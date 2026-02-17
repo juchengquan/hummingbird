@@ -3,6 +3,7 @@
 import { AppSidebar } from "@/components/widgets/app-sidebar"
 import { ChatPanel } from "@/components/panels/chat-panel"
 import { ResourcePanel } from "@/components/panels/resource-panel"
+import { EditorPanel } from "@/components/editor/editor-panel"
 import {
   SidebarInset,
   SidebarProvider,
@@ -28,13 +29,7 @@ export default function Page() {
             maxSecondWidth={50}
             firstPanel={<ResourcePanel />}
             secondPanel={<ChatPanel />}
-            thirdPanel={
-              <div className="h-full border-l flex items-center justify-center bg-[var(--secondary)]/30">
-                <p className="text-sm text-[var(--muted-foreground)]">
-                  Editor panel coming soon
-                </p>
-              </div>
-            }
+            thirdPanel={<EditorPanel />}
           />
         </SidebarInset>
       </SidebarProvider>

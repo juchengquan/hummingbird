@@ -9,9 +9,6 @@ import { Item, ItemMedia, ItemContent, ItemTitle, ItemDescription } from "@/comp
 import {
   Upload,
   File,
-  FileText,
-  FileJson,
-  Image,
   Search,
   Trash2,
   Check,
@@ -27,7 +24,19 @@ import {
 import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 import { cn } from "@/lib/utils"
+import { formatFileSize, getFileIcon } from "@/lib/file-utils"
 import { format } from "date-fns"
 
 const FILE_SIZE_LIMIT = 50 * 1024 * 1024 // 50MB
@@ -45,25 +54,6 @@ const ALLOWED_TYPES = [
 
 const ALLOWED_EXTENSIONS = [".pdf", ".docx", ".txt", ".csv", ".json", ".png", ".jpg", ".jpeg"]
 
-function getFileIcon(type: string) {
-  if (type.includes("pdf")) return <FileText size={20} className="text-red-500 shrink-0" />
-  if (type.includes("word") || type.includes("document"))
-    return <FileText size={20} className="text-blue-500 shrink-0" />
-  if (type.includes("image")) return <Image size={20} className="text-purple-500 shrink-0" aria-label="image" />
-  if (type.includes("json")) return <FileJson size={20} className="text-yellow-500 shrink-0" />
-  if (type.includes("csv") || type.includes("text"))
-    return <FileText size={20} className="text-green-500 shrink-0" />
-  return <File size={20} className="text-gray-500 shrink-0" />
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes === 0) return "0 B"
-  const k = 1024
-  const sizes = ["B", "KB", "MB", "GB"]
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i]
-}
-
 function validateFile(file: File): string | null {
   if (file.size > FILE_SIZE_LIMIT) {
     return `File size exceeds ${formatFileSize(FILE_SIZE_LIMIT)} limit`
@@ -72,7 +62,7 @@ function validateFile(file: File): string | null {
 }
 
 export function ResourcePanel() {
-  const { files, selectedFileIds, addFile, removeFile, toggleFileSelection, clearSelectedFiles } =
+  const { files, selectedFileIds, addFile, removeFile, toggleFileSelection, clearSelectedFiles, clearFiles } =
     useStore()
   const [searchQuery, setSearchQuery] = useState("")
   const [isDragOver, setIsDragOver] = useState(false)
@@ -287,6 +277,34 @@ export function ResourcePanel() {
                 </div>
               ))}
             </div>
+          )}
+        </div>
+
+        {/* Total files uploaded */}
+        <div className="px-3 py-2 border-t border-[var(--border)] flex items-center justify-between">
+          <span className="text-sm text-[var(--muted-foreground)]">
+            {files.length} {files.length === 1 ? "file" : "files"} uploaded
+          </span>
+          {files.length > 0 && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="ghost" size="sm" className="text-xs text-[var(--muted-foreground)] hover:bg-destructive hover:text-white">
+                  Delete all
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete all files?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will permanently delete all {files.length} uploaded files. This action cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction variant="destructive" onClick={clearFiles}>Delete</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           )}
         </div>
 

@@ -187,6 +187,7 @@ interface AppState {
   removeFile: (fileId: string) => void
   toggleFileSelection: (fileId: string) => void
   clearSelectedFiles: () => void
+  clearFiles: () => void
 
   // Conversation actions
   createConversation: () => void
@@ -284,6 +285,7 @@ export const useStore = create<AppState>()(
             : [...state.selectedFileIds, fileId],
         })),
       clearSelectedFiles: () => set({ selectedFileIds: [] }),
+      clearFiles: () => set({ files: [], selectedFileIds: [] }),
 
       // Conversation actions
       createConversation: () => {

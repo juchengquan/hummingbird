@@ -1,13 +1,16 @@
 "use client"
 
 import { useState, useRef, useEffect, useMemo, useCallback } from "react"
-import { useStore, useActiveConversation, useHydrated } from "@/lib/hooks/use-store"
+import { useStore, useActiveConversation, useHydrated, useSelectedFiles } from "@/lib/hooks/use-store"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { InputGroup, InputGroupTextarea, InputGroupButton } from "@/components/ui/input-group"
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
+import { CustomScrollbar } from "@/components/ui/custom-scrollbar"
 import { cn } from "@/lib/utils"
-import { Plus, Send, User, Bot, ChevronDown } from "lucide-react"
+import { formatFileSize, getFileIcon } from "@/lib/file-utils"
+import { Plus, Send, User, Bot, ChevronDown, Files, X } from "lucide-react"
 
 // Helper function to format time in UTC to avoid hydration mismatch
 function formatTime(timestamp: Date | string): string {
@@ -30,6 +33,62 @@ function MessageTime({ timestamp }: { timestamp: Date | string }) {
 
   if (!time) return null
   return <>{time}</>
+}
+
+// Selected Files Popover Component
+function SelectedFilesPopover() {
+  const selectedFiles = useSelectedFiles()
+  const { toggleFileSelection } = useStore()
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <InputGroupButton
+          size="icon-sm"
+          className="rounded-full transition-transform hover:scale-110 active:scale-95"
+          aria-label="View selected files"
+        >
+          <Files size={20} />
+        </InputGroupButton>
+      </PopoverTrigger>
+      <PopoverContent
+        side="top"
+        align="center"
+        className="w-72 p-2"
+        sideOffset={8}
+      >
+        <div className="text-sm font-medium text-[var(--foreground)] mb-2">
+          Selected Files ({selectedFiles.length})
+        </div>
+        {selectedFiles.length === 0 ? (
+          <p className="text-sm text-[var(--muted-foreground)] py-2">
+            No files selected
+          </p>
+        ) : (
+          <CustomScrollbar height="192px" innerClassName="space-y-1 pr-2">
+            {selectedFiles.map((file) => (
+              <div
+                key={file.id}
+                className="flex items-center gap-2 p-2 rounded hover:bg-[var(--secondary)] transition-colors cursor-pointer min-w-0"
+              >
+                <div className="shrink-0">{getFileIcon(file.type)}</div>
+                <span className="flex-1 min-w-0 truncate text-sm text-[var(--foreground)]">
+                  {file.name}
+                </span>
+                <button
+                  onClick={() => toggleFileSelection(file.id)}
+                  className="shrink-0 p-1 rounded text-[var(--muted-foreground)] hover:bg-[var(--destructive)] hover:text-[var(--destructive-foreground)] transition-colors"
+                  aria-label="Remove file"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ))}
+          </CustomScrollbar>
+        )}
+      </PopoverContent>
+    </Popover>
+  )
 }
 
 export function ChatPanel() {
@@ -254,6 +313,7 @@ export function ChatPanel() {
           >
             <Plus size={20} />
           </InputGroupButton>
+          <SelectedFilesPopover />
           <InputGroupTextarea
             ref={textareaRef}
             value={inputValue}
