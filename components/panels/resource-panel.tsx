@@ -17,6 +17,7 @@ import {
   Check,
   X,
 } from "lucide-react"
+import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card"
 import {
   InputGroup,
   InputGroupAddon,
@@ -45,14 +46,14 @@ const ALLOWED_TYPES = [
 const ALLOWED_EXTENSIONS = [".pdf", ".docx", ".txt", ".csv", ".json", ".png", ".jpg", ".jpeg"]
 
 function getFileIcon(type: string) {
-  if (type.includes("pdf")) return <FileText size={20} className="text-red-500" />
+  if (type.includes("pdf")) return <FileText size={20} className="text-red-500 shrink-0" />
   if (type.includes("word") || type.includes("document"))
-    return <FileText size={20} className="text-blue-500" />
-  if (type.includes("image")) return <Image size={20} className="text-purple-500" />
-  if (type.includes("json")) return <FileJson size={20} className="text-yellow-500" />
+    return <FileText size={20} className="text-blue-500 shrink-0" />
+  if (type.includes("image")) return <Image size={20} className="text-purple-500 shrink-0" aria-label="image" />
+  if (type.includes("json")) return <FileJson size={20} className="text-yellow-500 shrink-0" />
   if (type.includes("csv") || type.includes("text"))
-    return <FileText size={20} className="text-green-500" />
-  return <File size={20} className="text-gray-500" />
+    return <FileText size={20} className="text-green-500 shrink-0" />
+  return <File size={20} className="text-gray-500 shrink-0" />
 }
 
 function formatFileSize(bytes: number): string {
@@ -142,7 +143,7 @@ export function ResourcePanel() {
         {/* Drop zone */}
         <div
           className={cn(
-            "m-3 p-4 border-2 border-dashed rounded-lg transition-colors cursor-pointer",
+            "m-2 p-2 border-2 border-dashed rounded-lg transition-colors cursor-pointer",
             isDragOver
               ? "border-[var(--primary)] bg-[var(--primary)]/10"
               : "border-[var(--border)] hover:border-[var(--primary)]"
@@ -160,12 +161,12 @@ export function ResourcePanel() {
             onChange={(e) => handleFileSelect(e.target.files)}
             className="hidden"
           />
-          <Item className="flex flex-col items-center text-center border-0 p-0 shadow-none">
-            <ItemContent>
-              <ItemTitle className="justify-center text-[var(--foreground)] text-xs">
+          <Item className="flex flex-col items-center text-center border-0 p-0 shadow-none !w-full">
+            <ItemContent className="w-full items-center">
+              <ItemTitle className="justify-center text-center w-full text-[var(--foreground)] text-xs">
                 Drop files here or click to upload
               </ItemTitle>
-              <ItemDescription className="text-xs">
+              <ItemDescription className="text-center text-xs w-full">
                 PDF, DOCX, TXT, CSV, JSON, PNG, JPG (max 50MB)
               </ItemDescription>
             </ItemContent>
@@ -180,7 +181,7 @@ export function ResourcePanel() {
         )}
 
         {/* Search */}
-        <div className="px-3 pb-3 border-[var(--border)]">
+        <div className="px-2 pb-2 border-[var(--border)]">
           {/* <div className="relative"> */}
           <InputGroup>
             <InputGroupAddon align="inline-start">
@@ -199,7 +200,7 @@ export function ResourcePanel() {
         </div>
 
         {/* File list */}
-        <div className="max-h-[60vh] flex-1 overflow-y-auto border">
+        <div className="mx-2 rounded-lg max-h-[60vh] flex-1 overflow-y-auto border">
           {filteredFiles.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center p-4">
               <File size={32} className="text-[var(--muted-foreground)] mb-2" />
@@ -227,16 +228,27 @@ export function ResourcePanel() {
                     onClick={(e) => e.stopPropagation()}
                   />
 
-                  {/* File icon */}
-                  {getFileIcon(file.type)}
-
-                  {/* File info */}
+                  {/* File icon and info */}
                   <div className="flex-1 min-w-0 flex items-center gap-2">
-                    <p className="text-sm text-[var(--foreground)] truncate">
-                      {file.name}
-                    </p>
-                    <span className="text-xs text-[var(--muted-foreground)] shrink-0">
-                      {formatFileSize(file.size)} • {format(file.uploadedAt, "MMM d")}
+                    <HoverCard openDelay={300}>
+                      <HoverCardTrigger asChild>
+                        <div className="flex items-center gap-2 cursor-default min-w-0">
+                          {getFileIcon(file.type)}
+                          <p className="text-sm text-[var(--foreground)] truncate">
+                            {file.name}
+                          </p>
+                        </div>
+                      </HoverCardTrigger>
+                      <HoverCardContent side="right" align="start" className="w-auto max-w-xs">
+                        <p className="text-sm text-[var(--foreground)] break-all">{file.name}</p>
+                        <p className="text-xs text-[var(--muted-foreground)] mt-1">
+                          {formatFileSize(file.size)} • {format(file.uploadedAt, "MMM d, yyyy")}
+                        </p>
+                      </HoverCardContent>
+                    </HoverCard>
+                    <span className="text-xs text-[var(--muted-foreground)] shrink-0 ml-auto">
+                      {formatFileSize(file.size)}
+                      {/* • {format(file.uploadedAt, "MMM d")} */}
                     </span>
                   </div>
 

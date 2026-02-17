@@ -231,17 +231,17 @@ export function ChatPanel() {
       </div>
 
       {/* Scroll to bottom button */}
-      {showScrollButton && (
+      {/* {showScrollButton && ( */}
         <Button
           variant="secondary"
           size="icon"
-          className="absolute bottom-24 right-8 rounded-full shadow-md animate-scroll-button-in"
+          className="absolute bottom-40 right-8 rounded-full shadow-md animate-scroll-button-in"
           onClick={scrollToBottom}
           aria-label="Scroll to bottom"
         >
           <ChevronDown size={18} />
         </Button>
-      )}
+      {/* )} */}
 
       {/* Input Bar - fixed at bottom, grows upwards */}
       <div className="absolute bottom-12 left-0 right-0 border-[var(--border)] px-4 bg-background-transparant animate-input-bar-in">
@@ -259,7 +259,7 @@ export function ChatPanel() {
             value={inputValue}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
-            placeholder="Ask anthing!"
+            placeholder="Ask me anthing!"
             rows={1}
             className="min-h-[44px] max-h-[150px] transition-all focus:ring-2 focus:ring-primary/30"
           />
