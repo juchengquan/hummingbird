@@ -1,58 +1,55 @@
+"use client"
+
 import { AppSidebar } from "@/components/widgets/app-sidebar"
 import { ResourcesSidebar } from "@/components/widgets/resources-sidebar"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
-import { Separator } from "@/components/ui/separator"
+import { ChatPanel } from "@/components/panels/chat-panel"
 import {
   SidebarInset,
   SidebarProvider,
-  SidebarTrigger,
 } from "@/components/ui/sidebar"
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from "@/components/ui/resizable"
 
 export default function Page() {
   return (
-    <div>
+    <div className="h-screen overflow-hidden">
       <SidebarProvider>
         <AppSidebar />
         <ResourcesSidebar side="left" />
-        <SidebarInset>
-          {/* <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
-            <SidebarTrigger className="-ml-1" />
-            <Separator
-              orientation="vertical"
-              className="mr-2 data-[orientation=vertical]:h-4"
-            />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink href="#">Build Your Application</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Data Fetching</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </header> */}
-          <div className="flex flex-1 flex-col gap-4 p-4">
+        <SidebarInset className="h-full">
+          <ResizablePanelGroup
+            orientation="horizontal"
+            className="h-full"
+          >
+            {/* Chat Panel */}
+            <ResizablePanel
+              defaultSize="40%"
+              minSize="20%"
+              maxSize="60%"
+              className="h-full"
+            >
+              <ChatPanel />
+            </ResizablePanel>
 
-            <div className="grid auto-rows-min gap-4 md:grid-cols-3">
-              <div className="bg-muted/50 aspect-video rounded-xl">
-                {/* <ResourcePanel /> */}
-                </div>
-              <div className="bg-muted/50 aspect-video rounded-xl"> 
-              <span>XXXXX</span></div>
-              <div className="bg-muted/50 aspect-video rounded-xl" />
-            </div>
-            <div className="bg-muted/50 min-h-[100vh] flex-1 rounded-xl md:min-h-min" />
-          </div>
+            <ResizableHandle withHandle />
 
+            {/* Future Editor Panel */}
+            <ResizablePanel
+              defaultSize="60%"
+              minSize="20%"
+              maxSize="60%"
+              className="h-full"
+            >
+              <div className="h-full border-l flex items-center justify-center bg-[var(--secondary)]/30">
+                <p className="text-sm text-[var(--muted-foreground)]">
+                  Editor panel coming soon
+                </p>
+              </div>
+            </ResizablePanel>
+          </ResizablePanelGroup>
         </SidebarInset>
       </SidebarProvider>
 

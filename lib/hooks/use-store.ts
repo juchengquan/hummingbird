@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
@@ -23,6 +24,77 @@ export interface Conversation {
   createdAt: Date
   updatedAt: Date
   pinned: boolean
+}
+
+// Dummy data for testing - using fixed ISO strings to avoid hydration mismatch
+function getDummyConversations(): Conversation[] {
+  // Use a fixed base time to ensure consistency between server and client
+  const baseTime = new Date('2024-01-01T12:00:00Z').getTime()
+  return [
+    {
+      id: 'demo-1',
+      title: 'Welcome Chat',
+      messages: [
+        {
+          id: 'msg-1',
+          role: 'assistant',
+          content: 'Hello! I am your AI assistant. How can I help you today?',
+          timestamp: new Date(baseTime - 60000),
+        },
+        {
+          id: 'msg-2',
+          role: 'user',
+          content: 'Hi! I am testing the chat panel. It looks great!',
+          timestamp: new Date(baseTime - 30000),
+        },
+        {
+          id: 'msg-3',
+          role: 'assistant',
+          content: 'That is awesome! Feel free to send me messages and I will respond. You can also upload files in the Resources panel.',
+          timestamp: new Date(baseTime),
+        },
+      ],
+      createdAt: new Date(baseTime - 3600000),
+      updatedAt: new Date(baseTime),
+      pinned: true,
+    },
+    {
+      id: 'demo-2',
+      title: 'Project Discussion',
+      messages: [
+        {
+          id: 'msg-4',
+          role: 'user',
+          content: 'Can you help me plan a new project?',
+          timestamp: new Date(baseTime - 7200000),
+        },
+        {
+          id: 'msg-5',
+          role: 'assistant',
+          content: 'Of course! I would love to help you plan your project. What type of project are you working on?',
+          timestamp: new Date(baseTime - 6900000),
+        },
+      ],
+      createdAt: new Date(baseTime - 7200000),
+      updatedAt: new Date(baseTime - 6900000),
+      pinned: false,
+    },
+    {
+      id: 'demo-3',
+      title: 'Quick Notes',
+      messages: [
+        {
+          id: 'msg-6',
+          role: 'user',
+          content: 'Remember to buy groceries',
+          timestamp: new Date(baseTime - 86400000),
+        },
+      ],
+      createdAt: new Date(baseTime - 86400000),
+      updatedAt: new Date(baseTime - 86400000),
+      pinned: false,
+    },
+  ]
 }
 
 type Theme = 'system' | 'dark' | 'light'
@@ -51,6 +123,16 @@ function getPersistedState() {
     }
   } catch {}
   return {}
+}
+
+// Track hydration state to avoid SSR/client mismatch
+let hasHydratedInternal = false
+export const useHydrated = () => {
+  const [hydrated, setHydrated] = useState(false)
+  useEffect(() => {
+    setHydrated(hasHydratedInternal)
+  }, [])
+  return hydrated
 }
 
 // Get initial persisted values
@@ -155,11 +237,11 @@ export const useStore = create<AppState>()(
       selectedFileIds: [],
 
       // Conversations
-      conversations: (persisted.conversations || []).map((c: Conversation) => ({
+      conversations: (persisted.conversations || getDummyConversations()).map((c: Conversation) => ({
         ...c,
         pinned: c.pinned ?? false,
       })),
-      activeConversationId: persisted.activeConversationId ?? null,
+      activeConversationId: persisted.activeConversationId ?? 'demo-1',
 
       // Chat
       isTyping: false,
@@ -323,6 +405,9 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'hummingbird-storage',
+      onRehydrateStorage: () => () => {
+        hasHydratedInternal = true
+      },
       partialize: (state) => ({
         theme: state.theme,
         conversations: state.conversations,

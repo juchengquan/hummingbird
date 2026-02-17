@@ -90,7 +90,7 @@ export function ConversationItem({
   return (
     <div
       className={cn(
-        "group/menu-item relative flex w-full items-center gap-2 overflow-visible rounded-md p-2 text-sm",
+        "group/conversation relative flex w-full items-center gap-2 overflow-visible rounded-md p-2 text-sm cursor-pointer",
         isActive && "bg-[var(--sidebar-accent)] text-[var(--sidebar-accent-foreground)]",
         !isActive && "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
       )}
@@ -125,7 +125,7 @@ export function ConversationItem({
             <PopoverTrigger asChild>
               <button
                 type="button"
-                className="opacity-0 group-hover/menu-item:opacity-100 p-1 rounded hover:bg-[var(--sidebar-accent)] transition-all"
+                className="opacity-0 group-hover/conversation:opacity-100 p-1 rounded hover:bg-[var(--sidebar-accent)] transition-all"
                 aria-label="More options"
                 onClick={(e) => e.stopPropagation()}
               >

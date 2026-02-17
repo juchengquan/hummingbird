@@ -1,179 +1,283 @@
 "use client"
 
-import { useState } from "react"
-import { useStore } from "@/lib/hooks/use-store"
-import { PanelContainer } from "@/components/panel-container"
-import { Plus, MessageSquare, Search, MoreVertical, Trash2, Edit3 } from "lucide-react"
+import { useState, useRef, useEffect, useMemo, useCallback } from "react"
+import { useStore, useActiveConversation, useHydrated } from "@/lib/hooks/use-store"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { Button } from "@/components/ui/button"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { InputGroup, InputGroupTextarea, InputGroupButton } from "@/components/ui/input-group"
 import { cn } from "@/lib/utils"
-import { format } from "date-fns"
+import { Plus, Send, User, Bot, ChevronDown } from "lucide-react"
 
-export function ChatSessionsPanel() {
-  const {
-    conversations,
-    activeConversationId,
-    createConversation,
-    deleteConversation,
-    renameConversation,
-    setActiveConversation,
-  } = useStore()
+// Helper function to format time in UTC to avoid hydration mismatch
+function formatTime(timestamp: Date | string): string {
+  const date = new Date(timestamp)
+  const hours = date.getUTCHours()
+  const minutes = date.getUTCMinutes()
+  const ampm = hours >= 12 ? "PM" : "AM"
+  const hour12 = hours % 12 || 12
+  const minuteStr = minutes.toString().padStart(2, "0")
+  return `${hour12}:${minuteStr} ${ampm}`
+}
 
-  const [searchQuery, setSearchQuery] = useState("")
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [editingTitle, setEditingTitle] = useState("")
+// Client-only time component to avoid hydration mismatch
+function MessageTime({ timestamp }: { timestamp: Date | string }) {
+  const [time, setTime] = useState<string>("")
 
-  const filteredConversations = conversations.filter((conv) =>
-    conv.title.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  useEffect(() => {
+    setTime(formatTime(timestamp))
+  }, [timestamp])
 
-  const handleCreateConversation = () => {
-    createConversation()
+  if (!time) return null
+  return <>{time}</>
+}
+
+export function ChatPanel() {
+  const { addMessage, isTyping, setIsTyping } = useStore()
+  const activeConversation = useActiveConversation()
+  const hydrated = useHydrated()
+  const [inputValue, setInputValue] = useState("")
+  const [showScrollButton, setShowScrollButton] = useState(false)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const messages = useMemo(() => activeConversation?.messages || [], [activeConversation])
+
+  // Auto-scroll to bottom when new messages appear (only if already at bottom)
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [messages])
+
+  // Handle scroll event to show/hide scroll button
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLDivElement
+    const { scrollTop, scrollHeight, clientHeight } = target
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 100
+    setShowScrollButton(!isAtBottom)
+  }, [])
+
+  // Scroll to bottom function
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+    setShowScrollButton(false)
+  }, [])
+
+  const simulateAIResponse = (userMessage: string) => {
+    // Show typing indicator
+    setIsTyping(true)
+
+    // Simulate AI response delay
+    setTimeout(() => {
+      const responses = [
+        "That's an interesting question! Let me think about it...",
+        "I understand what you're asking. Here's my response:",
+        "Thanks for sharing that! Based on what you've told me, I would say:",
+        "That's a great point. Here's my take on it:",
+        "I appreciate you asking! Here's what I think:",
+      ]
+
+      const randomResponse = responses[Math.floor(Math.random() * responses.length)]
+      const additionalContent = `\n\nRegarding "${userMessage}": This is a mock response for testing purposes. In a real implementation, this would connect to an AI API to generate contextual responses based on your input.`
+
+      addMessage({
+        role: "assistant",
+        content: randomResponse + additionalContent,
+      })
+
+      setIsTyping(false)
+    }, 300) // Random delay between 1.5-2.5 seconds
   }
 
-  const handleStartRename = (id: string, title: string) => {
-    setEditingId(id)
-    setEditingTitle(title)
-  }
+  const handleSendMessage = () => {
+    if (!inputValue.trim()) return
 
-  const handleSaveRename = () => {
-    if (editingId && editingTitle.trim()) {
-      renameConversation(editingId, editingTitle.trim())
+    const messageContent = inputValue.trim()
+
+    addMessage({
+      role: "user",
+      content: messageContent,
+    })
+
+    setInputValue("")
+
+    // Reset textarea height
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto"
     }
-    setEditingId(null)
-    setEditingTitle("")
+
+    // Trigger AI response
+    simulateAIResponse(messageContent)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      handleSaveRename()
-    } else if (e.key === "Escape") {
-      setEditingId(null)
-      setEditingTitle("")
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault()
+      handleSendMessage()
     }
   }
 
-  return (
-    <PanelContainer
-      title="Sessions"
-    >
-      <div className="flex flex-col h-full">
-        {/* New conversation button */}
-        <div className="p-3 border-b border-[var(--border)]">
-          <button
-            onClick={handleCreateConversation}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-[var(--primary)] text-[var(--primary-foreground)] rounded-md font-medium text-sm hover:bg-[#d97706] transition-colors"
-          >
-            <Plus size={16} />
-            New Session
-          </button>
-        </div>
+  // Auto-resize textarea
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInputValue(e.target.value)
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto"
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 150)}px`
+    }
+  }
 
-        {/* Search */}
-        <div className="p-3 border-b border-[var(--border)]">
-          <div className="relative">
-            <Search
-              size={16}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
-            />
-            <input
-              type="text"
-              placeholder="Search conversations..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 bg-[var(--secondary)] border border-[var(--border)] rounded-md text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:border-[var(--primary)]"
-            />
-          </div>
-        </div>
-
-        {/* Conversation list */}
-        <div className="flex-1 overflow-y-auto">
-          {filteredConversations.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center p-4">
-              <MessageSquare
-                size={32}
-                className="text-[var(--muted-foreground)] mb-2"
-              />
-              <p className="text-sm text-[var(--muted-foreground)]">
-                {searchQuery
-                  ? "No conversations found"
-                  : "No conversations yet"}
-              </p>
-            </div>
-          ) : (
-            <div className="p-2 space-y-1">
-              {filteredConversations.map((conv) => (
-                <div
-                  key={conv.id}
-                  className={cn(
-                    "group flex items-center gap-2 p-3 rounded-md cursor-pointer transition-all",
-                    activeConversationId === conv.id
-                      ? "bg-[var(--secondary)] border border-[var(--primary)]"
-                      : "hover:bg-[var(--secondary)] border border-transparent"
-                  )}
-                  onClick={() => setActiveConversation(conv.id)}
-                >
-                  <MessageSquare
-                    size={16}
-                    className={cn(
-                      "flex-shrink-0",
-                      activeConversationId === conv.id
-                        ? "text-[var(--primary)]"
-                        : "text-[var(--muted-foreground)]"
-                    )}
-                  />
-
-                  {editingId === conv.id ? (
-                    <input
-                      type="text"
-                      value={editingTitle}
-                      onChange={(e) => setEditingTitle(e.target.value)}
-                      onBlur={handleSaveRename}
-                      onKeyDown={handleKeyDown}
-                      onClick={(e) => e.stopPropagation()}
-                      autoFocus
-                      className="flex-1 bg-transparent border-b border-[var(--primary)] text-sm text-[var(--foreground)] focus:outline-none"
-                    />
-                  ) : (
-                    <>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-[var(--foreground)] truncate">
-                          {conv.title}
-                        </p>
-                        <p className="text-xs text-[var(--muted-foreground)]">
-                          {format(conv.updatedAt, "MMM d, h:mm a")}
-                        </p>
-                      </div>
-                    </>
-                  )}
-
-                  {/* Actions */}
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleStartRename(conv.id, conv.title)
-                      }}
-                      className="p-1 rounded hover:bg-[var(--muted)] transition-colors"
-                      aria-label="Rename conversation"
-                    >
-                      <Edit3 size={14} className="text-[var(--muted-foreground)]" />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        deleteConversation(conv.id)
-                      }}
-                      className="p-1 rounded hover:bg-[var(--destructive)] transition-colors"
-                      aria-label="Delete conversation"
-                    >
-                      <Trash2 size={14} className="text-[var(--muted-foreground)] hover:text-[var(--destructive-foreground)]" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+  if (!activeConversation) {
+    return (
+      <div className="flex-1 flex items-center justify-center h-full">
+        <div className="text-center text-[var(--muted-foreground)]">
+          <p className="text-lg mb-2">No conversation selected</p>
+          <p className="text-sm">Select a conversation or start a new session</p>
         </div>
       </div>
-    </PanelContainer>
+    )
+  }
+
+  // Don't render messages until hydrated to avoid hydration mismatch
+  if (!hydrated) {
+    return (
+      <div className="flex-1 flex items-center justify-center h-full">
+        <div className="text-center text-[var(--muted-foreground)]">
+          <p className="text-sm">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col h-full relative">
+      <div className="flex-1 min-h-0 overflow-hidden pb-[10vh]">
+        <ScrollArea className="max-h-[90vh] h-[90vh] px-4" onScroll={handleScroll}>
+          <div className="py-4 pb-20 space-y-4">
+            {messages.length === 0 ? (
+            <div className="text-center text-[var(--muted-foreground)] py-8">
+              <p className="text-sm">Start a conversation</p>
+            </div>
+          ) : (
+            messages.map((message, index) => (
+              <div
+                key={message.id}
+                className="animate-message-in"
+                style={{ animationDelay: `${index * 50}ms` }}
+              >
+                <div
+                  className={cn(
+                    "flex gap-3",
+                    message.role === "user" ? "flex-row-reverse" : "flex-row"
+                  )}
+                >
+                  {/* Avatar */}
+                  <Avatar className="w-8 h-8 mt-1 animate-avatar-in">
+                    <AvatarImage src="" />
+                    <AvatarFallback className="text-xs">
+                      {message.role === "user" ? (
+                        <User size={16} />
+                      ) : (
+                        <Bot size={16} />
+                      )}
+                    </AvatarFallback>
+                  </Avatar>
+
+                  {/* Message Content */}
+                  <div
+                    className={cn(
+                      "max-w-[70%] rounded-lg px-4 py-2 animate-content-in",
+                      message.role === "user"
+                        ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
+                        : "bg-[var(--secondary)] text-[var(--foreground)]"
+                    )}
+                  >
+                    <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                    <p
+                      className={cn(
+                        "text-xs mt-1 opacity-60",
+                        message.role === "user"
+                          ? "text-[var(--primary-foreground)]"
+                          : "text-[var(--muted-foreground)]"
+                      )}
+                    >
+                      <MessageTime timestamp={message.timestamp} />
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+
+          {/* Typing indicator */}
+          {isTyping && (
+            <div className="flex gap-3">
+              <Avatar className="w-8 h-8 mt-1">
+                <AvatarFallback className="text-xs">
+                  <Bot size={16} />
+                </AvatarFallback>
+              </Avatar>
+              <div className="bg-[var(--secondary)] rounded-lg px-4 py-3">
+                <div className="flex gap-1">
+                  <span className="w-2 h-2 bg-[var(--muted-foreground)] rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                  <span className="w-2 h-2 bg-[var(--muted-foreground)] rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                  <span className="w-2 h-2 bg-[var(--muted-foreground)] rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div ref={messagesEndRef} />
+        </div>
+        </ScrollArea>
+      </div>
+
+      {/* Scroll to bottom button */}
+      {showScrollButton && (
+        <Button
+          variant="secondary"
+          size="icon"
+          className="absolute bottom-24 right-8 rounded-full shadow-md animate-scroll-button-in"
+          onClick={scrollToBottom}
+          aria-label="Scroll to bottom"
+        >
+          <ChevronDown size={18} />
+        </Button>
+      )}
+
+      {/* Input Bar - fixed at bottom, grows upwards */}
+      <div className="absolute bottom-12 left-0 right-0 border-[var(--border)] px-4 bg-background-transparant animate-input-bar-in">
+        <InputGroup className="max-w-4xl mx-auto rounded-[1vw] bg-background">
+          <InputGroupButton
+            // variant="default"
+            size="icon-sm"
+            className="rounded-full transition-transform hover:scale-110 active:scale-95"
+            aria-label="Add attachments"
+          >
+            <Plus size={20} />
+          </InputGroupButton>
+          <InputGroupTextarea
+            ref={textareaRef}
+            value={inputValue}
+            onChange={handleInputChange}
+            onKeyDown={handleKeyDown}
+            placeholder="Ask anthing!"
+            rows={1}
+            className="min-h-[44px] max-h-[150px] transition-all focus:ring-2 focus:ring-primary/30"
+          />
+          {/* <InputGroupButton
+            variant="default"
+            size="icon-sm"
+            className="rounded-full"
+            onClick={handleSendMessage}
+            disabled={!inputValue.trim()}
+            aria-label="Send message"
+          >
+            <Send size={18} />
+          </InputGroupButton> */}
+        </InputGroup>
+        <p className="text-xs text-center text-[var(--muted-foreground)] mt-2 italic">
+          AI is not silver bullet!
+        </p>
+      </div>
+    </div>
   )
 }

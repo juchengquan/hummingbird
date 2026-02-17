@@ -3,6 +3,9 @@
 import { useState, useRef, useCallback } from "react"
 import { useStore, UploadedFile } from "@/lib/hooks/use-store"
 import { PanelContainer } from "@/components/panel-container"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { Item, ItemMedia, ItemContent, ItemTitle, ItemDescription } from "@/components/ui/item"
+
 import {
   Upload,
   File,
@@ -14,8 +17,15 @@ import {
   Check,
   X,
 } from "lucide-react"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+  InputGroupText,
+} from "@/components/ui/input-group"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { format } from "date-fns"
 
@@ -127,7 +137,7 @@ export function ResourcePanel() {
   }
 
   return (
-    <PanelContainer title="Resources">
+    <PanelContainer title="Resources XXXX">
       <div className="flex flex-col h-full">
         {/* Drop zone */}
         <div
@@ -150,23 +160,16 @@ export function ResourcePanel() {
             onChange={(e) => handleFileSelect(e.target.files)}
             className="hidden"
           />
-          <div className="flex flex-col items-center text-center">
-            <Upload
-              size={24}
-              className={cn(
-                "mb-2",
-                isDragOver
-                  ? "text-[var(--primary)]"
-                  : "text-[var(--muted-foreground)]"
-              )}
-            />
-            <p className="text-sm text-[var(--foreground)]">
-              Drop files here or click to upload
-            </p>
-            <p className="text-xs text-[var(--muted-foreground)] mt-1">
-              PDF, DOCX, TXT, CSV, JSON, PNG, JPG (max 50MB)
-            </p>
-          </div>
+          <Item className="flex flex-col items-center text-center border-0 p-0 shadow-none">
+            <ItemContent>
+              <ItemTitle className="justify-center text-[var(--foreground)] text-xs">
+                Drop files here or click to upload
+              </ItemTitle>
+              <ItemDescription className="text-xs">
+                PDF, DOCX, TXT, CSV, JSON, PNG, JPG (max 50MB)
+              </ItemDescription>
+            </ItemContent>
+          </Item>
         </div>
 
         {/* Error message */}
@@ -177,13 +180,13 @@ export function ResourcePanel() {
         )}
 
         {/* Search */}
-        <div className="px-3 pb-3 border-b border-[var(--border)]">
-          <div className="relative">
-            <Search
-              size={16}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
-            />
-            <input
+        <div className="px-3 pb-3 border-[var(--border)]">
+          {/* <div className="relative"> */}
+          <InputGroup>
+            <InputGroupAddon align="inline-start">
+              <Search />
+            </InputGroupAddon>
+            <InputGroupInput
               type="text"
               placeholder="Search files..."
               value={searchQuery}
@@ -191,28 +194,12 @@ export function ResourcePanel() {
                 setSearchQuery(e.target.value)
                 setConfirmDeleteId(null)
               }}
-              className="w-full pl-9 pr-3 py-2 bg-[var(--secondary)] border border-[var(--border)] rounded-md text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:border-[var(--primary)]"
             />
-          </div>
+          </InputGroup>
         </div>
 
-        {/* Selected files count */}
-        {selectedFileIds.length > 0 && (
-          <div className="px-3 py-2 border-b border-[var(--border)] flex items-center justify-between">
-            <span className="text-sm text-[var(--muted-foreground)]">
-              {selectedFileIds.length} selected
-            </span>
-            <button
-              onClick={clearSelectedFiles}
-              className="text-xs text-[var(--primary)] hover:underline"
-            >
-              Clear selection
-            </button>
-          </div>
-        )}
-
         {/* File list */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="max-h-[60vh] flex-1 overflow-y-auto border">
           {filteredFiles.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center p-4">
               <File size={32} className="text-[var(--muted-foreground)] mb-2" />
@@ -244,13 +231,13 @@ export function ResourcePanel() {
                   {getFileIcon(file.type)}
 
                   {/* File info */}
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1 min-w-0 flex items-center gap-2">
                     <p className="text-sm text-[var(--foreground)] truncate">
                       {file.name}
                     </p>
-                    <p className="text-xs text-[var(--muted-foreground)]">
+                    <span className="text-xs text-[var(--muted-foreground)] shrink-0">
                       {formatFileSize(file.size)} • {format(file.uploadedAt, "MMM d")}
-                    </p>
+                    </span>
                   </div>
 
                   {/* Delete button */}
@@ -290,6 +277,21 @@ export function ResourcePanel() {
             </div>
           )}
         </div>
+
+        {/* Selected files count */}
+        {selectedFileIds.length > 0 && (
+          <div className="px-3 py-2 border-[var(--border)] flex items-center justify-between">
+            <span className="text-sm text-[var(--muted-foreground)]">
+              {selectedFileIds.length} selected
+            </span>
+            <button
+              onClick={clearSelectedFiles}
+              className="text-xs text-[var(--primary)] hover:underline"
+            >
+              Clear selection
+            </button>
+          </div>
+        )}
       </div>
     </PanelContainer>
   )

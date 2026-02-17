@@ -26,7 +26,7 @@ export function PanelContainer({
     <div
       className={cn(
         "panel-container h-full flex flex-col",
-        side === "left" ? "border-r" : "border-l",
+        // side === "left" ? "border-r" : "border-l",
         className
       )}
       style={{ width, minWidth: width }}
