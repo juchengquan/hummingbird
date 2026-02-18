@@ -113,7 +113,8 @@ export function EditorPanel() {
 
   return (
     <div className="h-full w-full">
-      <div className="h-full mr-12 border-r-2">
+      <div className="h-full border-r-2">
+        {/* mr-12 */}
         <Plate editor={editor}>
           <EditorContainer variant="demo">
             <Editor />

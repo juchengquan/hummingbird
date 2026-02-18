@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from "react"
 import { AppSidebar } from "@/components/sidebars/app-sidebar"
-import { ChatPanel } from "@/components/panels/chat-panel"
-import { ResourcePanel } from "@/components/panels/resource-panel"
-import { EditorPanel } from "@/components/panels/editor-panel"
+import { ResourcePanel } from "@/components/panels/resource"
+import { ChatPanel } from "@/components/panels/chat"
+import { EditorPanel } from "@/components/panels/editor"
 import {
   SidebarInset,
   SidebarProvider,
@@ -25,18 +25,21 @@ function DashboardContent() {
   const showFirstPanel = mounted ? resourcesPanelOpen : true
 
   return (
-    <ResizablePanelGroup
-      showFirstPanel={showFirstPanel}
-      defaultFirstWidth={15}
-      defaultSecondWidth={35}
-      minFirstWidth={15}
-      minSecondWidth={20}
-      maxFirstWidth={35}
-      maxSecondWidth={50}
-      firstPanel={<ResourcePanel />}
-      secondPanel={<ChatPanel />}
-      thirdPanel={<EditorPanel />}
-    />
+    <div ref={containerRef} className="h-full w-full">
+      <ResizablePanelGroup
+        showFirstPanel={showFirstPanel}
+        defaultFirstWidth={15}
+        defaultSecondWidth={35}
+        minFirstWidth={15}
+        minSecondWidth={20}
+        maxFirstWidth={25}
+        maxSecondWidth={50}
+        offset={sidebarOffset}
+        firstPanel={<ResourcePanel />}
+        secondPanel={<ChatPanel />}
+        thirdPanel={<EditorPanel />}
+      />
+    </div>
   )
 }
 

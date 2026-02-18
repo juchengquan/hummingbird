@@ -72,9 +72,9 @@ export function ResizablePanelGroup({
         )
 
         const currentSecondWidth = secondWidth
-        const thirdWidth = 100 - newFirstWidth - currentSecondWidth
+        const displayThirdWidth = 100 - newFirstWidth - currentSecondWidth
 
-        if (thirdWidth >= minSecondWidth) {
+        if (displayThirdWidth >= minSecondWidth) {
           setFirstWidth(newFirstWidth)
         } else {
           const maxFirstWithCurrentSecond = 100 - currentSecondWidth - minSecondWidth
@@ -135,8 +135,7 @@ export function ResizablePanelGroup({
     : 0
 
   // Calculate third panel width
-  let thirdWidth = 100 - displayFirstWidth - displaySecondWidth
-  thirdWidth = Math.max(thirdWidth, 0)
+  const displayThirdWidth = Math.max(100 - displayFirstWidth - displaySecondWidth, 0)
 
   // Show loading state before mount to avoid hydration mismatch
   if (!mounted) {
@@ -146,6 +145,7 @@ export function ResizablePanelGroup({
 
     return (
       <div ref={containerRef} className="flex h-full w-full relative">
+        WTF
         <div className="h-full overflow-hidden" style={{ width: `${loadingFirstWidth}%` }}>
           <div className="h-full" />
         </div>
@@ -224,7 +224,7 @@ export function ResizablePanelGroup({
       {/* Third Panel (Editor) */}
       <div
         className="h-full overflow-hidden"
-        style={{ width: `${thirdWidth}%` }}
+        style={{ width: `${displayThirdWidth}%` }}
       >
         {thirdPanel}
       </div>
