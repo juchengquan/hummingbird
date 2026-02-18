@@ -1,13 +1,13 @@
 "use client"
 
 import { useState, useRef, useEffect, useMemo, useCallback } from "react"
-import { useStore, useActiveConversation, useHydrated, useSelectedFiles } from "@/lib/hooks/use-store"
+import { useStore, useActiveConversation, useHydrated, useSessionStore } from "@/lib/hooks/use-store"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { InputGroup, InputGroupTextarea, InputGroupButton } from "@/components/ui/input-group"
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
-import { CustomScrollbar } from "@/components/ui/custom-scrollbar"
+import { CustomScrollbar } from "@/components/ui/custom/scrollbar"
 import { cn } from "@/lib/utils"
 import { formatFileSize, getFileIcon } from "@/lib/file-utils"
 import { Plus, Send, User, Bot, ChevronDown, Files, X } from "lucide-react"
@@ -37,8 +37,9 @@ function MessageTime({ timestamp }: { timestamp: Date | string }) {
 
 // Selected Files Popover Component
 function SelectedFilesPopover() {
-  const selectedFiles = useSelectedFiles()
-  const { toggleFileSelection } = useStore()
+  const files = useStore((state) => state.files)
+  const { selectedFileIds, toggleFileSelection } = useSessionStore()
+  const selectedFiles = files.filter((f) => selectedFileIds.includes(f.id))
 
   return (
     <Popover>

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
 
 export interface UploadedFile {
   id: string
@@ -424,6 +424,36 @@ export const useStore = create<AppState>()(
         resourcesPanelWidth: state.resourcesPanelWidth,
         editorPanelWidth: state.editorPanelWidth,
       }),
+    }
+  )
+)
+
+// Separate store for session-based state (cleared when browser tab is closed)
+interface SessionState {
+  selectedFileIds: string[]
+  toggleFileSelection: (fileId: string) => void
+  setSelectedFileIds: (ids: string[]) => void
+  clearSelectedFiles: () => void
+}
+
+export const useSessionStore = create<SessionState>()(
+  persist(
+    (set) => ({
+      selectedFileIds: [],
+      toggleFileSelection: (fileId: string) =>
+        set((state) => ({
+          selectedFileIds: state.selectedFileIds.includes(fileId)
+            ? state.selectedFileIds.filter((id) => id !== fileId)
+            : [...state.selectedFileIds, fileId],
+        })),
+      setSelectedFileIds: (ids: string[]) => set({ selectedFileIds: ids }),
+      clearSelectedFiles: () => set({ selectedFileIds: [] }),
+    }),
+    {
+      name: 'hummingbird-session',
+      storage: (typeof window !== 'undefined')
+        ? createJSONStorage(() => sessionStorage)
+        : undefined,
     }
   )
 )

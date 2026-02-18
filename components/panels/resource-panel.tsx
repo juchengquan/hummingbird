@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useCallback } from "react"
-import { useStore, UploadedFile } from "@/lib/hooks/use-store"
+import { useStore, useSessionStore, UploadedFile } from "@/lib/hooks/use-store"
 import { PanelContainer } from "@/components/panel-container"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Item, ItemMedia, ItemContent, ItemTitle, ItemDescription } from "@/components/ui/item"
@@ -62,8 +62,8 @@ function validateFile(file: File): string | null {
 }
 
 export function ResourcePanel() {
-  const { files, selectedFileIds, addFile, removeFile, toggleFileSelection, clearSelectedFiles, clearFiles } =
-    useStore()
+  const { files, addFile, removeFile, clearFiles } = useStore()
+  const { selectedFileIds, toggleFileSelection, setSelectedFileIds, clearSelectedFiles } = useSessionStore()
   const [searchQuery, setSearchQuery] = useState("")
   const [isDragOver, setIsDragOver] = useState(false)
   const [error, setError] = useState<string | null>(null)

@@ -30,12 +30,26 @@ export function ResizablePanelGroup({
 }: ThreePanelResizableProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [isDragging, setIsDragging] = useState<"first" | "second" | null>(null)
+  const [mounted, setMounted] = useState(false)
 
+  // Use fixed widths until mounted to avoid hydration mismatch
   const isFirstPanelVisible = showFirstPanel
 
-  // Use state with lazy initializer - only runs once on mount
-  const [firstWidth, setFirstWidth] = useState(() => defaultFirstWidth)
-  const [secondWidth, setSecondWidth] = useState(() => defaultSecondWidth)
+  // Start with default widths, update after mount
+  const [firstWidth, setFirstWidth] = useState(defaultFirstWidth)
+  const [secondWidth, setSecondWidth] = useState(defaultSecondWidth)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  // After mount, sync with any prop changes
+  useEffect(() => {
+    if (mounted) {
+      setFirstWidth(defaultFirstWidth)
+      setSecondWidth(defaultSecondWidth)
+    }
+  }, [defaultFirstWidth, defaultSecondWidth, mounted])
 
   const handleMouseDown = useCallback((handle: "first" | "second") => (e: React.MouseEvent) => {
     e.preventDefault()
@@ -106,16 +120,48 @@ export function ResizablePanelGroup({
     }
   }, [isDragging, handleMouseMove, handleMouseUp])
 
+  // Use default widths before mount to ensure server/client match
+  const widthsReady = mounted
+
   // Calculate widths
   const maxSecondWhenFirstHidden = 100 - minSecondWidth
-  const displaySecondWidth = isFirstPanelVisible ? secondWidth : Math.min(secondWidth, maxSecondWhenFirstHidden)
+  const displaySecondWidth = isFirstPanelVisible
+    ? (widthsReady ? secondWidth : defaultSecondWidth)
+    : Math.min(widthsReady ? secondWidth : defaultSecondWidth, maxSecondWhenFirstHidden)
 
   // Show/hide first panel - no animation
-  const displayFirstWidth = isFirstPanelVisible ? firstWidth : 0
+  const displayFirstWidth = isFirstPanelVisible
+    ? (widthsReady ? firstWidth : defaultFirstWidth)
+    : 0
 
   // Calculate third panel width
   let thirdWidth = 100 - displayFirstWidth - displaySecondWidth
   thirdWidth = Math.max(thirdWidth, 0)
+
+  // Show loading state before mount to avoid hydration mismatch
+  if (!mounted) {
+    const loadingFirstWidth = isFirstPanelVisible ? defaultFirstWidth : 0
+    const loadingSecondWidth = isFirstPanelVisible ? defaultSecondWidth : Math.min(defaultSecondWidth, maxSecondWhenFirstHidden)
+    const loadingThirdWidth = 100 - loadingFirstWidth - loadingSecondWidth
+
+    return (
+      <div ref={containerRef} className="flex h-full w-full relative">
+        <div className="h-full overflow-hidden" style={{ width: `${loadingFirstWidth}%` }}>
+          <div className="h-full" />
+        </div>
+        {isFirstPanelVisible && (
+          <div className="w-1 h-full cursor-col-resize flex items-center justify-center absolute top-0 bottom-0 z-10" style={{ left: `${loadingFirstWidth}%`, transform: "translateX(-50%)" }}>
+            <div className="w-1 h-12 bg-border rounded-full" />
+          </div>
+        )}
+        <div className="h-full overflow-hidden" style={{ width: `${loadingSecondWidth}%` }} />
+        <div className="w-1 h-full cursor-col-resize flex items-center justify-center absolute top-0 bottom-0 z-10" style={{ left: `${loadingFirstWidth + loadingSecondWidth}%`, transform: "translateX(-50%)" }}>
+          <div className="w-1 h-12 bg-border rounded-full" />
+        </div>
+        <div className="h-full overflow-hidden flex-1" style={{ width: `${loadingThirdWidth}%` }} />
+      </div>
+    )
+  }
 
   return (
     <div ref={containerRef} className="flex h-full w-full relative">
@@ -177,7 +223,7 @@ export function ResizablePanelGroup({
 
       {/* Third Panel (Editor) */}
       <div
-        className="h-full overflow-hidden flex-1"
+        className="h-full overflow-hidden"
         style={{ width: `${thirdWidth}%` }}
       >
         {thirdPanel}
