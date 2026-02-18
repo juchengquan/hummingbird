@@ -93,7 +93,7 @@ function SelectedFilesPopover() {
 }
 
 export function ChatPanel() {
-  const { addMessage, isTyping, setIsTyping } = useStore()
+  const { addMessage, isTyping, setIsTyping, setEditorContent } = useStore()
   const activeConversation = useActiveConversation()
   const hydrated = useHydrated()
   const [inputValue, setInputValue] = useState("")
@@ -157,6 +157,9 @@ export function ChatPanel() {
       role: "user",
       content: messageContent,
     })
+
+    // Sync to editor panel
+    setEditorContent(messageContent)
 
     setInputValue("")
 
@@ -292,24 +295,24 @@ export function ChatPanel() {
 
       {/* Scroll to bottom button */}
       {/* {showScrollButton && ( */}
-        <Button
-          variant="secondary"
-          size="icon"
-          className="absolute bottom-40 right-8 rounded-full shadow-md animate-scroll-button-in"
-          onClick={scrollToBottom}
-          aria-label="Scroll to bottom"
-        >
-          <ChevronDown size={18} />
-        </Button>
+      <Button
+        variant="secondary"
+        size="icon"
+        className="absolute bottom-20 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full shadow-md animate-scroll-button-in"
+        onClick={scrollToBottom}
+        aria-label="Scroll to bottom"
+      >
+        <ChevronDown size={18} />
+      </Button>
       {/* )} */}
 
       {/* Input Bar - fixed at bottom, grows upwards */}
-      <div className="absolute bottom-12 left-0 right-0 border-[var(--border)] px-4 bg-background-transparant animate-input-bar-in">
+      <div className="absolute bottom-2 left-0 right-0 border-[var(--border)] px-4 bg-background-transparant animate-input-bar-in">
         <InputGroup className="max-w-4xl mx-auto rounded-[1vw] bg-background">
           <InputGroupButton
             // variant="default"
             size="icon-sm"
-            className="rounded-full transition-transform hover:scale-110 active:scale-95"
+            className="ml-2 rounded-full transition-transform hover:scale-110 active:scale-95"
             aria-label="Add attachments"
           >
             <Plus size={20} />
@@ -322,7 +325,12 @@ export function ChatPanel() {
             onKeyDown={handleKeyDown}
             placeholder="Ask me anthing!"
             rows={1}
-            className="min-h-[44px] max-h-[150px] transition-all focus:ring-2 focus:ring-primary/30"
+            className="min-h-[44px] max-h-[160px] m-2 transition-all focus:ring-2 focus:ring-primary/30"
+            style={{
+              // scrollbarWidth: "thin",
+              scrollbarColor: "var(--muted-foreground) transparent",
+              // scrollbarGutter: "stable",
+            }}
           />
           {/* <InputGroupButton
             variant="default"

@@ -172,6 +172,9 @@ interface AppState {
   documentContent: string
   documentLastSaved: Date | null
 
+  // Editor content synced from chat
+  editorContent: string
+
   // Panel actions
   toggleSidebar: () => void
   toggleChatSessionsPanel: () => void
@@ -207,6 +210,7 @@ interface AppState {
   // Document actions
   setDocumentContent: (content: string) => void
   setDocumentLastSaved: (date: Date) => void
+  setEditorContent: (content: string) => void
 
   // Theme actions
   setTheme: (theme: Theme) => void
@@ -251,6 +255,9 @@ export const useStore = create<AppState>()(
       // Document
       documentContent: '',
       documentLastSaved: null,
+
+      // Editor content synced from chat
+      editorContent: '',
 
       // Panel actions
       toggleSidebar: () =>
@@ -394,6 +401,7 @@ export const useStore = create<AppState>()(
       // Document actions
       setDocumentContent: (content: string) => set({ documentContent: content }),
       setDocumentLastSaved: (date: Date) => set({ documentLastSaved: date }),
+      setEditorContent: (content: string) => set({ editorContent: content }),
 
       // Theme actions
       setTheme: (theme: Theme) => set({ theme }),

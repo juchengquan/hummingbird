@@ -1,5 +1,5 @@
 import * as React from "react"
-import { FolderOpen, Plus, ChevronRight, ChevronDown, Pin, MessageSquare } from "lucide-react"
+import { FolderOpen, Plus, ChevronRight, ChevronDown, Pin, MessageSquare, PencilLine } from "lucide-react"
 // import { SearchForm } from "@/components/search-form"
 // import { VersionSwitcher } from "@/components/version-switcher"
 import {
@@ -36,6 +36,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     renameConversation,
     togglePin,
     toggleResourcesPanel,
+    toggleEditorPanel,
   } = useStore()
 
   const { state } = useSidebar()
@@ -54,7 +55,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   }
 
   return (
-    <Sidebar collapsible="icon" {...props}>
+    <Sidebar collapsible="icon" {...props} className="z-100">
       <SidebarHeader>
         <div className="flex items-center w-full">
           <SidebarTrigger className="ml-auto" />
@@ -77,6 +78,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <SidebarMenuButton tooltip="Resources" onClick={toggleResourcesPanel}>
               <FolderOpen size={14} className="text-[var(--foreground)]" />
               <span className="group-data-[collapsible=icon]:hidden">Resources</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+
+          {/* Editor button */}
+          <SidebarMenuItem>
+            <SidebarMenuButton tooltip="Editor" onClick={toggleEditorPanel}>
+              <PencilLine size={14} className="text-[var(--foreground)]" />
+              <span className="group-data-[collapsible=icon]:hidden">Editor</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

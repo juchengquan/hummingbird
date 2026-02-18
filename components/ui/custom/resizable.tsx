@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 interface ThreePanelResizableProps {
   firstPanel: React.ReactNode
   secondPanel: React.ReactNode
-  thirdPanel?: React.ReactNode
+  thirdPanel: React.ReactNode
   showFirstPanel?: boolean
   defaultFirstWidth?: number
   defaultSecondWidth?: number
@@ -14,12 +14,13 @@ interface ThreePanelResizableProps {
   minSecondWidth?: number
   maxFirstWidth?: number
   maxSecondWidth?: number
+  offset?: number  // Sidebar width as percentage (e.g., 20 for 20%)
 }
 
 export function ResizablePanelGroup({
   firstPanel,
   secondPanel,
-  thirdPanel = null,
+  thirdPanel,
   showFirstPanel = true,
   defaultFirstWidth = 20,
   defaultSecondWidth = 40,
@@ -27,6 +28,7 @@ export function ResizablePanelGroup({
   minSecondWidth = 20,
   maxFirstWidth = 40,
   maxSecondWidth = 60,
+  offset = 0,
 }: ThreePanelResizableProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [isDragging, setIsDragging] = useState<"first" | "second" | null>(null)
@@ -123,19 +125,36 @@ export function ResizablePanelGroup({
   // Use default widths before mount to ensure server/client match
   const widthsReady = mounted
 
-  // Calculate widths
+  // Calculate widths with offset support
+  // When offset is applied (e.g., sidebar visible), we scale all panels proportionally
+  // to fit within the available width (100 - offset)%
+  const availableWidth = 100 - offset
+
   const maxSecondWhenFirstHidden = 100 - minSecondWidth
+  const baseSecondWidth = widthsReady ? secondWidth : defaultSecondWidth
   const displaySecondWidth = isFirstPanelVisible
-    ? (widthsReady ? secondWidth : defaultSecondWidth)
-    : Math.min(widthsReady ? secondWidth : defaultSecondWidth, maxSecondWhenFirstHidden)
+    ? baseSecondWidth
+    : Math.min(baseSecondWidth, maxSecondWhenFirstHidden)
 
   // Show/hide first panel - no animation
-  const displayFirstWidth = isFirstPanelVisible
-    ? (widthsReady ? firstWidth : defaultFirstWidth)
-    : 0
+  const baseFirstWidth = widthsReady ? firstWidth : defaultFirstWidth
+  const displayFirstWidth = isFirstPanelVisible ? baseFirstWidth : 0
 
-  // Calculate third panel width
-  const displayThirdWidth = Math.max(100 - displayFirstWidth - displaySecondWidth, 0)
+  // Calculate third panel width (before offset scaling)
+  const baseThirdWidth = Math.max(100 - displayFirstWidth - displaySecondWidth, 0)
+
+  // Apply offset scaling to maintain ratios when sidebar is toggled
+  // If offset = 20 (sidebar expanded), we scale from 100% to 80% available
+  const displayThirdWidth = baseThirdWidth * (availableWidth / 100)
+  const scaledFirstWidth = displayFirstWidth * (availableWidth / 100)
+  const scaledSecondWidth = displaySecondWidth * (availableWidth / 100)
+
+  // Common transition style for smooth animation (300ms with ease-out curve)
+  const transitionStyle = {
+    transitionProperty: "width, left",
+    transitionDuration: "300ms",
+    transitionTimingFunction: "cubic-bezier(0.4, 0, 0.2, 1)"
+  }
 
   // Show loading state before mount to avoid hydration mismatch
   if (!mounted) {
@@ -143,35 +162,39 @@ export function ResizablePanelGroup({
     const loadingSecondWidth = isFirstPanelVisible ? defaultSecondWidth : Math.min(defaultSecondWidth, maxSecondWhenFirstHidden)
     const loadingThirdWidth = 100 - loadingFirstWidth - loadingSecondWidth
 
+    // Apply offset scaling to loading state
+    const scaledLoadingFirstWidth = loadingFirstWidth * (availableWidth / 100)
+    const scaledLoadingSecondWidth = loadingSecondWidth * (availableWidth / 100)
+    const scaledLoadingThirdWidth = loadingThirdWidth * (availableWidth / 100)
+
     return (
-      <div ref={containerRef} className="flex h-full w-full relative">
-        WTF
-        <div className="h-full overflow-hidden" style={{ width: `${loadingFirstWidth}%` }}>
+      <div ref={containerRef} className="flex items-stretch h-full w-full relative">
+        <div className="h-full overflow-hidden" style={{ width: `${scaledLoadingFirstWidth}%` }}>
           <div className="h-full" />
         </div>
         {isFirstPanelVisible && (
-          <div className="w-1 h-full cursor-col-resize flex items-center justify-center absolute top-0 bottom-0 z-10" style={{ left: `${loadingFirstWidth}%`, transform: "translateX(-50%)" }}>
+          <div className="w-1 h-full cursor-col-resize flex items-center justify-center absolute top-0 bottom-0 z-10" style={{ left: `${scaledLoadingFirstWidth}%`, transform: "translateX(-50%)" }}>
             <div className="w-1 h-12 bg-border rounded-full" />
           </div>
         )}
-        <div className="h-full overflow-hidden" style={{ width: `${loadingSecondWidth}%` }} />
-        <div className="w-1 h-full cursor-col-resize flex items-center justify-center absolute top-0 bottom-0 z-10" style={{ left: `${loadingFirstWidth + loadingSecondWidth}%`, transform: "translateX(-50%)" }}>
+        <div className="h-full overflow-hidden" style={{ width: `${scaledLoadingSecondWidth}%` }} />
+        <div className="w-1 h-full cursor-col-resize flex items-center justify-center absolute top-0 bottom-0 z-10" style={{ left: `${scaledLoadingFirstWidth + scaledLoadingSecondWidth}%`, transform: "translateX(-50%)" }}>
           <div className="w-1 h-12 bg-border rounded-full" />
         </div>
-        <div className="h-full overflow-hidden flex-1" style={{ width: `${loadingThirdWidth}%` }} />
+        <div className="h-full overflow-hidden flex-1" style={{ width: `${scaledLoadingThirdWidth}%` }} />
       </div>
     )
   }
 
   return (
-    <div ref={containerRef} className="flex h-full w-full relative">
+    <div ref={containerRef} className="flex items-stretch h-full w-full relative">
       {/* First Panel (Resources) */}
       <>
         <div
           className="h-full overflow-hidden"
-          style={{ width: `${displayFirstWidth}%` }}
+          style={{ width: `${scaledFirstWidth}%`, ...(!isDragging ? transitionStyle : {}) }}
         >
-          <div className="h-full">
+          <div className="mx-1 h-full">
             {firstPanel}
           </div>
         </div>
@@ -186,8 +209,9 @@ export function ResizablePanelGroup({
               isDragging === "first" && "bg-primary/50"
             )}
             style={{
-              left: `${displayFirstWidth}%`,
-              transform: "translateX(-50%)"
+              left: `${scaledFirstWidth}%`,
+              transform: "translateX(-50%)",
+              ...(!isDragging ? transitionStyle : {})
             }}
             onMouseDown={handleMouseDown("first")}
           >
@@ -199,9 +223,11 @@ export function ResizablePanelGroup({
       {/* Second Panel (Chat) */}
       <div
         className="h-full overflow-hidden"
-        style={{ width: `${displaySecondWidth}%` }}
+        style={{ width: `${scaledSecondWidth}%`, ...(!isDragging ? transitionStyle : {}) }}
       >
-        {secondPanel}
+        <div className="mx-1 h-full">
+          {secondPanel}
+        </div>
       </div>
 
       {/* Second Resize Handle */}
@@ -213,8 +239,9 @@ export function ResizablePanelGroup({
           isDragging === "second" && "bg-primary/50"
         )}
         style={{
-          left: `${displayFirstWidth + displaySecondWidth}%`,
-          transform: "translateX(-50%)"
+          left: `${scaledFirstWidth + scaledSecondWidth}%`,
+          transform: "translateX(-50%)",
+          ...(!isDragging ? transitionStyle : {})
         }}
         onMouseDown={handleMouseDown("second")}
       >
@@ -224,9 +251,11 @@ export function ResizablePanelGroup({
       {/* Third Panel (Editor) */}
       <div
         className="h-full overflow-hidden"
-        style={{ width: `${displayThirdWidth}%` }}
+        style={{ width: `${displayThirdWidth}%`, ...(!isDragging ? transitionStyle : {}) }}
       >
-        {thirdPanel}
+        <div className="mx-1 h-full">
+          {thirdPanel}
+        </div>
       </div>
     </div>
   )
