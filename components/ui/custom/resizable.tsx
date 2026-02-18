@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 interface ThreePanelResizableProps {
   firstPanel: React.ReactNode
   secondPanel: React.ReactNode
-  thirdPanel: React.ReactNode
+  thirdPanel?: React.ReactNode
   showFirstPanel?: boolean
   defaultFirstWidth?: number
   defaultSecondWidth?: number
@@ -19,7 +19,7 @@ interface ThreePanelResizableProps {
 export function ResizablePanelGroup({
   firstPanel,
   secondPanel,
-  thirdPanel,
+  thirdPanel = null,
   showFirstPanel = true,
   defaultFirstWidth = 20,
   defaultSecondWidth = 40,
