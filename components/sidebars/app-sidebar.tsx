@@ -1,5 +1,5 @@
 import * as React from "react"
-import { FolderOpen, Plus, ChevronRight, ChevronDown, Pin, MessageSquare, PencilLine } from "lucide-react"
+import { FolderOpen, Plus, ChevronRight, ChevronDown, Pin, MessageSquare, PencilLine, Files } from "lucide-react"
 // import { SearchForm } from "@/components/search-form"
 // import { VersionSwitcher } from "@/components/version-switcher"
 import {
@@ -36,7 +36,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     renameConversation,
     togglePin,
     toggleResourcesPanel,
-    toggleEditorPanel,
+    openPanel,
+    editorPanelOpen,
+    chatPanelOpen,
+    resourcesNewPanelOpen,
   } = useStore()
 
   const { state } = useSidebar()
@@ -68,7 +71,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               onClick={createConversation}
               tooltip="New Session"
             >
-              <Plus size={14} className="text-[var(--foreground)]" />
+              <Plus className="text-[var(--foreground)]" />
               <span className="group-data-[collapsible=icon]:hidden">New Session</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -76,16 +79,47 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           {/* Resources button */}
           <SidebarMenuItem>
             <SidebarMenuButton tooltip="Resources" onClick={toggleResourcesPanel}>
-              <FolderOpen size={14} className="text-[var(--foreground)]" />
+              <FolderOpen className="text-[var(--foreground)]" />
               <span className="group-data-[collapsible=icon]:hidden">Resources</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+
+          {/* Resources New button */}
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              tooltip="Resources New"
+              onClick={() => openPanel("resourcesNewPanelOpen")}
+              isActive={resourcesNewPanelOpen}
+              className={resourcesNewPanelOpen ? "bg-primary/100" : ""}
+            >
+              <Files className={resourcesNewPanelOpen ? "text-primary" : "text-[var(--foreground)]"} />
+              <span className="group-data-[collapsible=icon]:hidden">Resources New</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
 
           {/* Editor button */}
           <SidebarMenuItem>
-            <SidebarMenuButton tooltip="Editor" onClick={toggleEditorPanel}>
-              <PencilLine size={14} className="text-[var(--foreground)]" />
+            <SidebarMenuButton
+              tooltip="Editor"
+              onClick={() => openPanel("editorPanelOpen")}
+              isActive={editorPanelOpen}
+              className={editorPanelOpen ? "bg-primary/100" : ""}
+            >
+              <PencilLine className={editorPanelOpen ? "text-primary" : "text-[var(--foreground)]"} />
               <span className="group-data-[collapsible=icon]:hidden">Editor</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+
+          {/* Chat button */}
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              tooltip="Chat"
+              onClick={() => openPanel("chatPanelOpen")}
+              isActive={chatPanelOpen}
+              className={chatPanelOpen ? "bg-primary/100" : ""}
+            >
+              <MessageSquare className={chatPanelOpen ? "text-primary" : "text-[var(--foreground)]"} />
+              <span className="group-data-[collapsible=icon]:hidden">Chat</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -169,7 +203,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             )}
           </SidebarMenu>
         </SidebarGroup>
-
 
       </SidebarContent>
       <SidebarRail />

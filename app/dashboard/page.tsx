@@ -2,7 +2,9 @@
 
 import { useState, useEffect, useRef } from "react"
 import { AppSidebar } from "@/components/sidebars/app-sidebar"
+import { ChatSidebar } from "@/components/sidebars/chat-sidebar"
 import { EditorSidebar } from "@/components/sidebars/editor-sidebar"
+import { ResourcesNewSidebar } from "@/components/sidebars/resources-new-sidebar"
 import { ResourcePanel } from "@/components/panels/resource"
 import { ChatPanel } from "@/components/panels/chat"
 import { EditorPanel } from "@/components/panels/editor"
@@ -72,10 +74,16 @@ export default function Page() {
     <div className="h-screen overflow-hidden">
       <SidebarProvider>
         <AppSidebar />
-        <EditorSidebar />
+
+
+        
         <SidebarInset className="h-full">
           <DashboardContent />
         </SidebarInset>
+        
+        <ResourcesNewSidebar />
+        <ChatSidebar />
+        <EditorSidebar />
       </SidebarProvider>
     </div>
   )
