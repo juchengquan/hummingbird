@@ -16,7 +16,7 @@ export function EditorSidebar() {
       closeButtonIcon={<ChevronsLeft size={20} className="text-[var(--foreground)]" />}
       closeButtonLabel="Close editor"
     >
-      <MarkdownDemo />
+      <EditorPanel />
     </SlidingSidebar>
   )
 }
