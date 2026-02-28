@@ -133,7 +133,7 @@ export function ConversationItem({
               </button>
             </PopoverTrigger>
             <PopoverContent
-              className="w-40 p-1"
+              className="w-40 p-1 z-[100]"
               side="right"
               align="start"
               onClick={(e) => e.stopPropagation()}

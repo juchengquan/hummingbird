@@ -26,9 +26,33 @@ export interface Conversation {
   pinned: boolean
 }
 
-// Dummy data for testing - using fixed ISO strings to avoid hydration mismatch
-function getDummyConversations(): Conversation[] {
-  // Use a fixed base time to ensure consistency between server and client
+type Theme = 'system' | 'dark' | 'light'
+
+// Read theme from localStorage synchronously to prevent flash
+function getInitialTheme(): Theme {
+  if (typeof window === 'undefined') return 'dark'
+  try {
+    const stored = localStorage.getItem('hummingbird-storage')
+    if (stored) {
+      const parsed = JSON.parse(stored)
+      return parsed.state?.theme || 'dark'
+    }
+  } catch {}
+  return 'dark'
+}
+
+// Track hydration state for SSR/client synchronization
+let hasHydratedInternal = false
+export const useHydrated = () => {
+  const [hydrated, setHydrated] = useState(false)
+  useEffect(() => {
+    setHydrated(hasHydratedInternal)
+  }, [])
+  return hydrated
+}
+
+// Default initial values for store
+const getDefaultConversations = (): Conversation[] => {
   const baseTime = new Date('2024-01-01T12:00:00Z').getTime()
   return [
     {
@@ -50,93 +74,16 @@ function getDummyConversations(): Conversation[] {
         {
           id: 'msg-3',
           role: 'assistant',
-          content: 'That is awesome! Feel free to send me messages and I will respond. You can also upload files in the Resources panel.',
+          content: 'Thank you! Feel free to ask me anything or start a new conversation.',
           timestamp: new Date(baseTime),
         },
       ],
-      createdAt: new Date(baseTime - 3600000),
+      createdAt: new Date(baseTime - 120000),
       updatedAt: new Date(baseTime),
       pinned: true,
     },
-    {
-      id: 'demo-2',
-      title: 'Project Discussion',
-      messages: [
-        {
-          id: 'msg-4',
-          role: 'user',
-          content: 'Can you help me plan a new project?',
-          timestamp: new Date(baseTime - 7200000),
-        },
-        {
-          id: 'msg-5',
-          role: 'assistant',
-          content: 'Of course! I would love to help you plan your project. What type of project are you working on?',
-          timestamp: new Date(baseTime - 6900000),
-        },
-      ],
-      createdAt: new Date(baseTime - 7200000),
-      updatedAt: new Date(baseTime - 6900000),
-      pinned: false,
-    },
-    {
-      id: 'demo-3',
-      title: 'Quick Notes',
-      messages: [
-        {
-          id: 'msg-6',
-          role: 'user',
-          content: 'Remember to buy groceries',
-          timestamp: new Date(baseTime - 86400000),
-        },
-      ],
-      createdAt: new Date(baseTime - 86400000),
-      updatedAt: new Date(baseTime - 86400000),
-      pinned: false,
-    },
   ]
 }
-
-type Theme = 'system' | 'dark' | 'light'
-
-// Read theme from localStorage synchronously to prevent flash
-function getInitialTheme(): Theme {
-  if (typeof window === 'undefined') return 'dark'
-  try {
-    const stored = localStorage.getItem('hummingbird-storage')
-    if (stored) {
-      const parsed = JSON.parse(stored)
-      return parsed.state?.theme || 'dark'
-    }
-  } catch {}
-  return 'dark'
-}
-
-// Read persisted state from localStorage synchronously
-function getPersistedState() {
-  if (typeof window === 'undefined') return {}
-  try {
-    const stored = localStorage.getItem('hummingbird-storage')
-    if (stored) {
-      const parsed = JSON.parse(stored)
-      return parsed.state || {}
-    }
-  } catch {}
-  return {}
-}
-
-// Track hydration state to avoid SSR/client mismatch
-let hasHydratedInternal = false
-export const useHydrated = () => {
-  const [hydrated, setHydrated] = useState(false)
-  useEffect(() => {
-    setHydrated(hasHydratedInternal)
-  }, [])
-  return hydrated
-}
-
-// Get initial persisted values
-const persisted = getPersistedState()
 
 interface AppState {
   // Theme
@@ -145,6 +92,7 @@ interface AppState {
   // Panel visibility
   chatSessionsPanelOpen: boolean
   resourcesPanelOpen: boolean
+  sourcesPanelOpen: boolean
   chatPanelOpen: boolean
   editorPanelOpen: boolean
 
@@ -179,8 +127,10 @@ interface AppState {
   toggleSidebar: () => void
   toggleChatSessionsPanel: () => void
   toggleResourcesPanel: () => void
+  toggleSourcesPanel: () => void
   toggleChatPanel: () => void
   toggleEditorPanel: () => void
+  openPanel: (panelName: keyof Pick<AppState, 'chatPanelOpen' | 'editorPanelOpen' | 'sourcesPanelOpen'>, group?: string) => void
   setChatSessionsPanelWidth: (width: number) => void
   setResourcesPanelWidth: (width: number) => void
   setEditorPanelWidth: (width: number) => void
@@ -224,29 +174,30 @@ export const useStore = create<AppState>()(
       theme: getInitialTheme(),
 
       // Initial panel states
-      chatSessionsPanelOpen: persisted.chatSessionsPanelOpen ?? true,
-      resourcesPanelOpen: persisted.resourcesPanelOpen ?? true,
-      chatPanelOpen: persisted.chatPanelOpen ?? true,
-      editorPanelOpen: persisted.editorPanelOpen ?? true,
+      chatSessionsPanelOpen: true,
+      resourcesPanelOpen: true,
+      sourcesPanelOpen: false,
+      chatPanelOpen: true,
+      editorPanelOpen: true,
 
       // Sidebar
-      sidebarCollapsed: persisted.sidebarCollapsed ?? false,
+      sidebarCollapsed: false,
 
       // Initial panel dimensions
-      chatSessionsPanelWidth: persisted.chatSessionsPanelWidth ?? 280,
-      resourcesPanelWidth: persisted.resourcesPanelWidth ?? 280,
-      editorPanelWidth: persisted.editorPanelWidth ?? 480,
+      chatSessionsPanelWidth: 280,
+      resourcesPanelWidth: 280,
+      editorPanelWidth: 480,
 
       // Files
       files: [],
       selectedFileIds: [],
 
       // Conversations
-      conversations: (persisted.conversations || getDummyConversations()).map((c: Conversation) => ({
+      conversations: getDefaultConversations().map((c: Conversation) => ({
         ...c,
         pinned: c.pinned ?? false,
       })),
-      activeConversationId: persisted.activeConversationId ?? 'demo-1',
+      activeConversationId: 'demo-1',
 
       // Chat
       isTyping: false,
@@ -266,10 +217,42 @@ export const useStore = create<AppState>()(
         set((state) => ({ chatSessionsPanelOpen: !state.chatSessionsPanelOpen })),
       toggleResourcesPanel: () =>
         set((state) => ({ resourcesPanelOpen: !state.resourcesPanelOpen })),
+      toggleSourcesPanel: () =>
+        set((state) => ({ sourcesPanelOpen: !state.sourcesPanelOpen })),
       toggleChatPanel: () =>
         set((state) => ({ chatPanelOpen: !state.chatPanelOpen })),
       toggleEditorPanel: () =>
         set((state) => ({ editorPanelOpen: !state.editorPanelOpen })),
+      openPanel: (panelName, group = "sliding") =>
+        set((state) => {
+          const panelStates: Record<string, keyof AppState> = {
+            chatPanelOpen: "chatPanelOpen",
+            editorPanelOpen: "editorPanelOpen",
+            sourcesPanelOpen: "sourcesPanelOpen",
+          }
+          const panelGroup: Record<string, string> = {
+            chatPanelOpen: "sliding",
+            editorPanelOpen: "sliding",
+            sourcesPanelOpen: "sliding",
+          }
+
+          const newState: Partial<AppState> = {}
+
+          // Close all panels in the same group
+          Object.entries(panelGroup).forEach(([panel, g]) => {
+            if (g === group && panel !== panelName) {
+              newState[panel as keyof AppState] = false
+            }
+          })
+
+          // Toggle the target panel
+          const targetPanel = panelStates[panelName]
+          if (targetPanel) {
+            newState[targetPanel] = !(state[targetPanel as keyof AppState] as boolean)
+          }
+
+          return newState
+        }),
       setChatSessionsPanelWidth: (width: number) =>
         set({ chatSessionsPanelWidth: Math.max(150, Math.min(400, width)) }),
       setResourcesPanelWidth: (width: number) =>
@@ -426,6 +409,7 @@ export const useStore = create<AppState>()(
         documentContent: state.documentContent,
         chatSessionsPanelOpen: state.chatSessionsPanelOpen,
         resourcesPanelOpen: state.resourcesPanelOpen,
+        sourcesPanelOpen: state.sourcesPanelOpen,
         chatPanelOpen: state.chatPanelOpen,
         editorPanelOpen: state.editorPanelOpen,
         chatSessionsPanelWidth: state.chatSessionsPanelWidth,

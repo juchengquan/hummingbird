@@ -1,19 +1,18 @@
-"use client"
+import * as React from 'react';
 
-import { useEffect, useState } from "react"
+export const useDebounce = <T>(value: T, delay = 500) => {
+  const [debouncedValue, setDebouncedValue] = React.useState(value);
 
-export function useDebounce<T>(value: T, delay: number): T {
-  const [debouncedValue, setDebouncedValue] = useState<T>(value)
+  React.useEffect(() => {
+    const handler: NodeJS.Timeout = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
 
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedValue(value)
-    }, delay)
-
+    // Cancel the timeout if value changes (also on delay change or unmount)
     return () => {
-      clearTimeout(handler)
-    }
-  }, [value, delay])
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
 
-  return debouncedValue
-}
+  return debouncedValue;
+};

@@ -1,6 +1,53 @@
 import { File, FileText, FileJson, Image } from "lucide-react"
 import React from "react"
 
+export interface UploadedFile {
+  id: string
+  name: string
+  size: number
+  type: string
+  uploadedAt: Date
+}
+
+// Default file validation (5MB limit)
+const DEFAULT_SIZE_LIMIT = 5 * 1024 * 1024
+
+export function processSelectedFiles(
+  files: FileList | null,
+  options: {
+    maxSize?: number
+    onValidationError?: (error: string) => void
+  } = {}
+): UploadedFile[] {
+  const { maxSize = DEFAULT_SIZE_LIMIT, onValidationError } = options
+
+  if (!files) return []
+
+  const uploadedFiles: UploadedFile[] = []
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i]
+
+    // Validate file size
+    if (file.size > maxSize) {
+      onValidationError?.(`File "${file.name}" exceeds ${formatFileSize(maxSize)} limit`)
+      continue
+    }
+
+    const uploadedFile: UploadedFile = {
+      id: crypto.randomUUID(),
+      name: file.name,
+      size: file.size,
+      type: file.type || 'application/octet-stream',
+      uploadedAt: new Date(),
+    }
+
+    uploadedFiles.push(uploadedFile)
+  }
+
+  return uploadedFiles
+}
+
 export function getFileIcon(type: string): React.ReactNode {
   if (type.includes("pdf")) return <FileText size={16} className="text-red-500 shrink-0" />
   if (type.includes("word") || type.includes("document"))

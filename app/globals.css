@@ -1,4 +1,6 @@
 @import "tailwindcss";
+
+@plugin "tailwind-scrollbar-hide";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
@@ -46,6 +48,7 @@
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
   --color-brand: var(--brand);
+  --color-highlight: var(--highlight);
 }
 
 :root {
@@ -84,6 +87,7 @@
   --brand: oklch(0.623 0.214 259.815);
   /* Panel animation durations */
   --panel-slide-duration: 500ms;
+  --highlight: oklch(0.852 0.199 91.936);
 }
 
 .dark {
@@ -119,6 +123,7 @@
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
   --brand: oklch(0.707 0.165 254.624);
+  --highlight: oklch(0.852 0.199 91.936);
 }
 
 @layer base {
@@ -284,7 +289,7 @@
 @keyframes slide-in-left {
   from {
     transform: translateX(-100%);
-    opacity: 0;
+    opacity: 1;
   }
   to {
     transform: translateX(0);
@@ -299,7 +304,7 @@
   }
   to {
     transform: translateX(-100%);
-    opacity: 0;
+    opacity: 1;
   }
 }
 
@@ -319,7 +324,7 @@
 @keyframes slide-in-right {
   from {
     transform: translateX(-100%);
-    opacity: 0;
+    opacity: 1;
   }
   to {
     transform: translateX(0);
@@ -334,7 +339,7 @@
   }
   to {
     transform: translateX(-100%);
-    opacity: 0;
+    opacity: 1;
   }
 }
 

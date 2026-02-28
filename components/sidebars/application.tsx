@@ -39,7 +39,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     openPanel,
     editorPanelOpen,
     chatPanelOpen,
-    resourcesNewPanelOpen,
+    sourcesPanelOpen,
   } = useStore()
 
   const { state } = useSidebar()
@@ -77,23 +77,36 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           </SidebarMenuItem>
 
           {/* Resources button */}
-          <SidebarMenuItem>
+          {/* <SidebarMenuItem>
             <SidebarMenuButton tooltip="Resources" onClick={toggleResourcesPanel}>
               <FolderOpen className="text-[var(--foreground)]" />
               <span className="group-data-[collapsible=icon]:hidden">Resources</span>
             </SidebarMenuButton>
-          </SidebarMenuItem>
-
-          {/* Resources New button */}
+          </SidebarMenuItem> */}
+          
+          {/* Sources button */}
           <SidebarMenuItem>
             <SidebarMenuButton
-              tooltip="Resources New"
-              onClick={() => openPanel("resourcesNewPanelOpen")}
-              isActive={resourcesNewPanelOpen}
-              className={resourcesNewPanelOpen ? "bg-primary/100" : ""}
+              tooltip="Sources"
+              onClick={() => openPanel("sourcesPanelOpen")}
+              isActive={sourcesPanelOpen}
+              className={sourcesPanelOpen ? "bg-primary/100" : ""}
             >
-              <Files className={resourcesNewPanelOpen ? "text-primary" : "text-[var(--foreground)]"} />
-              <span className="group-data-[collapsible=icon]:hidden">Resources New</span>
+              <Files className={sourcesPanelOpen ? "text-primary" : "text-[var(--foreground)]"} />
+              <span className="group-data-[collapsible=icon]:hidden">Sources</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+
+          {/* Chat button */}
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              tooltip="Chat"
+              onClick={() => openPanel("chatPanelOpen")}
+              isActive={chatPanelOpen}
+              className={chatPanelOpen ? "bg-primary/100" : ""}
+            >
+              <MessageSquare className={chatPanelOpen ? "text-primary" : "text-[var(--foreground)]"} />
+              <span className="group-data-[collapsible=icon]:hidden">Chat</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
 
@@ -110,18 +123,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             </SidebarMenuButton>
           </SidebarMenuItem>
 
-          {/* Chat button */}
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              tooltip="Chat"
-              onClick={() => openPanel("chatPanelOpen")}
-              isActive={chatPanelOpen}
-              className={chatPanelOpen ? "bg-primary/100" : ""}
-            >
-              <MessageSquare className={chatPanelOpen ? "text-primary" : "text-[var(--foreground)]"} />
-              <span className="group-data-[collapsible=icon]:hidden">Chat</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
+          
         </SidebarMenu>
 
       </SidebarHeader>

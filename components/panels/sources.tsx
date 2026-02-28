@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useCallback } from "react"
-import { useStore, useSessionStore, UploadedFile } from "@/lib/hooks/use-store"
+import { useStore, useSessionStore } from "@/lib/hooks/use-store"
 import { PanelContainer } from "@/components/panel-container"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Item, ItemMedia, ItemContent, ItemTitle, ItemDescription } from "@/components/ui/item"
@@ -36,30 +36,12 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { cn } from "@/lib/utils"
-import { formatFileSize, getFileIcon } from "@/lib/file-utils"
+import { formatFileSize, getFileIcon, processSelectedFiles } from "@/lib/file-utils"
 import { format } from "date-fns"
 
-const FILE_SIZE_LIMIT = 50 * 1024 * 1024 // 50MB
-
-const ALLOWED_TYPES = [
-  "application/pdf",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "text/plain",
-  "text/csv",
-  "application/json",
-  "image/png",
-  "image/jpeg",
-  "image/jpg",
-]
+const FILE_SIZE_LIMIT = 5 * 1024 * 1024 // 50MB
 
 const ALLOWED_EXTENSIONS = [".pdf", ".docx", ".txt", ".csv", ".json", ".png", ".jpg", ".jpeg"]
-
-function validateFile(file: File): string | null {
-  if (file.size > FILE_SIZE_LIMIT) {
-    return `File size exceeds ${formatFileSize(FILE_SIZE_LIMIT)} limit`
-  }
-  return null
-}
 
 export function ResourcePanel() {
   const { files, addFile, removeFile, clearFiles } = useStore()
@@ -79,27 +61,15 @@ export function ResourcePanel() {
       if (!selectedFiles) return
 
       setError(null)
-      const newFiles: UploadedFile[] = []
 
-      for (let i = 0; i < selectedFiles.length; i++) {
-        const file = selectedFiles[i]
-        const validationError = validateFile(file)
+      const newFiles = processSelectedFiles(selectedFiles, {
+        maxSize: FILE_SIZE_LIMIT,
+        onValidationError: setError,
+      })
 
-        if (validationError) {
-          setError(validationError)
-          continue
-        }
-
-        const uploadedFile: UploadedFile = {
-          id: crypto.randomUUID(),
-          name: file.name,
-          size: file.size,
-          type: file.type,
-          uploadedAt: new Date(),
-        }
-        newFiles.push(uploadedFile)
-        addFile(uploadedFile)
-      }
+      newFiles.forEach((file) => {
+        addFile(file)
+      })
     },
     [addFile]
   )
@@ -157,7 +127,7 @@ export function ResourcePanel() {
                 Drop files here or click to upload
               </ItemTitle>
               <ItemDescription className="text-center text-xs w-full">
-                PDF, DOCX, TXT, CSV, JSON, PNG, JPG (max 50MB)
+                PDF, DOCX, TXT, CSV, JSON, PNG, JPG (max 5MB)
               </ItemDescription>
             </ItemContent>
           </Item>
@@ -263,16 +233,18 @@ export function ResourcePanel() {
                       </Button>
                     </div>
                   ) : (
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="icon"
                       onClick={(e) => {
                         e.stopPropagation()
                         setConfirmDeleteId(file.id)
                       }}
-                      className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--destructive)] transition-all"
+                      className="h-6 w-6 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30"
                       aria-label="Remove file"
                     >
-                      <X size={14} className="text-[var(--muted-foreground)]" />
-                    </button>
+                      <X size={14} />
+                    </Button>
                   )}
                 </div>
               ))}

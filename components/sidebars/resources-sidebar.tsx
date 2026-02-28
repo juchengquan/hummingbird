@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { ResourcePanel } from "@/components/panels/resource"
+import { ResourcePanel } from "@/components/panels/sources"
 import { useStore } from "@/lib/hooks/use-store"
 
 export function ResourcesSidebar() {

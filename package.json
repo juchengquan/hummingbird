@@ -68,6 +68,7 @@
     "react-player": "^3.4.0",
     "react-resizable-panels": "^4",
     "react-tweet": "^3.3.0",
+    "remark-emoji": "^5.0.2",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
     "slate": "^0.123.0",

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useMemo, useCallback } from "react"
-import { useStore, useActiveConversation, useHydrated, useSessionStore } from "@/lib/hooks/use-store"
+import { useStore, useHydrated, useSessionStore } from "@/lib/hooks/use-store"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -9,8 +9,8 @@ import { InputGroup, InputGroupTextarea, InputGroupButton } from "@/components/u
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
 import { CustomScrollbar } from "@/components/ui/custom/scrollbar"
 import { cn } from "@/lib/utils"
-import { formatFileSize, getFileIcon } from "@/lib/file-utils"
-import { Plus, Send, User, Bot, ChevronDown, Files, X } from "lucide-react"
+import { formatFileSize, getFileIcon, processSelectedFiles } from "@/lib/file-utils"
+import { Plus, CirclePlus, Send, User, Bot, ChevronDown, Files, X, Upload, PlusCircle } from "lucide-react"
 
 // Helper function to format time in UTC to avoid hydration mismatch
 function formatTime(timestamp: Date | string): string {
@@ -37,9 +37,26 @@ function MessageTime({ timestamp }: { timestamp: Date | string }) {
 
 // Selected Files Popover Component
 function SelectedFilesPopover() {
+  const addFile = useStore((state) => state.addFile)
   const files = useStore((state) => state.files)
+  const toggleSourcesPanel = useStore((state) => state.toggleSourcesPanel)
   const { selectedFileIds, toggleFileSelection } = useSessionStore()
   const selectedFiles = files.filter((f) => selectedFileIds.includes(f.id))
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const uploadedFiles = processSelectedFiles(e.target.files)
+
+    uploadedFiles.forEach((file) => {
+      addFile(file)
+      toggleFileSelection(file.id)
+    })
+
+    // Reset input so same file can be selected again
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
 
   return (
     <Popover>
@@ -58,9 +75,40 @@ function SelectedFilesPopover() {
         className="w-72 p-2"
         sideOffset={8}
       >
-        <div className="text-sm font-medium text-[var(--foreground)] mb-2">
-          Selected Files ({selectedFiles.length})
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm font-medium text-[var(--foreground)]">
+            Selected Files ({selectedFiles.length})
+          </span>
+          <div className="flex items-center gap-1 ml-auto">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => fileInputRef.current?.click()}
+              className="h-8 w-8"
+              title="Upload new files"
+            >
+              <Upload />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                toggleSourcesPanel()
+              }}
+              className="h-8 w-8"
+              title="Select files from Sources"
+            >
+              <CirclePlus />
+            </Button>
+          </div>
         </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={handleFileSelect}
+        />
         {selectedFiles.length === 0 ? (
           <p className="text-sm text-[var(--muted-foreground)] py-2">
             No files selected
@@ -70,19 +118,21 @@ function SelectedFilesPopover() {
             {selectedFiles.map((file) => (
               <div
                 key={file.id}
-                className="flex items-center gap-2 p-2 rounded hover:bg-[var(--secondary)] transition-colors cursor-pointer min-w-0"
+                className="group flex items-center gap-2 p-2 rounded hover:bg-[var(--secondary)] transition-colors cursor-pointer min-w-0"
               >
                 <div className="shrink-0">{getFileIcon(file.type)}</div>
                 <span className="flex-1 min-w-0 truncate text-sm text-[var(--foreground)]">
                   {file.name}
                 </span>
-                <button
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
                   onClick={() => toggleFileSelection(file.id)}
-                  className="shrink-0 p-1 rounded text-[var(--muted-foreground)] hover:bg-[var(--destructive)] hover:text-[var(--destructive-foreground)] transition-colors"
+                  className="shrink-0 h-6 w-6 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30"
                   aria-label="Remove file"
                 >
-                  <X size={14} />
-                </button>
+                  <X />
+                </Button>
               </div>
             ))}
           </CustomScrollbar>
@@ -93,8 +143,16 @@ function SelectedFilesPopover() {
 }
 
 export function ChatPanel() {
-  const { addMessage, isTyping, setIsTyping, setEditorContent } = useStore()
-  const activeConversation = useActiveConversation()
+  const addMessage = useStore((state) => state.addMessage)
+  const isTyping = useStore((state) => state.isTyping)
+  const setIsTyping = useStore((state) => state.setIsTyping)
+  const setEditorContent = useStore((state) => state.setEditorContent)
+  const activeConversationId = useStore((state) => state.activeConversationId)
+  const conversations = useStore((state) => state.conversations)
+  const activeConversation = useMemo(
+    () => conversations.find((c) => c.id === activeConversationId) || null,
+    [conversations, activeConversationId]
+  )
   const hydrated = useHydrated()
   const [inputValue, setInputValue] = useState("")
   const [showScrollButton, setShowScrollButton] = useState(false)
@@ -103,9 +161,9 @@ export function ChatPanel() {
 
   const messages = useMemo(() => activeConversation?.messages || [], [activeConversation])
 
-  // Auto-scroll to bottom when new messages appear (only if already at bottom)
+  // Auto-scroll to bottom when new messages appear
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+    messagesEndRef.current?.scrollIntoView({ behavior: "auto" })
   }, [messages])
 
   // Handle scroll event to show/hide scroll button
@@ -139,10 +197,15 @@ export function ChatPanel() {
       const randomResponse = responses[Math.floor(Math.random() * responses.length)]
       const additionalContent = `\n\nRegarding "${userMessage}": This is a mock response for testing purposes. In a real implementation, this would connect to an AI API to generate contextual responses based on your input.`
 
+      const aiContent = randomResponse + additionalContent
+
       addMessage({
         role: "assistant",
-        content: randomResponse + additionalContent,
+        content: aiContent,
       })
+
+      // Sync AI response to editor panel as markdown
+      setEditorContent(aiContent)
 
       setIsTyping(false)
     }, 300) // Random delay between 1.5-2.5 seconds
@@ -152,7 +215,7 @@ export function ChatPanel() {
     if (!inputValue.trim()) return
 
     const messageContent = inputValue.trim()
-
+    
     addMessage({
       role: "user",
       content: messageContent,
@@ -212,8 +275,8 @@ export function ChatPanel() {
 
   return (
     <div className="flex flex-col h-full relative">
-      <div className="flex-1 min-h-0 overflow-hidden pb-[10vh]">
-        <ScrollArea className="max-h-[90vh] h-[90vh] px-4" onScroll={handleScroll}>
+      <div className="flex-1 min-h-0 overflow-hidden">
+        <ScrollArea className="max-w-5xl mx-auto max-h-[95vh] h-[95vh] px-4" onScroll={handleScroll}>
           <div className="py-4 pb-20 space-y-4">
             {messages.length === 0 ? (
             <div className="text-center text-[var(--muted-foreground)] py-8">
@@ -307,7 +370,7 @@ export function ChatPanel() {
       {/* )} */}
 
       {/* Input Bar - fixed at bottom, grows upwards */}
-      <div className="absolute bottom-2 left-0 right-0 border-[var(--border)] px-4 bg-background-transparant animate-input-bar-in">
+      <div className="absolute bottom-2 inset-x-0 border-[var(--border)] px-4 bg-background-transparant animate-input-bar-in">
         <InputGroup className="max-w-4xl mx-auto rounded-[1vw] bg-background">
           <InputGroupButton
             // variant="default"

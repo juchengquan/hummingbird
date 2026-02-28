@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect } from "react"
-import { Plate, usePlateEditor } from "platejs/react"
+import { Plate, PlateView, usePlateEditor } from "platejs/react"
 import type { Value } from "platejs"
 import type { MyEditor } from "@/components/third-party/plate/editor/editor-kit"
 
@@ -19,19 +19,13 @@ const defaultValue: Value = [
   },
 ]
 
-// Helper function to convert markdown string to Plate value
-function convertMarkdownToPlateValue(markdown: string, editor: MyEditor): Value {
-  if (!markdown) return defaultValue
-  try {
-    return editor.api.markdown.deserialize(markdown) as Value
-  } catch {
-    return [
-      {
-        type: "p",
-        children: [{ text: markdown }],
-      },
-    ]
-  }
+// Helper to update editor content efficiently
+function updateEditorContent(editor: MyEditor, content: string) {
+  if (!content) return
+
+  // Directly deserialize and set the complete content in one operation
+  const nodes = editor.api.markdown.deserialize(content) as Value
+  editor.tf.setValue(nodes)
 }
 
 interface EditorPanelProps {
@@ -44,12 +38,11 @@ export function EditorPanel({ initialContent }: EditorPanelProps) {
     value: defaultValue,
   })
 
-  // When initialContent changes, deserialize and set the value
+  // When initialContent changes, update the editor content
   useEffect(() => {
     if (!editor || !initialContent) return
 
-    const newValue = convertMarkdownToPlateValue(initialContent, editor)
-    editor.tf.setValue(newValue)
+    updateEditorContent(editor, initialContent)
   }, [editor, initialContent])
 
   return (
