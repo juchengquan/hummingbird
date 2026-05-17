@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { UploadedFile, Workspace, Resource, Message, Conversation, MainView } from '@/lib/types'
+import { DEFAULT_CHAT_MODEL } from '@/lib/models'
 
 export type { UploadedFile, Workspace, Resource, Message, Conversation, MainView } from '@/lib/types'
 
@@ -107,6 +108,7 @@ interface AppState {
   // Chat
   isTyping: boolean
   streamingContent: string
+  chatModel: string
 
   // Document
   documentContent: string
@@ -146,13 +148,15 @@ interface AppState {
   setActiveConversation: (conversationId: string | null) => void
 
   // Message actions
-  addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => void
+  addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => Message
   deleteMessage: (messageId: string) => void
   updateMessage: (messageId: string, content: string) => void
   truncateMessagesAfter: (messageId: string, inclusive?: boolean) => void
   clearMessages: () => void
   setIsTyping: (typing: boolean) => void
   setStreamingContent: (content: string) => void
+  setChatModel: (model: string) => void
+  appendToMessage: (messageId: string, chunk: string) => void
 
   // Document actions
   setDocumentContent: (content: string) => void
@@ -197,6 +201,7 @@ export const useStore = create<AppState>()(
       // Chat
       isTyping: false,
       streamingContent: '',
+      chatModel: DEFAULT_CHAT_MODEL,
 
       // Document
       documentContent: '',
@@ -427,6 +432,21 @@ export const useStore = create<AppState>()(
         })),
       setIsTyping: (typing: boolean) => set({ isTyping: typing }),
       setStreamingContent: (content: string) => set({ streamingContent: content }),
+      setChatModel: (model: string) => set({ chatModel: model }),
+      appendToMessage: (messageId: string, chunk: string) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id === state.activeConversationId) {
+              return {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === messageId ? { ...m, content: m.content + chunk } : m
+                ),
+              }
+            }
+            return c
+          }),
+        })),
 
       // Document actions
       setDocumentContent: (content: string) => set({ documentContent: content }),
@@ -485,6 +505,7 @@ export const useStore = create<AppState>()(
         activeConversationId: state.activeConversationId,
         files: state.files,
         documentContent: state.documentContent,
+        chatModel: state.chatModel,
       }),
     }
   )

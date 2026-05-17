@@ -1,23 +1,39 @@
 "use client"
 
 import { useState, useRef, useEffect, useMemo, useCallback } from "react"
+import { toast } from "sonner"
 import { useStore, useHydrated } from "@/lib/hooks/use-store"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { InputGroup, InputGroupTextarea, InputGroupButton } from "@/components/ui/input-group"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
 import { ChatMessage } from "@/components/panels/chat-message"
 import { Plus, Bot, ChevronDown } from "lucide-react"
+import { CHAT_MODELS } from "@/lib/models"
+import type { Message } from "@/lib/types"
 
 export function ChatPanel() {
   const addMessage = useStore((state) => state.addMessage)
   const deleteMessage = useStore((state) => state.deleteMessage)
   const updateMessage = useStore((state) => state.updateMessage)
+  const appendToMessage = useStore((state) => state.appendToMessage)
   const truncateMessagesAfter = useStore((state) => state.truncateMessagesAfter)
   const isTyping = useStore((state) => state.isTyping)
   const setIsTyping = useStore((state) => state.setIsTyping)
   const setEditorContent = useStore((state) => state.setEditorContent)
+  const chatModel = useStore((state) => state.chatModel)
+  const setChatModel = useStore((state) => state.setChatModel)
+  const files = useStore((state) => state.files)
   const activeConversationId = useStore((state) => state.activeConversationId)
   const conversations = useStore((state) => state.conversations)
   const activeConversation = useMemo(
@@ -67,63 +83,130 @@ export function ChatPanel() {
     setShowScrollButton(false)
   }, [])
 
-  const simulateAIResponse = useCallback(
+  // Mock fallback used when the AI Gateway key isn't configured.
+  const mockAIResponse = useCallback(
     (userMessage: string) => {
       setIsTyping(true)
       setTimeout(() => {
-        const responses = [
-          "That's an interesting question! Let me think about it...",
-          "I understand what you're asking. Here's my response:",
-          "Thanks for sharing that! Based on what you've told me, I would say:",
-          "That's a great point. Here's my take on it:",
-          "I appreciate you asking! Here's what I think:",
-        ]
-
-        const randomResponse = responses[Math.floor(Math.random() * responses.length)]
-        const additionalContent = `\n\nRegarding "${userMessage}": This is a mock response for testing purposes. In a real implementation, this would connect to an AI API to generate contextual responses based on your input.`
-
-        const aiContent = randomResponse + additionalContent
-
-        addMessage({
-          role: "assistant",
-          content: aiContent,
-        })
-
-        setEditorContent(aiContent)
-
+        const aiContent = `_Mock response (set \`AI_GATEWAY_API_KEY\` to enable real AI)_\n\nRegarding "${userMessage}": this is placeholder text.`
+        const created = addMessage({ role: "assistant", content: aiContent })
+        setEditorContent(created.content)
         setIsTyping(false)
       }, 300)
     },
     [setIsTyping, addMessage, setEditorContent]
   )
 
-  const simulateAIResponseRef = useRef(simulateAIResponse)
+  // Build the message list and file context the API expects, sent up to and
+  // including the most recent user message.
+  const callChatAPI = useCallback(
+    async (history: Message[]) => {
+      const conv = conversations.find((c) => c.id === activeConversationId)
+      const fileSummaries =
+        conv?.selectedFileIds
+          .map((id) => files.find((f) => f.id === id))
+          .filter((f): f is NonNullable<typeof f> => Boolean(f))
+          .map((f) => ({ name: f.name, size: f.size, type: f.type })) ?? []
+
+      setIsTyping(true)
+      let placeholder: Message | null = null
+      let firstChunk = true
+
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: chatModel,
+            messages: history.map((m) => ({ role: m.role, content: m.content })),
+            files: fileSummaries,
+          }),
+        })
+
+        if (res.status === 401) {
+          setIsTyping(false)
+          const lastUser = [...history].reverse().find((m) => m.role === "user")
+          if (lastUser) mockAIResponse(lastUser.content)
+          return
+        }
+
+        if (!res.ok || !res.body) {
+          throw new Error(`Chat request failed (${res.status})`)
+        }
+
+        const reader = res.body.getReader()
+        const decoder = new TextDecoder()
+        while (true) {
+          const { value, done } = await reader.read()
+          if (done) break
+          const chunk = decoder.decode(value, { stream: true })
+          if (firstChunk) {
+            setIsTyping(false)
+            placeholder = addMessage({ role: "assistant", content: chunk })
+            firstChunk = false
+          } else if (placeholder) {
+            appendToMessage(placeholder.id, chunk)
+          }
+        }
+
+        // Flush any remaining bytes from the decoder
+        const tail = decoder.decode()
+        if (tail && placeholder) appendToMessage(placeholder.id, tail)
+
+        if (firstChunk) {
+          // Stream closed without any tokens — treat as empty response
+          addMessage({
+            role: "assistant",
+            content: "_The model returned an empty response._",
+          })
+        }
+      } catch (err) {
+        setIsTyping(false)
+        const message = err instanceof Error ? err.message : "Unknown error"
+        toast.error(`Chat failed: ${message}`)
+        if (!placeholder) {
+          addMessage({
+            role: "assistant",
+            content: `_Error: ${message}_`,
+          })
+        }
+      }
+    },
+    [
+      activeConversationId,
+      addMessage,
+      appendToMessage,
+      chatModel,
+      conversations,
+      files,
+      mockAIResponse,
+      setIsTyping,
+    ]
+  )
+
+  const callChatAPIRef = useRef(callChatAPI)
   useEffect(() => {
-    simulateAIResponseRef.current = simulateAIResponse
-  }, [simulateAIResponse])
+    callChatAPIRef.current = callChatAPI
+  }, [callChatAPI])
 
   const handleSendMessage = () => {
     if (!inputValue.trim()) return
 
     const messageContent = inputValue.trim()
-
-    addMessage({
+    const userMessage = addMessage({
       role: "user",
       content: messageContent,
     })
 
-    // Sync to editor panel
     setEditorContent(messageContent)
-
     setInputValue("")
 
-    // Reset textarea height
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto"
     }
 
-    // Trigger AI response
-    simulateAIResponse(messageContent)
+    const history = [...messages, userMessage]
+    callChatAPIRef.current(history)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -135,12 +218,22 @@ export function ChatPanel() {
 
   const handleEditUserMessage = useCallback(
     (messageId: string, newContent: string) => {
+      const conv = conversations.find((c) => c.id === activeConversationId)
+      if (!conv) return
+      const idx = conv.messages.findIndex((m) => m.id === messageId)
+      if (idx === -1) return
+
       updateMessage(messageId, newContent)
       truncateMessagesAfter(messageId)
       setEditorContent(newContent)
-      simulateAIResponseRef.current(newContent)
+
+      const newHistory = [
+        ...conv.messages.slice(0, idx),
+        { ...conv.messages[idx], content: newContent },
+      ]
+      callChatAPIRef.current(newHistory)
     },
-    [updateMessage, truncateMessagesAfter, setEditorContent]
+    [conversations, activeConversationId, updateMessage, truncateMessagesAfter, setEditorContent]
   )
 
   const handleRegenerateAssistantMessage = useCallback(
@@ -149,12 +242,9 @@ export function ChatPanel() {
       if (!conv) return
       const idx = conv.messages.findIndex((m) => m.id === messageId)
       if (idx <= 0) return
-      const priorUser = [...conv.messages.slice(0, idx)]
-        .reverse()
-        .find((m) => m.role === "user")
-      if (!priorUser) return
       truncateMessagesAfter(messageId, true)
-      simulateAIResponseRef.current(priorUser.content)
+      const newHistory = conv.messages.slice(0, idx)
+      callChatAPIRef.current(newHistory)
     },
     [conversations, activeConversationId, truncateMessagesAfter]
   )
@@ -271,9 +361,38 @@ export function ChatPanel() {
               }}
             />
           </InputGroup>
-          <p className="text-xs text-center text-[var(--muted-foreground)] mt-2 italic">
-            AI is not silver bullet!
-          </p>
+          <div className="mt-2 flex items-center justify-center gap-3">
+            <Select value={chatModel} onValueChange={setChatModel}>
+              <SelectTrigger
+                size="sm"
+                className="h-6 text-xs gap-1 border-none bg-transparent hover:bg-[var(--secondary)]"
+                aria-label="Model"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(
+                  CHAT_MODELS.reduce<Record<string, typeof CHAT_MODELS>>((acc, m) => {
+                    if (!acc[m.provider]) acc[m.provider] = []
+                    acc[m.provider].push(m)
+                    return acc
+                  }, {})
+                ).map(([provider, models]) => (
+                  <SelectGroup key={provider}>
+                    <SelectLabel>{provider}</SelectLabel>
+                    {models.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                ))}
+              </SelectContent>
+            </Select>
+            <span className="text-xs text-[var(--muted-foreground)] italic">
+              AI is not a silver bullet!
+            </span>
+          </div>
         </div>
       </div>
 
