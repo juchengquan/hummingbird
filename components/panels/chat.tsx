@@ -4,37 +4,17 @@ import { useState, useRef, useEffect, useMemo, useCallback } from "react"
 import { useStore, useHydrated } from "@/lib/hooks/use-store"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { InputGroup, InputGroupTextarea, InputGroupButton } from "@/components/ui/input-group"
-import { cn } from "@/lib/utils"
 import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
-import { Plus, User, Bot, ChevronDown } from "lucide-react"
-
-// Helper function to format time in UTC to avoid hydration mismatch
-function formatTime(timestamp: Date | string): string {
-  const date = new Date(timestamp)
-  const hours = date.getUTCHours()
-  const minutes = date.getUTCMinutes()
-  const ampm = hours >= 12 ? "PM" : "AM"
-  const hour12 = hours % 12 || 12
-  const minuteStr = minutes.toString().padStart(2, "0")
-  return `${hour12}:${minuteStr} ${ampm}`
-}
-
-// Client-only time component to avoid hydration mismatch
-function MessageTime({ timestamp }: { timestamp: Date | string }) {
-  const [time, setTime] = useState<string>("")
-
-  useEffect(() => {
-    setTime(formatTime(timestamp))
-  }, [timestamp])
-
-  if (!time) return null
-  return <>{time}</>
-}
+import { ChatMessage } from "@/components/panels/chat-message"
+import { Plus, Bot, ChevronDown } from "lucide-react"
 
 export function ChatPanel() {
   const addMessage = useStore((state) => state.addMessage)
+  const deleteMessage = useStore((state) => state.deleteMessage)
+  const updateMessage = useStore((state) => state.updateMessage)
+  const truncateMessagesAfter = useStore((state) => state.truncateMessagesAfter)
   const isTyping = useStore((state) => state.isTyping)
   const setIsTyping = useStore((state) => state.setIsTyping)
   const setEditorContent = useStore((state) => state.setEditorContent)
@@ -87,36 +67,40 @@ export function ChatPanel() {
     setShowScrollButton(false)
   }, [])
 
-  const simulateAIResponse = (userMessage: string) => {
-    // Show typing indicator
-    setIsTyping(true)
+  const simulateAIResponse = useCallback(
+    (userMessage: string) => {
+      setIsTyping(true)
+      setTimeout(() => {
+        const responses = [
+          "That's an interesting question! Let me think about it...",
+          "I understand what you're asking. Here's my response:",
+          "Thanks for sharing that! Based on what you've told me, I would say:",
+          "That's a great point. Here's my take on it:",
+          "I appreciate you asking! Here's what I think:",
+        ]
 
-    // Simulate AI response delay
-    setTimeout(() => {
-      const responses = [
-        "That's an interesting question! Let me think about it...",
-        "I understand what you're asking. Here's my response:",
-        "Thanks for sharing that! Based on what you've told me, I would say:",
-        "That's a great point. Here's my take on it:",
-        "I appreciate you asking! Here's what I think:",
-      ]
+        const randomResponse = responses[Math.floor(Math.random() * responses.length)]
+        const additionalContent = `\n\nRegarding "${userMessage}": This is a mock response for testing purposes. In a real implementation, this would connect to an AI API to generate contextual responses based on your input.`
 
-      const randomResponse = responses[Math.floor(Math.random() * responses.length)]
-      const additionalContent = `\n\nRegarding "${userMessage}": This is a mock response for testing purposes. In a real implementation, this would connect to an AI API to generate contextual responses based on your input.`
+        const aiContent = randomResponse + additionalContent
 
-      const aiContent = randomResponse + additionalContent
+        addMessage({
+          role: "assistant",
+          content: aiContent,
+        })
 
-      addMessage({
-        role: "assistant",
-        content: aiContent,
-      })
+        setEditorContent(aiContent)
 
-      // Sync AI response to editor panel as markdown
-      setEditorContent(aiContent)
+        setIsTyping(false)
+      }, 300)
+    },
+    [setIsTyping, addMessage, setEditorContent]
+  )
 
-      setIsTyping(false)
-    }, 300)
-  }
+  const simulateAIResponseRef = useRef(simulateAIResponse)
+  useEffect(() => {
+    simulateAIResponseRef.current = simulateAIResponse
+  }, [simulateAIResponse])
 
   const handleSendMessage = () => {
     if (!inputValue.trim()) return
@@ -148,6 +132,32 @@ export function ChatPanel() {
       handleSendMessage()
     }
   }
+
+  const handleEditUserMessage = useCallback(
+    (messageId: string, newContent: string) => {
+      updateMessage(messageId, newContent)
+      truncateMessagesAfter(messageId)
+      setEditorContent(newContent)
+      simulateAIResponseRef.current(newContent)
+    },
+    [updateMessage, truncateMessagesAfter, setEditorContent]
+  )
+
+  const handleRegenerateAssistantMessage = useCallback(
+    (messageId: string) => {
+      const conv = conversations.find((c) => c.id === activeConversationId)
+      if (!conv) return
+      const idx = conv.messages.findIndex((m) => m.id === messageId)
+      if (idx <= 0) return
+      const priorUser = [...conv.messages.slice(0, idx)]
+        .reverse()
+        .find((m) => m.role === "user")
+      if (!priorUser) return
+      truncateMessagesAfter(messageId, true)
+      simulateAIResponseRef.current(priorUser.content)
+    },
+    [conversations, activeConversationId, truncateMessagesAfter]
+  )
 
   // Auto-resize textarea
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -193,52 +203,14 @@ export function ChatPanel() {
                 </div>
               ) : (
                 messages.map((message, index) => (
-                  <div
+                  <ChatMessage
                     key={message.id}
-                    className="animate-message-in"
-                    style={{ animationDelay: `${index * 50}ms` }}
-                  >
-                    <div
-                      className={cn(
-                        "flex gap-3",
-                        message.role === "user" ? "flex-row-reverse" : "flex-row"
-                      )}
-                    >
-                      {/* Avatar */}
-                      <Avatar className="w-8 h-8 mt-1 animate-avatar-in">
-                        <AvatarImage src="" />
-                        <AvatarFallback className="text-xs">
-                          {message.role === "user" ? (
-                            <User size={16} />
-                          ) : (
-                            <Bot size={16} />
-                          )}
-                        </AvatarFallback>
-                      </Avatar>
-
-                      {/* Message Content */}
-                      <div
-                        className={cn(
-                          "max-w-[70%] rounded-lg px-4 py-2 animate-content-in",
-                          message.role === "user"
-                            ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-                            : "bg-[var(--secondary)] text-[var(--foreground)]"
-                        )}
-                      >
-                        <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                        <p
-                          className={cn(
-                            "text-xs mt-1 opacity-60",
-                            message.role === "user"
-                              ? "text-[var(--primary-foreground)]"
-                              : "text-[var(--muted-foreground)]"
-                          )}
-                        >
-                          <MessageTime timestamp={message.timestamp} />
-                        </p>
-                      </div>
-                    </div>
-                  </div>
+                    message={message}
+                    index={index}
+                    onDelete={deleteMessage}
+                    onEditUserMessage={handleEditUserMessage}
+                    onRegenerateAssistantMessage={handleRegenerateAssistantMessage}
+                  />
                 ))
               )}
 

@@ -149,6 +149,7 @@ interface AppState {
   addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => void
   deleteMessage: (messageId: string) => void
   updateMessage: (messageId: string, content: string) => void
+  truncateMessagesAfter: (messageId: string, inclusive?: boolean) => void
   clearMessages: () => void
   setIsTyping: (typing: boolean) => void
   setStreamingContent: (content: string) => void
@@ -399,6 +400,18 @@ export const useStore = create<AppState>()(
                   m.id === messageId ? { ...m, content } : m
                 ),
               }
+            }
+            return c
+          }),
+        })),
+      truncateMessagesAfter: (messageId: string, inclusive: boolean = false) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id === state.activeConversationId) {
+              const idx = c.messages.findIndex((m) => m.id === messageId)
+              if (idx === -1) return c
+              const endExclusive = inclusive ? idx : idx + 1
+              return { ...c, messages: c.messages.slice(0, endExclusive) }
             }
             return c
           }),
