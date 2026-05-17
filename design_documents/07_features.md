@@ -56,8 +56,8 @@ This document lists all features of the application with their implementation st
 | File deletion | ✅ Complete | panels/sources.tsx |
 | File hover cards | ✅ Complete | panels/sources.tsx |
 | File icons | ✅ Complete | lib/file-utils.tsx |
-| File attachments in chat | ✅ Complete | chat.tsx popover |
-| Inline workspace context rail in chat | ✅ Complete | panels/chat-context-rail.tsx |
+| File attachments in chat (per-conversation, persisted) | ✅ Complete | Conversation.selectedFileIds |
+| Inline workspace resources side panel in chat | ✅ Complete | panels/chat-resources-panel.tsx |
 
 ### 1.5 Conversation Features
 

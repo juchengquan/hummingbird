@@ -35,6 +35,8 @@ export interface Conversation {
   createdAt: Date
   updatedAt: Date
   pinned: boolean
+  /** Workspace file IDs attached as context for the next message in this conversation. */
+  selectedFileIds: string[]
 }
 
 export type MainView = 'workspaces' | 'chat' | 'resources' | 'editor'

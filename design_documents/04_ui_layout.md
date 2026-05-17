@@ -18,10 +18,10 @@ This document details the tabbed main-area layout: the `AppSidebar` (left) drive
 │   • Files   │   │     ResourcePanel    ('resources')      │ │
 │             │   │     EditorPanel      ('editor')         │ │
 │ ▾ Chats  +  │   │                                         │ │
-│   - Chat 1  │   │   ChatPanel composition:                │ │
-│   - Chat 2  │   │     • ChatContextRail (workspace files) │ │
-│             │   │     • Message scroll area               │ │
-│             │   │     • Input bar (absolute bottom)       │ │
+│   - Chat 1  │   │   ChatPanel layout (two columns):       │ │
+│   - Chat 2  │   │     • Messages column (flex-1)          │ │
+│             │   │       ↳ scroll area + input bar         │ │
+│             │   │     • ChatResourcesPanel (320px, ≥lg)   │ │
 │             │   └─────────────────────────────────────────┘ │
 └─────────────┴───────────────────────────────────────────────┘
 ```

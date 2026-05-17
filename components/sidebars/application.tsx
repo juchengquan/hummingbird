@@ -1,5 +1,5 @@
 import * as React from "react"
-import { FolderOpen, Plus, ChevronRight, Pin, MessageSquare, PencilLine, Files } from "lucide-react"
+import { FolderOpen, Folder, Plus, ChevronRight, Pin, MessageSquare, MessagesSquare, PencilLine, Files } from "lucide-react"
 import {
   Sidebar,
   SidebarContent,
@@ -106,12 +106,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 onOpenChange={setResourcesExpanded}
                 className="group/collapsible"
               >
-                <SidebarGroup>
+                <SidebarGroup className="p-0">
                   <SidebarGroupLabel
                     asChild
                     className="group/label text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground text-sm"
                   >
                     <CollapsibleTrigger>
+                      <Folder size={14} className="mr-2 shrink-0" />
                       {"Resources"}
                       <ChevronRight className="ml-auto transition-transform group-data-[state=open]/collapsible:rotate-90" />
                     </CollapsibleTrigger>
@@ -119,12 +120,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 </SidebarGroup>
                 <CollapsibleContent>
                   <SidebarGroupContent>
-                    <SidebarMenu>
+                    <SidebarMenu className="gap-0.5">
                       <SidebarMenuItem>
                         <SidebarMenuButton
                           tooltip="Files"
                           onClick={() => setActiveView("resources")}
                           isActive={activeView === "resources"}
+                          className="h-7"
                         >
                           <Files />
                           <span className="group-data-[collapsible=icon]:hidden">Files</span>
@@ -168,27 +170,29 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   onOpenChange={setSessionsExpanded}
                   className="group/collapsible"
                 >
-                  <SidebarGroup>
+                  <SidebarGroup className="p-0">
                     <SidebarGroupLabel
                       asChild
                       className="group/label text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground text-sm"
                     >
                       <CollapsibleTrigger>
+                        <MessagesSquare size={14} className="mr-2 shrink-0" />
                         {"Chats"}
-                        <ChevronRight className="ml-auto mr-6 transition-transform group-data-[state=open]/collapsible:rotate-90" />
+                        <ChevronRight className="ml-auto transition-transform group-data-[state=open]/collapsible:rotate-90" />
                       </CollapsibleTrigger>
                     </SidebarGroupLabel>
                     <SidebarGroupAction
                       title="New chat"
                       aria-label="New chat"
                       onClick={handleNewChat}
+                      className="right-8"
                     >
                       <Plus />
                     </SidebarGroupAction>
                   </SidebarGroup>
                   <CollapsibleContent>
                     <SidebarGroupContent>
-                      <SidebarMenu>
+                      <SidebarMenu className="gap-0.5">
                         {[...workspaceConversations].sort((a, b) => {
                           if (a.pinned && !b.pinned) return -1
                           if (!a.pinned && b.pinned) return 1

@@ -75,6 +75,7 @@ const getDefaultConversations = (): Conversation[] => {
       createdAt: new Date(baseTime - 120000),
       updatedAt: new Date(baseTime),
       pinned: true,
+      selectedFileIds: [],
     },
   ]
 }
@@ -137,6 +138,10 @@ interface AppState {
   createConversation: (workspaceId?: string) => Conversation
   deleteConversation: (conversationId: string) => void
   renameConversation: (conversationId: string, title: string) => void
+  /** Toggle a file's attachment to the active conversation (no-op if no active conversation). */
+  toggleConversationFileSelection: (fileId: string) => void
+  /** Clear all attached files on the active conversation. */
+  clearConversationFileSelection: () => void
   togglePin: (conversationId: string) => void
   setActiveConversation: (conversationId: string | null) => void
 
@@ -184,6 +189,7 @@ export const useStore = create<AppState>()(
       conversations: getDefaultConversations().map((c: Conversation) => ({
         ...c,
         pinned: c.pinned ?? false,
+        selectedFileIds: c.selectedFileIds ?? [],
       })),
       activeConversationId: 'demo-1',
 
@@ -265,6 +271,12 @@ export const useStore = create<AppState>()(
       removeFile: (fileId: string) =>
         set((state) => ({
           files: state.files.filter((f) => f.id !== fileId),
+          // Strip the removed file id from every conversation's selection.
+          conversations: state.conversations.map((c) =>
+            c.selectedFileIds.includes(fileId)
+              ? { ...c, selectedFileIds: c.selectedFileIds.filter((id) => id !== fileId) }
+              : c
+          ),
         })),
       clearFiles: () => set({ files: [] }),
 
@@ -279,6 +291,7 @@ export const useStore = create<AppState>()(
           createdAt: new Date(),
           updatedAt: new Date(),
           pinned: false,
+          selectedFileIds: [],
         }
         set((state) => ({
           conversations: [newConversation, ...state.conversations],
@@ -311,6 +324,33 @@ export const useStore = create<AppState>()(
             c.id === conversationId ? { ...c, pinned: !c.pinned } : c
           ),
         })),
+      toggleConversationFileSelection: (fileId: string) =>
+        set((state) => {
+          const id = state.activeConversationId
+          if (!id) return state
+          return {
+            conversations: state.conversations.map((c) =>
+              c.id === id
+                ? {
+                    ...c,
+                    selectedFileIds: c.selectedFileIds.includes(fileId)
+                      ? c.selectedFileIds.filter((x) => x !== fileId)
+                      : [...c.selectedFileIds, fileId],
+                  }
+                : c
+            ),
+          }
+        }),
+      clearConversationFileSelection: () =>
+        set((state) => {
+          const id = state.activeConversationId
+          if (!id) return state
+          return {
+            conversations: state.conversations.map((c) =>
+              c.id === id ? { ...c, selectedFileIds: [] } : c
+            ),
+          }
+        }),
       setActiveConversation: (conversationId: string | null) =>
         set({ activeConversationId: conversationId }),
 
@@ -392,11 +432,11 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'hummingbird-storage',
-      version: 2,
+      version: 3,
       migrate: (persistedState, fromVersion) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState
+        const state = persistedState as Record<string, unknown>
         if (fromVersion < 2) {
-          const state = persistedState as Record<string, unknown>
           const stale = [
             'chatPanelOpen', 'editorPanelOpen', 'resourcesPanelOpen', 'sourcesPanelOpen',
             'chatSessionsPanelOpen', 'workspacePanelOpen',
@@ -404,6 +444,18 @@ export const useStore = create<AppState>()(
             'selectedFileIds',
           ]
           for (const k of stale) delete state[k]
+        }
+        if (fromVersion < 3) {
+          // selectedFileIds moved from useSessionStore onto each Conversation.
+          // Backfill an empty array on any persisted conversation missing it.
+          const convs = state.conversations
+          if (Array.isArray(convs)) {
+            state.conversations = convs.map((c) =>
+              c && typeof c === 'object' && !('selectedFileIds' in c)
+                ? { ...c, selectedFileIds: [] }
+                : c
+            )
+          }
         }
         return persistedState
       },
@@ -466,6 +518,15 @@ export const useActiveConversation = () => {
   const conversations = useStore((state) => state.conversations)
   const activeConversationId = useStore((state) => state.activeConversationId)
   return conversations.find((c) => c.id === activeConversationId) || null
+}
+
+/**
+ * Returns the file IDs the active conversation has attached as context for its
+ * next message. Empty array if there's no active conversation.
+ */
+export const useConversationSelectedFileIds = (): string[] => {
+  const conv = useActiveConversation()
+  return conv?.selectedFileIds ?? []
 }
 
 export const useWorkspaceConversations = () => {

@@ -1,17 +1,14 @@
 "use client"
 
 import { useState, useRef, useEffect, useMemo, useCallback } from "react"
-import { useStore, useHydrated, useSessionStore } from "@/lib/hooks/use-store"
+import { useStore, useHydrated } from "@/lib/hooks/use-store"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { InputGroup, InputGroupTextarea, InputGroupButton } from "@/components/ui/input-group"
-import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
-import { CustomScrollbar } from "@/components/ui/custom/scrollbar"
 import { cn } from "@/lib/utils"
-import { getFileIcon, processSelectedFiles } from "@/lib/file-utils"
-import { ChatContextRail } from "@/components/panels/chat-context-rail"
-import { Plus, CirclePlus, Send, User, Bot, ChevronDown, Files, X, Upload, PlusCircle } from "lucide-react"
+import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
+import { Plus, User, Bot, ChevronDown } from "lucide-react"
 
 // Helper function to format time in UTC to avoid hydration mismatch
 function formatTime(timestamp: Date | string): string {
@@ -36,111 +33,6 @@ function MessageTime({ timestamp }: { timestamp: Date | string }) {
   return <>{time}</>
 }
 
-// Selected Files Popover Component
-function SelectedFilesPopover() {
-  const addFile = useStore((state) => state.addFile)
-  const files = useStore((state) => state.files)
-  const setActiveView = useStore((state) => state.setActiveView)
-  const { selectedFileIds, toggleFileSelection } = useSessionStore()
-  const selectedFiles = files.filter((f) => selectedFileIds.includes(f.id))
-  const fileInputRef = useRef<HTMLInputElement>(null)
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const uploadedFiles = processSelectedFiles(e.target.files)
-
-    uploadedFiles.forEach((file) => {
-      addFile(file)
-      toggleFileSelection(file.id)
-    })
-
-    // Reset input so same file can be selected again
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ''
-    }
-  }
-
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <InputGroupButton
-          size="icon-sm"
-          className="rounded-full transition-transform hover:scale-110 active:scale-95"
-          aria-label="View selected files"
-        >
-          <Files size={20} />
-        </InputGroupButton>
-      </PopoverTrigger>
-      <PopoverContent
-        side="top"
-        align="center"
-        className="w-72 p-2 z-[200]"
-        sideOffset={8}
-      >
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm font-medium text-[var(--foreground)]">
-            Selected Files ({selectedFiles.length})
-          </span>
-          <div className="flex items-center gap-1 ml-auto">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => fileInputRef.current?.click()}
-              className="h-8 w-8"
-              title="Upload new files"
-            >
-              <Upload />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setActiveView("resources")}
-              className="h-8 w-8"
-              title="Select files from Sources"
-            >
-              <CirclePlus />
-            </Button>
-          </div>
-        </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          className="hidden"
-          onChange={handleFileSelect}
-        />
-        {selectedFiles.length === 0 ? (
-          <p className="text-sm text-[var(--muted-foreground)] py-2">
-            No files selected
-          </p>
-        ) : (
-          <CustomScrollbar height="192px" innerClassName="space-y-1 pr-2">
-            {selectedFiles.map((file) => (
-              <div
-                key={file.id}
-                className="group flex items-center gap-2 p-2 rounded hover:bg-[var(--secondary)] transition-colors cursor-pointer min-w-0"
-              >
-                <div className="shrink-0">{getFileIcon(file.type)}</div>
-                <span className="flex-1 min-w-0 truncate text-sm text-[var(--foreground)]">
-                  {file.name}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => toggleFileSelection(file.id)}
-                  className="shrink-0 h-6 w-6 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30"
-                  aria-label="Remove file"
-                >
-                  <X />
-                </Button>
-              </div>
-            ))}
-          </CustomScrollbar>
-        )}
-      </PopoverContent>
-    </Popover>
-  )
-}
-
 export function ChatPanel() {
   const addMessage = useStore((state) => state.addMessage)
   const isTyping = useStore((state) => state.isTyping)
@@ -154,16 +46,24 @@ export function ChatPanel() {
   )
   const hydrated = useHydrated()
   const [inputValue, setInputValue] = useState("")
-  const [showScrollButton, setShowScrollButton] = useState(false)
+  const [, setShowScrollButton] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const messages = useMemo(() => activeConversation?.messages || [], [activeConversation])
 
-  // Auto-scroll to bottom when new messages appear
+  // Auto-scroll the ScrollArea viewport (not via scrollIntoView, which can
+  // scroll unintended ancestors) when new messages or the typing indicator appear.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "auto" })
-  }, [messages])
+    const end = messagesEndRef.current
+    if (!end) return
+    const viewport = end.closest(
+      '[data-slot="scroll-area-viewport"]'
+    ) as HTMLElement | null
+    if (viewport) {
+      viewport.scrollTop = viewport.scrollHeight
+    }
+  }, [messages, isTyping])
 
   // Handle scroll event to show/hide scroll button
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
@@ -173,9 +73,17 @@ export function ChatPanel() {
     setShowScrollButton(!isAtBottom)
   }, [])
 
-  // Scroll to bottom function
+  // Scroll the ScrollArea viewport directly — never via scrollIntoView,
+  // which can scroll unintended ancestors.
   const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+    const end = messagesEndRef.current
+    if (!end) return
+    const viewport = end.closest(
+      '[data-slot="scroll-area-viewport"]'
+    ) as HTMLElement | null
+    if (viewport) {
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" })
+    }
     setShowScrollButton(false)
   }, [])
 
@@ -207,14 +115,14 @@ export function ChatPanel() {
       setEditorContent(aiContent)
 
       setIsTyping(false)
-    }, 300) // Random delay between 1.5-2.5 seconds
+    }, 300)
   }
 
   const handleSendMessage = () => {
     if (!inputValue.trim()) return
 
     const messageContent = inputValue.trim()
-    
+
     addMessage({
       role: "user",
       content: messageContent,
@@ -273,143 +181,132 @@ export function ChatPanel() {
   }
 
   return (
-    <div className="flex flex-col h-full relative">
-      <ChatContextRail />
-      <div className="flex-1 min-h-0 overflow-hidden">
-        <ScrollArea className="max-w-5xl mx-auto max-h-[95vh] h-[95vh] px-4" onScroll={handleScroll}>
-          <div className="py-4 pb-20 space-y-4">
-            {messages.length === 0 ? (
-            <div className="text-center text-[var(--muted-foreground)] py-8">
-              <p className="text-sm">Start a conversation</p>
-            </div>
-          ) : (
-            messages.map((message, index) => (
-              <div
-                key={message.id}
-                className="animate-message-in"
-                style={{ animationDelay: `${index * 50}ms` }}
-              >
-                <div
-                  className={cn(
-                    "flex gap-3",
-                    message.role === "user" ? "flex-row-reverse" : "flex-row"
-                  )}
-                >
-                  {/* Avatar */}
-                  <Avatar className="w-8 h-8 mt-1 animate-avatar-in">
-                    <AvatarImage src="" />
-                    <AvatarFallback className="text-xs">
-                      {message.role === "user" ? (
-                        <User size={16} />
-                      ) : (
-                        <Bot size={16} />
-                      )}
-                    </AvatarFallback>
-                  </Avatar>
-
-                  {/* Message Content */}
+    <div className="flex h-full">
+      {/* Messages column */}
+      <div className="flex flex-col flex-1 min-w-0 min-h-0 relative">
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <ScrollArea className="max-w-5xl mx-auto max-h-[95vh] h-[95vh] px-4" onScroll={handleScroll}>
+            <div className="max-w-5xl mx-auto px-4 py-4 pb-24 space-y-4">
+              {messages.length === 0 ? (
+                <div className="text-center text-[var(--muted-foreground)] py-8">
+                  <p className="text-sm">Start a conversation</p>
+                </div>
+              ) : (
+                messages.map((message, index) => (
                   <div
-                    className={cn(
-                      "max-w-[70%] rounded-lg px-4 py-2 animate-content-in",
-                      message.role === "user"
-                        ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-                        : "bg-[var(--secondary)] text-[var(--foreground)]"
-                    )}
+                    key={message.id}
+                    className="animate-message-in"
+                    style={{ animationDelay: `${index * 50}ms` }}
                   >
-                    <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                    <p
+                    <div
                       className={cn(
-                        "text-xs mt-1 opacity-60",
-                        message.role === "user"
-                          ? "text-[var(--primary-foreground)]"
-                          : "text-[var(--muted-foreground)]"
+                        "flex gap-3",
+                        message.role === "user" ? "flex-row-reverse" : "flex-row"
                       )}
                     >
-                      <MessageTime timestamp={message.timestamp} />
-                    </p>
+                      {/* Avatar */}
+                      <Avatar className="w-8 h-8 mt-1 animate-avatar-in">
+                        <AvatarImage src="" />
+                        <AvatarFallback className="text-xs">
+                          {message.role === "user" ? (
+                            <User size={16} />
+                          ) : (
+                            <Bot size={16} />
+                          )}
+                        </AvatarFallback>
+                      </Avatar>
+
+                      {/* Message Content */}
+                      <div
+                        className={cn(
+                          "max-w-[70%] rounded-lg px-4 py-2 animate-content-in",
+                          message.role === "user"
+                            ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
+                            : "bg-[var(--secondary)] text-[var(--foreground)]"
+                        )}
+                      >
+                        <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                        <p
+                          className={cn(
+                            "text-xs mt-1 opacity-60",
+                            message.role === "user"
+                              ? "text-[var(--primary-foreground)]"
+                              : "text-[var(--muted-foreground)]"
+                          )}
+                        >
+                          <MessageTime timestamp={message.timestamp} />
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+
+              {/* Typing indicator */}
+              {isTyping && (
+                <div className="flex gap-3">
+                  <Avatar className="w-8 h-8 mt-1">
+                    <AvatarFallback className="text-xs">
+                      <Bot size={16} />
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="bg-[var(--secondary)] rounded-lg px-4 py-3">
+                    <div className="flex gap-1">
+                      <span className="w-2 h-2 bg-[var(--muted-foreground)] rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                      <span className="w-2 h-2 bg-[var(--muted-foreground)] rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                      <span className="w-2 h-2 bg-[var(--muted-foreground)] rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))
-          )}
+              )}
 
-          {/* Typing indicator */}
-          {isTyping && (
-            <div className="flex gap-3">
-              <Avatar className="w-8 h-8 mt-1">
-                <AvatarFallback className="text-xs">
-                  <Bot size={16} />
-                </AvatarFallback>
-              </Avatar>
-              <div className="bg-[var(--secondary)] rounded-lg px-4 py-3">
-                <div className="flex gap-1">
-                  <span className="w-2 h-2 bg-[var(--muted-foreground)] rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                  <span className="w-2 h-2 bg-[var(--muted-foreground)] rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                  <span className="w-2 h-2 bg-[var(--muted-foreground)] rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
-                </div>
-              </div>
+              <div ref={messagesEndRef} />
             </div>
-          )}
-
-          <div ref={messagesEndRef} />
+          </ScrollArea>
         </div>
-        </ScrollArea>
+
+        {/* Scroll to bottom button */}
+        <Button
+          variant="secondary"
+          size="icon"
+          className="absolute bottom-20 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full shadow-md animate-scroll-button-in"
+          onClick={scrollToBottom}
+          aria-label="Scroll to bottom"
+        >
+          <ChevronDown size={18} />
+        </Button>
+
+        {/* Input Bar - fixed at bottom of messages column, grows upwards */}
+        <div className="absolute bottom-2 inset-x-0 border-[var(--border)] px-4 bg-background-transparant animate-input-bar-in">
+          <InputGroup className="max-w-4xl mx-auto rounded-[1vw] bg-background">
+            <InputGroupButton
+              size="icon-sm"
+              className="ml-2 rounded-full transition-transform hover:scale-110 active:scale-95"
+              aria-label="Add attachments"
+            >
+              <Plus size={20} />
+            </InputGroupButton>
+            <InputGroupTextarea
+              ref={textareaRef}
+              value={inputValue}
+              onChange={handleInputChange}
+              onKeyDown={handleKeyDown}
+              placeholder="Ask me anthing!"
+              rows={1}
+              className="min-h-[44px] max-h-[160px] m-2 transition-all focus:outline-none focus:ring-2 focus:ring-primary/30"
+              style={{
+                scrollbarColor: "var(--muted-foreground) transparent",
+              }}
+            />
+          </InputGroup>
+          <p className="text-xs text-center text-[var(--muted-foreground)] mt-2 italic">
+            AI is not silver bullet!
+          </p>
+        </div>
       </div>
 
-      {/* Scroll to bottom button */}
-      {/* {showScrollButton && ( */}
-      <Button
-        variant="secondary"
-        size="icon"
-        className="absolute bottom-20 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full shadow-md animate-scroll-button-in"
-        onClick={scrollToBottom}
-        aria-label="Scroll to bottom"
-      >
-        <ChevronDown size={18} />
-      </Button>
-      {/* )} */}
-
-      {/* Input Bar - fixed at bottom, grows upwards */}
-      <div className="absolute bottom-2 inset-x-0 border-[var(--border)] px-4 bg-background-transparant animate-input-bar-in">
-        <InputGroup className="max-w-4xl mx-auto rounded-[1vw] bg-background">
-          <InputGroupButton
-            // variant="default"
-            size="icon-sm"
-            className="ml-2 rounded-full transition-transform hover:scale-110 active:scale-95"
-            aria-label="Add attachments"
-          >
-            <Plus size={20} />
-          </InputGroupButton>
-          <SelectedFilesPopover />
-          <InputGroupTextarea
-            ref={textareaRef}
-            value={inputValue}
-            onChange={handleInputChange}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask me anthing!"
-            rows={1}
-            className="min-h-[44px] max-h-[160px] m-2 transition-all focus:outline-none focus:ring-2 focus:ring-primary/30"
-            style={{
-              // scrollbarWidth: "thin",
-              scrollbarColor: "var(--muted-foreground) transparent",
-              // scrollbarGutter: "stable",
-            }}
-          />
-          {/* <InputGroupButton
-            variant="default"
-            size="icon-sm"
-            className="rounded-full"
-            onClick={handleSendMessage}
-            disabled={!inputValue.trim()}
-            aria-label="Send message"
-          >
-            <Send size={18} />
-          </InputGroupButton> */}
-        </InputGroup>
-        <p className="text-xs text-center text-[var(--muted-foreground)] mt-2 italic">
-          AI is not silver bullet!
-        </p>
-      </div>
+      {/* Resources side panel */}
+      <ChatResourcesPanel />
     </div>
   )
 }

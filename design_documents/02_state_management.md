@@ -45,6 +45,8 @@ interface Conversation {
   createdAt: Date
   updatedAt: Date
   pinned: boolean
+  /** Workspace file IDs attached as context for this conversation's next message. */
+  selectedFileIds: string[]
 }
 
 interface Workspace {
@@ -119,7 +121,10 @@ removeFile: (fileId: string) => void
 clearFiles: () => void
 ```
 
-File-selection state (`selectedFileIds`, `toggleFileSelection`, `clearSelectedFiles`) lives on `useSessionStore` only — selections do NOT persist across browser reloads.
+There are now **two distinct file-selection concepts**, kept apart on purpose:
+
+- **Chat-attachment selection** — which workspace files are attached as context for the *next message* in a specific conversation. Stored as `selectedFileIds: string[]` on the `Conversation` entity itself, so it persists with the conversation and is independent per chat (switching chats reveals each chat's own attachments). Mutated via the conversation actions below. `removeFile(id)` also strips that id from every conversation's `selectedFileIds`.
+- **Resources view bulk selection** — the checkboxes inside `SourcesPanel` used for bulk delete/clear actions. Still lives on `useSessionStore` (sessionStorage-backed, session-scoped, not per-conversation). Unrelated to chat attachment.
 
 #### Conversation Actions
 
@@ -129,8 +134,12 @@ deleteConversation: (conversationId: string) => void
 renameConversation: (conversationId: string, title: string) => void
 togglePin: (conversationId: string) => void
 setActiveConversation: (conversationId: string | null) => void
-getWorkspaceConversations: (workspaceId: string) => Conversation[]
+// File attachment for the active conversation:
+toggleConversationFileSelection: (fileId: string) => void
+clearConversationFileSelection: () => void
 ```
+
+The helper selector `useConversationSelectedFileIds(): string[]` returns the active conversation's `selectedFileIds` (or `[]` when nothing is active).
 
 #### Message Actions
 
@@ -196,14 +205,17 @@ onRehydrateStorage: () => () => {
 
 ### 3.4 Persist Version & Migration
 
-The persist config sets `version: 2`. A `migrate` function strips stale keys from any v0/v1 localStorage payload (the previous boolean panel flags, panel widths, and `selectedFileIds`) so users upgrading from an older client don't carry around dead keys:
+The persist config sets `version: 3`.
+
+- `fromVersion < 2`: strip dead keys from the old multi-panel layout (boolean panel flags, panel widths, the top-level `selectedFileIds`).
+- `fromVersion < 3`: per-chat attachment selection. `selectedFileIds` moved from `useSessionStore` onto each `Conversation`. The migration backfills `selectedFileIds: []` on any persisted conversation missing the field.
 
 ```typescript
-version: 2,
+version: 3,
 migrate: (persistedState, fromVersion) => {
   if (!persistedState || typeof persistedState !== 'object') return persistedState
+  const state = persistedState as Record<string, unknown>
   if (fromVersion < 2) {
-    const state = persistedState as Record<string, unknown>
     const stale = [
       'chatPanelOpen','editorPanelOpen','resourcesPanelOpen','sourcesPanelOpen',
       'chatSessionsPanelOpen','workspacePanelOpen',
@@ -211,6 +223,16 @@ migrate: (persistedState, fromVersion) => {
       'selectedFileIds',
     ]
     for (const k of stale) delete state[k]
+  }
+  if (fromVersion < 3) {
+    const convs = state.conversations
+    if (Array.isArray(convs)) {
+      state.conversations = convs.map((c) =>
+        c && typeof c === 'object' && !('selectedFileIds' in c)
+          ? { ...c, selectedFileIds: [] }
+          : c
+      )
+    }
   }
   return persistedState
 }
@@ -238,8 +260,10 @@ Uses **sessionStorage** instead of localStorage:
 ### 4.3 State
 
 ```typescript
-selectedFileIds: string[]  // Files selected for current session only
+selectedFileIds: string[]  // Bulk-selection inside SourcesPanel only — session-scoped
 ```
+
+> Chat-attachment selection lives on `Conversation.selectedFileIds`, **not** here. Don't reuse `useSessionStore.selectedFileIds` for chat — see §2.4 Conversation Actions.
 
 ### 4.4 Actions
 
@@ -373,15 +397,14 @@ export const useWorkspaceResources = () => {
 }
 ```
 
-### 7.5 useSelectedFiles
+### 7.5 useConversationSelectedFileIds
 
-Returns files that match selected file IDs:
+Returns the active conversation's chat-attachment selection (file IDs). Empty array when no conversation is active.
 
 ```typescript
-export const useSelectedFiles = () => {
-  const files = useStore((state) => state.files)
-  const selectedFileIds = useStore((state) => state.selectedFileIds)
-  return files.filter((f) => selectedFileIds.includes(f.id))
+export const useConversationSelectedFileIds = (): string[] => {
+  const conv = useActiveConversation()
+  return conv?.selectedFileIds ?? []
 }
 ```
 

@@ -35,11 +35,11 @@ function MainArea() {
 
 export default function Page() {
   return (
-    <div className="h-screen overflow-hidden">
-      <SidebarProvider>
-        <AppSidebar />
-        <MainArea />
-      </SidebarProvider>
-    </div>
+    <SidebarProvider
+      style={{ height: "100svh", minHeight: 0, overflow: "hidden" }}
+    >
+      <AppSidebar />
+      <MainArea />
+    </SidebarProvider>
   )
 }

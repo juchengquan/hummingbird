@@ -16,13 +16,14 @@ The main chat interface that displays conversation messages and handles user inp
 
 ### 1.3 Features
 
-- Top **ChatContextRail** showing workspace resources as toggleable pills (see §1.8)
+- Two-column layout: messages on the left, **ChatResourcesPanel** on the right (see §1.8)
 - Displays conversation messages with user/assistant roles
 - Auto-scrolls to newest messages
 - Typing indicator animation
 - Message input with auto-resize textarea
-- SelectedFilesPopover for file attachments (compact, in input bar)
 - Syncs content to EditorPanel via store
+
+The previous input-bar `SelectedFilesPopover` has been removed; file attachment now happens exclusively via the side panel's per-file toggle.
 
 ### 1.4 Components
 
@@ -50,45 +51,6 @@ function MessageTime({ timestamp }: { timestamp: Date | string }) {
 
   if (!time) return null
   return <>{time}</>
-}
-```
-
-#### SelectedFilesPopover Component
-
-File selection popover with upload capability:
-
-```typescript
-function SelectedFilesPopover() {
-  const addFile = useStore((state) => state.addFile)
-  const files = useStore((state) => state.files)
-  const toggleSourcesPanel = useStore((state) => state.toggleSourcesPanel)
-  const { selectedFileIds, toggleFileSelection } = useSessionStore()
-  const selectedFiles = files.filter((f) => selectedFileIds.includes(f.id))
-  const fileInputRef = useRef<HTMLInputElement>(null)
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const uploadedFiles = processSelectedFiles(e.target.files)
-    uploadedFiles.forEach((file) => {
-      addFile(file)
-      toggleFileSelection(file.id)
-    })
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ''
-    }
-  }
-
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <InputGroupButton size="icon-sm" className="rounded-full">
-          <Files size={20} />
-        </InputGroupButton>
-      </PopoverTrigger>
-      <PopoverContent side="top" align="center" className="w-72 p-2">
-        {/* File list and upload buttons */}
-      </PopoverContent>
-    </Popover>
-  )
 }
 ```
 
@@ -159,23 +121,25 @@ const simulateAIResponse = (userMessage: string) => {
 }
 ```
 
-### 1.8 ChatContextRail
+### 1.8 ChatResourcesPanel
 
-`components/panels/chat-context-rail.tsx` — a thin (~44px) horizontal strip rendered as the first child of `ChatPanel`'s root flex column, above the message scroll area.
+`components/panels/chat-resources-panel.tsx` — a 320px-wide aside rendered as the second column of `ChatPanel`. Visible at `lg` breakpoint and above (`hidden lg:flex`); hidden on narrower viewports so the message column keeps its reading width.
 
-**Purpose:** make workspace resources attach/detach-able from inside the chat without switching to the Resources view.
+**Purpose:** make workspace resources visible and attach/detach-able while chatting, without switching to the Resources main view.
 
 **Data flow:**
 - Reads workspace files via `useWorkspaceResources()`.
-- Reads/writes the attachment selection via `useSessionStore` (`selectedFileIds`, `toggleFileSelection`) — the same store the input-bar `SelectedFilesPopover` uses, so the two views stay in sync automatically.
-- Uploads via the same pattern as `SourcesPanel`: `processSelectedFiles` → `addFile` → `addResource(activeWorkspaceId, file.id)` → `toggleFileSelection(file.id)` (uploaded file is auto-attached).
+- Reads the **active conversation's** attachment selection via `useConversationSelectedFileIds()` (which resolves to `Conversation.selectedFileIds`). Each chat carries its own selection — switching conversations swaps the attached files.
+- Toggles selection via `useStore.toggleConversationFileSelection(fileId)` (operates on the active conversation). The render rebinds whenever `activeConversationId` changes.
+- Uploads via the same pattern as `SourcesPanel`: `processSelectedFiles` → `addFile` → `addResource(activeWorkspaceId, file.id)` → `toggleConversationFileSelection(file.id)` (uploaded file is auto-attached to the current chat only).
 
-**UI:**
-- One pill per workspace resource (`getFileIcon` + truncated name, full name on hover via `title`).
-- Attached pill: `ring-1 ring-primary/50 bg-primary/10 text-primary`; idle: muted secondary; `aria-pressed` reflects attached state.
-- Right-edge fade `mask-image` on the scroll container hints at overflow.
-- Sticky-right controls: `+` (upload to workspace) and `Manage` (calls `setActiveView('resources')`).
-- Empty state: dashed-border row "Upload files to add workspace context" that opens the file picker on click.
+**UI sections (top → bottom):**
+- Header: title "Files", line of small counters (`N in workspace · M attached`), `+` upload button.
+- Search input (only shown when the workspace has resources).
+- Scrollable list. Each row is a button: leading `Checkbox` (decorative, mirrors attached state), `getFileIcon`, filename, `formatFileSize` + upload date. Attached rows get `bg-primary/10 ring-1 ring-primary/40` and primary-colored filename; idle rows hover `bg-accent`. `aria-pressed` reflects attached state.
+- Empty state when the workspace has zero resources: dashed drop-target inviting upload.
+- "No files match …" when search filter yields zero.
+- Footer: small "Manage workspace files →" link that calls `setActiveView('resources')`.
 
 **Constraints used locally** (matching `SourcesPanel`): 5MB size limit and `.pdf,.docx,.txt,.csv,.json,.png,.jpg,.jpeg` extensions.
 
