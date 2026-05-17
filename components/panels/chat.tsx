@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/select"
 import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
 import { ChatMessage } from "@/components/panels/chat-message"
-import { Plus, Bot, ChevronDown } from "lucide-react"
+import { Plus, Bot, ChevronDown, Square } from "lucide-react"
 import { CHAT_MODELS } from "@/lib/models"
 import type { Message } from "@/lib/types"
 
@@ -42,7 +42,9 @@ export function ChatPanel() {
   )
   const hydrated = useHydrated()
   const [inputValue, setInputValue] = useState("")
+  const [isStreaming, setIsStreaming] = useState(false)
   const [, setShowScrollButton] = useState(false)
+  const abortControllerRef = useRef<AbortController | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -108,7 +110,10 @@ export function ChatPanel() {
           .filter((f): f is NonNullable<typeof f> => Boolean(f))
           .map((f) => ({ name: f.name, size: f.size, type: f.type })) ?? []
 
+      const controller = new AbortController()
+      abortControllerRef.current = controller
       setIsTyping(true)
+      setIsStreaming(true)
       let placeholder: Message | null = null
       let firstChunk = true
 
@@ -116,6 +121,7 @@ export function ChatPanel() {
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
           body: JSON.stringify({
             model: chatModel,
             messages: history.map((m) => ({ role: m.role, content: m.content })),
@@ -125,6 +131,7 @@ export function ChatPanel() {
 
         if (res.status === 401) {
           setIsTyping(false)
+          setIsStreaming(false)
           const lastUser = [...history].reverse().find((m) => m.role === "user")
           if (lastUser) mockAIResponse(lastUser.content)
           return
@@ -149,26 +156,36 @@ export function ChatPanel() {
           }
         }
 
-        // Flush any remaining bytes from the decoder
         const tail = decoder.decode()
         if (tail && placeholder) appendToMessage(placeholder.id, tail)
 
         if (firstChunk) {
-          // Stream closed without any tokens — treat as empty response
           addMessage({
             role: "assistant",
             content: "_The model returned an empty response._",
           })
         }
       } catch (err) {
+        const aborted =
+          (err instanceof DOMException && err.name === "AbortError") ||
+          controller.signal.aborted
+        if (aborted) {
+          if (placeholder) appendToMessage(placeholder.id, "\n\n_[stopped]_")
+        } else {
+          const message = err instanceof Error ? err.message : "Unknown error"
+          toast.error(`Chat failed: ${message}`)
+          if (!placeholder) {
+            addMessage({
+              role: "assistant",
+              content: `_Error: ${message}_`,
+            })
+          }
+        }
+      } finally {
         setIsTyping(false)
-        const message = err instanceof Error ? err.message : "Unknown error"
-        toast.error(`Chat failed: ${message}`)
-        if (!placeholder) {
-          addMessage({
-            role: "assistant",
-            content: `_Error: ${message}_`,
-          })
+        setIsStreaming(false)
+        if (abortControllerRef.current === controller) {
+          abortControllerRef.current = null
         }
       }
     },
@@ -189,8 +206,12 @@ export function ChatPanel() {
     callChatAPIRef.current = callChatAPI
   }, [callChatAPI])
 
+  const handleStop = useCallback(() => {
+    abortControllerRef.current?.abort()
+  }, [])
+
   const handleSendMessage = () => {
-    if (!inputValue.trim()) return
+    if (!inputValue.trim() || isStreaming) return
 
     const messageContent = inputValue.trim()
     const userMessage = addMessage({
@@ -360,6 +381,17 @@ export function ChatPanel() {
                 scrollbarColor: "var(--muted-foreground) transparent",
               }}
             />
+            {isStreaming && (
+              <InputGroupButton
+                size="icon-sm"
+                onClick={handleStop}
+                className="mr-2 rounded-full bg-[var(--destructive)]/10 text-[var(--destructive)] hover:bg-[var(--destructive)]/20 transition-transform hover:scale-110 active:scale-95"
+                aria-label="Stop generating"
+                title="Stop"
+              >
+                <Square size={14} fill="currentColor" />
+              </InputGroupButton>
+            )}
           </InputGroup>
           <div className="mt-2 flex items-center justify-center gap-3">
             <Select value={chatModel} onValueChange={setChatModel}>
