@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { Toaster } from "sonner"
 import { AppSidebar } from "@/components/sidebars/application"
 import { ChatPanel } from "@/components/panels/chat"
 import { ResourcePanel } from "@/components/panels/sources"
@@ -40,6 +41,7 @@ export default function Page() {
     >
       <AppSidebar />
       <MainArea />
+      <Toaster />
     </SidebarProvider>
   )
 }
