@@ -1,5 +1,5 @@
 import * as React from "react"
-import { FolderOpen, Folder, Plus, ChevronRight, Pin, MessageSquare, MessagesSquare, PencilLine, Files } from "lucide-react"
+import { FolderOpen, Folder, Plus, ChevronRight, Pin, MessageSquare, MessagesSquare, PencilLine, Files, Search, X } from "lucide-react"
 import {
   Sidebar,
   SidebarContent,
@@ -8,6 +8,7 @@ import {
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
+  SidebarInput,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -43,6 +44,16 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const [mounted, setMounted] = React.useState(false)
   const [resourcesExpanded, setResourcesExpanded] = React.useState(true)
   const [sessionsExpanded, setSessionsExpanded] = React.useState(true)
+  const [chatQuery, setChatQuery] = React.useState("")
+
+  const filteredConversations = React.useMemo(() => {
+    const q = chatQuery.trim().toLowerCase()
+    if (!q) return workspaceConversations
+    return workspaceConversations.filter((c) => {
+      if (c.title.toLowerCase().includes(q)) return true
+      return c.messages.some((m) => m.content.toLowerCase().includes(q))
+    })
+  }, [workspaceConversations, chatQuery])
 
   React.useEffect(() => {
     setMounted(true)
@@ -144,7 +155,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <SidebarGroup className="group-data-[collapsible=icon]:hidden">
           <SidebarMenu>
             {sidebarCollapsed ? (
-              [...workspaceConversations].sort((a, b) => {
+              [...filteredConversations].sort((a, b) => {
                 if (a.pinned && !b.pinned) return -1
                 if (!a.pinned && b.pinned) return 1
                 return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
@@ -192,8 +203,31 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   </SidebarGroup>
                   <CollapsibleContent>
                     <SidebarGroupContent>
+                      <div className="relative px-2 pb-1.5 pt-1">
+                        <Search
+                          size={12}
+                          className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] pointer-events-none"
+                        />
+                        <SidebarInput
+                          placeholder="Search chats…"
+                          value={chatQuery}
+                          onChange={(e) => setChatQuery(e.target.value)}
+                          className="pl-7 pr-7 h-7 text-xs"
+                          aria-label="Search conversations"
+                        />
+                        {chatQuery && (
+                          <button
+                            type="button"
+                            onClick={() => setChatQuery("")}
+                            aria-label="Clear search"
+                            className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                          >
+                            <X size={12} />
+                          </button>
+                        )}
+                      </div>
                       <SidebarMenu className="gap-0.5">
-                        {[...workspaceConversations].sort((a, b) => {
+                        {[...filteredConversations].sort((a, b) => {
                           if (a.pinned && !b.pinned) return -1
                           if (!a.pinned && b.pinned) return 1
                           return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
@@ -209,9 +243,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                             />
                           </SidebarMenuItem>
                         ))}
-                        {workspaceConversations.length === 0 && (
+                        {filteredConversations.length === 0 && (
                           <div className="px-2 py-1 text-xs text-[var(--muted-foreground)]">
-                            No chats yet
+                            {chatQuery ? "No matches" : "No chats yet"}
                           </div>
                         )}
                       </SidebarMenu>
