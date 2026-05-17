@@ -114,12 +114,7 @@ Models that emit reasoning (DeepSeek R1, Claude thinking variants, OpenAI o1-sty
 - Persist reasoning separately from the answer on `Message` (new `reasoning?: string`) so it survives reloads but doesn't leak into Copy / Export by default.
 
 ### 3. Backend persistence
-Everything lives in `localStorage` under `hummingbird-storage` (version 3, see `lib/hooks/use-store.ts`). This blocks share links, multi-device sync, and large file storage. A real implementation needs:
-
-- Auth: NextAuth / Clerk / Supabase Auth. Probably Supabase for the path of least resistance, since it also covers DB + storage.
-- DB schema mirroring `Workspace`, `Conversation`, `Message`, `UploadedFile`, `Resource`. Most tables are obvious; the trickier piece is migrating existing local state on first sign-in.
-- File storage: Supabase Storage / S3 / R2. Uploadthing is already used as a transport — its files would move into our bucket.
-- Share links: server-rendered read-only conversation/document pages keyed by a public token; revocable in settings.
+Everything lives in `localStorage` under `hummingbird-storage` (version 3, see `lib/hooks/use-store.ts`). This blocks share links, multi-device sync, and large file storage. A full Supabase-based plan is detailed in **"Supabase persistence migration"** below.
 
 ### 4. Richer error and connectivity states
 Today both `app/api/ai/command/route.ts` and `app/api/chat/route.ts` collapse model errors into a generic 500. The chat panel surfaces those as a sonner toast and injects an `_Error: …_` placeholder message. Better UX:
@@ -129,3 +124,352 @@ Today both `app/api/ai/command/route.ts` and `app/api/chat/route.ts` collapse mo
 - Surface the model id and HTTP status in a small "details" disclosure so users can self-diagnose.
 - For aborted requests (Stop button), drop the placeholder entirely instead of leaving an "_Error_" line.
 
+## Supabase persistence migration
+
+### Context
+
+All persistence lives in `localStorage` (`hummingbird-storage`, version 3 — see `lib/hooks/use-store.ts`). This caps the app at a single device, blocks share links, prevents server-side features (digests, scheduled tasks, RAG against attachments), and risks data loss when a user clears site data. File blobs use UploadThing today, but the metadata that ties them to workspaces still lives client-side. We want a real backend without sacrificing the current zero-friction local-first UX.
+
+**Approach (informed by your answers):**
+
+- **Anonymous-first, sync when signed in.** The app continues to work without auth using the existing Zustand + localStorage store. Signing in unlocks multi-device sync; sign-out reverts to local-only.
+- **Email magic link only** as the sign-in method (Supabase Auth handles delivery).
+- **Multi-tenant** — every row is owned by a `user_id`; Postgres RLS enforces isolation.
+- **UploadThing stays for files already uploaded.** New uploads go to Supabase Storage. No data migration of existing UploadThing URLs.
+
+This is multi-phase work. **Phase 1 is the heavy lift**; later phases extend it.
+
+### Architecture
+
+```
++--------------------+        +---------------+        +-------------------+
+| React UI           |  reads | Zustand store | writes | localStorage       |
+| (panels/sidebars)  | <----> | (in-memory)   | <----> | (offline cache)    |
++--------------------+        +-------+-------+        +-------------------+
+                                      |
+                                      |  enqueues mutations
+                                      v
+                              +---------------+
+                              |  sync queue   |  (in-memory, FIFO, retries)
+                              +-------+-------+
+                                      |
+                                      |  flushes when authed + online
+                                      v
+                              +---------------+        +-------------------+
+                              | Supabase JS   | <----> | Postgres + Auth   |
+                              | (browser SDK) |        | + Storage         |
+                              +---------------+        +-------------------+
+```
+
+**Source of truth at runtime is still the Zustand store.** Supabase is a durable mirror. This preserves the existing optimistic UI and keeps the diff to the panels small.
+
+### Phase 1 — Auth + cloud-backed CRUD (MVP)
+
+The work that delivers the actual feature. Everything below targets this phase unless marked otherwise.
+
+#### Dependencies & env
+
+- Add `@supabase/supabase-js` and `@supabase/ssr` to `package.json`.
+- Add to `.env.example`:
+  - `NEXT_PUBLIC_SUPABASE_URL`
+  - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+  - `SUPABASE_SERVICE_ROLE_KEY` *(server-only, for admin tasks; not used in Phase 1)*
+
+#### Database schema (`supabase/migrations/0001_initial_schema.sql`)
+
+Mirrors the existing TypeScript types in `lib/types.ts`. Messages live in their own table (not a JSONB array on `conversations`) so streaming inserts, real-time, and per-message edits don't rewrite the whole conversation row.
+
+```sql
+create table profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  email text,
+  created_at timestamptz default now()
+);
+
+create table workspaces (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table conversations (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  workspace_id uuid not null references workspaces(id) on delete cascade,
+  title text not null,
+  pinned boolean not null default false,
+  selected_file_ids uuid[] not null default '{}',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table messages (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  conversation_id uuid not null references conversations(id) on delete cascade,
+  role text not null check (role in ('user','assistant')),
+  content text not null,
+  position int not null,                  -- preserves order without timestamp ties
+  created_at timestamptz not null default now()
+);
+
+create table files (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null,
+  size bigint not null,
+  type text not null,
+  storage_path text,                       -- nullable: UploadThing legacy files have only `external_url`
+  external_url text,
+  uploaded_at timestamptz not null default now()
+);
+
+create table resources (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  workspace_id uuid not null references workspaces(id) on delete cascade,
+  file_id uuid not null references files(id) on delete cascade,
+  added_at timestamptz not null default now()
+);
+
+create index on conversations (user_id, workspace_id, updated_at desc);
+create index on messages (conversation_id, position);
+create index on resources (workspace_id);
+```
+
+#### RLS policies (`supabase/migrations/0002_rls_policies.sql`)
+
+Same pattern on every table — read/write only your own rows:
+
+```sql
+alter table workspaces enable row level security;
+create policy "own workspaces" on workspaces
+  for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+-- repeat for conversations, messages, files, resources, profiles
+```
+
+#### Supabase clients
+
+- `lib/supabase/client.ts` — `createBrowserClient` from `@supabase/ssr`; singleton for the browser.
+- `lib/supabase/server.ts` — `createServerClient` for API routes (Phase 2+; not needed for the queue itself).
+
+#### Auth UI
+
+- `components/auth/auth-dialog.tsx` — magic-link form (email input → `supabase.auth.signInWithOtp({ email })` → "Check your inbox" state). Uses the existing `Dialog` and `Input` primitives.
+- `components/auth/account-menu.tsx` — small avatar/email row in the sidebar header (`components/sidebars/application.tsx`); shows "Sign in" when logged out, email + "Sign out" when logged in.
+- `app/auth/callback/route.ts` — handles the magic-link redirect (`supabase.auth.exchangeCodeForSession`), then redirects back to `/dashboard`.
+- `lib/hooks/use-auth.ts` — wraps `supabase.auth.onAuthStateChange`, exposes `{ user, signIn, signOut, status }`.
+
+#### Sync layer (`lib/sync/`)
+
+This is the part that touches the existing store. Two new files:
+
+- `lib/sync/sync-queue.ts` — in-memory FIFO of `SyncOp` objects, processed serially. Persisted to `localStorage` under `hummingbird-sync-queue` so pending writes survive reloads. Retries with exponential backoff. Pauses when offline (uses `navigator.onLine` + `online`/`offline` listeners). No-op when there's no session.
+- `lib/sync/handlers.ts` — one function per persisted mutator from `lib/hooks/use-store.ts`. Each takes the same args the mutator does and produces a `SyncOp` describing the Supabase call. Full list of mutators that need handlers (cross-referenced with `lib/hooks/use-store.ts`):
+  - Workspaces: `createWorkspace`, `deleteWorkspace` (cascades), `renameWorkspace`
+  - Conversations: `createConversation`, `deleteConversation`, `renameConversation`, `togglePin`, `toggleConversationFileSelection`, `clearConversationFileSelection`
+  - Messages: `addMessage`, `deleteMessage`, `updateMessage`, `appendToMessage`, `truncateMessagesAfter`, `clearMessages`
+  - Files: `addFile`, `removeFile`, `clearFiles`
+  - Resources: `addResource`, `removeResource`
+  - Misc: `setDocumentContent`, `setChatModel`, `setActiveWorkspace`, `setActiveConversation` *(last two are user-prefs; store on `profiles` if we want cross-device persistence, otherwise skip)*
+
+For `appendToMessage` and other high-frequency calls during streaming, debounce: enqueue the final `updateMessage(id, fullContent)` when the stream ends, not every chunk.
+
+#### Wiring sync into the store
+
+The cleanest hook-in point is a Zustand middleware that wraps `set` — but a lighter touch works: a `useSync()` hook mounted near the root of `app/dashboard/page.tsx`. It:
+
+1. Subscribes to relevant slices of `useStore` (workspaces, conversations, messages, files, resources, documentContent, chatModel).
+2. Diffs against the previous snapshot on every change, produces sync ops, and pushes them to the queue.
+
+This avoids modifying every mutator in `use-store.ts`. Trade-off: diffing is more work than emitting events from inside each mutator, but it leaves the store untouched and reversible.
+
+#### First sign-in flow
+
+When `onAuthStateChange` fires `SIGNED_IN`:
+
+1. Query Supabase for the user's workspaces.
+2. **If the cloud has zero rows:** bulk-INSERT the entire local state (workspaces, conversations, messages, files, resources) under the new `user_id`. UploadThing URLs go into `files.external_url`; `storage_path` is left null.
+3. **If the cloud has rows:** prompt the user (existing `AlertDialog`) — "We found a cloud workspace. Use cloud data and discard local, or keep local and overwrite cloud?" Default to cloud (safer for multi-device).
+4. After reconciliation, hydrate the Zustand store from the cloud and mark sync as ready.
+
+On sign-out: clear the sync queue, clear the session, leave localStorage alone (so the user keeps working locally).
+
+#### File uploads (`hooks/use-upload-file.ts`)
+
+When signed in, replace the UploadThing call with `supabase.storage.from('user-files').upload(path, file)` and record both the storage path and a signed URL on the `files` row. When signed out, keep the existing UploadThing path. **Existing UploadThing files keep working** because they're addressed by `external_url`.
+
+A `user-files` Storage bucket needs to be created with this policy:
+
+```sql
+create policy "own files" on storage.objects for all
+  using (bucket_id = 'user-files' and (storage.foldername(name))[1] = auth.uid()::text)
+  with check (bucket_id = 'user-files' and (storage.foldername(name))[1] = auth.uid()::text);
+```
+
+Files are stored under `user-files/{user_id}/{file_id}.{ext}`.
+
+#### API routes
+
+`app/api/chat/route.ts` (and the editor routes) stay stateless for Phase 1. In a later phase they could read attached file content via service-role queries, which would unlock the file extraction follow-up above.
+
+#### Critical files
+
+New:
+- `lib/supabase/client.ts`, `lib/supabase/server.ts`
+- `lib/supabase/types.ts` *(generated via `supabase gen types typescript`)*
+- `lib/sync/sync-queue.ts`, `lib/sync/handlers.ts`
+- `lib/hooks/use-auth.ts`, `lib/hooks/use-sync.ts`
+- `components/auth/auth-dialog.tsx`, `components/auth/account-menu.tsx`
+- `app/auth/callback/route.ts`
+- `supabase/migrations/0001_initial_schema.sql`, `supabase/migrations/0002_rls_policies.sql`
+- `supabase/storage/policies.sql`
+
+Modified (small, surgical changes):
+- `package.json` — add deps
+- `.env.example` — Supabase vars
+- `hooks/use-upload-file.ts` — branch on auth state, fall through to UploadThing when signed out
+- `components/sidebars/application.tsx` — mount `AccountMenu` in `SidebarHeader`
+- `app/dashboard/page.tsx` — mount `useSync()`
+
+Untouched (deliberate): `lib/hooks/use-store.ts`. The store stays the source of in-memory truth; the sync layer observes it from outside.
+
+### Conversation-related assets (Phase 1, extended)
+
+Beyond the existing entities (workspace, conversation, message, file, resource), Phase 1 introduces four new conversation-scoped concepts. Each lives in the Zustand store first (so it works offline), and the sync layer mirrors it to Supabase when signed in.
+
+#### A. Conversation-scoped file uploads
+
+Today every uploaded file is workspace-scoped via the `resources` join. Sometimes the user wants to drop a file *only* into one conversation without polluting the whole workspace's file list.
+
+- **Schema** — new join table parallel to `resources`:
+  ```sql
+  create table conversation_files (
+    id uuid primary key,
+    user_id uuid not null references auth.users(id) on delete cascade,
+    conversation_id uuid not null references conversations(id) on delete cascade,
+    file_id uuid not null references files(id) on delete cascade,
+    added_at timestamptz not null default now()
+  );
+  create index on conversation_files (conversation_id);
+  ```
+  `files` rows stay as-is — a file row can be referenced by `resources` (workspace-scoped), `conversation_files` (conversation-scoped), or both. The chat route's `files` payload (`app/api/chat/route.ts:18-22`) gets the union of workspace `selectedFileIds` + conversation-private files.
+- **Store** — add `conversationFiles: { conversationId, fileId, addedAt }[]` and the mutators `addConversationFile`, `removeConversationFile`. Persisted via `partialize`.
+- **UI** — `components/panels/chat-resources-panel.tsx` adds a second section "This conversation" above the existing workspace files section. The `+` button on the input bar in `components/panels/chat.tsx:344-350` (currently a no-op) becomes the upload trigger for conversation-private files.
+- **Sync handlers** — `addConversationFile`, `removeConversationFile`.
+
+#### B. Per-conversation editor document
+
+The editor today is a single global doc (`documentContent` in the store, shared across all conversations). Several recent product moves — message → editor sync, document export — work better if each conversation owns its own doc.
+
+- **Schema** — add columns to `conversations`:
+  ```sql
+  alter table conversations
+    add column document_content text not null default '',
+    add column document_updated_at timestamptz not null default now();
+  ```
+  No separate table; the doc is 1:1 with the conversation. Version history is out of scope (could go in a `conversation_document_revisions` table later).
+- **Store** — replace global `documentContent` with a getter that reads `conversations[activeId].documentContent`. Add `setConversationDocument(conversationId, content)`. The global `editorContent` ephemeral field stays — that's the live cross-panel relay.
+- **UI** — `components/panels/editor.tsx` reads/writes the active conversation's doc instead of the global one. The auto-sync at `components/panels/chat.tsx:115, 132` writes to the active conversation's doc. Switching conversations swaps the editor content automatically.
+- **Sync handlers** — `setConversationDocument` (debounced 500 ms — editor typing is high-frequency).
+- **Migration note** — on first hydration of an existing user, copy the legacy `documentContent` into the *currently active* conversation so nothing is lost.
+
+#### C. Assistant-generated artifacts
+
+Code blocks, generated tables, diagrams, and longer-form snippets the assistant produces. Today they live as plain text inside `Message.content`. Promoting them to first-class objects unlocks "save", "pin", "open in editor", and "render as preview".
+
+- **Schema**:
+  ```sql
+  create table artifacts (
+    id uuid primary key,
+    user_id uuid not null references auth.users(id) on delete cascade,
+    conversation_id uuid not null references conversations(id) on delete cascade,
+    message_id uuid references messages(id) on delete set null,  -- nullable: artifacts can outlive their source message
+    kind text not null check (kind in ('code','markdown','image','table','json','other')),
+    language text,                  -- e.g. 'tsx', 'python' — nullable
+    title text,
+    content text,                   -- inline text content (code, md, json, table CSV)
+    storage_path text,              -- for binary artifacts (images), null for text
+    pinned boolean not null default false,
+    created_at timestamptz not null default now()
+  );
+  create index on artifacts (conversation_id, created_at desc);
+  ```
+- **Store** — `artifacts: Artifact[]` slice; mutators `createArtifact`, `deleteArtifact`, `togglePinArtifact`, `updateArtifactTitle`. Persisted.
+- **Creation paths**:
+  - Manual: a "Save as artifact" button on assistant messages in `components/panels/chat-message.tsx` (next to Copy / Regenerate). Detects fenced code blocks in the message content; if multiple, opens a small picker.
+  - Automatic (Phase 1b, optional): post-stream pass that extracts every fenced code block of >5 lines into an artifact. Defer if it bloats Phase 1.
+- **UI** — new `components/panels/artifacts-panel.tsx` (a tab in `chat-resources-panel.tsx` or a new sidebar entry). Lists artifacts for the active conversation with kind icon, title, pinned flag, click-to-preview. "Open in editor" sets the editor content.
+- **Sync handlers** — `createArtifact`, `deleteArtifact`, `togglePinArtifact`, `updateArtifactTitle`. Binary artifacts (images) follow the same Storage path scheme as files: `user-files/{user_id}/artifacts/{artifact_id}.{ext}`.
+
+#### D. Per-conversation notes / bookmarks
+
+User-authored snippets attached to a conversation. Two modes:
+- **Conversation note** — free-form scratchpad (`message_id` null).
+- **Message bookmark** — a saved pointer to one message with optional commentary (`message_id` set).
+
+- **Schema**:
+  ```sql
+  create table notes (
+    id uuid primary key,
+    user_id uuid not null references auth.users(id) on delete cascade,
+    conversation_id uuid not null references conversations(id) on delete cascade,
+    message_id uuid references messages(id) on delete set null,
+    body text not null,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+  );
+  create index on notes (conversation_id, created_at desc);
+  ```
+- **Store** — `notes: Note[]` slice; `createNote`, `updateNote`, `deleteNote`.
+- **UI**:
+  - A bookmark icon on each assistant message in `chat-message.tsx` toggles a `Note { message_id }`.
+  - A "Notes" tab in the right-side panel lists all notes for the conversation. Bookmarks render as link cards (click jumps to the message).
+- **Sync handlers** — `createNote`, `updateNote`, `deleteNote`.
+
+#### Updated handlers list (Phase 1)
+
+Adds to the original handler list in `lib/sync/handlers.ts`:
+
+- `addConversationFile`, `removeConversationFile`
+- `setConversationDocument` *(debounced)*
+- `createArtifact`, `deleteArtifact`, `togglePinArtifact`, `updateArtifactTitle`
+- `createNote`, `updateNote`, `deleteNote`
+
+#### Updated verification (Phase 1)
+
+Append to the existing checklist:
+
+11. **Conversation-scoped file** — upload a file via the chat input's `+` button; verify it appears in the "This conversation" section, the chat API receives it in `files`, and a row exists in `conversation_files`.
+12. **Per-conversation editor doc** — type in the editor, switch conversations, switch back; content reappears. Verify `conversations.document_content` updates and is debounced (no row write per keystroke).
+13. **Artifact creation** — send a prompt that returns a code block, click "Save as artifact"; verify a row in `artifacts` with kind=`code` and the language detected.
+14. **Note + bookmark** — bookmark an assistant message; verify a `notes` row with `message_id` set, and that deleting the message nulls (not cascades) the bookmark.
+
+### Phase 2 — File storage cutover (follow-on)
+
+Once Phase 1 is stable, deprecate UploadThing for new files entirely and (optionally) write a one-time migration script that downloads each `external_url` and re-uploads to Supabase Storage. Not in scope for Phase 1.
+
+### Phase 3 — Realtime multi-device sync (follow-on)
+
+Subscribe to Postgres changes via `supabase.channel().on('postgres_changes', ...)` for the signed-in user's `messages`, `conversations`, `workspaces` rows and reconcile into the store. Requires a "last-writer-wins" rule on most tables and careful handling of `editorContent` (probably use a Yjs-style CRDT or just lock the doc to the active client). Out of scope for Phase 1.
+
+### Phase 4 — Share links (follow-on)
+
+Add a `shares` table with `(token, conversation_id|document_id, revoked_at)`. New routes `app/share/conversation/[token]/page.tsx` and `app/share/document/[token]/page.tsx` server-render a read-only view bypassing RLS via a service-role server-side query keyed by token. Out of scope for Phase 1.
+
+### Verification (Phase 1)
+
+End-to-end test plan, manually walked through after deployment to a Supabase project:
+
+1. **Schema applied** — `supabase db push` produces all five tables with RLS enabled. `select * from pg_policies where tablename in ('workspaces','conversations','messages','files','resources');` returns the expected policies.
+2. **Anonymous still works** — clear cookies + localStorage, open `/dashboard`. The demo workspace appears, you can create conversations and send messages, nothing hits Supabase (Network tab confirms).
+3. **Sign-in roundtrip** — open the auth dialog, request a magic link, click it from the inbox, land on `/dashboard` signed in.
+4. **First sign-in upload** — create local state pre-signin, sign in, verify rows appear in `workspaces`/`conversations`/`messages` for that `user_id`. Verify another user signing in sees nothing.
+5. **Multi-device read** — sign in on a second browser, confirm conversations and messages load from the cloud and the local demo doesn't overwrite them.
+6. **RLS sanity** — in the SQL editor, attempt `select * from messages where user_id <> auth.uid()` as that user; verify zero rows returned.
+7. **Offline behavior** — DevTools → Offline, send a message, refresh — message persists locally. Go online; the queue flushes within seconds; row appears in Supabase.
+8. **File upload signed-in** — upload a PDF; confirm the row in `files` has a `storage_path` (not just `external_url`) and the blob is visible in the Storage bucket under `user-files/{user_id}/`.
+9. **File upload signed-out** — sign out, upload a PDF; confirm the row's URL is an UploadThing one.
+10. **Sign-out leaves local intact** — sign out, refresh, demo workspace and any local conversations are still present in the UI (because localStorage wasn't cleared).
