@@ -86,6 +86,15 @@ function MessageTime({ timestamp }) {
 }
 ```
 
+## Environment Variables
+
+See `.env.example` for the full list. Two groups:
+
+- **AI Gateway** (`AI_GATEWAY_API_KEY`) — required for real chat/editor AI. Without it, the chat panel falls back to a clearly-labeled mock response.
+- **Supabase** (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`) — optional. Enables email magic-link sign-in and (eventually) cloud sync of workspaces, conversations, files, and conversation assets. Without it the app runs anonymously on `localStorage` only; the auth UI is hidden.
+
+SQL migrations live under `supabase/migrations/`. Storage bucket policies under `supabase/storage/`.
+
 ## Development Patterns
 
 - All panel content uses client-side rendering (`"use client"`)

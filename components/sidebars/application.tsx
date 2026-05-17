@@ -24,6 +24,7 @@ import {
 import { useStore } from "@/lib/hooks/use-store"
 import { useWorkspaceConversations } from "@/lib/hooks/use-store"
 import { ConversationItem } from "@/components/sidebars/conversation-item"
+import { AccountMenu } from "@/components/auth/account-menu"
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const {
@@ -76,8 +77,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   return (
     <Sidebar collapsible="icon" {...props} className="z-100">
       <SidebarHeader>
-        <div className="flex items-center w-full">
-          <SidebarTrigger className="ml-auto" />
+        <div className="flex items-center w-full gap-1">
+          <div className="flex-1 min-w-0">
+            <AccountMenu />
+          </div>
+          <SidebarTrigger className="shrink-0" />
         </div>
       </SidebarHeader>
 
