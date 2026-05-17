@@ -9,7 +9,8 @@ import { InputGroup, InputGroupTextarea, InputGroupButton } from "@/components/u
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
 import { CustomScrollbar } from "@/components/ui/custom/scrollbar"
 import { cn } from "@/lib/utils"
-import { formatFileSize, getFileIcon, processSelectedFiles } from "@/lib/file-utils"
+import { getFileIcon, processSelectedFiles } from "@/lib/file-utils"
+import { ChatContextRail } from "@/components/panels/chat-context-rail"
 import { Plus, CirclePlus, Send, User, Bot, ChevronDown, Files, X, Upload, PlusCircle } from "lucide-react"
 
 // Helper function to format time in UTC to avoid hydration mismatch
@@ -39,7 +40,7 @@ function MessageTime({ timestamp }: { timestamp: Date | string }) {
 function SelectedFilesPopover() {
   const addFile = useStore((state) => state.addFile)
   const files = useStore((state) => state.files)
-  const toggleSourcesPanel = useStore((state) => state.toggleSourcesPanel)
+  const setActiveView = useStore((state) => state.setActiveView)
   const { selectedFileIds, toggleFileSelection } = useSessionStore()
   const selectedFiles = files.filter((f) => selectedFileIds.includes(f.id))
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -72,7 +73,7 @@ function SelectedFilesPopover() {
       <PopoverContent
         side="top"
         align="center"
-        className="w-72 p-2"
+        className="w-72 p-2 z-[200]"
         sideOffset={8}
       >
         <div className="flex items-center justify-between mb-2">
@@ -92,9 +93,7 @@ function SelectedFilesPopover() {
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => {
-                toggleSourcesPanel()
-              }}
+              onClick={() => setActiveView("resources")}
               className="h-8 w-8"
               title="Select files from Sources"
             >
@@ -275,6 +274,7 @@ export function ChatPanel() {
 
   return (
     <div className="flex flex-col h-full relative">
+      <ChatContextRail />
       <div className="flex-1 min-h-0 overflow-hidden">
         <ScrollArea className="max-w-5xl mx-auto max-h-[95vh] h-[95vh] px-4" onScroll={handleScroll}>
           <div className="py-4 pb-20 space-y-4">
@@ -388,7 +388,7 @@ export function ChatPanel() {
             onKeyDown={handleKeyDown}
             placeholder="Ask me anthing!"
             rows={1}
-            className="min-h-[44px] max-h-[160px] m-2 transition-all focus:ring-2 focus:ring-primary/30"
+            className="min-h-[44px] max-h-[160px] m-2 transition-all focus:outline-none focus:ring-2 focus:ring-primary/30"
             style={{
               // scrollbarWidth: "thin",
               scrollbarColor: "var(--muted-foreground) transparent",

@@ -1,30 +1,9 @@
 import { useState, useEffect } from 'react'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
+import type { UploadedFile, Workspace, Resource, Message, Conversation, MainView } from '@/lib/types'
 
-export interface UploadedFile {
-  id: string
-  name: string
-  size: number
-  type: string
-  uploadedAt: Date
-}
-
-export interface Message {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  timestamp: Date
-}
-
-export interface Conversation {
-  id: string
-  title: string
-  messages: Message[]
-  createdAt: Date
-  updatedAt: Date
-  pinned: boolean
-}
+export type { UploadedFile, Workspace, Resource, Message, Conversation, MainView } from '@/lib/types'
 
 type Theme = 'system' | 'dark' | 'light'
 
@@ -52,11 +31,26 @@ export const useHydrated = () => {
 }
 
 // Default initial values for store
+const DEFAULT_WORKSPACE_ID = 'default'
+
+const getDefaultWorkspaces = (): Workspace[] => {
+  const now = new Date('2024-01-01T12:00:00Z')
+  return [
+    {
+      id: DEFAULT_WORKSPACE_ID,
+      name: 'My Workspace',
+      createdAt: now,
+      updatedAt: now,
+    },
+  ]
+}
+
 const getDefaultConversations = (): Conversation[] => {
   const baseTime = new Date('2024-01-01T12:00:00Z').getTime()
   return [
     {
       id: 'demo-1',
+      workspaceId: DEFAULT_WORKSPACE_ID,
       title: 'Welcome Chat',
       messages: [
         {
@@ -89,24 +83,21 @@ interface AppState {
   // Theme
   theme: Theme
 
-  // Panel visibility
-  chatSessionsPanelOpen: boolean
-  resourcesPanelOpen: boolean
-  sourcesPanelOpen: boolean
-  chatPanelOpen: boolean
-  editorPanelOpen: boolean
+  // Active main-area view (single source of truth — see MainArea in dashboard/page.tsx)
+  activeView: MainView
 
   // Sidebar
   sidebarCollapsed: boolean
 
-  // Panel dimensions
-  chatSessionsPanelWidth: number
-  resourcesPanelWidth: number
-  editorPanelWidth: number
-
   // Files
   files: UploadedFile[]
-  selectedFileIds: string[]
+
+  // Workspaces
+  workspaces: Workspace[]
+  activeWorkspaceId: string
+
+  // Resources (file-to-workspace associations)
+  resources: Resource[]
 
   // Conversations
   conversations: Conversation[]
@@ -123,27 +114,27 @@ interface AppState {
   // Editor content synced from chat
   editorContent: string
 
-  // Panel actions
+  // View / sidebar actions
   toggleSidebar: () => void
-  toggleChatSessionsPanel: () => void
-  toggleResourcesPanel: () => void
-  toggleSourcesPanel: () => void
-  toggleChatPanel: () => void
-  toggleEditorPanel: () => void
-  openPanel: (panelName: keyof Pick<AppState, 'chatPanelOpen' | 'editorPanelOpen' | 'sourcesPanelOpen'>, group?: string) => void
-  setChatSessionsPanelWidth: (width: number) => void
-  setResourcesPanelWidth: (width: number) => void
-  setEditorPanelWidth: (width: number) => void
+  setActiveView: (view: MainView) => void
+
+  // Workspace actions
+  createWorkspace: (name: string) => Workspace
+  deleteWorkspace: (workspaceId: string) => void
+  renameWorkspace: (workspaceId: string, name: string) => void
+  setActiveWorkspace: (workspaceId: string) => void
+
+  // Resource actions
+  addResource: (workspaceId: string, fileId: string) => void
+  removeResource: (resourceId: string) => void
 
   // File actions
   addFile: (file: UploadedFile) => void
   removeFile: (fileId: string) => void
-  toggleFileSelection: (fileId: string) => void
-  clearSelectedFiles: () => void
   clearFiles: () => void
 
   // Conversation actions
-  createConversation: () => void
+  createConversation: (workspaceId?: string) => Conversation
   deleteConversation: (conversationId: string) => void
   renameConversation: (conversationId: string, title: string) => void
   togglePin: (conversationId: string) => void
@@ -173,24 +164,21 @@ export const useStore = create<AppState>()(
       // Theme
       theme: getInitialTheme(),
 
-      // Initial panel states
-      chatSessionsPanelOpen: true,
-      resourcesPanelOpen: true,
-      sourcesPanelOpen: false,
-      chatPanelOpen: true,
-      editorPanelOpen: true,
+      // Active main-area view
+      activeView: 'workspaces',
 
       // Sidebar
       sidebarCollapsed: false,
 
-      // Initial panel dimensions
-      chatSessionsPanelWidth: 280,
-      resourcesPanelWidth: 280,
-      editorPanelWidth: 480,
-
       // Files
       files: [],
-      selectedFileIds: [],
+
+      // Workspaces
+      workspaces: getDefaultWorkspaces(),
+      activeWorkspaceId: DEFAULT_WORKSPACE_ID,
+
+      // Resources
+      resources: [],
 
       // Conversations
       conversations: getDefaultConversations().map((c: Conversation) => ({
@@ -210,55 +198,66 @@ export const useStore = create<AppState>()(
       // Editor content synced from chat
       editorContent: '',
 
-      // Panel actions
+      // View / sidebar actions
       toggleSidebar: () =>
         set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
-      toggleChatSessionsPanel: () =>
-        set((state) => ({ chatSessionsPanelOpen: !state.chatSessionsPanelOpen })),
-      toggleResourcesPanel: () =>
-        set((state) => ({ resourcesPanelOpen: !state.resourcesPanelOpen })),
-      toggleSourcesPanel: () =>
-        set((state) => ({ sourcesPanelOpen: !state.sourcesPanelOpen })),
-      toggleChatPanel: () =>
-        set((state) => ({ chatPanelOpen: !state.chatPanelOpen })),
-      toggleEditorPanel: () =>
-        set((state) => ({ editorPanelOpen: !state.editorPanelOpen })),
-      openPanel: (panelName, group = "sliding") =>
+      setActiveView: (view: MainView) => set({ activeView: view }),
+
+      // Workspace actions
+      createWorkspace: (name: string) => {
+        const newWorkspace: Workspace = {
+          id: crypto.randomUUID(),
+          name,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }
+        set((state) => ({
+          workspaces: [newWorkspace, ...state.workspaces],
+        }))
+        return newWorkspace
+      },
+      deleteWorkspace: (workspaceId: string) =>
         set((state) => {
-          const panelStates: Record<string, keyof AppState> = {
-            chatPanelOpen: "chatPanelOpen",
-            editorPanelOpen: "editorPanelOpen",
-            sourcesPanelOpen: "sourcesPanelOpen",
+          if (state.workspaces.length <= 1) return state // Prevent deleting last workspace
+          const newWorkspaces = state.workspaces.filter((w) => w.id !== workspaceId)
+          const newActiveWorkspaceId = state.activeWorkspaceId === workspaceId
+            ? newWorkspaces[0]?.id
+            : state.activeWorkspaceId
+          // Also delete associated resources and conversations
+          const newResources = state.resources.filter((r) => r.workspaceId !== workspaceId)
+          const newConversations = state.conversations.filter((c) => c.workspaceId !== workspaceId)
+          return {
+            workspaces: newWorkspaces,
+            activeWorkspaceId: newActiveWorkspaceId,
+            resources: newResources,
+            conversations: newConversations,
           }
-          const panelGroup: Record<string, string> = {
-            chatPanelOpen: "sliding",
-            editorPanelOpen: "sliding",
-            sourcesPanelOpen: "sliding",
-          }
-
-          const newState: Partial<AppState> = {}
-
-          // Close all panels in the same group
-          Object.entries(panelGroup).forEach(([panel, g]) => {
-            if (g === group && panel !== panelName) {
-              newState[panel as keyof AppState] = false
-            }
-          })
-
-          // Toggle the target panel
-          const targetPanel = panelStates[panelName]
-          if (targetPanel) {
-            newState[targetPanel] = !(state[targetPanel as keyof AppState] as boolean)
-          }
-
-          return newState
         }),
-      setChatSessionsPanelWidth: (width: number) =>
-        set({ chatSessionsPanelWidth: Math.max(150, Math.min(400, width)) }),
-      setResourcesPanelWidth: (width: number) =>
-        set({ resourcesPanelWidth: Math.max(180, Math.min(500, width)) }),
-      setEditorPanelWidth: (width: number) =>
-        set({ editorPanelWidth: Math.max(300, Math.min(800, width)) }),
+      renameWorkspace: (workspaceId: string, name: string) =>
+        set((state) => ({
+          workspaces: state.workspaces.map((w) =>
+            w.id === workspaceId ? { ...w, name, updatedAt: new Date() } : w
+          ),
+        })),
+      setActiveWorkspace: (workspaceId: string) =>
+        set({ activeWorkspaceId: workspaceId }),
+
+      // Resource actions
+      addResource: (workspaceId: string, fileId: string) => {
+        const newResource: Resource = {
+          id: crypto.randomUUID(),
+          workspaceId,
+          fileId,
+          addedAt: new Date(),
+        }
+        set((state) => ({
+          resources: [...state.resources, newResource],
+        }))
+      },
+      removeResource: (resourceId: string) =>
+        set((state) => ({
+          resources: state.resources.filter((r) => r.id !== resourceId),
+        })),
 
       // File actions
       addFile: (file: UploadedFile) =>
@@ -266,22 +265,16 @@ export const useStore = create<AppState>()(
       removeFile: (fileId: string) =>
         set((state) => ({
           files: state.files.filter((f) => f.id !== fileId),
-          selectedFileIds: state.selectedFileIds.filter((id) => id !== fileId),
         })),
-      toggleFileSelection: (fileId: string) =>
-        set((state) => ({
-          selectedFileIds: state.selectedFileIds.includes(fileId)
-            ? state.selectedFileIds.filter((id) => id !== fileId)
-            : [...state.selectedFileIds, fileId],
-        })),
-      clearSelectedFiles: () => set({ selectedFileIds: [] }),
-      clearFiles: () => set({ files: [], selectedFileIds: [] }),
+      clearFiles: () => set({ files: [] }),
 
       // Conversation actions
-      createConversation: () => {
+      createConversation: (workspaceId?: string) => {
+        const activeWorkspaceId = workspaceId || get().activeWorkspaceId
         const newConversation: Conversation = {
           id: crypto.randomUUID(),
-          title: `New Conversation ${get().conversations.length + 1}`,
+          workspaceId: activeWorkspaceId,
+          title: `New Chat ${get().conversations.filter(c => c.workspaceId === activeWorkspaceId).length + 1}`,
           messages: [],
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -291,6 +284,7 @@ export const useStore = create<AppState>()(
           conversations: [newConversation, ...state.conversations],
           activeConversationId: newConversation.id,
         }))
+        return newConversation
       },
       deleteConversation: (conversationId: string) =>
         set((state) => {
@@ -398,23 +392,34 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'hummingbird-storage',
+      version: 2,
+      migrate: (persistedState, fromVersion) => {
+        if (!persistedState || typeof persistedState !== 'object') return persistedState
+        if (fromVersion < 2) {
+          const state = persistedState as Record<string, unknown>
+          const stale = [
+            'chatPanelOpen', 'editorPanelOpen', 'resourcesPanelOpen', 'sourcesPanelOpen',
+            'chatSessionsPanelOpen', 'workspacePanelOpen',
+            'chatSessionsPanelWidth', 'resourcesPanelWidth', 'editorPanelWidth',
+            'selectedFileIds',
+          ]
+          for (const k of stale) delete state[k]
+        }
+        return persistedState
+      },
       onRehydrateStorage: () => () => {
         hasHydratedInternal = true
       },
       partialize: (state) => ({
         theme: state.theme,
+        activeView: state.activeView,
+        workspaces: state.workspaces,
+        activeWorkspaceId: state.activeWorkspaceId,
+        resources: state.resources,
         conversations: state.conversations,
         activeConversationId: state.activeConversationId,
         files: state.files,
         documentContent: state.documentContent,
-        chatSessionsPanelOpen: state.chatSessionsPanelOpen,
-        resourcesPanelOpen: state.resourcesPanelOpen,
-        sourcesPanelOpen: state.sourcesPanelOpen,
-        chatPanelOpen: state.chatPanelOpen,
-        editorPanelOpen: state.editorPanelOpen,
-        chatSessionsPanelWidth: state.chatSessionsPanelWidth,
-        resourcesPanelWidth: state.resourcesPanelWidth,
-        editorPanelWidth: state.editorPanelWidth,
       }),
     }
   )
@@ -451,14 +456,28 @@ export const useSessionStore = create<SessionState>()(
 )
 
 // Helper selectors
+export const useActiveWorkspace = () => {
+  const workspaces = useStore((state) => state.workspaces)
+  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
+  return workspaces.find((w) => w.id === activeWorkspaceId) || null
+}
+
 export const useActiveConversation = () => {
   const conversations = useStore((state) => state.conversations)
   const activeConversationId = useStore((state) => state.activeConversationId)
   return conversations.find((c) => c.id === activeConversationId) || null
 }
 
-export const useSelectedFiles = () => {
+export const useWorkspaceConversations = () => {
+  const conversations = useStore((state) => state.conversations)
+  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
+  return conversations.filter((c) => c.workspaceId === activeWorkspaceId)
+}
+
+export const useWorkspaceResources = () => {
+  const resources = useStore((state) => state.resources)
   const files = useStore((state) => state.files)
-  const selectedFileIds = useStore((state) => state.selectedFileIds)
-  return files.filter((f) => selectedFileIds.includes(f.id))
+  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
+  const workspaceResources = resources.filter((r) => r.workspaceId === activeWorkspaceId)
+  return workspaceResources.map((r) => files.find((f) => f.id === r.fileId)).filter(Boolean) as UploadedFile[]
 }

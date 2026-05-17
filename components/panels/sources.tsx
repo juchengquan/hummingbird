@@ -1,9 +1,7 @@
 "use client"
 
 import { useState, useRef, useCallback } from "react"
-import { useStore, useSessionStore } from "@/lib/hooks/use-store"
-import { PanelContainer } from "@/components/panel-container"
-import { ScrollArea } from "@/components/ui/scroll-area"
+import { useStore, useSessionStore, useWorkspaceResources } from "@/lib/hooks/use-store"
 import { Item, ItemMedia, ItemContent, ItemTitle, ItemDescription } from "@/components/ui/item"
 
 import {
@@ -13,6 +11,7 @@ import {
   Trash2,
   Check,
   X,
+  FolderOpen,
 } from "lucide-react"
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card"
 import {
@@ -39,20 +38,37 @@ import { cn } from "@/lib/utils"
 import { formatFileSize, getFileIcon, processSelectedFiles } from "@/lib/file-utils"
 import { format } from "date-fns"
 
-const FILE_SIZE_LIMIT = 5 * 1024 * 1024 // 50MB
+const FILE_SIZE_LIMIT = 5 * 1024 * 1024 // 5MB
 
 const ALLOWED_EXTENSIONS = [".pdf", ".docx", ".txt", ".csv", ".json", ".png", ".jpg", ".jpeg"]
 
 export function ResourcePanel() {
-  const { files, addFile, removeFile, clearFiles } = useStore()
-  const { selectedFileIds, toggleFileSelection, setSelectedFileIds, clearSelectedFiles } = useSessionStore()
+  const {
+    files,
+    addFile,
+    removeFile,
+    clearFiles,
+    activeWorkspaceId,
+    resources,
+    addResource,
+    removeResource,
+  } = useStore()
+  const { selectedFileIds, toggleFileSelection, clearSelectedFiles } = useSessionStore()
   const [searchQuery, setSearchQuery] = useState("")
   const [isDragOver, setIsDragOver] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  const workspaceResources = useWorkspaceResources()
+
+  // Filter files that are resources of the current workspace
+  const resourceFileIds = resources
+    .filter(r => r.workspaceId === activeWorkspaceId)
+    .map(r => r.fileId)
+
   const filteredFiles = files.filter((file) =>
+    resourceFileIds.includes(file.id) &&
     file.name.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
@@ -69,9 +85,11 @@ export function ResourcePanel() {
 
       newFiles.forEach((file) => {
         addFile(file)
+        // Automatically add as resource to current workspace
+        addResource(activeWorkspaceId, file.id)
       })
     },
-    [addFile]
+    [addFile, addResource, activeWorkspaceId]
   )
 
   const handleDrop = useCallback(
@@ -94,12 +112,20 @@ export function ResourcePanel() {
   }, [])
 
   const handleRemoveFile = (fileId: string) => {
-    removeFile(fileId)
+    // Remove from workspace resources
+    const resource = resources.find(r => r.workspaceId === activeWorkspaceId && r.fileId === fileId)
+    if (resource) {
+      removeResource(resource.id)
+    }
+    // If file is not used by other workspaces, delete it
+    const otherWorkspacesUsingFile = resources.some(r => r.fileId === fileId && r.workspaceId !== activeWorkspaceId)
+    if (!otherWorkspacesUsingFile) {
+      removeFile(fileId)
+    }
   }
 
   return (
-    <PanelContainer title="Resources XXXX">
-      <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full w-full">
         {/* Drop zone */}
         <div
           className={cn(
@@ -163,9 +189,12 @@ export function ResourcePanel() {
         <div className="mx-2 rounded-lg max-h-[60vh] flex-1 overflow-y-auto border">
           {filteredFiles.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center p-4">
-              <File size={32} className="text-[var(--muted-foreground)] mb-2" />
+              <FolderOpen size={32} className="text-[var(--muted-foreground)] mb-2" />
               <p className="text-sm text-[var(--muted-foreground)]">
-                {searchQuery ? "No files found" : "No files uploaded yet"}
+                {searchQuery ? "No files found" : "No resources in this workspace"}
+              </p>
+              <p className="text-xs text-[var(--muted-foreground)] mt-1">
+                Upload files to add them as resources
               </p>
             </div>
           ) : (
@@ -252,28 +281,30 @@ export function ResourcePanel() {
           )}
         </div>
 
-        {/* Total files uploaded */}
+        {/* Total files in workspace */}
         <div className="px-3 py-2 border-t border-[var(--border)] flex items-center justify-between">
           <span className="text-sm text-[var(--muted-foreground)]">
-            {files.length} {files.length === 1 ? "file" : "files"} uploaded
+            {filteredFiles.length} {filteredFiles.length === 1 ? "resource" : "resources"} in workspace
           </span>
-          {files.length > 0 && (
+          {filteredFiles.length > 0 && (
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button variant="ghost" size="sm" className="text-xs text-[var(--muted-foreground)] hover:bg-destructive hover:text-white">
-                  Delete all
+                  Remove all
                 </Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>Delete all files?</AlertDialogTitle>
+                  <AlertDialogTitle>Remove all resources from workspace?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    This will permanently delete all {files.length} uploaded files. This action cannot be undone.
+                    This will remove all {filteredFiles.length} files from this workspace. The files will still be available in other workspaces.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction variant="destructive" onClick={clearFiles}>Delete</AlertDialogAction>
+                  <AlertDialogAction variant="destructive" onClick={() => {
+                    filteredFiles.forEach(file => handleRemoveFile(file.id))
+                  }}>Remove</AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
@@ -294,7 +325,6 @@ export function ResourcePanel() {
             </button>
           </div>
         )}
-      </div>
-    </PanelContainer>
+    </div>
   )
 }

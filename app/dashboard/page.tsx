@@ -1,88 +1,44 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect } from "react"
 import { AppSidebar } from "@/components/sidebars/application"
-import { ChatSidebar } from "@/components/sidebars/chat-sidebar"
-import { EditorSidebar } from "@/components/sidebars/editor-sidebar"
-import { SourcesSidebar } from "@/components/sidebars/sources-sidebar"
-import { ResourcePanel } from "@/components/panels/sources"
 import { ChatPanel } from "@/components/panels/chat"
+import { ResourcePanel } from "@/components/panels/sources"
 import { EditorPanel } from "@/components/panels/editor"
+import { WorkspacesPanel } from "@/components/panels/workspaces"
 import {
   SidebarInset,
   SidebarProvider,
-  useSidebar,
 } from "@/components/ui/sidebar"
-import { ResizablePanelGroup } from "@/components/ui/custom/resizable"
 import { useStore } from "@/lib/hooks/use-store"
 
-// Sidebar width constants (from @/components/ui/sidebar.tsx)
-// SIDEBAR_WIDTH = "16rem" = 256px
-// SIDEBAR_WIDTH_ICON = "3rem" = 48px
-const SIDEBAR_EXPANDED_WIDTH = 256
-const SIDEBAR_COLLAPSED_WIDTH = 48
+function MainArea() {
+  const activeView = useStore((state) => state.activeView)
+  const editorContent = useStore((state) => state.editorContent)
+  const [mounted, setMounted] = useState(false)
 
-// function DashboardContent() {
-//   const { resourcesPanelOpen, editorContent } = useStore()
-//   const { state: sidebarState } = useSidebar()
-//   const containerRef = useRef<HTMLDivElement>(null)
-//   const [mounted, setMounted] = useState(false)
-//   const [sidebarOffset, setSidebarOffset] = useState(0)
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
-//   useEffect(() => {
-//     setMounted(true)
-//   }, [])
+  if (!mounted) return null
 
-//   // Calculate sidebar offset based on sidebar state and container width
-//   useEffect(() => {
-//     if (!mounted || !containerRef.current) return
-
-//     const containerWidth = containerRef.current.offsetWidth
-//     if (containerWidth === 0) return
-
-//     // Use sidebar width constants based on state
-//     const sidebarWidth = sidebarState === "expanded" ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_COLLAPSED_WIDTH
-//     const offsetPercent = (sidebarWidth / containerWidth) * 100
-//     setSidebarOffset(offsetPercent)
-//   }, [sidebarState, mounted])
-
-//   // Use stable default on server, then sync with store after mount
-//   // This prevents hydration mismatch from persisted store state
-//   const showFirstPanel = mounted ? resourcesPanelOpen : true
-
-//   return (
-//     <div ref={containerRef} className="h-full w-full">
-//       <ResizablePanelGroup
-//         showFirstPanel={showFirstPanel}
-//         defaultFirstWidth={15}
-//         defaultSecondWidth={35}
-//         minFirstWidth={15}
-//         minSecondWidth={20}
-//         maxFirstWidth={25}
-//         maxSecondWidth={50}
-//         offset={sidebarOffset}
-//         firstPanel={<ResourcePanel />}
-//         secondPanel={<ChatPanel />}
-//         thirdPanel={<EditorPanel initialContent={editorContent} />}
-//       />
-//     </div>
-//   )
-// }
+  return (
+    <SidebarInset className="h-full overflow-hidden">
+      {activeView === "workspaces" && <WorkspacesPanel />}
+      {activeView === "chat" && <ChatPanel />}
+      {activeView === "resources" && <ResourcePanel />}
+      {activeView === "editor" && <EditorPanel initialContent={editorContent} />}
+    </SidebarInset>
+  )
+}
 
 export default function Page() {
   return (
     <div className="h-screen overflow-hidden">
       <SidebarProvider>
         <AppSidebar />
-
-        {/* <SidebarInset className="h-full">
-          <DashboardContent />
-        </SidebarInset> */}
-        
-        <ChatSidebar />
-        <SourcesSidebar />
-        <EditorSidebar />
-
+        <MainArea />
       </SidebarProvider>
     </div>
   )

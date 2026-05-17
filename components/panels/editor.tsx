@@ -3,10 +3,10 @@
 import { useEffect } from "react"
 import { Plate, PlateView, usePlateEditor } from "platejs/react"
 import type { Value } from "platejs"
-import type { MyEditor } from "@/components/third-party/plate/editor/editor-kit"
+import type { MyEditor } from "@/components/editor/editor-kit"
 
-import { EditorKit } from "@/components/third-party/plate/editor/editor-kit"
-import { Editor, EditorContainer } from "@/components/third-party/plate/ui/editor"
+import { EditorKit } from "@/components/editor/editor-kit"
+import { Editor, EditorContainer } from "@/components/ui/editor"
 
 const defaultValue: Value = [
   {
