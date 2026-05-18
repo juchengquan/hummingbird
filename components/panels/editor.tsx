@@ -1,11 +1,11 @@
 "use client"
 
-import { useEffect, useRef, useCallback } from "react"
+import { useEffect, useRef, useCallback, useState } from "react"
 import { Plate, usePlateEditor } from "platejs/react"
 import type { Value } from "platejs"
 import { serializeMd } from "@platejs/markdown"
 import { toast } from "sonner"
-import { Download, Copy } from "lucide-react"
+import { Download, Copy, Check, Loader2 } from "lucide-react"
 import type { MyEditor } from "@/components/editor/editor-kit"
 
 import { EditorKit } from "@/components/editor/editor-kit"
@@ -13,6 +13,7 @@ import { Editor, EditorContainer } from "@/components/ui/editor"
 import { Button } from "@/components/ui/button"
 import { copyText, downloadAsFile, safeFilename } from "@/lib/export"
 import { useStore, useActiveConversationDocument } from "@/lib/hooks/use-store"
+import { cn } from "@/lib/utils"
 
 const emptyValue: Value = [
   {
@@ -57,6 +58,31 @@ function getEditorTitle(editor: MyEditor): string {
 
 const SAVE_DEBOUNCE_MS = 500
 
+function SaveIndicator({ state }: { state: "idle" | "pending" | "saved" }) {
+  if (state === "idle") return null
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 text-[11px] text-[var(--muted-foreground)] transition-opacity",
+        state === "saved" && "text-[var(--primary)]"
+      )}
+      aria-live="polite"
+    >
+      {state === "pending" ? (
+        <>
+          <Loader2 size={11} className="animate-spin" />
+          Saving…
+        </>
+      ) : (
+        <>
+          <Check size={11} />
+          Saved
+        </>
+      )}
+    </span>
+  )
+}
+
 export function EditorPanel() {
   const editor = usePlateEditor({
     plugins: EditorKit,
@@ -75,6 +101,8 @@ export function EditorPanel() {
   const loadedTokenRef = useRef<number>(-1)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const skipNextChangeRef = useRef(false)
+  const [saveState, setSaveState] = useState<"idle" | "pending" | "saved">("idle")
+  const savedHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     if (!editor) return
@@ -91,6 +119,11 @@ export function EditorPanel() {
       clearTimeout(saveTimerRef.current)
       saveTimerRef.current = null
     }
+    if (savedHideTimerRef.current) {
+      clearTimeout(savedHideTimerRef.current)
+      savedHideTimerRef.current = null
+    }
+    setSaveState("idle")
 
     skipNextChangeRef.current = true
     loadedConversationRef.current = activeConversationId
@@ -106,9 +139,13 @@ export function EditorPanel() {
     if (!activeConversationId) return
     const targetConversationId = activeConversationId
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    if (savedHideTimerRef.current) clearTimeout(savedHideTimerRef.current)
+    setSaveState("pending")
     saveTimerRef.current = setTimeout(() => {
       const md = serializeMd(editor)
       setConversationDocument(targetConversationId, md)
+      setSaveState("saved")
+      savedHideTimerRef.current = setTimeout(() => setSaveState("idle"), 1500)
     }, SAVE_DEBOUNCE_MS)
   }, [editor, activeConversationId, setConversationDocument])
 
@@ -138,7 +175,8 @@ export function EditorPanel() {
   return (
     <div className="h-full w-full">
       <div className="h-full border-r-2 relative">
-        <div className="absolute top-2 right-4 z-10 flex gap-1">
+        <div className="absolute top-2 right-4 z-10 flex items-center gap-2">
+          <SaveIndicator state={saveState} />
           <Button
             variant="ghost"
             size="sm"

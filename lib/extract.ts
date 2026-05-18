@@ -4,6 +4,8 @@
  * caller decides how to mark the file ('failed').
  */
 
+import { toast } from 'sonner'
+
 export const EXTRACTION_BUDGET = 32 * 1024 // 32 KB of extracted text per file
 
 export interface ExtractionResult {
@@ -80,6 +82,7 @@ export async function runExtraction(
       })
     } catch {
       setFileExtraction(fileId, { extractionStatus: 'failed' as FileExtractionStatus })
+      toast.error(`Couldn't read "${blob.name}" as an image.`)
     }
     return
   }
@@ -87,6 +90,7 @@ export async function runExtraction(
   const result = await extractFile(blob)
   if (!result) {
     setFileExtraction(fileId, { extractionStatus: 'failed' as FileExtractionStatus })
+    toast.error(`Text extraction failed for "${blob.name}".`)
     return
   }
   setFileExtraction(fileId, {

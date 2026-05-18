@@ -4,14 +4,29 @@ import { generateText } from 'ai';
 import { NextResponse } from 'next/server';
 
 import { categorizeError } from '@/lib/api-errors';
+import { CopilotRequestSchema } from '@/lib/api-schemas';
 
 export async function POST(req: NextRequest) {
-  const {
-    apiKey: key,
-    model = 'gpt-4o-mini',
-    prompt,
-    system,
-  } = await req.json();
+  let raw: unknown;
+  try {
+    raw = await req.json();
+  } catch {
+    return NextResponse.json(
+      { code: 'invalid_request', message: 'Body must be JSON.' },
+      { status: 400 }
+    );
+  }
+  const parsed = CopilotRequestSchema.safeParse(raw);
+  if (!parsed.success) {
+    return NextResponse.json(
+      {
+        code: 'invalid_request',
+        message: parsed.error.issues[0]?.message ?? 'Invalid request body.',
+      },
+      { status: 400 }
+    );
+  }
+  const { apiKey: key, model = 'gpt-4o-mini', prompt, system } = parsed.data;
 
   const apiKey = key || process.env.AI_GATEWAY_API_KEY;
 

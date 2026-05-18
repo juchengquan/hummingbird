@@ -6,6 +6,7 @@ import { NextResponse } from 'next/server'
 
 import { DEFAULT_CHAT_MODEL } from '@/lib/models'
 import { categorizeError } from '@/lib/api-errors'
+import { ChatRequestSchema } from '@/lib/api-schemas'
 
 interface FileSummary {
   name: string
@@ -89,7 +90,26 @@ function buildSystemPrompt(
 }
 
 export async function POST(req: NextRequest) {
-  const body = (await req.json()) as ChatRequestBody
+  let raw: unknown
+  try {
+    raw = await req.json()
+  } catch {
+    return NextResponse.json(
+      { code: 'invalid_request', message: 'Body must be JSON.' },
+      { status: 400 }
+    )
+  }
+  const parsed = ChatRequestSchema.safeParse(raw)
+  if (!parsed.success) {
+    return NextResponse.json(
+      {
+        code: 'invalid_request',
+        message: parsed.error.issues[0]?.message ?? 'Invalid request body.',
+      },
+      { status: 400 }
+    )
+  }
+  const body = parsed.data
   const apiKey = process.env.AI_GATEWAY_API_KEY
 
   if (!apiKey) {
@@ -107,7 +127,10 @@ export async function POST(req: NextRequest) {
       abortSignal: req.signal,
       model: gateway(modelId),
       system: buildSystemPrompt(body.files, body.workspaceSystemPrompt),
-      messages: body.messages,
+      // Cast back: Zod validates the outer shape (role + content union),
+      // but the AI SDK's ModelMessage uses tighter inner-part discriminants
+      // than the schema's structural fallback. Trust the schema validation.
+      messages: body.messages as ModelMessage[],
     })
 
     // Re-emit `fullStream` as a small SSE protocol so the client can keep
