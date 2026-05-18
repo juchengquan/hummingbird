@@ -10,6 +10,7 @@ import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { copyText } from "@/lib/export"
 import { extractCodeBlocks } from "@/lib/code-blocks"
+import { MarkdownPreview } from "@/components/markdown-preview"
 import { useStore, useMessageBookmark } from "@/lib/hooks/use-store"
 import type { ArtifactKind } from "@/lib/types"
 import {
@@ -414,7 +415,14 @@ export function ChatMessage({
                 {message.reasoning && message.reasoning.trim().length > 0 && (
                   <ReasoningBlock reasoning={message.reasoning} streaming={!message.content} />
                 )}
-                <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                {!isUser && message.content ? (
+                  <MarkdownPreview
+                    content={message.content}
+                    className="markdown-chat-bubble text-sm p-0 overflow-visible"
+                  />
+                ) : (
+                  <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                )}
                 <p
                   className={cn(
                     "text-xs mt-1 opacity-60",

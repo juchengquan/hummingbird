@@ -97,3 +97,36 @@
 .markdown-preview tbody tr:nth-child(even) {
   background: color-mix(in oklab, var(--secondary) 50%, transparent);
 }
+
+/* Chat-bubble variant. The bubble itself sits on var(--secondary), so the
+   default code-block background (also var(--secondary)) would disappear.
+   Use a contrasting darker / brighter fill, tighter spacing, and a smaller
+   inline-code chip. */
+.markdown-chat-bubble.markdown-preview > * + * {
+  margin-top: 0.5em;
+}
+.markdown-chat-bubble.markdown-preview h1 { font-size: 1.05rem; }
+.markdown-chat-bubble.markdown-preview h2 { font-size: 1rem; }
+.markdown-chat-bubble.markdown-preview h3 { font-size: 0.95rem; }
+.markdown-chat-bubble.markdown-preview h4,
+.markdown-chat-bubble.markdown-preview h5,
+.markdown-chat-bubble.markdown-preview h6 { font-size: 0.875rem; }
+
+.markdown-chat-bubble.markdown-preview code {
+  background: color-mix(in oklab, var(--background) 70%, transparent);
+}
+.markdown-chat-bubble.markdown-preview pre {
+  background: var(--background);
+  font-size: 0.78em;
+  padding: 0.6em 0.85em;
+}
+.markdown-chat-bubble.markdown-preview pre code {
+  background: transparent;
+}
+
+.markdown-chat-bubble.markdown-preview table {
+  font-size: 0.78em;
+}
+.markdown-chat-bubble.markdown-preview blockquote {
+  border-left-color: color-mix(in oklab, var(--border) 60%, var(--foreground) 40%);
+}
