@@ -16,6 +16,8 @@ import { type UIMessage, DefaultChatTransport } from 'ai';
 import { type TNode, KEYS, nanoid, NodeApi, TextApi } from 'platejs';
 import { type PlateEditor, useEditorRef, usePluginOption } from 'platejs/react';
 
+import { toast } from 'sonner';
+
 import { aiChatPlugin } from '@/components/editor/plugins/ai-kit';
 
 import { discussionPlugin } from './plugins/discussion-kit';
@@ -84,6 +86,41 @@ export const useChat = () => {
         });
 
         if (!res.ok) {
+          // Peek at the response body to see if the chat overhaul's
+          // categorised error shape ({ code, message } from
+          // lib/api-errors.ts) is present. For genuine failures
+          // (rate-limit, provider down, invalid model id, etc.) we
+          // surface a toast and let the AI SDK see the error — better
+          // than silently faking a stream and hiding the problem.
+          //
+          // The "auth" code (missing AI_GATEWAY_API_KEY) is the demo
+          // case and still falls through to the mock fallback below so
+          // the editor works out-of-the-box without configuration.
+          let errorBody: { code?: string; message?: string } | null = null;
+          try {
+            errorBody = (await res.clone().json()) as {
+              code?: string;
+              message?: string;
+            };
+          } catch {
+            /* non-JSON body — fall through to mock */
+          }
+
+          if (errorBody?.code && errorBody.code !== 'auth') {
+            const label =
+              errorBody.code === 'rate_limit'
+                ? 'Rate limited'
+                : errorBody.code === 'invalid_model'
+                  ? 'Model unavailable'
+                  : errorBody.code === 'provider'
+                    ? 'Provider error'
+                    : 'Editor AI failed';
+            toast.error(
+              errorBody.message ? `${label}: ${errorBody.message}` : label
+            );
+            return res;
+          }
+
           let sample: 'comment' | 'markdown' | 'mdx' | 'table' | null = null;
 
           try {
