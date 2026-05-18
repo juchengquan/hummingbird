@@ -26,7 +26,7 @@ import { extractCodeBlocks } from "@/lib/code-blocks"
 
 const AUTO_ARCHIVE_MIN_LINES = 15
 const AUTO_ARCHIVE_MAX_PER_MESSAGE = 3
-import { FILE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/lib/upload-config"
+import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/lib/upload-config"
 import type { Message, MessageError, MessageErrorCode } from "@/lib/types"
 
 export function ChatPanel() {
@@ -154,17 +154,41 @@ export function ChatPanel() {
       const conv = conversations.find((c) => c.id === activeConversationId)
       const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
       const workspaceSystemPrompt = activeWorkspace?.systemPrompt?.trim() || undefined
-      const fileSummaries =
+      const attachedFiles =
         conv?.selectedFileIds
           .map((id) => files.find((f) => f.id === id))
-          .filter((f): f is NonNullable<typeof f> => Boolean(f))
-          .map((f) => ({
-            name: f.name,
-            size: f.size,
-            type: f.type,
-            text: f.extractedText,
-            truncated: f.extractionTruncated,
-          })) ?? []
+          .filter((f): f is NonNullable<typeof f> => Boolean(f)) ?? []
+      const fileSummaries = attachedFiles.map((f) => ({
+        name: f.name,
+        size: f.size,
+        type: f.type,
+        text: f.extractedText,
+        truncated: f.extractionTruncated,
+      }))
+      // Attach images only to the most recent user message — re-sending them
+      // on every turn would explode the token bill and isn't how vision
+      // chats are typically structured.
+      const attachedImageUrls = attachedFiles
+        .filter((f) => f.extractedKind === "image" && f.imageDataUrl)
+        .map((f) => f.imageDataUrl as string)
+      const buildMessages = () =>
+        history.map((m, i) => {
+          const isLastUser =
+            i === history.length - 1 && m.role === "user" && attachedImageUrls.length > 0
+          if (!isLastUser) {
+            return { role: m.role, content: m.content }
+          }
+          return {
+            role: m.role,
+            content: [
+              { type: "text" as const, text: m.content },
+              ...attachedImageUrls.map((url) => ({
+                type: "image" as const,
+                image: url,
+              })),
+            ],
+          }
+        })
 
       const controller = new AbortController()
       abortControllerRef.current = controller
@@ -190,7 +214,7 @@ export function ChatPanel() {
           signal: controller.signal,
           body: JSON.stringify({
             model: chatModel,
-            messages: history.map((m) => ({ role: m.role, content: m.content })),
+            messages: buildMessages(),
             files: fileSummaries,
             workspaceSystemPrompt,
           }),
@@ -361,6 +385,7 @@ export function ChatPanel() {
     (list: FileList | null) => {
       const processed = processSelectedFiles(list, {
         maxSize: FILE_SIZE_LIMIT,
+        maxImageSize: IMAGE_SIZE_LIMIT,
         onValidationError: (err) => toast.error(err),
       })
       processed.forEach(({ meta, source }) => {

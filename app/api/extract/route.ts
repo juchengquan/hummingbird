@@ -10,7 +10,7 @@ export const runtime = 'nodejs'
 export const maxDuration = 30
 
 interface ExtractionResponse {
-  kind: 'pdf' | 'docx' | 'markdown' | 'csv' | 'json' | 'text' | 'unsupported'
+  kind: 'pdf' | 'docx' | 'markdown' | 'csv' | 'json' | 'text' | 'image' | 'unsupported'
   text: string
   truncated: boolean
 }
@@ -90,6 +90,18 @@ export async function POST(req: NextRequest) {
       const result = await mammoth.extractRawText({ buffer })
       const { text, truncated } = truncate(result.value ?? '')
       return NextResponse.json<ExtractionResponse>({ kind: 'docx', text, truncated })
+    }
+
+    // Images: the client handles them locally (FileReader → data URL stored
+    // on UploadedFile.imageDataUrl), so this route is normally never called
+    // for them. Returning a successful image response (rather than
+    // 'unsupported') keeps the contract clean if anything does hit it.
+    if (type.startsWith('image/') || hasName(name, '.png', '.jpg', '.jpeg', '.gif', '.webp')) {
+      return NextResponse.json<ExtractionResponse>({
+        kind: 'image',
+        text: '',
+        truncated: false,
+      })
     }
 
     return NextResponse.json<ExtractionResponse>({

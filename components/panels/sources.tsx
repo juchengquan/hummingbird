@@ -37,10 +37,10 @@ import {
 import { cn } from "@/lib/utils"
 import { formatFileSize, getFileIcon, processSelectedFiles } from "@/lib/file-utils"
 import { runExtraction } from "@/lib/extract"
+import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT } from "@/lib/upload-config"
 import { ExtractionStatusBadge } from "@/components/panels/extraction-status-badge"
 import { format } from "date-fns"
 
-const FILE_SIZE_LIMIT = 5 * 1024 * 1024 // 5MB
 
 const ALLOWED_EXTENSIONS = [".pdf", ".docx", ".txt", ".csv", ".json", ".png", ".jpg", ".jpeg"]
 
@@ -83,6 +83,7 @@ export function ResourcePanel() {
 
       const processed = processSelectedFiles(selectedFiles, {
         maxSize: FILE_SIZE_LIMIT,
+        maxImageSize: IMAGE_SIZE_LIMIT,
         onValidationError: setError,
       })
 

@@ -16,10 +16,16 @@ export function processSelectedFiles(
   files: FileList | null,
   options: {
     maxSize?: number
+    /** Tighter cap applied only to image MIME types. Defaults to `maxSize`. */
+    maxImageSize?: number
     onValidationError?: (error: string) => void
   } = {}
 ): ProcessedFile[] {
-  const { maxSize = DEFAULT_SIZE_LIMIT, onValidationError } = options
+  const {
+    maxSize = DEFAULT_SIZE_LIMIT,
+    maxImageSize = maxSize,
+    onValidationError,
+  } = options
 
   if (!files) return []
 
@@ -27,10 +33,14 @@ export function processSelectedFiles(
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i]
+    const isImage = file.type.startsWith('image/')
+    const limit = isImage ? maxImageSize : maxSize
 
     // Validate file size
-    if (file.size > maxSize) {
-      onValidationError?.(`File "${file.name}" exceeds ${formatFileSize(maxSize)} limit`)
+    if (file.size > limit) {
+      onValidationError?.(
+        `${isImage ? 'Image' : 'File'} "${file.name}" exceeds ${formatFileSize(limit)} limit`
+      )
       continue
     }
 

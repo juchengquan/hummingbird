@@ -36,20 +36,54 @@ import type { FileExtractionStatus, UploadedFile } from '@/lib/types'
 type ExtractionPatch = Partial<
   Pick<
     UploadedFile,
-    'extractionStatus' | 'extractedText' | 'extractionTruncated' | 'extractedKind'
+    | 'extractionStatus'
+    | 'extractedText'
+    | 'extractionTruncated'
+    | 'extractedKind'
+    | 'imageDataUrl'
   >
 >
+
+function readAsDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') resolve(reader.result)
+      else reject(new Error('FileReader returned non-string result'))
+    }
+    reader.onerror = () => reject(reader.error ?? new Error('FileReader error'))
+    reader.readAsDataURL(blob)
+  })
+}
 
 /**
  * Fire-and-forget helper: kicks off extraction for a freshly uploaded file
  * and pushes the result back into the store via `setFileExtraction`. Used by
  * both the chat input's `+` button and the resources panel.
+ *
+ * Images take a different path — no server round-trip, just a client-side
+ * `FileReader` to a base64 data URL stored on the `UploadedFile`. The URL
+ * is later attached as a multimodal content part on the next chat request.
  */
 export async function runExtraction(
   fileId: string,
   blob: File,
   setFileExtraction: (id: string, patch: ExtractionPatch) => void
 ): Promise<void> {
+  if (blob.type.startsWith('image/')) {
+    try {
+      const dataUrl = await readAsDataUrl(blob)
+      setFileExtraction(fileId, {
+        extractionStatus: 'done' as FileExtractionStatus,
+        extractedKind: 'image',
+        imageDataUrl: dataUrl,
+      })
+    } catch {
+      setFileExtraction(fileId, { extractionStatus: 'failed' as FileExtractionStatus })
+    }
+    return
+  }
+
   const result = await extractFile(blob)
   if (!result) {
     setFileExtraction(fileId, { extractionStatus: 'failed' as FileExtractionStatus })

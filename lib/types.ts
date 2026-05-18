@@ -12,8 +12,15 @@ export interface UploadedFile {
   extractedText?: string
   /** True when `extractedText` was cut to fit the per-file budget. */
   extractionTruncated?: boolean
-  /** Detected/resolved content kind (e.g. 'pdf', 'docx', 'markdown'). */
+  /** Detected/resolved content kind (e.g. 'pdf', 'docx', 'markdown', 'image'). */
   extractedKind?: string
+  /**
+   * For image uploads, the base64 data URL read client-side at upload time.
+   * Sent to vision-capable models as a multimodal content part. Lives in
+   * localStorage today; will migrate to Supabase Storage when the sync
+   * layer lands.
+   */
+  imageDataUrl?: string
 }
 
 export interface Workspace {

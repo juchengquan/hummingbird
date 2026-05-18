@@ -164,7 +164,11 @@ interface AppState {
     patch: Partial<
       Pick<
         UploadedFile,
-        'extractionStatus' | 'extractedText' | 'extractionTruncated' | 'extractedKind'
+        | 'extractionStatus'
+        | 'extractedText'
+        | 'extractionTruncated'
+        | 'extractedKind'
+        | 'imageDataUrl'
       >
     >
   ) => void

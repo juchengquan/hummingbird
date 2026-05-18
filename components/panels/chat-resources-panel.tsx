@@ -13,7 +13,7 @@ import {
   useConversationArtifacts,
 } from "@/lib/hooks/use-store"
 import { getFileIcon, processSelectedFiles, formatFileSize } from "@/lib/file-utils"
-import { FILE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/lib/upload-config"
+import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/lib/upload-config"
 import { runExtraction } from "@/lib/extract"
 import { NotesTab } from "@/components/panels/notes-tab"
 import { ArtifactsTab } from "@/components/panels/artifacts-tab"
@@ -60,6 +60,7 @@ export function ChatResourcesPanel() {
       setError(null)
       const processed = processSelectedFiles(list, {
         maxSize: FILE_SIZE_LIMIT,
+        maxImageSize: IMAGE_SIZE_LIMIT,
         onValidationError: setError,
       })
       processed.forEach(({ meta, source }) => {
