@@ -10,6 +10,12 @@ import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { copyText } from "@/lib/export"
 import { useStore, useMessageBookmark } from "@/lib/hooks/use-store"
+import type { ArtifactKind } from "@/lib/types"
+import {
+  SaveArtifactDialog,
+  type DetectedBlock,
+  type SaveArtifactSelection,
+} from "@/components/panels/save-artifact-dialog"
 
 function formatTime(timestamp: Date | string): string {
   const date = new Date(timestamp)
@@ -188,36 +194,71 @@ export function ChatMessage({
     toast.success(result ? "Bookmarked" : "Removed bookmark")
   }
 
+  const [pickerBlocks, setPickerBlocks] = useState<DetectedBlock[] | null>(null)
+
+  const saveBlockAsArtifact = (
+    b: DetectedBlock,
+    label: string
+  ) => {
+    if (!activeConversationId) return
+    const lang = (b.language ?? "").toLowerCase()
+    const kind: ArtifactKind = lang === "json" ? "json" : "code"
+    createArtifact({
+      conversationId: activeConversationId,
+      messageId: message.id,
+      kind,
+      language: b.language,
+      title: label,
+      content: b.code,
+    })
+  }
+
+  const saveWholeAsMarkdown = () => {
+    if (!activeConversationId) return
+    createArtifact({
+      conversationId: activeConversationId,
+      messageId: message.id,
+      kind: "markdown",
+      content: message.content,
+    })
+  }
+
   const handleSaveAsArtifact = () => {
     if (!activeConversationId) return
     const blocks = extractCodeBlocks(message.content)
+
     if (blocks.length === 0) {
-      createArtifact({
-        conversationId: activeConversationId,
-        messageId: message.id,
-        kind: "markdown",
-        content: message.content,
-      })
+      saveWholeAsMarkdown()
       toast.success("Saved as artifact")
       return
     }
-    blocks.forEach((b, i) => {
-      createArtifact({
-        conversationId: activeConversationId,
-        messageId: message.id,
-        kind: "code",
-        language: b.language,
-        title: blocks.length === 1
-          ? `Code${b.language ? ` (${b.language})` : ""}`
-          : `Code ${i + 1}${b.language ? ` (${b.language})` : ""}`,
-        content: b.code,
-      })
+
+    if (blocks.length === 1) {
+      const b = blocks[0]
+      saveBlockAsArtifact(b, `Code${b.language ? ` (${b.language})` : ""}`)
+      toast.success("Saved 1 code artifact")
+      return
+    }
+
+    // >1 blocks — open the picker
+    setPickerBlocks(blocks)
+  }
+
+  const handlePickerConfirm = (selection: SaveArtifactSelection) => {
+    if (!pickerBlocks) return
+    selection.blockIndices.forEach((i) => {
+      const b = pickerBlocks[i]
+      if (!b) return
+      saveBlockAsArtifact(
+        b,
+        `Code ${i + 1}${b.language ? ` (${b.language})` : ""}`
+      )
     })
-    toast.success(
-      blocks.length === 1
-        ? "Saved 1 code artifact"
-        : `Saved ${blocks.length} code artifacts`
-    )
+    if (selection.alsoSaveAsMarkdown) saveWholeAsMarkdown()
+    const total =
+      selection.blockIndices.length + (selection.alsoSaveAsMarkdown ? 1 : 0)
+    setPickerBlocks(null)
+    toast.success(`Saved ${total} artifact${total === 1 ? "" : "s"}`)
   }
 
   const handleCopy = async () => {
@@ -433,6 +474,12 @@ export function ChatMessage({
         </div>
         )}
       </div>
+      <SaveArtifactDialog
+        open={pickerBlocks !== null}
+        blocks={pickerBlocks ?? []}
+        onCancel={() => setPickerBlocks(null)}
+        onConfirm={handlePickerConfirm}
+      />
     </div>
   )
 }

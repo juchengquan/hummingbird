@@ -195,7 +195,17 @@ UI:
 
 Sync handlers for `createArtifact`/`deleteArtifact`/`togglePinArtifact`/`updateArtifactTitle` still pending (sync layer).
 
-Still pending for 5C full: auto-extraction on stream end, multi-block picker dialog on save, JSON/table/image renderers, syntax highlighting (`shiki` or similar), and binary artifact upload to Supabase Storage.
+#### ✅ Shipped — 5C full *(local-only, syntax highlighting + multi-block picker + JSON)*
+
+Builds on 5C lite. Three additions:
+
+1. **Multi-block save picker** — `components/panels/save-artifact-dialog.tsx`. When an assistant message contains more than one fenced code block, the archive button opens a dialog with a checkbox per block (default: all selected) plus an extra checkbox to also archive the whole message as markdown. Replaces the "save all blocks blindly" behaviour from 5C lite. Single-block messages still save in one click; zero-block messages still save as markdown directly.
+2. **JSON as a first-class kind** — code blocks tagged `json` are saved with `kind: 'json'` instead of `kind: 'code'`. The list and dialog use a `Braces` icon for them, and the preview pretty-prints via `JSON.stringify(JSON.parse(...), null, 2)` before highlighting. Falls back to the raw payload if parsing fails.
+3. **Syntax highlighting** — `components/code-highlight.tsx` (`CodeHighlight` + `JsonHighlight`). Uses `highlight.js/lib/common` (≈36 languages, ~50 KB) loaded **lazily on first render** via dynamic import so the chat-side bundle stays light. Theme: `highlight.js/styles/github-dark.css`, imported by the component itself (code-split with that chunk). Plain `<pre>` fallback while the import resolves. `lib/file-utils.tsx`'s `getFileIcon` and the artifact list share the colour palette.
+
+`asMarkdownForEditor` in `artifacts-tab.tsx` now wraps JSON in a `json` code fence (pretty-printed) when "Send to editor" fires, so the editor preserves the formatted payload.
+
+Still pending for 5C "really full": auto-extraction on stream end (creates artifacts without a click for code blocks above N lines), table renderer (markdown tables / CSV), image artifacts (needs binary storage upload — blocked on Supabase Storage), and sync handlers (blocked on sync layer).
 
 #### ⏳ TODO — Phase 1 remainder
 
@@ -229,7 +239,7 @@ Ordered roughly in the order they should land:
 5. **Conversation-related assets** *(four sub-features, each can ship independently)*
    - **~~A. Conversation-scoped file uploads~~** *(reframed + shipped local-only — see Status above)*. The `+` button on the chat input uploads to the active workspace and auto-attaches to the current conversation.
    - **~~B. Per-conversation editor document~~** *(shipped local-only — see Status above)*. Sync handler for `setConversationDocument` (debounced) still pending.
-   - **~~C. Assistant-generated artifacts (lite)~~** *(shipped local-only — see Status above)*. Still pending for 5C full: auto-extraction on stream end, JSON/table/image renderers, syntax highlighting, multi-block picker UI on save, sync handlers.
+   - **~~C. Assistant-generated artifacts~~** *(lite + full both shipped local-only — see Status above)*. Still pending: auto-extraction on stream end, table/image renderers, sync handlers (blocked on sync layer), and binary upload (blocked on Supabase Storage).
    - **~~D. Notes / bookmarks~~** *(shipped local-only — see Status above)*. Sync handlers (`createNote`, `updateNote`, `deleteNote`) still pending.
 
 6. **Verification pass** — run all 14 checklist items in the "Verification (Phase 1)" section below

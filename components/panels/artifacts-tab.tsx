@@ -6,6 +6,7 @@ import {
   Archive,
   Code2,
   FileText,
+  Braces,
   Pin,
   PinOff,
   Trash2,
@@ -31,16 +32,27 @@ import {
   useActiveConversation,
 } from "@/lib/hooks/use-store"
 import { copyText } from "@/lib/export"
+import { CodeHighlight, JsonHighlight } from "@/components/code-highlight"
 import type { Artifact } from "@/lib/types"
 
 function artifactKindIcon(artifact: Artifact) {
   if (artifact.kind === "code") return <Code2 size={12} />
+  if (artifact.kind === "json") return <Braces size={12} />
   return <FileText size={12} />
 }
 
 function asMarkdownForEditor(artifact: Artifact): string {
   if (artifact.kind === "code") {
     return `\`\`\`${artifact.language ?? ""}\n${artifact.content}\n\`\`\``
+  }
+  if (artifact.kind === "json") {
+    let pretty = artifact.content
+    try {
+      pretty = JSON.stringify(JSON.parse(artifact.content), null, 2)
+    } catch {
+      /* leave raw */
+    }
+    return `\`\`\`json\n${pretty}\n\`\`\``
   }
   return artifact.content
 }
@@ -209,7 +221,14 @@ function ArtifactPreviewDialog({
       <DialogContent className="sm:max-w-2xl max-h-[80vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 min-w-0">
-            {artifact && (artifact.kind === "code" ? <Code2 size={14} /> : <FileText size={14} />)}
+            {artifact &&
+              (artifact.kind === "code" ? (
+                <Code2 size={14} />
+              ) : artifact.kind === "json" ? (
+                <Braces size={14} />
+              ) : (
+                <FileText size={14} />
+              ))}
             {editingTitle ? (
               <div className="flex-1 flex items-center gap-1">
                 <Input
@@ -257,9 +276,15 @@ function ArtifactPreviewDialog({
         </DialogHeader>
 
         <div className="flex-1 min-h-0 overflow-auto rounded-md border border-[var(--border)] bg-[var(--secondary)]/30">
-          <pre className="text-xs p-3 whitespace-pre-wrap break-words font-mono">
-            {artifact?.content}
-          </pre>
+          {artifact?.kind === "code" ? (
+            <CodeHighlight code={artifact.content} language={artifact.language} />
+          ) : artifact?.kind === "json" ? (
+            <JsonHighlight content={artifact.content} />
+          ) : (
+            <pre className="text-xs p-3 whitespace-pre-wrap break-words font-mono">
+              {artifact?.content}
+            </pre>
+          )}
         </div>
 
         {artifact && (
