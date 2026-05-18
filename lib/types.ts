@@ -71,6 +71,14 @@ export interface Message {
    * section above the main content. Not included in exports or Copy.
    */
   reasoning?: string
+  /**
+   * Snapshot of which workspace files were attached when this message was
+   * sent. Lives on the message (not the conversation) so the visual record
+   * survives later changes to the conversation's selection or file deletion.
+   * For deleted files we keep the id and render a "deleted attachment"
+   * placeholder.
+   */
+  attachedFileIds?: string[]
 }
 
 export interface Conversation {

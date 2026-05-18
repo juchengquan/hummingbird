@@ -409,9 +409,18 @@ export function ChatPanel() {
     if (!inputValue.trim() || isStreaming) return
 
     const messageContent = inputValue.trim()
+    // Snapshot the currently-selected files onto the message so the chat
+    // scroll shows a visible record of what was attached. Without this the
+    // attachments are invisible after the send (the model still sees the
+    // image/text, but the user has no way to remember what they sent).
+    const conv = conversations.find((c) => c.id === activeConversationId)
+    const snapshotIds = conv?.selectedFileIds && conv.selectedFileIds.length > 0
+      ? [...conv.selectedFileIds]
+      : undefined
     const userMessage = addMessage({
       role: "user",
       content: messageContent,
+      attachedFileIds: snapshotIds,
     })
 
     setInputValue("")

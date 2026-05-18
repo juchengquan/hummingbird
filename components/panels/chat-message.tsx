@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils"
 import { copyText } from "@/lib/export"
 import { extractCodeBlocks } from "@/lib/code-blocks"
 import { MarkdownPreview } from "@/components/markdown-preview"
+import { MessageAttachments } from "@/components/panels/message-attachments"
 import { useStore, useMessageBookmark } from "@/lib/hooks/use-store"
 import type { ArtifactKind } from "@/lib/types"
 import {
@@ -423,6 +424,14 @@ export function ChatMessage({
                 ) : (
                   <p className="text-sm whitespace-pre-wrap">{message.content}</p>
                 )}
+                {isUser &&
+                  message.attachedFileIds &&
+                  message.attachedFileIds.length > 0 && (
+                    <MessageAttachments
+                      fileIds={message.attachedFileIds}
+                      align="end"
+                    />
+                  )}
                 <p
                   className={cn(
                     "text-xs mt-1 opacity-60",
