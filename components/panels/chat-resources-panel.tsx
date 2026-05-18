@@ -19,8 +19,6 @@ import { NotesTab } from "@/components/panels/notes-tab"
 import { ArtifactsTab } from "@/components/panels/artifacts-tab"
 import { ExtractionStatusBadge } from "@/components/panels/extraction-status-badge"
 
-type Tab = "files" | "notes" | "artifacts"
-
 export function ChatResourcesPanel() {
   const activeWorkspaceId = useStore((s) => s.activeWorkspaceId)
   const addFile = useStore((s) => s.addFile)
@@ -35,7 +33,8 @@ export function ChatResourcesPanel() {
   const [query, setQuery] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [mounted, setMounted] = useState(false)
-  const [tab, setTab] = useState<Tab>("files")
+  const tab = useStore((s) => s.resourcesSidebarTab)
+  const setTab = useStore((s) => s.setResourcesSidebarTab)
   const notesCount = useConversationNotes().length
   const artifactsCount = useConversationArtifacts().length
 
@@ -74,7 +73,7 @@ export function ChatResourcesPanel() {
   )
 
   return (
-    <aside className="hidden lg:flex flex-col w-80 h-full min-h-0 shrink-0 border-l border-[var(--border)] bg-[var(--background)]/60">
+    <div className="flex flex-col w-full h-full min-h-0">
       {/* Tab strip */}
       <div className="shrink-0 flex border-b border-[var(--border)]">
         <button
@@ -147,7 +146,7 @@ export function ChatResourcesPanel() {
           setActiveView={setActiveView}
         />
       )}
-    </aside>
+    </div>
   )
 }
 

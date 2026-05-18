@@ -1,30 +1,29 @@
 # UI Layout System
 
-This document details the tabbed main-area layout: the `AppSidebar` (left) drives a single `SidebarInset` (right) that swaps between four panels based on `activeView`. Sliding right-side sidebars are no longer mounted.
+This document details the tabbed main-area layout: the `AppSidebar` (left) drives a single `SidebarInset` (right) that swaps between four panels based on `activeView`. The chat view additionally mounts a `ResourcesSidebar` (right rail) that can collapse to an icon strip.
 
 ---
 
 ## 1. Layout Architecture Overview
 
 ```
-┌─────────────┬───────────────────────────────────────────────┐
-│ AppSidebar  │            SidebarInset (Main Area)           │
-│  [trigger]  │                                               │
-│             │   ┌─────────────────────────────────────────┐ │
-│ Workspaces  │   │   ONE of:                               │ │
-│ Editor      │   │     WorkspacesPanel  (activeView ==     │ │
-│             │   │                       'workspaces')     │ │
-│ 📁 Resources │   │     ChatPanel        ('chat')           │ │
-│   • Files   │   │     ResourcePanel    ('resources')      │ │
-│             │   │     EditorPanel      ('editor')         │ │
-│ 💬 Chats  +  │   │                                         │ │
-│   - Chat 1  │   │   ChatPanel layout (two columns):       │ │
-│   - Chat 2  │   │     • Messages column (flex-1)          │ │
-│             │   │       ↳ scroll area + input bar         │ │
-│  ── footer  │   │     • ChatResourcesPanel (320px, ≥lg)   │ │
-│ 👤 ? 🌙      │   │                                         │ │
-│             │   └─────────────────────────────────────────┘ │
-└─────────────┴───────────────────────────────────────────────┘
+┌─────────────┬─────────────────────────────────┬──────────────┐
+│ AppSidebar  │       SidebarInset (Main)       │ Resources    │
+│  [trigger]  │                                 │ Sidebar (R)  │
+│             │   ┌───────────────────────────┐ │ (chat only)  │
+│ Workspaces  │   │   ONE of:                 │ │              │
+│ Editor      │   │     WorkspacesPanel       │ │ expanded:    │
+│             │   │     ChatPanel             │ │  w-80, tabs: │
+│ 📁 Resources │   │     ResourcePanel         │ │  Files Notes │
+│   • Files   │   │     EditorPanel           │ │  Artifacts   │
+│             │   │                           │ │              │
+│ 💬 Chats  +  │   │   ChatPanel internal:     │ │ collapsed:   │
+│   - Chat 1  │   │     • Messages column     │ │  w-12 rail,  │
+│   - Chat 2  │   │       ↳ scroll + input    │ │  icons + ‹   │
+│             │   │                           │ │              │
+│  ── footer  │   │                           │ │  ⌘⇧B toggle  │
+│ 👤 ? 🌙      │   └───────────────────────────┘ │              │
+└─────────────┴─────────────────────────────────┴──────────────┘
 ```
 
 **Switch-over behavior:** clicking any tab/sub-item in the sidebar calls `setActiveView(...)` and `MainArea` swaps the rendered panel. Only one panel is mounted at a time — there are no overlays.
@@ -40,7 +39,19 @@ This document details the tabbed main-area layout: the `AppSidebar` (left) drive
 
 The Resources and Chats groups are `CollapsibleTrigger` headers — clicking them only expands/collapses; the view switch happens on their child items.
 
-The legacy `ChatSidebar`, `ResourcesSidebar`, and `EditorSidebar` wrappers are not mounted by `app/dashboard/page.tsx`. They still exist on disk but are dead code from the dashboard's perspective.
+### 1.1 Right resources sidebar (chat view)
+
+When `activeView === 'chat'`, `ChatPanel` mounts a second right-aligned sidebar (`components/sidebars/resources.tsx`). It is **independent** of the left `AppSidebar` — its state lives in the Zustand store, not in Shadcn's `SidebarProvider`:
+
+- `resourcesSidebarOpen` (persisted) — toggled by the chevron, the rail's icon tabs (which open + switch tab), or the `⌘⇧B` / `Ctrl+Shift+B` shortcut.
+- `resourcesSidebarTab` (persisted) — one of `'files' | 'notes' | 'artifacts'`.
+
+**Expanded (`w-80`):** renders `ChatResourcesPanel` (tab strip + Files/Notes/Artifacts body), with a `›` collapse button in the header.
+**Collapsed (`w-12`):** vertical rail with `‹` expand button, divider, then `Files / Notes / Artifacts` icons. Each icon shows a count badge when non-zero, and clicking one selects that tab AND expands the sidebar.
+
+A one-time first-mount check (sessionStorage marker) flips the default to closed on `max-width: 768px` viewports so phones start with full reading width.
+
+The legacy `ChatSidebar` and `EditorSidebar` wrappers under `components/sidebars/` are not mounted by `app/dashboard/page.tsx`. They still exist on disk but are dead code from the dashboard's perspective.
 
 ---
 

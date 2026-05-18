@@ -77,6 +77,10 @@ interface AppState {
   // Sidebar
   sidebarCollapsed: boolean
 
+  // Right resources sidebar (chat view)
+  resourcesSidebarOpen: boolean
+  resourcesSidebarTab: 'files' | 'notes' | 'artifacts'
+
   // Files
   files: UploadedFile[]
 
@@ -107,6 +111,9 @@ interface AppState {
   // View / sidebar actions
   toggleSidebar: () => void
   setActiveView: (view: MainView) => void
+  setResourcesSidebarOpen: (open: boolean) => void
+  toggleResourcesSidebar: () => void
+  setResourcesSidebarTab: (tab: 'files' | 'notes' | 'artifacts') => void
 
   // Workspace actions
   createWorkspace: (name: string) => Workspace
@@ -206,6 +213,11 @@ export const useStore = create<AppState>()(
       // Sidebar
       sidebarCollapsed: false,
 
+      // Right resources sidebar — default open on first load; the mobile
+      // override happens in ResourcesSidebar's first-mount effect.
+      resourcesSidebarOpen: true,
+      resourcesSidebarTab: 'files',
+
       // Files
       files: [],
 
@@ -240,6 +252,11 @@ export const useStore = create<AppState>()(
       toggleSidebar: () =>
         set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
       setActiveView: (view: MainView) => set({ activeView: view }),
+      setResourcesSidebarOpen: (open: boolean) =>
+        set({ resourcesSidebarOpen: open }),
+      toggleResourcesSidebar: () =>
+        set((state) => ({ resourcesSidebarOpen: !state.resourcesSidebarOpen })),
+      setResourcesSidebarTab: (tab) => set({ resourcesSidebarTab: tab }),
 
       // Workspace actions
       createWorkspace: (name: string) => {
@@ -667,7 +684,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'hummingbird-storage',
-      version: 5,
+      version: 6,
       migrate: (persistedState, fromVersion) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState
         const state = persistedState as Record<string, unknown>
@@ -730,6 +747,12 @@ export const useStore = create<AppState>()(
             })
           }
         }
+        if (fromVersion < 6) {
+          // Right resources sidebar gained persisted open/tab state. Seed
+          // defaults so the first render after upgrade isn't undefined.
+          if (!('resourcesSidebarOpen' in state)) state.resourcesSidebarOpen = true
+          if (!('resourcesSidebarTab' in state)) state.resourcesSidebarTab = 'files'
+        }
         return persistedState
       },
       onRehydrateStorage: () => () => {
@@ -747,6 +770,8 @@ export const useStore = create<AppState>()(
         chatModel: state.chatModel,
         notes: state.notes,
         artifacts: state.artifacts,
+        resourcesSidebarOpen: state.resourcesSidebarOpen,
+        resourcesSidebarTab: state.resourcesSidebarTab,
       }),
     }
   )

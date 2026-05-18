@@ -179,11 +179,56 @@ moves binary blobs to Storage.
   `--secondary`; same text colour as the assistant.
 - Assistant "box" removed: no bg, no padding, no radius on assistant
   messages. User keeps the bubble.
-- Message column widened from `max-w-[70%]` to `max-w-[90%]`.
-- `ReasoningBlock` rewritten: `max-h-[40vh] overflow-y-auto`,
-  `MarkdownPreview` for the body, live pulse during stream, hover
-  copy button, line-count badge. Timing badge was prototyped, then
-  removed at user request.
+- Message column: **user** is right-aligned at `max-w-[90%]`,
+  **assistant** is `w-full` (no cap, since there's no bubble — prose
+  flows the whole column). See `components/panels/chat-message.tsx:410`.
+- `ReasoningBlock` (`components/panels/chat-message.tsx:41`):
+  - No outer border / background (was `rounded-md border …`).
+  - Header: `Reasoning ▾` (chevron moved to the right of the label).
+    No line-count badge (removed).
+  - Copy button lives **inside** the expanded panel, top-right, as a
+    `sticky top-1` sibling above the markdown (so it stays visible
+    while scrolling long reasoning). Wrapped in a `pointer-events-none`
+    flex strip so clicks pass through everywhere except the button.
+  - Expansion animation: outer wrapper uses the CSS
+    `grid-template-rows: 0fr ↔ 1fr` trick with `transition-[grid-template-rows]
+    duration-200 ease-out`; inner `overflow-hidden` clips during the
+    tween. Innermost still has `max-h-[40vh] overflow-y-auto`. No JS
+    height measurements.
+
+### Right resources sidebar (this session)
+
+The right-side resources surface in the chat view is now a real
+collapsible sidebar with an icon-rail collapsed state, instead of a
+fixed 320-px column.
+
+- `components/sidebars/resources.tsx` — sidebar shell. Two modes via
+  `data-state="expanded"|"collapsed"`:
+  - **Expanded `w-80`**: title row (`Resources` + `›` collapse chevron)
+    above `<ChatResourcesPanel />`.
+  - **Collapsed `w-12`**: vertical rail — `‹` expand chevron, divider,
+    then `Files / Notes / Artifacts` icons with count badges. Clicking
+    a rail icon sets `resourcesSidebarTab` AND opens the sidebar in one
+    action.
+- Animation: `transition-[width] duration-200 ease-out`.
+- Keyboard shortcut: `⌘⇧B` / `Ctrl+Shift+B` toggles. Doesn't collide
+  with the left `AppSidebar`'s `⌘B`.
+- Mobile: `hidden lg:flex` (matches the old behavior — sidebar simply
+  doesn't render below `lg`). One-time first-mount check via
+  `sessionStorage` marker flips `resourcesSidebarOpen` to `false` on
+  `max-width: 768px` viewports so phones start with full reading width
+  if they ever do render the rail.
+- **State lives in Zustand**, not in Shadcn's `SidebarProvider`. Two
+  independent Shadcn sidebars would either share one cookie or collide
+  on the `⌘B` listener; we avoid both by handling state and keyboard
+  ourselves. Persist version bumped 5 → 6 to seed the new fields:
+  - `resourcesSidebarOpen: boolean` (default `true`)
+  - `resourcesSidebarTab: 'files' | 'notes' | 'artifacts'` (default `'files'`)
+- `components/panels/chat-resources-panel.tsx` had its local
+  `useState<Tab>` lifted out — it now reads `tab` / `setTab` from the
+  store, so the rail icons and the expanded tab strip share one source
+  of truth. The outer `<aside>` chrome was dropped; the sidebar shell
+  provides it now.
 
 ### Misc
 
@@ -286,9 +331,12 @@ If sync is blocked for any reason, here's the queue of pickable items
 that don't need infra (full list with effort estimates in the chat
 log + `docs/ROADMAP.md`):
 
-- **Mobile layout** — `chat-resources-panel.tsx:76` is `hidden lg:flex`
-  (panels disappear on phones); stale `mobile` branch on origin
-  suggests this was planned.
+- **Mobile layout** — the right resources sidebar
+  (`components/sidebars/resources.tsx`) is `hidden lg:flex` so it
+  disappears below `lg`. Phones currently have no way to attach a file
+  / open notes from inside chat. A swipe-in drawer (or just an
+  overlay-positioned variant at narrow widths) is the natural next
+  step; stale `mobile` branch on origin suggests this was planned.
 - **Tests** — zero coverage. Start with store-reducer tests + one
   chat-panel smoke test (Vitest + RTL).
 - **Slash commands / prompt templates** — `/summarize`, `/translate`,

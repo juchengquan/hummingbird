@@ -60,8 +60,6 @@ function ReasoningBlock({
   }, [streaming])
 
   const isLive = streaming && !content
-  const lineCount = reasoning.split("\n").filter(Boolean).length
-  const meta = lineCount > 0 ? `${lineCount} ${lineCount === 1 ? "line" : "lines"}` : ""
 
   const handleCopy = (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -70,49 +68,51 @@ function ReasoningBlock({
   }
 
   return (
-    <div className="group/reasoning mb-2 rounded-md border border-[var(--border)] bg-[var(--background)]/60 text-[var(--muted-foreground)]">
-      <div className="flex items-center w-full">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="flex-1 flex items-center gap-1.5 px-2 py-1 text-xs hover:bg-[var(--accent)]/50 rounded-md transition-colors min-w-0"
-          aria-expanded={open}
-        >
-          <ChevronDown
-            size={12}
-            className={cn("transition-transform shrink-0", !open && "-rotate-90")}
+    <div className="group/reasoning mb-2 text-[var(--muted-foreground)]">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 px-2 py-1 text-xs hover:bg-[var(--accent)]/50 rounded-md transition-colors min-w-0"
+        aria-expanded={open}
+      >
+        <span className="shrink-0">{isLive ? "Thinking…" : "Reasoning"}</span>
+        {isLive && (
+          <span
+            aria-hidden
+            className="inline-block w-1.5 h-1.5 rounded-full bg-[var(--muted-foreground)] animate-pulse shrink-0"
           />
-          <span className="shrink-0">{isLive ? "Thinking…" : "Reasoning"}</span>
-          {isLive && (
-            <span
-              aria-hidden
-              className="inline-block w-1.5 h-1.5 rounded-full bg-[var(--muted-foreground)] animate-pulse shrink-0"
+        )}
+        <ChevronDown
+          size={12}
+          className={cn("transition-transform shrink-0", !open && "-rotate-90")}
+        />
+      </button>
+      <div
+        className={cn(
+          "grid transition-[grid-template-rows] duration-200 ease-out",
+          open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+        )}
+      >
+        <div className="overflow-hidden">
+          <div className="relative px-2 pb-2 pt-1 max-h-[40vh] overflow-y-auto">
+            <div className="sticky top-1 z-10 flex justify-end -mb-7 pr-2 pointer-events-none">
+              <button
+                type="button"
+                onClick={handleCopy}
+                aria-label="Copy reasoning"
+                title="Copy reasoning"
+                className="pointer-events-auto p-1 rounded bg-[var(--background)]/80 backdrop-blur-sm opacity-0 group-hover/reasoning:opacity-100 focus-visible:opacity-100 hover:bg-[var(--accent)]/50 transition-opacity"
+              >
+                <Copy size={12} />
+              </button>
+            </div>
+            <MarkdownPreview
+              content={reasoning}
+              className="text-xs opacity-90 pr-7 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
             />
-          )}
-          {!isLive && meta && (
-            <span className="ml-auto pl-2 text-[10px] tabular-nums truncate">
-              {meta}
-            </span>
-          )}
-        </button>
-        <button
-          type="button"
-          onClick={handleCopy}
-          aria-label="Copy reasoning"
-          title="Copy reasoning"
-          className="opacity-0 group-hover/reasoning:opacity-100 focus-visible:opacity-100 mr-1 p-1 rounded hover:bg-[var(--accent)]/50 transition-opacity"
-        >
-          <Copy size={12} />
-        </button>
-      </div>
-      {open && (
-        <div className="px-3 pb-2 max-h-[40vh] overflow-y-auto">
-          <MarkdownPreview
-            content={reasoning}
-            className="text-xs opacity-90 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
-          />
+          </div>
         </div>
-      )}
+      </div>
     </div>
   )
 }
@@ -407,7 +407,7 @@ export function ChatMessage({
             onDelete={() => onDelete(message.id)}
           />
         ) : (
-        <div className={cn("flex flex-col max-w-[90%]", isUser ? "items-end" : "items-start")}>
+        <div className={cn("flex flex-col", isUser ? "items-end max-w-[90%]" : "items-start w-full")}>
           <div
             className={cn(
               "animate-content-in w-full",

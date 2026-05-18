@@ -16,7 +16,7 @@ The main chat interface that displays conversation messages and handles user inp
 
 ### 1.3 Features
 
-- Two-column layout: messages on the left, **ChatResourcesPanel** on the right (see §1.8)
+- Two-column layout: messages on the left, **ResourcesSidebar** on the right (see §1.8). The right rail is collapsible; when collapsed it shrinks to an icon strip.
 - Real AI streaming via `/api/chat` (SSE: `text` / `reasoning` / `error` / `done` / `suggestions` frames). Mock fallback when `AI_GATEWAY_API_KEY` is missing (`mockAIResponse` in `chat.tsx` — emits a fake reasoning block too).
 - Assistant messages render via `<MarkdownPreview>` (GFM, tables, fenced code).
 - **No avatars** — sender identity is alignment + bubble fill only.
@@ -128,9 +128,15 @@ const mockAIResponse = (userMessage: string) => {
 
 The mock includes a fake reasoning blob so the `ReasoningBlock` UI is exercisable without a live reasoning-capable model.
 
-### 1.8 ChatResourcesPanel
+### 1.8 ResourcesSidebar / ChatResourcesPanel
 
-`components/panels/chat-resources-panel.tsx` — a 320px-wide aside rendered as the second column of `ChatPanel`. Visible at `lg` breakpoint and above (`hidden lg:flex`); hidden on narrower viewports so the message column keeps its reading width.
+`components/sidebars/resources.tsx` (sidebar shell) wraps `components/panels/chat-resources-panel.tsx` (tab strip + body) as the chat view's right rail. Visible at `lg` breakpoint and above (`hidden lg:flex`); hidden on narrower viewports so the message column keeps its reading width. Toggle with `⌘⇧B` / `Ctrl+Shift+B`.
+
+**Two modes:**
+- **Expanded (`w-80`)** — header (title + collapse chevron `›`) above `ChatResourcesPanel`'s tab strip and body.
+- **Collapsed (`w-12`)** — vertical icon rail: expand chevron `‹`, divider, then `Files / Notes / Artifacts` icons with count badges. Clicking an icon switches `resourcesSidebarTab` AND sets `resourcesSidebarOpen` to `true`.
+
+Both `resourcesSidebarOpen` and `resourcesSidebarTab` live in the Zustand store (persisted). A first-mount sessionStorage marker flips the default to closed on `max-width: 768px` viewports — the user's later toggles always win.
 
 **Purpose:** make workspace resources visible and attach/detach-able while chatting, without switching to the Resources main view.
 

@@ -76,6 +76,8 @@ type Theme = 'system' | 'dark' | 'light'
 | theme | `'system' \| 'dark' \| 'light'` | `'dark'` | Application theme |
 | activeView | `'workspaces' \| 'chat' \| 'resources' \| 'editor'` | `'workspaces'` | Single source of truth for which panel renders in the main area (`SidebarInset`). Tabs in the sidebar set this. |
 | sidebarCollapsed | boolean | false | Main sidebar collapsed state |
+| resourcesSidebarOpen | boolean | true | Right resources sidebar open/closed (chat view). Mobile first-mount flips to `false`. |
+| resourcesSidebarTab | `'files' \| 'notes' \| 'artifacts'` | `'files'` | Selected tab inside the right resources sidebar (shared between the rail icons and the expanded tab strip). |
 | files | UploadedFile[] | [] | Uploaded files array |
 | workspaces | Workspace[] | [default workspace] | All workspaces |
 | activeWorkspaceId | string | 'default' | Active workspace ID |
@@ -95,6 +97,9 @@ type Theme = 'system' | 'dark' | 'light'
 ```typescript
 toggleSidebar: () => void                                   // toggles sidebarCollapsed
 setActiveView: (view: MainView) => void                     // drives MainArea
+setResourcesSidebarOpen: (open: boolean) => void            // explicit set
+toggleResourcesSidebar: () => void                          // ⌘⇧B and chevron buttons
+setResourcesSidebarTab: (tab: 'files' | 'notes' | 'artifacts') => void
 ```
 
 All legacy per-panel boolean toggles (`toggleChatPanel`, `toggleEditorPanel`, `toggleResourcesPanel`, `toggleSourcesPanel`, `toggleChatSessionsPanel`, `toggleWorkspacePanel`), the `openPanel` group-routing action, and the panel-width setters have been removed — the dashboard is tabbed and stores no individual panel-open state.
@@ -194,7 +199,11 @@ Only specific state is persisted to localStorage:
   conversations: state.conversations,
   activeConversationId: state.activeConversationId,
   files: state.files,
-  documentContent: state.documentContent,
+  chatModel: state.chatModel,
+  notes: state.notes,
+  artifacts: state.artifacts,
+  resourcesSidebarOpen: state.resourcesSidebarOpen,
+  resourcesSidebarTab: state.resourcesSidebarTab,
 }
 ```
 
@@ -208,10 +217,13 @@ onRehydrateStorage: () => () => {
 
 ### 3.4 Persist Version & Migration
 
-The persist config sets `version: 3`.
+The persist config sets `version: 6`.
 
 - `fromVersion < 2`: strip dead keys from the old multi-panel layout (boolean panel flags, panel widths, the top-level `selectedFileIds`).
 - `fromVersion < 3`: per-chat attachment selection. `selectedFileIds` moved from `useSessionStore` onto each `Conversation`. The migration backfills `selectedFileIds: []` on any persisted conversation missing the field.
+- `fromVersion < 4`: per-chat editor document. `documentContent` moved from the root state onto each `Conversation`. The legacy global doc is copied into the active conversation so prior work isn't lost.
+- `fromVersion < 5`: backfill `Workspace.systemPrompt = ''` on persisted workspaces missing the field.
+- `fromVersion < 6`: seed `resourcesSidebarOpen = true` and `resourcesSidebarTab = 'files'` for the new right-side resources sidebar.
 
 ```typescript
 version: 3,

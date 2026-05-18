@@ -15,7 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
+import { ResourcesSidebar } from "@/components/sidebars/resources"
 import { ChatMessage } from "@/components/panels/chat-message"
 import { EmptyChatWelcome } from "@/components/panels/empty-chat-welcome"
 import { Plus, ChevronDown, Square } from "lucide-react"
@@ -702,7 +702,7 @@ export function ChatPanel() {
       </div>
 
       {/* Resources side panel */}
-      <ChatResourcesPanel />
+      <ResourcesSidebar />
     </div>
   )
 }
