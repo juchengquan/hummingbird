@@ -2,15 +2,13 @@
 
 import { useCallback, useMemo, useRef, useState } from "react"
 import { format } from "date-fns"
-import { Search, Plus, FolderOpen, Check, StickyNote, Archive } from "lucide-react"
+import { Search, Plus, FolderOpen, Check } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import {
   useStore,
   useWorkspaceResources,
   useConversationSelectedFileIds,
-  useConversationNotes,
-  useConversationArtifacts,
 } from "@/lib/hooks/use-store"
 import { getFileIcon, processSelectedFiles, formatFileSize } from "@/lib/file-utils"
 import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/lib/upload-config"
@@ -34,9 +32,6 @@ export function ChatResourcesPanel() {
   const [error, setError] = useState<string | null>(null)
   const [mounted, setMounted] = useState(false)
   const tab = useStore((s) => s.resourcesSidebarTab)
-  const setTab = useStore((s) => s.setResourcesSidebarTab)
-  const notesCount = useConversationNotes().length
-  const artifactsCount = useConversationArtifacts().length
 
   // mount flag for date formatting (avoid SSR mismatch)
   if (!mounted && typeof window !== "undefined") {
@@ -74,58 +69,8 @@ export function ChatResourcesPanel() {
 
   return (
     <div className="flex flex-col w-full h-full min-h-0">
-      {/* Tab strip */}
-      <div className="shrink-0 flex border-b border-[var(--border)]">
-        <button
-          type="button"
-          onClick={() => setTab("files")}
-          className={cn(
-            "flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors",
-            tab === "files"
-              ? "text-[var(--foreground)] border-b-2 border-[var(--primary)] -mb-px"
-              : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-          )}
-        >
-          <FolderOpen size={13} />
-          Files
-          <span className="text-[10px] text-[var(--muted-foreground)]">
-            {resources.length}
-          </span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("notes")}
-          className={cn(
-            "flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors",
-            tab === "notes"
-              ? "text-[var(--foreground)] border-b-2 border-[var(--primary)] -mb-px"
-              : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-          )}
-        >
-          <StickyNote size={13} />
-          Notes
-          <span className="text-[10px] text-[var(--muted-foreground)]">
-            {notesCount}
-          </span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("artifacts")}
-          className={cn(
-            "flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors",
-            tab === "artifacts"
-              ? "text-[var(--foreground)] border-b-2 border-[var(--primary)] -mb-px"
-              : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-          )}
-        >
-          <Archive size={13} />
-          Artifacts
-          <span className="text-[10px] text-[var(--muted-foreground)]">
-            {artifactsCount}
-          </span>
-        </button>
-      </div>
-
+      {/* Tab strip removed — the icon column in <ResourcesSidebar/> is the
+          tab switcher now. Just render the active tab's body. */}
       {tab === "notes" ? (
         <NotesTab />
       ) : tab === "artifacts" ? (
