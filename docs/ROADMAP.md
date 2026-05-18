@@ -139,6 +139,70 @@ All persistence lives in `localStorage` (`hummingbird-storage`, version 3 — se
 
 This is multi-phase work. **Phase 1 is the heavy lift**; later phases extend it.
 
+### Status
+
+Tracks what has landed vs. what is still TODO. Updated as commits ship.
+
+#### ✅ Shipped — scaffolding (commit `ce82aa7`)
+
+- Dependencies: `@supabase/supabase-js`, `@supabase/ssr`
+- `.env.example` documenting all required vars; `.gitignore` exemption for it
+- `CLAUDE.md` "Environment Variables" section
+- SQL migrations:
+  - `supabase/migrations/0001_initial_schema.sql` — profiles, workspaces, conversations (incl. `document_content`), messages, files, resources, indexes
+  - `supabase/migrations/0002_conversation_assets.sql` — conversation_files, artifacts, notes
+  - `supabase/migrations/0003_rls_policies.sql` — RLS on every table + `on_auth_user_created` trigger
+  - `supabase/storage/policies.sql` — `user-files` bucket and folder-prefix policies
+- Supabase clients with defensive null when env vars are absent: `lib/supabase/{env,client,server}.ts`
+- `lib/hooks/use-auth.ts` exposing `{ status: 'unconfigured' | 'loading' | 'signed-out' | 'signed-in', user, signIn, signOut }`
+- `app/auth/callback/route.ts` for the magic-link code exchange
+- Auth UI: `components/auth/auth-dialog.tsx`, `components/auth/account-menu.tsx` mounted in the sidebar header
+
+Smoke-tested unconfigured: `/dashboard` 200, `/auth/callback` 307 → `/dashboard?auth_error=unconfigured`. AccountMenu renders nothing, so the UI looks identical to before.
+
+#### ⏳ TODO — Phase 1 remainder
+
+Ordered roughly in the order they should land:
+
+1. **Manual provisioning** *(user-side, not code)*
+   - Create a Supabase project
+   - Run the three migrations and `storage/policies.sql`
+   - Configure auth redirect URLs (`http://localhost:3000/auth/callback` + prod)
+   - Drop `NEXT_PUBLIC_SUPABASE_URL` / `_ANON_KEY` into `.env.local`
+
+2. **Sync layer for existing entities** — `lib/sync/sync-queue.ts`, `lib/sync/handlers.ts`, `lib/hooks/use-sync.ts`
+   - Generate types: `supabase gen types typescript > lib/supabase/types.ts`
+   - Queue persisted to localStorage under `hummingbird-sync-queue`
+   - Retries with exponential backoff; pauses on `navigator.onLine === false`
+   - Handlers for every persisted mutator listed in the Phase 1 plan above
+   - `useSync()` mounted in `app/dashboard/page.tsx` diffs store snapshots and enqueues ops
+   - Debounce `appendToMessage` → emit a single `updateMessage(id, fullContent)` on stream end
+
+3. **First sign-in reconciliation flow**
+   - On `SIGNED_IN`, query the cloud for the user's workspaces
+   - Empty cloud → bulk-INSERT entire local state under the new `user_id`
+   - Non-empty cloud → existing `AlertDialog` to choose "use cloud" (default) or "overwrite cloud with local"
+   - On reconciliation: hydrate the Zustand store from the cloud, flush the queue, mark sync ready
+
+4. **File uploads when signed in** — branch `hooks/use-upload-file.ts`
+   - Signed in: `supabase.storage.from('user-files').upload(...)`, record `storage_path` + signed URL on the `files` row
+   - Signed out: keep the existing UploadThing path
+   - Existing UploadThing URLs keep working via `files.external_url`
+
+5. **Conversation-related assets** *(four sub-features, each can ship independently)*
+   - **A. Conversation-scoped file uploads** — store slice (`conversationFiles`), `addConversationFile` / `removeConversationFile` mutators, UI section "This conversation" in `components/panels/chat-resources-panel.tsx`, wire the chat input `+` button as the upload trigger, sync handlers
+   - **B. Per-conversation editor document** — swap global `documentContent` for `conversations[activeId].documentContent`, `setConversationDocument(conversationId, content)` mutator (debounced 500 ms), update `components/panels/editor.tsx` and the auto-sync points in `components/panels/chat.tsx:115, 132`; one-time copy of legacy `documentContent` into the active conversation on first hydration
+   - **C. Assistant-generated artifacts** — `artifacts` store slice + mutators (`createArtifact`, `deleteArtifact`, `togglePinArtifact`, `updateArtifactTitle`), "Save as artifact" button on assistant messages in `components/panels/chat-message.tsx`, new `components/panels/artifacts-panel.tsx`, "Open in editor" action, sync handlers (binary artifacts use `user-files/{user_id}/artifacts/{artifact_id}.{ext}`)
+   - **D. Notes / bookmarks** — `notes` store slice + mutators, bookmark icon on each assistant message in `chat-message.tsx`, "Notes" tab in the right-side panel, sync handlers
+
+6. **Verification pass** — run all 14 checklist items in the "Verification (Phase 1)" section below
+
+#### ⏳ TODO — later phases (unchanged)
+
+- **Phase 2** — UploadThing cutover (deprecate for new files; optional one-time migration script for existing `external_url` files)
+- **Phase 3** — Realtime multi-device sync via `supabase.channel().on('postgres_changes', ...)`
+- **Phase 4** — Share links: new `shares` table + `app/share/conversation/[token]/page.tsx` and `app/share/document/[token]/page.tsx`
+
 ### Architecture
 
 ```
