@@ -164,9 +164,9 @@ Smoke-tested unconfigured: `/dashboard` 200, `/auth/callback` 307 → `/dashboar
 
 `Note` type, `notes` store slice with `createNote` / `updateNoteBody` / `deleteNote` / `toggleMessageBookmark`, persisted via `partialize`. Bookmark icon on assistant messages in `components/panels/chat-message.tsx`; "Notes" tab in `components/panels/chat-resources-panel.tsx` (now tabbed Files | Notes) backed by a new `components/panels/notes-tab.tsx`. Bookmarks render with a message preview and jump-to-message scroll; deleting a message detaches its bookmark (`messageId → null`, mirroring the schema's `on delete set null`). Sync handlers for `createNote`/`updateNote`/`deleteNote` not wired yet — pending the sync layer (item 2 below).
 
-#### ✅ Reframed — 5A *(documented, schema cleaned up)*
+#### ✅ Shipped — 5A reframed *(local-only)*
 
-Workspace-scoped files remain the design (managed in one workspace, attached across conversations). The `conversation_files` table has been removed from `supabase/migrations/0002_conversation_assets.sql` and its RLS policy removed from `0003`. The chat input's `+` button will be reframed (when implemented) as a shortcut: upload to active workspace + auto-attach to current conversation.
+The `+` button on the chat input is wired as a workspace upload shortcut. Clicking it opens the file picker; selected files are validated against `FILE_SIZE_LIMIT` / `ALLOWED_EXTENSIONS` (now in `lib/upload-config.ts`, shared with `chat-resources-panel.tsx`), added to the workspace via `addFile` + `addResource`, and auto-checked in the current conversation's `selectedFileIds`. Workspace-scoped files remain the design — no new tables or store slices. The `conversation_files` table was already removed from `supabase/migrations/0002_conversation_assets.sql` and its RLS policy from `0003`. No sync work needed yet; rides on the existing `addFile` / `addResource` mutators.
 
 #### ✅ Shipped — 5B per-conversation editor document *(local-only)*
 
@@ -208,7 +208,7 @@ Ordered roughly in the order they should land:
    - Existing UploadThing URLs keep working via `files.external_url`
 
 5. **Conversation-related assets** *(four sub-features, each can ship independently)*
-   - **~~A. Conversation-scoped file uploads~~** *(reframed — see Status above)*. The `+` button on the chat input becomes a shortcut: upload to active workspace + auto-attach to current conversation. No new tables or store slices.
+   - **~~A. Conversation-scoped file uploads~~** *(reframed + shipped local-only — see Status above)*. The `+` button on the chat input uploads to the active workspace and auto-attaches to the current conversation.
    - **~~B. Per-conversation editor document~~** *(shipped local-only — see Status above)*. Sync handler for `setConversationDocument` (debounced) still pending.
    - **C. Assistant-generated artifacts** — design refined: artifacts are a **passive archive** of AI outputs, distinct from the editor (active workspace). Read-mostly UI (no inline editing). "Send to editor" action **copies** into the editor as a derived doc, preserving the artifact as a pristine snapshot. Renderers can share code with the editor under the hood but the UX is deliberately different. Implementation: `artifacts` store slice + mutators (`createArtifact`, `deleteArtifact`, `togglePinArtifact`, `updateArtifactTitle`), "Save as artifact" button on assistant messages in `components/panels/chat-message.tsx`, new `components/panels/artifacts-panel.tsx`, "Send to editor" action, sync handlers. Binary artifacts use `user-files/{user_id}/artifacts/{artifact_id}.{ext}`. Ship 5C lite first (manual save, code + markdown renderers, simple list panel), 5C full later (auto-extraction, more kinds, polish).
    - **~~D. Notes / bookmarks~~** *(shipped local-only — see Status above)*. Sync handlers (`createNote`, `updateNote`, `deleteNote`) still pending.

@@ -12,12 +12,10 @@ import {
   useConversationNotes,
 } from "@/lib/hooks/use-store"
 import { getFileIcon, processSelectedFiles, formatFileSize } from "@/lib/file-utils"
+import { FILE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/lib/upload-config"
 import { NotesTab } from "@/components/panels/notes-tab"
 
 type Tab = "files" | "notes"
-
-const FILE_SIZE_LIMIT = 5 * 1024 * 1024 // 5MB
-const ALLOWED_EXTENSIONS = [".pdf", ".docx", ".txt", ".csv", ".json", ".png", ".jpg", ".jpeg"]
 
 export function ChatResourcesPanel() {
   const activeWorkspaceId = useStore((s) => s.activeWorkspaceId)

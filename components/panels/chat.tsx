@@ -20,6 +20,8 @@ import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
 import { ChatMessage } from "@/components/panels/chat-message"
 import { Plus, Bot, ChevronDown, Square } from "lucide-react"
 import { CHAT_MODELS } from "@/lib/models"
+import { processSelectedFiles } from "@/lib/file-utils"
+import { FILE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/lib/upload-config"
 import type { Message } from "@/lib/types"
 
 export function ChatPanel() {
@@ -35,6 +37,12 @@ export function ChatPanel() {
   const files = useStore((state) => state.files)
   const activeConversationId = useStore((state) => state.activeConversationId)
   const conversations = useStore((state) => state.conversations)
+  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
+  const addFile = useStore((state) => state.addFile)
+  const addResource = useStore((state) => state.addResource)
+  const toggleConversationFileSelection = useStore(
+    (state) => state.toggleConversationFileSelection
+  )
   const activeConversation = useMemo(
     () => conversations.find((c) => c.id === activeConversationId) || null,
     [conversations, activeConversationId]
@@ -44,6 +52,7 @@ export function ChatPanel() {
   const [isStreaming, setIsStreaming] = useState(false)
   const [, setShowScrollButton] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
+  const inputFileRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -208,6 +217,31 @@ export function ChatPanel() {
     abortControllerRef.current?.abort()
   }, [])
 
+  const handleAttachClick = useCallback(() => {
+    inputFileRef.current?.click()
+  }, [])
+
+  const handleFileSelected = useCallback(
+    (list: FileList | null) => {
+      const newFiles = processSelectedFiles(list, {
+        maxSize: FILE_SIZE_LIMIT,
+        onValidationError: (err) => toast.error(err),
+      })
+      newFiles.forEach((file) => {
+        addFile(file)
+        addResource(activeWorkspaceId, file.id)
+        toggleConversationFileSelection(file.id)
+      })
+      if (newFiles.length > 0) {
+        toast.success(
+          `Attached ${newFiles.length} file${newFiles.length === 1 ? "" : "s"}`
+        )
+      }
+      if (inputFileRef.current) inputFileRef.current.value = ""
+    },
+    [addFile, addResource, activeWorkspaceId, toggleConversationFileSelection]
+  )
+
   const handleSendMessage = () => {
     if (!inputValue.trim() || isStreaming) return
 
@@ -357,11 +391,21 @@ export function ChatPanel() {
 
         {/* Input Bar - fixed at bottom of messages column, grows upwards */}
         <div className="absolute bottom-2 inset-x-0 border-[var(--border)] px-4 bg-background-transparant animate-input-bar-in">
+          <input
+            ref={inputFileRef}
+            type="file"
+            multiple
+            accept={ALLOWED_EXTENSIONS.join(",")}
+            className="hidden"
+            onChange={(e) => handleFileSelected(e.target.files)}
+          />
           <InputGroup className="max-w-4xl mx-auto rounded-[1vw] bg-background">
             <InputGroupButton
               size="icon-sm"
+              onClick={handleAttachClick}
               className="ml-2 rounded-full transition-transform hover:scale-110 active:scale-95"
-              aria-label="Add attachments"
+              aria-label="Attach files to this conversation"
+              title="Attach files"
             >
               <Plus size={20} />
             </InputGroupButton>
