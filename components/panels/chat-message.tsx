@@ -5,7 +5,7 @@ import type { Message, MessageError } from "@/lib/types"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { User, Bot, Copy, Pencil, Trash2, RotateCcw, Check, X, Bookmark, AlertTriangle, ChevronDown, Archive } from "lucide-react"
+import { User, Bot, Copy, Pencil, Trash2, RotateCcw, Check, X, Bookmark, AlertTriangle, ChevronDown, Archive, Send } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { copyText } from "@/lib/export"
@@ -185,6 +185,9 @@ export function ChatMessage({
   const activeConversationId = useStore((s) => s.activeConversationId)
   const toggleMessageBookmark = useStore((s) => s.toggleMessageBookmark)
   const createArtifact = useStore((s) => s.createArtifact)
+  const setConversationDocument = useStore((s) => s.setConversationDocument)
+  const requestEditorReload = useStore((s) => s.requestEditorReload)
+  const setActiveView = useStore((s) => s.setActiveView)
   const bookmark = useMessageBookmark(message.id)
   const isBookmarked = bookmark !== null
 
@@ -259,6 +262,14 @@ export function ChatMessage({
       selection.blockIndices.length + (selection.alsoSaveAsMarkdown ? 1 : 0)
     setPickerBlocks(null)
     toast.success(`Saved ${total} artifact${total === 1 ? "" : "s"}`)
+  }
+
+  const handleSendToEditor = () => {
+    if (!activeConversationId) return
+    setConversationDocument(activeConversationId, message.content)
+    requestEditorReload()
+    setActiveView("editor")
+    toast.success("Sent to editor")
   }
 
   const handleCopy = async () => {
@@ -437,6 +448,16 @@ export function ChatMessage({
               )}
               {!isUser && (
                 <>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={handleSendToEditor}
+                    className="h-7 w-7"
+                    aria-label="Send to editor"
+                    title="Send to editor"
+                  >
+                    <Send size={14} />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon"
