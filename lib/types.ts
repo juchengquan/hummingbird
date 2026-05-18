@@ -20,11 +20,28 @@ export interface Resource {
   addedAt: Date
 }
 
+export type MessageErrorCode =
+  | 'auth'
+  | 'rate_limit'
+  | 'invalid_model'
+  | 'provider'
+  | 'network'
+  | 'unknown'
+
+export interface MessageError {
+  code: MessageErrorCode
+  status?: number
+  model?: string
+  detail?: string
+}
+
 export interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
   timestamp: Date
+  /** When set on an assistant message, render the error bubble UI instead of plain content. */
+  error?: MessageError
 }
 
 export interface Conversation {

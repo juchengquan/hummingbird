@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import type { UploadedFile, Workspace, Resource, Message, Conversation, MainView, Note } from '@/lib/types'
+import type { UploadedFile, Workspace, Resource, Message, MessageError, Conversation, MainView, Note } from '@/lib/types'
 import { DEFAULT_CHAT_MODEL } from '@/lib/models'
 
-export type { UploadedFile, Workspace, Resource, Message, Conversation, MainView, Note } from '@/lib/types'
+export type { UploadedFile, Workspace, Resource, Message, MessageError, Conversation, MainView, Note } from '@/lib/types'
 
 type Theme = 'system' | 'dark' | 'light'
 
@@ -161,6 +161,8 @@ interface AppState {
   setStreamingContent: (content: string) => void
   setChatModel: (model: string) => void
   appendToMessage: (messageId: string, chunk: string) => void
+  setMessageError: (messageId: string, error: MessageError) => void
+  clearMessageError: (messageId: string) => void
 
   // Per-conversation document actions
   setConversationDocument: (conversationId: string, content: string) => void
@@ -494,6 +496,37 @@ export const useStore = create<AppState>()(
                 messages: c.messages.map((m) =>
                   m.id === messageId ? { ...m, content: m.content + chunk } : m
                 ),
+              }
+            }
+            return c
+          }),
+        })),
+      setMessageError: (messageId: string, error: MessageError) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id === state.activeConversationId) {
+              return {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === messageId ? { ...m, error } : m
+                ),
+              }
+            }
+            return c
+          }),
+        })),
+      clearMessageError: (messageId: string) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id === state.activeConversationId) {
+              return {
+                ...c,
+                messages: c.messages.map((m) => {
+                  if (m.id !== messageId) return m
+                  const { error: _ignored, ...rest } = m
+                  void _ignored
+                  return rest
+                }),
               }
             }
             return c

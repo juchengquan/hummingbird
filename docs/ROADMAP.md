@@ -116,13 +116,11 @@ Models that emit reasoning (DeepSeek R1, Claude thinking variants, OpenAI o1-sty
 ### 3. Backend persistence
 Everything lives in `localStorage` under `hummingbird-storage` (version 3, see `lib/hooks/use-store.ts`). This blocks share links, multi-device sync, and large file storage. A full Supabase-based plan is detailed in **"Supabase persistence migration"** below.
 
-### 4. Richer error and connectivity states
-Today both `app/api/ai/command/route.ts` and `app/api/chat/route.ts` collapse model errors into a generic 500. The chat panel surfaces those as a sonner toast and injects an `_Error: …_` placeholder message. Better UX:
+### 4. ✅ Richer error and connectivity states *(chat shipped)*
 
-- Distinguish error categories on the server: missing key (401), rate limit / quota (429), provider outage (5xx upstream), invalid model id (400), aborted (408).
-- On the client, render the error inside the placeholder bubble with a **Retry** button (re-call `callChatAPI` with the same history) and a **Change model** shortcut.
-- Surface the model id and HTTP status in a small "details" disclosure so users can self-diagnose.
-- For aborted requests (Stop button), drop the placeholder entirely instead of leaving an "_Error_" line.
+`app/api/chat/route.ts` now categorises errors into `auth` / `rate_limit` / `invalid_model` / `provider` / `unknown` with appropriate status codes and a JSON body `{ code, message }`. The chat panel surfaces failures inline as a distinct error bubble (`components/panels/chat-message.tsx`) with **Retry**, **Change model** (opens the model picker), **Dismiss**, and a "Details" disclosure showing the error code, HTTP status, and model id. `Message` gained an optional `error: MessageError` field — see `lib/types.ts`. Error-marked messages are filtered out of the Markdown export. Aborted requests (Stop button) now drop the empty placeholder instead of leaving an "_[stopped]_" line.
+
+Still pending for the editor routes (`app/api/ai/command/route.ts`, `app/api/ai/copilot/route.ts`): same categorisation pattern + inline rendering — left for when richer editor error UI is needed.
 
 ## Supabase persistence migration
 

@@ -8,6 +8,7 @@ function formatTimestamp(timestamp: Date | string): string {
 export function conversationToMarkdown(conversation: Conversation): string {
   const header = `# ${conversation.title}\n\n_Exported ${new Date().toISOString()}_\n`
   const body = conversation.messages
+    .filter((m) => !m.error)
     .map((m) => {
       const role = m.role === "user" ? "User" : "Assistant"
       return `## ${role} — ${formatTimestamp(m.timestamp)}\n\n${m.content}`

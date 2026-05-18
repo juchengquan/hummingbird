@@ -22,7 +22,7 @@ import { Plus, Bot, ChevronDown, Square } from "lucide-react"
 import { CHAT_MODELS } from "@/lib/models"
 import { processSelectedFiles } from "@/lib/file-utils"
 import { FILE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/lib/upload-config"
-import type { Message } from "@/lib/types"
+import type { Message, MessageError, MessageErrorCode } from "@/lib/types"
 
 export function ChatPanel() {
   const addMessage = useStore((state) => state.addMessage)
@@ -30,6 +30,7 @@ export function ChatPanel() {
   const updateMessage = useStore((state) => state.updateMessage)
   const appendToMessage = useStore((state) => state.appendToMessage)
   const truncateMessagesAfter = useStore((state) => state.truncateMessagesAfter)
+  const setMessageError = useStore((state) => state.setMessageError)
   const isTyping = useStore((state) => state.isTyping)
   const setIsTyping = useStore((state) => state.setIsTyping)
   const chatModel = useStore((state) => state.chatModel)
@@ -50,6 +51,7 @@ export function ChatPanel() {
   const hydrated = useHydrated()
   const [inputValue, setInputValue] = useState("")
   const [isStreaming, setIsStreaming] = useState(false)
+  const [modelPickerOpen, setModelPickerOpen] = useState(false)
   const [, setShowScrollButton] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
   const inputFileRef = useRef<HTMLInputElement>(null)
@@ -124,6 +126,16 @@ export function ChatPanel() {
       let placeholder: Message | null = null
       let firstChunk = true
 
+      const surfaceError = (error: MessageError) => {
+        setIsTyping(false)
+        if (placeholder) {
+          setMessageError(placeholder.id, error)
+        } else {
+          const created = addMessage({ role: "assistant", content: "" })
+          setMessageError(created.id, error)
+        }
+      }
+
       try {
         const res = await fetch("/api/chat", {
           method: "POST",
@@ -136,16 +148,37 @@ export function ChatPanel() {
           }),
         })
 
-        if (res.status === 401) {
-          setIsTyping(false)
-          setIsStreaming(false)
-          const lastUser = [...history].reverse().find((m) => m.role === "user")
-          if (lastUser) mockAIResponse(lastUser.content)
+        if (!res.ok) {
+          let body: { code?: string; message?: string } = {}
+          try {
+            body = await res.json()
+          } catch {
+            /* non-JSON error body */
+          }
+          if (res.status === 401) {
+            setIsTyping(false)
+            setIsStreaming(false)
+            const lastUser = [...history].reverse().find((m) => m.role === "user")
+            if (lastUser) mockAIResponse(lastUser.content)
+            return
+          }
+          surfaceError({
+            code: (body.code as MessageErrorCode) || "unknown",
+            status: res.status,
+            model: chatModel,
+            detail: body.message,
+          })
           return
         }
 
-        if (!res.ok || !res.body) {
-          throw new Error(`Chat request failed (${res.status})`)
+        if (!res.body) {
+          surfaceError({
+            code: "provider",
+            status: res.status,
+            model: chatModel,
+            detail: "No response body.",
+          })
+          return
         }
 
         const reader = res.body.getReader()
@@ -167,9 +200,10 @@ export function ChatPanel() {
         if (tail && placeholder) appendToMessage(placeholder.id, tail)
 
         if (firstChunk) {
-          addMessage({
-            role: "assistant",
-            content: "_The model returned an empty response._",
+          surfaceError({
+            code: "provider",
+            model: chatModel,
+            detail: "The model returned an empty response.",
           })
         }
       } catch (err) {
@@ -177,16 +211,15 @@ export function ChatPanel() {
           (err instanceof DOMException && err.name === "AbortError") ||
           controller.signal.aborted
         if (aborted) {
-          if (placeholder) appendToMessage(placeholder.id, "\n\n_[stopped]_")
-        } else {
-          const message = err instanceof Error ? err.message : "Unknown error"
-          toast.error(`Chat failed: ${message}`)
-          if (!placeholder) {
-            addMessage({
-              role: "assistant",
-              content: `_Error: ${message}_`,
-            })
+          if (placeholder && placeholder.content === "") {
+            deleteMessage(placeholder.id)
           }
+        } else {
+          surfaceError({
+            code: "network",
+            model: chatModel,
+            detail: err instanceof Error ? err.message : "Network error",
+          })
         }
       } finally {
         setIsTyping(false)
@@ -202,9 +235,11 @@ export function ChatPanel() {
       appendToMessage,
       chatModel,
       conversations,
+      deleteMessage,
       files,
       mockAIResponse,
       setIsTyping,
+      setMessageError,
     ]
   )
 
@@ -300,6 +335,23 @@ export function ChatPanel() {
     [conversations, activeConversationId, truncateMessagesAfter]
   )
 
+  const handleRetryErrorMessage = useCallback(
+    (messageId: string) => {
+      const conv = conversations.find((c) => c.id === activeConversationId)
+      if (!conv) return
+      const idx = conv.messages.findIndex((m) => m.id === messageId)
+      if (idx === -1) return
+      const newHistory = conv.messages.slice(0, idx)
+      deleteMessage(messageId)
+      callChatAPIRef.current(newHistory)
+    },
+    [conversations, activeConversationId, deleteMessage]
+  )
+
+  const handleChangeModel = useCallback(() => {
+    setModelPickerOpen(true)
+  }, [])
+
   // Auto-resize textarea
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInputValue(e.target.value)
@@ -351,6 +403,8 @@ export function ChatPanel() {
                     onDelete={deleteMessage}
                     onEditUserMessage={handleEditUserMessage}
                     onRegenerateAssistantMessage={handleRegenerateAssistantMessage}
+                    onRetryError={handleRetryErrorMessage}
+                    onChangeModel={handleChangeModel}
                   />
                 ))
               )}
@@ -434,7 +488,12 @@ export function ChatPanel() {
             )}
           </InputGroup>
           <div className="mt-2 flex items-center justify-center gap-3">
-            <Select value={chatModel} onValueChange={setChatModel}>
+            <Select
+              value={chatModel}
+              onValueChange={setChatModel}
+              open={modelPickerOpen}
+              onOpenChange={setModelPickerOpen}
+            >
               <SelectTrigger
                 size="sm"
                 className="h-6 text-xs gap-1 border-none bg-transparent hover:bg-[var(--secondary)]"

@@ -38,13 +38,35 @@ function buildSystemPrompt(files: FileSummary[] | undefined): string {
   return `${base}\n\nThe user has attached the following files as context. You do NOT have their contents — only metadata. If a question requires the content of an attached file, say so explicitly and ask the user to paste the relevant portion.\n\n${list}`
 }
 
+function categorizeError(error: unknown): {
+  status: number
+  code: 'auth' | 'rate_limit' | 'invalid_model' | 'provider' | 'unknown'
+  message: string
+} {
+  const message = error instanceof Error ? error.message : 'Unknown error'
+  const lower = message.toLowerCase()
+  if (/rate.?limit|quota|too many requests|429/.test(lower)) {
+    return { status: 429, code: 'rate_limit', message }
+  }
+  if (/invalid.*model|model.*not.found|unknown model|400/.test(lower)) {
+    return { status: 400, code: 'invalid_model', message }
+  }
+  if (/unauthor|forbidden|401|403/.test(lower)) {
+    return { status: 401, code: 'auth', message }
+  }
+  if (/bad gateway|provider|upstream|502|503|504/.test(lower)) {
+    return { status: 502, code: 'provider', message }
+  }
+  return { status: 500, code: 'unknown', message }
+}
+
 export async function POST(req: NextRequest) {
   const body = (await req.json()) as ChatRequestBody
   const apiKey = process.env.AI_GATEWAY_API_KEY
 
   if (!apiKey) {
     return NextResponse.json(
-      { error: 'Missing AI_GATEWAY_API_KEY.' },
+      { code: 'auth', message: 'Missing AI_GATEWAY_API_KEY.' },
       { status: 401 }
     )
   }
@@ -63,11 +85,9 @@ export async function POST(req: NextRequest) {
     return result.toTextStreamResponse()
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      return NextResponse.json(null, { status: 408 })
+      return NextResponse.json({ code: 'aborted' }, { status: 408 })
     }
-    return NextResponse.json(
-      { error: 'Failed to process chat request' },
-      { status: 500 }
-    )
+    const { status, code, message } = categorizeError(error)
+    return NextResponse.json({ code, message }, { status })
   }
 }

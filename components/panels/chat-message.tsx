@@ -1,11 +1,11 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { Message } from "@/lib/types"
+import type { Message, MessageError } from "@/lib/types"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { User, Bot, Copy, Pencil, Trash2, RotateCcw, Check, X, Bookmark } from "lucide-react"
+import { User, Bot, Copy, Pencil, Trash2, RotateCcw, Check, X, Bookmark, AlertTriangle, ChevronDown } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { copyText } from "@/lib/export"
@@ -36,6 +36,109 @@ interface ChatMessageProps {
   onDelete: (messageId: string) => void
   onEditUserMessage: (messageId: string, newContent: string) => void
   onRegenerateAssistantMessage: (messageId: string) => void
+  onRetryError?: (messageId: string) => void
+  onChangeModel?: () => void
+}
+
+const ERROR_TITLES: Record<string, string> = {
+  auth: "Authentication failed",
+  rate_limit: "Rate limited",
+  invalid_model: "Model unavailable",
+  provider: "Provider error",
+  network: "Network error",
+  unknown: "Something went wrong",
+}
+
+function ErrorBubble({
+  error,
+  partialContent,
+  onRetry,
+  onChangeModel,
+  onDelete,
+}: {
+  error: MessageError
+  partialContent: string
+  onRetry: () => void
+  onChangeModel?: () => void
+  onDelete: () => void
+}) {
+  const [showDetails, setShowDetails] = useState(false)
+  const title = ERROR_TITLES[error.code] ?? ERROR_TITLES.unknown
+  return (
+    <div className="rounded-lg border border-[var(--destructive)]/40 bg-[var(--destructive)]/5 px-4 py-3 max-w-[70%] space-y-2">
+      {partialContent && (
+        <p className="text-sm whitespace-pre-wrap text-[var(--foreground)]">
+          {partialContent}
+        </p>
+      )}
+      <div className="flex items-start gap-2">
+        <AlertTriangle size={14} className="text-[var(--destructive)] mt-0.5 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-[var(--destructive)]">{title}</p>
+          {error.detail && (
+            <p className="text-xs text-[var(--muted-foreground)] mt-0.5 break-words">
+              {error.detail}
+            </p>
+          )}
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        <Button size="sm" variant="secondary" onClick={onRetry} className="h-7 gap-1.5 text-xs">
+          <RotateCcw size={12} />
+          Retry
+        </Button>
+        {onChangeModel && error.code !== "network" && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onChangeModel}
+            className="h-7 gap-1.5 text-xs"
+          >
+            Change model
+          </Button>
+        )}
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={onDelete}
+          className="h-7 gap-1.5 text-xs text-[var(--muted-foreground)]"
+        >
+          Dismiss
+        </Button>
+        {(error.status !== undefined || error.model) && (
+          <button
+            type="button"
+            onClick={() => setShowDetails((v) => !v)}
+            className="ml-auto inline-flex items-center gap-1 text-[10px] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+          >
+            Details
+            <ChevronDown
+              size={10}
+              className={cn("transition-transform", showDetails && "rotate-180")}
+            />
+          </button>
+        )}
+      </div>
+      {showDetails && (
+        <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 text-[10px] text-[var(--muted-foreground)] pt-1 border-t border-[var(--destructive)]/20">
+          <dt>Code</dt>
+          <dd className="font-mono">{error.code}</dd>
+          {error.status !== undefined && (
+            <>
+              <dt>HTTP</dt>
+              <dd className="font-mono">{error.status}</dd>
+            </>
+          )}
+          {error.model && (
+            <>
+              <dt>Model</dt>
+              <dd className="font-mono break-all">{error.model}</dd>
+            </>
+          )}
+        </dl>
+      )}
+    </div>
+  )
 }
 
 export function ChatMessage({
@@ -44,6 +147,8 @@ export function ChatMessage({
   onDelete,
   onEditUserMessage,
   onRegenerateAssistantMessage,
+  onRetryError,
+  onChangeModel,
 }: ChatMessageProps) {
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState(message.content)
@@ -128,6 +233,15 @@ export function ChatMessage({
           </AvatarFallback>
         </Avatar>
 
+        {message.error && !isUser ? (
+          <ErrorBubble
+            error={message.error}
+            partialContent={message.content}
+            onRetry={() => onRetryError?.(message.id)}
+            onChangeModel={onChangeModel}
+            onDelete={() => onDelete(message.id)}
+          />
+        ) : (
         <div className={cn("flex flex-col max-w-[70%]", isUser ? "items-end" : "items-start")}>
           <div
             className={cn(
@@ -262,6 +376,7 @@ export function ChatMessage({
             </div>
           )}
         </div>
+        )}
       </div>
     </div>
   )
