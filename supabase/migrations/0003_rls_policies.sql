@@ -7,7 +7,6 @@ alter table conversations enable row level security;
 alter table messages enable row level security;
 alter table files enable row level security;
 alter table resources enable row level security;
-alter table conversation_files enable row level security;
 alter table artifacts enable row level security;
 alter table notes enable row level security;
 
@@ -27,9 +26,6 @@ create policy "own files" on files
   for all using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 create policy "own resources" on resources
-  for all using (user_id = auth.uid()) with check (user_id = auth.uid());
-
-create policy "own conversation files" on conversation_files
   for all using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 create policy "own artifacts" on artifacts

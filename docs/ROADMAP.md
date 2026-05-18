@@ -160,6 +160,14 @@ Tracks what has landed vs. what is still TODO. Updated as commits ship.
 
 Smoke-tested unconfigured: `/dashboard` 200, `/auth/callback` 307 → `/dashboard?auth_error=unconfigured`. AccountMenu renders nothing, so the UI looks identical to before.
 
+#### ✅ Shipped — 5D notes/bookmarks *(local-only)*
+
+`Note` type, `notes` store slice with `createNote` / `updateNoteBody` / `deleteNote` / `toggleMessageBookmark`, persisted via `partialize`. Bookmark icon on assistant messages in `components/panels/chat-message.tsx`; "Notes" tab in `components/panels/chat-resources-panel.tsx` (now tabbed Files | Notes) backed by a new `components/panels/notes-tab.tsx`. Bookmarks render with a message preview and jump-to-message scroll; deleting a message detaches its bookmark (`messageId → null`, mirroring the schema's `on delete set null`). Sync handlers for `createNote`/`updateNote`/`deleteNote` not wired yet — pending the sync layer (item 2 below).
+
+#### ✅ Reframed — 5A *(documented, schema cleaned up)*
+
+Workspace-scoped files remain the design (managed in one workspace, attached across conversations). The `conversation_files` table has been removed from `supabase/migrations/0002_conversation_assets.sql` and its RLS policy removed from `0003`. The chat input's `+` button will be reframed (when implemented) as a shortcut: upload to active workspace + auto-attach to current conversation.
+
 #### ⏳ TODO — Phase 1 remainder
 
 Ordered roughly in the order they should land:
@@ -190,10 +198,10 @@ Ordered roughly in the order they should land:
    - Existing UploadThing URLs keep working via `files.external_url`
 
 5. **Conversation-related assets** *(four sub-features, each can ship independently)*
-   - **A. Conversation-scoped file uploads** — store slice (`conversationFiles`), `addConversationFile` / `removeConversationFile` mutators, UI section "This conversation" in `components/panels/chat-resources-panel.tsx`, wire the chat input `+` button as the upload trigger, sync handlers
+   - **~~A. Conversation-scoped file uploads~~** *(reframed — see Status above)*. The `+` button on the chat input becomes a shortcut: upload to active workspace + auto-attach to current conversation. No new tables or store slices.
    - **B. Per-conversation editor document** — swap global `documentContent` for `conversations[activeId].documentContent`, `setConversationDocument(conversationId, content)` mutator (debounced 500 ms), update `components/panels/editor.tsx` and the auto-sync points in `components/panels/chat.tsx:115, 132`; one-time copy of legacy `documentContent` into the active conversation on first hydration
    - **C. Assistant-generated artifacts** — `artifacts` store slice + mutators (`createArtifact`, `deleteArtifact`, `togglePinArtifact`, `updateArtifactTitle`), "Save as artifact" button on assistant messages in `components/panels/chat-message.tsx`, new `components/panels/artifacts-panel.tsx`, "Open in editor" action, sync handlers (binary artifacts use `user-files/{user_id}/artifacts/{artifact_id}.{ext}`)
-   - **D. Notes / bookmarks** — `notes` store slice + mutators, bookmark icon on each assistant message in `chat-message.tsx`, "Notes" tab in the right-side panel, sync handlers
+   - **~~D. Notes / bookmarks~~** *(shipped local-only — see Status above)*. Sync handlers (`createNote`, `updateNote`, `deleteNote`) still pending.
 
 6. **Verification pass** — run all 14 checklist items in the "Verification (Phase 1)" section below
 

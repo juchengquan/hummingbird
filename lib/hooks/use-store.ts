@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import type { UploadedFile, Workspace, Resource, Message, Conversation, MainView } from '@/lib/types'
+import type { UploadedFile, Workspace, Resource, Message, Conversation, MainView, Note } from '@/lib/types'
 import { DEFAULT_CHAT_MODEL } from '@/lib/models'
 
-export type { UploadedFile, Workspace, Resource, Message, Conversation, MainView } from '@/lib/types'
+export type { UploadedFile, Workspace, Resource, Message, Conversation, MainView, Note } from '@/lib/types'
 
 type Theme = 'system' | 'dark' | 'light'
 
@@ -101,6 +101,9 @@ interface AppState {
   // Resources (file-to-workspace associations)
   resources: Resource[]
 
+  // Notes (free-form notes & message bookmarks, scoped to a conversation)
+  notes: Note[]
+
   // Conversations
   conversations: Conversation[]
   activeConversationId: string | null
@@ -130,6 +133,13 @@ interface AppState {
   // Resource actions
   addResource: (workspaceId: string, fileId: string) => void
   removeResource: (resourceId: string) => void
+
+  // Notes actions
+  createNote: (input: { conversationId: string; messageId?: string | null; body?: string }) => Note
+  updateNoteBody: (noteId: string, body: string) => void
+  deleteNote: (noteId: string) => void
+  /** Returns the resulting bookmark note if created, or null if removed. */
+  toggleMessageBookmark: (conversationId: string, messageId: string) => Note | null
 
   // File actions
   addFile: (file: UploadedFile) => void
@@ -189,6 +199,9 @@ export const useStore = create<AppState>()(
 
       // Resources
       resources: [],
+
+      // Notes
+      notes: [],
 
       // Conversations
       conversations: getDefaultConversations().map((c: Conversation) => ({
@@ -271,6 +284,53 @@ export const useStore = create<AppState>()(
           resources: state.resources.filter((r) => r.id !== resourceId),
         })),
 
+      // Notes actions
+      createNote: ({ conversationId, messageId = null, body = '' }) => {
+        const now = new Date()
+        const newNote: Note = {
+          id: crypto.randomUUID(),
+          conversationId,
+          messageId,
+          body,
+          createdAt: now,
+          updatedAt: now,
+        }
+        set((state) => ({ notes: [newNote, ...state.notes] }))
+        return newNote
+      },
+      updateNoteBody: (noteId: string, body: string) =>
+        set((state) => ({
+          notes: state.notes.map((n) =>
+            n.id === noteId ? { ...n, body, updatedAt: new Date() } : n
+          ),
+        })),
+      deleteNote: (noteId: string) =>
+        set((state) => ({
+          notes: state.notes.filter((n) => n.id !== noteId),
+        })),
+      toggleMessageBookmark: (conversationId: string, messageId: string) => {
+        const existing = get().notes.find(
+          (n) => n.conversationId === conversationId && n.messageId === messageId
+        )
+        if (existing) {
+          set((state) => ({
+            notes: state.notes.filter((n) => n.id !== existing.id),
+          }))
+          return null
+        }
+        const now = new Date()
+        const newNote: Note = {
+          id: crypto.randomUUID(),
+          conversationId,
+          messageId,
+          body: '',
+          createdAt: now,
+          updatedAt: now,
+        }
+        set((state) => ({ notes: [newNote, ...state.notes] }))
+        return newNote
+      },
+
       // File actions
       addFile: (file: UploadedFile) =>
         set((state) => ({ files: [...state.files, file] })),
@@ -312,6 +372,7 @@ export const useStore = create<AppState>()(
           )
           return {
             conversations: newConversations,
+            notes: state.notes.filter((n) => n.conversationId !== conversationId),
             activeConversationId:
               state.activeConversationId === conversationId
                 ? newConversations[0]?.id || null
@@ -394,6 +455,11 @@ export const useStore = create<AppState>()(
             }
             return c
           }),
+          // Detach any bookmarks anchored to this message (mirrors the
+          // notes.message_id `on delete set null` from the Supabase schema).
+          notes: state.notes.map((n) =>
+            n.messageId === messageId ? { ...n, messageId: null } : n
+          ),
         })),
       updateMessage: (messageId: string, content: string) =>
         set((state) => ({
@@ -506,6 +572,7 @@ export const useStore = create<AppState>()(
         files: state.files,
         documentContent: state.documentContent,
         chatModel: state.chatModel,
+        notes: state.notes,
       }),
     }
   )
@@ -575,4 +642,20 @@ export const useWorkspaceResources = () => {
   const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
   const workspaceResources = resources.filter((r) => r.workspaceId === activeWorkspaceId)
   return workspaceResources.map((r) => files.find((f) => f.id === r.fileId)).filter(Boolean) as UploadedFile[]
+}
+
+export const useConversationNotes = () => {
+  const notes = useStore((state) => state.notes)
+  const activeConversationId = useStore((state) => state.activeConversationId)
+  if (!activeConversationId) return [] as Note[]
+  return notes.filter((n) => n.conversationId === activeConversationId)
+}
+
+export const useMessageBookmark = (messageId: string) => {
+  const notes = useStore((state) => state.notes)
+  const activeConversationId = useStore((state) => state.activeConversationId)
+  if (!activeConversationId) return null
+  return notes.find(
+    (n) => n.conversationId === activeConversationId && n.messageId === messageId
+  ) ?? null
 }

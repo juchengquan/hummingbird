@@ -1,14 +1,9 @@
--- Conversation-scoped assets: per-conversation file uploads, assistant
--- artifacts, and user notes/bookmarks. The per-conversation editor
--- document lives on the conversations table (added in 0001).
-
-create table if not exists conversation_files (
-  id uuid primary key,
-  user_id uuid not null references auth.users(id) on delete cascade,
-  conversation_id uuid not null references conversations(id) on delete cascade,
-  file_id uuid not null references files(id) on delete cascade,
-  added_at timestamptz not null default now()
-);
+-- Conversation-scoped assets: assistant artifacts and user
+-- notes/bookmarks. The per-conversation editor document lives on the
+-- conversations table (added in 0001). Files remain workspace-scoped
+-- via the `resources` join from 0001 — the chat input's + button is
+-- a shortcut that uploads to the active workspace and auto-attaches
+-- to the current conversation.
 
 create table if not exists artifacts (
   id uuid primary key,
@@ -33,9 +28,6 @@ create table if not exists notes (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
-
-create index if not exists conversation_files_conversation
-  on conversation_files (conversation_id);
 
 create index if not exists artifacts_conversation_created
   on artifacts (conversation_id, created_at desc);

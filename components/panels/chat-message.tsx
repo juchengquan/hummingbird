@@ -5,10 +5,11 @@ import { Message } from "@/lib/types"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { User, Bot, Copy, Pencil, Trash2, RotateCcw, Check, X } from "lucide-react"
+import { User, Bot, Copy, Pencil, Trash2, RotateCcw, Check, X, Bookmark } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { copyText } from "@/lib/export"
+import { useStore, useMessageBookmark } from "@/lib/hooks/use-store"
 
 function formatTime(timestamp: Date | string): string {
   const date = new Date(timestamp)
@@ -60,6 +61,17 @@ export function ChatMessage({
 
   const isUser = message.role === "user"
 
+  const activeConversationId = useStore((s) => s.activeConversationId)
+  const toggleMessageBookmark = useStore((s) => s.toggleMessageBookmark)
+  const bookmark = useMessageBookmark(message.id)
+  const isBookmarked = bookmark !== null
+
+  const handleBookmark = () => {
+    if (!activeConversationId) return
+    const result = toggleMessageBookmark(activeConversationId, message.id)
+    toast.success(result ? "Bookmarked" : "Removed bookmark")
+  }
+
   const handleCopy = async () => {
     try {
       await copyText(message.content)
@@ -101,7 +113,11 @@ export function ChatMessage({
 
   return (
     <div
-      className="group/message animate-message-in"
+      id={`chat-message-${message.id}`}
+      className={cn(
+        "group/message animate-message-in scroll-mt-20",
+        isBookmarked && "rounded-md ring-1 ring-amber-400/30"
+      )}
       style={{ animationDelay: `${index * 50}ms` }}
     >
       <div className={cn("flex gap-3", isUser ? "flex-row-reverse" : "flex-row")}>
@@ -176,10 +192,29 @@ export function ChatMessage({
           {!isEditing && (
             <div
               className={cn(
-                "flex gap-0.5 mt-1 opacity-0 group-hover/message:opacity-100 transition-opacity",
+                "flex gap-0.5 mt-1 transition-opacity",
+                isBookmarked
+                  ? "opacity-100"
+                  : "opacity-0 group-hover/message:opacity-100",
                 isUser ? "flex-row-reverse" : "flex-row"
               )}
             >
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleBookmark}
+                className={cn(
+                  "h-7 w-7",
+                  isBookmarked && "text-amber-500 hover:text-amber-500"
+                )}
+                aria-label={isBookmarked ? "Remove bookmark" : "Bookmark message"}
+                title={isBookmarked ? "Remove bookmark" : "Bookmark"}
+              >
+                <Bookmark
+                  size={14}
+                  fill={isBookmarked ? "currentColor" : "none"}
+                />
+              </Button>
               <Button
                 variant="ghost"
                 size="icon"

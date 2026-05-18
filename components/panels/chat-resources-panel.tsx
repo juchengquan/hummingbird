@@ -2,15 +2,19 @@
 
 import { useCallback, useMemo, useRef, useState } from "react"
 import { format } from "date-fns"
-import { Search, Plus, FolderOpen, Check } from "lucide-react"
+import { Search, Plus, FolderOpen, Check, StickyNote } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import {
   useStore,
   useWorkspaceResources,
   useConversationSelectedFileIds,
+  useConversationNotes,
 } from "@/lib/hooks/use-store"
 import { getFileIcon, processSelectedFiles, formatFileSize } from "@/lib/file-utils"
+import { NotesTab } from "@/components/panels/notes-tab"
+
+type Tab = "files" | "notes"
 
 const FILE_SIZE_LIMIT = 5 * 1024 * 1024 // 5MB
 const ALLOWED_EXTENSIONS = [".pdf", ".docx", ".txt", ".csv", ".json", ".png", ".jpg", ".jpeg"]
@@ -28,6 +32,8 @@ export function ChatResourcesPanel() {
   const [query, setQuery] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [mounted, setMounted] = useState(false)
+  const [tab, setTab] = useState<Tab>("files")
+  const notesCount = useConversationNotes().length
 
   // mount flag for date formatting (avoid SSR mismatch)
   if (!mounted && typeof window !== "undefined") {
@@ -63,14 +69,99 @@ export function ChatResourcesPanel() {
 
   return (
     <aside className="hidden lg:flex flex-col w-80 h-full min-h-0 shrink-0 border-l border-[var(--border)] bg-[var(--background)]/60">
+      {/* Tab strip */}
+      <div className="shrink-0 flex border-b border-[var(--border)]">
+        <button
+          type="button"
+          onClick={() => setTab("files")}
+          className={cn(
+            "flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors",
+            tab === "files"
+              ? "text-[var(--foreground)] border-b-2 border-[var(--primary)] -mb-px"
+              : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+          )}
+        >
+          <FolderOpen size={13} />
+          Files
+          <span className="text-[10px] text-[var(--muted-foreground)]">
+            {resources.length}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("notes")}
+          className={cn(
+            "flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors",
+            tab === "notes"
+              ? "text-[var(--foreground)] border-b-2 border-[var(--primary)] -mb-px"
+              : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+          )}
+        >
+          <StickyNote size={13} />
+          Notes
+          <span className="text-[10px] text-[var(--muted-foreground)]">
+            {notesCount}
+          </span>
+        </button>
+      </div>
+
+      {tab === "notes" ? (
+        <NotesTab />
+      ) : (
+        <FilesTabBody
+          resources={resources}
+          attachedCount={attachedCount}
+          query={query}
+          setQuery={setQuery}
+          filtered={filtered}
+          selectedFileIds={selectedFileIds}
+          toggleFileSelection={toggleFileSelection}
+          mounted={mounted}
+          error={error}
+          fileInputRef={fileInputRef}
+          handleUpload={handleUpload}
+          setActiveView={setActiveView}
+        />
+      )}
+    </aside>
+  )
+}
+
+interface FilesTabBodyProps {
+  resources: ReturnType<typeof useWorkspaceResources>
+  attachedCount: number
+  query: string
+  setQuery: (q: string) => void
+  filtered: ReturnType<typeof useWorkspaceResources>
+  selectedFileIds: string[]
+  toggleFileSelection: (fileId: string) => void
+  mounted: boolean
+  error: string | null
+  fileInputRef: React.RefObject<HTMLInputElement | null>
+  handleUpload: (list: FileList | null) => void
+  setActiveView: (view: "workspaces" | "chat" | "resources" | "editor") => void
+}
+
+function FilesTabBody({
+  resources,
+  attachedCount,
+  query,
+  setQuery,
+  filtered,
+  selectedFileIds,
+  toggleFileSelection,
+  mounted,
+  error,
+  fileInputRef,
+  handleUpload,
+  setActiveView,
+}: FilesTabBodyProps) {
+  return (
+    <>
       {/* Header */}
       <div className="shrink-0 px-3 py-2.5 border-b border-[var(--border)] flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="flex items-center gap-1.5 text-sm font-medium text-[var(--foreground)]">
-            <FolderOpen size={14} className="text-[var(--muted-foreground)]" />
-            Files
-          </div>
-          <p className="mt-0.5 text-[11px] text-[var(--muted-foreground)]">
+          <p className="text-[11px] text-[var(--muted-foreground)]">
             {resources.length} in workspace · {attachedCount} attached
           </p>
         </div>
@@ -200,6 +291,6 @@ export function ChatResourcesPanel() {
           Manage workspace files →
         </button>
       </div>
-    </aside>
+    </>
   )
 }

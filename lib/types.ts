@@ -39,4 +39,14 @@ export interface Conversation {
   selectedFileIds: string[]
 }
 
+export interface Note {
+  id: string
+  conversationId: string
+  /** When set, the note is a bookmark anchored to a specific message. */
+  messageId: string | null
+  body: string
+  createdAt: Date
+  updatedAt: Date
+}
+
 export type MainView = 'workspaces' | 'chat' | 'resources' | 'editor'
