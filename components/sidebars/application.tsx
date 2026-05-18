@@ -25,6 +25,7 @@ import { useStore } from "@/lib/hooks/use-store"
 import { useWorkspaceConversations } from "@/lib/hooks/use-store"
 import { ConversationItem } from "@/components/sidebars/conversation-item"
 import { AccountMenu } from "@/components/auth/account-menu"
+import { ThemeToggle } from "@/components/theme-toggle"
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const {
@@ -81,6 +82,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           <div className="flex-1 min-w-0">
             <AccountMenu />
           </div>
+          <ThemeToggle />
           <SidebarTrigger className="shrink-0" />
         </div>
       </SidebarHeader>

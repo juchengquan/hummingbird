@@ -22,6 +22,10 @@ import { Plus, Bot, ChevronDown, Square } from "lucide-react"
 import { CHAT_MODELS } from "@/lib/models"
 import { processSelectedFiles } from "@/lib/file-utils"
 import { runExtraction } from "@/lib/extract"
+import { extractCodeBlocks } from "@/lib/code-blocks"
+
+const AUTO_ARCHIVE_MIN_LINES = 15
+const AUTO_ARCHIVE_MAX_PER_MESSAGE = 3
 import { FILE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/lib/upload-config"
 import type { Message, MessageError, MessageErrorCode } from "@/lib/types"
 
@@ -43,6 +47,7 @@ export function ChatPanel() {
   const addFile = useStore((state) => state.addFile)
   const addResource = useStore((state) => state.addResource)
   const setFileExtraction = useStore((state) => state.setFileExtraction)
+  const createArtifact = useStore((state) => state.createArtifact)
   const toggleConversationFileSelection = useStore(
     (state) => state.toggleConversationFileSelection
   )
@@ -108,6 +113,36 @@ export function ChatPanel() {
       }, 300)
     },
     [setIsTyping, addMessage]
+  )
+
+  // After a stream completes, auto-archive substantial code blocks so they
+  // become first-class artifacts without the user having to remember the
+  // Save-as-artifact button. Conservative threshold (>= AUTO_ARCHIVE_MIN_LINES)
+  // and capped count keep the artifacts panel from flooding.
+  const autoArchiveCodeBlocks = useCallback(
+    (assistantMessage: Message) => {
+      if (!activeConversationId) return
+      const blocks = extractCodeBlocks(assistantMessage.content)
+      const eligible = blocks.filter((b) => b.lines >= AUTO_ARCHIVE_MIN_LINES)
+      if (eligible.length === 0) return
+      const capped = eligible.slice(0, AUTO_ARCHIVE_MAX_PER_MESSAGE)
+      capped.forEach((b, i) => {
+        const lang = (b.language ?? "").toLowerCase()
+        const kind = lang === "json" ? "json" : "code"
+        createArtifact({
+          conversationId: activeConversationId,
+          messageId: assistantMessage.id,
+          kind,
+          language: b.language,
+          title:
+            capped.length === 1
+              ? `Code${b.language ? ` (${b.language})` : ""}`
+              : `Code ${i + 1}${b.language ? ` (${b.language})` : ""}`,
+          content: b.code,
+        })
+      })
+    },
+    [activeConversationId, createArtifact]
   )
 
   // Build the message list and file context the API expects, sent up to and
@@ -213,6 +248,8 @@ export function ChatPanel() {
             model: chatModel,
             detail: "The model returned an empty response.",
           })
+        } else if (placeholder && activeConversationId) {
+          autoArchiveCodeBlocks(placeholder)
         }
       } catch (err) {
         const aborted =
@@ -241,6 +278,7 @@ export function ChatPanel() {
       activeConversationId,
       addMessage,
       appendToMessage,
+      autoArchiveCodeBlocks,
       chatModel,
       conversations,
       deleteMessage,

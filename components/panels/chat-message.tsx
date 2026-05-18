@@ -9,6 +9,7 @@ import { User, Bot, Copy, Pencil, Trash2, RotateCcw, Check, X, Bookmark, AlertTr
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { copyText } from "@/lib/export"
+import { extractCodeBlocks } from "@/lib/code-blocks"
 import { useStore, useMessageBookmark } from "@/lib/hooks/use-store"
 import type { ArtifactKind } from "@/lib/types"
 import {
@@ -34,16 +35,6 @@ function MessageTime({ timestamp }: { timestamp: Date | string }) {
   }, [timestamp])
   if (!time) return null
   return <>{time}</>
-}
-
-function extractCodeBlocks(content: string): { language: string | null; code: string }[] {
-  const re = /```(\w*)\n([\s\S]*?)```/g
-  const blocks: { language: string | null; code: string }[] = []
-  let m: RegExpExecArray | null
-  while ((m = re.exec(content)) !== null) {
-    blocks.push({ language: m[1] || null, code: m[2] })
-  }
-  return blocks
 }
 
 interface ChatMessageProps {

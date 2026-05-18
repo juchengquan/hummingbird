@@ -205,7 +205,11 @@ Builds on 5C lite. Three additions:
 
 `asMarkdownForEditor` in `artifacts-tab.tsx` now wraps JSON in a `json` code fence (pretty-printed) when "Send to editor" fires, so the editor preserves the formatted payload.
 
-Still pending for 5C "really full": auto-extraction on stream end (creates artifacts without a click for code blocks above N lines), table renderer (markdown tables / CSV), image artifacts (needs binary storage upload — blocked on Supabase Storage), and sync handlers (blocked on sync layer).
+Auto-extraction landed as a follow-up: `components/panels/chat.tsx` runs `extractCodeBlocks` (now hoisted to `lib/code-blocks.ts`) on the final placeholder content when a stream completes successfully. Code blocks of ≥ 15 lines (`AUTO_ARCHIVE_MIN_LINES`) get saved as artifacts, capped at 3 per message (`AUTO_ARCHIVE_MAX_PER_MESSAGE`). Silent (no toast) so users aren't nagged on every reply. Manual Save-as-artifact still works and the threshold means short snippets stay only in the chat.
+
+Theme system: `components/theme-applier.tsx` reads the store's `theme` value and toggles `.dark` on `<html>` so Tailwind dark mode actually engages (a pre-existing gap from before the Supabase work). `app/layout.tsx` includes a pre-hydration inline `<script>` that applies the same logic from `localStorage` to kill the first-paint flash. `components/theme-toggle.tsx` is a small DropdownMenu in the sidebar header with Light / Dark / System options. Resolves to the same theme the highlight-js scoped CSS reads (`hljs-theme-light` / `hljs-theme-dark`).
+
+Still pending for 5C "really full": table renderer (markdown tables / CSV), image artifacts (needs binary storage upload — blocked on Supabase Storage), and sync handlers (blocked on sync layer).
 
 #### ⏳ TODO — Phase 1 remainder
 
