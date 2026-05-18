@@ -211,34 +211,68 @@ Theme system: `components/theme-applier.tsx` reads the store's `theme` value and
 
 Still pending for 5C "really full": table renderer (markdown tables / CSV), image artifacts (needs binary storage upload — blocked on Supabase Storage), and sync handlers (blocked on sync layer).
 
-#### ⏳ TODO — Phase 1 remainder
+#### ✅ Shipped — Phase 1 sync layer
 
-Ordered roughly in the order they should land:
+This section was previously a TODO. All items below landed this session.
 
-1. **Manual provisioning** *(user-side, not code)*
-   - Create a Supabase project
-   - Run the three migrations and `storage/policies.sql`
-   - Configure auth redirect URLs (`http://localhost:3000/auth/callback` + prod)
-   - Drop `NEXT_PUBLIC_SUPABASE_URL` / `_ANON_KEY` into `.env.local`
+1. **Manual provisioning** — user-side. Migrations `0001`–`0003` and storage
+   policies applied. `.env.local` has `NEXT_PUBLIC_SUPABASE_URL`,
+   `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`,
+   `AI_GATEWAY_API_KEY`.
 
-2. **Sync layer for existing entities** — `lib/sync/sync-queue.ts`, `lib/sync/handlers.ts`, `lib/hooks/use-sync.ts`
-   - Generate types: `supabase gen types typescript > lib/supabase/types.ts`
-   - Queue persisted to localStorage under `hummingbird-sync-queue`
-   - Retries with exponential backoff; pauses on `navigator.onLine === false`
-   - Handlers for every persisted mutator listed in the Phase 1 plan above
-   - `useSync()` mounted in `app/dashboard/page.tsx` diffs store snapshots and enqueues ops
-   - Debounce `appendToMessage` → emit a single `updateMessage(id, fullContent)` on stream end
+2. **Sync layer for existing entities** — `lib/sync/sync-queue.ts`,
+   `lib/sync/handlers.ts`, `lib/hooks/use-sync.ts`. Queue persisted to
+   localStorage under `hummingbird-sync-queue`. Exponential backoff to
+   60s ceiling, `online`/`offline` aware, no-op when there's no session,
+   SQLSTATE-aware classification (23xxx/22xxx/42xxx/PGRST → drop). Diff
+   handlers cover all persisted slices. Stream debounce: per-chunk
+   message diffs skipped while `isTyping`; final sweep when typing
+   flips off.
 
-3. **First sign-in reconciliation flow**
-   - On `SIGNED_IN`, query the cloud for the user's workspaces
-   - Empty cloud → bulk-INSERT entire local state under the new `user_id`
-   - Non-empty cloud → existing `AlertDialog` to choose "use cloud" (default) or "overwrite cloud with local"
-   - On reconciliation: hydrate the Zustand store from the cloud, flush the queue, mark sync ready
+3. **First sign-in reconciliation flow** — `lib/hooks/use-reconcile.ts`
+   + `components/auth/reconcile-dialog.tsx`. First-time prompt with
+   "Use cloud / Overwrite cloud" choice. Subsequent sign-ins / refreshes
+   silently pull cloud → apply to store. `online` event triggers the
+   same silent pull. Marker persisted as `hummingbird-reconciled-users`
+   in localStorage. Queue is drained (`whenDrained`) before each pull
+   so local-only edits flush up before cloud-down overwrites.
 
-4. **File uploads when signed in** — branch `hooks/use-upload-file.ts`
-   - Signed in: `supabase.storage.from('user-files').upload(...)`, record `storage_path` + signed URL on the `files` row
-   - Signed out: keep the existing UploadThing path
-   - Existing UploadThing URLs keep working via `files.external_url`
+4. **File uploads when signed in** — `hooks/use-upload-file.ts` branches
+   on auth state. Signed-in: `supabase.storage.from('user-files')` with
+   1-year signed URL; signed-out / failure: existing UploadThing.
+
+5. **Migration 0004** — `supabase/migrations/0004_runtime_metadata.sql`
+   adds runtime fields (reasoning, message error JSONB, attachedFileIds,
+   suggestions, file extraction state, image_data_url, summary,
+   keyTopics, workspace.system_prompt) so refresh / cross-device
+   preserves them. Idempotent.
+
+#### ⏳ TODO — Phase 1 verification
+
+These are real-world checks against the user's Supabase project — they
+require a signed-in session and can't be automated from the harness:
+
+- Anonymous still works (clear storage, demo workspace appears).
+- First sign-in upload (rows appear under your `user_id`).
+- Multi-device read (cloud loads on a second browser).
+- RLS sanity (`select * from messages where user_id <> auth.uid()` → 0).
+- Offline → online (queue drains, cloud row appears).
+- Sign-out preserves local state.
+- Refresh re-syncs from cloud (delete a row in Supabase SQL, refresh,
+  row disappears locally — silent pull verified).
+- **Apply `0004` migration first**; without it, sync writes silently
+  drop the new fields.
+
+#### ⏳ TODO — cleanups / follow-ups
+
+- Strip the `[sync]` `console.log` lines in `lib/hooks/use-reconcile.ts`
+  and `lib/sync/reconcile.ts` (left in from the in-flight-cancel debug
+  session). Either remove or gate on a `DEBUG_SYNC` env.
+- Persist `reasoning_duration_ms` if you want the "Thought for X.Xs"
+  badge in the collapsed `ReasoningBlock` header to survive refresh.
+  Today it's component-local state, so the timing disappears after a
+  reload. (Badge was prototyped and removed at user request; line-count
+  badge stays.)
 
 5. **Conversation-related assets** *(four sub-features, each can ship independently)*
    - **~~A. Conversation-scoped file uploads~~** *(reframed + shipped local-only — see Status above)*. The `+` button on the chat input uploads to the active workspace and auto-attaches to the current conversation.

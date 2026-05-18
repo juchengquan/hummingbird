@@ -3,13 +3,16 @@
 import { createBrowserClient } from "@supabase/ssr"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { getSupabaseEnv } from "@/lib/supabase/env"
+import type { Database } from "@/lib/supabase/types"
 
-let cached: SupabaseClient | null = null
+export type AppSupabaseClient = SupabaseClient<Database>
 
-export function getSupabaseBrowserClient(): SupabaseClient | null {
+let cached: AppSupabaseClient | null = null
+
+export function getSupabaseBrowserClient(): AppSupabaseClient | null {
   if (cached) return cached
   const env = getSupabaseEnv()
   if (!env) return null
-  cached = createBrowserClient(env.url, env.anonKey)
+  cached = createBrowserClient<Database>(env.url, env.anonKey)
   return cached
 }

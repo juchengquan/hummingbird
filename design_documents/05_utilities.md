@@ -196,6 +196,8 @@ The application uses CSS custom properties for theming:
 | Destructive | `--destructive`, `--destructive-foreground` |
 | Borders | `--border`, `--input`, `--ring` |
 | Radius | `--radius` |
+| **Chat** | `--user-bubble`, `--user-bubble-foreground` (user message bubble; assistant has no bubble — flows on `--background`) |
+| Brand / accent | `--brand`, `--highlight` |
 
 ---
 

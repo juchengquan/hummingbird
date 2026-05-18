@@ -6,10 +6,13 @@ This document details the state management approach using Zustand, including sto
 
 ## 1. Overview
 
-The application uses **Zustand** for global state management with localStorage persistence. It consists of two stores:
+The application uses **Zustand** for in-memory state, layered on top of two persistence sinks:
 
-1. **Main Store (`useStore`)**: Persistent state across sessions
-2. **Session Store (`useSessionStore`)**: Temporary state for current session
+1. **Main Store (`useStore`)** — `lib/hooks/use-store.ts`. Source of truth at runtime. Persisted partially to `localStorage` (key `hummingbird-storage`, version 5).
+2. **Session Store (`useSessionStore`)** — same file. Tab-scoped, persisted to `sessionStorage`. Today only used for the SourcesPanel bulk-selection checkboxes — see §4.
+3. **Sync layer (`lib/sync/*`, `lib/hooks/use-sync.ts`, `lib/hooks/use-reconcile.ts`)** — when the user is signed in to Supabase, observes the store, diffs, and pushes ops to a persistent FIFO queue (`hummingbird-sync-queue`). On refresh / `online` it pulls cloud → applies to store. The store doesn't know about the sync layer — it's bolted on from outside so it can be removed by commenting out two mount sites (`<SyncMount/>` / `<ReconcileMount/>` in `app/dashboard/page.tsx`). See §8.
+
+Local-first guarantee: with no Supabase env vars or signed-out user, the sync layer is a no-op and the app behaves as a pure localStorage app.
 
 ---
 
@@ -514,7 +517,66 @@ const getDefaultConversations = (): Conversation[] => {
 
 ---
 
-## 10. Related Documents
+## 10. Supabase sync layer
+
+Activates only when the user is signed in (`useAuth.status === 'signed-in'`) and the Supabase client is configured (env vars present). All four pieces live outside the store so the store stays a pure local model.
+
+### 10.1 Files
+
+| Path | Responsibility |
+|---|---|
+| `lib/sync/sync-queue.ts` | Persistent FIFO `SyncOp[]` in localStorage `hummingbird-sync-queue`. `enqueue`, `configureSync({ client, userId })`, `pendingOpCount`, `whenDrained(timeoutMs=30_000)`, `resetSyncQueue`. Exponential backoff (max 60s), `online`/`offline` event-driven flush, SQLSTATE classification (23xxx/22xxx/42xxx/PGRST → drop; other codes / no code → retry). |
+| `lib/sync/handlers.ts` | Pure snapshot-diff producers per entity: `diffWorkspaces`, `diffConversations` (recurses into messages — skips per-chunk message diffs while `isTyping`), `diffFiles`, `diffResources`, `diffNotes`, `diffArtifacts`. Equality helpers compare deep enough to avoid spurious re-uploads. |
+| `lib/sync/reconcile.ts` | `fetchCloudSnapshot(client, userId)` reads all eight tables in parallel and builds a `CloudSnapshot`. `bulkUploadLocalState(client, userId, snapshot)` ships local → cloud in FK order. `applyCloudSnapshot(snapshot)` does the inverse: seeds the sync diff baseline (`setSyncSnapshot`) **before** `useStore.setState` so the resulting subscriber firing sees prev === next and emits zero ops. |
+| `lib/hooks/use-sync.ts` | `useSync()` mounts once; subscribes to store, diffs against a module-level `lastSnapshot`, enqueues ops. Exports `seedSyncSnapshot()` (read current state) and `setSyncSnapshot(snapshot)` (write a known snapshot atomically). |
+| `lib/hooks/use-reconcile.ts` | First-time prompt + silent refresh-pull + `online` event re-pull. `hasReconciled(userId)` reads `localStorage.hummingbird-reconciled-users`; the dialog only fires once per user per browser. **Both effects depend on `user.id` (stable string), not `user` (changing reference)** — otherwise `onAuthStateChange` re-runs cancel in-flight pulls via the cleanup function. |
+| `components/auth/reconcile-dialog.tsx` | AlertDialog rendered by `<ReconcileMount/>` when `status === 'prompt'`. Two choices: Use cloud · discard local, or Keep local · overwrite cloud. Both call `markReconciled(userId)` after applying. |
+
+### 10.2 Mount points
+
+`app/dashboard/page.tsx` has two zero-render components inside the `<SidebarProvider>`:
+
+```tsx
+function SyncMount()      { useSync();      return null }
+function ReconcileMount() { /* useReconcile + <ReconcileDialog/> */ }
+```
+
+`SyncMount` declared first so `useSync`'s initial `lastSnapshot = takeSnapshot()` seeding runs before reconciliation's first async pull resolves. Mostly defensive — `applyCloudSnapshot`'s atomic seed-before-setState also covers the race.
+
+### 10.3 Conflict ordering
+
+On both refresh and `online` event, the silent pull awaits `whenDrained()` first. This blocks (up to 30s) for any pending local edits to flush upward before we apply cloud-down. Without it, a reconnect could overwrite local-only edits that hadn't pushed yet. The 30s ceiling means a permanently-stuck queue (auth failure, malformed write, etc.) can't deadlock the pull.
+
+### 10.4 Field coverage
+
+Migration `0004` added the runtime fields that 0001/0002 omitted. The handlers + reconcile now read/write:
+
+- `messages` — `reasoning`, `error` (JSONB), `attached_file_ids`, `suggestions`
+- `files` — `extraction_status` (CHECK-constrained), `extracted_text`, `extraction_truncated`, `extracted_kind`, `image_data_url`, `summary`, `key_topics`
+- `workspaces` — `system_prompt`
+
+If 0004 hasn't been applied, the writes silently fail (Postgres rejects unknown columns; the queue classifies that as "drop"). Run the migration before relying on field preservation across refresh.
+
+### 10.5 Op envelope
+
+```ts
+type SyncOp =
+  | { kind: "upsert"; target: SyncTarget; clientOpId: string; row: Record<string, unknown>; attempts?: number }
+  | { kind: "delete"; target: SyncTarget; clientOpId: string; where: { column: string; value: string }; attempts?: number }
+  | { kind: "deleteMany"; target: SyncTarget; clientOpId: string; filters: Array<{ column: string; value: string | string[] }>; attempts?: number }
+
+type SyncTarget = "workspaces" | "conversations" | "messages" | "files" | "resources" | "artifacts" | "notes"
+```
+
+Handlers never include `user_id` in the row — the queue injects it at flush time from `configureSync({ userId })`. RLS at the database level checks `user_id = auth.uid()`.
+
+### 10.6 Debug logs
+
+There are currently `console.log("[sync] …")` lines in `use-reconcile.ts` and `lib/sync/reconcile.ts` from the in-flight-cancel debug pass. To be removed once Phase 1 verification is complete; if useful long-term, gate on a `DEBUG_SYNC` env.
+
+---
+
+## 11. Related Documents
 
 - [01_project_overview.md](01_project_overview.md) - Project foundation
 - [03_ui_components.md](03_ui_components.md) - UI components

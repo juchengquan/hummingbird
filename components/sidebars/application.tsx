@@ -3,6 +3,7 @@ import { FolderOpen, Folder, Plus, ChevronRight, Pin, MessageSquare, MessagesSqu
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupAction,
   SidebarGroupContent,
@@ -77,15 +78,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   }
 
   return (
-    <Sidebar collapsible="icon" {...props} className="z-100">
+    <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
-        <div className="flex items-center w-full gap-1">
-          <div className="flex-1 min-w-0">
-            <AccountMenu />
-          </div>
-          <HelpPopover />
-          <ThemeToggle />
-          <SidebarTrigger className="shrink-0" />
+        <div className="flex items-center w-full">
+          <SidebarTrigger className="ml-auto shrink-0" />
         </div>
       </SidebarHeader>
 
@@ -204,7 +200,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                       title="New chat"
                       aria-label="New chat"
                       onClick={handleNewChat}
-                      className="right-8"
+                      className="right-8 top-1.5"
                     >
                       <Plus />
                     </SidebarGroupAction>
@@ -265,6 +261,20 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           </SidebarMenu>
         </SidebarGroup>
       </SidebarContent>
+
+      <SidebarFooter>
+        <div className="flex items-center w-full gap-1">
+          <div className="flex-1 min-w-0">
+            <AccountMenu />
+          </div>
+          {/* Help + Theme toggle are extra utilities — hide them in
+              icon-collapsed mode so only the account icon remains. */}
+          <div className="flex items-center gap-1 shrink-0 group-data-[collapsible=icon]:hidden">
+            <HelpPopover />
+            <ThemeToggle />
+          </div>
+        </div>
+      </SidebarFooter>
 
       <SidebarRail />
     </Sidebar>

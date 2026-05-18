@@ -87,6 +87,12 @@
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
   --brand: oklch(0.623 0.214 259.815);
+  /* Chat: user-message bubble. A half-step away from --secondary (the
+     assistant bubble) — same text colour, slightly different fill so
+     turns are distinguishable without competing with the message
+     content. */
+  --user-bubble: oklch(0.93 0 0);
+  --user-bubble-foreground: oklch(0.145 0 0);
   /* Panel animation durations */
   --panel-slide-duration: 500ms;
   --highlight: oklch(0.852 0.199 91.936);
@@ -125,6 +131,9 @@
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
   --brand: oklch(0.707 0.165 254.624);
+  /* Dark user bubble: a half-step lighter than --secondary (0.269). */
+  --user-bubble: oklch(0.32 0 0);
+  --user-bubble-foreground: oklch(0.985 0 0);
   --highlight: oklch(0.852 0.199 91.936);
 }
 

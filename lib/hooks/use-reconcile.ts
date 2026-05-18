@@ -1,0 +1,284 @@
+"use client"
+
+/**
+ * Reconciliation + ongoing cloud-pull orchestrator. Mount once near the
+ * root of `/dashboard`, alongside `useSync`.
+ *
+ * Two concerns:
+ *
+ *   1. **First-sign-in reconciliation** — the very first time a given
+ *      user_id signs in on this device, we may need to decide whether to
+ *      keep local data, take cloud data, or merge. Tracked via a
+ *      localStorage set `hummingbird-reconciled-users`.
+ *
+ *   2. **Silent cloud-pull on refresh / reconnect** — after the user has
+ *      been reconciled once, every subsequent sign-in (including page
+ *      refresh) and every `online` transition pulls cloud → applies to
+ *      local store. Cloud is the source of truth when signed in.
+ *
+ * Conflict policy: BEFORE pulling cloud, we wait for the local sync queue
+ * to drain so any local-only edits flush upward first. Otherwise a
+ * reconnect would overwrite local writes that hadn't pushed yet.
+ *
+ * Pull UX is silent — no toast, no spinner. The UI just reflects the new
+ * state once the snapshot lands.
+ */
+
+import { useCallback, useEffect, useRef, useState } from "react"
+import { useStore } from "@/lib/hooks/use-store"
+import { useAuth } from "@/lib/hooks/use-auth"
+import { getSupabaseBrowserClient } from "@/lib/supabase/client"
+import {
+  applyCloudSnapshot,
+  bulkUploadLocalState,
+  fetchCloudSnapshot,
+  type CloudSnapshot,
+} from "@/lib/sync/reconcile"
+import { seedSyncSnapshot } from "@/lib/hooks/use-sync"
+import { whenDrained } from "@/lib/sync/sync-queue"
+import type { ReconcileChoice } from "@/components/auth/reconcile-dialog"
+
+export type ReconcileStatus = "idle" | "loading" | "prompt" | "done" | "error"
+
+export interface ReconcileState {
+  status: ReconcileStatus
+  cloud?: CloudSnapshot
+  error?: string
+  decide: (choice: ReconcileChoice) => void
+}
+
+// ---------- reconciled-users persistence -----------------------------------
+
+const RECONCILED_KEY = "hummingbird-reconciled-users"
+
+function readReconciledSet(): Set<string> {
+  if (typeof window === "undefined") return new Set()
+  try {
+    const raw = localStorage.getItem(RECONCILED_KEY)
+    if (!raw) return new Set()
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? new Set(parsed as string[]) : new Set()
+  } catch {
+    return new Set()
+  }
+}
+
+function markReconciled(userId: string): void {
+  if (typeof window === "undefined") return
+  const set = readReconciledSet()
+  set.add(userId)
+  try {
+    localStorage.setItem(RECONCILED_KEY, JSON.stringify([...set]))
+  } catch {
+    // localStorage full / blocked — accept that we'll re-prompt next time.
+  }
+}
+
+function hasReconciled(userId: string): boolean {
+  return readReconciledSet().has(userId)
+}
+
+// ---------- helpers --------------------------------------------------------
+
+function localSnapshotFromStore(): CloudSnapshot {
+  const s = useStore.getState()
+  return {
+    workspaces: s.workspaces,
+    conversations: s.conversations,
+    files: s.files,
+    resources: s.resources,
+    notes: s.notes,
+    artifacts: s.artifacts,
+  }
+}
+
+// ---------- hook -----------------------------------------------------------
+
+export function useReconcile(): ReconcileState {
+  const { status: authStatus, user } = useAuth()
+  const [status, setStatus] = useState<ReconcileStatus>("idle")
+  const [cloud, setCloud] = useState<CloudSnapshot | undefined>(undefined)
+  const [error, setError] = useState<string | undefined>(undefined)
+
+  // Depend on the stable user.id string, NOT the user object reference,
+  // so onAuthStateChange firing INITIAL_SESSION / TOKEN_REFRESHED with a
+  // new object doesn't tear down an in-flight async pull.
+  const userId = user?.id ?? null
+
+  // Per-session sticky so we don't loop the same flow. Reset on sign-out
+  // and on user change.
+  const handledUserId = useRef<string | null>(null)
+
+  // Sign-in / refresh-while-signed-in branch.
+  useEffect(() => {
+    console.log("[sync] auth effect", { authStatus, userId })
+    if (authStatus !== "signed-in" || !userId) {
+      handledUserId.current = null
+      setStatus("idle")
+      setCloud(undefined)
+      setError(undefined)
+      return
+    }
+    if (handledUserId.current === userId) {
+      console.log("[sync] already handled this user in this mount", userId)
+      return
+    }
+    handledUserId.current = userId
+
+    const client = getSupabaseBrowserClient()
+    if (!client) {
+      console.warn("[sync] supabase client unavailable")
+      setStatus("error")
+      setError("Supabase client unavailable")
+      return
+    }
+
+    let cancelled = false
+
+    // ---- already-reconciled user: silent pull, skip the prompt --------
+    if (hasReconciled(userId)) {
+      console.log("[sync] silent pull branch (reconciled set HAS user)")
+      setStatus("loading")
+      void (async () => {
+        try {
+          console.log("[sync] awaiting queue drain…")
+          await whenDrained()
+          if (cancelled) return
+          console.log("[sync] queue drained, fetching cloud snapshot")
+          const snap = await fetchCloudSnapshot(client, userId)
+          if (cancelled) return
+          if (!snap) {
+            console.warn("[sync] cloud fetch returned null")
+            setStatus("error")
+            setError("Failed to fetch cloud state")
+            return
+          }
+          console.log("[sync] cloud snapshot received", {
+            workspaces: snap.workspaces.length,
+            conversations: snap.conversations.length,
+            messages: snap.conversations.reduce((n, c) => n + c.messages.length, 0),
+            files: snap.files.length,
+            resources: snap.resources.length,
+            notes: snap.notes.length,
+            artifacts: snap.artifacts.length,
+          })
+          applyCloudSnapshot(snap)
+          console.log("[sync] cloud snapshot applied to local store")
+          setStatus("done")
+        } catch (err) {
+          console.error("[sync] silent pull threw", err)
+          setStatus("error")
+          setError(err instanceof Error ? err.message : "Unknown sync error")
+        }
+      })()
+      return () => {
+        cancelled = true
+      }
+    }
+
+    // ---- first-time reconciliation ----------------------------------
+    console.log("[sync] first-time reconciliation branch (user NOT in reconciled set)")
+    setStatus("loading")
+    void fetchCloudSnapshot(client, userId).then(async (snap) => {
+      if (cancelled) return
+      if (!snap) {
+        console.warn("[sync] first-time fetch failed")
+        setStatus("error")
+        setError("Failed to fetch cloud state")
+        return
+      }
+      const cloudHasData =
+        snap.workspaces.length > 0 ||
+        snap.conversations.length > 0 ||
+        snap.files.length > 0
+      console.log("[sync] first-time cloud check", {
+        cloudHasData,
+        workspaces: snap.workspaces.length,
+        conversations: snap.conversations.length,
+        files: snap.files.length,
+      })
+      if (!cloudHasData) {
+        const local = localSnapshotFromStore()
+        const result = await bulkUploadLocalState(client, userId, local)
+        if (cancelled) return
+        if (!result.ok) {
+          console.warn("[sync] bulk upload failed", result.error)
+          setStatus("error")
+          setError(result.error ?? "Bulk upload failed")
+          return
+        }
+        seedSyncSnapshot()
+        markReconciled(userId)
+        console.log("[sync] empty cloud → local bulk-uploaded; user marked reconciled")
+        setStatus("done")
+        return
+      }
+      setCloud(snap)
+      setStatus("prompt")
+      console.log("[sync] cloud has data → prompting user")
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [authStatus, userId])
+
+  // ---- `online` re-pull ---------------------------------------------------
+  useEffect(() => {
+    if (authStatus !== "signed-in" || !userId) return
+    const client = getSupabaseBrowserClient()
+    if (!client) return
+
+    const onOnline = async () => {
+      console.log("[sync] online event fired")
+      if (!hasReconciled(userId)) {
+        console.log("[sync] online: skipping — user not yet reconciled")
+        return
+      }
+      await whenDrained()
+      const snap = await fetchCloudSnapshot(client, userId)
+      if (!snap) {
+        console.warn("[sync] online: fetch returned null")
+        return
+      }
+      console.log("[sync] online: applying cloud snapshot", {
+        workspaces: snap.workspaces.length,
+        conversations: snap.conversations.length,
+      })
+      applyCloudSnapshot(snap)
+    }
+    window.addEventListener("online", onOnline)
+    return () => window.removeEventListener("online", onOnline)
+  }, [authStatus, userId])
+
+  // ---- decide() — only used when the prompt is showing ------------------
+  const decide = useCallback(
+    (choice: ReconcileChoice) => {
+      const client = getSupabaseBrowserClient()
+      if (!client || !userId || !cloud) return
+      if (choice === "use-cloud") {
+        applyCloudSnapshot(cloud) // seeds sync snapshot internally
+        markReconciled(userId)
+        setStatus("done")
+        setCloud(undefined)
+        return
+      }
+      void (async () => {
+        const local = localSnapshotFromStore()
+        const result = await bulkUploadLocalState(client, userId, local)
+        if (!result.ok) {
+          setStatus("error")
+          setError(result.error ?? "Bulk upload failed")
+          return
+        }
+        seedSyncSnapshot()
+        markReconciled(userId)
+        setStatus("done")
+        setCloud(undefined)
+      })()
+    },
+    [cloud, userId]
+  )
+
+  return { status, cloud, error, decide }
+}

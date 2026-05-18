@@ -17,11 +17,14 @@ The main chat interface that displays conversation messages and handles user inp
 ### 1.3 Features
 
 - Two-column layout: messages on the left, **ChatResourcesPanel** on the right (see §1.8)
-- Displays conversation messages with user/assistant roles
-- Auto-scrolls to newest messages
-- Typing indicator animation
-- Message input with auto-resize textarea
-- Syncs content to EditorPanel via store
+- Real AI streaming via `/api/chat` (SSE: `text` / `reasoning` / `error` / `done` / `suggestions` frames). Mock fallback when `AI_GATEWAY_API_KEY` is missing (`mockAIResponse` in `chat.tsx` — emits a fake reasoning block too).
+- Assistant messages render via `<MarkdownPreview>` (GFM, tables, fenced code).
+- **No avatars** — sender identity is alignment + bubble fill only.
+- **User bubble** is a subtle tinted box (token `--user-bubble`); **assistant has no bubble** — prose flows directly on the page.
+- Message column width: `max-w-[90%]`.
+- Auto-scrolls the ScrollArea Viewport directly (not via `scrollIntoView`, which can scroll unintended ancestors).
+- Typing indicator (no avatar) — three bouncing dots in a `--secondary` bubble.
+- Reasoning / "Thinking…" surfacing via `<ReasoningBlock>` (see §1.6).
 
 The previous input-bar `SelectedFilesPopover` has been removed; file attachment now happens exclusively via the side panel's per-file toggle.
 
@@ -56,40 +59,42 @@ function MessageTime({ timestamp }: { timestamp: Date | string }) {
 
 ### 1.5 Message Display
 
-```typescript
-<div className={cn(
-  "flex gap-3",
-  message.role === "user" ? "flex-row-reverse" : "flex-row"
-)}>
-  <Avatar className="w-8 h-8 mt-1">
-    <AvatarFallback className="text-xs">
-      {message.role === "user" ? <User size={16} /> : <Bot size={16} />}
-    </AvatarFallback>
-  </Avatar>
+`components/panels/chat-message.tsx`. Asymmetric styling:
+
+```tsx
+<div className={cn("flex", isUser ? "flex-row-reverse" : "flex-row")}>
   <div className={cn(
-    "max-w-[70%] rounded-lg px-4 py-2",
-    message.role === "user"
-      ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-      : "bg-[var(--secondary)] text-[var(--foreground)]"
+    "flex flex-col max-w-[90%]",
+    isUser ? "items-end" : "items-start"
   )}>
-    <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+    <div className={cn(
+      "animate-content-in w-full",
+      isUser
+        ? "rounded-lg px-4 py-2 bg-[var(--user-bubble)] text-[var(--user-bubble-foreground)]"
+        : "text-[var(--foreground)]"
+    )}>
+      {!isUser && message.content
+        ? <MarkdownPreview content={message.content} />
+        : <p className="text-sm whitespace-pre-wrap">{message.content}</p>}
+    </div>
   </div>
 </div>
 ```
 
-### 1.6 Typing Indicator
+User: right-aligned, subtle tinted bubble. Assistant: left-aligned, no bg/padding/radius — markdown flows on the page background.
 
-```typescript
+### 1.6 Reasoning block & typing indicator
+
+`<ReasoningBlock>` renders when `message.reasoning` is non-empty. While streaming (`!message.content`), it shows a pulsing dot and "Thinking…"; once content arrives it switches to "Reasoning" + line count. Body uses `<MarkdownPreview>` with `max-h-[40vh] overflow-y-auto` so long thoughts don't dominate the message. Header has a hover-revealed copy button.
+
+Typing indicator (no avatar):
+
+```tsx
 {isTyping && (
-  <div className="flex gap-3">
-    <Avatar className="w-8 h-8 mt-1">
-      <AvatarFallback className="text-xs">
-        <Bot size={16} />
-      </AvatarFallback>
-    </Avatar>
+  <div className="flex">
     <div className="bg-[var(--secondary)] rounded-lg px-4 py-3">
       <div className="flex gap-1">
-        <span className="w-2 h-2 bg-[var(--muted-foreground)] rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+        <span className="w-2 h-2 bg-[var(--muted-foreground)] rounded-full animate-bounce" />
         <span className="w-2 h-2 bg-[var(--muted-foreground)] rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
         <span className="w-2 h-2 bg-[var(--muted-foreground)] rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
       </div>
@@ -98,28 +103,30 @@ function MessageTime({ timestamp }: { timestamp: Date | string }) {
 )}
 ```
 
-### 1.7 AI Simulation (Mock)
+### 1.7 AI integration
 
-```typescript
-const simulateAIResponse = (userMessage: string) => {
+Real path: `chat.tsx`'s `callChatAPI` POSTs to `/api/chat` and consumes typed SSE frames (`text` / `reasoning` / `error` / `done` / `suggestions`). Streamed tokens go through `appendToMessage` / `appendToMessageReasoning`; on `done` the placeholder is finalised and code blocks are auto-archived as artifacts (`autoArchiveCodeBlocks`).
+
+Mock fallback: when `AI_GATEWAY_API_KEY` isn't set OR the server returns an `auth` error code, `mockAIResponse` (chat.tsx) fires instead:
+
+```ts
+const mockAIResponse = (userMessage: string) => {
   setIsTyping(true)
   setTimeout(() => {
-    const responses = [
-      "That's an interesting question! Let me think about it...",
-      "I understand what you're asking. Here's my response:",
-      "Thanks for sharing that! Based on what you've told me, I would say:",
-      "That's a great point. Here's my take on it:",
-      "I appreciate you asking! Here's what I think:",
-    ]
-    const randomResponse = responses[Math.floor(Math.random() * responses.length)]
-    const additionalContent = `\n\nRegarding "${userMessage}": This is a mock response for testing purposes.`
-    const aiContent = randomResponse + additionalContent
-    addMessage({ role: "assistant", content: aiContent })
-    setEditorContent(aiContent)
+    const reasoning = [
+      `User asked: "${userMessage}".`,
+      "Step 1 — Parse the request.",
+      "Step 2 — Consider whether any state is relevant…",
+      "Step 3 — Draft a reply that makes the mock origin obvious.",
+    ].join("\n")
+    const aiContent = `_Mock response (set \`AI_GATEWAY_API_KEY\` to enable real AI)_\n\nRegarding "${userMessage}": this is placeholder text.`
+    addMessage({ role: "assistant", content: aiContent, reasoning })
     setIsTyping(false)
   }, 300)
 }
 ```
+
+The mock includes a fake reasoning blob so the `ReasoningBlock` UI is exercisable without a live reasoning-capable model.
 
 ### 1.8 ChatResourcesPanel
 
@@ -270,29 +277,19 @@ const handleDragLeave = useCallback((e: React.DragEvent) => {
 
 The AppSidebar drives a tabbed main area: clicking any tab calls `setActiveView(...)` and the dashboard's `MainArea` switches to the matching panel. There are **no sliding sidebars** mounted any longer — every panel is a main-area view.
 
-Sidebar sections, top to bottom:
+Sidebar structure (top to bottom):
 
-1. **Workspaces** (top-level `SidebarMenuButton`)
-   - Static label `"Workspaces"` (the active workspace name no longer appears here — see `WorkspacesPanel` for workspace management).
-   - Click switches the main area via `setActiveView('workspaces')`.
-   - The previous workspace-switching popover (rename / delete / quick-switch) has been removed — those flows live in `WorkspacesPanel`.
-
-2. **Editor** (top-level `SidebarMenuButton`)
-   - Click switches the main area via `setActiveView('editor')`.
-
-3. **Resources** (collapsible, hidden when sidebar is icon-collapsed)
-   - Header is a `CollapsibleTrigger` (expand/collapse only).
-   - Contains one sub-item:
-     - **Files** — `setActiveView('resources')`.
-
-4. **Chats** (collapsible, hidden when sidebar is icon-collapsed)
-   - Header is a `CollapsibleTrigger`.
-   - Header `SidebarGroupAction` `+` button calls `createConversation()` then `setActiveView('chat')`.
-   - Lists workspace conversations via `useWorkspaceConversations()` — refreshes when the active workspace changes.
-   - Clicking a conversation calls `setActiveConversation(id)` then `setActiveView('chat')`.
-   - When the whole sidebar is icon-collapsed, the conversation list flattens to icon-only buttons (pinned conversations get the `Pin` icon, others get `MessageSquare`).
+- **Header** — just the `SidebarTrigger` (collapse toggle), right-aligned. The profile / help / theme controls that used to live here moved to the footer (see below).
+- **Content sections:**
+  1. **Workspaces** (top-level `SidebarMenuButton`) — static label, click → `setActiveView('workspaces')`.
+  2. **Editor** (top-level `SidebarMenuButton`) — click → `setActiveView('editor')`.
+  3. **Resources** collapsible (Folder icon + label, hidden in icon-collapsed mode). One sub-item: **Files** → `setActiveView('resources')`. Inner `<SidebarGroup>` uses `p-0` so the header label aligns with the top-level icon column.
+  4. **Chats** collapsible (MessagesSquare icon + label). Header has a `SidebarGroupAction` `+` button positioned at `right-8 top-1.5` (so it lines up with the chevron and sits between label and chevron). Click `+` → `createConversation()` + `setActiveView('chat')`. Conversation list via `useWorkspaceConversations()`. Click a row → `setActiveConversation(id)` + `setActiveView('chat')`. In icon-collapsed mode the conversation list flattens to icon-only buttons (Pin / MessageSquare).
+- **Footer (`SidebarFooter`):** `AccountMenu` (flex-1) + `HelpPopover` + `ThemeToggle`. Help and Theme are hidden via `group-data-[collapsible=icon]:hidden` when the sidebar is icon-collapsed; `AccountMenu` remains visible (just the avatar icon).
 
 Conversation items keep their pin / rename / delete actions via `ConversationItem`.
+
+**Z-index note:** the `<Sidebar>` does NOT set a custom `z-index`. Popovers/dropdowns inside the sidebar (theme menu, account menu, conversation row menu) default to `z-50` and need to render above the sidebar; an earlier `className="z-100"` was removed because it pushed the sidebar above all popovers.
 
 ### 5.3 Navigation Logic
 

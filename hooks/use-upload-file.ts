@@ -9,6 +9,8 @@ import type {
 import { generateReactHelpers } from '@uploadthing/react';
 import { toast } from 'sonner';
 import { z } from 'zod';
+import { getSupabaseBrowserClient } from '@/lib/supabase/client';
+import { useAuth } from '@/lib/hooks/use-auth';
 
 export type UploadedFile<T = unknown> = ClientUploadedFileData<T>;
 
@@ -31,9 +33,59 @@ export function useUploadFile({
   const [progress, setProgress] = React.useState<number>(0);
   const [isUploading, setIsUploading] = React.useState(false);
 
+  const { status: authStatus, user } = useAuth();
+
+  async function uploadToSupabaseStorage(file: File): Promise<UploadedFile | null> {
+    const client = getSupabaseBrowserClient();
+    if (!client || !user) return null;
+    const fileId = crypto.randomUUID();
+    const ext = file.name.includes('.') ? file.name.split('.').pop()! : 'bin';
+    const path = `${user.id}/${fileId}.${ext}`;
+    const upload = await client.storage
+      .from('user-files')
+      .upload(path, file, { contentType: file.type, upsert: false });
+    if (upload.error) {
+      throw new Error(upload.error.message);
+    }
+    // 1-year signed URL. Cross-device reads regenerate as needed.
+    const signed = await client.storage
+      .from('user-files')
+      .createSignedUrl(path, 60 * 60 * 24 * 365);
+    if (signed.error || !signed.data?.signedUrl) {
+      throw new Error(signed.error?.message ?? 'Failed to sign URL');
+    }
+    setProgress(100);
+    return {
+      key: path,
+      appUrl: signed.data.signedUrl,
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      url: signed.data.signedUrl,
+    } as UploadedFile;
+  }
+
   async function uploadThing(file: File) {
     setIsUploading(true);
     setUploadingFile(file);
+
+    // Signed in → go to Supabase Storage. Falls through to the
+    // UploadThing path on any failure so the editor never breaks.
+    if (authStatus === 'signed-in' && user) {
+      try {
+        const result = await uploadToSupabaseStorage(file);
+        if (result) {
+          setUploadedFile(result);
+          onUploadComplete?.(result);
+          return result;
+        }
+      } catch (err) {
+        console.warn('[upload] Supabase Storage failed; falling back to UploadThing', err);
+        toast.error('Cloud upload failed; trying fallback…');
+      } finally {
+        // Keep loading state set; UploadThing branch will reset it.
+      }
+    }
 
     try {
       const res = await uploadFiles('editorUploader', {

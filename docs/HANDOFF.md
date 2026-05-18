@@ -10,11 +10,13 @@ in `docs/`.
   Zustand, Plate.js editor, Tailwind v4). See `CLAUDE.md` for the full
   stack reference.
 - **Branch:** `claude/dev-followups`, branched from `dev` at the merge of
-  PR #1 (the big chat-overhaul). 14 commits ahead of `dev`. Working tree
-  clean. Already pushed.
-- **What you're picking up:** The Supabase **sync layer** is the highest-
-  value piece of work currently blocked. Everything needed is documented;
-  you just need a provisioned Supabase project to verify against.
+  PR #1 (the big chat-overhaul). Run `git log --oneline dev..HEAD` for
+  the chronological narrative, and `git status` to see whether the
+  working tree is clean before you start.
+- **What you're picking up:** Phase 1 sync layer has now **shipped** on
+  this branch (see "Supabase Phase 1 — sync layer" below). The main
+  remaining work is verification against a real Supabase project + the
+  small follow-ups in the "Open / next" table further down.
 
 ## What's already shipped on this branch
 
@@ -95,34 +97,118 @@ alone — `git log --oneline dev..HEAD` lists them in order.
   400 `{ code: 'invalid_request', message }`. Skipped
   `/api/ai/command` — its `ctx` payload is opaque Plate internals.
 
-## What's already in place for the Supabase work
+### Supabase Phase 1 — sync layer **(shipped this session)**
 
-Scaffolding shipped earlier (already on `dev`, see PR #1) — code is
-ready, just needs a project to talk to:
+The scaffolding from PR #1 is now backed by a working sync layer.
 
-- **Schema** — `supabase/migrations/0001_initial_schema.sql`,
-  `0002_conversation_assets.sql`, `0003_rls_policies.sql`
-- **Storage bucket policies** — `supabase/storage/policies.sql`
-- **Defensive clients** — `lib/supabase/{env,client,server}.ts` return
-  `null` when env vars are absent so nothing crashes pre-setup
-- **Auth UI** — `components/auth/auth-dialog.tsx` + `account-menu.tsx`
-  (sidebar header); renders nothing when `NEXT_PUBLIC_SUPABASE_URL`
-  isn't set
-- **Magic-link callback** — `app/auth/callback/route.ts`
-- **`useAuth` hook** — `lib/hooks/use-auth.ts` exposes
-  `status: 'unconfigured' | 'loading' | 'signed-out' | 'signed-in'`,
-  `user`, `signIn`, `signOut`
+- `lib/supabase/types.ts` — hand-rolled `Database` type covering
+  migrations 0001 + 0002 + **0004**. Make `client.ts` / `server.ts`
+  generic over `Database`; exports `AppSupabaseClient`.
+- `lib/sync/sync-queue.ts` — persistent FIFO queue
+  (`hummingbird-sync-queue` in localStorage). Exponential backoff,
+  `online`/`offline` aware, SQLSTATE-aware (23/22/42/PGRST codes drop;
+  others retry). Public API: `enqueue`, `configureSync`,
+  `pendingOpCount`, `whenDrained(timeoutMs)`, `resetSyncQueue`.
+- `lib/sync/handlers.ts` — pure diff producers per entity. Writes
+  reasoning / error / attachedFileIds / suggestions on messages; file
+  extraction metadata; workspace systemPrompt. Skips per-chunk message
+  diffs when `isTyping === true` (final sweep fires when typing flips
+  off).
+- `lib/sync/reconcile.ts` — `fetchCloudSnapshot`, `bulkUploadLocalState`,
+  `applyCloudSnapshot`. The apply path seeds the sync diff baseline via
+  `setSyncSnapshot()` **before** `useStore.setState`, so the queue
+  doesn't re-upload what we just downloaded.
+- `lib/hooks/use-sync.ts` — `useSync()` subscribes to store + diffs +
+  enqueues. Exports `seedSyncSnapshot()` (reads current state) and
+  `setSyncSnapshot(snapshot)` (synchronous seed before setState).
+- `lib/hooks/use-reconcile.ts` — first-time prompt + silent pull on
+  refresh + `online` re-pull. Reconciled-users marker persisted to
+  localStorage as `hummingbird-reconciled-users`, so the dialog only
+  ever fires once per user per browser. **Depend on `user.id` (stable
+  string), not `user` (changing object)** — otherwise
+  `onAuthStateChange` reposting the same session tears down the
+  in-flight pull. Bug fixed this session; don't regress.
+- `components/auth/reconcile-dialog.tsx` — AlertDialog for first-time
+  cloud-vs-local choice.
+- `app/dashboard/page.tsx` — mounts `<SyncMount/>` and `<ReconcileMount/>`.
+- `hooks/use-upload-file.ts` — branches: signed-in → Supabase Storage
+  (`user-files/{user_id}/{file_id}.{ext}`, 1-year signed URL);
+  signed-out / failure → UploadThing (existing path).
 
-The local user is following **`docs/SUPABASE_SETUP.md`** to provision
-their project + run the migrations + set `.env.local`. When they're
-done, the `<AccountMenu>` Sign-in button appears in the sidebar
-header. That's the signal you're ready to start.
+### Migration 0004 — runtime metadata columns
 
-## What to do first — the sync layer
+`supabase/migrations/0004_runtime_metadata.sql` adds the columns that
+local TS types carried but 0001/0002 omitted (idempotent `add column
+if not exists`). Run this in SQL editor before relying on field
+preservation across refresh / cross-device:
 
-This is the highest-leverage remaining work. Plan is in
-**`docs/ROADMAP.md`** under "Supabase persistence migration → Phase 1".
-Summarised here so you have it inline:
+- `messages.reasoning text`, `error jsonb`, `attached_file_ids uuid[]`,
+  `suggestions text[]`
+- `files.extraction_status` (CHECK-constrained), `extracted_text`,
+  `extraction_truncated`, `extracted_kind`, `image_data_url`, `summary`,
+  `key_topics text[]`
+- `workspaces.system_prompt`
+
+`image_data_url` is multi-MB base64. Acceptable for Phase 1; Phase 2
+moves binary blobs to Storage.
+
+### Auth swap — magic link → email + password
+
+- `signIn(email, password)` via `supabase.auth.signInWithPassword`.
+- `components/auth/auth-dialog.tsx` rebuilt with two fields + inline
+  error. No magic-link UI; no sign-up surface (provision users from
+  the Supabase dashboard).
+- `/auth/callback` route is kept for future email-confirmation /
+  OAuth.
+
+### Sidebar restructure
+
+- AccountMenu, HelpPopover, ThemeToggle moved from header → footer
+  (`SidebarFooter`).
+- Help + theme hidden in icon-collapsed mode (`group-data-[collapsible=icon]:hidden`);
+  AccountMenu remains as an avatar icon only.
+- Removed `className="z-100"` from `<Sidebar>` — popovers/dropdowns
+  default to z-50 and were rendering *behind* the sidebar.
+
+### Chat UI tweaks
+
+- Avatars removed (user + assistant + typing indicator). Sender ID is
+  alignment + fill only.
+- New CSS tokens `--user-bubble` / `--user-bubble-foreground` in
+  `app/globals.css` (light + dark). User bubble is a half-step from
+  `--secondary`; same text colour as the assistant.
+- Assistant "box" removed: no bg, no padding, no radius on assistant
+  messages. User keeps the bubble.
+- Message column widened from `max-w-[70%]` to `max-w-[90%]`.
+- `ReasoningBlock` rewritten: `max-h-[40vh] overflow-y-auto`,
+  `MarkdownPreview` for the body, live pulse during stream, hover
+  copy button, line-count badge. Timing badge was prototyped, then
+  removed at user request.
+
+### Misc
+
+- Default chat model → `deepseek/deepseek-v4-flash` (`lib/models.ts`).
+- PDF extraction fix: `next.config.ts` now sets
+  `serverExternalPackages: ['pdf-parse', 'pdfjs-dist', 'mammoth']` so
+  Node loads them from `node_modules` and `pdfjs-dist` can find its
+  worker module.
+- Build/TS: surgical `@ts-expect-error` on AI SDK v5 mismatches in
+  `app/api/ai/command/route.ts`; typed callback in
+  `block-placeholder-kit.tsx`; `<TooltipProvider>` wraps
+  `/editor/page.tsx`.
+
+### Diagnostic logs to clean up
+
+There are `[sync]` prefixed `console.log` calls in `use-reconcile.ts`
+and `lib/sync/reconcile.ts` that were added to debug the
+in-flight-cancel bug. The bug is fixed; the logs are still there as
+breadcrumbs. Either gate them behind a `DEBUG_SYNC` env var or strip
+them outright before merging.
+
+## What to do first — verification + small follow-ups
+
+Phase 1 is code-complete. The remaining work is real-world
+verification + a few small things flagged below.
 
 ### Architecture
 
@@ -139,85 +225,43 @@ React UI → Zustand store ↔ localStorage (offline cache)
        Supabase JS → Postgres + Auth + Storage
 ```
 
-### Implementation order
+### Implementation status — all done
 
-1. **Generated DB types** — `bunx supabase gen types typescript
-   --project-id <id> > lib/supabase/types.ts`. Then `lib/supabase/client.ts`
-   and `server.ts` should be generic over `Database`.
+| Item | Status |
+|---|---|
+| `lib/supabase/types.ts` (hand-rolled `Database`) | ✅ |
+| `lib/sync/sync-queue.ts` + `whenDrained()` | ✅ |
+| `lib/sync/handlers.ts` diff producers | ✅ (writes the 0004 fields too) |
+| `lib/hooks/use-sync.ts` | ✅ — `setSyncSnapshot` for atomic seed-before-setState |
+| `lib/sync/reconcile.ts` + `lib/hooks/use-reconcile.ts` | ✅ — first-time prompt + silent refresh-pull + `online` re-pull + reconciled-users set |
+| `components/auth/reconcile-dialog.tsx` | ✅ |
+| `app/dashboard/page.tsx` — mount `useSync()` + `useReconcile()` | ✅ |
+| `hooks/use-upload-file.ts` — Storage on signed-in | ✅ (1-year signed URL) |
+| `0004` migration: runtime metadata columns | ✅ SQL committed; **user still needs to run it against the project** |
 
-2. **`lib/sync/sync-queue.ts`** — in-memory FIFO of `SyncOp` objects.
-   Persisted to `localStorage` under `hummingbird-sync-queue` so
-   pending writes survive reloads. Retries with exponential backoff.
-   Pauses when `!navigator.onLine`. No-ops when there's no session.
+### Critical files (unchanged from PR #1 plan, plus 0004)
 
-3. **`lib/sync/handlers.ts`** — one handler per persisted mutator. Full
-   list (cross-reference `lib/hooks/use-store.ts`):
-   - Workspaces: `createWorkspace`, `deleteWorkspace` (cascades),
-     `renameWorkspace`, `setWorkspaceSystemPrompt`
-   - Conversations: `createConversation`, `deleteConversation`,
-     `renameConversation`, `togglePin`,
-     `toggleConversationFileSelection`,
-     `clearConversationFileSelection`, `setConversationDocument` (debounced)
-   - Messages: `addMessage`, `deleteMessage`, `updateMessage`,
-     `appendToMessage` (debounce — emit final `updateMessage` on
-     stream end, not every chunk), `truncateMessagesAfter`,
-     `clearMessages`, `setMessageError`, `setMessageSuggestions`,
-     `appendToMessageReasoning` (same debounce treatment)
-   - Files: `addFile`, `removeFile`, `clearFiles`,
-     `setFileExtraction` (multiple patch shapes)
-   - Resources: `addResource`, `removeResource`
-   - Notes: `createNote`, `updateNoteBody`, `deleteNote`,
-     `toggleMessageBookmark`
-   - Artifacts: `createArtifact`, `deleteArtifact`,
-     `togglePinArtifact`, `updateArtifactTitle`
-   - Misc: `setChatModel`, `setActiveWorkspace`, `setActiveConversation`
-     (last two are user-prefs; consider putting on `profiles` or
-     skipping)
+New since PR #1:
+- `lib/supabase/types.ts`
+- `lib/sync/sync-queue.ts`, `lib/sync/handlers.ts`, `lib/sync/reconcile.ts`
+- `lib/hooks/use-sync.ts`, `lib/hooks/use-reconcile.ts`
+- `components/auth/reconcile-dialog.tsx`
+- `supabase/migrations/0004_runtime_metadata.sql`
 
-4. **`lib/hooks/use-sync.ts`** — mounted once near the root of
-   `app/dashboard/page.tsx`. Subscribes to relevant slices of `useStore`
-   via Zustand selectors. Diffs against the previous snapshot on every
-   change, produces `SyncOp`s, pushes to the queue. Avoids modifying
-   every mutator in `use-store.ts` (reversible if we need to back out).
-
-5. **First-sign-in reconciliation**. When `onAuthStateChange` fires
-   `SIGNED_IN`:
-   - Query Supabase for the user's workspaces.
-   - **Empty cloud** → bulk-INSERT entire local state under the new
-     `user_id`. UploadThing URLs go into `files.external_url`;
-     `storage_path` stays null.
-   - **Non-empty cloud** → existing `AlertDialog` to choose "use cloud
-     and discard local" (default — safer for multi-device) or
-     "overwrite cloud with local".
-   - After reconciliation, hydrate Zustand from the cloud and mark
-     sync ready.
-
-6. **File uploads when signed in**. Branch `hooks/use-upload-file.ts`:
-   signed in → `supabase.storage.from('user-files').upload(path, file)`,
-   record `storage_path` + signed URL on the `files` row. Signed out →
-   keep existing UploadThing path. Existing UploadThing files keep
-   working via `files.external_url`. Path scheme:
-   `user-files/{user_id}/{file_id}.{ext}`.
-
-### Critical files
-
-New:
-- `lib/supabase/types.ts` (generated)
-- `lib/sync/sync-queue.ts`, `lib/sync/handlers.ts`
-- `lib/hooks/use-sync.ts`
-
-Modified (small, surgical):
-- `app/dashboard/page.tsx` — mount `useSync()`
-- `hooks/use-upload-file.ts` — branch on auth state, fall through to
-  UploadThing when signed out
-- `components/sidebars/application.tsx` — already mounts `AccountMenu`
+Modified:
+- `app/dashboard/page.tsx` — mounts `<SyncMount/>` and `<ReconcileMount/>`
+- `hooks/use-upload-file.ts` — auth-state branch
+- `components/auth/auth-dialog.tsx`, `lib/hooks/use-auth.ts` — password sign-in
+- `components/sidebars/application.tsx` — sidebar footer rearrange
+- `next.config.ts` — `serverExternalPackages` for PDF/DOCX extractors
 
 Deliberately untouched: `lib/hooks/use-store.ts`. The store stays the
 source of in-memory truth; the sync layer observes from outside.
 
-### Verification
+### Verification — still TODO
 
-End-to-end smoke test, manually after the layer ships:
+These are the steps the next agent (or you, after running 0004) should
+walk through:
 
 1. **Anonymous still works** — clear cookies + localStorage, demo
    workspace appears, can chat without network calls to Supabase.
@@ -233,6 +277,8 @@ End-to-end smoke test, manually after the layer ships:
    within seconds → row appears in Supabase.
 6. **Sign-out leaves local intact** — sign out, refresh, local data
    still present.
+7. **Refresh re-syncs (new)** — delete a row in Supabase SQL editor,
+   refresh dashboard, the row should disappear locally (silent pull).
 
 ## Other open items
 
@@ -277,14 +323,11 @@ log + `docs/ROADMAP.md`):
 
 ## Gotchas
 
-- **Pre-existing TS errors in `app/api/ai/command/route.ts`** at
-  lines 76, 78, 192, 194, 211, 213, 264, 266, 276, 278. AI SDK
-  version mismatch (`output: Output.choice/array` and `partialOutputStream`
-  changed shape). The route still works at runtime via turbopack's
-  looser checking, but `bunx tsc --noEmit` will complain. **Ignore
-  these unless you're refactoring that file**. Filter with
-  `grep -v "app/api/ai/command/route\.ts\|block-placeholder-kit"` when
-  reading typecheck output.
+- **AI SDK v5 type mismatches in `app/api/ai/command/route.ts`** — these
+  used to block `bun run build` (despite the original handoff saying
+  they didn't). Suppressed in this session with `@ts-expect-error`
+  directives at the offending lines. If the AI SDK fixes the typing,
+  TS will error on the now-unused directives and prompt removal.
 
 - **TS closure narrowing** in `components/panels/chat.tsx`'s
   `callChatAPI` — the SSE loop uses an `ensurePlaceholder` closure
@@ -307,25 +350,35 @@ log + `docs/ROADMAP.md`):
   faster than you'd expect. The sync layer is the real fix. Until
   then, the audit in `docs/ROADMAP.md` flags this as a known constraint.
 
-- **Pre-existing AI SDK overload errors don't block compile**. They
-  show up under `bunx tsc --noEmit` but Next.js dev/build runs fine.
-  Don't get distracted trying to fix them — they're unrelated to
-  current work and would need an AI SDK type-investigation of their
-  own.
+- **Auth events fire multiple times** — `onAuthStateChange` emits
+  `INITIAL_SESSION`, then sometimes `TOKEN_REFRESHED`, each time
+  calling `setUser` and producing a NEW `user` object reference. Any
+  hook depending on `[authStatus, user]` will re-run its cleanup and
+  cancel in-flight async work. **Always depend on `user.id` (stable
+  string)**. `useReconcile` and `useSync` have been switched; if you
+  add another auth-gated hook, follow that pattern.
+
+- **`[sync]` console logs** are still in `use-reconcile.ts` and
+  `lib/sync/reconcile.ts` from this session's debug pass. Strip or
+  gate them before merge.
+
+- **`pdf-parse@2` + Turbopack** — the package wraps `pdfjs-dist` which
+  dynamically imports its worker. Turbopack bundles it and breaks
+  the relative resolution. Fix is `serverExternalPackages` in
+  `next.config.ts`. Mammoth (DOCX) needs the same.
 
 ## How to start
 
-1. Confirm the user finished `docs/SUPABASE_SETUP.md`. The
-   `AccountMenu` should show a **Sign in** button in the sidebar
-   header. If not, the env vars aren't picked up — restart `bun dev`.
-2. Sign in with magic link. Verify a row appears in
-   `public.profiles` via the SQL Editor.
-3. Generate DB types:
-   `bunx supabase gen types typescript --project-id <id> > lib/supabase/types.ts`
-4. Start with `lib/sync/sync-queue.ts`. Use the implementation order
-   above. Each numbered piece can be its own commit.
-5. Don't open a PR until the full Phase 1 lands and the 6-step
-   verification passes against the real project.
+1. Apply `supabase/migrations/0004_runtime_metadata.sql` in the SQL
+   editor against your project. Without it, sync writes will silently
+   drop the new fields and refresh will lose them.
+2. In the Supabase Auth dashboard: create a user (email + password)
+   to test sign-in. There's no sign-up UI in the app.
+3. Walk through the 7-step verification above. Open the network tab
+   and watch `bsapthtfvflybeouyfqc.supabase.co` REST calls; that's
+   the queue flushing.
+4. Strip the `[sync]` debug logs once you've confirmed the silent
+   refresh-pull works end-to-end.
 
 ## Where to look for context if you get stuck
 

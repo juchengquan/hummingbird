@@ -11,10 +11,11 @@ export const CHAT_MODELS: ChatModel[] = [
   { id: 'openai/gpt-4o-mini', label: 'GPT-4o mini', provider: 'OpenAI' },
   { id: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro', provider: 'Google' },
   { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash', provider: 'Google' },
+  { id: 'deepseek/deepseek-v4-flash', label: 'DeepSeek v4 Flash', provider: 'DeepSeek' },
   { id: 'deepseek/deepseek-chat-v3.1', label: 'DeepSeek Chat v3.1', provider: 'DeepSeek' },
   { id: 'deepseek/deepseek-r1', label: 'DeepSeek R1', provider: 'DeepSeek' },
   { id: 'alibaba/qwen-3-coder', label: 'Qwen 3 Coder', provider: 'Alibaba' },
   { id: 'alibaba/qwen-3-max', label: 'Qwen 3 Max', provider: 'Alibaba' },
 ]
 
-export const DEFAULT_CHAT_MODEL = 'anthropic/claude-sonnet-4-5'
+export const DEFAULT_CHAT_MODEL = 'deepseek/deepseek-v4-flash'

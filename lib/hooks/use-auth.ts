@@ -9,7 +9,8 @@ export type AuthStatus = "unconfigured" | "loading" | "signed-out" | "signed-in"
 export interface AuthState {
   status: AuthStatus
   user: User | null
-  signIn: (email: string) => Promise<{ error?: string }>
+  /** Email + password sign-in. Resolves with `{ error }` on failure. */
+  signIn: (email: string, password: string) => Promise<{ error?: string }>
   signOut: () => Promise<void>
 }
 
@@ -40,16 +41,9 @@ export function useAuth(): AuthState {
   }, [client])
 
   const signIn = useCallback(
-    async (email: string) => {
+    async (email: string, password: string) => {
       if (!client) return { error: "Supabase is not configured" }
-      const redirectTo =
-        typeof window !== "undefined"
-          ? `${window.location.origin}/auth/callback`
-          : undefined
-      const { error } = await client.auth.signInWithOtp({
-        email,
-        options: redirectTo ? { emailRedirectTo: redirectTo } : undefined,
-      })
+      const { error } = await client.auth.signInWithPassword({ email, password })
       return error ? { error: error.message } : {}
     },
     [client]

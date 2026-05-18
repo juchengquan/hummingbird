@@ -213,7 +213,22 @@ bun run start
 
 ---
 
-## 7. Related Documents
+## 7. Server-external packages (Next.js)
+
+`next.config.ts` lists packages that should NOT go through Turbopack/webpack bundling on the server. These are libraries that dynamically import their own files at runtime; bundling rewrites their internal paths and breaks resolution.
+
+```ts
+serverExternalPackages: ['pdf-parse', 'pdfjs-dist', 'mammoth']
+```
+
+- **`pdf-parse` + `pdfjs-dist`** — pdfjs sets up a "fake worker" by dynamically importing `pdf.worker.mjs` relative to its own package. When bundled into `.next/dev/server/chunks/`, that relative path no longer points at the worker file → "Setting up fake worker failed". Marking the packages external makes Node `require()` them straight from `node_modules`, restoring the path.
+- **`mammoth`** — same pattern for DOCX extraction. Included pre-emptively.
+
+If you add a new server-only npm dep that does runtime relative-path loading (image libraries with native bindings, anything wrapping `pdfjs` or `tesseract.js`, etc.), add it here.
+
+---
+
+## 8. Related Documents
 
 - [01_project_overview.md](01_project_overview.md) - Project foundation
 - [02_state_management.md](02_state_management.md) - State management

@@ -5,7 +5,6 @@ import { toast } from "sonner"
 import { useStore, useHydrated } from "@/lib/hooks/use-store"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { InputGroup, InputGroupTextarea, InputGroupButton } from "@/components/ui/input-group"
 import {
   Select,
@@ -19,7 +18,7 @@ import {
 import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
 import { ChatMessage } from "@/components/panels/chat-message"
 import { EmptyChatWelcome } from "@/components/panels/empty-chat-welcome"
-import { Plus, Bot, ChevronDown, Square } from "lucide-react"
+import { Plus, ChevronDown, Square } from "lucide-react"
 import { CHAT_MODELS } from "@/lib/models"
 import { processSelectedFiles } from "@/lib/file-utils"
 import { runExtraction } from "@/lib/extract"
@@ -107,12 +106,21 @@ export function ChatPanel() {
   }, [])
 
   // Mock fallback used when the AI Gateway key isn't configured.
+  // Includes a fake reasoning block so the Thinking… UI is exercisable
+  // without a live reasoning-capable model.
   const mockAIResponse = useCallback(
     (userMessage: string) => {
       setIsTyping(true)
       setTimeout(() => {
+        const reasoning = [
+          `User asked: "${userMessage}".`,
+          "",
+          "Step 1 — Parse the request: they want a brief explanation.",
+          "Step 2 — Consider whether any state is relevant. The mock path doesn't actually call a model, so I'll keep this short.",
+          "Step 3 — Draft a reply that makes the mock origin obvious so it isn't confused with real model output.",
+        ].join("\n")
         const aiContent = `_Mock response (set \`AI_GATEWAY_API_KEY\` to enable real AI)_\n\nRegarding "${userMessage}": this is placeholder text.`
-        addMessage({ role: "assistant", content: aiContent })
+        addMessage({ role: "assistant", content: aiContent, reasoning })
         setIsTyping(false)
       }, 300)
     },
@@ -582,12 +590,7 @@ export function ChatPanel() {
 
               {/* Typing indicator */}
               {isTyping && (
-                <div className="flex gap-3">
-                  <Avatar className="w-8 h-8 mt-1">
-                    <AvatarFallback className="text-xs">
-                      <Bot size={16} />
-                    </AvatarFallback>
-                  </Avatar>
+                <div className="flex">
                   <div className="bg-[var(--secondary)] rounded-lg px-4 py-3">
                     <div className="flex gap-1">
                       <span className="w-2 h-2 bg-[var(--muted-foreground)] rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />

@@ -73,8 +73,11 @@ export async function POST(req: NextRequest) {
             : ['generate', 'comment'];
           const modelId = model || 'google/gemini-2.5-flash';
 
+          // @ts-expect-error AI SDK v5 typing for Output.choice doesn't
+          // narrow `output` on the result; runtime is correct. See ROADMAP.
           const { output: AIToolName } = await generateText({
             model: gatewayProvider(modelId),
+            // @ts-expect-error see above
             output: Output.choice({ options: enumOptions }),
             prompt,
           });
@@ -189,8 +192,10 @@ const getCommentTool = (
 ) =>
   tool({
     description: 'Comment on the content',
+    // @ts-expect-error AI SDK v5 rejects empty Zod input schemas on tool()
     inputSchema: z.object({}),
     strict: true,
+    // @ts-expect-error AI SDK v5 expects undefined execute when no inputSchema; runtime is correct
     execute: async () => {
       const commentSchema = z.object({
         blockId: z
@@ -208,8 +213,11 @@ const getCommentTool = (
           ),
       });
 
+      // @ts-expect-error AI SDK v5 typing for Output.array doesn't
+      // expose `partialOutputStream`; runtime is correct.
       const { partialOutputStream } = streamText({
         model,
+        // @ts-expect-error see above
         output: Output.array({ element: commentSchema }),
         prompt: getCommentPrompt(editor, {
           messages: messagesRaw,
@@ -261,8 +269,10 @@ const getTableTool = (
 ) =>
   tool({
     description: 'Edit table cells',
+    // @ts-expect-error see Comment-tool annotation above
     inputSchema: z.object({}),
     strict: true,
+    // @ts-expect-error see Comment-tool annotation above
     execute: async () => {
       const cellUpdateSchema = z.object({
         content: z
@@ -273,8 +283,10 @@ const getTableTool = (
         id: z.string().describe('The id of the table cell to update.'),
       });
 
+      // @ts-expect-error AI SDK v5 Output.array typing — see annotations above.
       const { partialOutputStream } = streamText({
         model,
+        // @ts-expect-error see above
         output: Output.array({ element: cellUpdateSchema }),
         prompt: buildEditTableMultiCellPrompt(editor, messagesRaw),
       });

@@ -1,8 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Mail, Loader2, CheckCircle2 } from "lucide-react"
-import { toast } from "sonner"
+import { LogIn, Loader2 } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -23,27 +22,33 @@ interface AuthDialogProps {
 export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
   const { status, signIn } = useAuth()
   const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
   const [submitting, setSubmitting] = useState(false)
-  const [sent, setSent] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    const trimmed = email.trim()
-    if (!trimmed) return
+    const trimmedEmail = email.trim()
+    if (!trimmedEmail || !password) return
     setSubmitting(true)
-    const { error } = await signIn(trimmed)
+    setError(null)
+    const { error: signInError } = await signIn(trimmedEmail, password)
     setSubmitting(false)
-    if (error) {
-      toast.error(error)
+    if (signInError) {
+      setError(signInError)
       return
     }
-    setSent(true)
+    // useAuth's onAuthStateChange will flip status to 'signed-in' and the
+    // surrounding components (sidebar, sync, reconciliation) react from there.
+    onOpenChange(false)
+    setEmail("")
+    setPassword("")
   }
 
   const handleClose = (next: boolean) => {
     if (!next) {
-      setSent(false)
-      setEmail("")
+      setError(null)
+      setPassword("")
     }
     onOpenChange(next)
   }
@@ -55,7 +60,6 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
           <DialogTitle>Sign in to Hummingbird</DialogTitle>
           <DialogDescription>
             Sync your workspaces, conversations, and files across devices.
-            We&apos;ll email you a one-time sign-in link.
           </DialogDescription>
         </DialogHeader>
 
@@ -66,14 +70,6 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
             <code className="text-xs">NEXT_PUBLIC_SUPABASE_ANON_KEY</code> to
             enable.
           </p>
-        ) : sent ? (
-          <div className="flex flex-col items-center gap-2 py-4 text-center">
-            <CheckCircle2 size={32} className="text-[var(--primary)]" />
-            <p className="text-sm font-medium">Check your inbox</p>
-            <p className="text-xs text-[var(--muted-foreground)]">
-              We sent a magic link to <strong>{email}</strong>.
-            </p>
-          </div>
         ) : (
           <form onSubmit={handleSubmit} className="flex flex-col gap-3">
             <div className="flex flex-col gap-1.5">
@@ -85,20 +81,43 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
                 type="email"
                 required
                 autoFocus
+                autoComplete="email"
                 placeholder="you@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 disabled={submitting}
               />
             </div>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="auth-password" className="text-sm font-medium">
+                Password
+              </label>
+              <Input
+                id="auth-password"
+                type="password"
+                required
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={submitting}
+              />
+            </div>
+            {error && (
+              <p
+                role="alert"
+                className="text-xs text-[var(--destructive)] -mt-1"
+              >
+                {error}
+              </p>
+            )}
             <DialogFooter>
               <Button type="submit" disabled={submitting} className="gap-2">
                 {submitting ? (
                   <Loader2 size={14} className="animate-spin" />
                 ) : (
-                  <Mail size={14} />
+                  <LogIn size={14} />
                 )}
-                Send magic link
+                Sign in
               </Button>
             </DialogFooter>
           </form>

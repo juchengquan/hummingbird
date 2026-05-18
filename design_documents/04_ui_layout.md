@@ -9,19 +9,20 @@ This document details the tabbed main-area layout: the `AppSidebar` (left) drive
 ```
 ┌─────────────┬───────────────────────────────────────────────┐
 │ AppSidebar  │            SidebarInset (Main Area)           │
-│  (Left)     │                                               │
+│  [trigger]  │                                               │
 │             │   ┌─────────────────────────────────────────┐ │
 │ Workspaces  │   │   ONE of:                               │ │
 │ Editor      │   │     WorkspacesPanel  (activeView ==     │ │
 │             │   │                       'workspaces')     │ │
-│ ▾ Resources │   │     ChatPanel        ('chat')           │ │
+│ 📁 Resources │   │     ChatPanel        ('chat')           │ │
 │   • Files   │   │     ResourcePanel    ('resources')      │ │
 │             │   │     EditorPanel      ('editor')         │ │
-│ ▾ Chats  +  │   │                                         │ │
+│ 💬 Chats  +  │   │                                         │ │
 │   - Chat 1  │   │   ChatPanel layout (two columns):       │ │
 │   - Chat 2  │   │     • Messages column (flex-1)          │ │
 │             │   │       ↳ scroll area + input bar         │ │
-│             │   │     • ChatResourcesPanel (320px, ≥lg)   │ │
+│  ── footer  │   │     • ChatResourcesPanel (320px, ≥lg)   │ │
+│ 👤 ? 🌙      │   │                                         │ │
 │             │   └─────────────────────────────────────────┘ │
 └─────────────┴───────────────────────────────────────────────┘
 ```

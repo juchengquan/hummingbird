@@ -2,10 +2,9 @@
 
 import { useState, useRef, useEffect } from "react"
 import type { Message, MessageError } from "@/lib/types"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { User, Bot, Copy, Pencil, Trash2, RotateCcw, Check, X, Bookmark, AlertTriangle, ChevronDown, Archive, Send } from "lucide-react"
+import { Copy, Pencil, Trash2, RotateCcw, Check, X, Bookmark, AlertTriangle, ChevronDown, Archive, Send } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { copyText } from "@/lib/export"
@@ -41,36 +40,78 @@ function MessageTime({ timestamp }: { timestamp: Date | string }) {
 
 function ReasoningBlock({
   reasoning,
+  /** The assistant message's `content`. When non-empty, the model has
+   *  moved on from reasoning to the answer — we use this transition to
+   *  swap the header label from "Thinking…" to "Reasoning". */
+  content,
   streaming,
 }: {
   reasoning: string
+  content: string
   /** When true (the message has reasoning but no content yet), open by default
    *  so the user sees the model is actively thinking. */
   streaming: boolean
 }) {
   const [open, setOpen] = useState(streaming)
+
   // Re-open automatically when a new streaming session begins.
   useEffect(() => {
     if (streaming) setOpen(true)
   }, [streaming])
+
+  const isLive = streaming && !content
+  const lineCount = reasoning.split("\n").filter(Boolean).length
+  const meta = lineCount > 0 ? `${lineCount} ${lineCount === 1 ? "line" : "lines"}` : ""
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    void copyText(reasoning)
+    toast.success("Reasoning copied")
+  }
+
   return (
-    <div className="mb-2 rounded-md border border-[var(--border)] bg-[var(--background)]/60 text-[var(--muted-foreground)]">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-1.5 px-2 py-1 text-xs hover:bg-[var(--accent)]/50 rounded-md transition-colors"
-        aria-expanded={open}
-      >
-        <ChevronDown
-          size={12}
-          className={cn("transition-transform", !open && "-rotate-90")}
-        />
-        <span>{streaming ? "Thinking…" : "Reasoning"}</span>
-      </button>
+    <div className="group/reasoning mb-2 rounded-md border border-[var(--border)] bg-[var(--background)]/60 text-[var(--muted-foreground)]">
+      <div className="flex items-center w-full">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex-1 flex items-center gap-1.5 px-2 py-1 text-xs hover:bg-[var(--accent)]/50 rounded-md transition-colors min-w-0"
+          aria-expanded={open}
+        >
+          <ChevronDown
+            size={12}
+            className={cn("transition-transform shrink-0", !open && "-rotate-90")}
+          />
+          <span className="shrink-0">{isLive ? "Thinking…" : "Reasoning"}</span>
+          {isLive && (
+            <span
+              aria-hidden
+              className="inline-block w-1.5 h-1.5 rounded-full bg-[var(--muted-foreground)] animate-pulse shrink-0"
+            />
+          )}
+          {!isLive && meta && (
+            <span className="ml-auto pl-2 text-[10px] tabular-nums truncate">
+              {meta}
+            </span>
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={handleCopy}
+          aria-label="Copy reasoning"
+          title="Copy reasoning"
+          className="opacity-0 group-hover/reasoning:opacity-100 focus-visible:opacity-100 mr-1 p-1 rounded hover:bg-[var(--accent)]/50 transition-opacity"
+        >
+          <Copy size={12} />
+        </button>
+      </div>
       {open && (
-        <pre className="px-3 pb-2 pt-0 text-[11px] whitespace-pre-wrap break-words font-mono leading-relaxed">
-          {reasoning}
-        </pre>
+        <div className="px-3 pb-2 max-h-[40vh] overflow-y-auto">
+          <MarkdownPreview
+            content={reasoning}
+            className="text-xs opacity-90 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+          />
+        </div>
       )}
     </div>
   )
@@ -115,7 +156,7 @@ function ErrorBubble({
   const [showDetails, setShowDetails] = useState(false)
   const title = ERROR_TITLES[error.code] ?? ERROR_TITLES.unknown
   return (
-    <div className="rounded-lg border border-[var(--destructive)]/40 bg-[var(--destructive)]/5 px-4 py-3 max-w-[70%] space-y-2">
+    <div className="rounded-lg border border-[var(--destructive)]/40 bg-[var(--destructive)]/5 px-4 py-3 max-w-[90%] space-y-2">
       {partialContent && (
         <p className="text-sm whitespace-pre-wrap text-[var(--foreground)]">
           {partialContent}
@@ -356,14 +397,7 @@ export function ChatMessage({
       )}
       style={{ animationDelay: `${index * 50}ms` }}
     >
-      <div className={cn("flex gap-3", isUser ? "flex-row-reverse" : "flex-row")}>
-        <Avatar className="w-8 h-8 mt-1 animate-avatar-in">
-          <AvatarImage src="" />
-          <AvatarFallback className="text-xs">
-            {isUser ? <User size={16} /> : <Bot size={16} />}
-          </AvatarFallback>
-        </Avatar>
-
+      <div className={cn("flex", isUser ? "flex-row-reverse" : "flex-row")}>
         {message.error && !isUser ? (
           <ErrorBubble
             error={message.error}
@@ -373,13 +407,13 @@ export function ChatMessage({
             onDelete={() => onDelete(message.id)}
           />
         ) : (
-        <div className={cn("flex flex-col max-w-[70%]", isUser ? "items-end" : "items-start")}>
+        <div className={cn("flex flex-col max-w-[90%]", isUser ? "items-end" : "items-start")}>
           <div
             className={cn(
-              "rounded-lg px-4 py-2 animate-content-in w-full",
+              "animate-content-in w-full",
               isUser
-                ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-                : "bg-[var(--secondary)] text-[var(--foreground)]"
+                ? "rounded-lg px-4 py-2 bg-[var(--user-bubble)] text-[var(--user-bubble-foreground)]"
+                : "text-[var(--foreground)]"
             )}
           >
             {isEditing ? (
@@ -420,7 +454,11 @@ export function ChatMessage({
             ) : (
               <>
                 {message.reasoning && message.reasoning.trim().length > 0 && (
-                  <ReasoningBlock reasoning={message.reasoning} streaming={!message.content} />
+                  <ReasoningBlock
+                    reasoning={message.reasoning}
+                    content={message.content}
+                    streaming={!message.content}
+                  />
                 )}
                 {!isUser && message.content ? (
                   <MarkdownPreview
@@ -442,7 +480,7 @@ export function ChatMessage({
                   className={cn(
                     "text-xs mt-1 opacity-60",
                     isUser
-                      ? "text-[var(--primary-foreground)]"
+                      ? "text-[var(--user-bubble-foreground)]"
                       : "text-[var(--muted-foreground)]"
                   )}
                 >

@@ -13,6 +13,9 @@ import {
   SidebarProvider,
 } from "@/components/ui/sidebar"
 import { useStore } from "@/lib/hooks/use-store"
+import { useSync } from "@/lib/hooks/use-sync"
+import { useReconcile } from "@/lib/hooks/use-reconcile"
+import { ReconcileDialog } from "@/components/auth/reconcile-dialog"
 
 // Plate.js + all its plugins are heavy (~200KB pre-minify). Defer the
 // editor chunk until the user actually switches to the editor view so
@@ -49,11 +52,38 @@ function MainArea() {
   )
 }
 
+function SyncMount() {
+  useSync()
+  return null
+}
+
+function ReconcileMount() {
+  const recon = useReconcile()
+  // Two primitive selectors, NOT one object selector — Zustand v5 has no
+  // default shallow comparison, so returning a fresh object would re-fire
+  // every render → infinite loop.
+  const workspaceCount = useStore((s) => s.workspaces.length)
+  const conversationCount = useStore((s) => s.conversations.length)
+  return (
+    <ReconcileDialog
+      open={recon.status === "prompt"}
+      cloudCounts={{
+        workspaces: recon.cloud?.workspaces.length ?? 0,
+        conversations: recon.cloud?.conversations.length ?? 0,
+      }}
+      localCounts={{ workspaces: workspaceCount, conversations: conversationCount }}
+      onChoose={recon.decide}
+    />
+  )
+}
+
 export default function Page() {
   return (
     <SidebarProvider
       style={{ height: "100svh", minHeight: 0, overflow: "hidden" }}
     >
+      <SyncMount />
+      <ReconcileMount />
       <AppSidebar />
       <MainArea />
       <CommandPalette />
