@@ -3,6 +3,8 @@ import type { NextRequest } from 'next/server';
 import { generateText } from 'ai';
 import { NextResponse } from 'next/server';
 
+import { categorizeError } from '@/lib/api-errors';
+
 export async function POST(req: NextRequest) {
   const {
     apiKey: key,
@@ -15,7 +17,7 @@ export async function POST(req: NextRequest) {
 
   if (!apiKey) {
     return NextResponse.json(
-      { error: 'Missing ai gateway API key.' },
+      { code: 'auth', message: 'Missing AI_GATEWAY_API_KEY.' },
       { status: 401 }
     );
   }
@@ -32,13 +34,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      return NextResponse.json(null, { status: 408 });
-    }
-
-    return NextResponse.json(
-      { error: 'Failed to process AI request' },
-      { status: 500 }
-    );
+    const { status, code, message } = categorizeError(error);
+    return NextResponse.json({ code, message }, { status });
   }
 }

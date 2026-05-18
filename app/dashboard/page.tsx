@@ -1,11 +1,13 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { Toaster } from "sonner"
 import { AppSidebar } from "@/components/sidebars/application"
 import { ChatPanel } from "@/components/panels/chat"
 import { ResourcePanel } from "@/components/panels/sources"
 import { EditorPanel } from "@/components/panels/editor"
 import { WorkspacesPanel } from "@/components/panels/workspaces"
+import { CommandPalette } from "@/components/command-palette"
 import {
   SidebarInset,
   SidebarProvider,
@@ -14,7 +16,6 @@ import { useStore } from "@/lib/hooks/use-store"
 
 function MainArea() {
   const activeView = useStore((state) => state.activeView)
-  const editorContent = useStore((state) => state.editorContent)
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
@@ -28,7 +29,7 @@ function MainArea() {
       {activeView === "workspaces" && <WorkspacesPanel />}
       {activeView === "chat" && <ChatPanel />}
       {activeView === "resources" && <ResourcePanel />}
-      {activeView === "editor" && <EditorPanel initialContent={editorContent} />}
+      {activeView === "editor" && <EditorPanel />}
     </SidebarInset>
   )
 }
@@ -40,6 +41,8 @@ export default function Page() {
     >
       <AppSidebar />
       <MainArea />
+      <CommandPalette />
+      <Toaster />
     </SidebarProvider>
   )
 }

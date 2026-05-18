@@ -2,23 +2,30 @@
 
 import { useCallback, useMemo, useRef, useState } from "react"
 import { format } from "date-fns"
-import { Search, Plus, FolderOpen, Check } from "lucide-react"
+import { Search, Plus, FolderOpen, Check, StickyNote, Archive } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import {
   useStore,
   useWorkspaceResources,
   useConversationSelectedFileIds,
+  useConversationNotes,
+  useConversationArtifacts,
 } from "@/lib/hooks/use-store"
 import { getFileIcon, processSelectedFiles, formatFileSize } from "@/lib/file-utils"
+import { FILE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/lib/upload-config"
+import { runExtraction } from "@/lib/extract"
+import { NotesTab } from "@/components/panels/notes-tab"
+import { ArtifactsTab } from "@/components/panels/artifacts-tab"
+import { ExtractionStatusBadge } from "@/components/panels/extraction-status-badge"
 
-const FILE_SIZE_LIMIT = 5 * 1024 * 1024 // 5MB
-const ALLOWED_EXTENSIONS = [".pdf", ".docx", ".txt", ".csv", ".json", ".png", ".jpg", ".jpeg"]
+type Tab = "files" | "notes" | "artifacts"
 
 export function ChatResourcesPanel() {
   const activeWorkspaceId = useStore((s) => s.activeWorkspaceId)
   const addFile = useStore((s) => s.addFile)
   const addResource = useStore((s) => s.addResource)
+  const setFileExtraction = useStore((s) => s.setFileExtraction)
   const setActiveView = useStore((s) => s.setActiveView)
   const toggleFileSelection = useStore((s) => s.toggleConversationFileSelection)
   const selectedFileIds = useConversationSelectedFileIds()
@@ -28,6 +35,9 @@ export function ChatResourcesPanel() {
   const [query, setQuery] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [mounted, setMounted] = useState(false)
+  const [tab, setTab] = useState<Tab>("files")
+  const notesCount = useConversationNotes().length
+  const artifactsCount = useConversationArtifacts().length
 
   // mount flag for date formatting (avoid SSR mismatch)
   if (!mounted && typeof window !== "undefined") {
@@ -48,29 +58,133 @@ export function ChatResourcesPanel() {
   const handleUpload = useCallback(
     (list: FileList | null) => {
       setError(null)
-      const newFiles = processSelectedFiles(list, {
+      const processed = processSelectedFiles(list, {
         maxSize: FILE_SIZE_LIMIT,
         onValidationError: setError,
       })
-      newFiles.forEach((file) => {
-        addFile(file)
-        addResource(activeWorkspaceId, file.id)
-        toggleFileSelection(file.id)
+      processed.forEach(({ meta, source }) => {
+        addFile(meta)
+        addResource(activeWorkspaceId, meta.id)
+        toggleFileSelection(meta.id)
+        void runExtraction(meta.id, source, setFileExtraction)
       })
     },
-    [addFile, addResource, activeWorkspaceId, toggleFileSelection]
+    [addFile, addResource, activeWorkspaceId, toggleFileSelection, setFileExtraction]
   )
 
   return (
     <aside className="hidden lg:flex flex-col w-80 h-full min-h-0 shrink-0 border-l border-[var(--border)] bg-[var(--background)]/60">
+      {/* Tab strip */}
+      <div className="shrink-0 flex border-b border-[var(--border)]">
+        <button
+          type="button"
+          onClick={() => setTab("files")}
+          className={cn(
+            "flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors",
+            tab === "files"
+              ? "text-[var(--foreground)] border-b-2 border-[var(--primary)] -mb-px"
+              : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+          )}
+        >
+          <FolderOpen size={13} />
+          Files
+          <span className="text-[10px] text-[var(--muted-foreground)]">
+            {resources.length}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("notes")}
+          className={cn(
+            "flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors",
+            tab === "notes"
+              ? "text-[var(--foreground)] border-b-2 border-[var(--primary)] -mb-px"
+              : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+          )}
+        >
+          <StickyNote size={13} />
+          Notes
+          <span className="text-[10px] text-[var(--muted-foreground)]">
+            {notesCount}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("artifacts")}
+          className={cn(
+            "flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors",
+            tab === "artifacts"
+              ? "text-[var(--foreground)] border-b-2 border-[var(--primary)] -mb-px"
+              : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+          )}
+        >
+          <Archive size={13} />
+          Artifacts
+          <span className="text-[10px] text-[var(--muted-foreground)]">
+            {artifactsCount}
+          </span>
+        </button>
+      </div>
+
+      {tab === "notes" ? (
+        <NotesTab />
+      ) : tab === "artifacts" ? (
+        <ArtifactsTab />
+      ) : (
+        <FilesTabBody
+          resources={resources}
+          attachedCount={attachedCount}
+          query={query}
+          setQuery={setQuery}
+          filtered={filtered}
+          selectedFileIds={selectedFileIds}
+          toggleFileSelection={toggleFileSelection}
+          mounted={mounted}
+          error={error}
+          fileInputRef={fileInputRef}
+          handleUpload={handleUpload}
+          setActiveView={setActiveView}
+        />
+      )}
+    </aside>
+  )
+}
+
+interface FilesTabBodyProps {
+  resources: ReturnType<typeof useWorkspaceResources>
+  attachedCount: number
+  query: string
+  setQuery: (q: string) => void
+  filtered: ReturnType<typeof useWorkspaceResources>
+  selectedFileIds: string[]
+  toggleFileSelection: (fileId: string) => void
+  mounted: boolean
+  error: string | null
+  fileInputRef: React.RefObject<HTMLInputElement | null>
+  handleUpload: (list: FileList | null) => void
+  setActiveView: (view: "workspaces" | "chat" | "resources" | "editor") => void
+}
+
+function FilesTabBody({
+  resources,
+  attachedCount,
+  query,
+  setQuery,
+  filtered,
+  selectedFileIds,
+  toggleFileSelection,
+  mounted,
+  error,
+  fileInputRef,
+  handleUpload,
+  setActiveView,
+}: FilesTabBodyProps) {
+  return (
+    <>
       {/* Header */}
       <div className="shrink-0 px-3 py-2.5 border-b border-[var(--border)] flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="flex items-center gap-1.5 text-sm font-medium text-[var(--foreground)]">
-            <FolderOpen size={14} className="text-[var(--muted-foreground)]" />
-            Files
-          </div>
-          <p className="mt-0.5 text-[11px] text-[var(--muted-foreground)]">
+          <p className="text-[11px] text-[var(--muted-foreground)]">
             {resources.length} in workspace · {attachedCount} attached
           </p>
         </div>
@@ -169,11 +283,14 @@ export function ChatResourcesPanel() {
                       >
                         {file.name}
                       </div>
-                      <div className="text-[10px] text-[var(--muted-foreground)]">
-                        {formatFileSize(file.size)}
-                        {mounted && (
-                          <> · {format(new Date(file.uploadedAt), "MMM d, yyyy")}</>
-                        )}
+                      <div className="text-[10px] text-[var(--muted-foreground)] flex items-center gap-1.5 flex-wrap">
+                        <span>
+                          {formatFileSize(file.size)}
+                          {mounted && (
+                            <> · {format(new Date(file.uploadedAt), "MMM d, yyyy")}</>
+                          )}
+                        </span>
+                        <ExtractionStatusBadge file={file} />
                       </div>
                     </div>
                   </button>
@@ -200,6 +317,6 @@ export function ChatResourcesPanel() {
           Manage workspace files →
         </button>
       </div>
-    </aside>
+    </>
   )
 }

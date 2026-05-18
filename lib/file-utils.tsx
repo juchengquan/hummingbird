@@ -1,16 +1,16 @@
-import { File, FileText, FileJson, Image } from "lucide-react"
+import { File as FileIcon, FileText, FileJson, Image } from "lucide-react"
 import React from "react"
-
-export interface UploadedFile {
-  id: string
-  name: string
-  size: number
-  type: string
-  uploadedAt: Date
-}
+import type { UploadedFile } from "@/lib/types"
 
 // Default file validation (5MB limit)
 const DEFAULT_SIZE_LIMIT = 5 * 1024 * 1024
+
+export interface ProcessedFile {
+  /** Metadata describing the file after validation. */
+  meta: UploadedFile
+  /** Original `File` blob, so callers can hand it to extraction or upload pipelines. */
+  source: File
+}
 
 export function processSelectedFiles(
   files: FileList | null,
@@ -18,12 +18,12 @@ export function processSelectedFiles(
     maxSize?: number
     onValidationError?: (error: string) => void
   } = {}
-): UploadedFile[] {
+): ProcessedFile[] {
   const { maxSize = DEFAULT_SIZE_LIMIT, onValidationError } = options
 
   if (!files) return []
 
-  const uploadedFiles: UploadedFile[] = []
+  const processed: ProcessedFile[] = []
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i]
@@ -34,18 +34,20 @@ export function processSelectedFiles(
       continue
     }
 
-    const uploadedFile: UploadedFile = {
-      id: crypto.randomUUID(),
-      name: file.name,
-      size: file.size,
-      type: file.type || 'application/octet-stream',
-      uploadedAt: new Date(),
-    }
-
-    uploadedFiles.push(uploadedFile)
+    processed.push({
+      meta: {
+        id: crypto.randomUUID(),
+        name: file.name,
+        size: file.size,
+        type: file.type || 'application/octet-stream',
+        uploadedAt: new Date(),
+        extractionStatus: 'pending',
+      },
+      source: file,
+    })
   }
 
-  return uploadedFiles
+  return processed
 }
 
 export function getFileIcon(type: string): React.ReactNode {
@@ -56,7 +58,7 @@ export function getFileIcon(type: string): React.ReactNode {
   if (type.includes("json")) return <FileJson size={16} className="text-yellow-500 shrink-0" />
   if (type.includes("csv") || type.includes("text"))
     return <FileText size={16} className="text-green-500 shrink-0" />
-  return <File size={16} className="text-gray-500 shrink-0" />
+  return <FileIcon size={16} className="text-gray-500 shrink-0" />
 }
 
 export function formatFileSize(bytes: number): string {

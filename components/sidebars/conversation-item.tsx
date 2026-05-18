@@ -2,9 +2,16 @@
 
 import { useState, useRef, useEffect } from "react"
 import { Conversation } from "@/lib/types"
-import { Pin, PinOff, Pencil, Trash2, MoreVertical, Check, X } from "lucide-react"
+import { Pin, PinOff, Pencil, Trash2, MoreVertical, Check, X, Download, Copy } from "lucide-react"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import {
+  conversationToMarkdown,
+  copyText,
+  downloadAsFile,
+  safeFilename,
+} from "@/lib/export"
 import {
   Popover,
   PopoverTrigger,
@@ -73,6 +80,23 @@ export function ConversationItem({
   const handlePin = () => {
     setMenuOpen(false)
     onPin()
+  }
+
+  const handleExportMarkdown = () => {
+    setMenuOpen(false)
+    const md = conversationToMarkdown(conversation)
+    downloadAsFile(`${safeFilename(conversation.title)}.md`, md)
+    toast.success("Conversation exported")
+  }
+
+  const handleCopyMarkdown = async () => {
+    setMenuOpen(false)
+    try {
+      await copyText(conversationToMarkdown(conversation))
+      toast.success("Copied as Markdown")
+    } catch {
+      toast.error("Failed to copy to clipboard")
+    }
   }
 
   const handleMenuClose = (open: boolean) => {
@@ -153,6 +177,22 @@ export function ConversationItem({
               >
                 <Pencil size={16} />
                 <span>Rename</span>
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={handleExportMarkdown}
+                className="w-full justify-start gap-2 cursor-pointer"
+              >
+                <Download size={16} />
+                <span>Export as .md</span>
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={handleCopyMarkdown}
+                className="w-full justify-start gap-2 cursor-pointer"
+              >
+                <Copy size={16} />
+                <span>Copy as Markdown</span>
               </Button>
               <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
                 <AlertDialogTrigger asChild>

@@ -21,6 +21,7 @@ import { z } from 'zod';
 
 import { BaseEditorKit } from '@/components/editor/editor-base-kit';
 import { markdownJoinerTransform } from '@/lib/markdown-joiner-transform';
+import { categorizeError } from '@/lib/api-errors';
 
 import {
   buildEditTableMultiCellPrompt,
@@ -45,7 +46,7 @@ export async function POST(req: NextRequest) {
 
   if (!apiKey) {
     return NextResponse.json(
-      { error: 'Missing AI Gateway API key.' },
+      { code: 'auth', message: 'Missing AI_GATEWAY_API_KEY.' },
       { status: 401 }
     );
   }
@@ -168,11 +169,9 @@ export async function POST(req: NextRequest) {
     });
 
     return createUIMessageStreamResponse({ stream });
-  } catch {
-    return NextResponse.json(
-      { error: 'Failed to process AI request' },
-      { status: 500 }
-    );
+  } catch (error) {
+    const { status, code, message } = categorizeError(error);
+    return NextResponse.json({ code, message }, { status });
   }
 }
 

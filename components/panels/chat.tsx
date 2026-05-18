@@ -1,52 +1,67 @@
 "use client"
 
 import { useState, useRef, useEffect, useMemo, useCallback } from "react"
+import { toast } from "sonner"
 import { useStore, useHydrated } from "@/lib/hooks/use-store"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { InputGroup, InputGroupTextarea, InputGroupButton } from "@/components/ui/input-group"
-import { cn } from "@/lib/utils"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
-import { Plus, User, Bot, ChevronDown } from "lucide-react"
+import { ChatMessage } from "@/components/panels/chat-message"
+import { Plus, Bot, ChevronDown, Square } from "lucide-react"
+import { CHAT_MODELS } from "@/lib/models"
+import { processSelectedFiles } from "@/lib/file-utils"
+import { runExtraction } from "@/lib/extract"
+import { extractCodeBlocks } from "@/lib/code-blocks"
 
-// Helper function to format time in UTC to avoid hydration mismatch
-function formatTime(timestamp: Date | string): string {
-  const date = new Date(timestamp)
-  const hours = date.getUTCHours()
-  const minutes = date.getUTCMinutes()
-  const ampm = hours >= 12 ? "PM" : "AM"
-  const hour12 = hours % 12 || 12
-  const minuteStr = minutes.toString().padStart(2, "0")
-  return `${hour12}:${minuteStr} ${ampm}`
-}
-
-// Client-only time component to avoid hydration mismatch
-function MessageTime({ timestamp }: { timestamp: Date | string }) {
-  const [time, setTime] = useState<string>("")
-
-  useEffect(() => {
-    setTime(formatTime(timestamp))
-  }, [timestamp])
-
-  if (!time) return null
-  return <>{time}</>
-}
+const AUTO_ARCHIVE_MIN_LINES = 15
+const AUTO_ARCHIVE_MAX_PER_MESSAGE = 3
+import { FILE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/lib/upload-config"
+import type { Message, MessageError, MessageErrorCode } from "@/lib/types"
 
 export function ChatPanel() {
   const addMessage = useStore((state) => state.addMessage)
+  const deleteMessage = useStore((state) => state.deleteMessage)
+  const updateMessage = useStore((state) => state.updateMessage)
+  const appendToMessage = useStore((state) => state.appendToMessage)
+  const truncateMessagesAfter = useStore((state) => state.truncateMessagesAfter)
+  const setMessageError = useStore((state) => state.setMessageError)
   const isTyping = useStore((state) => state.isTyping)
   const setIsTyping = useStore((state) => state.setIsTyping)
-  const setEditorContent = useStore((state) => state.setEditorContent)
+  const chatModel = useStore((state) => state.chatModel)
+  const setChatModel = useStore((state) => state.setChatModel)
+  const files = useStore((state) => state.files)
   const activeConversationId = useStore((state) => state.activeConversationId)
   const conversations = useStore((state) => state.conversations)
+  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
+  const addFile = useStore((state) => state.addFile)
+  const addResource = useStore((state) => state.addResource)
+  const setFileExtraction = useStore((state) => state.setFileExtraction)
+  const createArtifact = useStore((state) => state.createArtifact)
+  const toggleConversationFileSelection = useStore(
+    (state) => state.toggleConversationFileSelection
+  )
   const activeConversation = useMemo(
     () => conversations.find((c) => c.id === activeConversationId) || null,
     [conversations, activeConversationId]
   )
   const hydrated = useHydrated()
   const [inputValue, setInputValue] = useState("")
+  const [isStreaming, setIsStreaming] = useState(false)
+  const [modelPickerOpen, setModelPickerOpen] = useState(false)
   const [, setShowScrollButton] = useState(false)
+  const abortControllerRef = useRef<AbortController | null>(null)
+  const inputFileRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -87,59 +102,245 @@ export function ChatPanel() {
     setShowScrollButton(false)
   }, [])
 
-  const simulateAIResponse = (userMessage: string) => {
-    // Show typing indicator
-    setIsTyping(true)
+  // Mock fallback used when the AI Gateway key isn't configured.
+  const mockAIResponse = useCallback(
+    (userMessage: string) => {
+      setIsTyping(true)
+      setTimeout(() => {
+        const aiContent = `_Mock response (set \`AI_GATEWAY_API_KEY\` to enable real AI)_\n\nRegarding "${userMessage}": this is placeholder text.`
+        addMessage({ role: "assistant", content: aiContent })
+        setIsTyping(false)
+      }, 300)
+    },
+    [setIsTyping, addMessage]
+  )
 
-    // Simulate AI response delay
-    setTimeout(() => {
-      const responses = [
-        "That's an interesting question! Let me think about it...",
-        "I understand what you're asking. Here's my response:",
-        "Thanks for sharing that! Based on what you've told me, I would say:",
-        "That's a great point. Here's my take on it:",
-        "I appreciate you asking! Here's what I think:",
-      ]
-
-      const randomResponse = responses[Math.floor(Math.random() * responses.length)]
-      const additionalContent = `\n\nRegarding "${userMessage}": This is a mock response for testing purposes. In a real implementation, this would connect to an AI API to generate contextual responses based on your input.`
-
-      const aiContent = randomResponse + additionalContent
-
-      addMessage({
-        role: "assistant",
-        content: aiContent,
+  // After a stream completes, auto-archive substantial code blocks so they
+  // become first-class artifacts without the user having to remember the
+  // Save-as-artifact button. Conservative threshold (>= AUTO_ARCHIVE_MIN_LINES)
+  // and capped count keep the artifacts panel from flooding.
+  const autoArchiveCodeBlocks = useCallback(
+    (assistantMessage: Message) => {
+      if (!activeConversationId) return
+      const blocks = extractCodeBlocks(assistantMessage.content)
+      const eligible = blocks.filter((b) => b.lines >= AUTO_ARCHIVE_MIN_LINES)
+      if (eligible.length === 0) return
+      const capped = eligible.slice(0, AUTO_ARCHIVE_MAX_PER_MESSAGE)
+      capped.forEach((b, i) => {
+        const lang = (b.language ?? "").toLowerCase()
+        const kind = lang === "json" ? "json" : "code"
+        createArtifact({
+          conversationId: activeConversationId,
+          messageId: assistantMessage.id,
+          kind,
+          language: b.language,
+          title:
+            capped.length === 1
+              ? `Code${b.language ? ` (${b.language})` : ""}`
+              : `Code ${i + 1}${b.language ? ` (${b.language})` : ""}`,
+          content: b.code,
+        })
       })
+    },
+    [activeConversationId, createArtifact]
+  )
 
-      // Sync AI response to editor panel as markdown
-      setEditorContent(aiContent)
+  // Build the message list and file context the API expects, sent up to and
+  // including the most recent user message.
+  const callChatAPI = useCallback(
+    async (history: Message[]) => {
+      const conv = conversations.find((c) => c.id === activeConversationId)
+      const fileSummaries =
+        conv?.selectedFileIds
+          .map((id) => files.find((f) => f.id === id))
+          .filter((f): f is NonNullable<typeof f> => Boolean(f))
+          .map((f) => ({
+            name: f.name,
+            size: f.size,
+            type: f.type,
+            text: f.extractedText,
+            truncated: f.extractionTruncated,
+          })) ?? []
 
-      setIsTyping(false)
-    }, 300)
-  }
+      const controller = new AbortController()
+      abortControllerRef.current = controller
+      setIsTyping(true)
+      setIsStreaming(true)
+      let placeholder: Message | null = null
+      let firstChunk = true
+
+      const surfaceError = (error: MessageError) => {
+        setIsTyping(false)
+        if (placeholder) {
+          setMessageError(placeholder.id, error)
+        } else {
+          const created = addMessage({ role: "assistant", content: "" })
+          setMessageError(created.id, error)
+        }
+      }
+
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            model: chatModel,
+            messages: history.map((m) => ({ role: m.role, content: m.content })),
+            files: fileSummaries,
+          }),
+        })
+
+        if (!res.ok) {
+          let body: { code?: string; message?: string } = {}
+          try {
+            body = await res.json()
+          } catch {
+            /* non-JSON error body */
+          }
+          if (res.status === 401) {
+            setIsTyping(false)
+            setIsStreaming(false)
+            const lastUser = [...history].reverse().find((m) => m.role === "user")
+            if (lastUser) mockAIResponse(lastUser.content)
+            return
+          }
+          surfaceError({
+            code: (body.code as MessageErrorCode) || "unknown",
+            status: res.status,
+            model: chatModel,
+            detail: body.message,
+          })
+          return
+        }
+
+        if (!res.body) {
+          surfaceError({
+            code: "provider",
+            status: res.status,
+            model: chatModel,
+            detail: "No response body.",
+          })
+          return
+        }
+
+        const reader = res.body.getReader()
+        const decoder = new TextDecoder()
+        while (true) {
+          const { value, done } = await reader.read()
+          if (done) break
+          const chunk = decoder.decode(value, { stream: true })
+          if (firstChunk) {
+            setIsTyping(false)
+            placeholder = addMessage({ role: "assistant", content: chunk })
+            firstChunk = false
+          } else if (placeholder) {
+            appendToMessage(placeholder.id, chunk)
+          }
+        }
+
+        const tail = decoder.decode()
+        if (tail && placeholder) appendToMessage(placeholder.id, tail)
+
+        if (firstChunk) {
+          surfaceError({
+            code: "provider",
+            model: chatModel,
+            detail: "The model returned an empty response.",
+          })
+        } else if (placeholder && activeConversationId) {
+          autoArchiveCodeBlocks(placeholder)
+        }
+      } catch (err) {
+        const aborted =
+          (err instanceof DOMException && err.name === "AbortError") ||
+          controller.signal.aborted
+        if (aborted) {
+          if (placeholder && placeholder.content === "") {
+            deleteMessage(placeholder.id)
+          }
+        } else {
+          surfaceError({
+            code: "network",
+            model: chatModel,
+            detail: err instanceof Error ? err.message : "Network error",
+          })
+        }
+      } finally {
+        setIsTyping(false)
+        setIsStreaming(false)
+        if (abortControllerRef.current === controller) {
+          abortControllerRef.current = null
+        }
+      }
+    },
+    [
+      activeConversationId,
+      addMessage,
+      appendToMessage,
+      autoArchiveCodeBlocks,
+      chatModel,
+      conversations,
+      deleteMessage,
+      files,
+      mockAIResponse,
+      setIsTyping,
+      setMessageError,
+    ]
+  )
+
+  const callChatAPIRef = useRef(callChatAPI)
+  useEffect(() => {
+    callChatAPIRef.current = callChatAPI
+  }, [callChatAPI])
+
+  const handleStop = useCallback(() => {
+    abortControllerRef.current?.abort()
+  }, [])
+
+  const handleAttachClick = useCallback(() => {
+    inputFileRef.current?.click()
+  }, [])
+
+  const handleFileSelected = useCallback(
+    (list: FileList | null) => {
+      const processed = processSelectedFiles(list, {
+        maxSize: FILE_SIZE_LIMIT,
+        onValidationError: (err) => toast.error(err),
+      })
+      processed.forEach(({ meta, source }) => {
+        addFile(meta)
+        addResource(activeWorkspaceId, meta.id)
+        toggleConversationFileSelection(meta.id)
+        void runExtraction(meta.id, source, setFileExtraction)
+      })
+      if (processed.length > 0) {
+        toast.success(
+          `Attached ${processed.length} file${processed.length === 1 ? "" : "s"}`
+        )
+      }
+      if (inputFileRef.current) inputFileRef.current.value = ""
+    },
+    [addFile, addResource, activeWorkspaceId, toggleConversationFileSelection, setFileExtraction]
+  )
 
   const handleSendMessage = () => {
-    if (!inputValue.trim()) return
+    if (!inputValue.trim() || isStreaming) return
 
     const messageContent = inputValue.trim()
-
-    addMessage({
+    const userMessage = addMessage({
       role: "user",
       content: messageContent,
     })
 
-    // Sync to editor panel
-    setEditorContent(messageContent)
-
     setInputValue("")
 
-    // Reset textarea height
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto"
     }
 
-    // Trigger AI response
-    simulateAIResponse(messageContent)
+    const history = [...messages, userMessage]
+    callChatAPIRef.current(history)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -148,6 +349,55 @@ export function ChatPanel() {
       handleSendMessage()
     }
   }
+
+  const handleEditUserMessage = useCallback(
+    (messageId: string, newContent: string) => {
+      const conv = conversations.find((c) => c.id === activeConversationId)
+      if (!conv) return
+      const idx = conv.messages.findIndex((m) => m.id === messageId)
+      if (idx === -1) return
+
+      updateMessage(messageId, newContent)
+      truncateMessagesAfter(messageId)
+
+      const newHistory = [
+        ...conv.messages.slice(0, idx),
+        { ...conv.messages[idx], content: newContent },
+      ]
+      callChatAPIRef.current(newHistory)
+    },
+    [conversations, activeConversationId, updateMessage, truncateMessagesAfter]
+  )
+
+  const handleRegenerateAssistantMessage = useCallback(
+    (messageId: string) => {
+      const conv = conversations.find((c) => c.id === activeConversationId)
+      if (!conv) return
+      const idx = conv.messages.findIndex((m) => m.id === messageId)
+      if (idx <= 0) return
+      truncateMessagesAfter(messageId, true)
+      const newHistory = conv.messages.slice(0, idx)
+      callChatAPIRef.current(newHistory)
+    },
+    [conversations, activeConversationId, truncateMessagesAfter]
+  )
+
+  const handleRetryErrorMessage = useCallback(
+    (messageId: string) => {
+      const conv = conversations.find((c) => c.id === activeConversationId)
+      if (!conv) return
+      const idx = conv.messages.findIndex((m) => m.id === messageId)
+      if (idx === -1) return
+      const newHistory = conv.messages.slice(0, idx)
+      deleteMessage(messageId)
+      callChatAPIRef.current(newHistory)
+    },
+    [conversations, activeConversationId, deleteMessage]
+  )
+
+  const handleChangeModel = useCallback(() => {
+    setModelPickerOpen(true)
+  }, [])
 
   // Auto-resize textarea
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -193,52 +443,16 @@ export function ChatPanel() {
                 </div>
               ) : (
                 messages.map((message, index) => (
-                  <div
+                  <ChatMessage
                     key={message.id}
-                    className="animate-message-in"
-                    style={{ animationDelay: `${index * 50}ms` }}
-                  >
-                    <div
-                      className={cn(
-                        "flex gap-3",
-                        message.role === "user" ? "flex-row-reverse" : "flex-row"
-                      )}
-                    >
-                      {/* Avatar */}
-                      <Avatar className="w-8 h-8 mt-1 animate-avatar-in">
-                        <AvatarImage src="" />
-                        <AvatarFallback className="text-xs">
-                          {message.role === "user" ? (
-                            <User size={16} />
-                          ) : (
-                            <Bot size={16} />
-                          )}
-                        </AvatarFallback>
-                      </Avatar>
-
-                      {/* Message Content */}
-                      <div
-                        className={cn(
-                          "max-w-[70%] rounded-lg px-4 py-2 animate-content-in",
-                          message.role === "user"
-                            ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-                            : "bg-[var(--secondary)] text-[var(--foreground)]"
-                        )}
-                      >
-                        <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                        <p
-                          className={cn(
-                            "text-xs mt-1 opacity-60",
-                            message.role === "user"
-                              ? "text-[var(--primary-foreground)]"
-                              : "text-[var(--muted-foreground)]"
-                          )}
-                        >
-                          <MessageTime timestamp={message.timestamp} />
-                        </p>
-                      </div>
-                    </div>
-                  </div>
+                    message={message}
+                    index={index}
+                    onDelete={deleteMessage}
+                    onEditUserMessage={handleEditUserMessage}
+                    onRegenerateAssistantMessage={handleRegenerateAssistantMessage}
+                    onRetryError={handleRetryErrorMessage}
+                    onChangeModel={handleChangeModel}
+                  />
                 ))
               )}
 
@@ -278,11 +492,21 @@ export function ChatPanel() {
 
         {/* Input Bar - fixed at bottom of messages column, grows upwards */}
         <div className="absolute bottom-2 inset-x-0 border-[var(--border)] px-4 bg-background-transparant animate-input-bar-in">
+          <input
+            ref={inputFileRef}
+            type="file"
+            multiple
+            accept={ALLOWED_EXTENSIONS.join(",")}
+            className="hidden"
+            onChange={(e) => handleFileSelected(e.target.files)}
+          />
           <InputGroup className="max-w-4xl mx-auto rounded-[1vw] bg-background">
             <InputGroupButton
               size="icon-sm"
+              onClick={handleAttachClick}
               className="ml-2 rounded-full transition-transform hover:scale-110 active:scale-95"
-              aria-label="Add attachments"
+              aria-label="Attach files to this conversation"
+              title="Attach files"
             >
               <Plus size={20} />
             </InputGroupButton>
@@ -298,10 +522,55 @@ export function ChatPanel() {
                 scrollbarColor: "var(--muted-foreground) transparent",
               }}
             />
+            {isStreaming && (
+              <InputGroupButton
+                size="icon-sm"
+                onClick={handleStop}
+                className="mr-2 rounded-full bg-[var(--destructive)]/10 text-[var(--destructive)] hover:bg-[var(--destructive)]/20 transition-transform hover:scale-110 active:scale-95"
+                aria-label="Stop generating"
+                title="Stop"
+              >
+                <Square size={14} fill="currentColor" />
+              </InputGroupButton>
+            )}
           </InputGroup>
-          <p className="text-xs text-center text-[var(--muted-foreground)] mt-2 italic">
-            AI is not silver bullet!
-          </p>
+          <div className="mt-2 flex items-center justify-center gap-3">
+            <Select
+              value={chatModel}
+              onValueChange={setChatModel}
+              open={modelPickerOpen}
+              onOpenChange={setModelPickerOpen}
+            >
+              <SelectTrigger
+                size="sm"
+                className="h-6 text-xs gap-1 border-none bg-transparent hover:bg-[var(--secondary)]"
+                aria-label="Model"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(
+                  CHAT_MODELS.reduce<Record<string, typeof CHAT_MODELS>>((acc, m) => {
+                    if (!acc[m.provider]) acc[m.provider] = []
+                    acc[m.provider].push(m)
+                    return acc
+                  }, {})
+                ).map(([provider, models]) => (
+                  <SelectGroup key={provider}>
+                    <SelectLabel>{provider}</SelectLabel>
+                    {models.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                ))}
+              </SelectContent>
+            </Select>
+            <span className="text-xs text-[var(--muted-foreground)] italic">
+              AI is not a silver bullet!
+            </span>
+          </div>
         </div>
       </div>
 

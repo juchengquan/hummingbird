@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import type { UploadedFile, Workspace, Resource, Message, Conversation, MainView } from '@/lib/types'
+import type { UploadedFile, Workspace, Resource, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind } from '@/lib/types'
+import { DEFAULT_CHAT_MODEL } from '@/lib/models'
 
-export type { UploadedFile, Workspace, Resource, Message, Conversation, MainView } from '@/lib/types'
+export type { UploadedFile, Workspace, Resource, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind } from '@/lib/types'
 
 type Theme = 'system' | 'dark' | 'light'
 
@@ -76,6 +77,7 @@ const getDefaultConversations = (): Conversation[] => {
       updatedAt: new Date(baseTime),
       pinned: true,
       selectedFileIds: [],
+      documentContent: '',
     },
   ]
 }
@@ -100,6 +102,14 @@ interface AppState {
   // Resources (file-to-workspace associations)
   resources: Resource[]
 
+  // Notes (free-form notes & message bookmarks, scoped to a conversation)
+  notes: Note[]
+
+  // Artifacts (assistant-generated content captured by the user)
+  artifacts: Artifact[]
+  /** Bumped to force the editor to reload its content (e.g. on "Send to editor"). */
+  editorReloadToken: number
+
   // Conversations
   conversations: Conversation[]
   activeConversationId: string | null
@@ -107,13 +117,7 @@ interface AppState {
   // Chat
   isTyping: boolean
   streamingContent: string
-
-  // Document
-  documentContent: string
-  documentLastSaved: Date | null
-
-  // Editor content synced from chat
-  editorContent: string
+  chatModel: string
 
   // View / sidebar actions
   toggleSidebar: () => void
@@ -129,10 +133,40 @@ interface AppState {
   addResource: (workspaceId: string, fileId: string) => void
   removeResource: (resourceId: string) => void
 
+  // Notes actions
+  createNote: (input: { conversationId: string; messageId?: string | null; body?: string }) => Note
+  updateNoteBody: (noteId: string, body: string) => void
+  deleteNote: (noteId: string) => void
+  /** Returns the resulting bookmark note if created, or null if removed. */
+  toggleMessageBookmark: (conversationId: string, messageId: string) => Note | null
+
+  // Artifacts actions
+  createArtifact: (input: {
+    conversationId: string
+    messageId?: string | null
+    kind: ArtifactKind
+    language?: string | null
+    title?: string
+    content: string
+  }) => Artifact
+  deleteArtifact: (artifactId: string) => void
+  togglePinArtifact: (artifactId: string) => void
+  updateArtifactTitle: (artifactId: string, title: string) => void
+  requestEditorReload: () => void
+
   // File actions
   addFile: (file: UploadedFile) => void
   removeFile: (fileId: string) => void
   clearFiles: () => void
+  setFileExtraction: (
+    fileId: string,
+    patch: Partial<
+      Pick<
+        UploadedFile,
+        'extractionStatus' | 'extractedText' | 'extractionTruncated' | 'extractedKind'
+      >
+    >
+  ) => void
 
   // Conversation actions
   createConversation: (workspaceId?: string) => Conversation
@@ -146,17 +180,20 @@ interface AppState {
   setActiveConversation: (conversationId: string | null) => void
 
   // Message actions
-  addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => void
+  addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => Message
   deleteMessage: (messageId: string) => void
   updateMessage: (messageId: string, content: string) => void
+  truncateMessagesAfter: (messageId: string, inclusive?: boolean) => void
   clearMessages: () => void
   setIsTyping: (typing: boolean) => void
   setStreamingContent: (content: string) => void
+  setChatModel: (model: string) => void
+  appendToMessage: (messageId: string, chunk: string) => void
+  setMessageError: (messageId: string, error: MessageError) => void
+  clearMessageError: (messageId: string) => void
 
-  // Document actions
-  setDocumentContent: (content: string) => void
-  setDocumentLastSaved: (date: Date) => void
-  setEditorContent: (content: string) => void
+  // Per-conversation document actions
+  setConversationDocument: (conversationId: string, content: string) => void
 
   // Theme actions
   setTheme: (theme: Theme) => void
@@ -185,6 +222,13 @@ export const useStore = create<AppState>()(
       // Resources
       resources: [],
 
+      // Notes
+      notes: [],
+
+      // Artifacts
+      artifacts: [],
+      editorReloadToken: 0,
+
       // Conversations
       conversations: getDefaultConversations().map((c: Conversation) => ({
         ...c,
@@ -196,13 +240,7 @@ export const useStore = create<AppState>()(
       // Chat
       isTyping: false,
       streamingContent: '',
-
-      // Document
-      documentContent: '',
-      documentLastSaved: null,
-
-      // Editor content synced from chat
-      editorContent: '',
+      chatModel: DEFAULT_CHAT_MODEL,
 
       // View / sidebar actions
       toggleSidebar: () =>
@@ -265,6 +303,91 @@ export const useStore = create<AppState>()(
           resources: state.resources.filter((r) => r.id !== resourceId),
         })),
 
+      // Notes actions
+      createNote: ({ conversationId, messageId = null, body = '' }) => {
+        const now = new Date()
+        const newNote: Note = {
+          id: crypto.randomUUID(),
+          conversationId,
+          messageId,
+          body,
+          createdAt: now,
+          updatedAt: now,
+        }
+        set((state) => ({ notes: [newNote, ...state.notes] }))
+        return newNote
+      },
+      updateNoteBody: (noteId: string, body: string) =>
+        set((state) => ({
+          notes: state.notes.map((n) =>
+            n.id === noteId ? { ...n, body, updatedAt: new Date() } : n
+          ),
+        })),
+      deleteNote: (noteId: string) =>
+        set((state) => ({
+          notes: state.notes.filter((n) => n.id !== noteId),
+        })),
+      toggleMessageBookmark: (conversationId: string, messageId: string) => {
+        const existing = get().notes.find(
+          (n) => n.conversationId === conversationId && n.messageId === messageId
+        )
+        if (existing) {
+          set((state) => ({
+            notes: state.notes.filter((n) => n.id !== existing.id),
+          }))
+          return null
+        }
+        const now = new Date()
+        const newNote: Note = {
+          id: crypto.randomUUID(),
+          conversationId,
+          messageId,
+          body: '',
+          createdAt: now,
+          updatedAt: now,
+        }
+        set((state) => ({ notes: [newNote, ...state.notes] }))
+        return newNote
+      },
+
+      // Artifacts actions
+      createArtifact: ({ conversationId, messageId = null, kind, language = null, title, content }) => {
+        const fallbackTitle =
+          title ?? content.split('\n')[0].slice(0, 60).trim() ?? 'Untitled'
+        const newArtifact: Artifact = {
+          id: crypto.randomUUID(),
+          conversationId,
+          messageId,
+          kind,
+          language,
+          title: fallbackTitle || 'Untitled',
+          content,
+          storagePath: null,
+          pinned: false,
+          createdAt: new Date(),
+        }
+        set((state) => ({ artifacts: [newArtifact, ...state.artifacts] }))
+        return newArtifact
+      },
+      deleteArtifact: (artifactId: string) =>
+        set((state) => ({
+          artifacts: state.artifacts.filter((a) => a.id !== artifactId),
+        })),
+      togglePinArtifact: (artifactId: string) =>
+        set((state) => ({
+          artifacts: state.artifacts.map((a) =>
+            a.id === artifactId ? { ...a, pinned: !a.pinned } : a
+          ),
+        })),
+      updateArtifactTitle: (artifactId: string, title: string) =>
+        set((state) => ({
+          artifacts: state.artifacts.map((a) =>
+            a.id === artifactId ? { ...a, title } : a
+          ),
+        })),
+      requestEditorReload: () =>
+        set((state) => ({ editorReloadToken: state.editorReloadToken + 1 })),
+
       // File actions
       addFile: (file: UploadedFile) =>
         set((state) => ({ files: [...state.files, file] })),
@@ -279,6 +402,12 @@ export const useStore = create<AppState>()(
           ),
         })),
       clearFiles: () => set({ files: [] }),
+      setFileExtraction: (fileId, patch) =>
+        set((state) => ({
+          files: state.files.map((f) =>
+            f.id === fileId ? { ...f, ...patch } : f
+          ),
+        })),
 
       // Conversation actions
       createConversation: (workspaceId?: string) => {
@@ -292,6 +421,7 @@ export const useStore = create<AppState>()(
           updatedAt: new Date(),
           pinned: false,
           selectedFileIds: [],
+          documentContent: '',
         }
         set((state) => ({
           conversations: [newConversation, ...state.conversations],
@@ -306,6 +436,8 @@ export const useStore = create<AppState>()(
           )
           return {
             conversations: newConversations,
+            notes: state.notes.filter((n) => n.conversationId !== conversationId),
+            artifacts: state.artifacts.filter((a) => a.conversationId !== conversationId),
             activeConversationId:
               state.activeConversationId === conversationId
                 ? newConversations[0]?.id || null
@@ -388,6 +520,14 @@ export const useStore = create<AppState>()(
             }
             return c
           }),
+          // Detach any bookmarks / artifacts anchored to this message
+          // (mirrors the `on delete set null` from the Supabase schema).
+          notes: state.notes.map((n) =>
+            n.messageId === messageId ? { ...n, messageId: null } : n
+          ),
+          artifacts: state.artifacts.map((a) =>
+            a.messageId === messageId ? { ...a, messageId: null } : a
+          ),
         })),
       updateMessage: (messageId: string, content: string) =>
         set((state) => ({
@@ -403,6 +543,18 @@ export const useStore = create<AppState>()(
             return c
           }),
         })),
+      truncateMessagesAfter: (messageId: string, inclusive: boolean = false) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id === state.activeConversationId) {
+              const idx = c.messages.findIndex((m) => m.id === messageId)
+              if (idx === -1) return c
+              const endExclusive = inclusive ? idx : idx + 1
+              return { ...c, messages: c.messages.slice(0, endExclusive) }
+            }
+            return c
+          }),
+        })),
       clearMessages: () =>
         set((state) => ({
           conversations: state.conversations.map((c) => {
@@ -414,11 +566,62 @@ export const useStore = create<AppState>()(
         })),
       setIsTyping: (typing: boolean) => set({ isTyping: typing }),
       setStreamingContent: (content: string) => set({ streamingContent: content }),
+      setChatModel: (model: string) => set({ chatModel: model }),
+      appendToMessage: (messageId: string, chunk: string) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id === state.activeConversationId) {
+              return {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === messageId ? { ...m, content: m.content + chunk } : m
+                ),
+              }
+            }
+            return c
+          }),
+        })),
+      setMessageError: (messageId: string, error: MessageError) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id === state.activeConversationId) {
+              return {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === messageId ? { ...m, error } : m
+                ),
+              }
+            }
+            return c
+          }),
+        })),
+      clearMessageError: (messageId: string) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id === state.activeConversationId) {
+              return {
+                ...c,
+                messages: c.messages.map((m) => {
+                  if (m.id !== messageId) return m
+                  const { error: _ignored, ...rest } = m
+                  void _ignored
+                  return rest
+                }),
+              }
+            }
+            return c
+          }),
+        })),
 
-      // Document actions
-      setDocumentContent: (content: string) => set({ documentContent: content }),
-      setDocumentLastSaved: (date: Date) => set({ documentLastSaved: date }),
-      setEditorContent: (content: string) => set({ editorContent: content }),
+      // Per-conversation document actions
+      setConversationDocument: (conversationId: string, content: string) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) =>
+            c.id === conversationId
+              ? { ...c, documentContent: content, updatedAt: new Date() }
+              : c
+          ),
+        })),
 
       // Theme actions
       setTheme: (theme: Theme) => set({ theme }),
@@ -432,7 +635,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'hummingbird-storage',
-      version: 3,
+      version: 4,
       migrate: (persistedState, fromVersion) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState
         const state = persistedState as Record<string, unknown>
@@ -457,6 +660,30 @@ export const useStore = create<AppState>()(
             )
           }
         }
+        if (fromVersion < 4) {
+          // documentContent / editorContent / documentLastSaved removed from
+          // the root state. Each conversation now owns its own documentContent.
+          // Copy any legacy global doc into the active conversation so the
+          // user's previous editor content is not lost.
+          const legacyDoc =
+            typeof state.documentContent === 'string' ? state.documentContent : ''
+          const activeId = state.activeConversationId
+          const convs = state.conversations
+          if (Array.isArray(convs)) {
+            state.conversations = convs.map((c) => {
+              if (!c || typeof c !== 'object') return c
+              const conv = c as Record<string, unknown>
+              if ('documentContent' in conv) return conv
+              return {
+                ...conv,
+                documentContent: conv.id === activeId ? legacyDoc : '',
+              }
+            })
+          }
+          delete state.documentContent
+          delete state.documentLastSaved
+          delete state.editorContent
+        }
         return persistedState
       },
       onRehydrateStorage: () => () => {
@@ -471,7 +698,9 @@ export const useStore = create<AppState>()(
         conversations: state.conversations,
         activeConversationId: state.activeConversationId,
         files: state.files,
-        documentContent: state.documentContent,
+        chatModel: state.chatModel,
+        notes: state.notes,
+        artifacts: state.artifacts,
       }),
     }
   )
@@ -541,4 +770,40 @@ export const useWorkspaceResources = () => {
   const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
   const workspaceResources = resources.filter((r) => r.workspaceId === activeWorkspaceId)
   return workspaceResources.map((r) => files.find((f) => f.id === r.fileId)).filter(Boolean) as UploadedFile[]
+}
+
+export const useConversationNotes = () => {
+  const notes = useStore((state) => state.notes)
+  const activeConversationId = useStore((state) => state.activeConversationId)
+  if (!activeConversationId) return [] as Note[]
+  return notes.filter((n) => n.conversationId === activeConversationId)
+}
+
+export const useMessageBookmark = (messageId: string) => {
+  const notes = useStore((state) => state.notes)
+  const activeConversationId = useStore((state) => state.activeConversationId)
+  if (!activeConversationId) return null
+  return notes.find(
+    (n) => n.conversationId === activeConversationId && n.messageId === messageId
+  ) ?? null
+}
+
+export const useActiveConversationDocument = (): string => {
+  const conversations = useStore((state) => state.conversations)
+  const activeConversationId = useStore((state) => state.activeConversationId)
+  if (!activeConversationId) return ''
+  return conversations.find((c) => c.id === activeConversationId)?.documentContent ?? ''
+}
+
+export const useConversationArtifacts = () => {
+  const artifacts = useStore((state) => state.artifacts)
+  const activeConversationId = useStore((state) => state.activeConversationId)
+  if (!activeConversationId) return [] as Artifact[]
+  return artifacts
+    .filter((a) => a.conversationId === activeConversationId)
+    .sort((a, b) => {
+      if (a.pinned && !b.pinned) return -1
+      if (!a.pinned && b.pinned) return 1
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    })
 }
