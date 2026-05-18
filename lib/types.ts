@@ -89,6 +89,12 @@ export interface Message {
    * placeholder.
    */
   attachedFileIds?: string[]
+  /**
+   * Model-generated follow-up question prompts. Surfaced as click-to-send
+   * chips below the most recent assistant message. Cleared on regenerate
+   * or edit-and-resend.
+   */
+  suggestions?: string[]
 }
 
 export interface Conversation {

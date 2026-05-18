@@ -1,7 +1,7 @@
 import type { NextRequest } from 'next/server'
 
 import { createGateway } from '@ai-sdk/gateway'
-import { streamText, type ModelMessage } from 'ai'
+import { generateText, streamText, type ModelMessage } from 'ai'
 import { NextResponse } from 'next/server'
 
 import { DEFAULT_CHAT_MODEL } from '@/lib/models'
@@ -89,6 +89,78 @@ function buildSystemPrompt(
   return prompt
 }
 
+const SUGGESTION_MODEL = 'google/gemini-2.5-flash'
+
+function lastUserText(messages: ModelMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.role !== 'user') continue
+    if (typeof m.content === 'string') return m.content
+    if (Array.isArray(m.content)) {
+      const textPart = m.content.find(
+        (p): p is { type: 'text'; text: string } =>
+          typeof p === 'object' && p !== null && (p as { type?: string }).type === 'text'
+      )
+      if (textPart) return textPart.text
+    }
+    return ''
+  }
+  return ''
+}
+
+function parseSuggestionsJson(raw: string): string[] {
+  const cleaned = raw
+    .trim()
+    .replace(/^```(?:json)?\s*\n?/, '')
+    .replace(/\n?```\s*$/, '')
+    .trim()
+  try {
+    const parsed = JSON.parse(cleaned)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((s): s is string => typeof s === 'string')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0 && s.length <= 120)
+      .slice(0, 3)
+  } catch {
+    return []
+  }
+}
+
+async function generateSuggestions(
+  gateway: ReturnType<typeof createGateway>,
+  history: ModelMessage[],
+  assistantReply: string,
+  signal: AbortSignal
+): Promise<string[]> {
+  const userText = lastUserText(history)
+  const prompt = `Based on this exchange, propose 3 concise follow-up questions the user might want to ask next. Each must be under 14 words, in the user's voice (not "ask the user…"). Reply with strict JSON only — a flat array of 3 strings, no prose:
+["...", "...", "..."]
+
+User asked:
+"""
+${userText.slice(0, 4000)}
+"""
+
+Assistant answered:
+"""
+${assistantReply.slice(0, 4000)}
+"""`
+
+  try {
+    const result = await generateText({
+      abortSignal: signal,
+      model: gateway(SUGGESTION_MODEL),
+      prompt,
+      maxOutputTokens: 200,
+      temperature: 0.7,
+    })
+    return parseSuggestionsJson(result.text)
+  } catch {
+    return []
+  }
+}
+
 export async function POST(req: NextRequest) {
   let raw: unknown
   try {
@@ -145,13 +217,18 @@ export async function POST(req: NextRequest) {
         const send = (payload: unknown) => {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
         }
+        let assistantText = ''
+        let sawError = false
         try {
           for await (const part of result.fullStream) {
             if (part.type === 'text-delta') {
               const delta = (part as { delta?: string; text?: string }).delta
                 ?? (part as { text?: string }).text
                 ?? ''
-              if (delta) send({ type: 'text', value: delta })
+              if (delta) {
+                assistantText += delta
+                send({ type: 'text', value: delta })
+              }
             } else if (part.type === 'reasoning-delta') {
               const delta = (part as { delta?: string; text?: string }).delta
                 ?? (part as { text?: string }).text
@@ -161,9 +238,33 @@ export async function POST(req: NextRequest) {
               const { code, message } = categorizeError(
                 (part as { error?: unknown }).error
               )
+              sawError = true
               send({ type: 'error', code, message })
             }
           }
+
+          // Best-effort follow-up suggestions. Only when the stream produced
+          // a real answer (skip on error / aborted / empty). Runs after the
+          // main stream so it doesn't add to time-to-first-token. Failures
+          // are silent — suggestions are decoration, not blocking.
+          if (
+            !sawError &&
+            !req.signal.aborted &&
+            assistantText.trim().length > 0
+          ) {
+            const suggestions = await generateSuggestions(
+              gateway,
+              // Same cast as the streamText call above — Zod validates the
+              // structural shape, the SDK uses tighter inner discriminants.
+              body.messages as ModelMessage[],
+              assistantText,
+              req.signal
+            )
+            if (suggestions.length > 0) {
+              send({ type: 'suggestions', values: suggestions })
+            }
+          }
+
           send({ type: 'done' })
           controller.close()
         } catch (error) {

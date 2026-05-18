@@ -79,11 +79,15 @@ function ReasoningBlock({
 interface ChatMessageProps {
   message: Message
   index: number
+  /** True for the most recent non-error assistant message; controls whether
+   *  follow-up suggestion chips render. */
+  isLastAssistant?: boolean
   onDelete: (messageId: string) => void
   onEditUserMessage: (messageId: string, newContent: string) => void
   onRegenerateAssistantMessage: (messageId: string) => void
   onRetryError?: (messageId: string) => void
   onChangeModel?: () => void
+  onPickSuggestion?: (text: string) => void
 }
 
 const ERROR_TITLES: Record<string, string> = {
@@ -190,11 +194,13 @@ function ErrorBubble({
 export function ChatMessage({
   message,
   index,
+  isLastAssistant = false,
   onDelete,
   onEditUserMessage,
   onRegenerateAssistantMessage,
   onRetryError,
   onChangeModel,
+  onPickSuggestion,
 }: ChatMessageProps) {
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState(message.content)
@@ -540,6 +546,29 @@ export function ChatMessage({
               </Button>
             </div>
           )}
+          {!isUser &&
+            !isEditing &&
+            isLastAssistant &&
+            message.suggestions &&
+            message.suggestions.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {message.suggestions.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => onPickSuggestion?.(s)}
+                    className={cn(
+                      "text-xs px-3 py-1 rounded-full border border-[var(--border)]",
+                      "bg-[var(--background)]/60 text-[var(--foreground)]",
+                      "hover:bg-[var(--accent)] hover:border-[var(--ring)] transition-colors",
+                      "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                    )}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
         </div>
         )}
       </div>

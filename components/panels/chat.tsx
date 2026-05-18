@@ -38,6 +38,7 @@ export function ChatPanel() {
   const appendToMessageReasoning = useStore((state) => state.appendToMessageReasoning)
   const truncateMessagesAfter = useStore((state) => state.truncateMessagesAfter)
   const setMessageError = useStore((state) => state.setMessageError)
+  const setMessageSuggestions = useStore((state) => state.setMessageSuggestions)
   const isTyping = useStore((state) => state.isTyping)
   const setIsTyping = useStore((state) => state.setIsTyping)
   const chatModel = useStore((state) => state.chatModel)
@@ -288,7 +289,13 @@ export function ChatPanel() {
             if (!frame.startsWith("data:")) continue
             const payload = frame.slice(5).trim()
             if (!payload) continue
-            let parsed: { type?: string; value?: string; code?: string; message?: string }
+            let parsed: {
+              type?: string
+              value?: string
+              values?: string[]
+              code?: string
+              message?: string
+            }
             try {
               parsed = JSON.parse(payload)
             } catch {
@@ -300,6 +307,13 @@ export function ChatPanel() {
             } else if (parsed.type === "reasoning" && typeof parsed.value === "string") {
               const p = ensurePlaceholder()
               appendToMessageReasoning(p.id, parsed.value)
+            } else if (parsed.type === "suggestions" && Array.isArray(parsed.values)) {
+              // Same TS-can't-narrow-through-closure issue as the catch
+              // below; restore what we know with a cast.
+              const ph = placeholder as Message | null
+              if (ph) {
+                setMessageSuggestions(ph.id, parsed.values)
+              }
             } else if (parsed.type === "error") {
               streamError = { code: parsed.code, message: parsed.message }
               break outer
@@ -365,6 +379,7 @@ export function ChatPanel() {
       mockAIResponse,
       setIsTyping,
       setMessageError,
+      setMessageSuggestions,
       workspaces,
     ]
   )
@@ -543,18 +558,26 @@ export function ChatPanel() {
               {messages.length === 0 ? (
                 <EmptyChatWelcome onPickSuggestion={pickSuggestion} />
               ) : (
-                messages.map((message, index) => (
-                  <ChatMessage
-                    key={message.id}
-                    message={message}
-                    index={index}
-                    onDelete={deleteMessage}
-                    onEditUserMessage={handleEditUserMessage}
-                    onRegenerateAssistantMessage={handleRegenerateAssistantMessage}
-                    onRetryError={handleRetryErrorMessage}
-                    onChangeModel={handleChangeModel}
-                  />
-                ))
+                (() => {
+                  // Only render suggestion chips on the most recent assistant
+                  // message — older ones would just be clutter.
+                  const lastAssistantId =
+                    [...messages].reverse().find((m) => m.role === "assistant" && !m.error)?.id ?? null
+                  return messages.map((message, index) => (
+                    <ChatMessage
+                      key={message.id}
+                      message={message}
+                      index={index}
+                      isLastAssistant={message.id === lastAssistantId}
+                      onDelete={deleteMessage}
+                      onEditUserMessage={handleEditUserMessage}
+                      onRegenerateAssistantMessage={handleRegenerateAssistantMessage}
+                      onRetryError={handleRetryErrorMessage}
+                      onChangeModel={handleChangeModel}
+                      onPickSuggestion={pickSuggestion}
+                    />
+                  ))
+                })()
               )}
 
               {/* Typing indicator */}
