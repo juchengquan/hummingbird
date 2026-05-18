@@ -158,6 +158,15 @@ interface AppState {
   addFile: (file: UploadedFile) => void
   removeFile: (fileId: string) => void
   clearFiles: () => void
+  setFileExtraction: (
+    fileId: string,
+    patch: Partial<
+      Pick<
+        UploadedFile,
+        'extractionStatus' | 'extractedText' | 'extractionTruncated' | 'extractedKind'
+      >
+    >
+  ) => void
 
   // Conversation actions
   createConversation: (workspaceId?: string) => Conversation
@@ -393,6 +402,12 @@ export const useStore = create<AppState>()(
           ),
         })),
       clearFiles: () => set({ files: [] }),
+      setFileExtraction: (fileId, patch) =>
+        set((state) => ({
+          files: state.files.map((f) =>
+            f.id === fileId ? { ...f, ...patch } : f
+          ),
+        })),
 
       // Conversation actions
       createConversation: (workspaceId?: string) => {

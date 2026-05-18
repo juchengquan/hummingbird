@@ -1,9 +1,19 @@
+export type FileExtractionStatus = 'pending' | 'done' | 'failed' | 'unsupported'
+
 export interface UploadedFile {
   id: string
   name: string
   size: number
   type: string
   uploadedAt: Date
+  /** Lifecycle of the text-extraction pipeline. Absent on legacy files (treated as 'done' with no text). */
+  extractionStatus?: FileExtractionStatus
+  /** Extracted plain text content. May be truncated; see `extractionTruncated`. */
+  extractedText?: string
+  /** True when `extractedText` was cut to fit the per-file budget. */
+  extractionTruncated?: boolean
+  /** Detected/resolved content kind (e.g. 'pdf', 'docx', 'markdown'). */
+  extractedKind?: string
 }
 
 export interface Workspace {

@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { cn } from "@/lib/utils"
 import { formatFileSize, getFileIcon, processSelectedFiles } from "@/lib/file-utils"
+import { runExtraction } from "@/lib/extract"
 import { format } from "date-fns"
 
 const FILE_SIZE_LIMIT = 5 * 1024 * 1024 // 5MB
@@ -52,6 +53,7 @@ export function ResourcePanel() {
     resources,
     addResource,
     removeResource,
+    setFileExtraction,
   } = useStore()
   const { selectedFileIds, toggleFileSelection, clearSelectedFiles } = useSessionStore()
   const [searchQuery, setSearchQuery] = useState("")
@@ -78,18 +80,19 @@ export function ResourcePanel() {
 
       setError(null)
 
-      const newFiles = processSelectedFiles(selectedFiles, {
+      const processed = processSelectedFiles(selectedFiles, {
         maxSize: FILE_SIZE_LIMIT,
         onValidationError: setError,
       })
 
-      newFiles.forEach((file) => {
-        addFile(file)
+      processed.forEach(({ meta, source }) => {
+        addFile(meta)
         // Automatically add as resource to current workspace
-        addResource(activeWorkspaceId, file.id)
+        addResource(activeWorkspaceId, meta.id)
+        void runExtraction(meta.id, source, setFileExtraction)
       })
     },
-    [addFile, addResource, activeWorkspaceId]
+    [addFile, addResource, activeWorkspaceId, setFileExtraction]
   )
 
   const handleDrop = useCallback(

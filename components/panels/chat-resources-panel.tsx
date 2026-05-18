@@ -14,6 +14,7 @@ import {
 } from "@/lib/hooks/use-store"
 import { getFileIcon, processSelectedFiles, formatFileSize } from "@/lib/file-utils"
 import { FILE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/lib/upload-config"
+import { runExtraction } from "@/lib/extract"
 import { NotesTab } from "@/components/panels/notes-tab"
 import { ArtifactsTab } from "@/components/panels/artifacts-tab"
 
@@ -23,6 +24,7 @@ export function ChatResourcesPanel() {
   const activeWorkspaceId = useStore((s) => s.activeWorkspaceId)
   const addFile = useStore((s) => s.addFile)
   const addResource = useStore((s) => s.addResource)
+  const setFileExtraction = useStore((s) => s.setFileExtraction)
   const setActiveView = useStore((s) => s.setActiveView)
   const toggleFileSelection = useStore((s) => s.toggleConversationFileSelection)
   const selectedFileIds = useConversationSelectedFileIds()
@@ -55,17 +57,18 @@ export function ChatResourcesPanel() {
   const handleUpload = useCallback(
     (list: FileList | null) => {
       setError(null)
-      const newFiles = processSelectedFiles(list, {
+      const processed = processSelectedFiles(list, {
         maxSize: FILE_SIZE_LIMIT,
         onValidationError: setError,
       })
-      newFiles.forEach((file) => {
-        addFile(file)
-        addResource(activeWorkspaceId, file.id)
-        toggleFileSelection(file.id)
+      processed.forEach(({ meta, source }) => {
+        addFile(meta)
+        addResource(activeWorkspaceId, meta.id)
+        toggleFileSelection(meta.id)
+        void runExtraction(meta.id, source, setFileExtraction)
       })
     },
-    [addFile, addResource, activeWorkspaceId, toggleFileSelection]
+    [addFile, addResource, activeWorkspaceId, toggleFileSelection, setFileExtraction]
   )
 
   return (

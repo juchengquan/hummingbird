@@ -10,6 +10,10 @@ interface FileSummary {
   name: string
   size: number
   type: string
+  /** Plain-text content extracted by /api/extract. Undefined when extraction is pending or unsupported. */
+  text?: string
+  /** True when `text` was cut to fit the extraction budget. */
+  truncated?: boolean
 }
 
 interface ChatRequestBody {
@@ -17,6 +21,11 @@ interface ChatRequestBody {
   model?: string
   files?: FileSummary[]
 }
+
+// Soft cap on combined inline text across all attachments, to keep prompts
+// inside reasonable token budgets. Per-file truncation already happens at
+// extraction time; this is a second pass across the whole attachment set.
+const TOTAL_ATTACHMENT_BUDGET = 96 * 1024
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -31,11 +40,38 @@ function buildSystemPrompt(files: FileSummary[] | undefined): string {
 
   if (!files || files.length === 0) return base
 
-  const list = files
-    .map((f) => `- ${f.name} (${f.type || 'unknown'}, ${formatBytes(f.size)})`)
-    .join('\n')
+  const withText = files.filter((f) => f.text && f.text.trim().length > 0)
+  const metaOnly = files.filter((f) => !f.text || f.text.trim().length === 0)
 
-  return `${base}\n\nThe user has attached the following files as context. You do NOT have their contents — only metadata. If a question requires the content of an attached file, say so explicitly and ask the user to paste the relevant portion.\n\n${list}`
+  let prompt = base
+  let used = 0
+
+  if (withText.length > 0) {
+    prompt +=
+      '\n\nThe user has attached these files. Their extracted text follows. Treat them as authoritative context for any question that references them.'
+    for (const f of withText) {
+      const truncatedNote = f.truncated ? ' (per-file truncated at extraction)' : ''
+      const header = `\n\n--- ${f.name}${truncatedNote} ---\n`
+      const remaining = TOTAL_ATTACHMENT_BUDGET - used
+      if (remaining <= 0) {
+        prompt += `\n\n[Additional file omitted to fit budget: ${f.name}]`
+        continue
+      }
+      const body = (f.text ?? '').slice(0, remaining)
+      const overflow = (f.text ?? '').length > body.length
+      prompt += header + body + (overflow ? '\n\n[truncated to fit overall budget]' : '')
+      used += header.length + body.length
+    }
+  }
+
+  if (metaOnly.length > 0) {
+    const list = metaOnly
+      .map((f) => `- ${f.name} (${f.type || 'unknown'}, ${formatBytes(f.size)})`)
+      .join('\n')
+    prompt += `\n\nThe user has also attached these files which we could not extract text from (filename + metadata only). Ask the user to paste any relevant portion if a question requires their content:\n\n${list}`
+  }
+
+  return prompt
 }
 
 function categorizeError(error: unknown): {

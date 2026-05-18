@@ -93,16 +93,19 @@ All four items have shipped on `claude/analyze-codebase-improvements-bYvAH`:
 
 These surfaced during implementation and remain open. Each is a separate piece of work that should be planned before being picked up.
 
-### 1. File content extraction
-Currently the chat route only passes file **metadata** (name, size, type) into the system prompt. The model is explicitly told it does not have file contents and should ask the user to paste in the relevant portions. To make attachments genuinely useful:
+### 1. ✅ File content extraction *(shipped)*
 
-- Extract text from common file types at upload time (or lazily on first use):
-  - `.txt` / `.md` / `.csv` / `.json` — read as UTF-8 directly.
-  - `.pdf` — `pdf-parse` or `pdfjs-dist`.
-  - `.docx` — `mammoth` (server-side) for text + light formatting.
-  - Images — out of scope unless we add multimodal models.
-- Store the extracted text alongside the `UploadedFile` (new `extractedText?: string` field on `lib/types.ts`).
-- Update `app/api/chat/route.ts` to send the extracted text in the system prompt, truncated to a budget (e.g. 32k chars total across all attachments, with the model told what was truncated).
+Topology decision (logged in chat): **A — same Next.js app, separate route**, local libs only. Clean interface keeps the door open to swap to (B) standalone service / (C) queue / (D) SaaS later.
+
+New `app/api/extract/route.ts` (Node runtime) accepts a single file via `multipart/form-data` and returns `{ kind, text, truncated }`. Supported kinds: `text` / `markdown` / `csv` / `json` (UTF-8 read), `pdf` (pdf-parse v2 `PDFParse.getText`), `docx` (mammoth `extractRawText`). Anything else returns `kind: 'unsupported'` with empty text. Per-file budget: 32 KB of extracted text.
+
+Client side: `lib/extract.ts` exposes `extractFile(file)` for the raw call and `runExtraction(fileId, blob, setFileExtraction)` for the fire-and-forget store-update pattern. Upload paths in `components/panels/chat-resources-panel.tsx`, `components/panels/chat.tsx` (the `+` button), and `components/panels/sources.tsx` all kick off extraction immediately after `addFile`. `processSelectedFiles` now returns `{ meta, source }[]` so callers can pair metadata with the original `File` blob.
+
+Store: `UploadedFile` gained `extractionStatus` / `extractedText` / `extractionTruncated` / `extractedKind` fields and a `setFileExtraction(fileId, patch)` mutator. The local duplicate `UploadedFile` interface in `lib/file-utils.tsx` was removed in favour of the canonical type from `lib/types.ts`.
+
+Chat: `app/api/chat/route.ts` accepts an extended `FileSummary` with optional `text` + `truncated`. `buildSystemPrompt` now interleaves attached files' extracted text into the system message (with file-name headers and a "treat as authoritative context" instruction), splits files into a "with-text" group and a "metadata-only" group, and applies a second-pass total budget of 96 KB across all attachments so the prompt stays in reasonable token bounds even with many big files. The previous "you do NOT have their contents" prompt is gone for files we *do* have text for.
+
+Pending / not in scope here: OCR for scanned PDFs (would need Tesseract or a SaaS), audio/video transcription, image multimodal handling, and async background extraction for large files. The interface is stable enough that any of these can swap in behind the same `runExtraction` / `/api/extract` boundary later.
 - Decide where extraction runs: client-side (smaller deps, no infra) vs server-side route (heavier but consistent).
 
 ### 2. Reasoning / thinking token surfacing

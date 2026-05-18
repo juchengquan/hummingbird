@@ -21,6 +21,7 @@ import { ChatMessage } from "@/components/panels/chat-message"
 import { Plus, Bot, ChevronDown, Square } from "lucide-react"
 import { CHAT_MODELS } from "@/lib/models"
 import { processSelectedFiles } from "@/lib/file-utils"
+import { runExtraction } from "@/lib/extract"
 import { FILE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/lib/upload-config"
 import type { Message, MessageError, MessageErrorCode } from "@/lib/types"
 
@@ -41,6 +42,7 @@ export function ChatPanel() {
   const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
   const addFile = useStore((state) => state.addFile)
   const addResource = useStore((state) => state.addResource)
+  const setFileExtraction = useStore((state) => state.setFileExtraction)
   const toggleConversationFileSelection = useStore(
     (state) => state.toggleConversationFileSelection
   )
@@ -117,7 +119,13 @@ export function ChatPanel() {
         conv?.selectedFileIds
           .map((id) => files.find((f) => f.id === id))
           .filter((f): f is NonNullable<typeof f> => Boolean(f))
-          .map((f) => ({ name: f.name, size: f.size, type: f.type })) ?? []
+          .map((f) => ({
+            name: f.name,
+            size: f.size,
+            type: f.type,
+            text: f.extractedText,
+            truncated: f.extractionTruncated,
+          })) ?? []
 
       const controller = new AbortController()
       abortControllerRef.current = controller
@@ -258,23 +266,24 @@ export function ChatPanel() {
 
   const handleFileSelected = useCallback(
     (list: FileList | null) => {
-      const newFiles = processSelectedFiles(list, {
+      const processed = processSelectedFiles(list, {
         maxSize: FILE_SIZE_LIMIT,
         onValidationError: (err) => toast.error(err),
       })
-      newFiles.forEach((file) => {
-        addFile(file)
-        addResource(activeWorkspaceId, file.id)
-        toggleConversationFileSelection(file.id)
+      processed.forEach(({ meta, source }) => {
+        addFile(meta)
+        addResource(activeWorkspaceId, meta.id)
+        toggleConversationFileSelection(meta.id)
+        void runExtraction(meta.id, source, setFileExtraction)
       })
-      if (newFiles.length > 0) {
+      if (processed.length > 0) {
         toast.success(
-          `Attached ${newFiles.length} file${newFiles.length === 1 ? "" : "s"}`
+          `Attached ${processed.length} file${processed.length === 1 ? "" : "s"}`
         )
       }
       if (inputFileRef.current) inputFileRef.current.value = ""
     },
-    [addFile, addResource, activeWorkspaceId, toggleConversationFileSelection]
+    [addFile, addResource, activeWorkspaceId, toggleConversationFileSelection, setFileExtraction]
   )
 
   const handleSendMessage = () => {
