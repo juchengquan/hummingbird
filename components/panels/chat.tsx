@@ -34,6 +34,7 @@ export function ChatPanel() {
   const deleteMessage = useStore((state) => state.deleteMessage)
   const updateMessage = useStore((state) => state.updateMessage)
   const appendToMessage = useStore((state) => state.appendToMessage)
+  const appendToMessageReasoning = useStore((state) => state.appendToMessageReasoning)
   const truncateMessagesAfter = useStore((state) => state.truncateMessagesAfter)
   const setMessageError = useStore((state) => state.setMessageError)
   const isTyping = useStore((state) => state.isTyping)
@@ -226,23 +227,66 @@ export function ChatPanel() {
 
         const reader = res.body.getReader()
         const decoder = new TextDecoder()
-        while (true) {
+        let buffer = ""
+        let streamError: { code?: string; message?: string } | null = null
+
+        // Server emits SSE frames: `data: <json>\n\n`. The payload is one of:
+        //   { type: 'text',      value: string }
+        //   { type: 'reasoning', value: string }
+        //   { type: 'error',     code: string, message: string }
+        //   { type: 'done' }
+        // We parse line-by-line and dispatch text vs reasoning into the
+        // placeholder. The placeholder is created on the first event of
+        // either kind, so reasoning-first models still show typing UI
+        // disappearing as soon as any output arrives.
+        const ensurePlaceholder = () => {
+          if (placeholder) return placeholder
+          setIsTyping(false)
+          placeholder = addMessage({ role: "assistant", content: "" })
+          firstChunk = false
+          return placeholder
+        }
+
+        outer: while (true) {
           const { value, done } = await reader.read()
           if (done) break
-          const chunk = decoder.decode(value, { stream: true })
-          if (firstChunk) {
-            setIsTyping(false)
-            placeholder = addMessage({ role: "assistant", content: chunk })
-            firstChunk = false
-          } else if (placeholder) {
-            appendToMessage(placeholder.id, chunk)
+          buffer += decoder.decode(value, { stream: true })
+
+          let nlIndex: number
+          while ((nlIndex = buffer.indexOf("\n\n")) !== -1) {
+            const frame = buffer.slice(0, nlIndex)
+            buffer = buffer.slice(nlIndex + 2)
+            if (!frame.startsWith("data:")) continue
+            const payload = frame.slice(5).trim()
+            if (!payload) continue
+            let parsed: { type?: string; value?: string; code?: string; message?: string }
+            try {
+              parsed = JSON.parse(payload)
+            } catch {
+              continue
+            }
+            if (parsed.type === "text" && typeof parsed.value === "string") {
+              const p = ensurePlaceholder()
+              appendToMessage(p.id, parsed.value)
+            } else if (parsed.type === "reasoning" && typeof parsed.value === "string") {
+              const p = ensurePlaceholder()
+              appendToMessageReasoning(p.id, parsed.value)
+            } else if (parsed.type === "error") {
+              streamError = { code: parsed.code, message: parsed.message }
+              break outer
+            } else if (parsed.type === "done") {
+              break outer
+            }
           }
         }
 
-        const tail = decoder.decode()
-        if (tail && placeholder) appendToMessage(placeholder.id, tail)
-
-        if (firstChunk) {
+        if (streamError) {
+          surfaceError({
+            code: (streamError.code as MessageErrorCode) || "unknown",
+            model: chatModel,
+            detail: streamError.message,
+          })
+        } else if (firstChunk) {
           surfaceError({
             code: "provider",
             model: chatModel,
@@ -255,9 +299,13 @@ export function ChatPanel() {
         const aborted =
           (err instanceof DOMException && err.name === "AbortError") ||
           controller.signal.aborted
+        // TS can't narrow `placeholder` through the SSE loop's nested
+        // ensurePlaceholder closure; the type assertion just restores
+        // what we already know.
+        const ph = placeholder as Message | null
         if (aborted) {
-          if (placeholder && placeholder.content === "") {
-            deleteMessage(placeholder.id)
+          if (ph && ph.content === "") {
+            deleteMessage(ph.id)
           }
         } else {
           surfaceError({
@@ -278,6 +326,7 @@ export function ChatPanel() {
       activeConversationId,
       addMessage,
       appendToMessage,
+      appendToMessageReasoning,
       autoArchiveCodeBlocks,
       chatModel,
       conversations,

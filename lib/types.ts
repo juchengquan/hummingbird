@@ -52,6 +52,12 @@ export interface Message {
   timestamp: Date
   /** When set on an assistant message, render the error bubble UI instead of plain content. */
   error?: MessageError
+  /**
+   * Reasoning / "thinking" tokens streamed from models that emit them
+   * (DeepSeek R1, Claude thinking variants, etc.). Rendered in a collapsible
+   * section above the main content. Not included in exports or Copy.
+   */
+  reasoning?: string
 }
 
 export interface Conversation {

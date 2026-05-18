@@ -97,7 +97,58 @@ export async function POST(req: NextRequest) {
       messages: body.messages,
     })
 
-    return result.toTextStreamResponse()
+    // Re-emit `fullStream` as a small SSE protocol so the client can keep
+    // text and reasoning separate. Keeping our own envelope (rather than the
+    // AI SDK's UI message stream) means the chat client doesn't need to be
+    // a `useChat` consumer and we stay in control of the wire format.
+    //
+    // Frame: `data: {"type":"text"|"reasoning"|"error"|"done", ...}\n\n`
+    const encoder = new TextEncoder()
+    const sse = new ReadableStream({
+      async start(controller) {
+        const send = (payload: unknown) => {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
+        }
+        try {
+          for await (const part of result.fullStream) {
+            if (part.type === 'text-delta') {
+              const delta = (part as { delta?: string; text?: string }).delta
+                ?? (part as { text?: string }).text
+                ?? ''
+              if (delta) send({ type: 'text', value: delta })
+            } else if (part.type === 'reasoning-delta') {
+              const delta = (part as { delta?: string; text?: string }).delta
+                ?? (part as { text?: string }).text
+                ?? ''
+              if (delta) send({ type: 'reasoning', value: delta })
+            } else if (part.type === 'error') {
+              const { code, message } = categorizeError(
+                (part as { error?: unknown }).error
+              )
+              send({ type: 'error', code, message })
+            }
+          }
+          send({ type: 'done' })
+          controller.close()
+        } catch (error) {
+          const { code, message } = categorizeError(error)
+          send({ type: 'error', code, message })
+          controller.close()
+        }
+      },
+      cancel() {
+        // Client disconnected mid-stream; the abortSignal on streamText
+        // is already wired to req.signal so the upstream call gets cancelled.
+      },
+    })
+
+    return new Response(sse, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+      },
+    })
   } catch (error) {
     const { status, code, message } = categorizeError(error)
     return NextResponse.json({ code, message }, { status })

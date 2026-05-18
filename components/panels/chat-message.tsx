@@ -37,6 +37,43 @@ function MessageTime({ timestamp }: { timestamp: Date | string }) {
   return <>{time}</>
 }
 
+function ReasoningBlock({
+  reasoning,
+  streaming,
+}: {
+  reasoning: string
+  /** When true (the message has reasoning but no content yet), open by default
+   *  so the user sees the model is actively thinking. */
+  streaming: boolean
+}) {
+  const [open, setOpen] = useState(streaming)
+  // Re-open automatically when a new streaming session begins.
+  useEffect(() => {
+    if (streaming) setOpen(true)
+  }, [streaming])
+  return (
+    <div className="mb-2 rounded-md border border-[var(--border)] bg-[var(--background)]/60 text-[var(--muted-foreground)]">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-1.5 px-2 py-1 text-xs hover:bg-[var(--accent)]/50 rounded-md transition-colors"
+        aria-expanded={open}
+      >
+        <ChevronDown
+          size={12}
+          className={cn("transition-transform", !open && "-rotate-90")}
+        />
+        <span>{streaming ? "Thinking…" : "Reasoning"}</span>
+      </button>
+      {open && (
+        <pre className="px-3 pb-2 pt-0 text-[11px] whitespace-pre-wrap break-words font-mono leading-relaxed">
+          {reasoning}
+        </pre>
+      )}
+    </div>
+  )
+}
+
 interface ChatMessageProps {
   message: Message
   index: number
@@ -374,6 +411,9 @@ export function ChatMessage({
               </div>
             ) : (
               <>
+                {message.reasoning && message.reasoning.trim().length > 0 && (
+                  <ReasoningBlock reasoning={message.reasoning} streaming={!message.content} />
+                )}
                 <p className="text-sm whitespace-pre-wrap">{message.content}</p>
                 <p
                   className={cn(

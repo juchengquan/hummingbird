@@ -189,6 +189,7 @@ interface AppState {
   setStreamingContent: (content: string) => void
   setChatModel: (model: string) => void
   appendToMessage: (messageId: string, chunk: string) => void
+  appendToMessageReasoning: (messageId: string, chunk: string) => void
   setMessageError: (messageId: string, error: MessageError) => void
   clearMessageError: (messageId: string) => void
 
@@ -575,6 +576,22 @@ export const useStore = create<AppState>()(
                 ...c,
                 messages: c.messages.map((m) =>
                   m.id === messageId ? { ...m, content: m.content + chunk } : m
+                ),
+              }
+            }
+            return c
+          }),
+        })),
+      appendToMessageReasoning: (messageId: string, chunk: string) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id === state.activeConversationId) {
+              return {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === messageId
+                    ? { ...m, reasoning: (m.reasoning ?? '') + chunk }
+                    : m
                 ),
               }
             }
