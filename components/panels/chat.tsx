@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { ResourcesSidebar } from "@/components/sidebars/resources"
+import { ChatHeader } from "@/components/panels/chat-header"
 import { ChatMessage } from "@/components/panels/chat-message"
 import { EmptyChatWelcome } from "@/components/panels/empty-chat-welcome"
 import { Plus, ChevronDown, Square } from "lucide-react"
@@ -560,8 +561,12 @@ export function ChatPanel() {
     <div className="flex h-full">
       {/* Messages column */}
       <div className="flex flex-col flex-1 min-w-0 min-h-0 relative">
+        <ChatHeader />
         <div className="flex-1 min-h-0 overflow-hidden">
-          <ScrollArea className="max-w-5xl mx-auto max-h-[95vh] h-[95vh] px-4" onScroll={handleScroll}>
+          <ScrollArea
+            className="max-w-5xl mx-auto max-h-[calc(100vh-2.75rem)] h-[calc(100vh-2.75rem)] px-4"
+            onScroll={handleScroll}
+          >
             <div className="max-w-5xl mx-auto px-4 py-4 pb-24 space-y-4">
               {messages.length === 0 ? (
                 <EmptyChatWelcome onPickSuggestion={pickSuggestion} />
