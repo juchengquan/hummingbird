@@ -1,0 +1,99 @@
+/* Scoped styles for read-only markdown artifact previews.
+   Intentionally minimal — this is a "passive archive" view, not the editor. */
+
+.markdown-preview > * + * {
+  margin-top: 0.75em;
+}
+
+.markdown-preview h1,
+.markdown-preview h2,
+.markdown-preview h3,
+.markdown-preview h4,
+.markdown-preview h5,
+.markdown-preview h6 {
+  font-weight: 600;
+  line-height: 1.25;
+}
+.markdown-preview h1 { font-size: 1.25rem; }
+.markdown-preview h2 { font-size: 1.125rem; }
+.markdown-preview h3 { font-size: 1rem; }
+.markdown-preview h4,
+.markdown-preview h5,
+.markdown-preview h6 { font-size: 0.875rem; }
+
+.markdown-preview p {
+  line-height: 1.55;
+}
+
+.markdown-preview ul,
+.markdown-preview ol {
+  padding-left: 1.5em;
+}
+.markdown-preview ul { list-style: disc; }
+.markdown-preview ol { list-style: decimal; }
+.markdown-preview li + li {
+  margin-top: 0.25em;
+}
+
+.markdown-preview a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.markdown-preview a:hover {
+  text-decoration: none;
+}
+
+.markdown-preview code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.85em;
+  background: var(--secondary);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+
+.markdown-preview pre {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.8em;
+  background: var(--secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75em 1em;
+  overflow-x: auto;
+}
+.markdown-preview pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+
+.markdown-preview blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 1em;
+  color: var(--muted-foreground);
+}
+
+.markdown-preview hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.markdown-preview table {
+  border-collapse: collapse;
+  font-size: 0.85em;
+  width: 100%;
+}
+.markdown-preview thead th {
+  text-align: left;
+  font-weight: 600;
+  background: var(--secondary);
+}
+.markdown-preview th,
+.markdown-preview td {
+  border: 1px solid var(--border);
+  padding: 0.4em 0.6em;
+  vertical-align: top;
+}
+.markdown-preview tbody tr:nth-child(even) {
+  background: color-mix(in oklab, var(--secondary) 50%, transparent);
+}

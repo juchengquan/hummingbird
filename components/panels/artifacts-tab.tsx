@@ -33,6 +33,7 @@ import {
 } from "@/lib/hooks/use-store"
 import { copyText } from "@/lib/export"
 import { CodeHighlight, JsonHighlight } from "@/components/code-highlight"
+import { MarkdownPreview } from "@/components/markdown-preview"
 import type { Artifact } from "@/lib/types"
 
 function artifactKindIcon(artifact: Artifact) {
@@ -275,11 +276,13 @@ function ArtifactPreviewDialog({
           </DialogTitle>
         </DialogHeader>
 
-        <div className="flex-1 min-h-0 overflow-auto rounded-md border border-[var(--border)] bg-[var(--secondary)]/30">
+        <div className="flex-1 min-h-0 overflow-auto rounded-md border border-[var(--border)] bg-[var(--background)]">
           {artifact?.kind === "code" ? (
             <CodeHighlight code={artifact.content} language={artifact.language} />
           ) : artifact?.kind === "json" ? (
             <JsonHighlight content={artifact.content} />
+          ) : artifact?.kind === "markdown" ? (
+            <MarkdownPreview content={artifact.content} />
           ) : (
             <pre className="text-xs p-3 whitespace-pre-wrap break-words font-mono">
               {artifact?.content}
