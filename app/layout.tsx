@@ -1,6 +1,12 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { ThemeApplier } from "@/components/theme-applier";
+
+// Runs before React hydrates so the initial paint already has the correct
+// theme class. Mirrors the resolver in components/theme-applier.tsx.
+// Keep in sync with the zustand persist key in lib/hooks/use-store.ts.
+const themeBootstrapScript = `(function(){try{var s=localStorage.getItem('hummingbird-storage');var t='dark';if(s){var p=JSON.parse(s);if(p&&p.state&&p.state.theme)t=p.state.theme;}var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches);if(d)document.documentElement.classList.add('dark');}catch(e){}})();`
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -24,9 +30,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
+        <ThemeApplier />
         {children}
       </body>
     </html>
