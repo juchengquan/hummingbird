@@ -37,6 +37,7 @@ import {
 import { cn } from "@/lib/utils"
 import { formatFileSize, getFileIcon, processSelectedFiles } from "@/lib/file-utils"
 import { runExtraction } from "@/lib/extract"
+import { ExtractionStatusBadge } from "@/components/panels/extraction-status-badge"
 import { format } from "date-fns"
 
 const FILE_SIZE_LIMIT = 5 * 1024 * 1024 // 5MB
@@ -238,9 +239,9 @@ export function ResourcePanel() {
                         </p>
                       </HoverCardContent>
                     </HoverCard>
-                    <span className="text-xs text-[var(--muted-foreground)] shrink-0 ml-auto">
+                    <ExtractionStatusBadge file={file} size="default" className="shrink-0 ml-auto" />
+                    <span className="text-xs text-[var(--muted-foreground)] shrink-0">
                       {formatFileSize(file.size)}
-                      {/* • {format(file.uploadedAt, "MMM d")} */}
                     </span>
                   </div>
 

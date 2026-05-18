@@ -105,7 +105,9 @@ Store: `UploadedFile` gained `extractionStatus` / `extractedText` / `extractionT
 
 Chat: `app/api/chat/route.ts` accepts an extended `FileSummary` with optional `text` + `truncated`. `buildSystemPrompt` now interleaves attached files' extracted text into the system message (with file-name headers and a "treat as authoritative context" instruction), splits files into a "with-text" group and a "metadata-only" group, and applies a second-pass total budget of 96 KB across all attachments so the prompt stays in reasonable token bounds even with many big files. The previous "you do NOT have their contents" prompt is gone for files we *do* have text for.
 
-Pending / not in scope here: OCR for scanned PDFs (would need Tesseract or a SaaS), audio/video transcription, image multimodal handling, and async background extraction for large files. The interface is stable enough that any of these can swap in behind the same `runExtraction` / `/api/extract` boundary later.
+UX polish (shipped follow-up): `components/panels/extraction-status-badge.tsx` renders the lifecycle per file row — animated spinner during `pending`, destructive "Extraction failed" pill for `failed`, muted "No text" for `unsupported`, and an amber "Truncated" indicator regardless of status when the per-file budget cut the content. Used in `chat-resources-panel.tsx` (compact) and `sources.tsx` (default size). Successful extractions render no badge — silence is the success signal.
+
+Pending / not in scope here: OCR for scanned PDFs (would need Tesseract or a SaaS), audio/video transcription, image multimodal handling, async background extraction for large files, and a click-to-retry affordance on `failed` files. The interface is stable enough that any of these can swap in behind the same `runExtraction` / `/api/extract` boundary later.
 - Decide where extraction runs: client-side (smaller deps, no infra) vs server-side route (heavier but consistent).
 
 ### 2. Reasoning / thinking token surfacing

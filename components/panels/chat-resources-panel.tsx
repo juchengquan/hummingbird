@@ -17,6 +17,7 @@ import { FILE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/lib/upload-config"
 import { runExtraction } from "@/lib/extract"
 import { NotesTab } from "@/components/panels/notes-tab"
 import { ArtifactsTab } from "@/components/panels/artifacts-tab"
+import { ExtractionStatusBadge } from "@/components/panels/extraction-status-badge"
 
 type Tab = "files" | "notes" | "artifacts"
 
@@ -282,11 +283,14 @@ function FilesTabBody({
                       >
                         {file.name}
                       </div>
-                      <div className="text-[10px] text-[var(--muted-foreground)]">
-                        {formatFileSize(file.size)}
-                        {mounted && (
-                          <> · {format(new Date(file.uploadedAt), "MMM d, yyyy")}</>
-                        )}
+                      <div className="text-[10px] text-[var(--muted-foreground)] flex items-center gap-1.5 flex-wrap">
+                        <span>
+                          {formatFileSize(file.size)}
+                          {mounted && (
+                            <> · {format(new Date(file.uploadedAt), "MMM d, yyyy")}</>
+                          )}
+                        </span>
+                        <ExtractionStatusBadge file={file} />
                       </div>
                     </div>
                   </button>
