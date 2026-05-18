@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react"
 import { Conversation } from "@/lib/types"
-import { Pin, PinOff, Pencil, Trash2, MoreVertical, Check, X, Download, Copy } from "lucide-react"
+import { Pin, PinOff, Pencil, Trash2, MoreVertical, Check, X, Download, Copy, Sparkles } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -12,6 +12,7 @@ import {
   downloadAsFile,
   safeFilename,
 } from "@/lib/export"
+import { ConversationSummaryDialog } from "@/components/conversation-summary-dialog"
 import {
   Popover,
   PopoverTrigger,
@@ -50,6 +51,7 @@ export function ConversationItem({
   const [newTitle, setNewTitle] = useState(conversation.title)
   const [menuOpen, setMenuOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [summaryOpen, setSummaryOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -97,6 +99,11 @@ export function ConversationItem({
     } catch {
       toast.error("Failed to copy to clipboard")
     }
+  }
+
+  const handleSummarise = () => {
+    setMenuOpen(false)
+    setSummaryOpen(true)
   }
 
   const handleMenuClose = (open: boolean) => {
@@ -172,6 +179,14 @@ export function ConversationItem({
               </Button>
               <Button
                 variant="ghost"
+                onClick={handleSummarise}
+                className="w-full justify-start gap-2 cursor-pointer"
+              >
+                <Sparkles size={16} />
+                <span>Summarise</span>
+              </Button>
+              <Button
+                variant="ghost"
                 onClick={handleRename}
                 className="w-full justify-start gap-2 cursor-pointer"
               >
@@ -219,6 +234,10 @@ export function ConversationItem({
               </AlertDialog>
             </PopoverContent>
           </Popover>
+          <ConversationSummaryDialog
+            conversation={summaryOpen ? conversation : null}
+            onClose={() => setSummaryOpen(false)}
+          />
         </>
       )}
     </div>
