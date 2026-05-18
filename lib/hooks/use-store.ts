@@ -77,6 +77,7 @@ const getDefaultConversations = (): Conversation[] => {
       updatedAt: new Date(baseTime),
       pinned: true,
       selectedFileIds: [],
+      documentContent: '',
     },
   ]
 }
@@ -112,13 +113,6 @@ interface AppState {
   isTyping: boolean
   streamingContent: string
   chatModel: string
-
-  // Document
-  documentContent: string
-  documentLastSaved: Date | null
-
-  // Editor content synced from chat
-  editorContent: string
 
   // View / sidebar actions
   toggleSidebar: () => void
@@ -168,10 +162,8 @@ interface AppState {
   setChatModel: (model: string) => void
   appendToMessage: (messageId: string, chunk: string) => void
 
-  // Document actions
-  setDocumentContent: (content: string) => void
-  setDocumentLastSaved: (date: Date) => void
-  setEditorContent: (content: string) => void
+  // Per-conversation document actions
+  setConversationDocument: (conversationId: string, content: string) => void
 
   // Theme actions
   setTheme: (theme: Theme) => void
@@ -215,13 +207,6 @@ export const useStore = create<AppState>()(
       isTyping: false,
       streamingContent: '',
       chatModel: DEFAULT_CHAT_MODEL,
-
-      // Document
-      documentContent: '',
-      documentLastSaved: null,
-
-      // Editor content synced from chat
-      editorContent: '',
 
       // View / sidebar actions
       toggleSidebar: () =>
@@ -358,6 +343,7 @@ export const useStore = create<AppState>()(
           updatedAt: new Date(),
           pinned: false,
           selectedFileIds: [],
+          documentContent: '',
         }
         set((state) => ({
           conversations: [newConversation, ...state.conversations],
@@ -514,10 +500,15 @@ export const useStore = create<AppState>()(
           }),
         })),
 
-      // Document actions
-      setDocumentContent: (content: string) => set({ documentContent: content }),
-      setDocumentLastSaved: (date: Date) => set({ documentLastSaved: date }),
-      setEditorContent: (content: string) => set({ editorContent: content }),
+      // Per-conversation document actions
+      setConversationDocument: (conversationId: string, content: string) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) =>
+            c.id === conversationId
+              ? { ...c, documentContent: content, updatedAt: new Date() }
+              : c
+          ),
+        })),
 
       // Theme actions
       setTheme: (theme: Theme) => set({ theme }),
@@ -531,7 +522,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'hummingbird-storage',
-      version: 3,
+      version: 4,
       migrate: (persistedState, fromVersion) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState
         const state = persistedState as Record<string, unknown>
@@ -556,6 +547,30 @@ export const useStore = create<AppState>()(
             )
           }
         }
+        if (fromVersion < 4) {
+          // documentContent / editorContent / documentLastSaved removed from
+          // the root state. Each conversation now owns its own documentContent.
+          // Copy any legacy global doc into the active conversation so the
+          // user's previous editor content is not lost.
+          const legacyDoc =
+            typeof state.documentContent === 'string' ? state.documentContent : ''
+          const activeId = state.activeConversationId
+          const convs = state.conversations
+          if (Array.isArray(convs)) {
+            state.conversations = convs.map((c) => {
+              if (!c || typeof c !== 'object') return c
+              const conv = c as Record<string, unknown>
+              if ('documentContent' in conv) return conv
+              return {
+                ...conv,
+                documentContent: conv.id === activeId ? legacyDoc : '',
+              }
+            })
+          }
+          delete state.documentContent
+          delete state.documentLastSaved
+          delete state.editorContent
+        }
         return persistedState
       },
       onRehydrateStorage: () => () => {
@@ -570,7 +585,6 @@ export const useStore = create<AppState>()(
         conversations: state.conversations,
         activeConversationId: state.activeConversationId,
         files: state.files,
-        documentContent: state.documentContent,
         chatModel: state.chatModel,
         notes: state.notes,
       }),
@@ -658,4 +672,11 @@ export const useMessageBookmark = (messageId: string) => {
   return notes.find(
     (n) => n.conversationId === activeConversationId && n.messageId === messageId
   ) ?? null
+}
+
+export const useActiveConversationDocument = (): string => {
+  const conversations = useStore((state) => state.conversations)
+  const activeConversationId = useStore((state) => state.activeConversationId)
+  if (!activeConversationId) return ''
+  return conversations.find((c) => c.id === activeConversationId)?.documentContent ?? ''
 }

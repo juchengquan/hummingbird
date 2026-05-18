@@ -16,7 +16,6 @@ import { useStore } from "@/lib/hooks/use-store"
 
 function MainArea() {
   const activeView = useStore((state) => state.activeView)
-  const editorContent = useStore((state) => state.editorContent)
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
@@ -30,7 +29,7 @@ function MainArea() {
       {activeView === "workspaces" && <WorkspacesPanel />}
       {activeView === "chat" && <ChatPanel />}
       {activeView === "resources" && <ResourcePanel />}
-      {activeView === "editor" && <EditorPanel initialContent={editorContent} />}
+      {activeView === "editor" && <EditorPanel />}
     </SidebarInset>
   )
 }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useRef, useCallback } from "react"
 import { Plate, usePlateEditor } from "platejs/react"
 import type { Value } from "platejs"
 import { serializeMd } from "@platejs/markdown"
@@ -12,23 +12,37 @@ import { EditorKit } from "@/components/editor/editor-kit"
 import { Editor, EditorContainer } from "@/components/ui/editor"
 import { Button } from "@/components/ui/button"
 import { copyText, downloadAsFile, safeFilename } from "@/lib/export"
+import { useStore, useActiveConversationDocument } from "@/lib/hooks/use-store"
 
-const defaultValue: Value = [
-  {
-    type: "h1",
-    children: [{ text: "Chat Assistant Development Prompt" }],
-  },
+const emptyValue: Value = [
   {
     type: "p",
-    children: [{ text: "Start a conversation in the chat panel to see messages appear here." }],
+    children: [{ text: "" }],
   },
 ]
 
-function updateEditorContent(editor: MyEditor, content: string) {
-  if (!content) return
+const placeholderValue: Value = [
+  {
+    type: "h1",
+    children: [{ text: "Conversation document" }],
+  },
+  {
+    type: "p",
+    children: [
+      {
+        text: "Anything you write here is saved on this conversation. Switch conversations to see their own documents.",
+      },
+    ],
+  },
+]
 
-  const nodes = editor.api.markdown.deserialize(content) as Value
-  editor.tf.setValue(nodes)
+function loadMarkdown(editor: MyEditor, markdown: string) {
+  if (!markdown) {
+    editor.tf.setValue(placeholderValue)
+    return
+  }
+  const nodes = editor.api.markdown.deserialize(markdown) as Value
+  editor.tf.setValue(nodes.length > 0 ? nodes : emptyValue)
 }
 
 function getEditorTitle(editor: MyEditor): string {
@@ -41,21 +55,53 @@ function getEditorTitle(editor: MyEditor): string {
   return text || "document"
 }
 
-interface EditorPanelProps {
-  initialContent?: string
-}
+const SAVE_DEBOUNCE_MS = 500
 
-export function EditorPanel({ initialContent }: EditorPanelProps) {
+export function EditorPanel() {
   const editor = usePlateEditor({
     plugins: EditorKit,
-    value: defaultValue,
+    value: placeholderValue,
   })
 
-  useEffect(() => {
-    if (!editor || !initialContent) return
+  const activeConversationId = useStore((s) => s.activeConversationId)
+  const documentContent = useActiveConversationDocument()
+  const setConversationDocument = useStore((s) => s.setConversationDocument)
 
-    updateEditorContent(editor, initialContent)
-  }, [editor, initialContent])
+  // Track which conversation's content is currently loaded so we only reset
+  // the editor when the user actually switches conversations.
+  const loadedConversationRef = useRef<string | null>(null)
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const skipNextChangeRef = useRef(false)
+
+  useEffect(() => {
+    if (!editor) return
+    if (loadedConversationRef.current === activeConversationId) return
+
+    // Cancel any pending save from the previous conversation. We accept losing
+    // up to SAVE_DEBOUNCE_MS of trailing edits rather than misattributing them.
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+
+    skipNextChangeRef.current = true
+    loadedConversationRef.current = activeConversationId
+    loadMarkdown(editor, documentContent)
+  }, [editor, activeConversationId, documentContent])
+
+  const handleEditorChange = useCallback(() => {
+    if (skipNextChangeRef.current) {
+      skipNextChangeRef.current = false
+      return
+    }
+    if (!activeConversationId) return
+    const targetConversationId = activeConversationId
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => {
+      const md = serializeMd(editor)
+      setConversationDocument(targetConversationId, md)
+    }, SAVE_DEBOUNCE_MS)
+  }, [editor, activeConversationId, setConversationDocument])
 
   const handleExportMarkdown = () => {
     const md = serializeMd(editor)
@@ -70,6 +116,14 @@ export function EditorPanel({ initialContent }: EditorPanelProps) {
     } catch {
       toast.error("Failed to copy to clipboard")
     }
+  }
+
+  if (!activeConversationId) {
+    return (
+      <div className="h-full w-full flex items-center justify-center text-sm text-[var(--muted-foreground)]">
+        Select a conversation to open its document.
+      </div>
+    )
   }
 
   return (
@@ -97,7 +151,7 @@ export function EditorPanel({ initialContent }: EditorPanelProps) {
             <span className="hidden sm:inline">Export</span>
           </Button>
         </div>
-        <Plate editor={editor}>
+        <Plate editor={editor} onChange={handleEditorChange}>
           <EditorContainer variant="default" className="h-[100vh]">
             <Editor />
           </EditorContainer>

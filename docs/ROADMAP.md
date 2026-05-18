@@ -168,6 +168,16 @@ Smoke-tested unconfigured: `/dashboard` 200, `/auth/callback` 307 → `/dashboar
 
 Workspace-scoped files remain the design (managed in one workspace, attached across conversations). The `conversation_files` table has been removed from `supabase/migrations/0002_conversation_assets.sql` and its RLS policy removed from `0003`. The chat input's `+` button will be reframed (when implemented) as a shortcut: upload to active workspace + auto-attach to current conversation.
 
+#### ✅ Shipped — 5B per-conversation editor document *(local-only)*
+
+Added `documentContent: string` to `Conversation` in `lib/types.ts`. `setConversationDocument(conversationId, content)` mutator + `useActiveConversationDocument()` selector in `lib/hooks/use-store.ts`. Store version bumped to 4 with a v3→v4 migration that backfills each conversation's `documentContent` and copies the legacy global `documentContent` into the active conversation so nothing is lost. `editorContent`, `documentContent`, `documentLastSaved` and their setters removed from the root state.
+
+`components/panels/editor.tsx` now reads from the active conversation's doc and writes back on edit with a 500 ms debounce; switching conversations cancels any pending save and reloads the editor with the new doc. The "Sign in to open a document" empty state appears when there's no active conversation.
+
+**Design shift:** the previous chat → editor auto-sync was removed. Sending a chat message no longer overwrites the editor. This matches the design distinction agreed in design discussion: the editor is for **active engagement** (user authors, edits, AI commands), independent from the chat conversation. If we want a "send this message to the editor" affordance later, it'll be an explicit button on the assistant message (part of the 5C work).
+
+Sync handler for `setConversationDocument` (debounced) still pending — needs the sync layer.
+
 #### ⏳ TODO — Phase 1 remainder
 
 Ordered roughly in the order they should land:
@@ -199,8 +209,8 @@ Ordered roughly in the order they should land:
 
 5. **Conversation-related assets** *(four sub-features, each can ship independently)*
    - **~~A. Conversation-scoped file uploads~~** *(reframed — see Status above)*. The `+` button on the chat input becomes a shortcut: upload to active workspace + auto-attach to current conversation. No new tables or store slices.
-   - **B. Per-conversation editor document** — swap global `documentContent` for `conversations[activeId].documentContent`, `setConversationDocument(conversationId, content)` mutator (debounced 500 ms), update `components/panels/editor.tsx` and the auto-sync points in `components/panels/chat.tsx:115, 132`; one-time copy of legacy `documentContent` into the active conversation on first hydration
-   - **C. Assistant-generated artifacts** — `artifacts` store slice + mutators (`createArtifact`, `deleteArtifact`, `togglePinArtifact`, `updateArtifactTitle`), "Save as artifact" button on assistant messages in `components/panels/chat-message.tsx`, new `components/panels/artifacts-panel.tsx`, "Open in editor" action, sync handlers (binary artifacts use `user-files/{user_id}/artifacts/{artifact_id}.{ext}`)
+   - **~~B. Per-conversation editor document~~** *(shipped local-only — see Status above)*. Sync handler for `setConversationDocument` (debounced) still pending.
+   - **C. Assistant-generated artifacts** — design refined: artifacts are a **passive archive** of AI outputs, distinct from the editor (active workspace). Read-mostly UI (no inline editing). "Send to editor" action **copies** into the editor as a derived doc, preserving the artifact as a pristine snapshot. Renderers can share code with the editor under the hood but the UX is deliberately different. Implementation: `artifacts` store slice + mutators (`createArtifact`, `deleteArtifact`, `togglePinArtifact`, `updateArtifactTitle`), "Save as artifact" button on assistant messages in `components/panels/chat-message.tsx`, new `components/panels/artifacts-panel.tsx`, "Send to editor" action, sync handlers. Binary artifacts use `user-files/{user_id}/artifacts/{artifact_id}.{ext}`. Ship 5C lite first (manual save, code + markdown renderers, simple list panel), 5C full later (auto-extraction, more kinds, polish).
    - **~~D. Notes / bookmarks~~** *(shipped local-only — see Status above)*. Sync handlers (`createNote`, `updateNote`, `deleteNote`) still pending.
 
 6. **Verification pass** — run all 14 checklist items in the "Verification (Phase 1)" section below

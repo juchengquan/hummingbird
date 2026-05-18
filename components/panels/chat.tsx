@@ -30,7 +30,6 @@ export function ChatPanel() {
   const truncateMessagesAfter = useStore((state) => state.truncateMessagesAfter)
   const isTyping = useStore((state) => state.isTyping)
   const setIsTyping = useStore((state) => state.setIsTyping)
-  const setEditorContent = useStore((state) => state.setEditorContent)
   const chatModel = useStore((state) => state.chatModel)
   const setChatModel = useStore((state) => state.setChatModel)
   const files = useStore((state) => state.files)
@@ -91,12 +90,11 @@ export function ChatPanel() {
       setIsTyping(true)
       setTimeout(() => {
         const aiContent = `_Mock response (set \`AI_GATEWAY_API_KEY\` to enable real AI)_\n\nRegarding "${userMessage}": this is placeholder text.`
-        const created = addMessage({ role: "assistant", content: aiContent })
-        setEditorContent(created.content)
+        addMessage({ role: "assistant", content: aiContent })
         setIsTyping(false)
       }, 300)
     },
-    [setIsTyping, addMessage, setEditorContent]
+    [setIsTyping, addMessage]
   )
 
   // Build the message list and file context the API expects, sent up to and
@@ -219,7 +217,6 @@ export function ChatPanel() {
       content: messageContent,
     })
 
-    setEditorContent(messageContent)
     setInputValue("")
 
     if (textareaRef.current) {
@@ -246,7 +243,6 @@ export function ChatPanel() {
 
       updateMessage(messageId, newContent)
       truncateMessagesAfter(messageId)
-      setEditorContent(newContent)
 
       const newHistory = [
         ...conv.messages.slice(0, idx),
@@ -254,7 +250,7 @@ export function ChatPanel() {
       ]
       callChatAPIRef.current(newHistory)
     },
-    [conversations, activeConversationId, updateMessage, truncateMessagesAfter, setEditorContent]
+    [conversations, activeConversationId, updateMessage, truncateMessagesAfter]
   )
 
   const handleRegenerateAssistantMessage = useCallback(

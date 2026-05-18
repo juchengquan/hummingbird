@@ -37,6 +37,8 @@ export interface Conversation {
   pinned: boolean
   /** Workspace file IDs attached as context for the next message in this conversation. */
   selectedFileIds: string[]
+  /** Per-conversation editor document (rich-text scratchpad). */
+  documentContent: string
 }
 
 export interface Note {
