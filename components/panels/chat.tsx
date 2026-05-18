@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/select"
 import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
 import { ChatMessage } from "@/components/panels/chat-message"
+import { EmptyChatWelcome } from "@/components/panels/empty-chat-welcome"
 import { Plus, Bot, ChevronDown, Square } from "lucide-react"
 import { CHAT_MODELS } from "@/lib/models"
 import { processSelectedFiles } from "@/lib/file-utils"
@@ -488,6 +489,19 @@ export function ChatPanel() {
     }
   }
 
+  const pickSuggestion = useCallback((text: string) => {
+    setInputValue(text)
+    // Focus + place caret at end so the user can immediately keep typing.
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current
+      if (!ta) return
+      ta.focus()
+      ta.setSelectionRange(ta.value.length, ta.value.length)
+      ta.style.height = "auto"
+      ta.style.height = `${Math.min(ta.scrollHeight, 150)}px`
+    })
+  }, [])
+
   if (!activeConversation) {
     return (
       <div className="flex-1 flex items-center justify-center h-full">
@@ -518,9 +532,7 @@ export function ChatPanel() {
           <ScrollArea className="max-w-5xl mx-auto max-h-[95vh] h-[95vh] px-4" onScroll={handleScroll}>
             <div className="max-w-5xl mx-auto px-4 py-4 pb-24 space-y-4">
               {messages.length === 0 ? (
-                <div className="text-center text-[var(--muted-foreground)] py-8">
-                  <p className="text-sm">Start a conversation</p>
-                </div>
+                <EmptyChatWelcome onPickSuggestion={pickSuggestion} />
               ) : (
                 messages.map((message, index) => (
                   <ChatMessage

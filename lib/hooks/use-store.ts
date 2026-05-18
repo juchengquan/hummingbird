@@ -52,27 +52,12 @@ const getDefaultConversations = (): Conversation[] => {
     {
       id: 'demo-1',
       workspaceId: DEFAULT_WORKSPACE_ID,
-      title: 'Welcome Chat',
-      messages: [
-        {
-          id: 'msg-1',
-          role: 'assistant',
-          content: 'Hello! I am your AI assistant. How can I help you today?',
-          timestamp: new Date(baseTime - 60000),
-        },
-        {
-          id: 'msg-2',
-          role: 'user',
-          content: 'Hi! I am testing the chat panel. It looks great!',
-          timestamp: new Date(baseTime - 30000),
-        },
-        {
-          id: 'msg-3',
-          role: 'assistant',
-          content: 'Thank you! Feel free to ask me anything or start a new conversation.',
-          timestamp: new Date(baseTime),
-        },
-      ],
+      title: 'Welcome',
+      // Empty by design — the chat panel renders <EmptyChatWelcome> when
+      // there are no messages, with feature bullets and suggestion chips.
+      // Leaving stale pretend-messages here makes the app feel like a
+      // demo someone forgot to wipe before shipping.
+      messages: [],
       createdAt: new Date(baseTime - 120000),
       updatedAt: new Date(baseTime),
       pinned: true,
