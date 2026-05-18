@@ -42,7 +42,6 @@ export async function fetchCloudSnapshot(
   client: AppSupabaseClient,
   userId: string
 ): Promise<CloudSnapshot | null> {
-  console.log("[sync] fetchCloudSnapshot: dispatching 7 queries", { userId })
   let workspacesRes, conversationsRes, messagesRes, filesRes, resourcesRes, notesRes, artifactsRes
   try {
     ;[
@@ -66,30 +65,9 @@ export async function fetchCloudSnapshot(
       client.from("notes").select("*").eq("user_id", userId),
       client.from("artifacts").select("*").eq("user_id", userId),
     ])
-  } catch (err) {
-    console.warn("[sync] fetchCloudSnapshot: queries threw", err)
+  } catch {
     return null
   }
-  console.log(
-    "[sync] fetchCloudSnapshot: rows w/c/m/f/r/n/a =",
-    workspacesRes.data?.length ?? "null",
-    conversationsRes.data?.length ?? "null",
-    messagesRes.data?.length ?? "null",
-    filesRes.data?.length ?? "null",
-    resourcesRes.data?.length ?? "null",
-    notesRes.data?.length ?? "null",
-    artifactsRes.data?.length ?? "null"
-  )
-  console.log(
-    "[sync] fetchCloudSnapshot: errors w/c/m/f/r/n/a =",
-    workspacesRes.error?.message ?? "ok",
-    conversationsRes.error?.message ?? "ok",
-    messagesRes.error?.message ?? "ok",
-    filesRes.error?.message ?? "ok",
-    resourcesRes.error?.message ?? "ok",
-    notesRes.error?.message ?? "ok",
-    artifactsRes.error?.message ?? "ok"
-  )
 
   if (
     workspacesRes.error ||
@@ -100,7 +78,6 @@ export async function fetchCloudSnapshot(
     notesRes.error ||
     artifactsRes.error
   ) {
-    console.warn("[sync] fetchCloudSnapshot: returning null due to error(s)")
     return null
   }
 
@@ -198,10 +175,8 @@ export async function fetchCloudSnapshot(
       createdAt: new Date(a.created_at),
     }))
 
-    console.log("[sync] fetchCloudSnapshot: snapshot built successfully")
     return { workspaces, conversations, files, resources, notes, artifacts }
-  } catch (err) {
-    console.warn("[sync] fetchCloudSnapshot: snapshot build threw", err)
+  } catch {
     return null
   }
 }

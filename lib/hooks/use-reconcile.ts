@@ -111,7 +111,6 @@ export function useReconcile(): ReconcileState {
 
   // Sign-in / refresh-while-signed-in branch.
   useEffect(() => {
-    console.log("[sync] auth effect", { authStatus, userId })
     if (authStatus !== "signed-in" || !userId) {
       handledUserId.current = null
       setStatus("idle")
@@ -120,14 +119,12 @@ export function useReconcile(): ReconcileState {
       return
     }
     if (handledUserId.current === userId) {
-      console.log("[sync] already handled this user in this mount", userId)
       return
     }
     handledUserId.current = userId
 
     const client = getSupabaseBrowserClient()
     if (!client) {
-      console.warn("[sync] supabase client unavailable")
       setStatus("error")
       setError("Supabase client unavailable")
       return
@@ -137,36 +134,21 @@ export function useReconcile(): ReconcileState {
 
     // ---- already-reconciled user: silent pull, skip the prompt --------
     if (hasReconciled(userId)) {
-      console.log("[sync] silent pull branch (reconciled set HAS user)")
       setStatus("loading")
       void (async () => {
         try {
-          console.log("[sync] awaiting queue drain…")
           await whenDrained()
           if (cancelled) return
-          console.log("[sync] queue drained, fetching cloud snapshot")
           const snap = await fetchCloudSnapshot(client, userId)
           if (cancelled) return
           if (!snap) {
-            console.warn("[sync] cloud fetch returned null")
             setStatus("error")
             setError("Failed to fetch cloud state")
             return
           }
-          console.log("[sync] cloud snapshot received", {
-            workspaces: snap.workspaces.length,
-            conversations: snap.conversations.length,
-            messages: snap.conversations.reduce((n, c) => n + c.messages.length, 0),
-            files: snap.files.length,
-            resources: snap.resources.length,
-            notes: snap.notes.length,
-            artifacts: snap.artifacts.length,
-          })
           applyCloudSnapshot(snap)
-          console.log("[sync] cloud snapshot applied to local store")
           setStatus("done")
         } catch (err) {
-          console.error("[sync] silent pull threw", err)
           setStatus("error")
           setError(err instanceof Error ? err.message : "Unknown sync error")
         }
@@ -177,12 +159,10 @@ export function useReconcile(): ReconcileState {
     }
 
     // ---- first-time reconciliation ----------------------------------
-    console.log("[sync] first-time reconciliation branch (user NOT in reconciled set)")
     setStatus("loading")
     void fetchCloudSnapshot(client, userId).then(async (snap) => {
       if (cancelled) return
       if (!snap) {
-        console.warn("[sync] first-time fetch failed")
         setStatus("error")
         setError("Failed to fetch cloud state")
         return
@@ -191,31 +171,22 @@ export function useReconcile(): ReconcileState {
         snap.workspaces.length > 0 ||
         snap.conversations.length > 0 ||
         snap.files.length > 0
-      console.log("[sync] first-time cloud check", {
-        cloudHasData,
-        workspaces: snap.workspaces.length,
-        conversations: snap.conversations.length,
-        files: snap.files.length,
-      })
       if (!cloudHasData) {
         const local = localSnapshotFromStore()
         const result = await bulkUploadLocalState(client, userId, local)
         if (cancelled) return
         if (!result.ok) {
-          console.warn("[sync] bulk upload failed", result.error)
           setStatus("error")
           setError(result.error ?? "Bulk upload failed")
           return
         }
         seedSyncSnapshot()
         markReconciled(userId)
-        console.log("[sync] empty cloud → local bulk-uploaded; user marked reconciled")
         setStatus("done")
         return
       }
       setCloud(snap)
       setStatus("prompt")
-      console.log("[sync] cloud has data → prompting user")
     })
 
     return () => {
@@ -230,21 +201,10 @@ export function useReconcile(): ReconcileState {
     if (!client) return
 
     const onOnline = async () => {
-      console.log("[sync] online event fired")
-      if (!hasReconciled(userId)) {
-        console.log("[sync] online: skipping — user not yet reconciled")
-        return
-      }
+      if (!hasReconciled(userId)) return
       await whenDrained()
       const snap = await fetchCloudSnapshot(client, userId)
-      if (!snap) {
-        console.warn("[sync] online: fetch returned null")
-        return
-      }
-      console.log("[sync] online: applying cloud snapshot", {
-        workspaces: snap.workspaces.length,
-        conversations: snap.conversations.length,
-      })
+      if (!snap) return
       applyCloudSnapshot(snap)
     }
     window.addEventListener("online", onOnline)
