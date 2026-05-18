@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useRef, useState } from "react"
 import { format } from "date-fns"
-import { Search, Plus, FolderOpen, Check, StickyNote } from "lucide-react"
+import { Search, Plus, FolderOpen, Check, StickyNote, Archive } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import {
@@ -10,12 +10,14 @@ import {
   useWorkspaceResources,
   useConversationSelectedFileIds,
   useConversationNotes,
+  useConversationArtifacts,
 } from "@/lib/hooks/use-store"
 import { getFileIcon, processSelectedFiles, formatFileSize } from "@/lib/file-utils"
 import { FILE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/lib/upload-config"
 import { NotesTab } from "@/components/panels/notes-tab"
+import { ArtifactsTab } from "@/components/panels/artifacts-tab"
 
-type Tab = "files" | "notes"
+type Tab = "files" | "notes" | "artifacts"
 
 export function ChatResourcesPanel() {
   const activeWorkspaceId = useStore((s) => s.activeWorkspaceId)
@@ -32,6 +34,7 @@ export function ChatResourcesPanel() {
   const [mounted, setMounted] = useState(false)
   const [tab, setTab] = useState<Tab>("files")
   const notesCount = useConversationNotes().length
+  const artifactsCount = useConversationArtifacts().length
 
   // mount flag for date formatting (avoid SSR mismatch)
   if (!mounted && typeof window !== "undefined") {
@@ -101,10 +104,28 @@ export function ChatResourcesPanel() {
             {notesCount}
           </span>
         </button>
+        <button
+          type="button"
+          onClick={() => setTab("artifacts")}
+          className={cn(
+            "flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors",
+            tab === "artifacts"
+              ? "text-[var(--foreground)] border-b-2 border-[var(--primary)] -mb-px"
+              : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+          )}
+        >
+          <Archive size={13} />
+          Artifacts
+          <span className="text-[10px] text-[var(--muted-foreground)]">
+            {artifactsCount}
+          </span>
+        </button>
       </div>
 
       {tab === "notes" ? (
         <NotesTab />
+      ) : tab === "artifacts" ? (
+        <ArtifactsTab />
       ) : (
         <FilesTabBody
           resources={resources}

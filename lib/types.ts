@@ -68,4 +68,24 @@ export interface Note {
   updatedAt: Date
 }
 
+export type ArtifactKind = 'code' | 'markdown' | 'json' | 'table' | 'image' | 'other'
+
+export interface Artifact {
+  id: string
+  conversationId: string
+  /** Set when the artifact was extracted from a specific assistant message. Nullable: artifacts can outlive their source. */
+  messageId: string | null
+  kind: ArtifactKind
+  /** For code artifacts, the fence info (e.g. 'tsx', 'python'). */
+  language: string | null
+  /** User-editable display title. Auto-generated on save. */
+  title: string
+  /** Inline text content (code, markdown, json, table CSV). */
+  content: string
+  /** For binary artifacts (images). Null for text. */
+  storagePath: string | null
+  pinned: boolean
+  createdAt: Date
+}
+
 export type MainView = 'workspaces' | 'chat' | 'resources' | 'editor'

@@ -5,7 +5,7 @@ import type { Message, MessageError } from "@/lib/types"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { User, Bot, Copy, Pencil, Trash2, RotateCcw, Check, X, Bookmark, AlertTriangle, ChevronDown } from "lucide-react"
+import { User, Bot, Copy, Pencil, Trash2, RotateCcw, Check, X, Bookmark, AlertTriangle, ChevronDown, Archive } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { copyText } from "@/lib/export"
@@ -28,6 +28,16 @@ function MessageTime({ timestamp }: { timestamp: Date | string }) {
   }, [timestamp])
   if (!time) return null
   return <>{time}</>
+}
+
+function extractCodeBlocks(content: string): { language: string | null; code: string }[] {
+  const re = /```(\w*)\n([\s\S]*?)```/g
+  const blocks: { language: string | null; code: string }[] = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(content)) !== null) {
+    blocks.push({ language: m[1] || null, code: m[2] })
+  }
+  return blocks
 }
 
 interface ChatMessageProps {
@@ -168,6 +178,7 @@ export function ChatMessage({
 
   const activeConversationId = useStore((s) => s.activeConversationId)
   const toggleMessageBookmark = useStore((s) => s.toggleMessageBookmark)
+  const createArtifact = useStore((s) => s.createArtifact)
   const bookmark = useMessageBookmark(message.id)
   const isBookmarked = bookmark !== null
 
@@ -175,6 +186,38 @@ export function ChatMessage({
     if (!activeConversationId) return
     const result = toggleMessageBookmark(activeConversationId, message.id)
     toast.success(result ? "Bookmarked" : "Removed bookmark")
+  }
+
+  const handleSaveAsArtifact = () => {
+    if (!activeConversationId) return
+    const blocks = extractCodeBlocks(message.content)
+    if (blocks.length === 0) {
+      createArtifact({
+        conversationId: activeConversationId,
+        messageId: message.id,
+        kind: "markdown",
+        content: message.content,
+      })
+      toast.success("Saved as artifact")
+      return
+    }
+    blocks.forEach((b, i) => {
+      createArtifact({
+        conversationId: activeConversationId,
+        messageId: message.id,
+        kind: "code",
+        language: b.language,
+        title: blocks.length === 1
+          ? `Code${b.language ? ` (${b.language})` : ""}`
+          : `Code ${i + 1}${b.language ? ` (${b.language})` : ""}`,
+        content: b.code,
+      })
+    })
+    toast.success(
+      blocks.length === 1
+        ? "Saved 1 code artifact"
+        : `Saved ${blocks.length} code artifacts`
+    )
   }
 
   const handleCopy = async () => {
@@ -352,16 +395,28 @@ export function ChatMessage({
                 </Button>
               )}
               {!isUser && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => onRegenerateAssistantMessage(message.id)}
-                  className="h-7 w-7"
-                  aria-label="Regenerate response"
-                  title="Regenerate"
-                >
-                  <RotateCcw size={14} />
-                </Button>
+                <>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => onRegenerateAssistantMessage(message.id)}
+                    className="h-7 w-7"
+                    aria-label="Regenerate response"
+                    title="Regenerate"
+                  >
+                    <RotateCcw size={14} />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={handleSaveAsArtifact}
+                    className="h-7 w-7"
+                    aria-label="Save as artifact"
+                    title="Save as artifact"
+                  >
+                    <Archive size={14} />
+                  </Button>
+                </>
               )}
               <Button
                 variant="ghost"

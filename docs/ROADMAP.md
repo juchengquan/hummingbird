@@ -176,6 +176,22 @@ Added `documentContent: string` to `Conversation` in `lib/types.ts`. `setConvers
 
 Sync handler for `setConversationDocument` (debounced) still pending — needs the sync layer.
 
+#### ✅ Shipped — 5C lite assistant artifacts *(local-only)*
+
+`Artifact` + `ArtifactKind` types in `lib/types.ts`. `artifacts` store slice with `createArtifact` / `deleteArtifact` / `togglePinArtifact` / `updateArtifactTitle` mutators; cascades on conversation delete; detaches `messageId → null` on message delete (mirrors schema). Selector `useConversationArtifacts()` returns pinned-first then newest-first.
+
+UI:
+- Archive icon on assistant messages in `components/panels/chat-message.tsx`. Click extracts fenced code blocks: 0 → saves whole message as `markdown` artifact; 1 → saves as `code`; N → saves N separate `code` artifacts. Multi-block picker UI deferred to 5C full.
+- New `components/panels/artifacts-tab.tsx`; `chat-resources-panel.tsx` strip is now **Files | Notes | Artifacts** (three tabs).
+- Artifact list shows kind icon, pinned star, title, language badge for code, created-at.
+- Click opens a preview dialog: read-only `<pre>` of the content (no syntax highlighting in lite), inline-editable title, and **Send to editor / Copy / Pin / Delete** actions.
+
+"Send to editor" implementation: writes the artifact content (wrapped in a code fence for code artifacts) to the active conversation's `documentContent` via `setConversationDocument`, then bumps a new `editorReloadToken` so the editor reloads even when the conversation hasn't changed. `components/panels/editor.tsx` watches the token in its load effect.
+
+Sync handlers for `createArtifact`/`deleteArtifact`/`togglePinArtifact`/`updateArtifactTitle` still pending (sync layer).
+
+Still pending for 5C full: auto-extraction on stream end, multi-block picker dialog on save, JSON/table/image renderers, syntax highlighting (`shiki` or similar), and binary artifact upload to Supabase Storage.
+
 #### ⏳ TODO — Phase 1 remainder
 
 Ordered roughly in the order they should land:
@@ -208,7 +224,7 @@ Ordered roughly in the order they should land:
 5. **Conversation-related assets** *(four sub-features, each can ship independently)*
    - **~~A. Conversation-scoped file uploads~~** *(reframed + shipped local-only — see Status above)*. The `+` button on the chat input uploads to the active workspace and auto-attaches to the current conversation.
    - **~~B. Per-conversation editor document~~** *(shipped local-only — see Status above)*. Sync handler for `setConversationDocument` (debounced) still pending.
-   - **C. Assistant-generated artifacts** — design refined: artifacts are a **passive archive** of AI outputs, distinct from the editor (active workspace). Read-mostly UI (no inline editing). "Send to editor" action **copies** into the editor as a derived doc, preserving the artifact as a pristine snapshot. Renderers can share code with the editor under the hood but the UX is deliberately different. Implementation: `artifacts` store slice + mutators (`createArtifact`, `deleteArtifact`, `togglePinArtifact`, `updateArtifactTitle`), "Save as artifact" button on assistant messages in `components/panels/chat-message.tsx`, new `components/panels/artifacts-panel.tsx`, "Send to editor" action, sync handlers. Binary artifacts use `user-files/{user_id}/artifacts/{artifact_id}.{ext}`. Ship 5C lite first (manual save, code + markdown renderers, simple list panel), 5C full later (auto-extraction, more kinds, polish).
+   - **~~C. Assistant-generated artifacts (lite)~~** *(shipped local-only — see Status above)*. Still pending for 5C full: auto-extraction on stream end, JSON/table/image renderers, syntax highlighting, multi-block picker UI on save, sync handlers.
    - **~~D. Notes / bookmarks~~** *(shipped local-only — see Status above)*. Sync handlers (`createNote`, `updateNote`, `deleteNote`) still pending.
 
 6. **Verification pass** — run all 14 checklist items in the "Verification (Phase 1)" section below

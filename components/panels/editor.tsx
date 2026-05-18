@@ -66,16 +66,24 @@ export function EditorPanel() {
   const activeConversationId = useStore((s) => s.activeConversationId)
   const documentContent = useActiveConversationDocument()
   const setConversationDocument = useStore((s) => s.setConversationDocument)
+  const editorReloadToken = useStore((s) => s.editorReloadToken)
 
   // Track which conversation's content is currently loaded so we only reset
-  // the editor when the user actually switches conversations.
+  // the editor when the user actually switches conversations or an explicit
+  // reload is requested (e.g. via "Send to editor").
   const loadedConversationRef = useRef<string | null>(null)
+  const loadedTokenRef = useRef<number>(-1)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const skipNextChangeRef = useRef(false)
 
   useEffect(() => {
     if (!editor) return
-    if (loadedConversationRef.current === activeConversationId) return
+    if (
+      loadedConversationRef.current === activeConversationId &&
+      loadedTokenRef.current === editorReloadToken
+    ) {
+      return
+    }
 
     // Cancel any pending save from the previous conversation. We accept losing
     // up to SAVE_DEBOUNCE_MS of trailing edits rather than misattributing them.
@@ -86,8 +94,9 @@ export function EditorPanel() {
 
     skipNextChangeRef.current = true
     loadedConversationRef.current = activeConversationId
+    loadedTokenRef.current = editorReloadToken
     loadMarkdown(editor, documentContent)
-  }, [editor, activeConversationId, documentContent])
+  }, [editor, activeConversationId, editorReloadToken, documentContent])
 
   const handleEditorChange = useCallback(() => {
     if (skipNextChangeRef.current) {

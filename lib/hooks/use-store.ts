@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import type { UploadedFile, Workspace, Resource, Message, MessageError, Conversation, MainView, Note } from '@/lib/types'
+import type { UploadedFile, Workspace, Resource, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind } from '@/lib/types'
 import { DEFAULT_CHAT_MODEL } from '@/lib/models'
 
-export type { UploadedFile, Workspace, Resource, Message, MessageError, Conversation, MainView, Note } from '@/lib/types'
+export type { UploadedFile, Workspace, Resource, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind } from '@/lib/types'
 
 type Theme = 'system' | 'dark' | 'light'
 
@@ -105,6 +105,11 @@ interface AppState {
   // Notes (free-form notes & message bookmarks, scoped to a conversation)
   notes: Note[]
 
+  // Artifacts (assistant-generated content captured by the user)
+  artifacts: Artifact[]
+  /** Bumped to force the editor to reload its content (e.g. on "Send to editor"). */
+  editorReloadToken: number
+
   // Conversations
   conversations: Conversation[]
   activeConversationId: string | null
@@ -134,6 +139,20 @@ interface AppState {
   deleteNote: (noteId: string) => void
   /** Returns the resulting bookmark note if created, or null if removed. */
   toggleMessageBookmark: (conversationId: string, messageId: string) => Note | null
+
+  // Artifacts actions
+  createArtifact: (input: {
+    conversationId: string
+    messageId?: string | null
+    kind: ArtifactKind
+    language?: string | null
+    title?: string
+    content: string
+  }) => Artifact
+  deleteArtifact: (artifactId: string) => void
+  togglePinArtifact: (artifactId: string) => void
+  updateArtifactTitle: (artifactId: string, title: string) => void
+  requestEditorReload: () => void
 
   // File actions
   addFile: (file: UploadedFile) => void
@@ -196,6 +215,10 @@ export const useStore = create<AppState>()(
 
       // Notes
       notes: [],
+
+      // Artifacts
+      artifacts: [],
+      editorReloadToken: 0,
 
       // Conversations
       conversations: getDefaultConversations().map((c: Conversation) => ({
@@ -318,6 +341,44 @@ export const useStore = create<AppState>()(
         return newNote
       },
 
+      // Artifacts actions
+      createArtifact: ({ conversationId, messageId = null, kind, language = null, title, content }) => {
+        const fallbackTitle =
+          title ?? content.split('\n')[0].slice(0, 60).trim() ?? 'Untitled'
+        const newArtifact: Artifact = {
+          id: crypto.randomUUID(),
+          conversationId,
+          messageId,
+          kind,
+          language,
+          title: fallbackTitle || 'Untitled',
+          content,
+          storagePath: null,
+          pinned: false,
+          createdAt: new Date(),
+        }
+        set((state) => ({ artifacts: [newArtifact, ...state.artifacts] }))
+        return newArtifact
+      },
+      deleteArtifact: (artifactId: string) =>
+        set((state) => ({
+          artifacts: state.artifacts.filter((a) => a.id !== artifactId),
+        })),
+      togglePinArtifact: (artifactId: string) =>
+        set((state) => ({
+          artifacts: state.artifacts.map((a) =>
+            a.id === artifactId ? { ...a, pinned: !a.pinned } : a
+          ),
+        })),
+      updateArtifactTitle: (artifactId: string, title: string) =>
+        set((state) => ({
+          artifacts: state.artifacts.map((a) =>
+            a.id === artifactId ? { ...a, title } : a
+          ),
+        })),
+      requestEditorReload: () =>
+        set((state) => ({ editorReloadToken: state.editorReloadToken + 1 })),
+
       // File actions
       addFile: (file: UploadedFile) =>
         set((state) => ({ files: [...state.files, file] })),
@@ -361,6 +422,7 @@ export const useStore = create<AppState>()(
           return {
             conversations: newConversations,
             notes: state.notes.filter((n) => n.conversationId !== conversationId),
+            artifacts: state.artifacts.filter((a) => a.conversationId !== conversationId),
             activeConversationId:
               state.activeConversationId === conversationId
                 ? newConversations[0]?.id || null
@@ -443,10 +505,13 @@ export const useStore = create<AppState>()(
             }
             return c
           }),
-          // Detach any bookmarks anchored to this message (mirrors the
-          // notes.message_id `on delete set null` from the Supabase schema).
+          // Detach any bookmarks / artifacts anchored to this message
+          // (mirrors the `on delete set null` from the Supabase schema).
           notes: state.notes.map((n) =>
             n.messageId === messageId ? { ...n, messageId: null } : n
+          ),
+          artifacts: state.artifacts.map((a) =>
+            a.messageId === messageId ? { ...a, messageId: null } : a
           ),
         })),
       updateMessage: (messageId: string, content: string) =>
@@ -620,6 +685,7 @@ export const useStore = create<AppState>()(
         files: state.files,
         chatModel: state.chatModel,
         notes: state.notes,
+        artifacts: state.artifacts,
       }),
     }
   )
@@ -712,4 +778,17 @@ export const useActiveConversationDocument = (): string => {
   const activeConversationId = useStore((state) => state.activeConversationId)
   if (!activeConversationId) return ''
   return conversations.find((c) => c.id === activeConversationId)?.documentContent ?? ''
+}
+
+export const useConversationArtifacts = () => {
+  const artifacts = useStore((state) => state.artifacts)
+  const activeConversationId = useStore((state) => state.activeConversationId)
+  if (!activeConversationId) return [] as Artifact[]
+  return artifacts
+    .filter((a) => a.conversationId === activeConversationId)
+    .sort((a, b) => {
+      if (a.pinned && !b.pinned) return -1
+      if (!a.pinned && b.pinned) return 1
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    })
 }
