@@ -21,6 +21,12 @@ export interface Workspace {
   name: string
   createdAt: Date
   updatedAt: Date
+  /**
+   * Optional per-workspace system prompt prepended to every chat in this
+   * workspace. Lets the user give a workspace a persona / role / style
+   * without setting it again per conversation.
+   */
+  systemPrompt?: string
 }
 
 export interface Resource {

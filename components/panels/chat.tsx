@@ -45,6 +45,7 @@ export function ChatPanel() {
   const activeConversationId = useStore((state) => state.activeConversationId)
   const conversations = useStore((state) => state.conversations)
   const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
+  const workspaces = useStore((state) => state.workspaces)
   const addFile = useStore((state) => state.addFile)
   const addResource = useStore((state) => state.addResource)
   const setFileExtraction = useStore((state) => state.setFileExtraction)
@@ -151,6 +152,8 @@ export function ChatPanel() {
   const callChatAPI = useCallback(
     async (history: Message[]) => {
       const conv = conversations.find((c) => c.id === activeConversationId)
+      const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
+      const workspaceSystemPrompt = activeWorkspace?.systemPrompt?.trim() || undefined
       const fileSummaries =
         conv?.selectedFileIds
           .map((id) => files.find((f) => f.id === id))
@@ -189,6 +192,7 @@ export function ChatPanel() {
             model: chatModel,
             messages: history.map((m) => ({ role: m.role, content: m.content })),
             files: fileSummaries,
+            workspaceSystemPrompt,
           }),
         })
 
@@ -324,6 +328,7 @@ export function ChatPanel() {
     },
     [
       activeConversationId,
+      activeWorkspaceId,
       addMessage,
       appendToMessage,
       appendToMessageReasoning,
@@ -335,6 +340,7 @@ export function ChatPanel() {
       mockAIResponse,
       setIsTyping,
       setMessageError,
+      workspaces,
     ]
   )
 

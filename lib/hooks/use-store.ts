@@ -127,6 +127,7 @@ interface AppState {
   createWorkspace: (name: string) => Workspace
   deleteWorkspace: (workspaceId: string) => void
   renameWorkspace: (workspaceId: string, name: string) => void
+  setWorkspaceSystemPrompt: (workspaceId: string, prompt: string) => void
   setActiveWorkspace: (workspaceId: string) => void
 
   // Resource actions
@@ -282,6 +283,14 @@ export const useStore = create<AppState>()(
         set((state) => ({
           workspaces: state.workspaces.map((w) =>
             w.id === workspaceId ? { ...w, name, updatedAt: new Date() } : w
+          ),
+        })),
+      setWorkspaceSystemPrompt: (workspaceId: string, prompt: string) =>
+        set((state) => ({
+          workspaces: state.workspaces.map((w) =>
+            w.id === workspaceId
+              ? { ...w, systemPrompt: prompt, updatedAt: new Date() }
+              : w
           ),
         })),
       setActiveWorkspace: (workspaceId: string) =>
@@ -652,7 +661,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'hummingbird-storage',
-      version: 4,
+      version: 5,
       migrate: (persistedState, fromVersion) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState
         const state = persistedState as Record<string, unknown>
@@ -700,6 +709,20 @@ export const useStore = create<AppState>()(
           delete state.documentContent
           delete state.documentLastSaved
           delete state.editorContent
+        }
+        if (fromVersion < 5) {
+          // Workspaces gained an optional systemPrompt field — backfill
+          // empty so the typed accessors don't hit `undefined` and so the
+          // textarea in workspaces.tsx renders cleanly.
+          const ws = state.workspaces
+          if (Array.isArray(ws)) {
+            state.workspaces = ws.map((w) => {
+              if (!w || typeof w !== 'object') return w
+              const ws = w as Record<string, unknown>
+              if ('systemPrompt' in ws) return ws
+              return { ...ws, systemPrompt: '' }
+            })
+          }
         }
         return persistedState
       },

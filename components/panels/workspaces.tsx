@@ -4,6 +4,7 @@ import * as React from "react"
 import { useStore } from "@/lib/hooks/use-store"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
   AlertDialog,
@@ -35,6 +36,7 @@ export function WorkspacesPanel() {
     setActiveWorkspace,
     createWorkspace,
     renameWorkspace,
+    setWorkspaceSystemPrompt,
     deleteWorkspace,
     conversations,
     resources,
@@ -188,6 +190,25 @@ export function WorkspacesPanel() {
                     <div className="mt-3 text-[11px] text-[var(--muted-foreground)] space-y-0.5">
                       <div>Created {formatDate(ws.createdAt)}</div>
                       <div>Updated {formatDate(ws.updatedAt)}</div>
+                    </div>
+
+                    <div
+                      className="mt-3"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <label className="text-[10px] uppercase tracking-wide text-[var(--muted-foreground)] font-medium">
+                        System prompt
+                      </label>
+                      <Textarea
+                        value={ws.systemPrompt ?? ""}
+                        onChange={(e) =>
+                          setWorkspaceSystemPrompt(ws.id, e.target.value)
+                        }
+                        onKeyDown={(e) => e.stopPropagation()}
+                        placeholder="Optional. Prepended to every chat in this workspace."
+                        className="mt-1 text-xs resize-none min-h-[44px]"
+                        rows={2}
+                      />
                     </div>
                   </div>
                 </div>

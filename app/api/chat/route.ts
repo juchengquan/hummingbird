@@ -21,6 +21,8 @@ interface ChatRequestBody {
   messages: ModelMessage[]
   model?: string
   files?: FileSummary[]
+  /** Optional per-workspace prompt, prepended to the base system instruction. */
+  workspaceSystemPrompt?: string
 }
 
 // Soft cap on combined inline text across all attachments, to keep prompts
@@ -34,10 +36,21 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`
 }
 
-function buildSystemPrompt(files: FileSummary[] | undefined): string {
-  const base =
+function buildSystemPrompt(
+  files: FileSummary[] | undefined,
+  workspaceSystemPrompt?: string
+): string {
+  const trimmedWorkspace = workspaceSystemPrompt?.trim()
+  // Workspace prompt goes first so user-set persona/style instructions take
+  // precedence over our generic guidance. The base instructions then nudge the
+  // model toward Markdown formatting (which the chat bubble now renders).
+  const base = [
+    trimmedWorkspace,
     'You are a helpful chat assistant inside the Hummingbird app. ' +
-    'Answer concisely and use Markdown formatting when useful.'
+      'Answer concisely and use Markdown formatting when useful.',
+  ]
+    .filter(Boolean)
+    .join('\n\n')
 
   if (!files || files.length === 0) return base
 
@@ -93,7 +106,7 @@ export async function POST(req: NextRequest) {
     const result = streamText({
       abortSignal: req.signal,
       model: gateway(modelId),
-      system: buildSystemPrompt(body.files),
+      system: buildSystemPrompt(body.files, body.workspaceSystemPrompt),
       messages: body.messages,
     })
 
