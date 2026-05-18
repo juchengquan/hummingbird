@@ -43,8 +43,49 @@ type ExtractionPatch = Partial<
     | 'extractionTruncated'
     | 'extractedKind'
     | 'imageDataUrl'
+    | 'summary'
+    | 'keyTopics'
   >
 >
+
+/**
+ * Skip summarisation for files below this size — there's nothing useful to
+ * summarise. The summary call costs money so we'd rather under-trigger.
+ */
+const SUMMARY_MIN_TEXT_LENGTH = 500
+/** Cap the request body — the route validates against this too. */
+const SUMMARY_MAX_TEXT_LENGTH = 50_000
+
+async function summariseFileInBackground(
+  fileId: string,
+  name: string,
+  text: string,
+  setFileExtraction: (id: string, patch: ExtractionPatch) => void
+): Promise<void> {
+  try {
+    const res = await fetch('/api/summarize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'file',
+        name,
+        text: text.slice(0, SUMMARY_MAX_TEXT_LENGTH),
+      }),
+    })
+    if (!res.ok) return
+    const data = (await res.json()) as {
+      summary?: string
+      keyTopics?: string[]
+    }
+    if (!data.summary) return
+    setFileExtraction(fileId, {
+      summary: data.summary,
+      keyTopics: Array.isArray(data.keyTopics) ? data.keyTopics : undefined,
+    })
+  } catch {
+    /* silent — summary is best-effort */
+  }
+}
 
 function readAsDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -102,4 +143,13 @@ export async function runExtraction(
     extractionTruncated: result.truncated,
     extractedKind: result.kind,
   })
+
+  // Best-effort background summarisation. Skipped for unsupported kinds and
+  // very small files (where the summary would be longer than the source).
+  if (
+    result.kind !== 'unsupported' &&
+    result.text.length >= SUMMARY_MIN_TEXT_LENGTH
+  ) {
+    void summariseFileInBackground(fileId, blob.name, result.text, setFileExtraction)
+  }
 }

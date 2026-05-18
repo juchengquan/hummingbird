@@ -21,6 +21,16 @@ export interface UploadedFile {
    * layer lands.
    */
   imageDataUrl?: string
+  /**
+   * Auto-generated 2-3 sentence summary of the extracted text. Only populated
+   * when extraction succeeded and produced enough content to summarise.
+   */
+  summary?: string
+  /**
+   * Short topic phrases the summariser identified in the file. Surfaced
+   * inline in the file row for at-a-glance "what is this?" understanding.
+   */
+  keyTopics?: string[]
 }
 
 export interface Workspace {

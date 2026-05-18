@@ -154,6 +154,8 @@ interface AppState {
         | 'extractionTruncated'
         | 'extractedKind'
         | 'imageDataUrl'
+        | 'summary'
+        | 'keyTopics'
       >
     >
   ) => void

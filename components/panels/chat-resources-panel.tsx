@@ -293,6 +293,14 @@ function FilesTabBody({
                         </span>
                         <ExtractionStatusBadge file={file} />
                       </div>
+                      {file.keyTopics && file.keyTopics.length > 0 && (
+                        <div
+                          className="mt-1 text-[10px] text-[var(--muted-foreground)] truncate"
+                          title={file.summary}
+                        >
+                          {file.keyTopics.slice(0, 4).join(" · ")}
+                        </div>
+                      )}
                     </div>
                   </button>
                 </li>

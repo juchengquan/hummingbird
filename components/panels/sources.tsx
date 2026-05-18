@@ -233,11 +233,28 @@ export function ResourcePanel() {
                           </p>
                         </div>
                       </HoverCardTrigger>
-                      <HoverCardContent side="right" align="start" className="w-auto max-w-xs">
-                        <p className="text-sm text-[var(--foreground)] break-all">{file.name}</p>
+                      <HoverCardContent side="right" align="start" className="w-80 max-w-xs">
+                        <p className="text-sm font-medium text-[var(--foreground)] break-all">{file.name}</p>
                         <p className="text-xs text-[var(--muted-foreground)] mt-1">
                           {formatFileSize(file.size)} • {format(file.uploadedAt, "MMM d, yyyy")}
                         </p>
+                        {file.summary && (
+                          <p className="mt-2 text-xs text-[var(--foreground)] leading-relaxed">
+                            {file.summary}
+                          </p>
+                        )}
+                        {file.keyTopics && file.keyTopics.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {file.keyTopics.map((topic) => (
+                              <span
+                                key={topic}
+                                className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--secondary)] text-[var(--muted-foreground)]"
+                              >
+                                {topic}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </HoverCardContent>
                     </HoverCard>
                     <ExtractionStatusBadge file={file} size="default" className="shrink-0 ml-auto" />
