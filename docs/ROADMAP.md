@@ -121,11 +121,11 @@ Models that emit reasoning (DeepSeek R1, Claude thinking variants, OpenAI o1-sty
 ### 3. Backend persistence
 Everything lives in `localStorage` under `hummingbird-storage` (version 3, see `lib/hooks/use-store.ts`). This blocks share links, multi-device sync, and large file storage. A full Supabase-based plan is detailed in **"Supabase persistence migration"** below.
 
-### 4. ✅ Richer error and connectivity states *(chat shipped)*
+### 4. ✅ Richer error and connectivity states *(all AI routes shipped)*
 
-`app/api/chat/route.ts` now categorises errors into `auth` / `rate_limit` / `invalid_model` / `provider` / `unknown` with appropriate status codes and a JSON body `{ code, message }`. The chat panel surfaces failures inline as a distinct error bubble (`components/panels/chat-message.tsx`) with **Retry**, **Change model** (opens the model picker), **Dismiss**, and a "Details" disclosure showing the error code, HTTP status, and model id. `Message` gained an optional `error: MessageError` field — see `lib/types.ts`. Error-marked messages are filtered out of the Markdown export. Aborted requests (Stop button) now drop the empty placeholder instead of leaving an "_[stopped]_" line.
+`app/api/chat/route.ts` categorises errors into `auth` / `rate_limit` / `invalid_model` / `provider` / `aborted` / `unknown` with appropriate status codes and a JSON body `{ code, message }`. The chat panel surfaces failures inline as a distinct error bubble (`components/panels/chat-message.tsx`) with **Retry**, **Change model** (opens the model picker), **Dismiss**, and a "Details" disclosure showing the error code, HTTP status, and model id. `Message` gained an optional `error: MessageError` field — see `lib/types.ts`. Error-marked messages are filtered out of the Markdown export. Aborted requests (Stop button) now drop the empty placeholder instead of leaving an "_[stopped]_" line.
 
-Still pending for the editor routes (`app/api/ai/command/route.ts`, `app/api/ai/copilot/route.ts`): same categorisation pattern + inline rendering — left for when richer editor error UI is needed.
+The categoriser was extracted to `lib/api-errors.ts` (`categorizeError`) and now wraps the catch in all three AI Gateway routes: `app/api/chat/route.ts`, `app/api/ai/command/route.ts`, and `app/api/ai/copilot/route.ts`. All three return the same `{ code, message }` shape. Inline error rendering for the editor's command/copilot calls is still TODO — the responses are typed but `components/editor/use-chat.ts` doesn't consume the new fields yet; it'll get the same Retry/Change-model treatment when richer editor error UI is built.
 
 ## Supabase persistence migration
 

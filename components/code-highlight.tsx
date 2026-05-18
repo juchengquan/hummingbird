@@ -2,7 +2,29 @@
 
 import { useEffect, useState } from "react"
 import { cn } from "@/lib/utils"
-import "highlight.js/styles/github-dark.css"
+import { useStore } from "@/lib/hooks/use-store"
+import "./code-highlight.css"
+
+type ResolvedTheme = "light" | "dark"
+
+function useResolvedTheme(): ResolvedTheme {
+  const theme = useStore((s) => s.theme)
+  const [systemDark, setSystemDark] = useState(false)
+
+  useEffect(() => {
+    if (theme !== "system") return
+    if (typeof window === "undefined" || !window.matchMedia) return
+    const mq = window.matchMedia("(prefers-color-scheme: dark)")
+    setSystemDark(mq.matches)
+    const handler = (e: MediaQueryListEvent) => setSystemDark(e.matches)
+    mq.addEventListener("change", handler)
+    return () => mq.removeEventListener("change", handler)
+  }, [theme])
+
+  if (theme === "light") return "light"
+  if (theme === "dark") return "dark"
+  return systemDark ? "dark" : "light"
+}
 
 interface CodeHighlightProps {
   code: string
@@ -18,6 +40,7 @@ interface CodeHighlightProps {
  */
 export function CodeHighlight({ code, language, className }: CodeHighlightProps) {
   const [html, setHtml] = useState<string | null>(null)
+  const resolvedTheme = useResolvedTheme()
 
   useEffect(() => {
     let active = true
@@ -43,7 +66,13 @@ export function CodeHighlight({ code, language, className }: CodeHighlightProps)
   }, [code, language])
 
   return (
-    <pre className={cn("text-xs p-3 overflow-auto", className)}>
+    <pre
+      className={cn(
+        "text-xs p-3 overflow-auto",
+        resolvedTheme === "dark" ? "hljs-theme-dark" : "hljs-theme-light",
+        className
+      )}
+    >
       {html === null ? (
         <code className="font-mono whitespace-pre-wrap break-words">{code}</code>
       ) : (

@@ -5,6 +5,7 @@ import { streamText, type ModelMessage } from 'ai'
 import { NextResponse } from 'next/server'
 
 import { DEFAULT_CHAT_MODEL } from '@/lib/models'
+import { categorizeError } from '@/lib/api-errors'
 
 interface FileSummary {
   name: string
@@ -74,28 +75,6 @@ function buildSystemPrompt(files: FileSummary[] | undefined): string {
   return prompt
 }
 
-function categorizeError(error: unknown): {
-  status: number
-  code: 'auth' | 'rate_limit' | 'invalid_model' | 'provider' | 'unknown'
-  message: string
-} {
-  const message = error instanceof Error ? error.message : 'Unknown error'
-  const lower = message.toLowerCase()
-  if (/rate.?limit|quota|too many requests|429/.test(lower)) {
-    return { status: 429, code: 'rate_limit', message }
-  }
-  if (/invalid.*model|model.*not.found|unknown model|400/.test(lower)) {
-    return { status: 400, code: 'invalid_model', message }
-  }
-  if (/unauthor|forbidden|401|403/.test(lower)) {
-    return { status: 401, code: 'auth', message }
-  }
-  if (/bad gateway|provider|upstream|502|503|504/.test(lower)) {
-    return { status: 502, code: 'provider', message }
-  }
-  return { status: 500, code: 'unknown', message }
-}
-
 export async function POST(req: NextRequest) {
   const body = (await req.json()) as ChatRequestBody
   const apiKey = process.env.AI_GATEWAY_API_KEY
@@ -120,9 +99,6 @@ export async function POST(req: NextRequest) {
 
     return result.toTextStreamResponse()
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      return NextResponse.json({ code: 'aborted' }, { status: 408 })
-    }
     const { status, code, message } = categorizeError(error)
     return NextResponse.json({ code, message }, { status })
   }

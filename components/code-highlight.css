@@ -1,0 +1,113 @@
+/* Scoped highlight.js color rules. Applied by the CodeHighlight component
+   based on the store's `theme` value, so it works independently of whatever
+   class the broader app puts on <html>. Two top-level scopes only — pick the
+   one that matches the resolved theme.
+
+   Colours mirror highlight.js' bundled `github` and `github-dark` themes,
+   trimmed to the token classes that actually appear in highlight.js/lib/common
+   output. Edit-by-hand to keep both themes in sync. */
+
+.hljs-theme-light .hljs {
+  color: #24292e;
+  background: #f6f8fa;
+}
+.hljs-theme-light .hljs-comment,
+.hljs-theme-light .hljs-quote {
+  color: #6a737d;
+}
+.hljs-theme-light .hljs-keyword,
+.hljs-theme-light .hljs-doctag,
+.hljs-theme-light .hljs-type,
+.hljs-theme-light .hljs-template-tag,
+.hljs-theme-light .hljs-template-variable {
+  color: #d73a49;
+}
+.hljs-theme-light .hljs-title,
+.hljs-theme-light .hljs-section,
+.hljs-theme-light .hljs-name {
+  color: #6f42c1;
+}
+.hljs-theme-light .hljs-string,
+.hljs-theme-light .hljs-char {
+  color: #032f62;
+}
+.hljs-theme-light .hljs-number,
+.hljs-theme-light .hljs-literal,
+.hljs-theme-light .hljs-built_in,
+.hljs-theme-light .hljs-attribute,
+.hljs-theme-light .hljs-variable {
+  color: #005cc5;
+}
+.hljs-theme-light .hljs-tag,
+.hljs-theme-light .hljs-selector-tag,
+.hljs-theme-light .hljs-selector-class,
+.hljs-theme-light .hljs-selector-id {
+  color: #22863a;
+}
+.hljs-theme-light .hljs-attr,
+.hljs-theme-light .hljs-property,
+.hljs-theme-light .hljs-regexp,
+.hljs-theme-light .hljs-symbol,
+.hljs-theme-light .hljs-bullet {
+  color: #e36209;
+}
+.hljs-theme-light .hljs-meta {
+  color: #6a737d;
+}
+
+.hljs-theme-dark .hljs {
+  color: #c9d1d9;
+  background: #0d1117;
+}
+.hljs-theme-dark .hljs-comment,
+.hljs-theme-dark .hljs-quote {
+  color: #8b949e;
+}
+.hljs-theme-dark .hljs-keyword,
+.hljs-theme-dark .hljs-doctag,
+.hljs-theme-dark .hljs-type,
+.hljs-theme-dark .hljs-template-tag,
+.hljs-theme-dark .hljs-template-variable {
+  color: #ff7b72;
+}
+.hljs-theme-dark .hljs-title,
+.hljs-theme-dark .hljs-section,
+.hljs-theme-dark .hljs-name {
+  color: #d2a8ff;
+}
+.hljs-theme-dark .hljs-string,
+.hljs-theme-dark .hljs-char {
+  color: #a5d6ff;
+}
+.hljs-theme-dark .hljs-number,
+.hljs-theme-dark .hljs-literal,
+.hljs-theme-dark .hljs-built_in,
+.hljs-theme-dark .hljs-attribute,
+.hljs-theme-dark .hljs-variable {
+  color: #79c0ff;
+}
+.hljs-theme-dark .hljs-tag,
+.hljs-theme-dark .hljs-selector-tag,
+.hljs-theme-dark .hljs-selector-class,
+.hljs-theme-dark .hljs-selector-id {
+  color: #7ee787;
+}
+.hljs-theme-dark .hljs-attr,
+.hljs-theme-dark .hljs-property,
+.hljs-theme-dark .hljs-regexp,
+.hljs-theme-dark .hljs-symbol,
+.hljs-theme-dark .hljs-bullet {
+  color: #ffa657;
+}
+.hljs-theme-dark .hljs-meta {
+  color: #8b949e;
+}
+
+.hljs-theme-light .hljs-emphasis,
+.hljs-theme-dark .hljs-emphasis {
+  font-style: italic;
+}
+.hljs-theme-light .hljs-strong,
+.hljs-theme-dark .hljs-strong {
+  font-weight: 600;
+}
