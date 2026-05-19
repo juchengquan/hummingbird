@@ -1,15 +1,15 @@
--- Storage bucket and policies for the user-files bucket.
--- Run this once after creating the project; bucket name must match the
--- value used by lib/uploadthing.ts / hooks/use-upload-file.ts when it
--- is migrated to Supabase Storage (Phase 1 follow-on).
+-- The `user-files` Storage bucket and the per-user folder-prefix RLS
+-- policies. Path scheme is `user-files/{auth.uid()}/{file_id}.{ext}`.
+-- Read / write / update / delete are all scoped to the caller's own
+-- folder.
+--
+-- Bucket is private; public reads happen via short-lived signed URLs
+-- minted by the app (see hooks/use-upload-file.ts and lib/files/persist.ts).
 
--- Create the bucket (private by default; signed URLs only).
 insert into storage.buckets (id, name, public)
 values ('user-files', 'user-files', false)
 on conflict (id) do nothing;
 
--- Users can read/write only under their own user_id prefix.
--- Path scheme: user-files/{auth.uid()}/{file_id}.{ext}
 create policy "user-files: own folder read" on storage.objects
   for select using (
     bucket_id = 'user-files'

@@ -1,15 +1,11 @@
 /**
- * Hand-rolled Database type covering the Phase-1 migrations as applied:
- *   - supabase/migrations/0001_initial_schema.sql
- *   - supabase/migrations/0002_conversation_assets.sql
+ * Hand-rolled Database type mirroring `supabase/migrations/0001_schema.sql`.
  *
- * Swap in `bunx supabase gen types typescript --project-id <ref> > lib/supabase/types.ts`
- * once an access token is available. Same surface; more thorough nullability
- * annotations.
+ * The Row / Insert / Update shape on each table must match the
+ * column set in the schema file — when you change one, change the
+ * other. Generated equivalent (more thorough nullability annotations):
  *
- * Includes columns added by 0004 (`reasoning`, error, file extraction
- * fields, system_prompt, etc.) so the sync layer can persist and rehydrate
- * the full runtime state on refresh / cross-device.
+ *   bunx supabase gen types typescript --project-id <ref> > lib/supabase/types.ts
  */
 export type Json =
   | string

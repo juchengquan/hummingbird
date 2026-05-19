@@ -269,15 +269,12 @@ require a signed-in session and can't be automated from the harness:
 - Sign-out preserves local state.
 - Refresh re-syncs from cloud (delete a row in Supabase SQL, refresh,
   row disappears locally — silent pull verified).
-- **Apply `0004` migration first**; without it, sync writes silently
-  drop the new fields.
-- Apply `0005_shares.sql` before testing share links (Phase 4 backport).
-- Apply `0006_skills.sql` before testing skill-pref sync across devices.
-- Apply `0007_message_reasoning_duration.sql` so the "Thought for X.X s"
-  badge survives cross-device reload.
-- Apply `0008_message_tool_calls.sql` so persisted tool-call pills
-  render after reload (without it, `setMessageToolCalls` writes are
-  silently dropped server-side).
+- Schema is now a single consolidated file
+  (`supabase/migrations/0001_schema.sql`) — every feature column
+  (`reasoning`, `tool_calls`, `skill_prefs`, `default_model`, lineage,
+  workspace-scoped notes / artifacts, etc.) lives there. Run the
+  three files in order against a fresh project; against an existing
+  one, drop the public schema first (see SUPABASE_SETUP.md).
 
 #### ✅ Shipped — local-mode opt-outs (commit `592f7da`)
 
@@ -487,9 +484,14 @@ Three small UX wins that close gaps surfaced during the Skills work:
   BACKLOG
 - Pinned default model per workspace — auto-applies on workspace
   switch, session-picker overrides until the next switch
-  (`624558e`, migration `0010`); third item ticked off the BACKLOG
-- Plate doc updated: `docs/SUPABASE_SETUP.md` covers migrations `0001`–
-  `0008` + storage + Tavily env (commit `38b7a98`, refreshed `3ff1cab`)
+  (`624558e`); third item ticked off the BACKLOG
+- Plate doc updated: `docs/SUPABASE_SETUP.md` covers the consolidated
+  schema (`38b7a98`, refreshed `3ff1cab`)
+- Schema consolidation: collapsed eleven incremental migrations
+  (`0001`–`0011`) into three final-shape files (`0001_schema.sql` /
+  `0002_rls_policies.sql` / `0003_storage.sql`). Pre-launch trade-off —
+  applying against an existing project requires a `drop schema public
+  cascade` reset.
 
 ### Architecture
 

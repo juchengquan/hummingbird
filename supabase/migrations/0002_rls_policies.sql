@@ -1,5 +1,9 @@
--- Row-level security: every row is owned by user_id; users can only
--- read/write their own rows. profiles uses id directly.
+-- Row-level security + the auto-profile trigger.
+--
+-- One policy per user-data table: rows are visible / writable only by
+-- their owner (`user_id = auth.uid()`). profiles uses `id` directly.
+-- shares CRUD is owner-only too; the public read path runs via the
+-- service-role admin client and bypasses RLS deliberately.
 
 alter table profiles enable row level security;
 alter table workspaces enable row level security;
@@ -9,6 +13,7 @@ alter table files enable row level security;
 alter table resources enable row level security;
 alter table artifacts enable row level security;
 alter table notes enable row level security;
+alter table shares enable row level security;
 
 create policy "own profile" on profiles
   for all using (id = auth.uid()) with check (id = auth.uid());
@@ -34,7 +39,12 @@ create policy "own artifacts" on artifacts
 create policy "own notes" on notes
   for all using (user_id = auth.uid()) with check (user_id = auth.uid());
 
--- Auto-create a profile row when a new auth user is inserted.
+create policy "own shares" on shares
+  for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- Auto-create a profile row when a new auth user is inserted. Runs as
+-- security definer so the insert succeeds before the user's session
+-- exists (the trigger fires inside the auth flow).
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql

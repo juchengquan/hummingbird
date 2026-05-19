@@ -59,76 +59,40 @@ this tab open — the next steps use it.
 
 ## Step 2 — Run the schema migrations
 
-Eleven SQL files live in the repo under `supabase/migrations/`. Run
+Three SQL files live in the repo under `supabase/migrations/`. Run
 them in numerical order via the **SQL Editor** in the Supabase
 dashboard (left sidebar → **SQL Editor** → **New query**).
 
 For each file, paste the entire contents, click **Run**, confirm no
 errors:
 
-1. `supabase/migrations/0001_initial_schema.sql`
-   - Creates: `profiles`, `workspaces`, `conversations`, `messages`,
-     `files`, `resources` + indexes.
-2. `supabase/migrations/0002_conversation_assets.sql`
-   - Creates: `artifacts`, `notes` + indexes.
-3. `supabase/migrations/0003_rls_policies.sql`
+1. `supabase/migrations/0001_schema.sql`
+   - Every table in its final shape: `profiles`, `workspaces`,
+     `conversations`, `messages`, `files`, `resources`, `artifacts`,
+     `notes`, `shares`. Includes all columns the app uses today:
+     workspace `system_prompt` / `skill_prefs` / `default_model` /
+     `position`; conversation `document_content` / `skill_prefs` /
+     fork lineage; message `reasoning` / `reasoning_duration_ms` /
+     `error` / `attached_file_ids` / `suggestions` / `tool_calls`;
+     file extraction columns; workspace-scoped notes / artifacts
+     with nullable `conversation_id`.
+2. `supabase/migrations/0002_rls_policies.sql`
    - Enables row-level security on every table, creates "own row"
-     policies, installs the `on_auth_user_created` trigger that
-     auto-creates a profile when someone signs up.
-4. `supabase/migrations/0004_runtime_metadata.sql`
-   - Adds the runtime metadata columns the sync layer needs:
-     message `reasoning` / `error` / `attached_file_ids` /
-     `suggestions`; file extraction columns (`extraction_status`,
-     `extracted_text`, `extracted_kind`, `image_data_url`,
-     `summary`, `key_topics`); workspace `system_prompt`.
-5. `supabase/migrations/0005_shares.sql`
-   - Adds the `shares` table backing the public share-link routes,
-     plus its RLS policy ("own shares").
-6. `supabase/migrations/0006_skills.sql`
-   - Adds `skill_prefs jsonb` columns to `workspaces` and
-     `conversations` for the Skills cascade.
-7. `supabase/migrations/0007_message_reasoning_duration.sql`
-   - Adds `messages.reasoning_duration_ms` so the "Thought for X.X s"
-     badge in the reasoning block survives reload.
-8. `supabase/migrations/0008_message_tool_calls.sql`
-   - Adds `messages.tool_calls jsonb` for first-class tool-call
-     persistence (web-search pills survive reload as structured
-     records rather than markdown footers in the message text).
-9. `supabase/migrations/0009_conversation_lineage.sql`
-   - Adds `conversations.parent_id` + `conversations.forked_from_message_id`
-     so the Branches dialog can render a fork tree. `on delete set
-     null` on both so deleted ancestors don't cascade away children.
-10. `supabase/migrations/0010_workspace_default_model.sql`
-    - Adds `workspaces.default_model` for the per-workspace pinned
-      chat model (auto-applies on workspace switch).
-11. `supabase/migrations/0011_workspace_scope_and_ordering.sql`
-    - Promotes notes + artifacts from conversation-scope to
-      workspace-scope: adds `notes.workspace_id` and
-      `artifacts.workspace_id` (required), switches their
-      `conversation_id` FKs from `on delete cascade` to `on delete
-      set null` so orphaned items survive at the workspace level.
-    - Adds `workspaces.position` (integer ordering) for the
-      drag-to-reorder workspaces UI. Backfills via
-      `row_number() over (created_at)` per user so existing rows
-      get a stable initial order.
+     policies (one per table), installs the `on_auth_user_created`
+     trigger that auto-creates a profile when someone signs up.
+3. `supabase/migrations/0003_storage.sql`
+   - Creates the private `user-files` Storage bucket and the per-user
+     folder-prefix policies (read / write / update / delete are all
+     scoped to `user-files/{auth.uid()}/...`).
 
-After running all eleven, sanity-check from the **Table Editor**: ten
+After running all three, sanity-check from the **Table Editor**: nine
 tables should be listed (`profiles`, `workspaces`, `conversations`,
 `messages`, `files`, `resources`, `artifacts`, `notes`, `shares`), each
-showing the RLS shield icon indicating policies are active.
+showing the RLS shield icon indicating policies are active. The
+**Storage** sidebar should show a `user-files` private bucket with the
+four policies attached.
 
-## Step 3 — Set up the storage bucket
-
-`supabase/storage/policies.sql` creates the `user-files` bucket and the
-per-user folder-prefix policies that scope reads/writes to
-`user-files/{auth.uid()}/...`.
-
-Run it in the SQL Editor exactly like the migrations above.
-
-Verify in **Storage** (left sidebar) that the `user-files` bucket
-exists and shows "Private bucket" with policies attached.
-
-## Step 4 — Configure auth (magic link)
+## Step 3 — Configure auth (magic link)
 
 1. **Authentication** → **Providers** in the sidebar.
 2. **Email** should already be enabled. Click into it:
@@ -153,7 +117,7 @@ exists and shows "Private bucket" with policies attached.
      shared SMTP by default — sufficient for dev but rate-limited; for
      real users wire up your own SMTP under **Settings** → **Auth**.
 
-## Step 5 — Set env vars in `.env.local`
+## Step 4 — Set env vars in `.env.local`
 
 1. **Settings** → **API** in the dashboard.
 2. Copy these values:
@@ -180,7 +144,7 @@ exists and shows "Private bucket" with policies attached.
      data instead of inventing a search call.
 5. Restart `bun dev` so Next.js picks up the new env vars.
 
-## Step 6 — Verify
+## Step 5 — Verify
 
 After restart, with localStorage cleared so you're "anonymous":
 
@@ -266,7 +230,7 @@ If anything goes wrong:
   it the admin client falls back to null and shares can't be resolved
 - Files upload but never appear in Storage → check that the
   `user-files` bucket exists and the policies from
-  `supabase/storage/policies.sql` ran without errors
+  `supabase/migrations/0003_storage.sql` ran without errors
 
 ## Local-mode escape hatch
 
@@ -322,9 +286,29 @@ without exposing the local stack. Recommend starting with the cloud
 path above and switching to local later if you find yourself wanting
 faster reset cycles.
 
-## Re-running on an existing project
+## Re-running against an existing project
 
-Every migration is idempotent (`create table if not exists`,
-`add column if not exists`, etc.) so you can re-run all six against an
-already-provisioned project without dropping anything. New migrations
-(when added) just need to be run once; older ones become no-ops.
+The three migration files describe the schema's **final shape** — they
+are not incremental. To run them against a project that already has
+tables from an older version of this codebase, you have to **reset the
+public schema first** (otherwise `create table` collides). In the SQL
+Editor:
+
+```sql
+drop schema public cascade;
+create schema public;
+grant usage on schema public to anon, authenticated;
+grant all on schema public to postgres, service_role;
+```
+
+Then run `0001_schema.sql` → `0002_rls_policies.sql` → `0003_storage.sql`
+in order. The Storage bucket and its policies survive the schema drop
+(they live in the `storage` schema), so `0003_storage.sql` uses
+`on conflict do nothing` and `create policy` may error with "already
+exists" — drop the four `user-files: own folder ...` policies from
+the **Storage → Policies** UI before re-running if you hit that.
+
+This is a deliberate trade-off: the consolidated schema is much easier
+to read and modify, but the cost is that re-applying it requires a
+reset. For a pre-launch / solo-dev project this is fine; for shared
+environments, freeze the schema before migrating new collaborators.
