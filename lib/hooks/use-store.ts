@@ -543,6 +543,8 @@ export const useStore = create<AppState>()(
           selectedFileIds: [...source.selectedFileIds],
           documentContent: source.documentContent,
           skillPrefs: source.skillPrefs ? { ...source.skillPrefs } : undefined,
+          parentId: source.id,
+          forkedFromMessageId: untilMessageId,
         }
         set((state) => ({
           conversations: [fork, ...state.conversations],
@@ -829,7 +831,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'hummingbird-storage',
-      version: 9,
+      version: 10,
       migrate: (persistedState, fromVersion) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState
         const state = persistedState as Record<string, unknown>
@@ -929,6 +931,12 @@ export const useStore = create<AppState>()(
               return { ...obj, skillPrefs: {} }
             })
           }
+        }
+        if (fromVersion < 10) {
+          // Conversation lineage (parentId / forkedFromMessageId). No
+          // backfill needed — existing rows aren't part of any tree so
+          // they remain as standalone roots. Nothing to do but bump
+          // the version marker.
         }
         return persistedState
       },

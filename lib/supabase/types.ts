@@ -81,6 +81,8 @@ export interface Database {
           document_content: string
           document_updated_at: string
           skill_prefs: Json
+          parent_id: string | null
+          forked_from_message_id: string | null
           created_at: string
           updated_at: string
         }
@@ -94,6 +96,8 @@ export interface Database {
           document_content?: string
           document_updated_at?: string
           skill_prefs?: Json
+          parent_id?: string | null
+          forked_from_message_id?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -107,6 +111,8 @@ export interface Database {
           document_content?: string
           document_updated_at?: string
           skill_prefs?: Json
+          parent_id?: string | null
+          forked_from_message_id?: string | null
           created_at?: string
           updated_at?: string
         }

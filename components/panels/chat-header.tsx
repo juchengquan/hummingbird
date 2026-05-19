@@ -13,6 +13,7 @@ import {
   X,
   PanelRight,
   Share2,
+  GitBranch,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -36,6 +37,7 @@ import {
 import { ConversationSummaryDialog } from "@/components/conversation-summary-dialog"
 import { ResourcesMobileDrawer } from "@/components/sidebars/resources-mobile-drawer"
 import { ShareDialog } from "@/components/share-dialog"
+import { BranchesDialog } from "@/components/branches-dialog"
 import { cn } from "@/lib/utils"
 
 /**
@@ -60,6 +62,7 @@ export function ChatHeader() {
   const [draftTitle, setDraftTitle] = useState("")
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
+  const [branchesOpen, setBranchesOpen] = useState(false)
   const [mobileResourcesOpen, setMobileResourcesOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -100,6 +103,11 @@ export function ChatHeader() {
   const handleShare = () => {
     setMenuOpen(false)
     setShareOpen(true)
+  }
+
+  const handleBranches = () => {
+    setMenuOpen(false)
+    setBranchesOpen(true)
   }
 
   const handleExport = () => {
@@ -257,6 +265,14 @@ export function ChatHeader() {
               </Button>
               <Button
                 variant="ghost"
+                onClick={handleBranches}
+                className="w-full justify-start gap-2 cursor-pointer"
+              >
+                <GitBranch size={14} />
+                Branches
+              </Button>
+              <Button
+                variant="ghost"
                 onClick={handleShare}
                 className="w-full justify-start gap-2 cursor-pointer"
               >
@@ -276,6 +292,11 @@ export function ChatHeader() {
         open={shareOpen}
         onOpenChange={setShareOpen}
         conversationId={conversation.id}
+      />
+      <BranchesDialog
+        open={branchesOpen}
+        onOpenChange={setBranchesOpen}
+        anchorConversationId={conversation.id}
       />
       <ResourcesMobileDrawer
         open={mobileResourcesOpen}

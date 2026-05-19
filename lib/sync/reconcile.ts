@@ -137,6 +137,8 @@ export async function fetchCloudSnapshot(
       selectedFileIds: c.selected_file_ids ?? [],
       documentContent: c.document_content ?? "",
       skillPrefs: jsonToSkillPrefs(c.skill_prefs),
+      parentId: c.parent_id ?? undefined,
+      forkedFromMessageId: c.forked_from_message_id ?? undefined,
     }))
 
     const files: UploadedFile[] = (filesRes.data ?? []).map((f) => {
@@ -239,6 +241,8 @@ export async function bulkUploadLocalState(
         document_content: c.documentContent,
         document_updated_at: c.updatedAt.toISOString(),
         skill_prefs: c.skillPrefs ?? {},
+        parent_id: c.parentId ?? null,
+        forked_from_message_id: c.forkedFromMessageId ?? null,
         created_at: c.createdAt.toISOString(),
         updated_at: c.updatedAt.toISOString(),
       }))

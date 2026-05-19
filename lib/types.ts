@@ -158,6 +158,14 @@ export interface Conversation {
    * (true = on, false = off); absence = inherit from the workspace.
    */
   skillPrefs?: Record<string, boolean>
+  /**
+   * Conversation this one was forked from. Set by `forkConversation`;
+   * undefined for top-of-tree chats. Used by the branches dialog to
+   * render the fork tree.
+   */
+  parentId?: string
+  /** Message in the parent where the fork was made — the "branch point". */
+  forkedFromMessageId?: string
 }
 
 export interface Note {

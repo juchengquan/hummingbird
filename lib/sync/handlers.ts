@@ -126,6 +126,8 @@ export function diffConversations(
           document_content: c.documentContent,
           document_updated_at: toISO(c.updatedAt),
           skill_prefs: c.skillPrefs ?? {},
+          parent_id: c.parentId ?? null,
+          forked_from_message_id: c.forkedFromMessageId ?? null,
           created_at: toISO(c.createdAt),
           updated_at: toISO(c.updatedAt),
         },
@@ -162,6 +164,8 @@ function conversationHeaderEquals(a: Conversation, b: Conversation): boolean {
     a.documentContent === b.documentContent &&
     sameStringArray(a.selectedFileIds, b.selectedFileIds) &&
     sameSkillPrefs(a.skillPrefs, b.skillPrefs) &&
+    (a.parentId ?? null) === (b.parentId ?? null) &&
+    (a.forkedFromMessageId ?? null) === (b.forkedFromMessageId ?? null) &&
     sameInstant(a.createdAt, b.createdAt) &&
     sameInstant(a.updatedAt, b.updatedAt)
   )
