@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { cn } from "@/lib/utils"
 import { formatFileSize, getFileIcon, processSelectedFiles } from "@/lib/file-utils"
+import { SidebarTrigger } from "@/components/ui/sidebar"
 import { runExtraction } from "@/lib/extract"
 import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT } from "@/lib/upload-config"
 import { ExtractionStatusBadge } from "@/components/panels/extraction-status-badge"
@@ -131,6 +132,12 @@ export function ResourcePanel() {
 
   return (
     <div className="flex flex-col h-full w-full">
+        {/* Mobile-only header — surfaces the SidebarTrigger so users can
+            reopen the (closed-by-default) left sidebar on phones. */}
+        <div className="md:hidden shrink-0 flex items-center gap-2 px-3 py-2 border-b border-[var(--border)]">
+          <SidebarTrigger />
+          <h2 className="text-sm font-medium text-[var(--foreground)]">Files</h2>
+        </div>
         {/* Drop zone */}
         <div
           className={cn(

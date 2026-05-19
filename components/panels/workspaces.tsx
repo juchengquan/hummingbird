@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { SidebarTrigger } from "@/components/ui/sidebar"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -99,14 +100,17 @@ export function WorkspacesPanel() {
 
   return (
     <div className="h-full w-full flex flex-col">
-      <div className="shrink-0 px-6 py-4 border-b border-[var(--border)] flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-[var(--foreground)]">Workspaces</h1>
-          <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
-            {workspaces.length} {workspaces.length === 1 ? "workspace" : "workspaces"}
-          </p>
+      <div className="shrink-0 px-6 py-4 border-b border-[var(--border)] flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <SidebarTrigger className="md:hidden shrink-0" />
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold text-[var(--foreground)] truncate">Workspaces</h1>
+            <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+              {workspaces.length} {workspaces.length === 1 ? "workspace" : "workspaces"}
+            </p>
+          </div>
         </div>
-        <Button onClick={handleCreate} size="sm">
+        <Button onClick={handleCreate} size="sm" className="shrink-0">
           <Plus size={14} className="mr-1" /> New Workspace
         </Button>
       </div>

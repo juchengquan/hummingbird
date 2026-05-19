@@ -20,6 +20,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
+import { SidebarTrigger } from "@/components/ui/sidebar"
 import {
   useStore,
   useActiveConversation,
@@ -113,6 +114,11 @@ export function ChatHeader() {
   return (
     <>
       <div className="shrink-0 h-11 flex items-center gap-2 px-4 border-b border-[var(--border)]">
+        {/* Mobile-only: SidebarTrigger lives inside the (closed) left sidebar
+            on mobile, so we surface it here as an always-visible hamburger.
+            md:hidden — desktop has the trigger in the sidebar header where
+            users can already see it. */}
+        <SidebarTrigger className="md:hidden -ml-2" />
         {/* Breadcrumb — workspace › conversation title */}
         <div className="flex-1 min-w-0 flex items-center gap-1.5 text-sm">
           {workspace && (

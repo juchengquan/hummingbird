@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button"
 import { copyText, downloadAsFile, safeFilename } from "@/lib/export"
 import { useStore, useActiveConversationDocument } from "@/lib/hooks/use-store"
 import { cn } from "@/lib/utils"
+import { SidebarTrigger } from "@/components/ui/sidebar"
 
 const emptyValue: Value = [
   {
@@ -175,6 +176,12 @@ export function EditorPanel() {
   return (
     <div className="h-full w-full">
       <div className="h-full border-r-2 relative">
+        {/* Mobile-only: surface the SidebarTrigger here too — the editor
+            view has no header otherwise, so on phones there's no way back
+            to the left sidebar without it. */}
+        <div className="md:hidden absolute top-2 left-2 z-10">
+          <SidebarTrigger />
+        </div>
         <div className="absolute top-2 right-4 z-10 flex items-center gap-2">
           <SaveIndicator state={saveState} />
           <Button
