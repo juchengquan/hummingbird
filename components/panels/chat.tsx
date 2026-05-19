@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useMemo, useCallback } from "react"
+import { useChatScroll } from "@/components/panels/use-chat-scroll"
 import { toast } from "sonner"
 import { useStore, useHydrated } from "@/lib/hooks/use-store"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -105,82 +106,16 @@ export function ChatPanel() {
   const [liveToolCalls, setLiveToolCalls] = useState<
     Record<string, LiveToolCall[]>
   >({})
-  const [showScrollButton, setShowScrollButton] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
   const inputFileRef = useRef<HTMLInputElement>(null)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const messages = useMemo(() => activeConversation?.messages || [], [activeConversation])
 
-  // Auto-scroll the ScrollArea viewport (not via scrollIntoView, which can
-  // scroll unintended ancestors) when new messages or the typing indicator appear.
-  useEffect(() => {
-    const end = messagesEndRef.current
-    if (!end) return
-    const viewport = end.closest(
-      '[data-slot="scroll-area-viewport"]'
-    ) as HTMLElement | null
-    if (viewport) {
-      viewport.scrollTop = viewport.scrollHeight
-    }
-  }, [messages, isTyping])
-
-  // While the user clicks the scroll-to-bottom button, we kick off a smooth
-  // scrollTo. That fires the `scroll` event many times during the glide; the
-  // distance-from-bottom is still > threshold at the start of the glide, so
-  // the listener would flip the button right back on and create a flicker.
-  // This ref suppresses the listener for the duration of the auto-scroll.
-  const autoScrollingRef = useRef(false)
-
-  // Radix ScrollArea's `onScroll` doesn't fire — the scroll happens on an
-  // inner viewport element, not the root. Attach a listener directly to
-  // that viewport via useEffect. Threshold is relative to the messages
-  // list's bottom padding (`pb-44` = 176px) plus a small extra buffer so
-  // the button appears once the user has clearly scrolled off the most
-  // recent message, not when they're at the natural "bottom" landing
-  // position.
-  useEffect(() => {
-    const end = messagesEndRef.current
-    if (!end) return
-    const viewport = end.closest(
-      '[data-slot="scroll-area-viewport"]'
-    ) as HTMLElement | null
-    if (!viewport) return
-    const handler = () => {
-      if (autoScrollingRef.current) return
-      const distanceFromBottom =
-        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
-      // ~pb-44 padding (176px) means "at bottom" feels like 0–200; trigger
-      // the button once the user is meaningfully past that (>~250 from
-      // scroll bottom = roughly ~75px above the last message).
-      setShowScrollButton(distanceFromBottom > 250)
-    }
-    handler() // initial reading
-    viewport.addEventListener("scroll", handler, { passive: true })
-    return () => viewport.removeEventListener("scroll", handler)
-  }, [messages.length])
-
-  // Scroll the ScrollArea viewport directly — never via scrollIntoView,
-  // which can scroll unintended ancestors. Suppresses the scroll listener
-  // while the smooth scroll runs so the button doesn't flicker mid-glide.
-  const scrollToBottom = useCallback(() => {
-    const end = messagesEndRef.current
-    if (!end) return
-    const viewport = end.closest(
-      '[data-slot="scroll-area-viewport"]'
-    ) as HTMLElement | null
-    if (!viewport) return
-    autoScrollingRef.current = true
-    setShowScrollButton(false)
-    viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" })
-    // Re-arm the listener once the smooth scroll has had time to finish.
-    // 800ms covers a long page; the scroll engine itself short-circuits if
-    // the user starts interacting earlier, so this is a max cap.
-    setTimeout(() => {
-      autoScrollingRef.current = false
-    }, 800)
-  }, [])
+  const { messagesEndRef, showScrollButton, scrollToBottom } = useChatScroll({
+    messageCount: messages.length,
+    isTyping,
+  })
 
   // Mock fallback used when the AI Gateway key isn't configured.
   // Includes a fake reasoning block so the Thinking… UI is exercisable
