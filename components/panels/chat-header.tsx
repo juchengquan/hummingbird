@@ -12,6 +12,7 @@ import {
   Check,
   X,
   PanelRight,
+  Share2,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -34,6 +35,7 @@ import {
 } from "@/lib/export"
 import { ConversationSummaryDialog } from "@/components/conversation-summary-dialog"
 import { ResourcesMobileDrawer } from "@/components/sidebars/resources-mobile-drawer"
+import { ShareDialog } from "@/components/share-dialog"
 import { cn } from "@/lib/utils"
 
 /**
@@ -57,6 +59,7 @@ export function ChatHeader() {
   const [renaming, setRenaming] = useState(false)
   const [draftTitle, setDraftTitle] = useState("")
   const [summaryOpen, setSummaryOpen] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
   const [mobileResourcesOpen, setMobileResourcesOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -92,6 +95,11 @@ export function ChatHeader() {
   const handleSummarise = () => {
     setMenuOpen(false)
     setSummaryOpen(true)
+  }
+
+  const handleShare = () => {
+    setMenuOpen(false)
+    setShareOpen(true)
   }
 
   const handleExport = () => {
@@ -247,6 +255,14 @@ export function ChatHeader() {
                 <Copy size={14} />
                 Copy as Markdown
               </Button>
+              <Button
+                variant="ghost"
+                onClick={handleShare}
+                className="w-full justify-start gap-2 cursor-pointer"
+              >
+                <Share2 size={14} />
+                Share…
+              </Button>
             </PopoverContent>
           </Popover>
         )}
@@ -255,6 +271,11 @@ export function ChatHeader() {
       <ConversationSummaryDialog
         conversation={summaryOpen ? conversation : null}
         onClose={() => setSummaryOpen(false)}
+      />
+      <ShareDialog
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+        conversationId={conversation.id}
       />
       <ResourcesMobileDrawer
         open={mobileResourcesOpen}

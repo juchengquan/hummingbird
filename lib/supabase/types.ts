@@ -298,6 +298,33 @@ export interface Database {
         }
         Relationships: []
       }
+      shares: {
+        Row: {
+          token: string
+          user_id: string
+          kind: 'conversation' | 'document'
+          conversation_id: string
+          created_at: string
+          revoked_at: string | null
+        }
+        Insert: {
+          token: string
+          user_id: string
+          kind: 'conversation' | 'document'
+          conversation_id: string
+          created_at?: string
+          revoked_at?: string | null
+        }
+        Update: {
+          token?: string
+          user_id?: string
+          kind?: 'conversation' | 'document'
+          conversation_id?: string
+          created_at?: string
+          revoked_at?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: Record<string, never>
     Functions: Record<string, never>
