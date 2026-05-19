@@ -1,12 +1,17 @@
 import type { NextRequest } from 'next/server'
 
 import { createGateway } from '@ai-sdk/gateway'
-import { generateText, streamText, type ModelMessage } from 'ai'
+import { generateText, stepCountIs, streamText, type ModelMessage } from 'ai'
 import { NextResponse } from 'next/server'
 
 import { DEFAULT_CHAT_MODEL } from '@/lib/models'
 import { categorizeError } from '@/lib/api-errors'
 import { ChatRequestSchema } from '@/lib/api-schemas'
+import {
+  buildWebSearchTool,
+  isWebSearchConfigured,
+  type WebSearchLog,
+} from '@/lib/skills/web-search'
 
 interface FileSummary {
   name: string
@@ -45,9 +50,12 @@ function formatBytes(bytes: number): string {
 
 function buildSystemPrompt(
   files: FileSummary[] | undefined,
-  workspaceSystemPrompt?: string
+  workspaceSystemPrompt?: string,
+  /** Skill ids the user has effectively enabled for this turn. */
+  enabledSkills?: string[]
 ): string {
   const trimmedWorkspace = workspaceSystemPrompt?.trim()
+  const skillsLine = buildSkillsNote(enabledSkills ?? [])
   // Workspace prompt goes first so user-set persona/style instructions take
   // precedence over our generic guidance. The base instructions then nudge the
   // model toward Markdown formatting (which the chat bubble now renders).
@@ -55,6 +63,7 @@ function buildSystemPrompt(
     trimmedWorkspace,
     'You are a helpful chat assistant inside the Hummingbird app. ' +
       'Answer concisely and use Markdown formatting when useful.',
+    skillsLine,
   ]
     .filter(Boolean)
     .join('\n\n')
@@ -94,6 +103,26 @@ function buildSystemPrompt(
   }
 
   return prompt
+}
+
+function buildSkillsNote(enabledSkills: string[]): string | null {
+  if (enabledSkills.length === 0) return null
+  const notes: string[] = []
+  if (enabledSkills.includes('webSearch')) {
+    if (isWebSearchConfigured()) {
+      notes.push(
+        'You can call `webSearch({ query })` when the user asks about current information ' +
+          'or facts you may not have. Cite URLs from the results in your answer.'
+      )
+    } else {
+      notes.push(
+        'The user enabled "Web search" but the server is not configured (no TAVILY_API_KEY). ' +
+          'You cannot actually search — say so briefly and answer from training data instead.'
+      )
+    }
+  }
+  if (notes.length === 0) return null
+  return `Available capabilities:\n${notes.map((n) => `- ${n}`).join('\n')}`
 }
 
 const SUGGESTION_MODEL = 'google/gemini-2.5-flash'
@@ -200,16 +229,37 @@ export async function POST(req: NextRequest) {
 
   const gateway = createGateway({ apiKey })
   const modelId = body.model || DEFAULT_CHAT_MODEL
+  const enabledSkillIds = (body.skills ?? []).map((s) => s.id)
+
+  // Build the tool map from enabled skills. A skill that needs server config
+  // (e.g. TAVILY_API_KEY) returns null when unconfigured — we skip it in the
+  // tool map and the system prompt note tells the model to fall back.
+  const webSearchLog: WebSearchLog = []
+  const tools: Record<string, unknown> = {}
+  if (enabledSkillIds.includes('webSearch')) {
+    const t = buildWebSearchTool(webSearchLog)
+    if (t) tools.webSearch = t
+  }
 
   try {
     const result = streamText({
       abortSignal: req.signal,
       model: gateway(modelId),
-      system: buildSystemPrompt(body.files, body.workspaceSystemPrompt),
+      system: buildSystemPrompt(body.files, body.workspaceSystemPrompt, enabledSkillIds),
       // Cast back: Zod validates the outer shape (role + content union),
       // but the AI SDK's ModelMessage uses tighter inner-part discriminants
       // than the schema's structural fallback. Trust the schema validation.
       messages: body.messages as ModelMessage[],
+      // Only pass `tools` when non-empty — some providers reject the field
+      // when present-but-empty. Default stop condition is `stepCountIs(1)`
+      // which would prevent the model from continuing after a tool call;
+      // bump it so it can call a tool, read the result, and answer.
+      ...(Object.keys(tools).length > 0
+        ? {
+            tools: tools as Parameters<typeof streamText>[0]['tools'],
+            stopWhen: stepCountIs(5),
+          }
+        : {}),
     })
 
     // Re-emit `fullStream` as a small SSE protocol so the client can keep
@@ -241,6 +291,34 @@ export async function POST(req: NextRequest) {
                 ?? (part as { text?: string }).text
                 ?? ''
               if (delta) send({ type: 'reasoning', value: delta })
+            } else if (part.type === 'tool-call') {
+              // Surface the call so the UI can show "Searching the web for X…".
+              // We trust the tool definitions to produce a small input object.
+              const p = part as { toolCallId?: string; toolName?: string; input?: unknown }
+              send({
+                type: 'tool_call',
+                id: p.toolCallId ?? '',
+                name: p.toolName ?? '',
+                args: p.input ?? {},
+              })
+            } else if (part.type === 'tool-result') {
+              const p = part as { toolCallId?: string; toolName?: string; output?: unknown }
+              // Compute a short summary string the UI can display instead of
+              // raw JSON. Avoids leaking large result payloads onto the wire.
+              let summary = 'done'
+              const output = p.output as { results?: unknown[]; error?: string } | undefined
+              if (output?.error) {
+                summary = output.error
+              } else if (Array.isArray(output?.results)) {
+                const n = output.results.length
+                summary = `${n} result${n === 1 ? '' : 's'}`
+              }
+              send({
+                type: 'tool_result',
+                id: p.toolCallId ?? '',
+                name: p.toolName ?? '',
+                summary,
+              })
             } else if (part.type === 'error') {
               const { code, message } = categorizeError(
                 (part as { error?: unknown }).error
@@ -248,6 +326,20 @@ export async function POST(req: NextRequest) {
               sawError = true
               send({ type: 'error', code, message })
             }
+          }
+
+          // If the model used web search, append a persistent footer to the
+          // assistant message so the record survives reload. The live
+          // tool_call / tool_result UI is transient — this footer is the
+          // durable bit. Streamed as a final text delta so the client's
+          // existing append logic captures it.
+          if (!sawError && webSearchLog.length > 0) {
+            const queries = webSearchLog
+              .map((entry) => `"${entry.query.replace(/"/g, "'")}"`)
+              .join(', ')
+            const footer = `\n\n_Searched the web: ${queries}_`
+            assistantText += footer
+            send({ type: 'text', value: footer })
           }
 
           // Best-effort follow-up suggestions. Only when the stream produced

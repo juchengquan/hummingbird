@@ -39,6 +39,10 @@ export const ChatRequestSchema = z.object({
   model: z.string().max(100).optional(),
   files: z.array(FileSummarySchema).max(20).optional(),
   workspaceSystemPrompt: z.string().max(20_000).optional(),
+  skills: z
+    .array(z.object({ id: z.string().max(40) }))
+    .max(10)
+    .optional(),
 })
 
 export const CopilotRequestSchema = z.object({

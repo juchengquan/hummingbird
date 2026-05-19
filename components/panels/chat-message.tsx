@@ -11,6 +11,7 @@ import { copyText } from "@/lib/export"
 import { CHAT_MODELS, DEFAULT_CHAT_MODEL } from "@/lib/models"
 import { extractCodeBlocks } from "@/lib/code-blocks"
 import { MarkdownPreview } from "@/components/markdown-preview"
+import { ToolCallStrip, type LiveToolCall } from "@/components/skills/tool-call-strip"
 import { MessageAttachments } from "@/components/panels/message-attachments"
 import { useStore, useMessageBookmark } from "@/lib/hooks/use-store"
 import type { ArtifactKind } from "@/lib/types"
@@ -132,6 +133,8 @@ interface ChatMessageProps {
   /** Retry with a different model in one click. Wired by chat.tsx for invalid_model / provider errors. */
   onTryFallback?: (messageId: string, modelId: string) => void
   onPickSuggestion?: (text: string) => void
+  /** Live tool-call pills rendered above the assistant text during a stream. Cleared on `done`. */
+  liveToolCalls?: LiveToolCall[]
 }
 
 /**
@@ -288,6 +291,7 @@ export function ChatMessage({
   onChangeModel,
   onTryFallback,
   onPickSuggestion,
+  liveToolCalls,
 }: ChatMessageProps) {
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState(message.content)
@@ -506,6 +510,9 @@ export function ChatMessage({
                     content={message.content}
                     streaming={!message.content}
                   />
+                )}
+                {!isUser && liveToolCalls && liveToolCalls.length > 0 && (
+                  <ToolCallStrip calls={liveToolCalls} />
                 )}
                 {!isUser && message.content ? (
                   <MarkdownPreview

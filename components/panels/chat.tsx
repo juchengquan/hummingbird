@@ -17,6 +17,8 @@ import {
 } from "@/components/ui/select"
 import { ResourcesSidebar } from "@/components/sidebars/resources"
 import { ActiveSkillsChips } from "@/components/skills/active-chips"
+import { SKILLS } from "@/lib/skills/registry"
+import { resolveSkill } from "@/lib/skills/types"
 import { ChatHeader } from "@/components/panels/chat-header"
 import { ChatMessage } from "@/components/panels/chat-message"
 import { EmptyChatWelcome } from "@/components/panels/empty-chat-welcome"
@@ -31,6 +33,15 @@ const AUTO_ARCHIVE_MIN_LINES = 15
 const AUTO_ARCHIVE_MAX_PER_MESSAGE = 3
 import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/lib/upload-config"
 import type { Message, MessageError, MessageErrorCode } from "@/lib/types"
+
+interface LiveToolCall {
+  id: string
+  name: string
+  /** Friendly label shown to the user — e.g. the search query. */
+  argsLabel?: string
+  status: "running" | "done"
+  summary?: string
+}
 
 export function ChatPanel() {
   const addMessage = useStore((state) => state.addMessage)
@@ -66,6 +77,15 @@ export function ChatPanel() {
   const [inputValue, setInputValue] = useState("")
   const [isStreaming, setIsStreaming] = useState(false)
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
+  /**
+   * Per-message live tool-call state — keyed by message id. Populated as
+   * tool_call / tool_result frames arrive during a stream and cleared on
+   * `done`. The durable record lives in the message text (markdown footer
+   * appended by the server).
+   */
+  const [liveToolCalls, setLiveToolCalls] = useState<
+    Record<string, LiveToolCall[]>
+  >({})
   const [, setShowScrollButton] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
   const inputFileRef = useRef<HTMLInputElement>(null)
@@ -172,6 +192,11 @@ export function ChatPanel() {
       const conv = conversations.find((c) => c.id === activeConversationId)
       const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
       const workspaceSystemPrompt = activeWorkspace?.systemPrompt?.trim() || undefined
+      // Resolve which skills are effectively on for this turn so the route
+      // knows which tools to register.
+      const enabledSkills = SKILLS.filter((s) =>
+        resolveSkill(s, activeWorkspace?.skillPrefs, conv?.skillPrefs)
+      ).map((s) => ({ id: s.id }))
       const attachedFiles =
         conv?.selectedFileIds
           .map((id) => files.find((f) => f.id === id))
@@ -236,6 +261,7 @@ export function ChatPanel() {
             messages: buildMessages(),
             files: fileSummaries,
             workspaceSystemPrompt,
+            skills: enabledSkills,
           }),
         })
 
@@ -312,6 +338,10 @@ export function ChatPanel() {
               values?: string[]
               code?: string
               message?: string
+              id?: string
+              name?: string
+              args?: unknown
+              summary?: string
             }
             try {
               parsed = JSON.parse(payload)
@@ -324,6 +354,32 @@ export function ChatPanel() {
             } else if (parsed.type === "reasoning" && typeof parsed.value === "string") {
               const p = ensurePlaceholder()
               appendToMessageReasoning(p.id, parsed.value)
+            } else if (parsed.type === "tool_call" && parsed.id && parsed.name) {
+              const p = ensurePlaceholder()
+              const id = parsed.id
+              const name = parsed.name
+              const argsLabel = typeof (parsed.args as { query?: string })?.query === "string"
+                ? (parsed.args as { query: string }).query
+                : undefined
+              setLiveToolCalls((prev) => ({
+                ...prev,
+                [p.id]: [
+                  ...(prev[p.id] ?? []),
+                  { id, name, argsLabel, status: "running" },
+                ],
+              }))
+            } else if (parsed.type === "tool_result" && parsed.id) {
+              const ph = placeholder as Message | null
+              if (ph) {
+                const id = parsed.id
+                const summary = parsed.summary
+                setLiveToolCalls((prev) => ({
+                  ...prev,
+                  [ph.id]: (prev[ph.id] ?? []).map((t) =>
+                    t.id === id ? { ...t, status: "done", summary } : t
+                  ),
+                }))
+              }
             } else if (parsed.type === "suggestions" && Array.isArray(parsed.values)) {
               // Same TS-can't-narrow-through-closure issue as the catch
               // below; restore what we know with a cast.
@@ -385,6 +441,17 @@ export function ChatPanel() {
       } finally {
         setIsTyping(false)
         setIsStreaming(false)
+        // Drop live tool-call pills now that the stream is finished. The
+        // markdown footer the server appended carries the durable record.
+        const ph = placeholder as Message | null
+        if (ph) {
+          setLiveToolCalls((prev) => {
+            if (!(ph.id in prev)) return prev
+            const next = { ...prev }
+            delete next[ph.id]
+            return next
+          })
+        }
         if (abortControllerRef.current === controller) {
           abortControllerRef.current = null
         }
@@ -632,6 +699,7 @@ export function ChatPanel() {
                       message={message}
                       index={index}
                       isLastAssistant={message.id === lastAssistantId}
+                      liveToolCalls={liveToolCalls[message.id]}
                       onDelete={deleteMessage}
                       onEditUserMessage={handleEditUserMessage}
                       onRegenerateAssistantMessage={handleRegenerateAssistantMessage}
