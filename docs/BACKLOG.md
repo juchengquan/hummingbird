@@ -190,21 +190,14 @@ existing AI command routes (`/api/ai/command`).
 
 ---
 
-## Pinned default model per workspace
+## ~~Pinned default model per workspace~~ ✅ shipped (`624558e`)
 
-**Why distinctive.** Small but felt every day. Different workspaces
-serve different purposes (research, coding, casual chat); each is
-best with a different model. Today the global `chatModel` follows the
-user across workspaces.
-
-**Sketch.** Optional `Workspace.defaultModel` field. When switching
-into a workspace, if it has a default and the user hasn't manually
-overridden in this session, set `chatModel` to it. Setting controlled
-from the Workspaces view.
-
-**Builds on.** Workspace mutators, model picker.
-
-**Effort.** Small (~80 lines + a migration column).
+`Workspace.defaultModel` + a Select on the Workspaces panel card.
+Switching into a workspace auto-applies the pinned model unless the
+user has touched the chat-input picker this session
+(`sessionModelOverridden` flag). Cascade: session-picked →
+workspace.defaultModel → global `DEFAULT_CHAT_MODEL`. Migration
+`0010_workspace_default_model.sql`.
 
 ---
 

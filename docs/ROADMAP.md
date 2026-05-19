@@ -485,6 +485,9 @@ Three small UX wins that close gaps surfaced during the Skills work:
   citation markers in assistant messages become clickable pills that
   open the viewer at that page (`a1fcc45`); second item ticked off the
   BACKLOG
+- Pinned default model per workspace — auto-applies on workspace
+  switch, session-picker overrides until the next switch
+  (`624558e`, migration `0010`); third item ticked off the BACKLOG
 - Plate doc updated: `docs/SUPABASE_SETUP.md` covers migrations `0001`–
   `0008` + storage + Tavily env (commit `38b7a98`, refreshed `3ff1cab`)
 
