@@ -130,9 +130,12 @@ The categoriser was extracted to `lib/api-errors.ts` (`categorizeError`) and now
 ## Supabase persistence migration
 
 > **Status (current branch `claude/dev-followups`)** —
-> Phase 1 sync layer, file storage, share links (Phase 4 backport), and
-> the Skills system have all shipped. Phase 3 realtime multi-device sync
-> is the largest remaining piece. See the **Status** block below for the
+> Phase 1 sync layer, file storage, share links (Phase 4 backport), the
+> Skills system, the chat tier-1 polish (auto-retry / rate-limit /
+> reasoning duration), and the chat tier-2 polish (conversation
+> forking, per-message skill mute, first-class tool-call persistence)
+> have all shipped. **Phase 3 realtime multi-device sync** is the
+> largest remaining piece. See the **Status** block below for the
 > commit-by-commit picture.
 
 ### Context
@@ -270,6 +273,11 @@ require a signed-in session and can't be automated from the harness:
   drop the new fields.
 - Apply `0005_shares.sql` before testing share links (Phase 4 backport).
 - Apply `0006_skills.sql` before testing skill-pref sync across devices.
+- Apply `0007_message_reasoning_duration.sql` so the "Thought for X.X s"
+  badge survives cross-device reload.
+- Apply `0008_message_tool_calls.sql` so persisted tool-call pills
+  render after reload (without it, `setMessageToolCalls` writes are
+  silently dropped server-side).
 
 #### ✅ Shipped — local-mode opt-outs (commit `592f7da`)
 
@@ -373,25 +381,21 @@ recall plug into the same plumbing.
 
 #### ⏳ TODO — cleanups / follow-ups
 
-- Persist `reasoning_duration_ms` if you want the "Thought for X.Xs"
-  badge in the collapsed `ReasoningBlock` header to survive refresh.
-  Today it's component-local state, so the timing disappears after a
-  reload. (Badge was prototyped and removed at user request; line-count
-  badge stays.)
 - Sign-out → local edit → sign-in lost-changes investigation
   (documented in commit `592f7da` — needs validation against a real
   Supabase project before we can repro).
-- Auto-retry-once on transient network errors in chat. Currently the
-  error bubble appears immediately; a single silent retry with 1s
-  backoff would smooth over flaky connections.
-- Rate-limit countdown — "Retry in N s" surfacing for `rate_limit`
-  error code.
+- Phase 1 verification pass — 8-item checklist below, requires a real
+  Supabase project.
 
-> The previous `[sync]` `console.log` cleanup item shipped in commit
-> `ab4e82c`. Sync handlers for `setConversationDocument`,
-> `notes`, and `artifacts` are wired via `diffNotes` / `diffArtifacts`
-> in `lib/sync/handlers.ts` and the conversation row's `document_content`
-> column updates on debounced doc saves.
+> Shipped previously and removed from this list:
+> - `[sync]` `console.log` cleanup (`ab4e82c`).
+> - Sync handlers for `setConversationDocument`, `notes`, `artifacts`
+>   — wired via `diffNotes` / `diffArtifacts` in `lib/sync/handlers.ts`;
+>   the conversation row's `document_content` column updates on
+>   debounced doc saves.
+> - Reasoning duration persistence (`86034a5`).
+> - Auto-retry-once on network errors (`86034a5`).
+> - Rate-limit countdown (`86034a5`).
 
 5. **Conversation-related assets** *(four sub-features, each can ship independently)*
    - **~~A. Conversation-scoped file uploads~~** *(reframed + shipped local-only — see Status above)*. The `+` button on the chat input uploads to the active workspace and auto-attaches to the current conversation.
@@ -400,6 +404,49 @@ recall plug into the same plumbing.
    - **~~D. Notes / bookmarks~~** *(shipped local-only — see Status above)*. Sync handlers (`createNote`, `updateNote`, `deleteNote`) still pending.
 
 6. **Verification pass** — run all 14 checklist items in the "Verification (Phase 1)" section below
+
+#### ✅ Shipped — chat tier-1 polish (commit `86034a5`)
+
+Three small UX wins that close gaps surfaced during the Skills work:
+
+- **Auto-retry-once on transient network errors.** `callChatAPI` gains
+  `options.isRetry`. On a fetch failure with no streamed content yet
+  and a working connection, waits 1 s and retries silently before
+  showing the error bubble. Skipped once any content is visible so we
+  don't duplicate.
+- **Rate-limit cooldown.** `ErrorBubble` disables Retry for 30 s on a
+  `rate_limit` error and shows "Retry in N s" so the user knows when
+  it's safe to try again.
+- **Reasoning duration persistence.** New `Message.reasoningDurationMs`
+  + `setMessageReasoningDuration` mutator. Captured during streaming
+  (first/last reasoning chunk timestamps), persisted so the "Thought
+  for X.X s" badge in the collapsed `ReasoningBlock` header survives
+  reload. New migration `0007_message_reasoning_duration.sql` adds
+  the column (idempotent). Sync handler + reconcile + types updated.
+
+#### ✅ Shipped — chat tier-2 (commit `55064a8`)
+
+- **Conversation forking** — `forkConversation(conversationId,
+  untilMessageId)` store mutator. Assistant messages gain a "Branch
+  from here" action (GitBranch icon). Click creates a copy of the
+  conversation up to and including that message under a `(branch)`
+  title, inherits workspace + selected files + document + skill prefs,
+  and switches to it. Messages are re-id'd so the two threads diverge
+  independently.
+- **Per-message skill mute** — chip strip above the chat input gains
+  an × on each chip. Clicking pauses that skill for the next send only
+  (chip greys out, strikethrough, + to re-enable). Send resets the
+  mute set. Component-local state, never persists.
+- **First-class tool-call persistence** — `Message.toolCalls?:
+  ToolCallRecord[]` replaces the markdown footer. The chat panel
+  snapshots the live tool-call buffer at stream end and writes it via
+  `setMessageToolCalls`. `<ToolCallStrip>` prefers live state during
+  streaming and falls back to the persisted record after reload, so
+  the pretty pill survives across sessions. Server-side footer-append
+  removed from the chat route — Copy / Export now stay clean of tool
+  metadata. New migration `0008_message_tool_calls.sql` adds
+  `tool_calls jsonb` (idempotent). Sync handler + reconcile + types
+  updated.
 
 #### Phase status
 
@@ -424,8 +471,12 @@ recall plug into the same plumbing.
 - Local-mode opt-outs (`592f7da`)
 - File pipeline rework (`01c8854`, `d2f7953`, `fffe2b8`, `53622b3`)
 - Chat error UX polish (`03c88cc`)
+- Chat tier-1 polish — auto-retry / rate-limit / reasoning duration
+  (`86034a5`, migration `0007`)
+- Chat tier-2 — conversation forking / per-message skill mute /
+  first-class tool-call persistence (`55064a8`, migration `0008`)
 - Plate doc updated: `docs/SUPABASE_SETUP.md` covers migrations `0001`–
-  `0006` + storage + Tavily env (commit `38b7a98`)
+  `0008` + storage + Tavily env (commit `38b7a98`, refreshed `3ff1cab`)
 
 ### Architecture
 

@@ -1,16 +1,19 @@
 # Plan: Skills panel + Web Search (first skill)
 
-Status: **draft** — not yet implemented.
+Status: **✅ shipped** (commits `7e0b9d7`, `60adf63`). Phase-2 items
+originally listed as "cut from v1" — per-message overrides and
+first-class persisted tool-call history — also shipped in `55064a8`.
 
 ## Goal & scope cuts
 
 Build the **Skills surface** as a uniform concept so every future capability (image gen, code exec, page fetch, memory recall) plugs into the same plumbing. Web search is the v1 skill that proves the surface works.
 
-**Cut from v1 to keep it shippable:**
+**Cut from v1 to keep it shippable** *(status as of writing — see top
+banner for what's shipped since)*:
 
-- **Per-message overrides** — only conversation-scope on/off. Reconsider if it feels awkward in practice.
-- **Per-skill configuration UI** — web search uses sensible defaults (5 results, no domain filter); a "Configure…" pane is Phase 2.
-- **First-class persisted tool-call history** — the live "Searching the web…" indicator streams during the response; for persistence we append a tiny markdown footer to the message (`> _Searched the web for "X", "Y"_`). No new column. Real tool-call records (a `tool_calls jsonb` on `messages`) are Phase 2.
+- **Per-message overrides** — only conversation-scope on/off. Reconsider if it feels awkward in practice. **✅ shipped (`55064a8`)** as the chip × button.
+- **Per-skill configuration UI** — web search uses sensible defaults (5 results, no domain filter); a "Configure…" pane is Phase 2. *(still deferred)*
+- **First-class persisted tool-call history** — the live "Searching the web…" indicator streams during the response; for persistence we append a tiny markdown footer to the message (`> _Searched the web for "X", "Y"_`). No new column. Real tool-call records (a `tool_calls jsonb` on `messages`) are Phase 2. **✅ shipped (`55064a8`, migration `0008`)** — the markdown footer was replaced by `Message.toolCalls` + `messages.tool_calls jsonb`.
 
 ## Data model
 
@@ -141,10 +144,10 @@ When the tool returns it collapses to:
 
 ## Risks / tradeoffs
 
-- **Two-scope cascade only.** Per-message toggling is genuinely useful ("just this once, search the web") but doubles the UI complexity. If the chips row gets clicks asking for it, add in Phase 2.
+- ~~**Two-scope cascade only.** Per-message toggling is genuinely useful ("just this once, search the web") but doubles the UI complexity. If the chips row gets clicks asking for it, add in Phase 2.~~ **✅ shipped** as the chip × button in `55064a8`.
 - **JSONB skill prefs** can't be FK-constrained against a fixed enum at the DB level. Trade-off accepted: TS keeps it honest in the app, and unknown keys just get ignored.
 - **Tavily lock-in.** The provider lives behind a single file (`lib/skills/web-search.ts`) so swapping to Brave/Exa is a one-file change.
-- **Persisting tool-call history as a markdown footer is lossy** — you can't re-render the cute pill on reload, just the footer text. Acceptable for v1. Phase 2: a `tool_calls jsonb` column on `messages`.
+- ~~**Persisting tool-call history as a markdown footer is lossy** — you can't re-render the cute pill on reload, just the footer text. Acceptable for v1. Phase 2: a `tool_calls jsonb` column on `messages`.~~ **✅ shipped** in `55064a8` + migration `0008`. The pill renders the same on reload from `Message.toolCalls`.
 - **No "stop using web search after N seconds"** — Tavily is fast (~500 ms) so we don't need a per-tool timeout in v1. Add if other skills (code exec, browser) prove slow.
 
 ## Verification

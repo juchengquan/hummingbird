@@ -24,7 +24,12 @@ env vars:
   docs (`/share/conversation/[token]`, `/share/document/[token]`) via
   the service-role admin client
 - **Skills cascade** — per-workspace default + per-conversation override
-  for opt-in capabilities like Web Search
+  for opt-in capabilities like Web Search; per-message mute is
+  client-side only
+- **Cross-device durable chat polish** — the reasoning-duration badge
+  ("Thought for X.X s") and the tool-call pills (e.g. "Searched the
+  web · 5 results") render the same on every device once their
+  migrations are applied
 
 The app keeps working anonymously without any of this — every Supabase
 integration falls back gracefully when env vars are absent.
@@ -54,9 +59,9 @@ this tab open — the next steps use it.
 
 ## Step 2 — Run the schema migrations
 
-Six SQL files live in the repo under `supabase/migrations/`. Run them
-in numerical order via the **SQL Editor** in the Supabase dashboard
-(left sidebar → **SQL Editor** → **New query**).
+Eight SQL files live in the repo under `supabase/migrations/`. Run
+them in numerical order via the **SQL Editor** in the Supabase
+dashboard (left sidebar → **SQL Editor** → **New query**).
 
 For each file, paste the entire contents, click **Run**, confirm no
 errors:
@@ -82,8 +87,15 @@ errors:
 6. `supabase/migrations/0006_skills.sql`
    - Adds `skill_prefs jsonb` columns to `workspaces` and
      `conversations` for the Skills cascade.
+7. `supabase/migrations/0007_message_reasoning_duration.sql`
+   - Adds `messages.reasoning_duration_ms` so the "Thought for X.X s"
+     badge in the reasoning block survives reload.
+8. `supabase/migrations/0008_message_tool_calls.sql`
+   - Adds `messages.tool_calls jsonb` for first-class tool-call
+     persistence (web-search pills survive reload as structured
+     records rather than markdown footers in the message text).
 
-After running all six, sanity-check from the **Table Editor**: ten
+After running all eight, sanity-check from the **Table Editor**: ten
 tables should be listed (`profiles`, `workspaces`, `conversations`,
 `messages`, `files`, `resources`, `artifacts`, `notes`, `shares`), each
 showing the RLS shield icon indicating policies are active.
@@ -204,8 +216,28 @@ After restart, with localStorage cleared so you're "anonymous":
     "On for chat". Ask "what happened in the news today?". You should
     see a live **🌐 Searching the web for "…"** pill above the
     assistant response that resolves to **🌐 Searched the web · N
-    results**. After the answer streams in, the message ends with
-    `_Searched the web: "your query"_` — that's the durable record.
+    results**. After the answer streams in, refresh the page — the
+    pill should still be there (read from `messages.tool_calls`). The
+    message body itself should be free of "_Searched the web: …_"
+    footers; that footer was replaced by the durable column in `0008`.
+    Click × on the chip above the input to pause web search for one
+    send only; the chip greys out and Send resets the mute.
+
+### Verify conversation forking
+
+11. Hover an assistant message → click the **Branch from here** icon
+    (GitBranch). A new conversation titled `<original> (branch)`
+    appears at the top of the sidebar and becomes active, with the
+    message history copied up to and including the branch point.
+    The original conversation stays intact.
+
+### Verify reasoning-duration badge (needs a reasoning-emitting model)
+
+12. Switch to DeepSeek R1 (or any model that streams reasoning chunks).
+    Send a non-trivial prompt. After the answer arrives, collapse the
+    Reasoning block — the header should show "Reasoning · X.X s".
+    Refresh — the badge should still be there (read from
+    `messages.reasoning_duration_ms`).
 
 If anything goes wrong:
 - 401 / "unconfigured" toast → env vars not picked up; restart `bun dev`
