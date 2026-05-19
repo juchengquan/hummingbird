@@ -129,6 +129,12 @@ The categoriser was extracted to `lib/api-errors.ts` (`categorizeError`) and now
 
 ## Supabase persistence migration
 
+> **Status (current branch `claude/dev-followups`)** —
+> Phase 1 sync layer, file storage, share links (Phase 4 backport), and
+> the Skills system have all shipped. Phase 3 realtime multi-device sync
+> is the largest remaining piece. See the **Status** block below for the
+> commit-by-commit picture.
+
 ### Context
 
 All persistence lives in `localStorage` (`hummingbird-storage`, version 3 — see `lib/hooks/use-store.ts`). This caps the app at a single device, blocks share links, prevents server-side features (digests, scheduled tasks, RAG against attachments), and risks data loss when a user clears site data. File blobs use UploadThing today, but the metadata that ties them to workspaces still lives client-side. We want a real backend without sacrificing the current zero-friction local-first UX.
@@ -262,17 +268,132 @@ require a signed-in session and can't be automated from the harness:
   row disappears locally — silent pull verified).
 - **Apply `0004` migration first**; without it, sync writes silently
   drop the new fields.
+- Apply `0005_shares.sql` before testing share links (Phase 4 backport).
+- Apply `0006_skills.sql` before testing skill-pref sync across devices.
+
+#### ✅ Shipped — local-mode opt-outs (commit `592f7da`)
+
+Two toggles in the AccountMenu popover, persisted via Zustand
+`partialize`:
+
+- **`localOnlyMode`** — pauses the sync queue + reconciliation even when
+  Supabase is configured. Useful on shared machines. New helper
+  `lib/hooks/use-sync-enabled.ts` folds three conditions (signed-in,
+  resolved `userId`, not opted-out) into a single gate.
+- **`localFilesOnly`** — keeps raw blobs in IndexedDB only. Extracted
+  text still syncs (small text rows); the blob doesn't touch Supabase
+  Storage. Useful when staying under storage quotas.
+
+Store schema bumped 6 → 7 then 7 → 8 with idempotent backfills.
+
+#### ✅ Shipped — file pipeline rework (commits `01c8854`, `d2f7953`, `fffe2b8`, `53622b3`)
+
+- **Phase 2 UploadThing cutover** — `01c8854` routed chat-input uploads
+  through Supabase Storage; `53622b3` dropped `uploadthing` /
+  `@uploadthing/react`, `lib/uploadthing.ts`, and the
+  `app/api/uploadthing/` route. Editor media still uses
+  `hooks/use-upload-file.ts` which now goes to Supabase Storage when
+  signed in or a `URL.createObjectURL` session-only fallback when not.
+  Existing UploadThing URLs keep working via `files.external_url`.
+- **Local IndexedDB blob store** — `lib/files/local-store.ts` (raw IDB,
+  ~40 lines, no new deps). Cache size surfaced in the AccountMenu via
+  `navigator.storage.estimate()` + a "Clear local cache" action.
+- **`persistFile()` single decision point** — `lib/files/persist.ts`
+  routes blobs to `cloud` (Supabase Storage), `local` (IDB), or `skip`
+  based on `localFilesOnly` + auth + IDB availability.
+- **Cross-device availability badge** — `FileAvailabilityBadge` shows
+  "On another device" when a local-only file isn't reachable here.
+- **Re-extract button** — `fffe2b8`. Failed / unsupported / legacy file
+  rows get an inline retry. Fetches the blob from IDB or a Supabase
+  signed URL and re-runs `runExtraction`. New `FileRowMeta` component
+  centralises the per-row trailing UI (badge + availability + retry).
+- **Broader extraction coverage** — HTML, code with language detection,
+  XLSX added to `app/api/extract/route.ts`. Code budget bumped to 64 KB.
+
+#### ✅ Shipped — chat error UX polish (commit `03c88cc`)
+
+- Smart-retry on **Change model** from an error bubble (auto-retries
+  with the newly-picked model).
+- **Try {fallback}** one-click button for `invalid_model` / `provider`
+  errors. Picks `DEFAULT_CHAT_MODEL` (or the next available).
+- **Hide Retry** for `auth` errors (same setup will fail again).
+- **Offline detection** — `navigator.onLine === false` flips the
+  network-error detail to "You appear to be offline."
+- `callChatAPI` accepts a `modelOverride` so retries don't race the
+  `useCallback` closure refresh after `setChatModel`.
+
+#### ✅ Shipped — Phase 4 share links (commit `f239397`)
+
+Backported earlier than the original phase order suggested.
+
+- New `supabase/migrations/0005_shares.sql` — `shares` table (token PK,
+  kind enum, conversation_id, revoked_at) with "own rows" RLS.
+- New `lib/supabase/admin.ts` — service-role client backed by
+  `SUPABASE_SERVICE_ROLE_KEY`. Returns null when the key is unset so the
+  public pages fall back to 404.
+- `POST /api/share` mints a 128-bit base64url token; `DELETE
+  /api/share/[token]` sets `revoked_at`.
+- Public pages at `/share/conversation/[token]` and
+  `/share/document/[token]` server-render read-only views via the admin
+  client (RLS bypassed but scoped to the token-matched row).
+- UI: **Share…** entry in the chat header kebab; two-card kind picker;
+  copy-to-clipboard.
+- Sign-in is required to mint (revocation needs a `user_id` binding);
+  the dialog renders a sign-in nudge for anonymous users.
+
+#### ✅ Shipped — Skills system + Web Search (commits `7e0b9d7`, `60adf63`)
+
+A new uniform surface for opt-in model capabilities. Web Search is the
+v1 skill; image generation, code execution, page fetch, and memory
+recall plug into the same plumbing.
+
+- `supabase/migrations/0006_skills.sql` adds `skill_prefs jsonb` to
+  `workspaces` and `conversations` (JSONB rather than a join table so
+  new skills require zero schema changes).
+- `lib/skills/types.ts` — `Skill`, `SkillId`, `resolveSkill` cascade
+  (conversation override → workspace default → skill hard-coded
+  default).
+- `lib/skills/registry.ts` — registers Web Search.
+- `lib/skills/web-search.ts` — Tavily-backed AI SDK tool. Returns null
+  when `TAVILY_API_KEY` is unset; the chat route omits the tool from
+  the model's tool list and adds a soft system-prompt note so the model
+  doesn't invent a search call.
+- Store: `setWorkspaceSkillPref` / `setConversationSkillPref` with
+  `null = inherit`. Store schema bumped 8 → 9.
+- Sync handlers + reconcile map `skill_prefs` both ways.
+- UI: 4th icon (Sparkles) in the right activity bar opens a Skills tab
+  with a three-segment toggle per skill (Off / On for chat /
+  Workspace). Chip strip above the chat input shows active skills.
+  Mobile drawer gets the same tab.
+- Chat route: `stopWhen: stepCountIs(5)` when tools are present so the
+  model can call → read → answer in one stream. SSE protocol gains
+  `tool_call` and `tool_result` frames; client renders transient
+  `<ToolCallStrip>` pills above the assistant text. Durable record
+  appended as a markdown footer (`_Searched the web: "X"_`).
 
 #### ⏳ TODO — cleanups / follow-ups
 
-- Strip the `[sync]` `console.log` lines in `lib/hooks/use-reconcile.ts`
-  and `lib/sync/reconcile.ts` (left in from the in-flight-cancel debug
-  session). Either remove or gate on a `DEBUG_SYNC` env.
+- **Sync handlers for `setConversationDocument` (debounced)** — still
+  missing; the editor doc only persists locally today even when signed
+  in. Conversation row carries a `document_content` column already.
+- **Sync handlers for `notes` and `artifacts`** — schema + RLS in
+  `0002`; mutators are local-only.
 - Persist `reasoning_duration_ms` if you want the "Thought for X.Xs"
   badge in the collapsed `ReasoningBlock` header to survive refresh.
   Today it's component-local state, so the timing disappears after a
   reload. (Badge was prototyped and removed at user request; line-count
   badge stays.)
+- Sign-out → local edit → sign-in lost-changes investigation
+  (documented in commit `592f7da` — needs validation against a real
+  Supabase project before we can repro).
+- Auto-retry-once on transient network errors in chat. Currently the
+  error bubble appears immediately; a single silent retry with 1s
+  backoff would smooth over flaky connections.
+- Rate-limit countdown — "Retry in N s" surfacing for `rate_limit`
+  error code.
+
+> The previous `[sync]` `console.log` cleanup item shipped in commit
+> `ab4e82c`.
 
 5. **Conversation-related assets** *(four sub-features, each can ship independently)*
    - **~~A. Conversation-scoped file uploads~~** *(reframed + shipped local-only — see Status above)*. The `+` button on the chat input uploads to the active workspace and auto-attaches to the current conversation.
@@ -282,11 +403,31 @@ require a signed-in session and can't be automated from the harness:
 
 6. **Verification pass** — run all 14 checklist items in the "Verification (Phase 1)" section below
 
-#### ⏳ TODO — later phases (unchanged)
+#### Phase status
 
-- **Phase 2** — UploadThing cutover (deprecate for new files; optional one-time migration script for existing `external_url` files)
-- **Phase 3** — Realtime multi-device sync via `supabase.channel().on('postgres_changes', ...)`
-- **Phase 4** — Share links: new `shares` table + `app/share/conversation/[token]/page.tsx` and `app/share/document/[token]/page.tsx`
+- **Phase 1 — Auth + cloud-backed CRUD** ✅ *(shipped, see sync layer +
+  reconciliation entries above; verification checklist still pending on
+  a real Supabase project)*
+- **Phase 2 — UploadThing cutover** ✅ *(shipped, commit `53622b3`)*. A
+  one-time backfill script for existing `external_url` files is the
+  only remaining piece and is optional.
+- **Phase 3 — Realtime multi-device sync** ⏳ *(not started)*. Needs
+  `supabase.channel().on('postgres_changes', ...)` subscriptions and a
+  last-writer-wins rule on most tables. Editor doc reconciliation is
+  the hard part — probably needs a CRDT (Yjs-shaped) or an
+  active-client lock to avoid mid-typing churn.
+- **Phase 4 — Share links** ✅ *(shipped early, commit `f239397`)*. Two
+  share kinds (conversation, document); admin-client reads keyed by
+  opaque base64url token; UI in chat header kebab.
+
+#### Adjacent shipped work not in the original phase plan
+
+- Skills system + Web Search (`7e0b9d7`, `60adf63`)
+- Local-mode opt-outs (`592f7da`)
+- File pipeline rework (`01c8854`, `d2f7953`, `fffe2b8`, `53622b3`)
+- Chat error UX polish (`03c88cc`)
+- Plate doc updated: `docs/SUPABASE_SETUP.md` covers migrations `0001`–
+  `0006` + storage + Tavily env (commit `38b7a98`)
 
 ### Architecture
 
