@@ -31,6 +31,12 @@ export interface UploadedFile {
    * inline in the file row for at-a-glance "what is this?" understanding.
    */
   keyTopics?: string[]
+  /**
+   * Path inside the `user-files` Supabase Storage bucket — e.g.
+   * `{user_id}/{file_id}.pdf`. Absent when the blob lives only locally
+   * (IndexedDB) or in UploadThing.
+   */
+  storagePath?: string
 }
 
 export interface Workspace {

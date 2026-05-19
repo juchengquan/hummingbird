@@ -1,7 +1,8 @@
 "use client"
 
-import { useState } from "react"
-import { LogIn, LogOut, Loader2, CloudOff, Cloud } from "lucide-react"
+import { useState, useEffect, useCallback } from "react"
+import { LogIn, LogOut, Loader2, CloudOff, Cloud, HardDrive, Trash2 } from "lucide-react"
+import { toast } from "sonner"
 import {
   Popover,
   PopoverContent,
@@ -13,6 +14,8 @@ import { useAuth } from "@/lib/hooks/use-auth"
 import { useStore } from "@/lib/hooks/use-store"
 import { useSidebar } from "@/components/ui/sidebar"
 import { cn } from "@/lib/utils"
+import { clearAll, estimateUsage } from "@/lib/files/local-store"
+import { formatFileSize } from "@/lib/file-utils"
 
 /**
  * Sidebar footer auth + local-mode surface.
@@ -28,10 +31,45 @@ export function AccountMenu() {
   const { status, user, signOut } = useAuth()
   const localOnlyMode = useStore((s) => s.localOnlyMode)
   const setLocalOnlyMode = useStore((s) => s.setLocalOnlyMode)
+  const localFilesOnly = useStore((s) => s.localFilesOnly)
+  const setLocalFilesOnly = useStore((s) => s.setLocalFilesOnly)
   const { state } = useSidebar()
   const collapsed = state === "collapsed"
   const [dialogOpen, setDialogOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [usage, setUsage] = useState<number | null>(null)
+
+  // Refresh storage usage whenever the menu opens.
+  useEffect(() => {
+    if (!menuOpen) return
+    let cancelled = false
+    void estimateUsage().then((est) => {
+      if (!cancelled) setUsage(est?.usage ?? 0)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [menuOpen])
+
+  const handleToggleLocalFiles = useCallback(() => {
+    const next = !localFilesOnly
+    setLocalFilesOnly(next)
+    if (!next) {
+      toast.message("Files now sync to Supabase Storage", {
+        description: "Existing local files stay on this device. New uploads will sync.",
+      })
+    } else {
+      toast.message("New uploads will stay on this device", {
+        description: "Extracted text still syncs — only the raw blob stays local.",
+      })
+    }
+  }, [localFilesOnly, setLocalFilesOnly])
+
+  const handleClearCache = useCallback(async () => {
+    await clearAll()
+    setUsage(0)
+    toast.success("Cleared local file cache")
+  }, [])
 
   if (status === "loading") {
     return (
@@ -139,6 +177,51 @@ export function AccountMenu() {
           {localOnlyMode ? <Cloud size={14} /> : <CloudOff size={14} />}
           <span>{localOnlyMode ? "Resume cloud sync" : "Use local only"}</span>
         </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleToggleLocalFiles}
+          className="w-full justify-start gap-2"
+          title={
+            localFilesOnly
+              ? "Resume uploading raw files to Supabase Storage."
+              : "Keep raw files on this device. Extracted text still syncs."
+          }
+        >
+          <HardDrive size={14} />
+          <span className="flex-1 text-left">
+            {localFilesOnly ? "Sync files to cloud" : "Store files locally"}
+          </span>
+          {localFilesOnly && (
+            <span
+              aria-hidden
+              className="text-[10px] text-[var(--muted-foreground)]"
+            >
+              on
+            </span>
+          )}
+        </Button>
+        <div className="border-t my-1" />
+        <div className="px-2 py-1.5">
+          <div className="flex items-center justify-between text-[10px] text-[var(--muted-foreground)]">
+            <span>Local file cache</span>
+            <span title="Approximate IndexedDB usage for this origin.">
+              {usage === null ? "—" : formatFileSize(usage)}
+            </span>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleClearCache}
+            disabled={usage === 0}
+            className="w-full justify-start gap-2 mt-1 h-7 text-xs"
+            title="Delete every blob stored in this browser's IndexedDB. Files that are also in Supabase Storage stay reachable; local-only files become unrecoverable."
+          >
+            <Trash2 size={12} />
+            <span>Clear local cache</span>
+          </Button>
+        </div>
+        <div className="border-t my-1" />
         <Button
           variant="ghost"
           size="sm"

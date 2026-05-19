@@ -17,6 +17,7 @@ const FileSummarySchema = z.object({
   type: z.string().max(200),
   text: z.string().optional(),
   truncated: z.boolean().optional(),
+  kind: z.string().max(40).optional(),
 })
 
 // `ModelMessage` is broader than what we send today, but matches what the AI

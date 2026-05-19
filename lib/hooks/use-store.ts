@@ -3,6 +3,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { UploadedFile, Workspace, Resource, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind } from '@/lib/types'
 import { DEFAULT_CHAT_MODEL } from '@/lib/models'
+import { deleteBlob as deleteLocalBlob, clearAll as clearLocalBlobs } from '@/lib/files/local-store'
 
 export type { UploadedFile, Workspace, Resource, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind } from '@/lib/types'
 
@@ -89,6 +90,14 @@ interface AppState {
    */
   localOnlyMode: boolean
 
+  /**
+   * When true, raw file blobs are kept in IndexedDB instead of being
+   * uploaded to Supabase Storage. Extracted text + metadata still sync
+   * (it's small), but the actual blob never leaves the device. Useful
+   * when the user wants to stay under Supabase Storage quotas.
+   */
+  localFilesOnly: boolean
+
   // Files
   files: UploadedFile[]
 
@@ -123,6 +132,7 @@ interface AppState {
   toggleResourcesSidebar: () => void
   setResourcesSidebarTab: (tab: 'files' | 'notes' | 'artifacts') => void
   setLocalOnlyMode: (value: boolean) => void
+  setLocalFilesOnly: (value: boolean) => void
 
   // Workspace actions
   createWorkspace: (name: string) => Workspace
@@ -175,6 +185,7 @@ interface AppState {
       >
     >
   ) => void
+  setFileStorage: (fileId: string, patch: { storagePath?: string | null }) => void
 
   // Conversation actions
   createConversation: (workspaceId?: string) => Conversation
@@ -229,6 +240,7 @@ export const useStore = create<AppState>()(
 
       // Local-only mode — off by default; users opt in via AccountMenu.
       localOnlyMode: false,
+      localFilesOnly: false,
 
       // Files
       files: [],
@@ -270,6 +282,7 @@ export const useStore = create<AppState>()(
         set((state) => ({ resourcesSidebarOpen: !state.resourcesSidebarOpen })),
       setResourcesSidebarTab: (tab) => set({ resourcesSidebarTab: tab }),
       setLocalOnlyMode: (value) => set({ localOnlyMode: value }),
+      setLocalFilesOnly: (value) => set({ localFilesOnly: value }),
 
       // Workspace actions
       createWorkspace: (name: string) => {
@@ -423,7 +436,10 @@ export const useStore = create<AppState>()(
       // File actions
       addFile: (file: UploadedFile) =>
         set((state) => ({ files: [...state.files, file] })),
-      removeFile: (fileId: string) =>
+      removeFile: (fileId: string) => {
+        // Fire-and-forget — IDB delete is best-effort and shouldn't block
+        // the UI update.
+        void deleteLocalBlob(fileId)
         set((state) => ({
           files: state.files.filter((f) => f.id !== fileId),
           // Strip the removed file id from every conversation's selection.
@@ -432,12 +448,29 @@ export const useStore = create<AppState>()(
               ? { ...c, selectedFileIds: c.selectedFileIds.filter((id) => id !== fileId) }
               : c
           ),
-        })),
-      clearFiles: () => set({ files: [] }),
+        }))
+      },
+      clearFiles: () => {
+        void clearLocalBlobs()
+        set({ files: [] })
+      },
       setFileExtraction: (fileId, patch) =>
         set((state) => ({
           files: state.files.map((f) =>
             f.id === fileId ? { ...f, ...patch } : f
+          ),
+        })),
+      setFileStorage: (fileId, patch) =>
+        set((state) => ({
+          files: state.files.map((f) =>
+            f.id === fileId
+              ? {
+                  ...f,
+                  ...(patch.storagePath !== undefined
+                    ? { storagePath: patch.storagePath ?? undefined }
+                    : {}),
+                }
+              : f
           ),
         })),
 
@@ -697,7 +730,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'hummingbird-storage',
-      version: 7,
+      version: 8,
       migrate: (persistedState, fromVersion) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState
         const state = persistedState as Record<string, unknown>
@@ -771,6 +804,11 @@ export const useStore = create<AppState>()(
           // keep cloud sync unchanged unless they explicitly turn it on.
           if (!('localOnlyMode' in state)) state.localOnlyMode = false
         }
+        if (fromVersion < 8) {
+          // Local-files-only toggle. Default OFF so signed-in users keep
+          // Supabase Storage uploads. Storing raw blobs locally is opt-in.
+          if (!('localFilesOnly' in state)) state.localFilesOnly = false
+        }
         return persistedState
       },
       onRehydrateStorage: () => () => {
@@ -791,6 +829,7 @@ export const useStore = create<AppState>()(
         resourcesSidebarOpen: state.resourcesSidebarOpen,
         resourcesSidebarTab: state.resourcesSidebarTab,
         localOnlyMode: state.localOnlyMode,
+        localFilesOnly: state.localFilesOnly,
       }),
     }
   )

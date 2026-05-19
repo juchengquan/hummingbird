@@ -218,27 +218,32 @@ export function diffFiles(prev: UploadedFile[], next: UploadedFile[]): SyncOp[] 
   for (const f of next) {
     const before = prevById.get(f.id)
     if (!before || !fileEquals(before, f)) {
+      // Only include `storage_path` when we actually have one on the
+      // store — omitting the key keeps the upsert from null-overwriting
+      // a value the row already has in the DB (e.g. set by another
+      // device or by an earlier upload). `external_url` follows the
+      // same rule and is currently only touched by UploadThing paths
+      // outside this diff.
+      const row: Record<string, unknown> = {
+        id: f.id,
+        name: f.name,
+        size: f.size,
+        type: f.type,
+        extraction_status: f.extractionStatus ?? null,
+        extracted_text: f.extractedText ?? null,
+        extraction_truncated: f.extractionTruncated ?? false,
+        extracted_kind: f.extractedKind ?? null,
+        image_data_url: f.imageDataUrl ?? null,
+        summary: f.summary ?? null,
+        key_topics: f.keyTopics ?? [],
+        uploaded_at: toISO(f.uploadedAt),
+      }
+      if (f.storagePath) row.storage_path = f.storagePath
       ops.push({
         kind: "upsert",
         target: "files",
         clientOpId: "",
-        row: {
-          id: f.id,
-          name: f.name,
-          size: f.size,
-          type: f.type,
-          // storage_path / external_url are filled by the upload code
-          // path, not by the mutator. Don't overwrite them with null on
-          // metadata-only changes.
-          extraction_status: f.extractionStatus ?? null,
-          extracted_text: f.extractedText ?? null,
-          extraction_truncated: f.extractionTruncated ?? false,
-          extracted_kind: f.extractedKind ?? null,
-          image_data_url: f.imageDataUrl ?? null,
-          summary: f.summary ?? null,
-          key_topics: f.keyTopics ?? [],
-          uploaded_at: toISO(f.uploadedAt),
-        },
+        row,
       })
     }
   }
@@ -267,6 +272,7 @@ function fileEquals(a: UploadedFile, b: UploadedFile): boolean {
     (a.imageDataUrl ?? null) === (b.imageDataUrl ?? null) &&
     (a.summary ?? null) === (b.summary ?? null) &&
     sameStringArray(a.keyTopics ?? [], b.keyTopics ?? []) &&
+    (a.storagePath ?? null) === (b.storagePath ?? null) &&
     sameInstant(a.uploadedAt, b.uploadedAt)
   )
 }

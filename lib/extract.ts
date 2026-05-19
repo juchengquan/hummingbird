@@ -12,6 +12,7 @@ export interface ExtractionResult {
   kind: string
   text: string
   truncated: boolean
+  language?: string
 }
 
 export async function extractFile(

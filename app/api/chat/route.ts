@@ -16,6 +16,12 @@ interface FileSummary {
   text?: string
   /** True when `text` was cut to fit the extraction budget. */
   truncated?: boolean
+  /**
+   * Coarse content kind reported by /api/extract — 'pdf', 'docx', 'code',
+   * 'spreadsheet', etc. Used to label the per-file header so the model
+   * knows what flavour of text it's looking at.
+   */
+  kind?: string
 }
 
 interface ChatRequestBody {
@@ -66,7 +72,8 @@ function buildSystemPrompt(
       '\n\nThe user has attached these files. Their extracted text follows. Treat them as authoritative context for any question that references them.'
     for (const f of withText) {
       const truncatedNote = f.truncated ? ' (per-file truncated at extraction)' : ''
-      const header = `\n\n--- ${f.name}${truncatedNote} ---\n`
+      const kindNote = f.kind ? ` (${f.kind})` : ''
+      const header = `\n\n--- ${f.name}${kindNote}${truncatedNote} ---\n`
       const remaining = TOTAL_ATTACHMENT_BUDGET - used
       if (remaining <= 0) {
         prompt += `\n\n[Additional file omitted to fit budget: ${f.name}]`

@@ -38,6 +38,7 @@ import { cn } from "@/lib/utils"
 import { formatFileSize, getFileIcon, processSelectedFiles } from "@/lib/file-utils"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import { runExtraction } from "@/lib/extract"
+import { persistFile } from "@/lib/files/persist"
 import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT } from "@/lib/upload-config"
 import { ExtractionStatusBadge } from "@/components/panels/extraction-status-badge"
 import { format } from "date-fns"
@@ -56,6 +57,7 @@ export function ResourcePanel() {
     addResource,
     removeResource,
     setFileExtraction,
+    setFileStorage,
   } = useStore()
   const { selectedFileIds, toggleFileSelection, clearSelectedFiles } = useSessionStore()
   const [searchQuery, setSearchQuery] = useState("")
@@ -93,9 +95,14 @@ export function ResourcePanel() {
         // Automatically add as resource to current workspace
         addResource(activeWorkspaceId, meta.id)
         void runExtraction(meta.id, source, setFileExtraction)
+        void persistFile(source, meta.id, meta.name).then((result) => {
+          if (result.storagePath) {
+            setFileStorage(meta.id, { storagePath: result.storagePath })
+          }
+        })
       })
     },
-    [addFile, addResource, activeWorkspaceId, setFileExtraction]
+    [addFile, addResource, activeWorkspaceId, setFileExtraction, setFileStorage]
   )
 
   const handleDrop = useCallback(

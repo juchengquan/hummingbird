@@ -13,6 +13,7 @@ import {
 import { getFileIcon, processSelectedFiles, formatFileSize } from "@/lib/file-utils"
 import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/lib/upload-config"
 import { runExtraction } from "@/lib/extract"
+import { persistFile } from "@/lib/files/persist"
 import { NotesTab } from "@/components/panels/notes-tab"
 import { ArtifactsTab } from "@/components/panels/artifacts-tab"
 import { ExtractionStatusBadge } from "@/components/panels/extraction-status-badge"
@@ -22,6 +23,7 @@ export function ChatResourcesPanel() {
   const addFile = useStore((s) => s.addFile)
   const addResource = useStore((s) => s.addResource)
   const setFileExtraction = useStore((s) => s.setFileExtraction)
+  const setFileStorage = useStore((s) => s.setFileStorage)
   const setActiveView = useStore((s) => s.setActiveView)
   const toggleFileSelection = useStore((s) => s.toggleConversationFileSelection)
   const selectedFileIds = useConversationSelectedFileIds()
@@ -62,9 +64,14 @@ export function ChatResourcesPanel() {
         addResource(activeWorkspaceId, meta.id)
         toggleFileSelection(meta.id)
         void runExtraction(meta.id, source, setFileExtraction)
+        void persistFile(source, meta.id, meta.name).then((result) => {
+          if (result.storagePath) {
+            setFileStorage(meta.id, { storagePath: result.storagePath })
+          }
+        })
       })
     },
-    [addFile, addResource, activeWorkspaceId, toggleFileSelection, setFileExtraction]
+    [addFile, addResource, activeWorkspaceId, toggleFileSelection, setFileExtraction, setFileStorage]
   )
 
   return (

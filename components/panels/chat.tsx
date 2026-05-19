@@ -23,6 +23,7 @@ import { Plus, ChevronDown, Square } from "lucide-react"
 import { CHAT_MODELS } from "@/lib/models"
 import { processSelectedFiles } from "@/lib/file-utils"
 import { runExtraction } from "@/lib/extract"
+import { persistFile } from "@/lib/files/persist"
 import { extractCodeBlocks } from "@/lib/code-blocks"
 
 const AUTO_ARCHIVE_MIN_LINES = 15
@@ -51,6 +52,7 @@ export function ChatPanel() {
   const addFile = useStore((state) => state.addFile)
   const addResource = useStore((state) => state.addResource)
   const setFileExtraction = useStore((state) => state.setFileExtraction)
+  const setFileStorage = useStore((state) => state.setFileStorage)
   const createArtifact = useStore((state) => state.createArtifact)
   const toggleConversationFileSelection = useStore(
     (state) => state.toggleConversationFileSelection
@@ -175,6 +177,7 @@ export function ChatPanel() {
         type: f.type,
         text: f.extractedText,
         truncated: f.extractionTruncated,
+        kind: f.extractedKind,
       }))
       // Attach images only to the most recent user message — re-sending them
       // on every turn would explode the token bill and isn't how vision
@@ -418,6 +421,14 @@ export function ChatPanel() {
         addResource(activeWorkspaceId, meta.id)
         toggleConversationFileSelection(meta.id)
         void runExtraction(meta.id, source, setFileExtraction)
+        // Persist the raw blob in parallel with extraction. Result lands
+        // on the store via `setFileStorage` so cross-device sync can
+        // include the `storage_path`.
+        void persistFile(source, meta.id, meta.name).then((result) => {
+          if (result.storagePath) {
+            setFileStorage(meta.id, { storagePath: result.storagePath })
+          }
+        })
       })
       if (processed.length > 0) {
         toast.success(
@@ -426,7 +437,7 @@ export function ChatPanel() {
       }
       if (inputFileRef.current) inputFileRef.current.value = ""
     },
-    [addFile, addResource, activeWorkspaceId, toggleConversationFileSelection, setFileExtraction]
+    [addFile, addResource, activeWorkspaceId, toggleConversationFileSelection, setFileExtraction, setFileStorage]
   )
 
   const handleSendMessage = () => {
