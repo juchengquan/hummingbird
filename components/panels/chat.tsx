@@ -647,7 +647,7 @@ export function ChatPanel() {
               value={inputValue}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
-              placeholder="Ask me anthing!"
+              placeholder="Ask me anything!"
               rows={1}
               className="min-h-[44px] max-h-[160px] m-2 transition-all focus:outline-none focus:ring-2 focus:ring-primary/30"
               style={{
