@@ -64,8 +64,11 @@ export function ChatResourcesPanel({ mode = "chat" }: ChatResourcesPanelProps = 
     null
   )
   const openPdfViewer = usePdfViewer((s) => s.open)
-  const storedTab = useStore((s) => s.resourcesSidebarTab)
-  const tab = mode === "manage" ? "files" : storedTab
+  // `mode` only affects how the Files tab renders (manage vs attach). The
+  // active tab itself always follows the persisted `resourcesSidebarTab`
+  // so the rail can switch between Files/Notes/Artifacts/Skills regardless
+  // of whether we're in a chat or a workspace view.
+  const tab = useStore((s) => s.resourcesSidebarTab)
 
   // Mount flag for date formatting (avoid SSR mismatch). Must live in
   // useEffect — calling setMounted from render (even via queueMicrotask)

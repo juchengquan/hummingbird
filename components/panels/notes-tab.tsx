@@ -9,10 +9,20 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import {
   useStore,
-  useConversationNotes,
+  useWorkspaceNotes,
   useActiveConversation,
 } from "@/lib/hooks/use-store"
 import type { Message } from "@/lib/types"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 function messagePreview(content: string, max = 120): string {
   const trimmed = content.trim().replace(/\s+/g, " ")
@@ -31,33 +41,39 @@ function scrollToMessage(messageId: string) {
 
 export function NotesTab() {
   const activeConversation = useActiveConversation()
-  const notes = useConversationNotes()
+  const notes = useWorkspaceNotes()
+  const conversations = useStore((s) => s.conversations)
+  const activeWorkspaceId = useStore((s) => s.activeWorkspaceId)
   const createNote = useStore((s) => s.createNote)
   const updateNoteBody = useStore((s) => s.updateNoteBody)
   const deleteNote = useStore((s) => s.deleteNote)
   const [mounted, setMounted] = useState(false)
+  // Two-step delete: trash icon stages the id; the AlertDialog confirms.
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
   useEffect(() => {
     setMounted(true)
   }, [])
 
+  // Build a messageId → message map across every conversation in the
+  // workspace, so bookmark notes from other conversations still resolve.
   const messageById = useMemo(() => {
     const map = new Map<string, Message>()
-    activeConversation?.messages.forEach((m) => map.set(m.id, m))
+    for (const c of conversations) {
+      if (c.workspaceId !== activeWorkspaceId) continue
+      for (const m of c.messages) map.set(m.id, m)
+    }
     return map
-  }, [activeConversation])
+  }, [conversations, activeWorkspaceId])
 
   const handleAddNote = () => {
-    if (!activeConversation) return
-    createNote({ conversationId: activeConversation.id, body: "" })
-  }
-
-  if (!activeConversation) {
-    return (
-      <div className="flex-1 flex items-center justify-center px-6 text-center text-xs text-[var(--muted-foreground)]">
-        Select a conversation to add notes.
-      </div>
-    )
+    // Notes are workspace-scoped. If there's an active conversation, the
+    // new note records it as the source; otherwise it's a workspace-level
+    // free-form note (conversationId = null).
+    createNote({
+      conversationId: activeConversation?.id ?? null,
+      body: "",
+    })
   }
 
   return (
@@ -149,7 +165,7 @@ export function NotesTab() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={() => deleteNote(note.id)}
+                    onClick={() => setConfirmDeleteId(note.id)}
                     className="h-6 w-6 text-[var(--muted-foreground)] hover:text-[var(--destructive)] hover:bg-[var(--destructive)]/10"
                     aria-label="Delete note"
                     title="Delete"
@@ -162,6 +178,53 @@ export function NotesTab() {
           })
         )}
       </div>
+      <AlertDialog
+        open={confirmDeleteId !== null}
+        onOpenChange={(open) => !open && setConfirmDeleteId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this note?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {(() => {
+                const note = confirmDeleteId
+                  ? notes.find((n) => n.id === confirmDeleteId)
+                  : null
+                const preview = note?.body.trim().slice(0, 100)
+                if (preview) {
+                  return (
+                    <>
+                      &ldquo;{preview}
+                      {note && note.body.trim().length > 100 ? "…" : ""}&rdquo;
+                      <br />
+                      <span className="font-medium text-[var(--foreground)]">
+                        This action cannot be undone.
+                      </span>
+                    </>
+                  )
+                }
+                return (
+                  <span className="font-medium text-[var(--foreground)]">
+                    This action cannot be undone.
+                  </span>
+                )
+              })()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (confirmDeleteId) deleteNote(confirmDeleteId)
+                setConfirmDeleteId(null)
+              }}
+              className="bg-[var(--destructive)] text-white hover:bg-[var(--destructive)]/90 focus-visible:ring-[var(--destructive)]/40"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   )
 }

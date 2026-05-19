@@ -359,6 +359,9 @@ export function diffNotes(prev: Note[], next: Note[]): SyncOp[] {
   const nextById = byId(next)
 
   for (const n of next) {
+    // Skip orphaned workspace-level notes — the cloud schema still
+    // requires `conversation_id`. Locally they remain visible.
+    if (n.conversationId === null) continue
     const before = prevById.get(n.id)
     if (!before || !noteEquals(before, n)) {
       ops.push({
@@ -407,6 +410,9 @@ export function diffArtifacts(prev: Artifact[], next: Artifact[]): SyncOp[] {
   const nextById = byId(next)
 
   for (const a of next) {
+    // Skip orphaned workspace-level artifacts — the cloud schema still
+    // requires `conversation_id`.
+    if (a.conversationId === null) continue
     const before = prevById.get(a.id)
     if (!before || !artifactEquals(before, a)) {
       ops.push({

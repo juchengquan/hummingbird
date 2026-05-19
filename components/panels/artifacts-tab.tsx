@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/dialog"
 import {
   useStore,
-  useConversationArtifacts,
+  useWorkspaceArtifacts,
   useActiveConversation,
 } from "@/lib/hooks/use-store"
 import { copyText } from "@/lib/export"
@@ -59,7 +59,7 @@ function asMarkdownForEditor(artifact: Artifact): string {
 }
 
 export function ArtifactsTab() {
-  const artifacts = useConversationArtifacts()
+  const artifacts = useWorkspaceArtifacts()
   const activeConversation = useActiveConversation()
   const deleteArtifact = useStore((s) => s.deleteArtifact)
   const togglePinArtifact = useStore((s) => s.togglePinArtifact)
@@ -99,13 +99,6 @@ export function ArtifactsTab() {
     if (openId === a.id) setOpenId(null)
   }
 
-  if (!activeConversation) {
-    return (
-      <div className="flex-1 flex items-center justify-center px-6 text-center text-xs text-[var(--muted-foreground)]">
-        Select a conversation to view its artifacts.
-      </div>
-    )
-  }
 
   return (
     <>

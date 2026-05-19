@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react"
 import { PanelRightClose, PanelRightOpen, FolderOpen, StickyNote, Archive, Sparkles, PencilLine } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useStore, useWorkspaceResources, useConversationNotes, useConversationArtifacts, useActiveWorkspace, useActiveConversation } from "@/lib/hooks/use-store"
+import { useStore, useWorkspaceResources, useWorkspaceNotes, useWorkspaceArtifacts, useActiveWorkspace, useActiveConversation } from "@/lib/hooks/use-store"
 import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
 import { SKILLS } from "@/lib/skills/registry"
 import { resolveSkill } from "@/lib/skills/types"
@@ -64,8 +64,8 @@ export function ResourcesSidebar({ mode = "chat" }: ResourcesSidebarProps = {}) 
   const activeView = useStore((s) => s.activeView)
   const setActiveView = useStore((s) => s.setActiveView)
   const resourcesCount = useWorkspaceResources().length
-  const notesCount = useConversationNotes().length
-  const artifactsCount = useConversationArtifacts().length
+  const notesCount = useWorkspaceNotes().length
+  const artifactsCount = useWorkspaceArtifacts().length
   const workspace = useActiveWorkspace()
   const conversation = useActiveConversation()
   const skillsActive = SKILLS.filter((s) =>

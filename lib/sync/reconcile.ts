@@ -171,8 +171,17 @@ export async function fetchCloudSnapshot(
       addedAt: new Date(r.added_at),
     }))
 
+    // Build a conversation → workspace map so we can backfill `workspaceId`
+    // on notes/artifacts (the cloud schema still keys those by conversation).
+    const convToWorkspace = new Map<string, string>()
+    for (const c of conversations) convToWorkspace.set(c.id, c.workspaceId)
+    const fallbackWorkspaceId = workspaces[0]?.id ?? ""
+
     const notes: Note[] = (notesRes.data ?? []).map((n) => ({
       id: n.id,
+      workspaceId:
+        (n.conversation_id ? convToWorkspace.get(n.conversation_id) : undefined) ??
+        fallbackWorkspaceId,
       conversationId: n.conversation_id,
       messageId: n.message_id,
       body: n.body,
@@ -182,6 +191,9 @@ export async function fetchCloudSnapshot(
 
     const artifacts: Artifact[] = (artifactsRes.data ?? []).map((a) => ({
       id: a.id,
+      workspaceId:
+        (a.conversation_id ? convToWorkspace.get(a.conversation_id) : undefined) ??
+        fallbackWorkspaceId,
       conversationId: a.conversation_id,
       messageId: a.message_id,
       kind: a.kind,
@@ -330,10 +342,16 @@ export async function bulkUploadLocalState(
     if (error) return { ok: false, error: `resources: ${error.message}` }
   }
 
-  // notes
-  if (snapshot.notes.length > 0) {
+  // notes — skip orphaned workspace-level notes (conversationId === null);
+  // the cloud schema still requires a conversation. Long-term, the cloud
+  // schema should gain `workspace_id` + nullable `conversation_id` to
+  // mirror the local model.
+  const uploadableNotes = snapshot.notes.filter(
+    (n): n is typeof n & { conversationId: string } => n.conversationId !== null
+  )
+  if (uploadableNotes.length > 0) {
     const { error } = await client.from("notes").upsert(
-      snapshot.notes.map((n) => ({
+      uploadableNotes.map((n) => ({
         id: n.id,
         user_id: userId,
         conversation_id: n.conversationId,
@@ -346,10 +364,13 @@ export async function bulkUploadLocalState(
     if (error) return { ok: false, error: `notes: ${error.message}` }
   }
 
-  // artifacts
-  if (snapshot.artifacts.length > 0) {
+  // artifacts — same orphan filter as notes.
+  const uploadableArtifacts = snapshot.artifacts.filter(
+    (a): a is typeof a & { conversationId: string } => a.conversationId !== null
+  )
+  if (uploadableArtifacts.length > 0) {
     const { error } = await client.from("artifacts").upsert(
-      snapshot.artifacts.map((a) => ({
+      uploadableArtifacts.map((a) => ({
         id: a.id,
         user_id: userId,
         conversation_id: a.conversationId,

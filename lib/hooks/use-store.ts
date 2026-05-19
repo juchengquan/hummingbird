@@ -162,7 +162,7 @@ interface AppState {
   removeResource: (resourceId: string) => void
 
   // Notes actions
-  createNote: (input: { conversationId: string; messageId?: string | null; body?: string }) => Note
+  createNote: (input: { conversationId: string | null; messageId?: string | null; body?: string }) => Note
   updateNoteBody: (noteId: string, body: string) => void
   deleteNote: (noteId: string) => void
   /** Returns the resulting bookmark note if created, or null if removed. */
@@ -349,14 +349,19 @@ export const useStore = create<AppState>()(
           const newActiveWorkspaceId = state.activeWorkspaceId === workspaceId
             ? newWorkspaces[0]?.id
             : state.activeWorkspaceId
-          // Also delete associated resources and conversations
+          // Cascade: drop resources, conversations, notes, and artifacts
+          // that belonged to the workspace.
           const newResources = state.resources.filter((r) => r.workspaceId !== workspaceId)
           const newConversations = state.conversations.filter((c) => c.workspaceId !== workspaceId)
+          const newNotes = state.notes.filter((n) => n.workspaceId !== workspaceId)
+          const newArtifacts = state.artifacts.filter((a) => a.workspaceId !== workspaceId)
           return {
             workspaces: newWorkspaces,
             activeWorkspaceId: newActiveWorkspaceId,
             resources: newResources,
             conversations: newConversations,
+            notes: newNotes,
+            artifacts: newArtifacts,
           }
         }),
       renameWorkspace: (workspaceId: string, name: string) =>
@@ -442,9 +447,14 @@ export const useStore = create<AppState>()(
 
       // Notes actions
       createNote: ({ conversationId, messageId = null, body = '' }) => {
+        const conv = conversationId
+          ? get().conversations.find((c) => c.id === conversationId)
+          : undefined
+        const workspaceId = conv?.workspaceId ?? get().activeWorkspaceId
         const now = new Date()
         const newNote: Note = {
           id: uuid(),
+          workspaceId,
           conversationId,
           messageId,
           body,
@@ -474,9 +484,12 @@ export const useStore = create<AppState>()(
           }))
           return null
         }
+        const conv = get().conversations.find((c) => c.id === conversationId)
+        const workspaceId = conv?.workspaceId ?? get().activeWorkspaceId
         const now = new Date()
         const newNote: Note = {
           id: uuid(),
+          workspaceId,
           conversationId,
           messageId,
           body: '',
@@ -491,8 +504,11 @@ export const useStore = create<AppState>()(
       createArtifact: ({ conversationId, messageId = null, kind, language = null, title, content }) => {
         const fallbackTitle =
           title ?? content.split('\n')[0].slice(0, 60).trim() ?? 'Untitled'
+        const conv = get().conversations.find((c) => c.id === conversationId)
+        const workspaceId = conv?.workspaceId ?? get().activeWorkspaceId
         const newArtifact: Artifact = {
           id: uuid(),
+          workspaceId,
           conversationId,
           messageId,
           kind,
@@ -624,10 +640,25 @@ export const useStore = create<AppState>()(
           const newConversations = state.conversations.filter(
             (c) => c.id !== conversationId
           )
+          // Notes/artifacts are workspace-scoped, but bookmarks (notes with
+          // messageId !== null) anchor to a specific message that no longer
+          // exists once the conversation is gone — drop those. Free-form
+          // notes and all artifacts are orphaned (conversationId → null) so
+          // they remain visible at the workspace level.
+          const newNotes = state.notes
+            .filter(
+              (n) => !(n.conversationId === conversationId && n.messageId !== null)
+            )
+            .map((n) =>
+              n.conversationId === conversationId ? { ...n, conversationId: null } : n
+            )
+          const newArtifacts = state.artifacts.map((a) =>
+            a.conversationId === conversationId ? { ...a, conversationId: null } : a
+          )
           return {
             conversations: newConversations,
-            notes: state.notes.filter((n) => n.conversationId !== conversationId),
-            artifacts: state.artifacts.filter((a) => a.conversationId !== conversationId),
+            notes: newNotes,
+            artifacts: newArtifacts,
             activeConversationId:
               state.activeConversationId === conversationId
                 ? newConversations[0]?.id || null
@@ -899,7 +930,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'hummingbird-storage',
-      version: 11,
+      version: 12,
       migrate: (persistedState, fromVersion) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState
         const state = persistedState as Record<string, unknown>
@@ -1011,6 +1042,49 @@ export const useStore = create<AppState>()(
           // `undefined` (no pinned model), which is the same as the global
           // default — nothing changes for them. Marker bump only.
         }
+        if (fromVersion < 12) {
+          // Notes and artifacts moved from per-conversation to per-workspace
+          // scope. Backfill `workspaceId` on each item by looking up its
+          // conversation's workspaceId. Orphaned items (conversation already
+          // gone) fall back to the first workspace so they remain visible
+          // somewhere rather than silently disappearing.
+          const convs = state.conversations
+          const fallback =
+            (Array.isArray(state.workspaces)
+              ? (state.workspaces[0] as { id?: string } | undefined)?.id
+              : undefined) ?? null
+          const convMap = new Map<string, string>()
+          if (Array.isArray(convs)) {
+            for (const c of convs) {
+              if (c && typeof c === 'object') {
+                const conv = c as { id?: string; workspaceId?: string }
+                if (conv.id && conv.workspaceId) convMap.set(conv.id, conv.workspaceId)
+              }
+            }
+          }
+          const stamp = <T extends { conversationId?: string | null; workspaceId?: string }>(
+            item: T
+          ): T => {
+            if (item.workspaceId) return item
+            const wsFromConv = item.conversationId ? convMap.get(item.conversationId) : null
+            return {
+              ...item,
+              workspaceId: wsFromConv ?? fallback ?? '',
+            }
+          }
+          const notes = state.notes
+          if (Array.isArray(notes)) {
+            state.notes = notes.map((n) =>
+              n && typeof n === 'object' ? stamp(n as Record<string, unknown>) : n
+            )
+          }
+          const arts = state.artifacts
+          if (Array.isArray(arts)) {
+            state.artifacts = arts.map((a) =>
+              a && typeof a === 'object' ? stamp(a as Record<string, unknown>) : a
+            )
+          }
+        }
         return persistedState
       },
       onRehydrateStorage: () => () => {
@@ -1110,6 +1184,16 @@ export const useConversationNotes = () => {
   return notes.filter((n) => n.conversationId === activeConversationId)
 }
 
+/** Notes visible in the active workspace. Replaces the per-conversation
+ *  view in the right rail's Notes tab — notes now survive conversation
+ *  deletion and accumulate at the workspace level. */
+export const useWorkspaceNotes = () => {
+  const notes = useStore((state) => state.notes)
+  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
+  if (!activeWorkspaceId) return [] as Note[]
+  return notes.filter((n) => n.workspaceId === activeWorkspaceId)
+}
+
 export const useMessageBookmark = (messageId: string) => {
   const notes = useStore((state) => state.notes)
   const activeConversationId = useStore((state) => state.activeConversationId)
@@ -1132,6 +1216,21 @@ export const useConversationArtifacts = () => {
   if (!activeConversationId) return [] as Artifact[]
   return artifacts
     .filter((a) => a.conversationId === activeConversationId)
+    .sort((a, b) => {
+      if (a.pinned && !b.pinned) return -1
+      if (!a.pinned && b.pinned) return 1
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    })
+}
+
+/** Artifacts visible in the active workspace. Same shape as
+ *  `useConversationArtifacts` but scoped one level up. */
+export const useWorkspaceArtifacts = () => {
+  const artifacts = useStore((state) => state.artifacts)
+  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
+  if (!activeWorkspaceId) return [] as Artifact[]
+  return artifacts
+    .filter((a) => a.workspaceId === activeWorkspaceId)
     .sort((a, b) => {
       if (a.pinned && !b.pinned) return -1
       if (!a.pinned && b.pinned) return 1

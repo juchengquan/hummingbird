@@ -178,8 +178,17 @@ export interface Conversation {
 
 export interface Note {
   id: string
-  conversationId: string
-  /** When set, the note is a bookmark anchored to a specific message. */
+  /** Notes are scoped to the workspace — they survive conversation
+   *  deletion (with `conversationId` cleared) so they remain a long-lived
+   *  knowledge surface for the workspace. */
+  workspaceId: string
+  /** Source conversation the note was created in. Null when the source
+   *  conversation has been deleted or the note was created outside any
+   *  conversation. */
+  conversationId: string | null
+  /** When set, the note is a bookmark anchored to a specific message in
+   *  the source conversation. Bookmarks are deleted when their source
+   *  conversation is deleted (the anchor message no longer exists). */
   messageId: string | null
   body: string
   createdAt: Date
@@ -190,7 +199,11 @@ export type ArtifactKind = 'code' | 'markdown' | 'json' | 'table' | 'image' | 'o
 
 export interface Artifact {
   id: string
-  conversationId: string
+  /** Artifacts are scoped to the workspace — they outlive the conversation
+   *  they were saved from. */
+  workspaceId: string
+  /** Source conversation. Null when the conversation has been deleted. */
+  conversationId: string | null
   /** Set when the artifact was extracted from a specific assistant message. Nullable: artifacts can outlive their source. */
   messageId: string | null
   kind: ArtifactKind

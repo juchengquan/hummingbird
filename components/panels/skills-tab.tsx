@@ -30,16 +30,19 @@ export function SkillsTab() {
   const setWorkspaceSkillPref = useStore((s) => s.setWorkspaceSkillPref)
   const setConversationSkillPref = useStore((s) => s.setConversationSkillPref)
 
-  if (!conversation || !workspace) {
+  // Without a workspace there's nothing to edit. With workspace but no
+  // conversation, we drop into "workspace defaults" mode: 2-segment
+  // Off/On per skill, editing workspace-level prefs directly.
+  if (!workspace) {
     return (
       <div className="flex-1 flex items-center justify-center p-6 text-sm text-[var(--muted-foreground)]">
-        Open a conversation to manage skills.
+        No active workspace.
       </div>
     )
   }
 
   const activeSkillsCount = SKILLS.filter((skill) =>
-    resolveSkill(skill, workspace.skillPrefs, conversation.skillPrefs)
+    resolveSkill(skill, workspace.skillPrefs, conversation?.skillPrefs)
   ).length
 
   return (
@@ -49,6 +52,11 @@ export function SkillsTab() {
           {activeSkillsCount === 0
             ? `No skills active · ${SKILLS.length} available`
             : `${activeSkillsCount} active · ${SKILLS.length} available`}
+          {!conversation && (
+            <span className="ml-1.5 text-[var(--muted-foreground)]/80">
+              · editing workspace defaults
+            </span>
+          )}
         </p>
       </div>
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
@@ -57,15 +65,28 @@ export function SkillsTab() {
             key={skill.id}
             skill={skill}
             workspacePref={workspace.skillPrefs?.[skill.id]}
-            conversationPref={conversation.skillPrefs?.[skill.id]}
-            effective={resolveSkill(skill, workspace.skillPrefs, conversation.skillPrefs)}
-            onSetOff={() => setConversationSkillPref(conversation.id, skill.id, false)}
-            onSetOnForChat={() => setConversationSkillPref(conversation.id, skill.id, true)}
+            conversationPref={conversation?.skillPrefs?.[skill.id]}
+            hasConversation={!!conversation}
+            effective={resolveSkill(skill, workspace.skillPrefs, conversation?.skillPrefs)}
+            onSetOff={() => {
+              if (conversation) {
+                setConversationSkillPref(conversation.id, skill.id, false)
+              } else {
+                // No chat in scope: edit workspace default directly.
+                setWorkspaceSkillPref(workspace.id, skill.id, false)
+              }
+            }}
+            onSetOnForChat={() => {
+              if (conversation) {
+                setConversationSkillPref(conversation.id, skill.id, true)
+              }
+            }}
             onSetWorkspaceDefault={() => {
-              // Clearing the conversation override lets the workspace default
-              // take over. Setting the workspace default to true makes this
-              // the new floor.
-              setConversationSkillPref(conversation.id, skill.id, null)
+              if (conversation) {
+                // Clear the conversation override so the workspace default
+                // takes over, and set that default to true.
+                setConversationSkillPref(conversation.id, skill.id, null)
+              }
               setWorkspaceSkillPref(workspace.id, skill.id, true)
             }}
           />
@@ -79,6 +100,9 @@ interface SkillRowProps {
   skill: SkillDescriptor
   workspacePref: boolean | undefined
   conversationPref: boolean | undefined
+  /** When false, the row collapses to a 2-segment control editing
+   *  workspace defaults directly (no "On for chat" segment). */
+  hasConversation: boolean
   effective: boolean
   onSetOff: () => void
   onSetOnForChat: () => void
@@ -89,21 +113,27 @@ function SkillRow({
   skill,
   workspacePref,
   conversationPref,
+  hasConversation,
   effective,
   onSetOff,
   onSetOnForChat,
   onSetWorkspaceDefault,
 }: SkillRowProps) {
   const Icon = skill.icon
-  const segment: "off" | "chat" | "workspace" =
-    conversationPref === false
+  const segment: "off" | "chat" | "workspace" = hasConversation
+    ? conversationPref === false
       ? "off"
       : conversationPref === true
         ? "chat"
         : workspacePref === true
           ? "workspace"
           : "off"
-  const inheritsFromWorkspace = conversationPref === undefined && workspacePref !== undefined
+    : // Workspace-only mode: segment reflects workspacePref directly.
+      workspacePref === true
+      ? "workspace"
+      : "off"
+  const inheritsFromWorkspace =
+    hasConversation && conversationPref === undefined && workspacePref !== undefined
 
   return (
     <div className="rounded-md border border-[var(--border)] p-3 space-y-2">
@@ -117,17 +147,28 @@ function SkillRow({
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-0 rounded-md border border-[var(--border)] overflow-hidden">
-        <Segment active={segment === "off"} onClick={onSetOff}>
-          Off
-        </Segment>
-        <Segment active={segment === "chat"} onClick={onSetOnForChat}>
-          On for chat
-        </Segment>
-        <Segment active={segment === "workspace"} onClick={onSetWorkspaceDefault}>
-          Workspace
-        </Segment>
-      </div>
+      {hasConversation ? (
+        <div className="grid grid-cols-3 gap-0 rounded-md border border-[var(--border)] overflow-hidden">
+          <Segment active={segment === "off"} onClick={onSetOff}>
+            Off
+          </Segment>
+          <Segment active={segment === "chat"} onClick={onSetOnForChat}>
+            On for chat
+          </Segment>
+          <Segment active={segment === "workspace"} onClick={onSetWorkspaceDefault}>
+            Workspace
+          </Segment>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-0 rounded-md border border-[var(--border)] overflow-hidden">
+          <Segment active={segment === "off"} onClick={onSetOff}>
+            Off
+          </Segment>
+          <Segment active={segment === "workspace"} onClick={onSetWorkspaceDefault}>
+            On
+          </Segment>
+        </div>
+      )}
 
       {inheritsFromWorkspace && (
         <p className="text-[10px] text-[var(--muted-foreground)] inline-flex items-center gap-1">
