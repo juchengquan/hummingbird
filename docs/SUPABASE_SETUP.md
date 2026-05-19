@@ -59,7 +59,7 @@ this tab open — the next steps use it.
 
 ## Step 2 — Run the schema migrations
 
-Eight SQL files live in the repo under `supabase/migrations/`. Run
+Nine SQL files live in the repo under `supabase/migrations/`. Run
 them in numerical order via the **SQL Editor** in the Supabase
 dashboard (left sidebar → **SQL Editor** → **New query**).
 
@@ -94,6 +94,10 @@ errors:
    - Adds `messages.tool_calls jsonb` for first-class tool-call
      persistence (web-search pills survive reload as structured
      records rather than markdown footers in the message text).
+9. `supabase/migrations/0009_conversation_lineage.sql`
+   - Adds `conversations.parent_id` + `conversations.forked_from_message_id`
+     so the Branches dialog can render a fork tree. `on delete set
+     null` on both so deleted ancestors don't cascade away children.
 
 After running all eight, sanity-check from the **Table Editor**: ten
 tables should be listed (`profiles`, `workspaces`, `conversations`,

@@ -10,25 +10,13 @@ Living document: when an item moves to "planned", it gets its own
 
 ---
 
-## Conversation graph view
+## ~~Conversation graph view~~ ✅ shipped (`5666f0b`)
 
-**Why distinctive.** Hummingbird has first-class conversation forking
-(commit `55064a8`). No other chat app exposes that, so visualizing the
-fork tree is a feature only this app *can* show.
-
-**Sketch.** Small minimap, openable from the chat header or a new
-sidebar tab. Renders the conversation tree (parent → forks →
-sub-forks) as a vertical or horizontal graph; nodes are short message
-previews; click a node to switch to that conversation. Pin a node to
-keep it visible across switches.
-
-**Builds on.** `forkConversation` mutator, `Conversation.parentId`
-*(new field — small migration)* to track lineage. Today forks are
-created but their relationship to the source is lost after creation;
-adding `parentId` and a `forkedFromMessageId` would close that.
-
-**Effort.** Medium (~250–400 lines). All UI + one schema column.
-Could use `react-flow` or hand-roll with SVG.
+Indented tree dialog accessible from the chat-header kebab → Branches.
+Cards show title + msg count + branch-point snippet; click to switch.
+`Conversation.parentId` + `forkedFromMessageId` added via migration
+`0009_conversation_lineage`. `forkConversation` records lineage going
+forward.
 
 ---
 

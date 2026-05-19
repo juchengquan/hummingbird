@@ -478,6 +478,9 @@ Three small UX wins that close gaps surfaced during the Skills work:
 - Smart paste — context-aware chip for URL / JSON / CSV / code / long
   text (`64d60df`); see `docs/PLAN-smart-paste.md` and
   `docs/BACKLOG.md` for the surrounding ideas
+- Conversation graph view — Branches dialog showing the fork tree
+  rooted at the topmost ancestor (`5666f0b`, migration `0009`); first
+  item ticked off the BACKLOG
 - Plate doc updated: `docs/SUPABASE_SETUP.md` covers migrations `0001`–
   `0008` + storage + Tavily env (commit `38b7a98`, refreshed `3ff1cab`)
 
