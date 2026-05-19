@@ -1,28 +1,18 @@
 "use client"
 
 import { useState, useRef, useCallback } from "react"
-import { useStore, useSessionStore, useWorkspaceResources } from "@/lib/hooks/use-store"
-import { Item, ItemMedia, ItemContent, ItemTitle, ItemDescription } from "@/components/ui/item"
+import { useStore, useSessionStore } from "@/lib/hooks/use-store"
+import { Item, ItemContent, ItemTitle, ItemDescription } from "@/components/ui/item"
 
-import {
-  Upload,
-  File,
-  Search,
-  Trash2,
-  Check,
-  X,
-  FolderOpen,
-} from "lucide-react"
+import { Search, Check, X, FolderOpen } from "lucide-react"
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card"
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupInput,
-  InputGroupText,
 } from "@/components/ui/input-group"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -51,7 +41,6 @@ export function ResourcePanel() {
     files,
     addFile,
     removeFile,
-    clearFiles,
     activeWorkspaceId,
     resources,
     addResource,
@@ -65,8 +54,6 @@ export function ResourcePanel() {
   const [error, setError] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-
-  const workspaceResources = useWorkspaceResources()
 
   // Filter files that are resources of the current workspace
   const resourceFileIds = resources

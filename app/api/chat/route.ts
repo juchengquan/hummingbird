@@ -29,14 +29,6 @@ interface FileSummary {
   kind?: string
 }
 
-interface ChatRequestBody {
-  messages: ModelMessage[]
-  model?: string
-  files?: FileSummary[]
-  /** Optional per-workspace prompt, prepended to the base system instruction. */
-  workspaceSystemPrompt?: string
-}
-
 // Soft cap on combined inline text across all attachments, to keep prompts
 // inside reasonable token budgets. Per-file truncation already happens at
 // extraction time; this is a second pass across the whole attachment set.
