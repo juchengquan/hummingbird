@@ -52,6 +52,7 @@ export function ChatPanel() {
   const truncateMessagesAfter = useStore((state) => state.truncateMessagesAfter)
   const setMessageError = useStore((state) => state.setMessageError)
   const setMessageSuggestions = useStore((state) => state.setMessageSuggestions)
+  const setMessageReasoningDuration = useStore((state) => state.setMessageReasoningDuration)
   const isTyping = useStore((state) => state.isTyping)
   const setIsTyping = useStore((state) => state.setIsTyping)
   const chatModel = useStore((state) => state.chatModel)
@@ -184,11 +185,15 @@ export function ChatPanel() {
   // Build the message list and file context the API expects, sent up to and
   // including the most recent user message.
   const callChatAPI = useCallback(
-    async (history: Message[], options?: { modelOverride?: string }) => {
+    async (
+      history: Message[],
+      options?: { modelOverride?: string; isRetry?: boolean }
+    ) => {
       // Read the model freshly from the store rather than via the closure.
       // Lets retry-after-model-change use the new value without waiting for
       // this callback's useEffect-driven ref refresh to catch up.
       const modelForCall = options?.modelOverride ?? useStore.getState().chatModel
+      const isRetry = options?.isRetry ?? false
       const conv = conversations.find((c) => c.id === activeConversationId)
       const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
       const workspaceSystemPrompt = activeWorkspace?.systemPrompt?.trim() || undefined
@@ -240,6 +245,12 @@ export function ChatPanel() {
       setIsStreaming(true)
       let placeholder: Message | null = null
       let firstChunk = true
+      // Reasoning duration capture: first/last chunk timestamps so we can
+      // persist the elapsed ms on the message. Set on the first reasoning
+      // chunk; refreshed on each subsequent chunk so the difference at
+      // stream end equals total reasoning time.
+      let reasoningStart: number | null = null
+      let reasoningLast: number | null = null
 
       const surfaceError = (error: MessageError) => {
         setIsTyping(false)
@@ -353,6 +364,9 @@ export function ChatPanel() {
               appendToMessage(p.id, parsed.value)
             } else if (parsed.type === "reasoning" && typeof parsed.value === "string") {
               const p = ensurePlaceholder()
+              const now = Date.now()
+              if (reasoningStart === null) reasoningStart = now
+              reasoningLast = now
               appendToMessageReasoning(p.id, parsed.value)
             } else if (parsed.type === "tool_call" && parsed.id && parsed.name) {
               const p = ensurePlaceholder()
@@ -409,7 +423,17 @@ export function ChatPanel() {
             detail: "The model returned an empty response.",
           })
         } else if (placeholder && activeConversationId) {
-          autoArchiveCodeBlocks(placeholder)
+          const ph = placeholder as Message
+          autoArchiveCodeBlocks(ph)
+          // Persist reasoning duration so the "Thought for X.Xs" badge
+          // survives reload. Captured during the stream; written here so
+          // we only commit on successful completion.
+          if (reasoningStart !== null && reasoningLast !== null) {
+            setMessageReasoningDuration(
+              ph.id,
+              Math.max(0, reasoningLast - reasoningStart)
+            )
+          }
         }
       } catch (err) {
         const aborted =
@@ -427,6 +451,24 @@ export function ChatPanel() {
           // Distinguish offline from generic network failure — gives the
           // user a concrete next action (reconnect) instead of "Network error".
           const offline = typeof navigator !== "undefined" && navigator.onLine === false
+          // Auto-retry-once: a transient blip on a brand-new request (no
+          // placeholder content yet, online, not already a retry) tries one
+          // silent recovery after 1s before surfacing the error to the user.
+          // Anything past the first chunk has visible state we shouldn't
+          // duplicate or rewind, so we skip the retry there.
+          const phEmpty = !ph || ph.content === ""
+          if (!isRetry && !offline && phEmpty) {
+            if (ph) deleteMessage(ph.id)
+            setIsTyping(false)
+            setIsStreaming(false)
+            setTimeout(() => {
+              callChatAPIRef.current(history, {
+                modelOverride: options?.modelOverride,
+                isRetry: true,
+              })
+            }, 1000)
+            return
+          }
           const detail = offline
             ? "You appear to be offline. Reconnect and click Retry."
             : err instanceof Error
@@ -470,6 +512,7 @@ export function ChatPanel() {
       mockAIResponse,
       setIsTyping,
       setMessageError,
+      setMessageReasoningDuration,
       setMessageSuggestions,
       workspaces,
     ]

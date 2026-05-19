@@ -192,6 +192,7 @@ function diffMessages(
           content: m.content,
           position: idx,
           reasoning: m.reasoning ?? null,
+          reasoning_duration_ms: m.reasoningDurationMs ?? null,
           // MessageError is a structured object; store as JSONB (null when absent).
           error: m.error ?? null,
           attached_file_ids: m.attachedFileIds ?? [],
@@ -220,6 +221,7 @@ function messageEquals(a: Message, b: Message): boolean {
     a.role === b.role &&
     a.content === b.content &&
     (a.reasoning ?? null) === (b.reasoning ?? null) &&
+    (a.reasoningDurationMs ?? null) === (b.reasoningDurationMs ?? null) &&
     JSON.stringify(a.error ?? null) === JSON.stringify(b.error ?? null) &&
     sameStringArray(a.attachedFileIds ?? [], b.attachedFileIds ?? []) &&
     sameStringArray(a.suggestions ?? [], b.suggestions ?? []) &&

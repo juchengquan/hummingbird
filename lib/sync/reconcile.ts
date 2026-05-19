@@ -101,6 +101,7 @@ export async function fetchCloudSnapshot(
         timestamp: new Date(m.created_at),
       }
       if (m.reasoning) msg.reasoning = m.reasoning
+      if (m.reasoning_duration_ms != null) msg.reasoningDurationMs = m.reasoning_duration_ms
       // DB column is JSONB; we store MessageError shape and cast back here.
       if (m.error) msg.error = m.error as unknown as MessageError
       if (m.attached_file_ids && m.attached_file_ids.length > 0) {
@@ -252,6 +253,7 @@ export async function bulkUploadLocalState(
     content: string
     position: number
     reasoning: string | null
+    reasoning_duration_ms: number | null
     error: Json
     attached_file_ids: string[]
     suggestions: string[]
@@ -267,6 +269,7 @@ export async function bulkUploadLocalState(
         content: m.content,
         position: idx,
         reasoning: m.reasoning ?? null,
+        reasoning_duration_ms: m.reasoningDurationMs ?? null,
         error: m.error ? (m.error as unknown as Json) : null,
         attached_file_ids: m.attachedFileIds ?? [],
         suggestions: m.suggestions ?? [],

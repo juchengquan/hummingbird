@@ -373,11 +373,6 @@ recall plug into the same plumbing.
 
 #### ⏳ TODO — cleanups / follow-ups
 
-- **Sync handlers for `setConversationDocument` (debounced)** — still
-  missing; the editor doc only persists locally today even when signed
-  in. Conversation row carries a `document_content` column already.
-- **Sync handlers for `notes` and `artifacts`** — schema + RLS in
-  `0002`; mutators are local-only.
 - Persist `reasoning_duration_ms` if you want the "Thought for X.Xs"
   badge in the collapsed `ReasoningBlock` header to survive refresh.
   Today it's component-local state, so the timing disappears after a
@@ -393,7 +388,10 @@ recall plug into the same plumbing.
   error code.
 
 > The previous `[sync]` `console.log` cleanup item shipped in commit
-> `ab4e82c`.
+> `ab4e82c`. Sync handlers for `setConversationDocument`,
+> `notes`, and `artifacts` are wired via `diffNotes` / `diffArtifacts`
+> in `lib/sync/handlers.ts` and the conversation row's `document_content`
+> column updates on debounced doc saves.
 
 5. **Conversation-related assets** *(four sub-features, each can ship independently)*
    - **~~A. Conversation-scoped file uploads~~** *(reframed + shipped local-only — see Status above)*. The `+` button on the chat input uploads to the active workspace and auto-attaches to the current conversation.

@@ -213,6 +213,7 @@ interface AppState {
   setChatModel: (model: string) => void
   appendToMessage: (messageId: string, chunk: string) => void
   appendToMessageReasoning: (messageId: string, chunk: string) => void
+  setMessageReasoningDuration: (messageId: string, durationMs: number) => void
   setMessageSuggestions: (messageId: string, suggestions: string[]) => void
   setMessageError: (messageId: string, error: MessageError) => void
   clearMessageError: (messageId: string) => void
@@ -681,6 +682,22 @@ export const useStore = create<AppState>()(
                 messages: c.messages.map((m) =>
                   m.id === messageId
                     ? { ...m, reasoning: (m.reasoning ?? '') + chunk }
+                    : m
+                ),
+              }
+            }
+            return c
+          }),
+        })),
+      setMessageReasoningDuration: (messageId: string, durationMs: number) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id === state.activeConversationId) {
+              return {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === messageId
+                    ? { ...m, reasoningDurationMs: durationMs }
                     : m
                 ),
               }

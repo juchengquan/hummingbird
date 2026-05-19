@@ -47,12 +47,16 @@ function ReasoningBlock({
    *  swap the header label from "Thinking…" to "Reasoning". */
   content,
   streaming,
+  durationMs,
 }: {
   reasoning: string
   content: string
   /** When true (the message has reasoning but no content yet), open by default
    *  so the user sees the model is actively thinking. */
   streaming: boolean
+  /** Total reasoning time in ms, persisted on the message. Shown as "Thought for X.Xs"
+   *  in the collapsed header once streaming finishes. */
+  durationMs?: number
 }) {
   const [open, setOpen] = useState(streaming)
 
@@ -83,6 +87,11 @@ function ReasoningBlock({
             aria-hidden
             className="inline-block w-1.5 h-1.5 rounded-full bg-[var(--muted-foreground)] animate-pulse shrink-0"
           />
+        )}
+        {!isLive && durationMs !== undefined && durationMs > 0 && (
+          <span className="shrink-0 text-[10px] opacity-70" title="Total reasoning time">
+            · {(durationMs / 1000).toFixed(1)}s
+          </span>
         )}
         <ChevronDown
           size={12}
@@ -177,6 +186,20 @@ function ErrorBubble({
   onDelete: () => void
 }) {
   const [showDetails, setShowDetails] = useState(false)
+  // Rate-limit cooldown: when the model says "too many requests", retrying
+  // immediately just hits the same wall. Soft-disable Retry for 30 s with
+  // a countdown so the user knows when it's safe to try again.
+  const RATE_LIMIT_COOLDOWN_S = 30
+  const [cooldown, setCooldown] = useState<number>(
+    error.code === "rate_limit" ? RATE_LIMIT_COOLDOWN_S : 0
+  )
+  useEffect(() => {
+    if (cooldown <= 0) return
+    const id = setInterval(() => {
+      setCooldown((s) => (s <= 1 ? 0 : s - 1))
+    }, 1000)
+    return () => clearInterval(id)
+  }, [cooldown])
   const title = ERROR_TITLES[error.code] ?? ERROR_TITLES.unknown
   // `auth` means the API key is missing/invalid — retrying with the same
   // setup will hit the same wall. Hide Retry and let the user dismiss or
@@ -209,9 +232,16 @@ function ErrorBubble({
       </div>
       <div className="flex flex-wrap gap-1.5">
         {canRetrySameModel && (
-          <Button size="sm" variant="secondary" onClick={onRetry} className="h-7 gap-1.5 text-xs">
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={onRetry}
+            disabled={cooldown > 0}
+            className="h-7 gap-1.5 text-xs"
+            title={cooldown > 0 ? `Wait ${cooldown}s before retrying — provider asked us to slow down.` : undefined}
+          >
             <RotateCcw size={12} />
-            Retry
+            {cooldown > 0 ? `Retry in ${cooldown}s` : "Retry"}
           </Button>
         )}
         {fallback && (
@@ -509,6 +539,7 @@ export function ChatMessage({
                     reasoning={message.reasoning}
                     content={message.content}
                     streaming={!message.content}
+                    durationMs={message.reasoningDurationMs}
                   />
                 )}
                 {!isUser && liveToolCalls && liveToolCalls.length > 0 && (

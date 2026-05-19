@@ -94,6 +94,14 @@ export interface Message {
    */
   reasoning?: string
   /**
+   * Wall-clock duration in ms between the first and last reasoning chunk.
+   * Used to render a "Thought for X.Xs" badge in the collapsed
+   * `ReasoningBlock` header. Survives reload because it's persisted on
+   * the message — without it the badge would only show during the live
+   * stream.
+   */
+  reasoningDurationMs?: number
+  /**
    * Snapshot of which workspace files were attached when this message was
    * sent. Lives on the message (not the conversation) so the visual record
    * survives later changes to the conversation's selection or file deletion.

@@ -121,6 +121,7 @@ export interface Database {
           content: string
           position: number
           reasoning: string | null
+          reasoning_duration_ms: number | null
           error: Json | null
           attached_file_ids: string[]
           suggestions: string[]
@@ -134,6 +135,7 @@ export interface Database {
           content: string
           position: number
           reasoning?: string | null
+          reasoning_duration_ms?: number | null
           error?: Json | null
           attached_file_ids?: string[]
           suggestions?: string[]
@@ -147,6 +149,7 @@ export interface Database {
           content?: string
           position?: number
           reasoning?: string | null
+          reasoning_duration_ms?: number | null
           error?: Json | null
           attached_file_ids?: string[]
           suggestions?: string[]
