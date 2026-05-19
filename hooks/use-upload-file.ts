@@ -1,24 +1,35 @@
+/**
+ * Editor media uploader.
+ *
+ * Routes through Supabase Storage when the user is signed in. Otherwise
+ * falls back to a session-only object URL — the media works for the
+ * current session but is lost on reload, with a toast informing the
+ * user. UploadThing has been removed; signed-out users who want
+ * persistence should sign in (or accept the local-only behavior).
+ */
+
 import * as React from 'react';
 
-import type { OurFileRouter } from '@/lib/uploadthing';
-import type {
-  ClientUploadedFileData,
-  UploadFilesOptions,
-} from 'uploadthing/types';
-
-import { generateReactHelpers } from '@uploadthing/react';
 import { toast } from 'sonner';
 import { z } from 'zod';
+
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/hooks/use-auth';
 
-export type UploadedFile<T = unknown> = ClientUploadedFileData<T>;
+export interface UploadedFile<T = unknown> {
+  key: string;
+  appUrl: string;
+  name: string;
+  size: number;
+  type: string;
+  url: string;
+  /** Marker for callers that need to know whether the URL survives a reload. */
+  ephemeral?: boolean;
+  /** Metadata blob carried for parity with the previous UploadThing return shape. */
+  serverData?: T;
+}
 
-interface UseUploadFileProps
-  extends Pick<
-    UploadFilesOptions<OurFileRouter['editorUploader']>,
-    'headers' | 'onUploadBegin' | 'onUploadProgress' | 'skipPolling'
-  > {
+interface UseUploadFileProps {
   onUploadComplete?: (file: UploadedFile) => void;
   onUploadError?: (error: unknown) => void;
 }
@@ -26,7 +37,6 @@ interface UseUploadFileProps
 export function useUploadFile({
   onUploadComplete,
   onUploadError,
-  ...props
 }: UseUploadFileProps = {}) {
   const [uploadedFile, setUploadedFile] = React.useState<UploadedFile>();
   const [uploadingFile, setUploadingFile] = React.useState<File>();
@@ -47,7 +57,6 @@ export function useUploadFile({
     if (upload.error) {
       throw new Error(upload.error.message);
     }
-    // 1-year signed URL. Cross-device reads regenerate as needed.
     const signed = await client.storage
       .from('user-files')
       .createSignedUrl(path, 60 * 60 * 24 * 365);
@@ -62,84 +71,56 @@ export function useUploadFile({
       size: file.size,
       type: file.type,
       url: signed.data.signedUrl,
-    } as UploadedFile;
+    };
   }
 
-  async function uploadThing(file: File) {
+  function buildLocalFile(file: File): UploadedFile {
+    return {
+      key: `local:${crypto.randomUUID()}`,
+      appUrl: URL.createObjectURL(file),
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      url: URL.createObjectURL(file),
+      ephemeral: true,
+    };
+  }
+
+  async function uploadFile(file: File): Promise<UploadedFile> {
     setIsUploading(true);
     setUploadingFile(file);
 
-    // Signed in → go to Supabase Storage. Falls through to the
-    // UploadThing path on any failure so the editor never breaks.
-    if (authStatus === 'signed-in' && user) {
-      try {
-        const result = await uploadToSupabaseStorage(file);
-        if (result) {
-          setUploadedFile(result);
-          onUploadComplete?.(result);
-          return result;
-        }
-      } catch (err) {
-        console.warn('[upload] Supabase Storage failed; falling back to UploadThing', err);
-        toast.error('Cloud upload failed; trying fallback…');
-      } finally {
-        // Keep loading state set; UploadThing branch will reset it.
-      }
-    }
-
     try {
-      const res = await uploadFiles('editorUploader', {
-        ...props,
-        files: [file],
-        onUploadProgress: ({ progress }) => {
-          setProgress(Math.min(progress, 100));
-        },
-      });
-
-      setUploadedFile(res[0]);
-
-      onUploadComplete?.(res[0]);
-
-      return uploadedFile;
-    } catch (error) {
-      const errorMessage = getErrorMessage(error);
-
-      const message =
-        errorMessage.length > 0
-          ? errorMessage
-          : 'Something went wrong, please try again later.';
-
-      toast.error(message);
-
-      onUploadError?.(error);
-
-      // Mock upload for unauthenticated users
-      // toast.info('User not logged in. Mocking upload process.');
-      const mockUploadedFile = {
-        key: 'mock-key-0',
-        appUrl: `https://mock-app-url.com/${file.name}`,
-        name: file.name,
-        size: file.size,
-        type: file.type,
-        url: URL.createObjectURL(file),
-      } as UploadedFile;
-
-      // Simulate upload progress
-      let progress = 0;
-
-      const simulateProgress = async () => {
-        while (progress < 100) {
-          await new Promise((resolve) => setTimeout(resolve, 50));
-          progress += 2;
-          setProgress(Math.min(progress, 100));
+      if (authStatus === 'signed-in' && user) {
+        try {
+          const result = await uploadToSupabaseStorage(file);
+          if (result) {
+            setUploadedFile(result);
+            onUploadComplete?.(result);
+            return result;
+          }
+        } catch (err) {
+          // Surface as a real error rather than silently falling through.
+          // The previous behavior masked storage misconfigurations behind
+          // an UploadThing fallback that didn't actually fix anything.
+          const message = err instanceof Error ? err.message : 'Cloud upload failed';
+          toast.error(`Upload failed: ${message}`);
+          onUploadError?.(err);
+          throw err;
         }
-      };
+      }
 
-      await simulateProgress();
-
-      setUploadedFile(mockUploadedFile);
-
-      return mockUploadedFile;
+      // Signed-out (or Supabase not configured): keep the file usable for
+      // the current session via a blob URL. Flag it as ephemeral so the
+      // editor (and any future "this won't persist" UX) can react.
+      const local = buildLocalFile(file);
+      toast.info(
+        `"${file.name}" is only stored in this session. Sign in to save it across reloads.`
+      );
+      setProgress(100);
+      setUploadedFile(local);
+      onUploadComplete?.(local);
+      return local;
     } finally {
       setProgress(0);
       setIsUploading(false);
@@ -151,30 +132,20 @@ export function useUploadFile({
     isUploading,
     progress,
     uploadedFile,
-    uploadFile: uploadThing,
+    uploadFile,
     uploadingFile,
   };
 }
 
-export const { uploadFiles, useUploadThing } =
-  generateReactHelpers<OurFileRouter>();
-
 export function getErrorMessage(err: unknown) {
   const unknownError = 'Something went wrong, please try again later.';
-
   if (err instanceof z.ZodError) {
-    const errors = err.issues.map((issue) => issue.message);
-
-    return errors.join('\n');
+    return err.issues.map((issue) => issue.message).join('\n');
   }
-  if (err instanceof Error) {
-    return err.message;
-  }
+  if (err instanceof Error) return err.message;
   return unknownError;
 }
 
 export function showErrorToast(err: unknown) {
-  const errorMessage = getErrorMessage(err);
-
-  return toast.error(errorMessage);
+  return toast.error(getErrorMessage(err));
 }
