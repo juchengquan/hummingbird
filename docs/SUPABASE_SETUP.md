@@ -1,33 +1,41 @@
 # Supabase setup guide
 
-Once-through setup to unlock the cloud-sync work waiting on
-`claude/dev-followups`. The codebase ships migrations + RLS + auth UI;
-this guide walks the manual steps that have to happen on Supabase's
-side. **15-30 minutes** end to end.
+Once-through setup for cloud sync, sharing, and the Skills system. The
+codebase already ships the migrations, RLS policies, auth UI, sync
+layer, and route handlers; this guide walks the manual steps that have
+to happen on Supabase's side. **15-30 minutes** end to end.
 
 ## What this enables
 
-Everything currently blocked on having a Supabase project:
+All of the cloud-backed features. Most of it is wired up and waiting on
+env vars:
 
-- Cloud sync of workspaces, conversations, messages, files, resources,
-  notes, and artifacts (sync layer)
-- Magic-link sign-in across devices (already wired up in
-  `components/auth/auth-dialog.tsx` — currently hidden because the env
-  vars are absent)
-- First-sign-in reconciliation (upload local state to cloud or
-  reconcile with existing cloud rows)
-- Signed-in file uploads to Supabase Storage instead of UploadThing
-  (lifts the 2 MB image cap currently baked into localStorage)
-- Eventually: real-time multi-device sync + share links
+- **Cross-device sync** of workspaces, conversations, messages, files,
+  resources, notes, artifacts, **per-workspace and per-conversation skill
+  preferences**, and the per-conversation editor document
+- **Magic-link sign-in** (`components/auth/auth-dialog.tsx`) — currently
+  hidden when env vars are absent
+- **First-sign-in reconciliation** — uploads local state to cloud on
+  empty accounts; prompts to merge or replace when there's already cloud
+  data
+- **File uploads to Supabase Storage** (`hooks/use-upload-file.ts`,
+  `lib/files/persist.ts`) — replaces the old UploadThing path
+- **Public share links** for conversations and per-conversation editor
+  docs (`/share/conversation/[token]`, `/share/document/[token]`) via
+  the service-role admin client
+- **Skills cascade** — per-workspace default + per-conversation override
+  for opt-in capabilities like Web Search
 
-The app keeps working anonymously without any of this — Supabase is
-strictly additive.
+The app keeps working anonymously without any of this — every Supabase
+integration falls back gracefully when env vars are absent.
 
 ## Prerequisites
 
 - A Supabase account (free tier is fine for development)
 - A working email address for magic-link testing
 - About 15-30 minutes
+- _Optional_ — a Tavily API key for Web Search (free tier at
+  https://tavily.com)
 
 ---
 
@@ -35,8 +43,8 @@ strictly additive.
 
 1. Go to https://supabase.com/dashboard, sign in, click **New project**.
 2. Pick an org (or create one), name the project (e.g. `hummingbird-dev`),
-   set a database password (save it somewhere — you won't need it for
-   the app's runtime, but it's used for direct Postgres access).
+   set a database password (save it — you won't need it for the app's
+   runtime, but it's used for direct Postgres access).
 3. Pick a region geographically close to you.
 4. Free tier plan. Click **Create new project** and wait ~2 minutes
    for provisioning.
@@ -46,9 +54,9 @@ this tab open — the next steps use it.
 
 ## Step 2 — Run the schema migrations
 
-Three SQL files live in the repo under `supabase/migrations/`. Run
-them in numerical order via the **SQL Editor** in the Supabase
-dashboard (left sidebar → **SQL Editor** → **New query**).
+Six SQL files live in the repo under `supabase/migrations/`. Run them
+in numerical order via the **SQL Editor** in the Supabase dashboard
+(left sidebar → **SQL Editor** → **New query**).
 
 For each file, paste the entire contents, click **Run**, confirm no
 errors:
@@ -60,18 +68,31 @@ errors:
    - Creates: `artifacts`, `notes` + indexes.
 3. `supabase/migrations/0003_rls_policies.sql`
    - Enables row-level security on every table, creates "own row"
-     policies, and installs the `on_auth_user_created` trigger that
+     policies, installs the `on_auth_user_created` trigger that
      auto-creates a profile when someone signs up.
+4. `supabase/migrations/0004_runtime_metadata.sql`
+   - Adds the runtime metadata columns the sync layer needs:
+     message `reasoning` / `error` / `attached_file_ids` /
+     `suggestions`; file extraction columns (`extraction_status`,
+     `extracted_text`, `extracted_kind`, `image_data_url`,
+     `summary`, `key_topics`); workspace `system_prompt`.
+5. `supabase/migrations/0005_shares.sql`
+   - Adds the `shares` table backing the public share-link routes,
+     plus its RLS policy ("own shares").
+6. `supabase/migrations/0006_skills.sql`
+   - Adds `skill_prefs jsonb` columns to `workspaces` and
+     `conversations` for the Skills cascade.
 
-After running all three, sanity-check from the **Table Editor**:
-all nine tables should be listed, each showing the RLS shield icon
-indicating policies are active.
+After running all six, sanity-check from the **Table Editor**: ten
+tables should be listed (`profiles`, `workspaces`, `conversations`,
+`messages`, `files`, `resources`, `artifacts`, `notes`, `shares`), each
+showing the RLS shield icon indicating policies are active.
 
 ## Step 3 — Set up the storage bucket
 
-File 4 — `supabase/storage/policies.sql` — creates the `user-files`
-bucket and the per-user folder-prefix policies that scope reads/writes
-to `user-files/{auth.uid()}/...`.
+`supabase/storage/policies.sql` creates the `user-files` bucket and the
+per-user folder-prefix policies that scope reads/writes to
+`user-files/{auth.uid()}/...`.
 
 Run it in the SQL Editor exactly like the migrations above.
 
@@ -110,18 +131,24 @@ exists and shows "Private bucket" with policies attached.
    - **Project URL** → `NEXT_PUBLIC_SUPABASE_URL`
    - **anon public** key → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
    - **service_role** key → `SUPABASE_SERVICE_ROLE_KEY`
-     - ⚠️ This one is **server-only**. Never expose it to the browser.
-       The app code in `lib/supabase/client.ts` deliberately doesn't
-       read it. The variable is reserved for the sync layer's
-       server-side admin operations (e.g. reading another user's
-       row to render a share link).
+     - ⚠️ Server-only. Never expose to the browser. Used by the share
+       link routes (`app/share/conversation/[token]/page.tsx`,
+       `app/share/document/[token]/page.tsx`) via
+       `lib/supabase/admin.ts` to resolve tokens with RLS bypassed.
 3. In the repo root, create `.env.local` if it doesn't exist:
    ```bash
    cp .env.example .env.local
    ```
-4. Paste the three values into the relevant lines. Make sure
-   `AI_GATEWAY_API_KEY` is also set if you want real chat AI to
-   work (`.env.example` documents it).
+4. Paste the three values into the relevant lines. The other env vars
+   in `.env.example`:
+   - `AI_GATEWAY_API_KEY` — required for real chat AI (Vercel AI
+     Gateway). Without it the chat panel falls back to a labeled mock
+     response.
+   - `TAVILY_API_KEY` — optional. Backs the **Web Search** skill at
+     https://tavily.com (free tier covers dev use). Without it the
+     Skills panel still surfaces Web Search but the chat route omits
+     the tool and tells the model so it falls back to its training
+     data instead of inventing a search call.
 5. Restart `bun dev` so Next.js picks up the new env vars.
 
 ## Step 6 — Verify
@@ -129,9 +156,9 @@ exists and shows "Private bucket" with policies attached.
 After restart, with localStorage cleared so you're "anonymous":
 
 1. Open http://localhost:3000/dashboard.
-2. The sidebar header now shows a **Sign in** button (`AccountMenu`
-   renders nothing when Supabase is unconfigured; presence of the
-   button is the signal that env vars resolved correctly).
+2. The sidebar header shows a **Sign in** button (`AccountMenu` renders
+   nothing when Supabase is unconfigured; presence of the button means
+   env vars resolved correctly).
 3. Click it → enter your email → click **Send magic link**.
 4. Within ~30 seconds you should receive an email from
    `noreply@mail.app.supabase.io` (or your custom domain if you set
@@ -145,37 +172,65 @@ After restart, with localStorage cleared so you're "anonymous":
    You should see one row — your account, auto-created by the
    `on_auth_user_created` trigger.
 
+### Verify sync is running
+
+7. Create a workspace and a conversation. Within a second or two:
+   ```sql
+   select id, name from public.workspaces where user_id = auth.uid();
+   select id, title, skill_prefs from public.conversations where user_id = auth.uid();
+   ```
+   Both should show your rows. `skill_prefs` should be `{}` until you
+   toggle something in the Skills panel.
+
+### Verify file uploads
+
+8. Drag a small PDF into the chat input. Check **Storage** → `user-files`
+   → there should be a row at `{your-user-id}/{file-id}.pdf`. The same
+   id appears in `public.files`:
+   ```sql
+   select id, name, storage_path, extracted_text is not null as extracted
+   from public.files where user_id = auth.uid();
+   ```
+
+### Verify a share link
+
+9. Open the conversation kebab menu → **Share…** → **Conversation** →
+   **Create link**. Copy the URL and open it in a private window —
+   it should render the messages read-only without requiring a session.
+
+### Verify Web Search (if `TAVILY_API_KEY` is set)
+
+10. Open the right activity bar → **Skills** → toggle Web search to
+    "On for chat". Ask "what happened in the news today?". You should
+    see a live **🌐 Searching the web for "…"** pill above the
+    assistant response that resolves to **🌐 Searched the web · N
+    results**. After the answer streams in, the message ends with
+    `_Searched the web: "your query"_` — that's the durable record.
+
 If anything goes wrong:
 - 401 / "unconfigured" toast → env vars not picked up; restart `bun dev`
 - Magic link goes to spam → Supabase's default SMTP is heavily
   greylisted; either whitelist the sender or configure your own SMTP
 - Redirect loop → `Site URL` and `Redirect URLs` aren't both set
   correctly under Auth → URL Configuration
+- Share link 404 → confirm `SUPABASE_SERVICE_ROLE_KEY` is set; without
+  it the admin client falls back to null and shares can't be resolved
+- Files upload but never appear in Storage → check that the
+  `user-files` bucket exists and the policies from
+  `supabase/storage/policies.sql` ran without errors
 
-## What I'll do once this is done
+## Local-mode escape hatch
 
-Tell me you're set up (or push `.env.local`'s `NEXT_PUBLIC_*` keys
-into the dev environment) and I'll start work on the **sync layer**
-on a fresh branch. The order is:
+Users can opt out of cloud sync from the AccountMenu popover even when
+Supabase is configured:
 
-1. `lib/supabase/types.ts` — generated DB types via
-   `bunx supabase gen types typescript`
-2. `lib/sync/sync-queue.ts` — in-memory FIFO of `SyncOp` objects,
-   persisted to localStorage under `hummingbird-sync-queue`, retries
-   with exponential backoff, pauses when offline
-3. `lib/sync/handlers.ts` — one handler per persisted mutator from
-   the store (workspaces, conversations, messages, files, resources,
-   notes, artifacts, document content, chat model)
-4. `lib/hooks/use-sync.ts` — diff-based store observer that
-   transforms changes into `SyncOp`s and feeds the queue
-5. **First-sign-in reconciliation** — bulk-INSERT local state on
-   empty cloud; AlertDialog choice on non-empty cloud
-6. Signed-in file uploads via `supabase.storage.from('user-files')`
-   in `hooks/use-upload-file.ts`
+- **Use local only** — pauses the sync queue entirely. Useful on shared
+  machines or when you want to scope a session to one device.
+- **Store files locally** — keeps raw file blobs in IndexedDB only; the
+  extracted text still syncs but the underlying blob doesn't touch
+  Supabase Storage. Useful when you want to stay under storage quotas.
 
-This is the heavy lift — probably 600+ lines across the layer.
-Verification needs your real Supabase project so I can confirm rows
-actually land and RLS holds. Without it I'd be coding blind.
+Both toggles persist across reloads.
 
 ## Production setup (later)
 
@@ -185,9 +240,13 @@ When you're ready to deploy to a real environment:
   migrations against it.
 - Add the production URL to the **Redirect URLs** allow-list under
   Auth → URL Configuration.
-- Set the three `NEXT_PUBLIC_SUPABASE_URL` / `_ANON_KEY` /
-  `SUPABASE_SERVICE_ROLE_KEY` vars in your deployment platform's env
-  config (Vercel project settings, etc.).
+- Set every env var in your deployment platform's config (Vercel
+  project settings, etc.):
+  - `NEXT_PUBLIC_SUPABASE_URL`
+  - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+  - `SUPABASE_SERVICE_ROLE_KEY`
+  - `AI_GATEWAY_API_KEY`
+  - `TAVILY_API_KEY` _(optional)_
 - Configure custom SMTP under **Settings** → **Auth** if magic-link
   delivery matters at scale.
 - Periodic backups: enabled by default on free tier (point-in-time
@@ -206,10 +265,17 @@ supabase start
 
 This boots Postgres + Auth + Storage + Studio at `localhost:54321` /
 `localhost:54323` with deterministic anon/service-role keys you can
-use in `.env.local`. The migrations under `supabase/migrations/` will
+use in `.env.local`. The migrations under `supabase/migrations/`
 auto-apply.
 
 Trade-off: faster iteration, but you can't test multi-device sync
 without exposing the local stack. Recommend starting with the cloud
 path above and switching to local later if you find yourself wanting
 faster reset cycles.
+
+## Re-running on an existing project
+
+Every migration is idempotent (`create table if not exists`,
+`add column if not exists`, etc.) so you can re-run all six against an
+already-provisioned project without dropping anything. New migrations
+(when added) just need to be run once; older ones become no-ops.
