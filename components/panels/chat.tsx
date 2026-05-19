@@ -699,7 +699,7 @@ export function ChatPanel() {
                 ))}
               </SelectContent>
             </Select>
-            <span className="text-xs text-[var(--muted-foreground)] italic">
+            <span className="hidden sm:inline text-xs text-[var(--muted-foreground)] italic">
               AI is not a silver bullet!
             </span>
           </div>

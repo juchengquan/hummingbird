@@ -11,6 +11,7 @@ import {
   Copy,
   Check,
   X,
+  PanelRight,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -31,6 +32,7 @@ import {
   safeFilename,
 } from "@/lib/export"
 import { ConversationSummaryDialog } from "@/components/conversation-summary-dialog"
+import { ResourcesMobileDrawer } from "@/components/sidebars/resources-mobile-drawer"
 import { cn } from "@/lib/utils"
 
 /**
@@ -54,6 +56,7 @@ export function ChatHeader() {
   const [renaming, setRenaming] = useState(false)
   const [draftTitle, setDraftTitle] = useState("")
   const [summaryOpen, setSummaryOpen] = useState(false)
+  const [mobileResourcesOpen, setMobileResourcesOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -174,6 +177,18 @@ export function ChatHeader() {
 
         {/* Actions */}
         {!renaming && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setMobileResourcesOpen(true)}
+            className="h-7 w-7 shrink-0 text-[var(--muted-foreground)] lg:hidden"
+            aria-label="Open resources panel"
+            title="Resources"
+          >
+            <PanelRight size={14} />
+          </Button>
+        )}
+        {!renaming && (
           <Popover open={menuOpen} onOpenChange={setMenuOpen}>
             <PopoverTrigger asChild>
               <Button
@@ -234,6 +249,10 @@ export function ChatHeader() {
       <ConversationSummaryDialog
         conversation={summaryOpen ? conversation : null}
         onClose={() => setSummaryOpen(false)}
+      />
+      <ResourcesMobileDrawer
+        open={mobileResourcesOpen}
+        onOpenChange={setMobileResourcesOpen}
       />
     </>
   )
