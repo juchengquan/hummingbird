@@ -481,6 +481,10 @@ Three small UX wins that close gaps surfaced during the Skills work:
 - Conversation graph view — Branches dialog showing the fork tree
   rooted at the topmost ancestor (`5666f0b`, migration `0009`); first
   item ticked off the BACKLOG
+- Annotated PDF viewer — sheet from the right with pdfjs-dist; `[p.N]`
+  citation markers in assistant messages become clickable pills that
+  open the viewer at that page (`a1fcc45`); second item ticked off the
+  BACKLOG
 - Plate doc updated: `docs/SUPABASE_SETUP.md` covers migrations `0001`–
   `0008` + storage + Tavily env (commit `38b7a98`, refreshed `3ff1cab`)
 

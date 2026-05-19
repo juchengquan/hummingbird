@@ -134,24 +134,19 @@ change anything else.
 
 ---
 
-## Annotated PDF viewer
+## ~~Annotated PDF viewer~~ ✅ shipped (`a1fcc45`)
 
-**Why distinctive.** For attached PDFs, render alongside the chat with
-the model's citations highlighted. Builds on the file-extraction
-pipeline already in place; the leap is *showing* the PDF instead of
-just extracting text.
+Sheet from the right edge rendering the PDF via pdfjs-dist (legacy
+build, worker inline). Toolbar: page nav, zoom (50–300%), close.
+`[p.N]` citation markers in assistant messages become clickable pills
+that open the viewer at that page; the cited PDF is resolved per
+assistant message by walking back to the nearest user message with a
+PDF in `attachedFileIds`. System prompt instructs the model to cite
+pages when any attached file's kind is 'pdf'.
 
-**Sketch.** When the user clicks an attached PDF in the resources tab,
-opens a side-by-side viewer (PDF on left via `pdfjs-dist`, chat on
-right). When the model references a page or section in its reply, the
-viewer auto-scrolls and highlights. Requires the model to cite page
-numbers — driven by a system-prompt addition when a PDF is attached.
-
-**Builds on.** PDF extraction (`app/api/extract/route.ts`), file
-availability (`useFileAvailability`), conversation file attachment.
-
-**Effort.** Medium-large (~400–500 lines). `pdfjs-dist` is already in
-the bundle for extraction.
+Stretch items not yet shipped: text highlighting within the page,
+side-by-side layout option, multi-PDF disambiguation (citation
+`[file.pdf, p.4]`).
 
 ---
 
