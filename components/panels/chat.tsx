@@ -839,6 +839,24 @@ export function ChatPanel() {
                   // message — older ones would just be clutter.
                   const lastAssistantId =
                     [...messages].reverse().find((m) => m.role === "assistant" && !m.error)?.id ?? null
+                  // Resolve the cited PDF for each assistant message by walking
+                  // backward through history to the nearest user message with
+                  // a PDF attachment. Cached per render via a single sweep.
+                  const pdfByMessage = new Map<string, string>()
+                  let currentPdfId: string | undefined
+                  for (const m of messages) {
+                    if (m.role === "user" && m.attachedFileIds) {
+                      const firstPdf = m.attachedFileIds
+                        .map((id) => files.find((f) => f.id === id))
+                        .find(
+                          (f) =>
+                            !!f && (f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"))
+                        )
+                      if (firstPdf) currentPdfId = firstPdf.id
+                    } else if (m.role === "assistant" && currentPdfId) {
+                      pdfByMessage.set(m.id, currentPdfId)
+                    }
+                  }
                   return messages.map((message, index) => (
                     <ChatMessage
                       key={message.id}
@@ -846,6 +864,7 @@ export function ChatPanel() {
                       index={index}
                       isLastAssistant={message.id === lastAssistantId}
                       liveToolCalls={liveToolCalls[message.id]}
+                      pdfCitationFileId={pdfByMessage.get(message.id)}
                       onDelete={deleteMessage}
                       onEditUserMessage={handleEditUserMessage}
                       onRegenerateAssistantMessage={handleRegenerateAssistantMessage}

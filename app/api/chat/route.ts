@@ -76,9 +76,16 @@ function buildSystemPrompt(
   let prompt = base
   let used = 0
 
+  const pdfNames = withText.filter((f) => f.kind === 'pdf').map((f) => f.name)
+
   if (withText.length > 0) {
     prompt +=
       '\n\nThe user has attached these files. Their extracted text follows. Treat them as authoritative context for any question that references them.'
+    if (pdfNames.length > 0) {
+      prompt +=
+        ' When you reference content from a PDF, cite the page number inline using the marker `[p.N]` (e.g. "the discount applies after 30 days [p.4]"). The user can click these markers to open the PDF at that page.' +
+        ` PDFs attached: ${pdfNames.map((n) => `"${n}"`).join(', ')}.`
+    }
     for (const f of withText) {
       const truncatedNote = f.truncated ? ' (per-file truncated at extraction)' : ''
       const kindNote = f.kind ? ` (${f.kind})` : ''

@@ -8,6 +8,7 @@ import { ChatPanel } from "@/components/panels/chat"
 import { ResourcePanel } from "@/components/panels/sources"
 import { WorkspacesPanel } from "@/components/panels/workspaces"
 import { CommandPalette } from "@/components/command-palette"
+import { PdfViewerHost } from "@/components/pdf-viewer/pdf-viewer"
 import {
   SidebarInset,
   SidebarProvider,
@@ -87,6 +88,7 @@ export default function Page() {
       <AppSidebar />
       <MainArea />
       <CommandPalette />
+      <PdfViewerHost />
       <Toaster />
     </SidebarProvider>
   )

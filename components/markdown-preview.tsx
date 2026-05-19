@@ -1,8 +1,9 @@
 "use client"
 
-import { useMemo } from "react"
+import { useCallback, useMemo, useRef } from "react"
 import { marked } from "marked"
 import { cn } from "@/lib/utils"
+import { usePdfViewer } from "@/components/pdf-viewer/types"
 import "./markdown-preview.css"
 
 /**
@@ -21,6 +22,26 @@ import "./markdown-preview.css"
 interface MarkdownPreviewProps {
   content: string
   className?: string
+  /**
+   * When set, `[p.N]` markers in the rendered text become clickable
+   * buttons that open the PDF viewer for this file at page N.
+   * Resolved by the caller from the message's attached files.
+   */
+  pdfCitationFileId?: string
+}
+
+const CITATION_RE = /\[p\.(\d+)\]/g
+
+function decorateCitations(html: string, fileId: string): string {
+  return html.replace(
+    CITATION_RE,
+    (_, page) =>
+      `<button type="button" class="pdf-citation" data-citation-file="${escapeAttr(fileId)}" data-citation-page="${page}">[p.${page}]</button>`
+  )
+}
+
+function escapeAttr(value: string): string {
+  return value.replace(/"/g, "&quot;")
 }
 
 // Configure once, module-level. Setting `gfm: true` enables tables and
@@ -42,15 +63,36 @@ marked.use({
   },
 })
 
-export function MarkdownPreview({ content, className }: MarkdownPreviewProps) {
+export function MarkdownPreview({ content, className, pdfCitationFileId }: MarkdownPreviewProps) {
+  const openPdfViewer = usePdfViewer((s) => s.open)
+  const containerRef = useRef<HTMLDivElement>(null)
+
   const html = useMemo(() => {
     try {
       const out = marked.parse(content, { async: false })
-      return typeof out === "string" ? out : ""
+      const raw = typeof out === "string" ? out : ""
+      return pdfCitationFileId ? decorateCitations(raw, pdfCitationFileId) : raw
     } catch {
       return ""
     }
-  }, [content])
+  }, [content, pdfCitationFileId])
+
+  // Event-delegated click handler for citation buttons. Lives on the
+  // container so it stays attached across re-renders without React owning
+  // each citation as its own element.
+  const handleClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const target = (e.target as HTMLElement).closest<HTMLElement>("button.pdf-citation")
+      if (!target) return
+      const fileId = target.dataset.citationFile
+      const page = Number(target.dataset.citationPage)
+      if (!fileId || !Number.isFinite(page)) return
+      e.preventDefault()
+      e.stopPropagation()
+      openPdfViewer({ fileId, page })
+    },
+    [openPdfViewer]
+  )
 
   if (!html) {
     return (
@@ -62,6 +104,8 @@ export function MarkdownPreview({ content, className }: MarkdownPreviewProps) {
 
   return (
     <div
+      ref={containerRef}
+      onClick={handleClick}
       className={cn("markdown-preview text-sm p-3 overflow-auto", className)}
       dangerouslySetInnerHTML={{ __html: html }}
     />

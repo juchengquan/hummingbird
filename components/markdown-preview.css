@@ -130,3 +130,29 @@
 .markdown-chat-bubble.markdown-preview blockquote {
   border-left-color: color-mix(in oklab, var(--border) 60%, var(--foreground) 40%);
 }
+
+/* PDF citation buttons inlined in assistant messages. Renders as a
+   compact pill that the user can click to open the cited page in the
+   PDF viewer. Styled to look like a clickable footnote marker rather
+   than a heavy button. */
+.markdown-preview button.pdf-citation {
+  display: inline;
+  margin: 0 0.05em;
+  padding: 0 0.3em;
+  font-size: 0.85em;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  color: var(--primary);
+  background: color-mix(in oklab, var(--primary) 12%, transparent);
+  border: 1px solid color-mix(in oklab, var(--primary) 35%, transparent);
+  border-radius: 0.25rem;
+  cursor: pointer;
+  transition: background-color 0.12s, border-color 0.12s;
+}
+.markdown-preview button.pdf-citation:hover {
+  background: color-mix(in oklab, var(--primary) 22%, transparent);
+  border-color: color-mix(in oklab, var(--primary) 60%, transparent);
+}
+.markdown-preview button.pdf-citation:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}

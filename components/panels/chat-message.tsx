@@ -146,6 +146,8 @@ interface ChatMessageProps {
   onPickSuggestion?: (text: string) => void
   /** Live tool-call pills rendered above the assistant text during a stream. Cleared on `done`. */
   liveToolCalls?: LiveToolCall[]
+  /** Resolved by the parent: the PDF this assistant message is citing via `[p.N]` markers. */
+  pdfCitationFileId?: string
 }
 
 /**
@@ -325,6 +327,7 @@ export function ChatMessage({
   onTryFallback,
   onPickSuggestion,
   liveToolCalls,
+  pdfCitationFileId,
 }: ChatMessageProps) {
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState(message.content)
@@ -564,6 +567,7 @@ export function ChatMessage({
                   <MarkdownPreview
                     content={message.content}
                     className="markdown-chat-bubble text-sm p-0 overflow-visible"
+                    pdfCitationFileId={pdfCitationFileId}
                   />
                 ) : (
                   <p className="text-sm whitespace-pre-wrap">{message.content}</p>
