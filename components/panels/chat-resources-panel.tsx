@@ -16,8 +16,7 @@ import { runExtraction } from "@/lib/extract"
 import { persistFile } from "@/lib/files/persist"
 import { NotesTab } from "@/components/panels/notes-tab"
 import { ArtifactsTab } from "@/components/panels/artifacts-tab"
-import { ExtractionStatusBadge } from "@/components/panels/extraction-status-badge"
-import { FileAvailabilityBadge } from "@/components/panels/file-availability-badge"
+import { FileRowMeta } from "@/components/panels/file-row-meta"
 
 export function ChatResourcesPanel() {
   const activeWorkspaceId = useStore((s) => s.activeWorkspaceId)
@@ -202,13 +201,23 @@ function FilesTabBody({
               const attached = selectedFileIds.includes(file.id)
               return (
                 <li key={file.id}>
-                  <button
-                    type="button"
+                  {/* Outer is a div (not button) so the Re-extract button
+                      inside FileRowMeta can nest without invalid HTML. The
+                      role + keyboard handler restore button semantics. */}
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => toggleFileSelection(file.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault()
+                        toggleFileSelection(file.id)
+                      }
+                    }}
                     aria-pressed={attached}
                     title={file.name}
                     className={cn(
-                      "w-full flex items-start gap-2 px-2 py-1.5 rounded-md text-left transition-colors",
+                      "w-full flex items-start gap-2 px-2 py-1.5 rounded-md text-left transition-colors cursor-pointer",
                       "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
                       attached
                         ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/40"
@@ -243,8 +252,7 @@ function FilesTabBody({
                             <> · {format(new Date(file.uploadedAt), "MMM d, yyyy")}</>
                           )}
                         </span>
-                        <ExtractionStatusBadge file={file} />
-                        <FileAvailabilityBadge file={file} />
+                        <FileRowMeta file={file} />
                       </div>
                       {file.keyTopics && file.keyTopics.length > 0 && (
                         <div
@@ -255,7 +263,7 @@ function FilesTabBody({
                         </div>
                       )}
                     </div>
-                  </button>
+                  </div>
                 </li>
               )
             })}
