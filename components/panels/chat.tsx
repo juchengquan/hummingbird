@@ -19,6 +19,8 @@ import { ResourcesSidebar } from "@/components/sidebars/resources"
 import { ActiveSkillsChips } from "@/components/skills/active-chips"
 import { SKILLS } from "@/lib/skills/registry"
 import { resolveSkill, type SkillId } from "@/lib/skills/types"
+import { SmartPasteChip } from "@/components/chat/smart-paste-chip"
+import { detectPasteKind, type PasteDetection } from "@/lib/smart-paste/detect"
 import { ChatHeader } from "@/components/panels/chat-header"
 import { ChatMessage } from "@/components/panels/chat-message"
 import { EmptyChatWelcome } from "@/components/panels/empty-chat-welcome"
@@ -101,6 +103,13 @@ export function ChatPanel() {
       return next
     })
   }, [])
+
+  /**
+   * Smart-paste chip detection. Lives in component state because it's
+   * a per-input ephemeral hint — never persists, clears on send or when
+   * the input edits away from the detected snippet.
+   */
+  const [pasteDetection, setPasteDetection] = useState<PasteDetection | null>(null)
 
   const [liveToolCalls, setLiveToolCalls] = useState<
     Record<string, LiveToolCall[]>
@@ -623,6 +632,7 @@ export function ChatPanel() {
     setInputValue("")
     // Per-message skill mutes were for this one send — reset.
     if (mutedSkillsForNext.size > 0) setMutedSkillsForNext(new Set())
+    if (pasteDetection) setPasteDetection(null)
 
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto"
@@ -729,10 +739,49 @@ export function ChatPanel() {
 
   // Auto-resize textarea
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInputValue(e.target.value)
+    const next = e.target.value
+    setInputValue(next)
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto"
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 150)}px`
+    }
+    // Auto-dismiss the smart-paste chip if the user has edited the input
+    // enough that the originally-pasted snippet is no longer present.
+    if (pasteDetection && !next.includes(pasteDetection.snippet.slice(0, 80))) {
+      setPasteDetection(null)
+    }
+  }
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const pasted = e.clipboardData.getData("text")
+    if (!pasted) return
+    // Only show the chip when the paste *is* the input (or close to it).
+    // If the user is pasting into an existing draft, the chip's "replace
+    // input" semantics would be surprising — bail in that case.
+    const ta = e.currentTarget
+    const existing = ta.value.trim()
+    if (existing.length > 0 && !pasted.includes(existing) && !existing.includes(pasted.slice(0, 40))) {
+      return
+    }
+    const detection = detectPasteKind(pasted)
+    if (detection) {
+      setPasteDetection(detection)
+    }
+  }
+
+  const applyPasteAction = (prompt: string) => {
+    setInputValue(prompt)
+    setPasteDetection(null)
+    if (textareaRef.current) {
+      // Refocus and resize after the state has flushed.
+      requestAnimationFrame(() => {
+        const ta = textareaRef.current
+        if (!ta) return
+        ta.focus()
+        ta.style.height = "auto"
+        ta.style.height = `${Math.min(ta.scrollHeight, 150)}px`
+        ta.selectionStart = ta.selectionEnd = ta.value.length
+      })
     }
   }
 
@@ -854,6 +903,15 @@ export function ChatPanel() {
             mutedForNext={mutedSkillsForNext}
             onToggleMuted={toggleMutedSkillForNext}
           />
+          {pasteDetection && (
+            <div className="max-w-4xl mx-auto px-1 pb-1">
+              <SmartPasteChip
+                detection={pasteDetection}
+                onApply={applyPasteAction}
+                onDismiss={() => setPasteDetection(null)}
+              />
+            </div>
+          )}
           <InputGroup className="max-w-4xl mx-auto rounded-[1vw] bg-background">
             <InputGroupButton
               size="icon-sm"
@@ -869,6 +927,7 @@ export function ChatPanel() {
               value={inputValue}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
               placeholder="Ask me anything!"
               rows={1}
               className="min-h-[44px] max-h-[160px] m-2 transition-all focus:outline-none focus:ring-2 focus:ring-primary/30"
