@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
+// Radix ScrollArea nests the actual scrollable element a few levels
+// deep — `onScroll` on the root never fires. Every interaction goes
+// through this selector to find the real viewport at runtime.
+const VIEWPORT_SELECTOR = '[data-slot="scroll-area-viewport"]'
+
 /**
  * Auto-scroll + scroll-to-bottom UX for the chat panel's Radix ScrollArea.
  *
@@ -41,9 +46,7 @@ export function useChatScroll(options: {
   useEffect(() => {
     const end = messagesEndRef.current
     if (!end) return
-    const viewport = end.closest(
-      '[data-slot="scroll-area-viewport"]'
-    ) as HTMLElement | null
+    const viewport = end.closest(VIEWPORT_SELECTOR) as HTMLElement | null
     if (viewport) {
       viewport.scrollTop = viewport.scrollHeight
     }
@@ -56,9 +59,7 @@ export function useChatScroll(options: {
   useEffect(() => {
     const end = messagesEndRef.current
     if (!end) return
-    const viewport = end.closest(
-      '[data-slot="scroll-area-viewport"]'
-    ) as HTMLElement | null
+    const viewport = end.closest(VIEWPORT_SELECTOR) as HTMLElement | null
     if (!viewport) return
     const handler = () => {
       if (autoScrollingRef.current) return
@@ -74,9 +75,7 @@ export function useChatScroll(options: {
   const scrollToBottom = useCallback(() => {
     const end = messagesEndRef.current
     if (!end) return
-    const viewport = end.closest(
-      '[data-slot="scroll-area-viewport"]'
-    ) as HTMLElement | null
+    const viewport = end.closest(VIEWPORT_SELECTOR) as HTMLElement | null
     if (!viewport) return
     autoScrollingRef.current = true
     setShowScrollButton(false)
