@@ -88,27 +88,35 @@ export function ResourcesSidebar() {
     <aside
       data-state={open ? "expanded" : "collapsed"}
       className={cn(
-        "hidden lg:flex flex-row h-full min-h-0 shrink-0 border-l border-[var(--border)] bg-[var(--background)]/60",
-        "transition-[width] duration-200 ease-out",
-        open ? "w-80" : RAIL_WIDTH_CLASS
+        "hidden lg:flex flex-row h-full min-h-0 shrink-0 bg-[var(--background)]/60"
       )}
     >
-      {/* Content panel — slides in to the LEFT of the icon bar when open */}
-      {open && (
-        <div
-          className={cn(
-            "flex flex-col h-full min-h-0 shrink-0 border-r border-[var(--border)]",
-            CONTENT_WIDTH_CLASS
-          )}
-        >
-          <ChatResourcesPanel />
-        </div>
-      )}
-
-      {/* Activity bar — always rendered, pinned to the right viewport edge */}
+      {/* Content panel — its WIDTH animates 0 ↔ 272px so the activity bar
+          stays anchored at the viewport's right edge. The inner panel keeps
+          a fixed width so its layout doesn't reflow mid-transition; overflow
+          on the outer wrapper clips it cleanly. Border lives on the left so
+          it slides in with the panel rather than reappearing late. */}
       <div
         className={cn(
-          "flex flex-col items-center gap-1 py-2 shrink-0",
+          "h-full min-h-0 shrink-0 overflow-hidden",
+          "transition-[width] duration-200 ease-out",
+          open
+            ? cn(CONTENT_WIDTH_CLASS, "border-l border-[var(--border)]")
+            : "w-0 border-l-0"
+        )}
+        aria-hidden={!open}
+      >
+        <div className={cn("flex flex-col h-full min-h-0", CONTENT_WIDTH_CLASS)}>
+          <ChatResourcesPanel />
+        </div>
+      </div>
+
+      {/* Activity bar — always rendered at fixed width; its position never
+          changes when the content panel expands or collapses. The left
+          border anchors it visually whether or not the content is open. */}
+      <div
+        className={cn(
+          "flex flex-col items-center gap-1 py-2 shrink-0 border-l border-[var(--border)]",
           RAIL_WIDTH_CLASS
         )}
       >
