@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import type { UploadedFile, Workspace, Resource, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind } from '@/lib/types'
+import type { UploadedFile, Workspace, Resource, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind, ToolCallRecord } from '@/lib/types'
 import { DEFAULT_CHAT_MODEL } from '@/lib/models'
 import { deleteBlob as deleteLocalBlob, clearAll as clearLocalBlobs } from '@/lib/files/local-store'
 
-export type { UploadedFile, Workspace, Resource, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind } from '@/lib/types'
+export type { UploadedFile, Workspace, Resource, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind, ToolCallRecord } from '@/lib/types'
 
 type Theme = 'system' | 'dark' | 'light'
 
@@ -191,6 +191,14 @@ interface AppState {
 
   // Conversation actions
   createConversation: (workspaceId?: string) => Conversation
+  /**
+   * Branch a conversation at a specific message. Returns a new conversation
+   * that contains a copy of every message up to and including `untilMessageId`,
+   * inherits the source's workspace + selected files + document content +
+   * skill prefs, and is set as active. Messages get fresh ids so the two
+   * threads can diverge independently.
+   */
+  forkConversation: (conversationId: string, untilMessageId: string) => Conversation | null
   deleteConversation: (conversationId: string) => void
   renameConversation: (conversationId: string, title: string) => void
   /** Set a conversation skill override. `null` clears the entry (falls back to workspace default). */
@@ -214,6 +222,7 @@ interface AppState {
   appendToMessage: (messageId: string, chunk: string) => void
   appendToMessageReasoning: (messageId: string, chunk: string) => void
   setMessageReasoningDuration: (messageId: string, durationMs: number) => void
+  setMessageToolCalls: (messageId: string, toolCalls: ToolCallRecord[]) => void
   setMessageSuggestions: (messageId: string, suggestions: string[]) => void
   setMessageError: (messageId: string, error: MessageError) => void
   clearMessageError: (messageId: string) => void
@@ -510,6 +519,37 @@ export const useStore = create<AppState>()(
         }))
         return newConversation
       },
+      forkConversation: (conversationId, untilMessageId) => {
+        const source = get().conversations.find((c) => c.id === conversationId)
+        if (!source) return null
+        const idx = source.messages.findIndex((m) => m.id === untilMessageId)
+        if (idx === -1) return null
+        const slice = source.messages.slice(0, idx + 1)
+        // Re-id messages so edits to either branch don't bleed across.
+        // Keep timestamps + content + reasoning + attachments intact so
+        // the fork reads as a faithful copy of the past.
+        const copiedMessages: Message[] = slice.map((m) => ({
+          ...m,
+          id: crypto.randomUUID(),
+        }))
+        const fork: Conversation = {
+          id: crypto.randomUUID(),
+          workspaceId: source.workspaceId,
+          title: `${source.title} (branch)`,
+          messages: copiedMessages,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          pinned: false,
+          selectedFileIds: [...source.selectedFileIds],
+          documentContent: source.documentContent,
+          skillPrefs: source.skillPrefs ? { ...source.skillPrefs } : undefined,
+        }
+        set((state) => ({
+          conversations: [fork, ...state.conversations],
+          activeConversationId: fork.id,
+        }))
+        return fork
+      },
       deleteConversation: (conversationId: string) =>
         set((state) => {
           const newConversations = state.conversations.filter(
@@ -698,6 +738,22 @@ export const useStore = create<AppState>()(
                 messages: c.messages.map((m) =>
                   m.id === messageId
                     ? { ...m, reasoningDurationMs: durationMs }
+                    : m
+                ),
+              }
+            }
+            return c
+          }),
+        })),
+      setMessageToolCalls: (messageId, toolCalls) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id === state.activeConversationId) {
+              return {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === messageId
+                    ? { ...m, toolCalls: toolCalls.length > 0 ? toolCalls : undefined }
                     : m
                 ),
               }

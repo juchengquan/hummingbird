@@ -123,6 +123,7 @@ export interface Database {
           reasoning: string | null
           reasoning_duration_ms: number | null
           error: Json | null
+          tool_calls: Json | null
           attached_file_ids: string[]
           suggestions: string[]
           created_at: string
@@ -137,6 +138,7 @@ export interface Database {
           reasoning?: string | null
           reasoning_duration_ms?: number | null
           error?: Json | null
+          tool_calls?: Json | null
           attached_file_ids?: string[]
           suggestions?: string[]
           created_at?: string
@@ -151,6 +153,7 @@ export interface Database {
           reasoning?: string | null
           reasoning_duration_ms?: number | null
           error?: Json | null
+          tool_calls?: Json | null
           attached_file_ids?: string[]
           suggestions?: string[]
           created_at?: string

@@ -102,6 +102,21 @@ export interface Message {
    */
   reasoningDurationMs?: number
   /**
+   * Durable record of every tool the model invoked while producing this
+   * message — web search queries, code execution, image gen, etc. Each
+   * entry has a stable id, the tool name, a short summary (e.g. "5
+   * results"), and an optional input snippet (e.g. the search query).
+   *
+   * Lives on the message because:
+   *   1. The chat panel's transient `liveToolCalls` state clears on
+   *      stream `done`, so we'd lose the indicator on reload.
+   *   2. The previous "markdown footer" approach polluted the message
+   *      text and didn't render as a pill.
+   *
+   * Empty array is omitted on the wire / persistence.
+   */
+  toolCalls?: ToolCallRecord[]
+  /**
    * Snapshot of which workspace files were attached when this message was
    * sent. Lives on the message (not the conversation) so the visual record
    * survives later changes to the conversation's selection or file deletion.
@@ -115,6 +130,15 @@ export interface Message {
    * or edit-and-resend.
    */
   suggestions?: string[]
+}
+
+export interface ToolCallRecord {
+  id: string
+  name: string
+  /** Short user-facing snippet from the input (e.g. the search query). */
+  argsLabel?: string
+  /** One-line result summary (e.g. "5 results" or "Search failed"). */
+  summary?: string
 }
 
 export interface Conversation {

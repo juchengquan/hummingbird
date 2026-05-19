@@ -328,19 +328,12 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          // If the model used web search, append a persistent footer to the
-          // assistant message so the record survives reload. The live
-          // tool_call / tool_result UI is transient — this footer is the
-          // durable bit. Streamed as a final text delta so the client's
-          // existing append logic captures it.
-          if (!sawError && webSearchLog.length > 0) {
-            const queries = webSearchLog
-              .map((entry) => `"${entry.query.replace(/"/g, "'")}"`)
-              .join(', ')
-            const footer = `\n\n_Searched the web: ${queries}_`
-            assistantText += footer
-            send({ type: 'text', value: footer })
-          }
+          // The previous markdown footer is now superseded by the
+          // first-class tool_calls record on the message — the client
+          // collects tool_call / tool_result frames and persists them
+          // on the message via setMessageToolCalls. Keeps the message
+          // text clean (Copy / Export don't include the footer) and
+          // lets us render the pretty pill on reload.
 
           // Best-effort follow-up suggestions. Only when the stream produced
           // a real answer (skip on error / aborted / empty). Runs after the

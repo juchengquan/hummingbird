@@ -195,6 +195,8 @@ function diffMessages(
           reasoning_duration_ms: m.reasoningDurationMs ?? null,
           // MessageError is a structured object; store as JSONB (null when absent).
           error: m.error ?? null,
+          // Same JSONB shape for tool_calls — array of small records.
+          tool_calls: m.toolCalls ?? null,
           attached_file_ids: m.attachedFileIds ?? [],
           suggestions: m.suggestions ?? [],
           created_at: toISO(m.timestamp),
@@ -223,6 +225,7 @@ function messageEquals(a: Message, b: Message): boolean {
     (a.reasoning ?? null) === (b.reasoning ?? null) &&
     (a.reasoningDurationMs ?? null) === (b.reasoningDurationMs ?? null) &&
     JSON.stringify(a.error ?? null) === JSON.stringify(b.error ?? null) &&
+    JSON.stringify(a.toolCalls ?? null) === JSON.stringify(b.toolCalls ?? null) &&
     sameStringArray(a.attachedFileIds ?? [], b.attachedFileIds ?? []) &&
     sameStringArray(a.suggestions ?? [], b.suggestions ?? []) &&
     sameInstant(a.timestamp, b.timestamp)

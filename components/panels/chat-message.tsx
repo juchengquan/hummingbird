@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react"
 import type { Message, MessageError } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { Copy, Pencil, Trash2, RotateCcw, Check, X, Bookmark, AlertTriangle, ChevronDown, Archive, Send } from "lucide-react"
+import { Copy, Pencil, Trash2, RotateCcw, Check, X, Bookmark, AlertTriangle, ChevronDown, Archive, Send, GitBranch } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { copyText } from "@/lib/export"
@@ -137,6 +137,8 @@ interface ChatMessageProps {
   onDelete: (messageId: string) => void
   onEditUserMessage: (messageId: string, newContent: string) => void
   onRegenerateAssistantMessage: (messageId: string) => void
+  /** Branch the conversation at this message — creates a sibling chat starting from this point. */
+  onForkFromMessage?: (messageId: string) => void
   onRetryError?: (messageId: string) => void
   onChangeModel?: (messageId?: string) => void
   /** Retry with a different model in one click. Wired by chat.tsx for invalid_model / provider errors. */
@@ -317,6 +319,7 @@ export function ChatMessage({
   onDelete,
   onEditUserMessage,
   onRegenerateAssistantMessage,
+  onForkFromMessage,
   onRetryError,
   onChangeModel,
   onTryFallback,
@@ -542,9 +545,21 @@ export function ChatMessage({
                     durationMs={message.reasoningDurationMs}
                   />
                 )}
-                {!isUser && liveToolCalls && liveToolCalls.length > 0 && (
-                  <ToolCallStrip calls={liveToolCalls} />
-                )}
+                {!isUser && (liveToolCalls?.length || message.toolCalls?.length) ? (
+                  <ToolCallStrip
+                    calls={
+                      liveToolCalls && liveToolCalls.length > 0
+                        ? liveToolCalls
+                        : (message.toolCalls ?? []).map((t) => ({
+                            id: t.id,
+                            name: t.name,
+                            argsLabel: t.argsLabel,
+                            summary: t.summary,
+                            status: "done" as const,
+                          }))
+                    }
+                  />
+                ) : null}
                 {!isUser && message.content ? (
                   <MarkdownPreview
                     content={message.content}
@@ -645,6 +660,18 @@ export function ChatMessage({
                   >
                     <RotateCcw size={14} />
                   </Button>
+                  {onForkFromMessage && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => onForkFromMessage(message.id)}
+                      className="h-7 w-7"
+                      aria-label="Branch from here"
+                      title="Branch from here — start a new chat copied up to this message"
+                    >
+                      <GitBranch size={14} />
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="icon"

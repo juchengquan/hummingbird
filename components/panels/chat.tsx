@@ -18,7 +18,7 @@ import {
 import { ResourcesSidebar } from "@/components/sidebars/resources"
 import { ActiveSkillsChips } from "@/components/skills/active-chips"
 import { SKILLS } from "@/lib/skills/registry"
-import { resolveSkill } from "@/lib/skills/types"
+import { resolveSkill, type SkillId } from "@/lib/skills/types"
 import { ChatHeader } from "@/components/panels/chat-header"
 import { ChatMessage } from "@/components/panels/chat-message"
 import { EmptyChatWelcome } from "@/components/panels/empty-chat-welcome"
@@ -53,6 +53,7 @@ export function ChatPanel() {
   const setMessageError = useStore((state) => state.setMessageError)
   const setMessageSuggestions = useStore((state) => state.setMessageSuggestions)
   const setMessageReasoningDuration = useStore((state) => state.setMessageReasoningDuration)
+  const setMessageToolCalls = useStore((state) => state.setMessageToolCalls)
   const isTyping = useStore((state) => state.isTyping)
   const setIsTyping = useStore((state) => state.setIsTyping)
   const chatModel = useStore((state) => state.chatModel)
@@ -84,6 +85,23 @@ export function ChatPanel() {
    * `done`. The durable record lives in the message text (markdown footer
    * appended by the server).
    */
+  /**
+   * Per-message skill mute. Skills the user clicked × on for the next
+   * send only. Cleared on send (handleSendMessage) so the next turn
+   * resets to the conversation/workspace effective set.
+   */
+  const [mutedSkillsForNext, setMutedSkillsForNext] = useState<Set<SkillId>>(
+    () => new Set()
+  )
+  const toggleMutedSkillForNext = useCallback((id: SkillId) => {
+    setMutedSkillsForNext((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
   const [liveToolCalls, setLiveToolCalls] = useState<
     Record<string, LiveToolCall[]>
   >({})
@@ -199,8 +217,12 @@ export function ChatPanel() {
       const workspaceSystemPrompt = activeWorkspace?.systemPrompt?.trim() || undefined
       // Resolve which skills are effectively on for this turn so the route
       // knows which tools to register.
-      const enabledSkills = SKILLS.filter((s) =>
-        resolveSkill(s, activeWorkspace?.skillPrefs, conv?.skillPrefs)
+      // Effective set = workspace/conversation cascade minus any skills
+      // the user muted for this one send via the chip × button.
+      const enabledSkills = SKILLS.filter(
+        (s) =>
+          resolveSkill(s, activeWorkspace?.skillPrefs, conv?.skillPrefs) &&
+          !mutedSkillsForNext.has(s.id)
       ).map((s) => ({ id: s.id }))
       const attachedFiles =
         conv?.selectedFileIds
@@ -434,6 +456,21 @@ export function ChatPanel() {
               Math.max(0, reasoningLast - reasoningStart)
             )
           }
+          // Flush the live tool-call buffer onto the message so the pill
+          // survives reload. We drop the in-flight (running) entries: a
+          // tool that never returned doesn't belong in the durable record.
+          const liveSnapshot = liveToolCalls[ph.id] ?? []
+          const persisted = liveSnapshot
+            .filter((t) => t.status === "done")
+            .map(({ id, name, argsLabel, summary }) => ({
+              id,
+              name,
+              argsLabel,
+              summary,
+            }))
+          if (persisted.length > 0) {
+            setMessageToolCalls(ph.id, persisted)
+          }
         }
       } catch (err) {
         const aborted =
@@ -509,10 +546,13 @@ export function ChatPanel() {
       conversations,
       deleteMessage,
       files,
+      liveToolCalls,
       mockAIResponse,
+      mutedSkillsForNext,
       setIsTyping,
       setMessageError,
       setMessageReasoningDuration,
+      setMessageToolCalls,
       setMessageSuggestions,
       workspaces,
     ]
@@ -581,6 +621,8 @@ export function ChatPanel() {
     })
 
     setInputValue("")
+    // Per-message skill mutes were for this one send — reset.
+    if (mutedSkillsForNext.size > 0) setMutedSkillsForNext(new Set())
 
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto"
@@ -627,6 +669,18 @@ export function ChatPanel() {
       callChatAPIRef.current(newHistory)
     },
     [conversations, activeConversationId, truncateMessagesAfter]
+  )
+
+  const forkConversation = useStore((s) => s.forkConversation)
+  const handleForkFromMessage = useCallback(
+    (messageId: string) => {
+      if (!activeConversationId) return
+      const fork = forkConversation(activeConversationId, messageId)
+      if (fork) {
+        toast.success("Branched into a new chat")
+      }
+    },
+    [activeConversationId, forkConversation]
   )
 
   const handleRetryErrorMessage = useCallback(
@@ -746,6 +800,7 @@ export function ChatPanel() {
                       onDelete={deleteMessage}
                       onEditUserMessage={handleEditUserMessage}
                       onRegenerateAssistantMessage={handleRegenerateAssistantMessage}
+                      onForkFromMessage={handleForkFromMessage}
                       onRetryError={handleRetryErrorMessage}
                       onChangeModel={handleChangeModel}
                       onTryFallback={handleTryFallback}
@@ -794,7 +849,11 @@ export function ChatPanel() {
             className="hidden"
             onChange={(e) => handleFileSelected(e.target.files)}
           />
-          <ActiveSkillsChips className="max-w-4xl mx-auto px-1 pb-1" />
+          <ActiveSkillsChips
+            className="max-w-4xl mx-auto px-1 pb-1"
+            mutedForNext={mutedSkillsForNext}
+            onToggleMuted={toggleMutedSkillForNext}
+          />
           <InputGroup className="max-w-4xl mx-auto rounded-[1vw] bg-background">
             <InputGroupButton
               size="icon-sm"
