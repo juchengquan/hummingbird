@@ -8,6 +8,7 @@ import { Copy, Pencil, Trash2, RotateCcw, Check, X, Bookmark, AlertTriangle, Che
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { copyText } from "@/lib/export"
+import { CHAT_MODELS, DEFAULT_CHAT_MODEL } from "@/lib/models"
 import { extractCodeBlocks } from "@/lib/code-blocks"
 import { MarkdownPreview } from "@/components/markdown-preview"
 import { MessageAttachments } from "@/components/panels/message-attachments"
@@ -127,8 +128,25 @@ interface ChatMessageProps {
   onEditUserMessage: (messageId: string, newContent: string) => void
   onRegenerateAssistantMessage: (messageId: string) => void
   onRetryError?: (messageId: string) => void
-  onChangeModel?: () => void
+  onChangeModel?: (messageId?: string) => void
+  /** Retry with a different model in one click. Wired by chat.tsx for invalid_model / provider errors. */
+  onTryFallback?: (messageId: string, modelId: string) => void
   onPickSuggestion?: (text: string) => void
+}
+
+/**
+ * Pick a fallback model id for one-click retry. Prefers DEFAULT_CHAT_MODEL
+ * when it differs from the failed one, otherwise the first different model
+ * in CHAT_MODELS. Returns null when no different model exists (unreachable
+ * given the current list, but kept for safety).
+ */
+function pickFallbackModel(failedModelId: string | undefined): { id: string; label: string } | null {
+  if (DEFAULT_CHAT_MODEL !== failedModelId) {
+    const def = CHAT_MODELS.find((m) => m.id === DEFAULT_CHAT_MODEL)
+    if (def) return { id: def.id, label: def.label }
+  }
+  const other = CHAT_MODELS.find((m) => m.id !== failedModelId)
+  return other ? { id: other.id, label: other.label } : null
 }
 
 const ERROR_TITLES: Record<string, string> = {
@@ -145,16 +163,29 @@ function ErrorBubble({
   partialContent,
   onRetry,
   onChangeModel,
+  onTryFallback,
   onDelete,
 }: {
   error: MessageError
   partialContent: string
   onRetry: () => void
   onChangeModel?: () => void
+  onTryFallback?: (modelId: string) => void
   onDelete: () => void
 }) {
   const [showDetails, setShowDetails] = useState(false)
   const title = ERROR_TITLES[error.code] ?? ERROR_TITLES.unknown
+  // `auth` means the API key is missing/invalid — retrying with the same
+  // setup will hit the same wall. Hide Retry and let the user dismiss or
+  // pick a different model (which the bubble will surface separately).
+  const canRetrySameModel = error.code !== "auth" && error.code !== "invalid_model"
+  // Quick-fallback only makes sense when the model itself failed (invalid)
+  // or the provider behind it returned an error. For rate_limit / network
+  // / unknown the same-model retry is the right primary action.
+  const fallback =
+    (error.code === "invalid_model" || error.code === "provider") && onTryFallback
+      ? pickFallbackModel(error.model)
+      : null
   return (
     <div className="rounded-lg border border-[var(--destructive)]/40 bg-[var(--destructive)]/5 px-4 py-3 max-w-[90%] space-y-2">
       {partialContent && (
@@ -174,10 +205,24 @@ function ErrorBubble({
         </div>
       </div>
       <div className="flex flex-wrap gap-1.5">
-        <Button size="sm" variant="secondary" onClick={onRetry} className="h-7 gap-1.5 text-xs">
-          <RotateCcw size={12} />
-          Retry
-        </Button>
+        {canRetrySameModel && (
+          <Button size="sm" variant="secondary" onClick={onRetry} className="h-7 gap-1.5 text-xs">
+            <RotateCcw size={12} />
+            Retry
+          </Button>
+        )}
+        {fallback && (
+          <Button
+            size="sm"
+            variant={canRetrySameModel ? "ghost" : "secondary"}
+            onClick={() => onTryFallback?.(fallback.id)}
+            className="h-7 gap-1.5 text-xs"
+            title={`Switch model and retry with ${fallback.label}`}
+          >
+            <RotateCcw size={12} />
+            Try {fallback.label}
+          </Button>
+        )}
         {onChangeModel && error.code !== "network" && (
           <Button
             size="sm"
@@ -241,6 +286,7 @@ export function ChatMessage({
   onRegenerateAssistantMessage,
   onRetryError,
   onChangeModel,
+  onTryFallback,
   onPickSuggestion,
 }: ChatMessageProps) {
   const [isEditing, setIsEditing] = useState(false)
@@ -403,7 +449,8 @@ export function ChatMessage({
             error={message.error}
             partialContent={message.content}
             onRetry={() => onRetryError?.(message.id)}
-            onChangeModel={onChangeModel}
+            onChangeModel={() => onChangeModel?.(message.id)}
+            onTryFallback={(modelId) => onTryFallback?.(message.id, modelId)}
             onDelete={() => onDelete(message.id)}
           />
         ) : (

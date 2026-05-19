@@ -163,7 +163,11 @@ export function ChatPanel() {
   // Build the message list and file context the API expects, sent up to and
   // including the most recent user message.
   const callChatAPI = useCallback(
-    async (history: Message[]) => {
+    async (history: Message[], options?: { modelOverride?: string }) => {
+      // Read the model freshly from the store rather than via the closure.
+      // Lets retry-after-model-change use the new value without waiting for
+      // this callback's useEffect-driven ref refresh to catch up.
+      const modelForCall = options?.modelOverride ?? useStore.getState().chatModel
       const conv = conversations.find((c) => c.id === activeConversationId)
       const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
       const workspaceSystemPrompt = activeWorkspace?.systemPrompt?.trim() || undefined
@@ -227,7 +231,7 @@ export function ChatPanel() {
           headers: { "Content-Type": "application/json" },
           signal: controller.signal,
           body: JSON.stringify({
-            model: chatModel,
+            model: modelForCall,
             messages: buildMessages(),
             files: fileSummaries,
             workspaceSystemPrompt,
@@ -251,7 +255,7 @@ export function ChatPanel() {
           surfaceError({
             code: (body.code as MessageErrorCode) || "unknown",
             status: res.status,
-            model: chatModel,
+            model: modelForCall,
             detail: body.message,
           })
           return
@@ -261,7 +265,7 @@ export function ChatPanel() {
           surfaceError({
             code: "provider",
             status: res.status,
-            model: chatModel,
+            model: modelForCall,
             detail: "No response body.",
           })
           return
@@ -338,13 +342,13 @@ export function ChatPanel() {
         if (streamError) {
           surfaceError({
             code: (streamError.code as MessageErrorCode) || "unknown",
-            model: chatModel,
+            model: modelForCall,
             detail: streamError.message,
           })
         } else if (firstChunk) {
           surfaceError({
             code: "provider",
-            model: chatModel,
+            model: modelForCall,
             detail: "The model returned an empty response.",
           })
         } else if (placeholder && activeConversationId) {
@@ -363,10 +367,18 @@ export function ChatPanel() {
             deleteMessage(ph.id)
           }
         } else {
+          // Distinguish offline from generic network failure — gives the
+          // user a concrete next action (reconnect) instead of "Network error".
+          const offline = typeof navigator !== "undefined" && navigator.onLine === false
+          const detail = offline
+            ? "You appear to be offline. Reconnect and click Retry."
+            : err instanceof Error
+              ? err.message
+              : "Network error"
           surfaceError({
             code: "network",
-            model: chatModel,
-            detail: err instanceof Error ? err.message : "Network error",
+            model: modelForCall,
+            detail,
           })
         }
       } finally {
@@ -384,7 +396,6 @@ export function ChatPanel() {
       appendToMessage,
       appendToMessageReasoning,
       autoArchiveCodeBlocks,
-      chatModel,
       conversations,
       deleteMessage,
       files,
@@ -508,21 +519,48 @@ export function ChatPanel() {
   )
 
   const handleRetryErrorMessage = useCallback(
-    (messageId: string) => {
+    (messageId: string, modelOverride?: string) => {
       const conv = conversations.find((c) => c.id === activeConversationId)
       if (!conv) return
       const idx = conv.messages.findIndex((m) => m.id === messageId)
       if (idx === -1) return
       const newHistory = conv.messages.slice(0, idx)
       deleteMessage(messageId)
-      callChatAPIRef.current(newHistory)
+      callChatAPIRef.current(newHistory, modelOverride ? { modelOverride } : undefined)
     },
     [conversations, activeConversationId, deleteMessage]
   )
 
-  const handleChangeModel = useCallback(() => {
+  // Picker may be opened from the bottom select OR from an error bubble's
+  // "Change model" button. When opened from a bubble, the user expects the
+  // retry to fire automatically after they pick. This ref records which
+  // message to retry; cleared on selection or on plain dismissal.
+  const pendingRetryRef = useRef<string | null>(null)
+
+  const handleChangeModel = useCallback((messageId?: string) => {
+    pendingRetryRef.current = messageId ?? null
     setModelPickerOpen(true)
   }, [])
+
+  const handleModelPick = useCallback(
+    (modelId: string) => {
+      setChatModel(modelId)
+      const retryId = pendingRetryRef.current
+      pendingRetryRef.current = null
+      if (retryId) {
+        handleRetryErrorMessage(retryId, modelId)
+      }
+    },
+    [setChatModel, handleRetryErrorMessage]
+  )
+
+  const handleTryFallback = useCallback(
+    (messageId: string, fallbackModelId: string) => {
+      setChatModel(fallbackModelId)
+      handleRetryErrorMessage(messageId, fallbackModelId)
+    },
+    [setChatModel, handleRetryErrorMessage]
+  )
 
   // Auto-resize textarea
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -598,6 +636,7 @@ export function ChatPanel() {
                       onRegenerateAssistantMessage={handleRegenerateAssistantMessage}
                       onRetryError={handleRetryErrorMessage}
                       onChangeModel={handleChangeModel}
+                      onTryFallback={handleTryFallback}
                       onPickSuggestion={pickSuggestion}
                     />
                   ))
@@ -680,9 +719,15 @@ export function ChatPanel() {
           <div className="mt-2 flex items-center justify-center gap-3">
             <Select
               value={chatModel}
-              onValueChange={setChatModel}
+              onValueChange={handleModelPick}
               open={modelPickerOpen}
-              onOpenChange={setModelPickerOpen}
+              onOpenChange={(open) => {
+                setModelPickerOpen(open)
+                // Drop pending-retry intent if the user dismisses the picker
+                // without selecting (closing without picking shouldn't trigger
+                // a retry on the next plain model change).
+                if (!open) pendingRetryRef.current = null
+              }}
             >
               <SelectTrigger
                 size="sm"
