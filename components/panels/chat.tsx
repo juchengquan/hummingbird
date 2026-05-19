@@ -112,6 +112,44 @@ export function ChatPanel() {
 
   const messages = useMemo(() => activeConversation?.messages || [], [activeConversation])
 
+  // The most recent non-error assistant message id — only that message
+  // renders follow-up suggestion chips; older ones would just be clutter.
+  // Walk from the end (cheaper than reversing the whole array).
+  const lastAssistantId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]
+      if (m.role === "assistant" && !m.error) return m.id
+    }
+    return null
+  }, [messages])
+
+  // Map each assistant message to the PDF that its `[p.N]` citations
+  // should open. Resolved by walking forward through history and
+  // remembering the most recent PDF the user attached. Memoized so the
+  // map's identity is stable across unrelated renders (the chat panel
+  // re-renders on isTyping / input changes; without memo, every
+  // assistant message would receive a freshly-computed string from a
+  // freshly-built map and React.memo on ChatMessage couldn't skip).
+  const pdfByMessage = useMemo(() => {
+    const out = new Map<string, string>()
+    let currentPdfId: string | undefined
+    for (const m of messages) {
+      if (m.role === "user" && m.attachedFileIds) {
+        const firstPdf = m.attachedFileIds
+          .map((id) => files.find((f) => f.id === id))
+          .find(
+            (f) =>
+              !!f &&
+              (f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"))
+          )
+        if (firstPdf) currentPdfId = firstPdf.id
+      } else if (m.role === "assistant" && currentPdfId) {
+        out.set(m.id, currentPdfId)
+      }
+    }
+    return out
+  }, [messages, files])
+
   const { messagesEndRef, showScrollButton, scrollToBottom } = useChatScroll({
     messageCount: messages.length,
     isTyping,
@@ -804,30 +842,7 @@ export function ChatPanel() {
               {messages.length === 0 ? (
                 <EmptyChatWelcome onPickSuggestion={pickSuggestion} />
               ) : (
-                (() => {
-                  // Only render suggestion chips on the most recent assistant
-                  // message — older ones would just be clutter.
-                  const lastAssistantId =
-                    [...messages].reverse().find((m) => m.role === "assistant" && !m.error)?.id ?? null
-                  // Resolve the cited PDF for each assistant message by walking
-                  // backward through history to the nearest user message with
-                  // a PDF attachment. Cached per render via a single sweep.
-                  const pdfByMessage = new Map<string, string>()
-                  let currentPdfId: string | undefined
-                  for (const m of messages) {
-                    if (m.role === "user" && m.attachedFileIds) {
-                      const firstPdf = m.attachedFileIds
-                        .map((id) => files.find((f) => f.id === id))
-                        .find(
-                          (f) =>
-                            !!f && (f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"))
-                        )
-                      if (firstPdf) currentPdfId = firstPdf.id
-                    } else if (m.role === "assistant" && currentPdfId) {
-                      pdfByMessage.set(m.id, currentPdfId)
-                    }
-                  }
-                  return messages.map((message, index) => (
+                messages.map((message, index) => (
                     <ChatMessage
                       key={message.id}
                       message={message}
@@ -845,7 +860,6 @@ export function ChatPanel() {
                       onPickSuggestion={pickSuggestion}
                     />
                   ))
-                })()
               )}
 
               {/* Typing indicator */}
