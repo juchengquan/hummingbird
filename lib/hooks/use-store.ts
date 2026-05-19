@@ -320,9 +320,15 @@ export const useStore = create<AppState>()(
           name,
           createdAt: new Date(),
           updatedAt: new Date(),
+          // Goes to the front of the list — position 0 — and the existing
+          // workspaces shift by 1. Single update so the diff fires once.
+          position: 0,
         }
         set((state) => ({
-          workspaces: [newWorkspace, ...state.workspaces],
+          workspaces: [
+            newWorkspace,
+            ...state.workspaces.map((w, i) => ({ ...w, position: i + 1 })),
+          ],
         }))
         return newWorkspace
       },
@@ -340,7 +346,16 @@ export const useStore = create<AppState>()(
           // Append any workspaces not mentioned by the caller (defensive
           // against partial id lists).
           for (const w of byId.values()) reordered.push(w)
-          return { workspaces: reordered }
+          // Stamp positions so the cross-device sync can reproduce the
+          // order. Bump updatedAt too so the diff fires the upsert
+          // (position alone would still be picked up via workspaceEquals,
+          // but bumping updatedAt keeps "last touched" honest).
+          const now = new Date()
+          return {
+            workspaces: reordered.map((w, i) =>
+              w.position === i ? w : { ...w, position: i, updatedAt: now }
+            ),
+          }
         }),
       deleteWorkspace: (workspaceId: string) =>
         set((state) => {
@@ -930,7 +945,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'hummingbird-storage',
-      version: 12,
+      version: 13,
       migrate: (persistedState, fromVersion) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState
         const state = persistedState as Record<string, unknown>
@@ -1083,6 +1098,20 @@ export const useStore = create<AppState>()(
             state.artifacts = arts.map((a) =>
               a && typeof a === 'object' ? stamp(a as Record<string, unknown>) : a
             )
+          }
+        }
+        if (fromVersion < 13) {
+          // Workspace.position added. Backfill by index in the current
+          // array so existing ordering is preserved — the array order
+          // before this version *was* the user-perceived order.
+          const ws = state.workspaces
+          if (Array.isArray(ws)) {
+            state.workspaces = ws.map((w, i) => {
+              if (!w || typeof w !== 'object') return w
+              const obj = w as Record<string, unknown>
+              if (typeof obj.position === 'number') return obj
+              return { ...obj, position: i }
+            })
           }
         }
         return persistedState

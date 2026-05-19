@@ -117,15 +117,26 @@ export async function fetchCloudSnapshot(
       messagesByConv.set(m.conversation_id, list)
     }
 
-    const workspaces: Workspace[] = (workspacesRes.data ?? []).map((w) => ({
-      id: w.id,
-      name: w.name,
-      systemPrompt: w.system_prompt ?? undefined,
-      skillPrefs: jsonToSkillPrefs(w.skill_prefs),
-      defaultModel: w.default_model ?? undefined,
-      createdAt: new Date(w.created_at),
-      updatedAt: new Date(w.updated_at),
-    }))
+    const workspaces: Workspace[] = (workspacesRes.data ?? [])
+      .map((w) => ({
+        id: w.id,
+        name: w.name,
+        systemPrompt: w.system_prompt ?? undefined,
+        skillPrefs: jsonToSkillPrefs(w.skill_prefs),
+        defaultModel: w.default_model ?? undefined,
+        position: w.position ?? undefined,
+        createdAt: new Date(w.created_at),
+        updatedAt: new Date(w.updated_at),
+      }))
+      // Apply user-defined order. Workspaces without a position (legacy
+      // rows before 0011) sort to the end by createdAt — a stable
+      // fallback that doesn't get them lost in the list.
+      .sort((a, b) => {
+        const ap = a.position ?? Number.POSITIVE_INFINITY
+        const bp = b.position ?? Number.POSITIVE_INFINITY
+        if (ap !== bp) return ap - bp
+        return a.createdAt.getTime() - b.createdAt.getTime()
+      })
 
     const conversations: Conversation[] = (conversationsRes.data ?? []).map((c) => ({
       id: c.id,
@@ -177,9 +188,14 @@ export async function fetchCloudSnapshot(
     for (const c of conversations) convToWorkspace.set(c.id, c.workspaceId)
     const fallbackWorkspaceId = workspaces[0]?.id ?? ""
 
+    // Prefer the direct `workspace_id` column added in migration 0011.
+    // Fall back to the conversation-join lookup for rows written before
+    // the migration's backfill (or by clients that haven't been updated
+    // yet) so we don't lose them.
     const notes: Note[] = (notesRes.data ?? []).map((n) => ({
       id: n.id,
       workspaceId:
+        n.workspace_id ??
         (n.conversation_id ? convToWorkspace.get(n.conversation_id) : undefined) ??
         fallbackWorkspaceId,
       conversationId: n.conversation_id,
@@ -192,6 +208,7 @@ export async function fetchCloudSnapshot(
     const artifacts: Artifact[] = (artifactsRes.data ?? []).map((a) => ({
       id: a.id,
       workspaceId:
+        a.workspace_id ??
         (a.conversation_id ? convToWorkspace.get(a.conversation_id) : undefined) ??
         fallbackWorkspaceId,
       conversationId: a.conversation_id,
@@ -228,13 +245,17 @@ export async function bulkUploadLocalState(
   // workspaces
   if (snapshot.workspaces.length > 0) {
     const { error } = await client.from("workspaces").upsert(
-      snapshot.workspaces.map((w) => ({
+      snapshot.workspaces.map((w, i) => ({
         id: w.id,
         user_id: userId,
         name: w.name,
         system_prompt: w.systemPrompt ?? null,
         skill_prefs: w.skillPrefs ?? {},
         default_model: w.defaultModel ?? null,
+        // Fall back to array index when the local snapshot pre-dates
+        // the explicit `position` field (v13 migration). Preserves the
+        // user's current visible order on first cloud upload.
+        position: w.position ?? i,
         created_at: w.createdAt.toISOString(),
         updated_at: w.updatedAt.toISOString(),
       }))
@@ -342,18 +363,17 @@ export async function bulkUploadLocalState(
     if (error) return { ok: false, error: `resources: ${error.message}` }
   }
 
-  // notes — skip orphaned workspace-level notes (conversationId === null);
-  // the cloud schema still requires a conversation. Long-term, the cloud
-  // schema should gain `workspace_id` + nullable `conversation_id` to
-  // mirror the local model.
-  const uploadableNotes = snapshot.notes.filter(
-    (n): n is typeof n & { conversationId: string } => n.conversationId !== null
-  )
+  // notes — workspace-scoped after migration 0011, so orphans
+  // (conversationId === null) upload too via the new workspace_id
+  // column. Skip rows missing a workspaceId entirely (shouldn't
+  // happen post-v12 backfill, but defensive).
+  const uploadableNotes = snapshot.notes.filter((n) => !!n.workspaceId)
   if (uploadableNotes.length > 0) {
     const { error } = await client.from("notes").upsert(
       uploadableNotes.map((n) => ({
         id: n.id,
         user_id: userId,
+        workspace_id: n.workspaceId,
         conversation_id: n.conversationId,
         message_id: n.messageId,
         body: n.body,
@@ -364,15 +384,14 @@ export async function bulkUploadLocalState(
     if (error) return { ok: false, error: `notes: ${error.message}` }
   }
 
-  // artifacts — same orphan filter as notes.
-  const uploadableArtifacts = snapshot.artifacts.filter(
-    (a): a is typeof a & { conversationId: string } => a.conversationId !== null
-  )
+  // artifacts — same workspace-scoped story as notes.
+  const uploadableArtifacts = snapshot.artifacts.filter((a) => !!a.workspaceId)
   if (uploadableArtifacts.length > 0) {
     const { error } = await client.from("artifacts").upsert(
       uploadableArtifacts.map((a) => ({
         id: a.id,
         user_id: userId,
+        workspace_id: a.workspaceId,
         conversation_id: a.conversationId,
         message_id: a.messageId,
         kind: a.kind,

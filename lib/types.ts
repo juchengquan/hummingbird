@@ -64,6 +64,14 @@ export interface Workspace {
    * to the skill's hard-coded default (see lib/skills/registry.ts).
    */
   skillPrefs?: Record<string, boolean>
+  /**
+   * User-defined ordering within the workspaces list, set by
+   * `reorderWorkspaces`. The drag-and-drop UI in the Workspaces panel
+   * writes monotonically increasing integers; the render order falls
+   * back to insertion order when `position` is undefined (legacy rows
+   * before the field was introduced).
+   */
+  position?: number
 }
 
 export interface Resource {

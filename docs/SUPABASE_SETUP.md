@@ -59,7 +59,7 @@ this tab open — the next steps use it.
 
 ## Step 2 — Run the schema migrations
 
-Nine SQL files live in the repo under `supabase/migrations/`. Run
+Eleven SQL files live in the repo under `supabase/migrations/`. Run
 them in numerical order via the **SQL Editor** in the Supabase
 dashboard (left sidebar → **SQL Editor** → **New query**).
 
@@ -98,8 +98,21 @@ errors:
    - Adds `conversations.parent_id` + `conversations.forked_from_message_id`
      so the Branches dialog can render a fork tree. `on delete set
      null` on both so deleted ancestors don't cascade away children.
+10. `supabase/migrations/0010_workspace_default_model.sql`
+    - Adds `workspaces.default_model` for the per-workspace pinned
+      chat model (auto-applies on workspace switch).
+11. `supabase/migrations/0011_workspace_scope_and_ordering.sql`
+    - Promotes notes + artifacts from conversation-scope to
+      workspace-scope: adds `notes.workspace_id` and
+      `artifacts.workspace_id` (required), switches their
+      `conversation_id` FKs from `on delete cascade` to `on delete
+      set null` so orphaned items survive at the workspace level.
+    - Adds `workspaces.position` (integer ordering) for the
+      drag-to-reorder workspaces UI. Backfills via
+      `row_number() over (created_at)` per user so existing rows
+      get a stable initial order.
 
-After running all eight, sanity-check from the **Table Editor**: ten
+After running all eleven, sanity-check from the **Table Editor**: ten
 tables should be listed (`profiles`, `workspaces`, `conversations`,
 `messages`, `files`, `resources`, `artifacts`, `notes`, `shares`), each
 showing the RLS shield icon indicating policies are active.

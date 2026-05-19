@@ -50,6 +50,7 @@ export function diffWorkspaces(prev: Workspace[], next: Workspace[]): SyncOp[] {
           system_prompt: w.systemPrompt ?? null,
           skill_prefs: w.skillPrefs ?? {},
           default_model: w.defaultModel ?? null,
+          position: w.position ?? null,
           created_at: toISO(w.createdAt),
           updated_at: toISO(w.updatedAt),
         },
@@ -75,6 +76,7 @@ function workspaceEquals(a: Workspace, b: Workspace): boolean {
     (a.systemPrompt ?? null) === (b.systemPrompt ?? null) &&
     sameSkillPrefs(a.skillPrefs, b.skillPrefs) &&
     (a.defaultModel ?? null) === (b.defaultModel ?? null) &&
+    (a.position ?? null) === (b.position ?? null) &&
     sameInstant(a.createdAt, b.createdAt) &&
     sameInstant(a.updatedAt, b.updatedAt)
   )
@@ -359,9 +361,6 @@ export function diffNotes(prev: Note[], next: Note[]): SyncOp[] {
   const nextById = byId(next)
 
   for (const n of next) {
-    // Skip orphaned workspace-level notes — the cloud schema still
-    // requires `conversation_id`. Locally they remain visible.
-    if (n.conversationId === null) continue
     const before = prevById.get(n.id)
     if (!before || !noteEquals(before, n)) {
       ops.push({
@@ -370,6 +369,7 @@ export function diffNotes(prev: Note[], next: Note[]): SyncOp[] {
         clientOpId: "",
         row: {
           id: n.id,
+          workspace_id: n.workspaceId,
           conversation_id: n.conversationId,
           message_id: n.messageId,
           body: n.body,
@@ -394,6 +394,7 @@ export function diffNotes(prev: Note[], next: Note[]): SyncOp[] {
 
 function noteEquals(a: Note, b: Note): boolean {
   return (
+    a.workspaceId === b.workspaceId &&
     a.conversationId === b.conversationId &&
     a.messageId === b.messageId &&
     a.body === b.body &&
@@ -410,9 +411,6 @@ export function diffArtifacts(prev: Artifact[], next: Artifact[]): SyncOp[] {
   const nextById = byId(next)
 
   for (const a of next) {
-    // Skip orphaned workspace-level artifacts — the cloud schema still
-    // requires `conversation_id`.
-    if (a.conversationId === null) continue
     const before = prevById.get(a.id)
     if (!before || !artifactEquals(before, a)) {
       ops.push({
@@ -421,6 +419,7 @@ export function diffArtifacts(prev: Artifact[], next: Artifact[]): SyncOp[] {
         clientOpId: "",
         row: {
           id: a.id,
+          workspace_id: a.workspaceId,
           conversation_id: a.conversationId,
           message_id: a.messageId,
           kind: a.kind,
@@ -449,6 +448,7 @@ export function diffArtifacts(prev: Artifact[], next: Artifact[]): SyncOp[] {
 
 function artifactEquals(a: Artifact, b: Artifact): boolean {
   return (
+    a.workspaceId === b.workspaceId &&
     a.conversationId === b.conversationId &&
     a.messageId === b.messageId &&
     a.kind === b.kind &&

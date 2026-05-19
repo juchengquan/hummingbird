@@ -48,6 +48,7 @@ export interface Database {
           system_prompt: string | null
           skill_prefs: Json
           default_model: string | null
+          position: number | null
           created_at: string
           updated_at: string
         }
@@ -58,6 +59,7 @@ export interface Database {
           system_prompt?: string | null
           skill_prefs?: Json
           default_model?: string | null
+          position?: number | null
           created_at?: string
           updated_at?: string
         }
@@ -68,6 +70,7 @@ export interface Database {
           system_prompt?: string | null
           skill_prefs?: Json
           default_model?: string | null
+          position?: number | null
           created_at?: string
           updated_at?: string
         }
@@ -251,7 +254,8 @@ export interface Database {
         Row: {
           id: string
           user_id: string
-          conversation_id: string
+          workspace_id: string
+          conversation_id: string | null
           message_id: string | null
           kind: 'code' | 'markdown' | 'image' | 'table' | 'json' | 'other'
           language: string | null
@@ -264,7 +268,8 @@ export interface Database {
         Insert: {
           id: string
           user_id: string
-          conversation_id: string
+          workspace_id: string
+          conversation_id?: string | null
           message_id?: string | null
           kind: 'code' | 'markdown' | 'image' | 'table' | 'json' | 'other'
           language?: string | null
@@ -277,7 +282,8 @@ export interface Database {
         Update: {
           id?: string
           user_id?: string
-          conversation_id?: string
+          workspace_id?: string
+          conversation_id?: string | null
           message_id?: string | null
           kind?: 'code' | 'markdown' | 'image' | 'table' | 'json' | 'other'
           language?: string | null
@@ -293,7 +299,8 @@ export interface Database {
         Row: {
           id: string
           user_id: string
-          conversation_id: string
+          workspace_id: string
+          conversation_id: string | null
           message_id: string | null
           body: string
           created_at: string
@@ -302,7 +309,8 @@ export interface Database {
         Insert: {
           id: string
           user_id: string
-          conversation_id: string
+          workspace_id: string
+          conversation_id?: string | null
           message_id?: string | null
           body: string
           created_at?: string
@@ -311,7 +319,8 @@ export interface Database {
         Update: {
           id?: string
           user_id?: string
-          conversation_id?: string
+          workspace_id?: string
+          conversation_id?: string | null
           message_id?: string | null
           body?: string
           created_at?: string
