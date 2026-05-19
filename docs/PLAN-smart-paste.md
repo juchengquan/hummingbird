@@ -1,6 +1,8 @@
 # Plan: Smart paste
 
-Status: **draft** — not yet implemented.
+Status: **✅ shipped** (commit `64d60df`). Lines came in slightly under
+estimate. Detection covered all five kinds; URL/JSON/CSV/code chips
+verified via Playwright with simulated paste events.
 
 ## Goal
 

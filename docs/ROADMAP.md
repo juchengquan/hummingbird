@@ -475,6 +475,9 @@ Three small UX wins that close gaps surfaced during the Skills work:
   (`86034a5`, migration `0007`)
 - Chat tier-2 — conversation forking / per-message skill mute /
   first-class tool-call persistence (`55064a8`, migration `0008`)
+- Smart paste — context-aware chip for URL / JSON / CSV / code / long
+  text (`64d60df`); see `docs/PLAN-smart-paste.md` and
+  `docs/BACKLOG.md` for the surrounding ideas
 - Plate doc updated: `docs/SUPABASE_SETUP.md` covers migrations `0001`–
   `0008` + storage + Tavily env (commit `38b7a98`, refreshed `3ff1cab`)
 
