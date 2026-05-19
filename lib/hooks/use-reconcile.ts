@@ -26,7 +26,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useStore } from "@/lib/hooks/use-store"
-import { useAuth } from "@/lib/hooks/use-auth"
+import { useSyncEnabled } from "@/lib/hooks/use-sync-enabled"
 import { getSupabaseBrowserClient } from "@/lib/supabase/client"
 import {
   applyCloudSnapshot,
@@ -95,15 +95,16 @@ function localSnapshotFromStore(): CloudSnapshot {
 // ---------- hook -----------------------------------------------------------
 
 export function useReconcile(): ReconcileState {
-  const { status: authStatus, user } = useAuth()
+  // `useSyncEnabled` folds in the local-only opt-out, so toggling local
+  // mode short-circuits reconciliation just like signing out would.
+  // `useSyncEnabled` exposes a stable userId string when enabled, NOT the
+  // user object reference, so onAuthStateChange firing INITIAL_SESSION /
+  // TOKEN_REFRESHED with a new object doesn't tear down an in-flight pull.
+  // The `enabled` boolean also folds in the local-only opt-out toggle.
+  const { enabled, userId } = useSyncEnabled()
   const [status, setStatus] = useState<ReconcileStatus>("idle")
   const [cloud, setCloud] = useState<CloudSnapshot | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
-
-  // Depend on the stable user.id string, NOT the user object reference,
-  // so onAuthStateChange firing INITIAL_SESSION / TOKEN_REFRESHED with a
-  // new object doesn't tear down an in-flight async pull.
-  const userId = user?.id ?? null
 
   // Per-session sticky so we don't loop the same flow. Reset on sign-out
   // and on user change.
@@ -111,7 +112,7 @@ export function useReconcile(): ReconcileState {
 
   // Sign-in / refresh-while-signed-in branch.
   useEffect(() => {
-    if (authStatus !== "signed-in" || !userId) {
+    if (!enabled || !userId) {
       handledUserId.current = null
       setStatus("idle")
       setCloud(undefined)
@@ -192,11 +193,11 @@ export function useReconcile(): ReconcileState {
     return () => {
       cancelled = true
     }
-  }, [authStatus, userId])
+  }, [enabled, userId])
 
   // ---- `online` re-pull ---------------------------------------------------
   useEffect(() => {
-    if (authStatus !== "signed-in" || !userId) return
+    if (!enabled || !userId) return
     const client = getSupabaseBrowserClient()
     if (!client) return
 
@@ -209,7 +210,7 @@ export function useReconcile(): ReconcileState {
     }
     window.addEventListener("online", onOnline)
     return () => window.removeEventListener("online", onOnline)
-  }, [authStatus, userId])
+  }, [enabled, userId])
 
   // ---- decide() — only used when the prompt is showing ------------------
   const decide = useCallback(

@@ -81,6 +81,14 @@ interface AppState {
   resourcesSidebarOpen: boolean
   resourcesSidebarTab: 'files' | 'notes' | 'artifacts'
 
+  /**
+   * When true, behave as if Supabase isn't configured — no sync, no
+   * reconcile pulls, no auth flows. Lets users opt out even when
+   * `NEXT_PUBLIC_SUPABASE_URL` is set (e.g., on a shared machine).
+   * Survives reloads via partialize.
+   */
+  localOnlyMode: boolean
+
   // Files
   files: UploadedFile[]
 
@@ -114,6 +122,7 @@ interface AppState {
   setResourcesSidebarOpen: (open: boolean) => void
   toggleResourcesSidebar: () => void
   setResourcesSidebarTab: (tab: 'files' | 'notes' | 'artifacts') => void
+  setLocalOnlyMode: (value: boolean) => void
 
   // Workspace actions
   createWorkspace: (name: string) => Workspace
@@ -218,6 +227,9 @@ export const useStore = create<AppState>()(
       resourcesSidebarOpen: true,
       resourcesSidebarTab: 'files',
 
+      // Local-only mode — off by default; users opt in via AccountMenu.
+      localOnlyMode: false,
+
       // Files
       files: [],
 
@@ -257,6 +269,7 @@ export const useStore = create<AppState>()(
       toggleResourcesSidebar: () =>
         set((state) => ({ resourcesSidebarOpen: !state.resourcesSidebarOpen })),
       setResourcesSidebarTab: (tab) => set({ resourcesSidebarTab: tab }),
+      setLocalOnlyMode: (value) => set({ localOnlyMode: value }),
 
       // Workspace actions
       createWorkspace: (name: string) => {
@@ -684,7 +697,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'hummingbird-storage',
-      version: 6,
+      version: 7,
       migrate: (persistedState, fromVersion) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState
         const state = persistedState as Record<string, unknown>
@@ -753,6 +766,11 @@ export const useStore = create<AppState>()(
           if (!('resourcesSidebarOpen' in state)) state.resourcesSidebarOpen = true
           if (!('resourcesSidebarTab' in state)) state.resourcesSidebarTab = 'files'
         }
+        if (fromVersion < 7) {
+          // Local-only mode opt-out toggle. Default OFF so existing users
+          // keep cloud sync unchanged unless they explicitly turn it on.
+          if (!('localOnlyMode' in state)) state.localOnlyMode = false
+        }
         return persistedState
       },
       onRehydrateStorage: () => () => {
@@ -772,6 +790,7 @@ export const useStore = create<AppState>()(
         artifacts: state.artifacts,
         resourcesSidebarOpen: state.resourcesSidebarOpen,
         resourcesSidebarTab: state.resourcesSidebarTab,
+        localOnlyMode: state.localOnlyMode,
       }),
     }
   )

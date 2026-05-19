@@ -16,7 +16,7 @@
 
 import { useEffect, useRef } from "react"
 import { useStore } from "@/lib/hooks/use-store"
-import { useAuth } from "@/lib/hooks/use-auth"
+import { useSyncEnabled } from "@/lib/hooks/use-sync-enabled"
 import { getSupabaseBrowserClient } from "@/lib/supabase/client"
 import { configureSync, enqueue } from "@/lib/sync/sync-queue"
 import {
@@ -61,32 +61,31 @@ function takeSnapshot(): Snapshot {
 }
 
 export function useSync(): void {
-  const { status, user } = useAuth()
-  // Depend on the stable user.id string so onAuthStateChange spawning a
-  // new user object reference doesn't unsubscribe / resubscribe and
-  // drop in-flight store-change observations.
-  const userId = user?.id ?? null
+  // `useSyncEnabled` folds in the local-only opt-out so disabling cloud
+  // sync via the toggle behaves identically to being signed out.
+  const { enabled, userId } = useSyncEnabled()
 
   // Wire the queue's client+user.
   useEffect(() => {
     const client = getSupabaseBrowserClient()
     configureSync({
       client,
-      userId: status === "signed-in" ? userId : null,
+      userId: enabled ? userId : null,
     })
-  }, [status, userId])
+  }, [enabled, userId])
 
-  // On sign-out, clear the snapshot so a future sign-in re-seeds cleanly.
+  // On sign-out / local-mode-toggled-on, clear the snapshot so a future
+  // re-enable re-seeds cleanly.
   useEffect(() => {
-    if (status !== "signed-in" || !userId) {
+    if (!enabled) {
       lastSnapshot = null
     }
-  }, [status, userId])
+  }, [enabled])
 
   // Subscribe to store changes and produce SyncOps. The first change
-  // after sign-in seeds the snapshot if reconciliation hasn't already.
+  // after enabling seeds the snapshot if reconciliation hasn't already.
   useEffect(() => {
-    if (status !== "signed-in" || !userId) return
+    if (!enabled || !userId) return
 
     if (lastSnapshot === null) {
       lastSnapshot = takeSnapshot()
@@ -147,7 +146,7 @@ export function useSync(): void {
     })
 
     return () => unsubscribe()
-  }, [status, userId])
+  }, [enabled, userId])
 
   // When `isTyping` transitions false, re-diff the active conversation
   // so the final streamed assistant message lands in Supabase (in-flight
@@ -155,7 +154,7 @@ export function useSync(): void {
   const wasTyping = useRef(false)
   useEffect(() => {
     return useStore.subscribe((state) => {
-      if (status !== "signed-in" || !userId) return
+      if (!enabled || !userId) return
       const isTyping = state.isTyping
       if (wasTyping.current && !isTyping) {
         const prev = lastSnapshot
@@ -169,7 +168,7 @@ export function useSync(): void {
       }
       wasTyping.current = isTyping
     })
-  }, [status, userId])
+  }, [enabled, userId])
 }
 
 /**
