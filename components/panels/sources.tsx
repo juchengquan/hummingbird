@@ -41,6 +41,7 @@ import { runExtraction } from "@/lib/extract"
 import { persistFile } from "@/lib/files/persist"
 import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT } from "@/lib/upload-config"
 import { ExtractionStatusBadge } from "@/components/panels/extraction-status-badge"
+import { FileAvailabilityBadge } from "@/components/panels/file-availability-badge"
 import { format } from "date-fns"
 
 
@@ -272,6 +273,7 @@ export function ResourcePanel() {
                       </HoverCardContent>
                     </HoverCard>
                     <ExtractionStatusBadge file={file} size="default" className="shrink-0 ml-auto" />
+                    <FileAvailabilityBadge file={file} className="shrink-0" />
                     <span className="text-xs text-[var(--muted-foreground)] shrink-0">
                       {formatFileSize(file.size)}
                     </span>

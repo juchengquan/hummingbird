@@ -109,6 +109,24 @@ function readAsDataUrl(blob: Blob): Promise<string> {
  * `FileReader` to a base64 data URL stored on the `UploadedFile`. The URL
  * is later attached as a multimodal content part on the next chat request.
  */
+/**
+ * Re-run extraction for an existing file row, given a fresh Blob (typically
+ * fetched from IndexedDB or a Supabase signed URL). Wraps the blob as a File
+ * with the row's original name so server-side kind detection (which keys off
+ * filename extensions) still works.
+ */
+export async function retryExtraction(
+  file: { id: string; name: string; type: string },
+  blob: Blob,
+  setFileExtraction: (id: string, patch: ExtractionPatch) => void
+): Promise<void> {
+  const asFile = new File([blob], file.name, {
+    type: file.type || blob.type || 'application/octet-stream',
+  })
+  setFileExtraction(file.id, { extractionStatus: 'pending' })
+  await runExtraction(file.id, asFile, setFileExtraction)
+}
+
 export async function runExtraction(
   fileId: string,
   blob: File,

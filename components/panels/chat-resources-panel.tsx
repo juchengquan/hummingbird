@@ -17,6 +17,7 @@ import { persistFile } from "@/lib/files/persist"
 import { NotesTab } from "@/components/panels/notes-tab"
 import { ArtifactsTab } from "@/components/panels/artifacts-tab"
 import { ExtractionStatusBadge } from "@/components/panels/extraction-status-badge"
+import { FileAvailabilityBadge } from "@/components/panels/file-availability-badge"
 
 export function ChatResourcesPanel() {
   const activeWorkspaceId = useStore((s) => s.activeWorkspaceId)
@@ -243,6 +244,7 @@ function FilesTabBody({
                           )}
                         </span>
                         <ExtractionStatusBadge file={file} />
+                        <FileAvailabilityBadge file={file} />
                       </div>
                       {file.keyTopics && file.keyTopics.length > 0 && (
                         <div
