@@ -4,6 +4,7 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import type { UploadedFile, Workspace, Resource, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind, ToolCallRecord } from '@/lib/types'
 import { DEFAULT_CHAT_MODEL } from '@/lib/models'
 import { deleteBlob as deleteLocalBlob, clearAll as clearLocalBlobs } from '@/lib/files/local-store'
+import { uuid } from '@/lib/uuid'
 
 export type { UploadedFile, Workspace, Resource, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind, ToolCallRecord } from '@/lib/types'
 
@@ -144,6 +145,9 @@ interface AppState {
 
   // Workspace actions
   createWorkspace: (name: string) => Workspace
+  /** Reorder workspaces by id. Unknown ids are dropped; missing ids keep
+   *  their relative tail order. */
+  reorderWorkspaces: (orderedIds: string[]) => void
   deleteWorkspace: (workspaceId: string) => void
   renameWorkspace: (workspaceId: string, name: string) => void
   setWorkspaceSystemPrompt: (workspaceId: string, prompt: string) => void
@@ -312,7 +316,7 @@ export const useStore = create<AppState>()(
       // Workspace actions
       createWorkspace: (name: string) => {
         const newWorkspace: Workspace = {
-          id: crypto.randomUUID(),
+          id: uuid(),
           name,
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -322,6 +326,22 @@ export const useStore = create<AppState>()(
         }))
         return newWorkspace
       },
+      reorderWorkspaces: (orderedIds: string[]) =>
+        set((state) => {
+          const byId = new Map(state.workspaces.map((w) => [w.id, w]))
+          const reordered: Workspace[] = []
+          for (const id of orderedIds) {
+            const w = byId.get(id)
+            if (w) {
+              reordered.push(w)
+              byId.delete(id)
+            }
+          }
+          // Append any workspaces not mentioned by the caller (defensive
+          // against partial id lists).
+          for (const w of byId.values()) reordered.push(w)
+          return { workspaces: reordered }
+        }),
       deleteWorkspace: (workspaceId: string) =>
         set((state) => {
           if (state.workspaces.length <= 1) return state // Prevent deleting last workspace
@@ -406,7 +426,7 @@ export const useStore = create<AppState>()(
       // Resource actions
       addResource: (workspaceId: string, fileId: string) => {
         const newResource: Resource = {
-          id: crypto.randomUUID(),
+          id: uuid(),
           workspaceId,
           fileId,
           addedAt: new Date(),
@@ -424,7 +444,7 @@ export const useStore = create<AppState>()(
       createNote: ({ conversationId, messageId = null, body = '' }) => {
         const now = new Date()
         const newNote: Note = {
-          id: crypto.randomUUID(),
+          id: uuid(),
           conversationId,
           messageId,
           body,
@@ -456,7 +476,7 @@ export const useStore = create<AppState>()(
         }
         const now = new Date()
         const newNote: Note = {
-          id: crypto.randomUUID(),
+          id: uuid(),
           conversationId,
           messageId,
           body: '',
@@ -472,7 +492,7 @@ export const useStore = create<AppState>()(
         const fallbackTitle =
           title ?? content.split('\n')[0].slice(0, 60).trim() ?? 'Untitled'
         const newArtifact: Artifact = {
-          id: crypto.randomUUID(),
+          id: uuid(),
           conversationId,
           messageId,
           kind,
@@ -550,7 +570,7 @@ export const useStore = create<AppState>()(
       createConversation: (workspaceId?: string) => {
         const activeWorkspaceId = workspaceId || get().activeWorkspaceId
         const newConversation: Conversation = {
-          id: crypto.randomUUID(),
+          id: uuid(),
           workspaceId: activeWorkspaceId,
           title: `New Chat ${get().conversations.filter(c => c.workspaceId === activeWorkspaceId).length + 1}`,
           messages: [],
@@ -577,10 +597,10 @@ export const useStore = create<AppState>()(
         // the fork reads as a faithful copy of the past.
         const copiedMessages: Message[] = slice.map((m) => ({
           ...m,
-          id: crypto.randomUUID(),
+          id: uuid(),
         }))
         const fork: Conversation = {
-          id: crypto.randomUUID(),
+          id: uuid(),
           workspaceId: source.workspaceId,
           title: `${source.title} (branch)`,
           messages: copiedMessages,
@@ -671,7 +691,7 @@ export const useStore = create<AppState>()(
       addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => {
         const newMessage: Message = {
           ...message,
-          id: crypto.randomUUID(),
+          id: uuid(),
           timestamp: new Date(),
         }
         set((state) => {

@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { format } from "date-fns"
 import { Bookmark, Trash2, Plus, StickyNote, MessageSquare } from "lucide-react"
 import { toast } from "sonner"
@@ -37,9 +37,9 @@ export function NotesTab() {
   const deleteNote = useStore((s) => s.deleteNote)
   const [mounted, setMounted] = useState(false)
 
-  if (!mounted && typeof window !== "undefined") {
-    queueMicrotask(() => setMounted(true))
-  }
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   const messageById = useMemo(() => {
     const map = new Map<string, Message>()
@@ -62,22 +62,23 @@ export function NotesTab() {
 
   return (
     <>
-      <div className="shrink-0 px-3 py-2 border-b border-[var(--border)] flex items-center justify-between">
-        <p className="text-[11px] text-[var(--muted-foreground)]">
-          {notes.length === 0
-            ? "No notes yet"
-            : `${notes.length} ${notes.length === 1 ? "note" : "notes"}`}
-        </p>
-        <Button
-          variant="ghost"
-          size="sm"
+      <div className="shrink-0 h-11 px-3 border-b border-[var(--border)] flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[11px] text-[var(--muted-foreground)]">
+            {notes.length === 0
+              ? "No notes yet"
+              : `${notes.length} ${notes.length === 1 ? "note" : "notes"}`}
+          </p>
+        </div>
+        <button
+          type="button"
           onClick={handleAddNote}
-          className="h-7 gap-1 text-xs"
           aria-label="Add note"
+          title="Add note"
+          className="shrink-0 h-7 w-7 inline-flex items-center justify-center rounded-md text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] transition-colors"
         >
           <Plus size={14} />
-          New note
-        </Button>
+        </button>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2 space-y-2">

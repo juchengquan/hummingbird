@@ -55,7 +55,10 @@ export function buildTree(conversations: Conversation[], rootId: string): Branch
   function build(node: Conversation, depth: number): BranchNode {
     const kids = (childrenByParent.get(node.id) ?? [])
       .slice()
-      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .sort(
+        (a, b) =>
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      )
     return {
       conversation: node,
       depth,

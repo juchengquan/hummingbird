@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Manrope, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeApplier } from "@/components/theme-applier";
 
@@ -8,8 +8,8 @@ import { ThemeApplier } from "@/components/theme-applier";
 // Keep in sync with the zustand persist key in lib/hooks/use-store.ts.
 const themeBootstrapScript = `(function(){try{var s=localStorage.getItem('hummingbird-storage');var t='dark';if(s){var p=JSON.parse(s);if(p&&p.state&&p.state.theme)t=p.state.theme;}var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches);if(d)document.documentElement.classList.add('dark');}catch(e){}})();`
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const manropeSans = Manrope({
+  variable: "--font-manrope-sans",
   subsets: ["latin"],
 });
 
@@ -34,7 +34,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${manropeSans.variable} ${geistMono.variable} antialiased`}
       >
         <ThemeApplier />
         {children}

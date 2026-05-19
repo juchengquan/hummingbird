@@ -1,8 +1,19 @@
 "use client"
 
-import { useCallback, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { format } from "date-fns"
-import { Search, Plus, FolderOpen, Check } from "lucide-react"
+import { Search, Plus, FolderOpen, Check, Trash2, Eye } from "lucide-react"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { usePdfViewer } from "@/components/pdf-viewer/types"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import {
@@ -19,10 +30,23 @@ import { ArtifactsTab } from "@/components/panels/artifacts-tab"
 import { SkillsTab } from "@/components/panels/skills-tab"
 import { FileRowMeta } from "@/components/panels/file-row-meta"
 
-export function ChatResourcesPanel() {
+interface ChatResourcesPanelProps {
+  /**
+   * `chat` (default): tabbed view driven by `resourcesSidebarTab`. Files tab
+   * lets the user attach files to the active conversation.
+   *
+   * `manage`: forces the Files tab only, with no conversation context. Used
+   * by the workspaces view of the right rail. Hides attach checkboxes and
+   * the "Manage workspace files →" footer; adds per-row delete buttons.
+   */
+  mode?: "chat" | "manage"
+}
+
+export function ChatResourcesPanel({ mode = "chat" }: ChatResourcesPanelProps = {}) {
   const activeWorkspaceId = useStore((s) => s.activeWorkspaceId)
   const addFile = useStore((s) => s.addFile)
   const addResource = useStore((s) => s.addResource)
+  const removeFile = useStore((s) => s.removeFile)
   const setFileExtraction = useStore((s) => s.setFileExtraction)
   const setFileStorage = useStore((s) => s.setFileStorage)
   const setActiveView = useStore((s) => s.setActiveView)
@@ -34,12 +58,21 @@ export function ChatResourcesPanel() {
   const [query, setQuery] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [mounted, setMounted] = useState(false)
-  const tab = useStore((s) => s.resourcesSidebarTab)
+  // In manage mode, the trash button stages a confirmation rather than
+  // deleting immediately. Holds the file id pending confirmation.
+  const [confirmDeleteFileId, setConfirmDeleteFileId] = useState<string | null>(
+    null
+  )
+  const openPdfViewer = usePdfViewer((s) => s.open)
+  const storedTab = useStore((s) => s.resourcesSidebarTab)
+  const tab = mode === "manage" ? "files" : storedTab
 
-  // mount flag for date formatting (avoid SSR mismatch)
-  if (!mounted && typeof window !== "undefined") {
-    queueMicrotask(() => setMounted(true))
-  }
+  // Mount flag for date formatting (avoid SSR mismatch). Must live in
+  // useEffect — calling setMounted from render (even via queueMicrotask)
+  // schedules an update against an unmounted component on first paint.
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   const filtered = useMemo(() => {
     if (!query.trim()) return resources
@@ -87,6 +120,7 @@ export function ChatResourcesPanel() {
         <SkillsTab />
       ) : (
         <FilesTabBody
+          mode={mode}
           resources={resources}
           attachedCount={attachedCount}
           query={query}
@@ -94,6 +128,8 @@ export function ChatResourcesPanel() {
           filtered={filtered}
           selectedFileIds={selectedFileIds}
           toggleFileSelection={toggleFileSelection}
+          onRequestDelete={setConfirmDeleteFileId}
+          onOpenPdf={(fileId) => openPdfViewer({ fileId })}
           mounted={mounted}
           error={error}
           fileInputRef={fileInputRef}
@@ -101,11 +137,50 @@ export function ChatResourcesPanel() {
           setActiveView={setActiveView}
         />
       )}
+      {/* Delete confirmation — only relevant in manage mode but the dialog
+          itself is harmless when never opened. */}
+      <AlertDialog
+        open={confirmDeleteFileId !== null}
+        onOpenChange={(open) => !open && setConfirmDeleteFileId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete &ldquo;
+              {confirmDeleteFileId
+                ? resources.find((r) => r.id === confirmDeleteFileId)?.name ??
+                  "file"
+                : "file"}
+              &rdquo;?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the file from the workspace and deletes its local
+              blob.{" "}
+              <span className="font-medium text-[var(--foreground)]">
+                This action cannot be undone.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (confirmDeleteFileId) removeFile(confirmDeleteFileId)
+                setConfirmDeleteFileId(null)
+              }}
+              className="bg-[var(--destructive)] text-white hover:bg-[var(--destructive)]/90 focus-visible:ring-[var(--destructive)]/40"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
 
 interface FilesTabBodyProps {
+  mode: "chat" | "manage"
   resources: ReturnType<typeof useWorkspaceResources>
   attachedCount: number
   query: string
@@ -113,6 +188,9 @@ interface FilesTabBodyProps {
   filtered: ReturnType<typeof useWorkspaceResources>
   selectedFileIds: string[]
   toggleFileSelection: (fileId: string) => void
+  /** Stages a deletion — the parent shows the confirmation dialog. */
+  onRequestDelete: (fileId: string) => void
+  onOpenPdf: (fileId: string) => void
   mounted: boolean
   error: string | null
   fileInputRef: React.RefObject<HTMLInputElement | null>
@@ -121,6 +199,7 @@ interface FilesTabBodyProps {
 }
 
 function FilesTabBody({
+  mode,
   resources,
   attachedCount,
   query,
@@ -128,19 +207,24 @@ function FilesTabBody({
   filtered,
   selectedFileIds,
   toggleFileSelection,
+  onRequestDelete,
+  onOpenPdf,
   mounted,
   error,
   fileInputRef,
   handleUpload,
   setActiveView,
 }: FilesTabBodyProps) {
+  const isManage = mode === "manage"
   return (
     <>
       {/* Header */}
-      <div className="shrink-0 px-3 py-2.5 border-b border-[var(--border)] flex items-start justify-between gap-2">
+      <div className="shrink-0 h-11 px-3 border-b border-[var(--border)] flex items-center justify-between gap-2">
         <div className="min-w-0">
           <p className="text-[11px] text-[var(--muted-foreground)]">
-            {resources.length} in workspace · {attachedCount} attached
+            {isManage
+              ? `${resources.length} ${resources.length === 1 ? "file" : "files"}`
+              : `${resources.length} in workspace · ${attachedCount} attached`}
           </p>
         </div>
         <input
@@ -201,43 +285,48 @@ function FilesTabBody({
         ) : (
           <ul className="space-y-0.5">
             {filtered.map((file) => {
-              const attached = selectedFileIds.includes(file.id)
+              const attached = !isManage && selectedFileIds.includes(file.id)
               return (
-                <li key={file.id}>
+                <li key={file.id} className="group/row relative">
                   {/* Outer is a div (not button) so the Re-extract button
                       inside FileRowMeta can nest without invalid HTML. The
                       role + keyboard handler restore button semantics. */}
                   <div
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => toggleFileSelection(file.id)}
-                    onKeyDown={(e) => {
+                    role={isManage ? undefined : "button"}
+                    tabIndex={isManage ? undefined : 0}
+                    onClick={isManage ? undefined : () => toggleFileSelection(file.id)}
+                    onKeyDown={isManage ? undefined : (e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault()
                         toggleFileSelection(file.id)
                       }
                     }}
-                    aria-pressed={attached}
+                    aria-pressed={isManage ? undefined : attached}
                     title={file.name}
                     className={cn(
-                      "w-full flex items-start gap-2 px-2 py-1.5 rounded-md text-left transition-colors cursor-pointer",
+                      "w-full flex items-start gap-2 px-2 py-1.5 rounded-md text-left transition-colors",
                       "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
-                      attached
-                        ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/40"
-                        : "hover:bg-[var(--accent)]"
+                      // Reserve right-side gutter for the action buttons
+                      // (View / Delete). 14 = 56px = fits 2 small icon
+                      // buttons with breathing room.
+                      isManage ? "hover:bg-[var(--accent)] pr-14" : attached
+                        ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/40 cursor-pointer pr-8"
+                        : "hover:bg-[var(--accent)] cursor-pointer pr-8"
                     )}
                   >
-                    <span
-                      aria-hidden
-                      className={cn(
-                        "mt-0.5 shrink-0 size-4 rounded-[4px] border inline-flex items-center justify-center transition-colors",
-                        attached
-                          ? "bg-[var(--primary)] border-[var(--primary)] text-[var(--primary-foreground)]"
-                          : "border-[var(--border)] bg-transparent"
-                      )}
-                    >
-                      {attached && <Check size={12} strokeWidth={3} />}
-                    </span>
+                    {!isManage && (
+                      <span
+                        aria-hidden
+                        className={cn(
+                          "mt-0.5 shrink-0 size-4 rounded-[4px] border inline-flex items-center justify-center transition-colors",
+                          attached
+                            ? "bg-[var(--primary)] border-[var(--primary)] text-[var(--primary-foreground)]"
+                            : "border-[var(--border)] bg-transparent"
+                        )}
+                      >
+                        {attached && <Check size={12} strokeWidth={3} />}
+                      </span>
+                    )}
                     <span className="mt-0.5">{getFileIcon(file.type)}</span>
                     <div className="flex-1 min-w-0">
                       <div
@@ -267,6 +356,44 @@ function FilesTabBody({
                       )}
                     </div>
                   </div>
+                  {/* Right-side action cluster — View (PDFs only) +
+                      Delete (manage mode only). Both fade in on row hover.
+                      stopPropagation so clicking doesn't toggle attach. */}
+                  {(() => {
+                    const isPdf =
+                      file.type === "application/pdf" ||
+                      file.name.toLowerCase().endsWith(".pdf")
+                    if (!isPdf && !isManage) return null
+                    return (
+                      <div
+                        className="absolute top-1.5 right-1.5 flex items-center gap-0.5 opacity-0 group-hover/row:opacity-100 focus-within:opacity-100 transition-opacity"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {isPdf && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenPdf(file.id)}
+                            aria-label={`Open "${file.name}" in PDF viewer`}
+                            title="Open in PDF viewer"
+                            className="p-1 rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] transition-colors"
+                          >
+                            <Eye size={12} />
+                          </button>
+                        )}
+                        {isManage && (
+                          <button
+                            type="button"
+                            onClick={() => onRequestDelete(file.id)}
+                            aria-label={`Delete ${file.name}`}
+                            title="Delete file"
+                            className="p-1 rounded text-[var(--muted-foreground)] hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)] transition-colors"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })()}
                 </li>
               )
             })}
@@ -280,16 +407,18 @@ function FilesTabBody({
         )}
       </div>
 
-      {/* Footer */}
-      <div className="shrink-0 px-3 py-2 border-t border-[var(--border)]">
-        <button
-          type="button"
-          onClick={() => setActiveView("resources")}
-          className="text-[11px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
-        >
-          Manage workspace files →
-        </button>
-      </div>
+      {/* Footer — only shown in chat mode (manage mode IS this management surface). */}
+      {!isManage && (
+        <div className="shrink-0 px-3 py-2 border-t border-[var(--border)]">
+          <button
+            type="button"
+            onClick={() => setActiveView("resources")}
+            className="text-[11px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+          >
+            Manage workspace files →
+          </button>
+        </div>
+      )}
     </>
   )
 }

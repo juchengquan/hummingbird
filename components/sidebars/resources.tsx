@@ -1,12 +1,13 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import { ChevronLeft, ChevronRight, FolderOpen, StickyNote, Archive, Sparkles } from "lucide-react"
+import { PanelRightClose, PanelRightOpen, FolderOpen, StickyNote, Archive, Sparkles, PencilLine } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useStore, useWorkspaceResources, useConversationNotes, useConversationArtifacts, useActiveWorkspace, useActiveConversation } from "@/lib/hooks/use-store"
 import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
 import { SKILLS } from "@/lib/skills/registry"
 import { resolveSkill } from "@/lib/skills/types"
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 
 /**
  * Right-edge "activity bar" sidebar.
@@ -23,7 +24,7 @@ import { resolveSkill } from "@/lib/skills/types"
  * - Collapse / expand chevron at the *top* of the icon bar — single
  *   affordance regardless of state.
  */
-const RAIL_TABS = [
+const ALL_RAIL_TABS = [
   { id: "files" as const, label: "Files", Icon: FolderOpen },
   { id: "notes" as const, label: "Notes", Icon: StickyNote },
   { id: "artifacts" as const, label: "Artifacts", Icon: Archive },
@@ -35,12 +36,33 @@ const RAIL_TABS = [
 const RAIL_WIDTH_CLASS = "w-12" // 48px
 const CONTENT_WIDTH_CLASS = "w-[272px]"
 
-export function ResourcesSidebar() {
+interface ResourcesSidebarProps {
+  /**
+   * `chat` (default): all four tabs (Files/Notes/Artifacts/Skills),
+   * conversation-scoped Files behavior, persisted active tab.
+   *
+   * `workspaces`: Files-only rail. `ChatResourcesPanel` runs in `manage`
+   * mode (no attach checkboxes, per-row delete, no conversation footer).
+   * Used by `WorkspacesPanel` so users can manage workspace files without
+   * leaving the workspaces grid.
+   */
+  mode?: "chat" | "workspaces"
+}
+
+export function ResourcesSidebar({ mode = "chat" }: ResourcesSidebarProps = {}) {
+  const isWorkspaceMode = mode === "workspaces"
+  // Rail always shows the full tab set; `mode` only changes how the Files
+  // tab renders (`manage` mode hides the per-conversation attach UI when
+  // there's no conversation context).
+  const railTabs = ALL_RAIL_TABS
+
   const open = useStore((s) => s.resourcesSidebarOpen)
   const tab = useStore((s) => s.resourcesSidebarTab)
   const setOpen = useStore((s) => s.setResourcesSidebarOpen)
   const toggleOpen = useStore((s) => s.toggleResourcesSidebar)
   const setTab = useStore((s) => s.setResourcesSidebarTab)
+  const activeView = useStore((s) => s.activeView)
+  const setActiveView = useStore((s) => s.setActiveView)
   const resourcesCount = useWorkspaceResources().length
   const notesCount = useConversationNotes().length
   const artifactsCount = useConversationArtifacts().length
@@ -65,10 +87,16 @@ export function ResourcesSidebar() {
     }
   }, [setOpen])
 
-  // Cmd/Ctrl+Shift+B toggles the right resources sidebar.
+  // Cmd/Ctrl+Shift+B toggles the right resources sidebar. `e.key` can be
+  // undefined for composition events / some password-manager autofills, so
+  // guard it before lowercasing.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "b" && e.shiftKey && (e.metaKey || e.ctrlKey)) {
+      if (
+        e.key?.toLowerCase() === "b" &&
+        e.shiftKey &&
+        (e.metaKey || e.ctrlKey)
+      ) {
         e.preventDefault()
         toggleOpen()
       }
@@ -107,7 +135,7 @@ export function ResourcesSidebar() {
         aria-hidden={!open}
       >
         <div className={cn("flex flex-col h-full min-h-0", CONTENT_WIDTH_CLASS)}>
-          <ChatResourcesPanel />
+          <ChatResourcesPanel mode={isWorkspaceMode ? "manage" : "chat"} />
         </div>
       </div>
 
@@ -120,51 +148,81 @@ export function ResourcesSidebar() {
           RAIL_WIDTH_CLASS
         )}
       >
-        {/* Collapse / expand at the top */}
+        {/* Collapse / expand at the top — structural panel control. */}
         <button
           type="button"
           onClick={toggleOpen}
           aria-label={open ? "Collapse resources sidebar" : "Expand resources sidebar"}
-          title={`${open ? "Collapse" : "Expand"} (⌘⇧B)`}
           className="p-1.5 rounded text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--accent)]/50 transition-colors"
         >
-          {open ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+          {open ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
         </button>
         <div className="my-1 h-px w-6 bg-[var(--border)]" />
 
-        {RAIL_TABS.map(({ id, label, Icon }) => {
-          const count = counts[id]
-          const active = tab === id
-          return (
+        {/* Editor launcher — switches the main area to the editor view. Not
+            a context tab; it's a workflow launcher. */}
+        <Tooltip>
+          <TooltipTrigger asChild>
             <button
-              key={id}
               type="button"
-              onClick={() => {
-                if (open && active) {
-                  // Collapsing — preserve the tab so reopening lands here.
-                  setOpen(false)
-                } else {
-                  setTab(id)
-                  setOpen(true)
-                }
-              }}
-              aria-label={label}
-              aria-pressed={open && active}
-              title={`${label}${count > 0 ? ` (${count})` : ""}`}
+              onClick={() => setActiveView("editor")}
+              aria-label="Editor"
+              aria-pressed={activeView === "editor"}
               className={cn(
-                "relative p-1.5 rounded transition-colors",
-                open && active
+                "p-1.5 rounded transition-colors",
+                activeView === "editor"
                   ? "text-[var(--foreground)] bg-[var(--accent)]/60"
                   : "text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--accent)]/50"
               )}
             >
-              <Icon size={16} />
-              {count > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-3.5 px-1 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-[9px] leading-[14px] font-medium tabular-nums">
-                  {count > 99 ? "99+" : count}
-                </span>
-              )}
+              <PencilLine size={16} />
             </button>
+          </TooltipTrigger>
+          <TooltipContent side="left" sideOffset={6}>
+            Editor
+          </TooltipContent>
+        </Tooltip>
+        <div className="my-1 h-px w-6 bg-[var(--border)]" />
+
+        {railTabs.map(({ id, label, Icon }) => {
+          const count = counts[id]
+          const active = tab === id
+          return (
+            <Tooltip key={id}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (open && active) {
+                      // Collapsing — preserve the tab so reopening lands here.
+                      setOpen(false)
+                    } else {
+                      setTab(id)
+                      setOpen(true)
+                    }
+                  }}
+                  aria-label={label}
+                  aria-pressed={open && active}
+                  className={cn(
+                    "relative p-1.5 rounded transition-colors",
+                    open && active
+                      ? "text-[var(--foreground)] bg-[var(--accent)]/60"
+                      : "text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--accent)]/50"
+                  )}
+                >
+                  <Icon size={16} />
+                  {count > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-3.5 px-1 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-[9px] leading-[14px] font-medium tabular-nums">
+                      {count > 99 ? "99+" : count}
+                    </span>
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="left" sideOffset={6}>
+                {label}
+                {count > 0 && <span className="opacity-60 ml-1">({count})</span>}
+              </TooltipContent>
+            </Tooltip>
           )
         })}
       </div>

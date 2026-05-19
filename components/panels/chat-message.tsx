@@ -566,11 +566,11 @@ export function ChatMessage({
                 {!isUser && message.content ? (
                   <MarkdownPreview
                     content={message.content}
-                    className="markdown-chat-bubble text-sm p-0 overflow-visible"
+                    className="markdown-chat-bubble text-[15px] p-0 overflow-visible"
                     pdfCitationFileId={pdfCitationFileId}
                   />
                 ) : (
-                  <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                  <p className="text-[15px] whitespace-pre-wrap">{message.content}</p>
                 )}
                 {isUser &&
                   message.attachedFileIds &&
@@ -580,16 +580,6 @@ export function ChatMessage({
                       align="end"
                     />
                   )}
-                <p
-                  className={cn(
-                    "text-xs mt-1 opacity-60",
-                    isUser
-                      ? "text-[var(--user-bubble-foreground)]"
-                      : "text-[var(--muted-foreground)]"
-                  )}
-                >
-                  <MessageTime timestamp={message.timestamp} />
-                </p>
               </>
             )}
           </div>
@@ -597,13 +587,21 @@ export function ChatMessage({
           {!isEditing && (
             <div
               className={cn(
-                "flex gap-0.5 mt-1 transition-opacity",
-                isBookmarked
-                  ? "opacity-100"
-                  : "opacity-0 group-hover/message:opacity-100",
+                "flex items-center gap-1 mt-1",
                 isUser ? "flex-row-reverse" : "flex-row"
               )}
             >
+              {/* Actions cluster — sits at the bubble side (outer edge of
+                  the row). flex-row-reverse on user messages flips the
+                  visual order so actions stay anchored to the bubble. */}
+              <div
+                className={cn(
+                  "flex gap-0.5 transition-opacity",
+                  isBookmarked
+                    ? "opacity-100"
+                    : "opacity-0 group-hover/message:opacity-100"
+                )}
+              >
               <Button
                 variant="ghost"
                 size="icon"
@@ -698,6 +696,20 @@ export function ChatMessage({
               >
                 <Trash2 size={14} />
               </Button>
+              </div>
+              {/* Timestamp — sits next to (inner-side of) the action
+                  cluster so it doesn't anchor at the bubble's outer edge.
+                  Same hover-reveal as the actions. */}
+              <p
+                className={cn(
+                  "text-xs text-[var(--muted-foreground)] px-1 transition-opacity",
+                  isBookmarked
+                    ? "opacity-60"
+                    : "opacity-0 group-hover/message:opacity-60"
+                )}
+              >
+                <MessageTime timestamp={message.timestamp} />
+              </p>
             </div>
           )}
           {!isUser &&

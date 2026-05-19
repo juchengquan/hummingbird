@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import {
-  MoreVertical,
+  ChevronDown,
   Pencil,
   Pin,
   PinOff,
@@ -22,6 +22,16 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { CHAT_MODELS } from "@/lib/models"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import {
   useStore,
@@ -50,7 +60,24 @@ import { cn } from "@/lib/utils"
  * an inline input. Esc cancels, Enter / blur saves. Mirrors the sidebar's
  * rename UX so the muscle memory transfers.
  */
-export function ChatHeader() {
+interface ChatHeaderProps {
+  /** Current model id. */
+  chatModel: string
+  /** Called when the user picks a model from the header's model select.
+   *  Owned by ChatPanel so it can chain a retry on the pending-error case. */
+  onModelPick: (modelId: string) => void
+  /** Controlled-open state for the model picker (lets ChatPanel pop it open
+   *  programmatically when the user clicks `Change model` on an error). */
+  modelPickerOpen: boolean
+  onModelPickerOpenChange: (open: boolean) => void
+}
+
+export function ChatHeader({
+  chatModel,
+  onModelPick,
+  modelPickerOpen,
+  onModelPickerOpenChange,
+}: ChatHeaderProps) {
   const workspace = useActiveWorkspace()
   const conversation = useActiveConversation()
   const renameConversation = useStore((s) => s.renameConversation)
@@ -186,16 +213,129 @@ export function ChatHeader() {
               </Button>
             </div>
           ) : (
-            <button
-              type="button"
-              onClick={startRename}
-              className="font-medium truncate text-[var(--foreground)] hover:text-[var(--foreground)]/80 transition-colors text-left"
-              title="Click to rename"
-            >
-              {conversation.title}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={startRename}
+                className="font-medium truncate text-[var(--foreground)] hover:text-[var(--foreground)]/80 transition-colors text-left"
+                title="Click to rename"
+              >
+                {conversation.title}
+              </button>
+              {/* Title dropdown — chevron next to the title opens the
+                  conversation actions menu (Summarise, Pin, Export, etc.). */}
+              <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 shrink-0 text-[var(--muted-foreground)]"
+                    aria-label="Conversation actions"
+                  >
+                    <ChevronDown size={14} />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-44 p-1">
+                  <Button
+                    variant="ghost"
+                    onClick={handleSummarise}
+                    className={cn("w-full justify-start gap-2 cursor-pointer")}
+                  >
+                    <Sparkles size={14} />
+                    Summarise
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={handlePin}
+                    className="w-full justify-start gap-2 cursor-pointer"
+                  >
+                    {conversation.pinned ? <PinOff size={14} /> : <Pin size={14} />}
+                    {conversation.pinned ? "Unpin" : "Pin"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={startRename}
+                    className="w-full justify-start gap-2 cursor-pointer"
+                  >
+                    <Pencil size={14} />
+                    Rename
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={handleExport}
+                    className="w-full justify-start gap-2 cursor-pointer"
+                  >
+                    <Download size={14} />
+                    Export as .md
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={handleCopy}
+                    className="w-full justify-start gap-2 cursor-pointer"
+                  >
+                    <Copy size={14} />
+                    Copy as Markdown
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={handleBranches}
+                    className="w-full justify-start gap-2 cursor-pointer"
+                  >
+                    <GitBranch size={14} />
+                    Branches
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={handleShare}
+                    className="w-full justify-start gap-2 cursor-pointer"
+                  >
+                    <Share2 size={14} />
+                    Share…
+                  </Button>
+                </PopoverContent>
+              </Popover>
+            </>
           )}
         </div>
+
+        {/* Model picker — moved here from the input bar so the bar can stay
+            focused on text entry. ChatPanel owns the state so it can pop
+            this open programmatically (e.g. when the user clicks
+            `Change model` on an error). */}
+        {!renaming && (
+          <Select
+            value={chatModel}
+            onValueChange={onModelPick}
+            open={modelPickerOpen}
+            onOpenChange={onModelPickerOpenChange}
+          >
+            <SelectTrigger
+              size="sm"
+              className="h-7 text-xs gap-1 border-none bg-transparent hover:bg-[var(--secondary)] shrink-0 max-w-[180px]"
+              aria-label="Model"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              {Object.entries(
+                CHAT_MODELS.reduce<Record<string, typeof CHAT_MODELS>>((acc, m) => {
+                  if (!acc[m.provider]) acc[m.provider] = []
+                  acc[m.provider].push(m)
+                  return acc
+                }, {})
+              ).map(([provider, models]) => (
+                <SelectGroup key={provider}>
+                  <SelectLabel>{provider}</SelectLabel>
+                  {models.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
 
         {/* Actions */}
         {!renaming && (
@@ -209,78 +349,6 @@ export function ChatHeader() {
           >
             <PanelRight size={14} />
           </Button>
-        )}
-        {!renaming && (
-          <Popover open={menuOpen} onOpenChange={setMenuOpen}>
-            <PopoverTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 shrink-0 text-[var(--muted-foreground)]"
-                aria-label="Conversation actions"
-              >
-                <MoreVertical size={14} />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-44 p-1">
-              <Button
-                variant="ghost"
-                onClick={handleSummarise}
-                className={cn("w-full justify-start gap-2 cursor-pointer")}
-              >
-                <Sparkles size={14} />
-                Summarise
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={handlePin}
-                className="w-full justify-start gap-2 cursor-pointer"
-              >
-                {conversation.pinned ? <PinOff size={14} /> : <Pin size={14} />}
-                {conversation.pinned ? "Unpin" : "Pin"}
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={startRename}
-                className="w-full justify-start gap-2 cursor-pointer"
-              >
-                <Pencil size={14} />
-                Rename
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={handleExport}
-                className="w-full justify-start gap-2 cursor-pointer"
-              >
-                <Download size={14} />
-                Export as .md
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={handleCopy}
-                className="w-full justify-start gap-2 cursor-pointer"
-              >
-                <Copy size={14} />
-                Copy as Markdown
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={handleBranches}
-                className="w-full justify-start gap-2 cursor-pointer"
-              >
-                <GitBranch size={14} />
-                Branches
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={handleShare}
-                className="w-full justify-start gap-2 cursor-pointer"
-              >
-                <Share2 size={14} />
-                Share…
-              </Button>
-            </PopoverContent>
-          </Popover>
         )}
       </div>
 

@@ -6,15 +6,7 @@ import { useStore, useHydrated } from "@/lib/hooks/use-store"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupTextarea, InputGroupButton } from "@/components/ui/input-group"
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+import { cn } from "@/lib/utils"
 import { ResourcesSidebar } from "@/components/sidebars/resources"
 import { ActiveSkillsChips } from "@/components/skills/active-chips"
 import { SKILLS } from "@/lib/skills/registry"
@@ -24,8 +16,7 @@ import { detectPasteKind, type PasteDetection } from "@/lib/smart-paste/detect"
 import { ChatHeader } from "@/components/panels/chat-header"
 import { ChatMessage } from "@/components/panels/chat-message"
 import { EmptyChatWelcome } from "@/components/panels/empty-chat-welcome"
-import { Plus, ChevronDown, Square } from "lucide-react"
-import { CHAT_MODELS } from "@/lib/models"
+import { Plus, ChevronDown, Square, ArrowUp } from "lucide-react"
 import { processSelectedFiles } from "@/lib/file-utils"
 import { runExtraction } from "@/lib/extract"
 import { persistFile } from "@/lib/files/persist"
@@ -114,7 +105,7 @@ export function ChatPanel() {
   const [liveToolCalls, setLiveToolCalls] = useState<
     Record<string, LiveToolCall[]>
   >({})
-  const [, setShowScrollButton] = useState(false)
+  const [showScrollButton, setShowScrollButton] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
   const inputFileRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -135,26 +126,60 @@ export function ChatPanel() {
     }
   }, [messages, isTyping])
 
-  // Handle scroll event to show/hide scroll button
-  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    const target = e.target as HTMLDivElement
-    const { scrollTop, scrollHeight, clientHeight } = target
-    const isAtBottom = scrollHeight - scrollTop - clientHeight < 100
-    setShowScrollButton(!isAtBottom)
-  }, [])
+  // While the user clicks the scroll-to-bottom button, we kick off a smooth
+  // scrollTo. That fires the `scroll` event many times during the glide; the
+  // distance-from-bottom is still > threshold at the start of the glide, so
+  // the listener would flip the button right back on and create a flicker.
+  // This ref suppresses the listener for the duration of the auto-scroll.
+  const autoScrollingRef = useRef(false)
+
+  // Radix ScrollArea's `onScroll` doesn't fire — the scroll happens on an
+  // inner viewport element, not the root. Attach a listener directly to
+  // that viewport via useEffect. Threshold is relative to the messages
+  // list's bottom padding (`pb-44` = 176px) plus a small extra buffer so
+  // the button appears once the user has clearly scrolled off the most
+  // recent message, not when they're at the natural "bottom" landing
+  // position.
+  useEffect(() => {
+    const end = messagesEndRef.current
+    if (!end) return
+    const viewport = end.closest(
+      '[data-slot="scroll-area-viewport"]'
+    ) as HTMLElement | null
+    if (!viewport) return
+    const handler = () => {
+      if (autoScrollingRef.current) return
+      const distanceFromBottom =
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
+      // ~pb-44 padding (176px) means "at bottom" feels like 0–200; trigger
+      // the button once the user is meaningfully past that (>~250 from
+      // scroll bottom = roughly ~75px above the last message).
+      setShowScrollButton(distanceFromBottom > 250)
+    }
+    handler() // initial reading
+    viewport.addEventListener("scroll", handler, { passive: true })
+    return () => viewport.removeEventListener("scroll", handler)
+  }, [messages.length])
 
   // Scroll the ScrollArea viewport directly — never via scrollIntoView,
-  // which can scroll unintended ancestors.
+  // which can scroll unintended ancestors. Suppresses the scroll listener
+  // while the smooth scroll runs so the button doesn't flicker mid-glide.
   const scrollToBottom = useCallback(() => {
     const end = messagesEndRef.current
     if (!end) return
     const viewport = end.closest(
       '[data-slot="scroll-area-viewport"]'
     ) as HTMLElement | null
-    if (viewport) {
-      viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" })
-    }
+    if (!viewport) return
+    autoScrollingRef.current = true
     setShowScrollButton(false)
+    viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" })
+    // Re-arm the listener once the smooth scroll has had time to finish.
+    // 800ms covers a long page; the scroll engine itself short-circuits if
+    // the user starts interacting earlier, so this is a max cap.
+    setTimeout(() => {
+      autoScrollingRef.current = false
+    }, 800)
   }, [])
 
   // Mock fallback used when the AI Gateway key isn't configured.
@@ -824,13 +849,23 @@ export function ChatPanel() {
     <div className="flex h-full">
       {/* Messages column */}
       <div className="flex flex-col flex-1 min-w-0 min-h-0 relative">
-        <ChatHeader />
+        <ChatHeader
+          chatModel={chatModel}
+          onModelPick={handleModelPick}
+          modelPickerOpen={modelPickerOpen}
+          onModelPickerOpenChange={(open) => {
+            setModelPickerOpen(open)
+            // Drop pending-retry intent if the user dismisses the picker
+            // without selecting (closing without picking shouldn't trigger
+            // a retry on the next plain model change).
+            if (!open) pendingRetryRef.current = null
+          }}
+        />
         <div className="flex-1 min-h-0 overflow-hidden">
           <ScrollArea
             className="max-w-5xl mx-auto max-h-[calc(100vh-2.75rem)] h-[calc(100vh-2.75rem)] px-4"
-            onScroll={handleScroll}
           >
-            <div className="max-w-5xl mx-auto px-4 py-4 pb-24 space-y-4">
+            <div className="max-w-5xl mx-auto px-4 py-4 pb-44 space-y-4">
               {messages.length === 0 ? (
                 <EmptyChatWelcome onPickSuggestion={pickSuggestion} />
               ) : (
@@ -896,19 +931,36 @@ export function ChatPanel() {
           </ScrollArea>
         </div>
 
-        {/* Scroll to bottom button */}
-        <Button
-          variant="secondary"
-          size="icon"
-          className="absolute bottom-20 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full shadow-md animate-scroll-button-in"
-          onClick={scrollToBottom}
-          aria-label="Scroll to bottom"
-        >
-          <ChevronDown size={18} />
-        </Button>
+        {/* Scroll to bottom button — only shown when the user has scrolled
+            meaningfully off the bottom (>300px). Positioned above the input
+            bar so it doesn't overlap the textarea. */}
+        {showScrollButton && (
+          <Button
+            variant="secondary"
+            size="icon"
+            className="absolute bottom-32 left-1/2 -translate-x-1/2 rounded-full shadow-md animate-scroll-button-in z-10"
+            onClick={scrollToBottom}
+            aria-label="Scroll to bottom"
+          >
+            <ChevronDown size={18} />
+          </Button>
+        )}
 
-        {/* Input Bar - fixed at bottom of messages column, grows upwards */}
-        <div className="absolute bottom-2 inset-x-0 border-[var(--border)] px-4 bg-background-transparant animate-input-bar-in">
+        {/* Gradient fade above the input — masks messages as they approach
+            the bottom so the pill + tagline don't need opaque backdrops.
+            The bottom 40% stays fully solid (covers the tagline area and
+            the lower portion of the pill); above that it fades to
+            transparent so messages still feel like they're scrolling
+            into the input area rather than being abruptly cut. Same
+            pattern as ChatGPT / Claude.ai. */}
+        <div className="absolute bottom-0 inset-x-0 h-40 bg-gradient-to-t from-[var(--background)] from-40% to-transparent pointer-events-none" />
+
+        {/* Input Bar — wrapper handles positioning only and stays
+            transparent on the sides so the messages-column scrollbar isn't
+            covered. The pill is the integral floating element; the tagline
+            sits below the pill as plain text — the gradient above masks
+            messages so neither needs its own opaque strip. */}
+        <div className="absolute bottom-3 inset-x-0 px-4 animate-input-bar-in pointer-events-none">
           <input
             ref={inputFileRef}
             type="file"
@@ -917,21 +969,22 @@ export function ChatPanel() {
             className="hidden"
             onChange={(e) => handleFileSelected(e.target.files)}
           />
-          <ActiveSkillsChips
-            className="max-w-4xl mx-auto px-1 pb-1"
-            mutedForNext={mutedSkillsForNext}
-            onToggleMuted={toggleMutedSkillForNext}
-          />
-          {pasteDetection && (
-            <div className="max-w-4xl mx-auto px-1 pb-1">
-              <SmartPasteChip
-                detection={pasteDetection}
-                onApply={applyPasteAction}
-                onDismiss={() => setPasteDetection(null)}
-              />
-            </div>
-          )}
-          <InputGroup className="max-w-4xl mx-auto rounded-[1vw] bg-background">
+          <div className="max-w-3xl mx-auto pointer-events-auto bg-[var(--background)] rounded-3xl border border-[var(--border)] p-2 shadow-sm">
+            <ActiveSkillsChips
+              className="px-1 pb-1"
+              mutedForNext={mutedSkillsForNext}
+              onToggleMuted={toggleMutedSkillForNext}
+            />
+            {pasteDetection && (
+              <div className="px-1 pb-1">
+                <SmartPasteChip
+                  detection={pasteDetection}
+                  onApply={applyPasteAction}
+                  onDismiss={() => setPasteDetection(null)}
+                />
+              </div>
+            )}
+            <InputGroup className="bg-transparent border-none shadow-none rounded-none">
             <InputGroupButton
               size="icon-sm"
               onClick={handleAttachClick}
@@ -954,61 +1007,57 @@ export function ChatPanel() {
                 scrollbarColor: "var(--muted-foreground) transparent",
               }}
             />
-            {isStreaming && (
-              <InputGroupButton
-                size="icon-sm"
-                onClick={handleStop}
-                className="mr-2 rounded-full bg-[var(--destructive)]/10 text-[var(--destructive)] hover:bg-[var(--destructive)]/20 transition-transform hover:scale-110 active:scale-95"
-                aria-label="Stop generating"
-                title="Stop"
-              >
-                <Square size={14} fill="currentColor" />
-              </InputGroupButton>
-            )}
+            {/* Right-side button slot — fixed width / position so the
+                buttons fade IN PLACE (no width animation that would make
+                them appear to grow). Both buttons always rendered and
+                overlapped; only opacity transitions. */}
+            {(() => {
+              const showStop = isStreaming
+              const showSend = !isStreaming && inputValue.trim().length > 0
+              return (
+                <div className="relative h-8 w-8 mr-2 shrink-0">
+                  <InputGroupButton
+                    size="icon-sm"
+                    onClick={handleStop}
+                    aria-label="Stop generating"
+                    aria-hidden={!showStop}
+                    tabIndex={showStop ? 0 : -1}
+                    title="Stop"
+                    className={cn(
+                      "absolute inset-0 rounded-full bg-[var(--destructive)]/10 text-[var(--destructive)] hover:bg-[var(--destructive)]/20 transition-opacity duration-200",
+                      showStop
+                        ? "opacity-100 pointer-events-auto"
+                        : "opacity-0 pointer-events-none"
+                    )}
+                  >
+                    <Square size={14} fill="currentColor" />
+                  </InputGroupButton>
+                  <InputGroupButton
+                    size="icon-sm"
+                    onClick={handleSendMessage}
+                    aria-label="Send message"
+                    aria-hidden={!showSend}
+                    tabIndex={showSend ? 0 : -1}
+                    title="Send (Enter)"
+                    className={cn(
+                      "absolute inset-0 rounded-full bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground transition-opacity duration-200",
+                      showSend
+                        ? "opacity-100 pointer-events-auto"
+                        : "opacity-0 pointer-events-none"
+                    )}
+                  >
+                    <ArrowUp size={16} />
+                  </InputGroupButton>
+                </div>
+              )
+            })()}
           </InputGroup>
-          <div className="mt-2 flex items-center justify-center gap-3">
-            <Select
-              value={chatModel}
-              onValueChange={handleModelPick}
-              open={modelPickerOpen}
-              onOpenChange={(open) => {
-                setModelPickerOpen(open)
-                // Drop pending-retry intent if the user dismisses the picker
-                // without selecting (closing without picking shouldn't trigger
-                // a retry on the next plain model change).
-                if (!open) pendingRetryRef.current = null
-              }}
-            >
-              <SelectTrigger
-                size="sm"
-                className="h-6 text-xs gap-1 border-none bg-transparent hover:bg-[var(--secondary)]"
-                aria-label="Model"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {Object.entries(
-                  CHAT_MODELS.reduce<Record<string, typeof CHAT_MODELS>>((acc, m) => {
-                    if (!acc[m.provider]) acc[m.provider] = []
-                    acc[m.provider].push(m)
-                    return acc
-                  }, {})
-                ).map(([provider, models]) => (
-                  <SelectGroup key={provider}>
-                    <SelectLabel>{provider}</SelectLabel>
-                    {models.map((m) => (
-                      <SelectItem key={m.id} value={m.id}>
-                        {m.label}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                ))}
-              </SelectContent>
-            </Select>
-            <span className="hidden sm:inline text-xs text-[var(--muted-foreground)] italic">
-              AI is not a silver bullet!
-            </span>
           </div>
+          {/* Tagline — plain text, centered below the pill. No backdrop
+              needed because the gradient above already masks messages. */}
+          <p className="max-w-3xl mx-auto mt-2 text-center text-[11px] text-[var(--muted-foreground)] italic">
+            AI is not a silver bullet!
+          </p>
         </div>
       </div>
 

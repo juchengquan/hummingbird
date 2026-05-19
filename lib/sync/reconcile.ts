@@ -382,7 +382,8 @@ export async function bulkUploadLocalState(
 export function applyCloudSnapshot(snapshot: CloudSnapshot): void {
   const s = useStore.getState()
   const sortedWorkspaces = [...snapshot.workspaces].sort(
-    (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()
+    (a, b) =>
+      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
   )
   const activeWorkspaceId =
     sortedWorkspaces.find((w) => w.id === s.activeWorkspaceId)?.id ??
@@ -393,7 +394,8 @@ export function applyCloudSnapshot(snapshot: CloudSnapshot): void {
     (c) => c.workspaceId === activeWorkspaceId
   )
   const sortedConvs = candidateConvs.sort(
-    (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()
+    (a, b) =>
+      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
   )
   const activeConversationId =
     sortedConvs.find((c) => c.id === s.activeConversationId)?.id ??

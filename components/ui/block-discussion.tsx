@@ -119,7 +119,10 @@ const BlockCommentContent = ({
   const sortedMergedData = [
     ...resolvedDiscussions,
     ...resolvedSuggestions,
-  ].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  ].sort(
+    (a, b) =>
+      new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  );
 
   const selected =
     resolvedDiscussions.some((d) => d.id === activeCommentId) ||

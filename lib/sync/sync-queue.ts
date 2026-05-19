@@ -18,6 +18,7 @@
  */
 
 import type { AppSupabaseClient } from "@/lib/supabase/client"
+import { uuid } from "@/lib/uuid"
 
 const STORAGE_KEY = "hummingbird-sync-queue"
 const MAX_BACKOFF_MS = 60_000
@@ -289,7 +290,7 @@ export function resetSyncQueue(): void {
 
 function cryptoRandomId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID()
+    return uuid()
   }
   return Math.random().toString(36).slice(2) + Date.now().toString(36)
 }

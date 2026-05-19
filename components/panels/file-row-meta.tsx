@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { RotateCcw, FileText } from "lucide-react"
+import { RotateCcw } from "lucide-react"
 import type { UploadedFile } from "@/lib/types"
 import { useStore } from "@/lib/hooks/use-store"
 import { useFileAvailability } from "@/lib/files/use-file-availability"
@@ -9,7 +9,6 @@ import { fetchFileBlob } from "@/lib/files/fetch-blob"
 import { retryExtraction } from "@/lib/extract"
 import { ExtractionStatusBadge } from "@/components/panels/extraction-status-badge"
 import { FileAvailabilityBadge } from "@/components/panels/file-availability-badge"
-import { usePdfViewer } from "@/components/pdf-viewer/types"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 
@@ -32,14 +31,11 @@ interface FileRowMetaProps {
 export function FileRowMeta({ file, size = "compact", className }: FileRowMetaProps) {
   const available = useFileAvailability(file)
   const setFileExtraction = useStore((s) => s.setFileExtraction)
-  const openPdfViewer = usePdfViewer((s) => s.open)
   const [retrying, setRetrying] = useState(false)
 
   const status = file.extractionStatus
   const retryable =
     status === "failed" || status === "unsupported" || status === undefined
-  const isPdf =
-    file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
 
   const handleRetry = async (e: React.MouseEvent | React.KeyboardEvent) => {
     e.preventDefault()
@@ -78,26 +74,6 @@ export function FileRowMeta({ file, size = "compact", className }: FileRowMetaPr
         >
           <RotateCcw size={10} className={cn(retrying && "animate-spin")} />
           {retrying ? "Re-extracting…" : "Re-extract"}
-        </button>
-      )}
-      {isPdf && available !== false && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            openPdfViewer({ fileId: file.id })
-          }}
-          aria-label={`Open "${file.name}" in PDF viewer`}
-          title="Open in PDF viewer"
-          className={cn(
-            "inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px]",
-            "text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--accent)]",
-            "focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)] transition-colors"
-          )}
-        >
-          <FileText size={10} />
-          View
         </button>
       )}
     </div>

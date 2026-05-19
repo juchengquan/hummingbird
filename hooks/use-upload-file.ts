@@ -15,6 +15,7 @@ import { z } from 'zod';
 
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/hooks/use-auth';
+import { uuid } from '@/lib/uuid';
 
 export interface UploadedFile<T = unknown> {
   key: string;
@@ -48,7 +49,7 @@ export function useUploadFile({
   async function uploadToSupabaseStorage(file: File): Promise<UploadedFile | null> {
     const client = getSupabaseBrowserClient();
     if (!client || !user) return null;
-    const fileId = crypto.randomUUID();
+    const fileId = uuid();
     const ext = file.name.includes('.') ? file.name.split('.').pop()! : 'bin';
     const path = `${user.id}/${fileId}.${ext}`;
     const upload = await client.storage
@@ -76,7 +77,7 @@ export function useUploadFile({
 
   function buildLocalFile(file: File): UploadedFile {
     return {
-      key: `local:${crypto.randomUUID()}`,
+      key: `local:${uuid()}`,
       appUrl: URL.createObjectURL(file),
       name: file.name,
       size: file.size,

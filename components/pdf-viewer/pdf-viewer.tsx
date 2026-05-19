@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { ChevronLeft, ChevronRight, Loader2, X, ZoomIn, ZoomOut, AlertCircle } from "lucide-react"
+import { ChevronLeft, ChevronRight, Loader2, ZoomIn, ZoomOut, AlertCircle } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -153,9 +153,9 @@ function PdfViewer({ fileId, initialPage, onClose }: PdfViewerProps) {
     <Sheet open={true} onOpenChange={(o) => { if (!o) onClose() }}>
       <SheetContent
         side="right"
-        className="w-[640px] sm:max-w-[80vw] p-0 gap-0 flex flex-col"
+        className="w-full sm:w-[640px] sm:max-w-[80vw] p-0 gap-0 flex flex-col"
       >
-        <SheetHeader className="shrink-0 px-4 py-2.5 border-b border-[var(--border)] flex-row items-center justify-between gap-2 space-y-0">
+        <SheetHeader className="shrink-0 pl-4 pr-12 py-2.5 border-b border-[var(--border)] flex-row items-center justify-between gap-2 space-y-0">
           <SheetTitle className="text-sm font-medium truncate flex-1 min-w-0" title={file?.name ?? "PDF"}>
             {file?.name ?? "PDF"}
           </SheetTitle>
@@ -195,9 +195,16 @@ function PdfViewer({ fileId, initialPage, onClose }: PdfViewerProps) {
               >
                 <ZoomOut size={14} />
               </Button>
-              <span className="text-[10px] tabular-nums text-[var(--muted-foreground)] w-9 text-center">
+              <button
+                type="button"
+                onClick={() => setScale(1)}
+                disabled={scale === 1}
+                aria-label="Reset zoom"
+                title="Reset zoom"
+                className="text-[10px] tabular-nums text-[var(--muted-foreground)] hover:text-[var(--foreground)] disabled:cursor-default disabled:hover:text-[var(--muted-foreground)] w-9 h-7 rounded text-center transition-colors"
+              >
                 {Math.round(scale * 100)}%
-              </span>
+              </button>
               <Button
                 variant="ghost"
                 size="icon"
@@ -210,18 +217,9 @@ function PdfViewer({ fileId, initialPage, onClose }: PdfViewerProps) {
               </Button>
             </div>
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onClose}
-            className="h-7 w-7 shrink-0"
-            aria-label="Close"
-          >
-            <X size={14} />
-          </Button>
         </SheetHeader>
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto bg-[var(--muted)]/30">
+        <div ref={scrollRef} className="flex-1 overflow-auto bg-[var(--muted)]/30">
           {loading && (
             <div className="flex items-center justify-center h-32 text-sm text-[var(--muted-foreground)] gap-2">
               <Loader2 size={14} className="animate-spin" />
@@ -235,7 +233,12 @@ function PdfViewer({ fileId, initialPage, onClose }: PdfViewerProps) {
             </div>
           )}
           {doc && (
-            <div className="flex flex-col items-center gap-3 py-3 px-3">
+            // `min-w-full w-max`: container grows to the widest child
+            // (`w-max` = `width: max-content`) but is also at least as wide
+            // as the viewport (`min-w-full`). This keeps pages centered when
+            // they fit AND lets the scroll container reach the left edge
+            // when zoomed past viewport width.
+            <div className="min-w-full w-max flex flex-col items-center gap-3 py-3 px-3">
               {Array.from({ length: numPages }, (_, i) => i + 1).map((p) => (
                 <PdfPage
                   key={p}

@@ -1,6 +1,7 @@
 import { File as FileIcon, FileText, FileJson, Image } from "lucide-react"
 import React from "react"
 import type { UploadedFile } from "@/lib/types"
+import { uuid } from "@/lib/uuid"
 
 // Default file validation (5MB limit)
 const DEFAULT_SIZE_LIMIT = 5 * 1024 * 1024
@@ -46,7 +47,7 @@ export function processSelectedFiles(
 
     processed.push({
       meta: {
-        id: crypto.randomUUID(),
+        id: uuid(),
         name: file.name,
         size: file.size,
         type: file.type || 'application/octet-stream',

@@ -1,5 +1,5 @@
 import * as React from "react"
-import { FolderOpen, Folder, Plus, ChevronRight, Pin, MessageSquare, MessagesSquare, PencilLine, Files, Search, X } from "lucide-react"
+import { FolderOpen, Plus, ChevronRight, Pin, MessageSquare, MessagesSquare, Search, X } from "lucide-react"
 import {
   Sidebar,
   SidebarContent,
@@ -46,7 +46,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const sidebarCollapsed = state === "collapsed"
 
   const [mounted, setMounted] = React.useState(false)
-  const [resourcesExpanded, setResourcesExpanded] = React.useState(true)
   const [sessionsExpanded, setSessionsExpanded] = React.useState(true)
   const [chatQuery, setChatQuery] = React.useState("")
 
@@ -86,7 +85,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
 
       <SidebarContent>
-        {/* 1. Workspaces + Editor (top-level tabs) */}
+        {/* 1. Workspaces (top-level tab). Editor moved to the right activity
+            bar in ResourcesSidebar so workflow tools live alongside the
+            context tabs (Files / Notes / Artifacts / Skills). */}
         <SidebarGroup>
           <SidebarMenu>
             <SidebarMenuItem>
@@ -99,63 +100,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 <span className="group-data-[collapsible=icon]:hidden">Workspaces</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                tooltip="Editor"
-                onClick={() => setActiveView("editor")}
-                isActive={activeView === "editor"}
-              >
-                <PencilLine />
-                <span className="group-data-[collapsible=icon]:hidden">Editor</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
           </SidebarMenu>
         </SidebarGroup>
 
-        {/* 2. Resources (with Files as sub) — hidden when sidebar is icon-collapsed */}
-        <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <Collapsible
-                open={resourcesExpanded}
-                onOpenChange={setResourcesExpanded}
-                className="group/collapsible"
-              >
-                <SidebarGroup className="p-0">
-                  <SidebarGroupLabel
-                    asChild
-                    className="group/label text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground text-sm"
-                  >
-                    <CollapsibleTrigger>
-                      <Folder size={14} className="mr-2 shrink-0" />
-                      {"Resources"}
-                      <ChevronRight className="ml-auto transition-transform group-data-[state=open]/collapsible:rotate-90" />
-                    </CollapsibleTrigger>
-                  </SidebarGroupLabel>
-                </SidebarGroup>
-                <CollapsibleContent>
-                  <SidebarGroupContent>
-                    <SidebarMenu className="gap-0.5">
-                      <SidebarMenuItem>
-                        <SidebarMenuButton
-                          tooltip="Files"
-                          onClick={() => setActiveView("resources")}
-                          isActive={activeView === "resources"}
-                          className="h-7"
-                        >
-                          <Files />
-                          <span className="group-data-[collapsible=icon]:hidden">Files</span>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    </SidebarMenu>
-                  </SidebarGroupContent>
-                </CollapsibleContent>
-              </Collapsible>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarGroup>
-
-        {/* 3. Chats */}
+        {/* 2. Chats — file management moved to the right rail (`<ResourcesSidebar/>`),
+            which mounts in both `chat` and `workspaces` views. The left
+            sidebar no longer carries a Resources entry. */}
         <SidebarGroup className="group-data-[collapsible=icon]:hidden">
           <SidebarMenu>
             {sidebarCollapsed ? (

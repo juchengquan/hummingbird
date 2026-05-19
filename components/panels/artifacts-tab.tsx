@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { format } from "date-fns"
 import {
   Archive,
@@ -70,9 +70,9 @@ export function ArtifactsTab() {
 
   const [openId, setOpenId] = useState<string | null>(null)
   const [mounted, setMounted] = useState(false)
-  if (!mounted && typeof window !== "undefined") {
-    queueMicrotask(() => setMounted(true))
-  }
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   const open = openId ? artifacts.find((a) => a.id === openId) ?? null : null
 
@@ -109,7 +109,7 @@ export function ArtifactsTab() {
 
   return (
     <>
-      <div className="shrink-0 px-3 py-2 border-b border-[var(--border)]">
+      <div className="shrink-0 h-11 px-3 border-b border-[var(--border)] flex items-center">
         <p className="text-[11px] text-[var(--muted-foreground)]">
           {artifacts.length === 0
             ? "No artifacts yet"

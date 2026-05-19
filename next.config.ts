@@ -10,6 +10,11 @@ const nextConfig: NextConfig = {
   //
   // `mammoth` also reaches for its own files at runtime; same fix.
   serverExternalPackages: ["pdf-parse", "pdfjs-dist", "mammoth"],
+  // Allow the dev server to be hit from LAN IPs (e.g. for testing on a
+  // phone on the same Wi-Fi). Without this, Next.js 16+ warns about
+  // cross-origin requests to `/_next/*` and will eventually block them.
+  // Add specific IPs as needed; `*` is broad but fine for dev.
+  allowedDevOrigins: ["*"],
 };
 
 export default nextConfig;
