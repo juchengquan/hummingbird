@@ -19,21 +19,24 @@ import type { UploadedFile } from '@/lib/types'
 import { getBlob } from './local-store'
 
 export function useFileAvailability(file: UploadedFile, cacheVersion = 0): boolean | null {
-  const [available, setAvailable] = useState<boolean | null>(null)
+  // When the file has a storagePath we know it's reachable (Supabase
+  // Storage will serve it on demand). Return that synchronously from
+  // render — no need to dip through `null` first. The async IDB lookup
+  // only runs for files without a storagePath, where we genuinely don't
+  // know yet.
+  const hasStoragePath = !!file.storagePath
+  const [localAvailable, setLocalAvailable] = useState<boolean | null>(null)
 
   useEffect(() => {
+    if (hasStoragePath) return
     let cancelled = false
-    if (file.storagePath) {
-      setAvailable(true)
-      return
-    }
     void getBlob(file.id).then((blob) => {
-      if (!cancelled) setAvailable(blob !== null)
+      if (!cancelled) setLocalAvailable(blob !== null)
     })
     return () => {
       cancelled = true
     }
-  }, [file.id, file.storagePath, cacheVersion])
+  }, [file.id, hasStoragePath, cacheVersion])
 
-  return available
+  return hasStoragePath ? true : localAvailable
 }

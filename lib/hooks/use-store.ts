@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useSyncExternalStore } from 'react'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { UploadedFile, Workspace, Resource, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind, ToolCallRecord } from '@/lib/types'
@@ -23,15 +23,29 @@ function getInitialTheme(): Theme {
   return 'dark'
 }
 
-// Track hydration state for SSR/client synchronization
+// Track hydration state for SSR/client synchronization. We expose it via
+// useSyncExternalStore so subscribers update when Zustand's persist
+// middleware finishes loading from localStorage. Server snapshot is
+// always `false` to keep SSR + first client paint consistent; the flip
+// to `true` happens after hydration, post-mount.
 let hasHydratedInternal = false
-export const useHydrated = () => {
-  const [hydrated, setHydrated] = useState(false)
-  useEffect(() => {
-    setHydrated(hasHydratedInternal)
-  }, [])
-  return hydrated
+const hydrationSubscribers = new Set<() => void>()
+function subscribeHydration(callback: () => void): () => void {
+  hydrationSubscribers.add(callback)
+  return () => {
+    hydrationSubscribers.delete(callback)
+  }
 }
+function notifyHydrated(): void {
+  hasHydratedInternal = true
+  for (const cb of hydrationSubscribers) cb()
+}
+export const useHydrated = () =>
+  useSyncExternalStore(
+    subscribeHydration,
+    () => hasHydratedInternal,
+    () => false
+  )
 
 // Default initial values for store
 const DEFAULT_WORKSPACE_ID = 'default'
@@ -1117,7 +1131,7 @@ export const useStore = create<AppState>()(
         return persistedState
       },
       onRehydrateStorage: () => () => {
-        hasHydratedInternal = true
+        notifyHydrated()
       },
       partialize: (state) => ({
         theme: state.theme,
