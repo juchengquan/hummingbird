@@ -49,6 +49,7 @@ export function diffWorkspaces(prev: Workspace[], next: Workspace[]): SyncOp[] {
           name: w.name,
           system_prompt: w.systemPrompt ?? null,
           skill_prefs: w.skillPrefs ?? {},
+          default_model: w.defaultModel ?? null,
           created_at: toISO(w.createdAt),
           updated_at: toISO(w.updatedAt),
         },
@@ -73,6 +74,7 @@ function workspaceEquals(a: Workspace, b: Workspace): boolean {
     a.name === b.name &&
     (a.systemPrompt ?? null) === (b.systemPrompt ?? null) &&
     sameSkillPrefs(a.skillPrefs, b.skillPrefs) &&
+    (a.defaultModel ?? null) === (b.defaultModel ?? null) &&
     sameInstant(a.createdAt, b.createdAt) &&
     sameInstant(a.updatedAt, b.updatedAt)
   )

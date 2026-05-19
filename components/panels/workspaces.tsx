@@ -29,6 +29,16 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { format } from "date-fns"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { CHAT_MODELS } from "@/lib/models"
 
 export function WorkspacesPanel() {
   const {
@@ -38,6 +48,7 @@ export function WorkspacesPanel() {
     createWorkspace,
     renameWorkspace,
     setWorkspaceSystemPrompt,
+    setWorkspaceDefaultModel,
     deleteWorkspace,
     conversations,
     resources,
@@ -213,6 +224,50 @@ export function WorkspacesPanel() {
                         className="mt-1 text-xs resize-none min-h-[44px]"
                         rows={2}
                       />
+                    </div>
+
+                    <div
+                      className="mt-3"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <label className="text-[10px] uppercase tracking-wide text-[var(--muted-foreground)] font-medium">
+                        Default model
+                      </label>
+                      <Select
+                        value={ws.defaultModel ?? "__none__"}
+                        onValueChange={(v) =>
+                          setWorkspaceDefaultModel(ws.id, v === "__none__" ? "" : v)
+                        }
+                      >
+                        <SelectTrigger className="mt-1 text-xs h-8" aria-label="Default model for this workspace">
+                          <SelectValue placeholder="No preference (use global default)" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__" className="text-xs">
+                            No preference
+                          </SelectItem>
+                          {Object.entries(
+                            CHAT_MODELS.reduce<Record<string, typeof CHAT_MODELS>>((acc, m) => {
+                              if (!acc[m.provider]) acc[m.provider] = []
+                              acc[m.provider].push(m)
+                              return acc
+                            }, {})
+                          ).map(([provider, models]) => (
+                            <SelectGroup key={provider}>
+                              <SelectLabel>{provider}</SelectLabel>
+                              {models.map((m) => (
+                                <SelectItem key={m.id} value={m.id} className="text-xs">
+                                  {m.label}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="mt-1 text-[10px] text-[var(--muted-foreground)]">
+                        Auto-applied when you open this workspace. The chat-input picker still
+                        overrides per session.
+                      </p>
                     </div>
                   </div>
                 </div>

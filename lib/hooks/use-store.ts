@@ -124,6 +124,14 @@ interface AppState {
   isTyping: boolean
   streamingContent: string
   chatModel: string
+  /**
+   * True when the user has touched the chat-input model picker since
+   * the current workspace was activated. Suppresses the workspace's
+   * `defaultModel` from re-applying on every render. Resets when the
+   * active workspace changes. Not persisted — this is a per-session
+   * intent flag.
+   */
+  sessionModelOverridden: boolean
 
   // View / sidebar actions
   toggleSidebar: () => void
@@ -139,6 +147,8 @@ interface AppState {
   deleteWorkspace: (workspaceId: string) => void
   renameWorkspace: (workspaceId: string, name: string) => void
   setWorkspaceSystemPrompt: (workspaceId: string, prompt: string) => void
+  /** Pin a default chat model on a workspace. Empty string clears the pin. */
+  setWorkspaceDefaultModel: (workspaceId: string, modelId: string) => void
   /** Set a workspace skill default. `null` clears the entry (skill returns to default). */
   setWorkspaceSkillPref: (workspaceId: string, skillId: string, value: boolean | null) => void
   setActiveWorkspace: (workspaceId: string) => void
@@ -285,6 +295,7 @@ export const useStore = create<AppState>()(
       isTyping: false,
       streamingContent: '',
       chatModel: DEFAULT_CHAT_MODEL,
+      sessionModelOverridden: false,
 
       // View / sidebar actions
       toggleSidebar: () =>
@@ -342,6 +353,27 @@ export const useStore = create<AppState>()(
               : w
           ),
         })),
+      setWorkspaceDefaultModel: (workspaceId: string, modelId: string) =>
+        set((state) => {
+          const trimmed = modelId.trim()
+          const value = trimmed.length === 0 ? undefined : trimmed
+          const isActive = state.activeWorkspaceId === workspaceId
+          return {
+            workspaces: state.workspaces.map((w) =>
+              w.id === workspaceId
+                ? { ...w, defaultModel: value, updatedAt: new Date() }
+                : w
+            ),
+            // Apply immediately when the user pins a default on the *current*
+            // workspace AND hasn't manually overridden the session model. The
+            // intent is "from now on, this workspace = this model" — waiting
+            // until the next workspace switch to apply would feel inert.
+            chatModel:
+              isActive && value && !state.sessionModelOverridden
+                ? value
+                : state.chatModel,
+          }
+        }),
       setWorkspaceSkillPref: (workspaceId, skillId, value) =>
         set((state) => ({
           workspaces: state.workspaces.map((w) => {
@@ -354,7 +386,22 @@ export const useStore = create<AppState>()(
           }),
         })),
       setActiveWorkspace: (workspaceId: string) =>
-        set({ activeWorkspaceId: workspaceId }),
+        set((state) => {
+          if (workspaceId === state.activeWorkspaceId) {
+            return { activeWorkspaceId: workspaceId }
+          }
+          const next = state.workspaces.find((w) => w.id === workspaceId)
+          const pinned = next?.defaultModel
+          return {
+            activeWorkspaceId: workspaceId,
+            // Apply the new workspace's pinned model (or keep the current
+            // one if it doesn't have a pin). Crossing into a new workspace
+            // resets the session-override flag — picking a model in the
+            // previous workspace was per-that-workspace intent.
+            chatModel: pinned ?? state.chatModel,
+            sessionModelOverridden: false,
+          }
+        }),
 
       // Resource actions
       addResource: (workspaceId: string, fileId: string) => {
@@ -700,7 +747,8 @@ export const useStore = create<AppState>()(
         })),
       setIsTyping: (typing: boolean) => set({ isTyping: typing }),
       setStreamingContent: (content: string) => set({ streamingContent: content }),
-      setChatModel: (model: string) => set({ chatModel: model }),
+      setChatModel: (model: string) =>
+        set({ chatModel: model, sessionModelOverridden: true }),
       appendToMessage: (messageId: string, chunk: string) =>
         set((state) => ({
           conversations: state.conversations.map((c) => {
@@ -831,7 +879,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'hummingbird-storage',
-      version: 10,
+      version: 11,
       migrate: (persistedState, fromVersion) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState
         const state = persistedState as Record<string, unknown>
@@ -937,6 +985,11 @@ export const useStore = create<AppState>()(
           // backfill needed — existing rows aren't part of any tree so
           // they remain as standalone roots. Nothing to do but bump
           // the version marker.
+        }
+        if (fromVersion < 11) {
+          // Workspace.defaultModel added. Existing workspaces stay with
+          // `undefined` (no pinned model), which is the same as the global
+          // default — nothing changes for them. Marker bump only.
         }
         return persistedState
       },

@@ -47,6 +47,7 @@ export interface Database {
           name: string
           system_prompt: string | null
           skill_prefs: Json
+          default_model: string | null
           created_at: string
           updated_at: string
         }
@@ -56,6 +57,7 @@ export interface Database {
           name: string
           system_prompt?: string | null
           skill_prefs?: Json
+          default_model?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -65,6 +67,7 @@ export interface Database {
           name?: string
           system_prompt?: string | null
           skill_prefs?: Json
+          default_model?: string | null
           created_at?: string
           updated_at?: string
         }

@@ -122,6 +122,7 @@ export async function fetchCloudSnapshot(
       name: w.name,
       systemPrompt: w.system_prompt ?? undefined,
       skillPrefs: jsonToSkillPrefs(w.skill_prefs),
+      defaultModel: w.default_model ?? undefined,
       createdAt: new Date(w.created_at),
       updatedAt: new Date(w.updated_at),
     }))
@@ -221,6 +222,7 @@ export async function bulkUploadLocalState(
         name: w.name,
         system_prompt: w.systemPrompt ?? null,
         skill_prefs: w.skillPrefs ?? {},
+        default_model: w.defaultModel ?? null,
         created_at: w.createdAt.toISOString(),
         updated_at: w.updatedAt.toISOString(),
       }))

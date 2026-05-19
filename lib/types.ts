@@ -51,6 +51,14 @@ export interface Workspace {
    */
   systemPrompt?: string
   /**
+   * Optional pinned default chat model for this workspace. When set,
+   * switching into this workspace auto-applies the model (until the user
+   * picks a different one via the chat-input model picker, which sticks
+   * until the next workspace switch). Empty / undefined = no preference,
+   * falls back to the global `DEFAULT_CHAT_MODEL`.
+   */
+  defaultModel?: string
+  /**
    * Workspace-level skill defaults. Each conversation in this workspace
    * inherits these unless it sets its own override. Absent keys fall back
    * to the skill's hard-coded default (see lib/skills/registry.ts).
