@@ -80,7 +80,7 @@ interface AppState {
 
   // Right resources sidebar (chat view)
   resourcesSidebarOpen: boolean
-  resourcesSidebarTab: 'files' | 'notes' | 'artifacts'
+  resourcesSidebarTab: 'files' | 'notes' | 'artifacts' | 'skills'
 
   /**
    * When true, behave as if Supabase isn't configured — no sync, no
@@ -130,7 +130,7 @@ interface AppState {
   setActiveView: (view: MainView) => void
   setResourcesSidebarOpen: (open: boolean) => void
   toggleResourcesSidebar: () => void
-  setResourcesSidebarTab: (tab: 'files' | 'notes' | 'artifacts') => void
+  setResourcesSidebarTab: (tab: 'files' | 'notes' | 'artifacts' | 'skills') => void
   setLocalOnlyMode: (value: boolean) => void
   setLocalFilesOnly: (value: boolean) => void
 
@@ -139,6 +139,8 @@ interface AppState {
   deleteWorkspace: (workspaceId: string) => void
   renameWorkspace: (workspaceId: string, name: string) => void
   setWorkspaceSystemPrompt: (workspaceId: string, prompt: string) => void
+  /** Set a workspace skill default. `null` clears the entry (skill returns to default). */
+  setWorkspaceSkillPref: (workspaceId: string, skillId: string, value: boolean | null) => void
   setActiveWorkspace: (workspaceId: string) => void
 
   // Resource actions
@@ -191,6 +193,8 @@ interface AppState {
   createConversation: (workspaceId?: string) => Conversation
   deleteConversation: (conversationId: string) => void
   renameConversation: (conversationId: string, title: string) => void
+  /** Set a conversation skill override. `null` clears the entry (falls back to workspace default). */
+  setConversationSkillPref: (conversationId: string, skillId: string, value: boolean | null) => void
   /** Toggle a file's attachment to the active conversation (no-op if no active conversation). */
   toggleConversationFileSelection: (fileId: string) => void
   /** Clear all attached files on the active conversation. */
@@ -327,6 +331,17 @@ export const useStore = create<AppState>()(
               ? { ...w, systemPrompt: prompt, updatedAt: new Date() }
               : w
           ),
+        })),
+      setWorkspaceSkillPref: (workspaceId, skillId, value) =>
+        set((state) => ({
+          workspaces: state.workspaces.map((w) => {
+            if (w.id !== workspaceId) return w
+            const current = w.skillPrefs ?? {}
+            const next: Record<string, boolean> = { ...current }
+            if (value === null) delete next[skillId]
+            else next[skillId] = value
+            return { ...w, skillPrefs: next, updatedAt: new Date() }
+          }),
         })),
       setActiveWorkspace: (workspaceId: string) =>
         set({ activeWorkspaceId: workspaceId }),
@@ -514,6 +529,17 @@ export const useStore = create<AppState>()(
           conversations: state.conversations.map((c) =>
             c.id === conversationId ? { ...c, title, updatedAt: new Date() } : c
           ),
+        })),
+      setConversationSkillPref: (conversationId, skillId, value) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id !== conversationId) return c
+            const current = c.skillPrefs ?? {}
+            const next: Record<string, boolean> = { ...current }
+            if (value === null) delete next[skillId]
+            else next[skillId] = value
+            return { ...c, skillPrefs: next, updatedAt: new Date() }
+          }),
         })),
       togglePin: (conversationId: string) =>
         set((state) => ({
@@ -730,7 +756,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'hummingbird-storage',
-      version: 8,
+      version: 9,
       migrate: (persistedState, fromVersion) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState
         const state = persistedState as Record<string, unknown>
@@ -808,6 +834,28 @@ export const useStore = create<AppState>()(
           // Local-files-only toggle. Default OFF so signed-in users keep
           // Supabase Storage uploads. Storing raw blobs locally is opt-in.
           if (!('localFilesOnly' in state)) state.localFilesOnly = false
+        }
+        if (fromVersion < 9) {
+          // Skill prefs added on workspaces + conversations. Backfill empty
+          // maps so the typed accessors don't hit undefined.
+          const ws = state.workspaces
+          if (Array.isArray(ws)) {
+            state.workspaces = ws.map((w) => {
+              if (!w || typeof w !== 'object') return w
+              const obj = w as Record<string, unknown>
+              if ('skillPrefs' in obj) return obj
+              return { ...obj, skillPrefs: {} }
+            })
+          }
+          const convs = state.conversations
+          if (Array.isArray(convs)) {
+            state.conversations = convs.map((c) => {
+              if (!c || typeof c !== 'object') return c
+              const obj = c as Record<string, unknown>
+              if ('skillPrefs' in obj) return obj
+              return { ...obj, skillPrefs: {} }
+            })
+          }
         }
         return persistedState
       },

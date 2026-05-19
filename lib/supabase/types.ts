@@ -46,6 +46,7 @@ export interface Database {
           user_id: string
           name: string
           system_prompt: string | null
+          skill_prefs: Json
           created_at: string
           updated_at: string
         }
@@ -54,6 +55,7 @@ export interface Database {
           user_id: string
           name: string
           system_prompt?: string | null
+          skill_prefs?: Json
           created_at?: string
           updated_at?: string
         }
@@ -62,6 +64,7 @@ export interface Database {
           user_id?: string
           name?: string
           system_prompt?: string | null
+          skill_prefs?: Json
           created_at?: string
           updated_at?: string
         }
@@ -77,6 +80,7 @@ export interface Database {
           selected_file_ids: string[]
           document_content: string
           document_updated_at: string
+          skill_prefs: Json
           created_at: string
           updated_at: string
         }
@@ -89,6 +93,7 @@ export interface Database {
           selected_file_ids?: string[]
           document_content?: string
           document_updated_at?: string
+          skill_prefs?: Json
           created_at?: string
           updated_at?: string
         }
@@ -101,6 +106,7 @@ export interface Database {
           selected_file_ids?: string[]
           document_content?: string
           document_updated_at?: string
+          skill_prefs?: Json
           created_at?: string
           updated_at?: string
         }

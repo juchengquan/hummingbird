@@ -1,7 +1,10 @@
 "use client"
 
-import { FolderOpen, StickyNote, Archive } from "lucide-react"
+import { FolderOpen, StickyNote, Archive, Sparkles } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { SKILLS } from "@/lib/skills/registry"
+import { resolveSkill } from "@/lib/skills/types"
+import { useActiveConversation, useActiveWorkspace } from "@/lib/hooks/use-store"
 import {
   Sheet,
   SheetContent,
@@ -36,6 +39,7 @@ const TABS = [
   { id: "files" as const, label: "Files", Icon: FolderOpen },
   { id: "notes" as const, label: "Notes", Icon: StickyNote },
   { id: "artifacts" as const, label: "Artifacts", Icon: Archive },
+  { id: "skills" as const, label: "Skills", Icon: Sparkles },
 ]
 
 export function ResourcesMobileDrawer({
@@ -47,11 +51,17 @@ export function ResourcesMobileDrawer({
   const filesCount = useWorkspaceResources().length
   const notesCount = useConversationNotes().length
   const artifactsCount = useConversationArtifacts().length
+  const workspace = useActiveWorkspace()
+  const conversation = useActiveConversation()
+  const skillsActive = SKILLS.filter((s) =>
+    resolveSkill(s, workspace?.skillPrefs, conversation?.skillPrefs)
+  ).length
 
   const counts: Record<typeof tab, number> = {
     files: filesCount,
     notes: notesCount,
     artifacts: artifactsCount,
+    skills: skillsActive,
   }
 
   return (

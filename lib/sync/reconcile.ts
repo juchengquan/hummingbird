@@ -28,6 +28,15 @@ import type { Json } from "@/lib/supabase/types"
 import { useStore } from "@/lib/hooks/use-store"
 import { setSyncSnapshot } from "@/lib/hooks/use-sync"
 
+function jsonToSkillPrefs(value: Json | null | undefined): Record<string, boolean> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  const out: Record<string, boolean> = {}
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof v === "boolean") out[k] = v
+  }
+  return out
+}
+
 export interface CloudSnapshot {
   workspaces: Workspace[]
   conversations: Conversation[]
@@ -108,6 +117,7 @@ export async function fetchCloudSnapshot(
       id: w.id,
       name: w.name,
       systemPrompt: w.system_prompt ?? undefined,
+      skillPrefs: jsonToSkillPrefs(w.skill_prefs),
       createdAt: new Date(w.created_at),
       updatedAt: new Date(w.updated_at),
     }))
@@ -122,6 +132,7 @@ export async function fetchCloudSnapshot(
       pinned: c.pinned,
       selectedFileIds: c.selected_file_ids ?? [],
       documentContent: c.document_content ?? "",
+      skillPrefs: jsonToSkillPrefs(c.skill_prefs),
     }))
 
     const files: UploadedFile[] = (filesRes.data ?? []).map((f) => {
@@ -203,6 +214,7 @@ export async function bulkUploadLocalState(
         user_id: userId,
         name: w.name,
         system_prompt: w.systemPrompt ?? null,
+        skill_prefs: w.skillPrefs ?? {},
         created_at: w.createdAt.toISOString(),
         updated_at: w.updatedAt.toISOString(),
       }))
@@ -222,6 +234,7 @@ export async function bulkUploadLocalState(
         selected_file_ids: c.selectedFileIds,
         document_content: c.documentContent,
         document_updated_at: c.updatedAt.toISOString(),
+        skill_prefs: c.skillPrefs ?? {},
         created_at: c.createdAt.toISOString(),
         updated_at: c.updatedAt.toISOString(),
       }))

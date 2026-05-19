@@ -1,10 +1,12 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import { ChevronLeft, ChevronRight, FolderOpen, StickyNote, Archive } from "lucide-react"
+import { ChevronLeft, ChevronRight, FolderOpen, StickyNote, Archive, Sparkles } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useStore, useWorkspaceResources, useConversationNotes, useConversationArtifacts } from "@/lib/hooks/use-store"
+import { useStore, useWorkspaceResources, useConversationNotes, useConversationArtifacts, useActiveWorkspace, useActiveConversation } from "@/lib/hooks/use-store"
 import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
+import { SKILLS } from "@/lib/skills/registry"
+import { resolveSkill } from "@/lib/skills/types"
 
 /**
  * Right-edge "activity bar" sidebar.
@@ -25,6 +27,7 @@ const RAIL_TABS = [
   { id: "files" as const, label: "Files", Icon: FolderOpen },
   { id: "notes" as const, label: "Notes", Icon: StickyNote },
   { id: "artifacts" as const, label: "Artifacts", Icon: Archive },
+  { id: "skills" as const, label: "Skills", Icon: Sparkles },
 ]
 
 // Width tokens picked so the open total (icon bar + content) equals the
@@ -41,6 +44,11 @@ export function ResourcesSidebar() {
   const resourcesCount = useWorkspaceResources().length
   const notesCount = useConversationNotes().length
   const artifactsCount = useConversationArtifacts().length
+  const workspace = useActiveWorkspace()
+  const conversation = useActiveConversation()
+  const skillsActive = SKILLS.filter((s) =>
+    resolveSkill(s, workspace?.skillPrefs, conversation?.skillPrefs)
+  ).length
 
   // First-mount mobile override: only fires once per browser, and only if
   // user hasn't toggled since the v6 migration seeded `true`.
@@ -73,6 +81,7 @@ export function ResourcesSidebar() {
     files: resourcesCount,
     notes: notesCount,
     artifacts: artifactsCount,
+    skills: skillsActive,
   }
 
   return (

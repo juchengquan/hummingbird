@@ -50,6 +50,12 @@ export interface Workspace {
    * without setting it again per conversation.
    */
   systemPrompt?: string
+  /**
+   * Workspace-level skill defaults. Each conversation in this workspace
+   * inherits these unless it sets its own override. Absent keys fall back
+   * to the skill's hard-coded default (see lib/skills/registry.ts).
+   */
+  skillPrefs?: Record<string, boolean>
 }
 
 export interface Resource {
@@ -115,6 +121,11 @@ export interface Conversation {
   selectedFileIds: string[]
   /** Per-conversation editor document (rich-text scratchpad). */
   documentContent: string
+  /**
+   * Per-conversation skill overrides. Presence of a key = override
+   * (true = on, false = off); absence = inherit from the workspace.
+   */
+  skillPrefs?: Record<string, boolean>
 }
 
 export interface Note {

@@ -48,6 +48,7 @@ export function diffWorkspaces(prev: Workspace[], next: Workspace[]): SyncOp[] {
           id: w.id,
           name: w.name,
           system_prompt: w.systemPrompt ?? null,
+          skill_prefs: w.skillPrefs ?? {},
           created_at: toISO(w.createdAt),
           updated_at: toISO(w.updatedAt),
         },
@@ -71,9 +72,25 @@ function workspaceEquals(a: Workspace, b: Workspace): boolean {
   return (
     a.name === b.name &&
     (a.systemPrompt ?? null) === (b.systemPrompt ?? null) &&
+    sameSkillPrefs(a.skillPrefs, b.skillPrefs) &&
     sameInstant(a.createdAt, b.createdAt) &&
     sameInstant(a.updatedAt, b.updatedAt)
   )
+}
+
+function sameSkillPrefs(
+  a: Record<string, boolean> | undefined,
+  b: Record<string, boolean> | undefined
+): boolean {
+  const ak = Object.keys(a ?? {})
+  const bk = Object.keys(b ?? {})
+  if (ak.length !== bk.length) return false
+  for (const k of ak) {
+    if ((a as Record<string, boolean>)[k] !== (b as Record<string, boolean> | undefined)?.[k]) {
+      return false
+    }
+  }
+  return true
 }
 
 // ------------ conversations + their messages --------------------------------
@@ -108,6 +125,7 @@ export function diffConversations(
           selected_file_ids: c.selectedFileIds,
           document_content: c.documentContent,
           document_updated_at: toISO(c.updatedAt),
+          skill_prefs: c.skillPrefs ?? {},
           created_at: toISO(c.createdAt),
           updated_at: toISO(c.updatedAt),
         },
@@ -143,6 +161,7 @@ function conversationHeaderEquals(a: Conversation, b: Conversation): boolean {
     a.pinned === b.pinned &&
     a.documentContent === b.documentContent &&
     sameStringArray(a.selectedFileIds, b.selectedFileIds) &&
+    sameSkillPrefs(a.skillPrefs, b.skillPrefs) &&
     sameInstant(a.createdAt, b.createdAt) &&
     sameInstant(a.updatedAt, b.updatedAt)
   )

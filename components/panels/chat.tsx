@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { ResourcesSidebar } from "@/components/sidebars/resources"
+import { ActiveSkillsChips } from "@/components/skills/active-chips"
 import { ChatHeader } from "@/components/panels/chat-header"
 import { ChatMessage } from "@/components/panels/chat-message"
 import { EmptyChatWelcome } from "@/components/panels/empty-chat-welcome"
@@ -682,6 +683,7 @@ export function ChatPanel() {
             className="hidden"
             onChange={(e) => handleFileSelected(e.target.files)}
           />
+          <ActiveSkillsChips className="max-w-4xl mx-auto px-1 pb-1" />
           <InputGroup className="max-w-4xl mx-auto rounded-[1vw] bg-background">
             <InputGroupButton
               size="icon-sm"

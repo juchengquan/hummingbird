@@ -16,6 +16,7 @@ import { runExtraction } from "@/lib/extract"
 import { persistFile } from "@/lib/files/persist"
 import { NotesTab } from "@/components/panels/notes-tab"
 import { ArtifactsTab } from "@/components/panels/artifacts-tab"
+import { SkillsTab } from "@/components/panels/skills-tab"
 import { FileRowMeta } from "@/components/panels/file-row-meta"
 
 export function ChatResourcesPanel() {
@@ -82,6 +83,8 @@ export function ChatResourcesPanel() {
         <NotesTab />
       ) : tab === "artifacts" ? (
         <ArtifactsTab />
+      ) : tab === "skills" ? (
+        <SkillsTab />
       ) : (
         <FilesTabBody
           resources={resources}
