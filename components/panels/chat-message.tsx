@@ -13,6 +13,7 @@ import { MarkdownPreview } from "@/components/markdown-preview"
 import { ToolCallStrip, type LiveToolCall } from "@/components/skills/tool-call-strip"
 import { MessageAttachments } from "@/components/panels/message-attachments"
 import { ReasoningBlock } from "@/components/panels/reasoning-block"
+import { SourcesStrip } from "@/components/panels/sources-strip"
 import { ErrorBubble } from "@/components/panels/error-bubble"
 import { useStore, useMessageBookmark } from "@/client/hooks/use-store"
 import type { ArtifactKind } from "@/shared/types"
@@ -81,6 +82,21 @@ function ChatMessageImpl({
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState(message.content)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  // Track which `[N]` citation the user just clicked so the SourcesStrip
+  // can scroll-and-flash the matching card. Local state — the strip
+  // observes the value, scrolls, flashes for 1.2s, then we're done.
+  const [highlightedCitation, setHighlightedCitation] = useState<number | null>(null)
+
+  // Derive the persisted webSearch results (if any) for the Sources
+  // strip + `[N]` citation markers. We only thread through the
+  // *persisted* tool calls — `liveToolCalls` is the in-flight buffer
+  // used by the small status pill above, not for the final source list.
+  const webSearchResults = (() => {
+    const webCall = message.toolCalls?.find(
+      (t) => t.name === "webSearch" && t.results && t.results.length > 0
+    )
+    return webCall?.results ?? null
+  })()
 
   useEffect(() => {
     if (isEditing && textareaRef.current) {
@@ -317,9 +333,17 @@ function ChatMessageImpl({
                     content={message.content}
                     className="markdown-chat-bubble text-[15px] p-0 overflow-visible"
                     pdfCitationFileId={pdfCitationFileId}
+                    sourceCount={webSearchResults?.length ?? 0}
+                    onSourceClick={(idx) => setHighlightedCitation(idx)}
                   />
                 ) : (
                   <p className="text-[15px] whitespace-pre-wrap">{message.content}</p>
+                )}
+                {!isUser && webSearchResults && webSearchResults.length > 0 && (
+                  <SourcesStrip
+                    results={webSearchResults}
+                    highlightedIndex={highlightedCitation}
+                  />
                 )}
                 {isUser &&
                   message.attachedFileIds &&

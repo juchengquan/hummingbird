@@ -156,3 +156,29 @@
   outline: 2px solid var(--ring);
   outline-offset: 1px;
 }
+
+/* Web-search citation marker — same look as PDF citations so the user
+   recognises them as "click to see source". Wired by markdown-preview.tsx
+   to scroll the matching source card into view + flash a ring. */
+.markdown-preview button.web-citation {
+  display: inline;
+  margin: 0 0.05em;
+  padding: 0 0.3em;
+  font-size: 0.8em;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  color: var(--primary);
+  background: color-mix(in oklab, var(--primary) 12%, transparent);
+  border: 1px solid color-mix(in oklab, var(--primary) 35%, transparent);
+  border-radius: 0.25rem;
+  cursor: pointer;
+  transition: background-color 0.12s, border-color 0.12s;
+  vertical-align: baseline;
+}
+.markdown-preview button.web-citation:hover {
+  background: color-mix(in oklab, var(--primary) 22%, transparent);
+  border-color: color-mix(in oklab, var(--primary) 60%, transparent);
+}
+.markdown-preview button.web-citation:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}

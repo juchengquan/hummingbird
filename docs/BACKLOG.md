@@ -51,32 +51,28 @@ embedding cost.
 
 ---
 
-## Inline citations from web search
+## ~~Inline citations from web search~~ ✅ shipped
 
-**Why distinctive.** Polishes the web-search skill we just shipped
-into something noticeably more refined than the model-just-says-URLs
-default.
+- `ToolCallRecord` now carries `results?: ToolCallResult[]` (title /
+  url / snippet). Server includes them in the `tool_result` SSE frame
+  for `webSearch`; client persists onto the message so they survive
+  reload.
+- System prompt instructs the model to cite using `[N]` markers in the
+  order results were returned.
+- `MarkdownPreview` decorates in-range `[N]` markers into clickable
+  buttons; out-of-range (model hallucinated index) stays plain text.
+- New `components/panels/sources-strip.tsx` renders a horizontal
+  scrollable strip of source cards (favicon + domain + title +
+  snippet + `[N]` corner badge) below the assistant message. Cards
+  are inline at ≤2 sources, snap-scrolling carousel at ≥3, with
+  peek-next-card and chevron buttons on `md+`. Clicking a `[N]`
+  marker scrolls the matching card into view and flashes a ring.
+- `docs/API.md` updated with the new optional `results` field on
+  `tool_result` frames.
 
-**Sketch.** When the model uses Web Search and references a result,
-render footnote markers `[1] [2]` inline in the assistant message that
-link to the result URLs. Hover card shows the snippet from the search
-result. Builds on the persisted `Message.toolCalls` we just added in
-`55064a8` — the URL → footnote mapping lives there.
-
-Two parts:
-1. **Server side** — instruct the model in the system prompt (when
-   Web Search is on) to cite using `[n]` markers matching result
-   ordinals; expose result URLs in the `tool_result` SSE frame so the
-   client can match.
-2. **Client side** — `<MarkdownPreview>` post-processor that turns
-   `[n]` tokens into anchor links with hover cards keyed on the
-   message's `toolCalls`.
-
-**Builds on.** Web Search skill (`60adf63`), persisted tool calls
-(`55064a8`), `MarkdownPreview`.
-
-**Effort.** Small-to-medium (~150–250 lines). No new schema. Bumps
-`ToolCallRecord` to carry the result URLs.
+**Deferred.** Hover-cards on the `[N]` markers themselves. The strip
+already shows the snippet, so cards may be redundant; revisit if user
+testing shows the inline marker without context is too opaque.
 
 ---
 

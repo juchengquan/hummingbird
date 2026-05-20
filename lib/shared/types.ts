@@ -155,6 +155,17 @@ export interface ToolCallRecord {
   argsLabel?: string
   /** One-line result summary (e.g. "5 results" or "Search failed"). */
   summary?: string
+  /** Detailed result entries (currently only populated for `webSearch`).
+   *  Surfaced as the Sources strip + clickable `[N]` citation markers in
+   *  the rendered assistant message. Optional + backward-compatible —
+   *  legacy persisted rows without this field continue to render fine. */
+  results?: ToolCallResult[]
+}
+
+export interface ToolCallResult {
+  title: string
+  url: string
+  snippet: string
 }
 
 export interface Conversation {

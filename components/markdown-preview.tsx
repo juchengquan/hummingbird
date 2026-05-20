@@ -28,16 +28,39 @@ interface MarkdownPreviewProps {
    * Resolved by the caller from the message's attached files.
    */
   pdfCitationFileId?: string
+  /**
+   * Number of web-search sources attached to this message. When > 0,
+   * `[N]` markers (with N ≤ sourceCount) in the rendered text become
+   * clickable buttons that call `onSourceClick(N)` — typically wired to
+   * scroll the matching card in the Sources strip into view.
+   */
+  sourceCount?: number
+  onSourceClick?: (index: number) => void
 }
 
-const CITATION_RE = /\[p\.(\d+)\]/g
+const PDF_CITATION_RE = /\[p\.(\d+)\]/g
+// Web citations: `[N]` where N is 1-2 digits. Bounded by start-of-string
+// or a non-word char to avoid matching mid-token (e.g. `arr[1]` in code).
+const WEB_CITATION_RE = /(^|[^\w])\[(\d{1,2})\]/g
 
-function decorateCitations(html: string, fileId: string): string {
+function decoratePdfCitations(html: string, fileId: string): string {
   return html.replace(
-    CITATION_RE,
+    PDF_CITATION_RE,
     (_, page) =>
       `<button type="button" class="pdf-citation" data-citation-file="${escapeAttr(fileId)}" data-citation-page="${page}">[p.${page}]</button>`
   )
+}
+
+function decorateWebCitations(html: string, sourceCount: number): string {
+  return html.replace(WEB_CITATION_RE, (_, lead, indexStr) => {
+    const idx = Number(indexStr)
+    if (!Number.isFinite(idx) || idx < 1 || idx > sourceCount) {
+      // Out-of-range — leave as plain text so the user sees the marker
+      // but can't click into a non-existent source.
+      return `${lead}[${indexStr}]`
+    }
+    return `${lead}<button type="button" class="web-citation" data-citation-index="${idx}">[${idx}]</button>`
+  })
 }
 
 function escapeAttr(value: string): string {
@@ -63,35 +86,51 @@ marked.use({
   },
 })
 
-export function MarkdownPreview({ content, className, pdfCitationFileId }: MarkdownPreviewProps) {
+export function MarkdownPreview({
+  content,
+  className,
+  pdfCitationFileId,
+  sourceCount,
+  onSourceClick,
+}: MarkdownPreviewProps) {
   const openPdfViewer = usePdfViewer((s) => s.open)
   const containerRef = useRef<HTMLDivElement>(null)
 
   const html = useMemo(() => {
     try {
       const out = marked.parse(content, { async: false })
-      const raw = typeof out === "string" ? out : ""
-      return pdfCitationFileId ? decorateCitations(raw, pdfCitationFileId) : raw
+      let raw = typeof out === "string" ? out : ""
+      if (pdfCitationFileId) raw = decoratePdfCitations(raw, pdfCitationFileId)
+      if (sourceCount && sourceCount > 0) raw = decorateWebCitations(raw, sourceCount)
+      return raw
     } catch {
       return ""
     }
-  }, [content, pdfCitationFileId])
+  }, [content, pdfCitationFileId, sourceCount])
 
   // Event-delegated click handler for citation buttons. Lives on the
   // container so it stays attached across re-renders without React owning
   // each citation as its own element.
   const handleClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      const target = (e.target as HTMLElement).closest<HTMLElement>("button.pdf-citation")
+      const target = (e.target as HTMLElement).closest<HTMLElement>(
+        "button.pdf-citation, button.web-citation"
+      )
       if (!target) return
-      const fileId = target.dataset.citationFile
-      const page = Number(target.dataset.citationPage)
-      if (!fileId || !Number.isFinite(page)) return
       e.preventDefault()
       e.stopPropagation()
-      openPdfViewer({ fileId, page })
+      if (target.classList.contains("pdf-citation")) {
+        const fileId = target.dataset.citationFile
+        const page = Number(target.dataset.citationPage)
+        if (!fileId || !Number.isFinite(page)) return
+        openPdfViewer({ fileId, page })
+      } else if (target.classList.contains("web-citation")) {
+        const idx = Number(target.dataset.citationIndex)
+        if (!Number.isFinite(idx)) return
+        onSourceClick?.(idx)
+      }
     },
-    [openPdfViewer]
+    [openPdfViewer, onSourceClick]
   )
 
   if (!html) {

@@ -3,12 +3,18 @@
 import { Globe, Loader2, Check, Wrench } from "lucide-react"
 import { cn } from "@/shared/utils"
 
+import type { ToolCallResult } from "@/shared/types"
+
 export interface LiveToolCall {
   id: string
   name: string
   argsLabel?: string
   status: "running" | "done"
   summary?: string
+  /** Result entries from the tool (currently only `webSearch`).
+   *  Carried through to the persisted record so the Sources strip
+   *  survives reload. */
+  results?: ToolCallResult[]
 }
 
 interface ToolCallStripProps {

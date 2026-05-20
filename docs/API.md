@@ -159,7 +159,13 @@ shapes below are normative.
   "type": "tool_result",
   "id": "string",        // matches the `tool_call` frame
   "name": "string",
-  "summary": "string"    // one-line user-facing summary
+  "summary": "string",   // one-line user-facing summary
+  // Optional — populated by `webSearch` (and any future tools that want
+  // a Sources strip + clickable [N] citation markers in the message).
+  // Order matters: the assistant cites these as [1], [2], etc.
+  "results": [
+    { "title": "string", "url": "string", "snippet": "string" }
+  ]
 }
 
 // Suggestion chips — follow-up question prompts. Sent at most once,

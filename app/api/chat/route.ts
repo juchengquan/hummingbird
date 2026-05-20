@@ -111,7 +111,10 @@ function buildSkillsNote(enabledSkills: string[]): string | null {
     if (isWebSearchConfigured()) {
       notes.push(
         'You can call `webSearch({ query })` when the user asks about current information ' +
-          'or facts you may not have. Cite URLs from the results in your answer.'
+          'or facts you may not have. Cite sources using bracket markers `[1]`, `[2]`, etc. ' +
+          'placed inline at the end of the sentence they support, matching the order results ' +
+          'were returned in the most recent webSearch result. Do not repeat the URL in the ' +
+          'text — the UI renders `[N]` as a clickable link to source N.'
       )
     } else {
       notes.push(
@@ -305,18 +308,35 @@ export async function POST(req: NextRequest) {
               // Compute a short summary string the UI can display instead of
               // raw JSON. Avoids leaking large result payloads onto the wire.
               let summary = 'done'
-              const output = p.output as { results?: unknown[]; error?: string } | undefined
+              let results: Array<{ title: string; url: string; snippet: string }> | undefined
+              const output = p.output as
+                | { results?: Array<{ title?: unknown; url?: unknown; snippet?: unknown }>; error?: string }
+                | undefined
               if (output?.error) {
                 summary = output.error
               } else if (Array.isArray(output?.results)) {
                 const n = output.results.length
                 summary = `${n} result${n === 1 ? '' : 's'}`
+                // Pass results through to the client for the Sources strip
+                // and `[N]` citation markers. Only webSearch produces this
+                // shape; other tools without a `results` array fall through
+                // to the bare summary.
+                if (p.toolName === 'webSearch') {
+                  results = output.results
+                    .map((r) => ({
+                      title: typeof r?.title === 'string' ? r.title : '',
+                      url: typeof r?.url === 'string' ? r.url : '',
+                      snippet: typeof r?.snippet === 'string' ? r.snippet : '',
+                    }))
+                    .filter((r) => r.url) // drop malformed entries
+                }
               }
               send({
                 type: 'tool_result',
                 id: p.toolCallId ?? '',
                 name: p.toolName ?? '',
                 summary,
+                ...(results ? { results } : {}),
               })
             } else if (part.type === 'error') {
               const { code, message } = categorizeError(

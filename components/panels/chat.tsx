@@ -29,15 +29,7 @@ const AUTO_ARCHIVE_MIN_LINES = 15
 const AUTO_ARCHIVE_MAX_PER_MESSAGE = 3
 import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/shared/upload-config"
 import type { Message, MessageError, MessageErrorCode } from "@/shared/types"
-
-interface LiveToolCall {
-  id: string
-  name: string
-  /** Friendly label shown to the user — e.g. the search query. */
-  argsLabel?: string
-  status: "running" | "done"
-  summary?: string
-}
+import type { LiveToolCall } from "@/components/skills/tool-call-strip"
 
 export function ChatPanel() {
   const addMessage = useStore((state) => state.addMessage)
@@ -376,6 +368,7 @@ export function ChatPanel() {
               name?: string
               args?: unknown
               summary?: string
+              results?: Array<{ title?: string; url?: string; snippet?: string }>
             }
             try {
               parsed = JSON.parse(payload)
@@ -410,10 +403,23 @@ export function ChatPanel() {
               if (ph) {
                 const id = parsed.id
                 const summary = parsed.summary
+                // Validate at the boundary — server should always produce
+                // complete entries but JSON-over-the-wire is `unknown` to TS.
+                const results = Array.isArray(parsed.results)
+                  ? parsed.results
+                      .filter(
+                        (r): r is { title: string; url: string; snippet: string } =>
+                          typeof r?.title === "string" &&
+                          typeof r?.url === "string" &&
+                          typeof r?.snippet === "string"
+                      )
+                  : undefined
                 setLiveToolCalls((prev) => ({
                   ...prev,
                   [ph.id]: (prev[ph.id] ?? []).map((t) =>
-                    t.id === id ? { ...t, status: "done", summary } : t
+                    t.id === id
+                      ? { ...t, status: "done", summary, results }
+                      : t
                   ),
                 }))
               }
@@ -463,11 +469,12 @@ export function ChatPanel() {
           const liveSnapshot = liveToolCalls[ph.id] ?? []
           const persisted = liveSnapshot
             .filter((t) => t.status === "done")
-            .map(({ id, name, argsLabel, summary }) => ({
+            .map(({ id, name, argsLabel, summary, results }) => ({
               id,
               name,
               argsLabel,
               summary,
+              ...(results && results.length > 0 ? { results } : {}),
             }))
           if (persisted.length > 0) {
             setMessageToolCalls(ph.id, persisted)
