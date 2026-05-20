@@ -45,3 +45,9 @@ next-env.d.ts
 .claude
 
 .documents
+
+# Supabase CLI — generated state (the .branches/ .temp/ dirs and the
+# auto-managed seed.sql cache). config.toml is intentionally tracked.
+supabase/.branches/
+supabase/.temp/
+supabase/seed.sql

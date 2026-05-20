@@ -38,11 +38,25 @@ so every feature gated by `lib/shared/supabase/env.ts` lights up:
 - Share links via the local service-role key
 - All RLS policies — RLS is plain Postgres, not Supabase-cloud-specific
 
+## Two paths — pick one
+
+Both are pre-wired in the repo. Choose based on whether you want to
+install the Supabase CLI:
+
+| Path | Best for | Needs |
+|---|---|---|
+| **A. Supabase CLI** *(recommended)* | Local development, fast resets | `supabase` CLI + Docker |
+| **B. Standalone docker-compose** | CI, environments where CLI install is painful | Docker only |
+
+Both produce the same URLs (`:54321` API, `:54323` Studio, `:54324`
+Inbucket, `:54322` Postgres) and the same deterministic dev keys, so
+`.env.local` is identical for either.
+
 ## Prerequisites
 
 - **Docker** — Desktop on macOS / Windows, Engine on Linux. Verify with
   `docker info`. The stack uses ~2 GB RAM idle.
-- **Supabase CLI** — installation options:
+- *(Path A only)* **Supabase CLI** — installation options:
   ```bash
   brew install supabase/tap/supabase   # macOS / Linuxbrew
   npx -y supabase --version            # any platform via npx (slower)
@@ -51,28 +65,20 @@ so every feature gated by `lib/shared/supabase/env.ts` lights up:
   See https://supabase.com/docs/guides/cli/getting-started for other
   options. Verify with `supabase --version`.
 
-## Step 1 — Initialize the project
+---
 
-From the repo root:
+## Path A — Supabase CLI
 
-```bash
-supabase init
-```
+### Step 1 — Initialize
 
-This creates `supabase/config.toml` (already gitignored from
-`supabase/.gitignore` if it exists; if not, add it). The migrations
-under `supabase/migrations/` are discovered automatically — no
-moving needed.
+`supabase/config.toml` is already committed in this repo, so no
+`supabase init` step. The migrations under `supabase/migrations/` are
+discovered automatically.
 
-If `supabase init` complains that the directory is non-empty (it sees
-the existing `migrations/` folder), pass `--workdir .` or accept the
-prompt — it will leave existing files alone and only add `config.toml`
-and a `.gitignore`.
-
-## Step 2 — Boot the stack
+### Step 2 — Boot the stack
 
 ```bash
-supabase start
+bun run supabase:start    # alias for `supabase start`
 ```
 
 First run pulls the Docker images (~1 GB, a few minutes). Subsequent
@@ -93,7 +99,7 @@ The migrations under `supabase/migrations/` apply automatically on
 `supabase start` (and on every `supabase db reset`). No manual SQL
 Editor step.
 
-## Step 3 — Env vars
+### Step 3 — Env vars
 
 In repo root:
 
@@ -101,12 +107,13 @@ In repo root:
 cp .env.example .env.local   # if you don't have one yet
 ```
 
-Set these three lines in `.env.local`:
+Set these three lines in `.env.local` (copy values from the `supabase
+start` output or from `.docker/supabase/dev-keys.txt` — they're identical):
 
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=http://localhost:54321
-NEXT_PUBLIC_SUPABASE_ANON_KEY=<the anon key printed by supabase start>
-SUPABASE_SERVICE_ROLE_KEY=<the service_role key printed by supabase start>
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<see .docker/supabase/dev-keys.txt>
+SUPABASE_SERVICE_ROLE_KEY=<see .docker/supabase/dev-keys.txt>
 ```
 
 Leave the other vars (`AI_GATEWAY_API_KEY`, `TAVILY_API_KEY`,
@@ -115,14 +122,68 @@ them.
 
 Restart `bun dev` so Next.js picks the new env vars up.
 
-> **Tip** — the local anon and service-role keys are *deterministic*:
-> the CLI signs them with a well-known dev JWT secret. They never
-> change across machines or `supabase start` runs, so you can check
-> them into `.env.local.local` (not `.env.local`!) and reuse forever.
-> Just **never commit them anywhere a production stack might see** —
-> they're worthless in production but they look like real keys.
+> **Tip** — the local anon and service-role keys are *deterministic*
+> JWTs signed with the well-known dev secret. They never change across
+> machines or `supabase start` runs and are pre-committed in
+> `.docker/supabase/dev-keys.txt` for reference. Worthless against any
+> real Supabase project, but never paste them into a production env.
+
+---
+
+## Path B — Standalone docker-compose
+
+Use this when you don't want the Supabase CLI on the machine — e.g. CI
+runners or contributors who already have Docker but nothing else. The
+committed `docker-compose.supabase.yml` runs a subset of the same
+services (no Realtime, no Edge Functions, no Analytics — none of which
+this app uses anyway).
+
+### Step 1 — Boot and migrate
+
+```bash
+bun run supabase:docker:up         # boot containers (~30 s first time)
+bun run supabase:docker:migrate    # apply supabase/migrations/* (once)
+```
+
+Or do both atomically (also wipes existing volumes — destructive):
+
+```bash
+bun run supabase:docker:reset
+```
+
+### Step 2 — Env vars
+
+```bash
+cat .docker/supabase/dev-keys.txt    # copy these three lines into .env.local
+```
+
+Then `bun dev`.
+
+### Path-B-specific operations
+
+| Script | Effect |
+|---|---|
+| `bun run supabase:docker:up` | Start containers |
+| `bun run supabase:docker:down` | Stop containers (keeps volumes) |
+| `bun run supabase:docker:migrate` | Apply migrations to running stack |
+| `bun run supabase:docker:reset` | Wipe volumes, recreate, re-migrate |
+
+### Trade-offs vs Path A
+
+| | Path A (CLI) | Path B (docker-compose) |
+|---|---|---|
+| Install cost | Docker + supabase CLI | Docker only |
+| First boot | ~60 s | ~90 s |
+| `db reset` | `bun run supabase:reset` (~3 s) | `bun run supabase:docker:reset` (~30 s) |
+| Image-version maintenance | CLI tracks for you | Manual tag bumps in `docker-compose.supabase.yml` |
+| Services included | Full Supabase stack | Postgres, Auth, REST, Storage, Studio, Inbucket (sufficient for this app) |
+| CI-friendly | OK | Better (no extra binary) |
+
+---
 
 ## Step 4 — Verify
+
+(Applies to both paths once env vars are set and `bun dev` is up.)
 
 With Supabase running and `bun dev` up:
 

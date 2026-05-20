@@ -7,7 +7,16 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "audit:bundle": "bash scripts/audit-bundle.sh"
+    "audit:bundle": "bash scripts/audit-bundle.sh",
+    "supabase:start": "supabase start",
+    "supabase:stop": "supabase stop",
+    "supabase:reset": "supabase db reset",
+    "supabase:status": "supabase status",
+    "supabase:types": "supabase gen types typescript --local > lib/shared/supabase/types.ts",
+    "supabase:docker:up": "docker compose -f docker-compose.supabase.yml up -d",
+    "supabase:docker:down": "docker compose -f docker-compose.supabase.yml down",
+    "supabase:docker:reset": "docker compose -f docker-compose.supabase.yml down -v && docker compose -f docker-compose.supabase.yml up -d && sleep 8 && bash .docker/supabase/apply-migrations.sh",
+    "supabase:docker:migrate": "bash .docker/supabase/apply-migrations.sh"
   },
   "dependencies": {
     "@ai-sdk/react": "2.0.28",
