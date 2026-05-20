@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useState } from "react"
 
 import { SelectionToolbar } from "@/components/selection/selection-toolbar"
+import { SelectionChip } from "@/components/selection/selection-chip"
 import { ExplainPopover } from "@/components/selection/explain-popover"
+import { ExplainSheet } from "@/components/selection/explain-sheet"
+import { useIsTouchDevice } from "@/client/hooks/use-is-touch-device"
 import {
   useSelection,
   type ActiveSelection,
@@ -123,33 +126,63 @@ export function SelectionTrigger({
     return () => document.removeEventListener("keydown", onKey)
   }, [active, startExplain])
 
+  // Touch-device branching: mobile gets a single-action chip + bottom
+  // sheet; desktop gets the toolbar + anchored popover. Both share the
+  // streaming hook (`useExplainStream`) so behavior is identical;
+  // only layout differs. iPad Safari sometimes reports `maxTouchPoints
+  // > 0` while running with a Magic Keyboard — accept that the user
+  // gets the touch UI in that case, since OS selection still works.
+  const isTouch = useIsTouchDevice()
+
+  const pinHandler = ({ content, results }: { content: string; results: ToolCallResult[] }) => {
+    if (!explainTarget) return
+    onPin({
+      selection: explainTarget.text,
+      content,
+      model: chatModel,
+      results,
+    })
+  }
+
   return (
     <>
       {active && !explainTarget && (
-        <SelectionToolbar
-          selection={active}
-          onExplain={() => startExplain(active)}
-          onQuote={() => onQuote(active.text)}
-        />
+        isTouch ? (
+          <SelectionChip
+            selection={active}
+            onExplain={() => startExplain(active)}
+          />
+        ) : (
+          <SelectionToolbar
+            selection={active}
+            onExplain={() => startExplain(active)}
+            onQuote={() => onQuote(active.text)}
+          />
+        )
       )}
       {explainTarget && (
-        <ExplainPopover
-          anchorRect={explainTarget.rect}
-          selection={explainTarget.text}
-          contextMessages={explainTarget.context}
-          model={chatModel}
-          workspaceSystemPrompt={workspaceSystemPrompt}
-          skills={skills}
-          onPin={({ content, results }) =>
-            onPin({
-              selection: explainTarget.text,
-              content,
-              model: chatModel,
-              results,
-            })
-          }
-          onClose={() => setExplainTarget(null)}
-        />
+        isTouch ? (
+          <ExplainSheet
+            selection={explainTarget.text}
+            contextMessages={explainTarget.context}
+            model={chatModel}
+            workspaceSystemPrompt={workspaceSystemPrompt}
+            skills={skills}
+            onPin={pinHandler}
+            onClose={() => setExplainTarget(null)}
+          />
+        ) : (
+          <ExplainPopover
+            anchorRect={explainTarget.rect}
+            selection={explainTarget.text}
+            contextMessages={explainTarget.context}
+            model={chatModel}
+            workspaceSystemPrompt={workspaceSystemPrompt}
+            skills={skills}
+            onPin={pinHandler}
+            onClose={() => setExplainTarget(null)}
+          />
+        )
       )}
     </>
   )

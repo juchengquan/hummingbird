@@ -240,11 +240,34 @@ Landed:
   bus slice (also session-only). The trigger consumes the bus on the
   next render and runs the same flow that the toolbar would.
 
-### Phase 3 — Mobile
+### Phase 3 — Mobile ✅ shipped
 
-`SelectionChip` + `ExplainSheet` + touch-device branching in
-`SelectionTrigger`. Carefully tested on iOS Safari + Android Chrome.
-Visual viewport math for the chip + sheet positioning.
+Landed:
+
+- New `components/selection/selection-chip.tsx` — single `[✦] Explain`
+  pill, 32 px visual / generous tap target. Same flip-below logic as
+  the desktop toolbar plus the elementFromPoint content-above check.
+  Uses `window.visualViewport.height` (not `innerHeight`) so it doesn't
+  end up under the Android soft keyboard.
+- New `components/selection/explain-sheet.tsx` — bottom sheet via the
+  existing Radix Dialog primitive (`Sheet side="bottom"`). Drag handle
+  indicator, "EXPLAINING" label + truncated selection header, body
+  with `MarkdownPreview` + `SourcesStrip`, Copy + Pin footer with
+  `env(safe-area-inset-bottom)` padding for notched devices.
+- Streaming logic extracted from `ExplainPopover` into a shared hook
+  `lib/client/hooks/use-explain-stream.ts` — both the popover and the
+  sheet consume it so they can't drift. Single source of truth for
+  request building, SSE parsing, mock-on-401 fallback.
+- `SelectionTrigger` branches on `useIsTouchDevice()`:
+  - Touch → `SelectionChip` + `ExplainSheet`
+  - Pointer → `SelectionToolbar` + `ExplainPopover`
+
+Verified via Playwright with `hasTouch: true` + iPhone-sized viewport
+(390×844, DPR 3): chip renders (toolbar does not), tap → sheet opens
+with mock content, Pin closes the sheet and posts to the side panel
+slice. Real iOS Safari + Android Chrome runs still depend on a human
+holding a real device — gestures (`touchstart` magnifier, virtual
+keyboard collapse, etc.) are imperfectly simulated by Playwright.
 
 ### Phase 4 — Editor reuse
 

@@ -7,36 +7,14 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { MarkdownPreview } from "@/components/markdown-preview"
 import { SourcesStrip } from "@/components/panels/sources-strip"
-import { apiClient } from "@/client/api-client"
+import { useExplainStream } from "@/client/hooks/use-explain-stream"
 import { useStore } from "@/client/hooks/use-store"
-import {
-  explainSelectionPrompt,
-  truncateSelectionForLabel,
-} from "@/shared/selection-prompts"
-import type { ChatRequestInput } from "@/shared/api-schemas"
+import { truncateSelectionForLabel } from "@/shared/selection-prompts"
 import type { Message, ToolCallResult } from "@/shared/types"
 import { cn } from "@/shared/utils"
 
 const POPOVER_WIDTH = 440
 const POPOVER_GAP = 12 // distance from the selection's bounding rect
-
-/**
- * Labeled mock explanation surfaced when the AI Gateway key isn't
- * configured. Mirrors `mockAIResponse` in the chat panel so the
- * "missing key" experience is consistent: a clearly-marked mock that
- * tells the dev what would happen with a real key, instead of a bare
- * error message.
- */
-function mockExplanation(selection: string): string {
-  const short = selection.replace(/\s+/g, " ").trim().slice(0, 80)
-  return [
-    "_Mock explanation (set `AI_GATEWAY_API_KEY` to enable real AI)_",
-    "",
-    `With a configured AI Gateway key, the model would explain the passage "${short}${selection.length > 80 ? "…" : ""}" in light of this conversation, in 2-3 paragraphs.`,
-    "",
-    "If web search is enabled, sources would be cited with `[N]` markers and a Sources strip below.",
-  ].join("\n")
-}
 
 interface ExplainPopoverProps {
   /** Anchor rect — typically the user's selection rect at the moment
@@ -62,17 +40,10 @@ interface ExplainPopoverProps {
 }
 
 /**
- * Streamed-answer popover anchored to the right of the user's
+ * Desktop streamed-answer popover anchored to the right of the user's
  * selection (or left when there's no room). Dismisses on Esc or
- * click-away (handled by the parent).
- *
- * Reuses the existing /api/chat route via a synthetic user turn; the
- * full conversation history is sent so the model can answer "what does
- * this mean?" in context. The result is NOT persisted — it's
- * ephemeral until the user pins it (Phase 2 of the plan).
- *
- * Rendering reuses MarkdownPreview + SourcesStrip, so citation markers
- * and source cards work for free when web search runs.
+ * click-away. Streaming + mock-on-401 lives in `useExplainStream`;
+ * this file is layout only.
  */
 export function ExplainPopover({
   anchorRect,
@@ -90,12 +61,17 @@ export function ExplainPopover({
     left: 0,
     side: "right",
   })
-  const [streamed, setStreamed] = useState("")
-  const [toolResults, setToolResults] = useState<ToolCallResult[]>([])
   const [highlightedCitation, setHighlightedCitation] = useState<number | null>(null)
-  const [done, setDone] = useState(false)
-  const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const chatModel = useStore((s) => s.chatModel)
+  const effectiveModel = model ?? chatModel
+
+  const { streamed, toolResults, done, errorMsg } = useExplainStream({
+    selection,
+    contextMessages,
+    model: effectiveModel,
+    workspaceSystemPrompt,
+    skills,
+  })
 
   // Position the popover once, relative to the anchor rect. We don't
   // track scroll — the user wants to read what was returned, and
@@ -122,8 +98,7 @@ export function ExplainPopover({
   }, [anchorRect])
 
   // Pin → forward to the host + dismiss. Guarded so we never pin an
-  // empty / errored / still-streaming popover. Stable identity so the
-  // keyboard handler doesn't churn.
+  // empty / errored / still-streaming popover.
   const canPin = !!onPin && done && !errorMsg && streamed.length > 0
   const handlePin = useCallback(() => {
     if (!canPin || !onPin) return
@@ -131,8 +106,7 @@ export function ExplainPopover({
     onClose()
   }, [canPin, onPin, streamed, toolResults, onClose])
 
-  // Keyboard: Esc dismisses; ⌘↵ / Ctrl↵ pins when the popover is in
-  // its terminal-success state.
+  // Keyboard: Esc dismisses; ⌘↵ / Ctrl↵ pins.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -148,8 +122,7 @@ export function ExplainPopover({
     return () => document.removeEventListener("keydown", onKey)
   }, [onClose, canPin, handlePin])
 
-  // Dismiss on click outside the popover. We attach to the document
-  // pointerdown so a single tap anywhere outside closes it.
+  // Dismiss on click outside the popover.
   useEffect(() => {
     const onPointer = (e: PointerEvent) => {
       const el = containerRef.current
@@ -164,125 +137,6 @@ export function ExplainPopover({
       document.removeEventListener("pointerdown", onPointer)
     }
   }, [onClose])
-
-  // Build the request body once on mount.
-  const requestBody = useMemo<ChatRequestInput>(() => {
-    const historyAsModelMessages = contextMessages.map((m) => ({
-      role: m.role,
-      content: m.content,
-    }))
-    return {
-      messages: [
-        ...historyAsModelMessages,
-        { role: "user" as const, content: explainSelectionPrompt(selection) },
-      ],
-      model: model ?? chatModel,
-      workspaceSystemPrompt,
-      skills,
-    }
-  }, [contextMessages, selection, model, chatModel, workspaceSystemPrompt, skills])
-
-  // Kick the stream once.
-  useEffect(() => {
-    const controller = new AbortController()
-    let cancelled = false
-
-    const run = async () => {
-      const result = await apiClient.chat.stream(requestBody, {
-        signal: controller.signal,
-      })
-      if (!result.ok || !result.body) {
-        if (cancelled) return
-        // Mirror the chat panel's behavior: when the auth gate fires
-        // (no AI_GATEWAY_API_KEY in dev), surface a clearly-labeled
-        // mock explanation instead of a bare error. Lets the popover
-        // be exercised end-to-end without a key. Other error codes
-        // (rate_limit / provider / etc.) still go to the error path.
-        if (result.status === 401 || result.error?.code === "auth") {
-          setStreamed(mockExplanation(selection))
-          setDone(true)
-          return
-        }
-        setErrorMsg(
-          result.error?.message ?? `Request failed (HTTP ${result.status}).`
-        )
-        setDone(true)
-        return
-      }
-      const reader = result.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ""
-      try {
-        while (true) {
-          const { done: streamDone, value } = await reader.read()
-          if (streamDone) break
-          buffer += decoder.decode(value, { stream: true })
-          // SSE frames separated by blank line.
-          const frames = buffer.split("\n\n")
-          buffer = frames.pop() ?? ""
-          for (const frame of frames) {
-            if (!frame.startsWith("data:")) continue
-            const payload = frame.slice(5).trim()
-            if (!payload) continue
-            let parsed: {
-              type?: string
-              value?: string
-              code?: string
-              message?: string
-              results?: Array<{ title?: string; url?: string; snippet?: string }>
-            }
-            try {
-              parsed = JSON.parse(payload)
-            } catch {
-              continue
-            }
-            if (cancelled) break
-            if (parsed.type === "text" && typeof parsed.value === "string") {
-              setStreamed((prev) => prev + parsed.value)
-            } else if (parsed.type === "tool_result" && Array.isArray(parsed.results)) {
-              const cleaned = parsed.results
-                .filter(
-                  (r): r is { title: string; url: string; snippet: string } =>
-                    typeof r?.title === "string" &&
-                    typeof r?.url === "string" &&
-                    typeof r?.snippet === "string"
-                )
-              if (cleaned.length > 0) setToolResults(cleaned)
-            } else if (parsed.type === "error") {
-              // Same mock-fallback rule as the pre-stream branch above:
-              // an auth error surfaces a labeled mock instead of a
-              // bare error so the popover is exercisable in dev.
-              if (parsed.code === "auth") {
-                setStreamed(mockExplanation(selection))
-              } else {
-                setErrorMsg(parsed.message ?? "Request failed.")
-              }
-              setDone(true)
-              return
-            } else if (parsed.type === "done") {
-              setDone(true)
-              return
-            }
-          }
-        }
-        setDone(true)
-      } catch (err) {
-        if (controller.signal.aborted) return
-        const message = err instanceof Error ? err.message : "Stream failed."
-        setErrorMsg(message)
-        setDone(true)
-      }
-    }
-
-    run().catch(() => {
-      // Swallow — error state already surfaced via setErrorMsg.
-    })
-
-    return () => {
-      cancelled = true
-      controller.abort()
-    }
-  }, [requestBody, selection])
 
   const headerLabel = useMemo(
     () => truncateSelectionForLabel(selection, 60),
@@ -331,9 +185,7 @@ export function ExplainPopover({
 
       <div className="flex-1 overflow-y-auto px-3 py-2 text-sm leading-relaxed">
         {errorMsg ? (
-          <p className="text-[var(--destructive)] text-sm">
-            {errorMsg}
-          </p>
+          <p className="text-[var(--destructive)] text-sm">{errorMsg}</p>
         ) : streamed ? (
           <>
             <MarkdownPreview
@@ -357,7 +209,7 @@ export function ExplainPopover({
       </div>
 
       <div className="px-3 py-1.5 border-t flex items-center justify-between text-[10px] text-[var(--muted-foreground)]">
-        <span>{model ?? chatModel}</span>
+        <span>{effectiveModel}</span>
         {done && !errorMsg && (
           <div className="flex items-center gap-3">
             <button
