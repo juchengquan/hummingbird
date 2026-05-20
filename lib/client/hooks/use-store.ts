@@ -48,6 +48,24 @@ export const useHydrated = () =>
     () => false
   )
 
+/**
+ * Tombstone an `UploadedFile`: mark it deleted (`deletedAt = now`) and
+ * free every "content-ish" field, leaving only the lightweight
+ * metadata stub so future references can resolve to a "removed" label
+ * instead of crashing. The IndexedDB blob and any Supabase Storage
+ * object are freed separately — see callers.
+ */
+function tombstoneFile(file: UploadedFile): UploadedFile {
+  return {
+    id: file.id,
+    name: file.name,
+    size: file.size,
+    type: file.type,
+    uploadedAt: file.uploadedAt,
+    deletedAt: new Date(),
+  }
+}
+
 // Default initial values for store
 const DEFAULT_WORKSPACE_ID = 'default'
 
@@ -523,7 +541,9 @@ export const useStore = create<AppState>()(
           }
           for (const id of orphanedFileIds) void deleteLocalBlob(id)
           const newFiles = orphanedFileIds.size
-            ? state.files.filter((f) => !orphanedFileIds.has(f.id))
+            ? state.files.map((f) =>
+                orphanedFileIds.has(f.id) && !f.deletedAt ? tombstoneFile(f) : f
+              )
             : state.files
           // If the active doc lived in the deleted workspace, swap to the
           // most-recently-updated doc in the new active workspace (if any).
@@ -655,8 +675,8 @@ export const useStore = create<AppState>()(
                 }
               : c
           )
-          // GC the underlying file if this was its last reference anywhere
-          // (no remaining resources, no conversationFiles).
+          // GC: tombstone the underlying file if this was its last live
+          // reference anywhere (no remaining resources, no conversationFiles).
           const stillReferenced =
             newResources.some((r) => r.fileId === target.fileId) ||
             state.conversationFiles.some((cf) => cf.fileId === target.fileId)
@@ -667,7 +687,9 @@ export const useStore = create<AppState>()(
           return {
             resources: newResources,
             conversations: newConversations,
-            files: state.files.filter((f) => f.id !== target.fileId),
+            files: state.files.map((f) =>
+              f.id === target.fileId && !f.deletedAt ? tombstoneFile(f) : f
+            ),
           }
         }),
 
@@ -697,7 +719,7 @@ export const useStore = create<AppState>()(
           const newConversationFiles = state.conversationFiles.filter(
             (cf) => !(cf.conversationId === conversationId && cf.fileId === fileId)
           )
-          // GC: if no other join references this fileId, delete the file.
+          // GC: if no other join references this fileId, tombstone the file.
           const stillReferenced =
             state.resources.some((r) => r.fileId === fileId) ||
             newConversationFiles.some((cf) => cf.fileId === fileId)
@@ -707,7 +729,9 @@ export const useStore = create<AppState>()(
           void deleteLocalBlob(fileId)
           return {
             conversationFiles: newConversationFiles,
-            files: state.files.filter((f) => f.id !== fileId),
+            files: state.files.map((f) =>
+              f.id === fileId && !f.deletedAt ? tombstoneFile(f) : f
+            ),
           }
         }),
 
@@ -812,14 +836,17 @@ export const useStore = create<AppState>()(
         set((state) => ({ files: [...state.files, file] })),
       removeFile: (fileId: string) => {
         // Fire-and-forget — IDB delete is best-effort and shouldn't block
-        // the UI update.
+        // the UI update. The metadata row stays (tombstoned) so future
+        // references — message `attachedFileIds`, notes, citations —
+        // resolve to a "removed" label instead of dangling.
         void deleteLocalBlob(fileId)
         set((state) => ({
-          files: state.files.filter((f) => f.id !== fileId),
-          // Atomic cascade: drop every join row that references this
-          // file. Without this, `resources` / `conversationFiles` /
-          // `selectedFileIds` would dangle and the UI joins would skip
-          // them but the rows would still leak across reloads.
+          files: state.files.map((f) =>
+            f.id === fileId && !f.deletedAt ? tombstoneFile(f) : f
+          ),
+          // Atomic cascade: drop every live join row that references this
+          // file. The metadata stub remains for historical references but
+          // join rows shouldn't claim the file is still attached.
           resources: state.resources.filter((r) => r.fileId !== fileId),
           conversationFiles: state.conversationFiles.filter(
             (cf) => cf.fileId !== fileId
@@ -834,7 +861,7 @@ export const useStore = create<AppState>()(
       clearFiles: () => {
         void clearLocalBlobs()
         set((state) => ({
-          files: [],
+          files: state.files.map((f) => (f.deletedAt ? f : tombstoneFile(f))),
           resources: [],
           conversationFiles: [],
           conversations: state.conversations.map((c) =>
@@ -950,7 +977,9 @@ export const useStore = create<AppState>()(
           }
           for (const id of orphanedFileIds) void deleteLocalBlob(id)
           const newFiles = orphanedFileIds.size
-            ? state.files.filter((f) => !orphanedFileIds.has(f.id))
+            ? state.files.map((f) =>
+                orphanedFileIds.has(f.id) && !f.deletedAt ? tombstoneFile(f) : f
+              )
             : state.files
           // Notes/artifacts are workspace-scoped, but bookmarks (notes with
           // messageId !== null) anchor to a specific message that no longer
@@ -1613,17 +1642,19 @@ export const useStore = create<AppState>()(
       },
       onRehydrateStorage: () => (state) => {
         // Defensive prune: drop join rows and selection ids that
-        // reference a missing file. Cheap (one pass per array),
-        // no-op on healthy data; covers cross-tab races and any
-        // future bugs in new mutators.
+        // reference a missing or tombstoned file. Cheap (one pass
+        // per array), no-op on healthy data; covers cross-tab races
+        // and any future bugs in new mutators.
         if (state) {
-          const fileIds = new Set(state.files.map((f) => f.id))
-          const cleanResources = state.resources.filter((r) => fileIds.has(r.fileId))
+          const liveFileIds = new Set(
+            state.files.filter((f) => !f.deletedAt).map((f) => f.id)
+          )
+          const cleanResources = state.resources.filter((r) => liveFileIds.has(r.fileId))
           const cleanConversationFiles = state.conversationFiles.filter((cf) =>
-            fileIds.has(cf.fileId)
+            liveFileIds.has(cf.fileId)
           )
           const cleanConversations = state.conversations.map((c) => {
-            const filtered = c.selectedFileIds.filter((id) => fileIds.has(id))
+            const filtered = c.selectedFileIds.filter((id) => liveFileIds.has(id))
             return filtered.length === c.selectedFileIds.length
               ? c
               : { ...c, selectedFileIds: filtered }
@@ -1721,7 +1752,9 @@ export const useWorkspaceResources = () => {
   const files = useStore((state) => state.files)
   const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
   const workspaceResources = resources.filter((r) => r.workspaceId === activeWorkspaceId)
-  return workspaceResources.map((r) => files.find((f) => f.id === r.fileId)).filter(Boolean) as UploadedFile[]
+  return workspaceResources
+    .map((r) => files.find((f) => f.id === r.fileId))
+    .filter((f): f is UploadedFile => !!f && !f.deletedAt)
 }
 
 /**
@@ -1738,7 +1771,7 @@ export const useConversationPrivateFiles = (): UploadedFile[] => {
   return conversationFiles
     .filter((cf) => cf.conversationId === activeConversationId)
     .map((cf) => files.find((f) => f.id === cf.fileId))
-    .filter(Boolean) as UploadedFile[]
+    .filter((f): f is UploadedFile => !!f && !f.deletedAt)
 }
 
 export const useConversationNotes = () => {

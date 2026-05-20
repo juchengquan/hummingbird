@@ -192,6 +192,7 @@ export function ChatPanel() {
           .find(
             (f) =>
               !!f &&
+              !f.deletedAt &&
               (f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"))
           )
         if (firstPdf) currentPdfId = firstPdf.id
@@ -293,9 +294,12 @@ export function ChatPanel() {
             .map((cf) => cf.fileId)
         : []
       const attachedFileIds = [...new Set([...workspaceFileIds, ...privateFileIds])]
+      // Drop tombstoned files — they're metadata stubs only, no content to
+      // ship. They still render as "removed" placeholders in the message
+      // attachment chips via `MessageAttachments`, just not sent upstream.
       const attachedFiles = attachedFileIds
         .map((id) => files.find((f) => f.id === id))
-        .filter((f): f is NonNullable<typeof f> => Boolean(f))
+        .filter((f): f is NonNullable<typeof f> => !!f && !f.deletedAt)
       const fileSummaries = attachedFiles.map((f) => ({
         name: f.name,
         size: f.size,

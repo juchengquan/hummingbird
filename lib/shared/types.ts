@@ -37,6 +37,21 @@ export interface UploadedFile {
    * (IndexedDB) or in UploadThing.
    */
   storagePath?: string
+  /**
+   * Soft-delete marker. When set, the file is considered removed by
+   * every UI listing and the chat-route payload builder, but the
+   * metadata stub (`id, name, size, type, uploadedAt, deletedAt`) is
+   * retained so durable references — message `attachedFileIds`,
+   * future structured citations, notes anchored to a deleted file —
+   * can resolve to "🗑 name (removed)" instead of crashing or
+   * silently showing nothing.
+   *
+   * At tombstone time the *content-ish* fields are freed:
+   * `extractedText`, `imageDataUrl`, `storagePath`, the IndexedDB
+   * blob, and (best-effort) the Supabase Storage object. Only the
+   * lightweight metadata remains in `files[]`.
+   */
+  deletedAt?: Date
 }
 
 export interface Workspace {
