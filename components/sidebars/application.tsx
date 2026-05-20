@@ -1,5 +1,5 @@
 import * as React from "react"
-import { FolderOpen, Plus, ChevronRight, Pin, MessageSquare, MessagesSquare, Search, X } from "lucide-react"
+import { LayoutDashboard, Plus, ChevronRight, Pin, MessageSquare, MessagesSquare, Search, X } from "lucide-react"
 import {
   Sidebar,
   SidebarContent,
@@ -96,7 +96,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 onClick={() => setActiveView("workspaces")}
                 isActive={activeView === "workspaces"}
               >
-                <FolderOpen />
+                <LayoutDashboard />
                 <span className="group-data-[collapsible=icon]:hidden">Workspaces</span>
               </SidebarMenuButton>
             </SidebarMenuItem>

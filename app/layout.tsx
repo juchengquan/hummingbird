@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Manrope, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeApplier } from "@/components/theme-applier";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 // Runs before React hydrates so the initial paint already has the correct
 // theme class. Mirrors the resolver in components/theme-applier.tsx.
@@ -37,7 +38,7 @@ export default function RootLayout({
         className={`${manropeSans.variable} ${geistMono.variable} antialiased`}
       >
         <ThemeApplier />
-        {children}
+        <TooltipProvider delayDuration={150}>{children}</TooltipProvider>
       </body>
     </html>
   );
