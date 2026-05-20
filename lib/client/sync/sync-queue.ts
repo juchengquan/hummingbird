@@ -54,6 +54,7 @@ export type SyncOp =
 
 export type SyncTarget =
   | "workspaces"
+  | "documents"
   | "conversations"
   | "messages"
   | "files"

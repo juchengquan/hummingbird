@@ -74,6 +74,25 @@ export interface Workspace {
   position?: number
 }
 
+/**
+ * Rich-text document inside a workspace. A workspace owns N documents;
+ * one is "active" at a time (top-level `activeDocumentId` in the store).
+ * Plate editor reads and writes `content`; "Send to editor" actions
+ * append to the active document, creating one if none exists yet.
+ */
+export interface Document {
+  id: string
+  workspaceId: string
+  title: string
+  /** Markdown text. Empty string is the initial state. */
+  content: string
+  /** User-defined ordering within a workspace's doc list. Defaults to
+   *  insertion order when undefined. */
+  position?: number
+  createdAt: Date
+  updatedAt: Date
+}
+
 export interface Resource {
   id: string
   workspaceId: string
@@ -201,8 +220,6 @@ export interface Conversation {
   pinned: boolean
   /** Workspace file IDs attached as context for the next message in this conversation. */
   selectedFileIds: string[]
-  /** Per-conversation editor document (rich-text scratchpad). */
-  documentContent: string
   /**
    * Per-conversation skill overrides. Presence of a key = override
    * (true = on, false = off); absence = inherit from the workspace.

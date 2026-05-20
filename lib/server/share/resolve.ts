@@ -28,7 +28,8 @@ export interface ResolvedConversationShare {
 
 export interface ResolvedDocumentShare {
   kind: "document"
-  conversationTitle: string
+  /** Title of the shared document. Used as the displayed page title. */
+  documentTitle: string
   documentContent: string
   createdAt: string
 }
@@ -41,27 +42,35 @@ export async function resolveShare(token: string): Promise<ResolvedShare | null>
 
   const { data: share, error: shareError } = await admin
     .from("shares")
-    .select("kind, conversation_id, created_at, revoked_at")
+    .select("kind, conversation_id, document_id, created_at, revoked_at")
     .eq("token", token)
     .maybeSingle()
   if (shareError || !share) return null
   if (share.revoked_at) return null
 
-  const { data: conv, error: convError } = await admin
-    .from("conversations")
-    .select("title, document_content")
-    .eq("id", share.conversation_id)
-    .maybeSingle()
-  if (convError || !conv) return null
-
   if (share.kind === "document") {
+    if (!share.document_id) return null
+    const { data: doc, error: docError } = await admin
+      .from("documents")
+      .select("title, content")
+      .eq("id", share.document_id)
+      .maybeSingle()
+    if (docError || !doc) return null
     return {
       kind: "document",
-      conversationTitle: conv.title,
-      documentContent: conv.document_content,
+      documentTitle: doc.title || "Untitled",
+      documentContent: doc.content,
       createdAt: share.created_at,
     }
   }
+
+  if (!share.conversation_id) return null
+  const { data: conv, error: convError } = await admin
+    .from("conversations")
+    .select("title")
+    .eq("id", share.conversation_id)
+    .maybeSingle()
+  if (convError || !conv) return null
 
   const { data: messages, error: msgError } = await admin
     .from("messages")

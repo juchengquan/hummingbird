@@ -22,7 +22,7 @@ export default async function SharedDocumentPage({ params }: PageProps) {
         <p className="text-xs text-[var(--muted-foreground)]">
           Shared document · {format(new Date(share.createdAt), "MMM d, yyyy")}
         </p>
-        <h1 className="text-2xl font-semibold mt-1">{share.conversationTitle}</h1>
+        <h1 className="text-2xl font-semibold mt-1">{share.documentTitle}</h1>
       </header>
 
       {share.documentContent.trim() ? (

@@ -114,7 +114,9 @@ function ChatMessageImpl({
   const activeConversationId = useStore((s) => s.activeConversationId)
   const toggleMessageBookmark = useStore((s) => s.toggleMessageBookmark)
   const createArtifact = useStore((s) => s.createArtifact)
-  const setConversationDocument = useStore((s) => s.setConversationDocument)
+  const appendToActiveDocumentOrCreate = useStore(
+    (s) => s.appendToActiveDocumentOrCreate
+  )
   const requestEditorReload = useStore((s) => s.requestEditorReload)
   const setActiveView = useStore((s) => s.setActiveView)
   const bookmark = useMessageBookmark(message.id)
@@ -201,8 +203,10 @@ function ChatMessageImpl({
   }
 
   const handleSendToEditor = () => {
-    if (!activeConversationId) return
-    setConversationDocument(activeConversationId, message.content)
+    // Appends to the currently open document, creating one in the active
+    // workspace if none exists yet. `---` separator between fragments
+    // preserves prior content.
+    appendToActiveDocumentOrCreate(message.content)
     requestEditorReload()
     setActiveView("editor")
     toast.success("Sent to editor")

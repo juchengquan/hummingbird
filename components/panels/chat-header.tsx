@@ -84,6 +84,7 @@ export function ChatHeader({
   const renameConversation = useStore((s) => s.renameConversation)
   const togglePin = useStore((s) => s.togglePin)
   const setActiveView = useStore((s) => s.setActiveView)
+  const activeDocumentId = useStore((s) => s.activeDocumentId)
 
   const [menuOpen, setMenuOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
@@ -371,6 +372,7 @@ export function ChatHeader({
         open={shareOpen}
         onOpenChange={setShareOpen}
         conversationId={conversation.id}
+        documentId={activeDocumentId}
       />
       <BranchesDialog
         open={branchesOpen}

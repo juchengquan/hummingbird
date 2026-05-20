@@ -43,9 +43,29 @@ create table workspaces (
 );
 
 -- ---------------------------------------------------------------------------
--- conversations — chats within a workspace. Each has its own editor
--- document, its own skill overrides on top of the workspace defaults,
--- and optional fork lineage pointing at the parent it was branched from.
+-- documents — rich-text docs inside a workspace. A workspace owns N
+-- documents; one is "active" at a time on the client (top-level
+-- `activeDocumentId`). Plate editor reads + writes `content`.
+-- ---------------------------------------------------------------------------
+create table documents (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  workspace_id uuid not null references workspaces(id) on delete cascade,
+  title text not null,
+  -- Markdown body. Empty string is the initial state.
+  content text not null default '',
+  -- User-defined ordering within a workspace's doc list. Set later by a
+  -- drag-to-reorder UI; for now the client falls back to updated_at.
+  position integer,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- ---------------------------------------------------------------------------
+-- conversations — chats within a workspace. Each has its own skill
+-- overrides on top of the workspace defaults and optional fork lineage
+-- pointing at the parent it was branched from. Editor documents live
+-- in the `documents` table above, not on conversations.
 -- ---------------------------------------------------------------------------
 create table conversations (
   id uuid primary key,
@@ -55,9 +75,6 @@ create table conversations (
   pinned boolean not null default false,
   -- Workspace file IDs attached as context for the next message.
   selected_file_ids uuid[] not null default '{}',
-  -- Per-conversation editor document (rich-text scratchpad).
-  document_content text not null default '',
-  document_updated_at timestamptz not null default now(),
   -- { skillId: boolean } overrides on top of workspace defaults.
   skill_prefs jsonb not null default '{}'::jsonb,
   -- Branch lineage for the Branches dialog. Both nullable: top-of-tree
@@ -197,19 +214,28 @@ create table notes (
 );
 
 -- ---------------------------------------------------------------------------
--- shares — public read-only links for conversations or per-conversation
--- documents. The token is the capability: anyone with it can read the
--- pointed-to row. Anonymous reads happen via the service-role admin
--- client (see lib/supabase/admin.ts), so RLS on this table covers only
--- the owner CRUD path.
+-- shares — public read-only links for conversations or for individual
+-- documents inside a workspace. The token is the capability: anyone with
+-- it can read the pointed-to row. Anonymous reads happen via the
+-- service-role admin client (see lib/supabase/admin.ts), so RLS on this
+-- table covers only the owner CRUD path.
+--
+-- `conversation_id` is set for kind='conversation' shares; `document_id`
+-- is set for kind='document' shares. Exactly one of the two is non-null —
+-- enforced by the check constraint below.
 -- ---------------------------------------------------------------------------
 create table shares (
   token text primary key,
   user_id uuid not null references auth.users(id) on delete cascade,
   kind text not null check (kind in ('conversation', 'document')),
-  conversation_id uuid not null references conversations(id) on delete cascade,
+  conversation_id uuid references conversations(id) on delete cascade,
+  document_id uuid references documents(id) on delete cascade,
   created_at timestamptz not null default now(),
-  revoked_at timestamptz
+  revoked_at timestamptz,
+  constraint shares_target_matches_kind check (
+    (kind = 'conversation' and conversation_id is not null and document_id is null) or
+    (kind = 'document'     and document_id is not null     and conversation_id is null)
+  )
 );
 
 -- ---------------------------------------------------------------------------
@@ -240,4 +266,13 @@ create index shares_user_created
   on shares (user_id, created_at desc);
 
 create index shares_conversation
-  on shares (conversation_id);
+  on shares (conversation_id) where conversation_id is not null;
+
+create index shares_document
+  on shares (document_id) where document_id is not null;
+
+create index documents_workspace_updated
+  on documents (workspace_id, updated_at desc);
+
+create index documents_workspace_position
+  on documents (workspace_id, position);

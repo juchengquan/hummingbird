@@ -180,15 +180,11 @@ Smoke-tested unconfigured: `/dashboard` 200, `/auth/callback` 307 → `/dashboar
 
 The `+` button on the chat input is wired as a workspace upload shortcut. Clicking it opens the file picker; selected files are validated against `FILE_SIZE_LIMIT` / `ALLOWED_EXTENSIONS` (now in `lib/upload-config.ts`, shared with `chat-resources-panel.tsx`), added to the workspace via `addFile` + `addResource`, and auto-checked in the current conversation's `selectedFileIds`. Workspace-scoped files remain the design — no new tables or store slices. The `conversation_files` table was already removed from `supabase/migrations/0002_conversation_assets.sql` and its RLS policy from `0003`. No sync work needed yet; rides on the existing `addFile` / `addResource` mutators.
 
-#### ✅ Shipped — 5B per-conversation editor document *(local-only)*
+#### ✅ Shipped — 5B per-conversation editor document *(local-only, then promoted to workspace scope)*
 
-Added `documentContent: string` to `Conversation` in `lib/types.ts`. `setConversationDocument(conversationId, content)` mutator + `useActiveConversationDocument()` selector in `lib/hooks/use-store.ts`. Store version bumped to 4 with a v3→v4 migration that backfills each conversation's `documentContent` and copies the legacy global `documentContent` into the active conversation so nothing is lost. `editorContent`, `documentContent`, `documentLastSaved` and their setters removed from the root state.
+Originally added `documentContent: string` to `Conversation` (v3 → v4) and exposed `setConversationDocument` / `useActiveConversationDocument`. The auto-sync from chat → editor was removed in favour of an explicit **Send to editor** action.
 
-`components/panels/editor.tsx` now reads from the active conversation's doc and writes back on edit with a 500 ms debounce; switching conversations cancels any pending save and reloads the editor with the new doc. The "Sign in to open a document" empty state appears when there's no active conversation.
-
-**Design shift:** the previous chat → editor auto-sync was removed. Sending a chat message no longer overwrites the editor. This matches the design distinction agreed in design discussion: the editor is for **active engagement** (user authors, edits, AI commands), independent from the chat conversation. If we want a "send this message to the editor" affordance later, it'll be an explicit button on the assistant message (part of the 5C work).
-
-Sync handler for `setConversationDocument` (debounced) still pending — needs the sync layer.
+**Later promoted to workspace scope** (see *Adjacent shipped work* below): the field moved off `Conversation` and onto `Workspace`, `setConversationDocument` → `setWorkspaceDocument`, and "Send to editor" now appends with a `---` separator so prior work in the doc survives. Persist migration v13 → v14 lifts each workspace's most-recently-updated non-empty conversation doc onto the workspace row. Sync handler diffs `document_content` on `workspaces` (not `conversations`).
 
 #### ✅ Shipped — 5C lite assistant artifacts *(local-only)*
 
@@ -200,7 +196,7 @@ UI:
 - Artifact list shows kind icon, pinned star, title, language badge for code, created-at.
 - Click opens a preview dialog: read-only `<pre>` of the content (no syntax highlighting in lite), inline-editable title, and **Send to editor / Copy / Pin / Delete** actions.
 
-"Send to editor" implementation: writes the artifact content (wrapped in a code fence for code artifacts) to the active conversation's `documentContent` via `setConversationDocument`, then bumps a new `editorReloadToken` so the editor reloads even when the conversation hasn't changed. `components/panels/editor.tsx` watches the token in its load effect.
+"Send to editor" implementation: appends the artifact content (wrapped in a code fence for code artifacts) to the active workspace's `documentContent` via `appendToWorkspaceDocument`, then bumps a new `editorReloadToken` so the editor reloads even when the workspace hasn't changed. `components/panels/editor.tsx` watches the token in its load effect. *(Originally wrote per-conversation via `setConversationDocument`; updated when the editor was promoted to workspace scope.)*
 
 Sync handlers for `createArtifact`/`deleteArtifact`/`togglePinArtifact`/`updateArtifactTitle` still pending (sync layer).
 
@@ -386,17 +382,19 @@ recall plug into the same plumbing.
 
 > Shipped previously and removed from this list:
 > - `[sync]` `console.log` cleanup (`ab4e82c`).
-> - Sync handlers for `setConversationDocument`, `notes`, `artifacts`
->   — wired via `diffNotes` / `diffArtifacts` in `lib/sync/handlers.ts`;
->   the conversation row's `document_content` column updates on
->   debounced doc saves.
+> - Sync handlers for editor doc + notes + artifacts — wired via
+>   `diffNotes` / `diffArtifacts` in `lib/client/sync/handlers.ts`; the
+>   editor doc moved up to the **workspaces** row (`document_content`)
+>   when the editor was promoted to workspace scope, so the equivalent
+>   field on `diffWorkspaces` is what now updates on debounced doc
+>   saves.
 > - Reasoning duration persistence (`86034a5`).
 > - Auto-retry-once on network errors (`86034a5`).
 > - Rate-limit countdown (`86034a5`).
 
 5. **Conversation-related assets** *(four sub-features, each can ship independently)*
    - **~~A. Conversation-scoped file uploads~~** *(reframed + shipped local-only — see Status above)*. The `+` button on the chat input uploads to the active workspace and auto-attaches to the current conversation.
-   - **~~B. Per-conversation editor document~~** *(shipped local-only — see Status above)*. Sync handler for `setConversationDocument` (debounced) still pending.
+   - **~~B. Per-conversation editor document~~** *(superseded — see "Editor promoted to workspace scope" under Adjacent shipped work)*. Doc now lives on `Workspace` and the sync handler diffs `document_content` on `workspaces`.
    - **~~C. Assistant-generated artifacts~~** *(lite + full both shipped local-only — see Status above)*. Still pending: auto-extraction on stream end, table/image renderers, sync handlers (blocked on sync layer), and binary upload (blocked on Supabase Storage).
    - **~~D. Notes / bookmarks~~** *(shipped local-only — see Status above)*. Sync handlers (`createNote`, `updateNote`, `deleteNote`) still pending.
 
@@ -492,6 +490,27 @@ Three small UX wins that close gaps surfaced during the Skills work:
   `0002_rls_policies.sql` / `0003_storage.sql`). Pre-launch trade-off —
   applying against an existing project requires a `drop schema public
   cascade` reset.
+- Notes + artifacts promoted from conversation → workspace scope so
+  they survive conversation deletion. Persist v11 → v12; cloud schema
+  consolidated alongside.
+- Editor promoted from conversation → workspace scope. `documentContent`
+  moved from `Conversation` to `Workspace`; store gains
+  `setWorkspaceDocument` + `appendToWorkspaceDocument` (replaces
+  `setConversationDocument`). "Send to editor" now **appends** with a
+  `---` separator instead of overwriting, so prior work in the workspace
+  doc is preserved. Persist migration v13 → v14 lifts each workspace's
+  most-recently-updated non-empty conversation doc onto the workspace
+  row. Share links of `kind='document'` now key off `workspace_id`
+  (consolidated `0001_schema.sql`: nullable `workspace_id` on `shares`
+  with a check constraint enforcing exactly one of conversation_id /
+  workspace_id per kind).
+- Misc UI polish: tooltip-based hover labels for message actions,
+  per-button hover ring, message-delete confirmation, sidebar trigger
+  size unified with collapsed menu buttons, LayoutDashboard for the
+  left sidebar's Workspaces nav item, local-time message timestamps
+  (`formatTime` no longer uses `getUTCHours`), DeepSeek model list
+  trimmed to v4 Flash in both chat picker and editor settings dialog,
+  Retry tooltip in place of "Regenerate".
 
 ### Architecture
 
@@ -714,21 +733,16 @@ Today every uploaded file is workspace-scoped via the `resources` join. Sometime
 - **UI** — `components/panels/chat-resources-panel.tsx` adds a second section "This conversation" above the existing workspace files section. The `+` button on the input bar in `components/panels/chat.tsx:344-350` (currently a no-op) becomes the upload trigger for conversation-private files.
 - **Sync handlers** — `addConversationFile`, `removeConversationFile`.
 
-#### B. Per-conversation editor document
+#### B. ~~Per-conversation editor document~~ → workspace-scoped editor document *(shipped)*
 
-The editor today is a single global doc (`documentContent` in the store, shared across all conversations). Several recent product moves — message → editor sync, document export — work better if each conversation owns its own doc.
+The editor was originally a single global doc, then promoted to per-conversation, then ultimately promoted to **per-workspace** — the doc outlives any single conversation and accumulates as a long-lived workspace artifact. Final shape that landed:
 
-- **Schema** — add columns to `conversations`:
-  ```sql
-  alter table conversations
-    add column document_content text not null default '',
-    add column document_updated_at timestamptz not null default now();
-  ```
-  No separate table; the doc is 1:1 with the conversation. Version history is out of scope (could go in a `conversation_document_revisions` table later).
-- **Store** — replace global `documentContent` with a getter that reads `conversations[activeId].documentContent`. Add `setConversationDocument(conversationId, content)`. The global `editorContent` ephemeral field stays — that's the live cross-panel relay.
-- **UI** — `components/panels/editor.tsx` reads/writes the active conversation's doc instead of the global one. The auto-sync at `components/panels/chat.tsx:115, 132` writes to the active conversation's doc. Switching conversations swaps the editor content automatically.
-- **Sync handlers** — `setConversationDocument` (debounced 500 ms — editor typing is high-frequency).
-- **Migration note** — on first hydration of an existing user, copy the legacy `documentContent` into the *currently active* conversation so nothing is lost.
+- **Schema** — `workspaces.document_content text not null default ''` (consolidated into `0001_schema.sql`). The legacy `conversations.document_content` and `conversations.document_updated_at` columns were dropped.
+- **Store** — `Workspace.documentContent: string`; `setWorkspaceDocument(workspaceId, content)` for direct writes and `appendToWorkspaceDocument(workspaceId, fragment)` for "Send to editor" (appends with a `---` separator so prior work isn't lost). Selector: `useActiveWorkspaceDocument()`.
+- **UI** — `components/panels/editor.tsx` keys off `activeWorkspaceId`; Send-to-editor sites (chat-message, conversation-summary-dialog, artifacts-tab) call `appendToWorkspaceDocument(activeWorkspaceId, ...)`.
+- **Sync handlers** — `diffWorkspaces` / `workspaceEquals` carry `document_content`. The conversations diff no longer touches it.
+- **Migration** — persist v13 → v14 lifts each workspace's most-recently-updated non-empty conversation doc onto the workspace row; orphans / empties are dropped. Cloud schema is consolidated final-shape (no per-version SQL migration file).
+- **Share links** — `kind='document'` now keys off `workspace_id` instead of `conversation_id`. `shares` gained nullable `workspace_id`; check constraint enforces exactly one of `conversation_id` / `workspace_id` per kind.
 
 #### C. Assistant-generated artifacts
 
@@ -788,7 +802,7 @@ User-authored snippets attached to a conversation. Two modes:
 Adds to the original handler list in `lib/sync/handlers.ts`:
 
 - `addConversationFile`, `removeConversationFile`
-- `setConversationDocument` *(debounced)*
+- `setWorkspaceDocument` / `appendToWorkspaceDocument` *(debounced; diff is folded into `diffWorkspaces`)*
 - `createArtifact`, `deleteArtifact`, `togglePinArtifact`, `updateArtifactTitle`
 - `createNote`, `updateNote`, `deleteNote`
 

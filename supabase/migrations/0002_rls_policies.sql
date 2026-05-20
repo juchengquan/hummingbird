@@ -7,6 +7,7 @@
 
 alter table profiles enable row level security;
 alter table workspaces enable row level security;
+alter table documents enable row level security;
 alter table conversations enable row level security;
 alter table messages enable row level security;
 alter table files enable row level security;
@@ -19,6 +20,9 @@ create policy "own profile" on profiles
   for all using (id = auth.uid()) with check (id = auth.uid());
 
 create policy "own workspaces" on workspaces
+  for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+create policy "own documents" on documents
   for all using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 create policy "own conversations" on conversations

@@ -121,9 +121,9 @@ backed by `react-flow` or `tldraw`. Each node carries a `kind`:
 between nodes capture relationships. Persisted as JSON on the
 workspace row (or a new `canvas_state jsonb`).
 
-**Builds on.** Existing artifacts + notes + per-conversation editor
-doc + chat messages — same data already exists; this is a different
-spatial *view* of it.
+**Builds on.** Existing artifacts + notes + workspace editor doc +
+chat messages — same data already exists; this is a different spatial
+*view* of it.
 
 **Effort.** Large (~800+ lines), but ships independently — doesn't
 change anything else.
@@ -169,7 +169,7 @@ Defer until long-running tasks land.
 
 ## Diff mode for documents
 
-**Why distinctive.** Editor docs are per-conversation. When AI suggests
+**Why distinctive.** Editor docs are workspace-scoped. When AI suggests
 changes via the Editor, today they're applied in place. A diff mode
 would show before/after with accept/reject per chunk — like
 GitHub's PR review for chat-driven writing.
@@ -179,7 +179,7 @@ pre-change content; render the post-change content with a side-by-side
 or inline diff (`diff-match-patch`) and Accept / Reject buttons per
 hunk. Accepted hunks merge into the doc; rejected ones revert.
 
-**Builds on.** Editor (Plate.js), `setConversationDocument`, the
+**Builds on.** Editor (Plate.js), `setWorkspaceDocument`, the
 existing AI command routes (`/api/ai/command`).
 
 **Effort.** Medium (~300–400 lines). `diff-match-patch` is small.

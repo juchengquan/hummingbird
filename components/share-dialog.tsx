@@ -22,19 +22,23 @@ type ShareKind = "conversation" | "document"
 interface ShareDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** Target conversation for kind='conversation' shares. */
   conversationId: string
+  /** Target document for kind='document' shares. Null when the active
+   *  workspace has no documents yet — the Document option is disabled
+   *  in that case. */
+  documentId: string | null
 }
 
 /**
- * Modal that lets the user mint a public share link for the active
- * conversation. Two kinds:
+ * Modal that lets the user mint a public share link. Two kinds:
  *   - Conversation: read-only view of the message history.
- *   - Document:     read-only view of the per-conversation editor doc.
+ *   - Document:     read-only view of the currently open workspace doc.
  *
  * Anonymous users see a sign-in nudge — share rows need a `user_id` for
  * revocation and RLS, which requires an authenticated session.
  */
-export function ShareDialog({ open, onOpenChange, conversationId }: ShareDialogProps) {
+export function ShareDialog({ open, onOpenChange, conversationId, documentId }: ShareDialogProps) {
   const { status } = useAuth()
   const [kind, setKind] = useState<ShareKind>("conversation")
   const [creating, setCreating] = useState(false)
@@ -56,7 +60,11 @@ export function ShareDialog({ open, onOpenChange, conversationId }: ShareDialogP
   const handleCreate = async () => {
     setCreating(true)
     try {
-      const result = await apiClient.share.create({ kind, conversationId })
+      const result = await apiClient.share.create(
+        kind === "conversation"
+          ? { kind: "conversation", conversationId }
+          : { kind: "document", documentId: documentId! }
+      )
       if (!result.ok || !result.data) {
         toast.error(
           result.error ?? `Couldn't create share (HTTP ${result.status})`
@@ -148,13 +156,22 @@ export function ShareDialog({ open, onOpenChange, conversationId }: ShareDialogP
               <KindCard
                 kind="document"
                 active={kind === "document"}
-                onClick={() => setKind("document")}
+                onClick={() => documentId && setKind("document")}
                 icon={<FileText size={16} />}
                 title="Document"
-                description="The editor's saved content."
+                description={
+                  documentId
+                    ? "The currently open workspace document."
+                    : "No document open."
+                }
+                disabled={!documentId}
               />
             </div>
-            <Button onClick={handleCreate} disabled={creating} className="w-full mt-2">
+            <Button
+              onClick={handleCreate}
+              disabled={creating || (kind === "document" && !documentId)}
+              className="w-full mt-2"
+            >
               {creating ? <Loader2 size={14} className="animate-spin" /> : null}
               {creating ? "Creating…" : "Create link"}
             </Button>
@@ -171,6 +188,7 @@ function KindCard({
   icon,
   title,
   description,
+  disabled = false,
 }: {
   kind: ShareKind
   active: boolean
@@ -178,15 +196,18 @@ function KindCard({
   icon: React.ReactNode
   title: string
   description: string
+  disabled?: boolean
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
+      disabled={disabled}
       className={cn(
         "flex flex-col gap-1 px-3 py-2.5 text-left rounded-md border transition-colors",
         "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+        disabled && "opacity-50 cursor-not-allowed",
         active
           ? "border-[var(--primary)] bg-[var(--primary)]/5"
           : "border-[var(--border)] hover:bg-[var(--accent)]"

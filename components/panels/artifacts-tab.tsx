@@ -29,7 +29,6 @@ import {
 import {
   useStore,
   useWorkspaceArtifacts,
-  useActiveConversation,
 } from "@/client/hooks/use-store"
 import { copyText } from "@/client/export"
 import { TabEmptyState } from "@/components/panels/tab-empty-state"
@@ -61,11 +60,12 @@ function asMarkdownForEditor(artifact: Artifact): string {
 
 export function ArtifactsTab() {
   const artifacts = useWorkspaceArtifacts()
-  const activeConversation = useActiveConversation()
   const deleteArtifact = useStore((s) => s.deleteArtifact)
   const togglePinArtifact = useStore((s) => s.togglePinArtifact)
   const updateArtifactTitle = useStore((s) => s.updateArtifactTitle)
-  const setConversationDocument = useStore((s) => s.setConversationDocument)
+  const appendToActiveDocumentOrCreate = useStore(
+    (s) => s.appendToActiveDocumentOrCreate
+  )
   const requestEditorReload = useStore((s) => s.requestEditorReload)
   const setActiveView = useStore((s) => s.setActiveView)
 
@@ -78,8 +78,7 @@ export function ArtifactsTab() {
   const open = openId ? artifacts.find((a) => a.id === openId) ?? null : null
 
   const handleSendToEditor = (a: Artifact) => {
-    if (!activeConversation) return
-    setConversationDocument(activeConversation.id, asMarkdownForEditor(a))
+    appendToActiveDocumentOrCreate(asMarkdownForEditor(a))
     requestEditorReload()
     setActiveView("editor")
     setOpenId(null)

@@ -23,6 +23,7 @@ import "client-only"
 import type {
   Artifact,
   Conversation,
+  Document,
   Message,
   Note,
   Resource,
@@ -83,6 +84,56 @@ function workspaceEquals(a: Workspace, b: Workspace): boolean {
   )
 }
 
+// ------------ documents -----------------------------------------------------
+
+export function diffDocuments(prev: Document[], next: Document[]): SyncOp[] {
+  const ops: SyncOp[] = []
+  const prevById = byId(prev)
+  const nextById = byId(next)
+
+  for (const d of next) {
+    const before = prevById.get(d.id)
+    if (!before || !documentEquals(before, d)) {
+      ops.push({
+        kind: "upsert",
+        target: "documents",
+        clientOpId: "",
+        row: {
+          id: d.id,
+          workspace_id: d.workspaceId,
+          title: d.title,
+          content: d.content,
+          position: d.position ?? null,
+          created_at: toISO(d.createdAt),
+          updated_at: toISO(d.updatedAt),
+        },
+      })
+    }
+  }
+  for (const d of prev) {
+    if (!nextById.has(d.id)) {
+      ops.push({
+        kind: "delete",
+        target: "documents",
+        clientOpId: "",
+        where: { column: "id", value: d.id },
+      })
+    }
+  }
+  return ops
+}
+
+function documentEquals(a: Document, b: Document): boolean {
+  return (
+    a.workspaceId === b.workspaceId &&
+    a.title === b.title &&
+    a.content === b.content &&
+    (a.position ?? null) === (b.position ?? null) &&
+    sameInstant(a.createdAt, b.createdAt) &&
+    sameInstant(a.updatedAt, b.updatedAt)
+  )
+}
+
 function sameSkillPrefs(
   a: Record<string, boolean> | undefined,
   b: Record<string, boolean> | undefined
@@ -128,8 +179,9 @@ export function diffConversations(
           title: c.title,
           pinned: c.pinned,
           selected_file_ids: c.selectedFileIds,
-          document_content: c.documentContent,
-          document_updated_at: toISO(c.updatedAt),
+          // document_content / document_updated_at were promoted to the
+          // workspaces row. Column still exists for one release for
+          // safety; client no longer writes to it.
           skill_prefs: c.skillPrefs ?? {},
           parent_id: c.parentId ?? null,
           forked_from_message_id: c.forkedFromMessageId ?? null,
@@ -166,7 +218,6 @@ function conversationHeaderEquals(a: Conversation, b: Conversation): boolean {
     a.workspaceId === b.workspaceId &&
     a.title === b.title &&
     a.pinned === b.pinned &&
-    a.documentContent === b.documentContent &&
     sameStringArray(a.selectedFileIds, b.selectedFileIds) &&
     sameSkillPrefs(a.skillPrefs, b.skillPrefs) &&
     (a.parentId ?? null) === (b.parentId ?? null) &&
