@@ -1,3 +1,4 @@
+import "client-only"
 /**
  * Editor media uploader.
  *

@@ -1,3 +1,4 @@
+import "client-only"
 /**
  * Single decision point for "where does this blob live?" after the user
  * attaches a file. Three modes:

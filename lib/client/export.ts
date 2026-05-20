@@ -1,3 +1,4 @@
+import "client-only"
 import type { Conversation } from "@/shared/types"
 
 function formatTimestamp(timestamp: Date | string): string {

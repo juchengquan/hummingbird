@@ -1,3 +1,4 @@
+import "client-only"
 /**
  * Client-side helper that POSTs a file to /api/extract and returns the
  * resulting text + kind. Network/HTTP failures resolve to `null`; the

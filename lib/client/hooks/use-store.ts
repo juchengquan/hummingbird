@@ -1,3 +1,4 @@
+import "client-only"
 import { useSyncExternalStore } from 'react'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'

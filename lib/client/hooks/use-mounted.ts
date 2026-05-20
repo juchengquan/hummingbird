@@ -1,3 +1,4 @@
+import "client-only"
 import * as React from 'react';
 
 export function useMounted() {

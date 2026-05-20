@@ -97,13 +97,36 @@ SQL lives under `supabase/migrations/` as three final-shape files
 (`0001_schema.sql`, `0002_rls_policies.sql`, `0003_storage.sql`) — see
 `docs/SUPABASE_SETUP.md` for the run order.
 
+## Frontend module conventions
+
+`lib/` is split into three folders by runtime. The folder name tells you
+where the code runs, and a fence import at the top of each file enforces
+the boundary at build time:
+
+| Folder | Runtime | Fence | Allowed imports |
+|---|---|---|---|
+| `lib/client/`  | Browser only | `import "client-only"` | `@/client/*`, `@/shared/*` |
+| `lib/server/`  | Node only (route handlers, server components) | `import "server-only"` | `@/server/*`, `@/shared/*` |
+| `lib/shared/`  | Isomorphic (pure, no I/O) | none | `@/shared/*` only |
+
+Path aliases (`tsconfig.json`): `@/client/*`, `@/server/*`, `@/shared/*`.
+ESLint enforces the same convention via `no-restricted-imports` in
+`eslint.config.mjs`. After a production build, run `bun run audit:bundle`
+to confirm no server-only paths or secret env-var names leaked into
+`.next/static/chunks/*.js`.
+
+When adding a new file, classify by runtime first:
+- Touches `window`, `document`, `localStorage`, React hooks, or Zustand store → `lib/client/`
+- Reads `process.env`, server-only secrets, or uses `next/headers` / `cookies()` → `lib/server/`
+- Pure types, Zod schemas, helpers, constants → `lib/shared/`
+
 ## API contract
 
-Frontend → backend communication is centralised in `lib/api-client.ts`.
+Frontend → backend communication is centralised in `lib/client/api-client.ts`.
 Components and hooks must call `apiClient.*` (or read URLs from
 `apiUrls.*` for libraries like Plate that take a URL string) — never
 `fetch('/api/...')` directly. The wire shapes are pinned in
-`lib/api-schemas.ts` (Zod request + response schemas) and
+`lib/shared/api-schemas.ts` (Zod request + response schemas) and
 `docs/API.md` (the SSE streaming protocol).
 
 When adding a new endpoint, follow the checklist at the bottom of

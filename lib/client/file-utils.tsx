@@ -1,3 +1,4 @@
+import "client-only"
 import { File as FileIcon, FileText, FileJson, Image } from "lucide-react"
 import React from "react"
 import type { UploadedFile } from "@/shared/types"

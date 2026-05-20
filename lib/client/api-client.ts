@@ -1,3 +1,4 @@
+import "client-only"
 /**
  * Single typed entry point for every frontend → backend call.
  *

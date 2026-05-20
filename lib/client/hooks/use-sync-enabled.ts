@@ -1,4 +1,5 @@
 "use client"
+import "client-only"
 
 /**
  * Computed gate for whether cloud-sync machinery should run.

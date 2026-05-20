@@ -1,4 +1,5 @@
 "use client"
+import "client-only"
 
 /**
  * Background sync queue. Mirrors local Zustand mutations to Supabase when

@@ -1,4 +1,5 @@
 "use client"
+import "client-only"
 
 /**
  * First-sign-in reconciliation. Two halves:

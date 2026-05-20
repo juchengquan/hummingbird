@@ -1,3 +1,4 @@
+import "server-only"
 /**
  * Web search skill — Tavily-backed.
  *

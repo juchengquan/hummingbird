@@ -1,4 +1,5 @@
 "use client"
+import "client-only"
 
 /**
  * Snapshot diff → SyncOp[] producers. One function per entity.

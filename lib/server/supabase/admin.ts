@@ -1,3 +1,4 @@
+import "server-only"
 /**
  * Server-only admin client backed by SUPABASE_SERVICE_ROLE_KEY. Bypasses
  * RLS — use sparingly and only for narrowly-scoped reads keyed by a

@@ -1,3 +1,4 @@
+import "server-only"
 /**
  * Server-side share resolver. Uses the service-role client so the public
  * page can render without an authenticated session, but reads are scoped

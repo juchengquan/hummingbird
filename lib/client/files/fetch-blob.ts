@@ -1,3 +1,4 @@
+import "client-only"
 /**
  * Resolve a stored `UploadedFile` back to a `Blob` for re-extraction or
  * preview. Tries the local IndexedDB cache first, then a short-lived

@@ -1,3 +1,4 @@
+import "client-only"
 /**
  * React hook: "is this file's blob reachable from this device?"
  *

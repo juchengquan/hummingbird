@@ -1,4 +1,5 @@
 "use client"
+import "client-only"
 
 /**
  * Wires the sync queue into the Zustand store. Mount once near the root
@@ -26,7 +27,7 @@ import {
   diffNotes,
   diffResources,
   diffWorkspaces,
-} from "@/shared/sync/handlers"
+} from "@/client/sync/handlers"
 import type {
   Artifact,
   Conversation,

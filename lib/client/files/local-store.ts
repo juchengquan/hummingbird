@@ -1,3 +1,4 @@
+import "client-only"
 /**
  * Tiny IndexedDB wrapper for storing raw file blobs keyed by file id.
  *
