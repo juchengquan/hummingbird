@@ -4,9 +4,9 @@ import { useEffect, useState } from "react"
 import { AlertTriangle, ChevronDown, RotateCcw } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
-import { CHAT_MODELS, DEFAULT_CHAT_MODEL } from "@/lib/models"
-import type { MessageError } from "@/lib/types"
+import { cn } from "@/shared/utils"
+import { CHAT_MODELS, DEFAULT_CHAT_MODEL } from "@/shared/models"
+import type { MessageError } from "@/shared/types"
 
 const ERROR_TITLES: Record<string, string> = {
   auth: "Authentication failed",

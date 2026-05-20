@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server"
 import { NextResponse } from "next/server"
 
-import { getSupabaseServerClient } from "@/lib/supabase/server"
+import { getSupabaseServerClient } from "@/server/supabase/server"
 
 /**
  * Revoke a share. RLS limits the update to rows owned by the caller, so

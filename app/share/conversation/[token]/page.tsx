@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation"
 
-import { resolveShare } from "@/lib/share/resolve"
+import { resolveShare } from "@/server/share/resolve"
 import { MarkdownPreview } from "@/components/markdown-preview"
 import { format } from "date-fns"
 

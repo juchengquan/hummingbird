@@ -1,8 +1,8 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { cn } from "@/lib/utils"
-import { useStore } from "@/lib/hooks/use-store"
+import { cn } from "@/shared/utils"
+import { useStore } from "@/client/hooks/use-store"
 import "./code-highlight.css"
 
 type ResolvedTheme = "light" | "dark"

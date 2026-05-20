@@ -3,9 +3,9 @@
 import { Clipboard, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
-import { ACTIONS_BY_KIND, chipLabel } from "@/lib/smart-paste/actions"
-import type { PasteDetection } from "@/lib/smart-paste/detect"
+import { cn } from "@/shared/utils"
+import { ACTIONS_BY_KIND, chipLabel } from "@/shared/smart-paste/actions"
+import type { PasteDetection } from "@/shared/smart-paste/detect"
 
 interface SmartPasteChipProps {
   detection: PasteDetection

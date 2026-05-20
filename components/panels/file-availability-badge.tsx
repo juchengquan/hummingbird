@@ -1,9 +1,9 @@
 "use client"
 
 import { LaptopMinimal } from "lucide-react"
-import type { UploadedFile } from "@/lib/types"
-import { useFileAvailability } from "@/lib/files/use-file-availability"
-import { cn } from "@/lib/utils"
+import type { UploadedFile } from "@/shared/types"
+import { useFileAvailability } from "@/client/files/use-file-availability"
+import { cn } from "@/shared/utils"
 
 interface FileAvailabilityBadgeProps {
   file: UploadedFile

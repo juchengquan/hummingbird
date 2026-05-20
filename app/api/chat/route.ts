@@ -4,14 +4,14 @@ import { createGateway } from '@ai-sdk/gateway'
 import { generateText, stepCountIs, streamText, type ModelMessage } from 'ai'
 import { NextResponse } from 'next/server'
 
-import { DEFAULT_CHAT_MODEL } from '@/lib/models'
-import { categorizeError } from '@/lib/api-errors'
-import { ChatRequestSchema } from '@/lib/api-schemas'
+import { DEFAULT_CHAT_MODEL } from '@/shared/models'
+import { categorizeError } from '@/shared/api-errors'
+import { ChatRequestSchema } from '@/shared/api-schemas'
 import {
   buildWebSearchTool,
   isWebSearchConfigured,
   type WebSearchLog,
-} from '@/lib/skills/web-search'
+} from '@/server/skills/web-search'
 
 interface FileSummary {
   name: string

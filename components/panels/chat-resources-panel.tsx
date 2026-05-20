@@ -7,11 +7,11 @@ import {
   useStore,
   useWorkspaceResources,
   useConversationSelectedFileIds,
-} from "@/lib/hooks/use-store"
-import { processSelectedFiles } from "@/lib/file-utils"
-import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT } from "@/lib/upload-config"
-import { runExtraction } from "@/lib/extract"
-import { persistFile } from "@/lib/files/persist"
+} from "@/client/hooks/use-store"
+import { processSelectedFiles } from "@/client/file-utils"
+import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT } from "@/shared/upload-config"
+import { runExtraction } from "@/client/extract"
+import { persistFile } from "@/client/files/persist"
 import { NotesTab } from "@/components/panels/notes-tab"
 import { ArtifactsTab } from "@/components/panels/artifacts-tab"
 import { SkillsTab } from "@/components/panels/skills-tab"

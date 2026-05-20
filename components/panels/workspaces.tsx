@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useStore } from "@/lib/hooks/use-store"
+import { useStore } from "@/client/hooks/use-store"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { SidebarTrigger } from "@/components/ui/sidebar"
@@ -30,7 +30,7 @@ import {
   verticalListSortingStrategy,
   arrayMove,
 } from "@dnd-kit/sortable"
-import { cn } from "@/lib/utils"
+import { cn } from "@/shared/utils"
 import { ResourcesSidebar } from "@/components/sidebars/resources"
 import { format } from "date-fns"
 import { WorkspaceDetailSheet } from "@/components/panels/workspace-detail-sheet"

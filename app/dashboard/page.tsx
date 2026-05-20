@@ -12,9 +12,9 @@ import {
   SidebarInset,
   SidebarProvider,
 } from "@/components/ui/sidebar"
-import { useHydrated, useStore } from "@/lib/hooks/use-store"
-import { useSync } from "@/lib/hooks/use-sync"
-import { useReconcile } from "@/lib/hooks/use-reconcile"
+import { useHydrated, useStore } from "@/client/hooks/use-store"
+import { useSync } from "@/client/hooks/use-sync"
+import { useReconcile } from "@/client/hooks/use-reconcile"
 import { ReconcileDialog } from "@/components/auth/reconcile-dialog"
 
 // Plate.js + all its plugins are heavy (~200KB pre-minify). Defer the

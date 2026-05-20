@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useRef } from "react"
 import { marked } from "marked"
-import { cn } from "@/lib/utils"
+import { cn } from "@/shared/utils"
 import { usePdfViewer } from "@/components/pdf-viewer/types"
 import "./markdown-preview.css"
 

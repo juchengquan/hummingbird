@@ -10,9 +10,9 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { fetchFileBlob } from "@/lib/files/fetch-blob"
-import { useStore } from "@/lib/hooks/use-store"
-import { cn } from "@/lib/utils"
+import { fetchFileBlob } from "@/client/files/fetch-blob"
+import { useStore } from "@/client/hooks/use-store"
+import { cn } from "@/shared/utils"
 
 import { usePdfViewer } from "./types"
 

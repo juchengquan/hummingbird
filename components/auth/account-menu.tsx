@@ -10,12 +10,12 @@ import {
 } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
 import { AuthDialog } from "@/components/auth/auth-dialog"
-import { useAuth } from "@/lib/hooks/use-auth"
-import { useStore } from "@/lib/hooks/use-store"
+import { useAuth } from "@/client/hooks/use-auth"
+import { useStore } from "@/client/hooks/use-store"
 import { useSidebar } from "@/components/ui/sidebar"
-import { cn } from "@/lib/utils"
-import { clearAll, estimateUsage } from "@/lib/files/local-store"
-import { formatFileSize } from "@/lib/file-utils"
+import { cn } from "@/shared/utils"
+import { clearAll, estimateUsage } from "@/client/files/local-store"
+import { formatFileSize } from "@/client/file-utils"
 
 /**
  * Sidebar footer auth + local-mode surface.

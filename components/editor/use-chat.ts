@@ -19,7 +19,7 @@ import { type PlateEditor, useEditorRef, usePluginOption } from 'platejs/react';
 import { toast } from 'sonner';
 
 import { aiChatPlugin } from '@/components/editor/plugins/ai-kit';
-import { apiUrls } from '@/lib/api-client';
+import { apiUrls } from '@/client/api-client';
 
 import { discussionPlugin } from './plugins/discussion-kit';
 import { withAIBatch } from '@platejs/ai';

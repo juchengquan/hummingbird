@@ -1,7 +1,7 @@
 "use client"
 
 import { Globe, Loader2, Check, Wrench } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { cn } from "@/shared/utils"
 
 export interface LiveToolCall {
   id: string

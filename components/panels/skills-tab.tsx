@@ -3,14 +3,14 @@
 import { Info } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
+import { cn } from "@/shared/utils"
 import {
   useActiveConversation,
   useActiveWorkspace,
   useStore,
-} from "@/lib/hooks/use-store"
-import { SKILLS } from "@/lib/skills/registry"
-import { resolveSkill, type SkillDescriptor } from "@/lib/skills/types"
+} from "@/client/hooks/use-store"
+import { SKILLS } from "@/shared/skills/registry"
+import { resolveSkill, type SkillDescriptor } from "@/shared/skills/types"
 
 /**
  * "Skills" tab in the right activity bar.

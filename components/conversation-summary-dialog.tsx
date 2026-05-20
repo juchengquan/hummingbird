@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { Loader2, FileText, Send, Copy, Archive } from "lucide-react"
 import { toast } from "sonner"
-import { useStore } from "@/lib/hooks/use-store"
+import { useStore } from "@/client/hooks/use-store"
 import {
   Dialog,
   DialogContent,
@@ -13,10 +13,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
-import { copyText } from "@/lib/export"
-import type { Conversation } from "@/lib/types"
-import { apiClient } from "@/lib/api-client"
-import type { ConversationSummarizeResponse } from "@/lib/api-schemas"
+import { copyText } from "@/client/export"
+import type { Conversation } from "@/shared/types"
+import { apiClient } from "@/client/api-client"
+import type { ConversationSummarizeResponse } from "@/shared/api-schemas"
 
 type ConversationSummaryResult = ConversationSummarizeResponse
 

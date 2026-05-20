@@ -7,7 +7,7 @@ import { CopilotPlugin } from '@platejs/ai/react';
 import { serializeMd, stripMarkdown } from '@platejs/markdown';
 
 import { GhostText } from '@/components/ui/ghost-text';
-import { apiUrls } from '@/lib/api-client';
+import { apiUrls } from '@/client/api-client';
 
 import { MarkdownKit } from './markdown-kit';
 

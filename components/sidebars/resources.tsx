@@ -2,11 +2,11 @@
 
 import { useEffect, useRef } from "react"
 import { PanelRightClose, PanelRightOpen, FolderOpen, StickyNote, Archive, Sparkles, PencilLine } from "lucide-react"
-import { cn } from "@/lib/utils"
-import { useStore, useWorkspaceResources, useWorkspaceNotes, useWorkspaceArtifacts, useActiveWorkspace, useActiveConversation } from "@/lib/hooks/use-store"
+import { cn } from "@/shared/utils"
+import { useStore, useWorkspaceResources, useWorkspaceNotes, useWorkspaceArtifacts, useActiveWorkspace, useActiveConversation } from "@/client/hooks/use-store"
 import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
-import { SKILLS } from "@/lib/skills/registry"
-import { resolveSkill } from "@/lib/skills/types"
+import { SKILLS } from "@/shared/skills/registry"
+import { resolveSkill } from "@/shared/skills/types"
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 
 /**

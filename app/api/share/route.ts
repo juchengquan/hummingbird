@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 
-import { getSupabaseServerClient } from "@/lib/supabase/server"
+import { getSupabaseServerClient } from "@/server/supabase/server"
 
 const CreateShareSchema = z.object({
   kind: z.enum(["conversation", "document"]),

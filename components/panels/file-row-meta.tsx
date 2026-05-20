@@ -2,14 +2,14 @@
 
 import { useState } from "react"
 import { RotateCcw } from "lucide-react"
-import type { UploadedFile } from "@/lib/types"
-import { useStore } from "@/lib/hooks/use-store"
-import { useFileAvailability } from "@/lib/files/use-file-availability"
-import { fetchFileBlob } from "@/lib/files/fetch-blob"
-import { retryExtraction } from "@/lib/extract"
+import type { UploadedFile } from "@/shared/types"
+import { useStore } from "@/client/hooks/use-store"
+import { useFileAvailability } from "@/client/files/use-file-availability"
+import { fetchFileBlob } from "@/client/files/fetch-blob"
+import { retryExtraction } from "@/client/extract"
 import { ExtractionStatusBadge } from "@/components/panels/extraction-status-badge"
 import { FileAvailabilityBadge } from "@/components/panels/file-availability-badge"
-import { cn } from "@/lib/utils"
+import { cn } from "@/shared/utils"
 import { toast } from "sonner"
 
 interface FileRowMetaProps {

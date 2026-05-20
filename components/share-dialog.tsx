@@ -12,10 +12,10 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
-import { useAuth } from "@/lib/hooks/use-auth"
-import { copyText } from "@/lib/export"
-import { apiClient } from "@/lib/api-client"
+import { cn } from "@/shared/utils"
+import { useAuth } from "@/client/hooks/use-auth"
+import { copyText } from "@/client/export"
+import { apiClient } from "@/client/api-client"
 
 type ShareKind = "conversation" | "document"
 

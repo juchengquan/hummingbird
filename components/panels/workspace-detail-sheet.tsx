@@ -19,9 +19,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { useStore } from "@/lib/hooks/use-store"
-import { CHAT_MODELS } from "@/lib/models"
-import type { Workspace } from "@/lib/types"
+import { useStore } from "@/client/hooks/use-store"
+import { CHAT_MODELS } from "@/shared/models"
+import type { Workspace } from "@/shared/types"
 
 interface WorkspaceDetailSheetProps {
   workspaceId: string | null

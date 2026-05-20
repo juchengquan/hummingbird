@@ -1,21 +1,21 @@
 "use client"
 
 import { memo, useState, useRef, useEffect } from "react"
-import type { Message } from "@/lib/types"
+import type { Message } from "@/shared/types"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Copy, Pencil, Trash2, RotateCcw, Check, X, Bookmark, Archive, Send, GitBranch } from "lucide-react"
 import { toast } from "sonner"
-import { cn } from "@/lib/utils"
-import { copyText } from "@/lib/export"
-import { extractCodeBlocks } from "@/lib/code-blocks"
+import { cn } from "@/shared/utils"
+import { copyText } from "@/client/export"
+import { extractCodeBlocks } from "@/shared/code-blocks"
 import { MarkdownPreview } from "@/components/markdown-preview"
 import { ToolCallStrip, type LiveToolCall } from "@/components/skills/tool-call-strip"
 import { MessageAttachments } from "@/components/panels/message-attachments"
 import { ReasoningBlock } from "@/components/panels/reasoning-block"
 import { ErrorBubble } from "@/components/panels/error-bubble"
-import { useStore, useMessageBookmark } from "@/lib/hooks/use-store"
-import type { ArtifactKind } from "@/lib/types"
+import { useStore, useMessageBookmark } from "@/client/hooks/use-store"
+import type { ArtifactKind } from "@/shared/types"
 import {
   SaveArtifactDialog,
   type DetectedBlock,

@@ -2,16 +2,16 @@
 
 import { useState } from "react"
 import { FileText, X, ImageOff } from "lucide-react"
-import { useStore } from "@/lib/hooks/use-store"
-import { getFileIcon, formatFileSize } from "@/lib/file-utils"
+import { useStore } from "@/client/hooks/use-store"
+import { getFileIcon, formatFileSize } from "@/client/file-utils"
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { cn } from "@/lib/utils"
-import type { UploadedFile } from "@/lib/types"
+import { cn } from "@/shared/utils"
+import type { UploadedFile } from "@/shared/types"
 
 /**
  * Renders attached-file chips / image thumbnails for a single message.

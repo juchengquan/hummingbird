@@ -31,24 +31,24 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { CHAT_MODELS } from "@/lib/models"
+import { CHAT_MODELS } from "@/shared/models"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import {
   useStore,
   useActiveConversation,
   useActiveWorkspace,
-} from "@/lib/hooks/use-store"
+} from "@/client/hooks/use-store"
 import {
   conversationToMarkdown,
   copyText,
   downloadAsFile,
   safeFilename,
-} from "@/lib/export"
+} from "@/client/export"
 import { ConversationSummaryDialog } from "@/components/conversation-summary-dialog"
 import { ResourcesMobileDrawer } from "@/components/sidebars/resources-mobile-drawer"
 import { ShareDialog } from "@/components/share-dialog"
 import { BranchesDialog } from "@/components/branches-dialog"
-import { cn } from "@/lib/utils"
+import { cn } from "@/shared/utils"
 
 /**
  * Top-of-chat header showing the workspace → conversation breadcrumb plus a

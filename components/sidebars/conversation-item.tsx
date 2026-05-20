@@ -1,17 +1,17 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { Conversation } from "@/lib/types"
+import { Conversation } from "@/shared/types"
 import { Pin, PinOff, Pencil, Trash2, MoreVertical, Check, X, Download, Copy, Sparkles } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
+import { cn } from "@/shared/utils"
 import {
   conversationToMarkdown,
   copyText,
   downloadAsFile,
   safeFilename,
-} from "@/lib/export"
+} from "@/client/export"
 import { ConversationSummaryDialog } from "@/components/conversation-summary-dialog"
 import {
   Popover,

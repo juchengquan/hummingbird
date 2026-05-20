@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import { FILE_SIZE_LIMIT } from '@/lib/upload-config'
+import { FILE_SIZE_LIMIT } from '@/shared/upload-config'
 
 // Keep extracted-text budget aligned with the client constant.
 const EXTRACTION_BUDGET = 32 * 1024

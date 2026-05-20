@@ -4,15 +4,15 @@ import { useEffect, useMemo, useState } from "react"
 import { format } from "date-fns"
 import { Bookmark, Trash2, Plus, StickyNote, MessageSquare } from "lucide-react"
 import { toast } from "sonner"
-import { cn } from "@/lib/utils"
+import { cn } from "@/shared/utils"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import {
   useStore,
   useWorkspaceNotes,
   useActiveConversation,
-} from "@/lib/hooks/use-store"
-import type { Message } from "@/lib/types"
+} from "@/client/hooks/use-store"
+import type { Message } from "@/shared/types"
 import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { TabEmptyState } from "@/components/panels/tab-empty-state"
 

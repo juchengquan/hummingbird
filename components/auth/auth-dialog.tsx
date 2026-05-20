@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { useAuth } from "@/lib/hooks/use-auth"
+import { useAuth } from "@/client/hooks/use-auth"
 
 interface AuthDialogProps {
   open: boolean

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useCallback } from "react"
-import { useStore, useSessionStore } from "@/lib/hooks/use-store"
+import { useStore, useSessionStore } from "@/client/hooks/use-store"
 import { Item, ItemContent, ItemTitle, ItemDescription } from "@/components/ui/item"
 
 import { Search, Check, X, FolderOpen } from "lucide-react"
@@ -24,12 +24,12 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { cn } from "@/lib/utils"
-import { formatFileSize, getFileIcon, processSelectedFiles } from "@/lib/file-utils"
+import { cn } from "@/shared/utils"
+import { formatFileSize, getFileIcon, processSelectedFiles } from "@/client/file-utils"
 import { SidebarTrigger } from "@/components/ui/sidebar"
-import { runExtraction } from "@/lib/extract"
-import { persistFile } from "@/lib/files/persist"
-import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT } from "@/lib/upload-config"
+import { runExtraction } from "@/client/extract"
+import { persistFile } from "@/client/files/persist"
+import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT } from "@/shared/upload-config"
 import { FileRowMeta } from "@/components/panels/file-row-meta"
 import { format } from "date-fns"
 

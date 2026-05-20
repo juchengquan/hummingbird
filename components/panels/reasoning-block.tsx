@@ -4,8 +4,8 @@ import { useEffect, useState } from "react"
 import { ChevronDown, Copy } from "lucide-react"
 import { toast } from "sonner"
 
-import { cn } from "@/lib/utils"
-import { copyText } from "@/lib/export"
+import { cn } from "@/shared/utils"
+import { copyText } from "@/client/export"
 import { MarkdownPreview } from "@/components/markdown-preview"
 
 interface ReasoningBlockProps {

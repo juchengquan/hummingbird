@@ -10,15 +10,15 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog"
-import { cn } from "@/lib/utils"
-import { useStore } from "@/lib/hooks/use-store"
+import { cn } from "@/shared/utils"
+import { useStore } from "@/client/hooks/use-store"
 import {
   buildTree,
   countNodes,
   describeBranchPoint,
   findRoot,
   type BranchNode,
-} from "@/lib/branches/tree"
+} from "@/shared/branches/tree"
 
 interface BranchesDialogProps {
   open: boolean

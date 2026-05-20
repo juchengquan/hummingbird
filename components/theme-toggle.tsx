@@ -1,7 +1,7 @@
 "use client"
 
 import { Sun, Moon, Monitor, Check } from "lucide-react"
-import { useStore } from "@/lib/hooks/use-store"
+import { useStore } from "@/client/hooks/use-store"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -9,7 +9,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { cn } from "@/lib/utils"
+import { cn } from "@/shared/utils"
 
 const OPTIONS = [
   { value: "light", label: "Light", icon: Sun },

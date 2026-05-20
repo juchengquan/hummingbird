@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useMemo } from "react"
-import { useStore } from "@/lib/hooks/use-store"
+import { useStore } from "@/client/hooks/use-store"
 import {
   CommandDialog,
   CommandEmpty,
@@ -21,7 +21,7 @@ import {
   Plus,
   Layers,
 } from "lucide-react"
-import type { MainView } from "@/lib/types"
+import type { MainView } from "@/shared/types"
 
 export function CommandPalette() {
   const [open, setOpen] = useState(false)

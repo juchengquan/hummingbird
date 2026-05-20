@@ -5,7 +5,7 @@ import { generateText } from 'ai'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
-import { categorizeError } from '@/lib/api-errors'
+import { categorizeError } from '@/shared/api-errors'
 
 export const runtime = 'nodejs'
 

@@ -17,7 +17,7 @@ import {
   X,
 } from "lucide-react"
 import { toast } from "sonner"
-import { cn } from "@/lib/utils"
+import { cn } from "@/shared/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -30,12 +30,12 @@ import {
   useStore,
   useWorkspaceArtifacts,
   useActiveConversation,
-} from "@/lib/hooks/use-store"
-import { copyText } from "@/lib/export"
+} from "@/client/hooks/use-store"
+import { copyText } from "@/client/export"
 import { TabEmptyState } from "@/components/panels/tab-empty-state"
 import { CodeHighlight, JsonHighlight } from "@/components/code-highlight"
 import { MarkdownPreview } from "@/components/markdown-preview"
-import type { Artifact } from "@/lib/types"
+import type { Artifact } from "@/shared/types"
 
 function artifactKindIcon(artifact: Artifact) {
   if (artifact.kind === "code") return <Code2 size={12} />

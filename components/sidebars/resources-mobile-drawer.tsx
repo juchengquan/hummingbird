@@ -1,10 +1,10 @@
 "use client"
 
 import { FolderOpen, StickyNote, Archive, Sparkles } from "lucide-react"
-import { cn } from "@/lib/utils"
-import { SKILLS } from "@/lib/skills/registry"
-import { resolveSkill } from "@/lib/skills/types"
-import { useActiveConversation, useActiveWorkspace } from "@/lib/hooks/use-store"
+import { cn } from "@/shared/utils"
+import { SKILLS } from "@/shared/skills/registry"
+import { resolveSkill } from "@/shared/skills/types"
+import { useActiveConversation, useActiveWorkspace } from "@/client/hooks/use-store"
 import {
   Sheet,
   SheetContent,
@@ -16,7 +16,7 @@ import {
   useWorkspaceResources,
   useConversationNotes,
   useConversationArtifacts,
-} from "@/lib/hooks/use-store"
+} from "@/client/hooks/use-store"
 import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
 
 /**

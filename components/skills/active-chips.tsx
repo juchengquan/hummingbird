@@ -2,10 +2,10 @@
 
 import { X, Plus } from "lucide-react"
 
-import { useStore, useActiveConversation, useActiveWorkspace } from "@/lib/hooks/use-store"
-import { SKILLS } from "@/lib/skills/registry"
-import { resolveSkill, type SkillId } from "@/lib/skills/types"
-import { cn } from "@/lib/utils"
+import { useStore, useActiveConversation, useActiveWorkspace } from "@/client/hooks/use-store"
+import { SKILLS } from "@/shared/skills/registry"
+import { resolveSkill, type SkillId } from "@/shared/skills/types"
+import { cn } from "@/shared/utils"
 
 interface ActiveSkillsChipsProps {
   className?: string

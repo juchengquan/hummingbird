@@ -22,8 +22,8 @@ import {
   CollapsibleTrigger,
   CollapsibleContent,
 } from "@/components/ui/collapsible"
-import { useStore } from "@/lib/hooks/use-store"
-import { useWorkspaceConversations } from "@/lib/hooks/use-store"
+import { useStore } from "@/client/hooks/use-store"
+import { useWorkspaceConversations } from "@/client/hooks/use-store"
 import { ConversationItem } from "@/components/sidebars/conversation-item"
 import { AccountMenu } from "@/components/auth/account-menu"
 import { ThemeToggle } from "@/components/theme-toggle"
