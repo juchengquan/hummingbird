@@ -19,6 +19,7 @@ import { detectPasteKind, type PasteDetection } from "@/shared/smart-paste/detec
 import { ChatHeader } from "@/components/panels/chat-header"
 import { ChatMessage } from "@/components/panels/chat-message"
 import { EmptyChatWelcome } from "@/components/panels/empty-chat-welcome"
+import { SelectionTrigger } from "@/components/selection/selection-trigger"
 import { Plus, ChevronDown, Square, ArrowUp } from "lucide-react"
 import { processSelectedFiles } from "@/client/file-utils"
 import { runExtraction } from "@/client/extract"
@@ -105,6 +106,62 @@ export function ChatPanel() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const messages = useMemo(() => activeConversation?.messages || [], [activeConversation])
+
+  // SelectionTrigger needs the conversation slice up to (and including)
+  // the message the selection lives in. We resolve the scope attribute
+  // (`message-<id>`) back into a slice of `messages` so the model
+  // answers "explain this" with the right conversational context.
+  const resolveSelectionContext = useCallback(
+    (scope: string): typeof messages | null => {
+      const prefix = "message-"
+      if (!scope.startsWith(prefix)) return null
+      const id = scope.slice(prefix.length)
+      const idx = messages.findIndex((m) => m.id === id)
+      if (idx === -1) return null
+      return messages.slice(0, idx + 1)
+    },
+    [messages]
+  )
+
+  // Skills payload for selection-driven explanations. Uses the same
+  // workspace+conversation cascade as the chat input — minus the
+  // per-send mute (which is an input-bar concern, not relevant to
+  // ad-hoc explain queries).
+  const activeWorkspace = useMemo(
+    () => workspaces.find((w) => w.id === activeWorkspaceId),
+    [workspaces, activeWorkspaceId]
+  )
+  const selectionSkillsPayload = useMemo(() => {
+    return SKILLS.filter((s) =>
+      resolveSkill(s, activeWorkspace?.skillPrefs, activeConversation?.skillPrefs)
+    ).map((s) => ({ id: s.id }))
+  }, [activeWorkspace, activeConversation])
+
+  // "Quote in reply": stuff the selection into the input as a
+  // markdown blockquote and focus the textarea so the user can type
+  // their follow-up. Each line of the selection gets its own `>` so
+  // multi-paragraph selections render cleanly.
+  const handleQuoteSelection = useCallback((text: string) => {
+    const quoted = text
+      .trim()
+      .split("\n")
+      .map((line) => `> ${line}`)
+      .join("\n")
+    setInputValue((prev) => {
+      const sep = prev.length === 0 || prev.endsWith("\n\n") ? "" : prev.endsWith("\n") ? "\n" : "\n\n"
+      return `${prev}${sep}${quoted}\n\n`
+    })
+    // Focus the textarea + resize + move caret to end on the next
+    // tick so the new value has been applied.
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current
+      if (!ta) return
+      ta.focus()
+      ta.style.height = "auto"
+      ta.style.height = `${Math.min(ta.scrollHeight, 150)}px`
+      ta.selectionStart = ta.selectionEnd = ta.value.length
+    })
+  }, [])
 
   // The most recent non-error assistant message id — only that message
   // renders follow-up suggestion chips; older ones would just be clutter.
@@ -1010,6 +1067,17 @@ export function ChatPanel() {
           </p>
         </div>
       </div>
+
+      {/* Selection-driven actions (Phase 1: desktop only) — floating
+          toolbar + Explain popover. Mounted once per chat view; manages
+          its own visibility based on the current text selection. */}
+      <SelectionTrigger
+        resolveContext={resolveSelectionContext}
+        chatModel={chatModel}
+        workspaceSystemPrompt={activeWorkspace?.systemPrompt}
+        skills={selectionSkillsPayload}
+        onQuote={handleQuoteSelection}
+      />
 
       {/* Resources side panel */}
       <ResourcesSidebar />

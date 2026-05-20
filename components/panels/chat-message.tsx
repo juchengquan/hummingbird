@@ -267,6 +267,11 @@ function ChatMessageImpl({
                 ? "rounded-lg px-4 py-2 bg-[var(--user-bubble)] text-[var(--user-bubble-foreground)]"
                 : "text-[var(--foreground)]"
             )}
+            // Selection-driven actions (Explain / Quote) scope themselves
+            // to assistant messages by matching this attribute. User
+            // bubbles are intentionally excluded — selecting your own
+            // text and asking the model to explain it would be weird.
+            {...(!isUser ? { "data-selection-scope": `message-${message.id}` } : {})}
           >
             {isEditing ? (
               <div className="flex flex-col gap-2">

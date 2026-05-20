@@ -202,10 +202,17 @@ request whose result lives in the popover/sheet until pinned.
    `apiClient.chat.stream`
 3. `Quote in reply` wiring
 4. `⌘E` shortcut
-5. `⌘K` command palette entries
 
 Ship as one commit. Branchpoint: confirm popover feels right before
 adding pin.
+
+**Deferred from Phase 1: `⌘K` palette entries.** When the user opens
+the palette, focus moves to the palette input, which collapses the
+document selection. The entries would need to snapshot the selection
+on palette-open via a non-persisted Zustand slice that the trigger
+writes to on `selectionchange`. Not a huge lift, but worth its own
+small commit alongside Phase 2 (pin to side panel), which will need
+the same cross-component selection state anyway.
 
 ### Phase 2 — Pin to side panel
 
