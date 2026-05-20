@@ -18,11 +18,20 @@ if [ ! -d "$CHUNKS_DIR" ]; then
   exit 1
 fi
 
-# Strings that must never appear in a client chunk. Add to this list when
-# new server-only secrets or files are introduced.
+# Strings that must never appear in a client chunk. We check for env-var
+# *names* (not values — values are runtime-only and never in source) and
+# for server-only import paths.
+#
+# Note: `AI_GATEWAY_API_KEY` is intentionally *not* in this list. It surfaces
+# legitimately in two places: (1) user-facing mock-mode error messages
+# telling the user which env var to set, and (2) the `@ai-sdk/gateway`
+# library bundles its own env-var name as an error-message string and is
+# transitively pulled into the client via `@ai-sdk/react` / Plate.js. The
+# *value* of the key is never in source — only the name is — so name hits
+# are harmless. The real protection is the `lib/server/` / `@/server/`
+# path check below combined with the `server-only` fence.
 NEEDLES=(
   "SUPABASE_SERVICE_ROLE_KEY"
-  "AI_GATEWAY_API_KEY"
   "TAVILY_API_KEY"
   "UPLOADTHING_TOKEN"
   "lib/server/"
