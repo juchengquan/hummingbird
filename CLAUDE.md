@@ -95,7 +95,9 @@ See `.env.example` for the full list. Two groups:
 
 SQL lives under `supabase/migrations/` as three final-shape files
 (`0001_schema.sql`, `0002_rls_policies.sql`, `0003_storage.sql`) — see
-`docs/SUPABASE_SETUP.md` for the run order.
+`docs/SUPABASE_SETUP.md` for the hosted-cloud run order, or
+`docs/SUPABASE_LOCAL.md` for the local Supabase CLI path (Docker-based,
+no cloud account needed).
 
 ## Frontend module conventions
 

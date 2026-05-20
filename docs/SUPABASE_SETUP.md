@@ -267,24 +267,17 @@ When you're ready to deploy to a real environment:
 
 ## Local-only alternative (advanced)
 
-If you'd rather run Supabase locally instead of using cloud, the
-**Supabase CLI** can bring up a complete stack via Docker:
+If you'd rather run Supabase locally — for offline development,
+instant schema resets, or to avoid a shared cloud DB — see
+[`docs/SUPABASE_LOCAL.md`](./SUPABASE_LOCAL.md). It walks the Supabase
+CLI path end-to-end (~10 min once Docker is installed). The migrations
+under `supabase/migrations/` are reused as-is; only the env vars
+change.
 
-```bash
-brew install supabase/tap/supabase
-supabase init
-supabase start
-```
-
-This boots Postgres + Auth + Storage + Studio at `localhost:54321` /
-`localhost:54323` with deterministic anon/service-role keys you can
-use in `.env.local`. The migrations under `supabase/migrations/`
-auto-apply.
-
-Trade-off: faster iteration, but you can't test multi-device sync
-without exposing the local stack. Recommend starting with the cloud
-path above and switching to local later if you find yourself wanting
-faster reset cycles.
+Trade-off: local is faster to iterate against but can't be used to
+test multi-device sync against an external reviewer. Many teams keep
+both `.env.local.cloud` and `.env.local.local` and symlink whichever
+they want.
 
 ## Re-running against an existing project
 
