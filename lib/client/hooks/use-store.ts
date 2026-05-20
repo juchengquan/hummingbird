@@ -2,12 +2,12 @@ import "client-only"
 import { useSyncExternalStore } from 'react'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import type { UploadedFile, Workspace, Resource, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind, ToolCallRecord, ToolCallResult, PinnedExplanation } from '@/shared/types'
+import type { UploadedFile, Workspace, Document, Resource, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind, ToolCallRecord, ToolCallResult, PinnedExplanation } from '@/shared/types'
 import { DEFAULT_CHAT_MODEL } from '@/shared/models'
 import { deleteBlob as deleteLocalBlob, clearAll as clearLocalBlobs } from '@/client/files/local-store'
 import { uuid } from '@/shared/uuid'
 
-export type { UploadedFile, Workspace, Resource, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind, ToolCallRecord } from '@/shared/types'
+export type { UploadedFile, Workspace, Document, Resource, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind, ToolCallRecord } from '@/shared/types'
 
 type Theme = 'system' | 'dark' | 'light'
 
@@ -79,7 +79,6 @@ const getDefaultConversations = (): Conversation[] => {
       updatedAt: new Date(baseTime),
       pinned: true,
       selectedFileIds: [],
-      documentContent: '',
     },
   ]
 }
@@ -149,6 +148,13 @@ interface AppState {
   // Workspaces
   workspaces: Workspace[]
   activeWorkspaceId: string
+
+  // Documents — rich-text docs inside a workspace. A workspace owns N
+  // documents; `activeDocumentId` tracks which one the editor panel is
+  // showing. Switching workspaces resyncs `activeDocumentId` to that
+  // workspace's most-recently-updated doc (or null if none yet).
+  documents: Document[]
+  activeDocumentId: string | null
 
   // Resources (file-to-workspace associations)
   resources: Resource[]
@@ -300,8 +306,20 @@ interface AppState {
   setMessageError: (messageId: string, error: MessageError) => void
   clearMessageError: (messageId: string) => void
 
-  // Per-conversation document actions
-  setConversationDocument: (conversationId: string, content: string) => void
+  // Document actions. Workspaces own N documents; one is active at a
+  // time across the app (top-level `activeDocumentId`).
+  createDocument: (workspaceId: string, title?: string) => Document
+  deleteDocument: (documentId: string) => void
+  renameDocument: (documentId: string, title: string) => void
+  setDocumentContent: (documentId: string, content: string) => void
+  /** Append a markdown fragment to a document with a horizontal-rule
+   *  separator. Used by "Send to editor" sites so prior work isn't
+   *  overwritten. */
+  appendToDocument: (documentId: string, fragment: string) => void
+  setActiveDocument: (documentId: string | null) => void
+  /** Convenience for "Send to editor" callers: appends to the active
+   *  document, or creates one in the active workspace if none is set. */
+  appendToActiveDocumentOrCreate: (fragment: string) => void
 
   // Theme actions
   setTheme: (theme: Theme) => void
@@ -340,6 +358,10 @@ export const useStore = create<AppState>()(
       // Workspaces
       workspaces: getDefaultWorkspaces(),
       activeWorkspaceId: DEFAULT_WORKSPACE_ID,
+
+      // Documents
+      documents: [],
+      activeDocumentId: null,
 
       // Resources
       resources: [],
@@ -453,12 +475,29 @@ export const useStore = create<AppState>()(
           const newActiveWorkspaceId = state.activeWorkspaceId === workspaceId
             ? newWorkspaces[0]?.id
             : state.activeWorkspaceId
-          // Cascade: drop resources, conversations, notes, and artifacts
-          // that belonged to the workspace.
+          // Cascade: drop resources, conversations, notes, artifacts, and
+          // documents that belonged to the workspace.
           const newResources = state.resources.filter((r) => r.workspaceId !== workspaceId)
           const newConversations = state.conversations.filter((c) => c.workspaceId !== workspaceId)
           const newNotes = state.notes.filter((n) => n.workspaceId !== workspaceId)
           const newArtifacts = state.artifacts.filter((a) => a.workspaceId !== workspaceId)
+          const newDocuments = state.documents.filter((d) => d.workspaceId !== workspaceId)
+          // If the active doc lived in the deleted workspace, swap to the
+          // most-recently-updated doc in the new active workspace (if any).
+          let newActiveDocumentId = state.activeDocumentId
+          if (
+            state.activeDocumentId &&
+            !newDocuments.some((d) => d.id === state.activeDocumentId)
+          ) {
+            const fallback = newDocuments
+              .filter((d) => d.workspaceId === newActiveWorkspaceId)
+              .sort(
+                (a, b) =>
+                  new Date(b.updatedAt).getTime() -
+                  new Date(a.updatedAt).getTime()
+              )[0]
+            newActiveDocumentId = fallback?.id ?? null
+          }
           return {
             workspaces: newWorkspaces,
             activeWorkspaceId: newActiveWorkspaceId,
@@ -466,6 +505,8 @@ export const useStore = create<AppState>()(
             conversations: newConversations,
             notes: newNotes,
             artifacts: newArtifacts,
+            documents: newDocuments,
+            activeDocumentId: newActiveDocumentId,
           }
         }),
       renameWorkspace: (workspaceId: string, name: string) =>
@@ -521,8 +562,18 @@ export const useStore = create<AppState>()(
           }
           const next = state.workspaces.find((w) => w.id === workspaceId)
           const pinned = next?.defaultModel
+          // Pick the new workspace's most-recently-updated doc as the
+          // active one so the editor opens to something familiar.
+          // Falls through to null when the workspace has no docs yet.
+          const nextDoc = state.documents
+            .filter((d) => d.workspaceId === workspaceId)
+            .sort(
+              (a, b) =>
+                new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+            )[0]
           return {
             activeWorkspaceId: workspaceId,
+            activeDocumentId: nextDoc?.id ?? null,
             // Apply the new workspace's pinned model (or keep the current
             // one if it doesn't have a pin). Crossing into a new workspace
             // resets the session-override flag — picking a model in the
@@ -698,7 +749,6 @@ export const useStore = create<AppState>()(
           updatedAt: new Date(),
           pinned: false,
           selectedFileIds: [],
-          documentContent: '',
         }
         set((state) => ({
           conversations: [newConversation, ...state.conversations],
@@ -728,7 +778,6 @@ export const useStore = create<AppState>()(
           updatedAt: new Date(),
           pinned: false,
           selectedFileIds: [...source.selectedFileIds],
-          documentContent: source.documentContent,
           skillPrefs: source.skillPrefs ? { ...source.skillPrefs } : undefined,
           parentId: source.id,
           forkedFromMessageId: untilMessageId,
@@ -1019,15 +1068,103 @@ export const useStore = create<AppState>()(
           }),
         })),
 
-      // Per-conversation document actions
-      setConversationDocument: (conversationId: string, content: string) =>
+      // Document actions
+      createDocument: (workspaceId: string, title?: string) => {
+        const now = new Date()
+        // Default title: "Untitled" + a disambiguator scoped to the
+        // workspace (so the doc list doesn't show three "Untitled"s).
+        const existingCount = get().documents.filter(
+          (d) => d.workspaceId === workspaceId
+        ).length
+        const defaultTitle =
+          existingCount === 0 ? 'Untitled' : `Untitled ${existingCount + 1}`
+        const newDoc: Document = {
+          id: uuid(),
+          workspaceId,
+          title: title?.trim() || defaultTitle,
+          content: '',
+          position: existingCount,
+          createdAt: now,
+          updatedAt: now,
+        }
         set((state) => ({
-          conversations: state.conversations.map((c) =>
-            c.id === conversationId
-              ? { ...c, documentContent: content, updatedAt: new Date() }
-              : c
+          documents: [newDoc, ...state.documents],
+        }))
+        return newDoc
+      },
+      deleteDocument: (documentId: string) =>
+        set((state) => {
+          const newDocuments = state.documents.filter((d) => d.id !== documentId)
+          // If the active doc was the one deleted, swap to the next most-
+          // recently-updated doc in the same workspace (or null).
+          let newActiveDocumentId = state.activeDocumentId
+          if (state.activeDocumentId === documentId) {
+            const deleted = state.documents.find((d) => d.id === documentId)
+            const wsId = deleted?.workspaceId
+            const fallback = newDocuments
+              .filter((d) => d.workspaceId === wsId)
+              .sort(
+                (a, b) =>
+                  new Date(b.updatedAt).getTime() -
+                  new Date(a.updatedAt).getTime()
+              )[0]
+            newActiveDocumentId = fallback?.id ?? null
+          }
+          return {
+            documents: newDocuments,
+            activeDocumentId: newActiveDocumentId,
+          }
+        }),
+      renameDocument: (documentId: string, title: string) =>
+        set((state) => {
+          const trimmed = title.trim()
+          if (!trimmed) return state
+          return {
+            documents: state.documents.map((d) =>
+              d.id === documentId ? { ...d, title: trimmed, updatedAt: new Date() } : d
+            ),
+          }
+        }),
+      setDocumentContent: (documentId: string, content: string) =>
+        set((state) => ({
+          documents: state.documents.map((d) =>
+            d.id === documentId
+              ? { ...d, content, updatedAt: new Date() }
+              : d
           ),
         })),
+      appendToDocument: (documentId: string, fragment: string) =>
+        set((state) => ({
+          documents: state.documents.map((d) => {
+            if (d.id !== documentId) return d
+            const trimmedFragment = fragment.trim()
+            if (!trimmedFragment) return d
+            const existing = (d.content ?? '').trim()
+            const next = existing
+              ? `${existing}\n\n---\n\n${trimmedFragment}\n`
+              : `${trimmedFragment}\n`
+            return { ...d, content: next, updatedAt: new Date() }
+          }),
+        })),
+      setActiveDocument: (documentId: string | null) =>
+        set({ activeDocumentId: documentId }),
+      appendToActiveDocumentOrCreate: (fragment: string) => {
+        const trimmed = fragment.trim()
+        if (!trimmed) return
+        const state = get()
+        const targetId =
+          state.activeDocumentId ??
+          (state.activeWorkspaceId
+            ? get().createDocument(state.activeWorkspaceId).id
+            : null)
+        if (!targetId) return
+        if (!state.activeDocumentId) {
+          // The doc we just created — make it active so the editor opens
+          // to it after the upcoming reload.
+          set({ activeDocumentId: targetId })
+        }
+        get().appendToDocument(targetId, trimmed)
+      },
 
       // Theme actions
       setTheme: (theme: Theme) => set({ theme }),
@@ -1041,7 +1178,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'hummingbird-storage',
-      version: 13,
+      version: 15,
       migrate: (persistedState, fromVersion) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState
         const state = persistedState as Record<string, unknown>
@@ -1210,6 +1347,99 @@ export const useStore = create<AppState>()(
             })
           }
         }
+        if (fromVersion < 14) {
+          // Editor doc moved from conversation to workspace. For each
+          // workspace, lift its most-recently-updated non-empty
+          // conversation document onto the workspace row. Empty / orphan
+          // docs are dropped — the editor was a transient scratchpad in
+          // most cases and conflating multiple non-empty docs would
+          // require user input we don't have at migration time.
+          const ws = state.workspaces
+          const convs = state.conversations
+          if (Array.isArray(ws) && Array.isArray(convs)) {
+            const bestByWorkspace = new Map<string, { doc: string; updatedAt: number }>()
+            for (const c of convs) {
+              if (!c || typeof c !== 'object') continue
+              const conv = c as {
+                workspaceId?: string
+                documentContent?: string
+                updatedAt?: string | Date
+              }
+              const doc = conv.documentContent
+              if (!conv.workspaceId || typeof doc !== 'string' || !doc.trim()) continue
+              const ts = new Date(conv.updatedAt ?? 0).getTime()
+              const prev = bestByWorkspace.get(conv.workspaceId)
+              if (!prev || ts > prev.updatedAt) {
+                bestByWorkspace.set(conv.workspaceId, { doc, updatedAt: ts })
+              }
+            }
+            state.workspaces = ws.map((w) => {
+              if (!w || typeof w !== 'object') return w
+              const obj = w as Record<string, unknown>
+              if (typeof obj.documentContent === 'string') return obj
+              const id = obj.id as string | undefined
+              const carry = id ? bestByWorkspace.get(id)?.doc ?? '' : ''
+              return { ...obj, documentContent: carry }
+            })
+            // Strip the legacy field off conversations so the persisted
+            // shape matches the new type. Sync uploads to the legacy
+            // column already stopped — see lib/client/sync/handlers.ts.
+            state.conversations = convs.map((c) => {
+              if (!c || typeof c !== 'object') return c
+              const { documentContent: _drop, ...rest } = c as Record<string, unknown> & {
+                documentContent?: unknown
+              }
+              return rest
+            })
+          }
+        }
+        if (fromVersion < 15) {
+          // Multi-doc per workspace: convert each workspace's single
+          // `documentContent` (from v14) into a row in the new
+          // `documents` slice. Then strip the field off workspaces.
+          // Active doc is set to the active workspace's migrated doc
+          // when one exists.
+          const ws = state.workspaces
+          const existing = Array.isArray(state.documents) ? state.documents : []
+          const activeId = state.activeWorkspaceId as string | undefined
+          if (Array.isArray(ws)) {
+            const created: Document[] = []
+            const now = new Date()
+            const stamp = (
+              d: Date | string | undefined
+            ): Date => (d ? new Date(d) : now)
+            for (const w of ws) {
+              if (!w || typeof w !== 'object') continue
+              const obj = w as Record<string, unknown>
+              const id = obj.id as string | undefined
+              const name = (obj.name as string | undefined) ?? 'Workspace'
+              const legacyDoc = obj.documentContent
+              if (!id || typeof legacyDoc !== 'string' || !legacyDoc.trim()) continue
+              created.push({
+                id: uuid(),
+                workspaceId: id,
+                title: name,
+                content: legacyDoc,
+                position: 0,
+                createdAt: stamp(obj.createdAt as Date | string | undefined),
+                updatedAt: stamp(obj.updatedAt as Date | string | undefined),
+              })
+            }
+            state.workspaces = ws.map((w) => {
+              if (!w || typeof w !== 'object') return w
+              const { documentContent: _drop, ...rest } = w as Record<string, unknown> & {
+                documentContent?: unknown
+              }
+              void _drop
+              return rest
+            })
+            state.documents = [...existing, ...created]
+            // Pick the active workspace's migrated doc, if any.
+            const forActive = created.find((d) => d.workspaceId === activeId)
+            state.activeDocumentId =
+              (state.activeDocumentId as string | null | undefined) ?? forActive?.id ?? null
+          }
+        }
         return persistedState
       },
       onRehydrateStorage: () => () => {
@@ -1227,6 +1457,8 @@ export const useStore = create<AppState>()(
         chatModel: state.chatModel,
         notes: state.notes,
         artifacts: state.artifacts,
+        documents: state.documents,
+        activeDocumentId: state.activeDocumentId,
         resourcesSidebarOpen: state.resourcesSidebarOpen,
         resourcesSidebarTab: state.resourcesSidebarTab,
         localOnlyMode: state.localOnlyMode,
@@ -1328,11 +1560,35 @@ export const useMessageBookmark = (messageId: string) => {
   ) ?? null
 }
 
-export const useActiveConversationDocument = (): string => {
-  const conversations = useStore((state) => state.conversations)
-  const activeConversationId = useStore((state) => state.activeConversationId)
-  if (!activeConversationId) return ''
-  return conversations.find((c) => c.id === activeConversationId)?.documentContent ?? ''
+/** Documents in the active workspace, sorted by position (asc) and then
+ *  by updatedAt (desc) as a tiebreaker. Switching workspaces re-runs the
+ *  derivation through the `activeWorkspaceId` dependency. */
+export const useWorkspaceDocuments = (): Document[] => {
+  const documents = useStore((state) => state.documents)
+  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
+  if (!activeWorkspaceId) return []
+  return documents
+    .filter((d) => d.workspaceId === activeWorkspaceId)
+    .sort((a, b) => {
+      const ap = a.position ?? Number.POSITIVE_INFINITY
+      const bp = b.position ?? Number.POSITIVE_INFINITY
+      if (ap !== bp) return ap - bp
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    })
+}
+
+/** Current open document, or null when the workspace has none yet. */
+export const useActiveDocument = (): Document | null => {
+  const documents = useStore((state) => state.documents)
+  const activeDocumentId = useStore((state) => state.activeDocumentId)
+  if (!activeDocumentId) return null
+  return documents.find((d) => d.id === activeDocumentId) ?? null
+}
+
+/** Convenience: just the active doc's `content`. Empty string when none. */
+export const useActiveDocumentContent = (): string => {
+  const doc = useActiveDocument()
+  return doc?.content ?? ''
 }
 
 export const useConversationArtifacts = () => {

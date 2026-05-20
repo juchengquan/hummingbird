@@ -4,10 +4,23 @@ import { z } from "zod"
 
 import { getSupabaseServerClient } from "@/server/supabase/server"
 
-const CreateShareSchema = z.object({
-  kind: z.enum(["conversation", "document"]),
-  conversationId: z.string().uuid(),
-})
+/**
+ * Two shapes:
+ *   - kind='conversation' shares require `conversationId`.
+ *   - kind='document'     shares require `documentId` (workspaces now own
+ *     N documents, so the target is the specific doc, not the workspace).
+ * The discriminated union enforces exactly the right field per kind.
+ */
+const CreateShareSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("conversation"),
+    conversationId: z.string().uuid(),
+  }),
+  z.object({
+    kind: z.literal("document"),
+    documentId: z.string().uuid(),
+  }),
+])
 
 /**
  * Mint a base64url-encoded random token. 22 chars = 128 bits of entropy,
@@ -47,25 +60,43 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.message }, { status: 400 })
   }
 
-  // Verify the conversation belongs to this user — RLS would block the
+  // Verify the target row belongs to this user — RLS would block the
   // insert anyway, but a 404 is cleaner than the RLS rejection that comes
   // back as a generic 23xxx error.
-  const { data: conv, error: convError } = await client
-    .from("conversations")
-    .select("id")
-    .eq("id", parsed.data.conversationId)
-    .single()
-  if (convError || !conv) {
-    return NextResponse.json({ error: "Conversation not found" }, { status: 404 })
+  if (parsed.data.kind === "conversation") {
+    const { data: conv, error: convError } = await client
+      .from("conversations")
+      .select("id")
+      .eq("id", parsed.data.conversationId)
+      .single()
+    if (convError || !conv) {
+      return NextResponse.json({ error: "Conversation not found" }, { status: 404 })
+    }
+  } else {
+    const { data: doc, error: docError } = await client
+      .from("documents")
+      .select("id")
+      .eq("id", parsed.data.documentId)
+      .single()
+    if (docError || !doc) {
+      return NextResponse.json({ error: "Document not found" }, { status: 404 })
+    }
   }
 
   const token = mintToken()
-  const { error: insertError } = await client.from("shares").insert({
+  // Build a single row shape with explicit nulls on the unused side. The
+  // DB check constraint (`shares_target_matches_kind`) enforces exactly
+  // one of conversation_id / document_id is non-null per kind.
+  const insertRow = {
     token,
     user_id: userData.user.id,
     kind: parsed.data.kind,
-    conversation_id: parsed.data.conversationId,
-  })
+    conversation_id:
+      parsed.data.kind === "conversation" ? parsed.data.conversationId : null,
+    document_id:
+      parsed.data.kind === "document" ? parsed.data.documentId : null,
+  }
+  const { error: insertError } = await client.from("shares").insert(insertRow)
   if (insertError) {
     return NextResponse.json({ error: insertError.message }, { status: 500 })
   }

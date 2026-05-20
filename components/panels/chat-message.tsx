@@ -4,7 +4,7 @@ import { memo, useState, useRef, useEffect } from "react"
 import type { Message } from "@/shared/types"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { Copy, Pencil, Trash2, RotateCcw, Check, X, Bookmark, Archive, Send, GitBranch } from "lucide-react"
+import { Copy, Pencil, RotateCcw, Check, X, Bookmark, Archive, Send, GitBranch } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/shared/utils"
 import { copyText } from "@/client/export"
@@ -22,11 +22,12 @@ import {
   type DetectedBlock,
   type SaveArtifactSelection,
 } from "@/components/panels/save-artifact-dialog"
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 
 function formatTime(timestamp: Date | string): string {
   const date = new Date(timestamp)
-  const hours = date.getUTCHours()
-  const minutes = date.getUTCMinutes()
+  const hours = date.getHours()
+  const minutes = date.getMinutes()
   const ampm = hours >= 12 ? "PM" : "AM"
   const hour12 = hours % 12 || 12
   const minuteStr = minutes.toString().padStart(2, "0")
@@ -113,7 +114,9 @@ function ChatMessageImpl({
   const activeConversationId = useStore((s) => s.activeConversationId)
   const toggleMessageBookmark = useStore((s) => s.toggleMessageBookmark)
   const createArtifact = useStore((s) => s.createArtifact)
-  const setConversationDocument = useStore((s) => s.setConversationDocument)
+  const appendToActiveDocumentOrCreate = useStore(
+    (s) => s.appendToActiveDocumentOrCreate
+  )
   const requestEditorReload = useStore((s) => s.requestEditorReload)
   const setActiveView = useStore((s) => s.setActiveView)
   const bookmark = useMessageBookmark(message.id)
@@ -126,6 +129,13 @@ function ChatMessageImpl({
   }
 
   const [pickerBlocks, setPickerBlocks] = useState<DetectedBlock[] | null>(null)
+
+  // Shared sizing + hover-box treatment for every action button in the
+  // toolbar. The inset ring on hover gives each button a visible boxed
+  // outline so the affordance reads as a discrete target, not just a
+  // tinted background.
+  const actionBtnClass =
+    "h-7 w-7 hover:ring-1 hover:ring-inset hover:ring-[var(--border)]"
 
   const saveBlockAsArtifact = (
     b: DetectedBlock,
@@ -193,8 +203,10 @@ function ChatMessageImpl({
   }
 
   const handleSendToEditor = () => {
-    if (!activeConversationId) return
-    setConversationDocument(activeConversationId, message.content)
+    // Appends to the currently open document, creating one in the active
+    // workspace if none exists yet. `---` separator between fragments
+    // preserves prior content.
+    appendToActiveDocumentOrCreate(message.content)
     requestEditorReload()
     setActiveView("editor")
     toast.success("Sent to editor")
@@ -380,100 +392,122 @@ function ChatMessageImpl({
                     : "opacity-0 group-hover/message:opacity-100"
                 )}
               >
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleBookmark}
-                className={cn(
-                  "h-7 w-7",
-                  isBookmarked && "text-amber-500 hover:text-amber-500"
-                )}
-                aria-label={isBookmarked ? "Remove bookmark" : "Bookmark message"}
-                title={isBookmarked ? "Remove bookmark" : "Bookmark"}
-              >
-                <Bookmark
-                  size={14}
-                  fill={isBookmarked ? "currentColor" : "none"}
-                />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleCopy}
-                className="h-7 w-7"
-                aria-label="Copy message"
-                title="Copy"
-              >
-                <Copy size={14} />
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={handleBookmark}
+                    className={cn(
+                      actionBtnClass,
+                      isBookmarked && "text-amber-500 hover:text-amber-500"
+                    )}
+                    aria-label={isBookmarked ? "Remove bookmark" : "Bookmark message"}
+                  >
+                    <Bookmark
+                      size={14}
+                      fill={isBookmarked ? "currentColor" : "none"}
+                    />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  {isBookmarked ? "Remove bookmark" : "Bookmark"}
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={handleCopy}
+                    className={actionBtnClass}
+                    aria-label="Copy message"
+                  >
+                    <Copy size={14} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Copy</TooltipContent>
+              </Tooltip>
               {isUser && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={startEdit}
-                  className="h-7 w-7"
-                  aria-label="Edit message"
-                  title="Edit and resend"
-                >
-                  <Pencil size={14} />
-                </Button>
-              )}
-              {!isUser && (
-                <>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={handleSendToEditor}
-                    className="h-7 w-7"
-                    aria-label="Send to editor"
-                    title="Send to editor"
-                  >
-                    <Send size={14} />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => onRegenerateAssistantMessage(message.id)}
-                    className="h-7 w-7"
-                    aria-label="Regenerate response"
-                    title="Regenerate"
-                  >
-                    <RotateCcw size={14} />
-                  </Button>
-                  {onForkFromMessage && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => onForkFromMessage(message.id)}
-                      className="h-7 w-7"
-                      aria-label="Branch from here"
-                      title="Branch from here — start a new chat copied up to this message"
+                      onClick={startEdit}
+                      className={actionBtnClass}
+                      aria-label="Edit message"
                     >
-                      <GitBranch size={14} />
+                      <Pencil size={14} />
                     </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Edit and resend</TooltipContent>
+                </Tooltip>
+              )}
+              {!isUser && (
+                <>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={handleSendToEditor}
+                        className={actionBtnClass}
+                        aria-label="Send to editor"
+                      >
+                        <Send size={14} />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">Send to editor</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => onRegenerateAssistantMessage(message.id)}
+                        className={actionBtnClass}
+                        aria-label="Retry response"
+                      >
+                        <RotateCcw size={14} />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">Retry</TooltipContent>
+                  </Tooltip>
+                  {onForkFromMessage && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => onForkFromMessage(message.id)}
+                          className={actionBtnClass}
+                          aria-label="Branch from here"
+                        >
+                          <GitBranch size={14} />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">
+                        Branch from here
+                      </TooltipContent>
+                    </Tooltip>
                   )}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={handleSaveAsArtifact}
-                    className="h-7 w-7"
-                    aria-label="Save as artifact"
-                    title="Save as artifact"
-                  >
-                    <Archive size={14} />
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={handleSaveAsArtifact}
+                        className={actionBtnClass}
+                        aria-label="Save as artifact"
+                      >
+                        <Archive size={14} />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">Save as artifact</TooltipContent>
+                  </Tooltip>
                 </>
               )}
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => onDelete(message.id)}
-                className="h-7 w-7 text-[var(--destructive)] hover:text-[var(--destructive)] hover:bg-[var(--destructive)]/10"
-                aria-label="Delete message"
-                title="Delete"
-              >
-                <Trash2 size={14} />
-              </Button>
               </div>
               {/* Timestamp — sits next to (inner-side of) the action
                   cluster so it doesn't anchor at the bubble's outer edge.

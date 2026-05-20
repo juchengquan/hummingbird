@@ -23,6 +23,7 @@ import { configureSync, enqueue } from "@/client/sync/sync-queue"
 import {
   diffArtifacts,
   diffConversations,
+  diffDocuments,
   diffFiles,
   diffNotes,
   diffResources,
@@ -31,6 +32,7 @@ import {
 import type {
   Artifact,
   Conversation,
+  Document,
   Note,
   Resource,
   UploadedFile,
@@ -39,6 +41,7 @@ import type {
 
 interface Snapshot {
   workspaces: Workspace[]
+  documents: Document[]
   conversations: Conversation[]
   files: UploadedFile[]
   resources: Resource[]
@@ -53,6 +56,7 @@ function takeSnapshot(): Snapshot {
   const s = useStore.getState()
   return {
     workspaces: s.workspaces,
+    documents: s.documents,
     conversations: s.conversations,
     files: s.files,
     resources: s.resources,
@@ -95,6 +99,7 @@ export function useSync(): void {
     const unsubscribe = useStore.subscribe((state) => {
       const next: Snapshot = {
         workspaces: state.workspaces,
+        documents: state.documents,
         conversations: state.conversations,
         files: state.files,
         resources: state.resources,
@@ -109,6 +114,7 @@ export function useSync(): void {
 
       if (
         prev.workspaces === next.workspaces &&
+        prev.documents === next.documents &&
         prev.conversations === next.conversations &&
         prev.files === next.files &&
         prev.resources === next.resources &&
@@ -125,6 +131,9 @@ export function useSync(): void {
       const ops = [
         ...(prev.workspaces !== next.workspaces
           ? diffWorkspaces(prev.workspaces, next.workspaces)
+          : []),
+        ...(prev.documents !== next.documents
+          ? diffDocuments(prev.documents, next.documents)
           : []),
         ...(prev.conversations !== next.conversations
           ? diffConversations(prev.conversations, next.conversations, {
@@ -194,6 +203,7 @@ export function seedSyncSnapshot(): void {
  */
 export function setSyncSnapshot(snapshot: {
   workspaces: Workspace[]
+  documents: Document[]
   conversations: Conversation[]
   files: UploadedFile[]
   resources: Resource[]

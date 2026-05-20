@@ -16,8 +16,6 @@ export const CHAT_MODELS: ChatModel[] = [
   { id: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro', provider: 'Google', contextWindow: 1_000_000 },
   { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash', provider: 'Google', contextWindow: 1_000_000 },
   { id: 'deepseek/deepseek-v4-flash', label: 'DeepSeek v4 Flash', provider: 'DeepSeek', contextWindow: 128_000 },
-  { id: 'deepseek/deepseek-chat-v3.1', label: 'DeepSeek Chat v3.1', provider: 'DeepSeek', contextWindow: 128_000 },
-  { id: 'deepseek/deepseek-r1', label: 'DeepSeek R1', provider: 'DeepSeek', contextWindow: 64_000 },
   { id: 'alibaba/qwen-3-coder', label: 'Qwen 3 Coder', provider: 'Alibaba', contextWindow: 128_000 },
   { id: 'alibaba/qwen-3-max', label: 'Qwen 3 Max', provider: 'Alibaba', contextWindow: 128_000 },
 ]

@@ -72,6 +72,39 @@ export interface Database {
         }
         Relationships: []
       }
+      documents: {
+        Row: {
+          id: string
+          user_id: string
+          workspace_id: string
+          title: string
+          content: string
+          position: number | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          user_id: string
+          workspace_id: string
+          title: string
+          content?: string
+          position?: number | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          workspace_id?: string
+          title?: string
+          content?: string
+          position?: number | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       conversations: {
         Row: {
           id: string
@@ -80,8 +113,6 @@ export interface Database {
           title: string
           pinned: boolean
           selected_file_ids: string[]
-          document_content: string
-          document_updated_at: string
           skill_prefs: Json
           parent_id: string | null
           forked_from_message_id: string | null
@@ -95,8 +126,6 @@ export interface Database {
           title: string
           pinned?: boolean
           selected_file_ids?: string[]
-          document_content?: string
-          document_updated_at?: string
           skill_prefs?: Json
           parent_id?: string | null
           forked_from_message_id?: string | null
@@ -110,8 +139,6 @@ export interface Database {
           title?: string
           pinned?: boolean
           selected_file_ids?: string[]
-          document_content?: string
-          document_updated_at?: string
           skill_prefs?: Json
           parent_id?: string | null
           forked_from_message_id?: string | null
@@ -329,7 +356,11 @@ export interface Database {
           token: string
           user_id: string
           kind: 'conversation' | 'document'
-          conversation_id: string
+          // Conversation shares (kind='conversation') set conversation_id;
+          // document shares (kind='document') set document_id. The DB
+          // check constraint enforces exactly one is non-null.
+          conversation_id: string | null
+          document_id: string | null
           created_at: string
           revoked_at: string | null
         }
@@ -337,7 +368,8 @@ export interface Database {
           token: string
           user_id: string
           kind: 'conversation' | 'document'
-          conversation_id: string
+          conversation_id?: string | null
+          document_id?: string | null
           created_at?: string
           revoked_at?: string | null
         }
@@ -345,7 +377,8 @@ export interface Database {
           token?: string
           user_id?: string
           kind?: 'conversation' | 'document'
-          conversation_id?: string
+          conversation_id?: string | null
+          document_id?: string | null
           created_at?: string
           revoked_at?: string | null
         }

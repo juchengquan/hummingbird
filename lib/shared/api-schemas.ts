@@ -147,10 +147,18 @@ export const ConversationSummarizeResponseSchema = z.object({
 // --- /api/share -------------------------------------------------------------
 // POST: mint a share token. DELETE /api/share/[token]: revoke.
 
-export const CreateShareRequestSchema = z.object({
-  kind: z.enum(['conversation', 'document']),
-  conversationId: z.string().uuid(),
-})
+// Two shapes: conversation shares target a conversation; document shares
+// target a specific document (workspaces own N documents now).
+export const CreateShareRequestSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('conversation'),
+    conversationId: z.string().uuid(),
+  }),
+  z.object({
+    kind: z.literal('document'),
+    documentId: z.string().uuid(),
+  }),
+])
 
 export const CreateShareResponseSchema = z.object({
   token: z.string(),

@@ -122,20 +122,7 @@ export const models: Model[] = [
   { label: 'Command R Plus', value: 'cohere/command-r-plus' },
 
   // DeepSeek Models
-  { label: 'DeepSeek R1', value: 'deepseek/deepseek-r1' },
-  {
-    label: 'DeepSeek R1 Distill Llama 70B',
-    value: 'deepseek/deepseek-r1-distill-llama-70b',
-  },
-  { label: 'DeepSeek V3', value: 'deepseek/deepseek-v3' },
-  { label: 'DeepSeek V3.1', value: 'deepseek/deepseek-v3.1' },
-  { label: 'DeepSeek V3.1 Base', value: 'deepseek/deepseek-v3.1-base' },
-  { label: 'DeepSeek V3.1 Terminus', value: 'deepseek/deepseek-v3.1-terminus' },
-  { label: 'DeepSeek V3.2 Exp', value: 'deepseek/deepseek-v3.2-exp' },
-  {
-    label: 'DeepSeek V3.2 Exp Thinking',
-    value: 'deepseek/deepseek-v3.2-exp-thinking',
-  },
+  { label: 'DeepSeek v4 Flash', value: 'deepseek/deepseek-v4-flash' },
 
   // Inception Models
   { label: 'Mercury Coder Small', value: 'inception/mercury-coder-small' },

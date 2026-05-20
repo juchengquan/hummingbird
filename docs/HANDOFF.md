@@ -65,9 +65,17 @@ alone — `git log --oneline dev..HEAD` lists them in order.
   default + chat-bubble variant.
 
 ### Editor
-- **Per-conversation editor doc** (already on `dev`): each `Conversation`
-  owns its `documentContent`. The editor reads + writes the active
-  conversation's doc, debounced 500ms. Switching cancels pending saves.
+- **Workspace-scoped editor doc**: `documentContent` lives on
+  `Workspace`. The editor reads + writes the active workspace's doc,
+  debounced 500ms; switching workspaces cancels pending saves and
+  reloads. Previously was per-conversation — the doc was promoted
+  upward so it survives conversation deletion and accumulates as a
+  long-lived workspace artifact. Persist migration v13 → v14 lifts
+  each workspace's most-recently-updated non-empty conversation doc
+  onto the workspace row. "Send to editor" actions now **append** to
+  the workspace doc with a `---` separator
+  (`appendToWorkspaceDocument`) rather than overwriting, so prior work
+  is preserved. `kind='document'` share links key off `workspace_id`.
 - **Save indicator** (`e4a2b10`): "Saving…" spinner during debounce,
   "Saved" check for 1.5s after, then idle.
 - **Editor AI failures surface as toasts** (`b7300fc`): the editor's

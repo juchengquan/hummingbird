@@ -54,7 +54,9 @@ export function ConversationSummaryDialog({
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   const createArtifact = useStore((s) => s.createArtifact)
-  const setConversationDocument = useStore((s) => s.setConversationDocument)
+  const appendToActiveDocumentOrCreate = useStore(
+    (s) => s.appendToActiveDocumentOrCreate
+  )
   const requestEditorReload = useStore((s) => s.requestEditorReload)
   const setActiveView = useStore((s) => s.setActiveView)
 
@@ -125,10 +127,7 @@ export function ConversationSummaryDialog({
 
   const handleSendToEditor = () => {
     if (!conversation || !result) return
-    setConversationDocument(
-      conversation.id,
-      formatAsMarkdown(conversation, result)
-    )
+    appendToActiveDocumentOrCreate(formatAsMarkdown(conversation, result))
     requestEditorReload()
     setActiveView("editor")
     onClose()

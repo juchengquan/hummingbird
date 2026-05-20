@@ -85,6 +85,7 @@ function localSnapshotFromStore(): CloudSnapshot {
   const s = useStore.getState()
   return {
     workspaces: s.workspaces,
+    documents: s.documents,
     conversations: s.conversations,
     files: s.files,
     resources: s.resources,

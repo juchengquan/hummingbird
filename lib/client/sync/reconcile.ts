@@ -16,6 +16,7 @@ import "client-only"
 import type {
   Artifact,
   Conversation,
+  Document,
   FileExtractionStatus,
   Message,
   MessageError,
@@ -40,6 +41,7 @@ function jsonToSkillPrefs(value: Json | null | undefined): Record<string, boolea
 
 export interface CloudSnapshot {
   workspaces: Workspace[]
+  documents: Document[]
   conversations: Conversation[]
   files: UploadedFile[]
   resources: Resource[]
@@ -52,10 +54,11 @@ export async function fetchCloudSnapshot(
   client: AppSupabaseClient,
   userId: string
 ): Promise<CloudSnapshot | null> {
-  let workspacesRes, conversationsRes, messagesRes, filesRes, resourcesRes, notesRes, artifactsRes
+  let workspacesRes, documentsRes, conversationsRes, messagesRes, filesRes, resourcesRes, notesRes, artifactsRes
   try {
     ;[
       workspacesRes,
+      documentsRes,
       conversationsRes,
       messagesRes,
       filesRes,
@@ -64,6 +67,7 @@ export async function fetchCloudSnapshot(
       artifactsRes,
     ] = await Promise.all([
       client.from("workspaces").select("*").eq("user_id", userId),
+      client.from("documents").select("*").eq("user_id", userId),
       client.from("conversations").select("*").eq("user_id", userId),
       client
         .from("messages")
@@ -81,6 +85,7 @@ export async function fetchCloudSnapshot(
 
   if (
     workspacesRes.error ||
+    documentsRes.error ||
     conversationsRes.error ||
     messagesRes.error ||
     filesRes.error ||
@@ -139,6 +144,16 @@ export async function fetchCloudSnapshot(
         return a.createdAt.getTime() - b.createdAt.getTime()
       })
 
+    const documents: Document[] = (documentsRes.data ?? []).map((d) => ({
+      id: d.id,
+      workspaceId: d.workspace_id,
+      title: d.title,
+      content: d.content ?? '',
+      position: d.position ?? undefined,
+      createdAt: new Date(d.created_at),
+      updatedAt: new Date(d.updated_at),
+    }))
+
     const conversations: Conversation[] = (conversationsRes.data ?? []).map((c) => ({
       id: c.id,
       workspaceId: c.workspace_id,
@@ -148,7 +163,6 @@ export async function fetchCloudSnapshot(
       updatedAt: new Date(c.updated_at),
       pinned: c.pinned,
       selectedFileIds: c.selected_file_ids ?? [],
-      documentContent: c.document_content ?? "",
       skillPrefs: jsonToSkillPrefs(c.skill_prefs),
       parentId: c.parent_id ?? undefined,
       forkedFromMessageId: c.forked_from_message_id ?? undefined,
@@ -223,7 +237,7 @@ export async function fetchCloudSnapshot(
       createdAt: new Date(a.created_at),
     }))
 
-    return { workspaces, conversations, files, resources, notes, artifacts }
+    return { workspaces, documents, conversations, files, resources, notes, artifacts }
   } catch {
     return null
   }
@@ -274,8 +288,9 @@ export async function bulkUploadLocalState(
         title: c.title,
         pinned: c.pinned,
         selected_file_ids: c.selectedFileIds,
-        document_content: c.documentContent,
-        document_updated_at: c.updatedAt.toISOString(),
+        // document_content / document_updated_at moved onto the workspaces
+        // row. Column still exists for one release; client no longer
+        // writes to it.
         skill_prefs: c.skillPrefs ?? {},
         parent_id: c.parentId ?? null,
         forked_from_message_id: c.forkedFromMessageId ?? null,
@@ -284,6 +299,24 @@ export async function bulkUploadLocalState(
       }))
     )
     if (error) return { ok: false, error: `conversations: ${error.message}` }
+  }
+
+  // documents — workspace-scoped editor docs. FK requires the workspaces
+  // rows above to already exist.
+  if (snapshot.documents.length > 0) {
+    const { error } = await client.from("documents").upsert(
+      snapshot.documents.map((d) => ({
+        id: d.id,
+        user_id: userId,
+        workspace_id: d.workspaceId,
+        title: d.title,
+        content: d.content,
+        position: d.position ?? null,
+        created_at: d.createdAt.toISOString(),
+        updated_at: d.updatedAt.toISOString(),
+      }))
+    )
+    if (error) return { ok: false, error: `documents: ${error.message}` }
   }
 
   // messages, flattened with their conversation_id + position. The
@@ -443,9 +476,25 @@ export function applyCloudSnapshot(snapshot: CloudSnapshot): void {
     sortedConvs[0]?.id ??
     null
 
+  // Active document for the picked workspace: prefer the previously-
+  // active id if it lives in that workspace, else the most-recently-
+  // updated doc, else null.
+  const docsInActiveWorkspace = snapshot.documents.filter(
+    (d) => d.workspaceId === activeWorkspaceId
+  )
+  const sortedDocs = docsInActiveWorkspace.sort(
+    (a, b) =>
+      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  )
+  const activeDocumentId =
+    sortedDocs.find((d) => d.id === s.activeDocumentId)?.id ??
+    sortedDocs[0]?.id ??
+    null
+
   // Seed sync FIRST so the diff sees no change when setState fires.
   setSyncSnapshot({
     workspaces: snapshot.workspaces,
+    documents: snapshot.documents,
     conversations: snapshot.conversations,
     files: snapshot.files,
     resources: snapshot.resources,
@@ -455,6 +504,7 @@ export function applyCloudSnapshot(snapshot: CloudSnapshot): void {
 
   useStore.setState({
     workspaces: snapshot.workspaces,
+    documents: snapshot.documents,
     conversations: snapshot.conversations,
     files: snapshot.files,
     resources: snapshot.resources,
@@ -462,5 +512,6 @@ export function applyCloudSnapshot(snapshot: CloudSnapshot): void {
     artifacts: snapshot.artifacts,
     activeWorkspaceId,
     activeConversationId,
+    activeDocumentId,
   })
 }
