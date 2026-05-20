@@ -2,7 +2,7 @@ import "client-only"
 import { useSyncExternalStore } from 'react'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import type { UploadedFile, Workspace, Resource, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind, ToolCallRecord } from '@/shared/types'
+import type { UploadedFile, Workspace, Resource, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind, ToolCallRecord, ToolCallResult, PinnedExplanation } from '@/shared/types'
 import { DEFAULT_CHAT_MODEL } from '@/shared/models'
 import { deleteBlob as deleteLocalBlob, clearAll as clearLocalBlobs } from '@/client/files/local-store'
 import { uuid } from '@/shared/uuid'
@@ -84,6 +84,24 @@ const getDefaultConversations = (): Conversation[] => {
   ]
 }
 
+/**
+ * Bus payload for selection-driven actions dispatched from outside the
+ * `SelectionTrigger` (currently: the ⌘K command palette). The palette
+ * captures `window.getSelection()` at open time, then fires one of these
+ * via `fireSelectionAction`. `SelectionTrigger` consumes + clears it.
+ *
+ * `rect` is a plain object (not a `DOMRect`) so it survives any future
+ * serialization without coupling consumers to the live DOM range.
+ */
+export type PendingSelectionAction =
+  | {
+      type: 'explain'
+      text: string
+      scope: string
+      rect: { top: number; left: number; right: number; bottom: number; width: number; height: number }
+    }
+  | { type: 'quote'; text: string }
+
 interface AppState {
   // Theme
   theme: Theme
@@ -96,7 +114,18 @@ interface AppState {
 
   // Right resources sidebar (chat view)
   resourcesSidebarOpen: boolean
-  resourcesSidebarTab: 'files' | 'notes' | 'artifacts' | 'skills'
+  resourcesSidebarTab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins'
+
+  /** Session-only pinned explanations from the selection-driven Explain
+   *  action. Excluded from `partialize` — by design, pins vanish on
+   *  reload. Scoped to a conversation via the `conversationId` field. */
+  pinnedExplanations: PinnedExplanation[]
+
+  /** One-shot bus for selection-driven actions dispatched from outside
+   *  the SelectionTrigger (e.g. the command palette). The trigger
+   *  subscribes; on consumption it calls `clearSelectionAction`.
+   *  Excluded from `partialize`. */
+  pendingSelectionAction: PendingSelectionAction | null
 
   /**
    * When true, behave as if Supabase isn't configured — no sync, no
@@ -154,7 +183,22 @@ interface AppState {
   setActiveView: (view: MainView) => void
   setResourcesSidebarOpen: (open: boolean) => void
   toggleResourcesSidebar: () => void
-  setResourcesSidebarTab: (tab: 'files' | 'notes' | 'artifacts' | 'skills') => void
+  setResourcesSidebarTab: (tab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins') => void
+  /** Pin an explanation produced by the selection-driven Explain
+   *  action. Returns the inserted record (with id + createdAt set). */
+  pinExplanation: (input: {
+    conversationId: string
+    selection: string
+    content: string
+    model: string
+    results?: ToolCallResult[]
+  }) => PinnedExplanation
+  unpinExplanation: (id: string) => void
+  /** Drop all pins for a conversation. Used when a conversation is
+   *  deleted so we don't leak references to a vanished `conversationId`. */
+  clearPinnedExplanationsForConversation: (conversationId: string) => void
+  fireSelectionAction: (action: PendingSelectionAction) => void
+  clearSelectionAction: () => void
   setLocalOnlyMode: (value: boolean) => void
   setLocalFilesOnly: (value: boolean) => void
 
@@ -281,6 +325,11 @@ export const useStore = create<AppState>()(
       resourcesSidebarOpen: true,
       resourcesSidebarTab: 'files',
 
+      // Session-only selection-driven explain state (excluded from
+      // partialize — pins vanish on reload by design).
+      pinnedExplanations: [],
+      pendingSelectionAction: null,
+
       // Local-only mode — off by default; users opt in via AccountMenu.
       localOnlyMode: false,
       localFilesOnly: false,
@@ -325,6 +374,31 @@ export const useStore = create<AppState>()(
       toggleResourcesSidebar: () =>
         set((state) => ({ resourcesSidebarOpen: !state.resourcesSidebarOpen })),
       setResourcesSidebarTab: (tab) => set({ resourcesSidebarTab: tab }),
+      pinExplanation: (input) => {
+        const pin: PinnedExplanation = {
+          id: uuid(),
+          conversationId: input.conversationId,
+          selection: input.selection,
+          content: input.content,
+          model: input.model,
+          results: input.results,
+          createdAt: Date.now(),
+        }
+        set((state) => ({ pinnedExplanations: [pin, ...state.pinnedExplanations] }))
+        return pin
+      },
+      unpinExplanation: (id) =>
+        set((state) => ({
+          pinnedExplanations: state.pinnedExplanations.filter((p) => p.id !== id),
+        })),
+      clearPinnedExplanationsForConversation: (conversationId) =>
+        set((state) => ({
+          pinnedExplanations: state.pinnedExplanations.filter(
+            (p) => p.conversationId !== conversationId
+          ),
+        })),
+      fireSelectionAction: (action) => set({ pendingSelectionAction: action }),
+      clearSelectionAction: () => set({ pendingSelectionAction: null }),
       setLocalOnlyMode: (value) => set({ localOnlyMode: value }),
       setLocalFilesOnly: (value) => set({ localFilesOnly: value }),
 
@@ -685,10 +759,17 @@ export const useStore = create<AppState>()(
           const newArtifacts = state.artifacts.map((a) =>
             a.conversationId === conversationId ? { ...a, conversationId: null } : a
           )
+          // Pins are session-only and conversation-scoped — drop them
+          // when the conversation goes away so we don't keep dangling
+          // references that would never render again.
+          const newPins = state.pinnedExplanations.filter(
+            (p) => p.conversationId !== conversationId
+          )
           return {
             conversations: newConversations,
             notes: newNotes,
             artifacts: newArtifacts,
+            pinnedExplanations: newPins,
             activeConversationId:
               state.activeConversationId === conversationId
                 ? newConversations[0]?.id || null
@@ -1280,4 +1361,11 @@ export const useWorkspaceArtifacts = () => {
       if (!a.pinned && b.pinned) return 1
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     })
+}
+
+export const useConversationPinnedExplanations = () => {
+  const pins = useStore((state) => state.pinnedExplanations)
+  const activeConversationId = useStore((state) => state.activeConversationId)
+  if (!activeConversationId) return [] as PinnedExplanation[]
+  return pins.filter((p) => p.conversationId === activeConversationId)
 }

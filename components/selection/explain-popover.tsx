@@ -1,7 +1,7 @@
 "use client"
 
-import { Loader2, X } from "lucide-react"
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { Loader2, Pin, X } from "lucide-react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -54,6 +54,10 @@ interface ExplainPopoverProps {
   workspaceSystemPrompt?: string
   /** Skills to include (matches the chat route's payload shape). */
   skills?: Array<{ id: string }>
+  /** When set, the popover surfaces a Pin button + `⌘↵` shortcut.
+   *  Called with the streamed content + captured tool-result rows.
+   *  After pinning the popover closes via `onClose`. */
+  onPin?: (input: { content: string; results: ToolCallResult[] }) => void
   onClose: () => void
 }
 
@@ -77,6 +81,7 @@ export function ExplainPopover({
   model,
   workspaceSystemPrompt,
   skills,
+  onPin,
   onClose,
 }: ExplainPopoverProps) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -116,14 +121,32 @@ export function ExplainPopover({
     setPos({ top, left, side })
   }, [anchorRect])
 
-  // Dismiss on Escape.
+  // Pin → forward to the host + dismiss. Guarded so we never pin an
+  // empty / errored / still-streaming popover. Stable identity so the
+  // keyboard handler doesn't churn.
+  const canPin = !!onPin && done && !errorMsg && streamed.length > 0
+  const handlePin = useCallback(() => {
+    if (!canPin || !onPin) return
+    onPin({ content: streamed, results: toolResults })
+    onClose()
+  }, [canPin, onPin, streamed, toolResults, onClose])
+
+  // Keyboard: Esc dismisses; ⌘↵ / Ctrl↵ pins when the popover is in
+  // its terminal-success state.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose()
+      if (e.key === "Escape") {
+        onClose()
+        return
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && canPin) {
+        e.preventDefault()
+        handlePin()
+      }
     }
     document.addEventListener("keydown", onKey)
     return () => document.removeEventListener("keydown", onKey)
-  }, [onClose])
+  }, [onClose, canPin, handlePin])
 
   // Dismiss on click outside the popover. We attach to the document
   // pointerdown so a single tap anywhere outside closes it.
@@ -336,20 +359,37 @@ export function ExplainPopover({
       <div className="px-3 py-1.5 border-t flex items-center justify-between text-[10px] text-[var(--muted-foreground)]">
         <span>{model ?? chatModel}</span>
         {done && !errorMsg && (
-          <button
-            type="button"
-            className="hover:text-[var(--foreground)] transition-colors"
-            onClick={() => {
-              // Pin-to-side-panel ships in Phase 2 of the plan; for now
-              // we copy the explanation to clipboard so it's not lost.
-              navigator.clipboard
-                .writeText(streamed)
-                .then(() => toast.success("Copied explanation to clipboard"))
-                .catch(() => toast.error("Copy failed"))
-            }}
-          >
-            Copy
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              className="hover:text-[var(--foreground)] transition-colors"
+              onClick={() => {
+                navigator.clipboard
+                  .writeText(streamed)
+                  .then(() => toast.success("Copied explanation to clipboard"))
+                  .catch(() => toast.error("Copy failed"))
+              }}
+            >
+              Copy
+            </button>
+            {canPin && (
+              <button
+                type="button"
+                className="hover:text-[var(--foreground)] transition-colors inline-flex items-center gap-1"
+                onClick={() => {
+                  handlePin()
+                  toast.success("Pinned to side panel")
+                }}
+                title="Pin to side panel (⌘↵)"
+              >
+                <Pin size={10} />
+                Pin
+                <kbd className="ml-0.5 text-[9px] px-1 rounded border bg-[var(--muted)]/40">
+                  ⌘↵
+                </kbd>
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>

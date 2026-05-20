@@ -168,6 +168,29 @@ export interface ToolCallResult {
   snippet: string
 }
 
+/**
+ * Pinned explanation produced by the selection-driven Explain action.
+ * Stored in session-only state (not persisted to localStorage or
+ * Supabase) — pins survive view changes within a session but vanish
+ * on reload, by design. Scoped to a conversation so switching
+ * conversations swaps the visible pins.
+ */
+export interface PinnedExplanation {
+  id: string
+  conversationId: string
+  /** The selected passage that was explained. Stored as-is for the
+   *  card header; truncate at render time. */
+  selection: string
+  /** The model's full streamed answer (markdown). */
+  content: string
+  /** Model id used to produce the explanation, e.g. "anthropic/claude-sonnet-4-5". */
+  model: string
+  /** Tool-call results captured during the explain stream (currently
+   *  webSearch only). Renders the Sources strip inside the pin card. */
+  results?: ToolCallResult[]
+  createdAt: number
+}
+
 export interface Conversation {
   id: string
   workspaceId: string

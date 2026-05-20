@@ -8,7 +8,8 @@ import {
   useSelection,
   type ActiveSelection,
 } from "@/client/hooks/use-selection"
-import type { Message } from "@/shared/types"
+import { useStore } from "@/client/hooks/use-store"
+import type { Message, ToolCallResult } from "@/shared/types"
 
 interface SelectionTriggerProps {
   /** Conversation history up to and including the message the
@@ -25,6 +26,15 @@ interface SelectionTriggerProps {
    *  decides what to do — typically: append a blockquote to the input,
    *  focus the textarea. */
   onQuote: (text: string) => void
+  /** Called when the user pins an explanation from the popover. Host
+   *  forwards to `pinExplanation` on the store (which knows the active
+   *  conversation id). */
+  onPin: (input: {
+    selection: string
+    content: string
+    model: string
+    results: ToolCallResult[]
+  }) => void
 }
 
 /**
@@ -49,6 +59,7 @@ export function SelectionTrigger({
   workspaceSystemPrompt,
   skills,
   onQuote,
+  onPin,
 }: SelectionTriggerProps) {
   const active = useSelection({ scopeSelector: "[data-selection-scope]" })
 
@@ -69,6 +80,28 @@ export function SelectionTrigger({
     },
     [resolveContext]
   )
+
+  // Subscribe to the cross-component action bus. The command palette
+  // fires actions here when the user invokes them via `⌘K` — focus
+  // moves to the palette input which collapses the document selection,
+  // so we can't read it ourselves at that moment. The palette snapshots
+  // it on open and dispatches a payload with the captured rect.
+  const pendingAction = useStore((s) => s.pendingSelectionAction)
+  const clearSelectionAction = useStore((s) => s.clearSelectionAction)
+  useEffect(() => {
+    if (!pendingAction) return
+    if (pendingAction.type === "explain") {
+      const ctx = resolveContext(pendingAction.scope)
+      if (ctx) {
+        const r = pendingAction.rect
+        const rect = new DOMRect(r.left, r.top, r.width, r.height)
+        setExplainTarget({ text: pendingAction.text, rect, context: ctx })
+      }
+    } else if (pendingAction.type === "quote") {
+      onQuote(pendingAction.text)
+    }
+    clearSelectionAction()
+  }, [pendingAction, resolveContext, onQuote, clearSelectionAction])
 
   // ⌘E (or Ctrl+E on non-Mac) runs Explain on the current selection.
   useEffect(() => {
@@ -107,6 +140,14 @@ export function SelectionTrigger({
           model={chatModel}
           workspaceSystemPrompt={workspaceSystemPrompt}
           skills={skills}
+          onPin={({ content, results }) =>
+            onPin({
+              selection: explainTarget.text,
+              content,
+              model: chatModel,
+              results,
+            })
+          }
           onClose={() => setExplainTarget(null)}
         />
       )}

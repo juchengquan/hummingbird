@@ -57,6 +57,9 @@ export function ChatPanel() {
   const setFileExtraction = useStore((state) => state.setFileExtraction)
   const setFileStorage = useStore((state) => state.setFileStorage)
   const createArtifact = useStore((state) => state.createArtifact)
+  const pinExplanation = useStore((state) => state.pinExplanation)
+  const setResourcesSidebarTab = useStore((state) => state.setResourcesSidebarTab)
+  const setResourcesSidebarOpen = useStore((state) => state.setResourcesSidebarOpen)
   const toggleConversationFileSelection = useStore(
     (state) => state.toggleConversationFileSelection
   )
@@ -1077,6 +1080,20 @@ export function ChatPanel() {
         workspaceSystemPrompt={activeWorkspace?.systemPrompt}
         skills={selectionSkillsPayload}
         onQuote={handleQuoteSelection}
+        onPin={(input) => {
+          if (!activeConversationId) return
+          pinExplanation({
+            conversationId: activeConversationId,
+            selection: input.selection,
+            content: input.content,
+            model: input.model,
+            results: input.results.length > 0 ? input.results : undefined,
+          })
+          // Auto-switch the right rail to the Pins tab + open it so
+          // the user sees the pinned card without hunting for it.
+          setResourcesSidebarTab("pins")
+          setResourcesSidebarOpen(true)
+        }}
       />
 
       {/* Resources side panel */}

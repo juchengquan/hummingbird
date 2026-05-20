@@ -1,9 +1,9 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import { PanelRightClose, PanelRightOpen, FolderOpen, StickyNote, Archive, Sparkles, PencilLine } from "lucide-react"
+import { PanelRightClose, PanelRightOpen, FolderOpen, StickyNote, Archive, Sparkles, PencilLine, Pin } from "lucide-react"
 import { cn } from "@/shared/utils"
-import { useStore, useWorkspaceResources, useWorkspaceNotes, useWorkspaceArtifacts, useActiveWorkspace, useActiveConversation } from "@/client/hooks/use-store"
+import { useStore, useWorkspaceResources, useWorkspaceNotes, useWorkspaceArtifacts, useActiveWorkspace, useActiveConversation, useConversationPinnedExplanations } from "@/client/hooks/use-store"
 import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
 import { SKILLS } from "@/shared/skills/registry"
 import { resolveSkill } from "@/shared/skills/types"
@@ -28,6 +28,7 @@ const ALL_RAIL_TABS = [
   { id: "files" as const, label: "Files", Icon: FolderOpen },
   { id: "notes" as const, label: "Notes", Icon: StickyNote },
   { id: "artifacts" as const, label: "Artifacts", Icon: Archive },
+  { id: "pins" as const, label: "Pins", Icon: Pin },
   { id: "skills" as const, label: "Skills", Icon: Sparkles },
 ]
 
@@ -66,6 +67,7 @@ export function ResourcesSidebar({ mode = "chat" }: ResourcesSidebarProps = {}) 
   const resourcesCount = useWorkspaceResources().length
   const notesCount = useWorkspaceNotes().length
   const artifactsCount = useWorkspaceArtifacts().length
+  const pinsCount = useConversationPinnedExplanations().length
   const workspace = useActiveWorkspace()
   const conversation = useActiveConversation()
   const skillsActive = SKILLS.filter((s) =>
@@ -109,6 +111,7 @@ export function ResourcesSidebar({ mode = "chat" }: ResourcesSidebarProps = {}) 
     files: resourcesCount,
     notes: notesCount,
     artifacts: artifactsCount,
+    pins: pinsCount,
     skills: skillsActive,
   }
 

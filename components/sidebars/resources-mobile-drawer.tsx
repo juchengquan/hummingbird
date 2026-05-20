@@ -1,6 +1,6 @@
 "use client"
 
-import { FolderOpen, StickyNote, Archive, Sparkles } from "lucide-react"
+import { FolderOpen, StickyNote, Archive, Sparkles, Pin } from "lucide-react"
 import { cn } from "@/shared/utils"
 import { SKILLS } from "@/shared/skills/registry"
 import { resolveSkill } from "@/shared/skills/types"
@@ -16,6 +16,7 @@ import {
   useWorkspaceResources,
   useConversationNotes,
   useConversationArtifacts,
+  useConversationPinnedExplanations,
 } from "@/client/hooks/use-store"
 import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
 
@@ -39,6 +40,7 @@ const TABS = [
   { id: "files" as const, label: "Files", Icon: FolderOpen },
   { id: "notes" as const, label: "Notes", Icon: StickyNote },
   { id: "artifacts" as const, label: "Artifacts", Icon: Archive },
+  { id: "pins" as const, label: "Pins", Icon: Pin },
   { id: "skills" as const, label: "Skills", Icon: Sparkles },
 ]
 
@@ -51,6 +53,7 @@ export function ResourcesMobileDrawer({
   const filesCount = useWorkspaceResources().length
   const notesCount = useConversationNotes().length
   const artifactsCount = useConversationArtifacts().length
+  const pinsCount = useConversationPinnedExplanations().length
   const workspace = useActiveWorkspace()
   const conversation = useActiveConversation()
   const skillsActive = SKILLS.filter((s) =>
@@ -61,6 +64,7 @@ export function ResourcesMobileDrawer({
     files: filesCount,
     notes: notesCount,
     artifacts: artifactsCount,
+    pins: pinsCount,
     skills: skillsActive,
   }
 

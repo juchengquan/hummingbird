@@ -14,6 +14,7 @@ import { runExtraction } from "@/client/extract"
 import { persistFile } from "@/client/files/persist"
 import { NotesTab } from "@/components/panels/notes-tab"
 import { ArtifactsTab } from "@/components/panels/artifacts-tab"
+import { PinsTab } from "@/components/panels/pins-tab"
 import { SkillsTab } from "@/components/panels/skills-tab"
 import { FilesTabBody } from "@/components/panels/files-tab-body"
 
@@ -106,6 +107,8 @@ export function ChatResourcesPanel({ mode = "chat" }: ChatResourcesPanelProps = 
         <NotesTab />
       ) : tab === "artifacts" ? (
         <ArtifactsTab />
+      ) : tab === "pins" ? (
+        <PinsTab />
       ) : tab === "skills" ? (
         <SkillsTab />
       ) : (

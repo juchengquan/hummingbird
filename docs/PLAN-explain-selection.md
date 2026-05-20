@@ -214,10 +214,31 @@ writes to on `selectionchange`. Not a huge lift, but worth its own
 small commit alongside Phase 2 (pin to side panel), which will need
 the same cross-component selection state anyway.
 
-### Phase 2 — Pin to side panel
+### Phase 2 — Pin to side panel ✅ shipped
 
-Adds the dock target + a session-only `pinnedExplanations` slice. One
-commit; doesn't touch Phase 1 internals.
+Landed:
+
+- New `pinnedExplanations` slice in `useStore` (session-only —
+  excluded from `partialize`). `pinExplanation` / `unpinExplanation` /
+  `clearPinnedExplanationsForConversation` mutators. New
+  `useConversationPinnedExplanations` selector. Auto-cleared in
+  `deleteConversation`.
+- `Pin` button in the popover footer (visible only when
+  `done && !errorMsg`) plus `⌘↵` keyboard shortcut. Pinning also
+  switches the right rail to the new Pins tab + opens it so the user
+  sees the card without hunting for it. Toast confirms.
+- New `pins` rail tab with a `Pin` icon, between Artifacts and
+  Skills. `components/panels/pins-tab.tsx` renders cards with the
+  truncated selection as header, expand-on-click body that contains
+  `MarkdownPreview` + `SourcesStrip` (when web search produced
+  results) and an Unpin button.
+- ⌘K palette gained two new entries — `Explain selection` and
+  `Quote selection in reply` — shown only when there's an active
+  selection. Selection is **snapshotted on palette open** (before
+  focus moves into the input collapses the document selection) and
+  dispatched to `SelectionTrigger` via a new `pendingSelectionAction`
+  bus slice (also session-only). The trigger consumes the bus on the
+  next render and runs the same flow that the toolbar would.
 
 ### Phase 3 — Mobile
 
