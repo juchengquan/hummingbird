@@ -18,6 +18,9 @@ bun run start        # Start production server
 
 # Linting
 bun run lint         # Run ESLint
+bun run typecheck    # Run `tsc --noEmit`
+bun run check        # typecheck + lint (fast — mirrors CI without build/audit)
+bun run check:ci     # typecheck + lint + build + audit:bundle (full CI gate locally)
 ```
 
 ## Architecture
