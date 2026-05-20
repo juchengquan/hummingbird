@@ -23,6 +23,7 @@ import { configureSync, enqueue } from "@/client/sync/sync-queue"
 import {
   diffArtifacts,
   diffConversations,
+  diffConversationFiles,
   diffDocuments,
   diffFiles,
   diffNotes,
@@ -32,6 +33,7 @@ import {
 import type {
   Artifact,
   Conversation,
+  ConversationFile,
   Document,
   Note,
   Resource,
@@ -45,6 +47,7 @@ interface Snapshot {
   conversations: Conversation[]
   files: UploadedFile[]
   resources: Resource[]
+  conversationFiles: ConversationFile[]
   notes: Note[]
   artifacts: Artifact[]
 }
@@ -60,6 +63,7 @@ function takeSnapshot(): Snapshot {
     conversations: s.conversations,
     files: s.files,
     resources: s.resources,
+    conversationFiles: s.conversationFiles,
     notes: s.notes,
     artifacts: s.artifacts,
   }
@@ -103,6 +107,7 @@ export function useSync(): void {
         conversations: state.conversations,
         files: state.files,
         resources: state.resources,
+        conversationFiles: state.conversationFiles,
         notes: state.notes,
         artifacts: state.artifacts,
       }
@@ -118,6 +123,7 @@ export function useSync(): void {
         prev.conversations === next.conversations &&
         prev.files === next.files &&
         prev.resources === next.resources &&
+        prev.conversationFiles === next.conversationFiles &&
         prev.notes === next.notes &&
         prev.artifacts === next.artifacts
       ) {
@@ -143,6 +149,9 @@ export function useSync(): void {
         ...(prev.files !== next.files ? diffFiles(prev.files, next.files) : []),
         ...(prev.resources !== next.resources
           ? diffResources(prev.resources, next.resources)
+          : []),
+        ...(prev.conversationFiles !== next.conversationFiles
+          ? diffConversationFiles(prev.conversationFiles, next.conversationFiles)
           : []),
         ...(prev.notes !== next.notes ? diffNotes(prev.notes, next.notes) : []),
         ...(prev.artifacts !== next.artifacts
@@ -207,6 +216,7 @@ export function setSyncSnapshot(snapshot: {
   conversations: Conversation[]
   files: UploadedFile[]
   resources: Resource[]
+  conversationFiles: ConversationFile[]
   notes: Note[]
   artifacts: Artifact[]
 }): void {

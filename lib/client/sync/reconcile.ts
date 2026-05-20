@@ -16,6 +16,7 @@ import "client-only"
 import type {
   Artifact,
   Conversation,
+  ConversationFile,
   Document,
   FileExtractionStatus,
   Message,
@@ -45,6 +46,7 @@ export interface CloudSnapshot {
   conversations: Conversation[]
   files: UploadedFile[]
   resources: Resource[]
+  conversationFiles: ConversationFile[]
   notes: Note[]
   artifacts: Artifact[]
 }
@@ -54,7 +56,15 @@ export async function fetchCloudSnapshot(
   client: AppSupabaseClient,
   userId: string
 ): Promise<CloudSnapshot | null> {
-  let workspacesRes, documentsRes, conversationsRes, messagesRes, filesRes, resourcesRes, notesRes, artifactsRes
+  let workspacesRes,
+    documentsRes,
+    conversationsRes,
+    messagesRes,
+    filesRes,
+    resourcesRes,
+    conversationFilesRes,
+    notesRes,
+    artifactsRes
   try {
     ;[
       workspacesRes,
@@ -63,6 +73,7 @@ export async function fetchCloudSnapshot(
       messagesRes,
       filesRes,
       resourcesRes,
+      conversationFilesRes,
       notesRes,
       artifactsRes,
     ] = await Promise.all([
@@ -76,6 +87,7 @@ export async function fetchCloudSnapshot(
         .order("position", { ascending: true }),
       client.from("files").select("*").eq("user_id", userId),
       client.from("resources").select("*").eq("user_id", userId),
+      client.from("conversation_files").select("*").eq("user_id", userId),
       client.from("notes").select("*").eq("user_id", userId),
       client.from("artifacts").select("*").eq("user_id", userId),
     ])
@@ -90,6 +102,7 @@ export async function fetchCloudSnapshot(
     messagesRes.error ||
     filesRes.error ||
     resourcesRes.error ||
+    conversationFilesRes.error ||
     notesRes.error ||
     artifactsRes.error
   ) {
@@ -187,6 +200,11 @@ export async function fetchCloudSnapshot(
       if (f.key_topics && f.key_topics.length > 0) {
         file.keyTopics = f.key_topics
       }
+      // `deleted_at` column added in migration 0004. Older clients
+      // never set it; pre-0004 rows have it null. Either way: nullish
+      // → live file; non-null → tombstoned.
+      const deletedAt = (f as { deleted_at?: string | null }).deleted_at
+      if (deletedAt) file.deletedAt = new Date(deletedAt)
       return file
     })
 
@@ -195,6 +213,15 @@ export async function fetchCloudSnapshot(
       workspaceId: r.workspace_id,
       fileId: r.file_id,
       addedAt: new Date(r.added_at),
+    }))
+
+    const conversationFiles: ConversationFile[] = (
+      conversationFilesRes.data ?? []
+    ).map((cf) => ({
+      id: cf.id,
+      conversationId: cf.conversation_id,
+      fileId: cf.file_id,
+      addedAt: new Date(cf.added_at),
     }))
 
     // Build a conversation → workspace map so we can backfill `workspaceId`
@@ -237,7 +264,16 @@ export async function fetchCloudSnapshot(
       createdAt: new Date(a.created_at),
     }))
 
-    return { workspaces, documents, conversations, files, resources, notes, artifacts }
+    return {
+      workspaces,
+      documents,
+      conversations,
+      files,
+      resources,
+      conversationFiles,
+      notes,
+      artifacts,
+    }
   } catch {
     return null
   }
@@ -378,6 +414,7 @@ export async function bulkUploadLocalState(
         summary: f.summary ?? null,
         key_topics: f.keyTopics ?? [],
         uploaded_at: f.uploadedAt.toISOString(),
+        deleted_at: f.deletedAt ? f.deletedAt.toISOString() : null,
       }))
     )
     if (error) return { ok: false, error: `files: ${error.message}` }
@@ -395,6 +432,23 @@ export async function bulkUploadLocalState(
       }))
     )
     if (error) return { ok: false, error: `resources: ${error.message}` }
+  }
+
+  // conversation_files (depends on files + conversations) — the
+  // conversation-private lane introduced in migration 0004. Existing
+  // local-only users whose store predates v16 have an empty slice;
+  // skip the upsert in that case to avoid an empty round-trip.
+  if (snapshot.conversationFiles.length > 0) {
+    const { error } = await client.from("conversation_files").upsert(
+      snapshot.conversationFiles.map((cf) => ({
+        id: cf.id,
+        user_id: userId,
+        conversation_id: cf.conversationId,
+        file_id: cf.fileId,
+        added_at: cf.addedAt.toISOString(),
+      }))
+    )
+    if (error) return { ok: false, error: `conversation_files: ${error.message}` }
   }
 
   // notes — workspace-scoped after migration 0011, so orphans
@@ -498,6 +552,7 @@ export function applyCloudSnapshot(snapshot: CloudSnapshot): void {
     conversations: snapshot.conversations,
     files: snapshot.files,
     resources: snapshot.resources,
+    conversationFiles: snapshot.conversationFiles,
     notes: snapshot.notes,
     artifacts: snapshot.artifacts,
   })
@@ -508,6 +563,7 @@ export function applyCloudSnapshot(snapshot: CloudSnapshot): void {
     conversations: snapshot.conversations,
     files: snapshot.files,
     resources: snapshot.resources,
+    conversationFiles: snapshot.conversationFiles,
     notes: snapshot.notes,
     artifacts: snapshot.artifacts,
     activeWorkspaceId,

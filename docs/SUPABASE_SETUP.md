@@ -84,13 +84,18 @@ errors:
    - Creates the private `user-files` Storage bucket and the per-user
      folder-prefix policies (read / write / update / delete are all
      scoped to `user-files/{auth.uid()}/...`).
+4. `supabase/migrations/0004_conversation_files.sql`
+   - Adds the `conversation_files` join table (conversation-private
+     file attachments — files scoped to one chat that never enter the
+     workspace library) plus its RLS policy, and a `deleted_at`
+     column on `files` for soft-delete (tombstone) semantics.
 
-After running all three, sanity-check from the **Table Editor**: nine
+After running all four, sanity-check from the **Table Editor**: ten
 tables should be listed (`profiles`, `workspaces`, `conversations`,
-`messages`, `files`, `resources`, `artifacts`, `notes`, `shares`), each
-showing the RLS shield icon indicating policies are active. The
-**Storage** sidebar should show a `user-files` private bucket with the
-four policies attached.
+`messages`, `files`, `resources`, `conversation_files`, `artifacts`,
+`notes`, `shares`), each showing the RLS shield icon indicating
+policies are active. The **Storage** sidebar should show a
+`user-files` private bucket with the four policies attached.
 
 ## Step 3 — Configure auth (magic link)
 

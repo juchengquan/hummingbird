@@ -89,6 +89,7 @@ function localSnapshotFromStore(): CloudSnapshot {
     conversations: s.conversations,
     files: s.files,
     resources: s.resources,
+    conversationFiles: s.conversationFiles,
     notes: s.notes,
     artifacts: s.artifacts,
   }

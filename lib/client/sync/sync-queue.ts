@@ -59,6 +59,7 @@ export type SyncTarget =
   | "messages"
   | "files"
   | "resources"
+  | "conversation_files"
   | "artifacts"
   | "notes"
 

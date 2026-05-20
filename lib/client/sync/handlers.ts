@@ -23,6 +23,7 @@ import "client-only"
 import type {
   Artifact,
   Conversation,
+  ConversationFile,
   Document,
   Message,
   Note,
@@ -321,6 +322,10 @@ export function diffFiles(prev: UploadedFile[], next: UploadedFile[]): SyncOp[] 
         summary: f.summary ?? null,
         key_topics: f.keyTopics ?? [],
         uploaded_at: toISO(f.uploadedAt),
+        // `null` = live; ISO string = tombstoned. Always explicit so a
+        // file that was tombstoned and then later untombstoned (e.g.
+        // by another device) round-trips cleanly.
+        deleted_at: f.deletedAt ? toISO(f.deletedAt) : null,
       }
       if (f.storagePath) row.storage_path = f.storagePath
       ops.push({
@@ -357,7 +362,8 @@ function fileEquals(a: UploadedFile, b: UploadedFile): boolean {
     (a.summary ?? null) === (b.summary ?? null) &&
     sameStringArray(a.keyTopics ?? [], b.keyTopics ?? []) &&
     (a.storagePath ?? null) === (b.storagePath ?? null) &&
-    sameInstant(a.uploadedAt, b.uploadedAt)
+    sameInstant(a.uploadedAt, b.uploadedAt) &&
+    sameInstantOrNull(a.deletedAt, b.deletedAt)
   )
 }
 
@@ -400,6 +406,53 @@ export function diffResources(prev: Resource[], next: Resource[]): SyncOp[] {
 function resourceEquals(a: Resource, b: Resource): boolean {
   return (
     a.workspaceId === b.workspaceId &&
+    a.fileId === b.fileId &&
+    sameInstant(a.addedAt, b.addedAt)
+  )
+}
+
+// ------------ conversation_files --------------------------------------------
+
+export function diffConversationFiles(
+  prev: ConversationFile[],
+  next: ConversationFile[]
+): SyncOp[] {
+  const ops: SyncOp[] = []
+  const prevById = byId(prev)
+  const nextById = byId(next)
+
+  for (const cf of next) {
+    const before = prevById.get(cf.id)
+    if (!before || !conversationFileEquals(before, cf)) {
+      ops.push({
+        kind: "upsert",
+        target: "conversation_files",
+        clientOpId: "",
+        row: {
+          id: cf.id,
+          conversation_id: cf.conversationId,
+          file_id: cf.fileId,
+          added_at: toISO(cf.addedAt),
+        },
+      })
+    }
+  }
+  for (const cf of prev) {
+    if (!nextById.has(cf.id)) {
+      ops.push({
+        kind: "delete",
+        target: "conversation_files",
+        clientOpId: "",
+        where: { column: "id", value: cf.id },
+      })
+    }
+  }
+  return ops
+}
+
+function conversationFileEquals(a: ConversationFile, b: ConversationFile): boolean {
+  return (
+    a.conversationId === b.conversationId &&
     a.fileId === b.fileId &&
     sameInstant(a.addedAt, b.addedAt)
   )
@@ -528,6 +581,15 @@ function toISO(d: Date | string): string {
 
 function sameInstant(a: Date | string, b: Date | string): boolean {
   return new Date(a).getTime() === new Date(b).getTime()
+}
+
+function sameInstantOrNull(
+  a: Date | string | null | undefined,
+  b: Date | string | null | undefined
+): boolean {
+  if (!a && !b) return true
+  if (!a || !b) return false
+  return sameInstant(a, b)
 }
 
 function sameStringArray(a: string[], b: string[]): boolean {

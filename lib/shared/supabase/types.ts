@@ -212,6 +212,7 @@ export interface Database {
           summary: string | null
           key_topics: string[]
           uploaded_at: string
+          deleted_at: string | null
         }
         Insert: {
           id: string
@@ -229,6 +230,7 @@ export interface Database {
           summary?: string | null
           key_topics?: string[]
           uploaded_at?: string
+          deleted_at?: string | null
         }
         Update: {
           id?: string
@@ -246,6 +248,31 @@ export interface Database {
           summary?: string | null
           key_topics?: string[]
           uploaded_at?: string
+          deleted_at?: string | null
+        }
+        Relationships: []
+      }
+      conversation_files: {
+        Row: {
+          id: string
+          user_id: string
+          conversation_id: string
+          file_id: string
+          added_at: string
+        }
+        Insert: {
+          id: string
+          user_id: string
+          conversation_id: string
+          file_id: string
+          added_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          conversation_id?: string
+          file_id?: string
+          added_at?: string
         }
         Relationships: []
       }

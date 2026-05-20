@@ -84,8 +84,9 @@ Everything the app uses today. The codebase has zero hosted-only
 dependencies (no Realtime, no Edge Functions, no managed-only features),
 so every feature gated by `lib/shared/supabase/env.ts` lights up:
 
-- All three migrations (`supabase/migrations/0001_schema.sql`,
-  `0002_rls_policies.sql`, `0003_storage.sql`) apply identically
+- All four migrations (`supabase/migrations/0001_schema.sql`,
+  `0002_rls_policies.sql`, `0003_storage.sql`,
+  `0004_conversation_files.sql`) apply identically
 - Magic-link auth via local **Inbucket** (no real inbox needed —
   emails are captured at http://localhost:54324)
 - File uploads to the local `user-files` Storage bucket
