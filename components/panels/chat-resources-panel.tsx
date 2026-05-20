@@ -1,29 +1,42 @@
 "use client"
 
-import { useCallback, useMemo, useRef, useState } from "react"
-import { format } from "date-fns"
-import { Search, Plus, FolderOpen, Check, StickyNote, Archive } from "lucide-react"
-import { cn } from "@/lib/utils"
-import { Input } from "@/components/ui/input"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
+import { usePdfViewer } from "@/components/pdf-viewer/types"
 import {
   useStore,
   useWorkspaceResources,
   useConversationSelectedFileIds,
-  useConversationNotes,
-  useConversationArtifacts,
-} from "@/lib/hooks/use-store"
-import { getFileIcon, processSelectedFiles, formatFileSize } from "@/lib/file-utils"
-import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/lib/upload-config"
-import { runExtraction } from "@/lib/extract"
+} from "@/client/hooks/use-store"
+import { processSelectedFiles } from "@/client/file-utils"
+import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT } from "@/shared/upload-config"
+import { runExtraction } from "@/client/extract"
+import { persistFile } from "@/client/files/persist"
 import { NotesTab } from "@/components/panels/notes-tab"
 import { ArtifactsTab } from "@/components/panels/artifacts-tab"
-import { ExtractionStatusBadge } from "@/components/panels/extraction-status-badge"
+import { PinsTab } from "@/components/panels/pins-tab"
+import { SkillsTab } from "@/components/panels/skills-tab"
+import { FilesTabBody } from "@/components/panels/files-tab-body"
 
-export function ChatResourcesPanel() {
+interface ChatResourcesPanelProps {
+  /**
+   * `chat` (default): tabbed view driven by `resourcesSidebarTab`. Files tab
+   * lets the user attach files to the active conversation.
+   *
+   * `manage`: forces the Files tab only, with no conversation context. Used
+   * by the workspaces view of the right rail. Hides attach checkboxes and
+   * the "Manage workspace files →" footer; adds per-row delete buttons.
+   */
+  mode?: "chat" | "manage"
+}
+
+export function ChatResourcesPanel({ mode = "chat" }: ChatResourcesPanelProps = {}) {
   const activeWorkspaceId = useStore((s) => s.activeWorkspaceId)
   const addFile = useStore((s) => s.addFile)
   const addResource = useStore((s) => s.addResource)
+  const removeFile = useStore((s) => s.removeFile)
   const setFileExtraction = useStore((s) => s.setFileExtraction)
+  const setFileStorage = useStore((s) => s.setFileStorage)
   const setActiveView = useStore((s) => s.setActiveView)
   const toggleFileSelection = useStore((s) => s.toggleConversationFileSelection)
   const selectedFileIds = useConversationSelectedFileIds()
@@ -33,15 +46,24 @@ export function ChatResourcesPanel() {
   const [query, setQuery] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [mounted, setMounted] = useState(false)
+  // In manage mode, the trash button stages a confirmation rather than
+  // deleting immediately. Holds the file id pending confirmation.
+  const [confirmDeleteFileId, setConfirmDeleteFileId] = useState<string | null>(
+    null
+  )
+  const openPdfViewer = usePdfViewer((s) => s.open)
+  // `mode` only affects how the Files tab renders (manage vs attach). The
+  // active tab itself always follows the persisted `resourcesSidebarTab`
+  // so the rail can switch between Files/Notes/Artifacts/Skills regardless
+  // of whether we're in a chat or a workspace view.
   const tab = useStore((s) => s.resourcesSidebarTab)
-  const setTab = useStore((s) => s.setResourcesSidebarTab)
-  const notesCount = useConversationNotes().length
-  const artifactsCount = useConversationArtifacts().length
 
-  // mount flag for date formatting (avoid SSR mismatch)
-  if (!mounted && typeof window !== "undefined") {
-    queueMicrotask(() => setMounted(true))
-  }
+  // Mount flag for date formatting (avoid SSR mismatch). Must live in
+  // useEffect — calling setMounted from render (even via queueMicrotask)
+  // schedules an update against an unmounted component on first paint.
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   const filtered = useMemo(() => {
     if (!query.trim()) return resources
@@ -67,71 +89,31 @@ export function ChatResourcesPanel() {
         addResource(activeWorkspaceId, meta.id)
         toggleFileSelection(meta.id)
         void runExtraction(meta.id, source, setFileExtraction)
+        void persistFile(source, meta.id, meta.name).then((result) => {
+          if (result.storagePath) {
+            setFileStorage(meta.id, { storagePath: result.storagePath })
+          }
+        })
       })
     },
-    [addFile, addResource, activeWorkspaceId, toggleFileSelection, setFileExtraction]
+    [addFile, addResource, activeWorkspaceId, toggleFileSelection, setFileExtraction, setFileStorage]
   )
 
   return (
     <div className="flex flex-col w-full h-full min-h-0">
-      {/* Tab strip */}
-      <div className="shrink-0 flex border-b border-[var(--border)]">
-        <button
-          type="button"
-          onClick={() => setTab("files")}
-          className={cn(
-            "flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors",
-            tab === "files"
-              ? "text-[var(--foreground)] border-b-2 border-[var(--primary)] -mb-px"
-              : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-          )}
-        >
-          <FolderOpen size={13} />
-          Files
-          <span className="text-[10px] text-[var(--muted-foreground)]">
-            {resources.length}
-          </span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("notes")}
-          className={cn(
-            "flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors",
-            tab === "notes"
-              ? "text-[var(--foreground)] border-b-2 border-[var(--primary)] -mb-px"
-              : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-          )}
-        >
-          <StickyNote size={13} />
-          Notes
-          <span className="text-[10px] text-[var(--muted-foreground)]">
-            {notesCount}
-          </span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("artifacts")}
-          className={cn(
-            "flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors",
-            tab === "artifacts"
-              ? "text-[var(--foreground)] border-b-2 border-[var(--primary)] -mb-px"
-              : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-          )}
-        >
-          <Archive size={13} />
-          Artifacts
-          <span className="text-[10px] text-[var(--muted-foreground)]">
-            {artifactsCount}
-          </span>
-        </button>
-      </div>
-
+      {/* Tab strip removed — the icon column in <ResourcesSidebar/> is the
+          tab switcher now. Just render the active tab's body. */}
       {tab === "notes" ? (
         <NotesTab />
       ) : tab === "artifacts" ? (
         <ArtifactsTab />
+      ) : tab === "pins" ? (
+        <PinsTab />
+      ) : tab === "skills" ? (
+        <SkillsTab />
       ) : (
         <FilesTabBody
+          mode={mode}
           resources={resources}
           attachedCount={attachedCount}
           query={query}
@@ -139,6 +121,8 @@ export function ChatResourcesPanel() {
           filtered={filtered}
           selectedFileIds={selectedFileIds}
           toggleFileSelection={toggleFileSelection}
+          onRequestDelete={setConfirmDeleteFileId}
+          onOpenPdf={(fileId) => openPdfViewer({ fileId })}
           mounted={mounted}
           error={error}
           fileInputRef={fileInputRef}
@@ -146,185 +130,33 @@ export function ChatResourcesPanel() {
           setActiveView={setActiveView}
         />
       )}
+      {/* Delete confirmation — only relevant in manage mode but the dialog
+          itself is harmless when never opened. */}
+      <DeleteConfirmDialog
+        open={confirmDeleteFileId !== null}
+        onOpenChange={(open) => !open && setConfirmDeleteFileId(null)}
+        title={
+          <>
+            Delete &ldquo;
+            {confirmDeleteFileId
+              ? resources.find((r) => r.id === confirmDeleteFileId)?.name ?? "file"
+              : "file"}
+            &rdquo;?
+          </>
+        }
+        description={
+          <>
+            This removes the file from the workspace and deletes its local
+            blob.{" "}
+            <span className="font-medium text-[var(--foreground)]">
+              This action cannot be undone.
+            </span>
+          </>
+        }
+        onConfirm={() => {
+          if (confirmDeleteFileId) removeFile(confirmDeleteFileId)
+        }}
+      />
     </div>
-  )
-}
-
-interface FilesTabBodyProps {
-  resources: ReturnType<typeof useWorkspaceResources>
-  attachedCount: number
-  query: string
-  setQuery: (q: string) => void
-  filtered: ReturnType<typeof useWorkspaceResources>
-  selectedFileIds: string[]
-  toggleFileSelection: (fileId: string) => void
-  mounted: boolean
-  error: string | null
-  fileInputRef: React.RefObject<HTMLInputElement | null>
-  handleUpload: (list: FileList | null) => void
-  setActiveView: (view: "workspaces" | "chat" | "resources" | "editor") => void
-}
-
-function FilesTabBody({
-  resources,
-  attachedCount,
-  query,
-  setQuery,
-  filtered,
-  selectedFileIds,
-  toggleFileSelection,
-  mounted,
-  error,
-  fileInputRef,
-  handleUpload,
-  setActiveView,
-}: FilesTabBodyProps) {
-  return (
-    <>
-      {/* Header */}
-      <div className="shrink-0 px-3 py-2.5 border-b border-[var(--border)] flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-[11px] text-[var(--muted-foreground)]">
-            {resources.length} in workspace · {attachedCount} attached
-          </p>
-        </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept={ALLOWED_EXTENSIONS.join(",")}
-          className="hidden"
-          onChange={(e) => {
-            handleUpload(e.target.files)
-            if (fileInputRef.current) fileInputRef.current.value = ""
-          }}
-        />
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          aria-label="Upload files to workspace"
-          title="Upload files"
-          className="shrink-0 h-7 w-7 inline-flex items-center justify-center rounded-md text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] transition-colors"
-        >
-          <Plus size={14} />
-        </button>
-      </div>
-
-      {/* Search */}
-      {resources.length > 0 && (
-        <div className="shrink-0 px-3 py-2 border-b border-[var(--border)]">
-          <div className="relative">
-            <Search
-              size={12}
-              className="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
-            />
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search files"
-              className="h-7 pl-7 text-xs"
-            />
-          </div>
-        </div>
-      )}
-
-      {/* List */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2">
-        {resources.length === 0 ? (
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="w-full h-full min-h-[120px] flex flex-col items-center justify-center gap-2 px-3 text-center text-xs text-[var(--muted-foreground)] italic rounded-md border border-dashed border-[var(--border)] hover:border-[var(--primary)] hover:text-[var(--foreground)] transition-colors"
-          >
-            <FolderOpen size={20} />
-            <span>Upload files to add workspace context</span>
-          </button>
-        ) : filtered.length === 0 ? (
-          <div className="px-3 py-6 text-center text-xs text-[var(--muted-foreground)]">
-            No files match &ldquo;{query}&rdquo;
-          </div>
-        ) : (
-          <ul className="space-y-0.5">
-            {filtered.map((file) => {
-              const attached = selectedFileIds.includes(file.id)
-              return (
-                <li key={file.id}>
-                  <button
-                    type="button"
-                    onClick={() => toggleFileSelection(file.id)}
-                    aria-pressed={attached}
-                    title={file.name}
-                    className={cn(
-                      "w-full flex items-start gap-2 px-2 py-1.5 rounded-md text-left transition-colors",
-                      "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
-                      attached
-                        ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/40"
-                        : "hover:bg-[var(--accent)]"
-                    )}
-                  >
-                    <span
-                      aria-hidden
-                      className={cn(
-                        "mt-0.5 shrink-0 size-4 rounded-[4px] border inline-flex items-center justify-center transition-colors",
-                        attached
-                          ? "bg-[var(--primary)] border-[var(--primary)] text-[var(--primary-foreground)]"
-                          : "border-[var(--border)] bg-transparent"
-                      )}
-                    >
-                      {attached && <Check size={12} strokeWidth={3} />}
-                    </span>
-                    <span className="mt-0.5">{getFileIcon(file.type)}</span>
-                    <div className="flex-1 min-w-0">
-                      <div
-                        className={cn(
-                          "text-xs font-medium truncate",
-                          attached ? "text-[var(--primary)]" : "text-[var(--foreground)]"
-                        )}
-                      >
-                        {file.name}
-                      </div>
-                      <div className="text-[10px] text-[var(--muted-foreground)] flex items-center gap-1.5 flex-wrap">
-                        <span>
-                          {formatFileSize(file.size)}
-                          {mounted && (
-                            <> · {format(new Date(file.uploadedAt), "MMM d, yyyy")}</>
-                          )}
-                        </span>
-                        <ExtractionStatusBadge file={file} />
-                      </div>
-                      {file.keyTopics && file.keyTopics.length > 0 && (
-                        <div
-                          className="mt-1 text-[10px] text-[var(--muted-foreground)] truncate"
-                          title={file.summary}
-                        >
-                          {file.keyTopics.slice(0, 4).join(" · ")}
-                        </div>
-                      )}
-                    </div>
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
-        )}
-
-        {error && (
-          <div className="mt-2 px-2 text-[11px] text-red-500" role="alert">
-            {error}
-          </div>
-        )}
-      </div>
-
-      {/* Footer */}
-      <div className="shrink-0 px-3 py-2 border-t border-[var(--border)]">
-        <button
-          type="button"
-          onClick={() => setActiveView("resources")}
-          className="text-[11px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
-        >
-          Manage workspace files →
-        </button>
-      </div>
-    </>
   )
 }

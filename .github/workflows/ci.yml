@@ -1,0 +1,59 @@
+# CI — runs on every push to main and every PR.
+#
+# All gates hard-fail:
+#   - typecheck       (`bunx tsc --noEmit`)
+#   - lint            (`bun run lint`)
+#   - build           (`bun run build`)
+#   - bundle audit    (`bun run audit:bundle` — fence enforcement: no
+#                      server-only paths or secret env names leak into
+#                      .next/static/chunks/*.js)
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache bun install
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            node_modules
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bunx tsc --noEmit
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Build
+        run: bun run build
+
+      - name: Bundle audit (fence enforcement)
+        run: bun run audit:bundle

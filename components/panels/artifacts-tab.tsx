@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { format } from "date-fns"
 import {
   Archive,
@@ -17,7 +17,7 @@ import {
   X,
 } from "lucide-react"
 import { toast } from "sonner"
-import { cn } from "@/lib/utils"
+import { cn } from "@/shared/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -28,13 +28,14 @@ import {
 } from "@/components/ui/dialog"
 import {
   useStore,
-  useConversationArtifacts,
+  useWorkspaceArtifacts,
   useActiveConversation,
-} from "@/lib/hooks/use-store"
-import { copyText } from "@/lib/export"
+} from "@/client/hooks/use-store"
+import { copyText } from "@/client/export"
+import { TabEmptyState } from "@/components/panels/tab-empty-state"
 import { CodeHighlight, JsonHighlight } from "@/components/code-highlight"
 import { MarkdownPreview } from "@/components/markdown-preview"
-import type { Artifact } from "@/lib/types"
+import type { Artifact } from "@/shared/types"
 
 function artifactKindIcon(artifact: Artifact) {
   if (artifact.kind === "code") return <Code2 size={12} />
@@ -59,7 +60,7 @@ function asMarkdownForEditor(artifact: Artifact): string {
 }
 
 export function ArtifactsTab() {
-  const artifacts = useConversationArtifacts()
+  const artifacts = useWorkspaceArtifacts()
   const activeConversation = useActiveConversation()
   const deleteArtifact = useStore((s) => s.deleteArtifact)
   const togglePinArtifact = useStore((s) => s.togglePinArtifact)
@@ -70,9 +71,9 @@ export function ArtifactsTab() {
 
   const [openId, setOpenId] = useState<string | null>(null)
   const [mounted, setMounted] = useState(false)
-  if (!mounted && typeof window !== "undefined") {
-    queueMicrotask(() => setMounted(true))
-  }
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   const open = openId ? artifacts.find((a) => a.id === openId) ?? null : null
 
@@ -99,17 +100,10 @@ export function ArtifactsTab() {
     if (openId === a.id) setOpenId(null)
   }
 
-  if (!activeConversation) {
-    return (
-      <div className="flex-1 flex items-center justify-center px-6 text-center text-xs text-[var(--muted-foreground)]">
-        Select a conversation to view its artifacts.
-      </div>
-    )
-  }
 
   return (
     <>
-      <div className="shrink-0 px-3 py-2 border-b border-[var(--border)]">
+      <div className="shrink-0 h-11 px-3 border-b border-[var(--border)] flex items-center">
         <p className="text-[11px] text-[var(--muted-foreground)]">
           {artifacts.length === 0
             ? "No artifacts yet"
@@ -119,13 +113,10 @@ export function ArtifactsTab() {
 
       <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2 space-y-1">
         {artifacts.length === 0 ? (
-          <div className="h-full min-h-[120px] flex flex-col items-center justify-center gap-2 px-3 text-center text-xs text-[var(--muted-foreground)] italic rounded-md border border-dashed border-[var(--border)]">
-            <Archive size={20} />
-            <span>
-              Click the <strong>archive</strong> icon on an assistant message
-              to save code blocks or the full reply as an artifact.
-            </span>
-          </div>
+          <TabEmptyState icon={Archive}>
+            Click the <strong>archive</strong> icon on an assistant message
+            to save code blocks or the full reply as an artifact.
+          </TabEmptyState>
         ) : (
           artifacts.map((a) => (
             <button

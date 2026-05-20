@@ -57,7 +57,7 @@ import {
   PopoverAnchor,
   PopoverContent,
 } from '@/components/ui/popover';
-import { cn } from '@/lib/utils';
+import { cn } from '@/shared/utils';
 import { commentPlugin } from '@/components/editor/plugins/comment-kit';
 
 import { AIChatEditor } from './ai-chat-editor';
@@ -94,7 +94,7 @@ export function AIMenu() {
         setAnchorElement(anchorDom);
       }, 0);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, [streaming]);
 
   const setOpen = (open: boolean) => {
@@ -165,7 +165,7 @@ export function AIMenu() {
       const block = editor.api.block({ at: anchorNode[1] });
       setAnchorElement(editor.api.toDOMNode(block![0]!)!);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, [isLoading]);
 
   if (isLoading && mode === 'insert') return null;

@@ -3,8 +3,8 @@ import type { NextRequest } from 'next/server';
 import { generateText } from 'ai';
 import { NextResponse } from 'next/server';
 
-import { categorizeError } from '@/lib/api-errors';
-import { CopilotRequestSchema } from '@/lib/api-schemas';
+import { categorizeError } from '@/shared/api-errors';
+import { CopilotRequestSchema } from '@/shared/api-schemas';
 
 export async function POST(req: NextRequest) {
   let raw: unknown;

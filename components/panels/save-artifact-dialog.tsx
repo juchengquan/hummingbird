@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { Code2, FileText } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { cn } from "@/shared/utils"
 import {
   Dialog,
   DialogContent,

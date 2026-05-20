@@ -1,12 +1,17 @@
 import type { NextRequest } from 'next/server'
 
 import { createGateway } from '@ai-sdk/gateway'
-import { generateText, streamText, type ModelMessage } from 'ai'
+import { generateText, stepCountIs, streamText, type ModelMessage } from 'ai'
 import { NextResponse } from 'next/server'
 
-import { DEFAULT_CHAT_MODEL } from '@/lib/models'
-import { categorizeError } from '@/lib/api-errors'
-import { ChatRequestSchema } from '@/lib/api-schemas'
+import { DEFAULT_CHAT_MODEL } from '@/shared/models'
+import { categorizeError } from '@/shared/api-errors'
+import { ChatRequestSchema } from '@/shared/api-schemas'
+import {
+  buildWebSearchTool,
+  isWebSearchConfigured,
+  type WebSearchLog,
+} from '@/server/skills/web-search'
 
 interface FileSummary {
   name: string
@@ -16,14 +21,12 @@ interface FileSummary {
   text?: string
   /** True when `text` was cut to fit the extraction budget. */
   truncated?: boolean
-}
-
-interface ChatRequestBody {
-  messages: ModelMessage[]
-  model?: string
-  files?: FileSummary[]
-  /** Optional per-workspace prompt, prepended to the base system instruction. */
-  workspaceSystemPrompt?: string
+  /**
+   * Coarse content kind reported by /api/extract — 'pdf', 'docx', 'code',
+   * 'spreadsheet', etc. Used to label the per-file header so the model
+   * knows what flavour of text it's looking at.
+   */
+  kind?: string
 }
 
 // Soft cap on combined inline text across all attachments, to keep prompts
@@ -39,9 +42,12 @@ function formatBytes(bytes: number): string {
 
 function buildSystemPrompt(
   files: FileSummary[] | undefined,
-  workspaceSystemPrompt?: string
+  workspaceSystemPrompt?: string,
+  /** Skill ids the user has effectively enabled for this turn. */
+  enabledSkills?: string[]
 ): string {
   const trimmedWorkspace = workspaceSystemPrompt?.trim()
+  const skillsLine = buildSkillsNote(enabledSkills ?? [])
   // Workspace prompt goes first so user-set persona/style instructions take
   // precedence over our generic guidance. The base instructions then nudge the
   // model toward Markdown formatting (which the chat bubble now renders).
@@ -49,6 +55,7 @@ function buildSystemPrompt(
     trimmedWorkspace,
     'You are a helpful chat assistant inside the Hummingbird app. ' +
       'Answer concisely and use Markdown formatting when useful.',
+    skillsLine,
   ]
     .filter(Boolean)
     .join('\n\n')
@@ -61,12 +68,20 @@ function buildSystemPrompt(
   let prompt = base
   let used = 0
 
+  const pdfNames = withText.filter((f) => f.kind === 'pdf').map((f) => f.name)
+
   if (withText.length > 0) {
     prompt +=
       '\n\nThe user has attached these files. Their extracted text follows. Treat them as authoritative context for any question that references them.'
+    if (pdfNames.length > 0) {
+      prompt +=
+        ' When you reference content from a PDF, cite the page number inline using the marker `[p.N]` (e.g. "the discount applies after 30 days [p.4]"). The user can click these markers to open the PDF at that page.' +
+        ` PDFs attached: ${pdfNames.map((n) => `"${n}"`).join(', ')}.`
+    }
     for (const f of withText) {
       const truncatedNote = f.truncated ? ' (per-file truncated at extraction)' : ''
-      const header = `\n\n--- ${f.name}${truncatedNote} ---\n`
+      const kindNote = f.kind ? ` (${f.kind})` : ''
+      const header = `\n\n--- ${f.name}${kindNote}${truncatedNote} ---\n`
       const remaining = TOTAL_ATTACHMENT_BUDGET - used
       if (remaining <= 0) {
         prompt += `\n\n[Additional file omitted to fit budget: ${f.name}]`
@@ -87,6 +102,29 @@ function buildSystemPrompt(
   }
 
   return prompt
+}
+
+function buildSkillsNote(enabledSkills: string[]): string | null {
+  if (enabledSkills.length === 0) return null
+  const notes: string[] = []
+  if (enabledSkills.includes('webSearch')) {
+    if (isWebSearchConfigured()) {
+      notes.push(
+        'You can call `webSearch({ query })` when the user asks about current information ' +
+          'or facts you may not have. Cite sources using bracket markers `[1]`, `[2]`, etc. ' +
+          'placed inline at the end of the sentence they support, matching the order results ' +
+          'were returned in the most recent webSearch result. Do not repeat the URL in the ' +
+          'text — the UI renders `[N]` as a clickable link to source N.'
+      )
+    } else {
+      notes.push(
+        'The user enabled "Web search" but the server is not configured (no TAVILY_API_KEY). ' +
+          'You cannot actually search — say so briefly and answer from training data instead.'
+      )
+    }
+  }
+  if (notes.length === 0) return null
+  return `Available capabilities:\n${notes.map((n) => `- ${n}`).join('\n')}`
 }
 
 const SUGGESTION_MODEL = 'google/gemini-2.5-flash'
@@ -193,16 +231,37 @@ export async function POST(req: NextRequest) {
 
   const gateway = createGateway({ apiKey })
   const modelId = body.model || DEFAULT_CHAT_MODEL
+  const enabledSkillIds = (body.skills ?? []).map((s) => s.id)
+
+  // Build the tool map from enabled skills. A skill that needs server config
+  // (e.g. TAVILY_API_KEY) returns null when unconfigured — we skip it in the
+  // tool map and the system prompt note tells the model to fall back.
+  const webSearchLog: WebSearchLog = []
+  const tools: Record<string, unknown> = {}
+  if (enabledSkillIds.includes('webSearch')) {
+    const t = buildWebSearchTool(webSearchLog)
+    if (t) tools.webSearch = t
+  }
 
   try {
     const result = streamText({
       abortSignal: req.signal,
       model: gateway(modelId),
-      system: buildSystemPrompt(body.files, body.workspaceSystemPrompt),
+      system: buildSystemPrompt(body.files, body.workspaceSystemPrompt, enabledSkillIds),
       // Cast back: Zod validates the outer shape (role + content union),
       // but the AI SDK's ModelMessage uses tighter inner-part discriminants
       // than the schema's structural fallback. Trust the schema validation.
       messages: body.messages as ModelMessage[],
+      // Only pass `tools` when non-empty — some providers reject the field
+      // when present-but-empty. Default stop condition is `stepCountIs(1)`
+      // which would prevent the model from continuing after a tool call;
+      // bump it so it can call a tool, read the result, and answer.
+      ...(Object.keys(tools).length > 0
+        ? {
+            tools: tools as Parameters<typeof streamText>[0]['tools'],
+            stopWhen: stepCountIs(5),
+          }
+        : {}),
     })
 
     // Re-emit `fullStream` as a small SSE protocol so the client can keep
@@ -234,6 +293,51 @@ export async function POST(req: NextRequest) {
                 ?? (part as { text?: string }).text
                 ?? ''
               if (delta) send({ type: 'reasoning', value: delta })
+            } else if (part.type === 'tool-call') {
+              // Surface the call so the UI can show "Searching the web for X…".
+              // We trust the tool definitions to produce a small input object.
+              const p = part as { toolCallId?: string; toolName?: string; input?: unknown }
+              send({
+                type: 'tool_call',
+                id: p.toolCallId ?? '',
+                name: p.toolName ?? '',
+                args: p.input ?? {},
+              })
+            } else if (part.type === 'tool-result') {
+              const p = part as { toolCallId?: string; toolName?: string; output?: unknown }
+              // Compute a short summary string the UI can display instead of
+              // raw JSON. Avoids leaking large result payloads onto the wire.
+              let summary = 'done'
+              let results: Array<{ title: string; url: string; snippet: string }> | undefined
+              const output = p.output as
+                | { results?: Array<{ title?: unknown; url?: unknown; snippet?: unknown }>; error?: string }
+                | undefined
+              if (output?.error) {
+                summary = output.error
+              } else if (Array.isArray(output?.results)) {
+                const n = output.results.length
+                summary = `${n} result${n === 1 ? '' : 's'}`
+                // Pass results through to the client for the Sources strip
+                // and `[N]` citation markers. Only webSearch produces this
+                // shape; other tools without a `results` array fall through
+                // to the bare summary.
+                if (p.toolName === 'webSearch') {
+                  results = output.results
+                    .map((r) => ({
+                      title: typeof r?.title === 'string' ? r.title : '',
+                      url: typeof r?.url === 'string' ? r.url : '',
+                      snippet: typeof r?.snippet === 'string' ? r.snippet : '',
+                    }))
+                    .filter((r) => r.url) // drop malformed entries
+                }
+              }
+              send({
+                type: 'tool_result',
+                id: p.toolCallId ?? '',
+                name: p.toolName ?? '',
+                summary,
+                ...(results ? { results } : {}),
+              })
             } else if (part.type === 'error') {
               const { code, message } = categorizeError(
                 (part as { error?: unknown }).error
@@ -242,6 +346,13 @@ export async function POST(req: NextRequest) {
               send({ type: 'error', code, message })
             }
           }
+
+          // The previous markdown footer is now superseded by the
+          // first-class tool_calls record on the message — the client
+          // collects tool_call / tool_result frames and persists them
+          // on the message via setMessageToolCalls. Keeps the message
+          // text clean (Copy / Export don't include the footer) and
+          // lets us render the pretty pill on reload.
 
           // Best-effort follow-up suggestions. Only when the stream produced
           // a real answer (skip on error / aborted / empty). Runs after the

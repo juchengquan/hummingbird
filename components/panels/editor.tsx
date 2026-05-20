@@ -11,9 +11,11 @@ import type { MyEditor } from "@/components/editor/editor-kit"
 import { EditorKit } from "@/components/editor/editor-kit"
 import { Editor, EditorContainer } from "@/components/ui/editor"
 import { Button } from "@/components/ui/button"
-import { copyText, downloadAsFile, safeFilename } from "@/lib/export"
-import { useStore, useActiveConversationDocument } from "@/lib/hooks/use-store"
-import { cn } from "@/lib/utils"
+import { copyText, downloadAsFile, safeFilename } from "@/client/export"
+import { useStore, useActiveConversationDocument } from "@/client/hooks/use-store"
+import { cn } from "@/shared/utils"
+import { SidebarTrigger } from "@/components/ui/sidebar"
+import { ResourcesSidebar } from "@/components/sidebars/resources"
 
 const emptyValue: Value = [
   {
@@ -173,37 +175,54 @@ export function EditorPanel() {
   }
 
   return (
-    <div className="h-full w-full">
-      <div className="h-full border-r-2 relative">
-        <div className="absolute top-2 right-4 z-10 flex items-center gap-2">
-          <SaveIndicator state={saveState} />
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleCopyMarkdown}
-            className="gap-2"
-            aria-label="Copy as Markdown"
-          >
-            <Copy size={14} />
-            <span className="hidden sm:inline">Copy</span>
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleExportMarkdown}
-            className="gap-2"
-            aria-label="Export as Markdown"
-          >
-            <Download size={14} />
-            <span className="hidden sm:inline">Export</span>
-          </Button>
+    <div className="flex h-full">
+      {/* Editor column — mirrors the chat layout so the right rail sits
+          beside it the same way. */}
+      <div className="flex flex-col flex-1 min-w-0 min-h-0 relative">
+        {/* Mobile-only: surface the SidebarTrigger here too — the editor
+            view has no header otherwise, so on phones there's no way back
+            to the left sidebar without it. */}
+        <div className="md:hidden absolute top-2 left-2 z-10">
+          <SidebarTrigger />
         </div>
-        <Plate editor={editor} onChange={handleEditorChange}>
-          <EditorContainer variant="default" className="h-[100vh]">
-            <Editor />
-          </EditorContainer>
-        </Plate>
+        {/* Centered editor — same max width as chat (`max-w-5xl`) so
+            switching between the two views doesn't reflow the reading
+            measure. The toolbar sits inside this column so it tracks the
+            editor's right edge, not the panel's. */}
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <div className="max-w-5xl mx-auto h-full relative">
+            <div className="absolute top-2 right-4 z-10 flex items-center gap-2">
+              <SaveIndicator state={saveState} />
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleCopyMarkdown}
+                className="gap-2"
+                aria-label="Copy as Markdown"
+              >
+                <Copy size={14} />
+                <span className="hidden sm:inline">Copy</span>
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleExportMarkdown}
+                className="gap-2"
+                aria-label="Export as Markdown"
+              >
+                <Download size={14} />
+                <span className="hidden sm:inline">Export</span>
+              </Button>
+            </div>
+            <Plate editor={editor} onChange={handleEditorChange}>
+              <EditorContainer variant="default" className="h-full">
+                <Editor />
+              </EditorContainer>
+            </Plate>
+          </div>
+        </div>
       </div>
+      <ResourcesSidebar />
     </div>
   )
 }

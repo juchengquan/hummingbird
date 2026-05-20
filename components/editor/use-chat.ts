@@ -19,6 +19,7 @@ import { type PlateEditor, useEditorRef, usePluginOption } from 'platejs/react';
 import { toast } from 'sonner';
 
 import { aiChatPlugin } from '@/components/editor/plugins/ai-kit';
+import { apiUrls } from '@/client/api-client';
 
 import { discussionPlugin } from './plugins/discussion-kit';
 import { withAIBatch } from '@platejs/ai';
@@ -68,7 +69,7 @@ export const useChat = () => {
   const baseChat = useBaseChat<ChatMessage>({
     id: 'editor',
     transport: new DefaultChatTransport({
-      api: options.api || '/api/ai/command',
+      api: options.api || apiUrls.aiCommand(),
       // Mock the API response. Remove it when you implement the route /api/ai/command
       fetch: (async (input, init) => {
         const bodyOptions = editor.getOptions(aiChatPlugin).chatOptions?.body;
@@ -296,7 +297,7 @@ export const useChat = () => {
 
   React.useEffect(() => {
     editor.setOption(AIChatPlugin, 'chat', chat as any);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, [chat.status, chat.messages, chat.error]);
 
   return chat;

@@ -1,8 +1,8 @@
 "use client"
 
 import { Loader2, AlertCircle, FileQuestion, Scissors } from "lucide-react"
-import { cn } from "@/lib/utils"
-import type { UploadedFile } from "@/lib/types"
+import { cn } from "@/shared/utils"
+import type { UploadedFile } from "@/shared/types"
 
 interface ExtractionStatusBadgeProps {
   file: UploadedFile

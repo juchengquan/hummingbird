@@ -1,5 +1,5 @@
 'use client';
-/* eslint-disable react-hooks/refs -- Ref usage for color picker component refs */
+
 
 import React from 'react';
 
@@ -26,7 +26,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { cn } from '@/lib/utils';
+import { cn } from '@/shared/utils';
 
 import { ToolbarButton, ToolbarMenuGroup } from './toolbar';
 
@@ -231,7 +231,7 @@ function ColorCustom({
     [customColor, customColors]
   );
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+
   const updateCustomColorDebounced = React.useCallback(
     debounce(updateCustomColor, 100),
     [updateCustomColor]

@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect } from "react"
-import { useStore } from "@/lib/hooks/use-store"
+import { useStore } from "@/client/hooks/use-store"
 
 /**
  * Reads the store's `theme` value and toggles the `.dark` class on

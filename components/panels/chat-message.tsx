@@ -1,18 +1,22 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
-import type { Message, MessageError } from "@/lib/types"
+import { memo, useState, useRef, useEffect } from "react"
+import type { Message } from "@/shared/types"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { Copy, Pencil, Trash2, RotateCcw, Check, X, Bookmark, AlertTriangle, ChevronDown, Archive, Send } from "lucide-react"
+import { Copy, Pencil, Trash2, RotateCcw, Check, X, Bookmark, Archive, Send, GitBranch } from "lucide-react"
 import { toast } from "sonner"
-import { cn } from "@/lib/utils"
-import { copyText } from "@/lib/export"
-import { extractCodeBlocks } from "@/lib/code-blocks"
+import { cn } from "@/shared/utils"
+import { copyText } from "@/client/export"
+import { extractCodeBlocks } from "@/shared/code-blocks"
 import { MarkdownPreview } from "@/components/markdown-preview"
+import { ToolCallStrip, type LiveToolCall } from "@/components/skills/tool-call-strip"
 import { MessageAttachments } from "@/components/panels/message-attachments"
-import { useStore, useMessageBookmark } from "@/lib/hooks/use-store"
-import type { ArtifactKind } from "@/lib/types"
+import { ReasoningBlock } from "@/components/panels/reasoning-block"
+import { SourcesStrip } from "@/components/panels/sources-strip"
+import { ErrorBubble } from "@/components/panels/error-bubble"
+import { useStore, useMessageBookmark } from "@/client/hooks/use-store"
+import type { ArtifactKind } from "@/shared/types"
 import {
   SaveArtifactDialog,
   type DetectedBlock,
@@ -38,85 +42,6 @@ function MessageTime({ timestamp }: { timestamp: Date | string }) {
   return <>{time}</>
 }
 
-function ReasoningBlock({
-  reasoning,
-  /** The assistant message's `content`. When non-empty, the model has
-   *  moved on from reasoning to the answer — we use this transition to
-   *  swap the header label from "Thinking…" to "Reasoning". */
-  content,
-  streaming,
-}: {
-  reasoning: string
-  content: string
-  /** When true (the message has reasoning but no content yet), open by default
-   *  so the user sees the model is actively thinking. */
-  streaming: boolean
-}) {
-  const [open, setOpen] = useState(streaming)
-
-  // Re-open automatically when a new streaming session begins.
-  useEffect(() => {
-    if (streaming) setOpen(true)
-  }, [streaming])
-
-  const isLive = streaming && !content
-
-  const handleCopy = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    void copyText(reasoning)
-    toast.success("Reasoning copied")
-  }
-
-  return (
-    <div className="group/reasoning mb-2 text-[var(--muted-foreground)]">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 px-2 py-1 text-xs hover:bg-[var(--accent)]/50 rounded-md transition-colors min-w-0"
-        aria-expanded={open}
-      >
-        <span className="shrink-0">{isLive ? "Thinking…" : "Reasoning"}</span>
-        {isLive && (
-          <span
-            aria-hidden
-            className="inline-block w-1.5 h-1.5 rounded-full bg-[var(--muted-foreground)] animate-pulse shrink-0"
-          />
-        )}
-        <ChevronDown
-          size={12}
-          className={cn("transition-transform shrink-0", !open && "-rotate-90")}
-        />
-      </button>
-      <div
-        className={cn(
-          "grid transition-[grid-template-rows] duration-200 ease-out",
-          open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
-        )}
-      >
-        <div className="overflow-hidden">
-          <div className="relative px-2 pb-2 pt-1 max-h-[40vh] overflow-y-auto">
-            <div className="sticky top-1 z-10 flex justify-end -mb-7 pr-2 pointer-events-none">
-              <button
-                type="button"
-                onClick={handleCopy}
-                aria-label="Copy reasoning"
-                title="Copy reasoning"
-                className="pointer-events-auto p-1 rounded bg-[var(--background)]/80 backdrop-blur-sm opacity-0 group-hover/reasoning:opacity-100 focus-visible:opacity-100 hover:bg-[var(--accent)]/50 transition-opacity"
-              >
-                <Copy size={12} />
-              </button>
-            </div>
-            <MarkdownPreview
-              content={reasoning}
-              className="text-xs opacity-90 pr-7 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
-            />
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 interface ChatMessageProps {
   message: Message
   index: number
@@ -126,126 +51,52 @@ interface ChatMessageProps {
   onDelete: (messageId: string) => void
   onEditUserMessage: (messageId: string, newContent: string) => void
   onRegenerateAssistantMessage: (messageId: string) => void
+  /** Branch the conversation at this message — creates a sibling chat starting from this point. */
+  onForkFromMessage?: (messageId: string) => void
   onRetryError?: (messageId: string) => void
-  onChangeModel?: () => void
+  onChangeModel?: (messageId?: string) => void
+  /** Retry with a different model in one click. Wired by chat.tsx for invalid_model / provider errors. */
+  onTryFallback?: (messageId: string, modelId: string) => void
   onPickSuggestion?: (text: string) => void
+  /** Live tool-call pills rendered above the assistant text during a stream. Cleared on `done`. */
+  liveToolCalls?: LiveToolCall[]
+  /** Resolved by the parent: the PDF this assistant message is citing via `[p.N]` markers. */
+  pdfCitationFileId?: string
 }
 
-const ERROR_TITLES: Record<string, string> = {
-  auth: "Authentication failed",
-  rate_limit: "Rate limited",
-  invalid_model: "Model unavailable",
-  provider: "Provider error",
-  network: "Network error",
-  unknown: "Something went wrong",
-}
-
-function ErrorBubble({
-  error,
-  partialContent,
-  onRetry,
-  onChangeModel,
-  onDelete,
-}: {
-  error: MessageError
-  partialContent: string
-  onRetry: () => void
-  onChangeModel?: () => void
-  onDelete: () => void
-}) {
-  const [showDetails, setShowDetails] = useState(false)
-  const title = ERROR_TITLES[error.code] ?? ERROR_TITLES.unknown
-  return (
-    <div className="rounded-lg border border-[var(--destructive)]/40 bg-[var(--destructive)]/5 px-4 py-3 max-w-[90%] space-y-2">
-      {partialContent && (
-        <p className="text-sm whitespace-pre-wrap text-[var(--foreground)]">
-          {partialContent}
-        </p>
-      )}
-      <div className="flex items-start gap-2">
-        <AlertTriangle size={14} className="text-[var(--destructive)] mt-0.5 shrink-0" />
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-[var(--destructive)]">{title}</p>
-          {error.detail && (
-            <p className="text-xs text-[var(--muted-foreground)] mt-0.5 break-words">
-              {error.detail}
-            </p>
-          )}
-        </div>
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        <Button size="sm" variant="secondary" onClick={onRetry} className="h-7 gap-1.5 text-xs">
-          <RotateCcw size={12} />
-          Retry
-        </Button>
-        {onChangeModel && error.code !== "network" && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={onChangeModel}
-            className="h-7 gap-1.5 text-xs"
-          >
-            Change model
-          </Button>
-        )}
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={onDelete}
-          className="h-7 gap-1.5 text-xs text-[var(--muted-foreground)]"
-        >
-          Dismiss
-        </Button>
-        {(error.status !== undefined || error.model) && (
-          <button
-            type="button"
-            onClick={() => setShowDetails((v) => !v)}
-            className="ml-auto inline-flex items-center gap-1 text-[10px] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-          >
-            Details
-            <ChevronDown
-              size={10}
-              className={cn("transition-transform", showDetails && "rotate-180")}
-            />
-          </button>
-        )}
-      </div>
-      {showDetails && (
-        <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 text-[10px] text-[var(--muted-foreground)] pt-1 border-t border-[var(--destructive)]/20">
-          <dt>Code</dt>
-          <dd className="font-mono">{error.code}</dd>
-          {error.status !== undefined && (
-            <>
-              <dt>HTTP</dt>
-              <dd className="font-mono">{error.status}</dd>
-            </>
-          )}
-          {error.model && (
-            <>
-              <dt>Model</dt>
-              <dd className="font-mono break-all">{error.model}</dd>
-            </>
-          )}
-        </dl>
-      )}
-    </div>
-  )
-}
-
-export function ChatMessage({
+function ChatMessageImpl({
   message,
   index,
   isLastAssistant = false,
   onDelete,
   onEditUserMessage,
   onRegenerateAssistantMessage,
+  onForkFromMessage,
   onRetryError,
   onChangeModel,
+  onTryFallback,
   onPickSuggestion,
+  liveToolCalls,
+  pdfCitationFileId,
 }: ChatMessageProps) {
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState(message.content)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  // Track which `[N]` citation the user just clicked so the SourcesStrip
+  // can scroll-and-flash the matching card. Local state — the strip
+  // observes the value, scrolls, flashes for 1.2s, then we're done.
+  const [highlightedCitation, setHighlightedCitation] = useState<number | null>(null)
+
+  // Derive the persisted webSearch results (if any) for the Sources
+  // strip + `[N]` citation markers. We only thread through the
+  // *persisted* tool calls — `liveToolCalls` is the in-flight buffer
+  // used by the small status pill above, not for the final source list.
+  const webSearchResults = (() => {
+    const webCall = message.toolCalls?.find(
+      (t) => t.name === "webSearch" && t.results && t.results.length > 0
+    )
+    return webCall?.results ?? null
+  })()
 
   useEffect(() => {
     if (isEditing && textareaRef.current) {
@@ -403,7 +254,8 @@ export function ChatMessage({
             error={message.error}
             partialContent={message.content}
             onRetry={() => onRetryError?.(message.id)}
-            onChangeModel={onChangeModel}
+            onChangeModel={() => onChangeModel?.(message.id)}
+            onTryFallback={(modelId) => onTryFallback?.(message.id, modelId)}
             onDelete={() => onDelete(message.id)}
           />
         ) : (
@@ -415,6 +267,11 @@ export function ChatMessage({
                 ? "rounded-lg px-4 py-2 bg-[var(--user-bubble)] text-[var(--user-bubble-foreground)]"
                 : "text-[var(--foreground)]"
             )}
+            // Selection-driven actions (Explain / Quote) scope themselves
+            // to assistant messages by matching this attribute. User
+            // bubbles are intentionally excluded — selecting your own
+            // text and asking the model to explain it would be weird.
+            {...(!isUser ? { "data-selection-scope": `message-${message.id}` } : {})}
           >
             {isEditing ? (
               <div className="flex flex-col gap-2">
@@ -458,15 +315,40 @@ export function ChatMessage({
                     reasoning={message.reasoning}
                     content={message.content}
                     streaming={!message.content}
+                    durationMs={message.reasoningDurationMs}
                   />
                 )}
+                {!isUser && (liveToolCalls?.length || message.toolCalls?.length) ? (
+                  <ToolCallStrip
+                    calls={
+                      liveToolCalls && liveToolCalls.length > 0
+                        ? liveToolCalls
+                        : (message.toolCalls ?? []).map((t) => ({
+                            id: t.id,
+                            name: t.name,
+                            argsLabel: t.argsLabel,
+                            summary: t.summary,
+                            status: "done" as const,
+                          }))
+                    }
+                  />
+                ) : null}
                 {!isUser && message.content ? (
                   <MarkdownPreview
                     content={message.content}
-                    className="markdown-chat-bubble text-sm p-0 overflow-visible"
+                    className="markdown-chat-bubble text-[15px] p-0 overflow-visible"
+                    pdfCitationFileId={pdfCitationFileId}
+                    sourceCount={webSearchResults?.length ?? 0}
+                    onSourceClick={(idx) => setHighlightedCitation(idx)}
                   />
                 ) : (
-                  <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                  <p className="text-[15px] whitespace-pre-wrap">{message.content}</p>
+                )}
+                {!isUser && webSearchResults && webSearchResults.length > 0 && (
+                  <SourcesStrip
+                    results={webSearchResults}
+                    highlightedIndex={highlightedCitation}
+                  />
                 )}
                 {isUser &&
                   message.attachedFileIds &&
@@ -476,16 +358,6 @@ export function ChatMessage({
                       align="end"
                     />
                   )}
-                <p
-                  className={cn(
-                    "text-xs mt-1 opacity-60",
-                    isUser
-                      ? "text-[var(--user-bubble-foreground)]"
-                      : "text-[var(--muted-foreground)]"
-                  )}
-                >
-                  <MessageTime timestamp={message.timestamp} />
-                </p>
               </>
             )}
           </div>
@@ -493,13 +365,21 @@ export function ChatMessage({
           {!isEditing && (
             <div
               className={cn(
-                "flex gap-0.5 mt-1 transition-opacity",
-                isBookmarked
-                  ? "opacity-100"
-                  : "opacity-0 group-hover/message:opacity-100",
+                "flex items-center gap-1 mt-1",
                 isUser ? "flex-row-reverse" : "flex-row"
               )}
             >
+              {/* Actions cluster — sits at the bubble side (outer edge of
+                  the row). flex-row-reverse on user messages flips the
+                  visual order so actions stay anchored to the bubble. */}
+              <div
+                className={cn(
+                  "flex gap-0.5 transition-opacity",
+                  isBookmarked
+                    ? "opacity-100"
+                    : "opacity-0 group-hover/message:opacity-100"
+                )}
+              >
               <Button
                 variant="ghost"
                 size="icon"
@@ -560,6 +440,18 @@ export function ChatMessage({
                   >
                     <RotateCcw size={14} />
                   </Button>
+                  {onForkFromMessage && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => onForkFromMessage(message.id)}
+                      className="h-7 w-7"
+                      aria-label="Branch from here"
+                      title="Branch from here — start a new chat copied up to this message"
+                    >
+                      <GitBranch size={14} />
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="icon"
@@ -582,6 +474,20 @@ export function ChatMessage({
               >
                 <Trash2 size={14} />
               </Button>
+              </div>
+              {/* Timestamp — sits next to (inner-side of) the action
+                  cluster so it doesn't anchor at the bubble's outer edge.
+                  Same hover-reveal as the actions. */}
+              <p
+                className={cn(
+                  "text-xs text-[var(--muted-foreground)] px-1 transition-opacity",
+                  isBookmarked
+                    ? "opacity-60"
+                    : "opacity-0 group-hover/message:opacity-60"
+                )}
+              >
+                <MessageTime timestamp={message.timestamp} />
+              </p>
             </div>
           )}
           {!isUser &&
@@ -619,3 +525,13 @@ export function ChatMessage({
     </div>
   )
 }
+
+/**
+ * Memoized public export. Long conversations re-render the whole message
+ * list every time the chat panel updates (typing flag, scroll position,
+ * input value). With memo, only messages whose props actually changed
+ * re-render — relies on the parent passing stable callback refs (it
+ * does, via `useCallback` in chat.tsx).
+ */
+export const ChatMessage = memo(ChatMessageImpl)
+ChatMessage.displayName = "ChatMessage"

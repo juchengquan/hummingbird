@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import { FILE_SIZE_LIMIT } from '@/lib/upload-config'
+import { FILE_SIZE_LIMIT } from '@/shared/upload-config'
 
 // Keep extracted-text budget aligned with the client constant.
 const EXTRACTION_BUDGET = 32 * 1024
@@ -10,9 +10,64 @@ export const runtime = 'nodejs'
 export const maxDuration = 30
 
 interface ExtractionResponse {
-  kind: 'pdf' | 'docx' | 'markdown' | 'csv' | 'json' | 'text' | 'image' | 'unsupported'
+  kind:
+    | 'pdf'
+    | 'docx'
+    | 'markdown'
+    | 'csv'
+    | 'json'
+    | 'text'
+    | 'image'
+    | 'html'
+    | 'code'
+    | 'spreadsheet'
+    | 'unsupported'
   text: string
   truncated: boolean
+  /** Detected source language for `code` kind (e.g. 'tsx', 'python'). */
+  language?: string
+}
+
+// Code files get a wider window than prose — 64 KB. Source files routinely
+// blow past the prose budget without being long-form content.
+const CODE_BUDGET = 64 * 1024
+
+function truncateTo(text: string, budget: number): { text: string; truncated: boolean } {
+  if (text.length <= budget) return { text, truncated: false }
+  return { text: text.slice(0, budget), truncated: true }
+}
+
+const CODE_EXTENSIONS: Record<string, string> = {
+  '.ts': 'typescript',
+  '.tsx': 'tsx',
+  '.js': 'javascript',
+  '.jsx': 'jsx',
+  '.py': 'python',
+  '.rb': 'ruby',
+  '.go': 'go',
+  '.rs': 'rust',
+  '.java': 'java',
+  '.c': 'c',
+  '.h': 'c',
+  '.cpp': 'cpp',
+  '.cc': 'cpp',
+  '.cs': 'csharp',
+  '.swift': 'swift',
+  '.kt': 'kotlin',
+  '.sh': 'shell',
+  '.bash': 'shell',
+  '.sql': 'sql',
+  '.yaml': 'yaml',
+  '.yml': 'yaml',
+  '.toml': 'toml',
+}
+
+function codeLanguageFor(name: string): string | null {
+  const lower = name.toLowerCase()
+  for (const ext of Object.keys(CODE_EXTENSIONS)) {
+    if (lower.endsWith(ext)) return CODE_EXTENSIONS[ext]
+  }
+  return null
 }
 
 function truncate(text: string): { text: string; truncated: boolean } {
@@ -90,6 +145,64 @@ export async function POST(req: NextRequest) {
       const result = await mammoth.extractRawText({ buffer })
       const { text, truncated } = truncate(result.value ?? '')
       return NextResponse.json<ExtractionResponse>({ kind: 'docx', text, truncated })
+    }
+
+    // HTML — strip tags, keep visible text. We use a streaming HTML parser
+    // rather than a naïve regex so script/style content gets cleanly removed
+    // and entities decode.
+    if (type === 'text/html' || hasName(name, '.html', '.htm')) {
+      const { parse } = await import('node-html-parser')
+      const raw = await file.text()
+      const root = parse(raw, {
+        comment: false,
+        blockTextElements: { script: false, noscript: false, style: false, pre: true },
+      })
+      const visible = root.text.replace(/\s+/g, ' ').trim()
+      const { text, truncated } = truncate(visible)
+      return NextResponse.json<ExtractionResponse>({ kind: 'html', text, truncated })
+    }
+
+    // Code files — treat as plain text with a wider budget and a detected
+    // language tag the chat route can surface in the per-file header.
+    {
+      const language = codeLanguageFor(name)
+      if (language) {
+        const raw = await file.text()
+        const { text, truncated } = truncateTo(raw, CODE_BUDGET)
+        return NextResponse.json<ExtractionResponse>({
+          kind: 'code',
+          text,
+          truncated,
+          language,
+        })
+      }
+    }
+
+    // XLSX — emit one labelled CSV block per sheet. `xlsx` is ~600 KB but
+    // dynamic-imported, so it never touches the main bundle.
+    if (
+      type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      type === 'application/vnd.ms-excel' ||
+      hasName(name, '.xlsx', '.xls')
+    ) {
+      const XLSX = await import('xlsx')
+      const buffer = Buffer.from(await file.arrayBuffer())
+      const workbook = XLSX.read(buffer, { type: 'buffer' })
+      const chunks: string[] = []
+      for (const sheetName of workbook.SheetNames) {
+        const sheet = workbook.Sheets[sheetName]
+        if (!sheet) continue
+        const csv = XLSX.utils.sheet_to_csv(sheet)
+        if (!csv.trim()) continue
+        chunks.push(`# Sheet: ${sheetName}\n${csv.trim()}`)
+      }
+      const joined = chunks.join('\n\n')
+      const { text, truncated } = truncate(joined)
+      return NextResponse.json<ExtractionResponse>({
+        kind: 'spreadsheet',
+        text,
+        truncated,
+      })
     }
 
     // Images: the client handles them locally (FileReader → data URL stored

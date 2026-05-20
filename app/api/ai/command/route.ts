@@ -20,8 +20,8 @@ import { type SlateEditor, createSlateEditor, nanoid } from 'platejs';
 import { z } from 'zod';
 
 import { BaseEditorKit } from '@/components/editor/editor-base-kit';
-import { markdownJoinerTransform } from '@/lib/markdown-joiner-transform';
-import { categorizeError } from '@/lib/api-errors';
+import { markdownJoinerTransform } from '@/shared/markdown-joiner-transform';
+import { categorizeError } from '@/shared/api-errors';
 
 import {
   buildEditTableMultiCellPrompt,

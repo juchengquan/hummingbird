@@ -7,6 +7,7 @@ import { CopilotPlugin } from '@platejs/ai/react';
 import { serializeMd, stripMarkdown } from '@platejs/markdown';
 
 import { GhostText } from '@/components/ui/ghost-text';
+import { apiUrls } from '@/client/api-client';
 
 import { MarkdownKit } from './markdown-kit';
 
@@ -15,7 +16,7 @@ export const CopilotKit = [
   CopilotPlugin.configure(({ api }) => ({
     options: {
       completeOptions: {
-        api: '/api/ai/copilot',
+        api: apiUrls.aiCopilot(),
         body: {
           system: `You are an advanced AI writing assistant, similar to VSCode Copilot but for general text. Your task is to predict and generate the next part of the text based on the given context.
   

@@ -1,0 +1,386 @@
+"use client"
+
+import { useEffect, useRef, useState } from "react"
+import {
+  ChevronDown,
+  Pencil,
+  Pin,
+  PinOff,
+  Sparkles,
+  Download,
+  Copy,
+  Check,
+  X,
+  PanelRight,
+  Share2,
+  GitBranch,
+} from "lucide-react"
+import { toast } from "sonner"
+import { Button } from "@/components/ui/button"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { CHAT_MODELS } from "@/shared/models"
+import { SidebarTrigger } from "@/components/ui/sidebar"
+import {
+  useStore,
+  useActiveConversation,
+  useActiveWorkspace,
+} from "@/client/hooks/use-store"
+import {
+  conversationToMarkdown,
+  copyText,
+  downloadAsFile,
+  safeFilename,
+} from "@/client/export"
+import { ConversationSummaryDialog } from "@/components/conversation-summary-dialog"
+import { ContextMeter } from "@/components/panels/context-meter"
+import { ResourcesMobileDrawer } from "@/components/sidebars/resources-mobile-drawer"
+import { ShareDialog } from "@/components/share-dialog"
+import { BranchesDialog } from "@/components/branches-dialog"
+import { cn } from "@/shared/utils"
+
+/**
+ * Top-of-chat header showing the workspace → conversation breadcrumb plus a
+ * compact actions menu. Designed to stay out of the way (light border-bottom,
+ * no fill) while giving the user constant context about *where they are*
+ * and one-click access to the most-used per-conversation actions.
+ *
+ * Renamed in place — click the title (or the Rename menu item) to flip into
+ * an inline input. Esc cancels, Enter / blur saves. Mirrors the sidebar's
+ * rename UX so the muscle memory transfers.
+ */
+interface ChatHeaderProps {
+  /** Current model id. */
+  chatModel: string
+  /** Called when the user picks a model from the header's model select.
+   *  Owned by ChatPanel so it can chain a retry on the pending-error case. */
+  onModelPick: (modelId: string) => void
+  /** Controlled-open state for the model picker (lets ChatPanel pop it open
+   *  programmatically when the user clicks `Change model` on an error). */
+  modelPickerOpen: boolean
+  onModelPickerOpenChange: (open: boolean) => void
+}
+
+export function ChatHeader({
+  chatModel,
+  onModelPick,
+  modelPickerOpen,
+  onModelPickerOpenChange,
+}: ChatHeaderProps) {
+  const workspace = useActiveWorkspace()
+  const conversation = useActiveConversation()
+  const renameConversation = useStore((s) => s.renameConversation)
+  const togglePin = useStore((s) => s.togglePin)
+  const setActiveView = useStore((s) => s.setActiveView)
+
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  const [draftTitle, setDraftTitle] = useState("")
+  const [summaryOpen, setSummaryOpen] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
+  const [branchesOpen, setBranchesOpen] = useState(false)
+  const [mobileResourcesOpen, setMobileResourcesOpen] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (renaming && inputRef.current) {
+      inputRef.current.focus()
+      inputRef.current.select()
+    }
+  }, [renaming])
+
+  if (!conversation) return null
+
+  const startRename = () => {
+    setMenuOpen(false)
+    setDraftTitle(conversation.title)
+    setRenaming(true)
+  }
+  const saveRename = () => {
+    const t = draftTitle.trim()
+    if (t && t !== conversation.title) renameConversation(conversation.id, t)
+    setRenaming(false)
+  }
+  const cancelRename = () => {
+    setDraftTitle(conversation.title)
+    setRenaming(false)
+  }
+
+  const handlePin = () => {
+    setMenuOpen(false)
+    togglePin(conversation.id)
+  }
+
+  const handleSummarise = () => {
+    setMenuOpen(false)
+    setSummaryOpen(true)
+  }
+
+  const handleShare = () => {
+    setMenuOpen(false)
+    setShareOpen(true)
+  }
+
+  const handleBranches = () => {
+    setMenuOpen(false)
+    setBranchesOpen(true)
+  }
+
+  const handleExport = () => {
+    setMenuOpen(false)
+    const md = conversationToMarkdown(conversation)
+    downloadAsFile(`${safeFilename(conversation.title)}.md`, md)
+    toast.success("Conversation exported")
+  }
+
+  const handleCopy = async () => {
+    setMenuOpen(false)
+    try {
+      await copyText(conversationToMarkdown(conversation))
+      toast.success("Copied as Markdown")
+    } catch {
+      toast.error("Failed to copy to clipboard")
+    }
+  }
+
+  return (
+    <>
+      <div className="shrink-0 h-11 flex items-center gap-2 px-4 border-b border-[var(--border)]">
+        {/* Mobile-only: SidebarTrigger lives inside the (closed) left sidebar
+            on mobile, so we surface it here as an always-visible hamburger.
+            md:hidden — desktop has the trigger in the sidebar header where
+            users can already see it. */}
+        <SidebarTrigger className="md:hidden -ml-2" />
+        {/* Breadcrumb — workspace › conversation title */}
+        <div className="flex-1 min-w-0 flex items-center gap-1.5 text-sm">
+          {workspace && (
+            <>
+              <button
+                type="button"
+                onClick={() => setActiveView("workspaces")}
+                className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors truncate max-w-[40%]"
+                title={`Workspace: ${workspace.name}`}
+              >
+                {workspace.name}
+              </button>
+              <span className="text-[var(--muted-foreground)] shrink-0">›</span>
+            </>
+          )}
+          {conversation.pinned && !renaming && (
+            <Pin size={12} className="text-amber-500 shrink-0" />
+          )}
+          {renaming ? (
+            <div className="flex-1 min-w-0 flex items-center gap-1">
+              <input
+                ref={inputRef}
+                value={draftTitle}
+                onChange={(e) => setDraftTitle(e.target.value)}
+                onBlur={saveRename}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveRename()
+                  if (e.key === "Escape") cancelRename()
+                }}
+                className="flex-1 min-w-0 px-1 py-0.5 text-sm bg-background border border-input rounded focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={saveRename}
+                className="h-6 w-6"
+                aria-label="Save"
+              >
+                <Check size={12} />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={cancelRename}
+                className="h-6 w-6"
+                aria-label="Cancel rename"
+              >
+                <X size={12} />
+              </Button>
+            </div>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={startRename}
+                className="font-medium truncate text-[var(--foreground)] hover:text-[var(--foreground)]/80 transition-colors text-left"
+                title="Click to rename"
+              >
+                {conversation.title}
+              </button>
+              {/* Title dropdown — chevron next to the title opens the
+                  conversation actions menu (Summarise, Pin, Export, etc.). */}
+              <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 shrink-0 text-[var(--muted-foreground)]"
+                    aria-label="Conversation actions"
+                  >
+                    <ChevronDown size={14} />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-44 p-1">
+                  <Button
+                    variant="ghost"
+                    onClick={handleSummarise}
+                    className={cn("w-full justify-start gap-2 cursor-pointer")}
+                  >
+                    <Sparkles size={14} />
+                    Summarise
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={handlePin}
+                    className="w-full justify-start gap-2 cursor-pointer"
+                  >
+                    {conversation.pinned ? <PinOff size={14} /> : <Pin size={14} />}
+                    {conversation.pinned ? "Unpin" : "Pin"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={startRename}
+                    className="w-full justify-start gap-2 cursor-pointer"
+                  >
+                    <Pencil size={14} />
+                    Rename
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={handleExport}
+                    className="w-full justify-start gap-2 cursor-pointer"
+                  >
+                    <Download size={14} />
+                    Export as .md
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={handleCopy}
+                    className="w-full justify-start gap-2 cursor-pointer"
+                  >
+                    <Copy size={14} />
+                    Copy as Markdown
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={handleBranches}
+                    className="w-full justify-start gap-2 cursor-pointer"
+                  >
+                    <GitBranch size={14} />
+                    Branches
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={handleShare}
+                    className="w-full justify-start gap-2 cursor-pointer"
+                  >
+                    <Share2 size={14} />
+                    Share…
+                  </Button>
+                </PopoverContent>
+              </Popover>
+            </>
+          )}
+        </div>
+
+        {/* Context-window meter — hides when there are no messages yet
+            or the model is unknown. Sits to the left of the model picker
+            so the user sees `used / total` alongside the model name. */}
+        {!renaming && (
+          <ContextMeter
+            messages={conversation.messages}
+            modelId={chatModel}
+          />
+        )}
+
+        {/* Model picker — moved here from the input bar so the bar can stay
+            focused on text entry. ChatPanel owns the state so it can pop
+            this open programmatically (e.g. when the user clicks
+            `Change model` on an error). */}
+        {!renaming && (
+          <Select
+            value={chatModel}
+            onValueChange={onModelPick}
+            open={modelPickerOpen}
+            onOpenChange={onModelPickerOpenChange}
+          >
+            <SelectTrigger
+              size="sm"
+              className="h-7 text-xs gap-1 border-none bg-transparent hover:bg-[var(--secondary)] shrink-0 max-w-[180px]"
+              aria-label="Model"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              {Object.entries(
+                CHAT_MODELS.reduce<Record<string, typeof CHAT_MODELS>>((acc, m) => {
+                  if (!acc[m.provider]) acc[m.provider] = []
+                  acc[m.provider].push(m)
+                  return acc
+                }, {})
+              ).map(([provider, models]) => (
+                <SelectGroup key={provider}>
+                  <SelectLabel>{provider}</SelectLabel>
+                  {models.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
+        {/* Actions */}
+        {!renaming && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setMobileResourcesOpen(true)}
+            className="h-7 w-7 shrink-0 text-[var(--muted-foreground)] lg:hidden"
+            aria-label="Open resources panel"
+            title="Resources"
+          >
+            <PanelRight size={14} />
+          </Button>
+        )}
+      </div>
+
+      <ConversationSummaryDialog
+        conversation={summaryOpen ? conversation : null}
+        onClose={() => setSummaryOpen(false)}
+      />
+      <ShareDialog
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+        conversationId={conversation.id}
+      />
+      <BranchesDialog
+        open={branchesOpen}
+        onOpenChange={setBranchesOpen}
+        anchorConversationId={conversation.id}
+      />
+      <ResourcesMobileDrawer
+        open={mobileResourcesOpen}
+        onOpenChange={setMobileResourcesOpen}
+      />
+    </>
+  )
+}

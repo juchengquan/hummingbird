@@ -12,6 +12,7 @@ import { getPluginType, KEYS, PathApi } from 'platejs';
 import { usePluginOption } from 'platejs/react';
 
 import { AILoadingBar, AIMenu } from '@/components/ui/ai-menu';
+import { apiUrls } from '@/client/api-client';
 import { AIAnchorElement, AILeaf } from '@/components/ui/ai-node';
 
 import { useChat } from '../use-chat';
@@ -21,7 +22,7 @@ import { MarkdownKit } from './markdown-kit';
 export const aiChatPlugin = AIChatPlugin.extend({
   options: {
     chatOptions: {
-      api: '/api/ai/command',
+      api: apiUrls.aiCommand(),
       body: {},
     },
   },

@@ -1,6 +1,5 @@
 "use client"
 
-import { useState, useEffect } from "react"
 import dynamic from "next/dynamic"
 import { Toaster } from "sonner"
 import { AppSidebar } from "@/components/sidebars/application"
@@ -8,13 +7,14 @@ import { ChatPanel } from "@/components/panels/chat"
 import { ResourcePanel } from "@/components/panels/sources"
 import { WorkspacesPanel } from "@/components/panels/workspaces"
 import { CommandPalette } from "@/components/command-palette"
+import { PdfViewerHost } from "@/components/pdf-viewer/pdf-viewer"
 import {
   SidebarInset,
   SidebarProvider,
 } from "@/components/ui/sidebar"
-import { useStore } from "@/lib/hooks/use-store"
-import { useSync } from "@/lib/hooks/use-sync"
-import { useReconcile } from "@/lib/hooks/use-reconcile"
+import { useHydrated, useStore } from "@/client/hooks/use-store"
+import { useSync } from "@/client/hooks/use-sync"
+import { useReconcile } from "@/client/hooks/use-reconcile"
 import { ReconcileDialog } from "@/components/auth/reconcile-dialog"
 
 // Plate.js + all its plugins are heavy (~200KB pre-minify). Defer the
@@ -34,13 +34,13 @@ const EditorPanel = dynamic(
 
 function MainArea() {
   const activeView = useStore((state) => state.activeView)
-  const [mounted, setMounted] = useState(false)
-
-  useEffect(() => {
-    setMounted(true)
-  }, [])
-
-  if (!mounted) return null
+  // Wait for the persist middleware to finish loading from localStorage
+  // before painting any view. Keeps SSR markup (no activeView yet) and
+  // the first client paint consistent — avoids hydration mismatch on
+  // `activeView` and skips a wasteful render of the default panel before
+  // the persisted `activeView` lands.
+  const hydrated = useHydrated()
+  if (!hydrated) return null
 
   return (
     <SidebarInset className="h-full overflow-hidden">
@@ -87,6 +87,7 @@ export default function Page() {
       <AppSidebar />
       <MainArea />
       <CommandPalette />
+      <PdfViewerHost />
       <Toaster />
     </SidebarProvider>
   )

@@ -1,28 +1,18 @@
 "use client"
 
 import { useState, useRef, useCallback } from "react"
-import { useStore, useSessionStore, useWorkspaceResources } from "@/lib/hooks/use-store"
-import { Item, ItemMedia, ItemContent, ItemTitle, ItemDescription } from "@/components/ui/item"
+import { useStore, useSessionStore } from "@/client/hooks/use-store"
+import { Item, ItemContent, ItemTitle, ItemDescription } from "@/components/ui/item"
 
-import {
-  Upload,
-  File,
-  Search,
-  Trash2,
-  Check,
-  X,
-  FolderOpen,
-} from "lucide-react"
+import { Search, Check, X, FolderOpen } from "lucide-react"
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card"
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupInput,
-  InputGroupText,
 } from "@/components/ui/input-group"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,11 +24,13 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { cn } from "@/lib/utils"
-import { formatFileSize, getFileIcon, processSelectedFiles } from "@/lib/file-utils"
-import { runExtraction } from "@/lib/extract"
-import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT } from "@/lib/upload-config"
-import { ExtractionStatusBadge } from "@/components/panels/extraction-status-badge"
+import { cn } from "@/shared/utils"
+import { formatFileSize, getFileIcon, processSelectedFiles } from "@/client/file-utils"
+import { SidebarTrigger } from "@/components/ui/sidebar"
+import { runExtraction } from "@/client/extract"
+import { persistFile } from "@/client/files/persist"
+import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT } from "@/shared/upload-config"
+import { FileRowMeta } from "@/components/panels/file-row-meta"
 import { format } from "date-fns"
 
 
@@ -49,12 +41,12 @@ export function ResourcePanel() {
     files,
     addFile,
     removeFile,
-    clearFiles,
     activeWorkspaceId,
     resources,
     addResource,
     removeResource,
     setFileExtraction,
+    setFileStorage,
   } = useStore()
   const { selectedFileIds, toggleFileSelection, clearSelectedFiles } = useSessionStore()
   const [searchQuery, setSearchQuery] = useState("")
@@ -62,8 +54,6 @@ export function ResourcePanel() {
   const [error, setError] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-
-  const workspaceResources = useWorkspaceResources()
 
   // Filter files that are resources of the current workspace
   const resourceFileIds = resources
@@ -92,9 +82,14 @@ export function ResourcePanel() {
         // Automatically add as resource to current workspace
         addResource(activeWorkspaceId, meta.id)
         void runExtraction(meta.id, source, setFileExtraction)
+        void persistFile(source, meta.id, meta.name).then((result) => {
+          if (result.storagePath) {
+            setFileStorage(meta.id, { storagePath: result.storagePath })
+          }
+        })
       })
     },
-    [addFile, addResource, activeWorkspaceId, setFileExtraction]
+    [addFile, addResource, activeWorkspaceId, setFileExtraction, setFileStorage]
   )
 
   const handleDrop = useCallback(
@@ -131,6 +126,12 @@ export function ResourcePanel() {
 
   return (
     <div className="flex flex-col h-full w-full">
+        {/* Mobile-only header — surfaces the SidebarTrigger so users can
+            reopen the (closed-by-default) left sidebar on phones. */}
+        <div className="md:hidden shrink-0 flex items-center gap-2 px-3 py-2 border-b border-[var(--border)]">
+          <SidebarTrigger />
+          <h2 className="text-sm font-medium text-[var(--foreground)]">Files</h2>
+        </div>
         {/* Drop zone */}
         <div
           className={cn(
@@ -257,7 +258,7 @@ export function ResourcePanel() {
                         )}
                       </HoverCardContent>
                     </HoverCard>
-                    <ExtractionStatusBadge file={file} size="default" className="shrink-0 ml-auto" />
+                    <FileRowMeta file={file} size="default" className="shrink-0 ml-auto" />
                     <span className="text-xs text-[var(--muted-foreground)] shrink-0">
                       {formatFileSize(file.size)}
                     </span>

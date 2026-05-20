@@ -119,7 +119,10 @@ const BlockCommentContent = ({
   const sortedMergedData = [
     ...resolvedDiscussions,
     ...resolvedSuggestions,
-  ].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  ].sort(
+    (a, b) =>
+      new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  );
 
   const selected =
     resolvedDiscussions.some((d) => d.id === activeCommentId) ||
@@ -163,7 +166,7 @@ const BlockCommentContent = ({
     if (!activeNode) return null;
 
     return editor.api.toDOMNode(activeNode[0])!;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, [
     open,
     activeSuggestion,

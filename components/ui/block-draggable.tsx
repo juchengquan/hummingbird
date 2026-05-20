@@ -24,7 +24,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { cn } from '@/lib/utils';
+import { cn } from '@/shared/utils';
 
 const UNDRAGGABLE_KEYS = [KEYS.column, KEYS.tr, KEYS.td];
 
@@ -104,14 +104,14 @@ function Draggable(props: PlateElementProps) {
     if (!isDragging) {
       resetPreview();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, [isDragging]);
 
   React.useEffect(() => {
     if (isAboutToDrag) {
       previewRef.current?.classList.remove('opacity-0');
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, [isAboutToDrag]);
 
   const [dragButtonTop, setDragButtonTop] = React.useState(0);
