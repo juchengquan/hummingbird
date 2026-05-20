@@ -201,22 +201,25 @@ workspace.defaultModel → global `DEFAULT_CHAT_MODEL`. Migration
 
 ---
 
-## Smart context-window indicator
+## ~~Smart context-window indicator~~ ✅ partially shipped
 
-**Why distinctive.** Models silently drop early messages when the
-context window fills. Users don't see this — they just notice the
-model "forgetting" things. Surfacing the budget gives them agency.
+The meter itself shipped: `components/panels/context-meter.tsx` renders
+a `12k / 200k` chip next to the model picker, color-coded muted →
+amber → red via `contextZone` in `lib/shared/tokens.ts`.
+`contextWindow` added to each entry in `lib/shared/models.ts`. Token
+count uses a chars/4 heuristic (see the file-level comment for why
+not a real tokenizer).
 
-**Sketch.** A small `Context: 38k / 200k` meter near the model picker.
-Color-coded green / amber / red. When near full, a "Summarize older
-messages" button appears that compresses the first N messages into a
-single recap message via a quick `generateText` call.
-
-**Builds on.** Chat route, model metadata (would need to add
-`contextWindow` to `CHAT_MODELS`).
-
-**Effort.** Small-to-medium (~150 lines + accurate token counting via
-`tiktoken` / `js-tiktoken`).
+**Still open (deferred):**
+- A "Summarize older messages" button when in the danger zone that
+  compresses the first N messages into a single recap via a quick
+  `generateText` call. Skipped in v1 because it's a separate concern
+  with its own UX (which messages get summarised? how is the recap
+  presented? does it edit history or insert a synthetic message?).
+- Accurate per-family token counting. The heuristic is fine for a
+  "you're getting close" cue but undercounts code/JSON heavy chats.
+  Would need `js-tiktoken` for OpenAI, separate encoders for
+  Claude/Gemini.
 
 ---
 
