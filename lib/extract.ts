@@ -6,32 +6,19 @@
 
 import { toast } from 'sonner'
 
+import { apiClient } from '@/lib/api-client'
+import type { ExtractionResponse } from '@/lib/api-schemas'
+
 export const EXTRACTION_BUDGET = 32 * 1024 // 32 KB of extracted text per file
 
-export interface ExtractionResult {
-  kind: string
-  text: string
-  truncated: boolean
-  language?: string
-}
+/** Re-exported alias for callers that already import this name. */
+export type ExtractionResult = ExtractionResponse
 
 export async function extractFile(
   file: File,
   signal?: AbortSignal
-): Promise<ExtractionResult | null> {
-  const form = new FormData()
-  form.append('file', file)
-  try {
-    const res = await fetch('/api/extract', {
-      method: 'POST',
-      body: form,
-      signal,
-    })
-    if (!res.ok) return null
-    return (await res.json()) as ExtractionResult
-  } catch {
-    return null
-  }
+): Promise<ExtractionResponse | null> {
+  return apiClient.extract(file, { signal })
 }
 
 import type { FileExtractionStatus, UploadedFile } from '@/lib/types'
@@ -63,29 +50,16 @@ async function summariseFileInBackground(
   text: string,
   setFileExtraction: (id: string, patch: ExtractionPatch) => void
 ): Promise<void> {
-  try {
-    const res = await fetch('/api/summarize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        mode: 'file',
-        name,
-        text: text.slice(0, SUMMARY_MAX_TEXT_LENGTH),
-      }),
-    })
-    if (!res.ok) return
-    const data = (await res.json()) as {
-      summary?: string
-      keyTopics?: string[]
-    }
-    if (!data.summary) return
-    setFileExtraction(fileId, {
-      summary: data.summary,
-      keyTopics: Array.isArray(data.keyTopics) ? data.keyTopics : undefined,
-    })
-  } catch {
-    /* silent — summary is best-effort */
-  }
+  const data = await apiClient.summarize.file({
+    mode: 'file',
+    name,
+    text: text.slice(0, SUMMARY_MAX_TEXT_LENGTH),
+  })
+  if (!data?.summary) return
+  setFileExtraction(fileId, {
+    summary: data.summary,
+    keyTopics: Array.isArray(data.keyTopics) ? data.keyTopics : undefined,
+  })
 }
 
 function readAsDataUrl(blob: Blob): Promise<string> {

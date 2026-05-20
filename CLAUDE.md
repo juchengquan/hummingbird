@@ -97,6 +97,20 @@ SQL lives under `supabase/migrations/` as three final-shape files
 (`0001_schema.sql`, `0002_rls_policies.sql`, `0003_storage.sql`) — see
 `docs/SUPABASE_SETUP.md` for the run order.
 
+## API contract
+
+Frontend → backend communication is centralised in `lib/api-client.ts`.
+Components and hooks must call `apiClient.*` (or read URLs from
+`apiUrls.*` for libraries like Plate that take a URL string) — never
+`fetch('/api/...')` directly. The wire shapes are pinned in
+`lib/api-schemas.ts` (Zod request + response schemas) and
+`docs/API.md` (the SSE streaming protocol).
+
+When adding a new endpoint, follow the checklist at the bottom of
+`docs/API.md`. The plan in `docs/PLAN-backend-extraction.md` describes
+the eventual swap to a Python backend; the client + schemas + doc
+together are the contract that has to survive that swap.
+
 ## Development Patterns
 
 - All panel content uses client-side rendering (`"use client"`)

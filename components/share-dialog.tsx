@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/hooks/use-auth"
 import { copyText } from "@/lib/export"
+import { apiClient } from "@/lib/api-client"
 
 type ShareKind = "conversation" | "document"
 
@@ -22,12 +23,6 @@ interface ShareDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   conversationId: string
-}
-
-interface CreateResponse {
-  token: string
-  kind: ShareKind
-  error?: string
 }
 
 /**
@@ -61,18 +56,15 @@ export function ShareDialog({ open, onOpenChange, conversationId }: ShareDialogP
   const handleCreate = async () => {
     setCreating(true)
     try {
-      const res = await fetch("/api/share", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind, conversationId }),
-      })
-      const body = (await res.json().catch(() => ({}))) as CreateResponse
-      if (!res.ok) {
-        toast.error(body.error ?? `Couldn't create share (HTTP ${res.status})`)
+      const result = await apiClient.share.create({ kind, conversationId })
+      if (!result.ok || !result.data) {
+        toast.error(
+          result.error ?? `Couldn't create share (HTTP ${result.status})`
+        )
         return
       }
-      setCreatedToken(body.token)
-      setCreatedKind(body.kind)
+      setCreatedToken(result.data.token)
+      setCreatedKind(result.data.kind)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't create share")
     } finally {

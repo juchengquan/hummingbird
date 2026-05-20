@@ -15,12 +15,10 @@ import {
 import { Button } from "@/components/ui/button"
 import { copyText } from "@/lib/export"
 import type { Conversation } from "@/lib/types"
+import { apiClient } from "@/lib/api-client"
+import type { ConversationSummarizeResponse } from "@/lib/api-schemas"
 
-interface ConversationSummaryResult {
-  summary: string
-  keyPoints?: string[]
-  decisions?: string[]
-}
+type ConversationSummaryResult = ConversationSummarizeResponse
 
 interface ConversationSummaryDialogProps {
   conversation: Conversation | null
@@ -79,22 +77,16 @@ export function ConversationSummaryDialog({
 
     void (async () => {
       try {
-        const res = await fetch("/api/summarize", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode: "conversation", messages }),
+        const data = await apiClient.summarize.conversation({
+          mode: "conversation",
+          messages,
         })
         if (cancelled) return
-        if (!res.ok) {
-          const body = (await res.json().catch(() => ({}))) as {
-            message?: string
-          }
+        if (!data) {
           setStatus("error")
-          setErrorMsg(body.message ?? `Summarisation failed (${res.status})`)
+          setErrorMsg("Summarisation failed.")
           return
         }
-        const data = (await res.json()) as ConversationSummaryResult
-        if (cancelled) return
         setResult(data)
         setStatus("ready")
       } catch (err) {

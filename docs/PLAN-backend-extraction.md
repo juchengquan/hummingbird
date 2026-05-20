@@ -1,8 +1,7 @@
 # Plan: Frontend / backend extraction (Python-ready)
 
-Status: **draft** — not yet implemented. Phase 1 is the immediate work
-once approved; Phase 2 happens when a Python backend is ready to point
-at; Phase 3 is optional.
+Status: **Phase 1 ✅ shipped**; Phase 2 happens when a Python backend
+is ready to point at; Phase 3 is optional.
 
 ## Why
 

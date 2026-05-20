@@ -4,6 +4,8 @@ import { useState, useRef, useEffect, useMemo, useCallback } from "react"
 import { useChatScroll } from "@/components/panels/use-chat-scroll"
 import { toast } from "sonner"
 import { useStore, useHydrated } from "@/lib/hooks/use-store"
+import { apiClient } from "@/lib/api-client"
+import type { ChatRequestInput } from "@/lib/api-schemas"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupTextarea, InputGroupButton } from "@/components/ui/input-group"
@@ -292,27 +294,19 @@ export function ChatPanel() {
       }
 
       try {
-        const res = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: controller.signal,
-          body: JSON.stringify({
+        const result = await apiClient.chat.stream(
+          {
             model: modelForCall,
-            messages: buildMessages(),
+            messages: buildMessages() as ChatRequestInput["messages"],
             files: fileSummaries,
             workspaceSystemPrompt,
             skills: enabledSkills,
-          }),
-        })
+          },
+          { signal: controller.signal }
+        )
 
-        if (!res.ok) {
-          let body: { code?: string; message?: string } = {}
-          try {
-            body = await res.json()
-          } catch {
-            /* non-JSON error body */
-          }
-          if (res.status === 401) {
+        if (!result.ok) {
+          if (result.status === 401) {
             setIsTyping(false)
             setIsStreaming(false)
             const lastUser = [...history].reverse().find((m) => m.role === "user")
@@ -320,25 +314,25 @@ export function ChatPanel() {
             return
           }
           surfaceError({
-            code: (body.code as MessageErrorCode) || "unknown",
-            status: res.status,
+            code: (result.error?.code as MessageErrorCode) || "unknown",
+            status: result.status,
             model: modelForCall,
-            detail: body.message,
+            detail: result.error?.message,
           })
           return
         }
 
-        if (!res.body) {
+        if (!result.body) {
           surfaceError({
             code: "provider",
-            status: res.status,
+            status: result.status,
             model: modelForCall,
             detail: "No response body.",
           })
           return
         }
 
-        const reader = res.body.getReader()
+        const reader = result.body.getReader()
         const decoder = new TextDecoder()
         let buffer = ""
         let streamError: { code?: string; message?: string } | null = null
