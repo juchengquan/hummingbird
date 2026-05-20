@@ -5,16 +5,7 @@ import { useStore } from "@/lib/hooks/use-store"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { SidebarTrigger } from "@/components/ui/sidebar"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import {
   ArrowLeft,
   FolderOpen,
@@ -345,35 +336,26 @@ export function WorkspacesPanel() {
         </>
       )}
 
-      <AlertDialog
+      <DeleteConfirmDialog
         open={confirmDeleteId !== null}
         onOpenChange={(open) => !open && setConfirmDeleteId(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              Delete &ldquo;{workspaceToDelete?.name ?? "workspace"}&rdquo;?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently delete the workspace along with its chats and
-              file associations. Uploaded files shared with other workspaces will
-              be kept. <span className="font-medium text-[var(--foreground)]">This action cannot be undone.</span>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                if (confirmDeleteId) deleteWorkspace(confirmDeleteId)
-                setConfirmDeleteId(null)
-              }}
-              className="bg-[var(--destructive)] text-white hover:bg-[var(--destructive)]/90 focus-visible:ring-[var(--destructive)]/40"
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        title={
+          <>Delete &ldquo;{workspaceToDelete?.name ?? "workspace"}&rdquo;?</>
+        }
+        description={
+          <>
+            This will permanently delete the workspace along with its chats and
+            file associations. Uploaded files shared with other workspaces will
+            be kept.{" "}
+            <span className="font-medium text-[var(--foreground)]">
+              This action cannot be undone.
+            </span>
+          </>
+        }
+        onConfirm={() => {
+          if (confirmDeleteId) deleteWorkspace(confirmDeleteId)
+        }}
+      />
       </div>
       <ResourcesSidebar mode={focusedWorkspace ? "chat" : "workspaces"} />
       <WorkspaceDetailSheet

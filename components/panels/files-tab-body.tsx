@@ -10,6 +10,7 @@ import type { useWorkspaceResources } from "@/lib/hooks/use-store"
 import { cn } from "@/lib/utils"
 
 import { FileRowMeta } from "@/components/panels/file-row-meta"
+import { TabEmptyState } from "@/components/panels/tab-empty-state"
 
 
 interface FilesTabBodyProps {
@@ -103,14 +104,12 @@ export function FilesTabBody({
       {/* List */}
       <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2">
         {resources.length === 0 ? (
-          <button
-            type="button"
+          <TabEmptyState
+            icon={FolderOpen}
             onClick={() => fileInputRef.current?.click()}
-            className="w-full h-full min-h-[120px] flex flex-col items-center justify-center gap-2 px-3 text-center text-xs text-[var(--muted-foreground)] italic rounded-md border border-dashed border-[var(--border)] hover:border-[var(--primary)] hover:text-[var(--foreground)] transition-colors"
           >
-            <FolderOpen size={20} />
-            <span>Upload files to add workspace context</span>
-          </button>
+            Upload files to add workspace context
+          </TabEmptyState>
         ) : filtered.length === 0 ? (
           <div className="px-3 py-6 text-center text-xs text-[var(--muted-foreground)]">
             No files match &ldquo;{query}&rdquo;

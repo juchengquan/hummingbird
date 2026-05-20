@@ -1,16 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { usePdfViewer } from "@/components/pdf-viewer/types"
 import {
   useStore,
@@ -138,42 +129,31 @@ export function ChatResourcesPanel({ mode = "chat" }: ChatResourcesPanelProps = 
       )}
       {/* Delete confirmation — only relevant in manage mode but the dialog
           itself is harmless when never opened. */}
-      <AlertDialog
+      <DeleteConfirmDialog
         open={confirmDeleteFileId !== null}
         onOpenChange={(open) => !open && setConfirmDeleteFileId(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              Delete &ldquo;
-              {confirmDeleteFileId
-                ? resources.find((r) => r.id === confirmDeleteFileId)?.name ??
-                  "file"
-                : "file"}
-              &rdquo;?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              This removes the file from the workspace and deletes its local
-              blob.{" "}
-              <span className="font-medium text-[var(--foreground)]">
-                This action cannot be undone.
-              </span>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                if (confirmDeleteFileId) removeFile(confirmDeleteFileId)
-                setConfirmDeleteFileId(null)
-              }}
-              className="bg-[var(--destructive)] text-white hover:bg-[var(--destructive)]/90 focus-visible:ring-[var(--destructive)]/40"
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        title={
+          <>
+            Delete &ldquo;
+            {confirmDeleteFileId
+              ? resources.find((r) => r.id === confirmDeleteFileId)?.name ?? "file"
+              : "file"}
+            &rdquo;?
+          </>
+        }
+        description={
+          <>
+            This removes the file from the workspace and deletes its local
+            blob.{" "}
+            <span className="font-medium text-[var(--foreground)]">
+              This action cannot be undone.
+            </span>
+          </>
+        }
+        onConfirm={() => {
+          if (confirmDeleteFileId) removeFile(confirmDeleteFileId)
+        }}
+      />
     </div>
   )
 }

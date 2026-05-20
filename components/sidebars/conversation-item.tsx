@@ -18,17 +18,7 @@ import {
   PopoverTrigger,
   PopoverContent,
 } from "@/components/ui/popover"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"
+import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 
 interface ConversationItemProps {
   conversation: Conversation
@@ -209,29 +199,25 @@ export function ConversationItem({
                 <Copy size={16} />
                 <span>Copy as Markdown</span>
               </Button>
-              <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-                <AlertDialogTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    className="w-full justify-start gap-2 text-[var(--destructive)] hover:text-[var(--destructive)] hover:bg-[var(--destructive)]/10 cursor-pointer"
-                  >
-                    <Trash2 size={16} />
-                    <span>Delete</span>
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Delete conversation?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      This action cannot be undone. This will permanently delete &quot;{conversation.title}&quot; and remove it from your history.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel variant="outline">Cancel</AlertDialogCancel>
-                    <AlertDialogAction variant="destructive" onClick={onDelete}>Delete</AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
+              <Button
+                variant="ghost"
+                onClick={() => setDeleteDialogOpen(true)}
+                className="w-full justify-start gap-2 text-[var(--destructive)] hover:text-[var(--destructive)] hover:bg-[var(--destructive)]/10 cursor-pointer"
+              >
+                <Trash2 size={16} />
+                <span>Delete</span>
+              </Button>
+              <DeleteConfirmDialog
+                open={deleteDialogOpen}
+                onOpenChange={setDeleteDialogOpen}
+                title="Delete conversation?"
+                description={
+                  <>
+                    This action cannot be undone. This will permanently delete &ldquo;{conversation.title}&rdquo; and remove it from your history.
+                  </>
+                }
+                onConfirm={onDelete}
+              />
             </PopoverContent>
           </Popover>
           <ConversationSummaryDialog

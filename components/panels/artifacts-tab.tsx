@@ -32,6 +32,7 @@ import {
   useActiveConversation,
 } from "@/lib/hooks/use-store"
 import { copyText } from "@/lib/export"
+import { TabEmptyState } from "@/components/panels/tab-empty-state"
 import { CodeHighlight, JsonHighlight } from "@/components/code-highlight"
 import { MarkdownPreview } from "@/components/markdown-preview"
 import type { Artifact } from "@/lib/types"
@@ -112,13 +113,10 @@ export function ArtifactsTab() {
 
       <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2 space-y-1">
         {artifacts.length === 0 ? (
-          <div className="h-full min-h-[120px] flex flex-col items-center justify-center gap-2 px-3 text-center text-xs text-[var(--muted-foreground)] italic rounded-md border border-dashed border-[var(--border)]">
-            <Archive size={20} />
-            <span>
-              Click the <strong>archive</strong> icon on an assistant message
-              to save code blocks or the full reply as an artifact.
-            </span>
-          </div>
+          <TabEmptyState icon={Archive}>
+            Click the <strong>archive</strong> icon on an assistant message
+            to save code blocks or the full reply as an artifact.
+          </TabEmptyState>
         ) : (
           artifacts.map((a) => (
             <button

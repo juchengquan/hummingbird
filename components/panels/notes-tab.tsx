@@ -13,16 +13,8 @@ import {
   useActiveConversation,
 } from "@/lib/hooks/use-store"
 import type { Message } from "@/lib/types"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
+import { TabEmptyState } from "@/components/panels/tab-empty-state"
 
 function messagePreview(content: string, max = 120): string {
   const trimmed = content.trim().replace(/\s+/g, " ")
@@ -99,13 +91,10 @@ export function NotesTab() {
 
       <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2 space-y-2">
         {notes.length === 0 ? (
-          <div className="h-full min-h-[120px] flex flex-col items-center justify-center gap-2 px-3 text-center text-xs text-[var(--muted-foreground)] italic rounded-md border border-dashed border-[var(--border)]">
-            <StickyNote size={20} />
-            <span>
-              Bookmark an assistant message or click <strong>New note</strong>{" "}
-              to capture a thought.
-            </span>
-          </div>
+          <TabEmptyState icon={StickyNote}>
+            Bookmark an assistant message or click <strong>New note</strong>{" "}
+            to capture a thought.
+          </TabEmptyState>
         ) : (
           notes.map((note) => {
             const anchor = note.messageId ? messageById.get(note.messageId) : null
@@ -178,53 +167,34 @@ export function NotesTab() {
           })
         )}
       </div>
-      <AlertDialog
+      <DeleteConfirmDialog
         open={confirmDeleteId !== null}
         onOpenChange={(open) => !open && setConfirmDeleteId(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete this note?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {(() => {
-                const note = confirmDeleteId
-                  ? notes.find((n) => n.id === confirmDeleteId)
-                  : null
-                const preview = note?.body.trim().slice(0, 100)
-                if (preview) {
-                  return (
-                    <>
-                      &ldquo;{preview}
-                      {note && note.body.trim().length > 100 ? "…" : ""}&rdquo;
-                      <br />
-                      <span className="font-medium text-[var(--foreground)]">
-                        This action cannot be undone.
-                      </span>
-                    </>
-                  )
-                }
-                return (
-                  <span className="font-medium text-[var(--foreground)]">
-                    This action cannot be undone.
-                  </span>
-                )
-              })()}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                if (confirmDeleteId) deleteNote(confirmDeleteId)
-                setConfirmDeleteId(null)
-              }}
-              className="bg-[var(--destructive)] text-white hover:bg-[var(--destructive)]/90 focus-visible:ring-[var(--destructive)]/40"
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        title="Delete this note?"
+        description={(() => {
+          const note = confirmDeleteId
+            ? notes.find((n) => n.id === confirmDeleteId)
+            : null
+          const preview = note?.body.trim().slice(0, 100)
+          const undone = (
+            <span className="font-medium text-[var(--foreground)]">
+              This action cannot be undone.
+            </span>
+          )
+          if (!preview) return undone
+          return (
+            <>
+              &ldquo;{preview}
+              {note && note.body.trim().length > 100 ? "…" : ""}&rdquo;
+              <br />
+              {undone}
+            </>
+          )
+        })()}
+        onConfirm={() => {
+          if (confirmDeleteId) deleteNote(confirmDeleteId)
+        }}
+      />
     </>
   )
 }
