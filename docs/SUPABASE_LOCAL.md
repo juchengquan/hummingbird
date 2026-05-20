@@ -11,6 +11,60 @@ code is identical for both — only env vars differ.
 
 **~10 minutes** once Docker is installed.
 
+## Quick start (TL;DR)
+
+Pick one path. Both produce the same URLs and accept the same env vars.
+
+### Path A — Supabase CLI
+
+```bash
+# One-time install (one of):
+brew install supabase/tap/supabase       # macOS / Linuxbrew
+npx -y supabase --version                # any platform via npx
+
+# From repo root:
+bun run supabase:start                   # boots stack + applies migrations
+cat .docker/supabase/dev-keys.txt >> .env.local   # paste keys (edit dupes after)
+bun dev                                  # → http://localhost:3000
+```
+
+### Path B — Standalone docker-compose (no CLI)
+
+```bash
+# From repo root:
+bun run supabase:docker:up               # boot containers
+bun run supabase:docker:migrate          # apply migrations (once after first up)
+cat .docker/supabase/dev-keys.txt >> .env.local   # paste keys (edit dupes after)
+bun dev                                  # → http://localhost:3000
+```
+
+### URLs (both paths)
+
+| Service | URL |
+|---|---|
+| App (Next.js dev) | http://localhost:3000 |
+| Supabase API | http://localhost:54321 |
+| Studio (DB GUI) | http://localhost:54323 |
+| Inbucket (catches magic-link emails) | http://localhost:54324 |
+| Postgres | `postgres://postgres:postgres@localhost:54322/postgres` |
+
+### Common follow-ups
+
+```bash
+# Stop everything (keeps data)
+bun run supabase:stop                    # Path A
+bun run supabase:docker:down             # Path B
+
+# Wipe DB + replay migrations
+bun run supabase:reset                   # Path A (fast, ~3s)
+bun run supabase:docker:reset            # Path B (rebuilds containers, ~30s)
+
+# Regenerate TypeScript types from the live schema
+bun run supabase:types                   # Path A only
+```
+
+Detailed walkthrough below.
+
 ## When to use this vs. the cloud guide
 
 | Choose **local** when… | Choose **cloud** (`SUPABASE_SETUP.md`) when… |
