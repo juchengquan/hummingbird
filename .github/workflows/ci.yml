@@ -1,18 +1,12 @@
 # CI — runs on every push to main and every PR.
 #
-# Gates (hard fail):
+# All gates hard-fail:
 #   - typecheck       (`bunx tsc --noEmit`)
+#   - lint            (`bun run lint`)
 #   - build           (`bun run build`)
 #   - bundle audit    (`bun run audit:bundle` — fence enforcement: no
 #                      server-only paths or secret env names leak into
 #                      .next/static/chunks/*.js)
-#
-# Informational (visible but non-blocking, since there are 40 pre-existing
-# errors in vendor / Plate.js wrapper code that pre-date the lint rule):
-#   - lint            (`bun run lint`)
-#
-# Promote lint to a hard gate by removing `continue-on-error: true` once
-# the existing errors are addressed.
 
 name: CI
 
@@ -55,9 +49,8 @@ jobs:
       - name: Typecheck
         run: bunx tsc --noEmit
 
-      - name: Lint (informational)
+      - name: Lint
         run: bun run lint
-        continue-on-error: true
 
       - name: Build
         run: bun run build

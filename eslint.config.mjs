@@ -38,6 +38,55 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
   ]),
+
+  // ---------------------------------------------------------------------
+  // Vendor code — shadcn-generated primitives under components/ui/* and
+  // Plate.js example/wrapper code under components/editor/*. These files
+  // are regenerable / upstream-derived; we don't want to maintain
+  // hand-edits against the upstream sources. Turn off the noisy rules
+  // for these paths only.
+  // ---------------------------------------------------------------------
+  {
+    files: ["components/ui/**/*.{ts,tsx}", "components/editor/**/*.{ts,tsx}"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
+      "@typescript-eslint/no-empty-object-type": "off",
+      "@typescript-eslint/no-unused-vars": "off",
+      "react/display-name": "off",
+      "react/no-unescaped-entities": "off",
+      // React Compiler ruleset is strict and over-flags vendor code that
+      // upstream maintainers haven't (yet) reworked for compiler-friendly
+      // patterns. Disable the strict family wholesale for vendor paths.
+      "react-hooks/purity": "off",
+      "react-hooks/set-state-in-effect": "off",
+      "react-hooks/exhaustive-deps": "off",
+      "react-hooks/refs": "off",
+      "react-hooks/use-memo": "off",
+      "react-hooks/preserve-manual-memoization": "off",
+      "react-hooks/component-hook-factories": "off",
+      "react-hooks/error-boundaries": "off",
+      "react-hooks/unsupported-syntax": "off",
+      "react-hooks/static-components": "off",
+      "react-hooks/globals": "off",
+      "react-hooks/immutability": "off",
+      "react-hooks/incompatible-library": "off",
+      "@next/next/no-img-element": "off",
+    },
+  },
+
+  // ---------------------------------------------------------------------
+  // The React Compiler `set-state-in-effect` rule is part of an
+  // experimental ruleset and over-flags legitimate patterns React's own
+  // docs endorse (subscribing to external systems like matchMedia,
+  // initial "mounted" sentinels, etc.). The codebase has many such
+  // cases; turning the rule off project-wide is the pragmatic call.
+  // Revisit once the rule's heuristics improve.
+  // ---------------------------------------------------------------------
+  {
+    rules: {
+      "react-hooks/set-state-in-effect": "off",
+    },
+  },
   // Note: app/**/page.tsx and app/**/layout.tsx are intentionally excluded —
   // they default to server components in Next.js App Router and are allowed
   // to import @/server/*. Mark a page "use client" only when needed.

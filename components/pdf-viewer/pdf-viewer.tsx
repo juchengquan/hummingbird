@@ -270,9 +270,10 @@ function PdfPage({ doc, pageNumber, scale, pageRefs }: PdfPageProps) {
 
   useEffect(() => {
     const el = containerRef.current
-    if (el) pageRefs.current.set(pageNumber, el)
+    const refs = pageRefs.current
+    if (el) refs.set(pageNumber, el)
     return () => {
-      pageRefs.current.delete(pageNumber)
+      refs.delete(pageNumber)
     }
   }, [pageNumber, pageRefs])
 

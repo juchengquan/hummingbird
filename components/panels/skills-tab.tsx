@@ -180,8 +180,8 @@ function SkillRow({
       {skill.requiresEnv && effective && (
         <p className="text-[10px] text-amber-600 dark:text-amber-500 inline-flex items-center gap-1">
           <Info size={10} />
-          Requires server configuration. The model is told if the API key isn't
-          set; the toggle still records your intent.
+          Requires server configuration. The model is told if the API key
+          isn&apos;t set; the toggle still records your intent.
         </p>
       )}
     </div>
