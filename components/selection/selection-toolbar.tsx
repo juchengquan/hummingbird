@@ -48,7 +48,25 @@ export function SelectionToolbar({
     const r = selection.rect
 
     const wantTop = r.top - h - TOOLBAR_OFFSET
-    const flipped = wantTop < 8
+    // Two reasons to flip below the selection:
+    //  (1) Too close to the top of the viewport — the toolbar wouldn't fit.
+    //  (2) There's content directly above the selection (typical when
+    //      selecting mid-paragraph) — putting the toolbar there would
+    //      overlap text. Detect via elementFromPoint at the spot the
+    //      toolbar's middle would land. Skip the check if we already
+    //      know we have to flip.
+    const tooHigh = wantTop < 8
+    let contentAbove = false
+    if (!tooHigh) {
+      const probeY = wantTop + h / 2
+      const probeX = r.left + r.width / 2
+      const hit = document.elementFromPoint(probeX, probeY) as HTMLElement | null
+      // Treat any element inside the same selection scope as "content";
+      // background / margin / sidebar elements don't carry the scope
+      // attribute and won't trip this.
+      if (hit && hit.closest("[data-selection-scope]")) contentAbove = true
+    }
+    const flipped = tooHigh || contentAbove
     const top = flipped ? r.bottom + TOOLBAR_OFFSET : wantTop
 
     // Centre on the selection, but clamp to viewport so we don't

@@ -20,6 +20,24 @@ import { cn } from "@/shared/utils"
 const POPOVER_WIDTH = 440
 const POPOVER_GAP = 12 // distance from the selection's bounding rect
 
+/**
+ * Labeled mock explanation surfaced when the AI Gateway key isn't
+ * configured. Mirrors `mockAIResponse` in the chat panel so the
+ * "missing key" experience is consistent: a clearly-marked mock that
+ * tells the dev what would happen with a real key, instead of a bare
+ * error message.
+ */
+function mockExplanation(selection: string): string {
+  const short = selection.replace(/\s+/g, " ").trim().slice(0, 80)
+  return [
+    "_Mock explanation (set `AI_GATEWAY_API_KEY` to enable real AI)_",
+    "",
+    `With a configured AI Gateway key, the model would explain the passage "${short}${selection.length > 80 ? "…" : ""}" in light of this conversation, in 2-3 paragraphs.`,
+    "",
+    "If web search is enabled, sources would be cited with `[N]` markers and a Sources strip below.",
+  ].join("\n")
+}
+
 interface ExplainPopoverProps {
   /** Anchor rect — typically the user's selection rect at the moment
    *  they triggered Explain. We pin the popover to this once; further
@@ -151,12 +169,21 @@ export function ExplainPopover({
         signal: controller.signal,
       })
       if (!result.ok || !result.body) {
-        if (!cancelled) {
-          setErrorMsg(
-            result.error?.message ?? `Request failed (HTTP ${result.status}).`
-          )
+        if (cancelled) return
+        // Mirror the chat panel's behavior: when the auth gate fires
+        // (no AI_GATEWAY_API_KEY in dev), surface a clearly-labeled
+        // mock explanation instead of a bare error. Lets the popover
+        // be exercised end-to-end without a key. Other error codes
+        // (rate_limit / provider / etc.) still go to the error path.
+        if (result.status === 401 || result.error?.code === "auth") {
+          setStreamed(mockExplanation(selection))
           setDone(true)
+          return
         }
+        setErrorMsg(
+          result.error?.message ?? `Request failed (HTTP ${result.status}).`
+        )
+        setDone(true)
         return
       }
       const reader = result.body.getReader()
@@ -199,7 +226,14 @@ export function ExplainPopover({
                 )
               if (cleaned.length > 0) setToolResults(cleaned)
             } else if (parsed.type === "error") {
-              setErrorMsg(parsed.message ?? "Request failed.")
+              // Same mock-fallback rule as the pre-stream branch above:
+              // an auth error surfaces a labeled mock instead of a
+              // bare error so the popover is exercisable in dev.
+              if (parsed.code === "auth") {
+                setStreamed(mockExplanation(selection))
+              } else {
+                setErrorMsg(parsed.message ?? "Request failed.")
+              }
               setDone(true)
               return
             } else if (parsed.type === "done") {
@@ -225,7 +259,7 @@ export function ExplainPopover({
       cancelled = true
       controller.abort()
     }
-  }, [requestBody])
+  }, [requestBody, selection])
 
   const headerLabel = useMemo(
     () => truncateSelectionForLabel(selection, 60),
