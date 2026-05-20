@@ -7,6 +7,7 @@ import {
   useStore,
   useWorkspaceResources,
   useConversationSelectedFileIds,
+  useConversationPrivateFiles,
 } from "@/client/hooks/use-store"
 import { processSelectedFiles } from "@/client/file-utils"
 import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT } from "@/shared/upload-config"
@@ -17,6 +18,7 @@ import { ArtifactsTab } from "@/components/panels/artifacts-tab"
 import { PinsTab } from "@/components/panels/pins-tab"
 import { SkillsTab } from "@/components/panels/skills-tab"
 import { FilesTabBody } from "@/components/panels/files-tab-body"
+import { ConversationFilesSection } from "@/components/panels/conversation-files-section"
 
 interface ChatResourcesPanelProps {
   /**
@@ -32,8 +34,11 @@ interface ChatResourcesPanelProps {
 
 export function ChatResourcesPanel({ mode = "chat" }: ChatResourcesPanelProps = {}) {
   const activeWorkspaceId = useStore((s) => s.activeWorkspaceId)
+  const activeConversationId = useStore((s) => s.activeConversationId)
   const addFile = useStore((s) => s.addFile)
   const addResource = useStore((s) => s.addResource)
+  const addConversationFile = useStore((s) => s.addConversationFile)
+  const removeConversationFile = useStore((s) => s.removeConversationFile)
   const removeFile = useStore((s) => s.removeFile)
   const setFileExtraction = useStore((s) => s.setFileExtraction)
   const setFileStorage = useStore((s) => s.setFileStorage)
@@ -41,6 +46,7 @@ export function ChatResourcesPanel({ mode = "chat" }: ChatResourcesPanelProps = 
   const toggleFileSelection = useStore((s) => s.toggleConversationFileSelection)
   const selectedFileIds = useConversationSelectedFileIds()
   const resources = useWorkspaceResources()
+  const privateFiles = useConversationPrivateFiles()
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState("")
@@ -99,6 +105,41 @@ export function ChatResourcesPanel({ mode = "chat" }: ChatResourcesPanelProps = 
     [addFile, addResource, activeWorkspaceId, toggleFileSelection, setFileExtraction, setFileStorage]
   )
 
+  /**
+   * Upload to the conversation-private lane: the file is added to
+   * `files[]` and joined via `conversationFiles` — it does **not** get
+   * a `resources` row, so it never appears in the workspace library.
+   * No-op when there's no active conversation.
+   */
+  const handlePrivateUpload = useCallback(
+    (list: FileList | null) => {
+      if (!activeConversationId) return
+      setError(null)
+      const processed = processSelectedFiles(list, {
+        maxSize: FILE_SIZE_LIMIT,
+        maxImageSize: IMAGE_SIZE_LIMIT,
+        onValidationError: setError,
+      })
+      processed.forEach(({ meta, source }) => {
+        addFile(meta)
+        addConversationFile(activeConversationId, meta.id)
+        void runExtraction(meta.id, source, setFileExtraction)
+        void persistFile(source, meta.id, meta.name).then((result) => {
+          if (result.storagePath) {
+            setFileStorage(meta.id, { storagePath: result.storagePath })
+          }
+        })
+      })
+    },
+    [
+      activeConversationId,
+      addFile,
+      addConversationFile,
+      setFileExtraction,
+      setFileStorage,
+    ]
+  )
+
   return (
     <div className="flex flex-col w-full h-full min-h-0">
       {/* Tab strip removed — the icon column in <ResourcesSidebar/> is the
@@ -112,23 +153,38 @@ export function ChatResourcesPanel({ mode = "chat" }: ChatResourcesPanelProps = 
       ) : tab === "skills" ? (
         <SkillsTab />
       ) : (
-        <FilesTabBody
-          mode={mode}
-          resources={resources}
-          attachedCount={attachedCount}
-          query={query}
-          setQuery={setQuery}
-          filtered={filtered}
-          selectedFileIds={selectedFileIds}
-          toggleFileSelection={toggleFileSelection}
-          onRequestDelete={setConfirmDeleteFileId}
-          onOpenPdf={(fileId) => openPdfViewer({ fileId })}
-          mounted={mounted}
-          error={error}
-          fileInputRef={fileInputRef}
-          handleUpload={handleUpload}
-          setActiveView={setActiveView}
-        />
+        <div className="flex flex-col h-full min-h-0">
+          {mode === "chat" && activeConversationId && (
+            <ConversationFilesSection
+              files={privateFiles}
+              conversationId={activeConversationId}
+              onUpload={handlePrivateUpload}
+              onRemove={(fileId) =>
+                removeConversationFile(activeConversationId, fileId)
+              }
+              onOpenPdf={(fileId) => openPdfViewer({ fileId })}
+            />
+          )}
+          <div className="flex-1 min-h-0 flex flex-col">
+            <FilesTabBody
+              mode={mode}
+              resources={resources}
+              attachedCount={attachedCount}
+              query={query}
+              setQuery={setQuery}
+              filtered={filtered}
+              selectedFileIds={selectedFileIds}
+              toggleFileSelection={toggleFileSelection}
+              onRequestDelete={setConfirmDeleteFileId}
+              onOpenPdf={(fileId) => openPdfViewer({ fileId })}
+              mounted={mounted}
+              error={error}
+              fileInputRef={fileInputRef}
+              handleUpload={handleUpload}
+              setActiveView={setActiveView}
+            />
+          </div>
+        </div>
       )}
       {/* Delete confirmation — only relevant in manage mode but the dialog
           itself is harmless when never opened. */}

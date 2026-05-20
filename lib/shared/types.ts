@@ -100,6 +100,23 @@ export interface Resource {
   addedAt: Date
 }
 
+/**
+ * Conversation-private file attachment. Parallel to `Resource` but
+ * scoped to a single conversation — these files do **not** appear in
+ * the workspace library and are not visible to sibling conversations.
+ *
+ * The chat-route payload sends the union of (workspace files ticked
+ * via `Conversation.selectedFileIds`) + (private files attached via
+ * this join). De-duped by `fileId` so a file referenced by both lanes
+ * is only sent once.
+ */
+export interface ConversationFile {
+  id: string
+  conversationId: string
+  fileId: string
+  addedAt: Date
+}
+
 export type MessageErrorCode =
   | 'auth'
   | 'rate_limit'

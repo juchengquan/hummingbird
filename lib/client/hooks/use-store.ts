@@ -2,12 +2,12 @@ import "client-only"
 import { useSyncExternalStore } from 'react'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import type { UploadedFile, Workspace, Document, Resource, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind, ToolCallRecord, ToolCallResult, PinnedExplanation } from '@/shared/types'
+import type { UploadedFile, Workspace, Document, Resource, ConversationFile, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind, ToolCallRecord, ToolCallResult, PinnedExplanation } from '@/shared/types'
 import { DEFAULT_CHAT_MODEL } from '@/shared/models'
 import { deleteBlob as deleteLocalBlob, clearAll as clearLocalBlobs } from '@/client/files/local-store'
 import { uuid } from '@/shared/uuid'
 
-export type { UploadedFile, Workspace, Document, Resource, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind, ToolCallRecord } from '@/shared/types'
+export type { UploadedFile, Workspace, Document, Resource, ConversationFile, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind, ToolCallRecord } from '@/shared/types'
 
 type Theme = 'system' | 'dark' | 'light'
 
@@ -159,6 +159,12 @@ interface AppState {
   // Resources (file-to-workspace associations)
   resources: Resource[]
 
+  // Conversation-private file attachments (file-to-conversation join).
+  // Sits alongside `resources`: a `fileId` can be in either, both, or
+  // neither. Private files are scoped to one conversation and never
+  // appear in the workspace library.
+  conversationFiles: ConversationFile[]
+
   // Notes (free-form notes & message bookmarks, scoped to a conversation)
   notes: Note[]
 
@@ -225,6 +231,16 @@ interface AppState {
   // Resource actions
   addResource: (workspaceId: string, fileId: string) => void
   removeResource: (resourceId: string) => void
+
+  // Conversation-private file actions
+  /** Attach a file privately to a conversation. The file is **not**
+   *  added to the workspace library — it lives only inside this chat.
+   *  No-op if the join already exists. */
+  addConversationFile: (conversationId: string, fileId: string) => void
+  /** Detach a private file from a conversation. If this was the last
+   *  reference to the underlying `UploadedFile` (no `resources` row and
+   *  no other `conversationFiles` row), the file is GC'd. */
+  removeConversationFile: (conversationId: string, fileId: string) => void
 
   // Notes actions
   createNote: (input: { conversationId: string | null; messageId?: string | null; body?: string }) => Note
@@ -366,6 +382,9 @@ export const useStore = create<AppState>()(
       // Resources
       resources: [],
 
+      // Conversation-private file attachments
+      conversationFiles: [],
+
       // Notes
       notes: [],
 
@@ -482,6 +501,30 @@ export const useStore = create<AppState>()(
           const newNotes = state.notes.filter((n) => n.workspaceId !== workspaceId)
           const newArtifacts = state.artifacts.filter((a) => a.workspaceId !== workspaceId)
           const newDocuments = state.documents.filter((d) => d.workspaceId !== workspaceId)
+          // Drop conversation-private joins whose conversation lived in this
+          // workspace, then GC files that lost their last reference.
+          const droppedConvIds = new Set(
+            state.conversations
+              .filter((c) => c.workspaceId === workspaceId)
+              .map((c) => c.id)
+          )
+          const droppedJoins = state.conversationFiles.filter((cf) =>
+            droppedConvIds.has(cf.conversationId)
+          )
+          const newConversationFiles = state.conversationFiles.filter(
+            (cf) => !droppedConvIds.has(cf.conversationId)
+          )
+          const orphanedFileIds = new Set<string>()
+          for (const cf of droppedJoins) {
+            const stillReferenced =
+              newResources.some((r) => r.fileId === cf.fileId) ||
+              newConversationFiles.some((rj) => rj.fileId === cf.fileId)
+            if (!stillReferenced) orphanedFileIds.add(cf.fileId)
+          }
+          for (const id of orphanedFileIds) void deleteLocalBlob(id)
+          const newFiles = orphanedFileIds.size
+            ? state.files.filter((f) => !orphanedFileIds.has(f.id))
+            : state.files
           // If the active doc lived in the deleted workspace, swap to the
           // most-recently-updated doc in the new active workspace (if any).
           let newActiveDocumentId = state.activeDocumentId
@@ -503,6 +546,8 @@ export const useStore = create<AppState>()(
             activeWorkspaceId: newActiveWorkspaceId,
             resources: newResources,
             conversations: newConversations,
+            conversationFiles: newConversationFiles,
+            files: newFiles,
             notes: newNotes,
             artifacts: newArtifacts,
             documents: newDocuments,
@@ -596,9 +641,75 @@ export const useStore = create<AppState>()(
         }))
       },
       removeResource: (resourceId: string) =>
-        set((state) => ({
-          resources: state.resources.filter((r) => r.id !== resourceId),
-        })),
+        set((state) => {
+          const target = state.resources.find((r) => r.id === resourceId)
+          const newResources = state.resources.filter((r) => r.id !== resourceId)
+          if (!target) return { resources: newResources }
+          // Strip the fileId from every conversation's selection — once the
+          // resource is gone the workspace-library tick no longer makes sense.
+          const newConversations = state.conversations.map((c) =>
+            c.selectedFileIds.includes(target.fileId)
+              ? {
+                  ...c,
+                  selectedFileIds: c.selectedFileIds.filter((id) => id !== target.fileId),
+                }
+              : c
+          )
+          // GC the underlying file if this was its last reference anywhere
+          // (no remaining resources, no conversationFiles).
+          const stillReferenced =
+            newResources.some((r) => r.fileId === target.fileId) ||
+            state.conversationFiles.some((cf) => cf.fileId === target.fileId)
+          if (stillReferenced) {
+            return { resources: newResources, conversations: newConversations }
+          }
+          void deleteLocalBlob(target.fileId)
+          return {
+            resources: newResources,
+            conversations: newConversations,
+            files: state.files.filter((f) => f.id !== target.fileId),
+          }
+        }),
+
+      // Conversation-private file actions
+      addConversationFile: (conversationId: string, fileId: string) =>
+        set((state) => {
+          // Idempotent: don't add a second join row for the same pair.
+          if (
+            state.conversationFiles.some(
+              (cf) => cf.conversationId === conversationId && cf.fileId === fileId
+            )
+          ) {
+            return state
+          }
+          const newJoin: ConversationFile = {
+            id: uuid(),
+            conversationId,
+            fileId,
+            addedAt: new Date(),
+          }
+          return {
+            conversationFiles: [...state.conversationFiles, newJoin],
+          }
+        }),
+      removeConversationFile: (conversationId: string, fileId: string) =>
+        set((state) => {
+          const newConversationFiles = state.conversationFiles.filter(
+            (cf) => !(cf.conversationId === conversationId && cf.fileId === fileId)
+          )
+          // GC: if no other join references this fileId, delete the file.
+          const stillReferenced =
+            state.resources.some((r) => r.fileId === fileId) ||
+            newConversationFiles.some((cf) => cf.fileId === fileId)
+          if (stillReferenced) {
+            return { conversationFiles: newConversationFiles }
+          }
+          void deleteLocalBlob(fileId)
+          return {
+            conversationFiles: newConversationFiles,
+            files: state.files.filter((f) => f.id !== fileId),
+          }
+        }),
 
       // Notes actions
       createNote: ({ conversationId, messageId = null, body = '' }) => {
@@ -705,7 +816,14 @@ export const useStore = create<AppState>()(
         void deleteLocalBlob(fileId)
         set((state) => ({
           files: state.files.filter((f) => f.id !== fileId),
-          // Strip the removed file id from every conversation's selection.
+          // Atomic cascade: drop every join row that references this
+          // file. Without this, `resources` / `conversationFiles` /
+          // `selectedFileIds` would dangle and the UI joins would skip
+          // them but the rows would still leak across reloads.
+          resources: state.resources.filter((r) => r.fileId !== fileId),
+          conversationFiles: state.conversationFiles.filter(
+            (cf) => cf.fileId !== fileId
+          ),
           conversations: state.conversations.map((c) =>
             c.selectedFileIds.includes(fileId)
               ? { ...c, selectedFileIds: c.selectedFileIds.filter((id) => id !== fileId) }
@@ -715,7 +833,14 @@ export const useStore = create<AppState>()(
       },
       clearFiles: () => {
         void clearLocalBlobs()
-        set({ files: [] })
+        set((state) => ({
+          files: [],
+          resources: [],
+          conversationFiles: [],
+          conversations: state.conversations.map((c) =>
+            c.selectedFileIds.length > 0 ? { ...c, selectedFileIds: [] } : c
+          ),
+        }))
       },
       setFileExtraction: (fileId, patch) =>
         set((state) => ({
@@ -782,10 +907,25 @@ export const useStore = create<AppState>()(
           parentId: source.id,
           forkedFromMessageId: untilMessageId,
         }
-        set((state) => ({
-          conversations: [fork, ...state.conversations],
-          activeConversationId: fork.id,
-        }))
+        set((state) => {
+          // Copy the source's conversation-private file attachments onto
+          // the fork (new join rows pointing at the same files). The
+          // underlying `UploadedFile` is shared via fileId; we just add
+          // a parallel join under the new conversationId.
+          const inheritedJoins: ConversationFile[] = state.conversationFiles
+            .filter((cf) => cf.conversationId === source.id)
+            .map((cf) => ({
+              id: uuid(),
+              conversationId: fork.id,
+              fileId: cf.fileId,
+              addedAt: new Date(),
+            }))
+          return {
+            conversations: [fork, ...state.conversations],
+            conversationFiles: [...state.conversationFiles, ...inheritedJoins],
+            activeConversationId: fork.id,
+          }
+        })
         return fork
       },
       deleteConversation: (conversationId: string) =>
@@ -793,6 +933,25 @@ export const useStore = create<AppState>()(
           const newConversations = state.conversations.filter(
             (c) => c.id !== conversationId
           )
+          // Drop conversation-private file joins for this conversation, then
+          // GC any underlying files whose last reference just vanished.
+          const droppedJoins = state.conversationFiles.filter(
+            (cf) => cf.conversationId === conversationId
+          )
+          const remainingJoins = state.conversationFiles.filter(
+            (cf) => cf.conversationId !== conversationId
+          )
+          const orphanedFileIds = new Set<string>()
+          for (const cf of droppedJoins) {
+            const stillReferenced =
+              state.resources.some((r) => r.fileId === cf.fileId) ||
+              remainingJoins.some((rj) => rj.fileId === cf.fileId)
+            if (!stillReferenced) orphanedFileIds.add(cf.fileId)
+          }
+          for (const id of orphanedFileIds) void deleteLocalBlob(id)
+          const newFiles = orphanedFileIds.size
+            ? state.files.filter((f) => !orphanedFileIds.has(f.id))
+            : state.files
           // Notes/artifacts are workspace-scoped, but bookmarks (notes with
           // messageId !== null) anchor to a specific message that no longer
           // exists once the conversation is gone — drop those. Free-form
@@ -816,6 +975,8 @@ export const useStore = create<AppState>()(
           )
           return {
             conversations: newConversations,
+            conversationFiles: remainingJoins,
+            files: newFiles,
             notes: newNotes,
             artifacts: newArtifacts,
             pinnedExplanations: newPins,
@@ -1178,7 +1339,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'hummingbird-storage',
-      version: 15,
+      version: 16,
       migrate: (persistedState, fromVersion) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState
         const state = persistedState as Record<string, unknown>
@@ -1440,9 +1601,37 @@ export const useStore = create<AppState>()(
               (state.activeDocumentId as string | null | undefined) ?? forActive?.id ?? null
           }
         }
+        if (fromVersion < 16) {
+          // Conversation-private files lane added. Seed an empty slice
+          // on existing stores so the typed accessor doesn't hit
+          // `undefined`. Defensive prune of dangling joins / dangling
+          // `selectedFileIds` runs on every rehydrate (see
+          // `onRehydrateStorage`) so it's not duplicated here.
+          if (!('conversationFiles' in state)) state.conversationFiles = []
+        }
         return persistedState
       },
-      onRehydrateStorage: () => () => {
+      onRehydrateStorage: () => (state) => {
+        // Defensive prune: drop join rows and selection ids that
+        // reference a missing file. Cheap (one pass per array),
+        // no-op on healthy data; covers cross-tab races and any
+        // future bugs in new mutators.
+        if (state) {
+          const fileIds = new Set(state.files.map((f) => f.id))
+          const cleanResources = state.resources.filter((r) => fileIds.has(r.fileId))
+          const cleanConversationFiles = state.conversationFiles.filter((cf) =>
+            fileIds.has(cf.fileId)
+          )
+          const cleanConversations = state.conversations.map((c) => {
+            const filtered = c.selectedFileIds.filter((id) => fileIds.has(id))
+            return filtered.length === c.selectedFileIds.length
+              ? c
+              : { ...c, selectedFileIds: filtered }
+          })
+          state.resources = cleanResources
+          state.conversationFiles = cleanConversationFiles
+          state.conversations = cleanConversations
+        }
         notifyHydrated()
       },
       partialize: (state) => ({
@@ -1451,6 +1640,7 @@ export const useStore = create<AppState>()(
         workspaces: state.workspaces,
         activeWorkspaceId: state.activeWorkspaceId,
         resources: state.resources,
+        conversationFiles: state.conversationFiles,
         conversations: state.conversations,
         activeConversationId: state.activeConversationId,
         files: state.files,
@@ -1532,6 +1722,23 @@ export const useWorkspaceResources = () => {
   const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
   const workspaceResources = resources.filter((r) => r.workspaceId === activeWorkspaceId)
   return workspaceResources.map((r) => files.find((f) => f.id === r.fileId)).filter(Boolean) as UploadedFile[]
+}
+
+/**
+ * Files attached privately to the active conversation. These do NOT
+ * appear in the workspace library — they're scoped to one chat. Empty
+ * when there's no active conversation. Inner-joins against `files[]`
+ * so dangling refs are skipped silently.
+ */
+export const useConversationPrivateFiles = (): UploadedFile[] => {
+  const conversationFiles = useStore((state) => state.conversationFiles)
+  const files = useStore((state) => state.files)
+  const activeConversationId = useStore((state) => state.activeConversationId)
+  if (!activeConversationId) return []
+  return conversationFiles
+    .filter((cf) => cf.conversationId === activeConversationId)
+    .map((cf) => files.find((f) => f.id === cf.fileId))
+    .filter(Boolean) as UploadedFile[]
 }
 
 export const useConversationNotes = () => {
