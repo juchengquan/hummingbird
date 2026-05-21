@@ -29,43 +29,41 @@ import { z } from 'zod'
 
 // --- Building blocks --------------------------------------------------------
 
-/** Attachment payload shape — matches `AttachmentPayload` in
- *  `lib/shared/attachments.ts`. The discriminated `kind` lets a
- *  single field carry files / MCP resources / URL bookmarks while
- *  the server can still type-narrow per kind. */
-const AttachmentPayloadSchema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('file'),
-    summary: z.object({
-      name: z.string().max(500),
-      size: z.number().int().nonnegative().max(1_000_000_000),
-      type: z.string().max(100),
-      text: z.string().max(220_000).optional(),
-      truncated: z.boolean().optional(),
-      kind: z.string().max(40).optional(),
-    }),
-  }),
-  z.object({
-    kind: z.literal('mcp_resource'),
-    ref: z.object({
-      id: z.string().min(1).max(64),
-      serverId: z.string().min(1).max(64),
-      uri: z.string().min(1).max(2000),
-      name: z.string().min(1).max(500),
-      mimeType: z.string().max(100).optional(),
-    }),
-  }),
-  z.object({
-    kind: z.literal('url_bookmark'),
-    bookmark: z.object({
-      id: z.string().min(1).max(64),
-      url: z.string().min(1).max(2000),
-      title: z.string().min(1).max(500),
-      content: z.string().max(220_000),
-      contentTruncated: z.boolean(),
-      fetchedAt: z.string(),
-    }),
-  }),
+/** Per-kind sub-schemas for the attachment payload. Extracted at
+ *  module scope (rather than inline inside `AttachmentPayloadSchema`)
+ *  so `lib/shared/attachments.ts` can derive its TS types via
+ *  `z.infer` — single source of truth, no drift between schema and
+ *  type. */
+export const FileSummarySchema = z.object({
+  name: z.string().max(500),
+  size: z.number().int().nonnegative().max(1_000_000_000),
+  type: z.string().max(100),
+  text: z.string().max(220_000).optional(),
+  truncated: z.boolean().optional(),
+  kind: z.string().max(40).optional(),
+})
+
+export const McpResourceRefSchema = z.object({
+  id: z.string().min(1).max(64),
+  serverId: z.string().min(1).max(64),
+  uri: z.string().min(1).max(2000),
+  name: z.string().min(1).max(500),
+  mimeType: z.string().max(100).optional(),
+})
+
+export const UrlBookmarkRefSchema = z.object({
+  id: z.string().min(1).max(64),
+  url: z.string().min(1).max(2000),
+  title: z.string().min(1).max(500),
+  content: z.string().max(220_000),
+  contentTruncated: z.boolean(),
+  fetchedAt: z.string(),
+})
+
+export const AttachmentPayloadSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('file'), summary: FileSummarySchema }),
+  z.object({ kind: z.literal('mcp_resource'), ref: McpResourceRefSchema }),
+  z.object({ kind: z.literal('url_bookmark'), bookmark: UrlBookmarkRefSchema }),
 ])
 
 // `ModelMessage` is broader than what we send today, but matches what the AI
