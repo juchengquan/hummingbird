@@ -88,6 +88,60 @@ export function hasLiveReference(
 }
 
 /**
+ * Pre-computed set of "still live" ids per kind. Built once via
+ * `buildLiveRefIndex`, then consumed by `hasLiveRefInIndex` for O(1)
+ * membership checks. Used by `gcOrphanedAttachments` so bulk cascades
+ * don't pay an O(refs × scan) cost when each ref's liveness is checked
+ * against the same state.
+ *
+ * The "live" definition matches `hasLiveReference` exactly; the index
+ * is just a faster representation of the same answer. Set entries are
+ * the *attachment* ids (file id, mcp resource id, url bookmark id) —
+ * any id present in the relevant set has at least one live ref. Ids
+ * NOT present are orphan candidates.
+ */
+interface LiveRefIndex {
+  files: Set<string>
+  mcpResources: Set<string>
+  urlBookmarks: Set<string>
+}
+
+function buildLiveRefIndex(state: CascadeStateView): LiveRefIndex {
+  const files = new Set<string>()
+  for (const r of state.resources) files.add(r.fileId)
+  for (const cf of state.conversationFiles) files.add(cf.fileId)
+  for (const c of state.conversations) {
+    for (const id of c.selectedFileIds) files.add(id)
+  }
+
+  const mcpResources = new Set<string>()
+  for (const b of state.mcpResourceBindings) mcpResources.add(b.resourceId)
+  for (const cmr of state.conversationMcpResources) mcpResources.add(cmr.resourceId)
+  for (const c of state.conversations) {
+    for (const id of c.selectedMcpResourceIds ?? []) mcpResources.add(id)
+  }
+
+  const urlBookmarks = new Set<string>()
+  for (const cub of state.conversationUrlBookmarks) urlBookmarks.add(cub.bookmarkId)
+  for (const c of state.conversations) {
+    for (const id of c.selectedUrlBookmarkIds ?? []) urlBookmarks.add(id)
+  }
+
+  return { files, mcpResources, urlBookmarks }
+}
+
+function hasLiveRefInIndex(index: LiveRefIndex, ref: AttachmentRef): boolean {
+  switch (ref.kind) {
+    case "file":
+      return index.files.has(ref.id)
+    case "mcp_resource":
+      return index.mcpResources.has(ref.id)
+    case "url_bookmark":
+      return index.urlBookmarks.has(ref.id)
+  }
+}
+
+/**
  * Patch shape returned by `gcOrphanedAttachment`. Callers spread
  * this into the partial they pass to `set()`. Empty object when the
  * attachment still has live refs (no-op).
@@ -99,29 +153,16 @@ export interface CascadePatch {
 }
 
 /**
- * If the attachment has no live references, tombstone its underlying
- * entity. Fires `deleteLocalBlob` for files as a side effect
- * (best-effort IDB cleanup).
- *
- * Caller composes the returned patch inside a single `set()`:
- *
- *   set((state) => {
- *     const newJoins = state.conversationFiles.filter(…)
- *     const post = { ...state, conversationFiles: newJoins }
- *     const orphan = gcOrphanedAttachment(post, { kind: 'file', id: fileId })
- *     return { conversationFiles: newJoins, ...orphan }
- *   })
- *
- * The "compose against post-drop state" pattern matters: the helper
- * needs to see the state *after* the join was removed, otherwise
- * the ref-count check returns the wrong answer.
+ * Per-kind tombstone-patch builder. Assumes the liveness check
+ * already ran and decided the entity is an orphan — this just
+ * produces the slice update. Internal so the only public path is
+ * `gcOrphanedAttachment` / `gcOrphanedAttachments`, both of which
+ * gate on liveness first.
  */
-export function gcOrphanedAttachment(
+function tombstonePatch(
   state: CascadeStateView,
   ref: AttachmentRef
 ): CascadePatch {
-  if (hasLiveReference(state, ref)) return {}
-
   switch (ref.kind) {
     case "file": {
       void deleteLocalBlob(ref.id)
@@ -147,17 +188,58 @@ export function gcOrphanedAttachment(
 }
 
 /**
- * Bulk variant: de-dup refs internally by `(kind, id)` and fold each
- * GC patch onto the running state so the next ref sees a fresh
- * `hasLiveReference` view. Use this for `deleteConversation` /
- * `deleteWorkspace`-style bulk cascades — calling
- * `gcOrphanedAttachment` in a loop at the call site requires the
- * same dedup + state-folding boilerplate.
+ * If the attachment has no live references, tombstone its underlying
+ * entity. Fires `deleteLocalBlob` for files as a side effect
+ * (best-effort IDB cleanup).
+ *
+ * Caller composes the returned patch inside a single `set()`:
+ *
+ *   set((state) => {
+ *     const newJoins = state.conversationFiles.filter(…)
+ *     const post = { ...state, conversationFiles: newJoins }
+ *     const orphan = gcOrphanedAttachment(post, { kind: 'file', id: fileId })
+ *     return { conversationFiles: newJoins, ...orphan }
+ *   })
+ *
+ * The "compose against post-drop state" pattern matters: the helper
+ * needs to see the state *after* the join was removed, otherwise
+ * the ref-count check returns the wrong answer.
+ *
+ * Single-ref helper — uses `.some()` scans for liveness. Use
+ * `gcOrphanedAttachments` (plural) for bulk cascades; it builds a
+ * shared index once instead of re-scanning per ref.
+ */
+export function gcOrphanedAttachment(
+  state: CascadeStateView,
+  ref: AttachmentRef
+): CascadePatch {
+  if (hasLiveReference(state, ref)) return {}
+  return tombstonePatch(state, ref)
+}
+
+/**
+ * Bulk variant: de-dup refs internally by `(kind, id)`, share a single
+ * pre-computed liveness index across the loop, and fold each
+ * tombstone patch onto the running view so the next iteration's
+ * tombstone composes correctly with the previous one's.
+ *
+ * Used by `deleteConversation` / `deleteWorkspace`-style bulk
+ * cascades. The index pre-pass is O(joins + selections); per-ref
+ * checks are O(1) — drops the per-call cost from
+ * O(refs × state-scan) to O(state + refs).
+ *
+ * Building the index from `state` (not the per-iteration `view`) is
+ * safe because liveness reads from `resources` / `conversationFiles`
+ * / `conversations.selected*Ids` — none of which change when we
+ * tombstone an entity in `files` / `mcpResources` / `urlBookmarks`.
  */
 export function gcOrphanedAttachments(
   state: CascadeStateView,
   refs: AttachmentRef[]
 ): CascadePatch {
+  if (refs.length === 0) return {}
+
+  const index = buildLiveRefIndex(state)
   let view: CascadeStateView = state
   let patch: CascadePatch = {}
   const seen = new Set<string>()
@@ -165,7 +247,8 @@ export function gcOrphanedAttachments(
     const key = `${ref.kind}:${ref.id}`
     if (seen.has(key)) continue
     seen.add(key)
-    const next = gcOrphanedAttachment(view, ref)
+    if (hasLiveRefInIndex(index, ref)) continue
+    const next = tombstonePatch(view, ref)
     if (next.files) view = { ...view, files: next.files }
     if (next.mcpResources) view = { ...view, mcpResources: next.mcpResources }
     if (next.urlBookmarks) view = { ...view, urlBookmarks: next.urlBookmarks }
