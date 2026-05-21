@@ -4,6 +4,7 @@ import { readResource } from "@/server/mcp/client"
 import type { EffectiveMcpServer } from "@/server/mcp/load-servers"
 import type { ResolvedAttachment } from "@/server/attachments/render"
 import type { McpResourceRef } from "@/shared/attachments"
+import { getRecentFailure, recordFailure } from "@/server/mcp/last-failures"
 
 const READ_TIMEOUT_MS = 5000
 
@@ -13,6 +14,11 @@ const READ_TIMEOUT_MS = 5000
  * chat turn. Failures degrade gracefully: errors emit an inline
  * "[unavailable]" marker so the model knows the user *intended* to
  * share that content but couldn't.
+ *
+ * Per-server failure cache (`last-failures.ts`) short-circuits reads
+ * against servers that failed in the last 30 s, so only the first
+ * turn after an outage pays the timeout. See that module for the
+ * design tradeoffs (per-server granularity, in-process Map, etc.).
  */
 export async function resolveAttachedMcpResources(
   requests: McpResourceRef[] | undefined,
@@ -32,6 +38,15 @@ export async function resolveAttachedMcpResources(
           error: "server not configured or not enabled",
         }
       }
+      const cachedReason = getRecentFailure(server.id)
+      if (cachedReason !== null) {
+        return {
+          kind: "mcp_resource",
+          serverName: server.name,
+          resourceName: req.name,
+          error: `${cachedReason} (cached from a recent failure; retrying after 30s cooldown)`,
+        }
+      }
       try {
         const result = await withTimeout(
           readResource(server, server.credentials, req.uri),
@@ -44,11 +59,13 @@ export async function resolveAttachedMcpResources(
           text: result.text,
         }
       } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err)
+        recordFailure(server.id, reason)
         return {
           kind: "mcp_resource",
           serverName: server.name,
           resourceName: req.name,
-          error: err instanceof Error ? err.message : String(err),
+          error: reason,
         }
       }
     })
