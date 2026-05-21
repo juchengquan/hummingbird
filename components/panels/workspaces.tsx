@@ -178,7 +178,7 @@ export function WorkspacesPanel() {
                   variant="ghost"
                   size="sm"
                   onClick={() => setConfirmDeleteId(focusedWorkspace.id)}
-                  aria-label="Delete workspace"
+                  aria-label={`Delete workspace "${focusedWorkspace.name}"`}
                   className="text-[var(--muted-foreground)] hover:text-red-500 gap-1.5"
                 >
                   <Trash2 size={14} />
