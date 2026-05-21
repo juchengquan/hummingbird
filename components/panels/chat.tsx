@@ -24,6 +24,7 @@ import { Plus, ChevronDown, Square, ArrowUp } from "lucide-react"
 import { processSelectedFiles } from "@/client/file-utils"
 import { runExtraction } from "@/client/extract"
 import { persistFile } from "@/client/files/persist"
+import { getLocalCred } from "@/client/mcp/local-creds"
 import { extractCodeBlocks } from "@/shared/code-blocks"
 
 const AUTO_ARCHIVE_MIN_LINES = 15
@@ -356,6 +357,34 @@ export function ChatPanel() {
         }
       }
 
+      // Bundle the enabled MCP servers for this workspace into the
+      // chat payload. For each local-mode server we attach the
+      // credential straight from `localStorage` — it never lives in
+      // any store partition that syncs. Cloud-mode servers stay out
+      // of the body for now (Stage 3 will let the server look them
+      // up via Supabase + pgcrypto).
+      const mcpStore = useStore.getState()
+      const mcpServersForRequest = mcpStore.mcpServers
+        .filter(
+          (s) =>
+            s.workspaceId === activeWorkspaceId &&
+            !s.deletedAt &&
+            s.enabled &&
+            s.credentialMode === "local" &&
+            // Only ship servers with at least one discovered tool —
+            // empty capability lists are noise.
+            (s.capabilities?.tools?.length ?? 0) > 0
+        )
+        .map((s) => ({
+          id: s.id,
+          name: s.name,
+          url: s.url,
+          transport: s.transport,
+          enabled: s.enabled,
+          capabilities: s.capabilities,
+          credentials: getLocalCred(s.id) ?? undefined,
+        }))
+
       try {
         const result = await apiClient.chat.stream(
           {
@@ -364,6 +393,7 @@ export function ChatPanel() {
             files: fileSummaries,
             workspaceSystemPrompt,
             skills: enabledSkills,
+            mcpServers: mcpServersForRequest.length > 0 ? mcpServersForRequest : undefined,
           },
           { signal: controller.signal }
         )

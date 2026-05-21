@@ -12,6 +12,7 @@ import {
   isWebSearchConfigured,
   type WebSearchLog,
 } from '@/server/skills/web-search'
+import { buildMcpTool, mcpToolName } from '@/server/mcp/tools'
 
 interface FileSummary {
   name: string
@@ -44,10 +45,15 @@ function buildSystemPrompt(
   files: FileSummary[] | undefined,
   workspaceSystemPrompt?: string,
   /** Skill ids the user has effectively enabled for this turn. */
-  enabledSkills?: string[]
+  enabledSkills?: string[],
+  /** MCP server summaries — only used to mention available tooling.
+   *  Tool definitions themselves are surfaced via the AI SDK's `tools`
+   *  parameter, so we don't have to enumerate them in prose. */
+  mcpServers?: { name: string; toolCount: number }[]
 ): string {
   const trimmedWorkspace = workspaceSystemPrompt?.trim()
   const skillsLine = buildSkillsNote(enabledSkills ?? [])
+  const mcpLine = buildMcpNote(mcpServers ?? [])
   // Workspace prompt goes first so user-set persona/style instructions take
   // precedence over our generic guidance. The base instructions then nudge the
   // model toward Markdown formatting (which the chat bubble now renders).
@@ -56,6 +62,7 @@ function buildSystemPrompt(
     'You are a helpful chat assistant inside the Hummingbird app. ' +
       'Answer concisely and use Markdown formatting when useful.',
     skillsLine,
+    mcpLine,
   ]
     .filter(Boolean)
     .join('\n\n')
@@ -125,6 +132,21 @@ function buildSkillsNote(enabledSkills: string[]): string | null {
   }
   if (notes.length === 0) return null
   return `Available capabilities:\n${notes.map((n) => `- ${n}`).join('\n')}`
+}
+
+function buildMcpNote(servers: { name: string; toolCount: number }[]): string | null {
+  const active = servers.filter((s) => s.toolCount > 0)
+  if (active.length === 0) return null
+  const list = active
+    .map((s) => `- "${s.name}" (${s.toolCount} ${s.toolCount === 1 ? 'tool' : 'tools'})`)
+    .join('\n')
+  return (
+    `You have access to tools from MCP (Model Context Protocol) servers ` +
+    `the user has connected. Tool names are prefixed with ` +
+    `\`mcp__<serverId>__<toolName>\`; their descriptions and input schemas ` +
+    `are attached. Call them when relevant to the user's request. ` +
+    `MCP servers connected:\n${list}`
+  )
 }
 
 const SUGGESTION_MODEL = 'google/gemini-2.5-flash'
@@ -242,12 +264,34 @@ export async function POST(req: NextRequest) {
     const t = buildWebSearchTool(webSearchLog)
     if (t) tools.webSearch = t
   }
+  // Register MCP-exposed tools for every enabled server the client sent.
+  // Tool name is prefixed `mcp__<serverId>__<toolName>` so model logs
+  // carry provenance and tools from different servers don't collide.
+  // `credentials` here is the local-mode cred the client sent; cloud
+  // mode (decrypted from Supabase) lands in Stage 3.
+  const mcpToolNames: string[] = []
+  for (const server of body.mcpServers ?? []) {
+    if (server.enabled === false) continue
+    for (const descriptor of server.capabilities?.tools ?? []) {
+      const name = mcpToolName(server.id, descriptor.name)
+      tools[name] = buildMcpTool(server, descriptor, server.credentials)
+      mcpToolNames.push(name)
+    }
+  }
 
   try {
     const result = streamText({
       abortSignal: req.signal,
       model: gateway(modelId),
-      system: buildSystemPrompt(body.files, body.workspaceSystemPrompt, enabledSkillIds),
+      system: buildSystemPrompt(
+        body.files,
+        body.workspaceSystemPrompt,
+        enabledSkillIds,
+        (body.mcpServers ?? []).map((s) => ({
+          name: s.name,
+          toolCount: s.capabilities?.tools?.length ?? 0,
+        }))
+      ),
       // Cast back: Zod validates the outer shape (role + content union),
       // but the AI SDK's ModelMessage uses tighter inner-part discriminants
       // than the schema's structural fallback. Trust the schema validation.
@@ -259,7 +303,10 @@ export async function POST(req: NextRequest) {
       ...(Object.keys(tools).length > 0
         ? {
             tools: tools as Parameters<typeof streamText>[0]['tools'],
-            stopWhen: stepCountIs(5),
+            // 5 steps is enough for the single built-in skill (webSearch).
+            // Bump to 8 when MCP tools are registered — those chain
+            // naturally (list → get → filter → answer).
+            stopWhen: stepCountIs(mcpToolNames.length > 0 ? 8 : 5),
           }
         : {}),
     })

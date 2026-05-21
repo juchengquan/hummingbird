@@ -1,7 +1,8 @@
 "use client"
 
 import { useState } from "react"
-import { Plus, Trash2, ExternalLink, Lock, Cloud, AlertCircle } from "lucide-react"
+import { Plus, Trash2, ExternalLink, Lock, Cloud, AlertCircle, RefreshCw } from "lucide-react"
+import { toast } from "sonner"
 import {
   Dialog,
   DialogContent,
@@ -16,12 +17,15 @@ import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { useStore, useWorkspaceMcpServers } from "@/client/hooks/use-store"
 import {
   credentialFingerprint,
+  getLocalCred,
   removeLocalCred,
+  serializeCredentialHeader,
   setLocalCred,
   type McpCredentials,
 } from "@/client/mcp/local-creds"
+import { apiClient } from "@/client/api-client"
 import { cn } from "@/shared/utils"
-import type { McpCredentialMode, McpServer } from "@/shared/types"
+import type { McpCapabilities, McpCredentialMode, McpServer } from "@/shared/types"
 
 /**
  * Workspace settings → MCP servers section. Stage 1 surface: list +
@@ -34,13 +38,63 @@ export function WorkspaceMcpSection({ workspaceId }: { workspaceId: string }) {
   )
   const removeMcpServer = useStore((s) => s.removeMcpServer)
   const setMcpServerEnabled = useStore((s) => s.setMcpServerEnabled)
+  const setMcpServerCapabilities = useStore((s) => s.setMcpServerCapabilities)
 
   const [addOpen, setAddOpen] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [refreshingId, setRefreshingId] = useState<string | null>(null)
   const pendingDelete =
     confirmDeleteId !== null
       ? servers.find((s) => s.id === confirmDeleteId)
       : null
+
+  const refresh = async (server: McpServer) => {
+    setRefreshingId(server.id)
+    try {
+      const cred = getLocalCred(server.id)
+      const result = await apiClient.mcp.proxy(
+        "discover",
+        {
+          server: {
+            id: server.id,
+            name: server.name,
+            url: server.url,
+            transport: server.transport,
+          },
+        },
+        cred
+          ? { credentialHeader: serializeCredentialHeader(cred) }
+          : undefined
+      )
+      if (!result.ok) {
+        toast.error(
+          result.error.message ?? "Failed to reach MCP server",
+          { description: `Status ${result.status}` }
+        )
+        return
+      }
+      const capabilities = result.data.capabilities as McpCapabilities | undefined
+      if (!capabilities) {
+        toast.error("Server returned no capabilities")
+        return
+      }
+      setMcpServerCapabilities(server.id, capabilities)
+      const toolCount = capabilities.tools?.length ?? 0
+      const resourceCount = capabilities.resources?.length ?? 0
+      toast.success(
+        `Connected to ${server.name}`,
+        {
+          description:
+            `${toolCount} ${toolCount === 1 ? "tool" : "tools"}` +
+            `, ${resourceCount} ${resourceCount === 1 ? "resource" : "resources"}`,
+        }
+      )
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRefreshingId(null)
+    }
+  }
 
   return (
     <div>
@@ -89,6 +143,16 @@ export function WorkspaceMcpSection({ workspaceId }: { workspaceId: string }) {
                   <ExternalLink size={9} />
                   <span className="truncate">{server.url}</span>
                 </div>
+                {server.capabilities ? (
+                  <div className="text-[10px] text-[var(--muted-foreground)] mt-0.5">
+                    {server.capabilities.tools?.length ?? 0} tools ·{" "}
+                    {server.capabilities.resources?.length ?? 0} resources
+                  </div>
+                ) : (
+                  <div className="text-[10px] text-[var(--muted-foreground)] italic mt-0.5">
+                    Not discovered yet
+                  </div>
+                )}
               </div>
               <button
                 type="button"
@@ -109,6 +173,20 @@ export function WorkspaceMcpSection({ workspaceId }: { workspaceId: string }) {
                     server.enabled ? "translate-x-3.5" : "translate-x-0.5"
                   )}
                 />
+              </button>
+              <button
+                type="button"
+                onClick={() => void refresh(server)}
+                disabled={refreshingId === server.id}
+                aria-label={`Refresh capabilities for ${server.name}`}
+                title="Refresh capabilities"
+                className={cn(
+                  "p-1 rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] transition-colors",
+                  refreshingId === server.id && "animate-spin",
+                  refreshingId !== server.id && "opacity-0 group-hover/mcp-row:opacity-100 focus-within:opacity-100"
+                )}
+              >
+                <RefreshCw size={12} />
               </button>
               <button
                 type="button"
@@ -168,6 +246,7 @@ function AddMcpServerDialog({
   workspaceId: string
 }) {
   const addMcpServer = useStore((s) => s.addMcpServer)
+  const setMcpServerCapabilities = useStore((s) => s.setMcpServerCapabilities)
   const [name, setName] = useState("")
   const [url, setUrl] = useState("")
   const [credentialMode, setCredentialMode] = useState<McpCredentialMode>("local")
@@ -219,6 +298,10 @@ function AddMcpServerDialog({
         credentialFingerprint: fingerprint,
       })
       if (authType !== "none") setLocalCred(server.id, cred)
+      // Run discovery once so the row shows tool/resource counts
+      // immediately. Failure here doesn't block adding — the user can
+      // hit the refresh button later.
+      void discoverInBackground(server, cred, setMcpServerCapabilities)
       handleClose(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -406,5 +489,51 @@ function buildCred(
   return {
     type: "bearer",
     headers: { authorization: `Bearer ${token.trim()}` },
+  }
+}
+
+async function discoverInBackground(
+  server: McpServer,
+  cred: McpCredentials,
+  setCapabilities: (id: string, caps: McpCapabilities) => void
+): Promise<void> {
+  try {
+    const result = await apiClient.mcp.proxy(
+      "discover",
+      {
+        server: {
+          id: server.id,
+          name: server.name,
+          url: server.url,
+          transport: server.transport,
+        },
+      },
+      cred.type !== "none"
+        ? { credentialHeader: serializeCredentialHeader(cred) }
+        : undefined
+    )
+    if (!result.ok) {
+      toast.error(
+        result.error.message ?? "Discovery failed",
+        { description: "You can retry from the row's refresh button." }
+      )
+      return
+    }
+    const capabilities = result.data.capabilities as McpCapabilities | undefined
+    if (capabilities) {
+      setCapabilities(server.id, capabilities)
+      const toolCount = capabilities.tools?.length ?? 0
+      const resourceCount = capabilities.resources?.length ?? 0
+      toast.success(
+        `Connected to ${server.name}`,
+        {
+          description:
+            `${toolCount} ${toolCount === 1 ? "tool" : "tools"}` +
+            `, ${resourceCount} ${resourceCount === 1 ? "resource" : "resources"}`,
+        }
+      )
+    }
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "Discovery failed")
   }
 }

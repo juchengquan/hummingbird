@@ -1,5 +1,9 @@
 import "client-only"
 
+import { encodeCredentialHeader, type McpCredentials } from "@/shared/mcp/credentials"
+
+export type { McpCredentials } from "@/shared/mcp/credentials"
+
 /**
  * Local credential store for MCP servers. The browser-only side of the
  * dual-mode credential plan (`docs/PLAN-mcp-integration.md`): when a
@@ -10,21 +14,7 @@ import "client-only"
  *
  * Shape stored under `STORAGE_KEY`:
  *   { [serverId: string]: McpCredentials }
- *
- * `McpCredentials` is intentionally an open record so MCP servers can
- * each describe their own auth shape (bearer token, basic auth, custom
- * headers) without us locking into one schema.
  */
-
-export interface McpCredentials {
-  /** e.g. "bearer", "basic", "custom" — UI labels only, semantics live
-   *  in `headers`. */
-  type?: string
-  /** Headers to attach to every proxied request to this server. The
-   *  proxy reads these from `X-MCP-Credentials` and applies them
-   *  verbatim. Keep keys lowercase by convention. */
-  headers?: Record<string, string>
-}
 
 const STORAGE_KEY = "hummingbird-mcp-creds-v1"
 
@@ -92,14 +82,7 @@ export async function credentialFingerprint(
 }
 
 /**
- * Serialize a credential into the `X-MCP-Credentials` header value the
- * proxy expects. Base64-encoded JSON keeps non-ASCII tokens safe in
- * transit; the proxy reverses this before forwarding.
+ * Re-export the shared encoder so client callers don't have to import
+ * from two places.
  */
-export function serializeCredentialHeader(cred: McpCredentials): string {
-  const json = JSON.stringify(cred)
-  if (typeof window === "undefined") {
-    return Buffer.from(json, "utf8").toString("base64")
-  }
-  return window.btoa(unescape(encodeURIComponent(json)))
-}
+export { encodeCredentialHeader as serializeCredentialHeader }
