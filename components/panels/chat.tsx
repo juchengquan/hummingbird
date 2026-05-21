@@ -441,7 +441,13 @@ export function ChatPanel() {
             title: bookmark.title,
             content: bookmark.content,
             contentTruncated: bookmark.contentTruncated,
-            fetchedAt: bookmark.fetchedAt.toISOString(),
+            // After rehydration from localStorage, dates come back as ISO
+            // strings (no reviver). Right after addUrlBookmark they're real
+            // Dates. Handle both.
+            fetchedAt:
+              bookmark.fetchedAt instanceof Date
+                ? bookmark.fetchedAt.toISOString()
+                : String(bookmark.fetchedAt),
           },
         })
       }
