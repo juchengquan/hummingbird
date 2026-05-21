@@ -34,6 +34,7 @@ NEEDLES=(
   "SUPABASE_SERVICE_ROLE_KEY"
   "TAVILY_API_KEY"
   "UPLOADTHING_TOKEN"
+  "MCP_ENCRYPTION_KEY"
   "lib/server/"
   "@/server/"
 )
