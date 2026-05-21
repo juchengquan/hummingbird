@@ -3,36 +3,19 @@ import "server-only"
 import { readResource } from "@/server/mcp/client"
 import type { EffectiveMcpServer } from "@/server/mcp/load-servers"
 import type { ResolvedAttachment } from "@/server/attachments/render"
-
-/**
- * Wire-shape for an MCP resource the client wants attached to the
- * current chat turn. Mirrors the `mcp_resource` variant of
- * `AttachmentPayload` in `lib/shared/attachments.ts`.
- */
-export interface ResourceRequest {
-  id: string
-  serverId: string
-  uri: string
-  name: string
-  mimeType?: string
-}
+import type { McpResourceRef } from "@/shared/attachments"
 
 const READ_TIMEOUT_MS = 5000
 
 /**
  * Resolve attached MCP resources concurrently. Each `readResource`
  * call has its own 5s timeout — a slow server can't block the whole
- * chat turn. Failures degrade gracefully: the resource emits a
- * `ResolvedAttachment` with `error` set, and the renderer surfaces
- * an inline "unavailable" marker so the model knows the user
- * *intended* to share that content but couldn't.
- *
- * Returns `ResolvedAttachment[]` so the chat route can splice these
- * directly into the unified attachment list it hands to
- * `renderAttachmentsPrompt`.
+ * chat turn. Failures degrade gracefully: errors emit an inline
+ * "[unavailable]" marker so the model knows the user *intended* to
+ * share that content but couldn't.
  */
 export async function resolveAttachedMcpResources(
-  requests: ResourceRequest[] | undefined,
+  requests: McpResourceRef[] | undefined,
   servers: EffectiveMcpServer[]
 ): Promise<ResolvedAttachment[]> {
   if (!requests || requests.length === 0) return []

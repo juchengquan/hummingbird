@@ -8,6 +8,7 @@ import type {
   ConversationMcpResource,
   ConversationUrlBookmark,
   McpResource,
+  McpResourceBinding,
   Resource,
   UploadedFile,
   UrlBookmark,
@@ -38,7 +39,7 @@ export interface CascadeStateView {
   resources: Resource[]
   conversationFiles: ConversationFile[]
   mcpResources: McpResource[]
-  mcpResourceBindings: { resourceId: string }[]
+  mcpResourceBindings: McpResourceBinding[]
   conversationMcpResources: ConversationMcpResource[]
   urlBookmarks: UrlBookmark[]
   conversationUrlBookmarks: ConversationUrlBookmark[]
@@ -143,6 +144,34 @@ export function gcOrphanedAttachment(
         ),
       }
   }
+}
+
+/**
+ * Bulk variant: de-dup refs internally by `(kind, id)` and fold each
+ * GC patch onto the running state so the next ref sees a fresh
+ * `hasLiveReference` view. Use this for `deleteConversation` /
+ * `deleteWorkspace`-style bulk cascades — calling
+ * `gcOrphanedAttachment` in a loop at the call site requires the
+ * same dedup + state-folding boilerplate.
+ */
+export function gcOrphanedAttachments(
+  state: CascadeStateView,
+  refs: AttachmentRef[]
+): CascadePatch {
+  let view: CascadeStateView = state
+  let patch: CascadePatch = {}
+  const seen = new Set<string>()
+  for (const ref of refs) {
+    const key = `${ref.kind}:${ref.id}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    const next = gcOrphanedAttachment(view, ref)
+    if (next.files) view = { ...view, files: next.files }
+    if (next.mcpResources) view = { ...view, mcpResources: next.mcpResources }
+    if (next.urlBookmarks) view = { ...view, urlBookmarks: next.urlBookmarks }
+    patch = { ...patch, ...next }
+  }
+  return patch
 }
 
 // ---------------------------------------------------------------------------

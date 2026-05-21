@@ -9,7 +9,7 @@ import type { ChatRequestInput } from "@/shared/api-schemas"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupTextarea, InputGroupButton } from "@/components/ui/input-group"
-import { cn } from "@/shared/utils"
+import { cn, toISO } from "@/shared/utils"
 import { ResourcesSidebar } from "@/components/sidebars/resources"
 import { ActiveSkillsChips } from "@/components/skills/active-chips"
 import { SKILLS } from "@/shared/skills/registry"
@@ -285,9 +285,14 @@ export function ChatPanel() {
           resolveSkill(s, activeWorkspace?.skillPrefs, conv?.skillPrefs) &&
           !mutedSkillsForNext.has(s.id)
       ).map((s) => ({ id: s.id }))
-      // Merge the two lanes: workspace files ticked via `selectedFileIds`
-      // plus conversation-private files joined via `conversationFiles`.
-      // De-dup by `fileId` so a file in both lanes is sent once.
+      // Index workspace entities up front so the three attachment-collection
+      // loops below are O(attached) instead of O(attached × workspace-total).
+      const filesById = new Map(files.map((f) => [f.id, f]))
+      // Merge the two lanes: workspace-ticked via `selectedFileIds` plus
+      // conversation-private joins via `conversationFiles`. De-dup by id
+      // so a file in both lanes is sent once. Tombstoned files drop out —
+      // they still render as "removed" placeholders in the message chips
+      // via `MessageAttachments`, just not sent upstream.
       const workspaceFileIds = conv?.selectedFileIds ?? []
       const privateFileIds = conv
         ? conversationFiles
@@ -295,11 +300,8 @@ export function ChatPanel() {
             .map((cf) => cf.fileId)
         : []
       const attachedFileIds = [...new Set([...workspaceFileIds, ...privateFileIds])]
-      // Drop tombstoned files — they're metadata stubs only, no content to
-      // ship. They still render as "removed" placeholders in the message
-      // attachment chips via `MessageAttachments`, just not sent upstream.
       const attachedFiles = attachedFileIds
-        .map((id) => files.find((f) => f.id === id))
+        .map((id) => filesById.get(id))
         .filter((f): f is NonNullable<typeof f> => !!f && !f.deletedAt)
       // Attach images only to the most recent user message — re-sending them
       // on every turn would explode the token bill and isn't how vision
@@ -397,6 +399,9 @@ export function ChatPanel() {
         })
       }
 
+      const mcpResourcesById = new Map(
+        mcpStore.mcpResources.map((r) => [r.id, r])
+      )
       const workspaceMcpIds = conv?.selectedMcpResourceIds ?? []
       const privateMcpIds = conv
         ? mcpStore.conversationMcpResources
@@ -407,7 +412,7 @@ export function ChatPanel() {
         ...new Set([...workspaceMcpIds, ...privateMcpIds]),
       ]
       for (const id of attachedMcpResourceIds) {
-        const resource = mcpStore.mcpResources.find((r) => r.id === id)
+        const resource = mcpResourcesById.get(id)
         if (!resource || resource.deletedAt) continue
         attachmentsForRequest.push({
           kind: "mcp_resource",
@@ -421,6 +426,9 @@ export function ChatPanel() {
         })
       }
 
+      const urlBookmarksById = new Map(
+        mcpStore.urlBookmarks.map((b) => [b.id, b])
+      )
       const workspaceUrlIds = conv?.selectedUrlBookmarkIds ?? []
       const privateUrlIds = conv
         ? mcpStore.conversationUrlBookmarks
@@ -431,7 +439,7 @@ export function ChatPanel() {
         ...new Set([...workspaceUrlIds, ...privateUrlIds]),
       ]
       for (const id of attachedUrlBookmarkIds) {
-        const bookmark = mcpStore.urlBookmarks.find((b) => b.id === id)
+        const bookmark = urlBookmarksById.get(id)
         if (!bookmark || bookmark.deletedAt) continue
         attachmentsForRequest.push({
           kind: "url_bookmark",
@@ -441,13 +449,7 @@ export function ChatPanel() {
             title: bookmark.title,
             content: bookmark.content,
             contentTruncated: bookmark.contentTruncated,
-            // After rehydration from localStorage, dates come back as ISO
-            // strings (no reviver). Right after addUrlBookmark they're real
-            // Dates. Handle both.
-            fetchedAt:
-              bookmark.fetchedAt instanceof Date
-                ? bookmark.fetchedAt.toISOString()
-                : String(bookmark.fetchedAt),
+            fetchedAt: toISO(bookmark.fetchedAt),
           },
         })
       }

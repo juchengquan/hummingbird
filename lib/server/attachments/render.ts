@@ -1,25 +1,20 @@
 import "server-only"
 
 import type { FileSummary } from "@/shared/attachments"
+import { formatBytes } from "@/shared/utils"
 
 /**
- * Unified system-prompt renderer for source attachments. Replaces
- * the per-kind `renderMcpResourcesPrompt` + `renderBookmarksPrompt`
- * + inline file-block from the chat route.
+ * System-prompt renderer for source attachments. `ResolvedAttachment`
+ * is the post-resolution shape: files and URL bookmarks pass through
+ * from the wire shape, MCP resources arrive after
+ * `resolveAttachedMcpResources` has fetched content via `readResource`.
  *
- * `ResolvedAttachment` is the *post-resolution* shape — files and
- * URL bookmarks arrive verbatim from their wire shape (their content
- * was extracted client-side or at save time); MCP resources arrive
- * after `resolveAttachedMcpResources` has called `readResource` on
- * each one. The chat route does that wire→resolved conversion
- * before calling this renderer.
- *
- * Budget is shared across all kinds. Ordering inside the prompt:
- * files first, then MCP resources, then URL bookmarks — files carry
- * the highest user-intent weight (they were uploaded specifically
- * for this turn or pinned to this conversation), MCP comes next
- * because resources were explicitly attached, bookmarks last because
- * they're often reference material rather than primary content.
+ * Ordering inside the prompt — files → MCP → URL bookmarks — reflects
+ * information density: files are typically the primary content the
+ * user wants the model to look at, MCP resources are explicitly
+ * attached references, bookmarks are background context. All kinds
+ * share one character budget so a single oversized file can't drown
+ * out everything else.
  */
 
 export type ResolvedAttachment =
@@ -99,6 +94,15 @@ function renderSection(
   budget: number
 ): { fragment: string | null; used: number } {
   if (items.length === 0) return { fragment: null, used: 0 }
+
+  // Skip the section entirely when nothing inside can render — e.g. a file
+  // section where every file is meta-only (no extracted text). Without
+  // this, the intro lies ("their extracted text follows") even though the
+  // loop below would emit zero body blocks.
+  const anyRenderable = items.some(
+    (item) => itemErrorMarker(item) !== null || itemBody(item) !== null
+  )
+  if (!anyRenderable) return { fragment: null, used: 0 }
 
   const intro = sectionIntro(kind, items)
   if (budget <= intro.length) {
@@ -267,8 +271,3 @@ export function renderMetaOnlyFilesPrompt(
   )
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}

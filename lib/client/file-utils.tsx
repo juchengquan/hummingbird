@@ -3,6 +3,7 @@ import { File as FileIcon, FileText, FileJson, Image } from "lucide-react"
 import React from "react"
 import type { UploadedFile } from "@/shared/types"
 import { uuid } from "@/shared/uuid"
+import { formatBytes } from "@/shared/utils"
 
 // Default file validation (5MB limit)
 const DEFAULT_SIZE_LIMIT = 5 * 1024 * 1024
@@ -41,7 +42,7 @@ export function processSelectedFiles(
     // Validate file size
     if (file.size > limit) {
       onValidationError?.(
-        `${isImage ? 'Image' : 'File'} "${file.name}" exceeds ${formatFileSize(limit)} limit`
+        `${isImage ? 'Image' : 'File'} "${file.name}" exceeds ${formatBytes(limit)} limit`
       )
       continue
     }
@@ -73,10 +74,7 @@ export function getFileIcon(type: string): React.ReactNode {
   return <FileIcon size={16} className="text-gray-500 shrink-0" />
 }
 
-export function formatFileSize(bytes: number): string {
-  if (bytes === 0) return "0 B"
-  const k = 1024
-  const sizes = ["B", "KB", "MB", "GB"]
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i]
-}
+/** File-friendly alias for the shared `formatBytes`. Existing UI
+ *  call sites read more naturally as "format *file* size"; the
+ *  underlying implementation is the same. */
+export { formatBytes as formatFileSize } from "@/shared/utils"
