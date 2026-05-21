@@ -707,18 +707,32 @@ export const useStore = create<AppState>()(
           const newDocuments = state.documents.filter((d) => d.workspaceId !== workspaceId)
           // Drop conversation-private joins whose conversation lived in
           // this workspace, then GC files that lost their last reference.
-          // `gcOrphanedAttachment` does the ref-count + tombstone logic;
-          // the unique-ref dedup below stops it from running twice on
-          // the same file id when multiple deleted conversations had it
-          // privately attached.
+          // `gcOrphanedAttachments` does the ref-count + tombstone logic;
+          // its internal dedup stops it from running twice on the same
+          // file id when multiple deleted conversations had it privately
+          // attached.
+          //
+          // Two sources of orphan candidates:
+          //   1. Files attached to a deleted conversation via the
+          //      private `conversationFiles` join.
+          //   2. Files held in the workspace library via a `resources`
+          //      row in the deleted workspace. Without these, a file
+          //      attached *only* via the workspace library (no private
+          //      join) would leak as an untombstoned row after its
+          //      workspace went away.
           const droppedConvIds = new Set(
             state.conversations
               .filter((c) => c.workspaceId === workspaceId)
               .map((c) => c.id)
           )
-          const droppedFileRefs: AttachmentRef[] = state.conversationFiles
-            .filter((cf) => droppedConvIds.has(cf.conversationId))
-            .map((cf) => ({ kind: 'file' as const, id: cf.fileId }))
+          const droppedFileRefs: AttachmentRef[] = [
+            ...state.conversationFiles
+              .filter((cf) => droppedConvIds.has(cf.conversationId))
+              .map((cf) => ({ kind: 'file' as const, id: cf.fileId })),
+            ...state.resources
+              .filter((r) => r.workspaceId === workspaceId)
+              .map((r) => ({ kind: 'file' as const, id: r.fileId })),
+          ]
           const newConversationFiles = state.conversationFiles.filter(
             (cf) => !droppedConvIds.has(cf.conversationId)
           )
