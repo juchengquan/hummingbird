@@ -104,6 +104,13 @@ alter table public.conversation_mcp_resources enable row level security;
 create policy "own conversation_mcp_resources" on public.conversation_mcp_resources
   for all using (user_id = auth.uid()) with check (user_id = auth.uid());
 
+-- Mirror of `selected_file_ids` on conversations — which workspace
+-- MCP resources are ticked for this conversation's next message.
+-- Private (conversation-pinned) resources go through the join table
+-- `conversation_mcp_resources` above.
+alter table public.conversations
+  add column selected_mcp_resource_ids uuid[] not null default '{}';
+
 -- Partial indexes — common query is "give me live (non-tombstoned) rows".
 create index mcp_servers_workspace_live on public.mcp_servers (workspace_id)
   where deleted_at is null;

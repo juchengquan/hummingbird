@@ -17,8 +17,13 @@ import type {
   Artifact,
   Conversation,
   ConversationFile,
+  ConversationMcpResource,
   Document,
   FileExtractionStatus,
+  McpCapabilities,
+  McpResource,
+  McpResourceBinding,
+  McpServer,
   Message,
   MessageError,
   Note,
@@ -49,6 +54,10 @@ export interface CloudSnapshot {
   conversationFiles: ConversationFile[]
   notes: Note[]
   artifacts: Artifact[]
+  mcpServers: McpServer[]
+  mcpResources: McpResource[]
+  mcpResourceBindings: McpResourceBinding[]
+  conversationMcpResources: ConversationMcpResource[]
 }
 
 /** Returns null when there's a fetch error (caller decides whether to retry). */
@@ -64,7 +73,11 @@ export async function fetchCloudSnapshot(
     resourcesRes,
     conversationFilesRes,
     notesRes,
-    artifactsRes
+    artifactsRes,
+    mcpServersRes,
+    mcpResourcesRes,
+    mcpResourceBindingsRes,
+    conversationMcpResourcesRes
   try {
     ;[
       workspacesRes,
@@ -76,6 +89,10 @@ export async function fetchCloudSnapshot(
       conversationFilesRes,
       notesRes,
       artifactsRes,
+      mcpServersRes,
+      mcpResourcesRes,
+      mcpResourceBindingsRes,
+      conversationMcpResourcesRes,
     ] = await Promise.all([
       client.from("workspaces").select("*").eq("user_id", userId),
       client.from("documents").select("*").eq("user_id", userId),
@@ -90,6 +107,22 @@ export async function fetchCloudSnapshot(
       client.from("conversation_files").select("*").eq("user_id", userId),
       client.from("notes").select("*").eq("user_id", userId),
       client.from("artifacts").select("*").eq("user_id", userId),
+      // MCP: pull metadata only — `credentials_encrypted` stays on the
+      // server. Cloud-mode servers come back without a `credentials`
+      // field on the store; the chat / proxy routes decrypt on
+      // demand.
+      client
+        .from("mcp_servers")
+        .select(
+          "id, user_id, workspace_id, name, url, transport, credential_mode, credential_fingerprint, capabilities, capabilities_fetched_at, enabled, created_at, updated_at, deleted_at"
+        )
+        .eq("user_id", userId),
+      client.from("mcp_resources").select("*").eq("user_id", userId),
+      client.from("mcp_resource_bindings").select("*").eq("user_id", userId),
+      client
+        .from("conversation_mcp_resources")
+        .select("*")
+        .eq("user_id", userId),
     ])
   } catch {
     return null
@@ -104,7 +137,11 @@ export async function fetchCloudSnapshot(
     resourcesRes.error ||
     conversationFilesRes.error ||
     notesRes.error ||
-    artifactsRes.error
+    artifactsRes.error ||
+    mcpServersRes.error ||
+    mcpResourcesRes.error ||
+    mcpResourceBindingsRes.error ||
+    conversationMcpResourcesRes.error
   ) {
     return null
   }
@@ -176,6 +213,10 @@ export async function fetchCloudSnapshot(
       updatedAt: new Date(c.updated_at),
       pinned: c.pinned,
       selectedFileIds: c.selected_file_ids ?? [],
+      selectedMcpResourceIds:
+        c.selected_mcp_resource_ids && c.selected_mcp_resource_ids.length > 0
+          ? c.selected_mcp_resource_ids
+          : undefined,
       skillPrefs: jsonToSkillPrefs(c.skill_prefs),
       parentId: c.parent_id ?? undefined,
       forkedFromMessageId: c.forked_from_message_id ?? undefined,
@@ -222,6 +263,64 @@ export async function fetchCloudSnapshot(
       conversationId: cf.conversation_id,
       fileId: cf.file_id,
       addedAt: new Date(cf.added_at),
+    }))
+
+    const mcpServers: McpServer[] = (mcpServersRes.data ?? []).map((s) => {
+      const capabilities =
+        s.capabilities && typeof s.capabilities === "object"
+          ? (s.capabilities as McpCapabilities)
+          : undefined
+      const server: McpServer = {
+        id: s.id,
+        workspaceId: s.workspace_id,
+        name: s.name,
+        url: s.url,
+        transport: s.transport,
+        credentialMode: s.credential_mode,
+        credentialFingerprint: s.credential_fingerprint ?? undefined,
+        capabilities,
+        capabilitiesFetchedAt: s.capabilities_fetched_at
+          ? new Date(s.capabilities_fetched_at)
+          : undefined,
+        enabled: s.enabled,
+        createdAt: new Date(s.created_at),
+        updatedAt: new Date(s.updated_at),
+      }
+      if (s.deleted_at) server.deletedAt = new Date(s.deleted_at)
+      return server
+    })
+
+    const mcpResources: McpResource[] = (mcpResourcesRes.data ?? []).map((r) => {
+      const resource: McpResource = {
+        id: r.id,
+        workspaceId: r.workspace_id,
+        serverId: r.server_id,
+        uri: r.uri,
+        name: r.name,
+        description: r.description ?? undefined,
+        mimeType: r.mime_type ?? undefined,
+        addedAt: new Date(r.added_at),
+      }
+      if (r.deleted_at) resource.deletedAt = new Date(r.deleted_at)
+      return resource
+    })
+
+    const mcpResourceBindings: McpResourceBinding[] = (
+      mcpResourceBindingsRes.data ?? []
+    ).map((b) => ({
+      id: b.id,
+      workspaceId: b.workspace_id,
+      resourceId: b.resource_id,
+      addedAt: new Date(b.added_at),
+    }))
+
+    const conversationMcpResources: ConversationMcpResource[] = (
+      conversationMcpResourcesRes.data ?? []
+    ).map((cmr) => ({
+      id: cmr.id,
+      conversationId: cmr.conversation_id,
+      resourceId: cmr.resource_id,
+      addedAt: new Date(cmr.added_at),
     }))
 
     // Build a conversation → workspace map so we can backfill `workspaceId`
@@ -273,6 +372,10 @@ export async function fetchCloudSnapshot(
       conversationFiles,
       notes,
       artifacts,
+      mcpServers,
+      mcpResources,
+      mcpResourceBindings,
+      conversationMcpResources,
     }
   } catch {
     return null
@@ -451,6 +554,90 @@ export async function bulkUploadLocalState(
     if (error) return { ok: false, error: `conversation_files: ${error.message}` }
   }
 
+  // mcp_servers — only local-mode rows reach this path; cloud-mode
+  // rows can't exist locally when signed out (the UI disables the
+  // radio) and when signed in they're written via the dedicated
+  // /api/mcp/server route. We upload metadata with
+  // `credentials_encrypted = NULL` and the local fingerprint so
+  // other devices can detect "same cred" without sharing it.
+  const localServers = snapshot.mcpServers.filter(
+    (s) => s.credentialMode === "local"
+  )
+  if (localServers.length > 0) {
+    const { error } = await client.from("mcp_servers").upsert(
+      localServers.map((s) => ({
+        id: s.id,
+        user_id: userId,
+        workspace_id: s.workspaceId,
+        name: s.name,
+        url: s.url,
+        transport: s.transport,
+        credential_mode: s.credentialMode,
+        credential_fingerprint: s.credentialFingerprint ?? null,
+        // Cast: McpCapabilities is an open record without an index
+        // signature; at runtime it round-trips as plain JSON.
+        capabilities: (s.capabilities ?? null) as unknown as Json,
+        capabilities_fetched_at: s.capabilitiesFetchedAt
+          ? s.capabilitiesFetchedAt.toISOString()
+          : null,
+        enabled: s.enabled,
+        created_at: s.createdAt.toISOString(),
+        updated_at: s.updatedAt.toISOString(),
+        deleted_at: s.deletedAt ? s.deletedAt.toISOString() : null,
+      }))
+    )
+    if (error) return { ok: false, error: `mcp_servers: ${error.message}` }
+  }
+
+  // mcp_resources (depends on mcp_servers + workspaces)
+  if (snapshot.mcpResources.length > 0) {
+    const { error } = await client.from("mcp_resources").upsert(
+      snapshot.mcpResources.map((r) => ({
+        id: r.id,
+        user_id: userId,
+        workspace_id: r.workspaceId,
+        server_id: r.serverId,
+        uri: r.uri,
+        name: r.name,
+        description: r.description ?? null,
+        mime_type: r.mimeType ?? null,
+        added_at: r.addedAt.toISOString(),
+        deleted_at: r.deletedAt ? r.deletedAt.toISOString() : null,
+      }))
+    )
+    if (error) return { ok: false, error: `mcp_resources: ${error.message}` }
+  }
+
+  // mcp_resource_bindings (depends on mcp_resources + workspaces)
+  if (snapshot.mcpResourceBindings.length > 0) {
+    const { error } = await client.from("mcp_resource_bindings").upsert(
+      snapshot.mcpResourceBindings.map((b) => ({
+        id: b.id,
+        user_id: userId,
+        workspace_id: b.workspaceId,
+        resource_id: b.resourceId,
+        added_at: b.addedAt.toISOString(),
+      }))
+    )
+    if (error)
+      return { ok: false, error: `mcp_resource_bindings: ${error.message}` }
+  }
+
+  // conversation_mcp_resources (depends on mcp_resources + conversations)
+  if (snapshot.conversationMcpResources.length > 0) {
+    const { error } = await client.from("conversation_mcp_resources").upsert(
+      snapshot.conversationMcpResources.map((cmr) => ({
+        id: cmr.id,
+        user_id: userId,
+        conversation_id: cmr.conversationId,
+        resource_id: cmr.resourceId,
+        added_at: cmr.addedAt.toISOString(),
+      }))
+    )
+    if (error)
+      return { ok: false, error: `conversation_mcp_resources: ${error.message}` }
+  }
+
   // notes — workspace-scoped after migration 0011, so orphans
   // (conversationId === null) upload too via the new workspace_id
   // column. Skip rows missing a workspaceId entirely (shouldn't
@@ -555,6 +742,10 @@ export function applyCloudSnapshot(snapshot: CloudSnapshot): void {
     conversationFiles: snapshot.conversationFiles,
     notes: snapshot.notes,
     artifacts: snapshot.artifacts,
+    mcpServers: snapshot.mcpServers,
+    mcpResources: snapshot.mcpResources,
+    mcpResourceBindings: snapshot.mcpResourceBindings,
+    conversationMcpResources: snapshot.conversationMcpResources,
   })
 
   useStore.setState({
@@ -566,6 +757,10 @@ export function applyCloudSnapshot(snapshot: CloudSnapshot): void {
     conversationFiles: snapshot.conversationFiles,
     notes: snapshot.notes,
     artifacts: snapshot.artifacts,
+    mcpServers: snapshot.mcpServers,
+    mcpResources: snapshot.mcpResources,
+    mcpResourceBindings: snapshot.mcpResourceBindings,
+    conversationMcpResources: snapshot.conversationMcpResources,
     activeWorkspaceId,
     activeConversationId,
     activeDocumentId,

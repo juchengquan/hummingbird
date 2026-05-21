@@ -113,6 +113,7 @@ export interface Database {
           title: string
           pinned: boolean
           selected_file_ids: string[]
+          selected_mcp_resource_ids: string[]
           skill_prefs: Json
           parent_id: string | null
           forked_from_message_id: string | null
@@ -126,6 +127,7 @@ export interface Database {
           title: string
           pinned?: boolean
           selected_file_ids?: string[]
+          selected_mcp_resource_ids?: string[]
           skill_prefs?: Json
           parent_id?: string | null
           forked_from_message_id?: string | null
@@ -139,6 +141,7 @@ export interface Database {
           title?: string
           pinned?: boolean
           selected_file_ids?: string[]
+          selected_mcp_resource_ids?: string[]
           skill_prefs?: Json
           parent_id?: string | null
           forked_from_message_id?: string | null

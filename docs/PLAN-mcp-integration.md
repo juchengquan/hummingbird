@@ -1,6 +1,6 @@
 # Plan: MCP integration (tools + resources)
 
-Status: **planning** — no code yet.
+Status: **shipped** — Stages 1, 2, and 3 are live on `claude/dev-followups`. See `docs/PLAN-mcp-stage-3.md` for the Stage 3 sub-stage breakdown.
 
 Add support for [Model Context Protocol](https://modelcontextprotocol.io)
 servers as a workspace-level configuration. One MCP server unlocks a

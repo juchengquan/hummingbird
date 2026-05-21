@@ -1,6 +1,6 @@
 # Plan: MCP Stage 3 — cloud credentials, resource lanes, sync
 
-Status: **planning** — no code yet.
+Status: **shipped** (Stages 3a / 3b / 3c).
 
 Finishes the MCP integration. After this stage:
 

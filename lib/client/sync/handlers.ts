@@ -24,7 +24,11 @@ import type {
   Artifact,
   Conversation,
   ConversationFile,
+  ConversationMcpResource,
   Document,
+  McpResource,
+  McpResourceBinding,
+  McpServer,
   Message,
   Note,
   Resource,
@@ -180,6 +184,7 @@ export function diffConversations(
           title: c.title,
           pinned: c.pinned,
           selected_file_ids: c.selectedFileIds,
+          selected_mcp_resource_ids: c.selectedMcpResourceIds ?? [],
           // document_content / document_updated_at were promoted to the
           // workspaces row. Column still exists for one release for
           // safety; client no longer writes to it.
@@ -220,6 +225,10 @@ function conversationHeaderEquals(a: Conversation, b: Conversation): boolean {
     a.title === b.title &&
     a.pinned === b.pinned &&
     sameStringArray(a.selectedFileIds, b.selectedFileIds) &&
+    sameStringArray(
+      a.selectedMcpResourceIds ?? [],
+      b.selectedMcpResourceIds ?? []
+    ) &&
     sameSkillPrefs(a.skillPrefs, b.skillPrefs) &&
     (a.parentId ?? null) === (b.parentId ?? null) &&
     (a.forkedFromMessageId ?? null) === (b.forkedFromMessageId ?? null) &&
@@ -454,6 +463,236 @@ function conversationFileEquals(a: ConversationFile, b: ConversationFile): boole
   return (
     a.conversationId === b.conversationId &&
     a.fileId === b.fileId &&
+    sameInstant(a.addedAt, b.addedAt)
+  )
+}
+
+// ------------ mcp_servers ---------------------------------------------------
+
+/**
+ * Diff MCP server configs. Important: `credentials_encrypted` is owned
+ * by the dedicated `/api/mcp/server` route, NOT by this diff path.
+ * Cloud-mode servers reach Supabase initially via that route; from
+ * then on the sync layer pushes only metadata updates (name, URL,
+ * enabled, capabilities, deletedAt).
+ *
+ * For local-mode servers, sync pushes the row with `credentials_encrypted=NULL`
+ * and the `credential_fingerprint` so other devices can detect when
+ * they have the same cred (without sharing it).
+ */
+export function diffMcpServers(prev: McpServer[], next: McpServer[]): SyncOp[] {
+  const ops: SyncOp[] = []
+  const prevById = byId(prev)
+  const nextById = byId(next)
+
+  for (const s of next) {
+    const before = prevById.get(s.id)
+    if (!before || !mcpServerEquals(before, s)) {
+      // Upsert metadata only — credential ciphertext is managed via
+      // the dedicated route. Omitting the column from the upsert
+      // means existing ciphertext is preserved.
+      ops.push({
+        kind: "upsert",
+        target: "mcp_servers",
+        clientOpId: "",
+        row: {
+          id: s.id,
+          workspace_id: s.workspaceId,
+          name: s.name,
+          url: s.url,
+          transport: s.transport,
+          credential_mode: s.credentialMode,
+          credential_fingerprint:
+            s.credentialMode === "local" ? s.credentialFingerprint ?? null : null,
+          capabilities: s.capabilities ?? null,
+          capabilities_fetched_at: s.capabilitiesFetchedAt
+            ? toISO(s.capabilitiesFetchedAt)
+            : null,
+          enabled: s.enabled,
+          created_at: toISO(s.createdAt),
+          updated_at: toISO(s.updatedAt),
+          deleted_at: s.deletedAt ? toISO(s.deletedAt) : null,
+        },
+      })
+    }
+  }
+  for (const s of prev) {
+    if (!nextById.has(s.id)) {
+      ops.push({
+        kind: "delete",
+        target: "mcp_servers",
+        clientOpId: "",
+        where: { column: "id", value: s.id },
+      })
+    }
+  }
+  return ops
+}
+
+function mcpServerEquals(a: McpServer, b: McpServer): boolean {
+  return (
+    a.workspaceId === b.workspaceId &&
+    a.name === b.name &&
+    a.url === b.url &&
+    a.transport === b.transport &&
+    a.credentialMode === b.credentialMode &&
+    (a.credentialFingerprint ?? null) === (b.credentialFingerprint ?? null) &&
+    JSON.stringify(a.capabilities ?? null) === JSON.stringify(b.capabilities ?? null) &&
+    sameInstantOrNull(a.capabilitiesFetchedAt, b.capabilitiesFetchedAt) &&
+    a.enabled === b.enabled &&
+    sameInstant(a.createdAt, b.createdAt) &&
+    sameInstant(a.updatedAt, b.updatedAt) &&
+    sameInstantOrNull(a.deletedAt, b.deletedAt)
+  )
+}
+
+// ------------ mcp_resources -------------------------------------------------
+
+export function diffMcpResources(prev: McpResource[], next: McpResource[]): SyncOp[] {
+  const ops: SyncOp[] = []
+  const prevById = byId(prev)
+  const nextById = byId(next)
+
+  for (const r of next) {
+    const before = prevById.get(r.id)
+    if (!before || !mcpResourceEquals(before, r)) {
+      ops.push({
+        kind: "upsert",
+        target: "mcp_resources",
+        clientOpId: "",
+        row: {
+          id: r.id,
+          workspace_id: r.workspaceId,
+          server_id: r.serverId,
+          uri: r.uri,
+          name: r.name,
+          description: r.description ?? null,
+          mime_type: r.mimeType ?? null,
+          added_at: toISO(r.addedAt),
+          deleted_at: r.deletedAt ? toISO(r.deletedAt) : null,
+        },
+      })
+    }
+  }
+  for (const r of prev) {
+    if (!nextById.has(r.id)) {
+      ops.push({
+        kind: "delete",
+        target: "mcp_resources",
+        clientOpId: "",
+        where: { column: "id", value: r.id },
+      })
+    }
+  }
+  return ops
+}
+
+function mcpResourceEquals(a: McpResource, b: McpResource): boolean {
+  return (
+    a.workspaceId === b.workspaceId &&
+    a.serverId === b.serverId &&
+    a.uri === b.uri &&
+    a.name === b.name &&
+    (a.description ?? null) === (b.description ?? null) &&
+    (a.mimeType ?? null) === (b.mimeType ?? null) &&
+    sameInstant(a.addedAt, b.addedAt) &&
+    sameInstantOrNull(a.deletedAt, b.deletedAt)
+  )
+}
+
+// ------------ mcp_resource_bindings -----------------------------------------
+
+export function diffMcpResourceBindings(
+  prev: McpResourceBinding[],
+  next: McpResourceBinding[]
+): SyncOp[] {
+  const ops: SyncOp[] = []
+  const prevById = byId(prev)
+  const nextById = byId(next)
+
+  for (const b of next) {
+    const before = prevById.get(b.id)
+    if (!before || !mcpResourceBindingEquals(before, b)) {
+      ops.push({
+        kind: "upsert",
+        target: "mcp_resource_bindings",
+        clientOpId: "",
+        row: {
+          id: b.id,
+          workspace_id: b.workspaceId,
+          resource_id: b.resourceId,
+          added_at: toISO(b.addedAt),
+        },
+      })
+    }
+  }
+  for (const b of prev) {
+    if (!nextById.has(b.id)) {
+      ops.push({
+        kind: "delete",
+        target: "mcp_resource_bindings",
+        clientOpId: "",
+        where: { column: "id", value: b.id },
+      })
+    }
+  }
+  return ops
+}
+
+function mcpResourceBindingEquals(a: McpResourceBinding, b: McpResourceBinding): boolean {
+  return (
+    a.workspaceId === b.workspaceId &&
+    a.resourceId === b.resourceId &&
+    sameInstant(a.addedAt, b.addedAt)
+  )
+}
+
+// ------------ conversation_mcp_resources ------------------------------------
+
+export function diffConversationMcpResources(
+  prev: ConversationMcpResource[],
+  next: ConversationMcpResource[]
+): SyncOp[] {
+  const ops: SyncOp[] = []
+  const prevById = byId(prev)
+  const nextById = byId(next)
+
+  for (const cmr of next) {
+    const before = prevById.get(cmr.id)
+    if (!before || !conversationMcpResourceEquals(before, cmr)) {
+      ops.push({
+        kind: "upsert",
+        target: "conversation_mcp_resources",
+        clientOpId: "",
+        row: {
+          id: cmr.id,
+          conversation_id: cmr.conversationId,
+          resource_id: cmr.resourceId,
+          added_at: toISO(cmr.addedAt),
+        },
+      })
+    }
+  }
+  for (const cmr of prev) {
+    if (!nextById.has(cmr.id)) {
+      ops.push({
+        kind: "delete",
+        target: "conversation_mcp_resources",
+        clientOpId: "",
+        where: { column: "id", value: cmr.id },
+      })
+    }
+  }
+  return ops
+}
+
+function conversationMcpResourceEquals(
+  a: ConversationMcpResource,
+  b: ConversationMcpResource
+): boolean {
+  return (
+    a.conversationId === b.conversationId &&
+    a.resourceId === b.resourceId &&
     sameInstant(a.addedAt, b.addedAt)
   )
 }

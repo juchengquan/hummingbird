@@ -62,6 +62,10 @@ export type SyncTarget =
   | "conversation_files"
   | "artifacts"
   | "notes"
+  | "mcp_servers"
+  | "mcp_resources"
+  | "mcp_resource_bindings"
+  | "conversation_mcp_resources"
 
 interface QueueState {
   ops: SyncOp[]
