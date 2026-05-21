@@ -30,6 +30,7 @@ import type {
 import { DEFAULT_CHAT_MODEL } from '@/shared/models'
 import { deleteBlob as deleteLocalBlob, clearAll as clearLocalBlobs } from '@/client/files/local-store'
 import {
+  bulkTombstoneByKind,
   cloneAttachmentSelections,
   forkConversationJoins,
   gcOrphanedAttachment,
@@ -754,9 +755,10 @@ export const useStore = create<AppState>()(
             newActiveDocumentId = fallback?.id ?? null
           }
           // MCP cascade: tombstone every server in the workspace, then
-          // tombstone their resources, drop matching bindings and
-          // conversation joins. The metadata stubs (server, resource)
-          // remain so historic message references stay resolvable.
+          // tombstone their resources via `bulkTombstoneByKind`, drop
+          // matching bindings and conversation joins. The metadata
+          // stubs (server, resource) remain so historic message
+          // references stay resolvable.
           const droppedServerIds = new Set(
             state.mcpServers
               .filter((s) => s.workspaceId === workspaceId && !s.deletedAt)
@@ -770,27 +772,22 @@ export const useStore = create<AppState>()(
           const newMcpServers = state.mcpServers.map((s) =>
             droppedServerIds.has(s.id) ? tombstoneMcpServer(s) : s
           )
-          const newMcpResources = state.mcpResources.map((r) =>
-            droppedResourceIds.has(r.id) ? tombstoneMcpResource(r) : r
-          )
+          const mcpTombstones = bulkTombstoneByKind(state, 'mcp_resource', droppedResourceIds)
           const newMcpBindings = state.mcpResourceBindings.filter(
             (b) => !droppedResourceIds.has(b.resourceId)
           )
           const newConvMcpResources = state.conversationMcpResources.filter(
             (cmr) => !droppedResourceIds.has(cmr.resourceId)
           )
-          // URL bookmarks cascade — tombstone bookmarks in the workspace,
-          // drop conversation joins. Selection ids on the (now-deleted)
-          // conversations don't need stripping since the conversations
-          // themselves are gone.
+          // URL bookmarks cascade — same shape as MCP. Selection ids on
+          // the (now-deleted) conversations don't need stripping since
+          // the conversations themselves are gone.
           const droppedBookmarkIds = new Set(
             state.urlBookmarks
               .filter((b) => b.workspaceId === workspaceId && !b.deletedAt)
               .map((b) => b.id)
           )
-          const newUrlBookmarks = state.urlBookmarks.map((b) =>
-            droppedBookmarkIds.has(b.id) ? tombstoneUrlBookmark(b) : b
-          )
+          const urlTombstones = bulkTombstoneByKind(state, 'url_bookmark', droppedBookmarkIds)
           const newConvUrlBookmarks = state.conversationUrlBookmarks.filter(
             (cub) => !droppedBookmarkIds.has(cub.bookmarkId)
           )
@@ -805,11 +802,11 @@ export const useStore = create<AppState>()(
             documents: newDocuments,
             activeDocumentId: newActiveDocumentId,
             mcpServers: newMcpServers,
-            mcpResources: newMcpResources,
             mcpResourceBindings: newMcpBindings,
             conversationMcpResources: newConvMcpResources,
-            urlBookmarks: newUrlBookmarks,
             conversationUrlBookmarks: newConvUrlBookmarks,
+            ...mcpTombstones,
+            ...urlTombstones,
           }
           // GC files whose last private-join reference lived on a
           // conversation in the deleted workspace.

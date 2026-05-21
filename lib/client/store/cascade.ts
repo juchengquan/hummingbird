@@ -153,6 +153,49 @@ export interface CascadePatch {
 }
 
 /**
+ * Bulk-tombstone a set of entity ids unconditionally — i.e. without
+ * checking liveness first. Used by `deleteWorkspace` for workspace-
+ * children that are scoped to the deleted workspace: their existence
+ * has been invalidated by the workspace going away, not by a
+ * ref-count dropping to zero. Saves three near-identical
+ * `state.X.map(x => set.has(x.id) ? tombstoneX(x) : x)` blocks at
+ * the call site.
+ *
+ * Files get `deleteLocalBlob` fired as a side effect, same as the
+ * GC-driven tombstone path.
+ */
+export function bulkTombstoneByKind(
+  state: CascadeStateView,
+  kind: AttachmentKind,
+  ids: Iterable<string>
+): CascadePatch {
+  const idSet = ids instanceof Set ? ids : new Set(ids)
+  if (idSet.size === 0) return {}
+  switch (kind) {
+    case "file": {
+      for (const id of idSet) void deleteLocalBlob(id)
+      return {
+        files: state.files.map((f) =>
+          idSet.has(f.id) && !f.deletedAt ? tombstoneFile(f) : f
+        ),
+      }
+    }
+    case "mcp_resource":
+      return {
+        mcpResources: state.mcpResources.map((r) =>
+          idSet.has(r.id) && !r.deletedAt ? tombstoneMcpResource(r) : r
+        ),
+      }
+    case "url_bookmark":
+      return {
+        urlBookmarks: state.urlBookmarks.map((b) =>
+          idSet.has(b.id) && !b.deletedAt ? tombstoneUrlBookmark(b) : b
+        ),
+      }
+  }
+}
+
+/**
  * Per-kind tombstone-patch builder. Assumes the liveness check
  * already ran and decided the entity is an orphan — this just
  * produces the slice update. Internal so the only public path is
