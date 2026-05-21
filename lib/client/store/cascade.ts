@@ -153,6 +153,49 @@ export interface CascadePatch {
 }
 
 /**
+ * Bulk-tombstone a set of entity ids unconditionally — i.e. without
+ * checking liveness first. Used by `deleteWorkspace` for workspace-
+ * children that are scoped to the deleted workspace: their existence
+ * has been invalidated by the workspace going away, not by a
+ * ref-count dropping to zero. Saves three near-identical
+ * `state.X.map(x => set.has(x.id) ? tombstoneX(x) : x)` blocks at
+ * the call site.
+ *
+ * Files get `deleteLocalBlob` fired as a side effect, same as the
+ * GC-driven tombstone path.
+ */
+export function bulkTombstoneByKind(
+  state: CascadeStateView,
+  kind: AttachmentKind,
+  ids: Iterable<string>
+): CascadePatch {
+  const idSet = ids instanceof Set ? ids : new Set(ids)
+  if (idSet.size === 0) return {}
+  switch (kind) {
+    case "file": {
+      for (const id of idSet) void deleteLocalBlob(id)
+      return {
+        files: state.files.map((f) =>
+          idSet.has(f.id) && !f.deletedAt ? tombstoneFile(f) : f
+        ),
+      }
+    }
+    case "mcp_resource":
+      return {
+        mcpResources: state.mcpResources.map((r) =>
+          idSet.has(r.id) && !r.deletedAt ? tombstoneMcpResource(r) : r
+        ),
+      }
+    case "url_bookmark":
+      return {
+        urlBookmarks: state.urlBookmarks.map((b) =>
+          idSet.has(b.id) && !b.deletedAt ? tombstoneUrlBookmark(b) : b
+        ),
+      }
+  }
+}
+
+/**
  * Per-kind tombstone-patch builder. Assumes the liveness check
  * already ran and decided the entity is an orphan — this just
  * produces the slice update. Internal so the only public path is
@@ -307,16 +350,41 @@ export function tombstoneUrlBookmark(bookmark: UrlBookmark): UrlBookmark {
 }
 
 // ---------------------------------------------------------------------------
-// Fork-time helper: collect the conversation-private joins that
-// should follow a fork.
+// Fork-time helpers: inherit the source conversation's attachments onto
+// the fork. Split in two because the two halves consume different inputs:
 //
-// Used by `forkConversation` to inherit the source conversation's
-// private file / MCP-resource / URL-bookmark attachments onto the
-// fork. The three `selected*Ids` arrays on the conversation itself
-// (workspace-ticked attachments) are copied directly on the new
-// Conversation row — that lives in the createConversation-shaped
-// block, not here.
+//   - `cloneAttachmentSelections(source)` — pure, just the source row;
+//     produces the three `selected*Ids` fields for the new Conversation
+//     literal. Workspace-ticked attachments.
+//   - `forkConversationJoins(state, sourceId, forkId, newId)` — needs
+//     access to the join tables; returns three arrays of new join rows
+//     pointing at `forkId`. Conversation-private attachments.
+//
+// Co-located so a future "fourth attachment kind" only has to touch this
+// module to make forks inherit it.
 // ---------------------------------------------------------------------------
+
+/** Type alias for the `selected*Ids` triple on a Conversation. Both
+ *  optional fields preserve their `undefined` semantics from the source
+ *  so the partialized Zustand store doesn't serialize empty arrays. */
+export type ConversationSelectionFields = Pick<
+  Conversation,
+  "selectedFileIds" | "selectedMcpResourceIds" | "selectedUrlBookmarkIds"
+>
+
+export function cloneAttachmentSelections(
+  source: Conversation
+): ConversationSelectionFields {
+  return {
+    selectedFileIds: [...source.selectedFileIds],
+    selectedMcpResourceIds: source.selectedMcpResourceIds
+      ? [...source.selectedMcpResourceIds]
+      : undefined,
+    selectedUrlBookmarkIds: source.selectedUrlBookmarkIds
+      ? [...source.selectedUrlBookmarkIds]
+      : undefined,
+  }
+}
 
 export interface ForkedJoins {
   conversationFiles: ConversationFile[]
