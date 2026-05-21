@@ -30,6 +30,7 @@ import type {
 import { DEFAULT_CHAT_MODEL } from '@/shared/models'
 import { deleteBlob as deleteLocalBlob, clearAll as clearLocalBlobs } from '@/client/files/local-store'
 import {
+  cloneAttachmentSelections,
   forkConversationJoins,
   gcOrphanedAttachment,
   gcOrphanedAttachments,
@@ -1476,13 +1477,7 @@ export const useStore = create<AppState>()(
           createdAt: new Date(),
           updatedAt: new Date(),
           pinned: false,
-          selectedFileIds: [...source.selectedFileIds],
-          selectedMcpResourceIds: source.selectedMcpResourceIds
-            ? [...source.selectedMcpResourceIds]
-            : undefined,
-          selectedUrlBookmarkIds: source.selectedUrlBookmarkIds
-            ? [...source.selectedUrlBookmarkIds]
-            : undefined,
+          ...cloneAttachmentSelections(source),
           skillPrefs: source.skillPrefs ? { ...source.skillPrefs } : undefined,
           parentId: source.id,
           forkedFromMessageId: untilMessageId,

@@ -307,16 +307,41 @@ export function tombstoneUrlBookmark(bookmark: UrlBookmark): UrlBookmark {
 }
 
 // ---------------------------------------------------------------------------
-// Fork-time helper: collect the conversation-private joins that
-// should follow a fork.
+// Fork-time helpers: inherit the source conversation's attachments onto
+// the fork. Split in two because the two halves consume different inputs:
 //
-// Used by `forkConversation` to inherit the source conversation's
-// private file / MCP-resource / URL-bookmark attachments onto the
-// fork. The three `selected*Ids` arrays on the conversation itself
-// (workspace-ticked attachments) are copied directly on the new
-// Conversation row — that lives in the createConversation-shaped
-// block, not here.
+//   - `cloneAttachmentSelections(source)` — pure, just the source row;
+//     produces the three `selected*Ids` fields for the new Conversation
+//     literal. Workspace-ticked attachments.
+//   - `forkConversationJoins(state, sourceId, forkId, newId)` — needs
+//     access to the join tables; returns three arrays of new join rows
+//     pointing at `forkId`. Conversation-private attachments.
+//
+// Co-located so a future "fourth attachment kind" only has to touch this
+// module to make forks inherit it.
 // ---------------------------------------------------------------------------
+
+/** Type alias for the `selected*Ids` triple on a Conversation. Both
+ *  optional fields preserve their `undefined` semantics from the source
+ *  so the partialized Zustand store doesn't serialize empty arrays. */
+export type ConversationSelectionFields = Pick<
+  Conversation,
+  "selectedFileIds" | "selectedMcpResourceIds" | "selectedUrlBookmarkIds"
+>
+
+export function cloneAttachmentSelections(
+  source: Conversation
+): ConversationSelectionFields {
+  return {
+    selectedFileIds: [...source.selectedFileIds],
+    selectedMcpResourceIds: source.selectedMcpResourceIds
+      ? [...source.selectedMcpResourceIds]
+      : undefined,
+    selectedUrlBookmarkIds: source.selectedUrlBookmarkIds
+      ? [...source.selectedUrlBookmarkIds]
+      : undefined,
+  }
+}
 
 export interface ForkedJoins {
   conversationFiles: ConversationFile[]
