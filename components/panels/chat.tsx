@@ -392,6 +392,7 @@ export function ChatPanel() {
             messages: buildMessages() as ChatRequestInput["messages"],
             files: fileSummaries,
             workspaceSystemPrompt,
+            workspaceId: activeWorkspaceId || undefined,
             skills: enabledSkills,
             mcpServers: mcpServersForRequest.length > 0 ? mcpServersForRequest : undefined,
           },

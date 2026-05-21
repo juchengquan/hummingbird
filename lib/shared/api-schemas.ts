@@ -95,6 +95,10 @@ export const ChatRequestSchema = z.object({
   model: z.string().max(100).optional(),
   files: z.array(FileSummarySchema).max(20).optional(),
   workspaceSystemPrompt: z.string().max(20_000).optional(),
+  /** Active workspace id — required to look up cloud-mode MCP servers
+   *  server-side. Local-mode servers are passed in `mcpServers` and
+   *  don't need this. Optional so signed-out usage still works. */
+  workspaceId: z.string().max(64).optional(),
   skills: z
     .array(z.object({ id: z.string().max(40) }))
     .max(10)

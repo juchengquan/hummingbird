@@ -411,9 +411,168 @@ export interface Database {
         }
         Relationships: []
       }
+      mcp_servers: {
+        Row: {
+          id: string
+          user_id: string
+          workspace_id: string
+          name: string
+          url: string
+          transport: 'http'
+          credential_mode: 'cloud' | 'local'
+          credentials_encrypted: string | null
+          credential_fingerprint: string | null
+          capabilities: Json | null
+          capabilities_fetched_at: string | null
+          enabled: boolean
+          created_at: string
+          updated_at: string
+          deleted_at: string | null
+        }
+        Insert: {
+          id: string
+          user_id: string
+          workspace_id: string
+          name: string
+          url: string
+          transport?: 'http'
+          credential_mode: 'cloud' | 'local'
+          credentials_encrypted?: string | null
+          credential_fingerprint?: string | null
+          capabilities?: Json | null
+          capabilities_fetched_at?: string | null
+          enabled?: boolean
+          created_at?: string
+          updated_at?: string
+          deleted_at?: string | null
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          workspace_id?: string
+          name?: string
+          url?: string
+          transport?: 'http'
+          credential_mode?: 'cloud' | 'local'
+          credentials_encrypted?: string | null
+          credential_fingerprint?: string | null
+          capabilities?: Json | null
+          capabilities_fetched_at?: string | null
+          enabled?: boolean
+          created_at?: string
+          updated_at?: string
+          deleted_at?: string | null
+        }
+        Relationships: []
+      }
+      mcp_resources: {
+        Row: {
+          id: string
+          user_id: string
+          workspace_id: string
+          server_id: string
+          uri: string
+          name: string
+          description: string | null
+          mime_type: string | null
+          added_at: string
+          deleted_at: string | null
+        }
+        Insert: {
+          id: string
+          user_id: string
+          workspace_id: string
+          server_id: string
+          uri: string
+          name: string
+          description?: string | null
+          mime_type?: string | null
+          added_at?: string
+          deleted_at?: string | null
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          workspace_id?: string
+          server_id?: string
+          uri?: string
+          name?: string
+          description?: string | null
+          mime_type?: string | null
+          added_at?: string
+          deleted_at?: string | null
+        }
+        Relationships: []
+      }
+      mcp_resource_bindings: {
+        Row: {
+          id: string
+          user_id: string
+          workspace_id: string
+          resource_id: string
+          added_at: string
+        }
+        Insert: {
+          id: string
+          user_id: string
+          workspace_id: string
+          resource_id: string
+          added_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          workspace_id?: string
+          resource_id?: string
+          added_at?: string
+        }
+        Relationships: []
+      }
+      conversation_mcp_resources: {
+        Row: {
+          id: string
+          user_id: string
+          conversation_id: string
+          resource_id: string
+          added_at: string
+        }
+        Insert: {
+          id: string
+          user_id: string
+          conversation_id: string
+          resource_id: string
+          added_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          conversation_id?: string
+          resource_id?: string
+          added_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: Record<string, never>
-    Functions: Record<string, never>
+    Functions: {
+      mcp_get_decrypted_credentials: {
+        Args: { p_server_id: string; p_key: string }
+        Returns: Json | null
+      }
+      mcp_upsert_server_with_credentials: {
+        Args: {
+          p_id: string
+          p_workspace_id: string
+          p_name: string
+          p_url: string
+          p_credentials: Json
+          p_key: string
+          p_capabilities?: Json | null
+          p_enabled?: boolean
+        }
+        Returns: void
+      }
+    }
     Enums: Record<string, never>
     CompositeTypes: Record<string, never>
   }

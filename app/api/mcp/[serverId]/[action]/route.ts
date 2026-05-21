@@ -3,6 +3,8 @@ import { NextResponse } from "next/server"
 import { z } from "zod"
 
 import { callTool, discover, readResource } from "@/server/mcp/client"
+import { fetchDecryptedCredential } from "@/server/mcp/credentials"
+import { getSupabaseServerClient } from "@/server/supabase/server"
 import {
   MCP_CRED_HEADER,
   decodeCredentialHeader,
@@ -65,13 +67,45 @@ export async function POST(
     return NextResponse.json({ error: "Not found" }, { status: 404 })
   }
 
-  // Parse credentials from the header. Stage 2 supports local-mode
-  // only — no DB lookup. Stage 3 will allow an empty header for
-  // cloud-mode servers and resolve creds from Supabase via the user
-  // session.
+  // Credentials come from one of two places:
+  //   1. `X-MCP-Credentials` header (local-mode server — client
+  //      attaches the cred from localStorage on each call).
+  //   2. Cloud-mode lookup: when the header is absent, the user must
+  //      be signed in; we fetch the row's encrypted cred from
+  //      Supabase and decrypt via the SECURITY DEFINER RPC.
+  //
+  // If neither path produces a cred and the upstream MCP server
+  // actually requires auth, the call will fail upstream and the proxy
+  // surfaces that as a 502. We don't hard-fail on missing cred here
+  // because some MCP servers don't require auth at all.
   const credHeader = req.headers.get(MCP_CRED_HEADER)
-  const credentials: McpCredentials | undefined =
+  let credentials: McpCredentials | undefined =
     decodeCredentialHeader(credHeader) ?? undefined
+  let cloudServerOverride: Partial<McpServer> | null = null
+  if (!credentials) {
+    const client = await getSupabaseServerClient()
+    if (client) {
+      // Pull the row + decrypt the cred. RLS guarantees we only see
+      // the caller's own rows; the function's auth.uid() check inside
+      // gives the same guarantee for the decrypt itself.
+      const { data: row } = await client
+        .from("mcp_servers")
+        .select("id, name, url, transport, credential_mode")
+        .eq("id", serverId)
+        .is("deleted_at", null)
+        .maybeSingle()
+      if (row && row.credential_mode === "cloud") {
+        cloudServerOverride = {
+          id: row.id,
+          name: row.name,
+          url: row.url,
+          transport: row.transport,
+        }
+        const cred = await fetchDecryptedCredential(client, serverId)
+        if (cred) credentials = cred
+      }
+    }
+  }
 
   let body: unknown
   try {
@@ -86,7 +120,7 @@ export async function POST(
       if (!parsed.success) {
         return badRequest("invalid_body", parsed.error.message)
       }
-      const server = toServerShape(parsed.data.server, serverId)
+      const server = toServerShape(parsed.data.server, serverId, cloudServerOverride)
       const capabilities = await discover(server, credentials)
       return NextResponse.json({ capabilities })
     }
@@ -96,7 +130,7 @@ export async function POST(
       if (!parsed.success) {
         return badRequest("invalid_body", parsed.error.message)
       }
-      const server = toServerShape(parsed.data.server, serverId)
+      const server = toServerShape(parsed.data.server, serverId, cloudServerOverride)
       const result = await callTool(
         server,
         credentials,
@@ -111,7 +145,7 @@ export async function POST(
       if (!parsed.success) {
         return badRequest("invalid_body", parsed.error.message)
       }
-      const server = toServerShape(parsed.data.server, serverId)
+      const server = toServerShape(parsed.data.server, serverId, cloudServerOverride)
       const result = await readResource(server, credentials, parsed.data.uri)
       return NextResponse.json({ result })
     }
@@ -132,23 +166,39 @@ function badRequest(code: string, detail: string): NextResponse {
 }
 
 /**
- * Fill in the fields the MCP client wrapper expects but the client
+ * Fill in the fields the MCP client wrapper expects but the caller
  * doesn't bother re-sending (workspaceId, timestamps, etc). The
  * wrapper only uses `id`, `name`, `url`, `transport`.
+ *
+ * When `cloudOverride` is non-null, its url/name/transport take
+ * precedence over the body — these come from the Supabase row we
+ * just fetched, which is the source of truth for cloud-mode servers
+ * (a malicious client can't ask the proxy to call an unrelated URL).
  */
 function toServerShape(
   partial: Pick<McpServer, "id" | "name" | "url" | "transport">,
-  pathServerId: string
+  pathServerId: string,
+  cloudOverride: Partial<McpServer> | null
 ): McpServer {
   // Catch a body/path mismatch so a buggy client doesn't accidentally
   // hit the wrong server config.
   if (partial.id !== pathServerId) {
     throw new Error("serverId_mismatch")
   }
+  const merged = cloudOverride
+    ? {
+        ...partial,
+        ...cloudOverride,
+        id: pathServerId,
+      }
+    : partial
   return {
-    ...partial,
+    id: merged.id,
+    name: merged.name ?? partial.name,
+    url: merged.url ?? partial.url,
+    transport: merged.transport ?? partial.transport,
     workspaceId: "",
-    credentialMode: "local",
+    credentialMode: cloudOverride ? "cloud" : "local",
     enabled: true,
     createdAt: new Date(),
     updatedAt: new Date(),

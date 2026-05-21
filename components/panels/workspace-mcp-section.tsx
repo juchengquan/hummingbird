@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { useStore, useWorkspaceMcpServers } from "@/client/hooks/use-store"
+import { useAuth } from "@/client/hooks/use-auth"
 import {
   credentialFingerprint,
   getLocalCred,
@@ -247,6 +248,10 @@ function AddMcpServerDialog({
 }) {
   const addMcpServer = useStore((s) => s.addMcpServer)
   const setMcpServerCapabilities = useStore((s) => s.setMcpServerCapabilities)
+  const auth = useAuth()
+  // Cloud mode requires an authenticated Supabase session — the
+  // encryption key + RPC live behind cookie-auth.
+  const cloudAvailable = auth.status === "signed-in"
   const [name, setName] = useState("")
   const [url, setUrl] = useState("")
   const [credentialMode, setCredentialMode] = useState<McpCredentialMode>("local")
@@ -280,15 +285,58 @@ function AddMcpServerDialog({
     } catch {
       return setError("URL is not valid.")
     }
-    if (credentialMode === "cloud") {
+    if (credentialMode === "cloud" && !cloudAvailable) {
       return setError(
-        "Cloud-stored credentials are not yet wired (lands in Stage 2). " +
-          "Please use Local for now."
+        "Cloud-stored credentials require sign-in. Sign in to enable, or " +
+          "use Local mode (the credential stays on this device)."
+      )
+    }
+    if (credentialMode === "cloud" && authType === "none") {
+      return setError(
+        'Cloud mode needs a credential. Pick "Bearer token" or switch to ' +
+          "Local mode."
       )
     }
     setSubmitting(true)
     try {
       const cred: McpCredentials = buildCred(authType, token)
+
+      if (credentialMode === "cloud") {
+        // Cloud mode: create the row locally (no cred — we don't keep
+        // a plaintext copy client-side), then immediately push the
+        // encrypted version to Supabase via the dedicated route.
+        // The local row gets the cred-encrypted "marker" by reading
+        // back capabilities later via discover.
+        const server: McpServer = addMcpServer({
+          workspaceId,
+          name: trimmedName,
+          url: trimmedUrl,
+          credentialMode: "cloud",
+        })
+        const upsert = await apiClient.mcp.upsertCloudServer({
+          id: server.id,
+          workspaceId,
+          name: trimmedName,
+          url: trimmedUrl,
+          credentials: cred,
+        })
+        if (!upsert.ok) {
+          setError(
+            upsert.error.message ?? "Failed to save credential to Supabase."
+          )
+          // Roll back the local row — without the encrypted cred in
+          // Supabase, the row would be useless and confusing.
+          useStore.getState().removeMcpServer(server.id)
+          return
+        }
+        // Discovery via the proxy uses the encrypted cred (header
+        // omitted; route falls through to the Supabase decrypt path).
+        void discoverInBackground(server, undefined, setMcpServerCapabilities)
+        handleClose(false)
+        return
+      }
+
+      // Local mode (existing flow).
       const fingerprint = await credentialFingerprint(cred)
       const server: McpServer = addMcpServer({
         workspaceId,
@@ -358,11 +406,11 @@ function AddMcpServerDialog({
               />
               <CredModeButton
                 label="Cloud"
-                description="Synced (Stage 2)"
+                description={cloudAvailable ? "Synced across devices" : "Sign in to enable"}
                 icon={Cloud}
                 active={credentialMode === "cloud"}
-                onClick={() => setCredentialMode("cloud")}
-                disabled
+                onClick={() => cloudAvailable && setCredentialMode("cloud")}
+                disabled={!cloudAvailable}
               />
             </div>
           </div>
@@ -494,7 +542,10 @@ function buildCred(
 
 async function discoverInBackground(
   server: McpServer,
-  cred: McpCredentials,
+  /** Local-mode cred to send in the `X-MCP-Credentials` header.
+   *  Pass undefined for cloud-mode servers — the proxy decrypts from
+   *  Supabase by serverId. */
+  cred: McpCredentials | undefined,
   setCapabilities: (id: string, caps: McpCapabilities) => void
 ): Promise<void> {
   try {
@@ -508,7 +559,7 @@ async function discoverInBackground(
           transport: server.transport,
         },
       },
-      cred.type !== "none"
+      cred && cred.type !== "none"
         ? { credentialHeader: serializeCredentialHeader(cred) }
         : undefined
     )

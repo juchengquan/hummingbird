@@ -13,6 +13,7 @@ import {
   type WebSearchLog,
 } from '@/server/skills/web-search'
 import { buildMcpTool, mcpToolName } from '@/server/mcp/tools'
+import { loadEffectiveMcpServers } from '@/server/mcp/load-servers'
 
 interface FileSummary {
   name: string
@@ -264,14 +265,18 @@ export async function POST(req: NextRequest) {
     const t = buildWebSearchTool(webSearchLog)
     if (t) tools.webSearch = t
   }
-  // Register MCP-exposed tools for every enabled server the client sent.
-  // Tool name is prefixed `mcp__<serverId>__<toolName>` so model logs
-  // carry provenance and tools from different servers don't collide.
-  // `credentials` here is the local-mode cred the client sent; cloud
-  // mode (decrypted from Supabase) lands in Stage 3.
+  // Register MCP-exposed tools for every enabled server. Local-mode
+  // servers come in via `body.mcpServers` with their cred attached;
+  // cloud-mode servers are looked up server-side from Supabase and
+  // their cred decrypted via the SECURITY DEFINER RPC. Tool name is
+  // prefixed `mcp__<serverId>__<toolName>` so model logs carry
+  // provenance and tools from different servers don't collide.
+  const mcpServers = await loadEffectiveMcpServers(
+    body.workspaceId,
+    body.mcpServers
+  )
   const mcpToolNames: string[] = []
-  for (const server of body.mcpServers ?? []) {
-    if (server.enabled === false) continue
+  for (const server of mcpServers) {
     for (const descriptor of server.capabilities?.tools ?? []) {
       const name = mcpToolName(server.id, descriptor.name)
       tools[name] = buildMcpTool(server, descriptor, server.credentials)
@@ -287,7 +292,7 @@ export async function POST(req: NextRequest) {
         body.files,
         body.workspaceSystemPrompt,
         enabledSkillIds,
-        (body.mcpServers ?? []).map((s) => ({
+        mcpServers.map((s) => ({
           name: s.name,
           toolCount: s.capabilities?.tools?.length ?? 0,
         }))

@@ -95,12 +95,13 @@ See `.env.example` for the full list. Two groups:
 
 - **AI Gateway** (`AI_GATEWAY_API_KEY`) — required for real chat/editor AI. Without it, the chat panel falls back to a clearly-labeled mock response.
 - **Supabase** (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`) — optional. Enables email magic-link sign-in and (eventually) cloud sync of workspaces, conversations, files, and conversation assets. Without it the app runs anonymously on `localStorage` only; the auth UI is hidden.
+- **MCP encryption** (`MCP_ENCRYPTION_KEY`) — required when any user picks Cloud-mode credentials for an MCP server. Generate with `openssl rand -base64 32`. Stored only in the Next.js server env; never persisted to Postgres. Rotating it invalidates existing cloud-mode credentials (users have to re-add).
 
-SQL lives under `supabase/migrations/` as four files (`0001_schema.sql`,
-`0002_rls_policies.sql`, `0003_storage.sql`, `0004_conversation_files.sql`)
-— see `docs/SUPABASE_SETUP.md` for the hosted-cloud run order, or
-`docs/SUPABASE_LOCAL.md` for the local Supabase CLI path (Docker-based,
-no cloud account needed).
+SQL lives under `supabase/migrations/` as five files (`0001_schema.sql`,
+`0002_rls_policies.sql`, `0003_storage.sql`, `0004_conversation_files.sql`,
+`0005_mcp.sql`) — see `docs/SUPABASE_SETUP.md` for the hosted-cloud
+run order, or `docs/SUPABASE_LOCAL.md` for the local Supabase CLI
+path (Docker-based, no cloud account needed).
 
 ## Frontend module conventions
 

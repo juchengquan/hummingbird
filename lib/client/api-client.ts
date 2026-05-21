@@ -65,6 +65,7 @@ export const apiUrls = {
     url(`/api/share/${encodeURIComponent(token)}`),
   mcp: (serverId: string, action: "discover" | "call" | "read") =>
     url(`/api/mcp/${encodeURIComponent(serverId)}/${action}`),
+  mcpServer: () => url("/api/mcp/server"),
 }
 
 /**
@@ -285,6 +286,43 @@ async function mcpProxyCall(
   }
 }
 
+/**
+ * Persists a cloud-mode MCP server config + credential. The browser
+ * can't write to `credentials_encrypted` directly (no encryption key
+ * client-side), so this route wraps the SECURITY DEFINER RPC.
+ *
+ * Returns `ok: true` on success. The credential never round-trips:
+ * the route stores the encrypted ciphertext in Supabase and the client
+ * forgets it.
+ */
+async function mcpUpsertCloudServer(body: {
+  id: string
+  workspaceId: string
+  name: string
+  url: string
+  credentials: { type?: string; headers?: Record<string, string> }
+  capabilities?: Record<string, unknown>
+  enabled?: boolean
+}): Promise<
+  | { ok: true; status: number }
+  | { ok: false; status: number; error: { code?: string; message?: string } }
+> {
+  const res = await fetch(apiUrls.mcpServer(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const errBody = await readErrorBody(res)
+    return {
+      ok: false,
+      status: res.status,
+      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+    }
+  }
+  return { ok: true, status: res.status }
+}
+
 // --- Public surface ---------------------------------------------------------
 
 export const apiClient = {
@@ -299,7 +337,7 @@ export const apiClient = {
     create: createShare,
     revoke: revokeShare,
   },
-  mcp: { proxy: mcpProxyCall },
+  mcp: { proxy: mcpProxyCall, upsertCloudServer: mcpUpsertCloudServer },
 }
 
 export type ApiClient = typeof apiClient

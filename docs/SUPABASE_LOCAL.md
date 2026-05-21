@@ -84,9 +84,12 @@ Everything the app uses today. The codebase has zero hosted-only
 dependencies (no Realtime, no Edge Functions, no managed-only features),
 so every feature gated by `lib/shared/supabase/env.ts` lights up:
 
-- All four migrations (`supabase/migrations/0001_schema.sql`,
+- All five migrations (`supabase/migrations/0001_schema.sql`,
   `0002_rls_policies.sql`, `0003_storage.sql`,
-  `0004_conversation_files.sql`) apply identically
+  `0004_conversation_files.sql`, `0005_mcp.sql`) apply identically.
+  `0005_mcp.sql` enables `pgcrypto` itself — no separate extension
+  toggle. Set `MCP_ENCRYPTION_KEY` in `.env.local` if you want to
+  exercise the Cloud-mode credential path locally.
 - Magic-link auth via local **Inbucket** (no real inbox needed —
   emails are captured at http://localhost:54324)
 - File uploads to the local `user-files` Storage bucket
