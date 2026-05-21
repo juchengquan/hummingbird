@@ -13,7 +13,22 @@
 
 import type { LucideIcon } from "lucide-react"
 
-export type SkillId = "webSearch"
+export type SkillId = "webSearch" | "webFetch"
+
+/**
+ * Tool name exposed to the model for the web-search skill. The skill
+ * dispatches to one or more providers under the hood (Tavily + Brave
+ * today), but the model only sees a single `webSearch` tool.
+ * `isWebSearchToolName` is the canonical check so future provider
+ * additions can extend the union here without each UI consumer
+ * hardcoding the string.
+ */
+export const WEB_SEARCH_TOOL_NAMES = ["webSearch"] as const
+export type WebSearchToolName = (typeof WEB_SEARCH_TOOL_NAMES)[number]
+
+export function isWebSearchToolName(name: string): name is WebSearchToolName {
+  return (WEB_SEARCH_TOOL_NAMES as readonly string[]).includes(name)
+}
 
 export interface SkillDescriptor {
   id: SkillId

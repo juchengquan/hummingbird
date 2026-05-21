@@ -2,7 +2,9 @@
 
 import { useCallback, useState } from "react"
 import { format, formatDistanceToNow } from "date-fns"
-import { ExternalLink, Globe, Lock, Plus, RefreshCw, X } from "lucide-react"
+import { Eye, ExternalLink, Globe, Lock, Plus, RefreshCw, X } from "lucide-react"
+
+import { useUrlPreview } from "@/components/url-viewer/types"
 import { toast } from "sonner"
 
 import { Input } from "@/components/ui/input"
@@ -311,7 +313,12 @@ function BookmarkRow({
         aria-pressed={interactive ? attached : undefined}
         title={bookmark.url}
         className={cn(
-          "w-full flex items-start gap-2 px-2 py-1.5 rounded-md text-left transition-colors pr-14",
+          // `pr-20` reserves room for the three hover-action buttons
+          // (Eye / Refresh / Remove) so they don't overlap the title +
+          // URL when revealed. Each button is ~20px wide; three plus
+          // gaps + right offset is ~70px, so we use 80px for some
+          // breathing room.
+          "w-full flex items-start gap-2 px-2 py-1.5 rounded-md text-left transition-colors pr-20",
           interactive
             ? attached
               ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/40 cursor-pointer"
@@ -371,6 +378,15 @@ function BookmarkRow({
         className="absolute top-1.5 right-1.5 flex items-center gap-0.5 opacity-0 group-hover/bookmark-row:opacity-100 focus-within:opacity-100 transition-opacity"
         onClick={(e) => e.stopPropagation()}
       >
+        <button
+          type="button"
+          onClick={() => useUrlPreview.getState().open({ bookmarkId: bookmark.id })}
+          aria-label={`Preview ${bookmark.title}`}
+          title="Preview"
+          className="p-1 rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] transition-colors"
+        >
+          <Eye size={12} />
+        </button>
         <button
           type="button"
           onClick={onRefresh}

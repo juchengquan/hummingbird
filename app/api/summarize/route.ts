@@ -6,6 +6,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
 import { categorizeError } from '@/shared/api-errors'
+import { selectModel } from '@/server/model-provider'
 
 export const runtime = 'nodejs'
 
@@ -119,7 +120,7 @@ export async function POST(req: NextRequest) {
   try {
     const result = await generateText({
       abortSignal: req.signal,
-      model: gateway(modelId),
+      model: selectModel(modelId, gateway),
       prompt,
       // Summaries should be tight — bail out if the model rambles.
       maxOutputTokens: 600,

@@ -4,6 +4,7 @@ import { Globe, Loader2, Check, Wrench } from "lucide-react"
 import { cn } from "@/shared/utils"
 
 import type { ToolCallResult } from "@/shared/types"
+import { isWebSearchToolName } from "@/shared/skills/types"
 
 export interface LiveToolCall {
   id: string
@@ -63,14 +64,16 @@ export function ToolCallStrip({ calls, className }: ToolCallStripProps) {
 }
 
 function iconFor(name: string) {
-  if (name === "webSearch") return Globe
+  if (isWebSearchToolName(name)) return Globe
   return Wrench
 }
 
 function labelFor(call: LiveToolCall): string {
-  if (call.name === "webSearch") {
+  if (isWebSearchToolName(call.name)) {
     if (call.status === "running") {
-      return call.argsLabel ? `Searching for "${call.argsLabel}"…` : "Searching the web…"
+      return call.argsLabel
+        ? `Searching the web for "${call.argsLabel}"…`
+        : "Searching the web…"
     }
     return call.summary
       ? `Searched the web · ${call.summary}`

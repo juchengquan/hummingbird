@@ -5,13 +5,29 @@ import { generateText, stepCountIs, streamText, type ModelMessage } from 'ai'
 import { NextResponse } from 'next/server'
 
 import { DEFAULT_CHAT_MODEL } from '@/shared/models'
+import { selectModel } from '@/server/model-provider'
 import { categorizeError } from '@/shared/api-errors'
 import { ChatRequestSchema } from '@/shared/api-schemas'
 import {
   buildWebSearchTool,
+  isBraveConfigured,
+  isTavilyConfigured,
   isWebSearchConfigured,
   type WebSearchLog,
 } from '@/server/skills/web-search'
+import {
+  buildWebFetchTool,
+  type WebFetchLog,
+} from '@/server/skills/web-fetch'
+import {
+  DEFAULT_MAX_WEB_FETCHES,
+  clampMaxWebFetches,
+} from '@/shared/skills/web-fetch-config'
+import {
+  resolveWebSearchConfig,
+  type ResolvedWebSearchConfig,
+} from '@/shared/skills/web-search-config'
+import { isWebSearchToolName } from '@/shared/skills/types'
 import { buildMcpTool, mcpToolName } from '@/server/mcp/tools'
 import { loadEffectiveMcpServers, type EffectiveMcpServer } from '@/server/mcp/load-servers'
 import { resolveAttachedMcpResources } from '@/server/mcp/inject-resources'
@@ -75,6 +91,13 @@ function buildSystemPrompt(opts: {
   workspaceSystemPrompt?: string
   /** Skill ids the user has effectively enabled for this turn. */
   enabledSkills?: string[]
+  /** Fully-resolved webSearch config (cap + per-provider toggles + knobs).
+   *  Flows into the prompt so the model sees the same limits and providers
+   *  the runtime is enforcing. */
+  webSearchConfig: ResolvedWebSearchConfig
+  /** Resolved webFetch cap. Flows into the prompt so the model sees
+   *  the same number the runtime enforces. */
+  webFetchMaxCalls: number
   /** MCP server summaries — only used to mention available tooling.
    *  Tool definitions themselves are surfaced via the AI SDK's
    *  `tools` parameter, so we don't have to enumerate them in prose. */
@@ -86,7 +109,11 @@ function buildSystemPrompt(opts: {
   attachments: ResolvedAttachment[]
 }): string {
   const trimmedWorkspace = opts.workspaceSystemPrompt?.trim()
-  const skillsLine = buildSkillsNote(opts.enabledSkills ?? [])
+  const skillsLine = buildSkillsNote(
+    opts.enabledSkills ?? [],
+    opts.webSearchConfig,
+    opts.webFetchMaxCalls
+  )
   const mcpLine = buildMcpNote(opts.mcpServers ?? [])
   // Workspace prompt goes first so user-set persona/style instructions take
   // precedence over our generic guidance. The base instructions then nudge the
@@ -119,25 +146,79 @@ function buildSystemPrompt(opts: {
   return [base, attachmentBlock, metaBlock].filter(Boolean).join('\n\n')
 }
 
-function buildSkillsNote(enabledSkills: string[]): string | null {
+function buildSkillsNote(
+  enabledSkills: string[],
+  webSearchConfig: ResolvedWebSearchConfig,
+  webFetchMaxCalls: number
+): string | null {
   if (enabledSkills.length === 0) return null
   const notes: string[] = []
+
+  // Web-search note. One tool, possibly multiple providers under the
+  // hood. We tell the model which providers are actually live so it
+  // can decide whether to search (e.g. if only Brave is on and the
+  // query needs fresh news, that's relevant context) and reinforce
+  // the hard cap.
   if (enabledSkills.includes('webSearch')) {
-    if (isWebSearchConfigured()) {
+    const tavilyLive = webSearchConfig.tavily.enabled && isTavilyConfigured()
+    const braveLive = webSearchConfig.brave.enabled && isBraveConfigured()
+    if (tavilyLive || braveLive) {
+      const providers = [
+        tavilyLive ? 'Tavily' : null,
+        braveLive ? 'Brave' : null,
+      ]
+        .filter(Boolean)
+        .join(' + ')
+      const cap = webSearchConfig.maxCalls
       notes.push(
-        'You can call `webSearch({ query })` when the user asks about current information ' +
-          'or facts you may not have. Cite sources using bracket markers `[1]`, `[2]`, etc. ' +
-          'placed inline at the end of the sentence they support, matching the order results ' +
-          'were returned in the most recent webSearch result. Do not repeat the URL in the ' +
-          'text — the UI renders `[N]` as a clickable link to source N.'
+        `You can call \`webSearch({ query })\` when the user asks about current information ` +
+          `or facts you may not have. The tool fans out to enabled providers (${providers}) ` +
+          `in parallel and returns deduped, merged results. ` +
+          `Cite sources using bracket markers \`[1]\`, \`[2]\`, etc. placed inline at the end of ` +
+          `the sentence they support, matching the order results were returned. Do not repeat ` +
+          `the URL in the text — the UI renders \`[N]\` as a clickable link to source N. ` +
+          `HARD LIMIT: ${cap} tool call${cap === 1 ? '' : 's'} per turn (regardless of how many ` +
+          `providers each call fans out to). After ${cap} call${cap === 1 ? '' : 's'} any further ` +
+          `attempts will return an error. Plan: pick 1-2 broad queries that cover the question, ` +
+          `then write the answer from the snippets you have. Do not split one question into many ` +
+          `narrow searches.`
+      )
+    } else if (!isWebSearchConfigured()) {
+      // Skill is on but the server doesn't have any provider key. Be
+      // explicit about which env vars would unlock it so the user can
+      // grep their setup.
+      notes.push(
+        'The user enabled "Web search" but no provider is configured on the server ' +
+          '(missing TAVILY_API_KEY and BRAVE_SEARCH_API_KEY). You cannot actually search — ' +
+          'say so briefly and answer from training data instead.'
       )
     } else {
+      // Configured on the server but every provider has been disabled
+      // by the user's per-provider toggles. Tell the model honestly.
       notes.push(
-        'The user enabled "Web search" but the server is not configured (no TAVILY_API_KEY). ' +
+        'The user enabled "Web search" but disabled every provider in the skill settings. ' +
           'You cannot actually search — say so briefly and answer from training data instead.'
       )
     }
   }
+
+  // Web-fetch note. Pairs naturally with web search (search finds the
+  // URL, fetch reads it in full), but the model can also call fetch
+  // directly when the user references a specific URL. Cap is the
+  // resolved cascade value, matched here so the model sees the same
+  // number the runtime enforces.
+  if (enabledSkills.includes('webFetch')) {
+    notes.push(
+      `You can call \`webFetch({ url })\` to fetch a single web page and read its full ` +
+        `extracted text. Use this when the user references a specific URL, or when a ` +
+        `\`webSearch\` snippet looks promising but you need the full content to answer ` +
+        `accurately. Each call returns up to ~200 KB of plain text plus the page title and ` +
+        `description. Cannot fetch internal or private network addresses. HARD LIMIT: ` +
+        `${webFetchMaxCalls} ${webFetchMaxCalls === 1 ? 'call' : 'calls'} per turn — pick the URLs that ` +
+        `most directly answer the question rather than fetching everything.`
+    )
+  }
+
   if (notes.length === 0) return null
   return `Available capabilities:\n${notes.map((n) => `- ${n}`).join('\n')}`
 }
@@ -262,15 +343,39 @@ export async function POST(req: NextRequest) {
   const gateway = createGateway({ apiKey })
   const modelId = body.model || DEFAULT_CHAT_MODEL
   const enabledSkillIds = (body.skills ?? []).map((s) => s.id)
+  // Resolve the user-facing webSearch cap from the request. The client
+  // The client sends a resolved `webSearchConfig` (cap + per-provider
+  // toggles + per-provider knobs) on the webSearch skill entry. We
+  // re-resolve here through the shared resolver so server-side defaults
+  // and clamping apply even if the client omits or sends garbage.
+  const webSearchEntry = body.skills?.find((s) => s.id === 'webSearch')
+  const resolvedWebSearchConfig = resolveWebSearchConfig(
+    undefined,
+    webSearchEntry?.webSearchConfig
+  )
 
-  // Build the tool map from enabled skills. A skill that needs server config
-  // (e.g. TAVILY_API_KEY) returns null when unconfigured — we skip it in the
-  // tool map and the system prompt note tells the model to fall back.
+  // Build the tool map from enabled skills. The single `webSearch` tool
+  // dispatches across enabled providers; if both providers are
+  // toggled off (or none are configured server-side) the builder
+  // returns null and the system-prompt note tells the model to fall
+  // back.
   const webSearchLog: WebSearchLog = []
+  const webFetchLog: WebFetchLog = []
   const tools: Record<string, unknown> = {}
   if (enabledSkillIds.includes('webSearch')) {
-    const t = buildWebSearchTool(webSearchLog)
+    const t = buildWebSearchTool(webSearchLog, resolvedWebSearchConfig)
     if (t) tools.webSearch = t
+  }
+  // Resolve the webFetch cap from the request (client sends the
+  // already-cascaded value); fall back to the built-in default.
+  const webFetchEntry = body.skills?.find((s) => s.id === 'webFetch')
+  const webFetchMaxCalls = clampMaxWebFetches(
+    webFetchEntry?.webFetchConfig?.maxCalls ?? DEFAULT_MAX_WEB_FETCHES
+  )
+  if (enabledSkillIds.includes('webFetch')) {
+    tools.webFetch = buildWebFetchTool(webFetchLog, {
+      maxCalls: webFetchMaxCalls,
+    })
   }
   // Register MCP-exposed tools for every enabled server. Local-mode
   // servers come in via `body.mcpServers` with their cred attached;
@@ -297,13 +402,37 @@ export async function POST(req: NextRequest) {
   // blocking the turn.
   const attachments = await resolveAttachments(body.attachments, mcpServers)
 
+  // Idle watchdog: cancel the upstream call if the stream goes silent
+  // mid-response. Declared here so the AbortSignal can be combined with
+  // `req.signal` and threaded into `streamText`. The timer is armed inside
+  // the ReadableStream's `start()` so it only runs once we're actually
+  // consuming the stream.
+  const IDLE_TIMEOUT_MS = 90_000
+  const idleAbort = new AbortController()
+  const combinedSignal =
+    typeof AbortSignal.any === 'function'
+      ? AbortSignal.any([req.signal, idleAbort.signal])
+      : req.signal
+  // Fallback wiring for runtimes without `AbortSignal.any`: forward both
+  // sources into a third controller manually. (Node 20.3+ has `.any`.)
+  let manualCombined: AbortController | null = null
+  if (typeof AbortSignal.any !== 'function') {
+    manualCombined = new AbortController()
+    const relay = () => manualCombined?.abort()
+    req.signal.addEventListener('abort', relay, { once: true })
+    idleAbort.signal.addEventListener('abort', relay, { once: true })
+  }
+  const upstreamSignal = manualCombined?.signal ?? combinedSignal
+
   try {
     const result = streamText({
-      abortSignal: req.signal,
-      model: gateway(modelId),
+      abortSignal: upstreamSignal,
+      model: selectModel(modelId, gateway),
       system: buildSystemPrompt({
         workspaceSystemPrompt: body.workspaceSystemPrompt,
         enabledSkills: enabledSkillIds,
+        webSearchConfig: resolvedWebSearchConfig,
+        webFetchMaxCalls,
         mcpServers: mcpServers.map((s) => ({
           name: s.name,
           toolCount: s.capabilities?.tools?.length ?? 0,
@@ -321,10 +450,33 @@ export async function POST(req: NextRequest) {
       ...(Object.keys(tools).length > 0
         ? {
             tools: tools as Parameters<typeof streamText>[0]['tools'],
-            // 5 steps is enough for the single built-in skill (webSearch).
-            // Bump to 8 when MCP tools are registered — those chain
-            // naturally (list → get → filter → answer).
-            stopWhen: stepCountIs(mcpToolNames.length > 0 ? 8 : 5),
+            // Step budget. webSearch alone: 6 steps (model can chain a few
+            // searches and still have one forced text-only step at the end).
+            // With MCP tools registered: 10, because list → get → filter →
+            // answer naturally takes more steps.
+            stopWhen: stepCountIs(mcpToolNames.length > 0 ? 10 : 6),
+            // Force the last step to be text-only. Without this, reasoning
+            // models can chain tool calls until they hit the cap and emit
+            // `finishReason: tool-calls` — i.e. cut off mid-loop with no
+            // answer. By disabling tools on the final step we guarantee at
+            // least one text-producing step before stopWhen fires.
+            prepareStep: ({ stepNumber }) => {
+              const lastStepIndex = (mcpToolNames.length > 0 ? 10 : 6) - 1
+              // Force the last step to be text-only as a hard backstop.
+              //
+              // We intentionally do NOT drop webSearch from `activeTools`
+              // mid-turn once its budget is exhausted: some models (notably
+              // DeepSeek-family) react to a missing tool by leaking their
+              // internal tool-call markup as plain text (e.g.
+              // `<｜｜DSML｜｜tool_calls>…`) instead of writing an answer.
+              // Instead, the cap is enforced inside `webSearch`'s `execute`
+              // — over-budget calls return a normal tool-result with an
+              // error message, which the model handles gracefully.
+              if (stepNumber >= lastStepIndex) {
+                return { toolChoice: 'none' }
+              }
+              return undefined
+            },
           }
         : {}),
     })
@@ -345,12 +497,33 @@ export async function POST(req: NextRequest) {
         let sawError = false
         let sawReasoning = false
         let sawToolResult = false
+        let toolErrorCount = 0
+        let finalFinishReason: string | null = null
+        let lastStepFinishReason: string | null = null
+        let stepCount = 0
         // Behind DEBUG_CHAT_STREAM=1, dump every fullStream part type so we
         // can diagnose models that emit content via a part type the router
         // doesn't handle today (raw / source / tool-error / etc.).
         const debugStream = process.env.DEBUG_CHAT_STREAM === '1'
+        // Idle watchdog: declared outside start() so the signal could be
+        // threaded into streamText. Arm it now that we're consuming the
+        // stream; reset on every part; clear in the finally below.
+        let idleTimer: ReturnType<typeof setTimeout> | null = null
+        let idleTimedOut = false
+        const armIdle = () => {
+          if (idleTimer) clearTimeout(idleTimer)
+          idleTimer = setTimeout(() => {
+            idleTimedOut = true
+            console.warn(
+              `[chat] idle-timeout firing (model=${modelId}, sawReasoning=${sawReasoning}, sawToolResult=${sawToolResult}, lastStepFinishReason=${lastStepFinishReason})`
+            )
+            idleAbort.abort()
+          }, IDLE_TIMEOUT_MS)
+        }
+        armIdle()
         try {
           for await (const part of result.fullStream) {
+            armIdle()
             if (debugStream) {
               console.warn('[chat-stream]', part.type, Object.keys(part).filter((k) => k !== 'type'))
             }
@@ -395,10 +568,10 @@ export async function POST(req: NextRequest) {
                 const n = output.results.length
                 summary = `${n} result${n === 1 ? '' : 's'}`
                 // Pass results through to the client for the Sources strip
-                // and `[N]` citation markers. Only webSearch produces this
-                // shape; other tools without a `results` array fall through
-                // to the bare summary.
-                if (p.toolName === 'webSearch') {
+                // and `[N]` citation markers. Only web-search tools (Tavily
+                // + Brave) produce this shape; other tools without a
+                // `results` array fall through to the bare summary.
+                if (p.toolName && isWebSearchToolName(p.toolName)) {
                   results = output.results
                     .map((r) => ({
                       title: typeof r?.title === 'string' ? r.title : '',
@@ -416,6 +589,52 @@ export async function POST(req: NextRequest) {
                 summary,
                 ...(results ? { results } : {}),
               })
+            } else if (part.type === 'tool-error') {
+              // Tool execute() threw or args were malformed. The model never
+              // sees a result so the next step often produces no answer.
+              // Record it; surface as a tool_result with an error summary
+              // so the UI pill flips out of "running" instead of spinning.
+              const p = part as { toolCallId?: string; toolName?: string; error?: unknown }
+              toolErrorCount += 1
+              const errMsg = p.error instanceof Error
+                ? p.error.message
+                : typeof p.error === 'string'
+                  ? p.error
+                  : 'Tool error'
+              console.warn(
+                `[chat] tool-error (model=${modelId}, tool=${p.toolName}, msg=${errMsg})`
+              )
+              send({
+                type: 'tool_result',
+                id: p.toolCallId ?? '',
+                name: p.toolName ?? '',
+                summary: `error: ${errMsg}`,
+              })
+            } else if (part.type === 'finish-step') {
+              const p = part as { finishReason?: string }
+              stepCount += 1
+              lastStepFinishReason = p.finishReason ?? null
+              if (debugStream) {
+                console.warn(
+                  `[chat-stream] finish-step #${stepCount} reason=${lastStepFinishReason} textLen=${assistantText.length}`
+                )
+              }
+            } else if (part.type === 'finish') {
+              const p = part as { finishReason?: string }
+              finalFinishReason = p.finishReason ?? null
+              if (debugStream) {
+                console.warn(`[chat-stream] finish reason=${finalFinishReason}`)
+              }
+            } else if (part.type === 'abort') {
+              // Provider-side abort. Treat as error so the UI surfaces it
+              // rather than silently truncating.
+              console.warn(`[chat] provider abort (model=${modelId})`)
+              sawError = true
+              send({
+                type: 'error',
+                code: 'provider',
+                message: 'The model provider aborted the response.',
+              })
             } else if (part.type === 'error') {
               const { code, message } = categorizeError(
                 (part as { error?: unknown }).error
@@ -425,29 +644,99 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          // Stream ended without a final answer text. We saw activity
-          // (reasoning chunks or tool results) so the request wasn't a
-          // total no-op — the model just didn't emit a text-delta
-          // response after the tools ran. Common with reasoning models
-          // when the tool result alone "looks like" a complete answer
-          // (the user sees the tool pill but an empty bubble below it).
+          // Generic "model leaked its internal tool-call markup as text"
+          // detector. Different families use different tokens
+          // (DeepSeek's full-width `<｜｜DSML｜｜tool_calls>…`,
+          //  Anthropic-style `<function_calls><invoke>…`,
+          //  Mistral/Llama `<tool_call>…</tool_call>`, ChatML
+          //  `<|tool_call|>…`, etc.), so instead of stripping known
+          // patterns, we check whether the assistant's text looks
+          // structurally like a tool-call dump: lots of angle-bracket
+          // markup whose tag names contain "tool_call", "function_call",
+          // "tool_use", or "invoke". This is provider-agnostic — it
+          // matches the SHAPE of leaked markup, not specific tokens —
+          // and only fires when the markup dominates the text.
           //
-          // Surface this as visible text instead of a silent empty
-          // bubble. Log server-side so we can correlate with model id.
-          if (
+          // The shared root cause has been removed (we no longer drop
+          // tools from `activeTools` mid-turn), so this should be very
+          // rare in practice. It's here so a future model regression
+          // surfaces as a clear error instead of opaque gibberish.
+          const TOOLCALL_TAG_RE =
+            /[<＜《〈｜{[][^<>]*(?:tool_call|tool_use|function_call|invoke|tool_calls)\b/i
+          const looksLikeLeakedToolCall =
+            TOOLCALL_TAG_RE.test(assistantText) &&
+            // Stripping the markup-shaped substrings should remove most of
+            // the text. If what's left after a generic tag/JSON-ish strip
+            // is shorter than 40 chars (a sentence or two), treat the
+            // whole output as a leak.
+            assistantText
+              .replace(/<[^>]+>/g, '')
+              .replace(/[＜《〈｜][^＞》〉｜]*[＞》〉｜]/g, '')
+              .replace(/\{[^{}]*"(?:name|tool|function)"[^{}]*\}/g, '')
+              .trim().length < 40
+          if (looksLikeLeakedToolCall) {
+            console.warn(
+              `[chat] tool-call-markup leak detected (model=${modelId}, textLen=${assistantText.length})`
+            )
+          }
+
+          // Idle watchdog tripped — the stream went silent. The for-await
+          // above exits cleanly when idleAbort fires (the AI SDK plumbs
+          // abortSignal through), so we detect it here.
+          if (idleTimedOut && !sawError) {
+            sawError = true
+            send({
+              type: 'error',
+              code: 'provider',
+              message: `Model stopped responding after ${Math.round(IDLE_TIMEOUT_MS / 1000)}s of silence (last step finish: ${lastStepFinishReason ?? 'unknown'}).`,
+            })
+          }
+
+          // Stream ended without a complete answer. Two cases:
+          //   1. Zero text at all but we saw reasoning / tool activity.
+          //   2. Some preamble text, but the overall finish reason is
+          //      `tool-calls` / `length` / `content-filter` — the model
+          //      was cut off mid-stream. This is the case where the user
+          //      sees a few words and then nothing.
+          // Either way, surface as an error frame so the toast + Retry
+          // path handles it instead of leaving a half-finished bubble.
+          const truncated =
+            (finalFinishReason === 'tool-calls' ||
+              finalFinishReason === 'length' ||
+              finalFinishReason === 'content-filter') &&
+            !sawError &&
+            !req.signal.aborted
+          const empty =
             !sawError &&
             !req.signal.aborted &&
-            assistantText.trim().length === 0 &&
-            (sawReasoning || sawToolResult)
-          ) {
-            const fallback = sawToolResult
-              ? "_(The model gathered information from the tools above but didn't write a final answer. Try asking again, or expand the **Thought** block to see what it considered.)_"
-              : "_(The model produced reasoning but no final answer. Expand the **Thought** block above to see what it considered.)_"
-            send({ type: 'text', value: fallback })
-            assistantText = fallback
+            (assistantText.trim().length === 0 || looksLikeLeakedToolCall) &&
+            (sawReasoning || sawToolResult || toolErrorCount > 0 || looksLikeLeakedToolCall)
+          if (truncated || empty) {
+            sawError = true
+            const reason = finalFinishReason ?? lastStepFinishReason ?? 'unknown'
+            const hint =
+              reason === 'length'
+                ? 'output token budget exhausted — try a shorter conversation or different model'
+                : reason === 'content-filter'
+                  ? 'response blocked by content filter'
+                  : reason === 'tool-calls'
+                    ? 'model kept calling tools instead of answering — try rephrasing or disable web search'
+                    : looksLikeLeakedToolCall
+                      ? 'model emitted internal tool-call markup instead of an answer — try rephrasing or switch model'
+                      : sawToolResult
+                        ? 'model didn\'t write an answer after the tool call'
+                        : 'model produced reasoning but no answer'
             console.warn(
-              `[chat] empty-stream fallback emitted (model=${modelId}, hadReasoning=${sawReasoning}, hadToolResult=${sawToolResult})`
+              `[chat] truncated-response (model=${modelId}, reason=${reason}, textLen=${assistantText.length}, hadReasoning=${sawReasoning}, hadToolResult=${sawToolResult}, toolErrors=${toolErrorCount}, steps=${stepCount})`
             )
+            send({
+              type: 'error',
+              code: 'provider',
+              message:
+                assistantText.trim().length === 0
+                  ? `The model returned no answer (${hint}; finish reason: ${reason}).`
+                  : `The model was cut off before finishing its answer (${hint}; finish reason: ${reason}).`,
+            })
           }
 
           // The previous markdown footer is now superseded by the
@@ -482,9 +771,24 @@ export async function POST(req: NextRequest) {
           send({ type: 'done' })
           controller.close()
         } catch (error) {
-          const { code, message } = categorizeError(error)
-          send({ type: 'error', code, message })
+          // If the idle watchdog tripped, `streamText`'s upstream call was
+          // aborted via the combined signal — that surfaces as an exception
+          // out of the for-await rather than a clean end. Translate it into
+          // our explicit "stopped responding" error so the user sees the
+          // diagnostic, not a generic network error.
+          if (idleTimedOut) {
+            send({
+              type: 'error',
+              code: 'provider',
+              message: `Model stopped responding after ${Math.round(IDLE_TIMEOUT_MS / 1000)}s of silence (last step finish: ${lastStepFinishReason ?? 'unknown'}).`,
+            })
+          } else {
+            const { code, message } = categorizeError(error)
+            send({ type: 'error', code, message })
+          }
           controller.close()
+        } finally {
+          if (idleTimer) clearTimeout(idleTimer)
         }
       },
       cancel() {

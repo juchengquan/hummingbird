@@ -9,6 +9,7 @@ import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import {
   ArrowLeft,
   FolderOpen,
+  PanelRight,
   Plus,
   MessageSquare,
   Pin,
@@ -32,6 +33,7 @@ import {
 } from "@dnd-kit/sortable"
 import { cn } from "@/shared/utils"
 import { ResourcesSidebar } from "@/components/sidebars/resources"
+import { ResourcesMobileDrawer } from "@/components/sidebars/resources-mobile-drawer"
 import { format } from "date-fns"
 import { WorkspaceDetailSheet } from "@/components/panels/workspace-detail-sheet"
 import { WorkspaceRow } from "@/components/panels/workspace-row"
@@ -59,6 +61,12 @@ export function WorkspacesPanel() {
   // index list. Clicking a row in the index opens detail (and sets active
   // as a side effect). Cleared by the back button.
   const [focusedWorkspaceId, setFocusedWorkspaceId] = React.useState<string | null>(null)
+  // Below the `lg` breakpoint the right rail (ResourcesSidebar) is hidden,
+  // matching the chat page. We surface it via a slide-in drawer triggered
+  // by a button in each header so mobile users still have access to
+  // Files / Notes / Skills / MCP / etc. State is ephemeral (drawers
+  // shouldn't persist open across reloads).
+  const [mobileResourcesOpen, setMobileResourcesOpen] = React.useState(false)
   const focusedWorkspace = focusedWorkspaceId
     ? workspaces.find((w) => w.id === focusedWorkspaceId) ?? null
     : null
@@ -163,6 +171,16 @@ export function WorkspacesPanel() {
               )}
             </div>
             <div className="shrink-0 flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setMobileResourcesOpen(true)}
+                className="h-7 w-7 text-[var(--muted-foreground)] lg:hidden"
+                aria-label="Open resources panel"
+                title="Resources"
+              >
+                <PanelRight size={14} />
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"
@@ -291,9 +309,21 @@ export function WorkspacesPanel() {
             {workspaces.length} {workspaces.length === 1 ? "workspace" : "workspaces"}
           </h1>
         </div>
-        <Button onClick={handleCreate} size="sm" className="shrink-0">
-          <Plus size={14} className="mr-1" /> New Workspace
-        </Button>
+        <div className="shrink-0 flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setMobileResourcesOpen(true)}
+            className="h-7 w-7 text-[var(--muted-foreground)] lg:hidden"
+            aria-label="Open resources panel"
+            title="Resources"
+          >
+            <PanelRight size={14} />
+          </Button>
+          <Button onClick={handleCreate} size="sm">
+            <Plus size={14} className="mr-1" /> New Workspace
+          </Button>
+        </div>
       </div>
 
       <ScrollArea className="flex-1">
@@ -358,6 +388,10 @@ export function WorkspacesPanel() {
       />
       </div>
       <ResourcesSidebar mode={focusedWorkspace ? "chat" : "workspaces"} />
+      <ResourcesMobileDrawer
+        open={mobileResourcesOpen}
+        onOpenChange={setMobileResourcesOpen}
+      />
       <WorkspaceDetailSheet
         workspaceId={openDetailId}
         onClose={() => setOpenDetailId(null)}

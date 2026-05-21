@@ -22,6 +22,7 @@ import { z } from 'zod';
 import { BaseEditorKit } from '@/components/editor/editor-base-kit';
 import { markdownJoinerTransform } from '@/shared/markdown-joiner-transform';
 import { categorizeError } from '@/shared/api-errors';
+import { selectModel } from '@/server/model-provider';
 
 import {
   buildEditTableMultiCellPrompt,
@@ -76,7 +77,7 @@ export async function POST(req: NextRequest) {
           // @ts-expect-error AI SDK v5 typing for Output.choice doesn't
           // narrow `output` on the result; runtime is correct. See ROADMAP.
           const { output: AIToolName } = await generateText({
-            model: gatewayProvider(modelId),
+            model: selectModel(modelId, gatewayProvider),
             // @ts-expect-error see above
             output: Output.choice({ options: enumOptions }),
             prompt,
@@ -92,18 +93,18 @@ export async function POST(req: NextRequest) {
 
         const stream = streamText({
           experimental_transform: markdownJoinerTransform(),
-          model: gatewayProvider(model || 'openai/gpt-4o-mini'),
+          model: selectModel(model || 'openai/gpt-5.5', gatewayProvider),
           // Not used
           prompt: '',
           tools: {
             comment: getCommentTool(editor, {
               messagesRaw,
-              model: gatewayProvider(model || 'google/gemini-2.5-flash'),
+              model: selectModel(model || 'google/gemini-2.5-flash', gatewayProvider),
               writer,
             }),
             table: getTableTool(editor, {
               messagesRaw,
-              model: gatewayProvider(model || 'google/gemini-2.5-flash'),
+              model: selectModel(model || 'google/gemini-2.5-flash', gatewayProvider),
               writer,
             }),
           },
@@ -135,8 +136,8 @@ export async function POST(req: NextRequest) {
                 model:
                   editType === 'selection'
                     ? //The selection task is more challenging, so we chose to use Gemini 2.5 Flash.
-                      gatewayProvider(model || 'google/gemini-2.5-flash')
-                    : gatewayProvider(model || 'openai/gpt-4o-mini'),
+                      selectModel(model || 'google/gemini-2.5-flash', gatewayProvider)
+                    : selectModel(model || 'openai/gpt-5.5', gatewayProvider),
                 messages: [
                   {
                     content: editPrompt,
@@ -161,7 +162,7 @@ export async function POST(req: NextRequest) {
                     role: 'user',
                   },
                 ],
-                model: gatewayProvider(model || 'openai/gpt-4o-mini'),
+                model: selectModel(model || 'openai/gpt-5.5', gatewayProvider),
               };
             }
           },

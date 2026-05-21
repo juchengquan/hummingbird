@@ -8,6 +8,7 @@ import { ResourcePanel } from "@/components/panels/sources"
 import { WorkspacesPanel } from "@/components/panels/workspaces"
 import { CommandPalette } from "@/components/command-palette"
 import { PdfViewerHost } from "@/components/pdf-viewer/pdf-viewer"
+import { UrlPreviewHost } from "@/components/url-viewer/url-viewer"
 import {
   SidebarInset,
   SidebarProvider,
@@ -88,6 +89,7 @@ export default function Page() {
       <MainArea />
       <CommandPalette />
       <PdfViewerHost />
+      <UrlPreviewHost />
       <Toaster />
     </SidebarProvider>
   )

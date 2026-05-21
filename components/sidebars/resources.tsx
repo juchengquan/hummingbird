@@ -36,13 +36,17 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip
  * - Collapse / expand chevron at the *top* of the icon bar — single
  *   affordance regardless of state.
  */
+// Rail tab order: per-conversation content (Files / Notes / Artifacts /
+// Pins) first, then capability / integration tabs (Links / MCP / Skills)
+// at the tail — they get reached for less often, so putting them last
+// keeps the most-used icons within easy thumb reach at the top.
 const ALL_RAIL_TABS = [
   { id: "files" as const, label: "Files", Icon: FolderOpen },
-  { id: "links" as const, label: "Links", Icon: Globe },
   { id: "notes" as const, label: "Notes", Icon: StickyNote },
   { id: "artifacts" as const, label: "Artifacts", Icon: Archive },
-  { id: "mcp" as const, label: "MCP", Icon: Plug },
   { id: "pins" as const, label: "Pins", Icon: Pin },
+  { id: "links" as const, label: "Links", Icon: Globe },
+  { id: "mcp" as const, label: "MCP", Icon: Plug },
   { id: "skills" as const, label: "Skills", Icon: Sparkles },
 ]
 
@@ -208,48 +212,81 @@ export function ResourcesSidebar({ mode = "chat" }: ResourcesSidebarProps = {}) 
         </Tooltip>
         <div className="my-1 h-px w-6 bg-[var(--border)]" />
 
-        {railTabs.map(({ id, label, Icon }) => {
-          const count = counts[id]
-          const active = tab === id
-          return (
-            <Tooltip key={id}>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (open && active) {
-                      // Collapsing — preserve the tab so reopening lands here.
-                      setOpen(false)
-                    } else {
-                      setTab(id)
-                      setOpen(true)
-                    }
-                  }}
-                  aria-label={label}
-                  aria-pressed={open && active}
-                  className={cn(
-                    "relative p-1.5 rounded transition-colors",
-                    open && active
-                      ? "text-[var(--foreground)] bg-[var(--accent)]/60"
-                      : "text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--accent)]/50"
-                  )}
-                >
-                  <Icon size={16} />
-                  {count > 0 && (
-                    <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-3.5 px-1 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-[9px] leading-[14px] font-medium tabular-nums">
-                      {count > 99 ? "99+" : count}
-                    </span>
-                  )}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="left" sideOffset={6}>
-                {label}
-                {count > 0 && <span className="opacity-60 ml-1">({count})</span>}
-              </TooltipContent>
-            </Tooltip>
-          )
-        })}
+        {railTabs.map((t) => (
+          <RailTabButton
+            key={t.id}
+            id={t.id}
+            label={t.label}
+            Icon={t.Icon}
+            count={counts[t.id]}
+            active={tab === t.id}
+            open={open}
+            onActivate={() => {
+              if (open && tab === t.id) setOpen(false)
+              else {
+                setTab(t.id)
+                setOpen(true)
+              }
+            }}
+          />
+        ))}
       </div>
     </aside>
+  )
+}
+
+/**
+ * A single tab button in the right-rail activity bar. Extracted so the
+ * top and bottom tab groups share identical rendering — icon + active
+ * state + count badge + tooltip — without duplicating the JSX.
+ *
+ * `count` of 0 hides the badge; > 99 shows "99+" to keep the badge a
+ * stable width.
+ */
+function RailTabButton({
+  id,
+  label,
+  Icon,
+  count,
+  active,
+  open,
+  onActivate,
+}: {
+  id: string
+  label: string
+  Icon: React.ComponentType<{ size?: number; className?: string }>
+  count: number
+  active: boolean
+  open: boolean
+  onActivate: () => void
+}) {
+  return (
+    <Tooltip key={id}>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={onActivate}
+          aria-label={label}
+          aria-pressed={open && active}
+          className={cn(
+            "relative p-1.5 rounded transition-colors",
+            open && active
+              ? "text-[var(--foreground)] bg-[var(--accent)]/60"
+              : "text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--accent)]/50"
+          )}
+        >
+          <Icon size={16} />
+          {count > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-3.5 px-1 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-[9px] leading-[14px] font-medium tabular-nums">
+              {count > 99 ? "99+" : count}
+            </span>
+          )}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="left" sideOffset={6}>
+        {label}
+        {count > 0 && <span className="opacity-60 ml-1">({count})</span>}
+      </TooltipContent>
+    </Tooltip>
   )
 }

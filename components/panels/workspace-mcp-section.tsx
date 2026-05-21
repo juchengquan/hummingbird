@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import { Switch } from "@/components/ui/switch"
 import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { useStore, useWorkspaceMcpServers } from "@/client/hooks/use-store"
 import { useAuth } from "@/client/hooks/use-auth"
@@ -155,26 +156,12 @@ export function WorkspaceMcpSection({ workspaceId }: { workspaceId: string }) {
                   </div>
                 )}
               </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={server.enabled}
+              <Switch
+                checked={server.enabled}
+                onCheckedChange={(v) => setMcpServerEnabled(server.id, v)}
                 aria-label={`${server.enabled ? "Disable" : "Enable"} ${server.name}`}
-                onClick={() => setMcpServerEnabled(server.id, !server.enabled)}
-                className={cn(
-                  "shrink-0 h-4 w-7 rounded-full transition-colors relative",
-                  server.enabled
-                    ? "bg-[var(--primary)]"
-                    : "bg-[var(--border)]"
-                )}
-              >
-                <span
-                  className={cn(
-                    "absolute top-0.5 size-3 rounded-full bg-white transition-transform",
-                    server.enabled ? "translate-x-3.5" : "translate-x-0.5"
-                  )}
-                />
-              </button>
+                className="shrink-0"
+              />
               <button
                 type="button"
                 onClick={() => void refresh(server)}

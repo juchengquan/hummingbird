@@ -22,6 +22,7 @@
     "supabase:docker:migrate": "bash .docker/supabase/apply-migrations.sh"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^2.0.79",
     "@ai-sdk/react": "2.0.28",
     "@ariakit/react": "^0.4.21",
     "@dnd-kit/core": "^6.3.1",

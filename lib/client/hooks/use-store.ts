@@ -127,6 +127,60 @@ function tombstoneMcpServer(server: McpServer): McpServer {
   }
 }
 
+/**
+ * Deep-merge a `Partial<WebSearchConfig>` patch into an existing config,
+ * dropping any leaf or sub-object whose patched value is `undefined`.
+ * Pruning empty sub-objects (or returning `undefined` for the whole
+ * thing) is what lets a "reset to default" flow remove the override so
+ * the next cascade level takes over.
+ */
+function mergeWebFetchConfig(
+  base: import('@/shared/skills/web-fetch-config').WebFetchConfig | undefined,
+  patch: Partial<import('@/shared/skills/web-fetch-config').WebFetchConfig>
+):
+  | import('@/shared/skills/web-fetch-config').WebFetchConfig
+  | undefined {
+  const next: Record<string, unknown> = { ...(base ?? {}) }
+  for (const key of Object.keys(patch) as Array<keyof typeof patch>) {
+    const value = patch[key]
+    if (value === undefined) delete next[key as string]
+    else next[key as string] = value
+  }
+  if (Object.keys(next).length === 0) return undefined
+  return next as import('@/shared/skills/web-fetch-config').WebFetchConfig
+}
+
+function mergeWebSearchConfig(
+  base: import('@/shared/skills/web-search-config').WebSearchConfig | undefined,
+  patch: Partial<import('@/shared/skills/web-search-config').WebSearchConfig>
+):
+  | import('@/shared/skills/web-search-config').WebSearchConfig
+  | undefined {
+  const next: Record<string, unknown> = { ...(base ?? {}) }
+  for (const key of Object.keys(patch) as Array<keyof typeof patch>) {
+    const value = patch[key]
+    if (value === undefined) {
+      delete next[key as string]
+      continue
+    }
+    if (key === 'tavily' || key === 'brave') {
+      // Sub-object merge: deep on the two known provider sub-configs.
+      const prior = (next[key as string] ?? {}) as Record<string, unknown>
+      const merged: Record<string, unknown> = { ...prior }
+      for (const [subKey, subValue] of Object.entries(value)) {
+        if (subValue === undefined) delete merged[subKey]
+        else merged[subKey] = subValue
+      }
+      if (Object.keys(merged).length === 0) delete next[key as string]
+      else next[key as string] = merged
+    } else {
+      next[key as string] = value
+    }
+  }
+  if (Object.keys(next).length === 0) return undefined
+  return next as import('@/shared/skills/web-search-config').WebSearchConfig
+}
+
 // Default initial values for store
 const DEFAULT_WORKSPACE_ID = 'default'
 
@@ -319,6 +373,21 @@ interface AppState {
   setWorkspaceDefaultModel: (workspaceId: string, modelId: string) => void
   /** Set a workspace skill default. `null` clears the entry (skill returns to default). */
   setWorkspaceSkillPref: (workspaceId: string, skillId: string, value: boolean | null) => void
+  /** Patch the workspace-level `webSearch` config. Pass a partial
+   *  `WebSearchConfig`; provided fields overwrite, others are kept.
+   *  Setting a leaf to `undefined` (or the whole config to `null`)
+   *  drops that override so the level below in the cascade takes
+   *  over. */
+  patchWorkspaceWebSearchConfig: (
+    workspaceId: string,
+    patch: Partial<import("@/shared/skills/web-search-config").WebSearchConfig> | null
+  ) => void
+  /** Patch the workspace-level `webFetch` config. Same cascade
+   *  semantics as `patchWorkspaceWebSearchConfig`. */
+  patchWorkspaceWebFetchConfig: (
+    workspaceId: string,
+    patch: Partial<import("@/shared/skills/web-fetch-config").WebFetchConfig> | null
+  ) => void
   setActiveWorkspace: (workspaceId: string) => void
 
   // Resource actions
@@ -494,6 +563,18 @@ interface AppState {
   renameConversation: (conversationId: string, title: string) => void
   /** Set a conversation skill override. `null` clears the entry (falls back to workspace default). */
   setConversationSkillPref: (conversationId: string, skillId: string, value: boolean | null) => void
+  /** Patch the per-conversation `webSearch` config override (same shape
+   *  and semantics as `patchWorkspaceWebSearchConfig`). */
+  patchConversationWebSearchConfig: (
+    conversationId: string,
+    patch: Partial<import("@/shared/skills/web-search-config").WebSearchConfig> | null
+  ) => void
+  /** Patch the per-conversation `webFetch` config override (same shape
+   *  and semantics as `patchWorkspaceWebFetchConfig`). */
+  patchConversationWebFetchConfig: (
+    conversationId: string,
+    patch: Partial<import("@/shared/skills/web-fetch-config").WebFetchConfig> | null
+  ) => void
   /** Toggle a file's attachment to the active conversation (no-op if no active conversation). */
   toggleConversationFileSelection: (fileId: string) => void
   /** Clear all attached files on the active conversation. */
@@ -859,6 +940,32 @@ export const useStore = create<AppState>()(
             if (value === null) delete next[skillId]
             else next[skillId] = value
             return { ...w, skillPrefs: next, updatedAt: new Date() }
+          }),
+        })),
+      patchWorkspaceWebSearchConfig: (workspaceId, patch) =>
+        set((state) => ({
+          workspaces: state.workspaces.map((w) => {
+            if (w.id !== workspaceId) return w
+            if (patch === null) {
+              const { webSearchConfig: _drop, ...rest } = w
+              void _drop
+              return { ...rest, updatedAt: new Date() }
+            }
+            const merged = mergeWebSearchConfig(w.webSearchConfig, patch)
+            return { ...w, webSearchConfig: merged, updatedAt: new Date() }
+          }),
+        })),
+      patchWorkspaceWebFetchConfig: (workspaceId, patch) =>
+        set((state) => ({
+          workspaces: state.workspaces.map((w) => {
+            if (w.id !== workspaceId) return w
+            if (patch === null) {
+              const { webFetchConfig: _drop, ...rest } = w
+              void _drop
+              return { ...rest, updatedAt: new Date() }
+            }
+            const merged = mergeWebFetchConfig(w.webFetchConfig, patch)
+            return { ...w, webFetchConfig: merged, updatedAt: new Date() }
           }),
         })),
       setActiveWorkspace: (workspaceId: string) =>
@@ -1594,6 +1701,32 @@ export const useStore = create<AppState>()(
             return { ...c, skillPrefs: next, updatedAt: new Date() }
           }),
         })),
+      patchConversationWebSearchConfig: (conversationId, patch) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id !== conversationId) return c
+            if (patch === null) {
+              const { webSearchConfig: _drop, ...rest } = c
+              void _drop
+              return { ...rest, updatedAt: new Date() }
+            }
+            const merged = mergeWebSearchConfig(c.webSearchConfig, patch)
+            return { ...c, webSearchConfig: merged, updatedAt: new Date() }
+          }),
+        })),
+      patchConversationWebFetchConfig: (conversationId, patch) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id !== conversationId) return c
+            if (patch === null) {
+              const { webFetchConfig: _drop, ...rest } = c
+              void _drop
+              return { ...rest, updatedAt: new Date() }
+            }
+            const merged = mergeWebFetchConfig(c.webFetchConfig, patch)
+            return { ...c, webFetchConfig: merged, updatedAt: new Date() }
+          }),
+        })),
       togglePin: (conversationId: string) =>
         set((state) => ({
           conversations: state.conversations.map((c) =>
@@ -1930,7 +2063,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'hummingbird-storage',
-      version: 18,
+      version: 19,
       migrate: (persistedState, fromVersion) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState
         const state = persistedState as Record<string, unknown>
@@ -2225,6 +2358,64 @@ export const useStore = create<AppState>()(
           if (!('urlBookmarks' in state)) state.urlBookmarks = []
           if (!('conversationUrlBookmarks' in state)) {
             state.conversationUrlBookmarks = []
+          }
+        }
+        if (fromVersion < 19) {
+          // `webSearchMaxCalls` (flat number) folded into
+          // `webSearchConfig.maxCalls` on both Workspace and Conversation,
+          // alongside the new per-provider sub-config. Also retires the
+          // short-lived `webSearchBrave` skill id by folding its enabled
+          // state into `webSearchConfig.brave.enabled` and stripping the
+          // entry from `skillPrefs`.
+          const foldOne = (obj: Record<string, unknown>) => {
+            const legacyMax = obj.webSearchMaxCalls
+            const cfg =
+              (typeof obj.webSearchConfig === 'object' && obj.webSearchConfig)
+                ? { ...(obj.webSearchConfig as Record<string, unknown>) }
+                : ({} as Record<string, unknown>)
+            if (typeof legacyMax === 'number' && cfg.maxCalls === undefined) {
+              cfg.maxCalls = legacyMax
+            }
+            delete obj.webSearchMaxCalls
+            // Fold legacy skillPrefs.webSearchBrave (a brief two-skill
+            // detour) back into webSearchConfig.brave.enabled.
+            const prefs = obj.skillPrefs
+            if (prefs && typeof prefs === 'object') {
+              const p = prefs as Record<string, unknown>
+              if ('webSearchBrave' in p) {
+                const wantsBrave = p.webSearchBrave === true
+                const brave =
+                  (typeof cfg.brave === 'object' && cfg.brave)
+                    ? { ...(cfg.brave as Record<string, unknown>) }
+                    : ({} as Record<string, unknown>)
+                // Only fold a `false` override — `true` is the default
+                // when the env key is present, no need to store it.
+                if (!wantsBrave) brave.enabled = false
+                if (Object.keys(brave).length > 0) cfg.brave = brave
+                delete p.webSearchBrave
+              }
+            }
+            if (Object.keys(cfg).length > 0) {
+              obj.webSearchConfig = cfg
+            }
+          }
+          const ws = state.workspaces
+          if (Array.isArray(ws)) {
+            state.workspaces = ws.map((w) => {
+              if (!w || typeof w !== 'object') return w
+              const obj = { ...(w as Record<string, unknown>) }
+              foldOne(obj)
+              return obj
+            })
+          }
+          const convs = state.conversations
+          if (Array.isArray(convs)) {
+            state.conversations = convs.map((c) => {
+              if (!c || typeof c !== 'object') return c
+              const obj = { ...(c as Record<string, unknown>) }
+              foldOne(obj)
+              return obj
+            })
           }
         }
         return persistedState

@@ -14,6 +14,14 @@ import { ResourcesSidebar } from "@/components/sidebars/resources"
 import { ActiveSkillsChips } from "@/components/skills/active-chips"
 import { SKILLS } from "@/shared/skills/registry"
 import { resolveSkill, type SkillId } from "@/shared/skills/types"
+import {
+  resolveWebSearchConfig,
+  type WebSearchConfig,
+} from "@/shared/skills/web-search-config"
+import {
+  resolveWebFetchConfig,
+  type WebFetchConfig,
+} from "@/shared/skills/web-fetch-config"
 import { SmartPasteChip } from "@/components/chat/smart-paste-chip"
 import { detectPasteKind, type PasteDetection } from "@/shared/smart-paste/detect"
 import { ChatHeader } from "@/components/panels/chat-header"
@@ -284,7 +292,42 @@ export function ChatPanel() {
         (s) =>
           resolveSkill(s, activeWorkspace?.skillPrefs, conv?.skillPrefs) &&
           !mutedSkillsForNext.has(s.id)
-      ).map((s) => ({ id: s.id }))
+      ).map((s) => {
+        const entry: {
+          id: string
+          webSearchConfig?: WebSearchConfig
+          webFetchConfig?: WebFetchConfig
+        } = {
+          id: s.id,
+        }
+        if (s.id === 'webSearch') {
+          // Cascade conversation override → workspace default → built-in.
+          // Resolver clamps + fills in provider defaults.
+          const resolved = resolveWebSearchConfig(
+            activeWorkspace?.webSearchConfig,
+            conv?.webSearchConfig
+          )
+          entry.webSearchConfig = {
+            maxCalls: resolved.maxCalls,
+            tavily: {
+              enabled: resolved.tavily.enabled,
+              searchDepth: resolved.tavily.searchDepth,
+            },
+            brave: {
+              enabled: resolved.brave.enabled,
+              freshness: resolved.brave.freshness,
+            },
+          }
+        }
+        if (s.id === 'webFetch') {
+          const resolved = resolveWebFetchConfig(
+            activeWorkspace?.webFetchConfig,
+            conv?.webFetchConfig
+          )
+          entry.webFetchConfig = { maxCalls: resolved.maxCalls }
+        }
+        return entry
+      })
       // Index workspace entities up front so the three attachment-collection
       // loops below are O(attached) instead of O(attached × workspace-total).
       const filesById = new Map(files.map((f) => [f.id, f]))

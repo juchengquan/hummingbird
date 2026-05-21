@@ -80,6 +80,23 @@ export interface Workspace {
    */
   skillPrefs?: Record<string, boolean>
   /**
+   * Workspace-level config for the `webSearch` skill — per-turn cap +
+   * per-provider toggles + per-provider knobs (Tavily search depth,
+   * Brave freshness, …). Conversations inherit field-by-field and can
+   * override any single leaf. See `resolveWebSearchConfig` in
+   * `lib/shared/skills/web-search-config.ts`. Field-by-field cascade
+   * means a workspace can set `tavily.searchDepth = 'advanced'` while a
+   * conversation toggles `brave.enabled = false` without either erasing
+   * the other.
+   */
+  webSearchConfig?: import("./skills/web-search-config").WebSearchConfig
+  /**
+   * Workspace-level config for the `webFetch` skill — just a per-turn
+   * cap today, but the cascade machinery is in place for future knobs.
+   * Conversations inherit and can override.
+   */
+  webFetchConfig?: import("./skills/web-fetch-config").WebFetchConfig
+  /**
    * User-defined ordering within the workspaces list, set by
    * `reorderWorkspaces`. The drag-and-drop UI in the Workspaces panel
    * writes monotonically increasing integers; the render order falls
@@ -380,7 +397,7 @@ export interface PinnedExplanation {
   selection: string
   /** The model's full streamed answer (markdown). */
   content: string
-  /** Model id used to produce the explanation, e.g. "anthropic/claude-sonnet-4-5". */
+  /** Model id used to produce the explanation, e.g. "anthropic/claude-sonnet-4-6". */
   model: string
   /** Tool-call results captured during the explain stream (currently
    *  webSearch only). Renders the Sources strip inside the pin card. */
@@ -410,6 +427,18 @@ export interface Conversation {
    * (true = on, false = off); absence = inherit from the workspace.
    */
   skillPrefs?: Record<string, boolean>
+  /**
+   * Per-conversation override of any `webSearch` config field —
+   * per-turn cap, per-provider enable, per-provider knobs. Resolved
+   * field-by-field against `Workspace.webSearchConfig` and the
+   * built-in defaults.
+   */
+  webSearchConfig?: import("./skills/web-search-config").WebSearchConfig
+  /**
+   * Per-conversation override of the workspace `webFetch` config. Same
+   * field-by-field cascade as `webSearchConfig`.
+   */
+  webFetchConfig?: import("./skills/web-fetch-config").WebFetchConfig
   /**
    * Conversation this one was forked from. Set by `forkConversation`;
    * undefined for top-of-tree chats. Used by the branches dialog to

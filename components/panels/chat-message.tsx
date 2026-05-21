@@ -2,6 +2,7 @@
 
 import { memo, useState, useRef, useEffect } from "react"
 import type { Message } from "@/shared/types"
+import { isWebSearchToolName } from "@/shared/skills/types"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Copy, Pencil, RotateCcw, Check, X, Bookmark, Archive, Send, GitBranch } from "lucide-react"
@@ -88,15 +89,23 @@ function ChatMessageImpl({
   // observes the value, scrolls, flashes for 1.2s, then we're done.
   const [highlightedCitation, setHighlightedCitation] = useState<number | null>(null)
 
-  // Derive the persisted webSearch results (if any) for the Sources
+  // Derive the persisted web-search results (if any) for the Sources
   // strip + `[N]` citation markers. We only thread through the
   // *persisted* tool calls — `liveToolCalls` is the in-flight buffer
   // used by the small status pill above, not for the final source list.
+  //
+  // The single `webSearch` tool already merges results from multiple
+  // providers server-side, so we just flatten any matching tool calls
+  // on this message. `isWebSearchToolName` is used here so a future
+  // additional web-search tool name (e.g. a separate "research" tool)
+  // would slot in automatically.
   const webSearchResults = (() => {
-    const webCall = message.toolCalls?.find(
-      (t) => t.name === "webSearch" && t.results && t.results.length > 0
+    const calls = (message.toolCalls ?? []).filter(
+      (t) => isWebSearchToolName(t.name) && t.results && t.results.length > 0
     )
-    return webCall?.results ?? null
+    if (calls.length === 0) return null
+    const merged = calls.flatMap((c) => c.results ?? [])
+    return merged.length > 0 ? merged : null
   })()
 
   useEffect(() => {

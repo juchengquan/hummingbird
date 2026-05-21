@@ -127,7 +127,40 @@ export const ChatRequestSchema = z.object({
    *  don't need this. Optional so signed-out usage still works. */
   workspaceId: z.string().max(64).optional(),
   skills: z
-    .array(z.object({ id: z.string().max(40) }))
+    .array(
+      z.object({
+        id: z.string().max(40),
+        /** Optional structured config — currently only the `webSearch`
+         *  skill reads it. Ignored for other skills. Provider toggles
+         *  and per-provider settings (search depth, freshness) live
+         *  inside `webSearchConfig`; see `lib/shared/skills/web-search-config.ts`. */
+        webSearchConfig: z
+          .object({
+            maxCalls: z.number().int().min(1).max(50).optional(),
+            tavily: z
+              .object({
+                enabled: z.boolean().optional(),
+                searchDepth: z.enum(["basic", "advanced"]).optional(),
+              })
+              .optional(),
+            brave: z
+              .object({
+                enabled: z.boolean().optional(),
+                freshness: z.enum(["any", "pd", "pw", "pm", "py"]).optional(),
+              })
+              .optional(),
+          })
+          .optional(),
+        /** Optional structured config for the `webFetch` skill. Single
+         *  `maxCalls` field today; cascade machinery is in place for
+         *  future knobs. */
+        webFetchConfig: z
+          .object({
+            maxCalls: z.number().int().min(1).max(50).optional(),
+          })
+          .optional(),
+      })
+    )
     .max(10)
     .optional(),
   /** MCP server configs (with cached capabilities + local-mode creds)
