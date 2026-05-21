@@ -32,6 +32,7 @@ import { deleteBlob as deleteLocalBlob, clearAll as clearLocalBlobs } from '@/cl
 import {
   forkConversationJoins,
   gcOrphanedAttachment,
+  gcOrphanedAttachments,
   tombstoneFile,
   tombstoneMcpResource,
   tombstoneUrlBookmark,
@@ -778,7 +779,7 @@ export const useStore = create<AppState>()(
           const newConvUrlBookmarks = state.conversationUrlBookmarks.filter(
             (cub) => !droppedBookmarkIds.has(cub.bookmarkId)
           )
-          let patch: Partial<AppState> = {
+          const patch: Partial<AppState> = {
             workspaces: newWorkspaces,
             activeWorkspaceId: newActiveWorkspaceId,
             resources: newResources,
@@ -795,16 +796,12 @@ export const useStore = create<AppState>()(
             urlBookmarks: newUrlBookmarks,
             conversationUrlBookmarks: newConvUrlBookmarks,
           }
-          // GC files whose last private-join reference was on a
-          // conversation that lived in this workspace. De-dup refs so
-          // the same file isn't checked twice.
-          const seen = new Set<string>()
-          for (const ref of droppedFileRefs) {
-            if (seen.has(ref.id)) continue
-            seen.add(ref.id)
-            patch = { ...patch, ...gcOrphanedAttachment({ ...state, ...patch }, ref) }
+          // GC files whose last private-join reference lived on a
+          // conversation in the deleted workspace.
+          return {
+            ...patch,
+            ...gcOrphanedAttachments({ ...state, ...patch }, droppedFileRefs),
           }
-          return patch
         }),
       renameWorkspace: (workspaceId: string, name: string) =>
         set((state) => ({
@@ -1552,7 +1549,7 @@ export const useStore = create<AppState>()(
           // GC each orphaned attachment against the post-drop state.
           // De-dup refs (a workspace file referenced by multiple
           // conversation joins shouldn't get tombstoned twice).
-          let patch: Partial<AppState> = {
+          const patch: Partial<AppState> = {
             conversations: newConversations,
             conversationFiles: remainingFileJoins,
             conversationMcpResources: remainingMcpJoins,
@@ -1565,14 +1562,14 @@ export const useStore = create<AppState>()(
                 ? newConversations[0]?.id || null
                 : state.activeConversationId,
           }
-          const seen = new Set<string>()
-          for (const ref of [...droppedFileRefs, ...droppedMcpRefs, ...droppedUrlRefs]) {
-            const key = `${ref.kind}:${ref.id}`
-            if (seen.has(key)) continue
-            seen.add(key)
-            patch = { ...patch, ...gcOrphanedAttachment({ ...state, ...patch }, ref) }
+          return {
+            ...patch,
+            ...gcOrphanedAttachments({ ...state, ...patch }, [
+              ...droppedFileRefs,
+              ...droppedMcpRefs,
+              ...droppedUrlRefs,
+            ]),
           }
-          return patch
         }),
       renameConversation: (conversationId: string, title: string) =>
         set((state) => ({
