@@ -2,12 +2,54 @@ import "client-only"
 import { useSyncExternalStore } from 'react'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import type { UploadedFile, Workspace, Document, Resource, ConversationFile, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind, ToolCallRecord, ToolCallResult, PinnedExplanation } from '@/shared/types'
+import type {
+  UploadedFile,
+  Workspace,
+  Document,
+  Resource,
+  ConversationFile,
+  McpServer,
+  McpResource,
+  McpResourceBinding,
+  ConversationMcpResource,
+  McpCapabilities,
+  McpCredentialMode,
+  Message,
+  MessageError,
+  Conversation,
+  MainView,
+  Note,
+  Artifact,
+  ArtifactKind,
+  ToolCallRecord,
+  ToolCallResult,
+  PinnedExplanation,
+} from '@/shared/types'
 import { DEFAULT_CHAT_MODEL } from '@/shared/models'
 import { deleteBlob as deleteLocalBlob, clearAll as clearLocalBlobs } from '@/client/files/local-store'
 import { uuid } from '@/shared/uuid'
 
-export type { UploadedFile, Workspace, Document, Resource, ConversationFile, Message, MessageError, Conversation, MainView, Note, Artifact, ArtifactKind, ToolCallRecord } from '@/shared/types'
+export type {
+  UploadedFile,
+  Workspace,
+  Document,
+  Resource,
+  ConversationFile,
+  McpServer,
+  McpResource,
+  McpResourceBinding,
+  ConversationMcpResource,
+  McpCapabilities,
+  McpCredentialMode,
+  Message,
+  MessageError,
+  Conversation,
+  MainView,
+  Note,
+  Artifact,
+  ArtifactKind,
+  ToolCallRecord,
+} from '@/shared/types'
 
 type Theme = 'system' | 'dark' | 'light'
 
@@ -62,6 +104,46 @@ function tombstoneFile(file: UploadedFile): UploadedFile {
     size: file.size,
     type: file.type,
     uploadedAt: file.uploadedAt,
+    deletedAt: new Date(),
+  }
+}
+
+/**
+ * Tombstone an `McpServer`: mark it deleted and drop the cached
+ * `capabilities` blob (which can be large after a discovery). The
+ * stub keeps id / workspaceId / name / transport / createdAt so any
+ * historical message that referenced an MCP tool from this server
+ * resolves to a "🗑 GitHub MCP (removed)" label.
+ */
+function tombstoneMcpServer(server: McpServer): McpServer {
+  return {
+    id: server.id,
+    workspaceId: server.workspaceId,
+    name: server.name,
+    url: server.url,
+    transport: server.transport,
+    credentialMode: server.credentialMode,
+    enabled: false,
+    createdAt: server.createdAt,
+    updatedAt: server.updatedAt,
+    deletedAt: new Date(),
+  }
+}
+
+/**
+ * Tombstone an `McpResource`: keep the addressing tuple (workspaceId
+ * + serverId + uri + name) so historical references render with the
+ * original label, free nothing else of substance — these rows are
+ * already tiny.
+ */
+function tombstoneMcpResource(resource: McpResource): McpResource {
+  return {
+    id: resource.id,
+    workspaceId: resource.workspaceId,
+    serverId: resource.serverId,
+    uri: resource.uri,
+    name: resource.name,
+    addedAt: resource.addedAt,
     deletedAt: new Date(),
   }
 }
@@ -183,6 +265,14 @@ interface AppState {
   // appear in the workspace library.
   conversationFiles: ConversationFile[]
 
+  // MCP — workspace-scoped server bindings + the resources they expose.
+  // Same lane model as files: workspace library (`mcpResourceBindings`)
+  // + conversation-private (`conversationMcpResources`).
+  mcpServers: McpServer[]
+  mcpResources: McpResource[]
+  mcpResourceBindings: McpResourceBinding[]
+  conversationMcpResources: ConversationMcpResource[]
+
   // Notes (free-form notes & message bookmarks, scoped to a conversation)
   notes: Note[]
 
@@ -259,6 +349,62 @@ interface AppState {
    *  reference to the underlying `UploadedFile` (no `resources` row and
    *  no other `conversationFiles` row), the file is GC'd. */
   removeConversationFile: (conversationId: string, fileId: string) => void
+
+  // MCP server actions
+  /** Create a new MCP server config in the active workspace. Returns
+   *  the inserted record. Discovery (`capabilities`) happens out-of-
+   *  band via the proxy route. */
+  addMcpServer: (input: {
+    workspaceId: string
+    name: string
+    url: string
+    credentialMode: McpCredentialMode
+    credentialFingerprint?: string
+    enabled?: boolean
+  }) => McpServer
+  /** Patch arbitrary fields on a server. Bumps `updatedAt`. */
+  updateMcpServer: (
+    serverId: string,
+    patch: Partial<
+      Pick<McpServer, 'name' | 'url' | 'enabled' | 'credentialMode' | 'credentialFingerprint'>
+    >
+  ) => void
+  /** Replace the cached `capabilities` blob — called after a successful
+   *  discovery round-trip. Also stamps `capabilitiesFetchedAt`. */
+  setMcpServerCapabilities: (serverId: string, capabilities: McpCapabilities) => void
+  setMcpServerEnabled: (serverId: string, enabled: boolean) => void
+  /** Tombstone a server. Drops all dependent rows (resources, bindings,
+   *  conversation joins) atomically; metadata stub remains so historic
+   *  references resolve cleanly. */
+  removeMcpServer: (serverId: string) => void
+
+  // MCP resource actions
+  /** Upsert a server-discovered resource into the cache. Idempotent on
+   *  (serverId, uri). */
+  upsertMcpResource: (input: {
+    workspaceId: string
+    serverId: string
+    uri: string
+    name: string
+    description?: string
+    mimeType?: string
+  }) => McpResource
+  /** Add a workspace-library binding for an MCP resource. No-op if the
+   *  binding already exists. */
+  addMcpResourceBinding: (workspaceId: string, resourceId: string) => void
+  /** Drop a workspace-library binding. Strips the resource id from every
+   *  conversation's `selectedMcpResourceIds`. If no other join references
+   *  the underlying `McpResource`, it's GC'd (tombstoned). */
+  removeMcpResourceBinding: (bindingId: string) => void
+  /** Pin an MCP resource privately to a conversation. No-op if it's
+   *  already pinned. */
+  addConversationMcpResource: (conversationId: string, resourceId: string) => void
+  /** Unpin a private MCP resource. GC's the underlying `McpResource`
+   *  if it has no remaining live references. */
+  removeConversationMcpResource: (conversationId: string, resourceId: string) => void
+  /** Toggle a workspace-library MCP resource on/off for the active
+   *  conversation (mirrors `toggleConversationFileSelection`). */
+  toggleConversationMcpResourceSelection: (resourceId: string) => void
 
   // Notes actions
   createNote: (input: { conversationId: string | null; messageId?: string | null; body?: string }) => Note
@@ -402,6 +548,12 @@ export const useStore = create<AppState>()(
 
       // Conversation-private file attachments
       conversationFiles: [],
+
+      // MCP — server bindings and the resources they expose
+      mcpServers: [],
+      mcpResources: [],
+      mcpResourceBindings: [],
+      conversationMcpResources: [],
 
       // Notes
       notes: [],
@@ -561,6 +713,32 @@ export const useStore = create<AppState>()(
               )[0]
             newActiveDocumentId = fallback?.id ?? null
           }
+          // MCP cascade: tombstone every server in the workspace, then
+          // tombstone their resources, drop matching bindings and
+          // conversation joins. The metadata stubs (server, resource)
+          // remain so historic message references stay resolvable.
+          const droppedServerIds = new Set(
+            state.mcpServers
+              .filter((s) => s.workspaceId === workspaceId && !s.deletedAt)
+              .map((s) => s.id)
+          )
+          const droppedResourceIds = new Set(
+            state.mcpResources
+              .filter((r) => droppedServerIds.has(r.serverId) && !r.deletedAt)
+              .map((r) => r.id)
+          )
+          const newMcpServers = state.mcpServers.map((s) =>
+            droppedServerIds.has(s.id) ? tombstoneMcpServer(s) : s
+          )
+          const newMcpResources = state.mcpResources.map((r) =>
+            droppedResourceIds.has(r.id) ? tombstoneMcpResource(r) : r
+          )
+          const newMcpBindings = state.mcpResourceBindings.filter(
+            (b) => !droppedResourceIds.has(b.resourceId)
+          )
+          const newConvMcpResources = state.conversationMcpResources.filter(
+            (cmr) => !droppedResourceIds.has(cmr.resourceId)
+          )
           return {
             workspaces: newWorkspaces,
             activeWorkspaceId: newActiveWorkspaceId,
@@ -572,6 +750,10 @@ export const useStore = create<AppState>()(
             artifacts: newArtifacts,
             documents: newDocuments,
             activeDocumentId: newActiveDocumentId,
+            mcpServers: newMcpServers,
+            mcpResources: newMcpResources,
+            mcpResourceBindings: newMcpBindings,
+            conversationMcpResources: newConvMcpResources,
           }
         }),
       renameWorkspace: (workspaceId: string, name: string) =>
@@ -732,6 +914,227 @@ export const useStore = create<AppState>()(
             files: state.files.map((f) =>
               f.id === fileId && !f.deletedAt ? tombstoneFile(f) : f
             ),
+          }
+        }),
+
+      // MCP server actions
+      addMcpServer: ({ workspaceId, name, url, credentialMode, credentialFingerprint, enabled = true }) => {
+        const now = new Date()
+        const newServer: McpServer = {
+          id: uuid(),
+          workspaceId,
+          name,
+          url,
+          transport: 'http',
+          credentialMode,
+          credentialFingerprint,
+          enabled,
+          createdAt: now,
+          updatedAt: now,
+        }
+        set((state) => ({ mcpServers: [...state.mcpServers, newServer] }))
+        return newServer
+      },
+      updateMcpServer: (serverId, patch) =>
+        set((state) => ({
+          mcpServers: state.mcpServers.map((s) =>
+            s.id === serverId && !s.deletedAt
+              ? { ...s, ...patch, updatedAt: new Date() }
+              : s
+          ),
+        })),
+      setMcpServerCapabilities: (serverId, capabilities) =>
+        set((state) => ({
+          mcpServers: state.mcpServers.map((s) =>
+            s.id === serverId && !s.deletedAt
+              ? {
+                  ...s,
+                  capabilities,
+                  capabilitiesFetchedAt: new Date(),
+                  updatedAt: new Date(),
+                }
+              : s
+          ),
+        })),
+      setMcpServerEnabled: (serverId, enabled) =>
+        set((state) => ({
+          mcpServers: state.mcpServers.map((s) =>
+            s.id === serverId && !s.deletedAt
+              ? { ...s, enabled, updatedAt: new Date() }
+              : s
+          ),
+        })),
+      removeMcpServer: (serverId) =>
+        set((state) => {
+          // Atomic cascade: tombstone the server, drop every dependent
+          // row (resources, bindings, conversation joins, selection ids).
+          // Resources cascade-tombstone too — their addressing depends on
+          // the server existing.
+          const droppedResourceIds = new Set(
+            state.mcpResources
+              .filter((r) => r.serverId === serverId && !r.deletedAt)
+              .map((r) => r.id)
+          )
+          return {
+            mcpServers: state.mcpServers.map((s) =>
+              s.id === serverId && !s.deletedAt ? tombstoneMcpServer(s) : s
+            ),
+            mcpResources: state.mcpResources.map((r) =>
+              droppedResourceIds.has(r.id) ? tombstoneMcpResource(r) : r
+            ),
+            mcpResourceBindings: state.mcpResourceBindings.filter(
+              (b) => !droppedResourceIds.has(b.resourceId)
+            ),
+            conversationMcpResources: state.conversationMcpResources.filter(
+              (cmr) => !droppedResourceIds.has(cmr.resourceId)
+            ),
+            conversations: state.conversations.map((c) => {
+              const selected = c.selectedMcpResourceIds ?? []
+              const filtered = selected.filter((id) => !droppedResourceIds.has(id))
+              return filtered.length === selected.length
+                ? c
+                : { ...c, selectedMcpResourceIds: filtered }
+            }),
+          }
+        }),
+
+      // MCP resource actions
+      upsertMcpResource: ({ workspaceId, serverId, uri, name, description, mimeType }) => {
+        // Idempotent on (serverId, uri): re-discovery shouldn't create
+        // duplicate cache rows. Update name/description in place when
+        // they change.
+        const existing = get().mcpResources.find(
+          (r) => r.serverId === serverId && r.uri === uri && !r.deletedAt
+        )
+        if (existing) {
+          set((state) => ({
+            mcpResources: state.mcpResources.map((r) =>
+              r.id === existing.id
+                ? { ...r, name, description, mimeType }
+                : r
+            ),
+          }))
+          return { ...existing, name, description, mimeType }
+        }
+        const newResource: McpResource = {
+          id: uuid(),
+          workspaceId,
+          serverId,
+          uri,
+          name,
+          description,
+          mimeType,
+          addedAt: new Date(),
+        }
+        set((state) => ({ mcpResources: [...state.mcpResources, newResource] }))
+        return newResource
+      },
+      addMcpResourceBinding: (workspaceId, resourceId) =>
+        set((state) => {
+          if (
+            state.mcpResourceBindings.some(
+              (b) => b.workspaceId === workspaceId && b.resourceId === resourceId
+            )
+          ) {
+            return state
+          }
+          const newBinding: McpResourceBinding = {
+            id: uuid(),
+            workspaceId,
+            resourceId,
+            addedAt: new Date(),
+          }
+          return {
+            mcpResourceBindings: [...state.mcpResourceBindings, newBinding],
+          }
+        }),
+      removeMcpResourceBinding: (bindingId) =>
+        set((state) => {
+          const target = state.mcpResourceBindings.find((b) => b.id === bindingId)
+          if (!target) return state
+          const newBindings = state.mcpResourceBindings.filter((b) => b.id !== bindingId)
+          // Strip the resource id from every conversation's selection.
+          const newConversations = state.conversations.map((c) => {
+            const selected = c.selectedMcpResourceIds ?? []
+            if (!selected.includes(target.resourceId)) return c
+            return {
+              ...c,
+              selectedMcpResourceIds: selected.filter((id) => id !== target.resourceId),
+            }
+          })
+          // GC the underlying resource if this was the last reference.
+          const stillReferenced =
+            newBindings.some((b) => b.resourceId === target.resourceId) ||
+            state.conversationMcpResources.some(
+              (cmr) => cmr.resourceId === target.resourceId
+            )
+          if (stillReferenced) {
+            return {
+              mcpResourceBindings: newBindings,
+              conversations: newConversations,
+            }
+          }
+          return {
+            mcpResourceBindings: newBindings,
+            conversations: newConversations,
+            mcpResources: state.mcpResources.map((r) =>
+              r.id === target.resourceId && !r.deletedAt ? tombstoneMcpResource(r) : r
+            ),
+          }
+        }),
+      addConversationMcpResource: (conversationId, resourceId) =>
+        set((state) => {
+          if (
+            state.conversationMcpResources.some(
+              (cmr) => cmr.conversationId === conversationId && cmr.resourceId === resourceId
+            )
+          ) {
+            return state
+          }
+          const newJoin: ConversationMcpResource = {
+            id: uuid(),
+            conversationId,
+            resourceId,
+            addedAt: new Date(),
+          }
+          return {
+            conversationMcpResources: [...state.conversationMcpResources, newJoin],
+          }
+        }),
+      removeConversationMcpResource: (conversationId, resourceId) =>
+        set((state) => {
+          const newJoins = state.conversationMcpResources.filter(
+            (cmr) => !(cmr.conversationId === conversationId && cmr.resourceId === resourceId)
+          )
+          // GC: if no binding + no other private join, tombstone the resource.
+          const stillReferenced =
+            state.mcpResourceBindings.some((b) => b.resourceId === resourceId) ||
+            newJoins.some((cmr) => cmr.resourceId === resourceId)
+          if (stillReferenced) {
+            return { conversationMcpResources: newJoins }
+          }
+          return {
+            conversationMcpResources: newJoins,
+            mcpResources: state.mcpResources.map((r) =>
+              r.id === resourceId && !r.deletedAt ? tombstoneMcpResource(r) : r
+            ),
+          }
+        }),
+      toggleConversationMcpResourceSelection: (resourceId) =>
+        set((state) => {
+          const id = state.activeConversationId
+          if (!id) return state
+          return {
+            conversations: state.conversations.map((c) => {
+              if (c.id !== id) return c
+              const selected = c.selectedMcpResourceIds ?? []
+              return {
+                ...c,
+                selectedMcpResourceIds: selected.includes(resourceId)
+                  ? selected.filter((x) => x !== resourceId)
+                  : [...selected, resourceId],
+              }
+            }),
           }
         }),
 
@@ -930,16 +1333,19 @@ export const useStore = create<AppState>()(
           updatedAt: new Date(),
           pinned: false,
           selectedFileIds: [...source.selectedFileIds],
+          selectedMcpResourceIds: source.selectedMcpResourceIds
+            ? [...source.selectedMcpResourceIds]
+            : undefined,
           skillPrefs: source.skillPrefs ? { ...source.skillPrefs } : undefined,
           parentId: source.id,
           forkedFromMessageId: untilMessageId,
         }
         set((state) => {
-          // Copy the source's conversation-private file attachments onto
-          // the fork (new join rows pointing at the same files). The
-          // underlying `UploadedFile` is shared via fileId; we just add
-          // a parallel join under the new conversationId.
-          const inheritedJoins: ConversationFile[] = state.conversationFiles
+          // Copy the source's conversation-private file + MCP-resource
+          // attachments onto the fork. The underlying file / McpResource
+          // is shared; we just add parallel joins under the new
+          // conversationId.
+          const inheritedFileJoins: ConversationFile[] = state.conversationFiles
             .filter((cf) => cf.conversationId === source.id)
             .map((cf) => ({
               id: uuid(),
@@ -947,9 +1353,21 @@ export const useStore = create<AppState>()(
               fileId: cf.fileId,
               addedAt: new Date(),
             }))
+          const inheritedMcpJoins: ConversationMcpResource[] = state.conversationMcpResources
+            .filter((cmr) => cmr.conversationId === source.id)
+            .map((cmr) => ({
+              id: uuid(),
+              conversationId: fork.id,
+              resourceId: cmr.resourceId,
+              addedAt: new Date(),
+            }))
           return {
             conversations: [fork, ...state.conversations],
-            conversationFiles: [...state.conversationFiles, ...inheritedJoins],
+            conversationFiles: [...state.conversationFiles, ...inheritedFileJoins],
+            conversationMcpResources: [
+              ...state.conversationMcpResources,
+              ...inheritedMcpJoins,
+            ],
             activeConversationId: fork.id,
           }
         })
@@ -1002,9 +1420,34 @@ export const useStore = create<AppState>()(
           const newPins = state.pinnedExplanations.filter(
             (p) => p.conversationId !== conversationId
           )
+          // MCP-resource conversation joins: drop the conversation's
+          // joins, then GC any McpResource whose last reference just went
+          // away (no binding, no other conversation join).
+          const droppedMcpJoins = state.conversationMcpResources.filter(
+            (cmr) => cmr.conversationId === conversationId
+          )
+          const remainingMcpJoins = state.conversationMcpResources.filter(
+            (cmr) => cmr.conversationId !== conversationId
+          )
+          const orphanedMcpResourceIds = new Set<string>()
+          for (const cmr of droppedMcpJoins) {
+            const stillReferenced =
+              state.mcpResourceBindings.some((b) => b.resourceId === cmr.resourceId) ||
+              remainingMcpJoins.some((rj) => rj.resourceId === cmr.resourceId)
+            if (!stillReferenced) orphanedMcpResourceIds.add(cmr.resourceId)
+          }
+          const newMcpResources = orphanedMcpResourceIds.size
+            ? state.mcpResources.map((r) =>
+                orphanedMcpResourceIds.has(r.id) && !r.deletedAt
+                  ? tombstoneMcpResource(r)
+                  : r
+              )
+            : state.mcpResources
           return {
             conversations: newConversations,
             conversationFiles: remainingJoins,
+            conversationMcpResources: remainingMcpJoins,
+            mcpResources: newMcpResources,
             files: newFiles,
             notes: newNotes,
             artifacts: newArtifacts,
@@ -1368,7 +1811,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'hummingbird-storage',
-      version: 16,
+      version: 17,
       migrate: (persistedState, fromVersion) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState
         const state = persistedState as Record<string, unknown>
@@ -1638,30 +2081,59 @@ export const useStore = create<AppState>()(
           // `onRehydrateStorage`) so it's not duplicated here.
           if (!('conversationFiles' in state)) state.conversationFiles = []
         }
+        if (fromVersion < 17) {
+          // MCP slices added — workspace-scoped servers + the resources
+          // they expose, plus the workspace and conversation-private
+          // resource joins. Seed empties; the actual capability discovery
+          // happens out-of-band via the /api/mcp/* proxy.
+          if (!('mcpServers' in state)) state.mcpServers = []
+          if (!('mcpResources' in state)) state.mcpResources = []
+          if (!('mcpResourceBindings' in state)) state.mcpResourceBindings = []
+          if (!('conversationMcpResources' in state)) {
+            state.conversationMcpResources = []
+          }
+          // `Conversation.selectedMcpResourceIds` is optional in the
+          // type, so no backfill needed — read sites default to [].
+        }
         return persistedState
       },
       onRehydrateStorage: () => (state) => {
         // Defensive prune: drop join rows and selection ids that
-        // reference a missing or tombstoned file. Cheap (one pass
+        // reference a missing or tombstoned target. Cheap (one pass
         // per array), no-op on healthy data; covers cross-tab races
         // and any future bugs in new mutators.
         if (state) {
           const liveFileIds = new Set(
             state.files.filter((f) => !f.deletedAt).map((f) => f.id)
           )
-          const cleanResources = state.resources.filter((r) => liveFileIds.has(r.fileId))
-          const cleanConversationFiles = state.conversationFiles.filter((cf) =>
+          const liveMcpResourceIds = new Set(
+            state.mcpResources.filter((r) => !r.deletedAt).map((r) => r.id)
+          )
+          state.resources = state.resources.filter((r) => liveFileIds.has(r.fileId))
+          state.conversationFiles = state.conversationFiles.filter((cf) =>
             liveFileIds.has(cf.fileId)
           )
-          const cleanConversations = state.conversations.map((c) => {
-            const filtered = c.selectedFileIds.filter((id) => liveFileIds.has(id))
-            return filtered.length === c.selectedFileIds.length
-              ? c
-              : { ...c, selectedFileIds: filtered }
+          state.mcpResourceBindings = state.mcpResourceBindings.filter((b) =>
+            liveMcpResourceIds.has(b.resourceId)
+          )
+          state.conversationMcpResources = state.conversationMcpResources.filter(
+            (cmr) => liveMcpResourceIds.has(cmr.resourceId)
+          )
+          state.conversations = state.conversations.map((c) => {
+            const fileSel = c.selectedFileIds.filter((id) => liveFileIds.has(id))
+            const mcpSel = (c.selectedMcpResourceIds ?? []).filter((id) =>
+              liveMcpResourceIds.has(id)
+            )
+            const fileChanged = fileSel.length !== c.selectedFileIds.length
+            const mcpChanged =
+              mcpSel.length !== (c.selectedMcpResourceIds ?? []).length
+            if (!fileChanged && !mcpChanged) return c
+            return {
+              ...c,
+              selectedFileIds: fileSel,
+              selectedMcpResourceIds: mcpSel.length > 0 ? mcpSel : undefined,
+            }
           })
-          state.resources = cleanResources
-          state.conversationFiles = cleanConversationFiles
-          state.conversations = cleanConversations
         }
         notifyHydrated()
       },
@@ -1672,6 +2144,10 @@ export const useStore = create<AppState>()(
         activeWorkspaceId: state.activeWorkspaceId,
         resources: state.resources,
         conversationFiles: state.conversationFiles,
+        mcpServers: state.mcpServers,
+        mcpResources: state.mcpResources,
+        mcpResourceBindings: state.mcpResourceBindings,
+        conversationMcpResources: state.conversationMcpResources,
         conversations: state.conversations,
         activeConversationId: state.activeConversationId,
         files: state.files,
@@ -1772,6 +2248,46 @@ export const useConversationPrivateFiles = (): UploadedFile[] => {
     .filter((cf) => cf.conversationId === activeConversationId)
     .map((cf) => files.find((f) => f.id === cf.fileId))
     .filter((f): f is UploadedFile => !!f && !f.deletedAt)
+}
+
+/** MCP servers belonging to the active workspace (live, non-tombstoned). */
+export const useWorkspaceMcpServers = (): McpServer[] => {
+  const mcpServers = useStore((state) => state.mcpServers)
+  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
+  return mcpServers.filter(
+    (s) => s.workspaceId === activeWorkspaceId && !s.deletedAt
+  )
+}
+
+/** MCP resources bound to the active workspace's library. */
+export const useWorkspaceMcpResources = (): McpResource[] => {
+  const mcpResourceBindings = useStore((state) => state.mcpResourceBindings)
+  const mcpResources = useStore((state) => state.mcpResources)
+  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
+  return mcpResourceBindings
+    .filter((b) => b.workspaceId === activeWorkspaceId)
+    .map((b) => mcpResources.find((r) => r.id === b.resourceId))
+    .filter((r): r is McpResource => !!r && !r.deletedAt)
+}
+
+/** MCP resources pinned privately to the active conversation. */
+export const useConversationPrivateMcpResources = (): McpResource[] => {
+  const conversationMcpResources = useStore(
+    (state) => state.conversationMcpResources
+  )
+  const mcpResources = useStore((state) => state.mcpResources)
+  const activeConversationId = useStore((state) => state.activeConversationId)
+  if (!activeConversationId) return []
+  return conversationMcpResources
+    .filter((cmr) => cmr.conversationId === activeConversationId)
+    .map((cmr) => mcpResources.find((r) => r.id === cmr.resourceId))
+    .filter((r): r is McpResource => !!r && !r.deletedAt)
+}
+
+/** Workspace MCP resources ticked on for the active conversation. */
+export const useConversationSelectedMcpResourceIds = (): string[] => {
+  const conv = useActiveConversation()
+  return conv?.selectedMcpResourceIds ?? []
 }
 
 export const useConversationNotes = () => {

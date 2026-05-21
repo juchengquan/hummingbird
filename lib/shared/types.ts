@@ -115,6 +115,105 @@ export interface Resource {
   addedAt: Date
 }
 
+// ---------------------------------------------------------------------------
+// MCP (Model Context Protocol) — workspace-scoped server bindings + the
+// data they expose. Mirrors the files / resources / conversationFiles
+// triple: a server owns N resources; resources can be attached to a
+// workspace library (`McpResourceBinding`) and/or pinned privately to
+// one conversation (`ConversationMcpResource`).
+//
+// Stage 1 carries the type + store shape; Stages 2-3 wire the proxy
+// route, capability discovery, and tool/resource injection into the
+// chat route. See `docs/PLAN-mcp-integration.md`.
+// ---------------------------------------------------------------------------
+
+export type McpTransport = 'http'
+
+/** Where the server's credential lives. */
+export type McpCredentialMode = 'cloud' | 'local'
+
+export interface McpToolDescriptor {
+  name: string
+  description?: string
+  inputSchema?: unknown
+}
+
+export interface McpResourceDescriptor {
+  uri: string
+  name?: string
+  description?: string
+  mimeType?: string
+}
+
+export interface McpPromptDescriptor {
+  name: string
+  description?: string
+}
+
+export interface McpCapabilities {
+  tools?: McpToolDescriptor[]
+  resources?: McpResourceDescriptor[]
+  prompts?: McpPromptDescriptor[]
+}
+
+export interface McpServer {
+  id: string
+  workspaceId: string
+  /** User-facing label (e.g. "GitHub", "Notion personal"). */
+  name: string
+  /** MCP endpoint URL. */
+  url: string
+  transport: McpTransport
+  credentialMode: McpCredentialMode
+  /**
+   * For `credentialMode === 'local'`: a stable hash of the local
+   * credential (so two devices can tell when they have different creds
+   * for the "same" server config). Not the cred itself — that lives in
+   * `localStorage` keyed by server id. Absent for `cloud` mode.
+   */
+  credentialFingerprint?: string
+  /** Server-reported capabilities, cached from the last discovery. */
+  capabilities?: McpCapabilities
+  capabilitiesFetchedAt?: Date
+  /** Soft-disable without removing the row. */
+  enabled: boolean
+  createdAt: Date
+  updatedAt: Date
+  /** Soft-delete marker (same pattern as UploadedFile.deletedAt). */
+  deletedAt?: Date
+}
+
+/** A resource exposed by an MCP server — cached pointer, not content. */
+export interface McpResource {
+  id: string
+  workspaceId: string
+  serverId: string
+  /** Stable URI on the MCP server (the addressing primitive). */
+  uri: string
+  /** Cached display name from discovery. */
+  name: string
+  description?: string
+  mimeType?: string
+  addedAt: Date
+  deletedAt?: Date
+}
+
+/** Workspace-library lane for MCP resources (parallel to `Resource`). */
+export interface McpResourceBinding {
+  id: string
+  workspaceId: string
+  resourceId: string
+  addedAt: Date
+}
+
+/** Conversation-private lane (parallel to `ConversationFile`). */
+export interface ConversationMcpResource {
+  id: string
+  conversationId: string
+  resourceId: string
+  addedAt: Date
+}
+
 /**
  * Conversation-private file attachment. Parallel to `Resource` but
  * scoped to a single conversation — these files do **not** appear in
@@ -252,6 +351,10 @@ export interface Conversation {
   pinned: boolean
   /** Workspace file IDs attached as context for the next message in this conversation. */
   selectedFileIds: string[]
+  /** Workspace MCP-resource IDs (`McpResource.id`, not URIs) ticked on
+   *  for this conversation. Empty array on conversations created before
+   *  v17 — backfilled defensively. */
+  selectedMcpResourceIds?: string[]
   /**
    * Per-conversation skill overrides. Presence of a key = override
    * (true = on, false = off); absence = inherit from the workspace.

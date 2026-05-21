@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select"
 import { useStore } from "@/client/hooks/use-store"
 import { CHAT_MODELS } from "@/shared/models"
+import { WorkspaceMcpSection } from "@/components/panels/workspace-mcp-section"
 import type { Workspace } from "@/shared/types"
 
 interface WorkspaceDetailSheetProps {
@@ -151,6 +152,10 @@ function WorkspaceDetailBody({ workspace }: { workspace: Workspace }) {
             Auto-applied when you open this workspace. The chat-input model picker
             still overrides per session.
           </p>
+        </div>
+
+        <div className="pt-3 border-t border-[var(--border)]">
+          <WorkspaceMcpSection workspaceId={workspace.id} />
         </div>
 
         <div className="pt-2 border-t border-[var(--border)] grid grid-cols-2 gap-3 text-[11px] text-[var(--muted-foreground)]">
