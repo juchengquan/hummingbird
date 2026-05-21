@@ -2141,6 +2141,7 @@ export const useStore = create<AppState>()(
               const { documentContent: _drop, ...rest } = c as Record<string, unknown> & {
                 documentContent?: unknown
               }
+              void _drop
               return rest
             })
           }

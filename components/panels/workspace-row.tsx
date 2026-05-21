@@ -154,7 +154,7 @@ export function WorkspaceRow({
             size="icon-sm"
             className="h-7 w-7 hover:text-red-500"
             onClick={onRequestDelete}
-            aria-label="Delete workspace"
+            aria-label={`Delete workspace "${name}"`}
             title="Delete"
           >
             <Trash2 size={13} />
