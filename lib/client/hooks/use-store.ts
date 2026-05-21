@@ -40,6 +40,7 @@ import {
   tombstoneUrlBookmark,
   type AttachmentRef,
 } from '@/client/store/cascade'
+import { reviveDates } from '@/client/store/revive-dates'
 import { uuid } from '@/shared/uuid'
 
 export type {
@@ -2421,6 +2422,14 @@ export const useStore = create<AppState>()(
         return persistedState
       },
       onRehydrateStorage: () => (state) => {
+        // Revive Date fields. Zustand-persist round-trips Dates through
+        // JSON which strips them to ISO strings; without this pass
+        // every `Date`-typed field on the store would be a string at
+        // runtime and any `.toISOString()` / `.getTime()` call would
+        // need to defend itself. See `lib/client/store/revive-dates.ts`.
+        if (state) {
+          reviveDates(state as unknown as Record<string, unknown>)
+        }
         // Defensive prune: drop join rows and selection ids that
         // reference a missing or tombstoned target. Cheap (one pass
         // per array), no-op on healthy data; covers cross-tab races
