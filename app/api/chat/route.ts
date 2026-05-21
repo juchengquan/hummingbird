@@ -343,8 +343,17 @@ export async function POST(req: NextRequest) {
         }
         let assistantText = ''
         let sawError = false
+        let sawReasoning = false
+        let sawToolResult = false
+        // Behind DEBUG_CHAT_STREAM=1, dump every fullStream part type so we
+        // can diagnose models that emit content via a part type the router
+        // doesn't handle today (raw / source / tool-error / etc.).
+        const debugStream = process.env.DEBUG_CHAT_STREAM === '1'
         try {
           for await (const part of result.fullStream) {
+            if (debugStream) {
+              console.warn('[chat-stream]', part.type, Object.keys(part).filter((k) => k !== 'type'))
+            }
             if (part.type === 'text-delta') {
               const delta = (part as { delta?: string; text?: string }).delta
                 ?? (part as { text?: string }).text
@@ -357,7 +366,10 @@ export async function POST(req: NextRequest) {
               const delta = (part as { delta?: string; text?: string }).delta
                 ?? (part as { text?: string }).text
                 ?? ''
-              if (delta) send({ type: 'reasoning', value: delta })
+              if (delta) {
+                sawReasoning = true
+                send({ type: 'reasoning', value: delta })
+              }
             } else if (part.type === 'tool-call') {
               // Surface the call so the UI can show "Searching the web for X…".
               // We trust the tool definitions to produce a small input object.
@@ -396,6 +408,7 @@ export async function POST(req: NextRequest) {
                     .filter((r) => r.url) // drop malformed entries
                 }
               }
+              sawToolResult = true
               send({
                 type: 'tool_result',
                 id: p.toolCallId ?? '',
@@ -410,6 +423,31 @@ export async function POST(req: NextRequest) {
               sawError = true
               send({ type: 'error', code, message })
             }
+          }
+
+          // Stream ended without a final answer text. We saw activity
+          // (reasoning chunks or tool results) so the request wasn't a
+          // total no-op — the model just didn't emit a text-delta
+          // response after the tools ran. Common with reasoning models
+          // when the tool result alone "looks like" a complete answer
+          // (the user sees the tool pill but an empty bubble below it).
+          //
+          // Surface this as visible text instead of a silent empty
+          // bubble. Log server-side so we can correlate with model id.
+          if (
+            !sawError &&
+            !req.signal.aborted &&
+            assistantText.trim().length === 0 &&
+            (sawReasoning || sawToolResult)
+          ) {
+            const fallback = sawToolResult
+              ? "_(The model gathered information from the tools above but didn't write a final answer. Try asking again, or expand the **Thought** block to see what it considered.)_"
+              : "_(The model produced reasoning but no final answer. Expand the **Thought** block above to see what it considered.)_"
+            send({ type: 'text', value: fallback })
+            assistantText = fallback
+            console.warn(
+              `[chat] empty-stream fallback emitted (model=${modelId}, hadReasoning=${sawReasoning}, hadToolResult=${sawToolResult})`
+            )
           }
 
           // The previous markdown footer is now superseded by the
