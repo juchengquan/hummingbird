@@ -90,6 +90,33 @@ Leave them.
 JSONB column or a polymorphic join table. Not worth the migration.
 Keep three columns; expose a unified accessor at the type layer.
 
+## The three names — three jobs
+
+The refactor introduces three closely related but distinct types.
+Naming them clearly upfront avoids one being silently used where
+another is wanted:
+
+| Name | Where it lives | What it carries | Used by |
+|---|---|---|---|
+| `SourceAttachment` | Client store, post-selector | `{ kind, id, entity: …}` — the *full* entity dehydrated from the store | UI components that need to render an attachment row, hover preview, etc. |
+| `AttachmentPayload` | Wire (chat request body) | `{ kind, … }` minus client-only fields, plus only what the server needs | `ChatRequestSchema.attachments`, the client request builder |
+| `ResolvedAttachment` | Server-side, post-resolution | Like `AttachmentPayload` but with MCP resources' content fetched in | The new `renderAttachmentsPrompt` |
+
+The three exist because:
+
+1. The store has the full entity (e.g. `UploadedFile` with extraction
+   status, image data URL, summary, etc.). UI rows want to read all
+   of that.
+2. The wire shouldn't pay for fields the server doesn't need
+   (e.g. `imageDataUrl` for the chat route — it cares about text,
+   not the base64 image preview).
+3. MCP resources arrive on the wire as **pointers** (`serverId`,
+   `uri`) but reach the renderer as **content** (post-`readResource`).
+   That fan-out is exactly what `ResolvedAttachment` is for —
+   keep the type distinction so a reviewer can't accidentally
+   write a renderer that takes `AttachmentPayload` and crashes on
+   an MCP resource it forgot to resolve.
+
 ## The unified types
 
 New file `lib/shared/attachments.ts`:
@@ -100,10 +127,10 @@ import type { McpResource, UploadedFile, UrlBookmark } from './types'
 export type AttachmentKind = 'file' | 'mcp_resource' | 'url_bookmark'
 
 /**
- * Conversation-scope attachment. Discriminated union over the three
- * source kinds. The chat route, request builder, and any consumer
- * that wants "everything attached to this turn" works with this
- * shape; storage stays in the per-kind slices.
+ * Store-side discriminated union. Each variant carries the *full*
+ * entity exactly as it lives in the Zustand store. UI rows, hover
+ * cards, refresh buttons, anything that wants the rich entity
+ * shape consumes this.
  */
 export type SourceAttachment =
   | { kind: 'file'; id: string; entity: UploadedFile }
@@ -111,53 +138,81 @@ export type SourceAttachment =
   | { kind: 'url_bookmark'; id: string; entity: UrlBookmark }
 
 /**
- * Wire shape sent on the chat request body. Each kind ships the
- * minimum the server needs to render the system prompt — for files
- * and URL bookmarks that includes the cached text content; for MCP
- * resources it's the addressing tuple so the server can call
- * `readResource`.
+ * Wire shape sent on the chat request body. Each kind ships only
+ * the minimum the server needs to render the system prompt.
+ *
+ * Important asymmetry: files and URL bookmarks carry their text
+ * content here (already extracted client-side); MCP resources carry
+ * only the addressing tuple (`serverId` + `uri`) because content
+ * lives on the remote MCP server and we fetch it server-side at
+ * chat time via `readResource`. The shape encodes that asymmetry
+ * directly so it can't be forgotten.
  */
 export type AttachmentPayload =
-  | { kind: 'file'; summary: FileSummary }       // existing FileSummary, re-exported
-  | { kind: 'mcp_resource'; ref: McpResourceRef }
-  | { kind: 'url_bookmark'; bookmark: BookmarkRef }
+  | { kind: 'file'; summary: FileSummary }
+  | { kind: 'mcp_resource'; ref: { serverId: string; uri: string; name: string; mimeType?: string } }
+  | { kind: 'url_bookmark'; bookmark: { url: string; title: string; content: string; contentTruncated: boolean; fetchedAt: string } }
 
 /** Map a SourceAttachment to its kind+id tuple — used by selection
  *  state and de-dup. */
 export function attachmentRef(att: SourceAttachment): { kind: AttachmentKind; id: string }
 ```
 
-The point of the discriminated union is that consumers that *do*
-care about the kind keep type-narrowing; consumers that *don't*
-(payload de-dup, presence-check, rendering) work generically.
+A separate `ResolvedAttachment` lives in `lib/server/attachments/render.ts`
+(server-only) — see the next section.
 
 ## Server-side: one renderer
 
-Replace the three `render*Prompt` functions plus the inline file
-block in `buildSystemPrompt` with one:
+`lib/server/attachments/render.ts`:
 
 ```ts
-// lib/server/attachments/render.ts
+export type ResolvedAttachment =
+  | { kind: 'file'; summary: FileSummary }
+  | { kind: 'mcp_resource'; serverName: string; resourceName: string; text?: string; error?: string }
+  | { kind: 'url_bookmark'; title: string; url: string; content: string; truncated: boolean; fetchedAt?: string }
+
 export function renderAttachmentsPrompt(
   attachments: ResolvedAttachment[],
   totalBudget: number
 ): string | null
 ```
 
-Where `ResolvedAttachment` is the chat-route's variant — files arrive
-with `text` already extracted (no I/O); URL bookmarks arrive with
-cached `content` (no I/O); MCP resources arrive **post-`readResource`
-call** so by the time the renderer sees them they're text too.
+`ResolvedAttachment` is the **post-resolution** shape:
 
-The render groups by kind for readable section headers:
+- Files arrive verbatim from `AttachmentPayload['file']` (no
+  resolution needed — text was extracted client-side at upload).
+- URL bookmarks arrive verbatim from `AttachmentPayload['url_bookmark']`
+  (no resolution needed — content was extracted server-side at save
+  time via `/api/url/fetch` and now lives on the bookmark row).
+- **MCP resources** arrive as the result of a `readResource` call.
+  The existing `resolveAttachedMcpResources` helper (already in
+  `lib/server/mcp/inject-resources.ts`) does this dance —
+  concurrent reads with 5s per-call timeout, error fallback. It
+  stays. We just teach it to emit `ResolvedAttachment` instead of
+  the current `ResolvedResource` shape.
+
+Wire-to-resolved happens in `app/api/chat/route.ts` between schema
+validation and prompt build:
+
+```ts
+const resolved: ResolvedAttachment[] = []
+for (const att of body.attachments ?? []) {
+  if (att.kind === 'file') resolved.push({ kind: 'file', summary: att.summary })
+  else if (att.kind === 'url_bookmark') resolved.push({ kind: 'url_bookmark', ...att.bookmark })
+}
+const mcpReqs = (body.attachments ?? []).filter(a => a.kind === 'mcp_resource')
+const mcpResolved = await resolveAttachedMcpResources(mcpReqs, mcpServers)
+resolved.push(...mcpResolved)
+```
+
+The renderer groups by kind for readable section headers:
 - *Files attached:* …
 - *MCP resources attached:* …
 - *Bookmarked pages:* …
 
-Within each group, the same per-attachment header + truncation marker
-logic — written once. Budget is shared across all kinds; kinds with
-higher information density (files first, then MCP resources, then
-bookmarks) get priority by passing through in that order.
+Within each group, one header + truncation-marker loop, written
+once. Budget shared across all kinds; ordering (files → MCP →
+bookmarks) reflects information density.
 
 `buildSystemPrompt` becomes:
 
@@ -166,7 +221,7 @@ function buildSystemPrompt(opts: {
   workspaceSystemPrompt?: string
   enabledSkills?: string[]
   mcpServers?: { name: string; toolCount: number }[]
-  attachments: ResolvedAttachment[]   // the unified list
+  attachments: ResolvedAttachment[]
 }): string
 ```
 
@@ -217,59 +272,129 @@ Three slightly-different `tombstoneXxx` helpers. Three nearly-
 identical `stillReferenced` calculations. Same in
 `deleteConversation` and `deleteWorkspace` cascades.
 
-Refactor into a single helper in `lib/client/hooks/use-store.ts`:
+Refactor into a small `lib/client/store/cascade.ts` module — kept
+*outside* `use-store.ts` so the helpers are independently testable
+and the store file doesn't keep growing. Two pure functions:
 
 ```ts
-function gcOrphanedAttachment(
+/**
+ * For a given (kind, id), inspect the state and return true iff
+ * any live reference remains: workspace join row, conversation-
+ * private join row, or `selectedXxxIds` array on any conversation.
+ *
+ * Pure — caller decides what to do with the answer. Doesn't read
+ * tombstone state because tombstoned entities never have live joins
+ * after Stage 1 (cascade drops them atomically).
+ */
+export function hasLiveReference(state: AppState, ref: AttachmentRef): boolean
+
+/**
+ * Build a state delta that tombstones the given entity if it has
+ * no live references. No-op if refs remain. Pure: returns the
+ * partial state change; caller composes inside a single Zustand
+ * `set()` call.
+ *
+ * Per-kind details (which slice the entity lives in, which fields
+ * the tombstone preserves vs frees, which IDB blob to enqueue for
+ * deletion) live in a single `switch` here — verbose at definition
+ * but the rest of the codebase becomes one-liners.
+ */
+export function gcOrphanedAttachment(
   state: AppState,
-  ref: { kind: AttachmentKind; id: string }
+  ref: AttachmentRef
 ): Partial<AppState>
 ```
 
-Returns a state patch (works inside a Zustand `set`) that tombstones
-the entity iff zero refs remain across both lanes and all
-conversations. The per-kind details (which slice holds the entity,
-which tombstone function, which IDB blob to free) live in a single
-switch — verbose at definition but every consumer becomes a one-line
-call.
-
-`deleteConversation`'s cascade — today ~50 lines of three near-
-identical blocks — becomes ~15 lines:
+Why pure + delta-shaped rather than `(state) => state`: Zustand's
+`set` accepts either a full replacement or a partial; callers in
+the store today build partials with explicit field names (e.g.
+`{ conversationFiles, files, conversations }`). Keeping `gcOrphanedAttachment`
+delta-shaped means cascade code stays in the same shape it has
+today — composable inside a single `set`, no risk of stale-state
+reads between two `set` calls. Concrete example for the now-
+simplified `deleteConversation`:
 
 ```ts
-const affectedRefs = collectConversationAttachmentRefs(state, conversationId)
-const newJoins = dropConversationJoins(state, conversationId)
-const patches = affectedRefs.map(ref => gcOrphanedAttachment({ ...state, ...newJoins }, ref))
-return mergeStatePatches(newJoins, ...patches)
+deleteConversation: (conversationId: string) =>
+  set((state) => {
+    const newConversations = state.conversations.filter((c) => c.id !== conversationId)
+    // Drop join rows for this conversation across all three lanes.
+    const droppedJoins = dropConversationJoins(state, conversationId)
+    // For every (kind, id) that lost a ref, run GC against the
+    // post-drop state. Most calls are no-ops because workspace
+    // refs survive.
+    const orphanRefs = collectAffectedRefs(state, droppedJoins)
+    let patch: Partial<AppState> = { conversations: newConversations, ...droppedJoins }
+    for (const ref of orphanRefs) {
+      patch = { ...patch, ...gcOrphanedAttachment({ ...state, ...patch }, ref) }
+    }
+    // Plus the existing per-feature cleanups (notes, artifacts, pins, etc.)
+    return { ...patch, notes: …, artifacts: …, pinnedExplanations: … }
+  })
 ```
 
-`deleteWorkspace` likewise.
+The reducer-style accumulator (`patch = { ...patch, ...gcOrphanedAttachment(...) }`)
+is explicit and reads top-to-bottom; no `mergeStatePatches` magic.
+
+`deleteWorkspace` follows the same shape.
 
 `forkConversation`'s "copy private joins onto the fork" gets a
 helper `forkConversationJoins(state, sourceId, forkId)` returning
-the join arrays to merge into the state.
+the new join rows to append. The three `selectedXxxIds` arrays on
+the new conversation are copied directly in the existing
+`createConversation`-shaped block — they live on the conversation
+itself, not in join tables, so they're not "joins" to inherit via
+this helper. The fork code stays explicit about copying them.
 
 ## What stays the same
 
-To make the diff reviewable in one PR:
+To keep the PR reviewable:
 
 - Every Supabase migration. No DB changes.
 - The Zustand store **shape** — three slices, three sets of join
-  arrays, three selection-id arrays. Only the *mutator implementations*
-  shrink.
+  arrays, three selection-id arrays. Only the *removal/cascade*
+  mutator implementations shrink.
 - The sync layer (`lib/client/sync/*`). The three `diff*` functions
   + the reconcile path stay.
 - The three resource-sidebar tab components (Files / Links / MCP).
 - The three add-flow dialogs (file upload, URL paste, MCP server
   picker).
-- Every chat-route Zod schema field — three separate arrays
-  (`files`, `mcpResources`, `urlBookmarks`) stay in
-  `ChatRequestSchema` for one release. The route accepts both:
-  - **Legacy**: the three separate arrays (existing clients).
-  - **New**: a single `attachments` array (new client code).
-  Both go through `toAttachmentList()` and merge into one
-  `ResolvedAttachment[]`. The old fields stay through one stable
-  release, then a follow-up commit deletes them.
+- **Per-kind mutators that aren't about cascade.** The refactor only
+  touches *removal* + *cascade* logic. Operations that are
+  inherently per-kind stay per-kind because their patch shapes
+  diverge wildly:
+  - `addFile`, `setFileExtraction`, `setFileStorage` — file-specific
+    extraction lifecycle.
+  - `addMcpServer`, `setMcpServerCapabilities`, `setMcpServerEnabled`,
+    `upsertMcpResource`, `addMcpResourceBinding` — MCP-specific
+    discovery + binding flow.
+  - `addUrlBookmark`, `updateUrlBookmark` — URL-bookmark refresh
+    semantics (re-fetch + content-hash comparison) don't make sense
+    on the other kinds.
+  - All three add-flow surfaces stay distinct in the store.
+- **Wire shape changes atomically.** Files, MCP resources, URL
+  bookmarks have one client (this app) and no external API
+  consumers — so `ChatRequestSchema` swaps its three fields
+  (`files`, `mcpResources`, `urlBookmarks`) for one (`attachments`)
+  in one commit. No dual-shape compat layer. The client request
+  builder and the chat route change together; one PR, one shape.
+- **`Message.attachedFileIds`** — the per-message snapshot of
+  what was attached at send time — stays file-specific. It exists
+  to render "I sent these files in this message" chips below
+  user messages; the equivalent doesn't make sense for ephemeral
+  MCP resources (the resource may have changed between send and
+  re-render) or for URL bookmarks (the bookmark can be refreshed
+  out from under the message). Promoting it to a kind-discriminated
+  list of `(kind, id)` tuples is a future feature, not part of this
+  refactor.
+- **Defensive prune on hydrate** (`onRehydrateStorage`). Today's
+  pass already iterates the three slices independently — it doesn't
+  share the GC/tombstone logic, just the ref-counting question.
+  The refactor exports `hasLiveReference` from the new
+  `cascade.ts` so the prune pass can use it, but the prune
+  *itself* stays where it is and continues to handle each slice
+  by name (the loop is short and the file-by-file structure is
+  what makes a reviewer trust it).
 
 ## Phasing
 
@@ -278,11 +403,12 @@ lints:
 
 | Sub-commit | Scope | LOC delta |
 |---|---|---|
-| **1** | New `lib/shared/attachments.ts` + new server renderer. Chat-route migrates to `body.attachments`. Client request builder migrates. Three legacy `render*Prompt` functions stay for one release so existing in-flight requests still work. | +280 / -120 |
-| **2** | Store cascade helper. Mutators migrate (`removeFile`, `removeResource`, `removeMcpResourceBinding`, `removeConversationFile`, `removeConversationMcpResource`, `removeConversationUrlBookmark`, the four-lane cascade in `deleteConversation` + `deleteWorkspace`, `forkConversation` inheritance). | +130 / -260 |
+| **1** | New `lib/shared/attachments.ts` + `lib/server/attachments/render.ts`. Chat-route swaps `files`/`mcpResources`/`urlBookmarks` → `attachments` atomically. Client request builder migrates in the same commit. Three legacy `render*Prompt` files deleted (the existing `resolveAttachedMcpResources` is *kept* — it still does the per-resource read + timeout dance). | +280 / -220 |
+| **2** | New `lib/client/store/cascade.ts` with `hasLiveReference` + `gcOrphanedAttachment`. Removal mutators migrate (`removeFile`, `removeResource`, `removeMcpResourceBinding`, `removeConversationFile`, `removeConversationMcpResource`, `removeConversationUrlBookmark`, plus the cascade blocks in `deleteConversation` + `deleteWorkspace`, plus `forkConversation` private-join inheritance via the new `forkConversationJoins` helper). | +180 / -310 |
 
-Net after both: ~+410 / -380, so ~+30 LOC. The win is structural,
-not line-count.
+Net after both: ~+460 / -530, so **~−70 LOC**. The win is mostly
+structural — every consumer site shrinks 30-50% in branch count —
+but we end up with a smaller codebase too.
 
 ## Verification
 
