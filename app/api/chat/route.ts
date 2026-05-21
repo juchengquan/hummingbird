@@ -19,6 +19,10 @@ import {
   renderMcpResourcesPrompt,
   type ResolvedResource,
 } from '@/server/mcp/inject-resources'
+import {
+  renderBookmarksPrompt,
+  type BookmarkPayload,
+} from '@/server/url/inject-bookmarks'
 
 interface FileSummary {
   name: string
@@ -59,7 +63,11 @@ function buildSystemPrompt(
   /** Pre-resolved MCP resources to inject below the files block.
    *  Caller has already done the `readResource` round-trips; we just
    *  render with whatever budget remains after files. */
-  mcpResources?: ResolvedResource[]
+  mcpResources?: ResolvedResource[],
+  /** URL bookmarks attached to this turn. Content is already cached
+   *  on the client; we just render into the system prompt sharing
+   *  the same character budget. */
+  urlBookmarks?: BookmarkPayload[]
 ): string {
   const trimmedWorkspace = workspaceSystemPrompt?.trim()
   const skillsLine = buildSkillsNote(enabledSkills ?? [])
@@ -79,7 +87,13 @@ function buildSystemPrompt(
 
   const safeFiles = files ?? []
   const safeMcpResources = mcpResources ?? []
-  if (safeFiles.length === 0 && safeMcpResources.length === 0) return base
+  const safeBookmarks = urlBookmarks ?? []
+  if (
+    safeFiles.length === 0 &&
+    safeMcpResources.length === 0 &&
+    safeBookmarks.length === 0
+  )
+    return base
 
   const withText = safeFiles.filter((f) => f.text && f.text.trim().length > 0)
   const metaOnly = safeFiles.filter((f) => !f.text || f.text.trim().length === 0)
@@ -125,6 +139,17 @@ function buildSystemPrompt(
   if (safeMcpResources.length > 0) {
     const remaining = Math.max(0, TOTAL_ATTACHMENT_BUDGET - used)
     const rendered = renderMcpResourcesPrompt(safeMcpResources, remaining)
+    if (rendered.fragment) {
+      prompt += `\n\n${rendered.fragment}`
+      used += rendered.used
+    }
+  }
+
+  // URL bookmarks come last in the prompt — files and MCP resources
+  // take priority. Same budget; truncation markers match the file path.
+  if (safeBookmarks.length > 0) {
+    const remaining = Math.max(0, TOTAL_ATTACHMENT_BUDGET - used)
+    const rendered = renderBookmarksPrompt(safeBookmarks, remaining)
     if (rendered.fragment) {
       prompt += `\n\n${rendered.fragment}`
     }
@@ -324,7 +349,8 @@ export async function POST(req: NextRequest) {
           name: s.name,
           toolCount: s.capabilities?.tools?.length ?? 0,
         })),
-        resolvedMcpResources
+        resolvedMcpResources,
+        body.urlBookmarks
       ),
       // Cast back: Zod validates the outer shape (role + content union),
       // but the AI SDK's ModelMessage uses tighter inner-part discriminants
