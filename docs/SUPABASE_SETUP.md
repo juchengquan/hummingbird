@@ -98,12 +98,20 @@ errors:
      cloud-mode credentials. The encryption key lives in the Next.js
      server env (`MCP_ENCRYPTION_KEY`), not in Postgres — see the
      "MCP encryption key" subsection below.
+6. `supabase/migrations/0006_url_bookmarks.sql`
+   - Adds the `url_bookmarks` and `conversation_url_bookmarks` tables
+     (third source type after files and MCP resources) plus the
+     `selected_url_bookmark_ids` column on `conversations`. Same RLS
+     pattern, same workspace + conversation-private lane model. Page
+     content is fetched + extracted server-side by `/api/url/fetch`
+     at save time.
 
-After running all five, sanity-check from the **Table Editor**:
-fourteen tables should be listed (`profiles`, `workspaces`,
+After running all six, sanity-check from the **Table Editor**:
+sixteen tables should be listed (`profiles`, `workspaces`,
 `conversations`, `messages`, `files`, `resources`, `conversation_files`,
 `artifacts`, `notes`, `shares`, `mcp_servers`, `mcp_resources`,
-`mcp_resource_bindings`, `conversation_mcp_resources`), each showing
+`mcp_resource_bindings`, `conversation_mcp_resources`, `url_bookmarks`,
+`conversation_url_bookmarks`), each showing
 the RLS shield icon indicating policies are active. The **Storage**
 sidebar should show a `user-files` private bucket with the four
 policies attached.

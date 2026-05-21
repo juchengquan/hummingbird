@@ -18,6 +18,7 @@ import type {
   Conversation,
   ConversationFile,
   ConversationMcpResource,
+  ConversationUrlBookmark,
   Document,
   FileExtractionStatus,
   McpCapabilities,
@@ -29,6 +30,7 @@ import type {
   Note,
   Resource,
   UploadedFile,
+  UrlBookmark,
   Workspace,
 } from "@/shared/types"
 import type { AppSupabaseClient } from "@/client/supabase/client"
@@ -58,6 +60,8 @@ export interface CloudSnapshot {
   mcpResources: McpResource[]
   mcpResourceBindings: McpResourceBinding[]
   conversationMcpResources: ConversationMcpResource[]
+  urlBookmarks: UrlBookmark[]
+  conversationUrlBookmarks: ConversationUrlBookmark[]
 }
 
 /** Returns null when there's a fetch error (caller decides whether to retry). */
@@ -77,7 +81,9 @@ export async function fetchCloudSnapshot(
     mcpServersRes,
     mcpResourcesRes,
     mcpResourceBindingsRes,
-    conversationMcpResourcesRes
+    conversationMcpResourcesRes,
+    urlBookmarksRes,
+    conversationUrlBookmarksRes
   try {
     ;[
       workspacesRes,
@@ -93,6 +99,8 @@ export async function fetchCloudSnapshot(
       mcpResourcesRes,
       mcpResourceBindingsRes,
       conversationMcpResourcesRes,
+      urlBookmarksRes,
+      conversationUrlBookmarksRes,
     ] = await Promise.all([
       client.from("workspaces").select("*").eq("user_id", userId),
       client.from("documents").select("*").eq("user_id", userId),
@@ -123,6 +131,11 @@ export async function fetchCloudSnapshot(
         .from("conversation_mcp_resources")
         .select("*")
         .eq("user_id", userId),
+      client.from("url_bookmarks").select("*").eq("user_id", userId),
+      client
+        .from("conversation_url_bookmarks")
+        .select("*")
+        .eq("user_id", userId),
     ])
   } catch {
     return null
@@ -141,7 +154,9 @@ export async function fetchCloudSnapshot(
     mcpServersRes.error ||
     mcpResourcesRes.error ||
     mcpResourceBindingsRes.error ||
-    conversationMcpResourcesRes.error
+    conversationMcpResourcesRes.error ||
+    urlBookmarksRes.error ||
+    conversationUrlBookmarksRes.error
   ) {
     return null
   }
@@ -216,6 +231,10 @@ export async function fetchCloudSnapshot(
       selectedMcpResourceIds:
         c.selected_mcp_resource_ids && c.selected_mcp_resource_ids.length > 0
           ? c.selected_mcp_resource_ids
+          : undefined,
+      selectedUrlBookmarkIds:
+        c.selected_url_bookmark_ids && c.selected_url_bookmark_ids.length > 0
+          ? c.selected_url_bookmark_ids
           : undefined,
       skillPrefs: jsonToSkillPrefs(c.skill_prefs),
       parentId: c.parent_id ?? undefined,
@@ -323,6 +342,34 @@ export async function fetchCloudSnapshot(
       addedAt: new Date(cmr.added_at),
     }))
 
+    const urlBookmarks: UrlBookmark[] = (urlBookmarksRes.data ?? []).map((b) => {
+      const bookmark: UrlBookmark = {
+        id: b.id,
+        workspaceId: b.workspace_id,
+        url: b.url,
+        title: b.title,
+        content: b.content ?? "",
+        contentTruncated: b.content_truncated,
+        contentHash: b.content_hash,
+        description: b.description ?? undefined,
+        faviconUrl: b.favicon_url ?? undefined,
+        fetchedAt: new Date(b.fetched_at),
+        createdAt: new Date(b.created_at),
+        updatedAt: new Date(b.updated_at),
+      }
+      if (b.deleted_at) bookmark.deletedAt = new Date(b.deleted_at)
+      return bookmark
+    })
+
+    const conversationUrlBookmarks: ConversationUrlBookmark[] = (
+      conversationUrlBookmarksRes.data ?? []
+    ).map((cub) => ({
+      id: cub.id,
+      conversationId: cub.conversation_id,
+      bookmarkId: cub.bookmark_id,
+      addedAt: new Date(cub.added_at),
+    }))
+
     // Build a conversation → workspace map so we can backfill `workspaceId`
     // on notes/artifacts (the cloud schema still keys those by conversation).
     const convToWorkspace = new Map<string, string>()
@@ -376,6 +423,8 @@ export async function fetchCloudSnapshot(
       mcpResources,
       mcpResourceBindings,
       conversationMcpResources,
+      urlBookmarks,
+      conversationUrlBookmarks,
     }
   } catch {
     return null
@@ -638,6 +687,44 @@ export async function bulkUploadLocalState(
       return { ok: false, error: `conversation_mcp_resources: ${error.message}` }
   }
 
+  // url_bookmarks (depends on workspaces)
+  if (snapshot.urlBookmarks.length > 0) {
+    const { error } = await client.from("url_bookmarks").upsert(
+      snapshot.urlBookmarks.map((b) => ({
+        id: b.id,
+        user_id: userId,
+        workspace_id: b.workspaceId,
+        url: b.url,
+        title: b.title,
+        content: b.content,
+        content_truncated: b.contentTruncated,
+        content_hash: b.contentHash,
+        description: b.description ?? null,
+        favicon_url: b.faviconUrl ?? null,
+        fetched_at: b.fetchedAt.toISOString(),
+        deleted_at: b.deletedAt ? b.deletedAt.toISOString() : null,
+        created_at: b.createdAt.toISOString(),
+        updated_at: b.updatedAt.toISOString(),
+      }))
+    )
+    if (error) return { ok: false, error: `url_bookmarks: ${error.message}` }
+  }
+
+  // conversation_url_bookmarks (depends on url_bookmarks + conversations)
+  if (snapshot.conversationUrlBookmarks.length > 0) {
+    const { error } = await client.from("conversation_url_bookmarks").upsert(
+      snapshot.conversationUrlBookmarks.map((cub) => ({
+        id: cub.id,
+        user_id: userId,
+        conversation_id: cub.conversationId,
+        bookmark_id: cub.bookmarkId,
+        added_at: cub.addedAt.toISOString(),
+      }))
+    )
+    if (error)
+      return { ok: false, error: `conversation_url_bookmarks: ${error.message}` }
+  }
+
   // notes — workspace-scoped after migration 0011, so orphans
   // (conversationId === null) upload too via the new workspace_id
   // column. Skip rows missing a workspaceId entirely (shouldn't
@@ -746,6 +833,8 @@ export function applyCloudSnapshot(snapshot: CloudSnapshot): void {
     mcpResources: snapshot.mcpResources,
     mcpResourceBindings: snapshot.mcpResourceBindings,
     conversationMcpResources: snapshot.conversationMcpResources,
+    urlBookmarks: snapshot.urlBookmarks,
+    conversationUrlBookmarks: snapshot.conversationUrlBookmarks,
   })
 
   useStore.setState({
@@ -761,6 +850,8 @@ export function applyCloudSnapshot(snapshot: CloudSnapshot): void {
     mcpResources: snapshot.mcpResources,
     mcpResourceBindings: snapshot.mcpResourceBindings,
     conversationMcpResources: snapshot.conversationMcpResources,
+    urlBookmarks: snapshot.urlBookmarks,
+    conversationUrlBookmarks: snapshot.conversationUrlBookmarks,
     activeWorkspaceId,
     activeConversationId,
     activeDocumentId,

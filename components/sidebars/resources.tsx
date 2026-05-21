@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import { PanelRightClose, PanelRightOpen, FolderOpen, StickyNote, Archive, Sparkles, PencilLine, Pin, Plug } from "lucide-react"
+import { PanelRightClose, PanelRightOpen, FolderOpen, StickyNote, Archive, Sparkles, PencilLine, Pin, Plug, Globe } from "lucide-react"
 import { cn } from "@/shared/utils"
 import {
   useStore,
@@ -13,6 +13,8 @@ import {
   useConversationPinnedExplanations,
   useWorkspaceMcpResources,
   useConversationPrivateMcpResources,
+  useWorkspaceUrlBookmarks,
+  useConversationPrivateUrlBookmarks,
 } from "@/client/hooks/use-store"
 import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
 import { SKILLS } from "@/shared/skills/registry"
@@ -36,6 +38,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip
  */
 const ALL_RAIL_TABS = [
   { id: "files" as const, label: "Files", Icon: FolderOpen },
+  { id: "links" as const, label: "Links", Icon: Globe },
   { id: "notes" as const, label: "Notes", Icon: StickyNote },
   { id: "artifacts" as const, label: "Artifacts", Icon: Archive },
   { id: "mcp" as const, label: "MCP", Icon: Plug },
@@ -82,6 +85,8 @@ export function ResourcesSidebar({ mode = "chat" }: ResourcesSidebarProps = {}) 
   const mcpWorkspaceCount = useWorkspaceMcpResources().length
   const mcpPrivateCount = useConversationPrivateMcpResources().length
   const mcpCount = mcpWorkspaceCount + mcpPrivateCount
+  const linksCount =
+    useWorkspaceUrlBookmarks().length + useConversationPrivateUrlBookmarks().length
   const workspace = useActiveWorkspace()
   const conversation = useActiveConversation()
   const skillsActive = SKILLS.filter((s) =>
@@ -123,6 +128,7 @@ export function ResourcesSidebar({ mode = "chat" }: ResourcesSidebarProps = {}) 
 
   const counts: Record<typeof tab, number> = {
     files: resourcesCount,
+    links: linksCount,
     notes: notesCount,
     artifacts: artifactsCount,
     mcp: mcpCount,

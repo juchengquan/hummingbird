@@ -1,6 +1,6 @@
 # Plan: URL bookmarks as live sources
 
-Status: **planning** — no code yet.
+Status: **shipped** (Stages 1 and 2).
 
 Paste a URL → server fetches + extracts text → cache as a workspace
 or conversation-private "bookmark" → its content gets injected into

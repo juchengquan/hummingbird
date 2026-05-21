@@ -412,6 +412,31 @@ export function ChatPanel() {
           mimeType: r.mimeType,
         }))
 
+      // URL bookmarks attached to this turn — workspace-ticked +
+      // conversation-pinned, de-duped, tombstones filtered out.
+      const workspaceUrlIds = conv?.selectedUrlBookmarkIds ?? []
+      const privateUrlIds = conv
+        ? mcpStore.conversationUrlBookmarks
+            .filter((cub) => cub.conversationId === conv.id)
+            .map((cub) => cub.bookmarkId)
+        : []
+      const attachedUrlBookmarkIds = [
+        ...new Set([...workspaceUrlIds, ...privateUrlIds]),
+      ]
+      const urlBookmarksForRequest = attachedUrlBookmarkIds
+        .map((id) => mcpStore.urlBookmarks.find((b) => b.id === id))
+        .filter(
+          (b): b is NonNullable<typeof b> => !!b && !b.deletedAt
+        )
+        .map((b) => ({
+          id: b.id,
+          url: b.url,
+          title: b.title,
+          content: b.content,
+          contentTruncated: b.contentTruncated,
+          fetchedAt: b.fetchedAt.toISOString(),
+        }))
+
       try {
         const result = await apiClient.chat.stream(
           {
@@ -424,6 +449,8 @@ export function ChatPanel() {
             mcpServers: mcpServersForRequest.length > 0 ? mcpServersForRequest : undefined,
             mcpResources:
               mcpResourcesForRequest.length > 0 ? mcpResourcesForRequest : undefined,
+            urlBookmarks:
+              urlBookmarksForRequest.length > 0 ? urlBookmarksForRequest : undefined,
           },
           { signal: controller.signal }
         )

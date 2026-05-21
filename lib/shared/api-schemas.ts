@@ -100,6 +100,18 @@ const McpResourceRequestSchema = z.object({
   mimeType: z.string().max(100).optional(),
 })
 
+/** URL bookmark attached to this turn. Content already lives in the
+ *  client's store (extracted at save time), so the body ships the
+ *  cached text — no server-side fetch required. */
+const UrlBookmarkRequestSchema = z.object({
+  id: z.string().min(1).max(64),
+  url: z.string().min(1).max(2000),
+  title: z.string().min(1).max(500),
+  content: z.string().max(220_000),         // matches server's 200 KB cap
+  contentTruncated: z.boolean().optional(),
+  fetchedAt: z.string().optional(),         // ISO 8601
+})
+
 export const ChatRequestSchema = z.object({
   messages: z.array(ModelMessageSchema).min(1),
   model: z.string().max(100).optional(),
@@ -118,6 +130,11 @@ export const ChatRequestSchema = z.object({
    *  of workspace-ticked + conversation-pinned, de-duped. The server
    *  fetches content via the appropriate MCP server. */
   mcpResources: z.array(McpResourceRequestSchema).max(20).optional(),
+  /** URL bookmarks attached to this conversation — workspace-ticked +
+   *  conversation-pinned, de-duped. Content travels in the body (no
+   *  server fetch on the chat path; bookmarks were fetched at save
+   *  time via /api/url/fetch). */
+  urlBookmarks: z.array(UrlBookmarkRequestSchema).max(10).optional(),
 })
 
 // --- /api/ai/copilot --------------------------------------------------------

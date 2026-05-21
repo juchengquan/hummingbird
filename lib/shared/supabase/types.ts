@@ -114,6 +114,7 @@ export interface Database {
           pinned: boolean
           selected_file_ids: string[]
           selected_mcp_resource_ids: string[]
+          selected_url_bookmark_ids: string[]
           skill_prefs: Json
           parent_id: string | null
           forked_from_message_id: string | null
@@ -128,6 +129,7 @@ export interface Database {
           pinned?: boolean
           selected_file_ids?: string[]
           selected_mcp_resource_ids?: string[]
+          selected_url_bookmark_ids?: string[]
           skill_prefs?: Json
           parent_id?: string | null
           forked_from_message_id?: string | null
@@ -142,6 +144,7 @@ export interface Database {
           pinned?: boolean
           selected_file_ids?: string[]
           selected_mcp_resource_ids?: string[]
+          selected_url_bookmark_ids?: string[]
           skill_prefs?: Json
           parent_id?: string | null
           forked_from_message_id?: string | null
@@ -551,6 +554,81 @@ export interface Database {
           user_id?: string
           conversation_id?: string
           resource_id?: string
+          added_at?: string
+        }
+        Relationships: []
+      }
+      url_bookmarks: {
+        Row: {
+          id: string
+          user_id: string
+          workspace_id: string
+          url: string
+          title: string
+          content: string
+          content_truncated: boolean
+          content_hash: string
+          description: string | null
+          favicon_url: string | null
+          fetched_at: string
+          deleted_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          user_id: string
+          workspace_id: string
+          url: string
+          title: string
+          content?: string
+          content_truncated?: boolean
+          content_hash: string
+          description?: string | null
+          favicon_url?: string | null
+          fetched_at?: string
+          deleted_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          workspace_id?: string
+          url?: string
+          title?: string
+          content?: string
+          content_truncated?: boolean
+          content_hash?: string
+          description?: string | null
+          favicon_url?: string | null
+          fetched_at?: string
+          deleted_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      conversation_url_bookmarks: {
+        Row: {
+          id: string
+          user_id: string
+          conversation_id: string
+          bookmark_id: string
+          added_at: string
+        }
+        Insert: {
+          id: string
+          user_id: string
+          conversation_id: string
+          bookmark_id: string
+          added_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          conversation_id?: string
+          bookmark_id?: string
           added_at?: string
         }
         Relationships: []

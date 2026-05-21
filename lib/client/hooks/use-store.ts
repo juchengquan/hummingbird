@@ -14,6 +14,8 @@ import type {
   ConversationMcpResource,
   McpCapabilities,
   McpCredentialMode,
+  UrlBookmark,
+  ConversationUrlBookmark,
   Message,
   MessageError,
   Conversation,
@@ -41,6 +43,8 @@ export type {
   ConversationMcpResource,
   McpCapabilities,
   McpCredentialMode,
+  UrlBookmark,
+  ConversationUrlBookmark,
   Message,
   MessageError,
   Conversation,
@@ -148,6 +152,29 @@ function tombstoneMcpResource(resource: McpResource): McpResource {
   }
 }
 
+/**
+ * Tombstone a `UrlBookmark`: keep the identity (id, workspaceId, url,
+ * title, createdAt) so historical message references render the
+ * original page metadata; free the cached `content` + description +
+ * favicon. `contentHash` is preserved so a future undo or compaction
+ * pass can detect "this was the same content."
+ */
+function tombstoneUrlBookmark(bookmark: UrlBookmark): UrlBookmark {
+  return {
+    id: bookmark.id,
+    workspaceId: bookmark.workspaceId,
+    url: bookmark.url,
+    title: bookmark.title,
+    content: '',
+    contentTruncated: false,
+    fetchedAt: bookmark.fetchedAt,
+    contentHash: bookmark.contentHash,
+    createdAt: bookmark.createdAt,
+    updatedAt: bookmark.updatedAt,
+    deletedAt: new Date(),
+  }
+}
+
 // Default initial values for store
 const DEFAULT_WORKSPACE_ID = 'default'
 
@@ -213,7 +240,7 @@ interface AppState {
 
   // Right resources sidebar (chat view)
   resourcesSidebarOpen: boolean
-  resourcesSidebarTab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins' | 'mcp'
+  resourcesSidebarTab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins' | 'mcp' | 'links'
 
   /** Session-only pinned explanations from the selection-driven Explain
    *  action. Excluded from `partialize` — by design, pins vanish on
@@ -273,6 +300,12 @@ interface AppState {
   mcpResourceBindings: McpResourceBinding[]
   conversationMcpResources: ConversationMcpResource[]
 
+  // URL bookmarks — saved web pages. Third source type after files
+  // and MCP resources; workspace-library rows ticked on per conversation
+  // via `Conversation.selectedUrlBookmarkIds`, plus a private lane.
+  urlBookmarks: UrlBookmark[]
+  conversationUrlBookmarks: ConversationUrlBookmark[]
+
   // Notes (free-form notes & message bookmarks, scoped to a conversation)
   notes: Note[]
 
@@ -303,7 +336,7 @@ interface AppState {
   setActiveView: (view: MainView) => void
   setResourcesSidebarOpen: (open: boolean) => void
   toggleResourcesSidebar: () => void
-  setResourcesSidebarTab: (tab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins' | 'mcp') => void
+  setResourcesSidebarTab: (tab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins' | 'mcp' | 'links') => void
   /** Pin an explanation produced by the selection-driven Explain
    *  action. Returns the inserted record (with id + createdAt set). */
   pinExplanation: (input: {
@@ -405,6 +438,53 @@ interface AppState {
   /** Toggle a workspace-library MCP resource on/off for the active
    *  conversation (mirrors `toggleConversationFileSelection`). */
   toggleConversationMcpResourceSelection: (resourceId: string) => void
+
+  // URL bookmark actions
+  /** Add a freshly-fetched bookmark to the active workspace. The
+   *  caller is responsible for the `/api/url/fetch` round-trip and
+   *  passes the extracted fields here. Returns the inserted row. */
+  addUrlBookmark: (input: {
+    workspaceId: string
+    url: string
+    title: string
+    content: string
+    contentTruncated: boolean
+    contentHash: string
+    description?: string
+    faviconUrl?: string
+  }) => UrlBookmark
+  /** Replace the cached content of a bookmark after a manual refresh.
+   *  Bumps `fetchedAt` + `updatedAt` automatically. */
+  updateUrlBookmark: (
+    bookmarkId: string,
+    patch: Partial<
+      Pick<
+        UrlBookmark,
+        | 'title'
+        | 'content'
+        | 'contentTruncated'
+        | 'contentHash'
+        | 'description'
+        | 'faviconUrl'
+      >
+    >
+  ) => void
+  /** Tombstone a bookmark. Drops all joins and selection ids
+   *  atomically; metadata stub (url, title, createdAt) remains so
+   *  historical message references resolve cleanly. */
+  removeUrlBookmark: (bookmarkId: string) => void
+  /** Pin a bookmark privately to a conversation. No-op if already
+   *  pinned. */
+  addConversationUrlBookmark: (conversationId: string, bookmarkId: string) => void
+  /** Unpin a private bookmark. GC's the underlying bookmark when no
+   *  other live join references it. */
+  removeConversationUrlBookmark: (
+    conversationId: string,
+    bookmarkId: string
+  ) => void
+  /** Toggle a workspace-library bookmark on/off for the active
+   *  conversation (mirrors the file + MCP-resource selection). */
+  toggleConversationUrlBookmarkSelection: (bookmarkId: string) => void
 
   // Notes actions
   createNote: (input: { conversationId: string | null; messageId?: string | null; body?: string }) => Note
@@ -554,6 +634,10 @@ export const useStore = create<AppState>()(
       mcpResources: [],
       mcpResourceBindings: [],
       conversationMcpResources: [],
+
+      // URL bookmarks
+      urlBookmarks: [],
+      conversationUrlBookmarks: [],
 
       // Notes
       notes: [],
@@ -739,6 +823,21 @@ export const useStore = create<AppState>()(
           const newConvMcpResources = state.conversationMcpResources.filter(
             (cmr) => !droppedResourceIds.has(cmr.resourceId)
           )
+          // URL bookmarks cascade — tombstone bookmarks in the workspace,
+          // drop conversation joins. Selection ids on the (now-deleted)
+          // conversations don't need stripping since the conversations
+          // themselves are gone.
+          const droppedBookmarkIds = new Set(
+            state.urlBookmarks
+              .filter((b) => b.workspaceId === workspaceId && !b.deletedAt)
+              .map((b) => b.id)
+          )
+          const newUrlBookmarks = state.urlBookmarks.map((b) =>
+            droppedBookmarkIds.has(b.id) ? tombstoneUrlBookmark(b) : b
+          )
+          const newConvUrlBookmarks = state.conversationUrlBookmarks.filter(
+            (cub) => !droppedBookmarkIds.has(cub.bookmarkId)
+          )
           return {
             workspaces: newWorkspaces,
             activeWorkspaceId: newActiveWorkspaceId,
@@ -754,6 +853,8 @@ export const useStore = create<AppState>()(
             mcpResources: newMcpResources,
             mcpResourceBindings: newMcpBindings,
             conversationMcpResources: newConvMcpResources,
+            urlBookmarks: newUrlBookmarks,
+            conversationUrlBookmarks: newConvUrlBookmarks,
           }
         }),
       renameWorkspace: (workspaceId: string, name: string) =>
@@ -1138,6 +1239,133 @@ export const useStore = create<AppState>()(
           }
         }),
 
+      // URL bookmark actions
+      addUrlBookmark: ({
+        workspaceId,
+        url,
+        title,
+        content,
+        contentTruncated,
+        contentHash,
+        description,
+        faviconUrl,
+      }) => {
+        const now = new Date()
+        const newBookmark: UrlBookmark = {
+          id: uuid(),
+          workspaceId,
+          url,
+          title,
+          content,
+          contentTruncated,
+          fetchedAt: now,
+          contentHash,
+          description,
+          faviconUrl,
+          createdAt: now,
+          updatedAt: now,
+        }
+        set((state) => ({ urlBookmarks: [...state.urlBookmarks, newBookmark] }))
+        return newBookmark
+      },
+      updateUrlBookmark: (bookmarkId, patch) =>
+        set((state) => ({
+          urlBookmarks: state.urlBookmarks.map((b) =>
+            b.id === bookmarkId && !b.deletedAt
+              ? {
+                  ...b,
+                  ...patch,
+                  fetchedAt: new Date(),
+                  updatedAt: new Date(),
+                }
+              : b
+          ),
+        })),
+      removeUrlBookmark: (bookmarkId) =>
+        set((state) => ({
+          urlBookmarks: state.urlBookmarks.map((b) =>
+            b.id === bookmarkId && !b.deletedAt ? tombstoneUrlBookmark(b) : b
+          ),
+          // Atomic cascade: drop join rows and selection ids that
+          // reference the bookmark.
+          conversationUrlBookmarks: state.conversationUrlBookmarks.filter(
+            (cub) => cub.bookmarkId !== bookmarkId
+          ),
+          conversations: state.conversations.map((c) => {
+            const selected = c.selectedUrlBookmarkIds ?? []
+            const filtered = selected.filter((id) => id !== bookmarkId)
+            return filtered.length === selected.length
+              ? c
+              : { ...c, selectedUrlBookmarkIds: filtered }
+          }),
+        })),
+      addConversationUrlBookmark: (conversationId, bookmarkId) =>
+        set((state) => {
+          if (
+            state.conversationUrlBookmarks.some(
+              (cub) =>
+                cub.conversationId === conversationId &&
+                cub.bookmarkId === bookmarkId
+            )
+          ) {
+            return state
+          }
+          const newJoin: ConversationUrlBookmark = {
+            id: uuid(),
+            conversationId,
+            bookmarkId,
+            addedAt: new Date(),
+          }
+          return {
+            conversationUrlBookmarks: [
+              ...state.conversationUrlBookmarks,
+              newJoin,
+            ],
+          }
+        }),
+      removeConversationUrlBookmark: (conversationId, bookmarkId) =>
+        set((state) => {
+          const newJoins = state.conversationUrlBookmarks.filter(
+            (cub) =>
+              !(
+                cub.conversationId === conversationId &&
+                cub.bookmarkId === bookmarkId
+              )
+          )
+          // GC: if no other lane references the bookmark, tombstone it.
+          const stillReferenced =
+            newJoins.some((cub) => cub.bookmarkId === bookmarkId) ||
+            state.conversations.some((c) =>
+              (c.selectedUrlBookmarkIds ?? []).includes(bookmarkId)
+            )
+          if (stillReferenced) {
+            return { conversationUrlBookmarks: newJoins }
+          }
+          return {
+            conversationUrlBookmarks: newJoins,
+            urlBookmarks: state.urlBookmarks.map((b) =>
+              b.id === bookmarkId && !b.deletedAt ? tombstoneUrlBookmark(b) : b
+            ),
+          }
+        }),
+      toggleConversationUrlBookmarkSelection: (bookmarkId) =>
+        set((state) => {
+          const id = state.activeConversationId
+          if (!id) return state
+          return {
+            conversations: state.conversations.map((c) => {
+              if (c.id !== id) return c
+              const selected = c.selectedUrlBookmarkIds ?? []
+              return {
+                ...c,
+                selectedUrlBookmarkIds: selected.includes(bookmarkId)
+                  ? selected.filter((x) => x !== bookmarkId)
+                  : [...selected, bookmarkId],
+              }
+            }),
+          }
+        }),
+
       // Notes actions
       createNote: ({ conversationId, messageId = null, body = '' }) => {
         const conv = conversationId
@@ -1336,15 +1564,18 @@ export const useStore = create<AppState>()(
           selectedMcpResourceIds: source.selectedMcpResourceIds
             ? [...source.selectedMcpResourceIds]
             : undefined,
+          selectedUrlBookmarkIds: source.selectedUrlBookmarkIds
+            ? [...source.selectedUrlBookmarkIds]
+            : undefined,
           skillPrefs: source.skillPrefs ? { ...source.skillPrefs } : undefined,
           parentId: source.id,
           forkedFromMessageId: untilMessageId,
         }
         set((state) => {
-          // Copy the source's conversation-private file + MCP-resource
-          // attachments onto the fork. The underlying file / McpResource
-          // is shared; we just add parallel joins under the new
-          // conversationId.
+          // Copy the source's conversation-private file, MCP-resource,
+          // and URL-bookmark attachments onto the fork. The underlying
+          // entities are shared; we just add parallel joins under the
+          // new conversationId.
           const inheritedFileJoins: ConversationFile[] = state.conversationFiles
             .filter((cf) => cf.conversationId === source.id)
             .map((cf) => ({
@@ -1361,12 +1592,24 @@ export const useStore = create<AppState>()(
               resourceId: cmr.resourceId,
               addedAt: new Date(),
             }))
+          const inheritedUrlJoins: ConversationUrlBookmark[] = state.conversationUrlBookmarks
+            .filter((cub) => cub.conversationId === source.id)
+            .map((cub) => ({
+              id: uuid(),
+              conversationId: fork.id,
+              bookmarkId: cub.bookmarkId,
+              addedAt: new Date(),
+            }))
           return {
             conversations: [fork, ...state.conversations],
             conversationFiles: [...state.conversationFiles, ...inheritedFileJoins],
             conversationMcpResources: [
               ...state.conversationMcpResources,
               ...inheritedMcpJoins,
+            ],
+            conversationUrlBookmarks: [
+              ...state.conversationUrlBookmarks,
+              ...inheritedUrlJoins,
             ],
             activeConversationId: fork.id,
           }
@@ -1443,11 +1686,36 @@ export const useStore = create<AppState>()(
                   : r
               )
             : state.mcpResources
+          // URL bookmark conversation joins: same cascade as MCP.
+          const droppedUrlJoins = state.conversationUrlBookmarks.filter(
+            (cub) => cub.conversationId === conversationId
+          )
+          const remainingUrlJoins = state.conversationUrlBookmarks.filter(
+            (cub) => cub.conversationId !== conversationId
+          )
+          const orphanedUrlBookmarkIds = new Set<string>()
+          for (const cub of droppedUrlJoins) {
+            const stillReferenced =
+              remainingUrlJoins.some((rj) => rj.bookmarkId === cub.bookmarkId) ||
+              newConversations.some((c) =>
+                (c.selectedUrlBookmarkIds ?? []).includes(cub.bookmarkId)
+              )
+            if (!stillReferenced) orphanedUrlBookmarkIds.add(cub.bookmarkId)
+          }
+          const newUrlBookmarks = orphanedUrlBookmarkIds.size
+            ? state.urlBookmarks.map((b) =>
+                orphanedUrlBookmarkIds.has(b.id) && !b.deletedAt
+                  ? tombstoneUrlBookmark(b)
+                  : b
+              )
+            : state.urlBookmarks
           return {
             conversations: newConversations,
             conversationFiles: remainingJoins,
             conversationMcpResources: remainingMcpJoins,
             mcpResources: newMcpResources,
+            conversationUrlBookmarks: remainingUrlJoins,
+            urlBookmarks: newUrlBookmarks,
             files: newFiles,
             notes: newNotes,
             artifacts: newArtifacts,
@@ -1811,7 +2079,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'hummingbird-storage',
-      version: 17,
+      version: 18,
       migrate: (persistedState, fromVersion) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState
         const state = persistedState as Record<string, unknown>
@@ -2095,6 +2363,18 @@ export const useStore = create<AppState>()(
           // `Conversation.selectedMcpResourceIds` is optional in the
           // type, so no backfill needed — read sites default to [].
         }
+        if (fromVersion < 18) {
+          // URL-bookmark slices added — workspace-library bookmarks
+          // (`urlBookmarks`) + conversation-private join
+          // (`conversationUrlBookmarks`). Seed empties; the actual
+          // fetch + extraction happens out-of-band via /api/url/fetch.
+          // `Conversation.selectedUrlBookmarkIds` is optional, no
+          // backfill required.
+          if (!('urlBookmarks' in state)) state.urlBookmarks = []
+          if (!('conversationUrlBookmarks' in state)) {
+            state.conversationUrlBookmarks = []
+          }
+        }
         return persistedState
       },
       onRehydrateStorage: () => (state) => {
@@ -2109,6 +2389,9 @@ export const useStore = create<AppState>()(
           const liveMcpResourceIds = new Set(
             state.mcpResources.filter((r) => !r.deletedAt).map((r) => r.id)
           )
+          const liveUrlBookmarkIds = new Set(
+            state.urlBookmarks.filter((b) => !b.deletedAt).map((b) => b.id)
+          )
           state.resources = state.resources.filter((r) => liveFileIds.has(r.fileId))
           state.conversationFiles = state.conversationFiles.filter((cf) =>
             liveFileIds.has(cf.fileId)
@@ -2119,19 +2402,28 @@ export const useStore = create<AppState>()(
           state.conversationMcpResources = state.conversationMcpResources.filter(
             (cmr) => liveMcpResourceIds.has(cmr.resourceId)
           )
+          state.conversationUrlBookmarks = state.conversationUrlBookmarks.filter(
+            (cub) => liveUrlBookmarkIds.has(cub.bookmarkId)
+          )
           state.conversations = state.conversations.map((c) => {
             const fileSel = c.selectedFileIds.filter((id) => liveFileIds.has(id))
             const mcpSel = (c.selectedMcpResourceIds ?? []).filter((id) =>
               liveMcpResourceIds.has(id)
             )
+            const urlSel = (c.selectedUrlBookmarkIds ?? []).filter((id) =>
+              liveUrlBookmarkIds.has(id)
+            )
             const fileChanged = fileSel.length !== c.selectedFileIds.length
             const mcpChanged =
               mcpSel.length !== (c.selectedMcpResourceIds ?? []).length
-            if (!fileChanged && !mcpChanged) return c
+            const urlChanged =
+              urlSel.length !== (c.selectedUrlBookmarkIds ?? []).length
+            if (!fileChanged && !mcpChanged && !urlChanged) return c
             return {
               ...c,
               selectedFileIds: fileSel,
               selectedMcpResourceIds: mcpSel.length > 0 ? mcpSel : undefined,
+              selectedUrlBookmarkIds: urlSel.length > 0 ? urlSel : undefined,
             }
           })
         }
@@ -2148,6 +2440,8 @@ export const useStore = create<AppState>()(
         mcpResources: state.mcpResources,
         mcpResourceBindings: state.mcpResourceBindings,
         conversationMcpResources: state.conversationMcpResources,
+        urlBookmarks: state.urlBookmarks,
+        conversationUrlBookmarks: state.conversationUrlBookmarks,
         conversations: state.conversations,
         activeConversationId: state.activeConversationId,
         files: state.files,
@@ -2288,6 +2582,35 @@ export const useConversationPrivateMcpResources = (): McpResource[] => {
 export const useConversationSelectedMcpResourceIds = (): string[] => {
   const conv = useActiveConversation()
   return conv?.selectedMcpResourceIds ?? []
+}
+
+/** Live URL bookmarks in the active workspace. */
+export const useWorkspaceUrlBookmarks = (): UrlBookmark[] => {
+  const urlBookmarks = useStore((state) => state.urlBookmarks)
+  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
+  return urlBookmarks.filter(
+    (b) => b.workspaceId === activeWorkspaceId && !b.deletedAt
+  )
+}
+
+/** URL bookmarks pinned privately to the active conversation. */
+export const useConversationPrivateUrlBookmarks = (): UrlBookmark[] => {
+  const conversationUrlBookmarks = useStore(
+    (state) => state.conversationUrlBookmarks
+  )
+  const urlBookmarks = useStore((state) => state.urlBookmarks)
+  const activeConversationId = useStore((state) => state.activeConversationId)
+  if (!activeConversationId) return []
+  return conversationUrlBookmarks
+    .filter((cub) => cub.conversationId === activeConversationId)
+    .map((cub) => urlBookmarks.find((b) => b.id === cub.bookmarkId))
+    .filter((b): b is UrlBookmark => !!b && !b.deletedAt)
+}
+
+/** Workspace URL bookmarks ticked on for the active conversation. */
+export const useConversationSelectedUrlBookmarkIds = (): string[] => {
+  const conv = useActiveConversation()
+  return conv?.selectedUrlBookmarkIds ?? []
 }
 
 export const useConversationNotes = () => {

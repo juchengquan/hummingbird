@@ -214,6 +214,53 @@ export interface ConversationMcpResource {
   addedAt: Date
 }
 
+// ---------------------------------------------------------------------------
+// URL bookmarks — saved web pages. Third source type after files and
+// MCP resources, sharing the same workspace-library + conversation-
+// private lane model. Content is fetched + extracted server-side at
+// save time and cached in `content`; manual refresh re-fetches and
+// updates `fetchedAt` + `contentHash`.
+//
+// See `docs/PLAN-url-bookmarks.md` for the design.
+// ---------------------------------------------------------------------------
+
+export interface UrlBookmark {
+  id: string
+  workspaceId: string
+  /** Canonical URL (post-normalization). */
+  url: string
+  /** Extracted from `<title>`, fallback to hostname. */
+  title: string
+  /** Extracted plain text from the page body, capped at the server-side
+   *  budget (currently 200 KB). */
+  content: string
+  /** True when extraction hit the per-bookmark cap. */
+  contentTruncated: boolean
+  /** Wall-clock timestamp of the most recent successful fetch. */
+  fetchedAt: Date
+  /** SHA-256 of `content` — lets the UI show "no changes since last
+   *  fetch" diffs without re-comparing the full text. */
+  contentHash: string
+  /** Site's `<meta name="description">` or first paragraph snippet. */
+  description?: string
+  /** Absolute URL of the site favicon. Best-effort; absent when the
+   *  site doesn't expose one. */
+  faviconUrl?: string
+  /** Soft-delete marker (matches UploadedFile.deletedAt). */
+  deletedAt?: Date
+  createdAt: Date
+  updatedAt: Date
+}
+
+/** Conversation-private lane (parallel to `ConversationFile` and
+ *  `ConversationMcpResource`). */
+export interface ConversationUrlBookmark {
+  id: string
+  conversationId: string
+  bookmarkId: string
+  addedAt: Date
+}
+
 /**
  * Conversation-private file attachment. Parallel to `Resource` but
  * scoped to a single conversation — these files do **not** appear in
@@ -355,6 +402,9 @@ export interface Conversation {
    *  for this conversation. Empty array on conversations created before
    *  v17 — backfilled defensively. */
   selectedMcpResourceIds?: string[]
+  /** Workspace URL-bookmark IDs ticked on for this conversation.
+   *  Empty / absent on conversations created before v18. */
+  selectedUrlBookmarkIds?: string[]
   /**
    * Per-conversation skill overrides. Presence of a key = override
    * (true = on, false = off); absence = inherit from the workspace.

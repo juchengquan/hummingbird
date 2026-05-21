@@ -1,6 +1,6 @@
 "use client"
 
-import { FolderOpen, StickyNote, Archive, Sparkles, Pin, Plug } from "lucide-react"
+import { FolderOpen, StickyNote, Archive, Sparkles, Pin, Plug, Globe } from "lucide-react"
 import { cn } from "@/shared/utils"
 import { SKILLS } from "@/shared/skills/registry"
 import { resolveSkill } from "@/shared/skills/types"
@@ -19,6 +19,8 @@ import {
   useConversationPinnedExplanations,
   useWorkspaceMcpResources,
   useConversationPrivateMcpResources,
+  useWorkspaceUrlBookmarks,
+  useConversationPrivateUrlBookmarks,
 } from "@/client/hooks/use-store"
 import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
 
@@ -40,6 +42,7 @@ interface ResourcesMobileDrawerProps {
 
 const TABS = [
   { id: "files" as const, label: "Files", Icon: FolderOpen },
+  { id: "links" as const, label: "Links", Icon: Globe },
   { id: "notes" as const, label: "Notes", Icon: StickyNote },
   { id: "artifacts" as const, label: "Artifacts", Icon: Archive },
   { id: "mcp" as const, label: "MCP", Icon: Plug },
@@ -59,6 +62,8 @@ export function ResourcesMobileDrawer({
   const pinsCount = useConversationPinnedExplanations().length
   const mcpCount =
     useWorkspaceMcpResources().length + useConversationPrivateMcpResources().length
+  const linksCount =
+    useWorkspaceUrlBookmarks().length + useConversationPrivateUrlBookmarks().length
   const workspace = useActiveWorkspace()
   const conversation = useActiveConversation()
   const skillsActive = SKILLS.filter((s) =>
@@ -67,6 +72,7 @@ export function ResourcesMobileDrawer({
 
   const counts: Record<typeof tab, number> = {
     files: filesCount,
+    links: linksCount,
     notes: notesCount,
     artifacts: artifactsCount,
     mcp: mcpCount,

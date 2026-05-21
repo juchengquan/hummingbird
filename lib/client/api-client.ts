@@ -66,6 +66,7 @@ export const apiUrls = {
   mcp: (serverId: string, action: "discover" | "call" | "read") =>
     url(`/api/mcp/${encodeURIComponent(serverId)}/${action}`),
   mcpServer: () => url("/api/mcp/server"),
+  urlFetch: () => url("/api/url/fetch"),
 }
 
 /**
@@ -323,6 +324,44 @@ async function mcpUpsertCloudServer(body: {
   return { ok: true, status: res.status }
 }
 
+// --- /api/url/fetch ---------------------------------------------------------
+
+export interface UrlFetchSnapshot {
+  url: string
+  title: string
+  content: string
+  contentTruncated: boolean
+  contentHash: string
+  description?: string
+  faviconUrl?: string
+}
+
+/**
+ * Fetch + extract a URL bookmark snapshot. The server handles all
+ * fetching (CORS + SSRF defense + extraction); the client just hands
+ * over the URL and stores the result.
+ */
+async function urlFetchBookmark(url: string): Promise<
+  | { ok: true; status: number; bookmark: UrlFetchSnapshot }
+  | { ok: false; status: number; error: { code?: string; message?: string } }
+> {
+  const res = await fetch(apiUrls.urlFetch(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  })
+  if (!res.ok) {
+    const errBody = await readErrorBody(res)
+    return {
+      ok: false,
+      status: res.status,
+      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+    }
+  }
+  const data = (await res.json()) as { ok: boolean; bookmark: UrlFetchSnapshot }
+  return { ok: true, status: res.status, bookmark: data.bookmark }
+}
+
 // --- Public surface ---------------------------------------------------------
 
 export const apiClient = {
@@ -338,6 +377,7 @@ export const apiClient = {
     revoke: revokeShare,
   },
   mcp: { proxy: mcpProxyCall, upsertCloudServer: mcpUpsertCloudServer },
+  url: { fetch: urlFetchBookmark },
 }
 
 export type ApiClient = typeof apiClient
