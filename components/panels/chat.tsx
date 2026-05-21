@@ -301,14 +301,6 @@ export function ChatPanel() {
       const attachedFiles = attachedFileIds
         .map((id) => files.find((f) => f.id === id))
         .filter((f): f is NonNullable<typeof f> => !!f && !f.deletedAt)
-      const fileSummaries = attachedFiles.map((f) => ({
-        name: f.name,
-        size: f.size,
-        type: f.type,
-        text: f.extractedText,
-        truncated: f.extractionTruncated,
-        kind: f.extractedKind,
-      }))
       // Attach images only to the most recent user message — re-sending them
       // on every turn would explode the token bill and isn't how vision
       // chats are typically structured.
@@ -385,11 +377,26 @@ export function ChatPanel() {
           credentials: getLocalCred(s.id) ?? undefined,
         }))
 
-      // Resolve which MCP resources are attached to this turn. Union of:
-      //   - Workspace-ticked (`selectedMcpResourceIds` on the conv)
-      //   - Conversation-pinned (`conversationMcpResources`)
-      // De-duped by resource id. Server fetches content via the
-      // appropriate MCP server.
+      // Build the unified attachments payload — files + MCP resources
+      // + URL bookmarks in one discriminated array. Workspace-ticked
+      // + conversation-pinned, de-duped per kind, tombstones filtered.
+      // See `lib/shared/attachments.ts` for the union shape.
+      const attachmentsForRequest: ChatRequestInput["attachments"] = []
+
+      for (const file of attachedFiles) {
+        attachmentsForRequest.push({
+          kind: "file",
+          summary: {
+            name: file.name,
+            size: file.size,
+            type: file.type,
+            text: file.extractedText,
+            truncated: file.extractionTruncated,
+            kind: file.extractedKind,
+          },
+        })
+      }
+
       const workspaceMcpIds = conv?.selectedMcpResourceIds ?? []
       const privateMcpIds = conv
         ? mcpStore.conversationMcpResources
@@ -399,21 +406,21 @@ export function ChatPanel() {
       const attachedMcpResourceIds = [
         ...new Set([...workspaceMcpIds, ...privateMcpIds]),
       ]
-      const mcpResourcesForRequest = attachedMcpResourceIds
-        .map((id) => mcpStore.mcpResources.find((r) => r.id === id))
-        .filter(
-          (r): r is NonNullable<typeof r> => !!r && !r.deletedAt
-        )
-        .map((r) => ({
-          id: r.id,
-          serverId: r.serverId,
-          uri: r.uri,
-          name: r.name,
-          mimeType: r.mimeType,
-        }))
+      for (const id of attachedMcpResourceIds) {
+        const resource = mcpStore.mcpResources.find((r) => r.id === id)
+        if (!resource || resource.deletedAt) continue
+        attachmentsForRequest.push({
+          kind: "mcp_resource",
+          ref: {
+            id: resource.id,
+            serverId: resource.serverId,
+            uri: resource.uri,
+            name: resource.name,
+            mimeType: resource.mimeType,
+          },
+        })
+      }
 
-      // URL bookmarks attached to this turn — workspace-ticked +
-      // conversation-pinned, de-duped, tombstones filtered out.
       const workspaceUrlIds = conv?.selectedUrlBookmarkIds ?? []
       const privateUrlIds = conv
         ? mcpStore.conversationUrlBookmarks
@@ -423,34 +430,33 @@ export function ChatPanel() {
       const attachedUrlBookmarkIds = [
         ...new Set([...workspaceUrlIds, ...privateUrlIds]),
       ]
-      const urlBookmarksForRequest = attachedUrlBookmarkIds
-        .map((id) => mcpStore.urlBookmarks.find((b) => b.id === id))
-        .filter(
-          (b): b is NonNullable<typeof b> => !!b && !b.deletedAt
-        )
-        .map((b) => ({
-          id: b.id,
-          url: b.url,
-          title: b.title,
-          content: b.content,
-          contentTruncated: b.contentTruncated,
-          fetchedAt: b.fetchedAt.toISOString(),
-        }))
+      for (const id of attachedUrlBookmarkIds) {
+        const bookmark = mcpStore.urlBookmarks.find((b) => b.id === id)
+        if (!bookmark || bookmark.deletedAt) continue
+        attachmentsForRequest.push({
+          kind: "url_bookmark",
+          bookmark: {
+            id: bookmark.id,
+            url: bookmark.url,
+            title: bookmark.title,
+            content: bookmark.content,
+            contentTruncated: bookmark.contentTruncated,
+            fetchedAt: bookmark.fetchedAt.toISOString(),
+          },
+        })
+      }
 
       try {
         const result = await apiClient.chat.stream(
           {
             model: modelForCall,
             messages: buildMessages() as ChatRequestInput["messages"],
-            files: fileSummaries,
             workspaceSystemPrompt,
             workspaceId: activeWorkspaceId || undefined,
             skills: enabledSkills,
             mcpServers: mcpServersForRequest.length > 0 ? mcpServersForRequest : undefined,
-            mcpResources:
-              mcpResourcesForRequest.length > 0 ? mcpResourcesForRequest : undefined,
-            urlBookmarks:
-              urlBookmarksForRequest.length > 0 ? urlBookmarksForRequest : undefined,
+            attachments:
+              attachmentsForRequest.length > 0 ? attachmentsForRequest : undefined,
           },
           { signal: controller.signal }
         )

@@ -13,65 +13,81 @@ import {
   type WebSearchLog,
 } from '@/server/skills/web-search'
 import { buildMcpTool, mcpToolName } from '@/server/mcp/tools'
-import { loadEffectiveMcpServers } from '@/server/mcp/load-servers'
+import { loadEffectiveMcpServers, type EffectiveMcpServer } from '@/server/mcp/load-servers'
+import { resolveAttachedMcpResources } from '@/server/mcp/inject-resources'
 import {
-  resolveAttachedMcpResources,
-  renderMcpResourcesPrompt,
-  type ResolvedResource,
-} from '@/server/mcp/inject-resources'
-import {
-  renderBookmarksPrompt,
-  type BookmarkPayload,
-} from '@/server/url/inject-bookmarks'
-
-interface FileSummary {
-  name: string
-  size: number
-  type: string
-  /** Plain-text content extracted by /api/extract. Undefined when extraction is pending or unsupported. */
-  text?: string
-  /** True when `text` was cut to fit the extraction budget. */
-  truncated?: boolean
-  /**
-   * Coarse content kind reported by /api/extract — 'pdf', 'docx', 'code',
-   * 'spreadsheet', etc. Used to label the per-file header so the model
-   * knows what flavour of text it's looking at.
-   */
-  kind?: string
-}
+  renderAttachmentsPrompt,
+  renderMetaOnlyFilesPrompt,
+  type ResolvedAttachment,
+} from '@/server/attachments/render'
+import type { AttachmentPayload } from '@/shared/attachments'
 
 // Soft cap on combined inline text across all attachments, to keep prompts
 // inside reasonable token budgets. Per-file truncation already happens at
 // extraction time; this is a second pass across the whole attachment set.
 const TOTAL_ATTACHMENT_BUDGET = 96 * 1024
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(2)} MB`
+/**
+ * Convert the wire-shape `AttachmentPayload[]` into the server-side
+ * `ResolvedAttachment[]`. Files and URL bookmarks pass through with
+ * minor field renaming; MCP resources require a `readResource` round
+ * trip which we delegate to `resolveAttachedMcpResources` (concurrent
+ * + per-call timeout + graceful error fallback).
+ */
+async function resolveAttachments(
+  payloads: AttachmentPayload[] | undefined,
+  mcpServers: EffectiveMcpServer[]
+): Promise<ResolvedAttachment[]> {
+  if (!payloads || payloads.length === 0) return []
+
+  const resolved: ResolvedAttachment[] = []
+  const mcpRequests: Parameters<typeof resolveAttachedMcpResources>[0] = []
+
+  for (const att of payloads) {
+    if (att.kind === 'file') {
+      resolved.push({ kind: 'file', summary: att.summary })
+    } else if (att.kind === 'url_bookmark') {
+      resolved.push({
+        kind: 'url_bookmark',
+        title: att.bookmark.title,
+        url: att.bookmark.url,
+        content: att.bookmark.content,
+        truncated: att.bookmark.contentTruncated,
+        fetchedAt: att.bookmark.fetchedAt,
+      })
+    } else if (att.kind === 'mcp_resource') {
+      mcpRequests.push({
+        id: att.ref.id,
+        serverId: att.ref.serverId,
+        uri: att.ref.uri,
+        name: att.ref.name,
+        mimeType: att.ref.mimeType,
+      })
+    }
+  }
+
+  const mcpResolved = await resolveAttachedMcpResources(mcpRequests, mcpServers)
+  resolved.push(...mcpResolved)
+  return resolved
 }
 
-function buildSystemPrompt(
-  files: FileSummary[] | undefined,
-  workspaceSystemPrompt?: string,
+function buildSystemPrompt(opts: {
+  workspaceSystemPrompt?: string
   /** Skill ids the user has effectively enabled for this turn. */
-  enabledSkills?: string[],
+  enabledSkills?: string[]
   /** MCP server summaries — only used to mention available tooling.
-   *  Tool definitions themselves are surfaced via the AI SDK's `tools`
-   *  parameter, so we don't have to enumerate them in prose. */
-  mcpServers?: { name: string; toolCount: number }[],
-  /** Pre-resolved MCP resources to inject below the files block.
-   *  Caller has already done the `readResource` round-trips; we just
-   *  render with whatever budget remains after files. */
-  mcpResources?: ResolvedResource[],
-  /** URL bookmarks attached to this turn. Content is already cached
-   *  on the client; we just render into the system prompt sharing
-   *  the same character budget. */
-  urlBookmarks?: BookmarkPayload[]
-): string {
-  const trimmedWorkspace = workspaceSystemPrompt?.trim()
-  const skillsLine = buildSkillsNote(enabledSkills ?? [])
-  const mcpLine = buildMcpNote(mcpServers ?? [])
+   *  Tool definitions themselves are surfaced via the AI SDK's
+   *  `tools` parameter, so we don't have to enumerate them in prose. */
+  mcpServers?: { name: string; toolCount: number }[]
+  /** Resolved attachments — files + bookmarks pass through verbatim,
+   *  MCP resources arrive post-`readResource`. Single ordered list;
+   *  `renderAttachmentsPrompt` groups by kind for readable section
+   *  headers and shares the character budget across all of them. */
+  attachments: ResolvedAttachment[]
+}): string {
+  const trimmedWorkspace = opts.workspaceSystemPrompt?.trim()
+  const skillsLine = buildSkillsNote(opts.enabledSkills ?? [])
+  const mcpLine = buildMcpNote(opts.mcpServers ?? [])
   // Workspace prompt goes first so user-set persona/style instructions take
   // precedence over our generic guidance. The base instructions then nudge the
   // model toward Markdown formatting (which the chat bubble now renders).
@@ -85,77 +101,22 @@ function buildSystemPrompt(
     .filter(Boolean)
     .join('\n\n')
 
-  const safeFiles = files ?? []
-  const safeMcpResources = mcpResources ?? []
-  const safeBookmarks = urlBookmarks ?? []
-  if (
-    safeFiles.length === 0 &&
-    safeMcpResources.length === 0 &&
-    safeBookmarks.length === 0
+  if (opts.attachments.length === 0) return base
+
+  const attachmentBlock = renderAttachmentsPrompt(
+    opts.attachments,
+    TOTAL_ATTACHMENT_BUDGET
   )
-    return base
 
-  const withText = safeFiles.filter((f) => f.text && f.text.trim().length > 0)
-  const metaOnly = safeFiles.filter((f) => !f.text || f.text.trim().length === 0)
+  // Meta-only files (filename + metadata, no extracted text) get a
+  // separate "we couldn't extract this" footer. Files with text are
+  // already in the main attachments block.
+  const metaOnlyFiles = opts.attachments
+    .filter((a): a is Extract<ResolvedAttachment, { kind: 'file' }> => a.kind === 'file')
+    .map((a) => a.summary)
+  const metaBlock = renderMetaOnlyFilesPrompt(metaOnlyFiles)
 
-  let prompt = base
-  let used = 0
-
-  const pdfNames = withText.filter((f) => f.kind === 'pdf').map((f) => f.name)
-
-  if (withText.length > 0) {
-    prompt +=
-      '\n\nThe user has attached these files. Their extracted text follows. Treat them as authoritative context for any question that references them.'
-    if (pdfNames.length > 0) {
-      prompt +=
-        ' When you reference content from a PDF, cite the page number inline using the marker `[p.N]` (e.g. "the discount applies after 30 days [p.4]"). The user can click these markers to open the PDF at that page.' +
-        ` PDFs attached: ${pdfNames.map((n) => `"${n}"`).join(', ')}.`
-    }
-    for (const f of withText) {
-      const truncatedNote = f.truncated ? ' (per-file truncated at extraction)' : ''
-      const kindNote = f.kind ? ` (${f.kind})` : ''
-      const header = `\n\n--- ${f.name}${kindNote}${truncatedNote} ---\n`
-      const remaining = TOTAL_ATTACHMENT_BUDGET - used
-      if (remaining <= 0) {
-        prompt += `\n\n[Additional file omitted to fit budget: ${f.name}]`
-        continue
-      }
-      const body = (f.text ?? '').slice(0, remaining)
-      const overflow = (f.text ?? '').length > body.length
-      prompt += header + body + (overflow ? '\n\n[truncated to fit overall budget]' : '')
-      used += header.length + body.length
-    }
-  }
-
-  if (metaOnly.length > 0) {
-    const list = metaOnly
-      .map((f) => `- ${f.name} (${f.type || 'unknown'}, ${formatBytes(f.size)})`)
-      .join('\n')
-    prompt += `\n\nThe user has also attached these files which we could not extract text from (filename + metadata only). Ask the user to paste any relevant portion if a question requires their content:\n\n${list}`
-  }
-
-  // MCP resources share the same character budget as files. Render
-  // whatever fits in `TOTAL_ATTACHMENT_BUDGET - used` after files.
-  if (safeMcpResources.length > 0) {
-    const remaining = Math.max(0, TOTAL_ATTACHMENT_BUDGET - used)
-    const rendered = renderMcpResourcesPrompt(safeMcpResources, remaining)
-    if (rendered.fragment) {
-      prompt += `\n\n${rendered.fragment}`
-      used += rendered.used
-    }
-  }
-
-  // URL bookmarks come last in the prompt — files and MCP resources
-  // take priority. Same budget; truncation markers match the file path.
-  if (safeBookmarks.length > 0) {
-    const remaining = Math.max(0, TOTAL_ATTACHMENT_BUDGET - used)
-    const rendered = renderBookmarksPrompt(safeBookmarks, remaining)
-    if (rendered.fragment) {
-      prompt += `\n\n${rendered.fragment}`
-    }
-  }
-
-  return prompt
+  return [base, attachmentBlock, metaBlock].filter(Boolean).join('\n\n')
 }
 
 function buildSkillsNote(enabledSkills: string[]): string | null {
@@ -329,29 +290,26 @@ export async function POST(req: NextRequest) {
       mcpToolNames.push(name)
     }
   }
-  // Fetch any attached MCP resources concurrently. Each `readResource`
-  // call has its own timeout; failures render as "[unavailable]"
-  // markers in the system prompt rather than blocking the turn.
-  const resolvedMcpResources: ResolvedResource[] = await resolveAttachedMcpResources(
-    body.mcpResources,
-    mcpServers
-  )
+  // Wire→resolved: files + bookmarks pass through verbatim, MCP
+  // resources go through `resolveAttachedMcpResources` (concurrent
+  // reads + per-call timeout + graceful error fallback inline in the
+  // prompt). Failures render as "[unavailable]" markers rather than
+  // blocking the turn.
+  const attachments = await resolveAttachments(body.attachments, mcpServers)
 
   try {
     const result = streamText({
       abortSignal: req.signal,
       model: gateway(modelId),
-      system: buildSystemPrompt(
-        body.files,
-        body.workspaceSystemPrompt,
-        enabledSkillIds,
-        mcpServers.map((s) => ({
+      system: buildSystemPrompt({
+        workspaceSystemPrompt: body.workspaceSystemPrompt,
+        enabledSkills: enabledSkillIds,
+        mcpServers: mcpServers.map((s) => ({
           name: s.name,
           toolCount: s.capabilities?.tools?.length ?? 0,
         })),
-        resolvedMcpResources,
-        body.urlBookmarks
-      ),
+        attachments,
+      }),
       // Cast back: Zod validates the outer shape (role + content union),
       // but the AI SDK's ModelMessage uses tighter inner-part discriminants
       // than the schema's structural fallback. Trust the schema validation.
