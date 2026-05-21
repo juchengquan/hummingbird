@@ -1,6 +1,7 @@
 import "server-only"
 
 import type { FileSummary } from "@/shared/attachments"
+import { formatBytes } from "@/shared/utils"
 
 /**
  * System-prompt renderer for source attachments. `ResolvedAttachment`
@@ -270,8 +271,3 @@ export function renderMetaOnlyFilesPrompt(
   )
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}

@@ -38,6 +38,7 @@ import type {
   Workspace,
 } from "@/shared/types"
 import type { SyncOp } from "@/client/sync/sync-queue"
+import { toISO } from "@/shared/utils"
 
 // ------------ workspaces ----------------------------------------------------
 
@@ -935,10 +936,6 @@ function byId<T extends { id: string }>(arr: T[]): Map<string, T> {
   return m
 }
 
-function toISO(d: Date | string): string {
-  if (typeof d === "string") return d
-  return d.toISOString()
-}
 
 function sameInstant(a: Date | string, b: Date | string): boolean {
   return new Date(a).getTime() === new Date(b).getTime()

@@ -9,7 +9,7 @@ import type { ChatRequestInput } from "@/shared/api-schemas"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupTextarea, InputGroupButton } from "@/components/ui/input-group"
-import { cn } from "@/shared/utils"
+import { cn, toISO } from "@/shared/utils"
 import { ResourcesSidebar } from "@/components/sidebars/resources"
 import { ActiveSkillsChips } from "@/components/skills/active-chips"
 import { SKILLS } from "@/shared/skills/registry"
@@ -449,13 +449,7 @@ export function ChatPanel() {
             title: bookmark.title,
             content: bookmark.content,
             contentTruncated: bookmark.contentTruncated,
-            // `fetchedAt` is a Date right after addUrlBookmark but rehydrates
-            // from localStorage as an ISO string (no Date reviver on the
-            // store). Both produce the ISO 8601 string the wire schema wants.
-            fetchedAt:
-              bookmark.fetchedAt instanceof Date
-                ? bookmark.fetchedAt.toISOString()
-                : String(bookmark.fetchedAt),
+            fetchedAt: toISO(bookmark.fetchedAt),
           },
         })
       }
