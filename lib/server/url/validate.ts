@@ -107,6 +107,11 @@ export async function validateOutboundUrl(
   }
 
   const hostLower = parsed.hostname.toLowerCase()
+  // WHATWG URL surfaces IPv6 literals as `[::1]` (with brackets) on
+  // `.hostname`. Strip them before any IP check — otherwise `isIP`
+  // returns 0 and the literal falls through to a DNS lookup that
+  // shouldn't happen for an address literal.
+  const hostForIpCheck = stripIpv6Brackets(hostLower)
 
   if (BLOCKED_EXACT_HOSTS.has(hostLower)) {
     return {
@@ -130,13 +135,13 @@ export async function validateOutboundUrl(
   }
 
   // If the hostname is already a literal IP, check it directly.
-  if (isIP(hostLower)) {
-    if (isPrivateAddress(hostLower)) {
+  if (isIP(hostForIpCheck)) {
+    if (isPrivateAddress(hostForIpCheck)) {
       return {
         ok: false,
         error: {
           code: "private_address",
-          message: `Address ${hostLower} is in a private range`,
+          message: `Address ${hostForIpCheck} is in a private range`,
         },
       }
     }
@@ -171,6 +176,17 @@ export async function validateOutboundUrl(
   }
 
   return { ok: true, url: parsed }
+}
+
+/**
+ * Strip the surrounding `[...]` brackets that WHATWG URL puts on
+ * IPv6 hostnames. No-op for hostnames that aren't bracketed.
+ */
+function stripIpv6Brackets(host: string): string {
+  if (host.startsWith("[") && host.endsWith("]")) {
+    return host.slice(1, -1)
+  }
+  return host
 }
 
 /**
@@ -209,9 +225,14 @@ function isPrivateIpv4(addr: string): boolean {
 function isPrivateIpv6(addr: string): boolean {
   const lower = addr.toLowerCase()
   if (lower === "::" || lower === "::1") return true
-  // IPv4-mapped (::ffff:a.b.c.d) — extract the v4 part and re-check.
-  const mappedMatch = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(lower)
-  if (mappedMatch) return isPrivateIpv4(mappedMatch[1])
+  // IPv4-mapped IPv6 (`::ffff:*`) covers both the dotted form
+  // (`::ffff:127.0.0.1`) and the canonical form WHATWG URL normalizes
+  // to (`::ffff:7f00:1`). User-supplied URLs almost never need this;
+  // a legitimate request to a public IPv4 address should arrive as
+  // an IPv4 literal, not an IPv4-mapped IPv6 one. Reject the whole
+  // family — safest default and matches the conservative posture of
+  // the rest of the blocklist.
+  if (lower.startsWith("::ffff:")) return true
   // First-byte heuristics for the common private prefixes:
   //   fc00::/7  — unique local (fc00, fd00)
   //   fe80::/10 — link-local (fe80, fe90, fea0, feb0)
