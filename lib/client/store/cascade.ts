@@ -8,6 +8,7 @@ import type {
   ConversationMcpResource,
   ConversationUrlBookmark,
   McpResource,
+  McpResourceBinding,
   Resource,
   UploadedFile,
   UrlBookmark,
@@ -38,7 +39,7 @@ export interface CascadeStateView {
   resources: Resource[]
   conversationFiles: ConversationFile[]
   mcpResources: McpResource[]
-  mcpResourceBindings: { resourceId: string }[]
+  mcpResourceBindings: McpResourceBinding[]
   conversationMcpResources: ConversationMcpResource[]
   urlBookmarks: UrlBookmark[]
   conversationUrlBookmarks: ConversationUrlBookmark[]

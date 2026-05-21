@@ -103,33 +103,11 @@ export const useHydrated = () =>
   )
 
 /**
- * Tombstone an `UploadedFile`: mark it deleted (`deletedAt = now`) and
- * free every "content-ish" field, leaving only the lightweight
- * metadata stub so future references can resolve to a "removed" label
- * instead of crashing. The IndexedDB blob and any Supabase Storage
- * object are freed separately — see callers.
- */
-/**
- * Tombstone helpers + cascade orchestration for source attachments
- * (files, MCP resources, URL bookmarks) live in
- * `lib/client/store/cascade.ts`. Re-exported for in-file mutators
- * that haven't migrated yet (notably the workspace + conversation
- * cascade in `deleteWorkspace` / `deleteConversation` which still
- * builds patches inline rather than going through
- * `gcOrphanedAttachment`).
- */
-
-/**
  * Tombstone an `McpServer`: mark it deleted and drop the cached
  * `capabilities` blob (which can be large after a discovery). The
  * stub keeps id / workspaceId / name / transport / createdAt so any
  * historical message that referenced an MCP tool from this server
  * resolves to a "🗑 GitHub MCP (removed)" label.
- *
- * Stays here (not in cascade.ts) because MCP **servers** aren't
- * source-attachment entities — they're tool providers. Cascade
- * runs against their child `McpResource`s, not against the server
- * itself.
  */
 function tombstoneMcpServer(server: McpServer): McpServer {
   return {
