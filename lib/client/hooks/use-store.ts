@@ -29,6 +29,14 @@ import type {
 } from '@/shared/types'
 import { DEFAULT_CHAT_MODEL } from '@/shared/models'
 import { deleteBlob as deleteLocalBlob, clearAll as clearLocalBlobs } from '@/client/files/local-store'
+import {
+  forkConversationJoins,
+  gcOrphanedAttachment,
+  tombstoneFile,
+  tombstoneMcpResource,
+  tombstoneUrlBookmark,
+  type AttachmentRef,
+} from '@/client/store/cascade'
 import { uuid } from '@/shared/uuid'
 
 export type {
@@ -101,16 +109,15 @@ export const useHydrated = () =>
  * instead of crashing. The IndexedDB blob and any Supabase Storage
  * object are freed separately — see callers.
  */
-function tombstoneFile(file: UploadedFile): UploadedFile {
-  return {
-    id: file.id,
-    name: file.name,
-    size: file.size,
-    type: file.type,
-    uploadedAt: file.uploadedAt,
-    deletedAt: new Date(),
-  }
-}
+/**
+ * Tombstone helpers + cascade orchestration for source attachments
+ * (files, MCP resources, URL bookmarks) live in
+ * `lib/client/store/cascade.ts`. Re-exported for in-file mutators
+ * that haven't migrated yet (notably the workspace + conversation
+ * cascade in `deleteWorkspace` / `deleteConversation` which still
+ * builds patches inline rather than going through
+ * `gcOrphanedAttachment`).
+ */
 
 /**
  * Tombstone an `McpServer`: mark it deleted and drop the cached
@@ -118,6 +125,11 @@ function tombstoneFile(file: UploadedFile): UploadedFile {
  * stub keeps id / workspaceId / name / transport / createdAt so any
  * historical message that referenced an MCP tool from this server
  * resolves to a "🗑 GitHub MCP (removed)" label.
+ *
+ * Stays here (not in cascade.ts) because MCP **servers** aren't
+ * source-attachment entities — they're tool providers. Cascade
+ * runs against their child `McpResource`s, not against the server
+ * itself.
  */
 function tombstoneMcpServer(server: McpServer): McpServer {
   return {
@@ -130,47 +142,6 @@ function tombstoneMcpServer(server: McpServer): McpServer {
     enabled: false,
     createdAt: server.createdAt,
     updatedAt: server.updatedAt,
-    deletedAt: new Date(),
-  }
-}
-
-/**
- * Tombstone an `McpResource`: keep the addressing tuple (workspaceId
- * + serverId + uri + name) so historical references render with the
- * original label, free nothing else of substance — these rows are
- * already tiny.
- */
-function tombstoneMcpResource(resource: McpResource): McpResource {
-  return {
-    id: resource.id,
-    workspaceId: resource.workspaceId,
-    serverId: resource.serverId,
-    uri: resource.uri,
-    name: resource.name,
-    addedAt: resource.addedAt,
-    deletedAt: new Date(),
-  }
-}
-
-/**
- * Tombstone a `UrlBookmark`: keep the identity (id, workspaceId, url,
- * title, createdAt) so historical message references render the
- * original page metadata; free the cached `content` + description +
- * favicon. `contentHash` is preserved so a future undo or compaction
- * pass can detect "this was the same content."
- */
-function tombstoneUrlBookmark(bookmark: UrlBookmark): UrlBookmark {
-  return {
-    id: bookmark.id,
-    workspaceId: bookmark.workspaceId,
-    url: bookmark.url,
-    title: bookmark.title,
-    content: '',
-    contentTruncated: false,
-    fetchedAt: bookmark.fetchedAt,
-    contentHash: bookmark.contentHash,
-    createdAt: bookmark.createdAt,
-    updatedAt: bookmark.updatedAt,
     deletedAt: new Date(),
   }
 }
@@ -755,32 +726,23 @@ export const useStore = create<AppState>()(
           const newNotes = state.notes.filter((n) => n.workspaceId !== workspaceId)
           const newArtifacts = state.artifacts.filter((a) => a.workspaceId !== workspaceId)
           const newDocuments = state.documents.filter((d) => d.workspaceId !== workspaceId)
-          // Drop conversation-private joins whose conversation lived in this
-          // workspace, then GC files that lost their last reference.
+          // Drop conversation-private joins whose conversation lived in
+          // this workspace, then GC files that lost their last reference.
+          // `gcOrphanedAttachment` does the ref-count + tombstone logic;
+          // the unique-ref dedup below stops it from running twice on
+          // the same file id when multiple deleted conversations had it
+          // privately attached.
           const droppedConvIds = new Set(
             state.conversations
               .filter((c) => c.workspaceId === workspaceId)
               .map((c) => c.id)
           )
-          const droppedJoins = state.conversationFiles.filter((cf) =>
-            droppedConvIds.has(cf.conversationId)
-          )
+          const droppedFileRefs: AttachmentRef[] = state.conversationFiles
+            .filter((cf) => droppedConvIds.has(cf.conversationId))
+            .map((cf) => ({ kind: 'file' as const, id: cf.fileId }))
           const newConversationFiles = state.conversationFiles.filter(
             (cf) => !droppedConvIds.has(cf.conversationId)
           )
-          const orphanedFileIds = new Set<string>()
-          for (const cf of droppedJoins) {
-            const stillReferenced =
-              newResources.some((r) => r.fileId === cf.fileId) ||
-              newConversationFiles.some((rj) => rj.fileId === cf.fileId)
-            if (!stillReferenced) orphanedFileIds.add(cf.fileId)
-          }
-          for (const id of orphanedFileIds) void deleteLocalBlob(id)
-          const newFiles = orphanedFileIds.size
-            ? state.files.map((f) =>
-                orphanedFileIds.has(f.id) && !f.deletedAt ? tombstoneFile(f) : f
-              )
-            : state.files
           // If the active doc lived in the deleted workspace, swap to the
           // most-recently-updated doc in the new active workspace (if any).
           let newActiveDocumentId = state.activeDocumentId
@@ -838,13 +800,12 @@ export const useStore = create<AppState>()(
           const newConvUrlBookmarks = state.conversationUrlBookmarks.filter(
             (cub) => !droppedBookmarkIds.has(cub.bookmarkId)
           )
-          return {
+          let patch: Partial<AppState> = {
             workspaces: newWorkspaces,
             activeWorkspaceId: newActiveWorkspaceId,
             resources: newResources,
             conversations: newConversations,
             conversationFiles: newConversationFiles,
-            files: newFiles,
             notes: newNotes,
             artifacts: newArtifacts,
             documents: newDocuments,
@@ -856,6 +817,16 @@ export const useStore = create<AppState>()(
             urlBookmarks: newUrlBookmarks,
             conversationUrlBookmarks: newConvUrlBookmarks,
           }
+          // GC files whose last private-join reference was on a
+          // conversation that lived in this workspace. De-dup refs so
+          // the same file isn't checked twice.
+          const seen = new Set<string>()
+          for (const ref of droppedFileRefs) {
+            if (seen.has(ref.id)) continue
+            seen.add(ref.id)
+            patch = { ...patch, ...gcOrphanedAttachment({ ...state, ...patch }, ref) }
+          }
+          return patch
         }),
       renameWorkspace: (workspaceId: string, name: string) =>
         set((state) => ({
@@ -958,22 +929,11 @@ export const useStore = create<AppState>()(
                 }
               : c
           )
-          // GC: tombstone the underlying file if this was its last live
-          // reference anywhere (no remaining resources, no conversationFiles).
-          const stillReferenced =
-            newResources.some((r) => r.fileId === target.fileId) ||
-            state.conversationFiles.some((cf) => cf.fileId === target.fileId)
-          if (stillReferenced) {
-            return { resources: newResources, conversations: newConversations }
-          }
-          void deleteLocalBlob(target.fileId)
-          return {
-            resources: newResources,
-            conversations: newConversations,
-            files: state.files.map((f) =>
-              f.id === target.fileId && !f.deletedAt ? tombstoneFile(f) : f
-            ),
-          }
+          const orphanPatch = gcOrphanedAttachment(
+            { ...state, resources: newResources, conversations: newConversations },
+            { kind: 'file', id: target.fileId }
+          )
+          return { resources: newResources, conversations: newConversations, ...orphanPatch }
         }),
 
       // Conversation-private file actions
@@ -1002,20 +962,11 @@ export const useStore = create<AppState>()(
           const newConversationFiles = state.conversationFiles.filter(
             (cf) => !(cf.conversationId === conversationId && cf.fileId === fileId)
           )
-          // GC: if no other join references this fileId, tombstone the file.
-          const stillReferenced =
-            state.resources.some((r) => r.fileId === fileId) ||
-            newConversationFiles.some((cf) => cf.fileId === fileId)
-          if (stillReferenced) {
-            return { conversationFiles: newConversationFiles }
-          }
-          void deleteLocalBlob(fileId)
-          return {
-            conversationFiles: newConversationFiles,
-            files: state.files.map((f) =>
-              f.id === fileId && !f.deletedAt ? tombstoneFile(f) : f
-            ),
-          }
+          const orphanPatch = gcOrphanedAttachment(
+            { ...state, conversationFiles: newConversationFiles },
+            { kind: 'file', id: fileId }
+          )
+          return { conversationFiles: newConversationFiles, ...orphanPatch }
         }),
 
       // MCP server actions
@@ -1163,24 +1114,18 @@ export const useStore = create<AppState>()(
               selectedMcpResourceIds: selected.filter((id) => id !== target.resourceId),
             }
           })
-          // GC the underlying resource if this was the last reference.
-          const stillReferenced =
-            newBindings.some((b) => b.resourceId === target.resourceId) ||
-            state.conversationMcpResources.some(
-              (cmr) => cmr.resourceId === target.resourceId
-            )
-          if (stillReferenced) {
-            return {
+          const orphanPatch = gcOrphanedAttachment(
+            {
+              ...state,
               mcpResourceBindings: newBindings,
               conversations: newConversations,
-            }
-          }
+            },
+            { kind: 'mcp_resource', id: target.resourceId }
+          )
           return {
             mcpResourceBindings: newBindings,
             conversations: newConversations,
-            mcpResources: state.mcpResources.map((r) =>
-              r.id === target.resourceId && !r.deletedAt ? tombstoneMcpResource(r) : r
-            ),
+            ...orphanPatch,
           }
         }),
       addConversationMcpResource: (conversationId, resourceId) =>
@@ -1207,19 +1152,11 @@ export const useStore = create<AppState>()(
           const newJoins = state.conversationMcpResources.filter(
             (cmr) => !(cmr.conversationId === conversationId && cmr.resourceId === resourceId)
           )
-          // GC: if no binding + no other private join, tombstone the resource.
-          const stillReferenced =
-            state.mcpResourceBindings.some((b) => b.resourceId === resourceId) ||
-            newJoins.some((cmr) => cmr.resourceId === resourceId)
-          if (stillReferenced) {
-            return { conversationMcpResources: newJoins }
-          }
-          return {
-            conversationMcpResources: newJoins,
-            mcpResources: state.mcpResources.map((r) =>
-              r.id === resourceId && !r.deletedAt ? tombstoneMcpResource(r) : r
-            ),
-          }
+          const orphanPatch = gcOrphanedAttachment(
+            { ...state, conversationMcpResources: newJoins },
+            { kind: 'mcp_resource', id: resourceId }
+          )
+          return { conversationMcpResources: newJoins, ...orphanPatch }
         }),
       toggleConversationMcpResourceSelection: (resourceId) =>
         set((state) => {
@@ -1332,21 +1269,11 @@ export const useStore = create<AppState>()(
                 cub.bookmarkId === bookmarkId
               )
           )
-          // GC: if no other lane references the bookmark, tombstone it.
-          const stillReferenced =
-            newJoins.some((cub) => cub.bookmarkId === bookmarkId) ||
-            state.conversations.some((c) =>
-              (c.selectedUrlBookmarkIds ?? []).includes(bookmarkId)
-            )
-          if (stillReferenced) {
-            return { conversationUrlBookmarks: newJoins }
-          }
-          return {
-            conversationUrlBookmarks: newJoins,
-            urlBookmarks: state.urlBookmarks.map((b) =>
-              b.id === bookmarkId && !b.deletedAt ? tombstoneUrlBookmark(b) : b
-            ),
-          }
+          const orphanPatch = gcOrphanedAttachment(
+            { ...state, conversationUrlBookmarks: newJoins },
+            { kind: 'url_bookmark', id: bookmarkId }
+          )
+          return { conversationUrlBookmarks: newJoins, ...orphanPatch }
         }),
       toggleConversationUrlBookmarkSelection: (bookmarkId) =>
         set((state) => {
@@ -1572,44 +1499,21 @@ export const useStore = create<AppState>()(
           forkedFromMessageId: untilMessageId,
         }
         set((state) => {
-          // Copy the source's conversation-private file, MCP-resource,
-          // and URL-bookmark attachments onto the fork. The underlying
-          // entities are shared; we just add parallel joins under the
-          // new conversationId.
-          const inheritedFileJoins: ConversationFile[] = state.conversationFiles
-            .filter((cf) => cf.conversationId === source.id)
-            .map((cf) => ({
-              id: uuid(),
-              conversationId: fork.id,
-              fileId: cf.fileId,
-              addedAt: new Date(),
-            }))
-          const inheritedMcpJoins: ConversationMcpResource[] = state.conversationMcpResources
-            .filter((cmr) => cmr.conversationId === source.id)
-            .map((cmr) => ({
-              id: uuid(),
-              conversationId: fork.id,
-              resourceId: cmr.resourceId,
-              addedAt: new Date(),
-            }))
-          const inheritedUrlJoins: ConversationUrlBookmark[] = state.conversationUrlBookmarks
-            .filter((cub) => cub.conversationId === source.id)
-            .map((cub) => ({
-              id: uuid(),
-              conversationId: fork.id,
-              bookmarkId: cub.bookmarkId,
-              addedAt: new Date(),
-            }))
+          // Inherit the source's conversation-private joins onto the
+          // fork. Single helper covers all three lanes; the underlying
+          // entities (files / MCP resources / URL bookmarks) are
+          // shared via their existing ids.
+          const inherited = forkConversationJoins(state, source.id, fork.id, uuid)
           return {
             conversations: [fork, ...state.conversations],
-            conversationFiles: [...state.conversationFiles, ...inheritedFileJoins],
+            conversationFiles: [...state.conversationFiles, ...inherited.conversationFiles],
             conversationMcpResources: [
               ...state.conversationMcpResources,
-              ...inheritedMcpJoins,
+              ...inherited.conversationMcpResources,
             ],
             conversationUrlBookmarks: [
               ...state.conversationUrlBookmarks,
-              ...inheritedUrlJoins,
+              ...inherited.conversationUrlBookmarks,
             ],
             activeConversationId: fork.id,
           }
@@ -1621,27 +1525,30 @@ export const useStore = create<AppState>()(
           const newConversations = state.conversations.filter(
             (c) => c.id !== conversationId
           )
-          // Drop conversation-private file joins for this conversation, then
-          // GC any underlying files whose last reference just vanished.
-          const droppedJoins = state.conversationFiles.filter(
-            (cf) => cf.conversationId === conversationId
-          )
-          const remainingJoins = state.conversationFiles.filter(
+          // Drop every conversation-private join for this conversation
+          // across all three lanes. Pre-collect the (kind, id) refs
+          // that were orphaned so we can GC them after the join arrays
+          // shrink.
+          const droppedFileRefs: AttachmentRef[] = state.conversationFiles
+            .filter((cf) => cf.conversationId === conversationId)
+            .map((cf) => ({ kind: 'file' as const, id: cf.fileId }))
+          const droppedMcpRefs: AttachmentRef[] = state.conversationMcpResources
+            .filter((cmr) => cmr.conversationId === conversationId)
+            .map((cmr) => ({ kind: 'mcp_resource' as const, id: cmr.resourceId }))
+          const droppedUrlRefs: AttachmentRef[] = state.conversationUrlBookmarks
+            .filter((cub) => cub.conversationId === conversationId)
+            .map((cub) => ({ kind: 'url_bookmark' as const, id: cub.bookmarkId }))
+
+          const remainingFileJoins = state.conversationFiles.filter(
             (cf) => cf.conversationId !== conversationId
           )
-          const orphanedFileIds = new Set<string>()
-          for (const cf of droppedJoins) {
-            const stillReferenced =
-              state.resources.some((r) => r.fileId === cf.fileId) ||
-              remainingJoins.some((rj) => rj.fileId === cf.fileId)
-            if (!stillReferenced) orphanedFileIds.add(cf.fileId)
-          }
-          for (const id of orphanedFileIds) void deleteLocalBlob(id)
-          const newFiles = orphanedFileIds.size
-            ? state.files.map((f) =>
-                orphanedFileIds.has(f.id) && !f.deletedAt ? tombstoneFile(f) : f
-              )
-            : state.files
+          const remainingMcpJoins = state.conversationMcpResources.filter(
+            (cmr) => cmr.conversationId !== conversationId
+          )
+          const remainingUrlJoins = state.conversationUrlBookmarks.filter(
+            (cub) => cub.conversationId !== conversationId
+          )
+
           // Notes/artifacts are workspace-scoped, but bookmarks (notes with
           // messageId !== null) anchor to a specific message that no longer
           // exists once the conversation is gone — drop those. Free-form
@@ -1663,60 +1570,15 @@ export const useStore = create<AppState>()(
           const newPins = state.pinnedExplanations.filter(
             (p) => p.conversationId !== conversationId
           )
-          // MCP-resource conversation joins: drop the conversation's
-          // joins, then GC any McpResource whose last reference just went
-          // away (no binding, no other conversation join).
-          const droppedMcpJoins = state.conversationMcpResources.filter(
-            (cmr) => cmr.conversationId === conversationId
-          )
-          const remainingMcpJoins = state.conversationMcpResources.filter(
-            (cmr) => cmr.conversationId !== conversationId
-          )
-          const orphanedMcpResourceIds = new Set<string>()
-          for (const cmr of droppedMcpJoins) {
-            const stillReferenced =
-              state.mcpResourceBindings.some((b) => b.resourceId === cmr.resourceId) ||
-              remainingMcpJoins.some((rj) => rj.resourceId === cmr.resourceId)
-            if (!stillReferenced) orphanedMcpResourceIds.add(cmr.resourceId)
-          }
-          const newMcpResources = orphanedMcpResourceIds.size
-            ? state.mcpResources.map((r) =>
-                orphanedMcpResourceIds.has(r.id) && !r.deletedAt
-                  ? tombstoneMcpResource(r)
-                  : r
-              )
-            : state.mcpResources
-          // URL bookmark conversation joins: same cascade as MCP.
-          const droppedUrlJoins = state.conversationUrlBookmarks.filter(
-            (cub) => cub.conversationId === conversationId
-          )
-          const remainingUrlJoins = state.conversationUrlBookmarks.filter(
-            (cub) => cub.conversationId !== conversationId
-          )
-          const orphanedUrlBookmarkIds = new Set<string>()
-          for (const cub of droppedUrlJoins) {
-            const stillReferenced =
-              remainingUrlJoins.some((rj) => rj.bookmarkId === cub.bookmarkId) ||
-              newConversations.some((c) =>
-                (c.selectedUrlBookmarkIds ?? []).includes(cub.bookmarkId)
-              )
-            if (!stillReferenced) orphanedUrlBookmarkIds.add(cub.bookmarkId)
-          }
-          const newUrlBookmarks = orphanedUrlBookmarkIds.size
-            ? state.urlBookmarks.map((b) =>
-                orphanedUrlBookmarkIds.has(b.id) && !b.deletedAt
-                  ? tombstoneUrlBookmark(b)
-                  : b
-              )
-            : state.urlBookmarks
-          return {
+
+          // GC each orphaned attachment against the post-drop state.
+          // De-dup refs (a workspace file referenced by multiple
+          // conversation joins shouldn't get tombstoned twice).
+          let patch: Partial<AppState> = {
             conversations: newConversations,
-            conversationFiles: remainingJoins,
+            conversationFiles: remainingFileJoins,
             conversationMcpResources: remainingMcpJoins,
-            mcpResources: newMcpResources,
             conversationUrlBookmarks: remainingUrlJoins,
-            urlBookmarks: newUrlBookmarks,
-            files: newFiles,
             notes: newNotes,
             artifacts: newArtifacts,
             pinnedExplanations: newPins,
@@ -1725,6 +1587,14 @@ export const useStore = create<AppState>()(
                 ? newConversations[0]?.id || null
                 : state.activeConversationId,
           }
+          const seen = new Set<string>()
+          for (const ref of [...droppedFileRefs, ...droppedMcpRefs, ...droppedUrlRefs]) {
+            const key = `${ref.kind}:${ref.id}`
+            if (seen.has(key)) continue
+            seen.add(key)
+            patch = { ...patch, ...gcOrphanedAttachment({ ...state, ...patch }, ref) }
+          }
+          return patch
         }),
       renameConversation: (conversationId: string, title: string) =>
         set((state) => ({

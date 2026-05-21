@@ -29,14 +29,44 @@ import { z } from 'zod'
 
 // --- Building blocks --------------------------------------------------------
 
-const FileSummarySchema = z.object({
-  name: z.string().max(500),
-  size: z.number().int().nonnegative(),
-  type: z.string().max(200),
-  text: z.string().optional(),
-  truncated: z.boolean().optional(),
-  kind: z.string().max(40).optional(),
-})
+/** Attachment payload shape — matches `AttachmentPayload` in
+ *  `lib/shared/attachments.ts`. The discriminated `kind` lets a
+ *  single field carry files / MCP resources / URL bookmarks while
+ *  the server can still type-narrow per kind. */
+const AttachmentPayloadSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('file'),
+    summary: z.object({
+      name: z.string().max(500),
+      size: z.number().int().nonnegative().max(1_000_000_000),
+      type: z.string().max(100),
+      text: z.string().max(220_000).optional(),
+      truncated: z.boolean().optional(),
+      kind: z.string().max(40).optional(),
+    }),
+  }),
+  z.object({
+    kind: z.literal('mcp_resource'),
+    ref: z.object({
+      id: z.string().min(1).max(64),
+      serverId: z.string().min(1).max(64),
+      uri: z.string().min(1).max(2000),
+      name: z.string().min(1).max(500),
+      mimeType: z.string().max(100).optional(),
+    }),
+  }),
+  z.object({
+    kind: z.literal('url_bookmark'),
+    bookmark: z.object({
+      id: z.string().min(1).max(64),
+      url: z.string().min(1).max(2000),
+      title: z.string().min(1).max(500),
+      content: z.string().max(220_000),
+      contentTruncated: z.boolean(),
+      fetchedAt: z.string(),
+    }),
+  }),
+])
 
 // `ModelMessage` is broader than what we send today, but matches what the AI
 // SDK accepts (string OR an array of typed parts for multimodal). We validate
@@ -90,32 +120,9 @@ const McpRequestServerSchema = z.object({
     .optional(),
 })
 
-/** Resource attached to the current chat turn — server fetches content
- *  via MCP `readResource` and injects into the system prompt. */
-const McpResourceRequestSchema = z.object({
-  id: z.string().min(1).max(64),
-  serverId: z.string().min(1).max(64),
-  uri: z.string().min(1).max(2000),
-  name: z.string().min(1).max(500),
-  mimeType: z.string().max(100).optional(),
-})
-
-/** URL bookmark attached to this turn. Content already lives in the
- *  client's store (extracted at save time), so the body ships the
- *  cached text — no server-side fetch required. */
-const UrlBookmarkRequestSchema = z.object({
-  id: z.string().min(1).max(64),
-  url: z.string().min(1).max(2000),
-  title: z.string().min(1).max(500),
-  content: z.string().max(220_000),         // matches server's 200 KB cap
-  contentTruncated: z.boolean().optional(),
-  fetchedAt: z.string().optional(),         // ISO 8601
-})
-
 export const ChatRequestSchema = z.object({
   messages: z.array(ModelMessageSchema).min(1),
   model: z.string().max(100).optional(),
-  files: z.array(FileSummarySchema).max(20).optional(),
   workspaceSystemPrompt: z.string().max(20_000).optional(),
   /** Active workspace id — required to look up cloud-mode MCP servers
    *  server-side. Local-mode servers are passed in `mcpServers` and
@@ -125,16 +132,17 @@ export const ChatRequestSchema = z.object({
     .array(z.object({ id: z.string().max(40) }))
     .max(10)
     .optional(),
+  /** MCP server configs (with cached capabilities + local-mode creds)
+   *  for tool registration. Distinct from `attachments` — these are
+   *  the **servers** whose tools the model can call; attachments of
+   *  `kind: 'mcp_resource'` are the **resources** whose content the
+   *  model reads. */
   mcpServers: z.array(McpRequestServerSchema).max(8).optional(),
-  /** MCP resources the user has attached to this conversation — union
-   *  of workspace-ticked + conversation-pinned, de-duped. The server
-   *  fetches content via the appropriate MCP server. */
-  mcpResources: z.array(McpResourceRequestSchema).max(20).optional(),
-  /** URL bookmarks attached to this conversation — workspace-ticked +
-   *  conversation-pinned, de-duped. Content travels in the body (no
-   *  server fetch on the chat path; bookmarks were fetched at save
-   *  time via /api/url/fetch). */
-  urlBookmarks: z.array(UrlBookmarkRequestSchema).max(10).optional(),
+  /** Everything attached to this turn — files, MCP resources, URL
+   *  bookmarks — in one discriminated array. Workspace-ticked +
+   *  conversation-pinned, de-duped client-side, tombstones filtered.
+   *  See `lib/shared/attachments.ts` for the union shape. */
+  attachments: z.array(AttachmentPayloadSchema).max(40).optional(),
 })
 
 // --- /api/ai/copilot --------------------------------------------------------
