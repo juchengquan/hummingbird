@@ -96,6 +96,8 @@ function localSnapshotFromStore(): CloudSnapshot {
     mcpResources: s.mcpResources,
     mcpResourceBindings: s.mcpResourceBindings,
     conversationMcpResources: s.conversationMcpResources,
+    urlBookmarks: s.urlBookmarks,
+    conversationUrlBookmarks: s.conversationUrlBookmarks,
   }
 }
 

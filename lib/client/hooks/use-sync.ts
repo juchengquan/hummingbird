@@ -25,6 +25,7 @@ import {
   diffConversations,
   diffConversationFiles,
   diffConversationMcpResources,
+  diffConversationUrlBookmarks,
   diffDocuments,
   diffFiles,
   diffMcpResourceBindings,
@@ -32,6 +33,7 @@ import {
   diffMcpServers,
   diffNotes,
   diffResources,
+  diffUrlBookmarks,
   diffWorkspaces,
 } from "@/client/sync/handlers"
 import type {
@@ -39,6 +41,7 @@ import type {
   Conversation,
   ConversationFile,
   ConversationMcpResource,
+  ConversationUrlBookmark,
   Document,
   McpResource,
   McpResourceBinding,
@@ -46,6 +49,7 @@ import type {
   Note,
   Resource,
   UploadedFile,
+  UrlBookmark,
   Workspace,
 } from "@/shared/types"
 
@@ -62,6 +66,8 @@ interface Snapshot {
   mcpResources: McpResource[]
   mcpResourceBindings: McpResourceBinding[]
   conversationMcpResources: ConversationMcpResource[]
+  urlBookmarks: UrlBookmark[]
+  conversationUrlBookmarks: ConversationUrlBookmark[]
 }
 
 // Module-level so the reconciliation flow can reset it after hydration.
@@ -82,6 +88,8 @@ function takeSnapshot(): Snapshot {
     mcpResources: s.mcpResources,
     mcpResourceBindings: s.mcpResourceBindings,
     conversationMcpResources: s.conversationMcpResources,
+    urlBookmarks: s.urlBookmarks,
+    conversationUrlBookmarks: s.conversationUrlBookmarks,
   }
 }
 
@@ -130,6 +138,8 @@ export function useSync(): void {
         mcpResources: state.mcpResources,
         mcpResourceBindings: state.mcpResourceBindings,
         conversationMcpResources: state.conversationMcpResources,
+        urlBookmarks: state.urlBookmarks,
+        conversationUrlBookmarks: state.conversationUrlBookmarks,
       }
       const prev = lastSnapshot
       if (!prev) {
@@ -149,7 +159,9 @@ export function useSync(): void {
         prev.mcpServers === next.mcpServers &&
         prev.mcpResources === next.mcpResources &&
         prev.mcpResourceBindings === next.mcpResourceBindings &&
-        prev.conversationMcpResources === next.conversationMcpResources
+        prev.conversationMcpResources === next.conversationMcpResources &&
+        prev.urlBookmarks === next.urlBookmarks &&
+        prev.conversationUrlBookmarks === next.conversationUrlBookmarks
       ) {
         return
       }
@@ -197,6 +209,15 @@ export function useSync(): void {
           ? diffConversationMcpResources(
               prev.conversationMcpResources,
               next.conversationMcpResources
+            )
+          : []),
+        ...(prev.urlBookmarks !== next.urlBookmarks
+          ? diffUrlBookmarks(prev.urlBookmarks, next.urlBookmarks)
+          : []),
+        ...(prev.conversationUrlBookmarks !== next.conversationUrlBookmarks
+          ? diffConversationUrlBookmarks(
+              prev.conversationUrlBookmarks,
+              next.conversationUrlBookmarks
             )
           : []),
       ]
@@ -265,6 +286,8 @@ export function setSyncSnapshot(snapshot: {
   mcpResources: McpResource[]
   mcpResourceBindings: McpResourceBinding[]
   conversationMcpResources: ConversationMcpResource[]
+  urlBookmarks: UrlBookmark[]
+  conversationUrlBookmarks: ConversationUrlBookmark[]
 }): void {
   lastSnapshot = snapshot
 }

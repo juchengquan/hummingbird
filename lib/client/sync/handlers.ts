@@ -25,6 +25,7 @@ import type {
   Conversation,
   ConversationFile,
   ConversationMcpResource,
+  ConversationUrlBookmark,
   Document,
   McpResource,
   McpResourceBinding,
@@ -33,6 +34,7 @@ import type {
   Note,
   Resource,
   UploadedFile,
+  UrlBookmark,
   Workspace,
 } from "@/shared/types"
 import type { SyncOp } from "@/client/sync/sync-queue"
@@ -185,6 +187,7 @@ export function diffConversations(
           pinned: c.pinned,
           selected_file_ids: c.selectedFileIds,
           selected_mcp_resource_ids: c.selectedMcpResourceIds ?? [],
+          selected_url_bookmark_ids: c.selectedUrlBookmarkIds ?? [],
           // document_content / document_updated_at were promoted to the
           // workspaces row. Column still exists for one release for
           // safety; client no longer writes to it.
@@ -228,6 +231,10 @@ function conversationHeaderEquals(a: Conversation, b: Conversation): boolean {
     sameStringArray(
       a.selectedMcpResourceIds ?? [],
       b.selectedMcpResourceIds ?? []
+    ) &&
+    sameStringArray(
+      a.selectedUrlBookmarkIds ?? [],
+      b.selectedUrlBookmarkIds ?? []
     ) &&
     sameSkillPrefs(a.skillPrefs, b.skillPrefs) &&
     (a.parentId ?? null) === (b.parentId ?? null) &&
@@ -693,6 +700,121 @@ function conversationMcpResourceEquals(
   return (
     a.conversationId === b.conversationId &&
     a.resourceId === b.resourceId &&
+    sameInstant(a.addedAt, b.addedAt)
+  )
+}
+
+// ------------ url_bookmarks -------------------------------------------------
+
+export function diffUrlBookmarks(
+  prev: UrlBookmark[],
+  next: UrlBookmark[]
+): SyncOp[] {
+  const ops: SyncOp[] = []
+  const prevById = byId(prev)
+  const nextById = byId(next)
+
+  for (const b of next) {
+    const before = prevById.get(b.id)
+    if (!before || !urlBookmarkEquals(before, b)) {
+      ops.push({
+        kind: "upsert",
+        target: "url_bookmarks",
+        clientOpId: "",
+        row: {
+          id: b.id,
+          workspace_id: b.workspaceId,
+          url: b.url,
+          title: b.title,
+          content: b.content,
+          content_truncated: b.contentTruncated,
+          content_hash: b.contentHash,
+          description: b.description ?? null,
+          favicon_url: b.faviconUrl ?? null,
+          fetched_at: toISO(b.fetchedAt),
+          deleted_at: b.deletedAt ? toISO(b.deletedAt) : null,
+          created_at: toISO(b.createdAt),
+          updated_at: toISO(b.updatedAt),
+        },
+      })
+    }
+  }
+  for (const b of prev) {
+    if (!nextById.has(b.id)) {
+      ops.push({
+        kind: "delete",
+        target: "url_bookmarks",
+        clientOpId: "",
+        where: { column: "id", value: b.id },
+      })
+    }
+  }
+  return ops
+}
+
+function urlBookmarkEquals(a: UrlBookmark, b: UrlBookmark): boolean {
+  return (
+    a.workspaceId === b.workspaceId &&
+    a.url === b.url &&
+    a.title === b.title &&
+    a.content === b.content &&
+    a.contentTruncated === b.contentTruncated &&
+    a.contentHash === b.contentHash &&
+    (a.description ?? null) === (b.description ?? null) &&
+    (a.faviconUrl ?? null) === (b.faviconUrl ?? null) &&
+    sameInstant(a.fetchedAt, b.fetchedAt) &&
+    sameInstantOrNull(a.deletedAt, b.deletedAt) &&
+    sameInstant(a.createdAt, b.createdAt) &&
+    sameInstant(a.updatedAt, b.updatedAt)
+  )
+}
+
+// ------------ conversation_url_bookmarks ------------------------------------
+
+export function diffConversationUrlBookmarks(
+  prev: ConversationUrlBookmark[],
+  next: ConversationUrlBookmark[]
+): SyncOp[] {
+  const ops: SyncOp[] = []
+  const prevById = byId(prev)
+  const nextById = byId(next)
+
+  for (const cub of next) {
+    const before = prevById.get(cub.id)
+    if (!before || !conversationUrlBookmarkEquals(before, cub)) {
+      ops.push({
+        kind: "upsert",
+        target: "conversation_url_bookmarks",
+        clientOpId: "",
+        row: {
+          id: cub.id,
+          conversation_id: cub.conversationId,
+          bookmark_id: cub.bookmarkId,
+          added_at: toISO(cub.addedAt),
+        },
+      })
+    }
+  }
+  for (const cub of prev) {
+    if (!nextById.has(cub.id)) {
+      ops.push({
+        kind: "delete",
+        target: "conversation_url_bookmarks",
+        clientOpId: "",
+        where: { column: "id", value: cub.id },
+      })
+    }
+  }
+  return ops
+}
+
+function conversationUrlBookmarkEquals(
+  a: ConversationUrlBookmark,
+  b: ConversationUrlBookmark
+): boolean {
+  return (
+    a.conversationId === b.conversationId &&
+    a.bookmarkId === b.bookmarkId &&
     sameInstant(a.addedAt, b.addedAt)
   )
 }
