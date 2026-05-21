@@ -11,6 +11,11 @@ import type {
 } from "@/shared/types"
 import type { McpCredentials } from "@/shared/mcp/credentials"
 
+/** The subset of `McpServer` the wrapper actually uses. Decouples
+ *  callers (chat route, proxy, inject-resources) from the full store
+ *  shape — they pass whatever runtime descriptor they have. */
+type McpEndpoint = Pick<McpServer, "id" | "name" | "url" | "transport">
+
 /**
  * Thin wrapper around `@modelcontextprotocol/sdk` exposing the three
  * operations Hummingbird uses today. Streamable HTTP transport only —
@@ -28,7 +33,7 @@ function buildClient() {
   })
 }
 
-function buildTransport(server: McpServer, credentials?: McpCredentials) {
+function buildTransport(server: McpEndpoint, credentials?: McpCredentials) {
   const url = new URL(server.url)
   const headers: Record<string, string> = {}
   for (const [k, v] of Object.entries(credentials?.headers ?? {})) {
@@ -44,7 +49,7 @@ function buildTransport(server: McpServer, credentials?: McpCredentials) {
 }
 
 async function withSession<T>(
-  server: McpServer,
+  server: McpEndpoint,
   credentials: McpCredentials | undefined,
   fn: (client: Client) => Promise<T>
 ): Promise<T> {
@@ -71,7 +76,7 @@ async function withSession<T>(
  * is older than the TTL.
  */
 export async function discover(
-  server: McpServer,
+  server: McpEndpoint,
   credentials: McpCredentials | undefined
 ): Promise<McpCapabilities> {
   return withSession(server, credentials, async (client) => {
@@ -125,7 +130,7 @@ export async function discover(
  * parts and return as a string for the chat route's tool-call result.
  */
 export async function callTool(
-  server: McpServer,
+  server: McpEndpoint,
   credentials: McpCredentials | undefined,
   toolName: string,
   input: unknown
@@ -158,7 +163,7 @@ export async function callTool(
  * path in Stage 3.
  */
 export async function readResource(
-  server: McpServer,
+  server: McpEndpoint,
   credentials: McpCredentials | undefined,
   uri: string
 ): Promise<{ text?: string; mimeType?: string }> {

@@ -213,7 +213,7 @@ interface AppState {
 
   // Right resources sidebar (chat view)
   resourcesSidebarOpen: boolean
-  resourcesSidebarTab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins'
+  resourcesSidebarTab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins' | 'mcp'
 
   /** Session-only pinned explanations from the selection-driven Explain
    *  action. Excluded from `partialize` — by design, pins vanish on
@@ -303,7 +303,7 @@ interface AppState {
   setActiveView: (view: MainView) => void
   setResourcesSidebarOpen: (open: boolean) => void
   toggleResourcesSidebar: () => void
-  setResourcesSidebarTab: (tab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins') => void
+  setResourcesSidebarTab: (tab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins' | 'mcp') => void
   /** Pin an explanation produced by the selection-driven Explain
    *  action. Returns the inserted record (with id + createdAt set). */
   pinExplanation: (input: {

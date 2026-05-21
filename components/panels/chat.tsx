@@ -385,6 +385,33 @@ export function ChatPanel() {
           credentials: getLocalCred(s.id) ?? undefined,
         }))
 
+      // Resolve which MCP resources are attached to this turn. Union of:
+      //   - Workspace-ticked (`selectedMcpResourceIds` on the conv)
+      //   - Conversation-pinned (`conversationMcpResources`)
+      // De-duped by resource id. Server fetches content via the
+      // appropriate MCP server.
+      const workspaceMcpIds = conv?.selectedMcpResourceIds ?? []
+      const privateMcpIds = conv
+        ? mcpStore.conversationMcpResources
+            .filter((cmr) => cmr.conversationId === conv.id)
+            .map((cmr) => cmr.resourceId)
+        : []
+      const attachedMcpResourceIds = [
+        ...new Set([...workspaceMcpIds, ...privateMcpIds]),
+      ]
+      const mcpResourcesForRequest = attachedMcpResourceIds
+        .map((id) => mcpStore.mcpResources.find((r) => r.id === id))
+        .filter(
+          (r): r is NonNullable<typeof r> => !!r && !r.deletedAt
+        )
+        .map((r) => ({
+          id: r.id,
+          serverId: r.serverId,
+          uri: r.uri,
+          name: r.name,
+          mimeType: r.mimeType,
+        }))
+
       try {
         const result = await apiClient.chat.stream(
           {
@@ -395,6 +422,8 @@ export function ChatPanel() {
             workspaceId: activeWorkspaceId || undefined,
             skills: enabledSkills,
             mcpServers: mcpServersForRequest.length > 0 ? mcpServersForRequest : undefined,
+            mcpResources:
+              mcpResourcesForRequest.length > 0 ? mcpResourcesForRequest : undefined,
           },
           { signal: controller.signal }
         )

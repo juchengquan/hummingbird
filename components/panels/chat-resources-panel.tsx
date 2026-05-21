@@ -17,6 +17,7 @@ import { NotesTab } from "@/components/panels/notes-tab"
 import { ArtifactsTab } from "@/components/panels/artifacts-tab"
 import { PinsTab } from "@/components/panels/pins-tab"
 import { SkillsTab } from "@/components/panels/skills-tab"
+import { McpTab } from "@/components/panels/mcp-tab"
 import { FilesTabBody } from "@/components/panels/files-tab-body"
 import { ConversationFilesSection } from "@/components/panels/conversation-files-section"
 
@@ -152,6 +153,8 @@ export function ChatResourcesPanel({ mode = "chat" }: ChatResourcesPanelProps = 
         <PinsTab />
       ) : tab === "skills" ? (
         <SkillsTab />
+      ) : tab === "mcp" ? (
+        <McpTab />
       ) : (
         <div className="flex flex-col h-full min-h-0">
           {mode === "chat" && activeConversationId && (

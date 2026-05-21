@@ -14,6 +14,11 @@ import {
 } from '@/server/skills/web-search'
 import { buildMcpTool, mcpToolName } from '@/server/mcp/tools'
 import { loadEffectiveMcpServers } from '@/server/mcp/load-servers'
+import {
+  resolveAttachedMcpResources,
+  renderMcpResourcesPrompt,
+  type ResolvedResource,
+} from '@/server/mcp/inject-resources'
 
 interface FileSummary {
   name: string
@@ -50,7 +55,11 @@ function buildSystemPrompt(
   /** MCP server summaries — only used to mention available tooling.
    *  Tool definitions themselves are surfaced via the AI SDK's `tools`
    *  parameter, so we don't have to enumerate them in prose. */
-  mcpServers?: { name: string; toolCount: number }[]
+  mcpServers?: { name: string; toolCount: number }[],
+  /** Pre-resolved MCP resources to inject below the files block.
+   *  Caller has already done the `readResource` round-trips; we just
+   *  render with whatever budget remains after files. */
+  mcpResources?: ResolvedResource[]
 ): string {
   const trimmedWorkspace = workspaceSystemPrompt?.trim()
   const skillsLine = buildSkillsNote(enabledSkills ?? [])
@@ -68,10 +77,12 @@ function buildSystemPrompt(
     .filter(Boolean)
     .join('\n\n')
 
-  if (!files || files.length === 0) return base
+  const safeFiles = files ?? []
+  const safeMcpResources = mcpResources ?? []
+  if (safeFiles.length === 0 && safeMcpResources.length === 0) return base
 
-  const withText = files.filter((f) => f.text && f.text.trim().length > 0)
-  const metaOnly = files.filter((f) => !f.text || f.text.trim().length === 0)
+  const withText = safeFiles.filter((f) => f.text && f.text.trim().length > 0)
+  const metaOnly = safeFiles.filter((f) => !f.text || f.text.trim().length === 0)
 
   let prompt = base
   let used = 0
@@ -107,6 +118,16 @@ function buildSystemPrompt(
       .map((f) => `- ${f.name} (${f.type || 'unknown'}, ${formatBytes(f.size)})`)
       .join('\n')
     prompt += `\n\nThe user has also attached these files which we could not extract text from (filename + metadata only). Ask the user to paste any relevant portion if a question requires their content:\n\n${list}`
+  }
+
+  // MCP resources share the same character budget as files. Render
+  // whatever fits in `TOTAL_ATTACHMENT_BUDGET - used` after files.
+  if (safeMcpResources.length > 0) {
+    const remaining = Math.max(0, TOTAL_ATTACHMENT_BUDGET - used)
+    const rendered = renderMcpResourcesPrompt(safeMcpResources, remaining)
+    if (rendered.fragment) {
+      prompt += `\n\n${rendered.fragment}`
+    }
   }
 
   return prompt
@@ -283,6 +304,13 @@ export async function POST(req: NextRequest) {
       mcpToolNames.push(name)
     }
   }
+  // Fetch any attached MCP resources concurrently. Each `readResource`
+  // call has its own timeout; failures render as "[unavailable]"
+  // markers in the system prompt rather than blocking the turn.
+  const resolvedMcpResources: ResolvedResource[] = await resolveAttachedMcpResources(
+    body.mcpResources,
+    mcpServers
+  )
 
   try {
     const result = streamText({
@@ -295,7 +323,8 @@ export async function POST(req: NextRequest) {
         mcpServers.map((s) => ({
           name: s.name,
           toolCount: s.capabilities?.tools?.length ?? 0,
-        }))
+        })),
+        resolvedMcpResources
       ),
       // Cast back: Zod validates the outer shape (role + content union),
       // but the AI SDK's ModelMessage uses tighter inner-part discriminants

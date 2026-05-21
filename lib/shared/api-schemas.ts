@@ -90,6 +90,16 @@ const McpRequestServerSchema = z.object({
     .optional(),
 })
 
+/** Resource attached to the current chat turn — server fetches content
+ *  via MCP `readResource` and injects into the system prompt. */
+const McpResourceRequestSchema = z.object({
+  id: z.string().min(1).max(64),
+  serverId: z.string().min(1).max(64),
+  uri: z.string().min(1).max(2000),
+  name: z.string().min(1).max(500),
+  mimeType: z.string().max(100).optional(),
+})
+
 export const ChatRequestSchema = z.object({
   messages: z.array(ModelMessageSchema).min(1),
   model: z.string().max(100).optional(),
@@ -104,6 +114,10 @@ export const ChatRequestSchema = z.object({
     .max(10)
     .optional(),
   mcpServers: z.array(McpRequestServerSchema).max(8).optional(),
+  /** MCP resources the user has attached to this conversation — union
+   *  of workspace-ticked + conversation-pinned, de-duped. The server
+   *  fetches content via the appropriate MCP server. */
+  mcpResources: z.array(McpResourceRequestSchema).max(20).optional(),
 })
 
 // --- /api/ai/copilot --------------------------------------------------------

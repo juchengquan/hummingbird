@@ -1,9 +1,19 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import { PanelRightClose, PanelRightOpen, FolderOpen, StickyNote, Archive, Sparkles, PencilLine, Pin } from "lucide-react"
+import { PanelRightClose, PanelRightOpen, FolderOpen, StickyNote, Archive, Sparkles, PencilLine, Pin, Plug } from "lucide-react"
 import { cn } from "@/shared/utils"
-import { useStore, useWorkspaceResources, useWorkspaceNotes, useWorkspaceArtifacts, useActiveWorkspace, useActiveConversation, useConversationPinnedExplanations } from "@/client/hooks/use-store"
+import {
+  useStore,
+  useWorkspaceResources,
+  useWorkspaceNotes,
+  useWorkspaceArtifacts,
+  useActiveWorkspace,
+  useActiveConversation,
+  useConversationPinnedExplanations,
+  useWorkspaceMcpResources,
+  useConversationPrivateMcpResources,
+} from "@/client/hooks/use-store"
 import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
 import { SKILLS } from "@/shared/skills/registry"
 import { resolveSkill } from "@/shared/skills/types"
@@ -28,6 +38,7 @@ const ALL_RAIL_TABS = [
   { id: "files" as const, label: "Files", Icon: FolderOpen },
   { id: "notes" as const, label: "Notes", Icon: StickyNote },
   { id: "artifacts" as const, label: "Artifacts", Icon: Archive },
+  { id: "mcp" as const, label: "MCP", Icon: Plug },
   { id: "pins" as const, label: "Pins", Icon: Pin },
   { id: "skills" as const, label: "Skills", Icon: Sparkles },
 ]
@@ -68,6 +79,9 @@ export function ResourcesSidebar({ mode = "chat" }: ResourcesSidebarProps = {}) 
   const notesCount = useWorkspaceNotes().length
   const artifactsCount = useWorkspaceArtifacts().length
   const pinsCount = useConversationPinnedExplanations().length
+  const mcpWorkspaceCount = useWorkspaceMcpResources().length
+  const mcpPrivateCount = useConversationPrivateMcpResources().length
+  const mcpCount = mcpWorkspaceCount + mcpPrivateCount
   const workspace = useActiveWorkspace()
   const conversation = useActiveConversation()
   const skillsActive = SKILLS.filter((s) =>
@@ -111,6 +125,7 @@ export function ResourcesSidebar({ mode = "chat" }: ResourcesSidebarProps = {}) 
     files: resourcesCount,
     notes: notesCount,
     artifacts: artifactsCount,
+    mcp: mcpCount,
     pins: pinsCount,
     skills: skillsActive,
   }
