@@ -63,6 +63,9 @@ export const apiUrls = {
   share: () => url("/api/share"),
   shareToken: (token: string) =>
     url(`/api/share/${encodeURIComponent(token)}`),
+  mcp: (serverId: string, action: "discover" | "call" | "read") =>
+    url(`/api/mcp/${encodeURIComponent(serverId)}/${action}`),
+  mcpServer: () => url("/api/mcp/server"),
 }
 
 /**
@@ -232,6 +235,94 @@ async function revokeShare(token: string): Promise<{ ok: boolean; status: number
   return { ok: true, status: res.status }
 }
 
+// --- /api/mcp (proxy) -------------------------------------------------------
+
+/**
+ * Posts an MCP proxy call. Returns the parsed JSON body on success; on
+ * failure returns the error envelope so the caller can show a useful
+ * toast (creds never leave this function — they're sent via the
+ * `X-MCP-Credentials` header, not echoed back).
+ */
+async function mcpProxyCall(
+  action: "discover" | "call" | "read",
+  body: Record<string, unknown>,
+  options?: { credentialHeader?: string; signal?: AbortSignal }
+): Promise<
+  | { ok: true; status: number; data: Record<string, unknown> }
+  | { ok: false; status: number; error: { code?: string; message?: string } }
+> {
+  const serverId = (body.server as { id?: string } | undefined)?.id
+  if (!serverId) {
+    return {
+      ok: false,
+      status: 400,
+      error: { code: "missing_server_id", message: "server.id is required" },
+    }
+  }
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  }
+  if (options?.credentialHeader) {
+    headers["X-MCP-Credentials"] = options.credentialHeader
+  }
+  const res = await fetch(apiUrls.mcp(serverId, action), {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const errBody = await readErrorBody(res)
+    return {
+      ok: false,
+      status: res.status,
+      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+    }
+  }
+  return {
+    ok: true,
+    status: res.status,
+    data: (await res.json()) as Record<string, unknown>,
+  }
+}
+
+/**
+ * Persists a cloud-mode MCP server config + credential. The browser
+ * can't write to `credentials_encrypted` directly (no encryption key
+ * client-side), so this route wraps the SECURITY DEFINER RPC.
+ *
+ * Returns `ok: true` on success. The credential never round-trips:
+ * the route stores the encrypted ciphertext in Supabase and the client
+ * forgets it.
+ */
+async function mcpUpsertCloudServer(body: {
+  id: string
+  workspaceId: string
+  name: string
+  url: string
+  credentials: { type?: string; headers?: Record<string, string> }
+  capabilities?: Record<string, unknown>
+  enabled?: boolean
+}): Promise<
+  | { ok: true; status: number }
+  | { ok: false; status: number; error: { code?: string; message?: string } }
+> {
+  const res = await fetch(apiUrls.mcpServer(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const errBody = await readErrorBody(res)
+    return {
+      ok: false,
+      status: res.status,
+      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+    }
+  }
+  return { ok: true, status: res.status }
+}
+
 // --- Public surface ---------------------------------------------------------
 
 export const apiClient = {
@@ -246,6 +337,7 @@ export const apiClient = {
     create: createShare,
     revoke: revokeShare,
   },
+  mcp: { proxy: mcpProxyCall, upsertCloudServer: mcpUpsertCloudServer },
 }
 
 export type ApiClient = typeof apiClient

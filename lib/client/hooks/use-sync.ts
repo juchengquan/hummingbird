@@ -23,8 +23,13 @@ import { configureSync, enqueue } from "@/client/sync/sync-queue"
 import {
   diffArtifacts,
   diffConversations,
+  diffConversationFiles,
+  diffConversationMcpResources,
   diffDocuments,
   diffFiles,
+  diffMcpResourceBindings,
+  diffMcpResources,
+  diffMcpServers,
   diffNotes,
   diffResources,
   diffWorkspaces,
@@ -32,7 +37,12 @@ import {
 import type {
   Artifact,
   Conversation,
+  ConversationFile,
+  ConversationMcpResource,
   Document,
+  McpResource,
+  McpResourceBinding,
+  McpServer,
   Note,
   Resource,
   UploadedFile,
@@ -45,8 +55,13 @@ interface Snapshot {
   conversations: Conversation[]
   files: UploadedFile[]
   resources: Resource[]
+  conversationFiles: ConversationFile[]
   notes: Note[]
   artifacts: Artifact[]
+  mcpServers: McpServer[]
+  mcpResources: McpResource[]
+  mcpResourceBindings: McpResourceBinding[]
+  conversationMcpResources: ConversationMcpResource[]
 }
 
 // Module-level so the reconciliation flow can reset it after hydration.
@@ -60,8 +75,13 @@ function takeSnapshot(): Snapshot {
     conversations: s.conversations,
     files: s.files,
     resources: s.resources,
+    conversationFiles: s.conversationFiles,
     notes: s.notes,
     artifacts: s.artifacts,
+    mcpServers: s.mcpServers,
+    mcpResources: s.mcpResources,
+    mcpResourceBindings: s.mcpResourceBindings,
+    conversationMcpResources: s.conversationMcpResources,
   }
 }
 
@@ -103,8 +123,13 @@ export function useSync(): void {
         conversations: state.conversations,
         files: state.files,
         resources: state.resources,
+        conversationFiles: state.conversationFiles,
         notes: state.notes,
         artifacts: state.artifacts,
+        mcpServers: state.mcpServers,
+        mcpResources: state.mcpResources,
+        mcpResourceBindings: state.mcpResourceBindings,
+        conversationMcpResources: state.conversationMcpResources,
       }
       const prev = lastSnapshot
       if (!prev) {
@@ -118,8 +143,13 @@ export function useSync(): void {
         prev.conversations === next.conversations &&
         prev.files === next.files &&
         prev.resources === next.resources &&
+        prev.conversationFiles === next.conversationFiles &&
         prev.notes === next.notes &&
-        prev.artifacts === next.artifacts
+        prev.artifacts === next.artifacts &&
+        prev.mcpServers === next.mcpServers &&
+        prev.mcpResources === next.mcpResources &&
+        prev.mcpResourceBindings === next.mcpResourceBindings &&
+        prev.conversationMcpResources === next.conversationMcpResources
       ) {
         return
       }
@@ -144,9 +174,30 @@ export function useSync(): void {
         ...(prev.resources !== next.resources
           ? diffResources(prev.resources, next.resources)
           : []),
+        ...(prev.conversationFiles !== next.conversationFiles
+          ? diffConversationFiles(prev.conversationFiles, next.conversationFiles)
+          : []),
         ...(prev.notes !== next.notes ? diffNotes(prev.notes, next.notes) : []),
         ...(prev.artifacts !== next.artifacts
           ? diffArtifacts(prev.artifacts, next.artifacts)
+          : []),
+        ...(prev.mcpServers !== next.mcpServers
+          ? diffMcpServers(prev.mcpServers, next.mcpServers)
+          : []),
+        ...(prev.mcpResources !== next.mcpResources
+          ? diffMcpResources(prev.mcpResources, next.mcpResources)
+          : []),
+        ...(prev.mcpResourceBindings !== next.mcpResourceBindings
+          ? diffMcpResourceBindings(
+              prev.mcpResourceBindings,
+              next.mcpResourceBindings
+            )
+          : []),
+        ...(prev.conversationMcpResources !== next.conversationMcpResources
+          ? diffConversationMcpResources(
+              prev.conversationMcpResources,
+              next.conversationMcpResources
+            )
           : []),
       ]
 
@@ -207,8 +258,13 @@ export function setSyncSnapshot(snapshot: {
   conversations: Conversation[]
   files: UploadedFile[]
   resources: Resource[]
+  conversationFiles: ConversationFile[]
   notes: Note[]
   artifacts: Artifact[]
+  mcpServers: McpServer[]
+  mcpResources: McpResource[]
+  mcpResourceBindings: McpResourceBinding[]
+  conversationMcpResources: ConversationMcpResource[]
 }): void {
   lastSnapshot = snapshot
 }

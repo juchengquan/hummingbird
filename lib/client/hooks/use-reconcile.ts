@@ -89,8 +89,13 @@ function localSnapshotFromStore(): CloudSnapshot {
     conversations: s.conversations,
     files: s.files,
     resources: s.resources,
+    conversationFiles: s.conversationFiles,
     notes: s.notes,
     artifacts: s.artifacts,
+    mcpServers: s.mcpServers,
+    mcpResources: s.mcpResources,
+    mcpResourceBindings: s.mcpResourceBindings,
+    conversationMcpResources: s.conversationMcpResources,
   }
 }
 

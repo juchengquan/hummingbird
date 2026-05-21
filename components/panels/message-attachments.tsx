@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { FileText, X, ImageOff } from "lucide-react"
+import { FileText, Trash2, X, ImageOff } from "lucide-react"
 import { useStore } from "@/client/hooks/use-store"
 import { getFileIcon, formatFileSize } from "@/client/file-utils"
 import {
@@ -18,9 +18,12 @@ import type { UploadedFile } from "@/shared/types"
  * Lives below the message content. Clicking an image opens a full-size
  * preview dialog; non-image chips show metadata in their tooltip.
  *
- * Files deleted after the message was sent render as a muted
- * "deleted attachment" chip — we still know the id was attached, the
- * content is just gone.
+ * Three rendering states per id:
+ *   - file present and live → full chip / image thumb (interactive)
+ *   - file present but tombstoned (`deletedAt` set) → muted chip
+ *     showing the original name so users know *what* was attached
+ *   - file fully missing from `files[]` (legacy hard-deletes, or
+ *     hand-edited storage) → generic "deleted attachment" placeholder
  */
 export function MessageAttachments({
   fileIds,
@@ -54,6 +57,22 @@ export function MessageAttachments({
               >
                 <ImageOff size={10} />
                 Deleted attachment
+              </span>
+            )
+          }
+
+          if (file.deletedAt) {
+            // Tombstoned: metadata stub remains but content is freed.
+            // Show the original name so users can see *what* was sent
+            // even though the file is gone.
+            return (
+              <span
+                key={id}
+                className="inline-flex items-center gap-1.5 max-w-[200px] px-2 py-1 rounded-md border border-dashed border-[var(--border)] text-[11px] text-[var(--muted-foreground)] italic"
+                title={`${file.name} · removed`}
+              >
+                <Trash2 size={10} className="shrink-0" />
+                <span className="truncate">{file.name}</span>
               </span>
             )
           }

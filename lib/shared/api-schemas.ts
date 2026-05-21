@@ -57,15 +57,67 @@ const ModelMessageSchema = z.object({
 // is no JSON response schema; the wire format is `data: <json>\n\n`
 // frames described in that doc.
 
+// MCP server + its cached capabilities + (for local-mode) the
+// credential the client wants the server to use on its behalf this
+// turn. Cloud-mode credentials (Stage 3) come from Supabase and are
+// not sent in the request body.
+const McpRequestServerSchema = z.object({
+  id: z.string().min(1).max(64),
+  name: z.string().min(1).max(200),
+  url: z.string().url().max(2000),
+  transport: z.literal('http'),
+  enabled: z.boolean().optional(),
+  capabilities: z
+    .object({
+      tools: z
+        .array(
+          z.object({
+            name: z.string().max(200),
+            description: z.string().max(2000).optional(),
+            // JSON schema — kept loose; we forward verbatim to the AI SDK.
+            inputSchema: z.unknown().optional(),
+          })
+        )
+        .max(64)
+        .optional(),
+    })
+    .optional(),
+  credentials: z
+    .object({
+      type: z.string().max(40).optional(),
+      headers: z.record(z.string(), z.string()).optional(),
+    })
+    .optional(),
+})
+
+/** Resource attached to the current chat turn — server fetches content
+ *  via MCP `readResource` and injects into the system prompt. */
+const McpResourceRequestSchema = z.object({
+  id: z.string().min(1).max(64),
+  serverId: z.string().min(1).max(64),
+  uri: z.string().min(1).max(2000),
+  name: z.string().min(1).max(500),
+  mimeType: z.string().max(100).optional(),
+})
+
 export const ChatRequestSchema = z.object({
   messages: z.array(ModelMessageSchema).min(1),
   model: z.string().max(100).optional(),
   files: z.array(FileSummarySchema).max(20).optional(),
   workspaceSystemPrompt: z.string().max(20_000).optional(),
+  /** Active workspace id — required to look up cloud-mode MCP servers
+   *  server-side. Local-mode servers are passed in `mcpServers` and
+   *  don't need this. Optional so signed-out usage still works. */
+  workspaceId: z.string().max(64).optional(),
   skills: z
     .array(z.object({ id: z.string().max(40) }))
     .max(10)
     .optional(),
+  mcpServers: z.array(McpRequestServerSchema).max(8).optional(),
+  /** MCP resources the user has attached to this conversation — union
+   *  of workspace-ticked + conversation-pinned, de-duped. The server
+   *  fetches content via the appropriate MCP server. */
+  mcpResources: z.array(McpResourceRequestSchema).max(20).optional(),
 })
 
 // --- /api/ai/copilot --------------------------------------------------------

@@ -84,8 +84,14 @@ Everything the app uses today. The codebase has zero hosted-only
 dependencies (no Realtime, no Edge Functions, no managed-only features),
 so every feature gated by `lib/shared/supabase/env.ts` lights up:
 
-- All three migrations (`supabase/migrations/0001_schema.sql`,
-  `0002_rls_policies.sql`, `0003_storage.sql`) apply identically
+- All five migrations (`supabase/migrations/0001_schema.sql`,
+  `0002_rls_policies.sql`, `0003_storage.sql`,
+  `0004_conversation_files.sql`, `0005_mcp.sql`) apply identically.
+  `0005_mcp.sql` enables `pgcrypto` itself — no separate extension
+  toggle.
+- **MCP integration** — full tools + resources + cloud-mode
+  credentials. Set `MCP_ENCRYPTION_KEY` in `.env.local` to unlock
+  the Cloud radio in the Add Server dialog. See **Step 5** below.
 - Magic-link auth via local **Inbucket** (no real inbox needed —
   emails are captured at http://localhost:54324)
 - File uploads to the local `user-files` Storage bucket
@@ -241,10 +247,13 @@ Then `bun dev`.
 
 With Supabase running and `bun dev` up:
 
-1. **Studio loads** — open http://localhost:54323. You should see nine
-   tables under the `public` schema (`profiles`, `workspaces`,
-   `conversations`, `messages`, `files`, `resources`, `artifacts`,
-   `notes`, `shares`) and a `user-files` private bucket under Storage.
+1. **Studio loads** — open http://localhost:54323. You should see
+   fourteen tables under the `public` schema (`profiles`,
+   `workspaces`, `conversations`, `messages`, `files`, `resources`,
+   `conversation_files`, `artifacts`, `notes`, `shares`,
+   `mcp_servers`, `mcp_resources`, `mcp_resource_bindings`,
+   `conversation_mcp_resources`) and a `user-files` private bucket
+   under Storage.
 2. **App talks to local Supabase** — open http://localhost:3000/dashboard.
    The sidebar header shows a **Sign in** button (it's hidden when env
    vars are absent; presence of the button confirms the local URL +
@@ -278,6 +287,100 @@ With Supabase running and `bun dev` up:
 
 If anything above fails, check the **Common issues** section at the
 bottom of this doc.
+
+## Step 5 — MCP (optional)
+
+Hummingbird supports Model Context Protocol servers as workspace-
+scoped tooling. Two credential storage modes (see
+`docs/PLAN-mcp-integration.md` for the full design):
+
+- **Local mode** — credential lives in `localStorage` on this device,
+  sent in the `X-MCP-Credentials` header on each call. Works without
+  any backend setup; you can use it even with Supabase off.
+- **Cloud mode** — credential encrypted in Supabase via `pgcrypto`,
+  decrypted only inside a SECURITY DEFINER RPC. Syncs across
+  devices. Requires you to be signed in **and** to have set
+  `MCP_ENCRYPTION_KEY` in the Next.js server env.
+
+### Enable cloud-mode MCP credentials locally
+
+```bash
+# Generate a key (32+ bytes random — pgcrypto uses it as a passphrase).
+openssl rand -base64 32
+
+# Add to .env.local
+echo "MCP_ENCRYPTION_KEY=<paste the output above>" >> .env.local
+
+# Restart Next.js so the env var is picked up.
+# (kill `bun dev`, start it again — Next.js does not hot-reload env)
+bun dev
+```
+
+Without the key:
+- The **Cloud** radio in the "Add MCP server" dialog is greyed out
+  with "Sign in to enable" (when signed out) or stays greyed even
+  after sign-in (if the env var isn't set server-side).
+- Local mode keeps working.
+
+Rotating the key invalidates every existing cloud-mode credential —
+users have to re-add the server. Don't change it without a clear
+need.
+
+### Smoke-test an MCP server
+
+Most public HTTP-transport MCP servers work. Two options:
+
+1. **Cloudflare's hosted MCP demo** —
+   <https://github.com/cloudflare/agents-starter>. Spin it up on
+   Workers (~3 min) and point the workspace at the resulting URL.
+2. **Self-host a simple one** — e.g. the
+   [`@modelcontextprotocol/server-everything`](https://github.com/modelcontextprotocol/servers/tree/main/src/everything)
+   reference server behind a small Express wrapper that bridges
+   stdio → HTTP. Useful for end-to-end tests because it exposes one
+   tool of each MCP primitive.
+
+Verification path inside the app:
+
+1. Open the **workspace settings sheet** (gear icon next to the
+   active workspace, or pick a workspace from the workspaces panel
+   and open its detail).
+2. Scroll to **MCP servers** → **Add**. Enter a name + the server
+   URL + a bearer token if the server needs one + pick Local or
+   Cloud mode.
+3. On submit, the dialog runs discovery in the background and
+   surfaces a toast: *"Connected to X. 3 tools, 5 resources."* If
+   you see a 401/502, the URL or the token is wrong.
+4. **Tool call** — start a new chat in that workspace, ask the model
+   to call one of the tools (e.g. *"Search for X in this MCP
+   server"*). A tool-call pill renders inline with the prefix
+   `mcp__{serverId}__{toolName}`. Click to expand the result.
+5. **Resource attach** — open the right resources sidebar, click the
+   **Plug** icon to switch to the MCP tab. Click **+** in either
+   "This conversation" or "Workspace MCP resources", pick a resource
+   from the picker, then ask the model something that needs the
+   resource. The system prompt now contains its content.
+
+### Inspect cloud-mode encryption (advanced)
+
+```sql
+-- In Studio's SQL Editor, signed in as the same user that added
+-- the server. RLS makes this invisible to other users.
+
+-- Confirm the row has ciphertext, not plaintext:
+select credential_mode, credentials_encrypted is not null as has_cipher,
+       length(credentials_encrypted) as cipher_bytes
+from public.mcp_servers;
+
+-- Confirm decryption works through the SECURITY DEFINER function:
+select public.mcp_get_decrypted_credentials(
+  '<your server uuid>',
+  '<paste your MCP_ENCRYPTION_KEY value>'
+);
+-- Returns the decrypted JSON credential.
+
+-- Pass the wrong key → returns NULL (pgcrypto raises, function
+-- swallows). Never throws so callers can degrade gracefully.
+```
 
 ## Common operations
 

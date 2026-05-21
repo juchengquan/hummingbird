@@ -24,6 +24,7 @@ import { Plus, ChevronDown, Square, ArrowUp } from "lucide-react"
 import { processSelectedFiles } from "@/client/file-utils"
 import { runExtraction } from "@/client/extract"
 import { persistFile } from "@/client/files/persist"
+import { getLocalCred } from "@/client/mcp/local-creds"
 import { extractCodeBlocks } from "@/shared/code-blocks"
 
 const AUTO_ARCHIVE_MIN_LINES = 15
@@ -53,16 +54,14 @@ export function ChatPanel() {
   const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
   const workspaces = useStore((state) => state.workspaces)
   const addFile = useStore((state) => state.addFile)
-  const addResource = useStore((state) => state.addResource)
+  const addConversationFile = useStore((state) => state.addConversationFile)
+  const conversationFiles = useStore((state) => state.conversationFiles)
   const setFileExtraction = useStore((state) => state.setFileExtraction)
   const setFileStorage = useStore((state) => state.setFileStorage)
   const createArtifact = useStore((state) => state.createArtifact)
   const pinExplanation = useStore((state) => state.pinExplanation)
   const setResourcesSidebarTab = useStore((state) => state.setResourcesSidebarTab)
   const setResourcesSidebarOpen = useStore((state) => state.setResourcesSidebarOpen)
-  const toggleConversationFileSelection = useStore(
-    (state) => state.toggleConversationFileSelection
-  )
   const activeConversation = useMemo(
     () => conversations.find((c) => c.id === activeConversationId) || null,
     [conversations, activeConversationId]
@@ -194,6 +193,7 @@ export function ChatPanel() {
           .find(
             (f) =>
               !!f &&
+              !f.deletedAt &&
               (f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"))
           )
         if (firstPdf) currentPdfId = firstPdf.id
@@ -285,10 +285,22 @@ export function ChatPanel() {
           resolveSkill(s, activeWorkspace?.skillPrefs, conv?.skillPrefs) &&
           !mutedSkillsForNext.has(s.id)
       ).map((s) => ({ id: s.id }))
-      const attachedFiles =
-        conv?.selectedFileIds
-          .map((id) => files.find((f) => f.id === id))
-          .filter((f): f is NonNullable<typeof f> => Boolean(f)) ?? []
+      // Merge the two lanes: workspace files ticked via `selectedFileIds`
+      // plus conversation-private files joined via `conversationFiles`.
+      // De-dup by `fileId` so a file in both lanes is sent once.
+      const workspaceFileIds = conv?.selectedFileIds ?? []
+      const privateFileIds = conv
+        ? conversationFiles
+            .filter((cf) => cf.conversationId === conv.id)
+            .map((cf) => cf.fileId)
+        : []
+      const attachedFileIds = [...new Set([...workspaceFileIds, ...privateFileIds])]
+      // Drop tombstoned files — they're metadata stubs only, no content to
+      // ship. They still render as "removed" placeholders in the message
+      // attachment chips via `MessageAttachments`, just not sent upstream.
+      const attachedFiles = attachedFileIds
+        .map((id) => files.find((f) => f.id === id))
+        .filter((f): f is NonNullable<typeof f> => !!f && !f.deletedAt)
       const fileSummaries = attachedFiles.map((f) => ({
         name: f.name,
         size: f.size,
@@ -345,6 +357,61 @@ export function ChatPanel() {
         }
       }
 
+      // Bundle the enabled MCP servers for this workspace into the
+      // chat payload. For each local-mode server we attach the
+      // credential straight from `localStorage` — it never lives in
+      // any store partition that syncs. Cloud-mode servers stay out
+      // of the body for now (Stage 3 will let the server look them
+      // up via Supabase + pgcrypto).
+      const mcpStore = useStore.getState()
+      const mcpServersForRequest = mcpStore.mcpServers
+        .filter(
+          (s) =>
+            s.workspaceId === activeWorkspaceId &&
+            !s.deletedAt &&
+            s.enabled &&
+            s.credentialMode === "local" &&
+            // Only ship servers with at least one discovered tool —
+            // empty capability lists are noise.
+            (s.capabilities?.tools?.length ?? 0) > 0
+        )
+        .map((s) => ({
+          id: s.id,
+          name: s.name,
+          url: s.url,
+          transport: s.transport,
+          enabled: s.enabled,
+          capabilities: s.capabilities,
+          credentials: getLocalCred(s.id) ?? undefined,
+        }))
+
+      // Resolve which MCP resources are attached to this turn. Union of:
+      //   - Workspace-ticked (`selectedMcpResourceIds` on the conv)
+      //   - Conversation-pinned (`conversationMcpResources`)
+      // De-duped by resource id. Server fetches content via the
+      // appropriate MCP server.
+      const workspaceMcpIds = conv?.selectedMcpResourceIds ?? []
+      const privateMcpIds = conv
+        ? mcpStore.conversationMcpResources
+            .filter((cmr) => cmr.conversationId === conv.id)
+            .map((cmr) => cmr.resourceId)
+        : []
+      const attachedMcpResourceIds = [
+        ...new Set([...workspaceMcpIds, ...privateMcpIds]),
+      ]
+      const mcpResourcesForRequest = attachedMcpResourceIds
+        .map((id) => mcpStore.mcpResources.find((r) => r.id === id))
+        .filter(
+          (r): r is NonNullable<typeof r> => !!r && !r.deletedAt
+        )
+        .map((r) => ({
+          id: r.id,
+          serverId: r.serverId,
+          uri: r.uri,
+          name: r.name,
+          mimeType: r.mimeType,
+        }))
+
       try {
         const result = await apiClient.chat.stream(
           {
@@ -352,7 +419,11 @@ export function ChatPanel() {
             messages: buildMessages() as ChatRequestInput["messages"],
             files: fileSummaries,
             workspaceSystemPrompt,
+            workspaceId: activeWorkspaceId || undefined,
             skills: enabledSkills,
+            mcpServers: mcpServersForRequest.length > 0 ? mcpServersForRequest : undefined,
+            mcpResources:
+              mcpResourcesForRequest.length > 0 ? mcpResourcesForRequest : undefined,
           },
           { signal: controller.signal }
         )
@@ -611,6 +682,7 @@ export function ChatPanel() {
       appendToMessage,
       appendToMessageReasoning,
       autoArchiveCodeBlocks,
+      conversationFiles,
       conversations,
       deleteMessage,
       files,
@@ -641,6 +713,12 @@ export function ChatPanel() {
 
   const handleFileSelected = useCallback(
     (list: FileList | null) => {
+      // The chat input's `+` button attaches files to the
+      // conversation-private lane — they live and die with this chat
+      // and don't pollute the workspace library. Users who want a file
+      // available across every conversation in the workspace upload via
+      // the "Workspace files" section in the resources panel instead.
+      if (!activeConversationId) return
       const processed = processSelectedFiles(list, {
         maxSize: FILE_SIZE_LIMIT,
         maxImageSize: IMAGE_SIZE_LIMIT,
@@ -648,8 +726,7 @@ export function ChatPanel() {
       })
       processed.forEach(({ meta, source }) => {
         addFile(meta)
-        addResource(activeWorkspaceId, meta.id)
-        toggleConversationFileSelection(meta.id)
+        addConversationFile(activeConversationId, meta.id)
         void runExtraction(meta.id, source, setFileExtraction)
         // Persist the raw blob in parallel with extraction. Result lands
         // on the store via `setFileStorage` so cross-device sync can
@@ -667,21 +744,33 @@ export function ChatPanel() {
       }
       if (inputFileRef.current) inputFileRef.current.value = ""
     },
-    [addFile, addResource, activeWorkspaceId, toggleConversationFileSelection, setFileExtraction, setFileStorage]
+    [
+      activeConversationId,
+      addFile,
+      addConversationFile,
+      setFileExtraction,
+      setFileStorage,
+    ]
   )
 
   const handleSendMessage = () => {
     if (!inputValue.trim() || isStreaming) return
 
     const messageContent = inputValue.trim()
-    // Snapshot the currently-selected files onto the message so the chat
-    // scroll shows a visible record of what was attached. Without this the
-    // attachments are invisible after the send (the model still sees the
-    // image/text, but the user has no way to remember what they sent).
+    // Snapshot every attached file onto the message — both lanes — so
+    // the chat scroll shows a visible record of what was attached.
+    // Without this the attachments are invisible after the send (the
+    // model still sees the image/text, but the user has no way to
+    // remember what they sent).
     const conv = conversations.find((c) => c.id === activeConversationId)
-    const snapshotIds = conv?.selectedFileIds && conv.selectedFileIds.length > 0
-      ? [...conv.selectedFileIds]
-      : undefined
+    const workspaceIds = conv?.selectedFileIds ?? []
+    const privateIds = conv
+      ? conversationFiles
+          .filter((cf) => cf.conversationId === conv.id)
+          .map((cf) => cf.fileId)
+      : []
+    const snapshotIdsRaw = [...new Set([...workspaceIds, ...privateIds])]
+    const snapshotIds = snapshotIdsRaw.length > 0 ? snapshotIdsRaw : undefined
     const userMessage = addMessage({
       role: "user",
       content: messageContent,

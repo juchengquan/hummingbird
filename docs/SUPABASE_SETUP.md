@@ -84,13 +84,56 @@ errors:
    - Creates the private `user-files` Storage bucket and the per-user
      folder-prefix policies (read / write / update / delete are all
      scoped to `user-files/{auth.uid()}/...`).
+4. `supabase/migrations/0004_conversation_files.sql`
+   - Adds the `conversation_files` join table (conversation-private
+     file attachments — files scoped to one chat that never enter the
+     workspace library) plus its RLS policy, and a `deleted_at`
+     column on `files` for soft-delete (tombstone) semantics.
+5. `supabase/migrations/0005_mcp.sql`
+   - Adds the MCP tables (`mcp_servers`, `mcp_resources`,
+     `mcp_resource_bindings`, `conversation_mcp_resources`) with RLS,
+     enables the `pgcrypto` extension, and creates two SECURITY
+     DEFINER helpers (`mcp_get_decrypted_credentials`,
+     `mcp_upsert_server_with_credentials`) that encrypt / decrypt
+     cloud-mode credentials. The encryption key lives in the Next.js
+     server env (`MCP_ENCRYPTION_KEY`), not in Postgres — see the
+     "MCP encryption key" subsection below.
 
-After running all three, sanity-check from the **Table Editor**: nine
-tables should be listed (`profiles`, `workspaces`, `conversations`,
-`messages`, `files`, `resources`, `artifacts`, `notes`, `shares`), each
-showing the RLS shield icon indicating policies are active. The
-**Storage** sidebar should show a `user-files` private bucket with the
-four policies attached.
+After running all five, sanity-check from the **Table Editor**:
+fourteen tables should be listed (`profiles`, `workspaces`,
+`conversations`, `messages`, `files`, `resources`, `conversation_files`,
+`artifacts`, `notes`, `shares`, `mcp_servers`, `mcp_resources`,
+`mcp_resource_bindings`, `conversation_mcp_resources`), each showing
+the RLS shield icon indicating policies are active. The **Storage**
+sidebar should show a `user-files` private bucket with the four
+policies attached.
+
+### MCP encryption key
+
+If you plan to let users pick Cloud-mode credentials for MCP servers,
+set `MCP_ENCRYPTION_KEY` in your Next.js deployment's environment
+(Vercel project secrets, Fly secrets, etc.). Generate with:
+
+```bash
+openssl rand -base64 32
+```
+
+The key is **never stored in Postgres**. It's passed as an argument
+to the `mcp_*_credentials` RPCs on each call, which means:
+
+- One env var rotates encryption across all environments (local,
+  staging, prod) without touching the database.
+- A read-only attacker who breaches Supabase sees ciphertext only;
+  plaintext requires breaching the Next.js tier too.
+- The trade-off: the key is *theoretically* visible in slow-query
+  logs if `log_min_duration_statement = 0` and `pg_stat_statements`
+  are both enabled. If your audit posture cares about this, switch
+  to the session-setting pattern documented in
+  `docs/PLAN-mcp-stage-3.md` — one-file change, no schema migration.
+
+Leaving the key unset disables Cloud mode in the workspace settings
+UI (the radio greys out). Local mode keeps working — credentials live
+in the user's `localStorage`.
 
 ## Step 3 — Configure auth (magic link)
 
