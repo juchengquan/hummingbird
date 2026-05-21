@@ -60,8 +60,23 @@ const BLOCKED_EXACT_HOSTS = new Set([
  *  null when the input isn't parseable. Used for dedup before
  *  validation. */
 export function normalizeUrl(input: string): string | null {
+  const trimmed = input.trim()
+  // Accept "example.com" by treating it as https://. Bare-domain input is
+  // what users actually type; without this, every "google.com" landed as
+  // an invalid_url 400 even though `validateOutboundUrl` would have been
+  // happy with `https://google.com`.
+  //
+  // The scheme detector is split in two so `example.com:8080` (host +
+  // port) doesn't get mistaken for the scheme `example.com:`. URL schemes
+  // end in `://`; non-URL schemes (mailto:, javascript:, etc.) end in a
+  // non-digit character. A `:` followed directly by a digit is a port,
+  // not a scheme — fall through to the prepend.
+  const hasUrlScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
+  const hasNonUrlScheme = /^[a-z][a-z0-9+.-]*:[^/\d]/i.test(trimmed)
+  const hasScheme = hasUrlScheme || hasNonUrlScheme
+  const withScheme = hasScheme ? trimmed : `https://${trimmed}`
   try {
-    const u = new URL(input.trim())
+    const u = new URL(withScheme)
     u.hash = ""
     u.hostname = u.hostname.toLowerCase()
     // Strip a single trailing slash from the path so equivalent forms
