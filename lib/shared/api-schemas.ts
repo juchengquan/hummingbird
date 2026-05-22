@@ -38,7 +38,7 @@ export const FileSummarySchema = z.object({
   name: z.string().max(500),
   size: z.number().int().nonnegative().max(1_000_000_000),
   type: z.string().max(100),
-  text: z.string().max(220_000).optional(),
+  text: z.string().max(120_000).optional(),
   truncated: z.boolean().optional(),
   kind: z.string().max(40).optional(),
 })
