@@ -26,19 +26,15 @@
 
 // --- Maxcalls ---------------------------------------------------------------
 
-/** Built-in default when neither workspace nor conversation specifies. */
-export const DEFAULT_MAX_WEB_SEARCHES = 3
-/** Inclusive bounds the UI enforces on the stepper. */
-export const MIN_MAX_WEB_SEARCHES = 1
-export const MAX_MAX_WEB_SEARCHES = 10
+import { makeBoundedIntField } from "./bounded-int"
 
-export function clampMaxWebSearches(n: number): number {
-  if (!Number.isFinite(n)) return DEFAULT_MAX_WEB_SEARCHES
-  const rounded = Math.round(n)
-  if (rounded < MIN_MAX_WEB_SEARCHES) return MIN_MAX_WEB_SEARCHES
-  if (rounded > MAX_MAX_WEB_SEARCHES) return MAX_MAX_WEB_SEARCHES
-  return rounded
-}
+const WEB_SEARCH_MAX = makeBoundedIntField({ default: 3, min: 1, max: 10 })
+/** Built-in default when neither workspace nor conversation specifies. */
+export const DEFAULT_MAX_WEB_SEARCHES = WEB_SEARCH_MAX.DEFAULT
+/** Inclusive bounds the UI enforces on the stepper. */
+export const MIN_MAX_WEB_SEARCHES = WEB_SEARCH_MAX.MIN
+export const MAX_MAX_WEB_SEARCHES = WEB_SEARCH_MAX.MAX
+export const clampMaxWebSearches = WEB_SEARCH_MAX.clamp
 
 // --- Per-provider option types ---------------------------------------------
 
