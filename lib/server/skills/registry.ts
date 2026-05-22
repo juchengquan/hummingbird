@@ -65,10 +65,15 @@ export interface ServerSkill {
 // Implementations are imported below from their per-skill modules so
 // the wiring stays in one place. Each module owns its own log type,
 // config resolution, and prompt copy.
+import { imageGenSkill } from "@/server/skills/image-gen"
 import { webFetchSkill } from "@/server/skills/web-fetch"
 import { webSearchSkill } from "@/server/skills/web-search"
 
 /** Iteration order matches the model-visible enablement order so the
  *  system prompt and tool registration are deterministic. Order is
  *  not load-bearing today, but tests pin it. */
-export const SERVER_SKILLS: ServerSkill[] = [webSearchSkill, webFetchSkill]
+export const SERVER_SKILLS: ServerSkill[] = [
+  webSearchSkill,
+  webFetchSkill,
+  imageGenSkill,
+]

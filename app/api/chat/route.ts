@@ -38,6 +38,20 @@ const TOTAL_ATTACHMENT_BUDGET = 96 * 1024
 // across turns. See the call site for the rationale.
 const chatWebToolLimit = createSlidingWindow({ windowMs: 60_000, max: 20 })
 
+// Per-IP rate limit for image generation. Separate bucket because
+// image gen costs ~1–3¢ per call vs. fractions of a cent for the web
+// tools — needs a tighter ceiling. The cap is env-configurable so
+// trusted deployments can raise it; abusive ones can lower it.
+const IMAGE_GEN_PER_MINUTE = (() => {
+  const raw = Number(process.env.MINIMAX_IMAGE_RATE_LIMIT_PER_MINUTE)
+  if (!Number.isFinite(raw) || raw <= 0) return 5
+  return Math.min(Math.floor(raw), 60)
+})()
+const chatImageGenLimit = createSlidingWindow({
+  windowMs: 60_000,
+  max: IMAGE_GEN_PER_MINUTE,
+})
+
 /**
  * Convert the wire-shape `AttachmentPayload[]` into the server-side
  * `ResolvedAttachment[]`. Files and URL bookmarks pass through with
@@ -280,8 +294,9 @@ export async function POST(req: NextRequest) {
   // route has its own bucket (30/min/IP) — the two are intentionally
   // separate so a user filling their bookmark library doesn't
   // starve their chat turn.
-  const webToolIpKey = rateLimitKey(req)
-  const consumeWebToolBudget = () => chatWebToolLimit.consume(webToolIpKey)
+  const ipKey = rateLimitKey(req)
+  const consumeWebToolBudget = () => chatWebToolLimit.consume(ipKey)
+  const consumeImageGenBudget = () => chatImageGenLimit.consume(ipKey)
 
   // Build the tool map by iterating the server-side skill registry.
   // Each ServerSkill owns its own config resolution + log + tool
@@ -295,9 +310,14 @@ export async function POST(req: NextRequest) {
   const tools: Record<string, unknown> = {}
   for (const skill of SERVER_SKILLS) {
     if (!enabledSet.has(skill.id)) continue
+    // Image generation lives on a tighter per-IP bucket because each
+    // call costs an order of magnitude more than the web tools.
+    // Every other skill shares the unified web-tool bucket.
+    const consumeBudget =
+      skill.id === 'imageGen' ? consumeImageGenBudget : consumeWebToolBudget
     const tool = skill.buildTool(entryById.get(skill.id), {
       signal: req.signal,
-      consumeBudget: consumeWebToolBudget,
+      consumeBudget,
     })
     if (tool) tools[skill.toolName] = tool
   }
