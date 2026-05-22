@@ -99,7 +99,11 @@ export async function POST(
           id: row.id,
           name: row.name,
           url: row.url,
-          transport: row.transport,
+          // Codegen widens text columns with CHECK constraints to
+          // `string`; the constraint `transport in ('http')` still
+          // enforces this at runtime. Cast to satisfy the narrow
+          // domain type.
+          transport: row.transport as McpServer['transport'],
         }
         const cred = await fetchDecryptedCredential(client, serverId)
         if (cred) credentials = cred
