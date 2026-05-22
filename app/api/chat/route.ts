@@ -363,7 +363,10 @@ export async function POST(req: NextRequest) {
   const webFetchLog: WebFetchLog = []
   const tools: Record<string, unknown> = {}
   if (enabledSkillIds.includes('webSearch')) {
-    const t = buildWebSearchTool(webSearchLog, resolvedWebSearchConfig)
+    // Pass `req.signal` through so an in-flight search aborts when the
+    // client tab closes mid-stream — without this, each provider's
+    // 8s timer runs to completion as zombie outbound work.
+    const t = buildWebSearchTool(webSearchLog, resolvedWebSearchConfig, req.signal)
     if (t) tools.webSearch = t
   }
   // Resolve the webFetch cap from the request (client sends the
@@ -375,6 +378,7 @@ export async function POST(req: NextRequest) {
   if (enabledSkillIds.includes('webFetch')) {
     tools.webFetch = buildWebFetchTool(webFetchLog, {
       maxCalls: webFetchMaxCalls,
+      signal: req.signal,
     })
   }
   // Register MCP-exposed tools for every enabled server. Local-mode

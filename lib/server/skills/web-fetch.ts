@@ -59,6 +59,11 @@ interface BuildOpts {
   /** Per-turn cap. After this many invocations any further calls return
    *  a soft error. */
   maxCalls: number
+  /** Upstream abort signal — typically the chat route's `req.signal`.
+   *  Propagated into the URL fetcher so an in-flight tool call cancels
+   *  when the client tab closes mid-stream, instead of running its
+   *  internal 10s timer out to completion. */
+  signal?: AbortSignal
 }
 
 export function buildWebFetchTool(log: WebFetchLog, opts: BuildOpts) {
@@ -87,7 +92,7 @@ export function buildWebFetchTool(log: WebFetchLog, opts: BuildOpts) {
         }
       }
 
-      const res = await fetchUrlBookmark(url)
+      const res = await fetchUrlBookmark(url, { signal: opts.signal })
       if (!res.ok) {
         log.push({ url, ok: false, contentLength: 0 })
         const e = res.error

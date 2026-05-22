@@ -122,14 +122,39 @@ interface TavilyResponse {
 
 const TAVILY_ENDPOINT = "https://api.tavily.com/search"
 
+/** Per-provider call timeout. Bounds the chat-turn latency at this
+ *  value even if one upstream is slow or hung. `Promise.all` over both
+ *  providers then runs in parallel, so the user waits at most this
+ *  long before the merge step. */
+const PROVIDER_CALL_TIMEOUT_MS = 8_000
+
+/**
+ * Build the per-provider fetch signal. Combines a fresh
+ * `PROVIDER_CALL_TIMEOUT_MS` timer with the upstream caller signal so
+ * the outbound call aborts on whichever fires first (timeout OR
+ * client disconnect).
+ */
+function buildProviderSignal(upstream: AbortSignal | undefined): {
+  signal: AbortSignal
+  cancel: () => void
+} {
+  const timer = new AbortController()
+  const t = setTimeout(() => timer.abort(), PROVIDER_CALL_TIMEOUT_MS)
+  const signal = upstream
+    ? AbortSignal.any([timer.signal, upstream])
+    : timer.signal
+  return { signal, cancel: () => clearTimeout(t) }
+}
+
 async function tavilySearch(
   query: string,
-  opts: { searchDepth: TavilySearchDepth }
+  opts: { searchDepth: TavilySearchDepth; signal?: AbortSignal }
 ): Promise<{ results: NormalizedResult[] } | { results: []; error: string }> {
   const apiKey = process.env.TAVILY_API_KEY
   if (!apiKey) {
     return { results: [], error: "Tavily is not configured (missing TAVILY_API_KEY)." }
   }
+  const { signal, cancel } = buildProviderSignal(opts.signal)
   try {
     const res = await fetch(TAVILY_ENDPOINT, {
       method: "POST",
@@ -141,6 +166,7 @@ async function tavilySearch(
         search_depth: opts.searchDepth,
         include_answer: false,
       }),
+      signal,
     })
     if (!res.ok) {
       return { results: [], error: `Tavily search failed (HTTP ${res.status}).` }
@@ -156,10 +182,18 @@ async function tavilySearch(
       .filter((r) => r.url)
     return { results }
   } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      return {
+        results: [],
+        error: `Tavily timed out after ${PROVIDER_CALL_TIMEOUT_MS}ms`,
+      }
+    }
     return {
       results: [],
       error: err instanceof Error ? err.message : "Tavily search failed",
     }
+  } finally {
+    cancel()
   }
 }
 
@@ -179,7 +213,7 @@ const BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 
 async function braveSearch(
   query: string,
-  opts: { freshness: BraveFreshness }
+  opts: { freshness: BraveFreshness; signal?: AbortSignal }
 ): Promise<{ results: NormalizedResult[] } | { results: []; error: string }> {
   const apiKey = process.env.BRAVE_SEARCH_API_KEY
   if (!apiKey) {
@@ -188,6 +222,7 @@ async function braveSearch(
       error: "Brave Search is not configured (missing BRAVE_SEARCH_API_KEY).",
     }
   }
+  const { signal, cancel } = buildProviderSignal(opts.signal)
   try {
     const url = new URL(BRAVE_ENDPOINT)
     url.searchParams.set("q", query)
@@ -201,6 +236,7 @@ async function braveSearch(
         Accept: "application/json",
         "X-Subscription-Token": apiKey,
       },
+      signal,
     })
     if (!res.ok) {
       return { results: [], error: `Brave search failed (HTTP ${res.status}).` }
@@ -216,10 +252,18 @@ async function braveSearch(
       }))
     return { results }
   } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      return {
+        results: [],
+        error: `Brave timed out after ${PROVIDER_CALL_TIMEOUT_MS}ms`,
+      }
+    }
     return {
       results: [],
       error: err instanceof Error ? err.message : "Brave search failed",
     }
+  } finally {
+    cancel()
   }
 }
 
@@ -256,7 +300,11 @@ function interleaveAndDedupe(
 
 export function buildWebSearchTool(
   log: WebSearchLog,
-  config?: Partial<ResolvedWebSearchConfig>
+  config?: Partial<ResolvedWebSearchConfig>,
+  /** Upstream abort signal (typically `req.signal` from the chat route).
+   *  Propagated into each provider call alongside their own per-call
+   *  timeout so client disconnect cancels in-flight searches. */
+  upstreamSignal?: AbortSignal
 ) {
   // Decide which providers can actually run: enabled by user AND
   // configured on the server. If neither qualifies, don't register the
@@ -308,18 +356,23 @@ export function buildWebSearchTool(
       const tasks: Promise<void>[] = []
       if (tavilyOn) {
         tasks.push(
-          tavilySearch(query, { searchDepth: tavilyDepth }).then((r) => {
+          tavilySearch(query, { searchDepth: tavilyDepth, signal: upstreamSignal }).then((r) => {
             runs.push({ provider: "tavily", result: r })
           })
         )
       }
       if (braveOn) {
         tasks.push(
-          braveSearch(query, { freshness: braveFreshness }).then((r) => {
+          braveSearch(query, { freshness: braveFreshness, signal: upstreamSignal }).then((r) => {
             runs.push({ provider: "brave", result: r })
           })
         )
       }
+      // Each task swallows its own errors and returns an `error` field,
+      // so `Promise.all` is equivalent to `allSettled` here — except
+      // `all` short-circuits on a synchronous throw before the catch,
+      // which neither helper should do. The per-provider timeouts above
+      // bound the total wait time at `PROVIDER_CALL_TIMEOUT_MS`.
       await Promise.all(tasks)
 
       // Preserve the registration order (tavily, brave) when interleaving.
