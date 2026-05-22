@@ -1,6 +1,5 @@
 import type { NextRequest } from 'next/server'
 
-import { createGateway } from '@ai-sdk/gateway'
 import { generateText, stepCountIs, streamText, type ModelMessage } from 'ai'
 import { NextResponse } from 'next/server'
 
@@ -287,7 +286,6 @@ function parseSuggestionsJson(raw: string): string[] {
 }
 
 async function generateSuggestions(
-  gateway: ReturnType<typeof createGateway>,
   history: ModelMessage[],
   assistantReply: string,
   signal: AbortSignal
@@ -309,7 +307,7 @@ ${assistantReply.slice(0, 4000)}
   try {
     const result = await generateText({
       abortSignal: signal,
-      model: gateway(SUGGESTION_MODEL),
+      model: selectModel(SUGGESTION_MODEL),
       prompt,
       maxOutputTokens: 200,
       temperature: 0.7,
@@ -350,7 +348,6 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const gateway = createGateway({ apiKey })
   const modelId = body.model || DEFAULT_CHAT_MODEL
   const enabledSkillIds = (body.skills ?? []).map((s) => s.id)
   // Resolve the user-facing webSearch cap from the request. The client
@@ -460,7 +457,7 @@ export async function POST(req: NextRequest) {
   try {
     const result = streamText({
       abortSignal: upstreamSignal,
-      model: selectModel(modelId, gateway),
+      model: selectModel(modelId),
       system: buildSystemPrompt({
         workspaceSystemPrompt: body.workspaceSystemPrompt,
         enabledSkills: enabledSkillIds,
@@ -794,7 +791,6 @@ export async function POST(req: NextRequest) {
             assistantText.trim().length > 0
           ) {
             const suggestions = await generateSuggestions(
-              gateway,
               // Same cast as the streamText call above — Zod validates the
               // structural shape, the SDK uses tighter inner discriminants.
               body.messages as ModelMessage[],

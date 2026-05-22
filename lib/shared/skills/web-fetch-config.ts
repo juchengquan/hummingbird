@@ -13,19 +13,15 @@
  * shape used at request time.
  */
 
-/** Built-in default when neither workspace nor conversation specifies. */
-export const DEFAULT_MAX_WEB_FETCHES = 5
-/** Inclusive bounds the UI enforces on the stepper. */
-export const MIN_MAX_WEB_FETCHES = 1
-export const MAX_MAX_WEB_FETCHES = 20
+import { makeBoundedIntField } from "./bounded-int"
 
-export function clampMaxWebFetches(n: number): number {
-  if (!Number.isFinite(n)) return DEFAULT_MAX_WEB_FETCHES
-  const rounded = Math.round(n)
-  if (rounded < MIN_MAX_WEB_FETCHES) return MIN_MAX_WEB_FETCHES
-  if (rounded > MAX_MAX_WEB_FETCHES) return MAX_MAX_WEB_FETCHES
-  return rounded
-}
+const WEB_FETCH_MAX = makeBoundedIntField({ default: 5, min: 1, max: 20 })
+/** Built-in default when neither workspace nor conversation specifies. */
+export const DEFAULT_MAX_WEB_FETCHES = WEB_FETCH_MAX.DEFAULT
+/** Inclusive bounds the UI enforces on the stepper. */
+export const MIN_MAX_WEB_FETCHES = WEB_FETCH_MAX.MIN
+export const MAX_MAX_WEB_FETCHES = WEB_FETCH_MAX.MAX
+export const clampMaxWebFetches = WEB_FETCH_MAX.clamp
 
 export interface WebFetchConfig {
   maxCalls?: number

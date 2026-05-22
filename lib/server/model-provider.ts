@@ -19,9 +19,8 @@ import "server-only"
  */
 
 import { createAnthropic } from "@ai-sdk/anthropic"
+import { createGateway } from "@ai-sdk/gateway"
 import type { LanguageModel } from "ai"
-
-import type { createGateway } from "@ai-sdk/gateway"
 
 type GatewayProvider = ReturnType<typeof createGateway>
 
@@ -120,14 +119,47 @@ function getMinimaxCnClient(): ReturnType<typeof createAnthropic> | null {
 }
 
 /**
- * Returns a `LanguageModel` for the given gateway-style id. Pass the
- * already-constructed `gateway` provider as the fallback — the
- * dispatcher uses it for every non-minimax id, and for minimax ids
- * when the Minimax-CN override isn't configured.
+ * Memoised Vercel AI Gateway. Constructed once per process; cached
+ * across calls because `createGateway` is cheap but readable env on
+ * every call would still be wasteful. Re-keyed if `AI_GATEWAY_API_KEY`
+ * changes at runtime (rare — typically only in tests).
+ *
+ * Throws if `AI_GATEWAY_API_KEY` is missing; that's a setup error
+ * surfaced by the route's existing `categorizeError('auth')` path.
+ */
+let cachedGateway:
+  | { apiKey: string; client: GatewayProvider }
+  | null = null
+
+function getGateway(): GatewayProvider {
+  const apiKey = process.env.AI_GATEWAY_API_KEY?.trim()
+  if (!apiKey) {
+    throw new Error("Missing AI_GATEWAY_API_KEY.")
+  }
+  if (cachedGateway && cachedGateway.apiKey === apiKey) {
+    return cachedGateway.client
+  }
+  const client = createGateway({ apiKey })
+  cachedGateway = { apiKey, client }
+  return client
+}
+
+/**
+ * Returns a `LanguageModel` for the given gateway-style id. Routes
+ * `minimax/*` ids to the Minimax-CN endpoint when configured;
+ * everything else goes through the Vercel AI Gateway. The gateway
+ * client is constructed lazily inside this module — callers no
+ * longer need to pass it in.
+ *
+ * `options.apiKeyOverride` lets a route accept a client-supplied
+ * API key (today: the editor's settings dialog lets users provide
+ * their own gateway key for the `/api/ai/command` path). Overrides
+ * bypass the process-wide cache because the key may be per-user /
+ * per-request. The minimax-CN override still applies on top.
  */
 export function selectModel(
   modelId: string,
-  gateway: GatewayProvider
+  options: { apiKeyOverride?: string } = {}
 ): LanguageModel {
   if (modelId.startsWith("minimax/")) {
     const minimaxCn = getMinimaxCnClient()
@@ -138,7 +170,12 @@ export function selectModel(
       return minimaxCn(bare)
     }
   }
-  return gateway(modelId)
+  if (options.apiKeyOverride) {
+    // Per-request key — don't share the gateway client with other
+    // requests, build a one-shot. `createGateway` is cheap.
+    return createGateway({ apiKey: options.apiKeyOverride })(modelId)
+  }
+  return getGateway()(modelId)
 }
 
 /** Surface whether the Minimax-CN override is active. Useful for

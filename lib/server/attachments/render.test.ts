@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test"
 import {
   renderAttachmentsPrompt,
   renderMetaOnlyFilesPrompt,
-  type ResolvedAttachment,
 } from "./render"
 
 describe("renderAttachmentsPrompt", () => {

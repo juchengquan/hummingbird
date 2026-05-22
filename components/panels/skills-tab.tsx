@@ -382,7 +382,7 @@ function WebSearchSettingsPanel({
           }
         />
         {resolved.tavily.enabled && (
-          <Select
+          <InlineSelectRow
             label="Search depth"
             value={resolved.tavily.searchDepth}
             options={TAVILY_SEARCH_DEPTHS.map((d) => ({
@@ -415,7 +415,7 @@ function WebSearchSettingsPanel({
           }
         />
         {resolved.brave.enabled && (
-          <Select
+          <InlineSelectRow
             label="Freshness"
             value={resolved.brave.freshness}
             options={BRAVE_FRESHNESSES.map((f) => ({
@@ -448,7 +448,7 @@ function WebSearchSettingsPanel({
           }
         />
         {resolved.exa.enabled && (
-          <Select
+          <InlineSelectRow
             label="Search type"
             value={resolved.exa.type}
             options={EXA_SEARCH_TYPES.map((t) => ({
@@ -714,7 +714,7 @@ function ProviderHeader({
 }
 
 /** Small label + select row. Generic so provider sections share it. */
-function Select<T extends string>({
+function InlineSelectRow<T extends string>({
   label,
   value,
   options,

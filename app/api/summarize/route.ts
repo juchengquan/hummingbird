@@ -1,6 +1,5 @@
 import type { NextRequest } from 'next/server'
 
-import { createGateway } from '@ai-sdk/gateway'
 import { generateText } from 'ai'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
@@ -110,7 +109,6 @@ export async function POST(req: NextRequest) {
   }
 
   const body = parsed.data
-  const gateway = createGateway({ apiKey })
   const modelId = body.model ?? DEFAULT_SUMMARY_MODEL
   const prompt =
     body.mode === 'file'
@@ -120,7 +118,7 @@ export async function POST(req: NextRequest) {
   try {
     const result = await generateText({
       abortSignal: req.signal,
-      model: selectModel(modelId, gateway),
+      model: selectModel(modelId),
       prompt,
       // Summaries should be tight — bail out if the model rambles.
       maxOutputTokens: 600,

@@ -4,7 +4,6 @@ import type {
 } from '@/components/editor/use-chat';
 import type { NextRequest } from 'next/server';
 
-import { createGateway } from '@ai-sdk/gateway';
 import {
   type LanguageModel,
   type UIMessageStreamWriter,
@@ -43,20 +42,21 @@ export async function POST(req: NextRequest) {
     value: children,
   });
 
+  // The editor's settings dialog can supply its own gateway key;
+  // when present we pass it through to `selectModel` per-request so
+  // a user's key isn't accidentally cached for other users. Without
+  // it, `selectModel` falls back to the process-wide gateway built
+  // from `AI_GATEWAY_API_KEY`.
   const apiKey = key || process.env.AI_GATEWAY_API_KEY;
-
   if (!apiKey) {
     return NextResponse.json(
       { code: 'auth', message: 'Missing AI_GATEWAY_API_KEY.' },
       { status: 401 }
     );
   }
+  const modelOptions = key ? { apiKeyOverride: key as string } : undefined;
 
   const isSelecting = editor.api.isExpanded();
-
-  const gatewayProvider = createGateway({
-    apiKey,
-  });
 
   try {
     const stream = createUIMessageStream<ChatMessage>({
@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
           // @ts-expect-error AI SDK v5 typing for Output.choice doesn't
           // narrow `output` on the result; runtime is correct. See ROADMAP.
           const { output: AIToolName } = await generateText({
-            model: selectModel(modelId, gatewayProvider),
+            model: selectModel(modelId, modelOptions),
             // @ts-expect-error see above
             output: Output.choice({ options: enumOptions }),
             prompt,
@@ -93,18 +93,18 @@ export async function POST(req: NextRequest) {
 
         const stream = streamText({
           experimental_transform: markdownJoinerTransform(),
-          model: selectModel(model || 'openai/gpt-5.5', gatewayProvider),
+          model: selectModel(model || 'openai/gpt-5.5', modelOptions),
           // Not used
           prompt: '',
           tools: {
             comment: getCommentTool(editor, {
               messagesRaw,
-              model: selectModel(model || 'google/gemini-2.5-flash', gatewayProvider),
+              model: selectModel(model || 'google/gemini-2.5-flash', modelOptions),
               writer,
             }),
             table: getTableTool(editor, {
               messagesRaw,
-              model: selectModel(model || 'google/gemini-2.5-flash', gatewayProvider),
+              model: selectModel(model || 'google/gemini-2.5-flash', modelOptions),
               writer,
             }),
           },
@@ -136,8 +136,8 @@ export async function POST(req: NextRequest) {
                 model:
                   editType === 'selection'
                     ? //The selection task is more challenging, so we chose to use Gemini 2.5 Flash.
-                      selectModel(model || 'google/gemini-2.5-flash', gatewayProvider)
-                    : selectModel(model || 'openai/gpt-5.5', gatewayProvider),
+                      selectModel(model || 'google/gemini-2.5-flash', modelOptions)
+                    : selectModel(model || 'openai/gpt-5.5', modelOptions),
                 messages: [
                   {
                     content: editPrompt,
@@ -162,7 +162,7 @@ export async function POST(req: NextRequest) {
                     role: 'user',
                   },
                 ],
-                model: selectModel(model || 'openai/gpt-5.5', gatewayProvider),
+                model: selectModel(model || 'openai/gpt-5.5', modelOptions),
               };
             }
           },
