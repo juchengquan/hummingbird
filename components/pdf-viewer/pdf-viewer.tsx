@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { ChevronLeft, ChevronRight, Loader2, ZoomIn, ZoomOut, AlertCircle } from "lucide-react"
+import { ChevronLeft, ChevronRight, Download, ExternalLink, Loader2, ZoomIn, ZoomOut, AlertCircle } from "lucide-react"
+import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -10,6 +11,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
+import { PreviewHeader } from "@/components/preview/preview-header"
 import { fetchFileBlob } from "@/client/files/fetch-blob"
 import { useStore } from "@/client/hooks/use-store"
 import { cn } from "@/shared/utils"
@@ -149,74 +151,138 @@ function PdfViewer({ fileId, initialPage, onClose }: PdfViewerProps) {
     setCurrentPage(target)
   }
 
+  // File-action handlers — Download + Open in new tab. Match the shape
+  // used by the other viewers (DOCX, text, csv) so the header buttons
+  // behave consistently across all "right-drawer" surfaces.
+  const handleDownload = () => {
+    if (!file) return
+    void (async () => {
+      try {
+        const blob = await fetchFileBlob(file)
+        if (!blob) {
+          toast.error("Couldn't reach this file to download")
+          return
+        }
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = file.name
+        a.click()
+        URL.revokeObjectURL(url)
+      } catch {
+        toast.error("Download failed")
+      }
+    })()
+  }
+  const handleOpen = () => {
+    if (!file) return
+    void (async () => {
+      try {
+        const blob = await fetchFileBlob(file)
+        if (!blob) {
+          toast.error("Couldn't reach this file")
+          return
+        }
+        const url = URL.createObjectURL(blob)
+        window.open(url, "_blank", "noopener,noreferrer")
+        setTimeout(() => URL.revokeObjectURL(url), 60_000)
+      } catch {
+        toast.error("Open failed")
+      }
+    })()
+  }
+
   return (
     <Sheet open={true} onOpenChange={(o) => { if (!o) onClose() }}>
       <SheetContent
         side="right"
         className="w-full sm:w-[640px] sm:max-w-[80vw] p-0 gap-0 flex flex-col"
       >
-        <SheetHeader className="shrink-0 pl-4 pr-12 py-2.5 border-b border-[var(--border)] flex-row items-center justify-between gap-2 space-y-0">
-          <SheetTitle className="text-sm font-medium truncate flex-1 min-w-0" title={file?.name ?? "PDF"}>
-            {file?.name ?? "PDF"}
-          </SheetTitle>
-          {numPages > 0 && (
-            <div className="flex items-center gap-1 shrink-0">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => goToPage(currentPage - 1)}
-                disabled={currentPage <= 1}
-                className="h-7 w-7"
-                aria-label="Previous page"
-              >
-                <ChevronLeft size={14} />
-              </Button>
-              <span className="text-xs tabular-nums text-[var(--muted-foreground)]">
-                {currentPage} / {numPages}
-              </span>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => goToPage(currentPage + 1)}
-                disabled={currentPage >= numPages}
-                className="h-7 w-7"
-                aria-label="Next page"
-              >
-                <ChevronRight size={14} />
-              </Button>
-              <span className="mx-1 h-4 w-px bg-[var(--border)]" />
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setScale((s) => Math.max(MIN_SCALE, s - SCALE_STEP))}
-                disabled={scale <= MIN_SCALE}
-                className="h-7 w-7"
-                aria-label="Zoom out"
-              >
-                <ZoomOut size={14} />
-              </Button>
-              <button
-                type="button"
-                onClick={() => setScale(1)}
-                disabled={scale === 1}
-                aria-label="Reset zoom"
-                title="Reset zoom"
-                className="text-[10px] tabular-nums text-[var(--muted-foreground)] hover:text-[var(--foreground)] disabled:cursor-default disabled:hover:text-[var(--muted-foreground)] w-9 h-7 rounded text-center transition-colors"
-              >
-                {Math.round(scale * 100)}%
-              </button>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setScale((s) => Math.min(MAX_SCALE, s + SCALE_STEP))}
-                disabled={scale >= MAX_SCALE}
-                className="h-7 w-7"
-                aria-label="Zoom in"
-              >
-                <ZoomIn size={14} />
-              </Button>
-            </div>
-          )}
+        <SheetHeader className="shrink-0 pl-4 pr-12 py-2.5 border-b border-[var(--border)] space-y-0">
+          {/* Hidden a11y title — PreviewHeader owns the visible one. */}
+          <SheetTitle className="sr-only">{file?.name ?? "PDF"}</SheetTitle>
+          <PreviewHeader
+            title={file?.name ?? "PDF"}
+            sizeBytes={file?.size}
+            typeLabel="PDF"
+            updatedAt={file?.uploadedAt}
+            controls={
+              numPages > 0 && (
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => goToPage(currentPage - 1)}
+                    disabled={currentPage <= 1}
+                    className="h-7 w-7 text-[var(--muted-foreground)]"
+                    aria-label="Previous page"
+                  >
+                    <ChevronLeft size={14} />
+                  </Button>
+                  <span className="text-xs tabular-nums text-[var(--muted-foreground)]">
+                    {currentPage} / {numPages}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => goToPage(currentPage + 1)}
+                    disabled={currentPage >= numPages}
+                    className="h-7 w-7 text-[var(--muted-foreground)]"
+                    aria-label="Next page"
+                  >
+                    <ChevronRight size={14} />
+                  </Button>
+                  <span className="mx-1 h-4 w-px bg-[var(--border)]" />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setScale((s) => Math.max(MIN_SCALE, s - SCALE_STEP))}
+                    disabled={scale <= MIN_SCALE}
+                    className="h-7 w-7 text-[var(--muted-foreground)]"
+                    aria-label="Zoom out"
+                  >
+                    <ZoomOut size={14} />
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={() => setScale(1)}
+                    disabled={scale === 1}
+                    aria-label="Reset zoom"
+                    title="Reset zoom"
+                    className="text-[10px] tabular-nums text-[var(--muted-foreground)] hover:text-[var(--foreground)] disabled:cursor-default disabled:hover:text-[var(--muted-foreground)] w-9 h-7 rounded text-center transition-colors"
+                  >
+                    {Math.round(scale * 100)}%
+                  </button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setScale((s) => Math.min(MAX_SCALE, s + SCALE_STEP))}
+                    disabled={scale >= MAX_SCALE}
+                    className="h-7 w-7 text-[var(--muted-foreground)]"
+                    aria-label="Zoom in"
+                  >
+                    <ZoomIn size={14} />
+                  </Button>
+                </div>
+              )
+            }
+            actions={
+              file
+                ? [
+                    {
+                      icon: Download,
+                      label: "Download",
+                      onClick: handleDownload,
+                    },
+                    {
+                      icon: ExternalLink,
+                      label: "Open in new tab",
+                      onClick: handleOpen,
+                    },
+                  ]
+                : []
+            }
+          />
         </SheetHeader>
 
         <div ref={scrollRef} className="flex-1 overflow-auto bg-[var(--muted)]/30">

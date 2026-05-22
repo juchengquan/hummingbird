@@ -29,6 +29,13 @@ interface FilesTabBodyProps {
    *  Only invoked for rows whose file has `extractedKind === "image"`
    *  and an in-memory `imageDataUrl` to render. */
   onOpenImage: (fileId: string) => void
+  /** Open a `.docx` file in the shared right-side docx viewer.
+   *  Invoked for rows whose mime/extension is Word. */
+  onOpenDocx: (fileId: string) => void
+  /** Open a `.txt` / `.json` file in the shared text viewer. */
+  onOpenText: (fileId: string) => void
+  /** Open a `.csv` file in the shared csv table viewer. */
+  onOpenCsv: (fileId: string) => void
   mounted: boolean
   error: string | null
   fileInputRef: React.RefObject<HTMLInputElement | null>
@@ -48,6 +55,9 @@ export function FilesTabBody({
   onRequestDelete,
   onOpenPdf,
   onOpenImage,
+  onOpenDocx,
+  onOpenText,
+  onOpenCsv,
   mounted,
   error,
   fileInputRef,
@@ -198,16 +208,28 @@ export function FilesTabBody({
                       on row hover. stopPropagation so clicking doesn't
                       toggle attach. */}
                   {(() => {
+                    const lowerName = file.name.toLowerCase()
                     const isPdf =
                       file.type === "application/pdf" ||
-                      file.name.toLowerCase().endsWith(".pdf")
+                      lowerName.endsWith(".pdf")
                     // Image preview requires the in-memory data URL —
                     // legacy rows without `imageDataUrl` can't be
                     // viewed inline, so we hide the button rather than
                     // open an empty viewer.
                     const isImage =
                       file.extractedKind === "image" && !!file.imageDataUrl
-                    if (!isPdf && !isImage && !isManage) return null
+                    const isDocx =
+                      file.type ===
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+                      lowerName.endsWith(".docx")
+                    const isCsv =
+                      file.type === "text/csv" || lowerName.endsWith(".csv")
+                    const isText =
+                      lowerName.endsWith(".txt") ||
+                      lowerName.endsWith(".json") ||
+                      file.type === "text/plain" ||
+                      file.type === "application/json"
+                    if (!isPdf && !isImage && !isDocx && !isCsv && !isText && !isManage) return null
                     return (
                       <div
                         className="absolute top-1.5 right-1.5 flex items-center gap-0.5 opacity-0 group-hover/row:opacity-100 focus-within:opacity-100 transition-opacity"
@@ -230,6 +252,39 @@ export function FilesTabBody({
                             onClick={() => onOpenImage(file.id)}
                             aria-label={`Preview "${file.name}"`}
                             title="Preview image"
+                            className="p-1 rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] transition-colors"
+                          >
+                            <Eye size={12} />
+                          </button>
+                        )}
+                        {isDocx && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenDocx(file.id)}
+                            aria-label={`Open "${file.name}" in document viewer`}
+                            title="Preview document"
+                            className="p-1 rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] transition-colors"
+                          >
+                            <Eye size={12} />
+                          </button>
+                        )}
+                        {isCsv && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenCsv(file.id)}
+                            aria-label={`Open "${file.name}" in CSV viewer`}
+                            title="Preview as table"
+                            className="p-1 rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] transition-colors"
+                          >
+                            <Eye size={12} />
+                          </button>
+                        )}
+                        {isText && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenText(file.id)}
+                            aria-label={`Open "${file.name}" in text viewer`}
+                            title="Preview file"
                             className="p-1 rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] transition-colors"
                           >
                             <Eye size={12} />

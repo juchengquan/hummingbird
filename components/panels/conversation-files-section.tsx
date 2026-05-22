@@ -26,6 +26,9 @@ export function ConversationFilesSection({
   onRemove,
   onOpenPdf,
   onOpenImage,
+  onOpenDocx,
+  onOpenText,
+  onOpenCsv,
 }: {
   files: UploadedFile[]
   conversationId: string
@@ -35,6 +38,9 @@ export function ConversationFilesSection({
    *  the shared right-side image viewer with the file's metadata. */
   onOpenImage: (fileId: string) => void
   onOpenPdf: (fileId: string) => void
+  onOpenDocx: (fileId: string) => void
+  onOpenText: (fileId: string) => void
+  onOpenCsv: (fileId: string) => void
 }) {
   void _conversationId
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -80,11 +86,22 @@ export function ConversationFilesSection({
       ) : (
         <ul className="px-2 py-1.5 space-y-0.5">
           {files.map((file) => {
+            const lowerName = file.name.toLowerCase()
             const isPdf =
-              file.type === "application/pdf" ||
-              file.name.toLowerCase().endsWith(".pdf")
+              file.type === "application/pdf" || lowerName.endsWith(".pdf")
             const isImage =
               file.extractedKind === "image" && !!file.imageDataUrl
+            const isDocx =
+              file.type ===
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+              lowerName.endsWith(".docx")
+            const isCsv =
+              file.type === "text/csv" || lowerName.endsWith(".csv")
+            const isText =
+              lowerName.endsWith(".txt") ||
+              lowerName.endsWith(".json") ||
+              file.type === "text/plain" ||
+              file.type === "application/json"
             return (
               <li
                 key={file.id}
@@ -117,6 +134,39 @@ export function ConversationFilesSection({
                       onClick={() => onOpenImage(file.id)}
                       aria-label={`Preview "${file.name}"`}
                       title="Preview image"
+                      className="p-1 rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] transition-colors"
+                    >
+                      <Eye size={12} />
+                    </button>
+                  )}
+                  {isDocx && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenDocx(file.id)}
+                      aria-label={`Open "${file.name}" in document viewer`}
+                      title="Preview document"
+                      className="p-1 rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] transition-colors"
+                    >
+                      <Eye size={12} />
+                    </button>
+                  )}
+                  {isCsv && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenCsv(file.id)}
+                      aria-label={`Open "${file.name}" in CSV viewer`}
+                      title="Preview as table"
+                      className="p-1 rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] transition-colors"
+                    >
+                      <Eye size={12} />
+                    </button>
+                  )}
+                  {isText && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenText(file.id)}
+                      aria-label={`Open "${file.name}" in text viewer`}
+                      title="Preview file"
                       className="p-1 rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] transition-colors"
                     >
                       <Eye size={12} />

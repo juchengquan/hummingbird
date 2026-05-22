@@ -11,6 +11,9 @@ import { PdfViewerHost } from "@/components/pdf-viewer/pdf-viewer"
 import { UrlPreviewHost } from "@/components/url-viewer/url-viewer"
 import { LiveArtifactHost } from "@/components/live-artifact/live-artifact-panel"
 import { ImageViewerHost } from "@/components/image-viewer/image-viewer"
+import { DocxViewerHost } from "@/components/docx-viewer/docx-viewer"
+import { TextViewerHost } from "@/components/text-viewer/text-viewer"
+import { CsvViewerHost } from "@/components/csv-viewer/csv-viewer"
 import {
   SidebarInset,
   SidebarProvider,
@@ -94,6 +97,9 @@ export default function Page() {
       <UrlPreviewHost />
       <LiveArtifactHost />
       <ImageViewerHost />
+      <DocxViewerHost />
+      <TextViewerHost />
+      <CsvViewerHost />
       <Toaster closeButton />
     </SidebarProvider>
   )

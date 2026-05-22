@@ -20,17 +20,23 @@ import {
   useLiveArtifact,
   type LiveArtifactTarget,
 } from "@/components/live-artifact/store"
+import { useCsvViewer, type CsvViewerTarget } from "@/components/csv-viewer/types"
+import { useDocxViewer, type DocxViewerTarget } from "@/components/docx-viewer/types"
 import { useImageViewer, type ImageViewerTarget } from "@/components/image-viewer/types"
 import { usePdfViewer, type PdfViewerTarget } from "@/components/pdf-viewer/types"
+import { useTextViewer, type TextViewerTarget } from "@/components/text-viewer/types"
 import { useUrlPreview, type UrlPreviewTarget } from "@/components/url-viewer/types"
 
-type Slot = "pdf" | "url" | "artifact" | "image"
+type Slot = "pdf" | "url" | "artifact" | "image" | "docx" | "text" | "csv"
 
 function closeOthers(except: Slot) {
   if (except !== "pdf") usePdfViewer.getState().close()
   if (except !== "url") useUrlPreview.getState().close()
   if (except !== "artifact") useLiveArtifact.getState().close()
   if (except !== "image") useImageViewer.getState().close()
+  if (except !== "docx") useDocxViewer.getState().close()
+  if (except !== "text") useTextViewer.getState().close()
+  if (except !== "csv") useCsvViewer.getState().close()
 }
 
 export function openPdf(target: PdfViewerTarget) {
@@ -53,9 +59,27 @@ export function openImageViewer(target: ImageViewerTarget) {
   useImageViewer.getState().open(target)
 }
 
+export function openDocxViewer(target: DocxViewerTarget) {
+  closeOthers("docx")
+  useDocxViewer.getState().open(target)
+}
+
+export function openTextViewer(target: TextViewerTarget) {
+  closeOthers("text")
+  useTextViewer.getState().open(target)
+}
+
+export function openCsvViewer(target: CsvViewerTarget) {
+  closeOthers("csv")
+  useCsvViewer.getState().open(target)
+}
+
 export function closeRightPanel() {
   usePdfViewer.getState().close()
   useUrlPreview.getState().close()
   useLiveArtifact.getState().close()
   useImageViewer.getState().close()
+  useDocxViewer.getState().close()
+  useTextViewer.getState().close()
+  useCsvViewer.getState().close()
 }

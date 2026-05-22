@@ -287,12 +287,17 @@ function ChatMessageImpl({
     <div
       id={`chat-message-${message.id}`}
       className={cn(
-        "group/message animate-message-in scroll-mt-20",
+        // `min-w-0` lets this row shrink when it ends up inside a flex
+        // parent; `overflow-x-clip` is a defensive backstop so a
+        // pathologically wide child (long URL, monospaced code line,
+        // a too-tall image, …) can never push the conversation
+        // column past its `max-w-5xl` boundary on the right.
+        "group/message animate-message-in scroll-mt-20 min-w-0 overflow-x-clip",
         isBookmarked && "rounded-md ring-1 ring-amber-400/30"
       )}
       style={{ animationDelay: `${index * 50}ms` }}
     >
-      <div className={cn("flex", isUser ? "flex-row-reverse" : "flex-row")}>
+      <div className={cn("flex min-w-0 w-full", isUser ? "flex-row-reverse" : "flex-row")}>
         {message.error && !isUser ? (
           <ErrorBubble
             error={message.error}
@@ -303,10 +308,17 @@ function ChatMessageImpl({
             onDelete={() => onDelete(message.id)}
           />
         ) : (
-        <div className={cn("flex flex-col", isUser ? "items-end max-w-[90%]" : "items-start w-full")}>
+        <div className={cn("flex flex-col min-w-0", isUser ? "items-end max-w-[90%]" : "items-start w-full")}>
           <div
             className={cn(
-              "animate-content-in w-full",
+              // `min-w-0` lets the flex item shrink below its
+              // intrinsic content width; `wrap-anywhere` is more
+              // aggressive than `break-words` — it allows breaking at
+              // any character when the content would otherwise
+              // overflow, which is what we need for long URLs and
+              // no-space code blobs in user messages. Without it the
+              // bubble can push past `max-w-[90%]` on the right.
+              "animate-content-in w-full min-w-0 wrap-anywhere",
               isUser
                 ? "rounded-lg px-4 py-2 bg-[var(--user-bubble)] text-[var(--user-bubble-foreground)]"
                 : "text-[var(--foreground)]"
@@ -390,7 +402,7 @@ function ChatMessageImpl({
                     suppressImages={!!message.generatedImages?.length}
                   />
                 ) : (
-                  <p className="text-[15px] whitespace-pre-wrap">{message.content}</p>
+                  <p className="text-[15px] whitespace-pre-wrap wrap-anywhere">{message.content}</p>
                 )}
                 {!isUser && webSearchResults && webSearchResults.length > 0 && (
                   <SourcesStrip

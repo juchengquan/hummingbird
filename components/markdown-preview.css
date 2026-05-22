@@ -102,6 +102,14 @@
    default code-block background (also var(--secondary)) would disappear.
    Use a contrasting darker / brighter fill, tighter spacing, and a smaller
    inline-code chip. */
+.markdown-chat-bubble.markdown-preview {
+  /* Sweep-up: any text node inside the bubble can break anywhere if
+     it would otherwise overflow. Specific elements override as needed
+     (e.g. `<pre>` keeps `white-space: pre` so code formatting stays
+     intact and the block's own horizontal scrollbar handles long
+     lines). */
+  overflow-wrap: anywhere;
+}
 .markdown-chat-bubble.markdown-preview > * + * {
   margin-top: 0.5em;
 }
@@ -119,6 +127,25 @@
   background: var(--background);
   font-size: 0.78em;
   padding: 0.6em 0.85em;
+  /* Code blocks in chat bubbles wrap rather than scroll. The standard
+     `<pre>` + `overflow-x: auto` pattern works in isolation but in
+     this nested flex chain the `<pre>`'s intrinsic min-content (the
+     longest unbreakable line) still ends up propagating past the
+     bubble's `max-w-5xl` cap and overflowing the conversation column.
+     Hard-wrapping the content removes the propagation entirely — the
+     bubble can't be widened by content it isn't allowed to layout
+     full-width. Tradeoff: pre-indentation is preserved (we keep
+     `pre-wrap`, not `normal`) but long single lines visually break
+     across multiple rows.
+     `overflow-wrap: anywhere` allows mid-character breaks for
+     truly unbreakable sequences (URLs, base64). `word-break:
+     break-word` is the legacy alias kept for older Safari builds
+     that don't honour `overflow-wrap: anywhere` on `<pre>`. */
+  max-width: 100%;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .markdown-chat-bubble.markdown-preview pre code {
   background: transparent;
@@ -126,6 +153,14 @@
 
 .markdown-chat-bubble.markdown-preview table {
   font-size: 0.78em;
+  /* Same min-content escape hatch as `<pre>`: a wide table's columns
+     can otherwise widen the bubble past its container. `display:
+     block` + `overflow-x: auto` gives the table its own horizontal
+     scrollbar; `max-width: 100%` caps the block to the bubble. */
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
 }
 .markdown-chat-bubble.markdown-preview blockquote {
   border-left-color: color-mix(in oklab, var(--border) 60%, var(--foreground) 40%);

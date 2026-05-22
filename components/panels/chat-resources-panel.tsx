@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
-import { openImageViewer, openPdf } from "@/components/right-panel-slot"
+import {
+  openCsvViewer,
+  openDocxViewer,
+  openImageViewer,
+  openPdf,
+  openTextViewer,
+} from "@/components/right-panel-slot"
 import {
   useStore,
   useWorkspaceResources,
@@ -191,6 +197,9 @@ export function ChatResourcesPanel({ mode = "chat" }: ChatResourcesPanelProps = 
               }
               onOpenPdf={(fileId) => openPdf({ fileId })}
               onOpenImage={handleOpenImage}
+              onOpenDocx={(fileId) => openDocxViewer({ fileId })}
+              onOpenText={(fileId) => openTextViewer({ fileId })}
+              onOpenCsv={(fileId) => openCsvViewer({ fileId })}
             />
           )}
           <div className="flex-1 min-h-0 flex flex-col">
@@ -206,6 +215,9 @@ export function ChatResourcesPanel({ mode = "chat" }: ChatResourcesPanelProps = 
               onRequestDelete={setConfirmDeleteFileId}
               onOpenPdf={(fileId) => openPdf({ fileId })}
               onOpenImage={handleOpenImage}
+              onOpenDocx={(fileId) => openDocxViewer({ fileId })}
+              onOpenText={(fileId) => openTextViewer({ fileId })}
+              onOpenCsv={(fileId) => openCsvViewer({ fileId })}
               mounted={mounted}
               error={error}
               fileInputRef={fileInputRef}
