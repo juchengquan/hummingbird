@@ -12,6 +12,12 @@ export interface UploadedFile {
   extractedText?: string
   /** True when `extractedText` was cut to fit the per-file budget. */
   extractionTruncated?: boolean
+  /** Full extracted text (up to FULL_EXTRACTION_BUDGET ≈ 1 MB). Only
+   *  set when distinct from `extractedText` — i.e. when the file's
+   *  raw text exceeded the inline budget. Used by the Phase 3
+   *  `readFileSection` tool; persists to `files.full_text` via the
+   *  sync reconcile path. See `docs/PLAN-file-full-text-retrieval.md`. */
+  extractedFullText?: string
   /** Detected/resolved content kind (e.g. 'pdf', 'docx', 'markdown', 'image'). */
   extractedKind?: string
   /**
