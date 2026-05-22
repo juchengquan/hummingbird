@@ -1,0 +1,5 @@
+[test]
+# Preload mocks for `server-only` / `client-only` / IDB-touching modules
+# so co-located *.test.ts files can import either side of the runtime
+# fence without crashing at module load. See `tests/setup.ts`.
+preload = ["./tests/setup.ts"]
