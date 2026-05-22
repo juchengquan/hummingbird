@@ -32,7 +32,7 @@ import { ChatHeader } from "@/components/panels/chat-header"
 import { ChatMessage } from "@/components/panels/chat-message"
 import { EmptyChatWelcome } from "@/components/panels/empty-chat-welcome"
 import { SelectionTrigger } from "@/components/selection/selection-trigger"
-import { Plus, ChevronDown, Square, ArrowUp } from "lucide-react"
+import { Plus, ChevronDown, Square, ArrowUp, Repeat2, X } from "lucide-react"
 import { processSelectedFiles } from "@/client/file-utils"
 import { runExtraction } from "@/client/extract"
 import { persistFile } from "@/client/files/persist"
@@ -61,6 +61,12 @@ export function ChatPanel() {
   )
   const isTyping = useStore((state) => state.isTyping)
   const setIsTyping = useStore((state) => state.setIsTyping)
+  const pendingReferenceImage = useStore(
+    (state) => state.pendingReferenceImage
+  )
+  const setPendingReferenceImage = useStore(
+    (state) => state.setPendingReferenceImage
+  )
   const chatModel = useStore((state) => state.chatModel)
   const setChatModel = useStore((state) => state.setChatModel)
   const files = useStore((state) => state.files)
@@ -281,7 +287,15 @@ export function ChatPanel() {
   const callChatAPI = useCallback(
     async (
       history: Message[],
-      options?: { modelOverride?: string; isRetry?: boolean }
+      options?: {
+        modelOverride?: string
+        isRetry?: boolean
+        /** I2I reference URL to forward to the server for this turn.
+         *  Captured by the caller (`handleSendMessage`) ahead of the
+         *  store clear so a retry doesn't quietly re-attach a reference
+         *  the user already dismissed. */
+        referenceImage?: { url: string }
+      }
     ) => {
       // Read the model freshly from the store rather than via the closure.
       // Lets retry-after-model-change use the new value without waiting for
@@ -530,6 +544,7 @@ export function ChatPanel() {
             mcpServers: mcpServersForRequest.length > 0 ? mcpServersForRequest : undefined,
             attachments:
               attachmentsForRequest.length > 0 ? attachmentsForRequest : undefined,
+            referenceImage: options?.referenceImage,
           },
           { signal: controller.signal }
         )
@@ -924,13 +939,20 @@ export function ChatPanel() {
     // Per-message skill mutes were for this one send — reset.
     if (mutedSkillsForNext.size > 0) setMutedSkillsForNext(new Set())
     if (pasteDetection) setPasteDetection(null)
+    // Snapshot the remix reference and clear it — one-shot semantics.
+    // The chip disappears immediately; the in-flight request still gets
+    // the URL via callChatAPI's `options.referenceImage` arg.
+    const pendingRef = useStore.getState().pendingReferenceImage
+    if (pendingRef) useStore.getState().setPendingReferenceImage(null)
 
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto"
     }
 
     const history = [...messages, userMessage]
-    callChatAPIRef.current(history)
+    callChatAPIRef.current(history, {
+      referenceImage: pendingRef ? { url: pendingRef.url } : undefined,
+    })
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -1217,6 +1239,15 @@ export function ChatPanel() {
               mutedForNext={mutedSkillsForNext}
               onToggleMuted={toggleMutedSkillForNext}
             />
+            {pendingReferenceImage && (
+              <div className="px-1 pb-1">
+                <ReferenceImageChip
+                  url={pendingReferenceImage.url}
+                  sourcePrompt={pendingReferenceImage.sourcePrompt}
+                  onClear={() => setPendingReferenceImage(null)}
+                />
+              </div>
+            )}
             {pasteDetection && (
               <div className="px-1 pb-1">
                 <SmartPasteChip
@@ -1330,6 +1361,55 @@ export function ChatPanel() {
 
       {/* Resources side panel */}
       <ResourcesSidebar />
+    </div>
+  )
+}
+
+/**
+ * Small inline chip rendered above the chat input when the user has
+ * pinned a reference image via the gallery's "Remix" action. Shows a
+ * thumbnail + a caption hinting at the source prompt, plus an × to
+ * dismiss without sending. The reference clears automatically on send
+ * — this chip just exposes the manual dismiss path.
+ */
+function ReferenceImageChip({
+  url,
+  sourcePrompt,
+  onClear,
+}: {
+  url: string
+  sourcePrompt: string | undefined
+  onClear: () => void
+}) {
+  return (
+    <div className="flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--muted)]/40 pl-1 pr-2 py-1 max-w-fit">
+      <div className="relative h-7 w-7 rounded-full overflow-hidden shrink-0">
+        {/* eslint-disable-next-line @next/next/no-img-element -- same
+            reasoning as in generated-images-gallery.tsx. */}
+        <img
+          src={url}
+          alt="Reference image"
+          className="h-full w-full object-cover"
+        />
+      </div>
+      <Repeat2 size={12} className="text-[var(--muted-foreground)] shrink-0" />
+      <span className="text-[11px] text-[var(--foreground)] leading-none">
+        Remix
+        {sourcePrompt ? (
+          <span className="text-[var(--muted-foreground)]">
+            {" "}
+            — {sourcePrompt.length > 60 ? sourcePrompt.slice(0, 59) + "…" : sourcePrompt}
+          </span>
+        ) : null}
+      </span>
+      <button
+        type="button"
+        onClick={onClear}
+        aria-label="Remove reference image"
+        className="ml-1 text-[var(--muted-foreground)] hover:text-[var(--foreground)] shrink-0"
+      >
+        <X size={12} />
+      </button>
     </div>
   )
 }
