@@ -219,6 +219,7 @@ export interface Database {
           key_topics: string[]
           uploaded_at: string
           deleted_at: string | null
+          full_text: string | null
         }
         Insert: {
           id: string
@@ -237,6 +238,7 @@ export interface Database {
           key_topics?: string[]
           uploaded_at?: string
           deleted_at?: string | null
+          full_text?: string | null
         }
         Update: {
           id?: string
@@ -255,6 +257,7 @@ export interface Database {
           key_topics?: string[]
           uploaded_at?: string
           deleted_at?: string | null
+          full_text?: string | null
         }
         Relationships: []
       }

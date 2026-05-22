@@ -26,15 +26,46 @@ interface ExtractionResponse {
   truncated: boolean
   /** Detected source language for `code` kind (e.g. 'tsx', 'python'). */
   language?: string
+  /** Full extracted text (capped at FULL_EXTRACTION_BUDGET). Only set
+   *  when distinct from `text` — see ExtractionResponseSchema in
+   *  `lib/shared/api-schemas.ts` for the canonical wire shape. */
+  fullText?: string
 }
 
 // Code files get a wider window than prose — 128 KB. Source files routinely
 // blow past the prose budget without being long-form content.
 const CODE_BUDGET = 128 * 1024
 
-function truncateTo(text: string, budget: number): { text: string; truncated: boolean } {
-  if (text.length <= budget) return { text, truncated: false }
-  return { text: text.slice(0, budget), truncated: true }
+// Full-text budget for the Phase 3 `readFileSection` tool. 1 MB — 10x
+// the inline view. The FTS index lives at `files.full_text_tsv` (see
+// 0007 migration); the truncated `text` field stays the inline-prompt
+// version. Files extracting past this cap lose the tail end from FTS,
+// but 1 MB is plenty for "find the section about X" — the realistic
+// failure mode is huge log files, not docs/papers.
+const FULL_EXTRACTION_BUDGET = 1024 * 1024
+
+interface ExtractedBlock {
+  /** Inline-view text, truncated to per-format budget. */
+  text: string
+  /** True when `text` was cut from a longer source. */
+  truncated: boolean
+  /** Full extraction (capped at FULL_EXTRACTION_BUDGET). Only set
+   *  when distinct from `text` — when they would match (file fits
+   *  the inline budget), this is undefined and the wire response
+   *  omits the field. */
+  fullText?: string
+}
+
+function truncateTo(raw: string, budget: number): ExtractedBlock {
+  if (raw.length <= budget) {
+    // Small file: inline view is the whole thing. No separate fullText.
+    return { text: raw, truncated: false }
+  }
+  const text = raw.slice(0, budget)
+  const fullText = raw.length <= FULL_EXTRACTION_BUDGET
+    ? raw
+    : raw.slice(0, FULL_EXTRACTION_BUDGET)
+  return { text, truncated: true, fullText }
 }
 
 const CODE_EXTENSIONS: Record<string, string> = {
@@ -70,9 +101,8 @@ function codeLanguageFor(name: string): string | null {
   return null
 }
 
-function truncate(text: string): { text: string; truncated: boolean } {
-  if (text.length <= EXTRACTION_BUDGET) return { text, truncated: false }
-  return { text: text.slice(0, EXTRACTION_BUDGET), truncated: true }
+function truncate(raw: string): ExtractedBlock {
+  return truncateTo(raw, EXTRACTION_BUDGET)
 }
 
 function hasName(name: string, ...suffixes: string[]) {
@@ -112,7 +142,7 @@ export async function POST(req: NextRequest) {
       hasName(name, '.txt', '.md', '.csv', '.json')
     ) {
       const raw = await file.text()
-      const { text, truncated } = truncate(raw)
+      const { text, truncated, fullText } = truncate(raw)
       const kind: ExtractionResponse['kind'] =
         type === 'application/json' || hasName(name, '.json')
           ? 'json'
@@ -121,7 +151,7 @@ export async function POST(req: NextRequest) {
           : type === 'text/markdown' || hasName(name, '.md')
           ? 'markdown'
           : 'text'
-      return NextResponse.json<ExtractionResponse>({ kind, text, truncated })
+      return NextResponse.json<ExtractionResponse>({ kind, text, truncated, fullText })
     }
 
     // PDF
@@ -130,8 +160,8 @@ export async function POST(req: NextRequest) {
       const buffer = Buffer.from(await file.arrayBuffer())
       const parser = new PDFParse({ data: buffer })
       const result = await parser.getText()
-      const { text, truncated } = truncate(result.text ?? '')
-      return NextResponse.json<ExtractionResponse>({ kind: 'pdf', text, truncated })
+      const { text, truncated, fullText } = truncate(result.text ?? '')
+      return NextResponse.json<ExtractionResponse>({ kind: 'pdf', text, truncated, fullText })
     }
 
     // DOCX
@@ -143,8 +173,8 @@ export async function POST(req: NextRequest) {
       const mammoth = await import('mammoth')
       const buffer = Buffer.from(await file.arrayBuffer())
       const result = await mammoth.extractRawText({ buffer })
-      const { text, truncated } = truncate(result.value ?? '')
-      return NextResponse.json<ExtractionResponse>({ kind: 'docx', text, truncated })
+      const { text, truncated, fullText } = truncate(result.value ?? '')
+      return NextResponse.json<ExtractionResponse>({ kind: 'docx', text, truncated, fullText })
     }
 
     // HTML — strip tags, keep visible text. We use a streaming HTML parser
@@ -158,8 +188,8 @@ export async function POST(req: NextRequest) {
         blockTextElements: { script: false, noscript: false, style: false, pre: true },
       })
       const visible = root.text.replace(/\s+/g, ' ').trim()
-      const { text, truncated } = truncate(visible)
-      return NextResponse.json<ExtractionResponse>({ kind: 'html', text, truncated })
+      const { text, truncated, fullText } = truncate(visible)
+      return NextResponse.json<ExtractionResponse>({ kind: 'html', text, truncated, fullText })
     }
 
     // Code files — treat as plain text with a wider budget and a detected
@@ -168,11 +198,12 @@ export async function POST(req: NextRequest) {
       const language = codeLanguageFor(name)
       if (language) {
         const raw = await file.text()
-        const { text, truncated } = truncateTo(raw, CODE_BUDGET)
+        const { text, truncated, fullText } = truncateTo(raw, CODE_BUDGET)
         return NextResponse.json<ExtractionResponse>({
           kind: 'code',
           text,
           truncated,
+          fullText,
           language,
         })
       }
@@ -197,11 +228,12 @@ export async function POST(req: NextRequest) {
         chunks.push(`# Sheet: ${sheetName}\n${csv.trim()}`)
       }
       const joined = chunks.join('\n\n')
-      const { text, truncated } = truncate(joined)
+      const { text, truncated, fullText } = truncate(joined)
       return NextResponse.json<ExtractionResponse>({
         kind: 'spreadsheet',
         text,
         truncated,
+        fullText,
       })
     }
 

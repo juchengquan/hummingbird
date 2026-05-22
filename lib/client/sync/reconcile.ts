@@ -254,6 +254,7 @@ export async function fetchCloudSnapshot(
       }
       if (f.extracted_text) file.extractedText = f.extracted_text
       if (f.extraction_truncated) file.extractionTruncated = f.extraction_truncated
+      if (f.full_text) file.extractedFullText = f.full_text
       if (f.extracted_kind) file.extractedKind = f.extracted_kind
       if (f.image_data_url) file.imageDataUrl = f.image_data_url
       if (f.summary) file.summary = f.summary
@@ -561,6 +562,7 @@ export async function bulkUploadLocalState(
         extraction_status: f.extractionStatus ?? null,
         extracted_text: f.extractedText ?? null,
         extraction_truncated: f.extractionTruncated ?? false,
+        full_text: f.extractedFullText ?? null,
         extracted_kind: f.extractedKind ?? null,
         image_data_url: f.imageDataUrl ?? null,
         summary: f.summary ?? null,

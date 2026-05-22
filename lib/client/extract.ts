@@ -30,6 +30,7 @@ type ExtractionPatch = Partial<
     | 'extractionStatus'
     | 'extractedText'
     | 'extractionTruncated'
+    | 'extractedFullText'
     | 'extractedKind'
     | 'imageDataUrl'
     | 'summary'
@@ -135,6 +136,10 @@ export async function runExtraction(
         : ('done' as FileExtractionStatus),
     extractedText: result.text,
     extractionTruncated: result.truncated,
+    // Server only sends `fullText` when distinct from `text`. When
+    // absent, the inline view IS the full extraction — Phase 3 falls
+    // back to `extractedText` for short files.
+    extractedFullText: result.fullText,
     extractedKind: result.kind,
   })
 
