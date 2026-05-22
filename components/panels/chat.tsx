@@ -22,6 +22,10 @@ import {
   resolveWebFetchConfig,
   type WebFetchConfig,
 } from "@/shared/skills/web-fetch-config"
+import {
+  resolveImageGenConfig,
+  type ImageGenConfig,
+} from "@/shared/skills/image-gen-config"
 import { SmartPasteChip } from "@/components/chat/smart-paste-chip"
 import { detectPasteKind, type PasteDetection } from "@/shared/smart-paste/detect"
 import { ChatHeader } from "@/components/panels/chat-header"
@@ -300,6 +304,7 @@ export function ChatPanel() {
           id: string
           webSearchConfig?: WebSearchConfig
           webFetchConfig?: WebFetchConfig
+          imageGenConfig?: ImageGenConfig
         } = {
           id: s.id,
         }
@@ -332,6 +337,16 @@ export function ChatPanel() {
             conv?.webFetchConfig
           )
           entry.webFetchConfig = { maxCalls: resolved.maxCalls }
+        }
+        if (s.id === 'imageGen') {
+          const resolved = resolveImageGenConfig(
+            activeWorkspace?.imageGenConfig,
+            conv?.imageGenConfig
+          )
+          entry.imageGenConfig = {
+            maxCalls: resolved.maxCalls,
+            aspectRatio: resolved.aspectRatio,
+          }
         }
         return entry
       })

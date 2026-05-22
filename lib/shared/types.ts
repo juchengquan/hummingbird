@@ -97,6 +97,12 @@ export interface Workspace {
    */
   webFetchConfig?: import("./skills/web-fetch-config").WebFetchConfig
   /**
+   * Workspace-level config for the `imageGen` skill (Minimax image
+   * generation). Per-turn cap + default aspect ratio today; cascade
+   * machinery is shared with the other skills.
+   */
+  imageGenConfig?: import("./skills/image-gen-config").ImageGenConfig
+  /**
    * User-defined ordering within the workspaces list, set by
    * `reorderWorkspaces`. The drag-and-drop UI in the Workspaces panel
    * writes monotonically increasing integers; the render order falls
@@ -475,6 +481,11 @@ export interface Conversation {
    * field-by-field cascade as `webSearchConfig`.
    */
   webFetchConfig?: import("./skills/web-fetch-config").WebFetchConfig
+  /**
+   * Per-conversation override of the workspace `imageGen` config. Same
+   * field-by-field cascade as the other skills.
+   */
+  imageGenConfig?: import("./skills/image-gen-config").ImageGenConfig
   /**
    * Conversation this one was forked from. Set by `forkConversation`;
    * undefined for top-of-tree chats. Used by the branches dialog to
