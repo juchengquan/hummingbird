@@ -213,13 +213,13 @@ export interface Database {
           extraction_status: 'pending' | 'done' | 'failed' | 'unsupported' | null
           extracted_text: string | null
           extraction_truncated: boolean
-          full_text: string | null
           extracted_kind: string | null
           image_data_url: string | null
           summary: string | null
           key_topics: string[]
           uploaded_at: string
           deleted_at: string | null
+          full_text: string | null
         }
         Insert: {
           id: string
@@ -232,13 +232,13 @@ export interface Database {
           extraction_status?: 'pending' | 'done' | 'failed' | 'unsupported' | null
           extracted_text?: string | null
           extraction_truncated?: boolean
-          full_text?: string | null
           extracted_kind?: string | null
           image_data_url?: string | null
           summary?: string | null
           key_topics?: string[]
           uploaded_at?: string
           deleted_at?: string | null
+          full_text?: string | null
         }
         Update: {
           id?: string
@@ -251,13 +251,13 @@ export interface Database {
           extraction_status?: 'pending' | 'done' | 'failed' | 'unsupported' | null
           extracted_text?: string | null
           extraction_truncated?: boolean
-          full_text?: string | null
           extracted_kind?: string | null
           image_data_url?: string | null
           summary?: string | null
           key_topics?: string[]
           uploaded_at?: string
           deleted_at?: string | null
+          full_text?: string | null
         }
         Relationships: []
       }
