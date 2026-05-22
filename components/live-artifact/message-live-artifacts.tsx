@@ -18,6 +18,7 @@
  * content that the model produced without a fence.
  */
 
+import { useMemo } from "react"
 import { ExternalLink } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -40,8 +41,18 @@ export function MessageLiveArtifacts({
   messageId,
   className,
 }: MessageLiveArtifactsProps) {
-  const artifacts = useStore((s) =>
-    s.artifacts.filter((a) => a.messageId === messageId && a.kind === "code")
+  // Select the stable underlying slice — `.filter` inside the selector
+  // would return a fresh array on every read, which trips React's
+  // useSyncExternalStore equality check and produces an infinite
+  // re-render ("getSnapshot should be cached"). Derive the per-message
+  // subset in useMemo instead.
+  const allArtifacts = useStore((s) => s.artifacts)
+  const artifacts = useMemo(
+    () =>
+      allArtifacts.filter(
+        (a) => a.messageId === messageId && a.kind === "code"
+      ),
+    [allArtifacts, messageId]
   )
   if (artifacts.length === 0) return null
 
