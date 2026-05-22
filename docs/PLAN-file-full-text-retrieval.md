@@ -1,6 +1,6 @@
 # Plan: File full-text retrieval (A + C)
 
-Status: **Drafted, not yet started.**
+Status: **🪜 Phases 1 + 2 shipped** in PRs [#33](https://github.com/juchengquan/hummingbird/pull/33) and [#35](https://github.com/juchengquan/hummingbird/pull/35) — file text caps raised + full-text storage column on `files`. Phase 3 (`searchFiles` skill + retrieval API) **not yet started**.
 
 ## Why
 

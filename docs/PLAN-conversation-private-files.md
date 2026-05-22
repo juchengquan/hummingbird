@@ -1,6 +1,6 @@
 # Plan: Conversation-private file attachments
 
-Status: **planning** — no code yet.
+Status: **✅ shipped**. `ConversationFile` lane lives alongside workspace `Resource` lane; see `lib/client/hooks/use-store.ts` (`addConversationFile` / `removeConversationFile`) and migration `0004_conversation_files.sql`.
 
 A second lane of file attachments that live and die with one
 conversation, sitting alongside the existing workspace-library lane.
