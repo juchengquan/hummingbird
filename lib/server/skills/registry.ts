@@ -66,6 +66,7 @@ export interface ServerSkill {
 // the wiring stays in one place. Each module owns its own log type,
 // config resolution, and prompt copy.
 import { imageGenSkill } from "@/server/skills/image-gen"
+import { searchFilesSkill } from "@/server/skills/file-search"
 import { webFetchSkill } from "@/server/skills/web-fetch"
 import { webSearchSkill } from "@/server/skills/web-search"
 
@@ -76,4 +77,5 @@ export const SERVER_SKILLS: ServerSkill[] = [
   webSearchSkill,
   webFetchSkill,
   imageGenSkill,
+  searchFilesSkill,
 ]

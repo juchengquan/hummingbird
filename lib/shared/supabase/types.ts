@@ -665,6 +665,19 @@ export interface Database {
         }
         Returns: void
       }
+      search_file_sections: {
+        Args: {
+          p_file_id: string
+          p_query: string
+          p_max_fragments?: number
+          p_max_words?: number
+          p_min_words?: number
+        }
+        Returns: {
+          excerpt: string
+          rank: number
+        }[]
+      }
     }
     Enums: Record<string, never>
     CompositeTypes: Record<string, never>

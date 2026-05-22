@@ -1,6 +1,6 @@
 # Plan: File full-text retrieval (A + C)
 
-Status: **🪜 Phases 1 + 2 shipped** in PRs [#33](https://github.com/juchengquan/hummingbird/pull/33) and [#35](https://github.com/juchengquan/hummingbird/pull/35) — file text caps raised + full-text storage column on `files`. Phase 3 (`searchFiles` skill + retrieval API) **not yet started**.
+Status: **🪜 Phases 1 + 2 + 3 shipped**. PRs [#33](https://github.com/juchengquan/hummingbird/pull/33) (caps), [#35](https://github.com/juchengquan/hummingbird/pull/35) (full-text storage), and the in-flight PR for the `searchFiles` ServerSkill + Postgres FTS RPC. Phase 4 (system-prompt wiring) is folded into Phase 3 — `searchFilesSkill.promptFragment` tells the model when/how to call the tool. Phase 5 (UI polish) is the remaining optional follow-up.
 
 ## Why
 

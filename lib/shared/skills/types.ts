@@ -13,7 +13,7 @@
 
 import type { LucideIcon } from "lucide-react"
 
-export type SkillId = "webSearch" | "webFetch" | "imageGen"
+export type SkillId = "webSearch" | "webFetch" | "imageGen" | "searchFiles"
 
 /**
  * Tool name exposed to the model for the web-search skill. The skill
