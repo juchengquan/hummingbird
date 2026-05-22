@@ -4,7 +4,7 @@ import { useCallback, useState } from "react"
 import { format, formatDistanceToNow } from "date-fns"
 import { Eye, ExternalLink, Globe, Lock, Plus, RefreshCw, X } from "lucide-react"
 
-import { useUrlPreview } from "@/components/url-viewer/types"
+import { openUrlPreview } from "@/components/right-panel-slot"
 import { toast } from "sonner"
 
 import { Input } from "@/components/ui/input"
@@ -380,7 +380,7 @@ function BookmarkRow({
       >
         <button
           type="button"
-          onClick={() => useUrlPreview.getState().open({ bookmarkId: bookmark.id })}
+          onClick={() => openUrlPreview({ bookmarkId: bookmark.id })}
           aria-label={`Preview ${bookmark.title}`}
           title="Preview"
           className="p-1 rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] transition-colors"

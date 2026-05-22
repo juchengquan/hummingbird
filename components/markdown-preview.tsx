@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useRef } from "react"
 import { marked } from "marked"
 import { cn } from "@/shared/utils"
-import { usePdfViewer } from "@/components/pdf-viewer/types"
+import { openPdf } from "@/components/right-panel-slot"
 import "./markdown-preview.css"
 
 /**
@@ -93,7 +93,6 @@ export function MarkdownPreview({
   sourceCount,
   onSourceClick,
 }: MarkdownPreviewProps) {
-  const openPdfViewer = usePdfViewer((s) => s.open)
   const containerRef = useRef<HTMLDivElement>(null)
 
   const html = useMemo(() => {
@@ -123,14 +122,14 @@ export function MarkdownPreview({
         const fileId = target.dataset.citationFile
         const page = Number(target.dataset.citationPage)
         if (!fileId || !Number.isFinite(page)) return
-        openPdfViewer({ fileId, page })
+        openPdf({ fileId, page })
       } else if (target.classList.contains("web-citation")) {
         const idx = Number(target.dataset.citationIndex)
         if (!Number.isFinite(idx)) return
         onSourceClick?.(idx)
       }
     },
-    [openPdfViewer, onSourceClick]
+    [onSourceClick]
   )
 
   if (!html) {
