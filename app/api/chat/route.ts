@@ -4,7 +4,10 @@ import { generateText, stepCountIs, streamText, type ModelMessage } from 'ai'
 import { NextResponse } from 'next/server'
 
 import { DEFAULT_CHAT_MODEL } from '@/shared/models'
-import { selectModel } from '@/server/model-provider'
+import {
+  ProviderUnavailableError,
+  selectModel,
+} from '@/server/model-provider'
 import { categorizeError } from '@/shared/api-errors'
 import { ChatRequestSchema } from '@/shared/api-schemas'
 import {
@@ -339,15 +342,6 @@ export async function POST(req: NextRequest) {
     )
   }
   const body = parsed.data
-  const apiKey = process.env.AI_GATEWAY_API_KEY
-
-  if (!apiKey) {
-    return NextResponse.json(
-      { code: 'auth', message: 'Missing AI_GATEWAY_API_KEY.' },
-      { status: 401 }
-    )
-  }
-
   const modelId = body.model || DEFAULT_CHAT_MODEL
   const enabledSkillIds = (body.skills ?? []).map((s) => s.id)
   // Resolve the user-facing webSearch cap from the request. The client
@@ -839,6 +833,12 @@ export async function POST(req: NextRequest) {
       },
     })
   } catch (error) {
+    if (error instanceof ProviderUnavailableError) {
+      return NextResponse.json(
+        { code: 'auth', message: error.message },
+        { status: 401 }
+      )
+    }
     const { status, code, message } = categorizeError(error)
     return NextResponse.json({ code, message }, { status })
   }

@@ -5,7 +5,10 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
 import { categorizeError } from '@/shared/api-errors'
-import { selectModel } from '@/server/model-provider'
+import {
+  ProviderUnavailableError,
+  selectModel,
+} from '@/server/model-provider'
 
 export const runtime = 'nodejs'
 
@@ -100,14 +103,6 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const apiKey = process.env.AI_GATEWAY_API_KEY
-  if (!apiKey) {
-    return NextResponse.json(
-      { code: 'auth', message: 'Missing AI_GATEWAY_API_KEY.' },
-      { status: 401 }
-    )
-  }
-
   const body = parsed.data
   const modelId = body.model ?? DEFAULT_SUMMARY_MODEL
   const prompt =
@@ -139,6 +134,12 @@ export async function POST(req: NextRequest) {
       )
     }
   } catch (error) {
+    if (error instanceof ProviderUnavailableError) {
+      return NextResponse.json(
+        { code: 'auth', message: error.message },
+        { status: 401 }
+      )
+    }
     const { status, code, message } = categorizeError(error)
     return NextResponse.json({ code, message }, { status })
   }
