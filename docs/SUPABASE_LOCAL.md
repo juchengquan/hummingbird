@@ -422,9 +422,40 @@ incremental), `db reset` is the more common path.
 supabase gen types typescript --local > lib/shared/supabase/types.ts
 ```
 
-The Supabase plan in `docs/SUPABASE_SETUP.md` mentions this command;
-the `--local` flag points it at your local stack instead of a remote
-project.
+Equivalently: `bun run supabase:types`. The `--local` flag points the
+codegen at your local stack instead of a remote project.
+
+**Always regenerate after a migration change.** `lib/shared/supabase/types.ts`
+is the contract between the typed Supabase client and the live schema —
+when it falls behind, columns and RPC signatures silently degrade to
+`any` and bugs that should be compile-time errors leak through.
+
+CI enforces this via a lightweight diff-pairing check: any PR that
+touches `supabase/migrations/` must also touch
+`lib/shared/supabase/types.ts`. See `scripts/verify-supabase-types.sh`.
+The check is purely a forcing function — it doesn't validate that the
+regen produced the correct output, just that it happened. The
+discipline of `bun run supabase:reset && bun run supabase:types`
+before committing migrations is what keeps the file honest.
+
+If you want belt-and-braces enforcement locally, add this to
+`.git/hooks/pre-commit` (executable):
+
+```bash
+#!/bin/bash
+# Warn when migrations are staged without a types.ts update.
+if git diff --cached --name-only | grep -q '^supabase/migrations/'; then
+  if ! git diff --cached --name-only | grep -q '^lib/shared/supabase/types\.ts$'; then
+    echo "⚠️  Migrations staged but lib/shared/supabase/types.ts is not."
+    echo "   Run: bun run supabase:reset && bun run supabase:types"
+    echo "   (Use --no-verify to commit anyway.)"
+    exit 1
+  fi
+fi
+```
+
+Not installed by default — keeps the project free of `husky`/`lefthook`
+dependencies. Copy the snippet if you want the local nudge.
 
 ### Inspect / edit data
 
