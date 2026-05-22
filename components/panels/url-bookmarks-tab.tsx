@@ -17,7 +17,7 @@ import {
 } from "@/client/hooks/use-store"
 import { apiClient } from "@/client/api-client"
 import { TabEmptyState } from "@/components/panels/tab-empty-state"
-import { cn } from "@/shared/utils"
+import { cn, stripUrlScheme } from "@/shared/utils"
 import type { UrlBookmark } from "@/shared/types"
 
 /**
@@ -363,7 +363,7 @@ function BookmarkRow({
           </div>
           <div className="text-[10px] text-[var(--muted-foreground)] truncate flex items-center gap-1">
             <ExternalLink size={9} />
-            <span className="truncate">{stripScheme(bookmark.url)}</span>
+            <span className="truncate">{stripUrlScheme(bookmark.url)}</span>
           </div>
           <div
             className="text-[10px] text-[var(--muted-foreground)] mt-0.5"
@@ -494,6 +494,3 @@ function AddBookmarkDialog({
   )
 }
 
-function stripScheme(url: string): string {
-  return url.replace(/^https?:\/\//, "")
-}

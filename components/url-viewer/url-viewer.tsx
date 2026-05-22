@@ -23,6 +23,7 @@ import { toast } from "sonner"
 import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
+import { stripUrlScheme } from "@/shared/utils"
 import {
   Sheet,
   SheetContent,
@@ -168,7 +169,7 @@ function InfoBlock({
           </SheetTitle>
           <p className="mt-1 text-[11px] text-[var(--muted-foreground)] flex items-center gap-1.5 flex-wrap">
             <span className="truncate" title={bookmark.url}>
-              {stripScheme(bookmark.url)}
+              {stripUrlScheme(bookmark.url)}
             </span>
             <span className="opacity-50">·</span>
             <span
@@ -264,6 +265,3 @@ function Body({ bookmark }: { bookmark: UrlBookmark }) {
   )
 }
 
-function stripScheme(url: string): string {
-  return url.replace(/^https?:\/\//, "").replace(/\/$/, "")
-}
