@@ -8,7 +8,7 @@
  * not implementation details.
  */
 
-import { Globe, Link2 } from "lucide-react"
+import { Globe, ImagePlus, Link2 } from "lucide-react"
 
 import type { SkillDescriptor } from "./types"
 
@@ -30,6 +30,17 @@ export const SKILLS: SkillDescriptor[] = [
       "Look up current information on the web. Picks from Tavily and Brave under the hood — toggle providers and tune their settings in this skill's panel.",
     icon: Globe,
     default: false,
+    requiresEnv: true,
+  },
+  {
+    id: "imageGen",
+    name: "Image generation",
+    description:
+      "Let the model generate images via Minimax (text-to-image, or image-to-image when you provide a reference URL). Tight per-turn cap because each generation costs ~1–3¢.",
+    icon: ImagePlus,
+    default: false,
+    // Requires MINIMAX_CN_API_KEY (same key as the Minimax-CN chat
+    // bypass — the image endpoint accepts the same auth).
     requiresEnv: true,
   },
 ]

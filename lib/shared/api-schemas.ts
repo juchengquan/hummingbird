@@ -165,6 +165,17 @@ export const ChatRequestSchema = z.object({
             maxCalls: z.number().int().min(1).max(50).optional(),
           })
           .optional(),
+        /** Optional structured config for the `imageGen` skill (Minimax
+         *  T2I/I2I). Server clamps both `maxCalls` and `aspectRatio`
+         *  via `resolveImageGenConfig` so client-side garbage is safe. */
+        imageGenConfig: z
+          .object({
+            maxCalls: z.number().int().min(1).max(50).optional(),
+            aspectRatio: z
+              .enum(["1:1", "16:9", "9:16", "4:3", "3:4", "2:3", "3:2"])
+              .optional(),
+          })
+          .optional(),
       })
     )
     .max(10)
