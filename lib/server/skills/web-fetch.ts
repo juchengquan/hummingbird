@@ -141,3 +141,45 @@ export function buildWebFetchTool(log: WebFetchLog, opts: BuildOpts) {
     },
   })
 }
+
+// --- ServerSkill entry -----------------------------------------------------
+
+import type { ServerSkill } from "@/server/skills/registry"
+import { DEFAULT_MAX_WEB_FETCHES } from "@/shared/skills/web-fetch-config"
+
+/**
+ * Registry entry for the webFetch skill. Threads the per-request
+ * `webFetchConfig.maxCalls` through the shared clamp, owns its
+ * per-turn log internally, and produces a Tool that the AI SDK can
+ * register. The prompt fragment mirrors the runtime cap exactly so
+ * the model sees the same number it's actually constrained by.
+ */
+export const webFetchSkill: ServerSkill = {
+  id: "webFetch",
+  toolName: "webFetch",
+  buildTool(requestEntry, ctx) {
+    const maxCalls = clampMaxWebFetches(
+      requestEntry?.webFetchConfig?.maxCalls ?? DEFAULT_MAX_WEB_FETCHES
+    )
+    const log: WebFetchLog = []
+    return buildWebFetchTool(log, {
+      maxCalls,
+      signal: ctx.signal,
+      consumeBudget: ctx.consumeBudget,
+    })
+  },
+  promptFragment(requestEntry) {
+    const maxCalls = clampMaxWebFetches(
+      requestEntry?.webFetchConfig?.maxCalls ?? DEFAULT_MAX_WEB_FETCHES
+    )
+    return (
+      `You can call \`webFetch({ url })\` to fetch a single web page and read its full ` +
+      `extracted text. Use this when the user references a specific URL, or when a ` +
+      `\`webSearch\` snippet looks promising but you need the full content to answer ` +
+      `accurately. Each call returns up to ~200 KB of plain text plus the page title and ` +
+      `description. Cannot fetch internal or private network addresses. HARD LIMIT: ` +
+      `${maxCalls} ${maxCalls === 1 ? "call" : "calls"} per turn — pick the URLs that ` +
+      `most directly answer the question rather than fetching everything.`
+    )
+  },
+}
