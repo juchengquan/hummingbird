@@ -31,6 +31,7 @@ export function MediaPreviewDialog() {
   const isOpen = useImagePreviewValue('isOpen', editor.id);
   const scale = useImagePreviewValue('scale');
   const isEditingScale = useImagePreviewValue('isEditingScale');
+  const currentPreview = useImagePreviewValue('currentPreview');
   const {
     closeProps,
     currentUrlIndex,
@@ -45,6 +46,21 @@ export function MediaPreviewDialog() {
     zoomInProps,
     zoomOutDisabled,
   } = useImagePreview({ scrollSpeed: SCROLL_SPEED });
+
+  const downloadCurrent = () => {
+    if (!currentPreview?.url) return;
+    const a = document.createElement('a');
+    a.href = currentPreview.url;
+    // Filename hint — browsers honour `download` for same-origin and
+    // blob/data URLs; ignored cross-origin but the click still triggers
+    // the standard save flow. The .png suffix is a hint; the actual
+    // bytes the browser writes come from the server's content-type.
+    a.download = currentPreview.id
+      ? `image-${currentPreview.id}.png`
+      : 'image.png';
+    a.rel = 'noopener';
+    a.click();
+  };
 
   return (
     <div
@@ -127,8 +143,18 @@ export function MediaPreviewDialog() {
                 <Plus className="size-4" />
               </button>
             </div>
-            {/* TODO: downLoad the image */}
-            <button className={cn(buttonVariants())} type="button">
+            <button
+              className={cn(
+                buttonVariants({
+                  variant: currentPreview?.url ? 'default' : 'disabled',
+                })
+              )}
+              type="button"
+              onClick={downloadCurrent}
+              disabled={!currentPreview?.url}
+              aria-label="Download image"
+              title="Download"
+            >
               <Download className="size-4" />
             </button>
             <button
