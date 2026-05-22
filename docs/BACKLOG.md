@@ -22,32 +22,9 @@ forward.
 
 ## Cross-conversation memory with retrieval
 
-**Why distinctive.** Solves "the model forgets between chats" with a
-proper retrieval layer instead of a hand-curated "memories" list. Few
-AI chat apps do this well; the ones that do (Mem, Pi) are entire
-products built around it.
+→ See [PLAN-cross-conversation-memory.md](PLAN-cross-conversation-memory.md).
 
-**Sketch.**
-- Embed every persisted message with a small model
-  (`text-embedding-3-small` or open-weight). Store the vector in a
-  new `message_embeddings (message_id, embedding vector(1536))` table.
-- New `/api/recall` route: takes the user's current question, returns
-  the top-K past messages by cosine similarity, scoped to the user.
-- Surface as either:
-  - **A `memoryRecall` skill** in the Skills cascade — when on, every
-    chat turn prepends "From your past conversations: …" to the
-    system prompt with the top-3 hits.
-  - **A "Related" strip** under the chat input showing 1–3 past
-    conversation cards the user can click to include explicitly.
-
-**Builds on.** Skills surface (`lib/skills/registry.ts`),
-`messages` table, the chat route's system-prompt assembly.
-
-**Effort.** Large (~500–700 lines + ops). Requires `pgvector`
-extension in Supabase, an embedding budget (cheap, but real),
-async embedding pipeline (don't block chat saves). Phase 1 could
-gate this behind a per-user toggle in AccountMenu to control
-embedding cost.
+**Effort.** Large (~500–700 lines + ops).
 
 ---
 
@@ -78,55 +55,17 @@ testing shows the inline marker without context is too opaque.
 
 ## Long-running task mode
 
-**Why distinctive.** Most chat apps are turn-based: prompt → answer →
-done. Long-running tasks ("research the top 10 React frameworks and
-write a comparison") need an async-task surface with progress
-visibility. Differentiator vs chat-only apps; positions Hummingbird
-closer to an agent surface.
+→ See [PLAN-long-running-tasks.md](PLAN-long-running-tasks.md).
 
-**Sketch.**
-- New `tasks` table: `{ id, user_id, conversation_id, status, goal,
-  started_at, finished_at }`.
-- A "Run as task" toggle on the input bar (or per-prompt slash command
-  `/task`). When on, the message is dispatched to a server worker that
-  runs `streamText` in a loop, calling tools (web search, page fetch,
-  …) until either the model emits a "done" signal or a step cap hits.
-- The chat shows a **task strip** at the top of the conversation with
-  live progress ("Step 3 of N · Searching the web for X…") and a
-  Cancel button. Final result lands as a normal assistant message
-  when done.
-- Notification when the task finishes (browser notification + a small
-  badge on the conversation sidebar entry).
-
-**Builds on.** Skills cascade, `stopWhen: stepCountIs(N)` (already in
-chat route), live tool-call strip.
-
-**Effort.** Large (~600+ lines plus a worker process or Vercel
-background function). Probably needs a queue (Supabase pg-boss or
-Inngest). Requires careful think on what happens when the user closes
-the browser mid-task.
+**Effort.** Large (~600+ lines plus a worker/queue strategy).
 
 ---
 
 ## Workspace canvas
 
-**Why distinctive.** Combines the editor, chat, and artifacts into a
-freeform drag-and-drop canvas where messages, artifacts, and files
-become movable cards. Lets the user spatially organize a research
-session instead of scrolling through linear chat.
+→ See [PLAN-workspace-canvas.md](PLAN-workspace-canvas.md).
 
-**Sketch.** A new view alongside Workspaces / Chat / Editor. Canvas
-backed by `react-flow` or `tldraw`. Each node carries a `kind`:
-`chat-message`, `artifact`, `file`, `note`. Drag to rearrange; arrows
-between nodes capture relationships. Persisted as JSON on the
-workspace row (or a new `canvas_state jsonb`).
-
-**Builds on.** Existing artifacts + notes + workspace editor doc +
-chat messages — same data already exists; this is a different spatial
-*view* of it.
-
-**Effort.** Large (~800+ lines), but ships independently — doesn't
-change anything else.
+**Effort.** Large (~800+ lines), ships independently.
 
 ---
 
@@ -148,22 +87,12 @@ side-by-side layout option, multi-PDF disambiguation (citation
 
 ## Project mode
 
-**Why distinctive.** Promote a workspace to a "project" with a goal, a
-small set of milestones, and AI that helps move items through a
-Kanban-style task surface. Combines the workspace + tasks + AI agent
-patterns into one product surface.
+→ See [PLAN-project-mode.md](PLAN-project-mode.md). Depends on
+[PLAN-long-running-tasks.md](PLAN-long-running-tasks.md) shipping
+first.
 
-**Sketch.** New optional fields on `Workspace`: `goal text`,
-`milestones jsonb`. A new "Tasks" tab in the right sidebar with
-columns (To-do / In progress / Done). AI can be asked to break down
-the goal into tasks; each task card can be "worked on" by spawning a
-long-running task (above) that returns an artifact.
-
-**Builds on.** Workspace system prompts, workspace skill prefs,
-artifacts, long-running task mode (depends on it).
-
-**Effort.** Very large (~1,000+ lines). Effectively a sub-product.
-Defer until long-running tasks land.
+**Effort.** Very large (~1,000+ lines). Defer until long-running
+tasks land.
 
 ---
 
