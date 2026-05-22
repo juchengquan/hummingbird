@@ -36,10 +36,16 @@ describe("last-failures cache", () => {
   })
 
   test("entry past 30s TTL → null (lazy expiry)", () => {
-    recordFailure("srv-3", "test")
+    // Freeze the clock so the record and read see fixed timestamps —
+    // without this the few microseconds between `recordFailure` and
+    // the patch leak into the diff and make the boundary check flaky
+    // when the suite runs under load.
     const realNow = Date.now
-    Date.now = () => realNow() + 31_000
+    const t0 = realNow()
+    Date.now = () => t0
     try {
+      recordFailure("srv-3", "test")
+      Date.now = () => t0 + 31_000
       expect(getRecentFailure("srv-3")).toBeNull()
     } finally {
       Date.now = realNow
@@ -47,10 +53,12 @@ describe("last-failures cache", () => {
   })
 
   test("at exactly 30s boundary → still cached", () => {
-    recordFailure("srv-4", "edge")
     const realNow = Date.now
-    Date.now = () => realNow() + 30_000
+    const t0 = realNow()
+    Date.now = () => t0
     try {
+      recordFailure("srv-4", "edge")
+      Date.now = () => t0 + 30_000
       expect(getRecentFailure("srv-4")).toBe("edge")
     } finally {
       Date.now = realNow

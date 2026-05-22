@@ -22,18 +22,7 @@ import { tool } from "ai"
 import { z } from "zod"
 
 import { fetchUrlBookmark } from "@/server/url/fetch"
-
-/** Tool name surfaced to the model. Kept stable so message-history
- *  tool_call records survive renames. */
-export const WEB_FETCH_TOOL_NAME = "webFetch"
-
-export const DEFAULT_MAX_WEB_FETCHES = 5
-const MAX_FETCHES_CEILING = 20
-
-export function clampMaxWebFetches(n: number): number {
-  if (!Number.isFinite(n) || n <= 0) return DEFAULT_MAX_WEB_FETCHES
-  return Math.min(Math.floor(n), MAX_FETCHES_CEILING)
-}
+import { clampMaxWebFetches } from "@/shared/skills/web-fetch-config"
 
 export interface WebFetchInvocation {
   url: string
