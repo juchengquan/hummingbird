@@ -30,8 +30,10 @@ import type { AttachmentPayload } from '@/shared/attachments'
 
 // Soft cap on combined inline text across all attachments, to keep prompts
 // inside reasonable token budgets. Per-file truncation already happens at
-// extraction time; this is a second pass across the whole attachment set.
-const TOTAL_ATTACHMENT_BUDGET = 96 * 1024
+// extraction time (100 KB / file, 128 KB for code); this is a second pass
+// across the whole attachment set. Sized to fit ~3 medium docs in full
+// before round-robin trimming kicks in.
+const TOTAL_ATTACHMENT_BUDGET = 300 * 1024
 
 // Per-IP rate limit shared across the chat route's web-tool calls
 // (webSearch + webFetch combined). The per-turn caps inside each tool

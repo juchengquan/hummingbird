@@ -10,7 +10,7 @@ import { toast } from 'sonner'
 import { apiClient } from '@/client/api-client'
 import type { ExtractionResponse } from '@/shared/api-schemas'
 
-export const EXTRACTION_BUDGET = 32 * 1024 // 32 KB of extracted text per file
+export const EXTRACTION_BUDGET = 100 * 1024 // 100 KB of extracted text per file
 
 /** Re-exported alias for callers that already import this name. */
 export type ExtractionResult = ExtractionResponse

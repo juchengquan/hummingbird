@@ -3,7 +3,7 @@ import type { NextRequest } from 'next/server'
 import { FILE_SIZE_LIMIT } from '@/shared/upload-config'
 
 // Keep extracted-text budget aligned with the client constant.
-const EXTRACTION_BUDGET = 32 * 1024
+const EXTRACTION_BUDGET = 100 * 1024
 
 export const runtime = 'nodejs'
 // Bigger uploads come through here than for JSON routes.
@@ -28,9 +28,9 @@ interface ExtractionResponse {
   language?: string
 }
 
-// Code files get a wider window than prose — 64 KB. Source files routinely
+// Code files get a wider window than prose — 128 KB. Source files routinely
 // blow past the prose budget without being long-form content.
-const CODE_BUDGET = 64 * 1024
+const CODE_BUDGET = 128 * 1024
 
 function truncateTo(text: string, budget: number): { text: string; truncated: boolean } {
   if (text.length <= budget) return { text, truncated: false }
