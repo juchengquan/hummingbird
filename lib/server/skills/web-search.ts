@@ -304,7 +304,11 @@ export function buildWebSearchTool(
   /** Upstream abort signal (typically `req.signal` from the chat route).
    *  Propagated into each provider call alongside their own per-call
    *  timeout so client disconnect cancels in-flight searches. */
-  upstreamSignal?: AbortSignal
+  upstreamSignal?: AbortSignal,
+  /** Per-IP cross-turn budget gate. Called once per tool invocation;
+   *  when refused, the tool returns a soft error with retry-after.
+   *  Distinct from `config.maxCalls` (per-turn). Omitted → no gate. */
+  consumeBudget?: () => { allowed: boolean; retryAfterSec: number }
 ) {
   // Decide which providers can actually run: enabled by user AND
   // configured on the server. If neither qualifies, don't register the
@@ -340,8 +344,16 @@ export function buildWebSearchTool(
         ),
     }),
     execute: async ({ query }) => {
-      // Cap check: one tool invocation = one cap unit, regardless of
-      // how many providers it fans out to.
+      // Per-IP cross-turn gate first.
+      const budget = consumeBudget?.()
+      if (budget && !budget.allowed) {
+        return {
+          results: [],
+          error: `webSearch rate limit exceeded for this IP. Retry in ${budget.retryAfterSec}s. The chat route caps outbound web tools (webSearch + webFetch combined) per minute.`,
+        }
+      }
+      // Per-turn cap: one tool invocation = one cap unit, regardless
+      // of how many providers it fans out to.
       if (log.length >= maxCalls) {
         return {
           results: [],

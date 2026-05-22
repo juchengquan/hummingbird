@@ -4,6 +4,7 @@ import { z } from "zod"
 
 import { fetchUrlBookmark, type FetchError } from "@/server/url/fetch"
 import { normalizeUrl } from "@/server/url/validate"
+import { createSlidingWindow, rateLimitKey } from "@/server/rate-limit"
 
 /**
  * Fetch + extract a URL as a bookmark snapshot. Used by the "Add
@@ -28,38 +29,10 @@ const BodySchema = z.object({
   url: z.string().min(1).max(2000),
 })
 
-const RATE_LIMIT_WINDOW_MS = 60_000
-const RATE_LIMIT_MAX_REQUESTS = 30
-const rateLimitBuckets = new Map<string, number[]>()
-
-function rateLimitKey(req: NextRequest): string {
-  // Prefer X-Forwarded-For (the deployment proxy fills it in); fall back
-  // to a single bucket so an unconfigured deploy still limits abuse.
-  const forwarded = req.headers.get("x-forwarded-for")
-  if (forwarded) {
-    return forwarded.split(",")[0].trim()
-  }
-  return "default"
-}
-
-function consumeRateLimit(key: string): { allowed: boolean; retryAfterSec: number } {
-  const now = Date.now()
-  const bucket = rateLimitBuckets.get(key) ?? []
-  // Drop entries outside the window.
-  const fresh = bucket.filter((t) => now - t < RATE_LIMIT_WINDOW_MS)
-  if (fresh.length >= RATE_LIMIT_MAX_REQUESTS) {
-    const oldest = fresh[0]
-    const retryAfterMs = RATE_LIMIT_WINDOW_MS - (now - oldest)
-    return { allowed: false, retryAfterSec: Math.ceil(retryAfterMs / 1000) }
-  }
-  fresh.push(now)
-  rateLimitBuckets.set(key, fresh)
-  return { allowed: true, retryAfterSec: 0 }
-}
+const bookmarkRateLimit = createSlidingWindow({ windowMs: 60_000, max: 30 })
 
 export async function POST(req: NextRequest) {
-  const rateKey = rateLimitKey(req)
-  const limit = consumeRateLimit(rateKey)
+  const limit = bookmarkRateLimit.consume(rateLimitKey(req))
   if (!limit.allowed) {
     return NextResponse.json(
       {

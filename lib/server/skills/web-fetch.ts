@@ -64,6 +64,12 @@ interface BuildOpts {
    *  when the client tab closes mid-stream, instead of running its
    *  internal 10s timer out to completion. */
   signal?: AbortSignal
+  /** Per-IP cross-turn budget gate. Called once per tool invocation.
+   *  When refused (`allowed: false`), the tool returns a soft error
+   *  with the suggested retry-after. Distinct from `maxCalls` (which
+   *  is a within-turn budget). When omitted, no cross-turn gate is
+   *  applied. */
+  consumeBudget?: () => { allowed: boolean; retryAfterSec: number }
 }
 
 export function buildWebFetchTool(log: WebFetchLog, opts: BuildOpts) {
@@ -81,6 +87,18 @@ export function buildWebFetchTool(log: WebFetchLog, opts: BuildOpts) {
         .describe("Absolute http(s) URL of the page to fetch."),
     }),
     execute: async ({ url }): Promise<WebFetchResult> => {
+      // Per-IP cross-turn gate first — if the user has been hammering
+      // the chat web tools we refuse before even checking the local
+      // log so a one-line tool result tells them to back off.
+      const budget = opts.consumeBudget?.()
+      if (budget && !budget.allowed) {
+        log.push({ url, ok: false, contentLength: 0 })
+        return {
+          ok: false,
+          url,
+          error: `webFetch rate limit exceeded for this IP. Retry in ${budget.retryAfterSec}s. The chat route caps outbound web tools (webSearch + webFetch combined) per minute.`,
+        }
+      }
       // Soft cap — return a tool result with an error rather than
       // throwing so the model handles it gracefully.
       if (log.length >= maxCalls) {

@@ -30,6 +30,7 @@ import {
 import { isWebSearchToolName } from '@/shared/skills/types'
 import { buildMcpTool, mcpToolName } from '@/server/mcp/tools'
 import { loadEffectiveMcpServers, type EffectiveMcpServer } from '@/server/mcp/load-servers'
+import { createSlidingWindow, rateLimitKey } from '@/server/rate-limit'
 import { resolveAttachedMcpResources } from '@/server/mcp/inject-resources'
 import {
   renderAttachmentsPrompt,
@@ -42,6 +43,12 @@ import type { AttachmentPayload } from '@/shared/attachments'
 // inside reasonable token budgets. Per-file truncation already happens at
 // extraction time; this is a second pass across the whole attachment set.
 const TOTAL_ATTACHMENT_BUDGET = 96 * 1024
+
+// Per-IP rate limit shared across the chat route's web-tool calls
+// (webSearch + webFetch combined). The per-turn caps inside each tool
+// are budget hints to the model; this is the abuse gate that runs
+// across turns. See the call site for the rationale.
+const chatWebToolLimit = createSlidingWindow({ windowMs: 60_000, max: 20 })
 
 /**
  * Convert the wire-shape `AttachmentPayload[]` into the server-side
@@ -359,6 +366,19 @@ export async function POST(req: NextRequest) {
   // toggled off (or none are configured server-side) the builder
   // returns null and the system-prompt note tells the model to fall
   // back.
+  //
+  // Per-IP cross-tool rate limit. The per-turn caps on webFetch /
+  // webSearch (5 + 3 by default) are budget hints to the model — a
+  // cooperative client can sidestep them by splitting one logical
+  // question into many turns. This cap is the actual abuse gate: at
+  // most 20 outbound web ops per IP per minute, summed across both
+  // tools. Counted on tool invocation, not per HTTP request. The
+  // existing /api/url/fetch route has its own bucket (30/min/IP) — the
+  // two are intentionally separate so a user filling their bookmark
+  // library doesn't starve their chat turn.
+  const webToolIpKey = rateLimitKey(req)
+  const consumeWebToolBudget = () => chatWebToolLimit.consume(webToolIpKey)
+
   const webSearchLog: WebSearchLog = []
   const webFetchLog: WebFetchLog = []
   const tools: Record<string, unknown> = {}
@@ -366,7 +386,12 @@ export async function POST(req: NextRequest) {
     // Pass `req.signal` through so an in-flight search aborts when the
     // client tab closes mid-stream — without this, each provider's
     // 8s timer runs to completion as zombie outbound work.
-    const t = buildWebSearchTool(webSearchLog, resolvedWebSearchConfig, req.signal)
+    const t = buildWebSearchTool(
+      webSearchLog,
+      resolvedWebSearchConfig,
+      req.signal,
+      consumeWebToolBudget
+    )
     if (t) tools.webSearch = t
   }
   // Resolve the webFetch cap from the request (client sends the
@@ -379,6 +404,7 @@ export async function POST(req: NextRequest) {
     tools.webFetch = buildWebFetchTool(webFetchLog, {
       maxCalls: webFetchMaxCalls,
       signal: req.signal,
+      consumeBudget: consumeWebToolBudget,
     })
   }
   // Register MCP-exposed tools for every enabled server. Local-mode
