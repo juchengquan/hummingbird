@@ -21,7 +21,10 @@ import { z } from 'zod';
 import { BaseEditorKit } from '@/components/editor/editor-base-kit';
 import { markdownJoinerTransform } from '@/shared/markdown-joiner-transform';
 import { categorizeError } from '@/shared/api-errors';
-import { selectModel } from '@/server/model-provider';
+import {
+  ProviderUnavailableError,
+  selectModel,
+} from '@/server/model-provider';
 
 import {
   buildEditTableMultiCellPrompt,
@@ -42,21 +45,14 @@ export async function POST(req: NextRequest) {
     value: children,
   });
 
-  // The editor's settings dialog can supply its own gateway key;
-  // when present we pass it through to `selectModel` per-request so
-  // a user's key isn't accidentally cached for other users. Without
-  // it, `selectModel` falls back to the process-wide gateway built
-  // from `AI_GATEWAY_API_KEY`.
-  const apiKey = key || process.env.AI_GATEWAY_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json(
-      { code: 'auth', message: 'Missing AI_GATEWAY_API_KEY.' },
-      { status: 401 }
-    );
-  }
-  const modelOptions = key ? { apiKeyOverride: key as string } : undefined;
-
   const isSelecting = editor.api.isExpanded();
+
+  // Honour the per-request gateway key from the editor settings dialog.
+  // `selectModel` falls back to the server-side gateway provider config
+  // (env var) when this isn't set, and surfaces `ProviderUnavailableError`
+  // — which we translate to 401 below — when neither is available.
+  const pickModel = (id: string) =>
+    selectModel(id, { gatewayApiKeyOverride: key });
 
   try {
     const stream = createUIMessageStream<ChatMessage>({
@@ -77,7 +73,7 @@ export async function POST(req: NextRequest) {
           // @ts-expect-error AI SDK v5 typing for Output.choice doesn't
           // narrow `output` on the result; runtime is correct. See ROADMAP.
           const { output: AIToolName } = await generateText({
-            model: selectModel(modelId, modelOptions),
+            model: pickModel(modelId),
             // @ts-expect-error see above
             output: Output.choice({ options: enumOptions }),
             prompt,
@@ -93,18 +89,18 @@ export async function POST(req: NextRequest) {
 
         const stream = streamText({
           experimental_transform: markdownJoinerTransform(),
-          model: selectModel(model || 'openai/gpt-5.5', modelOptions),
+          model: pickModel(model || 'openai/gpt-5.5'),
           // Not used
           prompt: '',
           tools: {
             comment: getCommentTool(editor, {
               messagesRaw,
-              model: selectModel(model || 'google/gemini-2.5-flash', modelOptions),
+              model: pickModel(model || 'google/gemini-2.5-flash'),
               writer,
             }),
             table: getTableTool(editor, {
               messagesRaw,
-              model: selectModel(model || 'google/gemini-2.5-flash', modelOptions),
+              model: pickModel(model || 'google/gemini-2.5-flash'),
               writer,
             }),
           },
@@ -136,8 +132,8 @@ export async function POST(req: NextRequest) {
                 model:
                   editType === 'selection'
                     ? //The selection task is more challenging, so we chose to use Gemini 2.5 Flash.
-                      selectModel(model || 'google/gemini-2.5-flash', modelOptions)
-                    : selectModel(model || 'openai/gpt-5.5', modelOptions),
+                      pickModel(model || 'google/gemini-2.5-flash')
+                    : pickModel(model || 'openai/gpt-5.5'),
                 messages: [
                   {
                     content: editPrompt,
@@ -162,7 +158,7 @@ export async function POST(req: NextRequest) {
                     role: 'user',
                   },
                 ],
-                model: selectModel(model || 'openai/gpt-5.5', modelOptions),
+                model: pickModel(model || 'openai/gpt-5.5'),
               };
             }
           },
@@ -174,6 +170,12 @@ export async function POST(req: NextRequest) {
 
     return createUIMessageStreamResponse({ stream });
   } catch (error) {
+    if (error instanceof ProviderUnavailableError) {
+      return NextResponse.json(
+        { code: 'auth', message: error.message },
+        { status: 401 }
+      );
+    }
     const { status, code, message } = categorizeError(error);
     return NextResponse.json({ code, message }, { status });
   }

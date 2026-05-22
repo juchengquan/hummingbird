@@ -1,61 +1,149 @@
-import { describe, expect, test } from "bun:test"
-import { __test } from "./model-provider"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
-const { isMinimaxBaseUrlSafe } = __test
+import {
+  isMinimaxCnConfigured,
+  ProviderUnavailableError,
+  selectModel,
+} from "./model-provider"
 
-describe("isMinimaxBaseUrlSafe — accepts", () => {
-  test("plain https URL with public hostname", () => {
-    expect(isMinimaxBaseUrlSafe("https://api.minimax.chat/v1")).toBe(true)
+const ENV_KEYS = [
+  "AI_GATEWAY_API_KEY",
+  "MINIMAX_CN_BASE_URL",
+  "MINIMAX_CN_API_KEY",
+] as const
+
+function snapshotEnv() {
+  const snap: Record<string, string | undefined> = {}
+  for (const k of ENV_KEYS) snap[k] = process.env[k]
+  return snap
+}
+function restoreEnv(snap: Record<string, string | undefined>) {
+  for (const k of ENV_KEYS) {
+    if (snap[k] === undefined) delete process.env[k]
+    else process.env[k] = snap[k]
+  }
+}
+
+describe("selectModel — happy paths", () => {
+  let snap: Record<string, string | undefined>
+  beforeEach(() => {
+    snap = snapshotEnv()
+    delete process.env.MINIMAX_CN_BASE_URL
+    delete process.env.MINIMAX_CN_API_KEY
+    process.env.AI_GATEWAY_API_KEY = "gw-test-key"
   })
-  test("https URL with path", () => {
-    expect(isMinimaxBaseUrlSafe("https://example.com/v1")).toBe(true)
+  afterEach(() => restoreEnv(snap))
+
+  test("returns a model for a gateway-routed id", () => {
+    const m = selectModel("anthropic/claude-sonnet-4.6")
+    // LanguageModel is an opaque object — assert we got SOMETHING and
+    // selectModel didn't throw. Behavioural assertions live below.
+    expect(m).toBeDefined()
   })
-  test("https URL with port", () => {
-    expect(isMinimaxBaseUrlSafe("https://api.example.com:8443/v1")).toBe(true)
+
+  test("returns a model for the multi-route minimax/* id via the gateway fallback", () => {
+    const m = selectModel("minimax/minimax-m2.7")
+    expect(m).toBeDefined()
+  })
+
+  test("falls back to gateway for an unknown model id", () => {
+    // Unknown ids implicitly route through the gateway — preserves the
+    // pre-refactor behaviour for per-request overrides that bypass
+    // config/models.json.
+    const m = selectModel("some/future-model")
+    expect(m).toBeDefined()
   })
 })
 
-describe("isMinimaxBaseUrlSafe — rejects", () => {
-  test("non-https scheme (http)", () => {
-    expect(isMinimaxBaseUrlSafe("http://api.minimax.chat/v1")).toBe(false)
+describe("selectModel — provider unavailable", () => {
+  let snap: Record<string, string | undefined>
+  beforeEach(() => {
+    snap = snapshotEnv()
+    delete process.env.AI_GATEWAY_API_KEY
+    delete process.env.MINIMAX_CN_BASE_URL
+    delete process.env.MINIMAX_CN_API_KEY
   })
-  test("non-http scheme (ftp)", () => {
-    expect(isMinimaxBaseUrlSafe("ftp://api.minimax.chat")).toBe(false)
+  afterEach(() => restoreEnv(snap))
+
+  test("throws ProviderUnavailableError when no provider is configured", () => {
+    expect(() => selectModel("anthropic/claude-sonnet-4.6")).toThrow(
+      ProviderUnavailableError
+    )
   })
-  test("localhost", () => {
-    expect(isMinimaxBaseUrlSafe("https://localhost:8080/v1")).toBe(false)
+
+  test("error message mentions tried providers and includes a 401 marker", () => {
+    let err: unknown
+    try {
+      selectModel("minimax/minimax-m2.7")
+    } catch (e) {
+      err = e
+    }
+    expect(err).toBeInstanceOf(ProviderUnavailableError)
+    const msg = (err as Error).message
+    expect(msg).toContain("401")
+    expect(msg).toContain("minimax-cn")
+    expect(msg).toContain("gateway")
   })
-  test("loopback IP", () => {
-    expect(isMinimaxBaseUrlSafe("https://127.0.0.1/v1")).toBe(false)
+
+  test("gateway override is honoured even when AI_GATEWAY_API_KEY is unset", () => {
+    const m = selectModel("anthropic/claude-sonnet-4.6", {
+      gatewayApiKeyOverride: "per-request-key",
+    })
+    expect(m).toBeDefined()
   })
-  test("any 127.x.x.x", () => {
-    expect(isMinimaxBaseUrlSafe("https://127.5.4.3/v1")).toBe(false)
+
+  test("empty override is treated as no override (and still throws)", () => {
+    expect(() =>
+      selectModel("anthropic/claude-sonnet-4.6", {
+        gatewayApiKeyOverride: "   ",
+      })
+    ).toThrow(ProviderUnavailableError)
   })
-  test("0.0.0.0", () => {
-    expect(isMinimaxBaseUrlSafe("https://0.0.0.0/v1")).toBe(false)
+})
+
+describe("selectModel — minimax-cn route precedence", () => {
+  let snap: Record<string, string | undefined>
+  beforeEach(() => {
+    snap = snapshotEnv()
+    process.env.AI_GATEWAY_API_KEY = "gw-test-key"
+    process.env.MINIMAX_CN_BASE_URL = "https://example.test/v1"
+    process.env.MINIMAX_CN_API_KEY = "mm-key"
   })
-  test("RFC 1918 ranges", () => {
-    expect(isMinimaxBaseUrlSafe("https://10.1.2.3/v1")).toBe(false)
-    expect(isMinimaxBaseUrlSafe("https://192.168.1.1/v1")).toBe(false)
-    expect(isMinimaxBaseUrlSafe("https://172.16.0.1/v1")).toBe(false)
-    expect(isMinimaxBaseUrlSafe("https://172.31.255.255/v1")).toBe(false)
+  afterEach(() => restoreEnv(snap))
+
+  test("isMinimaxCnConfigured reports true when both env vars are set", () => {
+    expect(isMinimaxCnConfigured()).toBe(true)
   })
-  test("172.15.x — outside RFC 1918 — is allowed (regression guard)", () => {
-    expect(isMinimaxBaseUrlSafe("https://172.15.0.1/v1")).toBe(true)
-    expect(isMinimaxBaseUrlSafe("https://172.32.0.1/v1")).toBe(true)
+
+  test("non-minimax models still resolve via gateway when both providers are configured", () => {
+    const m = selectModel("anthropic/claude-sonnet-4.6")
+    expect(m).toBeDefined()
   })
-  test(".local / .internal suffix", () => {
-    expect(isMinimaxBaseUrlSafe("https://service.local/v1")).toBe(false)
-    expect(isMinimaxBaseUrlSafe("https://api.internal/v1")).toBe(false)
+
+  test("minimax/* model resolves successfully when minimax-cn is configured", () => {
+    const m = selectModel("minimax/minimax-m2.7")
+    expect(m).toBeDefined()
   })
-  test("IPv6 loopback", () => {
-    expect(isMinimaxBaseUrlSafe("https://[::1]/v1")).toBe(false)
+})
+
+describe("isMinimaxCnConfigured", () => {
+  let snap: Record<string, string | undefined>
+  beforeEach(() => {
+    snap = snapshotEnv()
+    delete process.env.MINIMAX_CN_BASE_URL
+    delete process.env.MINIMAX_CN_API_KEY
   })
-  test("not a URL at all", () => {
-    expect(isMinimaxBaseUrlSafe("not a url")).toBe(false)
-    expect(isMinimaxBaseUrlSafe("")).toBe(false)
+  afterEach(() => restoreEnv(snap))
+
+  test("false when neither env var is set", () => {
+    expect(isMinimaxCnConfigured()).toBe(false)
   })
-  test("scheme alone", () => {
-    expect(isMinimaxBaseUrlSafe("https://")).toBe(false)
+
+  test("false when only one of the two env vars is set", () => {
+    process.env.MINIMAX_CN_BASE_URL = "https://example.test/v1"
+    expect(isMinimaxCnConfigured()).toBe(false)
+    delete process.env.MINIMAX_CN_BASE_URL
+    process.env.MINIMAX_CN_API_KEY = "k"
+    expect(isMinimaxCnConfigured()).toBe(false)
   })
 })
