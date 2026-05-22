@@ -270,9 +270,28 @@ const ConversationSummarizeRequest = z.object({
   model: z.string().max(100).optional(),
 })
 
+// Compress mode — produces a tight markdown recap intended to REPLACE
+// the input messages in the chat history (i.e. the model reads it on
+// the next turn as a substitute for the originals). Different content
+// shape from `conversation` mode (which is for human display).
+const CompressSummarizeRequest = z.object({
+  mode: z.literal('compress'),
+  messages: z
+    .array(
+      z.object({
+        role: z.enum(['user', 'assistant']),
+        content: z.string(),
+      })
+    )
+    .min(2)
+    .max(200),
+  model: z.string().max(100).optional(),
+})
+
 export const SummarizeRequestSchema = z.discriminatedUnion('mode', [
   FileSummarizeRequest,
   ConversationSummarizeRequest,
+  CompressSummarizeRequest,
 ])
 
 export const FileSummarizeResponseSchema = z.object({
@@ -284,6 +303,14 @@ export const ConversationSummarizeResponseSchema = z.object({
   summary: z.string(),
   keyPoints: z.array(z.string()).optional(),
   decisions: z.array(z.string()).optional(),
+})
+
+export const CompressSummarizeResponseSchema = z.object({
+  /** Markdown recap intended to substitute for the input messages on
+   *  the next chat turn. Information-dense; preserves names, facts,
+   *  decisions, and any file/URL references the assistant might still
+   *  need to reason about. */
+  recap: z.string().min(1).max(10_000),
 })
 
 // --- /api/share -------------------------------------------------------------
@@ -329,6 +356,7 @@ export type ExtractionResponse = z.infer<typeof ExtractionResponseSchema>
 export type SummarizeRequestInput = z.infer<typeof SummarizeRequestSchema>
 export type FileSummarizeResponse = z.infer<typeof FileSummarizeResponseSchema>
 export type ConversationSummarizeResponse = z.infer<typeof ConversationSummarizeResponseSchema>
+export type CompressSummarizeResponse = z.infer<typeof CompressSummarizeResponseSchema>
 export type CreateShareRequestInput = z.infer<typeof CreateShareRequestSchema>
 export type CreateShareResponse = z.infer<typeof CreateShareResponseSchema>
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>

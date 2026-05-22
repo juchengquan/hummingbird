@@ -167,6 +167,9 @@ export interface Database {
           tool_calls: Json | null
           attached_file_ids: string[]
           suggestions: string[]
+          compressed: boolean
+          kind: string | null
+          recap_message_ids: string[]
           created_at: string
         }
         Insert: {
@@ -182,6 +185,9 @@ export interface Database {
           tool_calls?: Json | null
           attached_file_ids?: string[]
           suggestions?: string[]
+          compressed?: boolean
+          kind?: string | null
+          recap_message_ids?: string[]
           created_at?: string
         }
         Update: {
@@ -197,6 +203,9 @@ export interface Database {
           tool_calls?: Json | null
           attached_file_ids?: string[]
           suggestions?: string[]
+          compressed?: boolean
+          kind?: string | null
+          recap_message_ids?: string[]
           created_at?: string
         }
         Relationships: []

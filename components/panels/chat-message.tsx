@@ -124,6 +124,7 @@ function ChatMessageImpl({
 
   const activeConversationId = useStore((s) => s.activeConversationId)
   const toggleMessageBookmark = useStore((s) => s.toggleMessageBookmark)
+  const uncompressRecap = useStore((s) => s.uncompressRecap)
   const createArtifact = useStore((s) => s.createArtifact)
   const appendToActiveDocumentOrCreate = useStore(
     (s) => s.appendToActiveDocumentOrCreate
@@ -260,6 +261,26 @@ function ChatMessageImpl({
       e.preventDefault()
       cancelEdit()
     }
+  }
+
+  // Recap and compressed messages take their own bespoke render paths
+  // and skip the regular user/assistant bubble + actions row. They're
+  // special enough that branching here keeps the main flow readable.
+  if (message.kind === "recap") {
+    return (
+      <RecapCard
+        message={message}
+        onUndo={() => {
+          if (!activeConversationId) return
+          uncompressRecap(activeConversationId, message.id)
+          toast.success("Restored compressed messages")
+        }}
+        index={index}
+      />
+    )
+  }
+  if (message.compressed) {
+    return <CompressedRow message={message} index={index} />
   }
 
   return (
@@ -586,3 +607,81 @@ function ChatMessageImpl({
  */
 export const ChatMessage = memo(ChatMessageImpl)
 ChatMessage.displayName = "ChatMessage"
+
+/**
+ * Synthetic recap message inserted by the "Compress older messages"
+ * action. Rendered as a distinct full-width card with an Undo control
+ * so it can't be confused with a regular assistant turn.
+ */
+function RecapCard({
+  message,
+  onUndo,
+  index,
+}: {
+  message: Message
+  onUndo: () => void
+  index: number
+}) {
+  const count = message.recapMessageIds?.length ?? 0
+  return (
+    <div
+      className="animate-message-in scroll-mt-20"
+      style={{ animationDelay: `${index * 50}ms` }}
+    >
+      <div className="my-3 rounded-md border border-dashed border-[var(--border)] bg-[var(--muted)]/30 px-3 py-2.5 text-sm">
+        <div className="flex items-center justify-between gap-2 mb-1.5">
+          <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-[var(--muted-foreground)]">
+            <Archive size={11} />
+            Recap of {count} compressed message{count === 1 ? "" : "s"}
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onUndo}
+            className="h-6 gap-1 text-[10px] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            aria-label="Restore compressed messages"
+          >
+            <RotateCcw size={10} />
+            Undo
+          </Button>
+        </div>
+        <MarkdownPreview content={message.content} className="text-sm" />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Single-line muted placeholder for a compressed message. Keeps the
+ * scroll position recognisable (so users can see the conversation
+ * structure) without taking up vertical space. Includes a short
+ * preview of the original content so users remember roughly what was
+ * there.
+ */
+function CompressedRow({
+  message,
+  index,
+}: {
+  message: Message
+  index: number
+}) {
+  const preview = message.content.replace(/\s+/g, " ").slice(0, 120)
+  return (
+    <div
+      className="animate-message-in scroll-mt-20 -my-1"
+      style={{ animationDelay: `${index * 50}ms` }}
+    >
+      <div className="flex items-center gap-2 px-3 py-1 text-[11px] text-[var(--muted-foreground)]/80 italic">
+        <span className="opacity-70 not-italic font-medium">
+          {message.role === "user" ? "You" : "Assistant"}
+        </span>
+        <span className="opacity-60 truncate">
+          {preview}
+          {message.content.length > 120 ? "…" : ""}
+        </span>
+        <span className="opacity-60 not-italic shrink-0">(compressed)</span>
+      </div>
+    </div>
+  )
+}

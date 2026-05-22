@@ -381,6 +381,28 @@ export interface Message {
    * Empty / undefined when no images were generated.
    */
   generatedImages?: GeneratedImage[]
+  /**
+   * Excluded from the chat API request when true. Set by the "Compress
+   * older messages" action — the message stays on disk and renders
+   * (muted, behind a "Show N compressed" disclosure on the recap card)
+   * but the model no longer sees it. Cleared by Undo on the
+   * corresponding recap.
+   */
+  compressed?: boolean
+  /**
+   * Marks special synthetic messages. `'recap'` is a model-generated
+   * summary inserted in place of compressed messages — rendered with
+   * a distinct card and an Undo affordance. Regular user / assistant
+   * messages leave this undefined.
+   */
+  kind?: 'recap'
+  /**
+   * Only meaningful on `kind: 'recap'` messages — the original message
+   * ids that this recap stands in for. Undo iterates this list to flip
+   * `compressed` back to false; deleting the recap entry restores the
+   * original conversation.
+   */
+  recapMessageIds?: string[]
 }
 
 export interface GeneratedImage {

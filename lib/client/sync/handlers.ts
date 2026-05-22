@@ -281,6 +281,9 @@ function diffMessages(
           tool_calls: m.toolCalls ?? null,
           attached_file_ids: m.attachedFileIds ?? [],
           suggestions: m.suggestions ?? [],
+          compressed: m.compressed ?? false,
+          kind: m.kind ?? null,
+          recap_message_ids: m.recapMessageIds ?? [],
           created_at: toISO(m.timestamp),
         },
       })
@@ -310,6 +313,9 @@ function messageEquals(a: Message, b: Message): boolean {
     JSON.stringify(a.toolCalls ?? null) === JSON.stringify(b.toolCalls ?? null) &&
     sameStringArray(a.attachedFileIds ?? [], b.attachedFileIds ?? []) &&
     sameStringArray(a.suggestions ?? [], b.suggestions ?? []) &&
+    (a.compressed ?? false) === (b.compressed ?? false) &&
+    (a.kind ?? null) === (b.kind ?? null) &&
+    sameStringArray(a.recapMessageIds ?? [], b.recapMessageIds ?? []) &&
     sameInstant(a.timestamp, b.timestamp)
   )
 }

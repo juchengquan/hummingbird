@@ -25,10 +25,15 @@ export function estimateTokens(text: string): number {
  * Estimate the total token count for a conversation. Sums every
  * message's content plus reasoning (if persisted) — reasoning still
  * counts against the context window when replayed.
+ *
+ * Compressed messages are skipped: they no longer travel to the model,
+ * so they don't count against the window. The recap message that
+ * replaced them counts normally.
  */
 export function estimateConversationTokens(messages: Message[]): number {
   let total = 0
   for (const m of messages) {
+    if (m.compressed) continue
     total += estimateTokens(m.content)
     if (m.reasoning) total += estimateTokens(m.reasoning)
   }

@@ -388,10 +388,17 @@ export function ChatPanel() {
       const attachedImageUrls = attachedFiles
         .filter((f) => f.extractedKind === "image" && f.imageDataUrl)
         .map((f) => f.imageDataUrl as string)
+      // Drop messages the user compressed out of context — the recap
+      // message that replaced them stays in the array and travels to
+      // the model as a regular assistant turn, which is the whole
+      // point of the compression action.
+      const transmittedHistory = history.filter((m) => !m.compressed)
       const buildMessages = () =>
-        history.map((m, i) => {
+        transmittedHistory.map((m, i) => {
           const isLastUser =
-            i === history.length - 1 && m.role === "user" && attachedImageUrls.length > 0
+            i === transmittedHistory.length - 1 &&
+            m.role === "user" &&
+            attachedImageUrls.length > 0
           if (!isLastUser) {
             return { role: m.role, content: m.content }
           }
