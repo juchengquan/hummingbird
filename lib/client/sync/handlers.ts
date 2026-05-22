@@ -13,8 +13,10 @@ import "client-only"
  *   so each emitted op is scoped correctly.
  * - We do NOT push runtime-only fields that have no DB column (see the
  *   notes in `lib/supabase/types.ts`): error / reasoning / attachedFileIds /
- *   suggestions on messages; extraction state / image data URLs / summary /
- *   keyTopics on files; systemPrompt on workspaces. These stay local.
+ *   suggestions / generatedImages on messages; extraction state / image
+ *   data URLs / summary / keyTopics on files; systemPrompt on workspaces.
+ *   These stay local. (`generatedImages` is data-URL-only in PR B; cross-
+ *   device sync waits for the Supabase Storage upgrade in PR C.)
  * - Deletes for child entities (messages of a deleted conversation, etc.)
  *   are NOT emitted — Postgres ON DELETE CASCADE handles them via the
  *   foreign keys defined in migration 0001/0002.

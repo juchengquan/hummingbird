@@ -23,6 +23,7 @@ import type {
   Note,
   Artifact,
   ArtifactKind,
+  GeneratedImage,
   ToolCallRecord,
   ToolCallResult,
   PinnedExplanation,
@@ -64,6 +65,7 @@ export type {
   Note,
   Artifact,
   ArtifactKind,
+  GeneratedImage,
   ToolCallRecord,
 } from '@/shared/types'
 
@@ -597,6 +599,7 @@ interface AppState {
   setMessageReasoningDuration: (messageId: string, durationMs: number) => void
   setMessageToolCalls: (messageId: string, toolCalls: ToolCallRecord[]) => void
   setMessageSuggestions: (messageId: string, suggestions: string[]) => void
+  appendMessageGeneratedImages: (messageId: string, images: GeneratedImage[]) => void
   setMessageError: (messageId: string, error: MessageError) => void
   clearMessageError: (messageId: string) => void
 
@@ -1920,6 +1923,20 @@ export const useStore = create<AppState>()(
               }
             }
             return c
+          }),
+        })),
+      appendMessageGeneratedImages: (messageId, images) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id !== state.activeConversationId) return c
+            return {
+              ...c,
+              messages: c.messages.map((m) => {
+                if (m.id !== messageId) return m
+                const next = [...(m.generatedImages ?? []), ...images]
+                return { ...m, generatedImages: next }
+              }),
+            }
           }),
         })),
       setMessageError: (messageId: string, error: MessageError) =>
