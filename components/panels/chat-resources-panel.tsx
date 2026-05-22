@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
-import { openPdf } from "@/components/right-panel-slot"
+import { openImageViewer, openPdf } from "@/components/right-panel-slot"
 import {
   useStore,
   useWorkspaceResources,
@@ -49,6 +49,28 @@ export function ChatResourcesPanel({ mode = "chat" }: ChatResourcesPanelProps = 
   const selectedFileIds = useConversationSelectedFileIds()
   const resources = useWorkspaceResources()
   const privateFiles = useConversationPrivateFiles()
+  const files = useStore((s) => s.files)
+
+  // Look up the file metadata then dispatch into the shared image
+  // viewer drawer. Shared between the workspace files list and the
+  // per-conversation private files section so both surfaces preview
+  // images via the same path.
+  const handleOpenImage = (fileId: string) => {
+    const file = files.find((f) => f.id === fileId)
+    if (!file?.imageDataUrl) return
+    openImageViewer({
+      images: [
+        {
+          id: file.id,
+          url: file.imageDataUrl,
+          alt: file.name,
+          filename: file.name,
+          sizeBytes: file.size,
+          format: (file.type.split("/")[1] ?? "png").toLowerCase(),
+        },
+      ],
+    })
+  }
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState("")
@@ -168,6 +190,7 @@ export function ChatResourcesPanel({ mode = "chat" }: ChatResourcesPanelProps = 
                 removeConversationFile(activeConversationId, fileId)
               }
               onOpenPdf={(fileId) => openPdf({ fileId })}
+              onOpenImage={handleOpenImage}
             />
           )}
           <div className="flex-1 min-h-0 flex flex-col">
@@ -182,6 +205,7 @@ export function ChatResourcesPanel({ mode = "chat" }: ChatResourcesPanelProps = 
               toggleFileSelection={toggleFileSelection}
               onRequestDelete={setConfirmDeleteFileId}
               onOpenPdf={(fileId) => openPdf({ fileId })}
+              onOpenImage={handleOpenImage}
               mounted={mounted}
               error={error}
               fileInputRef={fileInputRef}

@@ -9,6 +9,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
+import { Switch } from "@/components/ui/switch"
 import { AuthDialog } from "@/components/auth/auth-dialog"
 import { useAuth } from "@/client/hooks/use-auth"
 import { useStore } from "@/client/hooks/use-store"
@@ -160,47 +161,42 @@ export function AccountMenu() {
             </p>
           )}
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            setMenuOpen(false)
-            setLocalOnlyMode(!localOnlyMode)
-          }}
-          className="w-full justify-start gap-2"
-          title={
+        {/* Cloud sync toggle. `localOnlyMode === true` means sync is OFF,
+            so the switch shows the inverse for clarity ("on" = sync on). */}
+        <ToggleRow
+          icon={localOnlyMode ? CloudOff : Cloud}
+          label="Cloud sync"
+          description={
             localOnlyMode
-              ? "Resume syncing this browser's changes to Supabase."
-              : "Keep working locally — pause syncing this browser's changes to Supabase."
+              ? "Paused — changes stay on this device"
+              : "Workspaces, chats, files sync to Supabase"
           }
-        >
-          {localOnlyMode ? <Cloud size={14} /> : <CloudOff size={14} />}
-          <span>{localOnlyMode ? "Resume cloud sync" : "Use local only"}</span>
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleToggleLocalFiles}
-          className="w-full justify-start gap-2"
-          title={
+          checked={!localOnlyMode}
+          onCheckedChange={(v) => setLocalOnlyMode(!v)}
+          ariaLabel={
+            localOnlyMode
+              ? "Resume cloud sync"
+              : "Pause cloud sync (use local only)"
+          }
+        />
+        {/* File-blob sync. `localFilesOnly === true` means raw blobs
+            stay local; extracted text still syncs either way. */}
+        <ToggleRow
+          icon={HardDrive}
+          label="Sync files to cloud"
+          description={
             localFilesOnly
-              ? "Resume uploading raw files to Supabase Storage."
-              : "Keep raw files on this device. Extracted text still syncs."
+              ? "Raw files stay on this device · extracted text still syncs"
+              : "Raw files upload to Supabase Storage"
           }
-        >
-          <HardDrive size={14} />
-          <span className="flex-1 text-left">
-            {localFilesOnly ? "Sync files to cloud" : "Store files locally"}
-          </span>
-          {localFilesOnly && (
-            <span
-              aria-hidden
-              className="text-[10px] text-[var(--muted-foreground)]"
-            >
-              on
-            </span>
-          )}
-        </Button>
+          checked={!localFilesOnly}
+          onCheckedChange={() => handleToggleLocalFiles()}
+          ariaLabel={
+            localFilesOnly
+              ? "Resume uploading raw files to cloud"
+              : "Stop uploading raw files (keep them on this device)"
+          }
+        />
         <div className="border-t my-1" />
         <div className="px-2 py-1.5">
           <div className="flex items-center justify-between text-[10px] text-[var(--muted-foreground)]">
@@ -236,5 +232,61 @@ export function AccountMenu() {
         </Button>
       </PopoverContent>
     </Popover>
+  )
+}
+
+/**
+ * Row used inside the account popover for boolean settings: a leading
+ * icon, a label + small description column, and a Switch on the right.
+ * Whole row is clickable as a fallback for users who don't want to aim
+ * at the switch handle (clicks delegate to the same toggle).
+ */
+function ToggleRow({
+  icon: Icon,
+  label,
+  description,
+  checked,
+  onCheckedChange,
+  ariaLabel,
+}: {
+  icon: React.ComponentType<{ size?: number; className?: string }>
+  label: string
+  description: string
+  checked: boolean
+  onCheckedChange: (value: boolean) => void
+  ariaLabel: string
+}) {
+  // The wrapper is a `<div>`, not a `<button>` — nesting the Switch
+  // (a button) inside another button is invalid HTML and triggers a
+  // hydration error. The Switch is the single focusable control per row
+  // (proper `role="switch"`, keyboard support); the wrapper just adds
+  // mouse convenience so users don't have to aim at the small handle.
+  return (
+    <div
+      onClick={() => onCheckedChange(!checked)}
+      role="presentation"
+      className={cn(
+        "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left cursor-pointer",
+        "hover:bg-[var(--accent)] transition-colors"
+      )}
+    >
+      <Icon size={14} className="shrink-0 text-[var(--muted-foreground)]" />
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-medium leading-tight">{label}</p>
+        <p className="text-[10px] text-[var(--muted-foreground)] leading-snug truncate">
+          {description}
+        </p>
+      </div>
+      <Switch
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+        // Stop the click from bubbling to the wrapper, otherwise the
+        // wrapper's onClick would fire and re-toggle right after Switch
+        // already toggled.
+        onClick={(e) => e.stopPropagation()}
+        aria-label={ariaLabel}
+        className="shrink-0"
+      />
+    </div>
   )
 }

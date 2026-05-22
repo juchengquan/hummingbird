@@ -63,7 +63,7 @@ function PdfViewer({ fileId, initialPage, onClose }: PdfViewerProps) {
   const [doc, setDoc] = useState<import("pdfjs-dist").PDFDocumentProxy | null>(null)
   const [numPages, setNumPages] = useState(0)
   const [currentPage, setCurrentPage] = useState(initialPage ?? 1)
-  const [scale, setScale] = useState(1.25)
+  const [scale, setScale] = useState(1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)

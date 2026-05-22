@@ -126,6 +126,12 @@ export const ChatRequestSchema = z.object({
    *  server-side. Local-mode servers are passed in `mcpServers` and
    *  don't need this. Optional so signed-out usage still works. */
   workspaceId: z.string().max(64).optional(),
+  /** Client-side "Store files locally" preference (from the account
+   *  menu). When true, the chat route's image-persistence layer skips
+   *  Supabase Storage and returns data URLs instead — same semantic as
+   *  the client's `persistFile()` honouring the same flag for uploads.
+   *  Absent / false → cloud upload is allowed when a session exists. */
+  localFilesOnly: z.boolean().optional(),
   skills: z
     .array(
       z.object({

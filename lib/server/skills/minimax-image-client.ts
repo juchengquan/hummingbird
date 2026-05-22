@@ -5,7 +5,7 @@ import "server-only"
  *
  * Wraps the documented endpoint:
  *
- *   POST https://api.minimax.io/v1/image_generation
+ *   POST <baseURL>/v1/image_generation
  *   Authorization: Bearer <MINIMAX_CN_API_KEY>
  *   Content-Type: application/json
  *
@@ -21,9 +21,16 @@ import "server-only"
  *   }
  *
  * The auth key is shared with the Minimax-CN chat bypass — Minimax
- * issues one key per account that covers both APIs. Endpoint URL is
- * fixed (T2I and I2I share the same path; the request shape
- * distinguishes the two modes).
+ * issues one key per account that covers both APIs. The endpoint URL
+ * is region-specific (Minimax keys are tied to a region) and is
+ * resolved at call time via `getImageEndpoint`:
+ *
+ *   1. Derive from `MINIMAX_CN_BASE_URL`'s origin + `/v1/image_generation`.
+ *      Chat and image share a host but live under different paths, so
+ *      we strip the chat-specific path (e.g. `/anthropic/v1`) and use
+ *      the host root.
+ *   2. Otherwise (`MINIMAX_CN_BASE_URL` unset), fall back to the
+ *      endpoint `https://api.minimaxi.com`.
  *
  * Failure handling is structured: every error returns
  * `{ ok: false, code, message }` with one of a small set of stable
@@ -37,9 +44,35 @@ import "server-only"
  * the chat turn frozen if Minimax stalls.
  */
 
-const ENDPOINT = "https://api.minimax.io/v1/image_generation"
+const DEFAULT_ENDPOINT = "https://api.minimaxi.com/v1/image_generation"
 const MODEL = "image-01"
 const CALL_TIMEOUT_MS = 30_000
+
+/**
+ * Resolve the image-generation endpoint at call time. When
+ * `MINIMAX_CN_BASE_URL` is set, the image endpoint lives on the same
+ * host as the chat-bypass (just under a different path), so we strip
+ * the chat-specific path and rebuild against the host root. Otherwise
+ * fall back to the international endpoint. Invalid URLs fall through
+ * silently — the request will hit the next layer's validation (likely
+ * the network) and surface the failure there rather than throwing at
+ * config time.
+ */
+export function getImageEndpoint(): string {
+  const cnBase = process.env.MINIMAX_CN_BASE_URL?.trim()
+  if (cnBase) {
+    try {
+      // Strip the chat-specific path (e.g. `/anthropic/v1`) and rebuild
+      // against the host root — image and chat live on the same host
+      // but at different paths.
+      const u = new URL(cnBase)
+      return `${u.origin}/v1/image_generation`
+    } catch {
+      // Malformed URL — fall through to international default.
+    }
+  }
+  return DEFAULT_ENDPOINT
+}
 
 export interface MinimaxImageRequest {
   prompt: string
@@ -122,7 +155,7 @@ export async function minimaxGenerateImage(
   const { signal, cancel } = buildSignal(req.signal)
   let res: Response
   try {
-    res = await fetch(ENDPOINT, {
+    res = await fetch(getImageEndpoint(), {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -282,6 +315,7 @@ export function extractImageUrls(json: MinimaxImageResponse): string[] {
 export const __test = {
   extractImageUrls,
   mapMinimaxStatusCode,
-  ENDPOINT,
+  getImageEndpoint,
+  DEFAULT_ENDPOINT,
   CALL_TIMEOUT_MS,
 }

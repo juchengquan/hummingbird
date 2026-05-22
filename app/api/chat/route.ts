@@ -199,7 +199,11 @@ function buildSkillsNote(
 async function maybeEmitImageFrame(
   part: { toolCallId?: string; toolName?: string; output?: unknown },
   send: (payload: unknown) => void,
-  signal: AbortSignal
+  signal: AbortSignal,
+  /** Mirror of `body.localFilesOnly` — when true, force the
+   *  persistence layer into its data-URL path instead of uploading to
+   *  Supabase Storage. */
+  localFilesOnly: boolean
 ): Promise<void> {
   const output = part.output as
     | {
@@ -233,7 +237,10 @@ async function maybeEmitImageFrame(
     }))
   if (inputs.length === 0) return
 
-  const persisted = await persistGeneratedImages(inputs, { signal })
+  const persisted = await persistGeneratedImages(inputs, {
+    signal,
+    localFilesOnly,
+  })
   if (!persisted.ok) return
 
   const mode: 't2i' | 'i2i' = output.mode === 'i2i' ? 'i2i' : 't2i'
@@ -646,7 +653,12 @@ export async function POST(req: NextRequest) {
               // (the `tool_result` text above) still says "rendered
               // N images" — UI is decoupled from the tool's contract.
               if (p.toolName === 'generateImage') {
-                await maybeEmitImageFrame(p, send, req.signal)
+                await maybeEmitImageFrame(
+                  p,
+                  send,
+                  req.signal,
+                  body.localFilesOnly === true
+                )
               }
             } else if (part.type === 'tool-error') {
               // Tool execute() threw or args were malformed. The model never

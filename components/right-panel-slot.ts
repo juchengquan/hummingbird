@@ -20,13 +20,17 @@ import {
   useLiveArtifact,
   type LiveArtifactTarget,
 } from "@/components/live-artifact/store"
+import { useImageViewer, type ImageViewerTarget } from "@/components/image-viewer/types"
 import { usePdfViewer, type PdfViewerTarget } from "@/components/pdf-viewer/types"
 import { useUrlPreview, type UrlPreviewTarget } from "@/components/url-viewer/types"
 
-function closeOthers(except: "pdf" | "url" | "artifact") {
+type Slot = "pdf" | "url" | "artifact" | "image"
+
+function closeOthers(except: Slot) {
   if (except !== "pdf") usePdfViewer.getState().close()
   if (except !== "url") useUrlPreview.getState().close()
   if (except !== "artifact") useLiveArtifact.getState().close()
+  if (except !== "image") useImageViewer.getState().close()
 }
 
 export function openPdf(target: PdfViewerTarget) {
@@ -44,8 +48,14 @@ export function openLiveArtifact(target: LiveArtifactTarget) {
   useLiveArtifact.getState().open(target)
 }
 
+export function openImageViewer(target: ImageViewerTarget) {
+  closeOthers("image")
+  useImageViewer.getState().open(target)
+}
+
 export function closeRightPanel() {
   usePdfViewer.getState().close()
   useUrlPreview.getState().close()
   useLiveArtifact.getState().close()
+  useImageViewer.getState().close()
 }

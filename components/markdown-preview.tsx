@@ -36,6 +36,14 @@ interface MarkdownPreviewProps {
    */
   sourceCount?: number
   onSourceClick?: (index: number) => void
+  /**
+   * When true, all `<img>` tags emitted by the markdown renderer are
+   * dropped. Used by the chat bubble when the message already renders
+   * its own `GeneratedImagesGallery` so the model can't double-show
+   * the image by embedding a `![](url)` reference in its prose. The
+   * surrounding text + caption survive; only the `<img>` is stripped.
+   */
+  suppressImages?: boolean
 }
 
 const PDF_CITATION_RE = /\[p\.(\d+)\]/g
@@ -67,6 +75,23 @@ function escapeAttr(value: string): string {
   return value.replace(/"/g, "&quot;")
 }
 
+/**
+ * Strip every `<img …>` tag the markdown renderer emitted. Used when
+ * the chat bubble already shows a `GeneratedImagesGallery` for this
+ * message — without this, models that helpfully embed `![](url)` in
+ * their prose end up double-rendering the same image. We deliberately
+ * leave surrounding text + captions intact; just the `<img>` goes.
+ *
+ * Self-closing (`<img … />`) and unclosed (`<img …>`) forms both
+ * match. Tag bodies can't contain a `>` because `marked`'s HTML output
+ * URI-encodes any embedded `>` inside attribute values, so a simple
+ * non-greedy match is safe.
+ */
+const IMG_TAG_RE = /<img\b[^>]*\/?>/gi
+function stripImageTags(html: string): string {
+  return html.replace(IMG_TAG_RE, "")
+}
+
 // Configure once, module-level. Setting `gfm: true` enables tables and
 // fenced code. `breaks: false` keeps line breaks meaningful only when the
 // source uses real markdown line breaks.
@@ -92,6 +117,7 @@ export function MarkdownPreview({
   pdfCitationFileId,
   sourceCount,
   onSourceClick,
+  suppressImages,
 }: MarkdownPreviewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -101,11 +127,12 @@ export function MarkdownPreview({
       let raw = typeof out === "string" ? out : ""
       if (pdfCitationFileId) raw = decoratePdfCitations(raw, pdfCitationFileId)
       if (sourceCount && sourceCount > 0) raw = decorateWebCitations(raw, sourceCount)
+      if (suppressImages) raw = stripImageTags(raw)
       return raw
     } catch {
       return ""
     }
-  }, [content, pdfCitationFileId, sourceCount])
+  }, [content, pdfCitationFileId, sourceCount, suppressImages])
 
   // Event-delegated click handler for citation buttons. Lives on the
   // container so it stays attached across re-renders without React owning

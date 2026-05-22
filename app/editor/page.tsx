@@ -9,7 +9,7 @@ export default function Page() {
       <div className="h-screen w-full">
         <PlateEditor />
 
-        <Toaster />
+        <Toaster closeButton />
       </div>
     </TooltipProvider>
   );

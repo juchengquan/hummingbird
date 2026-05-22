@@ -72,6 +72,12 @@ export interface PersistImagesOpts {
    *  downloads instead of letting them run to completion as zombie
    *  outbound work. */
   signal?: AbortSignal
+  /** Mirror of the client's "Store files locally" preference. When
+   *  true, skip Supabase Storage even for signed-in users and fall
+   *  through to the data-URL path so the bytes never leave the
+   *  device's localStorage. Off by default — cloud upload is allowed
+   *  whenever a session is present. */
+  localFilesOnly?: boolean
 }
 
 export type PersistImagesResult =
@@ -96,7 +102,10 @@ export async function persistGeneratedImages(
   // Resolve Supabase context once for the whole batch. Sharing the
   // client across uploads avoids one cookie-bound `getUser()` per
   // image. Either piece missing → data-URL path for the whole batch.
-  const cloud = await resolveCloudContext()
+  // Honour the client's "Store files locally" preference by skipping
+  // the resolve step entirely — same semantic as `persistFile()` in
+  // the client file pipeline.
+  const cloud = opts.localFilesOnly ? null : await resolveCloudContext()
 
   const results = await Promise.all(
     inputs.map((img) => persistOne(img, cloud, opts.signal))

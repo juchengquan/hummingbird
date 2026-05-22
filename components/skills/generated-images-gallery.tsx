@@ -2,14 +2,14 @@
 
 import "client-only"
 
-import { useCallback, useEffect, useState } from "react"
-import { Copy, Download, ExternalLink, Repeat2, X } from "lucide-react"
+import { Copy, Download, ExternalLink, Maximize2, Repeat2 } from "lucide-react"
 import { toast } from "sonner"
 
 import type { GeneratedImage } from "@/shared/types"
-import { Button } from "@/components/ui/button"
 import { useStore } from "@/client/hooks/use-store"
 import { cn } from "@/shared/utils"
+import { openImageViewer } from "@/components/right-panel-slot"
+import type { ImageViewerItem } from "@/components/image-viewer/types"
 
 /** Minimax fetches the `referenceImageUrl` server-side, so the reference
  *  has to be a URL their network can resolve. Signed Supabase Storage
@@ -41,53 +41,43 @@ function stageRemix(
  *   3 images → first wide, two stacked
  *   4 images → 2×2 grid
  *
- * Clicking an image opens the lightbox. Hover surfaces actions
- * (download, copy URL, open in new tab). All actions are no-ops on
- * data: URLs that the browser would refuse to navigate (we still
- * download successfully).
+ * The inline view is the primary surface — clicking the Expand button
+ * in each tile's hover toolbar routes through `openImageViewer(...)`
+ * (the shared right-side image-viewer drawer, same one attached image
+ * files use), keeping the chat scroll uninterrupted while a fullscreen
+ * preview is available next to it.
  */
 export function GeneratedImagesGallery({
   images,
 }: {
   images: GeneratedImage[]
 }) {
-  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
-  const close = useCallback(() => setLightboxIdx(null), [])
-  // Esc closes the lightbox. Added once when the lightbox is open;
-  // useEffect's cleanup detaches it.
-  useEffect(() => {
-    if (lightboxIdx === null) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close()
-      else if (e.key === "ArrowRight" && lightboxIdx < images.length - 1)
-        setLightboxIdx(lightboxIdx + 1)
-      else if (e.key === "ArrowLeft" && lightboxIdx > 0)
-        setLightboxIdx(lightboxIdx - 1)
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [lightboxIdx, images.length, close])
   if (images.length === 0) return null
-  const open = (i: number) => setLightboxIdx(i)
+  const openAt = (i: number) =>
+    openImageViewer({
+      images: images.map(toViewerItem),
+      initialIndex: i,
+    })
 
   return (
-    <>
-      <div className="mt-2 mb-1">
-        <GalleryLayout images={images} onOpen={open} />
-        <p className="mt-1.5 text-[11px] text-[var(--muted-foreground)] italic">
-          {captionFor(images)}
-        </p>
-      </div>
-      {lightboxIdx !== null && (
-        <Lightbox
-          images={images}
-          index={lightboxIdx}
-          onIndex={setLightboxIdx}
-          onClose={close}
-        />
-      )}
-    </>
+    <div className="mt-2 mb-1">
+      <GalleryLayout images={images} onOpen={openAt} />
+      <p className="mt-1.5 text-[11px] text-[var(--muted-foreground)] italic">
+        {captionFor(images)}
+      </p>
+    </div>
   )
+}
+
+function toViewerItem(image: GeneratedImage): ImageViewerItem {
+  return {
+    id: image.id,
+    url: image.url,
+    alt: image.prompt,
+    format: image.format,
+    prompt: image.prompt,
+    mode: image.mode,
+  }
 }
 
 function GalleryLayout({
@@ -128,235 +118,167 @@ function ImageTile({
   single,
 }: {
   image: GeneratedImage
+  /** Called by the Expand button to open the lightbox at this tile's
+   *  index. The image itself is no longer click-to-expand — the user
+   *  acts via the hover toolbar instead. */
   onOpen: () => void
   single: boolean
 }) {
-  const setPendingReferenceImage = useStore(
-    (s) => s.setPendingReferenceImage
-  )
   const remixable = canRemix(image.url)
   return (
-    // Wrap the click-to-open button in a positioning parent so the
-    // Remix shortcut can sit as a sibling overlay. Nesting it inside
-    // the open button would be invalid HTML (no nested <button>s);
-    // sibling + `z-10` keeps clicks on Remix from triggering open.
-    <div className="group relative">
-      <button
-        type="button"
-        onClick={onOpen}
-        aria-label={`Open image: ${image.prompt.slice(0, 80)}`}
-        className={cn(
-          "block w-full overflow-hidden rounded-md border border-[var(--border)] bg-[var(--muted)]/30",
-          "transition-shadow hover:shadow-md hover:border-[var(--muted-foreground)]/40",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]/40",
-          single ? "max-h-[420px]" : "max-h-[260px]"
-        )}
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element -- data: URLs
-            and possibly cross-origin signed URLs don't play with next/image's
-            loader; the unoptimized fallback would be more complexity than
-            this needs. */}
-        <img
-          src={image.url}
-          alt={image.prompt}
-          loading="lazy"
-          className="block w-full h-auto object-cover"
-        />
-      </button>
+    <div
+      className={cn(
+        "group relative w-fit overflow-hidden rounded-md border border-[var(--border)] bg-[var(--muted)]/30",
+        // Inline view is now the primary surface — bigger than before
+        // so users can actually see the image without enlarging. The
+        // lightbox stays available via the Expand button in the hover
+        // toolbar for full-resolution viewing.
+        single
+          ? "max-w-[640px] max-h-[480px]"
+          : "max-w-[360px] max-h-[280px]"
+      )}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element -- data: URLs
+          and possibly cross-origin signed URLs don't play with next/image's
+          loader; the unoptimized fallback would be more complexity than
+          this needs. */}
+      <img
+        src={image.url}
+        alt={image.prompt}
+        loading="lazy"
+        className="block w-full h-auto object-cover"
+      />
       {image.mode === "i2i" && (
         <span className="pointer-events-none absolute top-1.5 left-1.5 text-[10px] font-medium uppercase tracking-wide bg-black/55 text-white px-1.5 py-0.5 rounded-sm">
           remix
         </span>
       )}
-      {remixable && (
-        // Hover-revealed shortcut so users don't have to open the
-        // lightbox just to stage a remix. Focus-visible reveal keeps
-        // it reachable via keyboard. `z-10` puts it above the open
-        // button so clicks land here, not on open.
-        <button
-          type="button"
-          onClick={() => stageRemix(image, setPendingReferenceImage)}
-          aria-label="Remix this image"
-          title="Remix"
-          className={cn(
-            "absolute top-1.5 right-1.5 z-10 inline-flex items-center gap-1",
-            "rounded-md bg-black/55 text-white px-1.5 py-1",
-            "text-[10px] font-medium leading-none",
-            "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
-            "transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-          )}
-        >
-          <Repeat2 size={12} />
-          Remix
-        </button>
-      )}
-    </div>
-  )
-}
-
-function Lightbox({
-  images,
-  index,
-  onIndex,
-  onClose,
-}: {
-  images: GeneratedImage[]
-  index: number
-  onIndex: (i: number) => void
-  onClose: () => void
-}) {
-  const img = images[index]
-  if (!img) return null
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Image viewer"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85"
-      onClick={onClose}
-    >
+      {/* Hover/focus toolbar — icon-only buttons over a dark semi-
+          transparent backplate so they read on any background. The
+          Expand button opens the lightbox; everything else acts
+          directly on the image. Hidden until hover/focus to keep the
+          inline view clean. */}
       <div
-        className="relative max-w-[92vw] max-h-[92vh] flex flex-col items-center gap-3"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={img.url}
-          alt={img.prompt}
-          className="max-w-[92vw] max-h-[80vh] object-contain rounded-md shadow-2xl"
-        />
-        <div className="flex items-center gap-2">
-          <ActionButton image={img} kind="download" />
-          <ActionButton image={img} kind="copy" />
-          <ActionButton image={img} kind="open" />
-          {canRemix(img.url) && (
-            <ActionButton image={img} kind="remix" onAfter={onClose} />
-          )}
-          {images.length > 1 && (
-            <span className="text-xs text-white/70 px-2">
-              {index + 1} / {images.length}
-            </span>
-          )}
-        </div>
-        <p className="max-w-[80vw] text-xs text-white/80 italic text-center">
-          {img.prompt}
-        </p>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close image viewer"
-          className="absolute -top-10 right-0 text-white/80 hover:text-white"
-        >
-          <X size={20} />
-        </button>
-        {images.length > 1 && (
-          <>
-            {index > 0 && (
-              <button
-                type="button"
-                aria-label="Previous image"
-                onClick={() => onIndex(index - 1)}
-                className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-12 text-white/70 hover:text-white text-3xl px-2"
-              >
-                ‹
-              </button>
-            )}
-            {index < images.length - 1 && (
-              <button
-                type="button"
-                aria-label="Next image"
-                onClick={() => onIndex(index + 1)}
-                className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-12 text-white/70 hover:text-white text-3xl px-2"
-              >
-                ›
-              </button>
-            )}
-          </>
+        className={cn(
+          "absolute top-1.5 right-1.5 z-10 flex items-center gap-1",
+          "rounded-md bg-black/55 backdrop-blur-sm p-0.5",
+          "opacity-0 group-hover:opacity-100 focus-within:opacity-100",
+          "transition-opacity"
         )}
+      >
+        <TileActionButton
+          icon={Maximize2}
+          label="Expand"
+          onClick={onOpen}
+        />
+        <TileActionButton image={image} kind="download" />
+        <TileActionButton image={image} kind="copy" />
+        <TileActionButton image={image} kind="open" />
+        {remixable && <TileActionButton image={image} kind="remix" />}
       </div>
     </div>
   )
 }
 
-function ActionButton({
-  image,
-  kind,
-  onAfter,
-}: {
-  image: GeneratedImage
-  kind: "download" | "copy" | "open" | "remix"
-  /** Optional callback fired after the action completes — used to
-   *  close the lightbox once a remix reference is staged so the user
-   *  sees the chip in the input. */
-  onAfter?: () => void
-}) {
+/**
+ * Compact icon button for the inline hover toolbar. Two modes:
+ *   - Generic (`onClick` + `icon` + `label`) — used by the Expand
+ *     button.
+ *   - Bound to a known action kind (`image` + `kind`) — reuses the
+ *     same handlers as the lightbox `ActionButton` for download / copy
+ *     / open / remix.
+ */
+function TileActionButton(
+  props:
+    | {
+        icon: typeof Maximize2
+        label: string
+        onClick: () => void
+        image?: never
+        kind?: never
+      }
+    | {
+        image: GeneratedImage
+        kind: "download" | "copy" | "open" | "remix"
+        icon?: never
+        label?: never
+        onClick?: never
+      }
+) {
   const setPendingReferenceImage = useStore(
     (s) => s.setPendingReferenceImage
   )
-  const handle = async () => {
-    if (kind === "download") {
-      try {
-        // Works for both data: and remote URLs. `download` attribute
-        // gives the browser a hint at the filename.
-        const a = document.createElement("a")
-        a.href = image.url
-        a.download = `image-${image.id}.${image.format}`
-        a.click()
-      } catch {
-        toast.error("Download failed")
+  let Icon: typeof Maximize2
+  let label: string
+  let onClick: () => void | Promise<void>
+  if (props.icon) {
+    Icon = props.icon
+    label = props.label
+    onClick = props.onClick
+  } else {
+    const { image, kind } = props
+    Icon =
+      kind === "download"
+        ? Download
+        : kind === "copy"
+          ? Copy
+          : kind === "remix"
+            ? Repeat2
+            : ExternalLink
+    label =
+      kind === "download"
+        ? "Download"
+        : kind === "copy"
+          ? "Copy URL"
+          : kind === "remix"
+            ? "Remix"
+            : "Open in new tab"
+    onClick = async () => {
+      if (kind === "download") {
+        try {
+          const a = document.createElement("a")
+          a.href = image.url
+          a.download = `image-${image.id}.${image.format}`
+          a.click()
+        } catch {
+          toast.error("Download failed")
+        }
+      } else if (kind === "copy") {
+        try {
+          await navigator.clipboard.writeText(image.url)
+          toast.success(image.url.startsWith("data:") ? "Data URL copied" : "URL copied")
+        } catch {
+          toast.error("Copy failed")
+        }
+      } else if (kind === "remix") {
+        stageRemix(image, setPendingReferenceImage)
+      } else {
+        if (image.url.startsWith("data:")) {
+          toast.info("Open-in-tab isn't supported for data: URLs — downloading instead")
+          const a = document.createElement("a")
+          a.href = image.url
+          a.download = `image-${image.id}.${image.format}`
+          a.click()
+        } else {
+          window.open(image.url, "_blank", "noopener,noreferrer")
+        }
       }
-    } else if (kind === "copy") {
-      try {
-        await navigator.clipboard.writeText(image.url)
-        toast.success(image.url.startsWith("data:") ? "Data URL copied" : "URL copied")
-      } catch {
-        toast.error("Copy failed")
-      }
-    } else if (kind === "remix") {
-      stageRemix(image, setPendingReferenceImage)
-      onAfter?.()
-    } else {
-      // Open in new tab — works for remote URLs; browsers refuse to
-      // navigate to data: URLs in modern versions. Fall back to
-      // download in that case.
-      if (image.url.startsWith("data:")) {
-        toast.info("Open-in-tab isn't supported for data: URLs — downloading instead")
-        const a = document.createElement("a")
-        a.href = image.url
-        a.download = `image-${image.id}.${image.format}`
-        a.click()
-        return
-      }
-      window.open(image.url, "_blank", "noopener,noreferrer")
     }
   }
-  const Icon =
-    kind === "download"
-      ? Download
-      : kind === "copy"
-        ? Copy
-        : kind === "remix"
-          ? Repeat2
-          : ExternalLink
-  const label =
-    kind === "download"
-      ? "Download"
-      : kind === "copy"
-        ? "Copy URL"
-        : kind === "remix"
-          ? "Remix"
-          : "Open in new tab"
   return (
-    <Button
-      variant="secondary"
-      size="sm"
-      onClick={handle}
-      className="gap-1.5 bg-white/10 text-white hover:bg-white/20 border-white/20"
+    <button
+      type="button"
+      onClick={onClick}
       aria-label={label}
+      title={label}
+      className={cn(
+        "inline-flex items-center justify-center h-6 w-6 rounded-sm",
+        "text-white/85 hover:text-white hover:bg-white/15",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+      )}
     >
-      <Icon size={14} />
-      <span className="text-xs">{label}</span>
-    </Button>
+      <Icon size={12} />
+    </button>
   )
 }
 

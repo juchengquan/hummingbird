@@ -38,6 +38,7 @@ import { runExtraction } from "@/client/extract"
 import { persistFile } from "@/client/files/persist"
 import { getLocalCred } from "@/client/mcp/local-creds"
 import { extractCodeBlocks } from "@/shared/code-blocks"
+import { detectArtifactShell } from "@/client/live-artifact/detect"
 
 const AUTO_ARCHIVE_MIN_LINES = 15
 const AUTO_ARCHIVE_MAX_PER_MESSAGE = 3
@@ -255,12 +256,31 @@ export function ChatPanel() {
   // After a stream completes, auto-archive substantial code blocks so they
   // become first-class artifacts without the user having to remember the
   // Save-as-artifact button. Conservative threshold (>= AUTO_ARCHIVE_MIN_LINES)
-  // and capped count keep the artifacts panel from flooding.
+  // and capped count keep the artifacts panel from flooding. Renderable
+  // blocks (tsx/jsx/html/svg/mermaid, or content that sniffs as one)
+  // bypass the line threshold — the point of those is to be *previewed*,
+  // not archived for length. A 6-line `<Button>` JSX block is just as
+  // worth showing inline as a 60-line one.
   const autoArchiveCodeBlocks = useCallback(
-    (assistantMessage: Message) => {
+    (assistantMessageId: string) => {
       if (!activeConversationId) return
-      const blocks = extractCodeBlocks(assistantMessage.content)
-      const eligible = blocks.filter((b) => b.lines >= AUTO_ARCHIVE_MIN_LINES)
+      // The streaming loop holds a STALE `Message` reference because
+      // `appendToMessage` updates the store immutably (creates new
+      // Message objects, leaving the captured reference at `content: ""`
+      // forever). Re-read the message from the store using the id so we
+      // operate on the actual streamed content.
+      const conv = useStore
+        .getState()
+        .conversations.find((c) => c.id === activeConversationId)
+      const message = conv?.messages.find((m) => m.id === assistantMessageId)
+      if (!message) return
+      const blocks = extractCodeBlocks(message.content)
+      const eligible = blocks.filter(
+        (b) =>
+          b.lines >= AUTO_ARCHIVE_MIN_LINES ||
+          detectArtifactShell({ language: b.language ?? null, content: b.code })
+            .renderable
+      )
       if (eligible.length === 0) return
       const capped = eligible.slice(0, AUTO_ARCHIVE_MAX_PER_MESSAGE)
       capped.forEach((b, i) => {
@@ -268,7 +288,7 @@ export function ChatPanel() {
         const kind = lang === "json" ? "json" : "code"
         createArtifact({
           conversationId: activeConversationId,
-          messageId: assistantMessage.id,
+          messageId: assistantMessageId,
           kind,
           language: b.language,
           title:
@@ -540,6 +560,14 @@ export function ChatPanel() {
         })
       }
 
+      // Read at send-time rather than subscribing — the flag is a boolean
+      // that doesn't need to re-trigger anything mid-flight; just snapshot
+      // the user's current preference so the server knows whether to
+      // route generated images to Supabase Storage or fall back to data
+      // URLs (same semantic the client uses for file uploads in
+      // `persist.ts`).
+      const localFilesOnly = useStore.getState().localFilesOnly
+
       try {
         const result = await apiClient.chat.stream(
           {
@@ -552,6 +580,7 @@ export function ChatPanel() {
             attachments:
               attachmentsForRequest.length > 0 ? attachmentsForRequest : undefined,
             referenceImage: options?.referenceImage,
+            localFilesOnly: localFilesOnly || undefined,
           },
           { signal: controller.signal }
         )
@@ -749,7 +778,10 @@ export function ChatPanel() {
           })
         } else if (placeholder && activeConversationId) {
           const ph = placeholder as Message
-          autoArchiveCodeBlocks(ph)
+          // Pass the id, not the captured Message — the local reference is
+          // stale (it still has the empty initial content); `autoArchive`
+          // re-reads the actual streamed content from the store.
+          autoArchiveCodeBlocks(ph.id)
           // Persist reasoning duration so the "Thought for X.Xs" badge
           // survives reload. Captured during the stream; written here so
           // we only commit on successful completion.
@@ -1157,9 +1189,12 @@ export function ChatPanel() {
           }}
         />
         <div className="flex-1 min-h-0 overflow-hidden">
-          <ScrollArea
-            className="max-w-5xl mx-auto max-h-[calc(100vh-2.75rem)] h-[calc(100vh-2.75rem)] px-4"
-          >
+          {/* ScrollArea fills the full messages column so its right-edge
+              scrollbar sits at the column edge (not floating in mid-air
+              the way a centered ScrollArea on a wide viewport does).
+              The inner div does the actual reading-width centering with
+              its own `max-w-5xl mx-auto`. */}
+          <ScrollArea className="w-full max-h-[calc(100vh-2.75rem)] h-[calc(100vh-2.75rem)]">
             <div className="max-w-5xl mx-auto px-4 py-4 pb-44 space-y-4">
               {messages.length === 0 ? (
                 <EmptyChatWelcome onPickSuggestion={pickSuggestion} />
@@ -1202,21 +1237,6 @@ export function ChatPanel() {
           </ScrollArea>
         </div>
 
-        {/* Scroll to bottom button — only shown when the user has scrolled
-            meaningfully off the bottom (>300px). Positioned above the input
-            bar so it doesn't overlap the textarea. */}
-        {showScrollButton && (
-          <Button
-            variant="secondary"
-            size="icon"
-            className="absolute bottom-32 left-1/2 -translate-x-1/2 rounded-full shadow-md animate-scroll-button-in z-10"
-            onClick={scrollToBottom}
-            aria-label="Scroll to bottom"
-          >
-            <ChevronDown size={18} />
-          </Button>
-        )}
-
         {/* Gradient fade above the input — masks messages as they approach
             the bottom so the pill + tagline don't need opaque backdrops.
             The bottom 40% stays fully solid (covers the tagline area and
@@ -1232,6 +1252,23 @@ export function ChatPanel() {
             sits below the pill as plain text — the gradient above masks
             messages so neither needs its own opaque strip. */}
         <div className="absolute bottom-3 inset-x-0 px-4 animate-input-bar-in pointer-events-none">
+          {/* Scroll-to-bottom button — visible only when the user has
+              scrolled meaningfully off the bottom. Lives INSIDE the
+              input-bar wrapper so it tracks the pill's actual top edge
+              (`bottom-full`) regardless of how tall the pill grows —
+              attached files, skill chips, smart-paste hint, etc. The
+              `mb-3` is the fixed gap between button bottom and pill top. */}
+          {showScrollButton && (
+            <Button
+              variant="secondary"
+              size="icon"
+              className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 rounded-full shadow-md animate-scroll-button-in z-10 pointer-events-auto"
+              onClick={scrollToBottom}
+              aria-label="Scroll to bottom"
+            >
+              <ChevronDown size={18} />
+            </Button>
+          )}
           <input
             ref={inputFileRef}
             type="file"

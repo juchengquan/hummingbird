@@ -384,6 +384,10 @@ function ChatMessageImpl({
                     pdfCitationFileId={pdfCitationFileId}
                     sourceCount={webSearchResults?.length ?? 0}
                     onSourceClick={(idx) => setHighlightedCitation(idx)}
+                    // Suppress markdown-embedded `<img>` tags when this
+                    // message already shows a gallery — keeps the
+                    // model's helpful `![](url)` from double-rendering.
+                    suppressImages={!!message.generatedImages?.length}
                   />
                 ) : (
                   <p className="text-[15px] whitespace-pre-wrap">{message.content}</p>

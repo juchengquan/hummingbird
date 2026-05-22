@@ -10,6 +10,7 @@ import { CommandPalette } from "@/components/command-palette"
 import { PdfViewerHost } from "@/components/pdf-viewer/pdf-viewer"
 import { UrlPreviewHost } from "@/components/url-viewer/url-viewer"
 import { LiveArtifactHost } from "@/components/live-artifact/live-artifact-panel"
+import { ImageViewerHost } from "@/components/image-viewer/image-viewer"
 import {
   SidebarInset,
   SidebarProvider,
@@ -92,7 +93,8 @@ export default function Page() {
       <PdfViewerHost />
       <UrlPreviewHost />
       <LiveArtifactHost />
-      <Toaster />
+      <ImageViewerHost />
+      <Toaster closeButton />
     </SidebarProvider>
   )
 }

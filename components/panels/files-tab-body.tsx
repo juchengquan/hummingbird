@@ -25,6 +25,10 @@ interface FilesTabBodyProps {
   /** Stages a deletion — the parent shows the confirmation dialog. */
   onRequestDelete: (fileId: string) => void
   onOpenPdf: (fileId: string) => void
+  /** Open an attached image in the shared right-side image viewer.
+   *  Only invoked for rows whose file has `extractedKind === "image"`
+   *  and an in-memory `imageDataUrl` to render. */
+  onOpenImage: (fileId: string) => void
   mounted: boolean
   error: string | null
   fileInputRef: React.RefObject<HTMLInputElement | null>
@@ -43,6 +47,7 @@ export function FilesTabBody({
   toggleFileSelection,
   onRequestDelete,
   onOpenPdf,
+  onOpenImage,
   mounted,
   error,
   fileInputRef,
@@ -188,14 +193,21 @@ export function FilesTabBody({
                       )}
                     </div>
                   </div>
-                  {/* Right-side action cluster — View (PDFs only) +
-                      Delete (manage mode only). Both fade in on row hover.
-                      stopPropagation so clicking doesn't toggle attach. */}
+                  {/* Right-side action cluster — Preview (PDFs +
+                      images) + Delete (manage mode only). Both fade in
+                      on row hover. stopPropagation so clicking doesn't
+                      toggle attach. */}
                   {(() => {
                     const isPdf =
                       file.type === "application/pdf" ||
                       file.name.toLowerCase().endsWith(".pdf")
-                    if (!isPdf && !isManage) return null
+                    // Image preview requires the in-memory data URL —
+                    // legacy rows without `imageDataUrl` can't be
+                    // viewed inline, so we hide the button rather than
+                    // open an empty viewer.
+                    const isImage =
+                      file.extractedKind === "image" && !!file.imageDataUrl
+                    if (!isPdf && !isImage && !isManage) return null
                     return (
                       <div
                         className="absolute top-1.5 right-1.5 flex items-center gap-0.5 opacity-0 group-hover/row:opacity-100 focus-within:opacity-100 transition-opacity"
@@ -207,6 +219,17 @@ export function FilesTabBody({
                             onClick={() => onOpenPdf(file.id)}
                             aria-label={`Open "${file.name}" in PDF viewer`}
                             title="Open in PDF viewer"
+                            className="p-1 rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] transition-colors"
+                          >
+                            <Eye size={12} />
+                          </button>
+                        )}
+                        {isImage && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenImage(file.id)}
+                            aria-label={`Preview "${file.name}"`}
+                            title="Preview image"
                             className="p-1 rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] transition-colors"
                           >
                             <Eye size={12} />

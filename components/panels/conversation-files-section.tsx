@@ -25,11 +25,15 @@ export function ConversationFilesSection({
   onUpload,
   onRemove,
   onOpenPdf,
+  onOpenImage,
 }: {
   files: UploadedFile[]
   conversationId: string
   onUpload: (list: FileList | null) => void
   onRemove: (fileId: string) => void
+  /** Same shape as `FilesTabBody.onOpenImage` — caller dispatches into
+   *  the shared right-side image viewer with the file's metadata. */
+  onOpenImage: (fileId: string) => void
   onOpenPdf: (fileId: string) => void
 }) {
   void _conversationId
@@ -79,6 +83,8 @@ export function ConversationFilesSection({
             const isPdf =
               file.type === "application/pdf" ||
               file.name.toLowerCase().endsWith(".pdf")
+            const isImage =
+              file.extractedKind === "image" && !!file.imageDataUrl
             return (
               <li
                 key={file.id}
@@ -100,6 +106,17 @@ export function ConversationFilesSection({
                       onClick={() => onOpenPdf(file.id)}
                       aria-label={`Open "${file.name}" in PDF viewer`}
                       title="Open in PDF viewer"
+                      className="p-1 rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] transition-colors"
+                    >
+                      <Eye size={12} />
+                    </button>
+                  )}
+                  {isImage && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenImage(file.id)}
+                      aria-label={`Preview "${file.name}"`}
+                      title="Preview image"
                       className="p-1 rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] transition-colors"
                     >
                       <Eye size={12} />
