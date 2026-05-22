@@ -8,7 +8,7 @@
  * not implementation details.
  */
 
-import { Globe, ImagePlus, Link2 } from "lucide-react"
+import { FileSearch, Globe, ImagePlus, Link2 } from "lucide-react"
 
 import type { SkillDescriptor } from "./types"
 
@@ -41,6 +41,17 @@ export const SKILLS: SkillDescriptor[] = [
     default: false,
     // Requires MINIMAX_CN_API_KEY (same key as the Minimax-CN chat
     // bypass — the image endpoint accepts the same auth).
+    requiresEnv: true,
+  },
+  {
+    id: "searchFiles",
+    name: "File search",
+    description:
+      "Let the model pull additional sections from your attached files when their inline view was truncated. Uses Postgres full-text search over each file's full extracted text. Sign-in required — file full text is stored in Supabase.",
+    icon: FileSearch,
+    default: false,
+    // Requires Supabase sign-in: full text is stored in `files.full_text`
+    // and the searchFiles tool RPC reads it via the user's RLS context.
     requiresEnv: true,
   },
 ]
