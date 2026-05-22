@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react"
 import { useChatScroll } from "@/components/panels/use-chat-scroll"
 import { toast } from "sonner"
-import { useStore, useHydrated } from "@/client/hooks/use-store"
+import { useStore, useHydrated, useIsConversationTyping } from "@/client/hooks/use-store"
 import { apiClient } from "@/client/api-client"
 import type { ChatRequestInput } from "@/shared/api-schemas"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -60,8 +60,10 @@ export function ChatPanel() {
   const appendMessageGeneratedImages = useStore(
     (state) => state.appendMessageGeneratedImages
   )
-  const isTyping = useStore((state) => state.isTyping)
-  const setIsTyping = useStore((state) => state.setIsTyping)
+  // Per-conversation typing flag. Reads via a memoised selector so
+  // switching to a non-streaming conversation while another is mid-
+  // stream doesn't show "typing…" here.
+  const setConversationTyping = useStore((state) => state.setConversationTyping)
   const pendingReferenceImage = useStore(
     (state) => state.pendingReferenceImage
   )
@@ -90,7 +92,26 @@ export function ChatPanel() {
   )
   const hydrated = useHydrated()
   const [inputValue, setInputValue] = useState("")
-  const [isStreaming, setIsStreaming] = useState(false)
+  // Per-conversation streaming flags. Keeping a Set lets the chat panel
+  // know which conversations are mid-stream so switching to another
+  // conv while one is streaming doesn't blanket-disable the send
+  // button. `isStreaming` below is the *active conversation*'s flag.
+  const [streamingConvIds, setStreamingConvIds] = useState<Set<string>>(
+    () => new Set()
+  )
+  const isStreaming =
+    activeConversationId !== null && streamingConvIds.has(activeConversationId)
+  const isTyping = useIsConversationTyping(activeConversationId)
+  const markStreaming = useCallback((convId: string, on: boolean) => {
+    setStreamingConvIds((prev) => {
+      const has = prev.has(convId)
+      if (on === has) return prev
+      const next = new Set(prev)
+      if (on) next.add(convId)
+      else next.delete(convId)
+      return next
+    })
+  }, [])
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
   /**
    * Per-message live tool-call state — keyed by message id. Populated as
@@ -125,7 +146,11 @@ export function ChatPanel() {
   const [liveToolCalls, setLiveToolCalls] = useState<
     Record<string, LiveToolCall[]>
   >({})
-  const abortControllerRef = useRef<AbortController | null>(null)
+  // Per-conversation abort controllers. Map<convId, controller>. The
+  // Stop button on the active conversation aborts that conversation's
+  // controller only — other conversations keep streaming. Cleaned up
+  // when the stream ends (success, error, or abort).
+  const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
   const inputFileRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -235,8 +260,8 @@ export function ChatPanel() {
   // Includes a fake reasoning block so the Thinking… UI is exercisable
   // without a live reasoning-capable model.
   const mockAIResponse = useCallback(
-    (userMessage: string) => {
-      setIsTyping(true)
+    (userMessage: string, convId: string) => {
+      setConversationTyping(convId, true)
       setTimeout(() => {
         const reasoning = [
           `User asked: "${userMessage}".`,
@@ -247,10 +272,10 @@ export function ChatPanel() {
         ].join("\n")
         const aiContent = `_Mock response (set \`AI_GATEWAY_API_KEY\` to enable real AI)_\n\nRegarding "${userMessage}": this is placeholder text.`
         addMessage({ role: "assistant", content: aiContent, reasoning })
-        setIsTyping(false)
+        setConversationTyping(convId, false)
       }, 300)
     },
-    [setIsTyping, addMessage]
+    [setConversationTyping, addMessage]
   )
 
   // After a stream completes, auto-archive substantial code blocks so they
@@ -322,7 +347,14 @@ export function ChatPanel() {
       // this callback's useEffect-driven ref refresh to catch up.
       const modelForCall = options?.modelOverride ?? useStore.getState().chatModel
       const isRetry = options?.isRetry ?? false
-      const conv = conversations.find((c) => c.id === activeConversationId)
+      // Capture the conversation id at send time. Every "is this conv
+      // streaming?" / "this conv's controller" decision below uses
+      // `targetConvId` instead of reading `activeConversationId`
+      // mid-flight, so switching conversations during a stream
+      // doesn't move the stream's UI state onto the wrong chat.
+      const targetConvId = activeConversationId
+      if (!targetConvId) return
+      const conv = conversations.find((c) => c.id === targetConvId)
       const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
       const workspaceSystemPrompt = activeWorkspace?.systemPrompt?.trim() || undefined
       // Resolve which skills are effectively on for this turn so the route
@@ -435,9 +467,14 @@ export function ChatPanel() {
         })
 
       const controller = new AbortController()
-      abortControllerRef.current = controller
-      setIsTyping(true)
-      setIsStreaming(true)
+      // If this conversation already has an in-flight controller
+      // (very rare — user double-clicks Send before the previous
+      // turn lands a placeholder), abort the old one first so we
+      // don't leak its event listener.
+      abortControllersRef.current.get(targetConvId)?.abort()
+      abortControllersRef.current.set(targetConvId, controller)
+      setConversationTyping(targetConvId, true)
+      markStreaming(targetConvId, true)
       let placeholder: Message | null = null
       let firstChunk = true
       // Reasoning duration capture: first/last chunk timestamps so we can
@@ -448,11 +485,11 @@ export function ChatPanel() {
       let reasoningLast: number | null = null
 
       const surfaceError = (error: MessageError) => {
-        setIsTyping(false)
+        setConversationTyping(targetConvId, false)
         if (placeholder) {
           setMessageError(placeholder.id, error)
         } else {
-          const created = addMessage({ role: "assistant", content: "" })
+          const created = addMessage({ role: "assistant", content: "" }, targetConvId)
           setMessageError(created.id, error)
         }
       }
@@ -587,10 +624,10 @@ export function ChatPanel() {
 
         if (!result.ok) {
           if (result.status === 401) {
-            setIsTyping(false)
-            setIsStreaming(false)
+            setConversationTyping(targetConvId, false)
+            markStreaming(targetConvId, false)
             const lastUser = [...history].reverse().find((m) => m.role === "user")
-            if (lastUser) mockAIResponse(lastUser.content)
+            if (lastUser) mockAIResponse(lastUser.content, targetConvId)
             return
           }
           surfaceError({
@@ -628,8 +665,8 @@ export function ChatPanel() {
         // disappearing as soon as any output arrives.
         const ensurePlaceholder = () => {
           if (placeholder) return placeholder
-          setIsTyping(false)
-          placeholder = addMessage({ role: "assistant", content: "" })
+          setConversationTyping(targetConvId, false)
+          placeholder = addMessage({ role: "assistant", content: "" }, targetConvId)
           firstChunk = false
           return placeholder
         }
@@ -832,8 +869,8 @@ export function ChatPanel() {
           const phEmpty = !ph || ph.content === ""
           if (!isRetry && !offline && phEmpty) {
             if (ph) deleteMessage(ph.id)
-            setIsTyping(false)
-            setIsStreaming(false)
+            setConversationTyping(targetConvId, false)
+            markStreaming(targetConvId, false)
             setTimeout(() => {
               callChatAPIRef.current(history, {
                 modelOverride: options?.modelOverride,
@@ -854,8 +891,8 @@ export function ChatPanel() {
           })
         }
       } finally {
-        setIsTyping(false)
-        setIsStreaming(false)
+        setConversationTyping(targetConvId, false)
+        markStreaming(targetConvId, false)
         // Drop live tool-call pills now that the stream is finished. The
         // markdown footer the server appended carries the durable record.
         const ph = placeholder as Message | null
@@ -867,8 +904,11 @@ export function ChatPanel() {
             return next
           })
         }
-        if (abortControllerRef.current === controller) {
-          abortControllerRef.current = null
+        // Clear this conversation's controller entry only if it's
+        // still the one we set — guards against a follow-up send
+        // for the same conversation overwriting the slot.
+        if (abortControllersRef.current.get(targetConvId) === controller) {
+          abortControllersRef.current.delete(targetConvId)
         }
       }
     },
@@ -886,7 +926,8 @@ export function ChatPanel() {
       liveToolCalls,
       mockAIResponse,
       mutedSkillsForNext,
-      setIsTyping,
+      setConversationTyping,
+      markStreaming,
       setMessageError,
       setMessageReasoningDuration,
       setMessageToolCalls,
@@ -901,8 +942,12 @@ export function ChatPanel() {
   }, [callChatAPI])
 
   const handleStop = useCallback(() => {
-    abortControllerRef.current?.abort()
-  }, [])
+    // Stop only the *active* conversation's stream. Other conversations
+    // mid-stream stay running — they each have their own controller
+    // in the map.
+    if (!activeConversationId) return
+    abortControllersRef.current.get(activeConversationId)?.abort()
+  }, [activeConversationId])
 
   const handleAttachClick = useCallback(() => {
     inputFileRef.current?.click()

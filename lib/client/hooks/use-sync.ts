@@ -166,9 +166,7 @@ export function useSync(): void {
         return
       }
 
-      const streamingConversationId = state.isTyping
-        ? state.activeConversationId
-        : null
+      const streamingConversationIds = new Set(state.typingConversationIds)
 
       const ops = [
         ...(prev.workspaces !== next.workspaces
@@ -179,7 +177,7 @@ export function useSync(): void {
           : []),
         ...(prev.conversations !== next.conversations
           ? diffConversations(prev.conversations, next.conversations, {
-              streamingConversationId,
+              streamingConversationIds,
             })
           : []),
         ...(prev.files !== next.files ? diffFiles(prev.files, next.files) : []),
@@ -230,25 +228,33 @@ export function useSync(): void {
     return () => unsubscribe()
   }, [enabled, userId])
 
-  // When `isTyping` transitions false, re-diff the active conversation
-  // so the final streamed assistant message lands in Supabase (in-flight
-  // diffs skip it intentionally).
-  const wasTyping = useRef(false)
+  // When a conversation transitions out of the streaming set, re-diff
+  // it so the final assistant message lands in Supabase (in-flight
+  // diffs skip its messages intentionally). Tracks the previous set
+  // so we know which ids just *exited*.
+  const prevTypingIds = useRef<Set<string>>(new Set())
   useEffect(() => {
     return useStore.subscribe((state) => {
       if (!enabled || !userId) return
-      const isTyping = state.isTyping
-      if (wasTyping.current && !isTyping) {
+      const currentIds = new Set(state.typingConversationIds)
+      const justFinished: string[] = []
+      for (const id of prevTypingIds.current) {
+        if (!currentIds.has(id)) justFinished.push(id)
+      }
+      if (justFinished.length > 0) {
         const prev = lastSnapshot
         if (prev) {
+          // Diff with an empty streaming set so message diffs run for
+          // the just-finished conversations (the other still-streaming
+          // ones are already being skipped at the next scheduled diff).
           const ops = diffConversations(prev.conversations, state.conversations, {
-            streamingConversationId: null,
+            streamingConversationIds: new Set(),
           })
           for (const op of ops) enqueue(op)
           lastSnapshot = { ...prev, conversations: state.conversations }
         }
       }
-      wasTyping.current = isTyping
+      prevTypingIds.current = currentIds
     })
   }, [enabled, userId])
 }
