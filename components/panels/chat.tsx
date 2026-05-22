@@ -52,6 +52,9 @@ export function ChatPanel() {
   const setMessageSuggestions = useStore((state) => state.setMessageSuggestions)
   const setMessageReasoningDuration = useStore((state) => state.setMessageReasoningDuration)
   const setMessageToolCalls = useStore((state) => state.setMessageToolCalls)
+  const appendMessageGeneratedImages = useStore(
+    (state) => state.appendMessageGeneratedImages
+  )
   const isTyping = useStore((state) => state.isTyping)
   const setIsTyping = useStore((state) => state.setIsTyping)
   const chatModel = useStore((state) => state.chatModel)
@@ -588,6 +591,8 @@ export function ChatPanel() {
               args?: unknown
               summary?: string
               results?: Array<{ title?: string; url?: string; snippet?: string }>
+              mode?: string
+              images?: unknown[]
             }
             try {
               parsed = JSON.parse(payload)
@@ -641,6 +646,38 @@ export function ChatPanel() {
                       : t
                   ),
                 }))
+              }
+            } else if (parsed.type === "tool_image" && Array.isArray(parsed.images)) {
+              // generateImage produced images; the server pre-persisted
+              // each Minimax URL to a durable form (data URL today,
+              // Supabase signed URL in a future PR) so the message
+              // survives reload. Validate at the boundary; drop
+              // malformed entries silently.
+              const ph = placeholder as Message | null
+              if (ph) {
+                const mode: "t2i" | "i2i" = parsed.mode === "i2i" ? "i2i" : "t2i"
+                const images = (parsed.images as Array<Record<string, unknown>>)
+                  .filter(
+                    (img): img is {
+                      id: string
+                      url: string
+                      width: number
+                      height: number
+                      format: string
+                      prompt: string
+                      mode: "t2i" | "i2i"
+                    } =>
+                      typeof img?.id === "string" &&
+                      typeof img?.url === "string" &&
+                      typeof img?.width === "number" &&
+                      typeof img?.height === "number" &&
+                      typeof img?.format === "string" &&
+                      typeof img?.prompt === "string"
+                  )
+                  .map((img) => ({ ...img, mode }))
+                if (images.length > 0) {
+                  appendMessageGeneratedImages(ph.id, images)
+                }
               }
             } else if (parsed.type === "suggestions" && Array.isArray(parsed.values)) {
               // Same TS-can't-narrow-through-closure issue as the catch

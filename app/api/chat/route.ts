@@ -19,6 +19,7 @@ import { isWebSearchToolName } from '@/shared/skills/types'
 import { buildMcpTool, mcpToolName } from '@/server/mcp/tools'
 import { loadEffectiveMcpServers, type EffectiveMcpServer } from '@/server/mcp/load-servers'
 import { createSlidingWindow, rateLimitKey } from '@/server/rate-limit'
+import { persistGeneratedImages, type ImageToPersist } from '@/server/image-storage'
 import { resolveAttachedMcpResources } from '@/server/mcp/inject-resources'
 import {
   renderAttachmentsPrompt,
@@ -171,6 +172,71 @@ function buildSkillsNote(
   }
   if (notes.length === 0) return null
   return `Available capabilities:\n${notes.map((n) => `- ${n}`).join('\n')}`
+}
+
+/**
+ * After the `generateImage` tool returns, persist Minimax's hosted
+ * URLs server-side (currently as data URLs; future PR upgrades to
+ * Supabase Storage) and emit a `tool_image` SSE frame so the chat
+ * client appends the rendered images to the message.
+ *
+ * Failure is non-fatal: if the download/encode fails we just skip
+ * the frame. The model already saw the tool succeed; the user-facing
+ * fallback is a missing image rather than a broken chat.
+ */
+async function maybeEmitImageFrame(
+  part: { toolCallId?: string; toolName?: string; output?: unknown },
+  send: (payload: unknown) => void,
+  signal: AbortSignal
+): Promise<void> {
+  const output = part.output as
+    | {
+        ok?: boolean
+        mode?: 't2i' | 'i2i'
+        prompt?: string
+        images?: Array<{
+          id?: string
+          url?: string
+          width?: number
+          height?: number
+          format?: string
+        }>
+      }
+    | undefined
+  if (!output?.ok || !Array.isArray(output.images) || output.images.length === 0) {
+    return
+  }
+  const inputs: ImageToPersist[] = output.images
+    .filter((img): img is typeof img & { url: string } => typeof img?.url === 'string')
+    .map((img) => ({
+      url: img.url,
+      width: typeof img.width === 'number' ? img.width : 0,
+      height: typeof img.height === 'number' ? img.height : 0,
+      format: typeof img.format === 'string' ? img.format : 'png',
+    }))
+  if (inputs.length === 0) return
+
+  const persisted = await persistGeneratedImages(inputs, { signal })
+  if (!persisted.ok) return
+
+  const mode: 't2i' | 'i2i' = output.mode === 'i2i' ? 'i2i' : 't2i'
+  const prompt = typeof output.prompt === 'string' ? output.prompt : ''
+  send({
+    type: 'tool_image',
+    id: part.toolCallId ?? '',
+    mode,
+    images: persisted.images.map((img, i) => ({
+      // Stable per-image id — used as the React key and the future
+      // Supabase Storage object name.
+      id: `${part.toolCallId ?? 'img'}-${i}`,
+      url: img.url,
+      width: img.width,
+      height: img.height,
+      format: img.format,
+      prompt,
+      mode,
+    })),
+  })
 }
 
 function buildMcpNote(servers: { name: string; toolCount: number }[]): string | null {
@@ -537,6 +603,14 @@ export async function POST(req: NextRequest) {
                 summary,
                 ...(results ? { results } : {}),
               })
+              // generateImage: persist Minimax's short-lived URLs
+              // server-side and emit a separate `tool_image` SSE
+              // frame the client renders inline. The model's view
+              // (the `tool_result` text above) still says "rendered
+              // N images" — UI is decoupled from the tool's contract.
+              if (p.toolName === 'generateImage') {
+                await maybeEmitImageFrame(p, send, req.signal)
+              }
             } else if (part.type === 'tool-error') {
               // Tool execute() threw or args were malformed. The model never
               // sees a result so the next step often produces no answer.

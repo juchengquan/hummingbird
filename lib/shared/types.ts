@@ -360,6 +360,42 @@ export interface Message {
    * or edit-and-resend.
    */
   suggestions?: string[]
+  /**
+   * Images the model generated during this turn via the `imageGen`
+   * skill. Each entry carries the rendered image URL (Supabase Storage
+   * signed URL when available; data: URL fallback when storage isn't
+   * configured), dimensions when known, and the prompt that produced
+   * it. Rendered as a gallery beneath the assistant text in PR C.
+   * Empty / undefined when no images were generated.
+   */
+  generatedImages?: GeneratedImage[]
+}
+
+export interface GeneratedImage {
+  /** Stable per-image id — used as the React key and as the storage
+   *  object name when persisted to Supabase. */
+  id: string
+  /** Hosted URL the UI loads. Either:
+   *  - Supabase Storage signed URL (durable but expires; UI re-signs
+   *    lazily on render — same pattern as conversation files), OR
+   *  - `data:image/png;base64,...` URL when Supabase isn't configured
+   *    or upload failed. Heavier on persistence but works for
+   *    signed-out / offline users. */
+  url: string
+  /** Width in pixels. Zero is a sentinel "unknown — let the browser
+   *  detect from the loaded image." Set when the upstream provider
+   *  returns dimensions; left at 0 otherwise. */
+  width: number
+  height: number
+  /** Lowercase MIME subtype (`"png"`, `"jpg"`, `"webp"`). */
+  format: string
+  /** The prompt the model passed to `generateImage`, kept for the
+   *  alt text + the lightbox caption + any "regenerate this" affordance
+   *  PR C may add. */
+  prompt: string
+  /** Which mode produced the image. `"i2i"` ones may want different
+   *  affordances (e.g. "use the reference again" rather than "regenerate"). */
+  mode: 't2i' | 'i2i'
 }
 
 export interface ToolCallRecord {
