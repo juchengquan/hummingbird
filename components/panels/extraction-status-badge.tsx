@@ -78,16 +78,39 @@ export function ExtractionStatusBadge({
 
   // `done` or undefined (legacy files / non-extracted demos)
   if (truncated) {
+    // When the full text was stashed via Phase 2 sync, surface "+N KB
+    // searchable" so the user knows the searchFiles tool can pull
+    // sections that didn't fit the inline budget — otherwise
+    // "Truncated" alone reads as "the model is missing content,"
+    // which understates the actual capability.
+    const extraKb = indexedExtraKb(file)
     return (
       <span
         className={cn(base, "text-amber-600 dark:text-amber-500", className)}
-        title="Extracted text was truncated to fit the per-file budget."
+        title={
+          extraKb !== null
+            ? `Inline view was truncated, but +${extraKb} KB of full text is indexed and searchable via the searchFiles tool.`
+            : "Extracted text was truncated to fit the per-file budget."
+        }
       >
         <Scissors size={size === "compact" ? 10 : 12} />
-        Truncated
+        {extraKb !== null ? `Truncated · +${extraKb} KB indexed` : "Truncated"}
       </span>
     )
   }
 
   return null
+}
+
+/**
+ * If the file has `extractedFullText` strictly larger than the inline
+ * `extractedText` (i.e. Phase 2 actually stashed extra content for
+ * Phase 3 retrieval), returns the size of the extra bytes in KB
+ * (rounded). Returns null when there's nothing extra to advertise.
+ */
+function indexedExtraKb(file: UploadedFile): number | null {
+  const inline = file.extractedText?.length ?? 0
+  const full = file.extractedFullText?.length ?? 0
+  if (full <= inline) return null
+  return Math.round((full - inline) / 1024)
 }

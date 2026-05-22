@@ -1,10 +1,13 @@
 "use client"
 
-import { Globe, Loader2, Check, Wrench } from "lucide-react"
+import { FileSearch, Globe, Loader2, Check, Wrench } from "lucide-react"
 import { cn } from "@/shared/utils"
 
 import type { ToolCallResult } from "@/shared/types"
-import { isWebSearchToolName } from "@/shared/skills/types"
+import {
+  isSearchFilesToolName,
+  isWebSearchToolName,
+} from "@/shared/skills/types"
 
 export interface LiveToolCall {
   id: string
@@ -65,6 +68,7 @@ export function ToolCallStrip({ calls, className }: ToolCallStripProps) {
 
 function iconFor(name: string) {
   if (isWebSearchToolName(name)) return Globe
+  if (isSearchFilesToolName(name)) return FileSearch
   return Wrench
 }
 
@@ -78,6 +82,20 @@ function labelFor(call: LiveToolCall): string {
     return call.summary
       ? `Searched the web · ${call.summary}`
       : "Searched the web"
+  }
+  if (isSearchFilesToolName(call.name)) {
+    if (call.status === "running") {
+      // argsLabel is set by the chat side from the query string —
+      // we don't try to look up the file name here (would require a
+      // store read; the model already references the file by name
+      // in the surrounding response text).
+      return call.argsLabel
+        ? `Searching attached files for "${call.argsLabel}"…`
+        : "Searching attached files…"
+    }
+    return call.summary
+      ? `Searched attached files · ${call.summary}`
+      : "Searched attached files"
   }
   // Generic fallback.
   if (call.status === "running") return `${call.name}…`

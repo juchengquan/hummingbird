@@ -30,6 +30,19 @@ export function isWebSearchToolName(name: string): name is WebSearchToolName {
   return (WEB_SEARCH_TOOL_NAMES as readonly string[]).includes(name)
 }
 
+/**
+ * Tool name exposed to the model for the searchFiles skill (Phase 3
+ * of the file full-text retrieval plan). Mirrors the webSearch pattern
+ * so UI consumers don't hardcode the string and future tool-name
+ * variants (e.g. cross-file search) can extend the union here.
+ */
+export const SEARCH_FILES_TOOL_NAMES = ["searchFiles"] as const
+export type SearchFilesToolName = (typeof SEARCH_FILES_TOOL_NAMES)[number]
+
+export function isSearchFilesToolName(name: string): name is SearchFilesToolName {
+  return (SEARCH_FILES_TOOL_NAMES as readonly string[]).includes(name)
+}
+
 export interface SkillDescriptor {
   id: SkillId
   name: string

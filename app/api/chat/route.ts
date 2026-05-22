@@ -15,7 +15,7 @@ import {
   type SkillRequestEntry,
 } from '@/server/skills/registry'
 import type { SkillId } from '@/shared/skills/types'
-import { isWebSearchToolName } from '@/shared/skills/types'
+import { isSearchFilesToolName, isWebSearchToolName } from '@/shared/skills/types'
 import { buildMcpTool, mcpToolName } from '@/server/mcp/tools'
 import { loadEffectiveMcpServers, type EffectiveMcpServer } from '@/server/mcp/load-servers'
 import { createSlidingWindow, rateLimitKey } from '@/server/rate-limit'
@@ -618,7 +618,11 @@ export async function POST(req: NextRequest) {
               let summary = 'done'
               let results: Array<{ title: string; url: string; snippet: string }> | undefined
               const output = p.output as
-                | { results?: Array<{ title?: unknown; url?: unknown; snippet?: unknown }>; error?: string }
+                | {
+                    results?: Array<{ title?: unknown; url?: unknown; snippet?: unknown }>
+                    fragments?: unknown[]
+                    error?: string
+                  }
                 | undefined
               if (output?.error) {
                 summary = output.error
@@ -638,6 +642,19 @@ export async function POST(req: NextRequest) {
                     }))
                     .filter((r) => r.url) // drop malformed entries
                 }
+              } else if (
+                p.toolName &&
+                isSearchFilesToolName(p.toolName) &&
+                Array.isArray(output?.fragments)
+              ) {
+                // searchFiles returns `{ fragments: string[], rank }` on
+                // success — surface the count so the tool-call pill
+                // reads "Searched attached files · 3 excerpts" rather
+                // than "done". Fragments themselves stay server-side;
+                // the model quotes the relevant bits into its own
+                // response text.
+                const n = output.fragments.length
+                summary = `${n} excerpt${n === 1 ? '' : 's'}`
               }
               sawToolResult = true
               send({
