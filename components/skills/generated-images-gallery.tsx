@@ -19,6 +19,19 @@ function canRemix(url: string): boolean {
   return url.startsWith("http://") || url.startsWith("https://")
 }
 
+/** Stage a gallery image as the next turn's I2I reference. Shared
+ *  between the lightbox action and the inline tile-hover button so the
+ *  toast wording stays in sync. */
+function stageRemix(
+  image: GeneratedImage,
+  setPending: (
+    v: { url: string; sourcePrompt?: string } | null
+  ) => void
+) {
+  setPending({ url: image.url, sourcePrompt: image.prompt })
+  toast.success("Reference set — describe your variation and send")
+}
+
 /**
  * Renders the images the `imageGen` skill produced for an assistant
  * message. Layout adapts to count:
@@ -118,34 +131,66 @@ function ImageTile({
   onOpen: () => void
   single: boolean
 }) {
+  const setPendingReferenceImage = useStore(
+    (s) => s.setPendingReferenceImage
+  )
+  const remixable = canRemix(image.url)
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      aria-label={`Open image: ${image.prompt.slice(0, 80)}`}
-      className={cn(
-        "group relative overflow-hidden rounded-md border border-[var(--border)] bg-[var(--muted)]/30",
-        "transition-shadow hover:shadow-md hover:border-[var(--muted-foreground)]/40",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]/40",
-        single ? "max-h-[420px]" : "max-h-[260px]"
-      )}
-    >
-      {/* eslint-disable-next-line @next/next/no-img-element -- data: URLs
-          and possibly cross-origin signed URLs don't play with next/image's
-          loader; the unoptimized fallback would be more complexity than
-          this needs. */}
-      <img
-        src={image.url}
-        alt={image.prompt}
-        loading="lazy"
-        className="block w-full h-auto object-cover"
-      />
+    // Wrap the click-to-open button in a positioning parent so the
+    // Remix shortcut can sit as a sibling overlay. Nesting it inside
+    // the open button would be invalid HTML (no nested <button>s);
+    // sibling + `z-10` keeps clicks on Remix from triggering open.
+    <div className="group relative">
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`Open image: ${image.prompt.slice(0, 80)}`}
+        className={cn(
+          "block w-full overflow-hidden rounded-md border border-[var(--border)] bg-[var(--muted)]/30",
+          "transition-shadow hover:shadow-md hover:border-[var(--muted-foreground)]/40",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]/40",
+          single ? "max-h-[420px]" : "max-h-[260px]"
+        )}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element -- data: URLs
+            and possibly cross-origin signed URLs don't play with next/image's
+            loader; the unoptimized fallback would be more complexity than
+            this needs. */}
+        <img
+          src={image.url}
+          alt={image.prompt}
+          loading="lazy"
+          className="block w-full h-auto object-cover"
+        />
+      </button>
       {image.mode === "i2i" && (
-        <span className="absolute top-1.5 left-1.5 text-[10px] font-medium uppercase tracking-wide bg-black/55 text-white px-1.5 py-0.5 rounded-sm">
+        <span className="pointer-events-none absolute top-1.5 left-1.5 text-[10px] font-medium uppercase tracking-wide bg-black/55 text-white px-1.5 py-0.5 rounded-sm">
           remix
         </span>
       )}
-    </button>
+      {remixable && (
+        // Hover-revealed shortcut so users don't have to open the
+        // lightbox just to stage a remix. Focus-visible reveal keeps
+        // it reachable via keyboard. `z-10` puts it above the open
+        // button so clicks land here, not on open.
+        <button
+          type="button"
+          onClick={() => stageRemix(image, setPendingReferenceImage)}
+          aria-label="Remix this image"
+          title="Remix"
+          className={cn(
+            "absolute top-1.5 right-1.5 z-10 inline-flex items-center gap-1",
+            "rounded-md bg-black/55 text-white px-1.5 py-1",
+            "text-[10px] font-medium leading-none",
+            "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+            "transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+          )}
+        >
+          <Repeat2 size={12} />
+          Remix
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -268,8 +313,7 @@ function ActionButton({
         toast.error("Copy failed")
       }
     } else if (kind === "remix") {
-      setPendingReferenceImage({ url: image.url, sourcePrompt: image.prompt })
-      toast.success("Reference set — describe your variation and send")
+      stageRemix(image, setPendingReferenceImage)
       onAfter?.()
     } else {
       // Open in new tab — works for remote URLs; browsers refuse to
