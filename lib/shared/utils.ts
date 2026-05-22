@@ -27,3 +27,13 @@ export function formatBytes(bytes: number): string {
 export function toISO(d: Date | string): string {
   return typeof d === "string" ? d : d.toISOString()
 }
+
+/**
+ * Strip the `http(s)://` prefix and any trailing slash from a URL
+ * so it renders as `example.com/foo` instead of
+ * `https://example.com/foo/`. Display-only — never pass the result
+ * to anything that re-parses URLs.
+ */
+export function stripUrlScheme(url: string): string {
+  return url.replace(/^https?:\/\//, "").replace(/\/$/, "")
+}

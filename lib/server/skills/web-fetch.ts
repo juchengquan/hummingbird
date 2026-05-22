@@ -22,18 +22,7 @@ import { tool } from "ai"
 import { z } from "zod"
 
 import { fetchUrlBookmark } from "@/server/url/fetch"
-
-/** Tool name surfaced to the model. Kept stable so message-history
- *  tool_call records survive renames. */
-export const WEB_FETCH_TOOL_NAME = "webFetch"
-
-export const DEFAULT_MAX_WEB_FETCHES = 5
-const MAX_FETCHES_CEILING = 20
-
-export function clampMaxWebFetches(n: number): number {
-  if (!Number.isFinite(n) || n <= 0) return DEFAULT_MAX_WEB_FETCHES
-  return Math.min(Math.floor(n), MAX_FETCHES_CEILING)
-}
+import { clampMaxWebFetches } from "@/shared/skills/web-fetch-config"
 
 export interface WebFetchInvocation {
   url: string
@@ -70,6 +59,17 @@ interface BuildOpts {
   /** Per-turn cap. After this many invocations any further calls return
    *  a soft error. */
   maxCalls: number
+  /** Upstream abort signal — typically the chat route's `req.signal`.
+   *  Propagated into the URL fetcher so an in-flight tool call cancels
+   *  when the client tab closes mid-stream, instead of running its
+   *  internal 10s timer out to completion. */
+  signal?: AbortSignal
+  /** Per-IP cross-turn budget gate. Called once per tool invocation.
+   *  When refused (`allowed: false`), the tool returns a soft error
+   *  with the suggested retry-after. Distinct from `maxCalls` (which
+   *  is a within-turn budget). When omitted, no cross-turn gate is
+   *  applied. */
+  consumeBudget?: () => { allowed: boolean; retryAfterSec: number }
 }
 
 export function buildWebFetchTool(log: WebFetchLog, opts: BuildOpts) {
@@ -87,6 +87,18 @@ export function buildWebFetchTool(log: WebFetchLog, opts: BuildOpts) {
         .describe("Absolute http(s) URL of the page to fetch."),
     }),
     execute: async ({ url }): Promise<WebFetchResult> => {
+      // Per-IP cross-turn gate first — if the user has been hammering
+      // the chat web tools we refuse before even checking the local
+      // log so a one-line tool result tells them to back off.
+      const budget = opts.consumeBudget?.()
+      if (budget && !budget.allowed) {
+        log.push({ url, ok: false, contentLength: 0 })
+        return {
+          ok: false,
+          url,
+          error: `webFetch rate limit exceeded for this IP. Retry in ${budget.retryAfterSec}s. The chat route caps outbound web tools (webSearch + webFetch combined) per minute.`,
+        }
+      }
       // Soft cap — return a tool result with an error rather than
       // throwing so the model handles it gracefully.
       if (log.length >= maxCalls) {
@@ -98,7 +110,7 @@ export function buildWebFetchTool(log: WebFetchLog, opts: BuildOpts) {
         }
       }
 
-      const res = await fetchUrlBookmark(url)
+      const res = await fetchUrlBookmark(url, { signal: opts.signal })
       if (!res.ok) {
         log.push({ url, ok: false, contentLength: 0 })
         const e = res.error

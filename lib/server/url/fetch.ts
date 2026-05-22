@@ -47,9 +47,15 @@ export type FetchError =
 /**
  * Fetch and extract a single URL. Returns a `BookmarkSnapshot` on
  * success or a structured `FetchError` on any failure mode.
+ *
+ * `options.signal` propagates upstream abort (e.g. the chat-route
+ * `req.signal` when the client tab closes mid-stream). It's combined
+ * with the internal 10s timer via `AbortSignal.any`, so the fetch
+ * aborts on whichever fires first.
  */
 export async function fetchUrlBookmark(
-  rawUrl: string
+  rawUrl: string,
+  options: { signal?: AbortSignal } = {}
 ): Promise<
   | { ok: true; snapshot: BookmarkSnapshot }
   | { ok: false; error: FetchError }
@@ -59,6 +65,12 @@ export async function fetchUrlBookmark(
 
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  // Combined signal: caller's upstream signal (e.g. tab closed) OR
+  // our internal 10s timeout — whichever fires first cancels the
+  // outbound fetch. Stops zombie work after a client disconnect.
+  const requestSignal = options.signal
+    ? AbortSignal.any([controller.signal, options.signal])
+    : controller.signal
 
   try {
     while (true) {
@@ -80,7 +92,7 @@ export async function fetchUrlBookmark(
           method: "GET",
           // We handle redirects manually so we can re-validate each hop.
           redirect: "manual",
-          signal: controller.signal,
+          signal: requestSignal,
           headers: {
             "User-Agent":
               "Hummingbird-Bookmark/1.0 (+https://github.com/juchengquan/hummingbird)",

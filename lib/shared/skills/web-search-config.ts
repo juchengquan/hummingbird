@@ -129,18 +129,3 @@ export function resolveWebSearchConfig(
     },
   }
 }
-
-/**
- * Backwards-compat resolver kept for callers that only care about the
- * cap (legacy `maxCalls` accessor). New code should call
- * `resolveWebSearchConfig`.
- */
-export function resolveWebSearchMaxCalls(
-  workspaceValue: WebSearchConfig | number | undefined,
-  conversationValue: WebSearchConfig | number | undefined
-): number {
-  const toCfg = (v: WebSearchConfig | number | undefined): WebSearchConfig | undefined =>
-    typeof v === "number" ? { maxCalls: v } : v
-  return resolveWebSearchConfig(toCfg(workspaceValue), toCfg(conversationValue))
-    .maxCalls
-}

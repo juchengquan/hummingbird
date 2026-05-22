@@ -30,6 +30,7 @@ import {
 import { isWebSearchToolName } from '@/shared/skills/types'
 import { buildMcpTool, mcpToolName } from '@/server/mcp/tools'
 import { loadEffectiveMcpServers, type EffectiveMcpServer } from '@/server/mcp/load-servers'
+import { createSlidingWindow, rateLimitKey } from '@/server/rate-limit'
 import { resolveAttachedMcpResources } from '@/server/mcp/inject-resources'
 import {
   renderAttachmentsPrompt,
@@ -42,6 +43,12 @@ import type { AttachmentPayload } from '@/shared/attachments'
 // inside reasonable token budgets. Per-file truncation already happens at
 // extraction time; this is a second pass across the whole attachment set.
 const TOTAL_ATTACHMENT_BUDGET = 96 * 1024
+
+// Per-IP rate limit shared across the chat route's web-tool calls
+// (webSearch + webFetch combined). The per-turn caps inside each tool
+// are budget hints to the model; this is the abuse gate that runs
+// across turns. See the call site for the rationale.
+const chatWebToolLimit = createSlidingWindow({ windowMs: 60_000, max: 20 })
 
 /**
  * Convert the wire-shape `AttachmentPayload[]` into the server-side
@@ -359,11 +366,32 @@ export async function POST(req: NextRequest) {
   // toggled off (or none are configured server-side) the builder
   // returns null and the system-prompt note tells the model to fall
   // back.
+  //
+  // Per-IP cross-tool rate limit. The per-turn caps on webFetch /
+  // webSearch (5 + 3 by default) are budget hints to the model — a
+  // cooperative client can sidestep them by splitting one logical
+  // question into many turns. This cap is the actual abuse gate: at
+  // most 20 outbound web ops per IP per minute, summed across both
+  // tools. Counted on tool invocation, not per HTTP request. The
+  // existing /api/url/fetch route has its own bucket (30/min/IP) — the
+  // two are intentionally separate so a user filling their bookmark
+  // library doesn't starve their chat turn.
+  const webToolIpKey = rateLimitKey(req)
+  const consumeWebToolBudget = () => chatWebToolLimit.consume(webToolIpKey)
+
   const webSearchLog: WebSearchLog = []
   const webFetchLog: WebFetchLog = []
   const tools: Record<string, unknown> = {}
   if (enabledSkillIds.includes('webSearch')) {
-    const t = buildWebSearchTool(webSearchLog, resolvedWebSearchConfig)
+    // Pass `req.signal` through so an in-flight search aborts when the
+    // client tab closes mid-stream — without this, each provider's
+    // 8s timer runs to completion as zombie outbound work.
+    const t = buildWebSearchTool(
+      webSearchLog,
+      resolvedWebSearchConfig,
+      req.signal,
+      consumeWebToolBudget
+    )
     if (t) tools.webSearch = t
   }
   // Resolve the webFetch cap from the request (client sends the
@@ -375,6 +403,8 @@ export async function POST(req: NextRequest) {
   if (enabledSkillIds.includes('webFetch')) {
     tools.webFetch = buildWebFetchTool(webFetchLog, {
       maxCalls: webFetchMaxCalls,
+      signal: req.signal,
+      consumeBudget: consumeWebToolBudget,
     })
   }
   // Register MCP-exposed tools for every enabled server. Local-mode
@@ -448,36 +478,41 @@ export async function POST(req: NextRequest) {
       // which would prevent the model from continuing after a tool call;
       // bump it so it can call a tool, read the result, and answer.
       ...(Object.keys(tools).length > 0
-        ? {
-            tools: tools as Parameters<typeof streamText>[0]['tools'],
+        ? (() => {
             // Step budget. webSearch alone: 6 steps (model can chain a few
             // searches and still have one forced text-only step at the end).
             // With MCP tools registered: 10, because list → get → filter →
-            // answer naturally takes more steps.
-            stopWhen: stepCountIs(mcpToolNames.length > 0 ? 10 : 6),
-            // Force the last step to be text-only. Without this, reasoning
-            // models can chain tool calls until they hit the cap and emit
-            // `finishReason: tool-calls` — i.e. cut off mid-loop with no
-            // answer. By disabling tools on the final step we guarantee at
-            // least one text-producing step before stopWhen fires.
-            prepareStep: ({ stepNumber }) => {
-              const lastStepIndex = (mcpToolNames.length > 0 ? 10 : 6) - 1
-              // Force the last step to be text-only as a hard backstop.
-              //
-              // We intentionally do NOT drop webSearch from `activeTools`
-              // mid-turn once its budget is exhausted: some models (notably
-              // DeepSeek-family) react to a missing tool by leaking their
-              // internal tool-call markup as plain text (e.g.
-              // `<｜｜DSML｜｜tool_calls>…`) instead of writing an answer.
-              // Instead, the cap is enforced inside `webSearch`'s `execute`
-              // — over-budget calls return a normal tool-result with an
-              // error message, which the model handles gracefully.
-              if (stepNumber >= lastStepIndex) {
-                return { toolChoice: 'none' }
-              }
-              return undefined
-            },
-          }
+            // answer naturally takes more steps. Computed once so the
+            // `stopWhen` cap and the `lastStepIndex` guard inside
+            // `prepareStep` can't drift apart.
+            const stepBudget = mcpToolNames.length > 0 ? 10 : 6
+            const lastStepIndex = stepBudget - 1
+            return {
+              tools: tools as Parameters<typeof streamText>[0]['tools'],
+              stopWhen: stepCountIs(stepBudget),
+              // Force the last step to be text-only. Without this, reasoning
+              // models can chain tool calls until they hit the cap and emit
+              // `finishReason: tool-calls` — i.e. cut off mid-loop with no
+              // answer. By disabling tools on the final step we guarantee at
+              // least one text-producing step before stopWhen fires.
+              prepareStep: ({ stepNumber }: { stepNumber: number }) => {
+                // Force the last step to be text-only as a hard backstop.
+                //
+                // We intentionally do NOT drop webSearch from `activeTools`
+                // mid-turn once its budget is exhausted: some models (notably
+                // DeepSeek-family) react to a missing tool by leaking their
+                // internal tool-call markup as plain text (e.g.
+                // `<｜｜DSML｜｜tool_calls>…`) instead of writing an answer.
+                // Instead, the cap is enforced inside `webSearch`'s `execute`
+                // — over-budget calls return a normal tool-result with an
+                // error message, which the model handles gracefully.
+                if (stepNumber >= lastStepIndex) {
+                  return { toolChoice: 'none' as const }
+                }
+                return undefined
+              },
+            }
+          })()
         : {}),
     })
 
