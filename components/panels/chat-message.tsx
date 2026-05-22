@@ -11,6 +11,7 @@ import { cn } from "@/shared/utils"
 import { copyText } from "@/client/export"
 import { extractCodeBlocks } from "@/shared/code-blocks"
 import { MarkdownPreview } from "@/components/markdown-preview"
+import { MessageLiveArtifacts } from "@/components/live-artifact/message-live-artifacts"
 import { ToolCallStrip, type LiveToolCall } from "@/components/skills/tool-call-strip"
 import { GeneratedImagesGallery } from "@/components/skills/generated-images-gallery"
 import { MessageAttachments } from "@/components/panels/message-attachments"
@@ -372,6 +373,7 @@ function ChatMessageImpl({
                     highlightedIndex={highlightedCitation}
                   />
                 )}
+                {!isUser && <MessageLiveArtifacts messageId={message.id} />}
                 {!isUser &&
                   message.generatedImages &&
                   message.generatedImages.length > 0 && (

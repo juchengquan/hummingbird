@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
-import { usePdfViewer } from "@/components/pdf-viewer/types"
+import { openPdf } from "@/components/right-panel-slot"
 import {
   useStore,
   useWorkspaceResources,
@@ -59,7 +59,6 @@ export function ChatResourcesPanel({ mode = "chat" }: ChatResourcesPanelProps = 
   const [confirmDeleteFileId, setConfirmDeleteFileId] = useState<string | null>(
     null
   )
-  const openPdfViewer = usePdfViewer((s) => s.open)
   // `mode` only affects how the Files tab renders (manage vs attach). The
   // active tab itself always follows the persisted `resourcesSidebarTab`
   // so the rail can switch between Files/Notes/Artifacts/Skills regardless
@@ -168,7 +167,7 @@ export function ChatResourcesPanel({ mode = "chat" }: ChatResourcesPanelProps = 
               onRemove={(fileId) =>
                 removeConversationFile(activeConversationId, fileId)
               }
-              onOpenPdf={(fileId) => openPdfViewer({ fileId })}
+              onOpenPdf={(fileId) => openPdf({ fileId })}
             />
           )}
           <div className="flex-1 min-h-0 flex flex-col">
@@ -182,7 +181,7 @@ export function ChatResourcesPanel({ mode = "chat" }: ChatResourcesPanelProps = 
               selectedFileIds={selectedFileIds}
               toggleFileSelection={toggleFileSelection}
               onRequestDelete={setConfirmDeleteFileId}
-              onOpenPdf={(fileId) => openPdfViewer({ fileId })}
+              onOpenPdf={(fileId) => openPdf({ fileId })}
               mounted={mounted}
               error={error}
               fileInputRef={fileInputRef}

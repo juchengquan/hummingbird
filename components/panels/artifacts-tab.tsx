@@ -5,6 +5,7 @@ import { format } from "date-fns"
 import {
   Archive,
   Code2,
+  Eye,
   FileText,
   Braces,
   Pin,
@@ -34,6 +35,8 @@ import { copyText } from "@/client/export"
 import { TabEmptyState } from "@/components/panels/tab-empty-state"
 import { CodeHighlight, JsonHighlight } from "@/components/code-highlight"
 import { MarkdownPreview } from "@/components/markdown-preview"
+import { detectArtifactShell } from "@/client/live-artifact/detect"
+import { openLiveArtifact } from "@/components/right-panel-slot"
 import type { Artifact } from "@/shared/types"
 
 function artifactKindIcon(artifact: Artifact) {
@@ -282,6 +285,21 @@ function ArtifactPreviewDialog({
 
         {artifact && (
           <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-[var(--border)]">
+            {artifact.kind === "code" &&
+              detectArtifactShell({
+                language: artifact.language,
+                content: artifact.content,
+              }).renderable && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => openLiveArtifact({ artifactId: artifact.id })}
+                  className="gap-1.5"
+                >
+                  <Eye size={12} />
+                  Preview
+                </Button>
+              )}
             <Button size="sm" variant="secondary" onClick={() => onSendToEditor(artifact)} className="gap-1.5">
               <Send size={12} />
               Send to editor
