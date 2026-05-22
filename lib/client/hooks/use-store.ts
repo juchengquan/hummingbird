@@ -164,8 +164,8 @@ function mergeWebSearchConfig(
       delete next[key as string]
       continue
     }
-    if (key === 'tavily' || key === 'brave') {
-      // Sub-object merge: deep on the two known provider sub-configs.
+    if (key === 'tavily' || key === 'brave' || key === 'exa') {
+      // Sub-object merge: deep on the known provider sub-configs.
       const prior = (next[key as string] ?? {}) as Record<string, unknown>
       const merged: Record<string, unknown> = { ...prior }
       for (const [subKey, subValue] of Object.entries(value)) {

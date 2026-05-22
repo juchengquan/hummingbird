@@ -149,6 +149,12 @@ export const ChatRequestSchema = z.object({
                 freshness: z.enum(["any", "pd", "pw", "pm", "py"]).optional(),
               })
               .optional(),
+            exa: z
+              .object({
+                enabled: z.boolean().optional(),
+                type: z.enum(["auto", "neural", "keyword"]).optional(),
+              })
+              .optional(),
           })
           .optional(),
         /** Optional structured config for the `webFetch` skill. Single

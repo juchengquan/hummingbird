@@ -4,25 +4,27 @@ import "server-only"
  *
  * The model sees one tool, `webSearch({ query })`. When invoked, the
  * server runs the query against every enabled+configured provider in
- * parallel (Tavily, Brave), dedupes by URL, interleaves the results so
- * neither provider dominates the first slots, and returns a single
- * merged result list. From the model's perspective, the choice of
- * provider is invisible — it just gets richer, dedup'd web results.
+ * parallel (Tavily, Brave, Exa), dedupes by URL, interleaves the
+ * results so no single provider dominates the first slots, and returns
+ * a single merged result list. From the model's perspective, the
+ * choice of provider is invisible — it just gets richer, dedup'd web
+ * results.
  *
  * Cap budget: one `webSearch` tool invocation = one cap unit, even when
  * it fans out to multiple providers. Matches the user's mental model
  * ("how many times can the model decide to search?") rather than
  * counting upstream API hits.
  *
- * Per-provider knobs (Tavily `searchDepth`, Brave `freshness`, …) are
- * resolved client-side from the cascade and arrive on the request as
- * `ResolvedWebSearchConfig`. Each provider's invocation uses its own
- * sub-config.
+ * Per-provider knobs (Tavily `searchDepth`, Brave `freshness`, Exa
+ * `type`, …) are resolved client-side from the cascade and arrive on
+ * the request as `ResolvedWebSearchConfig`. Each provider's invocation
+ * uses its own sub-config.
  *
  * Server-only: api keys live in env, never in the browser bundle.
  * Per-provider failures are tolerated — Tavily returning 500 doesn't
- * suppress Brave's results, and vice versa. If both fail we surface a
- * concise error to the model so it can fall back to training data.
+ * suppress Brave's results, and vice versa. If all enabled providers
+ * fail we surface a concise error to the model so it can fall back to
+ * training data.
  */
 
 import { tool } from "ai"
@@ -31,9 +33,11 @@ import { z } from "zod"
 import {
   clampMaxWebSearches,
   DEFAULT_BRAVE_FRESHNESS,
+  DEFAULT_EXA_SEARCH_TYPE,
   DEFAULT_MAX_WEB_SEARCHES,
   DEFAULT_TAVILY_SEARCH_DEPTH,
   type BraveFreshness,
+  type ExaSearchType,
   type ResolvedWebSearchConfig,
   type TavilySearchDepth,
 } from "@/shared/skills/web-search-config"
@@ -41,9 +45,11 @@ import {
 const SNIPPET_MAX = 600
 const PER_PROVIDER_RESULTS = 5
 
+export type WebSearchProvider = "tavily" | "brave" | "exa"
+
 export interface WebSearchInvocation {
   /** Which providers we asked on this tool call (in dispatch order). */
-  providers: ("tavily" | "brave")[]
+  providers: WebSearchProvider[]
   query: string
   /** Count of unique results returned after dedup + merge. */
   resultCount: number
@@ -66,9 +72,13 @@ export function isBraveConfigured(): boolean {
   return !!process.env.BRAVE_SEARCH_API_KEY
 }
 
+export function isExaConfigured(): boolean {
+  return !!process.env.EXA_API_KEY
+}
+
 /** True when any provider is usable. */
 export function isWebSearchConfigured(): boolean {
-  return isTavilyConfigured() || isBraveConfigured()
+  return isTavilyConfigured() || isBraveConfigured() || isExaConfigured()
 }
 
 // --- Shared types -----------------------------------------------------------
@@ -267,6 +277,84 @@ async function braveSearch(
   }
 }
 
+// --- Exa --------------------------------------------------------------------
+
+interface ExaResult {
+  title?: string | null
+  url?: string
+  // `contents: { text: { maxCharacters } }` gives us a per-result text
+  // blob. Exa also returns `summary` if requested, but we stick with
+  // `text` for parity with how Tavily/Brave surface snippet content.
+  text?: string | null
+  // Exa returns a per-result `summary` if `contents.summary` is set;
+  // we don't ask for it today but the field is tolerated.
+  summary?: string | null
+}
+
+interface ExaResponse {
+  results?: ExaResult[]
+}
+
+const EXA_ENDPOINT = "https://api.exa.ai/search"
+
+async function exaSearch(
+  query: string,
+  opts: { type: ExaSearchType; signal?: AbortSignal }
+): Promise<{ results: NormalizedResult[] } | { results: []; error: string }> {
+  const apiKey = process.env.EXA_API_KEY
+  if (!apiKey) {
+    return { results: [], error: "Exa is not configured (missing EXA_API_KEY)." }
+  }
+  const { signal, cancel } = buildProviderSignal(opts.signal)
+  try {
+    const res = await fetch(EXA_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+      },
+      body: JSON.stringify({
+        query,
+        numResults: PER_PROVIDER_RESULTS,
+        type: opts.type,
+        // Ask Exa to include a text excerpt so we have something for
+        // the snippet field. `maxCharacters` keeps the response size
+        // bounded; `clipSnippet` enforces the final per-result cap.
+        contents: {
+          text: { maxCharacters: SNIPPET_MAX },
+        },
+      }),
+      signal,
+    })
+    if (!res.ok) {
+      return { results: [], error: `Exa search failed (HTTP ${res.status}).` }
+    }
+    const data = (await res.json()) as ExaResponse
+    const results = (data.results ?? [])
+      .slice(0, PER_PROVIDER_RESULTS)
+      .filter((r): r is ExaResult & { url: string } => typeof r.url === "string")
+      .map((r) => ({
+        title: typeof r.title === "string" ? r.title : "",
+        url: r.url,
+        snippet: clipSnippet(r.text ?? r.summary ?? ""),
+      }))
+    return { results }
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      return {
+        results: [],
+        error: `Exa timed out after ${PROVIDER_CALL_TIMEOUT_MS}ms`,
+      }
+    }
+    return {
+      results: [],
+      error: err instanceof Error ? err.message : "Exa search failed",
+    }
+  } finally {
+    cancel()
+  }
+}
+
 // --- Merge -----------------------------------------------------------------
 
 /**
@@ -317,13 +405,16 @@ export function buildWebSearchTool(
   const maxCalls = clampMaxWebSearches(config?.maxCalls ?? DEFAULT_MAX_WEB_SEARCHES)
   const tavilyOn = (config?.tavily?.enabled ?? true) && isTavilyConfigured()
   const braveOn = (config?.brave?.enabled ?? true) && isBraveConfigured()
-  if (!tavilyOn && !braveOn) return null
+  const exaOn = (config?.exa?.enabled ?? true) && isExaConfigured()
+  if (!tavilyOn && !braveOn && !exaOn) return null
   const tavilyDepth = config?.tavily?.searchDepth ?? DEFAULT_TAVILY_SEARCH_DEPTH
   const braveFreshness = config?.brave?.freshness ?? DEFAULT_BRAVE_FRESHNESS
+  const exaType = config?.exa?.type ?? DEFAULT_EXA_SEARCH_TYPE
 
   const providersDescriptionFragment = [
     tavilyOn ? "Tavily" : null,
     braveOn ? "Brave" : null,
+    exaOn ? "Exa" : null,
   ]
     .filter(Boolean)
     .join(" + ")
@@ -362,7 +453,7 @@ export function buildWebSearchTool(
       }
 
       const runs: Array<{
-        provider: "tavily" | "brave"
+        provider: WebSearchProvider
         result: Awaited<ReturnType<typeof tavilySearch>>
       }> = []
       const tasks: Promise<void>[] = []
@@ -380,6 +471,13 @@ export function buildWebSearchTool(
           })
         )
       }
+      if (exaOn) {
+        tasks.push(
+          exaSearch(query, { type: exaType, signal: upstreamSignal }).then((r) => {
+            runs.push({ provider: "exa", result: r })
+          })
+        )
+      }
       // Each task swallows its own errors and returns an `error` field,
       // so `Promise.all` is equivalent to `allSettled` here — except
       // `all` short-circuits on a synchronous throw before the catch,
@@ -387,10 +485,14 @@ export function buildWebSearchTool(
       // bound the total wait time at `PROVIDER_CALL_TIMEOUT_MS`.
       await Promise.all(tasks)
 
-      // Preserve the registration order (tavily, brave) when interleaving.
+      // Preserve the registration order (tavily, brave, exa) when interleaving.
+      const PROVIDER_ORDER: Record<WebSearchProvider, number> = {
+        tavily: 0,
+        brave: 1,
+        exa: 2,
+      }
       runs.sort(
-        (a, b) =>
-          (a.provider === "tavily" ? 0 : 1) - (b.provider === "tavily" ? 0 : 1)
+        (a, b) => PROVIDER_ORDER[a.provider] - PROVIDER_ORDER[b.provider]
       )
 
       const lists = runs.map((r) =>

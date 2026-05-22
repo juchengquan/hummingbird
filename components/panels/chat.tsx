@@ -317,6 +317,10 @@ export function ChatPanel() {
               enabled: resolved.brave.enabled,
               freshness: resolved.brave.freshness,
             },
+            exa: {
+              enabled: resolved.exa.enabled,
+              type: resolved.exa.type,
+            },
           }
         }
         if (s.id === 'webFetch') {

@@ -11,6 +11,7 @@ import { ChatRequestSchema } from '@/shared/api-schemas'
 import {
   buildWebSearchTool,
   isBraveConfigured,
+  isExaConfigured,
   isTavilyConfigured,
   isWebSearchConfigured,
   type WebSearchLog,
@@ -169,10 +170,12 @@ function buildSkillsNote(
   if (enabledSkills.includes('webSearch')) {
     const tavilyLive = webSearchConfig.tavily.enabled && isTavilyConfigured()
     const braveLive = webSearchConfig.brave.enabled && isBraveConfigured()
-    if (tavilyLive || braveLive) {
+    const exaLive = webSearchConfig.exa.enabled && isExaConfigured()
+    if (tavilyLive || braveLive || exaLive) {
       const providers = [
         tavilyLive ? 'Tavily' : null,
         braveLive ? 'Brave' : null,
+        exaLive ? 'Exa' : null,
       ]
         .filter(Boolean)
         .join(' + ')
@@ -196,8 +199,8 @@ function buildSkillsNote(
       // grep their setup.
       notes.push(
         'The user enabled "Web search" but no provider is configured on the server ' +
-          '(missing TAVILY_API_KEY and BRAVE_SEARCH_API_KEY). You cannot actually search — ' +
-          'say so briefly and answer from training data instead.'
+          '(missing TAVILY_API_KEY, BRAVE_SEARCH_API_KEY, and EXA_API_KEY). You cannot ' +
+          'actually search — say so briefly and answer from training data instead.'
       )
     } else {
       // Configured on the server but every provider has been disabled
