@@ -105,7 +105,13 @@ errors:
      pattern, same workspace + conversation-private lane model. Page
      content is fetched + extracted server-side by `/api/url/fetch`
      at save time.
-7. `supabase/migrations/0007_message_compression.sql`
+7. `supabase/migrations/0007_file_full_text.sql`
+   - Adds the `full_text` column to `files` (alongside the existing
+     truncated `extracted_text`) plus a `tsvector` generated column
+     and GIN index that back Phase 3 of the file full-text retrieval
+     plan (`docs/PLAN-file-full-text-retrieval.md`). English-stemmed
+     today; per-document language detection is a later concern.
+8. `supabase/migrations/0008_message_compression.sql`
    - Adds three columns to `messages` for the "Compress older messages"
      action: `compressed` (excluded from the next chat call when true),
      `kind` (null for normal messages, `'recap'` for synthetic
@@ -113,7 +119,7 @@ errors:
      replaced, so Undo knows what to restore). Idempotent — safe to
      re-run.
 
-After running all seven, sanity-check from the **Table Editor**:
+After running all eight, sanity-check from the **Table Editor**:
 sixteen tables should be listed (`profiles`, `workspaces`,
 `conversations`, `messages`, `files`, `resources`, `conversation_files`,
 `artifacts`, `notes`, `shares`, `mcp_servers`, `mcp_resources`,
