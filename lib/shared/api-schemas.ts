@@ -191,6 +191,17 @@ export const ChatRequestSchema = z.object({
    *  conversation-pinned, de-duped client-side, tombstones filtered.
    *  See `lib/shared/attachments.ts` for the union shape. */
   attachments: z.array(AttachmentPayloadSchema).max(40).optional(),
+  /** I2I reference image for the next turn. Set by the "Remix" action
+   *  on a `GeneratedImagesGallery` tile. When present, the server
+   *  appends a system note instructing the model to call
+   *  `generateImage` with `referenceImageUrl` set; the tool's own
+   *  SSRF gate validates the URL before forwarding to Minimax. Cleared
+   *  by the client on send. */
+  referenceImage: z
+    .object({
+      url: z.string().url().max(4000),
+    })
+    .optional(),
 })
 
 // --- /api/ai/copilot --------------------------------------------------------

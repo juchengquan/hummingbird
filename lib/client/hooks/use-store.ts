@@ -348,6 +348,23 @@ interface AppState {
   streamingContent: string
   chatModel: string
   /**
+   * Pending image-to-image reference for the next user message. Set by
+   * the "Remix" action on a `GeneratedImagesGallery` tile; cleared on
+   * send or on explicit dismiss. Lives only at the runtime layer — not
+   * persisted (and intentionally not synced) because it's an in-flight
+   * compose-time hint, not a property of any saved message.
+   *
+   * The URL must be publicly fetchable for the Minimax server to load
+   * it (signed Supabase Storage URLs qualify; `data:` URLs do not, so
+   * Remix is gated on a non-data URL upstream).
+   */
+  pendingReferenceImage: {
+    url: string
+    /** Optional source prompt — used in the chip caption so the user
+     *  knows which image they're remixing. */
+    sourcePrompt?: string
+  } | null
+  /**
    * True when the user has touched the chat-input model picker since
    * the current workspace was activated. Suppresses the workspace's
    * `defaultModel` from re-applying on every render. Resets when the
@@ -619,6 +636,11 @@ interface AppState {
   truncateMessagesAfter: (messageId: string, inclusive?: boolean) => void
   clearMessages: () => void
   setIsTyping: (typing: boolean) => void
+  /** Set the pending I2I reference for the next user message. Pass
+   *  `null` to clear. */
+  setPendingReferenceImage: (
+    value: { url: string; sourcePrompt?: string } | null
+  ) => void
   setStreamingContent: (content: string) => void
   setChatModel: (model: string) => void
   appendToMessage: (messageId: string, chunk: string) => void
@@ -723,6 +745,7 @@ export const useStore = create<AppState>()(
       streamingContent: '',
       chatModel: DEFAULT_CHAT_MODEL,
       sessionModelOverridden: false,
+      pendingReferenceImage: null,
 
       // View / sidebar actions
       toggleSidebar: () =>
@@ -1899,6 +1922,8 @@ export const useStore = create<AppState>()(
           }),
         })),
       setIsTyping: (typing: boolean) => set({ isTyping: typing }),
+      setPendingReferenceImage: (value) =>
+        set({ pendingReferenceImage: value }),
       setStreamingContent: (content: string) => set({ streamingContent: content }),
       setChatModel: (model: string) =>
         set({ chatModel: model, sessionModelOverridden: true }),

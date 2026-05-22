@@ -5,38 +5,44 @@ import "server-only"
  *
  * Minimax returns short-lived hosted URLs (typically valid for several
  * hours). To survive a page reload — or just a tab left open
- * overnight — we download each image once and persist it client-side.
+ * overnight — we download each image once and persist it.
  *
- * This first cut ships **data-URL persistence only**:
- *   - Server downloads each Minimax URL with a tight timeout.
- *   - Encodes the bytes as `data:image/<format>;base64,<...>`.
- *   - Returns the data URLs so the chat route can emit them on the
- *     `tool_image` SSE frame.
- *   - Client appends them to `Message.generatedImages`; they round-trip
- *     through localStorage like any other message field.
+ * Persistence mode is chosen per-request:
  *
- * A Supabase Storage upgrade is planned (the bucket + signed-URL
- * machinery) for a follow-up PR. The function signature is designed to
- * absorb that: when storage is configured + a user-id is available we
- * upload to a per-user bucket path and return the signed URL instead.
- * For now the implementation always returns data URLs and the rest of
- * the code is agnostic about which kind it gets.
+ *   1. **Supabase Storage** (preferred) — when a Supabase session
+ *      is present, upload the bytes to `user-files/{user_id}/generated/
+ *      {image_id}.{format}` and mint a long-lived signed URL. The
+ *      `storagePath` is also returned so the client can re-sign later
+ *      if the URL ever expires (1-year TTL today, same as file uploads).
+ *   2. **Data URL fallback** — anonymous / unconfigured Supabase, or
+ *      any cloud upload failure. Returns `data:image/<format>;base64,
+ *      <...>` so the image still renders. Heavier on localStorage but
+ *      keeps anonymous-mode parity with PR B.
+ *
+ * Either way the caller treats the returned URL identically: it loads
+ * directly in an `<img>` and round-trips through `Message.generatedImages`.
  *
  * Size posture:
- *   - Per-image cap: 4 MB raw bytes (refuse to encode larger). Image
- *     gen at default Minimax sizes is typically 500 KB – 1.5 MB; the
- *     cap is the safety belt against an unexpectedly huge response.
- *   - Per-turn cap is already enforced upstream by the skill's
- *     `maxCalls` × `MAX_IMAGES_PER_CALL` (= 5 × 4 = 20 images max).
- *     Worst-case data-URL footprint per turn ≈ 80 MB raw, ~107 MB
- *     base64-encoded. That's a lot for localStorage — the practical
- *     bound from the per-IP rate limit is far tighter.
+ *   - Per-image cap: 4 MB raw bytes (refuse to persist larger).
+ *   - Per-turn cap is upstream — `maxCalls` × `MAX_IMAGES_PER_CALL`.
  */
+
+import type { SupabaseClient } from "@supabase/supabase-js"
+import { getSupabaseServerClient } from "@/server/supabase/server"
+import type { Database } from "@/shared/supabase/types"
 
 const DOWNLOAD_TIMEOUT_MS = 10_000
 const MAX_BYTES_PER_IMAGE = 4 * 1024 * 1024
+/** 1-year signed URLs — matches the file-upload flow in
+ *  `hooks/use-upload-file.ts`. Client re-signs from `storagePath` when
+ *  the URL ever expires. */
+const SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 365
 
 export interface ImageToPersist {
+  /** Stable id used as the storage object name + the React key. The
+   *  chat route derives it from the tool-call id + index so it survives
+   *  retries deterministically. */
+  id: string
   url: string
   width: number
   height: number
@@ -44,19 +50,22 @@ export interface ImageToPersist {
 }
 
 export interface PersistedImage {
-  /** Either a Supabase Storage signed URL (future) or a `data:` URL
-   *  (today). Caller doesn't need to know which — both load directly
-   *  in an `<img>`. */
+  id: string
+  /** Either a Supabase Storage signed URL or a `data:` URL — the UI
+   *  doesn't need to know which (both load in `<img>`). */
   url: string
+  /** Set only when persistence went to Supabase Storage. Used by the
+   *  client to re-sign a fresh URL if the original ever expires. */
+  storagePath?: string
   width: number
   height: number
   format: string
 }
 
 export interface PersistImagesOpts {
-  /** Conversation + message context. Reserved for the Supabase
-   *  Storage upgrade path (bucket key includes them); ignored by the
-   *  data-URL implementation. */
+  /** Conversation + message context. Reserved for callers that want to
+   *  scope storage paths; the current implementation uses `image.id`
+   *  directly, so these are accepted but unused. */
   conversationId?: string
   messageId?: string
   /** Upstream signal — when the chat tab closes we abort the
@@ -84,8 +93,13 @@ export async function persistGeneratedImages(
 ): Promise<PersistImagesResult> {
   if (inputs.length === 0) return { ok: true, images: [] }
 
+  // Resolve Supabase context once for the whole batch. Sharing the
+  // client across uploads avoids one cookie-bound `getUser()` per
+  // image. Either piece missing → data-URL path for the whole batch.
+  const cloud = await resolveCloudContext()
+
   const results = await Promise.all(
-    inputs.map((img) => downloadAsDataUrl(img, opts.signal))
+    inputs.map((img) => persistOne(img, cloud, opts.signal))
   )
   const ok = results.filter(
     (r): r is { ok: true; image: PersistedImage } => r.ok
@@ -102,13 +116,75 @@ export async function persistGeneratedImages(
   return { ok: true, images: ok.map((r) => r.image) }
 }
 
-async function downloadAsDataUrl(
+interface CloudContext {
+  client: SupabaseClient<Database>
+  userId: string
+}
+
+async function resolveCloudContext(): Promise<CloudContext | null> {
+  const client = await getSupabaseServerClient()
+  if (!client) return null
+  const { data, error } = await client.auth.getUser()
+  if (error || !data.user) return null
+  return { client, userId: data.user.id }
+}
+
+async function persistOne(
   input: ImageToPersist,
+  cloud: CloudContext | null,
   upstream?: AbortSignal
 ): Promise<
   | { ok: true; image: PersistedImage }
   | { ok: false; error: string }
 > {
+  const downloaded = await downloadBytes(input, upstream)
+  if (!downloaded.ok) return downloaded
+
+  if (cloud) {
+    // Try Supabase Storage first. Any failure falls through to data URL —
+    // a slow / misbehaving bucket shouldn't break image generation for the
+    // user. The signed URL has a 1-year TTL; storagePath travels with the
+    // image so a future expiry can be repaired client-side.
+    const uploaded = await uploadToBucket(input, downloaded.buf, downloaded.mime, cloud)
+    if (uploaded) {
+      return {
+        ok: true,
+        image: {
+          id: input.id,
+          url: uploaded.signedUrl,
+          storagePath: uploaded.path,
+          width: input.width,
+          height: input.height,
+          format: mimeToFormat(downloaded.mime, input.format),
+        },
+      }
+    }
+  }
+
+  // Data URL fallback.
+  const base64 = Buffer.from(downloaded.buf).toString("base64")
+  return {
+    ok: true,
+    image: {
+      id: input.id,
+      url: `data:${downloaded.mime};base64,${base64}`,
+      width: input.width,
+      height: input.height,
+      format: mimeToFormat(downloaded.mime, input.format),
+    },
+  }
+}
+
+interface DownloadedBytes {
+  ok: true
+  buf: ArrayBuffer
+  mime: string
+}
+
+async function downloadBytes(
+  input: ImageToPersist,
+  upstream?: AbortSignal
+): Promise<DownloadedBytes | { ok: false; error: string }> {
   const timer = new AbortController()
   const t = setTimeout(() => timer.abort(), DOWNLOAD_TIMEOUT_MS)
   const signal = upstream
@@ -141,20 +217,11 @@ async function downloadAsDataUrl(
     }
     // Trust the response's Content-Type over the model-supplied
     // format hint — Minimax says "png" everywhere but if they ever
-    // return JPEG we don't want a corrupt data URL.
+    // return JPEG we don't want a corrupt persistence.
     const mime =
       res.headers.get("content-type")?.split(";")[0]?.trim() ??
       `image/${input.format || "png"}`
-    const base64 = Buffer.from(buf).toString("base64")
-    return {
-      ok: true,
-      image: {
-        url: `data:${mime};base64,${base64}`,
-        width: input.width,
-        height: input.height,
-        format: mimeToFormat(mime, input.format),
-      },
-    }
+    return { ok: true, buf, mime }
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
       return { ok: false, error: "image download timed out or was aborted" }
@@ -168,9 +235,33 @@ async function downloadAsDataUrl(
   }
 }
 
+async function uploadToBucket(
+  input: ImageToPersist,
+  buf: ArrayBuffer,
+  mime: string,
+  cloud: CloudContext
+): Promise<{ path: string; signedUrl: string } | null> {
+  // Path includes a `generated/` segment to keep generated images
+  // visually separate from user uploads when browsing the bucket.
+  // The RLS policies (migration 0003) gate by first folder segment
+  // = userId, so any nested subfolder is fine.
+  const ext = mimeToFormat(mime, input.format)
+  const path = `${cloud.userId}/generated/${input.id}.${ext}`
+  const { error: uploadError } = await cloud.client.storage
+    .from("user-files")
+    .upload(path, buf, {
+      contentType: mime,
+      upsert: true, // retries with the same image id should overwrite, not fail.
+    })
+  if (uploadError) return null
+  const { data, error: signError } = await cloud.client.storage
+    .from("user-files")
+    .createSignedUrl(path, SIGNED_URL_TTL_SECONDS)
+  if (signError || !data?.signedUrl) return null
+  return { path, signedUrl: data.signedUrl }
+}
+
 function mimeToFormat(mime: string, fallback: string): string {
-  // "image/png" → "png", "image/jpeg" → "jpg" (canonical short form
-  // matches the GeneratedImage.format type's expectations).
   const sub = mime.split("/")[1]?.toLowerCase()
   if (!sub) return fallback || "png"
   if (sub === "jpeg") return "jpg"

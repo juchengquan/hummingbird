@@ -114,6 +114,11 @@ function buildSystemPrompt(opts: {
    *  `renderAttachmentsPrompt` groups by kind for readable section
    *  headers and shares the character budget across all of them. */
   attachments: ResolvedAttachment[]
+  /** I2I reference image the user pinned via the gallery's "Remix"
+   *  action. When set we add a system note nudging the model to call
+   *  `generateImage` with `referenceImageUrl`. The tool's SSRF gate
+   *  still validates the URL before forwarding to Minimax. */
+  referenceImage?: { url: string }
 }): string {
   const trimmedWorkspace = opts.workspaceSystemPrompt?.trim()
   const skillsLine = buildSkillsNote(
@@ -121,6 +126,10 @@ function buildSystemPrompt(opts: {
     opts.skillRequestEntries
   )
   const mcpLine = buildMcpNote(opts.mcpServers ?? [])
+  const remixLine = buildRemixNote(
+    opts.referenceImage,
+    opts.enabledSkillIds
+  )
   // Workspace prompt goes first so user-set persona/style instructions take
   // precedence over our generic guidance. The base instructions then nudge the
   // model toward Markdown formatting (which the chat bubble now renders).
@@ -130,6 +139,7 @@ function buildSystemPrompt(opts: {
       'Answer concisely and use Markdown formatting when useful.',
     skillsLine,
     mcpLine,
+    remixLine,
   ]
     .filter(Boolean)
     .join('\n\n')
@@ -206,9 +216,14 @@ async function maybeEmitImageFrame(
   if (!output?.ok || !Array.isArray(output.images) || output.images.length === 0) {
     return
   }
+  const toolCallId = part.toolCallId ?? 'img'
   const inputs: ImageToPersist[] = output.images
     .filter((img): img is typeof img & { url: string } => typeof img?.url === 'string')
-    .map((img) => ({
+    .map((img, i) => ({
+      // Stable per-image id — used as the React key AND the storage
+      // object name, so the persistence layer can write
+      // `user-files/{user_id}/generated/{id}.{ext}` deterministically.
+      id: `${toolCallId}-${i}`,
       url: img.url,
       width: typeof img.width === 'number' ? img.width : 0,
       height: typeof img.height === 'number' ? img.height : 0,
@@ -225,11 +240,10 @@ async function maybeEmitImageFrame(
     type: 'tool_image',
     id: part.toolCallId ?? '',
     mode,
-    images: persisted.images.map((img, i) => ({
-      // Stable per-image id — used as the React key and the future
-      // Supabase Storage object name.
-      id: `${part.toolCallId ?? 'img'}-${i}`,
+    images: persisted.images.map((img) => ({
+      id: img.id,
       url: img.url,
+      storagePath: img.storagePath,
       width: img.width,
       height: img.height,
       format: img.format,
@@ -237,6 +251,26 @@ async function maybeEmitImageFrame(
       mode,
     })),
   })
+}
+
+/**
+ * System note instructing the model to use the user's pinned reference
+ * image for the next `generateImage` call (I2I mode). Returns null when
+ * no reference is pending or when the imageGen skill isn't enabled —
+ * a reference without the tool would just be confusing context.
+ */
+function buildRemixNote(
+  ref: { url: string } | undefined,
+  enabledSkillIds: SkillId[]
+): string | null {
+  if (!ref) return null
+  if (!enabledSkillIds.includes('imageGen' as SkillId)) return null
+  return (
+    `The user attached a reference image for image-to-image generation. ` +
+    `When they ask for an image variation, edit, or remix, call ` +
+    `\`generateImage\` with \`referenceImageUrl: "${ref.url}"\` (i2i mode). ` +
+    `If they ask for an unrelated new image instead, ignore the reference.`
+  )
 }
 
 function buildMcpNote(servers: { name: string; toolCount: number }[]): string | null {
@@ -447,6 +481,7 @@ export async function POST(req: NextRequest) {
           toolCount: s.capabilities?.tools?.length ?? 0,
         })),
         attachments,
+        referenceImage: body.referenceImage,
       }),
       // Cast back: Zod validates the outer shape (role + content union),
       // but the AI SDK's ModelMessage uses tighter inner-part discriminants

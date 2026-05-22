@@ -3,12 +3,21 @@
 import "client-only"
 
 import { useCallback, useEffect, useState } from "react"
-import { Copy, Download, ExternalLink, X } from "lucide-react"
+import { Copy, Download, ExternalLink, Repeat2, X } from "lucide-react"
 import { toast } from "sonner"
 
 import type { GeneratedImage } from "@/shared/types"
 import { Button } from "@/components/ui/button"
+import { useStore } from "@/client/hooks/use-store"
 import { cn } from "@/shared/utils"
+
+/** Minimax fetches the `referenceImageUrl` server-side, so the reference
+ *  has to be a URL their network can resolve. Signed Supabase Storage
+ *  URLs work; `data:` and `blob:` URLs do not — we hide the Remix button
+ *  in those cases rather than failing later inside the tool. */
+function canRemix(url: string): boolean {
+  return url.startsWith("http://") || url.startsWith("https://")
+}
 
 /**
  * Renders the images the `imageGen` skill produced for an assistant
@@ -175,6 +184,9 @@ function Lightbox({
           <ActionButton image={img} kind="download" />
           <ActionButton image={img} kind="copy" />
           <ActionButton image={img} kind="open" />
+          {canRemix(img.url) && (
+            <ActionButton image={img} kind="remix" onAfter={onClose} />
+          )}
           {images.length > 1 && (
             <span className="text-xs text-white/70 px-2">
               {index + 1} / {images.length}
@@ -224,10 +236,18 @@ function Lightbox({
 function ActionButton({
   image,
   kind,
+  onAfter,
 }: {
   image: GeneratedImage
-  kind: "download" | "copy" | "open"
+  kind: "download" | "copy" | "open" | "remix"
+  /** Optional callback fired after the action completes — used to
+   *  close the lightbox once a remix reference is staged so the user
+   *  sees the chip in the input. */
+  onAfter?: () => void
 }) {
+  const setPendingReferenceImage = useStore(
+    (s) => s.setPendingReferenceImage
+  )
   const handle = async () => {
     if (kind === "download") {
       try {
@@ -247,6 +267,10 @@ function ActionButton({
       } catch {
         toast.error("Copy failed")
       }
+    } else if (kind === "remix") {
+      setPendingReferenceImage({ url: image.url, sourcePrompt: image.prompt })
+      toast.success("Reference set — describe your variation and send")
+      onAfter?.()
     } else {
       // Open in new tab — works for remote URLs; browsers refuse to
       // navigate to data: URLs in modern versions. Fall back to
@@ -262,8 +286,22 @@ function ActionButton({
       window.open(image.url, "_blank", "noopener,noreferrer")
     }
   }
-  const Icon = kind === "download" ? Download : kind === "copy" ? Copy : ExternalLink
-  const label = kind === "download" ? "Download" : kind === "copy" ? "Copy URL" : "Open in new tab"
+  const Icon =
+    kind === "download"
+      ? Download
+      : kind === "copy"
+        ? Copy
+        : kind === "remix"
+          ? Repeat2
+          : ExternalLink
+  const label =
+    kind === "download"
+      ? "Download"
+      : kind === "copy"
+        ? "Copy URL"
+        : kind === "remix"
+          ? "Remix"
+          : "Open in new tab"
   return (
     <Button
       variant="secondary"
