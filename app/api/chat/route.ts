@@ -11,25 +11,10 @@ import {
 import { categorizeError } from '@/shared/api-errors'
 import { ChatRequestSchema } from '@/shared/api-schemas'
 import {
-  buildWebSearchTool,
-  isBraveConfigured,
-  isExaConfigured,
-  isTavilyConfigured,
-  isWebSearchConfigured,
-  type WebSearchLog,
-} from '@/server/skills/web-search'
-import {
-  buildWebFetchTool,
-  type WebFetchLog,
-} from '@/server/skills/web-fetch'
-import {
-  DEFAULT_MAX_WEB_FETCHES,
-  clampMaxWebFetches,
-} from '@/shared/skills/web-fetch-config'
-import {
-  resolveWebSearchConfig,
-  type ResolvedWebSearchConfig,
-} from '@/shared/skills/web-search-config'
+  SERVER_SKILLS,
+  type SkillRequestEntry,
+} from '@/server/skills/registry'
+import type { SkillId } from '@/shared/skills/types'
 import { isWebSearchToolName } from '@/shared/skills/types'
 import { buildMcpTool, mcpToolName } from '@/server/mcp/tools'
 import { loadEffectiveMcpServers, type EffectiveMcpServer } from '@/server/mcp/load-servers'
@@ -100,14 +85,11 @@ async function resolveAttachments(
 function buildSystemPrompt(opts: {
   workspaceSystemPrompt?: string
   /** Skill ids the user has effectively enabled for this turn. */
-  enabledSkills?: string[]
-  /** Fully-resolved webSearch config (cap + per-provider toggles + knobs).
-   *  Flows into the prompt so the model sees the same limits and providers
-   *  the runtime is enforcing. */
-  webSearchConfig: ResolvedWebSearchConfig
-  /** Resolved webFetch cap. Flows into the prompt so the model sees
-   *  the same number the runtime enforces. */
-  webFetchMaxCalls: number
+  enabledSkillIds: SkillId[]
+  /** The per-skill `body.skills[*]` entries (request-time config the
+   *  client included). Each registered ServerSkill picks its own
+   *  typed sub-object out via `skill.promptFragment(entry)`. */
+  skillRequestEntries: SkillRequestEntry[]
   /** MCP server summaries — only used to mention available tooling.
    *  Tool definitions themselves are surfaced via the AI SDK's
    *  `tools` parameter, so we don't have to enumerate them in prose. */
@@ -120,9 +102,8 @@ function buildSystemPrompt(opts: {
 }): string {
   const trimmedWorkspace = opts.workspaceSystemPrompt?.trim()
   const skillsLine = buildSkillsNote(
-    opts.enabledSkills ?? [],
-    opts.webSearchConfig,
-    opts.webFetchMaxCalls
+    opts.enabledSkillIds,
+    opts.skillRequestEntries
   )
   const mcpLine = buildMcpNote(opts.mcpServers ?? [])
   // Workspace prompt goes first so user-set persona/style instructions take
@@ -157,80 +138,23 @@ function buildSystemPrompt(opts: {
 }
 
 function buildSkillsNote(
-  enabledSkills: string[],
-  webSearchConfig: ResolvedWebSearchConfig,
-  webFetchMaxCalls: number
+  enabledSkillIds: SkillId[],
+  skillRequestEntries: SkillRequestEntry[]
 ): string | null {
-  if (enabledSkills.length === 0) return null
+  if (enabledSkillIds.length === 0) return null
+  const enabled = new Set<SkillId>(enabledSkillIds)
+  const entryById = new Map<string, SkillRequestEntry>(
+    skillRequestEntries.map((s) => [s.id, s])
+  )
+  // Iterate the server registry so the next skill (webShell, etc.)
+  // only needs to add a `ServerSkill` to `SERVER_SKILLS` — no new
+  // branch here.
   const notes: string[] = []
-
-  // Web-search note. One tool, possibly multiple providers under the
-  // hood. We tell the model which providers are actually live so it
-  // can decide whether to search (e.g. if only Brave is on and the
-  // query needs fresh news, that's relevant context) and reinforce
-  // the hard cap.
-  if (enabledSkills.includes('webSearch')) {
-    const tavilyLive = webSearchConfig.tavily.enabled && isTavilyConfigured()
-    const braveLive = webSearchConfig.brave.enabled && isBraveConfigured()
-    const exaLive = webSearchConfig.exa.enabled && isExaConfigured()
-    if (tavilyLive || braveLive || exaLive) {
-      const providers = [
-        tavilyLive ? 'Tavily' : null,
-        braveLive ? 'Brave' : null,
-        exaLive ? 'Exa' : null,
-      ]
-        .filter(Boolean)
-        .join(' + ')
-      const cap = webSearchConfig.maxCalls
-      notes.push(
-        `You can call \`webSearch({ query })\` when the user asks about current information ` +
-          `or facts you may not have. The tool fans out to enabled providers (${providers}) ` +
-          `in parallel and returns deduped, merged results. ` +
-          `Cite sources using bracket markers \`[1]\`, \`[2]\`, etc. placed inline at the end of ` +
-          `the sentence they support, matching the order results were returned. Do not repeat ` +
-          `the URL in the text — the UI renders \`[N]\` as a clickable link to source N. ` +
-          `HARD LIMIT: ${cap} tool call${cap === 1 ? '' : 's'} per turn (regardless of how many ` +
-          `providers each call fans out to). After ${cap} call${cap === 1 ? '' : 's'} any further ` +
-          `attempts will return an error. Plan: pick 1-2 broad queries that cover the question, ` +
-          `then write the answer from the snippets you have. Do not split one question into many ` +
-          `narrow searches.`
-      )
-    } else if (!isWebSearchConfigured()) {
-      // Skill is on but the server doesn't have any provider key. Be
-      // explicit about which env vars would unlock it so the user can
-      // grep their setup.
-      notes.push(
-        'The user enabled "Web search" but no provider is configured on the server ' +
-          '(missing TAVILY_API_KEY, BRAVE_SEARCH_API_KEY, and EXA_API_KEY). You cannot ' +
-          'actually search — say so briefly and answer from training data instead.'
-      )
-    } else {
-      // Configured on the server but every provider has been disabled
-      // by the user's per-provider toggles. Tell the model honestly.
-      notes.push(
-        'The user enabled "Web search" but disabled every provider in the skill settings. ' +
-          'You cannot actually search — say so briefly and answer from training data instead.'
-      )
-    }
+  for (const skill of SERVER_SKILLS) {
+    if (!enabled.has(skill.id)) continue
+    const fragment = skill.promptFragment(entryById.get(skill.id))
+    if (fragment) notes.push(fragment)
   }
-
-  // Web-fetch note. Pairs naturally with web search (search finds the
-  // URL, fetch reads it in full), but the model can also call fetch
-  // directly when the user references a specific URL. Cap is the
-  // resolved cascade value, matched here so the model sees the same
-  // number the runtime enforces.
-  if (enabledSkills.includes('webFetch')) {
-    notes.push(
-      `You can call \`webFetch({ url })\` to fetch a single web page and read its full ` +
-        `extracted text. Use this when the user references a specific URL, or when a ` +
-        `\`webSearch\` snippet looks promising but you need the full content to answer ` +
-        `accurately. Each call returns up to ~200 KB of plain text plus the page title and ` +
-        `description. Cannot fetch internal or private network addresses. HARD LIMIT: ` +
-        `${webFetchMaxCalls} ${webFetchMaxCalls === 1 ? 'call' : 'calls'} per turn — pick the URLs that ` +
-        `most directly answer the question rather than fetching everything.`
-    )
-  }
-
   if (notes.length === 0) return null
   return `Available capabilities:\n${notes.map((n) => `- ${n}`).join('\n')}`
 }
@@ -343,63 +267,39 @@ export async function POST(req: NextRequest) {
   }
   const body = parsed.data
   const modelId = body.model || DEFAULT_CHAT_MODEL
-  const enabledSkillIds = (body.skills ?? []).map((s) => s.id)
+  const enabledSkillIds: SkillId[] = (body.skills ?? [])
+    .map((s) => s.id as SkillId)
   // Resolve the user-facing webSearch cap from the request. The client
-  // The client sends a resolved `webSearchConfig` (cap + per-provider
-  // toggles + per-provider knobs) on the webSearch skill entry. We
-  // re-resolve here through the shared resolver so server-side defaults
-  // and clamping apply even if the client omits or sends garbage.
-  const webSearchEntry = body.skills?.find((s) => s.id === 'webSearch')
-  const resolvedWebSearchConfig = resolveWebSearchConfig(
-    undefined,
-    webSearchEntry?.webSearchConfig
-  )
-
-  // Build the tool map from enabled skills. The single `webSearch` tool
-  // dispatches across enabled providers; if both providers are
-  // toggled off (or none are configured server-side) the builder
-  // returns null and the system-prompt note tells the model to fall
-  // back.
-  //
-  // Per-IP cross-tool rate limit. The per-turn caps on webFetch /
-  // webSearch (5 + 3 by default) are budget hints to the model — a
-  // cooperative client can sidestep them by splitting one logical
-  // question into many turns. This cap is the actual abuse gate: at
-  // most 20 outbound web ops per IP per minute, summed across both
-  // tools. Counted on tool invocation, not per HTTP request. The
-  // existing /api/url/fetch route has its own bucket (30/min/IP) — the
-  // two are intentionally separate so a user filling their bookmark
-  // library doesn't starve their chat turn.
+  // Per-IP cross-tool rate limit. The per-turn caps inside each
+  // skill tool (e.g. webFetch 5, webSearch 3) are budget hints to
+  // the model — a cooperative client can sidestep them by splitting
+  // one logical question into many turns. This cap is the actual
+  // abuse gate: at most 20 outbound web ops per IP per minute,
+  // summed across all chat-route web tools. Counted on tool
+  // invocation, not per HTTP request. The existing /api/url/fetch
+  // route has its own bucket (30/min/IP) — the two are intentionally
+  // separate so a user filling their bookmark library doesn't
+  // starve their chat turn.
   const webToolIpKey = rateLimitKey(req)
   const consumeWebToolBudget = () => chatWebToolLimit.consume(webToolIpKey)
 
-  const webSearchLog: WebSearchLog = []
-  const webFetchLog: WebFetchLog = []
-  const tools: Record<string, unknown> = {}
-  if (enabledSkillIds.includes('webSearch')) {
-    // Pass `req.signal` through so an in-flight search aborts when the
-    // client tab closes mid-stream — without this, each provider's
-    // 8s timer runs to completion as zombie outbound work.
-    const t = buildWebSearchTool(
-      webSearchLog,
-      resolvedWebSearchConfig,
-      req.signal,
-      consumeWebToolBudget
-    )
-    if (t) tools.webSearch = t
-  }
-  // Resolve the webFetch cap from the request (client sends the
-  // already-cascaded value); fall back to the built-in default.
-  const webFetchEntry = body.skills?.find((s) => s.id === 'webFetch')
-  const webFetchMaxCalls = clampMaxWebFetches(
-    webFetchEntry?.webFetchConfig?.maxCalls ?? DEFAULT_MAX_WEB_FETCHES
+  // Build the tool map by iterating the server-side skill registry.
+  // Each ServerSkill owns its own config resolution + log + tool
+  // builder; the route just enables what the client asked for. Adding
+  // a new skill is one entry in SERVER_SKILLS — no branch here.
+  const enabledSet = new Set<SkillId>(enabledSkillIds)
+  const skillRequestEntries: SkillRequestEntry[] = body.skills ?? []
+  const entryById = new Map<string, SkillRequestEntry>(
+    skillRequestEntries.map((s) => [s.id, s])
   )
-  if (enabledSkillIds.includes('webFetch')) {
-    tools.webFetch = buildWebFetchTool(webFetchLog, {
-      maxCalls: webFetchMaxCalls,
+  const tools: Record<string, unknown> = {}
+  for (const skill of SERVER_SKILLS) {
+    if (!enabledSet.has(skill.id)) continue
+    const tool = skill.buildTool(entryById.get(skill.id), {
       signal: req.signal,
       consumeBudget: consumeWebToolBudget,
     })
+    if (tool) tools[skill.toolName] = tool
   }
   // Register MCP-exposed tools for every enabled server. Local-mode
   // servers come in via `body.mcpServers` with their cred attached;
@@ -454,9 +354,8 @@ export async function POST(req: NextRequest) {
       model: selectModel(modelId),
       system: buildSystemPrompt({
         workspaceSystemPrompt: body.workspaceSystemPrompt,
-        enabledSkills: enabledSkillIds,
-        webSearchConfig: resolvedWebSearchConfig,
-        webFetchMaxCalls,
+        enabledSkillIds,
+        skillRequestEntries,
         mcpServers: mcpServers.map((s) => ({
           name: s.name,
           toolCount: s.capabilities?.tools?.length ?? 0,

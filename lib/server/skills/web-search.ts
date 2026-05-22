@@ -535,3 +535,70 @@ export const __test = {
   dedupKey,
   interleaveAndDedupe,
 }
+
+// --- ServerSkill entry -----------------------------------------------------
+
+import type { ServerSkill } from "@/server/skills/registry"
+import { resolveWebSearchConfig } from "@/shared/skills/web-search-config"
+
+/**
+ * Registry entry for the webSearch skill. Threads the per-request
+ * config from `body.skills` through the shared resolver, owns its
+ * per-turn log internally, and returns either a Tool ready for the
+ * AI SDK or null when no provider is actually available.
+ */
+export const webSearchSkill: ServerSkill = {
+  id: "webSearch",
+  toolName: "webSearch",
+  buildTool(requestEntry, ctx) {
+    const config = resolveWebSearchConfig(undefined, requestEntry?.webSearchConfig)
+    // Per-turn log is opaque to the route — only the tool's `execute`
+    // reads it back. Allocated fresh per build (i.e. per chat turn).
+    const log: WebSearchLog = []
+    return buildWebSearchTool(log, config, ctx.signal, ctx.consumeBudget)
+  },
+  promptFragment(requestEntry) {
+    const config = resolveWebSearchConfig(undefined, requestEntry?.webSearchConfig)
+    const tavilyLive = config.tavily.enabled && isTavilyConfigured()
+    const braveLive = config.brave.enabled && isBraveConfigured()
+    const exaLive = config.exa.enabled && isExaConfigured()
+    if (tavilyLive || braveLive || exaLive) {
+      const providers = [
+        tavilyLive ? "Tavily" : null,
+        braveLive ? "Brave" : null,
+        exaLive ? "Exa" : null,
+      ]
+        .filter(Boolean)
+        .join(" + ")
+      const cap = config.maxCalls
+      return (
+        `You can call \`webSearch({ query })\` when the user asks about current information ` +
+        `or facts you may not have. The tool fans out to enabled providers (${providers}) ` +
+        `in parallel and returns deduped, merged results. ` +
+        `Cite sources using bracket markers \`[1]\`, \`[2]\`, etc. placed inline at the end of ` +
+        `the sentence they support, matching the order results were returned. Do not repeat ` +
+        `the URL in the text — the UI renders \`[N]\` as a clickable link to source N. ` +
+        `HARD LIMIT: ${cap} tool call${cap === 1 ? "" : "s"} per turn (regardless of how many ` +
+        `providers each call fans out to). After ${cap} call${cap === 1 ? "" : "s"} any further ` +
+        `attempts will return an error. Plan: pick 1-2 broad queries that cover the question, ` +
+        `then write the answer from the snippets you have. Do not split one question into many ` +
+        `narrow searches.`
+      )
+    }
+    if (!isWebSearchConfigured()) {
+      // Skill is on but the server doesn't have any provider key.
+      // Be explicit so the user can grep their setup.
+      return (
+        'The user enabled "Web search" but no provider is configured on the server ' +
+        "(missing TAVILY_API_KEY, BRAVE_SEARCH_API_KEY, and EXA_API_KEY). You cannot " +
+        "actually search — say so briefly and answer from training data instead."
+      )
+    }
+    // Configured on the server but every provider has been disabled
+    // by the user's per-provider toggles. Be honest about it.
+    return (
+      'The user enabled "Web search" but disabled every provider in the skill settings. ' +
+      "You cannot actually search — say so briefly and answer from training data instead."
+    )
+  },
+}
