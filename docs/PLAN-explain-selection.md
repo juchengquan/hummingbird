@@ -1,6 +1,6 @@
 # Plan: Explain selection — selection-driven AI actions
 
-Status: **planning** — no code yet.
+Status: **✅ shipped**. See `components/selection/` (`explain-popover.tsx`, `explain-sheet.tsx`) for the runtime surface.
 
 A small set of selection-driven actions (`Explain`, `Quote in reply`)
 surfaced through a floating toolbar on desktop and a chip + bottom

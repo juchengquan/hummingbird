@@ -1,6 +1,6 @@
 # Plan: Live artifact rendering (sandboxed iframe)
 
-Status: **planning** — no code yet.
+Status: **✅ shipped** in PR [#36](https://github.com/juchengquan/hummingbird/pull/36). See `components/live-artifact/` for the runtime surface (`live-artifact-frame.tsx`, `inline-preview.tsx`, `message-live-artifacts.tsx`) and `sandbox-guard.test.ts` for the security posture.
 
 When the assistant emits a code artifact that looks renderable (HTML
 document, TSX/JSX, SVG, Mermaid), preview it as actual rendered UI

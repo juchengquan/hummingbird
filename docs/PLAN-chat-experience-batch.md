@@ -1,5 +1,7 @@
 # Plan: Chat experience batch — markdown bubbles, vision, system prompts
 
+Status: **✅ shipped**. Markdown rendering via `MarkdownPreview`, vision via the `imageDataUrl` plumbing on extracted image files, and workspace-level `systemPrompt` are all live.
+
 ## Context
 
 Coming off a product audit on `claude/dev-followups` (post-merge of the chat-overhaul PR). Three changes that materially improve the chat experience without committing to a strategic direction. All three are "no-regret" — they make sense whatever vertical / collaboration / local-first direction the product eventually picks.

@@ -1,7 +1,6 @@
 # Plan: Client / server split inside the frontend
 
-Status: **draft** — survey + recommendations only. Not yet
-implemented.
+Status: **✅ shipped**. Code is split across `lib/client/`, `lib/server/`, `lib/shared/` with `client-only` / `server-only` fences. ESLint enforces import boundaries; `bun run audit:bundle` verifies no server-only paths leak into the client bundle. See the "Frontend module conventions" section in `CLAUDE.md`.
 
 ## Why
 

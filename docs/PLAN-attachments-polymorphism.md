@@ -1,6 +1,6 @@
 # Plan: Consumer-side polymorphism for source attachments
 
-Status: **planning** — no code yet.
+Status: **✅ shipped**. Discriminated union lives in `lib/shared/api-schemas.ts` (`AttachmentPayloadSchema`) and `lib/shared/attachments.ts`; the chat route consumes the unified shape via `resolveAttachments` in `app/api/chat/route.ts`.
 
 We now have three nearly-identical source lanes — **files**, **MCP
 resources**, **URL bookmarks** — each with its own type, its own
