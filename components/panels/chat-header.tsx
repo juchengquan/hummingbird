@@ -46,6 +46,7 @@ import {
 } from "@/client/export"
 import { ConversationSummaryDialog } from "@/components/conversation-summary-dialog"
 import { ContextMeter } from "@/components/panels/context-meter"
+import { CompressButton } from "@/components/chat/compress-button"
 import { ResourcesMobileDrawer } from "@/components/sidebars/resources-mobile-drawer"
 import { ShareDialog } from "@/components/share-dialog"
 import { BranchesDialog } from "@/components/branches-dialog"
@@ -302,12 +303,22 @@ export function ChatHeader({
 
         {/* Context-window meter — hides when there are no messages yet
             or the model is unknown. Sits to the left of the model picker
-            so the user sees `used / total` alongside the model name. */}
+            so the user sees `used / total` alongside the model name.
+            Followed by the Compress action when the meter is in the
+            warn / danger zone and the conversation has enough headroom
+            to be worth compressing. */}
         {!renaming && (
-          <ContextMeter
-            messages={conversation.messages}
-            modelId={chatModel}
-          />
+          <>
+            <ContextMeter
+              messages={conversation.messages}
+              modelId={chatModel}
+            />
+            <CompressButton
+              conversationId={conversation.id}
+              messages={conversation.messages}
+              modelId={chatModel}
+            />
+          </>
         )}
 
         {/* Model picker — moved here from the input bar so the bar can stay

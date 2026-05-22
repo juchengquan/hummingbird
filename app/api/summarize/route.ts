@@ -37,9 +37,29 @@ const ConversationSummaryBody = z.object({
   model: z.string().max(100).optional(),
 })
 
+// Compress mode: same input shape as conversation mode but the output
+// is a single markdown string intended to REPLACE the input messages
+// in the chat history. Information density matters more than narrative
+// flow — the next turn's model reads this as a substitute for raw
+// context.
+const CompressSummaryBody = z.object({
+  mode: z.literal('compress'),
+  messages: z
+    .array(
+      z.object({
+        role: z.enum(['user', 'assistant']),
+        content: z.string(),
+      })
+    )
+    .min(2)
+    .max(200),
+  model: z.string().max(100).optional(),
+})
+
 const BodySchema = z.discriminatedUnion('mode', [
   FileSummaryBody,
   ConversationSummaryBody,
+  CompressSummaryBody,
 ])
 
 function buildFilePrompt(name: string | undefined, text: string) {
@@ -67,6 +87,33 @@ function buildConversationPrompt(
 
 Reply with strict JSON only, no prose:
 {"summary": "...", "keyPoints": ["..."], "decisions": ["..."]}
+
+Conversation:
+"""
+${transcript}
+"""`
+}
+
+function buildCompressPrompt(
+  messages: { role: 'user' | 'assistant'; content: string }[]
+) {
+  // Information-dense markdown bullets. The output replaces the input
+  // verbatim in the next chat turn's history, so the model needs to be
+  // able to *continue* the conversation from this recap alone — names,
+  // facts, file references, decisions, and any open threads all matter.
+  // No narrative voice; bullets stay terse.
+  const transcript = messages
+    .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
+    .join('\n\n')
+  return `Compress the following conversation between USER and ASSISTANT into a tight markdown recap (4-10 bullets, ~300 tokens) that PRESERVES enough information for the assistant to continue the conversation seamlessly from this point.
+
+Required:
+- Keep specific names, facts, numbers, file references, URLs.
+- Keep any explicit decisions the user made.
+- Keep any open questions or pending follow-ups.
+- Drop pleasantries and rhetorical filler.
+
+Output plain markdown bullets only. No headings, no preamble, no JSON. Start the response with "- ".
 
 Conversation:
 """
@@ -108,17 +155,33 @@ export async function POST(req: NextRequest) {
   const prompt =
     body.mode === 'file'
       ? buildFilePrompt(body.name, body.text)
-      : buildConversationPrompt(body.messages)
+      : body.mode === 'conversation'
+        ? buildConversationPrompt(body.messages)
+        : buildCompressPrompt(body.messages)
 
   try {
     const result = await generateText({
       abortSignal: req.signal,
       model: selectModel(modelId),
       prompt,
-      // Summaries should be tight — bail out if the model rambles.
-      maxOutputTokens: 600,
+      // Compress mode wants ~300 tokens worth of bullets but we leave
+      // headroom for verbose models. Other modes were sized at 600;
+      // keep that ceiling for them and bump compress to 800 for safety.
+      maxOutputTokens: body.mode === 'compress' ? 800 : 600,
       temperature: 0.3,
     })
+
+    // Compress mode returns plain markdown, not JSON.
+    if (body.mode === 'compress') {
+      const recap = result.text.trim()
+      if (!recap) {
+        return NextResponse.json(
+          { code: 'provider', message: 'Summariser returned empty output.' },
+          { status: 502 }
+        )
+      }
+      return NextResponse.json({ recap })
+    }
 
     const cleaned = stripJsonFences(result.text)
     try {

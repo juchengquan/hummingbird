@@ -184,6 +184,11 @@ export async function fetchCloudSnapshot(
       if (m.suggestions && m.suggestions.length > 0) {
         msg.suggestions = m.suggestions
       }
+      if (m.compressed) msg.compressed = true
+      if (m.kind === 'recap') msg.kind = 'recap'
+      if (m.recap_message_ids && m.recap_message_ids.length > 0) {
+        msg.recapMessageIds = m.recap_message_ids
+      }
       list.push(msg)
       messagesByConv.set(m.conversation_id, list)
     }
@@ -522,6 +527,9 @@ export async function bulkUploadLocalState(
     tool_calls: Json
     attached_file_ids: string[]
     suggestions: string[]
+    compressed: boolean
+    kind: string | null
+    recap_message_ids: string[]
     created_at: string
   }> = []
   for (const c of snapshot.conversations) {
@@ -539,6 +547,9 @@ export async function bulkUploadLocalState(
         tool_calls: m.toolCalls ? (m.toolCalls as unknown as Json) : null,
         attached_file_ids: m.attachedFileIds ?? [],
         suggestions: m.suggestions ?? [],
+        compressed: m.compressed ?? false,
+        kind: m.kind ?? null,
+        recap_message_ids: m.recapMessageIds ?? [],
         created_at: new Date(m.timestamp).toISOString(),
       })
     })

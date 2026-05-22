@@ -24,6 +24,7 @@ import {
   ExtractionResponseSchema,
   FileSummarizeResponseSchema,
   ConversationSummarizeResponseSchema,
+  CompressSummarizeResponseSchema,
   RevokeShareResponseSchema,
   type ChatRequestInput,
   type CreateShareRequestInput,
@@ -31,6 +32,7 @@ import {
   type ExtractionResponse,
   type FileSummarizeResponse,
   type ConversationSummarizeResponse,
+  type CompressSummarizeResponse,
   type SummarizeRequestInput,
 } from "@/shared/api-schemas"
 
@@ -193,6 +195,31 @@ async function summarizeConversation(
     })
     if (!res.ok) return null
     return ConversationSummarizeResponseSchema.parse(await res.json())
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Compresses a slice of older messages into a markdown recap intended
+ * to substitute for them in the next chat turn. Used by the chat
+ * header's "Compress" action when the context meter is in the
+ * warn/danger zone. Returns null on failure; the caller surfaces a
+ * toast and aborts the compress.
+ */
+async function summarizeCompress(
+  body: Extract<SummarizeRequestInput, { mode: "compress" }>,
+  options?: { signal?: AbortSignal }
+): Promise<CompressSummarizeResponse | null> {
+  try {
+    const res = await fetch(apiUrls.summarize(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: options?.signal,
+    })
+    if (!res.ok) return null
+    return CompressSummarizeResponseSchema.parse(await res.json())
   } catch {
     return null
   }
@@ -371,6 +398,7 @@ export const apiClient = {
   summarize: {
     file: summarizeFile,
     conversation: summarizeConversation,
+    compress: summarizeCompress,
   },
   share: {
     create: createShare,

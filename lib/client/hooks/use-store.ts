@@ -634,6 +634,21 @@ interface AppState {
   deleteMessage: (messageId: string) => void
   updateMessage: (messageId: string, content: string) => void
   truncateMessagesAfter: (messageId: string, inclusive?: boolean) => void
+  /** Replace a slice of messages with a synthetic `kind: 'recap'`
+   *  assistant message that summarises them. The originals stay on
+   *  disk + visible, but are flagged `compressed: true` so the chat
+   *  request builder skips them. Returns the inserted recap message
+   *  (or null if no messages matched, which only happens if the caller
+   *  passes stale ids). */
+  compressMessages: (
+    conversationId: string,
+    messageIds: string[],
+    recapContent: string
+  ) => Message | null
+  /** Inverse of `compressMessages`: removes the recap message and
+   *  un-flags every message it stood in for. No-op if `recapMessageId`
+   *  doesn't refer to a recap. */
+  uncompressRecap: (conversationId: string, recapMessageId: string) => void
   clearMessages: () => void
   setIsTyping: (typing: boolean) => void
   /** Set the pending I2I reference for the next user message. Pass
@@ -1910,6 +1925,62 @@ export const useStore = create<AppState>()(
               return { ...c, messages: c.messages.slice(0, endExclusive) }
             }
             return c
+          }),
+        })),
+      compressMessages: (
+        conversationId: string,
+        messageIds: string[],
+        recapContent: string
+      ) => {
+        // Build the recap message outside `set` so we can return it
+        // to the caller (which uses it to scroll into view / focus the
+        // Undo button). Inserted just before the FIRST id in the
+        // range so it visually leads the collapsed group.
+        const recap: Message = {
+          id: uuid(),
+          role: 'assistant',
+          content: recapContent,
+          timestamp: new Date(),
+          kind: 'recap',
+          recapMessageIds: [...messageIds],
+        }
+        const idSet = new Set(messageIds)
+        let applied = false
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id !== conversationId) return c
+            const firstIdx = c.messages.findIndex((m) => idSet.has(m.id))
+            if (firstIdx === -1) return c
+            const next: Message[] = []
+            for (let i = 0; i < c.messages.length; i++) {
+              if (i === firstIdx) next.push(recap)
+              const m = c.messages[i]
+              next.push(idSet.has(m.id) ? { ...m, compressed: true } : m)
+            }
+            applied = true
+            return { ...c, messages: next, updatedAt: new Date() }
+          }),
+        }))
+        return applied ? recap : null
+      },
+      uncompressRecap: (conversationId: string, recapMessageId: string) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id !== conversationId) return c
+            const recap = c.messages.find(
+              (m) => m.id === recapMessageId && m.kind === 'recap'
+            )
+            if (!recap) return c
+            const restore = new Set(recap.recapMessageIds ?? [])
+            return {
+              ...c,
+              messages: c.messages
+                .filter((m) => m.id !== recapMessageId)
+                .map((m) =>
+                  restore.has(m.id) ? { ...m, compressed: false } : m
+                ),
+              updatedAt: new Date(),
+            }
           }),
         })),
       clearMessages: () =>
