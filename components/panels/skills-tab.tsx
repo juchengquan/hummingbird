@@ -22,12 +22,15 @@ import {
   BRAVE_FRESHNESSES,
   BRAVE_FRESHNESS_LABELS,
   DEFAULT_MAX_WEB_SEARCHES,
+  EXA_SEARCH_TYPES,
+  EXA_SEARCH_TYPE_LABELS,
   MAX_MAX_WEB_SEARCHES,
   MIN_MAX_WEB_SEARCHES,
   TAVILY_SEARCH_DEPTHS,
   clampMaxWebSearches,
   resolveWebSearchConfig,
   type BraveFreshness,
+  type ExaSearchType,
   type TavilySearchDepth,
   type WebSearchConfig,
 } from "@/shared/skills/web-search-config"
@@ -431,12 +434,47 @@ function WebSearchSettingsPanel({
         )}
       </div>
 
-      {!resolved.tavily.enabled && !resolved.brave.enabled && (
-        <p className="text-[10px] text-amber-600 dark:text-amber-500 inline-flex items-center gap-1">
-          <Info size={10} />
-          All providers disabled — Web search is effectively off.
-        </p>
-      )}
+      <div className="rounded-md border border-[var(--border)] bg-[var(--muted)]/30 p-2.5 space-y-2">
+        <ProviderHeader
+          name="Exa"
+          enabled={resolved.exa.enabled}
+          ownEnabled={ownConfig?.exa?.enabled}
+          workspaceEnabled={workspaceConfig?.exa?.enabled}
+          editingConversation={editingConversation}
+          onToggle={(value) =>
+            patch({
+              exa: { ...(ownConfig?.exa ?? {}), enabled: value },
+            })
+          }
+        />
+        {resolved.exa.enabled && (
+          <Select
+            label="Search type"
+            value={resolved.exa.type}
+            options={EXA_SEARCH_TYPES.map((t) => ({
+              value: t,
+              label: EXA_SEARCH_TYPE_LABELS[t],
+            }))}
+            onChange={(value) =>
+              patch({
+                exa: {
+                  ...(ownConfig?.exa ?? {}),
+                  type: value as ExaSearchType,
+                },
+              })
+            }
+          />
+        )}
+      </div>
+
+      {!resolved.tavily.enabled &&
+        !resolved.brave.enabled &&
+        !resolved.exa.enabled && (
+          <p className="text-[10px] text-amber-600 dark:text-amber-500 inline-flex items-center gap-1">
+            <Info size={10} />
+            All providers disabled — Web search is effectively off.
+          </p>
+        )}
     </div>
   )
 }

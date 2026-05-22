@@ -6,6 +6,7 @@
  *     maxCalls?: number,           // tool-level — total calls per turn
  *     tavily?:  { enabled?, searchDepth? },
  *     brave?:   { enabled?, freshness? },
+ *     exa?:     { enabled?, type? },
  *   }
  *
  * `maxCalls` is enforced at the tool level: one `webSearch` invocation
@@ -78,12 +79,39 @@ export interface BraveConfig {
   freshness?: BraveFreshness
 }
 
+/** Exa-specific knobs.
+ *
+ * Exa exposes three retrieval modes:
+ *   - "neural"  → embedding-based semantic search (Exa's flagship mode)
+ *   - "keyword" → traditional lexical search
+ *   - "auto"    → Exa picks per query (default; recommended)
+ */
+export type ExaSearchType = "auto" | "neural" | "keyword"
+export const EXA_SEARCH_TYPES: ReadonlyArray<ExaSearchType> = [
+  "auto",
+  "neural",
+  "keyword",
+]
+export const DEFAULT_EXA_SEARCH_TYPE: ExaSearchType = "auto"
+/** User-facing labels for the search-type select. */
+export const EXA_SEARCH_TYPE_LABELS: Record<ExaSearchType, string> = {
+  auto: "Auto (recommended)",
+  neural: "Neural (semantic)",
+  keyword: "Keyword (lexical)",
+}
+
+export interface ExaConfig {
+  enabled?: boolean
+  type?: ExaSearchType
+}
+
 // --- Top-level config + resolver -------------------------------------------
 
 export interface WebSearchConfig {
   maxCalls?: number
   tavily?: TavilyConfig
   brave?: BraveConfig
+  exa?: ExaConfig
 }
 
 /**
@@ -94,6 +122,7 @@ export interface ResolvedWebSearchConfig {
   maxCalls: number
   tavily: { enabled: boolean; searchDepth: TavilySearchDepth }
   brave: { enabled: boolean; freshness: BraveFreshness }
+  exa: { enabled: boolean; type: ExaSearchType }
 }
 
 export function resolveWebSearchConfig(
@@ -126,6 +155,16 @@ export function resolveWebSearchConfig(
         conversationCfg?.brave?.freshness ??
         workspaceCfg?.brave?.freshness ??
         DEFAULT_BRAVE_FRESHNESS,
+    },
+    exa: {
+      enabled:
+        conversationCfg?.exa?.enabled ??
+        workspaceCfg?.exa?.enabled ??
+        true,
+      type:
+        conversationCfg?.exa?.type ??
+        workspaceCfg?.exa?.type ??
+        DEFAULT_EXA_SEARCH_TYPE,
     },
   }
 }
