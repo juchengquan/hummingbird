@@ -100,7 +100,11 @@ export async function loadEffectiveMcpServers(
         id: row.id,
         name: row.name,
         url: row.url,
-        transport: row.transport,
+        // Codegen widens text columns with CHECK constraints to
+        // `string`; the constraint `transport in ('http')` still
+        // enforces this at runtime. Cast to satisfy the narrow
+        // domain type.
+        transport: row.transport as EffectiveMcpServer['transport'],
         capabilities,
         credentials: cred,
       }

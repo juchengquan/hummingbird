@@ -167,7 +167,12 @@ export async function fetchCloudSnapshot(
       const list = messagesByConv.get(m.conversation_id) ?? []
       const msg: Message = {
         id: m.id,
-        role: m.role,
+        // Asserted: Supabase codegen widens text columns with CHECK
+        // constraints to `string` (the constraint `role in ('user',
+        // 'assistant')` lives in 0001 but doesn't survive type
+        // inference). Runtime values are still constrained by the
+        // DB CHECK. See docs/SUPABASE_LOCAL.md.
+        role: m.role as Message['role'],
         content: m.content,
         timestamp: new Date(m.created_at),
       }
@@ -300,8 +305,11 @@ export async function fetchCloudSnapshot(
         workspaceId: s.workspace_id,
         name: s.name,
         url: s.url,
-        transport: s.transport,
-        credentialMode: s.credential_mode,
+        // Codegen-widened — both columns have CHECK constraints in
+        // the migration that don't survive type inference. See note
+        // above on Message.role.
+        transport: s.transport as McpServer['transport'],
+        credentialMode: s.credential_mode as McpServer['credentialMode'],
         credentialFingerprint: s.credential_fingerprint ?? undefined,
         capabilities,
         capabilitiesFetchedAt: s.capabilities_fetched_at
@@ -407,7 +415,8 @@ export async function fetchCloudSnapshot(
         fallbackWorkspaceId,
       conversationId: a.conversation_id,
       messageId: a.message_id,
-      kind: a.kind,
+      // Codegen-widened (see Message.role note above).
+      kind: a.kind as Artifact['kind'],
       language: a.language,
       title: a.title ?? "",
       content: a.content ?? "",

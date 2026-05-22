@@ -29,6 +29,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Need the PR base commit so the supabase-types alignment
+          # check can diff against it. `fetch-depth: 0` is overkill but
+          # cheaper than juggling the right shallow-fetch incantation
+          # for both PR and push events.
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -57,3 +63,12 @@ jobs:
 
       - name: Bundle audit (fence enforcement)
         run: bun run audit:bundle
+
+      - name: Supabase types ↔ migrations alignment
+        # Lightweight diff-pairing check — fails PRs that change a
+        # migration without regenerating lib/shared/supabase/types.ts.
+        # See scripts/verify-supabase-types.sh for the rationale.
+        if: github.event_name == 'pull_request'
+        run: |
+          bash scripts/verify-supabase-types.sh \
+            origin/${{ github.event.pull_request.base.ref }}
