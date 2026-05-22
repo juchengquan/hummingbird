@@ -119,17 +119,27 @@ function dedupKey(rawUrl: string): string {
 
 // --- Tavily ----------------------------------------------------------------
 
-interface TavilyResult {
-  title: string
-  url: string
-  content: string
-  score?: number
-}
+/**
+ * Per-result schema — permissive on optional fields so a single
+ * malformed row (e.g. `title: 42`) drops out via per-row `safeParse`
+ * rather than killing the whole response. The wrapper schema below
+ * is strict on the array's presence, which is what catches the
+ * scenario this validation pass exists to catch: an upstream
+ * renaming `results` (or removing it entirely) instead of having it
+ * silently produce empty results forever.
+ */
+const TavilyResultSchema = z.object({
+  title: z.string().optional(),
+  url: z.string().optional(),
+  content: z.string().optional(),
+  score: z.number().optional(),
+})
 
-interface TavilyResponse {
-  answer?: string
-  results?: TavilyResult[]
-}
+/** Wrapper schema — `results` is required (per Tavily's docs, always
+ *  present in 200 responses). Element shape is checked per-row below. */
+const TavilyResponseSchema = z.object({
+  results: z.array(z.unknown()),
+})
 
 const TAVILY_ENDPOINT = "https://api.tavily.com/search"
 
@@ -157,6 +167,19 @@ function buildProviderSignal(upstream: AbortSignal | undefined): {
   return { signal, cancel: () => clearTimeout(t) }
 }
 
+/**
+ * Compact one-liner of a Zod issue list for the model-facing error
+ * field. Matches the style used by `lib/server/providers-config.ts`
+ * for `config/providers.json` validation — easy to grep for when a
+ * provider's API actually changes shape.
+ */
+function describeIssues(error: z.ZodError): string {
+  return error.issues
+    .map((i) => `${i.path.length > 0 ? i.path.join(".") + ": " : ""}${i.message}`)
+    .slice(0, 3)
+    .join("; ")
+}
+
 async function tavilySearch(
   query: string,
   opts: { searchDepth: TavilySearchDepth; signal?: AbortSignal }
@@ -182,15 +205,24 @@ async function tavilySearch(
     if (!res.ok) {
       return { results: [], error: `Tavily search failed (HTTP ${res.status}).` }
     }
-    const data = (await res.json()) as TavilyResponse
-    const results = (data.results ?? [])
-      .slice(0, PER_PROVIDER_RESULTS)
-      .map((r) => ({
-        title: r.title ?? "",
-        url: r.url,
-        snippet: clipSnippet(r.content ?? ""),
-      }))
-      .filter((r) => r.url)
+    const wrapper = TavilyResponseSchema.safeParse(await res.json())
+    if (!wrapper.success) {
+      return {
+        results: [],
+        error: `Tavily response shape changed: ${describeIssues(wrapper.error)}`,
+      }
+    }
+    const results: NormalizedResult[] = []
+    for (const raw of wrapper.data.results) {
+      const r = TavilyResultSchema.safeParse(raw)
+      if (!r.success || !r.data.url) continue
+      results.push({
+        title: r.data.title ?? "",
+        url: r.data.url,
+        snippet: clipSnippet(r.data.content ?? ""),
+      })
+      if (results.length >= PER_PROVIDER_RESULTS) break
+    }
     return { results }
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
@@ -210,15 +242,23 @@ async function tavilySearch(
 
 // --- Brave -----------------------------------------------------------------
 
-interface BraveWebResult {
-  title?: string
-  url?: string
-  description?: string
-}
+const BraveResultSchema = z.object({
+  title: z.string().optional(),
+  url: z.string().optional(),
+  description: z.string().optional(),
+})
 
-interface BraveResponse {
-  web?: { results?: BraveWebResult[] }
-}
+/** Brave's `web` block can be entirely absent on no-web-results
+ *  responses (e.g. queries answered by news/discussion mixers).
+ *  When present, the inner `results` array is required — that's the
+ *  wrapper-rename guard. */
+const BraveResponseSchema = z.object({
+  web: z
+    .object({
+      results: z.array(z.unknown()),
+    })
+    .optional(),
+})
 
 const BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 
@@ -252,15 +292,24 @@ async function braveSearch(
     if (!res.ok) {
       return { results: [], error: `Brave search failed (HTTP ${res.status}).` }
     }
-    const data = (await res.json()) as BraveResponse
-    const results = (data.web?.results ?? [])
-      .slice(0, PER_PROVIDER_RESULTS)
-      .filter((r): r is BraveWebResult & { url: string } => typeof r.url === "string")
-      .map((r) => ({
-        title: typeof r.title === "string" ? r.title : "",
-        url: r.url,
-        snippet: clipSnippet(r.description ?? ""),
-      }))
+    const wrapper = BraveResponseSchema.safeParse(await res.json())
+    if (!wrapper.success) {
+      return {
+        results: [],
+        error: `Brave response shape changed: ${describeIssues(wrapper.error)}`,
+      }
+    }
+    const results: NormalizedResult[] = []
+    for (const raw of wrapper.data.web?.results ?? []) {
+      const r = BraveResultSchema.safeParse(raw)
+      if (!r.success || !r.data.url) continue
+      results.push({
+        title: r.data.title ?? "",
+        url: r.data.url,
+        snippet: clipSnippet(r.data.description ?? ""),
+      })
+      if (results.length >= PER_PROVIDER_RESULTS) break
+    }
     return { results }
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
@@ -280,21 +329,19 @@ async function braveSearch(
 
 // --- Exa --------------------------------------------------------------------
 
-interface ExaResult {
-  title?: string | null
-  url?: string
-  // `contents: { text: { maxCharacters } }` gives us a per-result text
-  // blob. Exa also returns `summary` if requested, but we stick with
-  // `text` for parity with how Tavily/Brave surface snippet content.
-  text?: string | null
-  // Exa returns a per-result `summary` if `contents.summary` is set;
-  // we don't ask for it today but the field is tolerated.
-  summary?: string | null
-}
+const ExaResultSchema = z.object({
+  title: z.string().nullable().optional(),
+  url: z.string().optional(),
+  // `text` is what we ask for via `contents.text`; `summary` is the
+  // documented per-result LLM summary if `contents.summary` is set.
+  // Both nullable per Exa docs.
+  text: z.string().nullable().optional(),
+  summary: z.string().nullable().optional(),
+})
 
-interface ExaResponse {
-  results?: ExaResult[]
-}
+const ExaResponseSchema = z.object({
+  results: z.array(z.unknown()),
+})
 
 const EXA_ENDPOINT = "https://api.exa.ai/search"
 
@@ -330,15 +377,24 @@ async function exaSearch(
     if (!res.ok) {
       return { results: [], error: `Exa search failed (HTTP ${res.status}).` }
     }
-    const data = (await res.json()) as ExaResponse
-    const results = (data.results ?? [])
-      .slice(0, PER_PROVIDER_RESULTS)
-      .filter((r): r is ExaResult & { url: string } => typeof r.url === "string")
-      .map((r) => ({
-        title: typeof r.title === "string" ? r.title : "",
-        url: r.url,
-        snippet: clipSnippet(r.text ?? r.summary ?? ""),
-      }))
+    const wrapper = ExaResponseSchema.safeParse(await res.json())
+    if (!wrapper.success) {
+      return {
+        results: [],
+        error: `Exa response shape changed: ${describeIssues(wrapper.error)}`,
+      }
+    }
+    const results: NormalizedResult[] = []
+    for (const raw of wrapper.data.results) {
+      const r = ExaResultSchema.safeParse(raw)
+      if (!r.success || !r.data.url) continue
+      results.push({
+        title: r.data.title ?? "",
+        url: r.data.url,
+        snippet: clipSnippet(r.data.text ?? r.data.summary ?? ""),
+      })
+      if (results.length >= PER_PROVIDER_RESULTS) break
+    }
     return { results }
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
