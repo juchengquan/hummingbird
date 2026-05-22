@@ -27,26 +27,36 @@ const BaseFieldsSchema = z.object({
   apiKeyEnv: z.string().min(1).optional(),
 })
 
-const GatewayProviderSchema = BaseFieldsSchema.extend({
-  type: z.literal("gateway"),
-})
-
-const AnthropicProviderSchema = BaseFieldsSchema.extend({
-  type: z.literal("anthropic"),
-  /** Inline base URL. Must include the `/v1` suffix (the Anthropic SDK
-   *  only appends `/messages`). Wins over `baseURLEnv` when set. */
+/** Adds the `baseURL` / `baseURLEnv` pair to providers that talk to a
+ *  user-configurable endpoint (anthropic-compatible, openai-compatible).
+ *  Gateway providers don't need this since they don't expose a URL. */
+const UrlBaseFieldsSchema = BaseFieldsSchema.extend({
+  /** Inline base URL. Wins over `baseURLEnv` when set. The dispatcher
+   *  passes this directly to the SDK; the SDK's path-suffix rules
+   *  (`/messages` for anthropic, `/chat/completions` for openai) apply,
+   *  so include any `/v1` suffix the endpoint expects. */
   baseURL: z.string().url().optional(),
   /** Name of an env var to read the base URL from. Looked up only when
    *  `baseURL` isn't set. */
   baseURLEnv: z.string().min(1).optional(),
 })
 
-// TODO(openai-compatible): add an `openai` variant once we wire
-// `@ai-sdk/openai`-compatible providers (baseURL + apiKey) into the
-// dispatcher.
+const GatewayProviderSchema = BaseFieldsSchema.extend({
+  type: z.literal("gateway"),
+})
+
+const AnthropicProviderSchema = UrlBaseFieldsSchema.extend({
+  type: z.literal("anthropic"),
+})
+
+const OpenAIProviderSchema = UrlBaseFieldsSchema.extend({
+  type: z.literal("openai"),
+})
+
 const ProviderSchema = z.discriminatedUnion("type", [
   GatewayProviderSchema,
   AnthropicProviderSchema,
+  OpenAIProviderSchema,
 ])
 
 const ProvidersConfigSchema = z.record(z.string().min(1), ProviderSchema)
@@ -54,6 +64,8 @@ const ProvidersConfigSchema = z.record(z.string().min(1), ProviderSchema)
 export type ProviderConfig = z.infer<typeof ProviderSchema>
 export type GatewayProviderConfig = z.infer<typeof GatewayProviderSchema>
 export type AnthropicProviderConfig = z.infer<typeof AnthropicProviderSchema>
+export type OpenAIProviderConfig = z.infer<typeof OpenAIProviderSchema>
+type UrlProviderConfig = AnthropicProviderConfig | OpenAIProviderConfig
 
 const parsed = ProvidersConfigSchema.safeParse(rawProviders)
 if (!parsed.success) {
@@ -81,12 +93,18 @@ export interface ResolvedAnthropicProvider {
   baseURL: string
   apiKey: string
 }
+export interface ResolvedOpenAIProvider {
+  type: "openai"
+  baseURL: string
+  apiKey: string
+}
 export interface ResolvedGatewayProvider {
   type: "gateway"
   apiKey: string
 }
 export type ResolvedProvider =
   | ResolvedAnthropicProvider
+  | ResolvedOpenAIProvider
   | ResolvedGatewayProvider
 
 function pickApiKey(cfg: ProviderConfig): string | null {
@@ -98,7 +116,7 @@ function pickApiKey(cfg: ProviderConfig): string | null {
   return null
 }
 
-function pickBaseURL(cfg: AnthropicProviderConfig): string | null {
+function pickBaseURL(cfg: UrlProviderConfig): string | null {
   if (cfg.baseURL) return cfg.baseURL
   if (cfg.baseURLEnv) {
     const v = process.env[cfg.baseURLEnv]?.trim()
@@ -148,42 +166,55 @@ function envLabel(inline: string | undefined, envName: string | undefined): stri
   return envName ?? (inline ? "<inline>" : "<unset>")
 }
 
+function resolveUrlProvider(
+  name: string,
+  cfg: UrlProviderConfig
+): { baseURL: string; apiKey: string } | null {
+  const apiKey = pickApiKey(cfg)
+  const baseURL = pickBaseURL(cfg)
+  // Partial-env warning: one of the two is set but not the other.
+  // Almost always a config mistake (user pasted half the override).
+  if ((!!apiKey) !== (!!baseURL)) {
+    if (!warnedPartial.has(name)) {
+      console.warn(
+        `[providers] ${name}: only one of ${envLabel(cfg.baseURL, cfg.baseURLEnv)} / ${envLabel(cfg.apiKey, cfg.apiKeyEnv)} is set; both are required. Skipping this provider.`
+      )
+      warnedPartial.add(name)
+    }
+    return null
+  }
+  if (!apiKey || !baseURL) return null
+  if (!isSafeBaseUrl(baseURL)) {
+    // Refuse to construct the client — sending the api key as an
+    // Authorization header to e.g. http://internal.svc would
+    // exfiltrate it. Warn once per distinct bad value.
+    if (warnedBadUrl.get(name) !== baseURL) {
+      console.warn(
+        `[providers] ${name}: refusing to use baseURL="${baseURL}" — must be an https:// URL with a public hostname. Skipping this provider.`
+      )
+      warnedBadUrl.set(name, baseURL)
+    }
+    return null
+  }
+  return { baseURL, apiKey }
+}
+
 /** Resolve a provider's credentials at request time. Returns null when
  *  the provider isn't fully configured (caller should skip the route).
- *  Anthropic-compatible providers additionally fail closed when the
- *  base URL doesn't pass `isSafeBaseUrl`. */
+ *  URL-bearing providers (anthropic / openai) additionally fail closed
+ *  when the base URL doesn't pass `isSafeBaseUrl`. */
 export function resolveProvider(name: string): ResolvedProvider | null {
   const cfg = getProviderConfig(name)
   if (!cfg) return null
-  const apiKey = pickApiKey(cfg)
   if (cfg.type === "anthropic") {
-    const baseURL = pickBaseURL(cfg)
-    // Partial-env warning: one of the two is set but not the other.
-    // Almost always a config mistake (user pasted half the override).
-    if ((!!apiKey) !== (!!baseURL)) {
-      if (!warnedPartial.has(name)) {
-        console.warn(
-          `[providers] ${name}: only one of ${envLabel(cfg.baseURL, cfg.baseURLEnv)} / ${envLabel(cfg.apiKey, cfg.apiKeyEnv)} is set; both are required. Skipping this provider.`
-        )
-        warnedPartial.add(name)
-      }
-      return null
-    }
-    if (!apiKey || !baseURL) return null
-    if (!isSafeBaseUrl(baseURL)) {
-      // Refuse to construct the client — sending the api key as an
-      // Authorization header to e.g. http://internal.svc would
-      // exfiltrate it. Warn once per distinct bad value.
-      if (warnedBadUrl.get(name) !== baseURL) {
-        console.warn(
-          `[providers] ${name}: refusing to use baseURL="${baseURL}" — must be an https:// URL with a public hostname. Skipping this provider.`
-        )
-        warnedBadUrl.set(name, baseURL)
-      }
-      return null
-    }
-    return { type: "anthropic", baseURL, apiKey }
+    const r = resolveUrlProvider(name, cfg)
+    return r ? { type: "anthropic", ...r } : null
   }
+  if (cfg.type === "openai") {
+    const r = resolveUrlProvider(name, cfg)
+    return r ? { type: "openai", ...r } : null
+  }
+  const apiKey = pickApiKey(cfg)
   if (!apiKey) return null
   return { type: "gateway", apiKey }
 }
@@ -201,4 +232,11 @@ export function listProviderNames(): string[] {
 }
 
 /** Exported for tests only. */
-export const __test = { isSafeBaseUrl }
+export const __test = {
+  isSafeBaseUrl,
+  /** Validate any config object against the providers schema. Lets
+   *  tests assert that the openai / anthropic / gateway variants are
+   *  accepted (or rejected) without round-tripping through the
+   *  bundled `config/providers.json`. */
+  parseConfig: (raw: unknown) => ProvidersConfigSchema.safeParse(raw),
+}

@@ -11,13 +11,17 @@ import "server-only"
  *
  * For each model the dispatcher tries routes in declaration order and
  * picks the first whose provider is configured (env var set, or inline
- * `apiKey` / `baseURL` present in `providers.json`). Two provider types
- * are supported today:
+ * `apiKey` / `baseURL` present in `providers.json`). Three provider
+ * types are supported today:
  *
- * - `gateway`  → Vercel AI Gateway via `@ai-sdk/gateway`.
+ * - `gateway`   → Vercel AI Gateway via `@ai-sdk/gateway`.
  * - `anthropic` → `@ai-sdk/anthropic` pointed at the given baseURL.
  *                  Use this for any Anthropic-compatible endpoint —
  *                  the bundled `minimax-cn` provider is one such case.
+ * - `openai`    → `@ai-sdk/openai-compatible` pointed at the given
+ *                  baseURL. Use this for any OpenAI-compatible
+ *                  endpoint (OpenRouter, Together, Groq, vLLM, LM
+ *                  Studio, Ollama, self-hosted, …).
  *
  * If no route resolves the dispatcher throws `ProviderUnavailableError`
  * so the calling route can return a typed 401 instead of leaking the
@@ -26,6 +30,7 @@ import "server-only"
 
 import { createAnthropic } from "@ai-sdk/anthropic"
 import { createGateway } from "@ai-sdk/gateway"
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
 import type { LanguageModel } from "ai"
 
 import { getChatModel, type ChatModelRoute } from "@/shared/models"
@@ -46,8 +51,11 @@ export class ProviderUnavailableError extends Error {
  *  so a runtime env-var change (rare) rebuilds the client cleanly. */
 type AnthropicClient = ReturnType<typeof createAnthropic>
 type GatewayClient = ReturnType<typeof createGateway>
+type OpenAIClient = ReturnType<typeof createOpenAICompatible>
+type ProviderClient = AnthropicClient | GatewayClient | OpenAIClient
 type CachedClient =
   | { type: "anthropic"; baseURL: string; apiKey: string; client: AnthropicClient }
+  | { type: "openai"; baseURL: string; apiKey: string; client: OpenAIClient }
   | { type: "gateway"; apiKey: string; client: GatewayClient }
 
 const CLIENT_CACHE = new Map<string, CachedClient>()
@@ -55,18 +63,18 @@ const CLIENT_CACHE = new Map<string, CachedClient>()
 function getOrBuildClient(
   name: string,
   resolved: ResolvedProvider
-): AnthropicClient | GatewayClient {
+): ProviderClient {
   const cached = CLIENT_CACHE.get(name)
-  if (cached) {
-    if (cached.type === "anthropic" && resolved.type === "anthropic") {
+  if (cached && cached.type === resolved.type) {
+    if (resolved.type === "gateway" && cached.type === "gateway") {
+      if (cached.apiKey === resolved.apiKey) return cached.client
+    } else if (cached.type !== "gateway" && resolved.type !== "gateway") {
       if (
         cached.baseURL === resolved.baseURL &&
         cached.apiKey === resolved.apiKey
       ) {
         return cached.client
       }
-    } else if (cached.type === "gateway" && resolved.type === "gateway") {
-      if (cached.apiKey === resolved.apiKey) return cached.client
     }
   }
   if (resolved.type === "anthropic") {
@@ -76,6 +84,23 @@ function getOrBuildClient(
     })
     CLIENT_CACHE.set(name, {
       type: "anthropic",
+      baseURL: resolved.baseURL,
+      apiKey: resolved.apiKey,
+      client,
+    })
+    return client
+  }
+  if (resolved.type === "openai") {
+    // `createOpenAICompatible` requires a `name` for diagnostics — use
+    // the provider's configured name so error messages and traces are
+    // self-describing.
+    const client = createOpenAICompatible({
+      name,
+      baseURL: resolved.baseURL,
+      apiKey: resolved.apiKey,
+    })
+    CLIENT_CACHE.set(name, {
+      type: "openai",
       baseURL: resolved.baseURL,
       apiKey: resolved.apiKey,
       client,
