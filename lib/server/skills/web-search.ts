@@ -116,6 +116,7 @@ function dedupKey(rawUrl: string): string {
   }
 }
 
+
 // --- Tavily ----------------------------------------------------------------
 
 interface TavilyResult {
@@ -525,4 +526,12 @@ export function buildWebSearchTool(
       return { query, results: merged }
     },
   })
+}
+
+/** @internal — exported for tests only. Not part of the public surface;
+ *  do not import outside `*.test.ts`. */
+export const __test = {
+  clipSnippet,
+  dedupKey,
+  interleaveAndDedupe,
 }
