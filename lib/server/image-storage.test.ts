@@ -37,7 +37,7 @@ describe("persistGeneratedImages", () => {
       })
     )
     const r = await persistGeneratedImages([
-      { url: "https://cdn/img.png", width: 1, height: 1, format: "png" },
+      { id: "img-0", url: "https://cdn/img.png", width: 1, height: 1, format: "png" },
     ])
     expect(r.ok).toBe(true)
     if (r.ok) {
@@ -57,7 +57,7 @@ describe("persistGeneratedImages", () => {
     )
     const r = await persistGeneratedImages([
       // Input says "png" but server returns JPEG headers — trust the server.
-      { url: "https://cdn/img", width: 1, height: 1, format: "png" },
+      { id: "img-mime", url: "https://cdn/img", width: 1, height: 1, format: "png" },
     ])
     expect(r.ok).toBe(true)
     if (r.ok) {
@@ -78,7 +78,7 @@ describe("persistGeneratedImages", () => {
       })
     )
     const r = await persistGeneratedImages([
-      { url: "https://cdn/huge.png", width: 0, height: 0, format: "png" },
+      { id: "img-huge", url: "https://cdn/huge.png", width: 0, height: 0, format: "png" },
     ])
     // Only one image failed; persistGeneratedImages returns ok:false
     // when ALL fail. With a single input that's the same thing.
@@ -97,8 +97,8 @@ describe("persistGeneratedImages", () => {
       })
     })
     const r = await persistGeneratedImages([
-      { url: "https://cdn/missing.png", width: 1, height: 1, format: "png" },
-      { url: "https://cdn/ok.png", width: 1, height: 1, format: "png" },
+      { id: "img-missing", url: "https://cdn/missing.png", width: 1, height: 1, format: "png" },
+      { id: "img-ok", url: "https://cdn/ok.png", width: 1, height: 1, format: "png" },
     ])
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.images.length).toBe(1)
@@ -107,11 +107,28 @@ describe("persistGeneratedImages", () => {
   test("all-fail → ok:false with first error", async () => {
     mockFetch(async () => new Response("", { status: 500 }))
     const r = await persistGeneratedImages([
-      { url: "https://cdn/a", width: 1, height: 1, format: "png" },
-      { url: "https://cdn/b", width: 1, height: 1, format: "png" },
+      { id: "img-a", url: "https://cdn/a", width: 1, height: 1, format: "png" },
+      { id: "img-b", url: "https://cdn/b", width: 1, height: 1, format: "png" },
     ])
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error).toContain("HTTP 500")
+  })
+
+  test("data-URL path propagates `id` and leaves storagePath undefined", async () => {
+    mockFetch(async () =>
+      new Response(TINY_PNG, {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      })
+    )
+    const r = await persistGeneratedImages([
+      { id: "call-abc-2", url: "https://cdn/img.png", width: 1, height: 1, format: "png" },
+    ])
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.images[0].id).toBe("call-abc-2")
+      expect(r.images[0].storagePath).toBeUndefined()
+    }
   })
 
   test("aborts on upstream signal", async () => {
@@ -127,7 +144,7 @@ describe("persistGeneratedImages", () => {
     const upstream = new AbortController()
     upstream.abort()
     const r = await persistGeneratedImages(
-      [{ url: "https://cdn/a", width: 1, height: 1, format: "png" }],
+      [{ id: "img-abort", url: "https://cdn/a", width: 1, height: 1, format: "png" }],
       { signal: upstream.signal }
     )
     expect(r.ok).toBe(false)

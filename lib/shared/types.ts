@@ -388,6 +388,10 @@ export interface GeneratedImage {
    *    or upload failed. Heavier on persistence but works for
    *    signed-out / offline users. */
   url: string
+  /** Set when the image was persisted to Supabase Storage. Lets the
+   *  client re-sign a fresh URL from the same bytes if the original
+   *  ever expires. Undefined for data-URL fallbacks. */
+  storagePath?: string
   /** Width in pixels. Zero is a sentinel "unknown — let the browser
    *  detect from the loaded image." Set when the upstream provider
    *  returns dimensions; left at 0 otherwise. */

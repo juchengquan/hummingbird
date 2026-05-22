@@ -676,6 +676,7 @@ export function ChatPanel() {
                     (img): img is {
                       id: string
                       url: string
+                      storagePath?: string
                       width: number
                       height: number
                       format: string
@@ -687,7 +688,9 @@ export function ChatPanel() {
                       typeof img?.width === "number" &&
                       typeof img?.height === "number" &&
                       typeof img?.format === "string" &&
-                      typeof img?.prompt === "string"
+                      typeof img?.prompt === "string" &&
+                      (img.storagePath === undefined ||
+                        typeof img.storagePath === "string")
                   )
                   .map((img) => ({ ...img, mode }))
                 if (images.length > 0) {

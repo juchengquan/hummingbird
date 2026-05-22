@@ -206,9 +206,14 @@ async function maybeEmitImageFrame(
   if (!output?.ok || !Array.isArray(output.images) || output.images.length === 0) {
     return
   }
+  const toolCallId = part.toolCallId ?? 'img'
   const inputs: ImageToPersist[] = output.images
     .filter((img): img is typeof img & { url: string } => typeof img?.url === 'string')
-    .map((img) => ({
+    .map((img, i) => ({
+      // Stable per-image id — used as the React key AND the storage
+      // object name, so the persistence layer can write
+      // `user-files/{user_id}/generated/{id}.{ext}` deterministically.
+      id: `${toolCallId}-${i}`,
       url: img.url,
       width: typeof img.width === 'number' ? img.width : 0,
       height: typeof img.height === 'number' ? img.height : 0,
@@ -225,11 +230,10 @@ async function maybeEmitImageFrame(
     type: 'tool_image',
     id: part.toolCallId ?? '',
     mode,
-    images: persisted.images.map((img, i) => ({
-      // Stable per-image id — used as the React key and the future
-      // Supabase Storage object name.
-      id: `${part.toolCallId ?? 'img'}-${i}`,
+    images: persisted.images.map((img) => ({
+      id: img.id,
       url: img.url,
+      storagePath: img.storagePath,
       width: img.width,
       height: img.height,
       format: img.format,

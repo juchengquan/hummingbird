@@ -15,8 +15,10 @@ import "client-only"
  *   notes in `lib/supabase/types.ts`): error / reasoning / attachedFileIds /
  *   suggestions / generatedImages on messages; extraction state / image
  *   data URLs / summary / keyTopics on files; systemPrompt on workspaces.
- *   These stay local. (`generatedImages` is data-URL-only in PR B; cross-
- *   device sync waits for the Supabase Storage upgrade in PR C.)
+ *   These stay local. (`generatedImages` are now stored to Supabase Storage
+ *   when authenticated and the `storagePath` is captured, but cross-device
+ *   sync of the metadata row still needs a `messages.generated_images` DB
+ *   column — that's a follow-up.)
  * - Deletes for child entities (messages of a deleted conversation, etc.)
  *   are NOT emitted — Postgres ON DELETE CASCADE handles them via the
  *   foreign keys defined in migration 0001/0002.
