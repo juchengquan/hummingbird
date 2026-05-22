@@ -153,6 +153,22 @@ function mergeWebFetchConfig(
   return next as import('@/shared/skills/web-fetch-config').WebFetchConfig
 }
 
+function mergeImageGenConfig(
+  base: import('@/shared/skills/image-gen-config').ImageGenConfig | undefined,
+  patch: Partial<import('@/shared/skills/image-gen-config').ImageGenConfig>
+):
+  | import('@/shared/skills/image-gen-config').ImageGenConfig
+  | undefined {
+  const next: Record<string, unknown> = { ...(base ?? {}) }
+  for (const key of Object.keys(patch) as Array<keyof typeof patch>) {
+    const value = patch[key]
+    if (value === undefined) delete next[key as string]
+    else next[key as string] = value
+  }
+  if (Object.keys(next).length === 0) return undefined
+  return next as import('@/shared/skills/image-gen-config').ImageGenConfig
+}
+
 function mergeWebSearchConfig(
   base: import('@/shared/skills/web-search-config').WebSearchConfig | undefined,
   patch: Partial<import('@/shared/skills/web-search-config').WebSearchConfig>
@@ -391,6 +407,12 @@ interface AppState {
     workspaceId: string,
     patch: Partial<import("@/shared/skills/web-fetch-config").WebFetchConfig> | null
   ) => void
+  /** Patch the workspace-level `imageGen` config. Same cascade
+   *  semantics as `patchWorkspaceWebSearchConfig`. */
+  patchWorkspaceImageGenConfig: (
+    workspaceId: string,
+    patch: Partial<import("@/shared/skills/image-gen-config").ImageGenConfig> | null
+  ) => void
   setActiveWorkspace: (workspaceId: string) => void
 
   // Resource actions
@@ -577,6 +599,11 @@ interface AppState {
   patchConversationWebFetchConfig: (
     conversationId: string,
     patch: Partial<import("@/shared/skills/web-fetch-config").WebFetchConfig> | null
+  ) => void
+  /** Patch the per-conversation `imageGen` config override. */
+  patchConversationImageGenConfig: (
+    conversationId: string,
+    patch: Partial<import("@/shared/skills/image-gen-config").ImageGenConfig> | null
   ) => void
   /** Toggle a file's attachment to the active conversation (no-op if no active conversation). */
   toggleConversationFileSelection: (fileId: string) => void
@@ -970,6 +997,19 @@ export const useStore = create<AppState>()(
             }
             const merged = mergeWebFetchConfig(w.webFetchConfig, patch)
             return { ...w, webFetchConfig: merged, updatedAt: new Date() }
+          }),
+        })),
+      patchWorkspaceImageGenConfig: (workspaceId, patch) =>
+        set((state) => ({
+          workspaces: state.workspaces.map((w) => {
+            if (w.id !== workspaceId) return w
+            if (patch === null) {
+              const { imageGenConfig: _drop, ...rest } = w
+              void _drop
+              return { ...rest, updatedAt: new Date() }
+            }
+            const merged = mergeImageGenConfig(w.imageGenConfig, patch)
+            return { ...w, imageGenConfig: merged, updatedAt: new Date() }
           }),
         })),
       setActiveWorkspace: (workspaceId: string) =>
@@ -1729,6 +1769,19 @@ export const useStore = create<AppState>()(
             }
             const merged = mergeWebFetchConfig(c.webFetchConfig, patch)
             return { ...c, webFetchConfig: merged, updatedAt: new Date() }
+          }),
+        })),
+      patchConversationImageGenConfig: (conversationId, patch) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id !== conversationId) return c
+            if (patch === null) {
+              const { imageGenConfig: _drop, ...rest } = c
+              void _drop
+              return { ...rest, updatedAt: new Date() }
+            }
+            const merged = mergeImageGenConfig(c.imageGenConfig, patch)
+            return { ...c, imageGenConfig: merged, updatedAt: new Date() }
           }),
         })),
       togglePin: (conversationId: string) =>

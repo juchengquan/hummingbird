@@ -12,6 +12,7 @@ import { copyText } from "@/client/export"
 import { extractCodeBlocks } from "@/shared/code-blocks"
 import { MarkdownPreview } from "@/components/markdown-preview"
 import { ToolCallStrip, type LiveToolCall } from "@/components/skills/tool-call-strip"
+import { GeneratedImagesGallery } from "@/components/skills/generated-images-gallery"
 import { MessageAttachments } from "@/components/panels/message-attachments"
 import { ReasoningBlock } from "@/components/panels/reasoning-block"
 import { SourcesStrip } from "@/components/panels/sources-strip"
@@ -371,6 +372,11 @@ function ChatMessageImpl({
                     highlightedIndex={highlightedCitation}
                   />
                 )}
+                {!isUser &&
+                  message.generatedImages &&
+                  message.generatedImages.length > 0 && (
+                    <GeneratedImagesGallery images={message.generatedImages} />
+                  )}
                 {isUser &&
                   message.attachedFileIds &&
                   message.attachedFileIds.length > 0 && (

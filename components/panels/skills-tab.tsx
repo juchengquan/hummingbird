@@ -42,6 +42,18 @@ import {
   resolveWebFetchConfig,
   type WebFetchConfig,
 } from "@/shared/skills/web-fetch-config"
+import {
+  DEFAULT_IMAGE_GEN_ASPECT_RATIO,
+  DEFAULT_MAX_IMAGE_GENERATIONS,
+  IMAGE_GEN_ASPECT_RATIOS,
+  IMAGE_GEN_ASPECT_RATIO_LABELS,
+  MAX_MAX_IMAGE_GENERATIONS,
+  MIN_MAX_IMAGE_GENERATIONS,
+  clampMaxImageGenerations,
+  resolveImageGenConfig,
+  type ImageGenAspectRatio,
+  type ImageGenConfig,
+} from "@/shared/skills/image-gen-config"
 
 /**
  * "Skills" tab in the right activity bar.
@@ -71,6 +83,12 @@ export function SkillsTab() {
   )
   const patchConversationWebFetchConfig = useStore(
     (s) => s.patchConversationWebFetchConfig
+  )
+  const patchWorkspaceImageGenConfig = useStore(
+    (s) => s.patchWorkspaceImageGenConfig
+  )
+  const patchConversationImageGenConfig = useStore(
+    (s) => s.patchConversationImageGenConfig
   )
 
   // Without a workspace there's nothing to edit. With workspace but no
@@ -115,6 +133,8 @@ export function SkillsTab() {
             conversationWebSearchConfig={conversation?.webSearchConfig}
             workspaceWebFetchConfig={workspace.webFetchConfig}
             conversationWebFetchConfig={conversation?.webFetchConfig}
+            workspaceImageGenConfig={workspace.imageGenConfig}
+            conversationImageGenConfig={conversation?.imageGenConfig}
             onPatchWorkspace={(patch) =>
               patchWorkspaceWebSearchConfig(workspace.id, patch)
             }
@@ -129,6 +149,14 @@ export function SkillsTab() {
             onPatchConversationWebFetch={(patch) => {
               if (conversation) {
                 patchConversationWebFetchConfig(conversation.id, patch)
+              }
+            }}
+            onPatchWorkspaceImageGen={(patch) =>
+              patchWorkspaceImageGenConfig(workspace.id, patch)
+            }
+            onPatchConversationImageGen={(patch) => {
+              if (conversation) {
+                patchConversationImageGenConfig(conversation.id, patch)
               }
             }}
             onSetEffective={(value) => {
@@ -174,6 +202,10 @@ interface SkillRowProps {
   workspaceWebFetchConfig: WebFetchConfig | undefined
   /** Conversation-level webFetch config override. */
   conversationWebFetchConfig: WebFetchConfig | undefined
+  /** Workspace-level imageGen config (cap + default aspect ratio). */
+  workspaceImageGenConfig: ImageGenConfig | undefined
+  /** Conversation-level imageGen config override. */
+  conversationImageGenConfig: ImageGenConfig | undefined
   onPatchWorkspace: (
     patch: Partial<WebSearchConfig> | null
   ) => void
@@ -185,6 +217,12 @@ interface SkillRowProps {
   ) => void
   onPatchConversationWebFetch: (
     patch: Partial<WebFetchConfig> | null
+  ) => void
+  onPatchWorkspaceImageGen: (
+    patch: Partial<ImageGenConfig> | null
+  ) => void
+  onPatchConversationImageGen: (
+    patch: Partial<ImageGenConfig> | null
   ) => void
   /** Set the *effective* state for this row. With a conversation in
    *  scope this writes the per-chat override; without one it writes the
@@ -207,10 +245,14 @@ function SkillRow({
   conversationWebSearchConfig,
   workspaceWebFetchConfig,
   conversationWebFetchConfig,
+  workspaceImageGenConfig,
+  conversationImageGenConfig,
   onPatchWorkspace,
   onPatchConversation,
   onPatchWorkspaceWebFetch,
   onPatchConversationWebFetch,
+  onPatchWorkspaceImageGen,
+  onPatchConversationImageGen,
   onSetEffective,
   onPinToWorkspace,
 }: SkillRowProps) {
@@ -228,7 +270,8 @@ function SkillRow({
   // webFetch). Defaults to collapsed; the user clicks the chevron to
   // reveal the panel. Local state — ephemeral, resets on remount,
   // intentionally not persisted.
-  const hasSettingsPanel = skill.id === "webSearch" || skill.id === "webFetch"
+  const hasSettingsPanel =
+    skill.id === "webSearch" || skill.id === "webFetch" || skill.id === "imageGen"
   const [expanded, setExpanded] = useState(false)
 
   return (
@@ -302,6 +345,16 @@ function SkillRow({
           conversationConfig={conversationWebSearchConfig}
           onPatchWorkspace={onPatchWorkspace}
           onPatchConversation={onPatchConversation}
+        />
+      )}
+
+      {skill.id === "imageGen" && expanded && (
+        <ImageGenSettingsPanel
+          hasConversation={hasConversation}
+          workspaceConfig={workspaceImageGenConfig}
+          conversationConfig={conversationImageGenConfig}
+          onPatchWorkspace={onPatchWorkspaceImageGen}
+          onPatchConversation={onPatchConversationImageGen}
         />
       )}
 
@@ -524,6 +577,136 @@ function WebFetchSettingsPanel({
         onCommit={(value) => patch({ maxCalls: value })}
         onReset={() => patch({ maxCalls: undefined })}
       />
+    </div>
+  )
+}
+
+interface ImageGenSettingsPanelProps {
+  hasConversation: boolean
+  workspaceConfig: ImageGenConfig | undefined
+  conversationConfig: ImageGenConfig | undefined
+  onPatchWorkspace: (patch: Partial<ImageGenConfig> | null) => void
+  onPatchConversation: (patch: Partial<ImageGenConfig> | null) => void
+}
+
+/**
+ * Expanded settings shown under the Image generation row. Per-turn cap
+ * stepper + default aspect ratio select. Same cascade semantics as the
+ * other skill panels — workspace defaults when no conversation is in
+ * scope, conversation override otherwise.
+ */
+function ImageGenSettingsPanel({
+  hasConversation,
+  workspaceConfig,
+  conversationConfig,
+  onPatchWorkspace,
+  onPatchConversation,
+}: ImageGenSettingsPanelProps) {
+  const resolved = resolveImageGenConfig(workspaceConfig, conversationConfig)
+  const editingConversation = hasConversation
+  const patch = (p: Partial<ImageGenConfig>) => {
+    if (editingConversation) onPatchConversation(p)
+    else onPatchWorkspace(p)
+  }
+  const ownConfig = editingConversation ? conversationConfig : workspaceConfig
+
+  return (
+    <div className="space-y-2.5 pt-1">
+      <MaxCallsStepper
+        label="Max generations"
+        effective={resolved.maxCalls}
+        ownValue={ownConfig?.maxCalls}
+        workspaceValue={workspaceConfig?.maxCalls}
+        editingConversation={editingConversation}
+        min={MIN_MAX_IMAGE_GENERATIONS}
+        max={MAX_MAX_IMAGE_GENERATIONS}
+        defaultValue={DEFAULT_MAX_IMAGE_GENERATIONS}
+        clamp={clampMaxImageGenerations}
+        onCommit={(value) => patch({ maxCalls: value })}
+        onReset={() => patch({ maxCalls: undefined })}
+      />
+      <AspectRatioRow
+        effective={resolved.aspectRatio}
+        ownValue={ownConfig?.aspectRatio}
+        workspaceValue={workspaceConfig?.aspectRatio}
+        editingConversation={editingConversation}
+        onChange={(value) => patch({ aspectRatio: value })}
+        onReset={() => patch({ aspectRatio: undefined })}
+      />
+    </div>
+  )
+}
+
+/** Aspect-ratio row: label + sublabel (inheritance hint) + select +
+ *  optional reset. Inline rather than reusing InlineSelectRow so it can
+ *  show the same cascade messaging the stepper does. */
+function AspectRatioRow({
+  effective,
+  ownValue,
+  workspaceValue,
+  editingConversation,
+  onChange,
+  onReset,
+}: {
+  effective: ImageGenAspectRatio
+  ownValue: ImageGenAspectRatio | undefined
+  workspaceValue: ImageGenAspectRatio | undefined
+  editingConversation: boolean
+  onChange: (value: ImageGenAspectRatio) => void
+  onReset: () => void
+}) {
+  const isOverride = editingConversation && ownValue !== undefined
+  const showReset =
+    ownValue !== undefined && ownValue !== DEFAULT_IMAGE_GEN_ASPECT_RATIO
+  const sublabel = editingConversation
+    ? isOverride
+      ? "Chat override"
+      : workspaceValue !== undefined
+        ? `Inherits ${workspaceValue} from workspace`
+        : `Default ${DEFAULT_IMAGE_GEN_ASPECT_RATIO}`
+    : workspaceValue !== undefined
+      ? "Workspace default"
+      : `Default ${DEFAULT_IMAGE_GEN_ASPECT_RATIO}`
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <div className="min-w-0">
+        <p className="text-[11px] text-[var(--foreground)] leading-tight">
+          Aspect ratio
+        </p>
+        <p className="text-[10px] text-[var(--muted-foreground)] leading-tight">
+          {sublabel}
+        </p>
+      </div>
+      <div className="flex items-center gap-0.5 shrink-0">
+        {showReset && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Reset to default"
+            title="Reset to default"
+            onClick={onReset}
+            className="h-6 w-6 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+          >
+            <RotateCcw size={11} />
+          </Button>
+        )}
+        <select
+          value={effective}
+          onChange={(e) => onChange(e.target.value as ImageGenAspectRatio)}
+          aria-label="Aspect ratio"
+          className={cn(
+            "text-[11px] rounded-md border border-[var(--border)] bg-[var(--background)]",
+            "px-2 py-0.5 h-6 outline-none focus:ring-1 focus:ring-[var(--primary)]/40"
+          )}
+        >
+          {IMAGE_GEN_ASPECT_RATIOS.map((r) => (
+            <option key={r} value={r}>
+              {IMAGE_GEN_ASPECT_RATIO_LABELS[r]}
+            </option>
+          ))}
+        </select>
+      </div>
     </div>
   )
 }
