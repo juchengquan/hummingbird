@@ -572,4 +572,120 @@ describe("buildWebSearchTool", () => {
     expect(out.results).toEqual([])
     expect(out.error).toMatch(/tavily:/i)
   })
+
+  // --- Upstream response-shape validation -------------------------------
+  // These tests cover the Zod-validated parse layer. The thing we're
+  // protecting against is a quiet upstream rename (e.g. Tavily
+  // renaming `results` → `items`) silently zeroing out search forever.
+  // With validation in place, the shape break surfaces to the model as
+  // a real per-provider error.
+
+  test("Tavily: missing top-level `results` surfaces a shape error", async () => {
+    process.env.TAVILY_API_KEY = "tav"
+    installFetchRouter({
+      // Tavily renames `results` → `items` in a hypothetical future. The
+      // old code path would have produced `data.results ?? []` → empty,
+      // silently. Now: surfaced.
+      "https://api.tavily.com": async () =>
+        jsonResponse({ items: [{ title: "T", url: "https://t/1", content: "" }] }),
+    })
+    const t = buildWebSearchTool([])
+    const out = await execTool(t, "q")
+    expect(out.results).toEqual([])
+    expect(out.error).toMatch(/tavily:/i)
+    expect(out.error).toMatch(/response shape changed/i)
+  })
+
+  test("Tavily: `results` of wrong type (string) surfaces a shape error", async () => {
+    process.env.TAVILY_API_KEY = "tav"
+    installFetchRouter({
+      "https://api.tavily.com": async () =>
+        jsonResponse({ results: "not-an-array" }),
+    })
+    const t = buildWebSearchTool([])
+    const out = await execTool(t, "q")
+    expect(out.error).toMatch(/tavily/i)
+    expect(out.error).toMatch(/response shape changed/i)
+  })
+
+  test("Tavily: legitimate empty results parses without error", async () => {
+    // The schema requires `results` to be present and an array; the
+    // empty array is the natural "no hits" signal and must NOT trip
+    // shape-change detection.
+    process.env.TAVILY_API_KEY = "tav"
+    process.env.BRAVE_SEARCH_API_KEY = "brv"
+    installFetchRouter({
+      "https://api.tavily.com": async () => jsonResponse({ results: [] }),
+      "https://api.search.brave.com": async () =>
+        jsonResponse({ web: { results: [{ title: "B", url: "https://b/1" }] } }),
+    })
+    const out = await execTool(buildWebSearchTool([]), "q")
+    expect(out.error).toBeUndefined()
+    expect(out.results.map((r) => r.url)).toEqual(["https://b/1"])
+  })
+
+  test("Brave: `web` entirely absent is tolerated (no shape error, empty)", async () => {
+    // Brave legitimately omits `web` on responses where the answer is
+    // dominated by news/discussions. The schema marks `web` optional,
+    // so this is a no-results outcome — not a shape change.
+    process.env.BRAVE_SEARCH_API_KEY = "brv"
+    process.env.TAVILY_API_KEY = "tav"
+    installFetchRouter({
+      "https://api.search.brave.com": async () => jsonResponse({}),
+      "https://api.tavily.com": async () =>
+        jsonResponse({ results: [{ title: "T", url: "https://t/1", content: "ok" }] }),
+    })
+    const out = await execTool(buildWebSearchTool([]), "q")
+    expect(out.error).toBeUndefined()
+    expect(out.results.map((r) => r.url)).toEqual(["https://t/1"])
+  })
+
+  test("Brave: `web.results` missing (web present) surfaces a shape error", async () => {
+    process.env.BRAVE_SEARCH_API_KEY = "brv"
+    installFetchRouter({
+      // `web` is present (so the optional schema doesn't bail out)
+      // but `web.results` is renamed → the inner `results` array is
+      // required when `web` exists, so this is caught.
+      "https://api.search.brave.com": async () =>
+        jsonResponse({ web: { items: [] } }),
+    })
+    const t = buildWebSearchTool([])
+    const out = await execTool(t, "q")
+    expect(out.error).toMatch(/brave/i)
+    expect(out.error).toMatch(/response shape changed/i)
+  })
+
+  test("Exa: missing top-level `results` surfaces a shape error", async () => {
+    process.env.EXA_API_KEY = "exa"
+    installFetchRouter({
+      "https://api.exa.ai": async () =>
+        jsonResponse({ data: [{ url: "https://e/1" }] }),
+    })
+    const t = buildWebSearchTool([])
+    const out = await execTool(t, "q")
+    expect(out.error).toMatch(/exa/i)
+    expect(out.error).toMatch(/response shape changed/i)
+  })
+
+  test("per-row malformed entries are dropped, but valid rows still come through", async () => {
+    // Mixed batch: one row with a number url (drops via per-row
+    // safeParse), one row with a non-string title (drops), one good.
+    // Validates that the per-row tolerance from the existing
+    // pre-Zod implementation is preserved.
+    process.env.TAVILY_API_KEY = "tav"
+    installFetchRouter({
+      "https://api.tavily.com": async () =>
+        jsonResponse({
+          results: [
+            { title: "bad-url", url: 42, content: "x" },
+            { title: 99, url: "https://t/bad-title", content: "x" },
+            { title: "ok", url: "https://t/1", content: "snippet" },
+          ],
+        }),
+    })
+    const out = await execTool(buildWebSearchTool([]), "q")
+    expect(out.error).toBeUndefined()
+    expect(out.results.map((r) => r.url)).toEqual(["https://t/1"])
+    expect(out.results[0]).toMatchObject({ title: "ok", snippet: "snippet" })
+  })
 })
