@@ -21,6 +21,10 @@ export interface SlashAutocompleteEntry {
   /** Secondary text — skill name / prompt description. Optional. */
   hint?: string
   icon?: LucideIcon
+  /** Optional section header. When entries carry groups, a label row
+   *  is rendered above the first entry of each new group. Entries are
+   *  assumed pre-sorted by group (the menu doesn't reorder). */
+  groupLabel?: string
 }
 
 /**
@@ -57,9 +61,18 @@ export function SlashAutocomplete({
       {entries.map((entry, i) => {
         const Icon = entry.icon
         const active = i === activeIndex
+        // Section header when this entry starts a new group.
+        const showGroup =
+          entry.groupLabel !== undefined &&
+          entry.groupLabel !== entries[i - 1]?.groupLabel
         return (
+          <div key={entry.id}>
+            {showGroup && (
+              <div className="px-2.5 pt-1.5 pb-1 text-[10px] font-medium uppercase tracking-wide text-[var(--muted-foreground)]/70 select-none">
+                {entry.groupLabel}
+              </div>
+            )}
           <button
-            key={entry.id}
             type="button"
             role="option"
             aria-selected={active}
@@ -91,6 +104,7 @@ export function SlashAutocomplete({
               </span>
             )}
           </button>
+          </div>
         )
       })}
     </div>
