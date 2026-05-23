@@ -24,6 +24,7 @@ import type {
   Artifact,
   ArtifactKind,
   GeneratedImage,
+  Prompt,
   ToolCallRecord,
   ToolCallResult,
   PinnedExplanation,
@@ -43,6 +44,51 @@ import {
 } from '@/client/store/cascade'
 import { reviveDates } from '@/client/store/revive-dates'
 import { uuid } from '@/shared/uuid'
+import { parseTemplate } from '@/shared/prompts/expand'
+
+// Short, URL-safe id for prompts. Re-uses the existing uuid helper so we
+// don't add a nanoid dep; the slice doesn't need RFC4122 cryptographic
+// uniqueness, just unique-within-a-user's-library.
+const nanoid = uuid
+
+/**
+ * Slugify a prompt name for the future `/<slug>` slash trigger. Lowercase,
+ * spaces and punctuation collapsed to single dashes, leading/trailing
+ * dashes trimmed. Empty string → "prompt" (the createPrompt action layers
+ * collision-handling on top via `ensureUniquePromptSlug`).
+ */
+function defaultSlug(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+  return slug || "prompt"
+}
+
+/**
+ * Append `-2`, `-3`, ... to `base` until the slug is unique within the
+ * caller's prompt list. `excludePromptId` lets updatePrompt re-check its
+ * own slug without colliding with itself.
+ */
+function ensureUniquePromptSlug(
+  base: string,
+  prompts: Prompt[],
+  excludePromptId?: string
+): string {
+  const taken = new Set(
+    prompts
+      .filter((p) => p.id !== excludePromptId && !p.deletedAt)
+      .map((p) => p.slug)
+  )
+  if (!taken.has(base)) return base
+  for (let n = 2; n < 10_000; n++) {
+    const candidate = `${base}-${n}`
+    if (!taken.has(candidate)) return candidate
+  }
+  // Pathological fallback — every numeric suffix taken. Append a random
+  // tail to escape. Shouldn't happen in any sane library.
+  return `${base}-${nanoid().slice(0, 6)}`
+}
 
 export type {
   UploadedFile,
@@ -339,6 +385,19 @@ interface AppState {
   /** Bumped to force the editor to reload its content (e.g. on "Send to editor"). */
   editorReloadToken: number
 
+  // Prompts — user-scoped saved templates. Listed in the left sidebar's
+  // Prompts group; click-to-insert drops the expanded template into the
+  // chat input via `pendingChatInput`. See docs/PLAN-prompt-library.md.
+  // Phase 1: local-only. Phase 2 will add Supabase sync.
+  prompts: Prompt[]
+
+  /** One-shot signal from anywhere in the app to ChatPanel's local input
+   *  state. Set by sidebar prompt click (after variable expansion) or
+   *  any future surface that wants to seed the input. ChatPanel's
+   *  useEffect reads, copies to local state, then clears (so the same
+   *  string can be inserted again later without dedup confusion). */
+  pendingChatInput: string | null
+
   // Conversations
   conversations: Conversation[]
   activeConversationId: string | null
@@ -576,6 +635,31 @@ interface AppState {
   updateArtifactTitle: (artifactId: string, title: string) => void
   requestEditorReload: () => void
 
+  // Prompt actions — user-scoped saved templates. Slug is auto-derived
+  // from `name` on create via `defaultSlug()`; the create action accepts
+  // optional `slug` for cases (import, duplicate-with-rename) where the
+  // caller wants control.
+  createPrompt: (input: {
+    name: string
+    template: string
+    slug?: string
+  }) => Prompt
+  updatePrompt: (
+    promptId: string,
+    patch: Partial<Pick<Prompt, "name" | "slug" | "template">>
+  ) => void
+  /** Soft-delete — sets `deletedAt`. The Phase 2 sync layer reads the
+   *  marker; the UI filters it out everywhere. */
+  deletePrompt: (promptId: string) => void
+  /** Clears the soft-delete marker. Restored prompts re-appear in the
+   *  sidebar list. Currently no Undo UI for this in v1 — exposed
+   *  programmatically for future surfaces. */
+  restorePrompt: (promptId: string) => void
+
+  /** Set the one-shot chat-input seed read by ChatPanel. Pass null to
+   *  clear. ChatPanel clears immediately after reading. */
+  setPendingChatInput: (value: string | null) => void
+
   // File actions
   addFile: (file: UploadedFile) => void
   removeFile: (fileId: string) => void
@@ -762,6 +846,10 @@ export const useStore = create<AppState>()(
       // Artifacts
       artifacts: [],
       editorReloadToken: 0,
+
+      // Prompts (Phase 1: local-only)
+      prompts: [],
+      pendingChatInput: null,
 
       // Conversations
       conversations: getDefaultConversations().map((c: Conversation) => ({
@@ -1580,6 +1668,75 @@ export const useStore = create<AppState>()(
         })),
       requestEditorReload: () =>
         set((state) => ({ editorReloadToken: state.editorReloadToken + 1 })),
+
+      // Prompt actions
+      createPrompt: ({ name, template, slug }) => {
+        const now = new Date()
+        const baseSlug = slug?.trim() || defaultSlug(name)
+        const uniqueSlug = ensureUniquePromptSlug(
+          baseSlug,
+          get().prompts
+        )
+        const prompt: Prompt = {
+          id: nanoid(),
+          name: name.trim(),
+          slug: uniqueSlug,
+          template,
+          variables: parseTemplate(template).variables,
+          createdAt: now,
+          updatedAt: now,
+        }
+        set((state) => ({ prompts: [...state.prompts, prompt] }))
+        return prompt
+      },
+      updatePrompt: (promptId, patch) =>
+        set((state) => ({
+          prompts: state.prompts.map((p) => {
+            if (p.id !== promptId) return p
+            const nextName = patch.name?.trim() ?? p.name
+            const nextTemplate = patch.template ?? p.template
+            // Slug rules:
+            //   - Explicit slug in patch wins (after slug-collision check).
+            //   - Otherwise keep the existing slug stable across renames.
+            //     (Auto-rederiving from name would break muscle memory once
+            //     Phase 3 slash triggers ship.)
+            let nextSlug = p.slug
+            if (patch.slug !== undefined) {
+              const requested = patch.slug.trim() || defaultSlug(nextName)
+              nextSlug = ensureUniquePromptSlug(
+                requested,
+                state.prompts,
+                p.id
+              )
+            }
+            return {
+              ...p,
+              name: nextName,
+              slug: nextSlug,
+              template: nextTemplate,
+              variables: parseTemplate(nextTemplate).variables,
+              updatedAt: new Date(),
+            }
+          }),
+        })),
+      deletePrompt: (promptId) =>
+        set((state) => ({
+          prompts: state.prompts.map((p) =>
+            p.id === promptId
+              ? { ...p, deletedAt: new Date(), updatedAt: new Date() }
+              : p
+          ),
+        })),
+      restorePrompt: (promptId) =>
+        set((state) => ({
+          prompts: state.prompts.map((p) =>
+            p.id === promptId
+              ? { ...p, deletedAt: undefined, updatedAt: new Date() }
+              : p
+          ),
+        })),
+
+      setPendingChatInput: (value) => set({ pendingChatInput: value }),
 
       // File actions
       addFile: (file: UploadedFile) =>
@@ -2702,6 +2859,10 @@ export const useStore = create<AppState>()(
         resourcesSidebarTab: state.resourcesSidebarTab,
         localOnlyMode: state.localOnlyMode,
         localFilesOnly: state.localFilesOnly,
+        prompts: state.prompts,
+        // pendingChatInput is deliberately NOT persisted — it's a
+        // one-shot event signal, not durable state. Surviving a reload
+        // would re-trigger an insert on next mount.
       }),
     }
   )

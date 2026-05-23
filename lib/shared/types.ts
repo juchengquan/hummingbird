@@ -571,4 +571,36 @@ export interface Artifact {
   createdAt: Date
 }
 
+/**
+ * User-scoped saved prompt template. Lives in the left sidebar's
+ * Prompts group; click-to-insert into the chat input expands the
+ * `{{variable}}` markers via the variable-fill modal. See
+ * `docs/PLAN-prompt-library.md`.
+ *
+ * Phase 1 stores prompts in Zustand only (per-device, no sync).
+ * Phase 2 will add a Supabase `prompts` table + the standard
+ * `diffPrompts` sync handler. The shape below is forward-compatible
+ * with that (matches the planned column set; `slug` derives from
+ * `name` and stays editable independently).
+ */
+export interface Prompt {
+  id: string
+  /** User-facing label. Slug derives from this on first save. */
+  name: string
+  /** Identifier for the future `/<slug>` slash trigger. Derived from
+   *  `name` on creation, then editable independently. */
+  slug: string
+  /** Plain text with `{{variable}}` markers — see
+   *  `lib/shared/prompts/expand.ts`. */
+  template: string
+  /** Variable names in first-appearance order, derived from `template`
+   *  at save time and stored for quick listing without re-parsing. */
+  variables: string[]
+  createdAt: Date
+  updatedAt: Date
+  /** Soft-delete marker. Same pattern as `files.deletedAt` etc. so the
+   *  Phase 2 sync handler can ship tombstones without UI special-casing. */
+  deletedAt?: Date
+}
+
 export type MainView = 'workspaces' | 'chat' | 'resources' | 'editor'

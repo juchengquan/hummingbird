@@ -42,6 +42,7 @@ const DATE_FIELDS_BY_SLICE: Record<string, readonly string[]> = {
   notes: ["createdAt", "updatedAt"],
   artifacts: ["createdAt"],
   documents: ["createdAt", "updatedAt"],
+  prompts: ["createdAt", "updatedAt", "deletedAt"],
 }
 
 export function reviveDates(state: Record<string, unknown>): void {
