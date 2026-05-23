@@ -1,5 +1,5 @@
 import * as React from "react"
-import { LayoutDashboard, Plus, ChevronRight, Pin, MessageSquare, MessagesSquare, FileText, Search, X } from "lucide-react"
+import { BookOpen, LayoutDashboard, Plus, ChevronRight, Pin, MessageSquare, MessagesSquare, FileText, Search, X } from "lucide-react"
 import {
   Sidebar,
   SidebarContent,
@@ -29,9 +29,13 @@ import {
 } from "@/client/hooks/use-store"
 import { ConversationItem } from "@/components/sidebars/conversation-item"
 import { DocumentItem } from "@/components/sidebars/document-item"
+import { PromptItem } from "@/components/sidebars/prompt-item"
+import { PromptDialog } from "@/components/panels/prompt-dialog"
+import { PromptVariableFill } from "@/components/panels/prompt-variable-fill"
 import { AccountMenu } from "@/components/auth/account-menu"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { HelpPopover } from "@/components/help-popover"
+import type { Prompt } from "@/shared/types"
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const {
@@ -59,8 +63,53 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const [mounted, setMounted] = React.useState(false)
   const [sessionsExpanded, setSessionsExpanded] = React.useState(true)
   const [docsExpanded, setDocsExpanded] = React.useState(true)
+  const [promptsExpanded, setPromptsExpanded] = React.useState(true)
   const [chatQuery, setChatQuery] = React.useState("")
   const [docQuery, setDocQuery] = React.useState("")
+  const [promptQuery, setPromptQuery] = React.useState("")
+
+  // Prompt dialog state. `editingPrompt === null` with `dialogOpen === true`
+  // means create mode (new-prompt button); a non-null prompt means edit.
+  // `varFillPrompt` carries the prompt currently in the variable-fill modal.
+  const [editingPrompt, setEditingPrompt] = React.useState<Prompt | null>(null)
+  const [promptDialogOpen, setPromptDialogOpen] = React.useState(false)
+  const [varFillPrompt, setVarFillPrompt] = React.useState<Prompt | null>(null)
+
+  const allPrompts = useStore((s) => s.prompts)
+  const deletePromptAction = useStore((s) => s.deletePrompt)
+  const setPendingChatInput = useStore((s) => s.setPendingChatInput)
+
+  // Visible prompts = non-deleted, sorted by updatedAt desc, optionally
+  // filtered by search query (name match only in v1).
+  const filteredPrompts = React.useMemo(() => {
+    const q = promptQuery.trim().toLowerCase()
+    const visible = allPrompts
+      .filter((p) => !p.deletedAt)
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+    if (!q) return visible
+    return visible.filter((p) => p.name.toLowerCase().includes(q))
+  }, [allPrompts, promptQuery])
+
+  const handleSelectPrompt = (prompt: Prompt) => {
+    // Click-to-insert. If the prompt has no variables, the template
+    // drops straight into the chat input. Otherwise the variable-fill
+    // modal opens; on submit it calls setPendingChatInput itself.
+    if (prompt.variables.length === 0) {
+      setPendingChatInput(prompt.template)
+      return
+    }
+    setVarFillPrompt(prompt)
+  }
+
+  const handleNewPrompt = () => {
+    setEditingPrompt(null)
+    setPromptDialogOpen(true)
+  }
+
+  const handleEditPrompt = (prompt: Prompt) => {
+    setEditingPrompt(prompt)
+    setPromptDialogOpen(true)
+  }
 
   const filteredConversations = React.useMemo(() => {
     const q = chatQuery.trim().toLowerCase()
@@ -339,7 +388,115 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             )}
           </SidebarMenu>
         </SidebarGroup>
+
+        {/* 4. Prompts — user-scoped saved templates. Click a row to
+            insert the prompt into the current chat input; templates
+            with {{variable}} markers fire the variable-fill modal
+            first. Mirrors the Documents section structure. Phase 1
+            local-only; Phase 2 will add cross-device sync. See
+            docs/PLAN-prompt-library.md. */}
+        <SidebarGroup className="group-data-[collapsible=icon]:hidden">
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <Collapsible
+                open={promptsExpanded}
+                onOpenChange={setPromptsExpanded}
+                className="group/collapsible"
+              >
+                <SidebarGroup className="p-0">
+                  <SidebarGroupLabel
+                    asChild
+                    className="group/label text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground text-sm"
+                  >
+                    <CollapsibleTrigger>
+                      <BookOpen size={14} className="mr-2 shrink-0" />
+                      {"Prompts"}
+                      <ChevronRight className="ml-auto transition-transform group-data-[state=open]/collapsible:rotate-90" />
+                    </CollapsibleTrigger>
+                  </SidebarGroupLabel>
+                  <SidebarGroupAction
+                    title="New prompt"
+                    aria-label="New prompt"
+                    onClick={handleNewPrompt}
+                    className="right-8 top-1.5"
+                  >
+                    <Plus />
+                  </SidebarGroupAction>
+                </SidebarGroup>
+                <CollapsibleContent>
+                  <SidebarGroupContent>
+                    <div className="relative px-2 pb-1.5 pt-1">
+                      <Search
+                        size={12}
+                        className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] pointer-events-none"
+                      />
+                      <SidebarInput
+                        placeholder="Search prompts…"
+                        value={promptQuery}
+                        onChange={(e) => setPromptQuery(e.target.value)}
+                        className="pl-7 pr-7 h-7 text-xs"
+                        aria-label="Search prompts"
+                      />
+                      {promptQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setPromptQuery("")}
+                          aria-label="Clear search"
+                          className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
+                    <SidebarMenu className="gap-0.5">
+                      {filteredPrompts.map((p) => (
+                        <SidebarMenuItem key={p.id}>
+                          <PromptItem
+                            prompt={p}
+                            isActive={
+                              promptDialogOpen && editingPrompt?.id === p.id
+                            }
+                            onSelect={() => handleSelectPrompt(p)}
+                            onEdit={() => handleEditPrompt(p)}
+                            onDelete={() => deletePromptAction(p.id)}
+                          />
+                        </SidebarMenuItem>
+                      ))}
+                      {filteredPrompts.length === 0 && (
+                        <div className="px-2 py-1 text-xs text-[var(--muted-foreground)]">
+                          {promptQuery ? "No matches" : "No prompts yet"}
+                        </div>
+                      )}
+                    </SidebarMenu>
+                  </SidebarGroupContent>
+                </CollapsibleContent>
+              </Collapsible>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroup>
       </SidebarContent>
+
+      {/* Modal mounts — keep them inside the Sidebar tree so unmounting
+          the sidebar (e.g. mobile collapse) also closes any open
+          dialog state. */}
+      <PromptDialog
+        open={promptDialogOpen}
+        onOpenChange={(open) => {
+          setPromptDialogOpen(open)
+          if (!open) setEditingPrompt(null)
+        }}
+        prompt={editingPrompt}
+      />
+      <PromptVariableFill
+        open={varFillPrompt !== null}
+        onOpenChange={(open) => {
+          if (!open) setVarFillPrompt(null)
+        }}
+        prompt={varFillPrompt}
+        onInsert={(expanded) => {
+          setPendingChatInput(expanded)
+        }}
+      />
 
       <SidebarFooter>
         <div className="flex items-center w-full gap-1">

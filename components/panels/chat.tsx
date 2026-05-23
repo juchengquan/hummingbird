@@ -212,6 +212,27 @@ export function ChatPanel() {
     })
   }, [])
 
+  // Pending-input subscription — sidebar prompt clicks (and any future
+  // surface that wants to seed the input) push a string through
+  // `useStore.pendingChatInput`. When it's non-null, copy to local
+  // input state, focus the textarea, then clear the store so the same
+  // string can be inserted again later without dedup confusion.
+  const pendingChatInput = useStore((s) => s.pendingChatInput)
+  const setPendingChatInput = useStore((s) => s.setPendingChatInput)
+  useEffect(() => {
+    if (pendingChatInput === null) return
+    setInputValue(pendingChatInput)
+    setPendingChatInput(null)
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current
+      if (!ta) return
+      ta.focus()
+      ta.style.height = "auto"
+      ta.style.height = `${Math.min(ta.scrollHeight, 150)}px`
+      ta.selectionStart = ta.selectionEnd = ta.value.length
+    })
+  }, [pendingChatInput, setPendingChatInput])
+
   // The most recent non-error assistant message id — only that message
   // renders follow-up suggestion chips; older ones would just be clutter.
   // Walk from the end (cheaper than reversing the whole array).
