@@ -23,7 +23,7 @@ import type {
  * the ref-counting + tombstone logic into two pure helpers; callers
  * compose the resulting deltas inside a single Zustand `set()`.
  *
- * See `docs/PLAN-attachments-polymorphism.md` for the design.
+ * See `docs/_done/PLAN-attachments-polymorphism.md` for the design.
  */
 
 export type AttachmentRef = { kind: AttachmentKind; id: string }

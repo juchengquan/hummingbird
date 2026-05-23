@@ -10,7 +10,7 @@ import { cn } from "@/shared/utils"
  * One row in the autocomplete menu. Symbol-agnostic on purpose: the
  * slash-commands feature feeds it skill triggers under `/`, and the
  * prompt-library Phase 3 will feed it prompt slugs under `@` (see
- * `docs/PLAN-slash-commands.md` — two-symbol model). Keep this
+ * `docs/_done/PLAN-slash-commands.md` — two-symbol model). Keep this
  * component free of skill- or prompt-specific knowledge.
  */
 export interface SlashAutocompleteEntry {

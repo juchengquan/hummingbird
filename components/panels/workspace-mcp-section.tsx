@@ -32,7 +32,7 @@ import type { McpCapabilities, McpCredentialMode, McpServer } from "@/shared/typ
 /**
  * Workspace settings → MCP servers section. Stage 1 surface: list +
  * add + remove + enable toggle. Discovery and tool wiring land in
- * Stages 2-3 (see `docs/PLAN-mcp-integration.md`).
+ * Stages 2-3 (see `docs/_done/PLAN-mcp-integration.md`).
  */
 export function WorkspaceMcpSection({ workspaceId }: { workspaceId: string }) {
   const servers = useWorkspaceMcpServers().filter(
@@ -190,7 +190,7 @@ export function WorkspaceMcpSection({ workspaceId }: { workspaceId: string }) {
       )}
       <p className="mt-2 text-[10px] text-[var(--muted-foreground)]">
         Discovery, tool calling, and resource attachment will light up after
-        Stage 2 of the MCP integration. See <code>docs/PLAN-mcp-integration.md</code>.
+        Stage 2 of the MCP integration. See <code>docs/_done/PLAN-mcp-integration.md</code>.
       </p>
 
       <AddMcpServerDialog

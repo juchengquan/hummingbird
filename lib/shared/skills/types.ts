@@ -66,7 +66,7 @@ export interface SkillDescriptor {
    * autocomplete); later entries are accepted as aliases on input.
    * Triggers must be unique across the whole registry. Skills own the
    * `/` namespace; user prompt templates use `@` (see
-   * `docs/PLAN-slash-commands.md` — two-symbol model), so there's no
+   * `docs/_done/PLAN-slash-commands.md` — two-symbol model), so there's no
    * collision to resolve here.
    */
   slashTriggers?: string[]

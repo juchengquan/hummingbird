@@ -6,7 +6,7 @@ export type { McpCredentials } from "@/shared/mcp/credentials"
 
 /**
  * Local credential store for MCP servers. The browser-only side of the
- * dual-mode credential plan (`docs/PLAN-mcp-integration.md`): when a
+ * dual-mode credential plan (`docs/_done/PLAN-mcp-integration.md`): when a
  * server is configured with `credentialMode === 'local'`, its cred
  * lives here in `localStorage` and is sent on each request via the
  * `X-MCP-Credentials` header to the `/api/mcp/*` proxy. Excluded from

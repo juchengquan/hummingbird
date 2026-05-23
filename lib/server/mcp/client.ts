@@ -19,7 +19,7 @@ type McpEndpoint = Pick<McpServer, "id" | "name" | "url" | "transport">
 /**
  * Thin wrapper around `@modelcontextprotocol/sdk` exposing the three
  * operations Hummingbird uses today. Streamable HTTP transport only —
- * stdio support is deferred per `docs/PLAN-mcp-integration.md`.
+ * stdio support is deferred per `docs/_done/PLAN-mcp-integration.md`.
  *
  * Each call opens a fresh session (connect → operation → close). Cheap
  * enough for v1; if call volume grows we can pool clients per

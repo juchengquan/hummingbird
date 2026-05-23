@@ -16,7 +16,7 @@ import { isIP } from "node:net"
  * Caller must re-run validation on each redirect (the fetch helper
  * does this) — a 302 to a private IP would otherwise sneak through.
  *
- * See `docs/PLAN-url-bookmarks.md` "Validation + anti-SSRF" for the
+ * See `docs/_done/PLAN-url-bookmarks.md` "Validation + anti-SSRF" for the
  * full rationale.
  */
 

@@ -8,7 +8,7 @@ import type { McpCredentials } from "@/shared/mcp/credentials"
  * Server-side credential helpers for cloud-mode MCP servers. The
  * encryption key lives in `MCP_ENCRYPTION_KEY` — never persisted,
  * never logged, never round-trips the client. See
- * `docs/PLAN-mcp-stage-3.md` for the trade-off note on
+ * `docs/_done/PLAN-mcp-stage-3.md` for the trade-off note on
  * function-argument vs session-setting key passing.
  *
  * All decrypt / encrypt happens via SECURITY DEFINER SQL functions

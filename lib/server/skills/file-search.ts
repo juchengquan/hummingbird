@@ -4,7 +4,7 @@ import "server-only"
  * File-search skill — Postgres FTS over attached files' full text.
  *
  * Phase 3 of the file full-text retrieval plan
- * (docs/PLAN-file-full-text-retrieval.md). Exposes a single
+ * (docs/_done/PLAN-file-full-text-retrieval.md). Exposes a single
  * `searchFiles({ fileId, query })` tool to the model. The tool RPCs
  * into `search_file_sections` (0009 migration), which wraps Postgres
  * `ts_headline` over the `files.full_text` column added in 0007.

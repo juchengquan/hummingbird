@@ -1,7 +1,7 @@
 /**
  * Pure parser for the `/` slash-command surface (skills only — prompt
  * templates use `@`, a physically-separate namespace; see
- * `docs/PLAN-slash-commands.md`).
+ * `docs/_done/PLAN-slash-commands.md`).
  *
  * A skill slash is a turn-level directive: typing `/search latest news`
  * forces the `webSearch` skill on for that one send, regardless of the

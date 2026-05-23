@@ -247,7 +247,7 @@ export const ExtractionResponseSchema = z.object({
    *  by the Phase 3 `readFileSection` tool. Only set when the file's
    *  raw text exceeded the inline `text` budget — when they would be
    *  equal, this is omitted to avoid doubling the wire payload. See
-   *  `docs/PLAN-file-full-text-retrieval.md`. */
+   *  `docs/_done/PLAN-file-full-text-retrieval.md`. */
   fullText: z.string().max(1_200_000).optional(),
 })
 

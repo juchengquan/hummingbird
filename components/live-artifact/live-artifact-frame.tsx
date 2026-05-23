@@ -79,7 +79,7 @@ export function LiveArtifactFrame({
       title="Live artifact"
       // CRITICAL: do NOT add `allow-same-origin`. The null origin is
       // what protects parent cookies / storage from the generated
-      // script. See PLAN-live-artifacts.md → Sandbox security model.
+      // script. See docs/_done/PLAN-live-artifacts.md → Sandbox security model.
       sandbox="allow-scripts"
       referrerPolicy="no-referrer"
       // `loading="lazy"` so inline previews scrolled out of view

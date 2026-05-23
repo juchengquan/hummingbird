@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 
 /**
  * Regression guard for the iframe's sandbox configuration. The
- * security model in PLAN-live-artifacts.md depends on:
+ * security model in docs/_done/PLAN-live-artifacts.md depends on:
  *
  *   - `sandbox="allow-scripts"` (and nothing else — crucially NOT
  *     `allow-same-origin`, which would let the iframe read parent

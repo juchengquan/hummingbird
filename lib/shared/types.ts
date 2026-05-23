@@ -16,7 +16,7 @@ export interface UploadedFile {
    *  set when distinct from `extractedText` — i.e. when the file's
    *  raw text exceeded the inline budget. Used by the Phase 3
    *  `readFileSection` tool; persists to `files.full_text` via the
-   *  sync reconcile path. See `docs/PLAN-file-full-text-retrieval.md`. */
+   *  sync reconcile path. See `docs/_done/PLAN-file-full-text-retrieval.md`. */
   extractedFullText?: string
   /** Detected/resolved content kind (e.g. 'pdf', 'docx', 'markdown', 'image'). */
   extractedKind?: string
@@ -153,7 +153,7 @@ export interface Resource {
 //
 // Stage 1 carries the type + store shape; Stages 2-3 wire the proxy
 // route, capability discovery, and tool/resource injection into the
-// chat route. See `docs/PLAN-mcp-integration.md`.
+// chat route. See `docs/_done/PLAN-mcp-integration.md`.
 // ---------------------------------------------------------------------------
 
 export type McpTransport = 'http'
@@ -250,7 +250,7 @@ export interface ConversationMcpResource {
 // save time and cached in `content`; manual refresh re-fetches and
 // updates `fetchedAt` + `contentHash`.
 //
-// See `docs/PLAN-url-bookmarks.md` for the design.
+// See `docs/_done/PLAN-url-bookmarks.md` for the design.
 // ---------------------------------------------------------------------------
 
 export interface UrlBookmark {
