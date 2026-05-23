@@ -6,8 +6,13 @@ Phase 1 ([#50](https://github.com/juchengquan/hummingbird/pull/50))
 Phase 2 (this PR) — Supabase `prompts` table (migration `0011`),
 `diffPrompts` sync handler, reconcile in/out, RLS. Prompts now
 roam across devices for signed-in users.
-Phase 3 (slash trigger `/<slug>`) is still deferred — see the
-slash-commands plan for the shared resolver.
+Phase 3 (the **`@<slug>`** trigger — note the symbol, see below) is
+still deferred. **Decision update:** prompts use **`@`**, not `/`.
+Skills own `/` (turn directives); prompts own `@` (text expansion).
+Two symbols, no shared namespace, no collisions. See the "two-symbol
+model" section in `PLAN-slash-commands.md`. Phase 3 reuses the
+symbol-agnostic autocomplete component built by the slash-commands
+(`/`) work and mounts a second instance for `@`.
 
 User-scoped saved prompt templates with placeholder variables, listed
 in the left sidebar (alongside Workspaces / Chats / Documents) and
@@ -38,9 +43,14 @@ phases:
   in the sync handler chain, bidirectional mapping in
   `reconcile.ts`. Mirrors how file full-text storage layered onto
   Phase 1's extract caps.
-- **Phase 3 (future, depends on `PLAN-slash-commands.md`):** the
-  `/<name>` slash trigger in the chat input. Until that lands,
-  prompts are accessed via the sidebar only.
+- **Phase 3 (future, builds on the `PLAN-slash-commands.md`
+  autocomplete component):** the **`@<slug>`** trigger in the chat
+  input — `@` for prompts, distinct from `/` for skills. Reuses the
+  symbol-agnostic autocomplete component built for `/`; mounts a
+  second instance for `@` over the `prompts` slice. Picking a prompt
+  expands its template into the input immediately (then the
+  `{{variable}}` fill modal if needed). Until that lands, prompts
+  are accessed via the sidebar only.
 
 Builds on the planned slash-command surface
 (`docs/PLAN-slash-commands.md`) for Phase 3 — both features write
@@ -173,34 +183,32 @@ New `diffPrompts` in `lib/client/sync/handlers.ts`, mirroring
 
 No new infrastructure — the diff/push/pull pattern already exists.
 
-### Slash resolver — shared with skill slashes
+### Trigger symbol — `@`, separate from skills' `/`
 
-The slash-commands plan (`PLAN-slash-commands.md`) flags
-prompt-library coexistence as an open question. Resolved here:
+**Decision (supersedes the earlier "shared resolver / skills win"
+idea):** prompts are triggered with **`@`**, skills with **`/`**.
+Two symbols, two physically-separate namespaces, **no shared
+resolver and no collision rule needed** — a user can name a prompt
+`search` freely because `@search` and `/search` are different
+surfaces. See the "two-symbol model" table in
+`PLAN-slash-commands.md` for the full rationale.
 
-**Single resolver lives in `lib/client/slash-resolver.ts`** (new
-file, written as part of the slash-commands or prompt-library
-implementation, whichever lands first).
+Phase 3 reuses the **symbol-agnostic autocomplete component**
+(`components/panels/slash-autocomplete.tsx`) the slash-commands work
+introduces. It's parameterised over `{ triggerChar, entries,
+onPick }`, so Phase 3 mounts a second instance:
 
-Inputs:
-- Static skill triggers from `lib/shared/skills/registry.ts`
-- User prompt slugs from the Zustand `prompts` slice
+- `triggerChar = "@"`
+- `entries` = the `prompts` slice mapped to `{ id, label: name,
+  hint: slug, ... }`, filtered by the typed token after `@`.
+- `onPick` = expand the chosen template into the input at the `@slug`
+  position (replacing the token), then open the variable-fill modal
+  if the template has `{{variables}}`.
 
-Output:
-- Ordered list of `{ kind: 'skill' | 'prompt'; trigger: string; ...meta }`
-  for the autocomplete to render.
-
-**Collision rule: skill triggers win.** If a user names a prompt
-`search`, the slug `/search` still maps to the web-search skill;
-the prompt is silently shadowed in the autocomplete (and an
-inline hint in the Manage Prompts dialog tells the user). Reason:
-skill triggers are global, documented, and the user can rename
-their prompt; reserving them avoids surprising "my prompt
-disappeared" cases.
-
-The shared resolver is also where the prompt-library autocomplete
-list comes from. The dropdown (a single component) lists skills
-first, then prompts, with a divider between.
+Unlike skill picks (which leave a `/trigger ` directive that resolves
+at send), a prompt pick **resolves immediately** — by send time the
+`@slug` is gone and it's plain text. That's why multiple `@`
+expansions per message work and `@` is allowed mid-message.
 
 ### Variable expansion
 

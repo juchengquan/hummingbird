@@ -1,6 +1,9 @@
 # Plan: Slash commands for skill chaining
 
-Status: **planning** — no code yet.
+Status: **🚧 in progress** — two-symbol model locked (`/` skills,
+`@` prompts). Implementing the `/` skill surface first; the `@`
+prompt surface is prompt-library Phase 3 and reuses the same
+autocomplete component.
 
 Power-user shortcut for forcing a skill on for a single turn from the
 chat input. Type `/search …`, `/fetch …`, `/image …` and the matching
@@ -65,8 +68,11 @@ through `SERVER_SKILLS` via the existing `body.skills` payload.
   input. A styled "chip" pill (like attachment pills) is slicker but
   needs contenteditable plumbing and clear backspace semantics —
   scope creep for v1.
-- **Mid-message slashes / multi-slash chaining.** Both rejected
-  above; revisit only if a real use case shows up.
+- **Mid-message slashes / multi-slash chaining (skills).** Both
+  rejected above for the `/` skill surface; a skill directive is
+  turn-level so it's first-token, one-per-message. (Multiple
+  *prompt* expansions via `@` in one message ARE supported — they're
+  text, not directives. See the two-symbol section below.)
 - **Slash discovery on empty input.** The dropdown only appears once
   the user actually types `/`. No "type / for commands" placeholder
   hint in v1.
@@ -225,12 +231,50 @@ end, including manual UX verification.
 
 ## Open question
 
-- **Trigger collisions with Prompt library (future).** When the
-  Prompt library lands (`docs/BACKLOG.md`), users will define their
-  own `/foo` templates. The two surfaces will need to share a slash
-  registry — first-match-wins, with skill triggers reserved. Worth
-  noting up front so we don't bake an assumption here that makes the
-  prompt-library merge painful. The proposed `SkillDescriptor`
-  field is forward-compatible: a unified resolver can read from both
-  the static skill registry and the user's prompt store and pick the
-  best match.
+- **Trigger collisions with Prompt library (future).** ~~When the
+  Prompt library lands…~~ **Resolved — two-symbol model.** See the
+  "Coexistence with the Prompt library" section below. Skills own
+  `/`; prompts own `@`. No shared namespace, no collisions, no
+  reserved words.
+
+## Coexistence with the Prompt library — two-symbol model
+
+Skill slashes and prompt-library expansions are **different
+mechanisms** and get **different trigger symbols** so they never
+collide and the position rules become self-evident:
+
+| | Skills | Prompt library |
+|---|---|---|
+| Symbol | `/` | `@` |
+| What it is | Turn-level **directive** — force a skill on for this send | Compose-time **text expansion** — insert a saved template |
+| Position | First non-whitespace token only | Anywhere, at any word boundary |
+| Resolves | At **send** (the `/trigger ` prefix is stripped, skill force-enabled) | At **selection** (template text replaces the `@slug` token immediately; `{{variables}}` open the fill modal) |
+| Multiplicity | One per message | Multiple per message (they're just text once expanded) |
+| Source | Fixed registry (`slashTriggers` on `SkillDescriptor`) | User-defined `prompts` store slice |
+
+**Why two symbols rather than a shared `/` with skills reserved:**
+
+1. The position asymmetry (skills first-token-only, prompts anywhere)
+   becomes obvious from the symbol instead of being a hidden,
+   surprising rule.
+2. Zero collisions — a user can name a prompt `search` without it
+   being shadowed by the `/search` skill.
+3. Each namespace grows independently.
+
+Cost is small: one extra trigger char in the autocomplete component
+(it's written symbol-agnostic — see below) and a second, discoverable
+affordance.
+
+**`@` reservation caveat.** If agent / persona mentions or
+memory-recall ever want `@`, design `@` as a namespaced surface up
+front (`@prompt:…`, `@agent:…`) or move prompts to `#`. Flagged so a
+future feature doesn't fight prompts for the symbol.
+
+**Shared component, two callers.** The autocomplete UI
+(`components/panels/slash-autocomplete.tsx`) is written generic over
+its trigger char + entry list. The slash-commands feature mounts it
+for `/` over skill triggers; the prompt-library Phase 3 mounts a
+second instance for `@` over prompt slugs. No shared resolver needed
+because the namespaces are physically separated by symbol — the
+"unified resolver / first-match-wins" idea from the old open question
+is **dropped**.

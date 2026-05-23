@@ -12,8 +12,14 @@ import { InputGroup, InputGroupTextarea, InputGroupButton } from "@/components/u
 import { cn, toISO } from "@/shared/utils"
 import { ResourcesSidebar } from "@/components/sidebars/resources"
 import { ActiveSkillsChips } from "@/components/skills/active-chips"
+import { SlashAutocomplete } from "@/components/panels/slash-autocomplete"
 import { SKILLS } from "@/shared/skills/registry"
 import { resolveSkill, type SkillId } from "@/shared/skills/types"
+import {
+  isTypingSlashCommand,
+  matchSlashTriggers,
+  parseSlashCommand,
+} from "@/shared/skills/slash-parser"
 import {
   resolveWebSearchConfig,
   type WebSearchConfig,
@@ -142,6 +148,38 @@ export function ChatPanel() {
    * the input edits away from the detected snippet.
    */
   const [pasteDetection, setPasteDetection] = useState<PasteDetection | null>(null)
+
+  /**
+   * `/` slash-command autocomplete. `slashActiveIndex` is the
+   * highlighted row; `slashDismissed` lets Escape close the menu for
+   * the duration of the current slash token (reset once the input no
+   * longer starts with `/`). Skill triggers only — prompt templates
+   * use `@` (a separate surface, prompt-library Phase 3).
+   */
+  const [slashActiveIndex, setSlashActiveIndex] = useState(0)
+  const [slashDismissed, setSlashDismissed] = useState(false)
+  const slashMatches = useMemo(
+    () =>
+      isTypingSlashCommand(inputValue)
+        ? matchSlashTriggers(inputValue.slice(1))
+        : [],
+    [inputValue]
+  )
+  const slashOpen = !slashDismissed && slashMatches.length > 0
+  // Keep the highlighted row in range as the match set shrinks while
+  // typing.
+  useEffect(() => {
+    setSlashActiveIndex((i) => (i >= slashMatches.length ? 0 : i))
+  }, [slashMatches.length])
+
+  const pickSlashTrigger = useCallback((trigger: string) => {
+    // Replace the input with the canonical `/trigger ` form. The
+    // trailing space closes the menu (isTypingSlashCommand → false)
+    // and positions the caret to type the query.
+    setInputValue(`/${trigger} `)
+    setSlashActiveIndex(0)
+    textareaRef.current?.focus()
+  }, [])
 
   const [liveToolCalls, setLiveToolCalls] = useState<
     Record<string, LiveToolCall[]>
@@ -363,6 +401,11 @@ export function ChatPanel() {
          *  store clear so a retry doesn't quietly re-attach a reference
          *  the user already dismissed. */
         referenceImage?: { url: string }
+        /** Skill ids forced on for this turn by a `/slash` command,
+         *  on top of the workspace/conversation cascade. Passed as an
+         *  arg (not read from state) so a retry re-applies the same
+         *  forced set deterministically. */
+        forcedSkillIds?: SkillId[]
       }
     ) => {
       // Read the model freshly from the store rather than via the closure.
@@ -382,11 +425,15 @@ export function ChatPanel() {
       const workspaceSystemPrompt = activeWorkspace?.systemPrompt?.trim() || undefined
       // Resolve which skills are effectively on for this turn so the route
       // knows which tools to register.
-      // Effective set = workspace/conversation cascade minus any skills
-      // the user muted for this one send via the chip × button.
+      // Effective set = (workspace/conversation cascade ∪ slash-forced)
+      // minus any skills the user muted for this one send via the chip ×
+      // button. Mute wins over slash-force in the rare case both name the
+      // same skill (explicit "off" beats explicit "on").
+      const forcedSkillIds = new Set(options?.forcedSkillIds ?? [])
       const enabledSkills = SKILLS.filter(
         (s) =>
-          resolveSkill(s, activeWorkspace?.skillPrefs, conv?.skillPrefs) &&
+          (resolveSkill(s, activeWorkspace?.skillPrefs, conv?.skillPrefs) ||
+            forcedSkillIds.has(s.id)) &&
           !mutedSkillsForNext.has(s.id)
       ).map((s) => {
         const entry: {
@@ -1024,7 +1071,17 @@ export function ChatPanel() {
   const handleSendMessage = () => {
     if (!inputValue.trim() || isStreaming) return
 
-    const messageContent = inputValue.trim()
+    const trimmed = inputValue.trim()
+    // A leading `/trigger ` forces the matching skill on for this turn
+    // and is stripped from the visible message. The forced skill is
+    // surfaced to the model via the request's `skills` payload + the
+    // tool-call strip, so the bare query reads cleanly in the bubble.
+    const parsedSlash = parseSlashCommand(trimmed)
+    const forcedSkillIds = parsedSlash ? [parsedSlash.skillId] : undefined
+    const messageContent = parsedSlash ? parsedSlash.remainder : trimmed
+    // `/search ` with no query is a no-op (don't send an empty turn);
+    // the user is mid-compose. The send button stays available.
+    if (!messageContent) return
     // Snapshot every attached file onto the message — both lanes — so
     // the chat scroll shows a visible record of what was attached.
     // Without this the attachments are invisible after the send (the
@@ -1062,10 +1119,38 @@ export function ChatPanel() {
     const history = [...messages, userMessage]
     callChatAPIRef.current(history, {
       referenceImage: pendingRef ? { url: pendingRef.url } : undefined,
+      forcedSkillIds,
     })
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // While the slash menu is open, the nav keys drive it instead of
+    // the textarea / send.
+    if (slashOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault()
+        setSlashActiveIndex((i) => (i + 1) % slashMatches.length)
+        return
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault()
+        setSlashActiveIndex(
+          (i) => (i - 1 + slashMatches.length) % slashMatches.length
+        )
+        return
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault()
+        const entry = slashMatches[slashActiveIndex]
+        if (entry) pickSlashTrigger(entry.trigger)
+        return
+      }
+      if (e.key === "Escape") {
+        e.preventDefault()
+        setSlashDismissed(true)
+        return
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       handleSendMessage()
@@ -1164,6 +1249,9 @@ export function ChatPanel() {
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const next = e.target.value
     setInputValue(next)
+    // Re-arm the slash menu once the input no longer starts with `/`
+    // (so a prior Escape doesn't keep it closed forever).
+    if (!next.startsWith("/") && slashDismissed) setSlashDismissed(false)
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto"
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 150)}px`
@@ -1348,7 +1436,21 @@ export function ChatPanel() {
             className="hidden"
             onChange={(e) => handleFileSelected(e.target.files)}
           />
-          <div className="max-w-3xl mx-auto pointer-events-auto bg-[var(--background)] rounded-3xl border border-[var(--border)] p-2 shadow-sm">
+          <div className="relative max-w-3xl mx-auto pointer-events-auto bg-[var(--background)] rounded-3xl border border-[var(--border)] p-2 shadow-sm">
+            {slashOpen && (
+              <SlashAutocomplete
+                triggerChar="/"
+                entries={slashMatches.map((m) => ({
+                  id: m.skillId,
+                  label: m.trigger,
+                  hint: m.skill.name,
+                  icon: m.skill.icon,
+                }))}
+                activeIndex={slashActiveIndex}
+                onHoverIndex={setSlashActiveIndex}
+                onPick={(entry) => pickSlashTrigger(entry.label)}
+              />
+            )}
             <ActiveSkillsChips
               className="px-1 pb-1"
               mutedForNext={mutedSkillsForNext}

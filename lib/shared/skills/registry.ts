@@ -22,6 +22,7 @@ export const SKILLS: SkillDescriptor[] = [
     default: false,
     // Uses node's built-in fetch — no API key required.
     requiresEnv: false,
+    slashTriggers: ["fetch", "f"],
   },
   {
     id: "webSearch",
@@ -31,6 +32,7 @@ export const SKILLS: SkillDescriptor[] = [
     icon: Globe,
     default: false,
     requiresEnv: true,
+    slashTriggers: ["search", "s"],
   },
   {
     id: "imageGen",
@@ -42,6 +44,7 @@ export const SKILLS: SkillDescriptor[] = [
     // Requires MINIMAX_CN_API_KEY (same key as the Minimax-CN chat
     // bypass — the image endpoint accepts the same auth).
     requiresEnv: true,
+    slashTriggers: ["image", "img"],
   },
   {
     id: "searchFiles",
@@ -53,6 +56,7 @@ export const SKILLS: SkillDescriptor[] = [
     // Requires Supabase sign-in: full text is stored in `files.full_text`
     // and the searchFiles tool RPC reads it via the user's RLS context.
     requiresEnv: true,
+    slashTriggers: ["files", "file"],
   },
 ]
 

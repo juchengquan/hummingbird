@@ -59,6 +59,17 @@ export interface SkillDescriptor {
    * mirrors the route's check. (We do not expose env to the browser.)
    */
   requiresEnv?: boolean
+  /**
+   * Slash-command shortcuts that force this skill on for the turn,
+   * overriding the workspace/conversation cascade. Typed as `/search …`
+   * in the chat input. First trigger is canonical (shown in the
+   * autocomplete); later entries are accepted as aliases on input.
+   * Triggers must be unique across the whole registry. Skills own the
+   * `/` namespace; user prompt templates use `@` (see
+   * `docs/PLAN-slash-commands.md` — two-symbol model), so there's no
+   * collision to resolve here.
+   */
+  slashTriggers?: string[]
 }
 
 export type SkillPrefs = Partial<Record<SkillId, boolean>>
