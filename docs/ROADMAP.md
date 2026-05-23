@@ -10,7 +10,7 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-05-22 (PR #37).
+Last updated: 2026-05-23 (backlog plan drafts).
 
 ---
 
@@ -72,7 +72,11 @@ Earlier features (kept for reference, no specific date):
 
 | Plan | Branch | Notes |
 |---|---|---|
-| 🚧 Slash commands for skill chaining | `claude/slash-commands` | [PLAN](PLAN-slash-commands.md) — autocomplete + parser; v1: `/search`, `/fetch`, `/image` |
+| _(nothing actively in flight)_ | | |
+
+A WIP commit for slash commands lives on `claude/slash-commands`
+(shared parser + registry only). Treated as planned, not in
+progress, until UI / chat-panel wiring picks up.
 
 ---
 
@@ -80,8 +84,14 @@ Earlier features (kept for reference, no specific date):
 
 | Plan | Status | Sketch |
 |---|---|---|
+| 📐 [Slash commands for skill chaining](PLAN-slash-commands.md) | planning | `/search`, `/fetch`, `/image` autocomplete |
 | 📐 [Editor diff mode](PLAN-editor-diff-mode.md) | planning | Before / after chunks with accept-reject for editor AI commands |
 | 📐 [Prompt library](PLAN-prompt-library.md) | planning | Reusable prompts with variable substitution |
+| 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
+| 📐 [Long-running task mode](PLAN-long-running-tasks.md) | planning | Async step-based agent with progress + notifications |
+| 📐 [Workspace canvas](PLAN-workspace-canvas.md) | planning | Spatial drag-drop view of messages / artifacts / files |
+| 📐 [Project mode](PLAN-project-mode.md) | planning | Workspace → goal + milestones + Kanban tasks (depends on long-running tasks) |
+| 📐 [Small follow-ups batch](PLAN-small-followups.md) | planning | Five half-day items: generatedImages sync, accurate tokens, recap-of-recaps, signed-URL re-sign, roadmap refresh |
 | 🪜 [File full-text retrieval](PLAN-file-full-text-retrieval.md) | Phase 3 pending | `searchFiles` skill + RAG over `files.full_text` |
 | 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 pending | Python backend rewrite (gated on a clear product win) |
 
@@ -89,31 +99,9 @@ Earlier features (kept for reference, no specific date):
 
 ## Backlog (no plan yet)
 
-The full list lives in [BACKLOG.md](BACKLOG.md). Highlights:
-
-- 💡 Cross-conversation memory with retrieval (pgvector + embeddings)
-- 💡 Long-running task mode (async, step-based, notifications)
-- 💡 Workspace canvas (spatial drag-drop view)
-- 💡 Project mode (Kanban tasks + goal tracking)
-
----
-
-## Known small follow-ups
-
-Not full features — polish items, deferred sub-tasks. Each is a half-day
-or less and doesn't need its own plan.
-
-- Cross-device sync of `Message.generatedImages` metadata (storage path
-  + signed-URL refresh on render). The bytes are already durable in
-  Supabase Storage; only the message row needs catching up.
-- Accurate per-family token counting in `lib/shared/tokens.ts` — replace
-  the `chars/4` heuristic with `js-tiktoken` for OpenAI/Anthropic, keep
-  heuristic elsewhere.
-- "Summarize" of an existing recap when the user re-compresses
-  (currently the new recap stacks alongside the old). Low priority —
-  cleanup happens naturally if the recap is undone.
-- Lazy signed-URL re-sign for generated images when the 1-year TTL
-  eventually expires. Defer until anyone hits it.
+The full list lives in [BACKLOG.md](BACKLOG.md). Everything currently
+there now has a plan — see the **Planned** table above. Add new
+ideas to `BACKLOG.md` first; promote them here when they get a plan.
 
 ---
 
