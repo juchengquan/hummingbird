@@ -13,13 +13,18 @@ import { cn, toISO } from "@/shared/utils"
 import { ResourcesSidebar } from "@/components/sidebars/resources"
 import { ActiveSkillsChips } from "@/components/skills/active-chips"
 import { SlashAutocomplete } from "@/components/panels/slash-autocomplete"
+import { SlashHelpDialog } from "@/components/panels/slash-help-dialog"
+import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { SKILLS } from "@/shared/skills/registry"
 import { resolveSkill, type SkillId } from "@/shared/skills/types"
+import { isTypingSlashCommand } from "@/shared/skills/slash-parser"
 import {
-  isTypingSlashCommand,
-  matchSlashTriggers,
-  parseSlashCommand,
-} from "@/shared/skills/slash-parser"
+  matchSlashMenu,
+  resolveSlash,
+  type SlashMenuEntry,
+} from "@/shared/slash-resolver"
+import { useSlashCommands } from "@/client/hooks/use-slash-commands"
+import type { CommandId } from "@/shared/commands/registry"
 import {
   isTypingPromptMention,
   matchPromptMentions,
@@ -164,10 +169,11 @@ export function ChatPanel() {
    */
   const [slashActiveIndex, setSlashActiveIndex] = useState(0)
   const [slashDismissed, setSlashDismissed] = useState(false)
-  const slashMatches = useMemo(
+  // The `/` menu now lists both action commands and skills, grouped.
+  const slashMatches = useMemo<SlashMenuEntry[]>(
     () =>
       isTypingSlashCommand(inputValue)
-        ? matchSlashTriggers(inputValue.slice(1))
+        ? matchSlashMenu(inputValue.slice(1))
         : [],
     [inputValue]
   )
@@ -178,14 +184,28 @@ export function ChatPanel() {
     setSlashActiveIndex((i) => (i >= slashMatches.length ? 0 : i))
   }, [slashMatches.length])
 
-  const pickSlashTrigger = useCallback((trigger: string) => {
-    // Replace the input with the canonical `/trigger ` form. The
-    // trailing space closes the menu (isTypingSlashCommand → false)
-    // and positions the caret to type the query.
-    setInputValue(`/${trigger} `)
-    setSlashActiveIndex(0)
-    textareaRef.current?.focus()
-  }, [])
+  const slashCommands = useSlashCommands({
+    openModelPicker: () => setModelPickerOpen(true),
+    isStreaming,
+  })
+
+  const pickSlashEntry = useCallback(
+    (entry: SlashMenuEntry) => {
+      // Skill picks and arg-taking commands complete to `/trigger ` so
+      // the user types the body. Instant commands (argKind 'none') run
+      // immediately and clear the input.
+      const instant = entry.kind === "command" && entry.argKind === "none"
+      if (instant) {
+        slashCommands.run(entry.id as CommandId, "")
+        setInputValue("")
+      } else {
+        setInputValue(`/${entry.trigger} `)
+      }
+      setSlashActiveIndex(0)
+      textareaRef.current?.focus()
+    },
+    [slashCommands]
+  )
 
   /**
    * `@` prompt-mention autocomplete. Sibling of the `/` skill surface
@@ -1117,13 +1137,20 @@ export function ChatPanel() {
     if (!inputValue.trim() || isStreaming) return
 
     const trimmed = inputValue.trim()
-    // A leading `/trigger ` forces the matching skill on for this turn
-    // and is stripped from the visible message. The forced skill is
-    // surfaced to the model via the request's `skills` payload + the
-    // tool-call strip, so the bare query reads cleanly in the bubble.
-    const parsedSlash = parseSlashCommand(trimmed)
-    const forcedSkillIds = parsedSlash ? [parsedSlash.skillId] : undefined
-    const messageContent = parsedSlash ? parsedSlash.remainder : trimmed
+    // Resolve a leading `/` directive. A **command** runs now and does
+    // NOT send a message; a **skill** forces a capability on and is
+    // stripped from the visible message.
+    const slash = resolveSlash(trimmed)
+    if (slash?.kind === "command") {
+      slashCommands.run(slash.commandId, slash.arg)
+      setInputValue("")
+      if (textareaRef.current) textareaRef.current.style.height = "auto"
+      return // ← no message added, no API call
+    }
+    const forcedSkillIds =
+      slash?.kind === "skill" ? [slash.skillId] : undefined
+    const messageContent =
+      slash?.kind === "skill" ? slash.remainder : trimmed
     // `/search ` with no query is a no-op (don't send an empty turn);
     // the user is mid-compose. The send button stays available.
     if (!messageContent) return
@@ -1187,7 +1214,7 @@ export function ChatPanel() {
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault()
         const entry = slashMatches[slashActiveIndex]
-        if (entry) pickSlashTrigger(entry.trigger)
+        if (entry) pickSlashEntry(entry)
         return
       }
       if (e.key === "Escape") {
@@ -1516,14 +1543,20 @@ export function ChatPanel() {
               <SlashAutocomplete
                 triggerChar="/"
                 entries={slashMatches.map((m) => ({
-                  id: m.skillId,
+                  id: `${m.kind}:${m.id}`,
                   label: m.trigger,
-                  hint: m.skill.name,
-                  icon: m.skill.icon,
+                  hint: m.hint,
+                  icon: m.icon,
+                  groupLabel: m.group,
                 }))}
                 activeIndex={slashActiveIndex}
                 onHoverIndex={setSlashActiveIndex}
-                onPick={(entry) => pickSlashTrigger(entry.label)}
+                onPick={(entry) => {
+                  const match = slashMatches.find(
+                    (m) => `${m.kind}:${m.id}` === entry.id
+                  )
+                  if (match) pickSlashEntry(match)
+                }}
               />
             )}
             {mentionOpen && (
@@ -1685,6 +1718,22 @@ export function ChatPanel() {
           setMentionActiveIndex(0)
           textareaRef.current?.focus()
         }}
+      />
+
+      {/* `/clear` destructive confirm + `/help` cheat-sheet — owned by
+          the useSlashCommands hook, rendered here alongside the other
+          chat dialogs. */}
+      <DeleteConfirmDialog
+        open={slashCommands.clearConfirmOpen}
+        onOpenChange={slashCommands.setClearConfirmOpen}
+        title="Clear this conversation?"
+        description="Every message in this chat will be removed. This can't be undone."
+        confirmLabel="Clear"
+        onConfirm={slashCommands.confirmClear}
+      />
+      <SlashHelpDialog
+        open={slashCommands.helpOpen}
+        onOpenChange={slashCommands.setHelpOpen}
       />
     </div>
   )
