@@ -61,6 +61,7 @@ import { cn } from '@/shared/utils';
 import { commentPlugin } from '@/components/editor/plugins/comment-kit';
 
 import { AIChatEditor } from './ai-chat-editor';
+import { AIMenuReviewToggle } from './ai-menu-review-toggle';
 
 export function AIMenu() {
   const { api, editor } = useEditorPlugin(AIChatPlugin);
@@ -241,6 +242,11 @@ export function AIMenu() {
               />
             </CommandList>
           )}
+          {/* Footer toggle — only shown while the user is composing a
+              new prompt (not while reviewing already-produced output).
+              `messages.length` is the discriminator: zero ⇒ command
+              state, >0 ⇒ suggestion state. */}
+          {!isLoading && messages.length === 0 && <AIMenuReviewToggle />}
         </Command>
       </PopoverContent>
     </Popover>

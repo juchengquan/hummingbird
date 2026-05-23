@@ -12,7 +12,10 @@ import { getPluginType, KEYS, PathApi } from 'platejs';
 import { usePluginOption } from 'platejs/react';
 
 import { AILoadingBar, AIMenu } from '@/components/ui/ai-menu';
+import { AIReviewKeymap } from '@/components/editor/ai-review-keymap';
+import { AIReviewPill } from '@/components/editor/ai-review-pill';
 import { apiUrls } from '@/client/api-client';
+import { useStore } from '@/client/hooks/use-store';
 import { AIAnchorElement, AILeaf } from '@/components/ui/ai-node';
 
 import { useChat } from '../use-chat';
@@ -27,7 +30,7 @@ export const aiChatPlugin = AIChatPlugin.extend({
     },
   },
   render: {
-    afterContainer: AILoadingBar,
+    afterContainer: AIChatAfterContainer,
     afterEditable: AIMenu,
     node: AIAnchorElement,
   },
@@ -88,10 +91,37 @@ export const aiChatPlugin = AIChatPlugin.extend({
         editor.setOption(AIChatPlugin, '_blockChunks', '');
         editor.setOption(AIChatPlugin, '_blockPath', null);
         editor.setOption(AIChatPlugin, '_mdxName', null);
+
+        // "Review changes" toggle off → auto-accept every suggestion
+        // the AI just produced. Same as today's blast-replace UX, but
+        // routed through Plate's accept transform so the document
+        // ends in a clean state (no stray suggestion marks). Toggle
+        // ON (default) leaves the suggestions pending; the review
+        // pill + BlockSuggestion card take over.
+        if (toolName === 'edit' && mode === 'chat') {
+          const review = useStore.getState().editorPrefs.aiReviewChanges;
+          if (!review) {
+            editor.getTransforms(AIChatPlugin).aiChat.accept();
+          }
+        }
       },
     });
   },
 });
+
+/** Composite `afterContainer` renderer that hosts both the
+ *  streaming loading bar AND the post-finish review surfaces
+ *  (pill + keymap). Plate's `render.afterContainer` slot only
+ *  accepts a single component, so we wrap. */
+function AIChatAfterContainer() {
+  return (
+    <>
+      <AILoadingBar />
+      <AIReviewPill />
+      <AIReviewKeymap />
+    </>
+  );
+}
 
 export const AIKit = [
   ...CursorOverlayKit,
