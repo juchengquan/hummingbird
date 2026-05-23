@@ -1,9 +1,12 @@
 # Plan: Diff mode for editor AI commands
 
-Status: **planning** — no code yet. Rewritten after surveying the
-existing Plate suggestion infrastructure; original plan
-overestimated the scope by ~2× because much of the Track Changes
-UX is already wired.
+Status: **planning — may be picked up in a parallel session.** No
+code in `dev` yet. Rewritten after surveying the existing Plate
+suggestion infrastructure; original plan overestimated the scope by
+~2× because much of the Track Changes UX is already wired. If you're
+about to start work on this, check open PRs and branches matching
+`claude/editor-diff-*` or `*editor-diff-mode*` first to avoid
+duplication.
 
 When the rich-text editor's AI command (`/api/ai/command`) modifies
 the document, the user reviews each change before it commits —

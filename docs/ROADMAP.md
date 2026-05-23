@@ -85,7 +85,7 @@ progress, until UI / chat-panel wiring picks up.
 | Plan | Status | Sketch |
 |---|---|---|
 | 📐 [Slash commands for skill chaining](PLAN-slash-commands.md) | planning | `/search`, `/fetch`, `/image` autocomplete |
-| 📐 [Editor diff mode](PLAN-editor-diff-mode.md) | planning | Before / after chunks with accept-reject for editor AI commands |
+| 📐 [Editor diff mode](PLAN-editor-diff-mode.md) | planning — may be claimed in a parallel session | Before / after chunks with accept-reject for editor AI commands |
 | 📐 [Prompt library](PLAN-prompt-library.md) | planning | Reusable prompts with variable substitution |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Long-running task mode](PLAN-long-running-tasks.md) | planning | Async step-based agent with progress + notifications |
