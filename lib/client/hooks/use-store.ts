@@ -732,6 +732,16 @@ interface AppState {
   setActiveConversation: (conversationId: string | null) => void
 
   // Message actions
+  //
+  // INVARIANT: every mutator below addresses a message by id and finds
+  // the owning conversation by scanning every conversation's `messages`
+  // array. None of them rely on `activeConversationId`. This is
+  // deliberate so two conversations streaming in parallel land their
+  // chunks correctly even when the user switches tabs mid-stream.
+  // Don't reintroduce an `activeConversationId` filter inside these
+  // mutators (the old wrong pattern) — see `addMessage`'s
+  // `conversationId` parameter for the "I want to target a specific
+  // conversation that may not be active" path.
   /** Append a message. Defaults to the active conversation; pass
    *  `conversationId` explicitly when a streaming callback may
    *  outlive the user's focus (e.g. they switch chats while a
@@ -2077,8 +2087,15 @@ export const useStore = create<AppState>()(
       },
       deleteMessage: (messageId: string) =>
         set((state) => ({
+          // Find by messageId across ALL conversations rather than only
+          // the active one. Message ids are uuids, so they uniquely
+          // identify the owning conversation; filtering on `activeId`
+          // here would misfire whenever the user has switched tabs since
+          // the message was created — particularly during parallel
+          // streams. (Same pattern applied to every other per-message
+          // mutator below.)
           conversations: state.conversations.map((c) => {
-            if (c.id === state.activeConversationId) {
+            if (c.messages.some((m) => m.id === messageId)) {
               return {
                 ...c,
                 messages: c.messages.filter((m) => m.id !== messageId),
@@ -2098,7 +2115,7 @@ export const useStore = create<AppState>()(
       updateMessage: (messageId: string, content: string) =>
         set((state) => ({
           conversations: state.conversations.map((c) => {
-            if (c.id === state.activeConversationId) {
+            if (c.messages.some((m) => m.id === messageId)) {
               return {
                 ...c,
                 messages: c.messages.map((m) =>
@@ -2112,13 +2129,10 @@ export const useStore = create<AppState>()(
       truncateMessagesAfter: (messageId: string, inclusive: boolean = false) =>
         set((state) => ({
           conversations: state.conversations.map((c) => {
-            if (c.id === state.activeConversationId) {
-              const idx = c.messages.findIndex((m) => m.id === messageId)
-              if (idx === -1) return c
-              const endExclusive = inclusive ? idx : idx + 1
-              return { ...c, messages: c.messages.slice(0, endExclusive) }
-            }
-            return c
+            const idx = c.messages.findIndex((m) => m.id === messageId)
+            if (idx === -1) return c
+            const endExclusive = inclusive ? idx : idx + 1
+            return { ...c, messages: c.messages.slice(0, endExclusive) }
           }),
         })),
       compressMessages: (
@@ -2205,7 +2219,7 @@ export const useStore = create<AppState>()(
       appendToMessage: (messageId: string, chunk: string) =>
         set((state) => ({
           conversations: state.conversations.map((c) => {
-            if (c.id === state.activeConversationId) {
+            if (c.messages.some((m) => m.id === messageId)) {
               return {
                 ...c,
                 messages: c.messages.map((m) =>
@@ -2219,7 +2233,7 @@ export const useStore = create<AppState>()(
       appendToMessageReasoning: (messageId: string, chunk: string) =>
         set((state) => ({
           conversations: state.conversations.map((c) => {
-            if (c.id === state.activeConversationId) {
+            if (c.messages.some((m) => m.id === messageId)) {
               return {
                 ...c,
                 messages: c.messages.map((m) =>
@@ -2235,7 +2249,7 @@ export const useStore = create<AppState>()(
       setMessageReasoningDuration: (messageId: string, durationMs: number) =>
         set((state) => ({
           conversations: state.conversations.map((c) => {
-            if (c.id === state.activeConversationId) {
+            if (c.messages.some((m) => m.id === messageId)) {
               return {
                 ...c,
                 messages: c.messages.map((m) =>
@@ -2251,7 +2265,7 @@ export const useStore = create<AppState>()(
       setMessageToolCalls: (messageId, toolCalls) =>
         set((state) => ({
           conversations: state.conversations.map((c) => {
-            if (c.id === state.activeConversationId) {
+            if (c.messages.some((m) => m.id === messageId)) {
               return {
                 ...c,
                 messages: c.messages.map((m) =>
@@ -2267,7 +2281,7 @@ export const useStore = create<AppState>()(
       setMessageSuggestions: (messageId: string, suggestions: string[]) =>
         set((state) => ({
           conversations: state.conversations.map((c) => {
-            if (c.id === state.activeConversationId) {
+            if (c.messages.some((m) => m.id === messageId)) {
               return {
                 ...c,
                 messages: c.messages.map((m) =>
@@ -2281,7 +2295,7 @@ export const useStore = create<AppState>()(
       appendMessageGeneratedImages: (messageId, images) =>
         set((state) => ({
           conversations: state.conversations.map((c) => {
-            if (c.id !== state.activeConversationId) return c
+            if (!c.messages.some((m) => m.id === messageId)) return c
             return {
               ...c,
               messages: c.messages.map((m) => {
@@ -2295,7 +2309,7 @@ export const useStore = create<AppState>()(
       setMessageError: (messageId: string, error: MessageError) =>
         set((state) => ({
           conversations: state.conversations.map((c) => {
-            if (c.id === state.activeConversationId) {
+            if (c.messages.some((m) => m.id === messageId)) {
               return {
                 ...c,
                 messages: c.messages.map((m) =>
@@ -2309,7 +2323,7 @@ export const useStore = create<AppState>()(
       clearMessageError: (messageId: string) =>
         set((state) => ({
           conversations: state.conversations.map((c) => {
-            if (c.id === state.activeConversationId) {
+            if (c.messages.some((m) => m.id === messageId)) {
               return {
                 ...c,
                 messages: c.messages.map((m) => {

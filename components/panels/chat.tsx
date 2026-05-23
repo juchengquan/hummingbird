@@ -292,7 +292,9 @@ export function ChatPanel() {
           "Step 3 — Draft a reply that makes the mock origin obvious so it isn't confused with real model output.",
         ].join("\n")
         const aiContent = `_Mock response (set \`AI_GATEWAY_API_KEY\` to enable real AI)_\n\nRegarding "${userMessage}": this is placeholder text.`
-        addMessage({ role: "assistant", content: aiContent, reasoning })
+        // Pin to the originating conv id so the mock answer still lands
+        // in the right tab if the user switched away while waiting.
+        addMessage({ role: "assistant", content: aiContent, reasoning }, convId)
         setConversationTyping(convId, false)
       }, 300)
     },
@@ -308,16 +310,16 @@ export function ChatPanel() {
   // not archived for length. A 6-line `<Button>` JSX block is just as
   // worth showing inline as a 60-line one.
   const autoArchiveCodeBlocks = useCallback(
-    (assistantMessageId: string) => {
-      if (!activeConversationId) return
-      // The streaming loop holds a STALE `Message` reference because
-      // `appendToMessage` updates the store immutably (creates new
-      // Message objects, leaving the captured reference at `content: ""`
-      // forever). Re-read the message from the store using the id so we
-      // operate on the actual streamed content.
+    (assistantMessageId: string, conversationId: string) => {
+      // Caller supplies the conversation id explicitly so this works
+      // for streams that completed while the user was looking at a
+      // different conversation tab. Re-read the message from the store
+      // using the id (the streaming loop holds a stale `Message`
+      // reference because `appendToMessage` updates the store
+      // immutably).
       const conv = useStore
         .getState()
-        .conversations.find((c) => c.id === activeConversationId)
+        .conversations.find((c) => c.id === conversationId)
       const message = conv?.messages.find((m) => m.id === assistantMessageId)
       if (!message) return
       const blocks = extractCodeBlocks(message.content)
@@ -333,7 +335,7 @@ export function ChatPanel() {
         const lang = (b.language ?? "").toLowerCase()
         const kind = lang === "json" ? "json" : "code"
         createArtifact({
-          conversationId: activeConversationId,
+          conversationId,
           messageId: assistantMessageId,
           kind,
           language: b.language,
@@ -345,7 +347,7 @@ export function ChatPanel() {
         })
       })
     },
-    [activeConversationId, createArtifact]
+    [createArtifact]
   )
 
   // Build the message list and file context the API expects, sent up to and
@@ -834,12 +836,15 @@ export function ChatPanel() {
             model: modelForCall,
             detail: "The model returned an empty response.",
           })
-        } else if (placeholder && activeConversationId) {
+        } else if (placeholder) {
           const ph = placeholder as Message
           // Pass the id, not the captured Message — the local reference is
           // stale (it still has the empty initial content); `autoArchive`
-          // re-reads the actual streamed content from the store.
-          autoArchiveCodeBlocks(ph.id)
+          // re-reads the actual streamed content from the store. The
+          // conversation id is captured from `targetConvId` so a stream
+          // that finished while the user was on a different tab still
+          // archives into the originating conversation.
+          autoArchiveCodeBlocks(ph.id, targetConvId)
           // Persist reasoning duration so the "Thought for X.Xs" badge
           // survives reload. Captured during the stream; written here so
           // we only commit on successful completion.
