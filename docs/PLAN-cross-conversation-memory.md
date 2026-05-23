@@ -46,6 +46,102 @@ distinctive.
 - Cross-workspace search UI (the recall skill already crosses
   workspaces; what's deferred is the read-only browser for hits).
 
+## Storage backend is not yet decided
+
+This plan is written assuming **pgvector** (semantic similarity over
+embeddings). Whether the project actually uses a vector store — and
+where it lives — is an **open decision** captured in
+[`PLAN-local-rag.md`](PLAN-local-rag.md). Two things to know:
+
+- A **non-vector fallback exists**: the shipped Postgres full-text
+  search (`tsvector`) could back a *lexical* "search my old messages"
+  recall with zero new infra. It's a weaker, different product
+  (keyword match, not semantic), but it removes the vector-store
+  dependency entirely. See `PLAN-local-rag.md` "Option Ø".
+- If vectors *are* used, the default is Supabase pgvector (Option A
+  there). Everything below assumes that; swapping in the FTS fallback
+  changes only the retrieval query in Phase 2, not the FE.
+
+The **frontend surface below is identical regardless of backend** —
+toggle, skill, attribution pill don't care whether the hit came from
+cosine similarity or FTS.
+
+## Frontend surface
+
+v1 is deliberately backend-heavy; the visible surface is small, and
+most of the value is *invisible* (better answers). Four touch points,
+all reusing UI patterns that already exist:
+
+### 1. Opt-in toggle — `AccountMenu` (Phase 1)
+
+A single **"Enable memory"** switch in the account menu. Off by
+default, **sign-in gated** (server-side embeddings → no anonymous
+mode; the row simply doesn't render when signed out). Flipping it on
+starts background indexing of existing messages. A companion
+destructive **"Clear my memory"** row wipes the embeddings. This is
+the entire settings surface.
+
+### 2. A skill toggle — Skills tab + active-chips (Phase 2)
+
+`memoryRecall` is a normal `ServerSkill` (Brain icon), so it plugs
+into machinery that already ships: it appears in the **Skills tab**
+with the same workspace/conversation cascade as web search, and as a
+**chip in the active-skills strip** above the input. The user turns
+"recall from my past chats" on per-conversation like any other skill.
+
+> **Two-step-opt-in wrinkle.** Today this means a user must flip *both*
+> the AccountMenu toggle (index my data) *and* the skill (use it this
+> chat). Recommendation: when the AccountMenu toggle is switched on,
+> auto-enable the `memoryRecall` skill at the workspace-default level
+> so it "just works", leaving the per-conversation cascade to override.
+> Flagged as a small UX call to make at build time.
+
+*(Optional: since it's a skill, it can get a `/recall` slash trigger
+for free via `slashTriggers` — one line. Not required for v1.)*
+
+### 3. The recall itself — invisible in v1
+
+When the skill is on, each turn silently embeds the message, finds
+top matches from *other* conversations, and prepends them to the
+system prompt. **No UI during the turn.** The model is instructed to
+attribute inline ("you mentioned in *Postgres setup*…"), so the only
+visible sign in v1 is that attribution appearing in the answer text.
+
+### 4. Attribution pill — above the assistant message (Phase 3)
+
+The one genuinely new piece of FE. When the recall skill fired for a
+turn, render a compact **"Recalled from N chats"** pill above the
+assistant bubble, mirroring the existing web-search **Sources strip**
+(`components/panels/sources-strip.tsx`) interaction model:
+
+- **Data:** the recall step already fetched `{ messageId,
+  conversationId, conversationTitle, snippet, distance }` per hit.
+  Persist the 1–3 surfaced hits onto the assistant `Message` as a new
+  optional field (e.g. `Message.recalledFrom?: RecallSource[]`) so the
+  pill survives reload — same durability pattern as `toolCalls` /
+  `generatedImages`.
+- **Render:** a small pill row; each source is a chip showing the
+  source conversation title + a one-line snippet. ≤2 inline, ≥3
+  collapses to "Recalled from 3 chats ▸" that expands.
+- **Click:** opens the source conversation and scrolls/flashes the
+  cited message — reuse the `scroll-and-flash` already built for
+  `[N]` citation markers + the conversation-jump from the ⌘K palette.
+- **Privacy nuance:** the pill exposes that *this* conversation pulled
+  from *that* one. Fine for a single user; revisit if conversations
+  ever become shareable (the recalled snippet shouldn't leak into a
+  shared transcript — strip `recalledFrom` from share/export, same as
+  reasoning is stripped today).
+
+### What's deliberately NOT on the FE in v1
+
+- **No "browse my memory" screen** — no UI to see/search/edit what's
+  indexed beyond an indexed-count badge + the wipe button. A read-only
+  memory browser is deferred.
+- **Nothing for anonymous users** — the whole feature is hidden
+  unless signed in (a real UI branch).
+- **No inline "recalling…" spinner** during the turn — the recall is a
+  single fast query folded into the existing typing indicator.
+
 ## Architecture
 
 ```
@@ -157,15 +253,36 @@ turn, similar cost profile.
 even for opted-in users — explicit opt-in per workspace via the
 existing skills cascade.
 
-### Phase 3 — UI polish (≈ half day, optional)
+### Phase 3 — UI polish (≈ 1 day, optional)
 
-- "Last sync" badge in the AccountMenu showing how many messages have
-  been indexed.
-- A "Recalled" pill above the assistant turn when the skill fired,
-  listing 1–3 source links (click → opens that conversation at the
-  cited message).
-- Manual re-index button for users whose embedding model changes
-  (model upgrade) or who flip the toggle on after months of chat.
+The "Frontend surface" section above is the spec; this is the
+build breakdown.
+
+- **Attribution pill** (`components/panels/recall-strip.tsx`, new) —
+  rendered by `chat-message.tsx` above the assistant bubble when
+  `message.recalledFrom?.length`. Mirror `sources-strip.tsx`:
+  - New `Message.recalledFrom?: RecallSource[]` on
+    `lib/shared/types.ts`, where `RecallSource = { messageId,
+    conversationId, conversationTitle, snippet }`. Persisted +
+    synced like `toolCalls` (needs a `messages.recalled_from jsonb`
+    column + the `diffMessages` / reconcile additions — same shape as
+    the `generated_images` follow-up that already shipped).
+  - The chat route's `memoryRecall` step emits the surfaced hits on a
+    new SSE frame (`{ type: 'recall', sources: [...] }`); the client
+    parser writes them onto the placeholder via a
+    `setMessageRecallSources(messageId, sources)` mutator. Same
+    pattern as `tool_result` / `tool_image`.
+  - Click a chip → reuse the conversation-jump + scroll-and-flash
+    from the ⌘K palette and the `[N]` citation markers.
+  - Strip `recalledFrom` from Copy / Export / Share (it's attribution
+    metadata, not message content — same exclusion list as
+    `reasoning`).
+- **"N messages indexed" badge** in the AccountMenu — a count from
+  `select count(*) from message_embeddings where user_id = …`,
+  refreshed when the menu opens.
+- **Manual re-index button** in the AccountMenu for users whose
+  embedding model changed (upgrade) or who flipped the toggle on
+  after months of chat — enqueues all un-indexed messages.
 
 ## Verification
 

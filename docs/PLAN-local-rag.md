@@ -5,10 +5,21 @@ the architecture options for a local/self-hostable vector store so
 the choice is made deliberately when a RAG feature
 (`PLAN-cross-conversation-memory.md`, future file-RAG) needs it.
 
-This is **infrastructure**, not a feature. It answers one question:
-when we add `pgvector`-style retrieval, does it have to run through
-Supabase? Short answer — no, but the alternatives have sharply
-different cost/effort profiles depending on what "local" means.
+This is **infrastructure**, not a feature. It answers **two**
+questions, in order:
+
+1. **Do we use a vector store at all?** Semantic retrieval (embeddings
+   + cosine similarity) is the "real" version, but the shipped
+   Postgres full-text search could back a cheaper *lexical* recall
+   with zero new infra. Logged as **Option Ø** below. **Not yet
+   decided** — the team hasn't committed to vectors.
+2. **If vectors: where do they live?** When we add `pgvector`-style
+   retrieval, does it have to run through Supabase? Short answer —
+   no, but the alternatives (A / B / C) have sharply different
+   cost/effort profiles depending on what "local" means.
+
+Resolve (1) first. If the answer is "FTS is enough", the A/B/C
+matrix is moot and this whole doc collapses to Option Ø.
 
 ## Background — what exists today
 
@@ -40,6 +51,48 @@ pointing at a different option:
 
 The rest of this doc lays out all three so whoever picks up the RAG
 feature can choose with eyes open.
+
+## Option Ø — No vectors: reuse Postgres full-text search
+
+Before any vector store, the honest baseline: **do we need embeddings
+at all?** The app already runs Postgres FTS (`tsvector`) for file
+search (`lib/server/skills/file-search.ts`, migrations `0007`/`0009`).
+The same machinery could back message recall:
+
+```sql
+-- no new extension; messages already have content
+alter table messages
+  add column content_tsv tsvector
+  generated always as (to_tsvector('english', coalesce(content, ''))) stored;
+create index on messages using gin (content_tsv);
+```
+
+Recall becomes a `plainto_tsquery` ranked by `ts_rank`, scoped to
+`auth.uid()` via the existing RLS — basically the file-search RPC
+pointed at `messages`.
+
+**Effort:** Lowest of all. One migration + one RPC. No embedding
+pipeline, no embedding cost, no model choice, no new client.
+
+**Pros:**
+- Zero new infrastructure or dependencies. Ships in well under a day.
+- No per-message embedding cost, no third-party text egress.
+- Reuses the exact pattern already proven by file search.
+
+**Cons:**
+- **Lexical, not semantic.** "what's my dog's name?" won't match an
+  earlier "my golden retriever Pickle" unless a keyword overlaps.
+  This is the crux: it's a *different, weaker product* than the
+  "the model remembers what I told it" pitch in
+  `PLAN-cross-conversation-memory.md`.
+- English-stemming only (same caveat as file search).
+- A future upgrade to vectors is additive, not a migration — but
+  you'd be rebuilding the retrieval half.
+
+**Pick this if:** the goal is a cheap "search my old messages" recall
+and semantic matching isn't a hard requirement — or as a **Phase 0**
+that ships value immediately while the vector decision is made.
+(Hybrid FTS+vector fusion later is a known, well-trodden upgrade.)
 
 ## Option A — Supabase pgvector (hosted or local CLI)
 
@@ -180,24 +233,44 @@ in-browser-embedding cost (model download + CPU time).
 
 ## Recommendation matrix
 
-| Driver | Option | Why |
+First decide **whether** vectors are needed; then **where**.
+
+| Goal / driver | Option | Why |
 |---|---|---|
-| Dev convenience | **A** (local Supabase CLI) | Already wired; `supabase start` runs pgvector in Docker |
-| Require-sign-in is fine | **A** (hosted) | Lowest effort, RLS for free, scales |
-| Full self-hosting | **A pointed at self-hosted Supabase** | Less work than reimplementing RLS in app code (Option B) |
-| Privacy / offline / anonymous-mode RAG | **C1** (PGlite + pgvector) | True local, SQL ports to cloud later, paired with in-browser embeddings |
-| Smallest possible footprint, small N | **C2** (cosine scan in IndexedDB) | No WASM, ~30 LOC, fine under ~10k vectors |
+| Cheap "search my old messages", semantic match not required | **Ø** (Postgres FTS) | Zero new infra; reuses the file-search pattern; ships in <1 day |
+| Ship *something* now, decide vectors later | **Ø as Phase 0**, then A | FTS delivers value immediately; vectors layer on (hybrid fusion) without a migration |
+| Semantic recall, dev convenience | **A** (local Supabase CLI) | Already wired; `supabase start` runs pgvector in Docker |
+| Semantic recall, require-sign-in is fine | **A** (hosted) | Lowest effort for vectors; RLS for free; scales (hnsw) |
+| Semantic recall, full self-hosting | **A pointed at self-hosted Supabase** | Less work than reimplementing RLS in app code (Option B) |
+| Semantic recall, privacy / offline / anonymous | **C1** (PGlite + pgvector) | True local; SQL ports to cloud later; needs in-browser embeddings |
+| Semantic recall, smallest footprint, small N | **C2** (cosine scan in IndexedDB) | No WASM, ~30 LOC, fine under ~10k vectors |
 
-**Default recommendation: Option A.** Unless privacy/offline is an
-explicit product requirement, the cost/benefit overwhelmingly favours
-Supabase pgvector — it reuses RLS, sync, migrations, and the existing
-client, and the local CLI covers the dev-convenience case. The
-cross-conversation-memory plan already assumes this.
+### Recommendation (pending the team's call — not yet decided)
 
-**If privacy/offline is the real driver,** Option C1 is the
-principled choice (SQL parity with A means it's not a dead end), but
-budget for the in-browser embedding model — that's the actual hard
-part, not the vector storage.
+**The decision is deliberately left open; the options above are all
+logged so whoever picks this up chooses with eyes open.** With that
+said, the leaning, in priority order:
+
+1. **If unsure whether semantic recall is worth the cost → start with
+   Option Ø (FTS).** It's the cheapest way to ship *a* recall feature
+   and learn whether users want more. It is *not* a dead end: adding
+   vectors later is additive (hybrid FTS+vector), not a rewrite of
+   storage.
+2. **If semantic recall is a committed product goal → Option A
+   (Supabase pgvector).** Unless privacy/offline is an explicit
+   requirement, the cost/benefit overwhelmingly favours it — reuses
+   RLS, sync, migrations, and the existing client; the local CLI
+   covers dev convenience. This is what
+   `PLAN-cross-conversation-memory.md` assumes.
+3. **If privacy/offline is the real driver → Option C1** (PGlite +
+   pgvector). Principled, SQL parity with A so it's not a dead end —
+   but budget for the in-browser embedding model, which is the actual
+   hard part, not the vector storage.
+
+The single most consequential call is **#1 vs #2** — lexical vs
+semantic. It's a product question (how smart must "memory" feel?),
+not an infra one, so it's logged here for the team rather than
+defaulted.
 
 ## Hybrid worth noting
 
@@ -224,8 +297,18 @@ matter.
 
 ## Next step
 
-Pick the driver (dev convenience / require-sign-in / privacy-offline
-/ self-host). That single choice collapses the matrix to one option,
-at which point the implementation folds into
-`PLAN-cross-conversation-memory.md` (for the message-recall use case)
-or a new file-RAG plan (for retrieval over `files.full_text`).
+Two decisions, in order:
+
+1. **Vectors or not?** (Option Ø vs everything else.) A product call:
+   does "memory" need to feel *semantic*, or is keyword search over
+   old messages enough for v1? If FTS is enough, stop here — implement
+   Option Ø and fold it into `PLAN-cross-conversation-memory.md`'s
+   retrieval step (the FE surface there is unchanged).
+2. **If vectors: which driver?** (dev convenience / require-sign-in /
+   privacy-offline / self-host.) That collapses A/B/C to one option,
+   at which point implementation folds into
+   `PLAN-cross-conversation-memory.md` (message recall) or a new
+   file-RAG plan (retrieval over `files.full_text`).
+
+Neither is decided yet — this doc exists to make the choice
+deliberate, not to pre-empt it.
