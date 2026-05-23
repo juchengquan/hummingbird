@@ -72,7 +72,7 @@ Earlier features (kept for reference, no specific date):
 
 | Plan | Branch | Notes |
 |---|---|---|
-| _(nothing actively in flight)_ | | |
+| 🪜 [Prompt library](PLAN-prompt-library.md) | `claude/prompt-library` | Phase 1 (local-only, no slash trigger) in flight |
 
 A WIP commit for slash commands lives on `claude/slash-commands`
 (shared parser + registry only). Treated as planned, not in
@@ -86,7 +86,6 @@ progress, until UI / chat-panel wiring picks up.
 |---|---|---|
 | 📐 [Slash commands for skill chaining](PLAN-slash-commands.md) | planning | `/search`, `/fetch`, `/image` autocomplete |
 | 📐 [Editor diff mode](PLAN-editor-diff-mode.md) | planning | Before / after chunks with accept-reject for editor AI commands |
-| 📐 [Prompt library](PLAN-prompt-library.md) | planning | Reusable prompts with variable substitution |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Long-running task mode](PLAN-long-running-tasks.md) | planning | Async step-based agent with progress + notifications |
 | 📐 [Workspace canvas](PLAN-workspace-canvas.md) | planning | Spatial drag-drop view of messages / artifacts / files |

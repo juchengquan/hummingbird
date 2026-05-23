@@ -1,16 +1,45 @@
 # Plan: Prompt library
 
-Status: **planning** — no code yet.
+Status: **🚧 Phase 1 in progress** on `claude/prompt-library`. Phases 2
+and 3 are deferred follow-ups.
 
-User-scoped saved prompt templates with placeholder variables,
-surfaced via `/<name>` autocomplete in the chat input and managed
-from a dialog opened from the chat header kebab. Templates expand to
-real prompts (with the user filling in variables) before being sent
-as the next user turn.
+User-scoped saved prompt templates with placeholder variables, listed
+in the left sidebar (alongside Workspaces / Chats / Documents) and
+expanded inline before being sent as the next chat turn. Click a
+prompt in the sidebar to insert it into the current chat input;
+prompts with `{{variable}}` markers prompt for fills via a small
+modal first.
+
+The original plan placed prompt management in the chat-header kebab
+menu. **The implementation moves it to a fourth sidebar group** —
+prompts are user-scoped/global, not per-conversation actions, so they
+fit the existing left-sidebar taxonomy (persistent collections the
+user browses) more naturally than a per-chat kebab. Same `<SidebarGroup>`
+shape, same search affordance, same hover-revealed row actions as the
+Documents section.
+
+## Phasing
+
+This document describes the full feature. The implementation ships in
+phases:
+
+- **Phase 1 (this PR — `claude/prompt-library`):** local-only.
+  Zustand slice + sidebar group + create/edit/delete dialog +
+  variable fill modal + click-to-insert into the chat input. Works
+  in anonymous and signed-in modes; signed-in users just don't get
+  cross-device sync yet.
+- **Phase 2 (future):** Supabase sync. New migration, `diffPrompts`
+  in the sync handler chain, bidirectional mapping in
+  `reconcile.ts`. Mirrors how file full-text storage layered onto
+  Phase 1's extract caps.
+- **Phase 3 (future, depends on `PLAN-slash-commands.md`):** the
+  `/<name>` slash trigger in the chat input. Until that lands,
+  prompts are accessed via the sidebar only.
 
 Builds on the planned slash-command surface
-(`docs/PLAN-slash-commands.md`) — both features write into the same
-autocomplete dropdown and share a slash-trigger registry.
+(`docs/PLAN-slash-commands.md`) for Phase 3 — both features write
+into the same autocomplete dropdown and share a slash-trigger
+registry.
 
 ## Why
 
@@ -94,7 +123,8 @@ interface Prompt {
 (`createPrompt`, `updatePrompt`, `deletePrompt`, `restorePrompt`).
 Persisted via `partialize` like other slices.
 
-**Supabase table** (`supabase/migrations/0007_prompts.sql`):
+**Supabase table** (Phase 2 — `supabase/migrations/0011_prompts.sql`,
+not built in this PR):
 
 ```sql
 create table prompts (
@@ -195,53 +225,80 @@ block (sometimes that's intentional).
 
 ### UI components
 
-**`components/panels/manage-prompts-dialog.tsx`** *(new)*. List on
-the left, edit form on the right. Form fields:
+**`components/sidebars/application.tsx`** — extend with a fourth
+group **Prompts**, sitting after Documents. Same shape as the
+existing Chats / Documents sections:
+
+- Collapsed-icon mode: one row per prompt (BookOpen icon)
+- Expanded mode: `SidebarGroupLabel` with collapsible chevron, "+"
+  action to open the new-prompt dialog, search input, list of
+  prompts with hover-revealed edit / delete actions
+- Each row's click: insert the prompt into the current chat input
+  (via the new `pendingChatInput` Zustand action — see Chat panel
+  wire-up). Prompts with variables fire the fill modal first.
+
+**`components/panels/prompt-dialog.tsx`** *(new)*. Combined
+create-and-edit dialog, opened from the sidebar's "+" action or
+from a row's Edit action. Form fields:
 - Name (auto-derives slug on first input; slug becomes editable
   after first save)
 - Template textarea (auto-resizing, monospace, with variable
   markers highlighted)
-- Live preview pane: shows the template with `{{var}}` rendered as
-  pill placeholders. Helps the user see what'll be expanded.
-- Variable list (derived, read-only) for clarity.
+- Variable list (derived, read-only) for clarity
 
 Save / Delete / Duplicate buttons. Standard `Dialog` from
 `components/ui/dialog.tsx`.
 
+The original plan called this a "Manage Prompts" dialog with a
+list-on-the-left/edit-on-the-right two-pane shape. The sidebar
+already provides the list view, so the dialog reduces to single-
+prompt edit mode — simpler, less screen real estate, easier to keep
+focused.
+
 **`components/panels/prompt-variable-fill.tsx`** *(new)*. Small
 modal anchored near the chat input. One text field per variable
 in order, with auto-focus on first. Submit (Enter on last field
-or click Send) expands the template and sets the chat input to the
-expanded text — the user can still edit before sending if they
-want. Esc cancels, restoring the input to just `/<slug>` so the
-user can pick something else.
+or click Insert) expands the template and sets the chat input to
+the expanded text — the user can still edit before sending if they
+want. Esc cancels and clears the pending insert.
 
-**`components/panels/slash-autocomplete.tsx`** is shared with the
-slash-commands plan. Extends to render prompt rows in addition to
-skill rows (visual: same row shape, different icon — maybe
-`BookOpen` for prompts vs the skill's icon).
+**`components/panels/slash-autocomplete.tsx`** *(Phase 3 only)* is
+shared with the slash-commands plan. Not part of Phase 1 — the
+sidebar carries the surface until slash lands.
 
-### Chat header wire-up
+### Sidebar wire-up
 
-`components/panels/chat-header.tsx`'s kebab popover gains one entry:
-**Manage prompts** at the top (above Summarise / Pin / etc.). Opens
-the `ManagePromptsDialog`. One-line change.
+The fourth `<SidebarGroup>` in `application.tsx` carries:
+
+- `BookOpen size={14}` icon in the label
+- "+" action button opens `<PromptDialog mode="create" />`
+- Each row is a new `<PromptItem>` component (mirrors `<DocumentItem>`)
+- Active state when the dialog is open editing that prompt
+
+No chat-header changes. The kebab menu stays as today's seven
+per-conversation actions.
 
 ### Chat panel wire-up
 
-`components/panels/chat.tsx` already has the `enabledSkills`
-assembly the slash plan touches. Prompt expansion is independent:
+Clicking a prompt in the sidebar needs to push text into the chat
+input, which lives in `ChatPanel`'s local `useState`. The cleanest
+seam is a Zustand-mediated event:
 
-1. On send, check if `inputValue` starts with `/<known-prompt-slug>`
-2. If so, the slug + space is stripped (the variable-fill modal
-   already replaced the input text by this point in the happy
-   path)
-3. Otherwise, send as-is
+- New `pendingChatInput: string | null` field on the store
+- `setPendingChatInput(value: string | null)` action
+- `ChatPanel`'s `useEffect` subscribes; when non-null, it sets
+  `inputValue`, focuses the textarea, and clears `pendingChatInput`
+  (one-shot, not a permanent draft state)
 
-The variable-fill modal pre-expands the message into the visible
-input before the user clicks Send, so the actual send-path is just
-"send whatever's in the textarea." No special expansion step at
-send time.
+Sidebar click flow:
+1. User clicks a prompt row → resolve `parseTemplate(prompt.template)`
+2. If `variables.length === 0`: `setPendingChatInput(prompt.template)` directly
+3. Else: open `<PromptVariableFill>` modal; on submit, call
+   `expandTemplate(prompt.template, fills)` and
+   `setPendingChatInput(expanded)`
+
+The send path itself is unchanged — once text is in the textarea,
+the existing flow takes over.
 
 ## Edge cases
 
@@ -290,26 +347,41 @@ gets messy.
 
 ## Files touched
 
+### Phase 1 (this PR)
+
 | File | Why |
 |---|---|
-| `supabase/migrations/0007_prompts.sql` *(new)* | Table + RLS |
-| `lib/shared/prompts/types.ts` *(new)* | `Prompt`, `ParsedTemplate` types |
 | `lib/shared/prompts/expand.ts` *(new)* | `parseTemplate`, `expandTemplate` |
 | `lib/shared/prompts/expand.test.ts` *(new)* | Pure-fn tests |
-| `lib/client/hooks/use-store.ts` | `prompts` slice + actions |
-| `lib/client/sync/handlers.ts` | `diffPrompts` |
-| `lib/client/hooks/use-sync.ts` | Subscribe `diffPrompts` |
-| `lib/client/slash-resolver.ts` *(new, shared with slash-commands)* | Unified slash dispatch |
-| `components/panels/manage-prompts-dialog.tsx` *(new)* | CRUD UI |
+| `lib/shared/types.ts` | `Prompt` interface |
+| `lib/client/hooks/use-store.ts` | `prompts` slice + actions, `pendingChatInput` + `setPendingChatInput` |
+| `components/panels/prompt-dialog.tsx` *(new)* | Create/edit/delete UI |
 | `components/panels/prompt-variable-fill.tsx` *(new)* | Variable fill-in modal |
-| `components/panels/slash-autocomplete.tsx` | Extend to render prompt rows |
-| `components/panels/chat-header.tsx` | Add "Manage prompts" kebab entry |
-| `components/panels/chat.tsx` | Variable-fill modal trigger on slash select |
+| `components/sidebars/application.tsx` | Fourth `<SidebarGroup>` for Prompts |
+| `components/panels/chat.tsx` | Subscribe to `pendingChatInput` |
 
-**~600 lines** of new code + ~120 of tests. Bigger than slash-
-commands but smaller than diff-mode because the patterns are all
-established — most of it is plumbing through the existing slice +
-sync chain.
+### Phase 2 (sync — future PR)
+
+| File | Why |
+|---|---|
+| `supabase/migrations/0011_prompts.sql` *(new)* | Table + RLS |
+| `lib/shared/supabase/types.ts` | Regenerated for the new table |
+| `lib/client/sync/handlers.ts` | `diffPrompts` |
+| `lib/client/sync/reconcile.ts` | Bidirectional mapping |
+| `lib/client/hooks/use-sync.ts` | Subscribe `diffPrompts` |
+
+### Phase 3 (slash — future PR, depends on PLAN-slash-commands)
+
+| File | Why |
+|---|---|
+| `lib/client/slash-resolver.ts` *(new, shared with slash-commands)* | Unified slash dispatch |
+| `components/panels/slash-autocomplete.tsx` | Extend to render prompt rows |
+| `components/panels/chat.tsx` | Slash-detection in input |
+
+**Phase 1 size:** ~500 lines of new code + ~120 of tests. Same
+"new user-scoped entity in Zustand + new sidebar group + edit
+dialog + a pure helper lib" shape as `0006_url_bookmarks`'s Phase
+1 (which also shipped without sync before sync layered on later).
 
 ## Test plan
 
