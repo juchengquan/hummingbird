@@ -1,7 +1,8 @@
 # Plan: Prompt library
 
-Status: **🚧 Phase 1 in progress** on `claude/prompt-library`. Phases 2
-and 3 are deferred follow-ups.
+Status: **✅ Phase 1 shipped** in [#50](https://github.com/juchengquan/hummingbird/pull/50)
+— sidebar group, dialogs, click-to-insert. Phases 2 (Supabase sync)
+and 3 (slash trigger) are deferred follow-ups.
 
 User-scoped saved prompt templates with placeholder variables, listed
 in the left sidebar (alongside Workspaces / Chats / Documents) and

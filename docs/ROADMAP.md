@@ -31,6 +31,8 @@ to a representative PR otherwise.
 
 | When | Feature | Where |
 |---|---|---|
+| 2026-05-23 | Prompt library — Phase 1 (sidebar group, dialogs, click-to-insert) | [PLAN](PLAN-prompt-library.md) · [#50](https://github.com/juchengquan/hummingbird/pull/50) |
+| 2026-05-23 | Editor diff mode for AI commands (toggle, review pill, keyboard nav) | [PLAN](PLAN-editor-diff-mode.md) · [#49](https://github.com/juchengquan/hummingbird/pull/49) |
 | 2026-05-22 | "Compress older messages" action with reversible recap | [#37](https://github.com/juchengquan/hummingbird/pull/37) |
 | 2026-05-22 | Sandboxed-iframe live artifacts (TSX/HTML/SVG/Mermaid) | [PLAN](PLAN-live-artifacts.md) · [#36](https://github.com/juchengquan/hummingbird/pull/36) |
 | 2026-05-22 | File full-text retrieval — all 5 phases (caps, FTS storage, `searchFiles` skill + RPC, UI affordances) | [PLAN](PLAN-file-full-text-retrieval.md) · [TEST](SUPABASE_TEST.md) · [#33](https://github.com/juchengquan/hummingbird/pull/33), [#35](https://github.com/juchengquan/hummingbird/pull/35), [#40](https://github.com/juchengquan/hummingbird/pull/40), [#41](https://github.com/juchengquan/hummingbird/pull/41) |
@@ -72,7 +74,7 @@ Earlier features (kept for reference, no specific date):
 
 | Plan | Branch | Notes |
 |---|---|---|
-| 🪜 [Prompt library](PLAN-prompt-library.md) | `claude/prompt-library` | Phase 1 (local-only, no slash trigger) in flight |
+| _(nothing actively in flight)_ | | |
 
 A WIP commit for slash commands lives on `claude/slash-commands`
 (shared parser + registry only). Treated as planned, not in
@@ -85,7 +87,6 @@ progress, until UI / chat-panel wiring picks up.
 | Plan | Status | Sketch |
 |---|---|---|
 | 📐 [Slash commands for skill chaining](PLAN-slash-commands.md) | planning | `/search`, `/fetch`, `/image` autocomplete |
-| 📐 [Editor diff mode](PLAN-editor-diff-mode.md) | planning | Before / after chunks with accept-reject for editor AI commands |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Long-running task mode](PLAN-long-running-tasks.md) | planning | Async step-based agent with progress + notifications |
 | 📐 [Workspace canvas](PLAN-workspace-canvas.md) | planning | Spatial drag-drop view of messages / artifacts / files |
