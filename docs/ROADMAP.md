@@ -10,7 +10,13 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-05-23 (slash `/` skills #55 shipped; action-commands plan drafted).
+Last updated: 2026-05-23 (plan sweep: 14 shipped plans archived to
+`_done/`; active plans + this roadmap re-pointed).
+
+> **Plan archive.** Fully-shipped `PLAN-*.md` files live in
+> [`_done/`](_done/). Active plans (planning / phased / decision
+> docs) stay in `docs/`. Links below point at wherever the plan
+> currently lives.
 
 ---
 
@@ -31,18 +37,18 @@ to a representative PR otherwise.
 
 | When | Feature | Where |
 |---|---|---|
-| 2026-05-23 | Slash commands — `/` skill surface (parser, autocomplete, force-skill-for-turn) | [PLAN](PLAN-slash-commands.md) · [#55](https://github.com/juchengquan/hummingbird/pull/55) |
+| 2026-05-23 | Slash commands — `/` skill surface (parser, autocomplete, force-skill-for-turn) | [PLAN](_done/PLAN-slash-commands.md) · [#55](https://github.com/juchengquan/hummingbird/pull/55) |
 | 2026-05-23 | Prompt library — Phase 2 (Supabase sync: `prompts` table, `diffPrompts`, reconcile) | [PLAN](PLAN-prompt-library.md) · [#53](https://github.com/juchengquan/hummingbird/pull/53) |
 | 2026-05-23 | Multi-conversation fix — per-message store mutators address by message id | [#52](https://github.com/juchengquan/hummingbird/pull/52) |
 | 2026-05-23 | Per-conversation streaming state — switching chats no longer blocks input | [#43](https://github.com/juchengquan/hummingbird/pull/43) |
 | 2026-05-23 | Prompt library — Phase 1 (sidebar group, dialogs, click-to-insert) | [PLAN](PLAN-prompt-library.md) · [#50](https://github.com/juchengquan/hummingbird/pull/50) |
-| 2026-05-23 | Editor diff mode for AI commands (toggle, review pill, keyboard nav) | [PLAN](PLAN-editor-diff-mode.md) · [#49](https://github.com/juchengquan/hummingbird/pull/49) |
+| 2026-05-23 | Editor diff mode for AI commands (toggle, review pill, keyboard nav) | [PLAN](_done/PLAN-editor-diff-mode.md) · [#49](https://github.com/juchengquan/hummingbird/pull/49) |
 | 2026-05-23 | Cross-device sync for `Message.generatedImages` (metadata column + reconcile) | [#45](https://github.com/juchengquan/hummingbird/pull/45) |
 | 2026-05-23 | DOCX / CSV / text file previews | `647b23d` |
 | 2026-05-23 | Image handling + right-side viewer drawer integration | `2c1e1ea` |
 | 2026-05-22 | "Compress older messages" action with reversible recap | [#37](https://github.com/juchengquan/hummingbird/pull/37) |
-| 2026-05-22 | Sandboxed-iframe live artifacts (TSX/HTML/SVG/Mermaid) | [PLAN](PLAN-live-artifacts.md) · [#36](https://github.com/juchengquan/hummingbird/pull/36) |
-| 2026-05-22 | File full-text retrieval — all 5 phases (caps, FTS storage, `searchFiles` skill + RPC, UI affordances) | [PLAN](PLAN-file-full-text-retrieval.md) · [TEST](SUPABASE_TEST.md) · [#33](https://github.com/juchengquan/hummingbird/pull/33), [#35](https://github.com/juchengquan/hummingbird/pull/35), [#40](https://github.com/juchengquan/hummingbird/pull/40), [#41](https://github.com/juchengquan/hummingbird/pull/41) |
+| 2026-05-22 | Sandboxed-iframe live artifacts (TSX/HTML/SVG/Mermaid) | [PLAN](_done/PLAN-live-artifacts.md) · [#36](https://github.com/juchengquan/hummingbird/pull/36) |
+| 2026-05-22 | File full-text retrieval — all 5 phases (caps, FTS storage, `searchFiles` skill + RPC, UI affordances) | [PLAN](_done/PLAN-file-full-text-retrieval.md) · [TEST](SUPABASE_TEST.md) · [#33](https://github.com/juchengquan/hummingbird/pull/33), [#35](https://github.com/juchengquan/hummingbird/pull/35), [#40](https://github.com/juchengquan/hummingbird/pull/40), [#41](https://github.com/juchengquan/hummingbird/pull/41) |
 | 2026-05-22 | Media-preview Download + inline Remix shortcut | [#32](https://github.com/juchengquan/hummingbird/pull/32) |
 | 2026-05-22 | Image generation — Storage upload + Remix (I2I) entry | [#29](https://github.com/juchengquan/hummingbird/pull/29) |
 | 2026-05-22 | OpenAI-compatible provider type | [#28](https://github.com/juchengquan/hummingbird/pull/28) |
@@ -54,15 +60,15 @@ to a representative PR otherwise.
 Earlier features (kept for reference, no specific date):
 
 - ✅ Conversation graph view (branching/forking)
-- ✅ URL bookmarks as live sources — [PLAN](PLAN-url-bookmarks.md)
-- ✅ MCP integration (Stages 1–3) — [PLAN](PLAN-mcp-integration.md), [Stage 3 detail](PLAN-mcp-stage-3.md)
-- ✅ Smart paste — [PLAN](PLAN-smart-paste.md)
-- ✅ Skills panel + Web search — [PLAN](PLAN-skills-panel-and-web-search.md)
-- ✅ Explain-selection — [PLAN](PLAN-explain-selection.md)
-- ✅ Conversation-private file attachments — [PLAN](PLAN-conversation-private-files.md)
-- ✅ Chat experience batch (markdown / vision / system prompts) — [PLAN](PLAN-chat-experience-batch.md)
-- ✅ Attachments polymorphism (file / MCP / URL bookmark union) — [PLAN](PLAN-attachments-polymorphism.md)
-- ✅ Client/server fences (`lib/{client,server,shared}/`) — [PLAN](PLAN-client-server-fences.md)
+- ✅ URL bookmarks as live sources — [PLAN](_done/PLAN-url-bookmarks.md)
+- ✅ MCP integration (Stages 1–3) — [PLAN](_done/PLAN-mcp-integration.md), [Stage 3 detail](_done/PLAN-mcp-stage-3.md)
+- ✅ Smart paste — [PLAN](_done/PLAN-smart-paste.md)
+- ✅ Skills panel + Web search — [PLAN](_done/PLAN-skills-panel-and-web-search.md)
+- ✅ Explain-selection — [PLAN](_done/PLAN-explain-selection.md)
+- ✅ Conversation-private file attachments — [PLAN](_done/PLAN-conversation-private-files.md)
+- ✅ Chat experience batch (markdown / vision / system prompts) — [PLAN](_done/PLAN-chat-experience-batch.md)
+- ✅ Attachments polymorphism (file / MCP / URL bookmark union) — [PLAN](_done/PLAN-attachments-polymorphism.md)
+- ✅ Client/server fences (`lib/{client,server,shared}/`) — [PLAN](_done/PLAN-client-server-fences.md)
 - ✅ Backend extraction Phase 1 (API surface + Zod schemas) — [PLAN](PLAN-backend-extraction.md)
 - ✅ Reasoning / "thinking" tokens
 - ✅ Auto-retry-once on transient errors + rate-limit cooldown
@@ -87,11 +93,18 @@ Earlier features (kept for reference, no specific date):
 
 ## Planned (have a PLAN, no code yet)
 
+The `🪜` rows are partial ships — their finished phases are documented
+inside the plan; only the listed phase(s) remain. The slash-commands
+core shipped and is archived in [`_done/`](_done/PLAN-slash-commands.md);
+its two pending sub-surfaces are tracked below (prompt-library Phase 3
+for `@`, and the slash-action-commands plan for `/` run-now commands).
+
 | Plan | Status | Sketch |
 |---|---|---|
-| 🪜 [Slash commands](PLAN-slash-commands.md) | `/` skills shipped (#55) | Pending: `@` prompt expansion (→ prompt library Phase 3), `/` action commands (→ below) |
+| 🪜 [Prompt library](PLAN-prompt-library.md) | Phases 1+2 shipped; Phase 3 pending | Pending: `@<slug>` text expansion (reuses the slash autocomplete component) |
 | 📐 [Slash action commands](PLAN-slash-action-commands.md) | planning | `/clear`, `/rename`, `/new`, `/model`, `/help` — run-now commands, no send |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
+| 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
 | 📐 [Long-running task mode](PLAN-long-running-tasks.md) | planning | Async step-based agent with progress + notifications |
 | 📐 [Workspace canvas](PLAN-workspace-canvas.md) | planning | Spatial drag-drop view of messages / artifacts / files |
 | 📐 [Project mode](PLAN-project-mode.md) | planning | Workspace → goal + milestones + Kanban tasks (depends on long-running tasks) |
@@ -115,8 +128,13 @@ When a feature ships:
 1. Move the row from **Planned** → **Shipped** here, with date + PR.
 2. Update the `PLAN-*.md` file's `Status:` line to `✅ shipped` plus the
    PR link.
-3. If the work surfaced new follow-ups, append them to **Known small
-   follow-ups** (or to `BACKLOG.md` if they're full-feature shaped).
+3. **If the plan is fully shipped** (all phases done, nothing pending),
+   `git mv docs/PLAN-<name>.md docs/_done/` and re-point any links to
+   it (here and from other plans) at `_done/`. Phased plans with
+   pending work stay in `docs/` until the last phase lands.
+4. If the work surfaced new follow-ups, append them to the
+   **Small follow-ups batch** plan (or to `BACKLOG.md` if they're
+   full-feature shaped).
 
 When a new plan is drafted:
 

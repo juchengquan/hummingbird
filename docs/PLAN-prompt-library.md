@@ -10,7 +10,7 @@ Phase 3 (the **`@<slug>`** trigger — note the symbol, see below) is
 still deferred. **Decision update:** prompts use **`@`**, not `/`.
 Skills own `/` (turn directives); prompts own `@` (text expansion).
 Two symbols, no shared namespace, no collisions. See the "two-symbol
-model" section in `PLAN-slash-commands.md`. Phase 3 reuses the
+model" section in `_done/PLAN-slash-commands.md`. Phase 3 reuses the
 symbol-agnostic autocomplete component built by the slash-commands
 (`/`) work and mounts a second instance for `@`.
 
@@ -43,7 +43,7 @@ phases:
   in the sync handler chain, bidirectional mapping in
   `reconcile.ts`. Mirrors how file full-text storage layered onto
   Phase 1's extract caps.
-- **Phase 3 (future, builds on the `PLAN-slash-commands.md`
+- **Phase 3 (future, builds on the `_done/PLAN-slash-commands.md`
   autocomplete component):** the **`@<slug>`** trigger in the chat
   input — `@` for prompts, distinct from `/` for skills. Reuses the
   symbol-agnostic autocomplete component built for `/`; mounts a
@@ -53,7 +53,7 @@ phases:
   are accessed via the sidebar only.
 
 Builds on the planned slash-command surface
-(`docs/PLAN-slash-commands.md`) for Phase 3 — both features write
+(`docs/_done/PLAN-slash-commands.md`) for Phase 3 — both features write
 into the same autocomplete dropdown and share a slash-trigger
 registry.
 
@@ -79,7 +79,7 @@ but the data model should not block it).
   "declare variables" step.
 - **`/<name>` slash command** in the chat input. Autocomplete
   shares the same dropdown as the skill slashes (per
-  `PLAN-slash-commands.md`). Skill triggers reserved — prompt
+  `_done/PLAN-slash-commands.md`). Skill triggers reserved — prompt
   triggers can't collide.
 - **Variable fill-in inline modal.** When the user selects a
   template with variables, a small modal anchored near the input
@@ -191,7 +191,7 @@ Two symbols, two physically-separate namespaces, **no shared
 resolver and no collision rule needed** — a user can name a prompt
 `search` freely because `@search` and `/search` are different
 surfaces. See the "two-symbol model" table in
-`PLAN-slash-commands.md` for the full rationale.
+`_done/PLAN-slash-commands.md` for the full rationale.
 
 Phase 3 reuses the **symbol-agnostic autocomplete component**
 (`components/panels/slash-autocomplete.tsx`) the slash-commands work
@@ -349,7 +349,7 @@ well-trodden in this codebase: the URL-bookmarks feature (migration
 chat-header kebab has obvious room for a new entry. The variable
 expansion is pure-function territory.
 
-The only non-trivial design coupling is with `PLAN-slash-commands.md`
+The only non-trivial design coupling is with `_done/PLAN-slash-commands.md`
 — both features write into the same autocomplete dropdown. Resolved
 above (single shared resolver, skill-triggers reserved). If
 slash-commands lands first, this plan extends the autocomplete; if
@@ -384,7 +384,7 @@ gets messy.
 | `lib/client/sync/reconcile.ts` | Bidirectional mapping |
 | `lib/client/hooks/use-sync.ts` | Subscribe `diffPrompts` |
 
-### Phase 3 (slash — future PR, depends on PLAN-slash-commands)
+### Phase 3 (slash — future PR, depends on _done/PLAN-slash-commands)
 
 | File | Why |
 |---|---|
@@ -444,4 +444,4 @@ plan ships first, as a deliberate seam.
   permissive — these are user-visible labels, not identifiers.
 - **What does the variable-fill modal look like on mobile?**
   Bottom sheet rather than anchored popover. Reuses the pattern
-  from PLAN-explain-selection's mobile sheet.
+  from _done/PLAN-explain-selection's mobile sheet.

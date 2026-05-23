@@ -44,7 +44,7 @@ here is conversation-local.
 (run now). They share the symbol but are behaviourally distinct and
 must not collide on a trigger. `@` stays prompts-only (text
 expansion) — unchanged by this plan. See the two-symbol model in
-`PLAN-slash-commands.md`.
+`_done/PLAN-slash-commands.md`.
 
 ```
 /  ──► skill   (search, fetch, image, files)  → force skill, strip prefix, SEND
