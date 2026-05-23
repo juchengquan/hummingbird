@@ -1,9 +1,14 @@
 # Plan: Slash commands for skill chaining
 
-Status: **🚧 in progress** — two-symbol model locked (`/` skills,
-`@` prompts). Implementing the `/` skill surface first; the `@`
-prompt surface is prompt-library Phase 3 and reuses the same
-autocomplete component.
+Status: **🪜 `/` skill surface shipped** in
+[#55](https://github.com/juchengquan/hummingbird/pull/55) — parser,
+autocomplete, force-skill-for-turn, the four skill triggers. The
+two-symbol model is locked (`/` skills, `@` prompts). Two related
+surfaces are still pending and have their own plans:
+- **`@` prompt expansion** → prompt-library Phase 3
+  (`PLAN-prompt-library.md`), reuses the same autocomplete component.
+- **`/` action commands** (`/clear`, `/rename`, `/new`, `/model`,
+  `/help`) → `PLAN-slash-action-commands.md`.
 
 Power-user shortcut for forcing a skill on for a single turn from the
 chat input. Type `/search …`, `/fetch …`, `/image …` and the matching
