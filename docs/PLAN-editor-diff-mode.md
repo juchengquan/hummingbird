@@ -1,9 +1,10 @@
 # Plan: Diff mode for editor AI commands
 
-Status: **planning** — no code yet. Rewritten after surveying the
-existing Plate suggestion infrastructure; original plan
-overestimated the scope by ~2× because much of the Track Changes
-UX is already wired.
+Status: **✅ shipped** in [#49](https://github.com/juchengquan/hummingbird/pull/49)
+— review-changes toggle, review pill, keyboard navigation. Rewritten
+before implementation after surveying the existing Plate suggestion
+infrastructure; original plan overestimated the scope by ~2× because
+much of the Track Changes UX was already wired.
 
 When the rich-text editor's AI command (`/api/ai/command`) modifies
 the document, the user reviews each change before it commits —
