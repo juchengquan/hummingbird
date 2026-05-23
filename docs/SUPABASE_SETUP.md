@@ -119,9 +119,11 @@ errors:
      replaced, so Undo knows what to restore). Idempotent — safe to
      re-run.
 9. `supabase/migrations/0009_search_file_sections.sql`
-   - Adds the SECURITY DEFINER helper `search_file_sections` that
-     powers the `searchFiles` skill (Phase 3 of the file full-text
-     retrieval plan). RLS-bound to the caller's `auth.uid()`.
+   - Adds the `search_file_sections(p_file_id, p_query, …)`
+     SECURITY INVOKER function that wraps Postgres `ts_headline`
+     over `files.full_text` (added in 0007). Backs the
+     `searchFiles` ServerSkill — see Phase 3 of the file full-text
+     retrieval plan. Granted to `authenticated`.
 10. `supabase/migrations/0010_message_generated_images.sql`
     - Adds `generated_images jsonb` to `messages` so the assistant's
       generated-image gallery (with storage paths + signed URLs)

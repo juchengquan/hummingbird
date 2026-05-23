@@ -104,7 +104,9 @@ SQL lives under `supabase/migrations/` as ten files (`0001_schema.sql`,
 `0008_message_compression.sql`, `0009_search_file_sections.sql`,
 `0010_message_generated_images.sql`) — see `docs/SUPABASE_SETUP.md`
 for the hosted-cloud run order, or `docs/SUPABASE_LOCAL.md` for the
-local Supabase CLI path (Docker-based, no cloud account needed).
+local Supabase CLI path (Docker-based, no cloud account needed). For
+verifying the file full-text retrieval pipeline end-to-end after
+schema or extraction changes, see `docs/SUPABASE_TEST.md`.
 
 ## Frontend module conventions
 
