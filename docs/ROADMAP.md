@@ -10,7 +10,7 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-05-23 (housekeeping sweep — PRs #43, #45, #49–53).
+Last updated: 2026-05-23 (slash `/` skills #55 shipped; action-commands plan drafted).
 
 ---
 
@@ -31,6 +31,7 @@ to a representative PR otherwise.
 
 | When | Feature | Where |
 |---|---|---|
+| 2026-05-23 | Slash commands — `/` skill surface (parser, autocomplete, force-skill-for-turn) | [PLAN](PLAN-slash-commands.md) · [#55](https://github.com/juchengquan/hummingbird/pull/55) |
 | 2026-05-23 | Prompt library — Phase 2 (Supabase sync: `prompts` table, `diffPrompts`, reconcile) | [PLAN](PLAN-prompt-library.md) · [#53](https://github.com/juchengquan/hummingbird/pull/53) |
 | 2026-05-23 | Multi-conversation fix — per-message store mutators address by message id | [#52](https://github.com/juchengquan/hummingbird/pull/52) |
 | 2026-05-23 | Per-conversation streaming state — switching chats no longer blocks input | [#43](https://github.com/juchengquan/hummingbird/pull/43) |
@@ -82,17 +83,14 @@ Earlier features (kept for reference, no specific date):
 |---|---|---|
 | _(nothing actively in flight)_ | | |
 
-A WIP commit for slash commands lives on `claude/slash-commands`
-(shared parser + registry only). Treated as planned, not in
-progress, until UI / chat-panel wiring picks up.
-
 ---
 
 ## Planned (have a PLAN, no code yet)
 
 | Plan | Status | Sketch |
 |---|---|---|
-| 📐 [Slash commands for skill chaining](PLAN-slash-commands.md) | planning | `/search`, `/fetch`, `/image` autocomplete |
+| 🪜 [Slash commands](PLAN-slash-commands.md) | `/` skills shipped (#55) | Pending: `@` prompt expansion (→ prompt library Phase 3), `/` action commands (→ below) |
+| 📐 [Slash action commands](PLAN-slash-action-commands.md) | planning | `/clear`, `/rename`, `/new`, `/model`, `/help` — run-now commands, no send |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Long-running task mode](PLAN-long-running-tasks.md) | planning | Async step-based agent with progress + notifications |
 | 📐 [Workspace canvas](PLAN-workspace-canvas.md) | planning | Spatial drag-drop view of messages / artifacts / files |
