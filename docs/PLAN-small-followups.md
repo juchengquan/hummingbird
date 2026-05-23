@@ -14,7 +14,11 @@ can implement one in isolation without re-reading the rest.
 
 ---
 
-## 1. Cross-device sync of `Message.generatedImages` metadata
+## ~~1. Cross-device sync of `Message.generatedImages` metadata~~ ✅ shipped ([#45](https://github.com/juchengquan/hummingbird/pull/45))
+
+Migration `0010_message_generated_images.sql` + `diffMessages`
+upsert + reconcile hydration with a defensive boundary parser.
+Original notes kept below for reference.
 
 **Why.** Phase 1 image-gen storage shipped the bytes to Supabase
 Storage with a `storagePath` on `GeneratedImage`, but the message
@@ -171,7 +175,11 @@ support that; rotating the underlying bytes would be the path).
 
 ---
 
-## 5. ROADMAP refresh sweep (housekeeping)
+## ~~5. ROADMAP refresh sweep (housekeeping)~~ ✅ done (this PR)
+
+Swept PRs #43, #45, #49–53 into the ROADMAP Shipped table and
+fixed the small-followups status line. Recurring chore — re-run
+whenever the table drifts. Original notes kept below.
 
 **Why.** `docs/ROADMAP.md` got stale within hours of landing — a
 few features shipped immediately after. A periodic sweep keeps it

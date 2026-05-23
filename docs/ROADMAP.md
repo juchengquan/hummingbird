@@ -10,7 +10,7 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-05-23 (backlog plan drafts).
+Last updated: 2026-05-23 (housekeeping sweep — PRs #43, #45, #49–53).
 
 ---
 
@@ -31,8 +31,14 @@ to a representative PR otherwise.
 
 | When | Feature | Where |
 |---|---|---|
+| 2026-05-23 | Prompt library — Phase 2 (Supabase sync: `prompts` table, `diffPrompts`, reconcile) | [PLAN](PLAN-prompt-library.md) · [#53](https://github.com/juchengquan/hummingbird/pull/53) |
+| 2026-05-23 | Multi-conversation fix — per-message store mutators address by message id | [#52](https://github.com/juchengquan/hummingbird/pull/52) |
+| 2026-05-23 | Per-conversation streaming state — switching chats no longer blocks input | [#43](https://github.com/juchengquan/hummingbird/pull/43) |
 | 2026-05-23 | Prompt library — Phase 1 (sidebar group, dialogs, click-to-insert) | [PLAN](PLAN-prompt-library.md) · [#50](https://github.com/juchengquan/hummingbird/pull/50) |
 | 2026-05-23 | Editor diff mode for AI commands (toggle, review pill, keyboard nav) | [PLAN](PLAN-editor-diff-mode.md) · [#49](https://github.com/juchengquan/hummingbird/pull/49) |
+| 2026-05-23 | Cross-device sync for `Message.generatedImages` (metadata column + reconcile) | [#45](https://github.com/juchengquan/hummingbird/pull/45) |
+| 2026-05-23 | DOCX / CSV / text file previews | `647b23d` |
+| 2026-05-23 | Image handling + right-side viewer drawer integration | `2c1e1ea` |
 | 2026-05-22 | "Compress older messages" action with reversible recap | [#37](https://github.com/juchengquan/hummingbird/pull/37) |
 | 2026-05-22 | Sandboxed-iframe live artifacts (TSX/HTML/SVG/Mermaid) | [PLAN](PLAN-live-artifacts.md) · [#36](https://github.com/juchengquan/hummingbird/pull/36) |
 | 2026-05-22 | File full-text retrieval — all 5 phases (caps, FTS storage, `searchFiles` skill + RPC, UI affordances) | [PLAN](PLAN-file-full-text-retrieval.md) · [TEST](SUPABASE_TEST.md) · [#33](https://github.com/juchengquan/hummingbird/pull/33), [#35](https://github.com/juchengquan/hummingbird/pull/35), [#40](https://github.com/juchengquan/hummingbird/pull/40), [#41](https://github.com/juchengquan/hummingbird/pull/41) |
@@ -91,7 +97,7 @@ progress, until UI / chat-panel wiring picks up.
 | 📐 [Long-running task mode](PLAN-long-running-tasks.md) | planning | Async step-based agent with progress + notifications |
 | 📐 [Workspace canvas](PLAN-workspace-canvas.md) | planning | Spatial drag-drop view of messages / artifacts / files |
 | 📐 [Project mode](PLAN-project-mode.md) | planning | Workspace → goal + milestones + Kanban tasks (depends on long-running tasks) |
-| 📐 [Small follow-ups batch](PLAN-small-followups.md) | planning | Five half-day items: generatedImages sync, accurate tokens, recap-of-recaps, signed-URL re-sign, roadmap refresh |
+| 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 2 of 5 done | Done: generatedImages sync (#45), roadmap sweep. Open: accurate tokens, recap-of-recaps, signed-URL re-sign |
 | 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 pending | Python backend rewrite (gated on a clear product win) |
 
 ---
