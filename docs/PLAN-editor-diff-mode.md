@@ -38,20 +38,26 @@ not gambling on whether to overwrite their draft.
   default ON. Power users who want today's blast-replace UX can
   flip it off per-prompt. (Persisting the toggle across sessions is
   v1 polish — store in `useStore` next to other editor prefs.)
-- Diff surface: an **inline split view** within the affected block(s)
-  — original on the left, proposed on the right, with row-level
-  Accept / Reject buttons between them. No modal dialog (preserves
-  the user's spatial context in the doc).
-- Granularity: **paragraph / block-level**. Sentence-level and
-  character-level diffs are interesting but the editor's value is a
-  tree of Slate nodes, so block-level maps naturally onto the data
-  model. Within a paragraph, the diff is shown as text-level
-  inline highlights for readability, but accept/reject buttons act
-  on the whole paragraph.
-- One-click "Accept all" / "Reject all" buttons at the top of the
-  review pane so trivial cases don't require clicking every chunk.
-- Esc dismisses the review and rejects all unresolved chunks (same
-  as the existing AI menu's Discard).
+- **Diff surface: inline Track Changes** (Word / Google Docs style).
+  Additions render in green underline, deletions in red strikethrough,
+  in the doc itself at normal width. Hovering any change reveals a
+  floating action chip with **✓ Accept / ✕ Reject / ↻ Regenerate**.
+  No split-view, no side panel — the doc stays at its normal
+  width, which is critical for mobile and narrow editor columns.
+- **Granularity: paragraph / block-level for accept/reject**;
+  word-level highlights for *reading* the change. Slate's data
+  model is a tree of nodes — splitting a paragraph mid-text-run
+  into "accept this word, reject that word" cascades into "what
+  if the user already had marks here." Block-level keeps the
+  invariants clean; the inline highlights are decoration.
+- **Review bar** anchored bottom-center while review is active:
+  shows "N AI changes pending" + `Accept all` / `Reject all` /
+  `Done` controls. Mirrors the existing `AILoadingBar` placement.
+- **Keyboard:** `Tab` / `Shift+Tab` move focus to next / previous
+  pending change; `Y` accepts the focused one, `N` rejects it,
+  `⌘↵` accepts-all-and-dismisses, `Esc` rejects-all-and-dismisses.
+- One-click `Accept all` / `Reject all` for the common case where
+  the user just wants the whole rewrite (or doesn't).
 
 **Cut from v1 to keep it shippable:**
 
@@ -71,6 +77,29 @@ not gambling on whether to overwrite their draft.
 - **Diff for AI commands invoked from outside the AI menu** (e.g. a
   future "suggest next paragraph" plugin). Same surface should work
   generically, but v1 only wires the existing AI menu.
+
+## UX shape — why Track Changes over split-view
+
+Three layouts were considered:
+
+1. **Inline split-view.** Each block becomes a two-column row in
+   the doc — original on the left, proposed on the right, action
+   buttons between. Unambiguous but doubles vertical space, and
+   wrecks the editor at mobile widths (a 640 px column → two
+   280 px columns is unusable).
+2. **Track Changes inline (chosen).** Word / Google Docs pattern.
+   Proposed text replaces original inline; additions in green,
+   deletions in red strikethrough; hover chip carries the
+   actions. Doc keeps its normal width. Familiar to every writer.
+   Maps cleanly onto Slate's existing decoration / mark system.
+3. **Side panel.** Right-rail with a code-review-style hunk view;
+   doc unchanged until accept. Rejected because the editor *is*
+   the work surface — putting the diff next to it disconnects
+   "review" from "where I'm reading."
+
+The hard cost of Track Changes is dense changes (every other word
+rewritten) — the red/green interleave can get noisy. Addressed
+via the per-chip eye-toggle described under "Edge cases."
 
 ## Surface architecture
 
@@ -104,24 +133,45 @@ its Accept/Discard buttons, route through a new
 Per-chunk Accept keeps the corresponding "after" node; Reject swaps
 it back to the snapshot's node.
 
-### Two new components
+### How the inline Track Changes view renders
 
-**`components/editor/ai-diff-review.tsx`** — the inline split view.
-For each diffed block (paragraph, heading, list item, etc.), renders:
+During review, both the **proposed** node and the **original** node
+for each `replaced` chunk are present in the editor — the original
+hidden as a Slate decoration carrying a `kind: "ai-remove"` mark,
+the proposed as `kind: "ai-add"`. Plate's decoration system already
+supports per-leaf rendering, so a renderer plugin paints:
 
-- Left column: original node, dimmed
-- Right column: proposed node, with text-level highlights
-  (additions in green, deletions in red — pure visual, the
-  accept/reject still acts at the block level)
-- A small `✓ Accept / ✕ Reject` button strip between them
+- `ai-add` marks → `text-emerald-700` + light green underline
+- `ai-remove` marks → `text-red-700` + strikethrough, slightly dimmed
+- Hovering or focusing a change → floating chip with action buttons
+- `added` / `removed` whole-block chunks → the entire block carries
+  the corresponding mark, so the block reads as one continuous
+  green-added or red-strikethrough region
 
-Anchored above/below the affected blocks using Plate's slot system
-(same anchoring trick as `ai-menu.tsx`).
+For inline highlighting *within* a replaced paragraph (word-level
+green / red), `fast-diff` runs on the leaf text of the before /
+after pair; the result becomes a list of `{ text, kind: 'unchanged'
+| 'add' | 'remove' }` segments which the decoration plugin paints.
+The accept/reject verdict still acts on the whole block — these
+are just visual cues that help the user read the change.
+
+### Three new components
+
+**`components/editor/ai-diff-decoration.tsx`** — the Plate decoration
+plugin that paints `ai-add` / `ai-remove` marks and renders the
+hover chip. The chip is anchored to the changed range via Plate's
+existing range-anchored positioning (same trick `ai-menu.tsx`
+already uses).
+
+**`components/editor/ai-diff-chip.tsx`** — the floating per-change
+action chip: `✓ Accept`, `✕ Reject`, `↻ Regenerate`, with `⌘E`
+keyboard hint. Appears on hover, focus, or after `Tab`-navigation
+brings the change into focus.
 
 **`components/editor/ai-diff-review-bar.tsx`** — replaces / extends
-the existing `AILoadingBar`. Adds "Accept all" / "Reject all" /
-"Done" controls. "Done" is enabled once every chunk has a verdict
-(or after a single "Accept all").
+the existing `AILoadingBar`. Bottom-center pill with "N AI changes
+pending", `Accept all`, `Reject all`, `Done`. "Done" is enabled
+once every chunk has a verdict (or after a single `Accept all`).
 
 ### One new pure-logic module
 
@@ -153,6 +203,13 @@ verdict still acts on the whole block.
   2 paragraphs. The diff is `[replaced, replaced, removed]` or
   similar. Each chunk gets its own accept/reject. "Accept all" or
   "Reject all" handles the common case in one click.
+- **Dense changes (every other word rewritten).** Interleaved
+  red-strikethrough + green-underline can get noisy to parse. The
+  hover chip on each change includes a tiny eye-toggle that
+  briefly hides removals (showing only the proposed text) or
+  hides additions (showing only the original). Cheap to add as a
+  per-chip toggle on the existing decoration plugin — not in v1
+  critical path but recorded here.
 - **Stream still running when user clicks Accept on an early
   chunk.** Either disable per-chunk buttons until `onFinish`, or
   accept the in-flight value (which may still change). v1: disable
@@ -206,17 +263,20 @@ issue and the implementation stays cheap.
 | File | Why |
 |---|---|
 | `components/editor/plugins/ai-kit.tsx` | Snapshot on chunk-start, hand off to review UI on finish |
-| `components/editor/ai-diff-review.tsx` *(new)* | Inline split-view UI |
-| `components/editor/ai-diff-review-bar.tsx` *(new)* | Accept-all / Reject-all / Done controls |
+| `components/editor/ai-diff-decoration.tsx` *(new)* | Plate decoration plugin painting `ai-add` / `ai-remove` marks |
+| `components/editor/ai-diff-chip.tsx` *(new)* | Floating per-change action chip |
+| `components/editor/ai-diff-review-bar.tsx` *(new)* | Accept-all / Reject-all / Done controls + change counter |
 | `lib/client/editor/diff-blocks.ts` *(new)* | Pure block-level diff function |
 | `lib/client/editor/diff-blocks.test.ts` *(new)* | Unit tests on the diff function |
 | `components/ui/ai-menu.tsx` | Add "Review changes" toggle, default on |
 | `lib/client/hooks/use-store.ts` | Persist the toggle pref |
 | `package.json` | Add `fast-diff` dependency (~3 KB) |
 
-**~400 lines** of new code, ~80 of tests. The split-view rendering
-is the biggest chunk; the diff function is small once `fast-diff`
-does the LCS work.
+**~350 lines** of new code, ~80 of tests. Smaller than the
+split-view design because the decoration plugin reuses Plate's
+existing mark-rendering pipeline instead of a custom two-column
+layout. The diff function is small once `fast-diff` does the LCS
+work.
 
 ## Test plan
 
