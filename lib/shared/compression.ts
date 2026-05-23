@@ -66,3 +66,80 @@ function isEligible(m: Message): boolean {
   if (m.error) return false
   return true
 }
+
+/**
+ * Existing recap messages positioned before `beforeMessageId` in the
+ * conversation. Used by the re-compress flow: when the user compresses
+ * again, any recap that already sits ahead of the new slice gets folded
+ * into the new recap (its content into the summariser input, its
+ * `recapMessageIds` inherited) rather than left stacked. With the fold
+ * in place there's normally at most one, but we return all for
+ * robustness against legacy conversations that stacked recaps before
+ * this landed.
+ */
+export function priorRecapsBefore(
+  messages: Message[],
+  beforeMessageId: string
+): Message[] {
+  const idx = messages.findIndex((m) => m.id === beforeMessageId)
+  if (idx === -1) return []
+  return messages.filter((m, i) => i < idx && m.kind === "recap")
+}
+
+export interface CompressionResult {
+  /** The rebuilt message list: prior recaps dropped, the new recap
+   *  inserted at the head of the compressed slice, the slice flagged
+   *  `compressed`. */
+  messages: Message[]
+  /** The inserted recap (so the caller can scroll/focus it). */
+  recap: Message
+}
+
+/**
+ * Pure core of the `compressMessages` store mutator. Given the
+ * conversation's messages, the ids being compressed, and a pre-summarised
+ * recap body, produce the new message array + the recap row.
+ *
+ * Re-compress fold: any recap already sitting before the slice is
+ * removed and its `recapMessageIds` are prepended to the new recap's, so
+ * a single Undo restores every original message across both spans. The
+ * caller is responsible for having folded those prior recaps' *content*
+ * into `recapContent` (via `priorRecapsBefore` → summariser input).
+ *
+ * Returns null when none of `compressIds` are present (stale ids).
+ */
+export function buildCompressedMessages(
+  messages: Message[],
+  compressIds: string[],
+  recapId: string,
+  recapContent: string,
+  now: Date
+): CompressionResult | null {
+  const idSet = new Set(compressIds)
+  const firstIdx = messages.findIndex((m) => idSet.has(m.id))
+  if (firstIdx === -1) return null
+
+  const firstCompressId = messages[firstIdx].id
+  const priorRecaps = priorRecapsBefore(messages, firstCompressId)
+  const priorRecapIds = new Set(priorRecaps.map((r) => r.id))
+  const inheritedIds = priorRecaps.flatMap((r) => r.recapMessageIds ?? [])
+
+  const recap: Message = {
+    id: recapId,
+    role: "assistant",
+    content: recapContent,
+    timestamp: now,
+    kind: "recap",
+    recapMessageIds: [...inheritedIds, ...compressIds],
+  }
+
+  const next: Message[] = []
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i]
+    if (priorRecapIds.has(m.id)) continue // fold: drop the old recap row
+    if (i === firstIdx) next.push(recap)
+    next.push(idSet.has(m.id) ? { ...m, compressed: true } : m)
+  }
+  return { messages: next, recap }
+}
+

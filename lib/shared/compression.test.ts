@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import type { Message } from "@/shared/types"
-import { pickCompressionRange, MIN_MESSAGES_TO_COMPRESS } from "./compression"
+import {
+  buildCompressedMessages,
+  pickCompressionRange,
+  priorRecapsBefore,
+  MIN_MESSAGES_TO_COMPRESS,
+} from "./compression"
 
 function msg(
   i: number,
@@ -99,5 +104,93 @@ describe("pickCompressionRange", () => {
     expect(result!.toCompress.length).toBeGreaterThanOrEqual(
       MIN_MESSAGES_TO_COMPRESS
     )
+  })
+})
+
+describe("priorRecapsBefore", () => {
+  test("returns recaps positioned before the anchor", () => {
+    const messages = [
+      msg(0, { kind: "recap", content: "R0", recapMessageIds: ["x"] }),
+      msg(1, { compressed: true }),
+      msg(2),
+      msg(3),
+    ]
+    expect(priorRecapsBefore(messages, "m-2").map((m) => m.id)).toEqual([
+      "m-0",
+    ])
+  })
+
+  test("no recap before the anchor → empty", () => {
+    expect(priorRecapsBefore([msg(0), msg(1, { kind: "recap" })], "m-0")).toEqual(
+      []
+    )
+  })
+
+  test("unknown anchor id → empty", () => {
+    expect(priorRecapsBefore([msg(0)], "nope")).toEqual([])
+  })
+})
+
+describe("buildCompressedMessages", () => {
+  const NOW = new Date(2026, 0, 2)
+
+  test("first compress: inserts recap, flags the slice, no inheritance", () => {
+    const messages = Array.from({ length: 6 }, (_, i) => msg(i))
+    const r = buildCompressedMessages(
+      messages,
+      ["m-0", "m-1", "m-2"],
+      "recap-1",
+      "RECAP BODY",
+      NOW
+    )
+    expect(r).not.toBeNull()
+    const out = r!.messages
+    expect(out[0].id).toBe("recap-1")
+    expect(out[0].kind).toBe("recap")
+    expect(r!.recap.recapMessageIds).toEqual(["m-0", "m-1", "m-2"])
+    expect(out.slice(1, 4).every((m) => m.compressed)).toBe(true)
+    expect(out.slice(4).every((m) => !m.compressed)).toBe(true)
+    expect(out).toHaveLength(messages.length + 1)
+  })
+
+  test("re-compress fold: drops the prior recap and inherits its ids", () => {
+    const messages: Message[] = [
+      msg(100, {
+        kind: "recap",
+        content: "R1",
+        recapMessageIds: ["m-0", "m-1", "m-2"],
+      }),
+      msg(0, { compressed: true }),
+      msg(1, { compressed: true }),
+      msg(2, { compressed: true }),
+      msg(3),
+      msg(4),
+      msg(5),
+    ]
+    const r = buildCompressedMessages(
+      messages,
+      ["m-3", "m-4"],
+      "recap-2",
+      "MERGED RECAP",
+      NOW
+    )
+    expect(r).not.toBeNull()
+    const out = r!.messages
+    expect(out.some((m) => m.id === "m-100")).toBe(false)
+    expect(out.filter((m) => m.kind === "recap")).toHaveLength(1)
+    expect(r!.recap.recapMessageIds).toEqual([
+      "m-0",
+      "m-1",
+      "m-2",
+      "m-3",
+      "m-4",
+    ])
+    expect(out.find((m) => m.id === "m-0")!.compressed).toBe(true)
+    expect(out.find((m) => m.id === "m-3")!.compressed).toBe(true)
+    expect(out.find((m) => m.id === "m-5")!.compressed).toBeFalsy()
+  })
+
+  test("stale ids (none present) → null", () => {
+    expect(buildCompressedMessages([msg(0)], ["nope"], "r", "x", NOW)).toBeNull()
   })
 })

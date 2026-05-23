@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/dialog"
 import { apiClient } from "@/client/api-client"
 import { useStore } from "@/client/hooks/use-store"
-import { pickCompressionRange } from "@/shared/compression"
+import { pickCompressionRange, priorRecapsBefore } from "@/shared/compression"
 import { contextZone, estimateConversationTokens } from "@/shared/tokens"
 import { getChatModel } from "@/shared/models"
 import type { Message } from "@/shared/types"
@@ -61,12 +61,24 @@ export function CompressButton({
   const handleConfirm = async () => {
     setBusy(true)
     try {
+      // Re-compress fold: if a recap already sits before this slice,
+      // prepend its body to the summariser input so the new recap
+      // subsumes it (the store mutator then drops the old recap row and
+      // inherits its `recapMessageIds`). Keeps one recap per chat
+      // instead of a growing stack.
+      const priorRecaps = priorRecapsBefore(messages, pick.toCompress[0].id)
       const response = await apiClient.summarize.compress({
         mode: "compress",
-        messages: pick.toCompress.map((m) => ({
-          role: m.role,
-          content: m.content,
-        })),
+        messages: [
+          ...priorRecaps.map((r) => ({
+            role: "assistant" as const,
+            content: `Summary of earlier messages:\n${r.content}`,
+          })),
+          ...pick.toCompress.map((m) => ({
+            role: m.role,
+            content: m.content,
+          })),
+        ],
         model: modelId,
       })
       if (!response) {
