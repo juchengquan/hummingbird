@@ -344,7 +344,13 @@ interface AppState {
   activeConversationId: string | null
 
   // Chat
-  isTyping: boolean
+  /** Conversation ids currently mid-stream — populated by chat.tsx
+   *  when it starts a send, cleared on stream end (or abort/error).
+   *  Per-conversation so switching to another chat while one is
+   *  streaming doesn't blanket-disable input everywhere; see
+   *  `useIsConversationTyping(id)` for the derived per-conversation
+   *  flag. Not persisted: streaming state is ephemeral. */
+  typingConversationIds: string[]
   streamingContent: string
   chatModel: string
   /**
@@ -630,7 +636,14 @@ interface AppState {
   setActiveConversation: (conversationId: string | null) => void
 
   // Message actions
-  addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => Message
+  /** Append a message. Defaults to the active conversation; pass
+   *  `conversationId` explicitly when a streaming callback may
+   *  outlive the user's focus (e.g. they switch chats while a
+   *  response is in flight). */
+  addMessage: (
+    message: Omit<Message, 'id' | 'timestamp'>,
+    conversationId?: string
+  ) => Message
   deleteMessage: (messageId: string) => void
   updateMessage: (messageId: string, content: string) => void
   truncateMessagesAfter: (messageId: string, inclusive?: boolean) => void
@@ -650,7 +663,10 @@ interface AppState {
    *  doesn't refer to a recap. */
   uncompressRecap: (conversationId: string, recapMessageId: string) => void
   clearMessages: () => void
-  setIsTyping: (typing: boolean) => void
+  /** Mark a conversation as "typing" (loading dots above the
+   *  message list). Idempotent — passing `true` twice for the same
+   *  id is a no-op. */
+  setConversationTyping: (conversationId: string, typing: boolean) => void
   /** Set the pending I2I reference for the next user message. Pass
    *  `null` to clear. */
   setPendingReferenceImage: (
@@ -756,7 +772,7 @@ export const useStore = create<AppState>()(
       activeConversationId: 'demo-1',
 
       // Chat
-      isTyping: false,
+      typingConversationIds: [],
       streamingContent: '',
       chatModel: DEFAULT_CHAT_MODEL,
       sessionModelOverridden: false,
@@ -1859,16 +1875,20 @@ export const useStore = create<AppState>()(
         set({ activeConversationId: conversationId }),
 
       // Message actions
-      addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => {
+      addMessage: (
+        message: Omit<Message, 'id' | 'timestamp'>,
+        conversationId?: string
+      ) => {
         const newMessage: Message = {
           ...message,
           id: uuid(),
           timestamp: new Date(),
         }
         set((state) => {
-          const { conversations, activeConversationId } = state
-          const updatedConversations = conversations.map((c) => {
-            if (c.id === activeConversationId) {
+          const targetId = conversationId ?? state.activeConversationId
+          if (!targetId) return {}
+          const updatedConversations = state.conversations.map((c) => {
+            if (c.id === targetId) {
               return {
                 ...c,
                 messages: [...c.messages, newMessage],
@@ -1992,7 +2012,17 @@ export const useStore = create<AppState>()(
             return c
           }),
         })),
-      setIsTyping: (typing: boolean) => set({ isTyping: typing }),
+      setConversationTyping: (conversationId: string, typing: boolean) =>
+        set((state) => {
+          const has = state.typingConversationIds.includes(conversationId)
+          if (typing && has) return {}
+          if (!typing && !has) return {}
+          return {
+            typingConversationIds: typing
+              ? [...state.typingConversationIds, conversationId]
+              : state.typingConversationIds.filter((id) => id !== conversationId),
+          }
+        }),
       setPendingReferenceImage: (value) =>
         set({ pendingReferenceImage: value }),
       setStreamingContent: (content: string) => set({ streamingContent: content }),
@@ -2718,6 +2748,15 @@ export const useActiveConversation = () => {
   const conversations = useStore((state) => state.conversations)
   const activeConversationId = useStore((state) => state.activeConversationId)
   return conversations.find((c) => c.id === activeConversationId) || null
+}
+
+/** True iff the given conversation is currently mid-stream. `null`
+ *  conversation id always returns false. Cheap O(n) lookup over the
+ *  typing-ids array which is realistically always 0–few items long. */
+export const useIsConversationTyping = (conversationId: string | null): boolean => {
+  return useStore((state) =>
+    conversationId !== null && state.typingConversationIds.includes(conversationId)
+  )
 }
 
 /**

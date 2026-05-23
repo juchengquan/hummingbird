@@ -168,11 +168,11 @@ export function diffConversations(
   next: Conversation[],
   /**
    * When a message is currently streaming we skip per-chunk message
-   * upserts (huge volume, no value). Pass the active conversation id
-   * when `isTyping === true` so we hold off on its message diff until
-   * the stream ends.
+   * upserts (huge volume, no value). Pass the set of conversation ids
+   * currently mid-stream so their message diffs are held off until
+   * each stream ends.
    */
-  options: { streamingConversationId?: string | null } = {}
+  options: { streamingConversationIds?: ReadonlySet<string> } = {}
 ): SyncOp[] {
   const ops: SyncOp[] = []
   const prevById = byId(prev)
@@ -205,9 +205,9 @@ export function diffConversations(
       })
     }
 
-    // Diff messages on this conversation, skipping the one that's
+    // Diff messages on this conversation, skipping ones that are
     // currently streaming.
-    const skipMessages = options.streamingConversationId === c.id
+    const skipMessages = options.streamingConversationIds?.has(c.id) ?? false
     if (!skipMessages) {
       ops.push(...diffMessages(c.id, before?.messages ?? [], c.messages))
     }
