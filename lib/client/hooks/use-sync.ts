@@ -32,6 +32,7 @@ import {
   diffMcpResources,
   diffMcpServers,
   diffNotes,
+  diffPrompts,
   diffResources,
   diffUrlBookmarks,
   diffWorkspaces,
@@ -47,6 +48,7 @@ import type {
   McpResourceBinding,
   McpServer,
   Note,
+  Prompt,
   Resource,
   UploadedFile,
   UrlBookmark,
@@ -62,6 +64,7 @@ interface Snapshot {
   conversationFiles: ConversationFile[]
   notes: Note[]
   artifacts: Artifact[]
+  prompts: Prompt[]
   mcpServers: McpServer[]
   mcpResources: McpResource[]
   mcpResourceBindings: McpResourceBinding[]
@@ -84,6 +87,7 @@ function takeSnapshot(): Snapshot {
     conversationFiles: s.conversationFiles,
     notes: s.notes,
     artifacts: s.artifacts,
+    prompts: s.prompts,
     mcpServers: s.mcpServers,
     mcpResources: s.mcpResources,
     mcpResourceBindings: s.mcpResourceBindings,
@@ -134,6 +138,7 @@ export function useSync(): void {
         conversationFiles: state.conversationFiles,
         notes: state.notes,
         artifacts: state.artifacts,
+        prompts: state.prompts,
         mcpServers: state.mcpServers,
         mcpResources: state.mcpResources,
         mcpResourceBindings: state.mcpResourceBindings,
@@ -156,6 +161,7 @@ export function useSync(): void {
         prev.conversationFiles === next.conversationFiles &&
         prev.notes === next.notes &&
         prev.artifacts === next.artifacts &&
+        prev.prompts === next.prompts &&
         prev.mcpServers === next.mcpServers &&
         prev.mcpResources === next.mcpResources &&
         prev.mcpResourceBindings === next.mcpResourceBindings &&
@@ -190,6 +196,9 @@ export function useSync(): void {
         ...(prev.notes !== next.notes ? diffNotes(prev.notes, next.notes) : []),
         ...(prev.artifacts !== next.artifacts
           ? diffArtifacts(prev.artifacts, next.artifacts)
+          : []),
+        ...(prev.prompts !== next.prompts
+          ? diffPrompts(prev.prompts, next.prompts)
           : []),
         ...(prev.mcpServers !== next.mcpServers
           ? diffMcpServers(prev.mcpServers, next.mcpServers)
@@ -288,6 +297,7 @@ export function setSyncSnapshot(snapshot: {
   conversationFiles: ConversationFile[]
   notes: Note[]
   artifacts: Artifact[]
+  prompts: Prompt[]
   mcpServers: McpServer[]
   mcpResources: McpResource[]
   mcpResourceBindings: McpResourceBinding[]

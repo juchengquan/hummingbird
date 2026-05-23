@@ -68,6 +68,7 @@ export type SyncTarget =
   | "conversation_mcp_resources"
   | "url_bookmarks"
   | "conversation_url_bookmarks"
+  | "prompts"
 
 interface QueueState {
   ops: SyncOp[]

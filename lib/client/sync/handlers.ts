@@ -34,6 +34,7 @@ import type {
   McpServer,
   Message,
   Note,
+  Prompt,
   Resource,
   UploadedFile,
   UrlBookmark,
@@ -947,6 +948,68 @@ function artifactEquals(a: Artifact, b: Artifact): boolean {
     a.storagePath === b.storagePath &&
     a.pinned === b.pinned &&
     sameInstant(a.createdAt, b.createdAt)
+  )
+}
+
+// ------------ prompts -------------------------------------------------------
+//
+// User-scoped prompt templates. Soft-delete via `deletedAt`: a
+// "deleted" prompt becomes a tombstone on the row (deleted_at set);
+// we never emit hard `delete` ops here. Restore is just flipping
+// `deletedAt` back to null + bumping `updatedAt`, which round-trips
+// through the upsert branch like any other field change.
+
+export function diffPrompts(prev: Prompt[], next: Prompt[]): SyncOp[] {
+  const ops: SyncOp[] = []
+  const prevById = byId(prev)
+  const nextById = byId(next)
+
+  for (const p of next) {
+    const before = prevById.get(p.id)
+    if (!before || !promptEquals(before, p)) {
+      ops.push({
+        kind: "upsert",
+        target: "prompts",
+        clientOpId: "",
+        row: {
+          id: p.id,
+          name: p.name,
+          slug: p.slug,
+          template: p.template,
+          variables: p.variables ?? [],
+          created_at: toISO(p.createdAt),
+          updated_at: toISO(p.updatedAt),
+          deleted_at: p.deletedAt ? toISO(p.deletedAt) : null,
+        },
+      })
+    }
+  }
+  // Hard delete only when the prompt disappears entirely from the
+  // local array — should not happen during normal usage (soft-delete
+  // is the user path), but accept it as a clean-up path so a
+  // dev-time wipe doesn't leave orphaned cloud rows.
+  for (const p of prev) {
+    if (!nextById.has(p.id)) {
+      ops.push({
+        kind: "delete",
+        target: "prompts",
+        clientOpId: "",
+        where: { column: "id", value: p.id },
+      })
+    }
+  }
+  return ops
+}
+
+function promptEquals(a: Prompt, b: Prompt): boolean {
+  return (
+    a.name === b.name &&
+    a.slug === b.slug &&
+    a.template === b.template &&
+    sameStringArray(a.variables ?? [], b.variables ?? []) &&
+    sameInstant(a.createdAt, b.createdAt) &&
+    sameInstant(a.updatedAt, b.updatedAt) &&
+    sameInstantOrNull(a.deletedAt, b.deletedAt)
   )
 }
 
