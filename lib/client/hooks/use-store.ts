@@ -30,6 +30,7 @@ import type {
   PinnedExplanation,
 } from '@/shared/types'
 import { DEFAULT_CHAT_MODEL } from '@/shared/models'
+import { buildCompressedMessages } from '@/shared/compression'
 import { deleteBlob as deleteLocalBlob, clearAll as clearLocalBlobs } from '@/client/files/local-store'
 import {
   bulkTombstoneByKind,
@@ -2140,36 +2141,30 @@ export const useStore = create<AppState>()(
         messageIds: string[],
         recapContent: string
       ) => {
-        // Build the recap message outside `set` so we can return it
-        // to the caller (which uses it to scroll into view / focus the
-        // Undo button). Inserted just before the FIRST id in the
-        // range so it visually leads the collapsed group.
-        const recap: Message = {
-          id: uuid(),
-          role: 'assistant',
-          content: recapContent,
-          timestamp: new Date(),
-          kind: 'recap',
-          recapMessageIds: [...messageIds],
-        }
-        const idSet = new Set(messageIds)
-        let applied = false
+        // The array surgery (insert recap, flag the slice, fold any
+        // prior recap so a single Undo restores both spans) lives in
+        // the pure `buildCompressedMessages` helper. We assign its
+        // result out of the `set` updater so the caller still gets the
+        // inserted recap back for scroll/focus.
+        const recapId = uuid()
+        const now = new Date()
+        let recap: Message | null = null
         set((state) => ({
           conversations: state.conversations.map((c) => {
             if (c.id !== conversationId) return c
-            const firstIdx = c.messages.findIndex((m) => idSet.has(m.id))
-            if (firstIdx === -1) return c
-            const next: Message[] = []
-            for (let i = 0; i < c.messages.length; i++) {
-              if (i === firstIdx) next.push(recap)
-              const m = c.messages[i]
-              next.push(idSet.has(m.id) ? { ...m, compressed: true } : m)
-            }
-            applied = true
-            return { ...c, messages: next, updatedAt: new Date() }
+            const built = buildCompressedMessages(
+              c.messages,
+              messageIds,
+              recapId,
+              recapContent,
+              now
+            )
+            if (!built) return c
+            recap = built.recap
+            return { ...c, messages: built.messages, updatedAt: now }
           }),
         }))
-        return applied ? recap : null
+        return recap
       },
       uncompressRecap: (conversationId: string, recapMessageId: string) =>
         set((state) => ({

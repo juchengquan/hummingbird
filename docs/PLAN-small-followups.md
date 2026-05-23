@@ -102,7 +102,13 @@ proxy; document the residual ±10% in the file header.
 
 ---
 
-## 3. Recap-of-recaps cleanup on re-compress
+## ~~3. Recap-of-recaps cleanup on re-compress~~ ✅ shipped
+
+Folding implemented in `buildCompressedMessages` (pure, in
+`lib/shared/compression.ts`) + the summariser-input prepend in
+`CompressButton`. Re-compressing now drops the prior recap row and
+inherits its `recapMessageIds`, so one Undo restores every span and
+only one recap card ever shows. Original notes below.
 
 **Why.** `compressMessages` excludes existing `kind: 'recap'`
 messages from the eligible pool, so a second Compress doesn't
