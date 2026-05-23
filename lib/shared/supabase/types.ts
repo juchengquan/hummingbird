@@ -688,6 +688,42 @@ export type Database = {
         }
         Relationships: []
       }
+      prompts: {
+        Row: {
+          created_at: string
+          deleted_at: string | null
+          id: string
+          name: string
+          slug: string
+          template: string
+          updated_at: string
+          user_id: string
+          variables: string[]
+        }
+        Insert: {
+          created_at?: string
+          deleted_at?: string | null
+          id: string
+          name: string
+          slug: string
+          template: string
+          updated_at?: string
+          user_id: string
+          variables?: string[]
+        }
+        Update: {
+          created_at?: string
+          deleted_at?: string | null
+          id?: string
+          name?: string
+          slug?: string
+          template?: string
+          updated_at?: string
+          user_id?: string
+          variables?: string[]
+        }
+        Relationships: []
+      }
       resources: {
         Row: {
           added_at: string

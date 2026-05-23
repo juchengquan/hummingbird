@@ -29,6 +29,7 @@ import type {
   Message,
   MessageError,
   Note,
+  Prompt,
   Resource,
   UploadedFile,
   UrlBookmark,
@@ -96,6 +97,7 @@ export interface CloudSnapshot {
   conversationFiles: ConversationFile[]
   notes: Note[]
   artifacts: Artifact[]
+  prompts: Prompt[]
   mcpServers: McpServer[]
   mcpResources: McpResource[]
   mcpResourceBindings: McpResourceBinding[]
@@ -118,6 +120,7 @@ export async function fetchCloudSnapshot(
     conversationFilesRes,
     notesRes,
     artifactsRes,
+    promptsRes,
     mcpServersRes,
     mcpResourcesRes,
     mcpResourceBindingsRes,
@@ -135,6 +138,7 @@ export async function fetchCloudSnapshot(
       conversationFilesRes,
       notesRes,
       artifactsRes,
+      promptsRes,
       mcpServersRes,
       mcpResourcesRes,
       mcpResourceBindingsRes,
@@ -155,6 +159,7 @@ export async function fetchCloudSnapshot(
       client.from("conversation_files").select("*").eq("user_id", userId),
       client.from("notes").select("*").eq("user_id", userId),
       client.from("artifacts").select("*").eq("user_id", userId),
+      client.from("prompts").select("*").eq("user_id", userId),
       // MCP: pull metadata only — `credentials_encrypted` stays on the
       // server. Cloud-mode servers come back without a `credentials`
       // field on the store; the chat / proxy routes decrypt on
@@ -191,6 +196,7 @@ export async function fetchCloudSnapshot(
     conversationFilesRes.error ||
     notesRes.error ||
     artifactsRes.error ||
+    promptsRes.error ||
     mcpServersRes.error ||
     mcpResourcesRes.error ||
     mcpResourceBindingsRes.error ||
@@ -472,6 +478,17 @@ export async function fetchCloudSnapshot(
       createdAt: new Date(a.created_at),
     }))
 
+    const prompts: Prompt[] = (promptsRes.data ?? []).map((p) => ({
+      id: p.id,
+      name: p.name,
+      slug: p.slug,
+      template: p.template,
+      variables: p.variables ?? [],
+      createdAt: new Date(p.created_at),
+      updatedAt: new Date(p.updated_at),
+      ...(p.deleted_at ? { deletedAt: new Date(p.deleted_at) } : {}),
+    }))
+
     return {
       workspaces,
       documents,
@@ -481,6 +498,7 @@ export async function fetchCloudSnapshot(
       conversationFiles,
       notes,
       artifacts,
+      prompts,
       mcpServers,
       mcpResources,
       mcpResourceBindings,
@@ -842,6 +860,26 @@ export async function bulkUploadLocalState(
     if (error) return { ok: false, error: `artifacts: ${error.message}` }
   }
 
+  // Prompts — user-scoped saved templates. No `workspace_id` (see the
+  // migration comment for why). Soft-delete fields round-trip via
+  // `deleted_at`.
+  if (snapshot.prompts.length > 0) {
+    const { error } = await client.from("prompts").upsert(
+      snapshot.prompts.map((p) => ({
+        id: p.id,
+        user_id: userId,
+        name: p.name,
+        slug: p.slug,
+        template: p.template,
+        variables: p.variables ?? [],
+        created_at: p.createdAt.toISOString(),
+        updated_at: p.updatedAt.toISOString(),
+        deleted_at: p.deletedAt ? p.deletedAt.toISOString() : null,
+      }))
+    )
+    if (error) return { ok: false, error: `prompts: ${error.message}` }
+  }
+
   return { ok: true }
 }
 
@@ -903,6 +941,7 @@ export function applyCloudSnapshot(snapshot: CloudSnapshot): void {
     conversationFiles: snapshot.conversationFiles,
     notes: snapshot.notes,
     artifacts: snapshot.artifacts,
+    prompts: snapshot.prompts,
     mcpServers: snapshot.mcpServers,
     mcpResources: snapshot.mcpResources,
     mcpResourceBindings: snapshot.mcpResourceBindings,
@@ -920,6 +959,7 @@ export function applyCloudSnapshot(snapshot: CloudSnapshot): void {
     conversationFiles: snapshot.conversationFiles,
     notes: snapshot.notes,
     artifacts: snapshot.artifacts,
+    prompts: snapshot.prompts,
     mcpServers: snapshot.mcpServers,
     mcpResources: snapshot.mcpResources,
     mcpResourceBindings: snapshot.mcpResourceBindings,

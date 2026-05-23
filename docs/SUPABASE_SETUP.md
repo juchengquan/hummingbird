@@ -128,13 +128,20 @@ errors:
     - Adds `generated_images jsonb` to `messages` so the assistant's
       generated-image gallery (with storage paths + signed URLs)
       syncs across devices. Idempotent.
+11. `supabase/migrations/0011_prompts.sql`
+    - Creates the `prompts` table — user-scoped saved prompt
+      templates with `{{variables}}`. Backs Phase 2 of the prompt
+      library plan (`docs/PLAN-prompt-library.md`); the in-Zustand
+      store from Phase 1 (PR #50) now round-trips to Supabase.
+      Soft-delete via `deleted_at`; unique `(user_id, slug)` on
+      live rows. Idempotent.
 
-After running all ten, sanity-check from the **Table Editor**:
-sixteen tables should be listed (`profiles`, `workspaces`,
+After running all eleven, sanity-check from the **Table Editor**:
+seventeen tables should be listed (`profiles`, `workspaces`,
 `conversations`, `messages`, `files`, `resources`, `conversation_files`,
-`artifacts`, `notes`, `shares`, `mcp_servers`, `mcp_resources`,
-`mcp_resource_bindings`, `conversation_mcp_resources`, `url_bookmarks`,
-`conversation_url_bookmarks`), each showing
+`artifacts`, `notes`, `prompts`, `shares`, `mcp_servers`,
+`mcp_resources`, `mcp_resource_bindings`, `conversation_mcp_resources`,
+`url_bookmarks`, `conversation_url_bookmarks`), each showing
 the RLS shield icon indicating policies are active. The **Storage**
 sidebar should show a `user-files` private bucket with the four
 policies attached.

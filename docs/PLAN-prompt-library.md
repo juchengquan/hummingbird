@@ -1,8 +1,13 @@
 # Plan: Prompt library
 
-Status: **✅ Phase 1 shipped** in [#50](https://github.com/juchengquan/hummingbird/pull/50)
-— sidebar group, dialogs, click-to-insert. Phases 2 (Supabase sync)
-and 3 (slash trigger) are deferred follow-ups.
+Status: **✅ Phases 1 + 2 shipped**.
+Phase 1 ([#50](https://github.com/juchengquan/hummingbird/pull/50))
+— sidebar group, dialogs, click-to-insert.
+Phase 2 (this PR) — Supabase `prompts` table (migration `0011`),
+`diffPrompts` sync handler, reconcile in/out, RLS. Prompts now
+roam across devices for signed-in users.
+Phase 3 (slash trigger `/<slug>`) is still deferred — see the
+slash-commands plan for the shared resolver.
 
 User-scoped saved prompt templates with placeholder variables, listed
 in the left sidebar (alongside Workspaces / Chats / Documents) and
