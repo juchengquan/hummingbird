@@ -118,8 +118,16 @@ errors:
      summaries), and `recap_message_ids` (the original ids a recap
      replaced, so Undo knows what to restore). Idempotent — safe to
      re-run.
+9. `supabase/migrations/0009_search_file_sections.sql`
+   - Adds the SECURITY DEFINER helper `search_file_sections` that
+     powers the `searchFiles` skill (Phase 3 of the file full-text
+     retrieval plan). RLS-bound to the caller's `auth.uid()`.
+10. `supabase/migrations/0010_message_generated_images.sql`
+    - Adds `generated_images jsonb` to `messages` so the assistant's
+      generated-image gallery (with storage paths + signed URLs)
+      syncs across devices. Idempotent.
 
-After running all eight, sanity-check from the **Table Editor**:
+After running all ten, sanity-check from the **Table Editor**:
 sixteen tables should be listed (`profiles`, `workspaces`,
 `conversations`, `messages`, `files`, `resources`, `conversation_files`,
 `artifacts`, `notes`, `shares`, `mcp_servers`, `mcp_resources`,
