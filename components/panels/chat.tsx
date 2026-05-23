@@ -21,6 +21,12 @@ import {
   parseSlashCommand,
 } from "@/shared/skills/slash-parser"
 import {
+  isTypingPromptMention,
+  matchPromptMentions,
+} from "@/shared/prompts/mention-parser"
+import { expandTemplate } from "@/shared/prompts/expand"
+import { PromptVariableFill } from "@/components/panels/prompt-variable-fill"
+import {
   resolveWebSearchConfig,
   type WebSearchConfig,
 } from "@/shared/skills/web-search-config"
@@ -49,7 +55,7 @@ import { detectArtifactShell } from "@/client/live-artifact/detect"
 const AUTO_ARCHIVE_MIN_LINES = 15
 const AUTO_ARCHIVE_MAX_PER_MESSAGE = 3
 import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/shared/upload-config"
-import type { Message, MessageError, MessageErrorCode } from "@/shared/types"
+import type { Message, MessageError, MessageErrorCode, Prompt } from "@/shared/types"
 import type { LiveToolCall } from "@/components/skills/tool-call-strip"
 
 export function ChatPanel() {
@@ -180,6 +186,45 @@ export function ChatPanel() {
     setSlashActiveIndex(0)
     textareaRef.current?.focus()
   }, [])
+
+  /**
+   * `@` prompt-mention autocomplete. Sibling of the `/` skill surface
+   * — mutually exclusive because each requires its own leading char.
+   * Picking a prompt expands its template into the input (replacing
+   * the `@slug`); prompts with `{{variable}}` markers route through
+   * the fill modal first. See prompt-library Phase 3 in
+   * `docs/_done/PLAN-prompt-library.md`.
+   */
+  const prompts = useStore((state) => state.prompts)
+  const [mentionActiveIndex, setMentionActiveIndex] = useState(0)
+  const [mentionDismissed, setMentionDismissed] = useState(false)
+  const [mentionFillPrompt, setMentionFillPrompt] = useState<Prompt | null>(null)
+  const mentionMatches = useMemo(
+    () =>
+      isTypingPromptMention(inputValue)
+        ? matchPromptMentions(inputValue.slice(1), prompts)
+        : [],
+    [inputValue, prompts]
+  )
+  const mentionOpen = !mentionDismissed && mentionMatches.length > 0
+  useEffect(() => {
+    setMentionActiveIndex((i) => (i >= mentionMatches.length ? 0 : i))
+  }, [mentionMatches.length])
+
+  const pickPromptMention = useCallback((prompt: Prompt) => {
+    if (prompt.variables.length > 0) {
+      // Defer expansion to the fill modal; it calls back with the
+      // expanded text which we drop into the input.
+      setMentionFillPrompt(prompt)
+      return
+    }
+    // No variables — expand (a no-op substitution) straight into the
+    // input. Clearing the `@slug` token entirely.
+    setInputValue(expandTemplate(prompt.template, {}))
+    setMentionActiveIndex(0)
+    textareaRef.current?.focus()
+  }, [])
+
 
   const [liveToolCalls, setLiveToolCalls] = useState<
     Record<string, LiveToolCall[]>
@@ -1151,6 +1196,34 @@ export function ChatPanel() {
         return
       }
     }
+    // Same nav-key capture for the `@` mention menu. Mutually exclusive
+    // with the slash menu (each needs its own leading char), so the
+    // two blocks never both fire.
+    if (mentionOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault()
+        setMentionActiveIndex((i) => (i + 1) % mentionMatches.length)
+        return
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault()
+        setMentionActiveIndex(
+          (i) => (i - 1 + mentionMatches.length) % mentionMatches.length
+        )
+        return
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault()
+        const prompt = mentionMatches[mentionActiveIndex]
+        if (prompt) pickPromptMention(prompt)
+        return
+      }
+      if (e.key === "Escape") {
+        e.preventDefault()
+        setMentionDismissed(true)
+        return
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       handleSendMessage()
@@ -1252,6 +1325,8 @@ export function ChatPanel() {
     // Re-arm the slash menu once the input no longer starts with `/`
     // (so a prior Escape doesn't keep it closed forever).
     if (!next.startsWith("/") && slashDismissed) setSlashDismissed(false)
+    // Same re-arm for the `@` mention menu.
+    if (!next.startsWith("@") && mentionDismissed) setMentionDismissed(false)
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto"
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 150)}px`
@@ -1451,6 +1526,22 @@ export function ChatPanel() {
                 onPick={(entry) => pickSlashTrigger(entry.label)}
               />
             )}
+            {mentionOpen && (
+              <SlashAutocomplete
+                triggerChar="@"
+                entries={mentionMatches.map((m) => ({
+                  id: m.id,
+                  label: m.slug,
+                  hint: m.name,
+                }))}
+                activeIndex={mentionActiveIndex}
+                onHoverIndex={setMentionActiveIndex}
+                onPick={(entry) => {
+                  const prompt = mentionMatches.find((m) => m.id === entry.id)
+                  if (prompt) pickPromptMention(prompt)
+                }}
+              />
+            )}
             <ActiveSkillsChips
               className="px-1 pb-1"
               mutedForNext={mutedSkillsForNext}
@@ -1578,6 +1669,23 @@ export function ChatPanel() {
 
       {/* Resources side panel */}
       <ResourcesSidebar />
+
+      {/* Variable-fill modal for `@`-mention prompts that carry
+          `{{variable}}` markers. On insert it drops the expanded
+          template into the chat input. */}
+      <PromptVariableFill
+        open={mentionFillPrompt !== null}
+        onOpenChange={(open) => {
+          if (!open) setMentionFillPrompt(null)
+        }}
+        prompt={mentionFillPrompt}
+        onInsert={(expanded) => {
+          setInputValue(expanded)
+          setMentionFillPrompt(null)
+          setMentionActiveIndex(0)
+          textareaRef.current?.focus()
+        }}
+      />
     </div>
   )
 }

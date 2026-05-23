@@ -395,7 +395,7 @@ interface AppState {
 
   // Prompts — user-scoped saved templates. Listed in the left sidebar's
   // Prompts group; click-to-insert drops the expanded template into the
-  // chat input via `pendingChatInput`. See docs/PLAN-prompt-library.md.
+  // chat input via `pendingChatInput`. See docs/_done/PLAN-prompt-library.md.
   // Phase 1: local-only. Phase 2 will add Supabase sync.
   prompts: Prompt[]
 

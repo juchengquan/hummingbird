@@ -131,7 +131,7 @@ errors:
 11. `supabase/migrations/0011_prompts.sql`
     - Creates the `prompts` table — user-scoped saved prompt
       templates with `{{variables}}`. Backs Phase 2 of the prompt
-      library plan (`docs/PLAN-prompt-library.md`); the in-Zustand
+      library plan (`docs/_done/PLAN-prompt-library.md`); the in-Zustand
       store from Phase 1 (PR #50) now round-trips to Supabase.
       Soft-delete via `deleted_at`; unique `(user_id, slug)` on
       live rows. Idempotent.

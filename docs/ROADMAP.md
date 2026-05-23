@@ -10,8 +10,8 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-05-23 (plan sweep: 14 shipped plans archived to
-`_done/`; active plans + this roadmap re-pointed).
+Last updated: 2026-05-23 (prompt-library Phase 3 `@`-mentions shipped;
+plan fully done → archived to `_done/`).
 
 > **Plan archive.** Fully-shipped `PLAN-*.md` files live in
 > [`_done/`](_done/). Active plans (planning / phased / decision
@@ -37,11 +37,12 @@ to a representative PR otherwise.
 
 | When | Feature | Where |
 |---|---|---|
+| 2026-05-23 | Prompt library — Phase 3 (`@<slug>` mention trigger + variable-fill on expand) | [PLAN](_done/PLAN-prompt-library.md) |
 | 2026-05-23 | Slash commands — `/` skill surface (parser, autocomplete, force-skill-for-turn) | [PLAN](_done/PLAN-slash-commands.md) · [#55](https://github.com/juchengquan/hummingbird/pull/55) |
-| 2026-05-23 | Prompt library — Phase 2 (Supabase sync: `prompts` table, `diffPrompts`, reconcile) | [PLAN](PLAN-prompt-library.md) · [#53](https://github.com/juchengquan/hummingbird/pull/53) |
+| 2026-05-23 | Prompt library — Phase 2 (Supabase sync: `prompts` table, `diffPrompts`, reconcile) | [PLAN](_done/PLAN-prompt-library.md) · [#53](https://github.com/juchengquan/hummingbird/pull/53) |
 | 2026-05-23 | Multi-conversation fix — per-message store mutators address by message id | [#52](https://github.com/juchengquan/hummingbird/pull/52) |
 | 2026-05-23 | Per-conversation streaming state — switching chats no longer blocks input | [#43](https://github.com/juchengquan/hummingbird/pull/43) |
-| 2026-05-23 | Prompt library — Phase 1 (sidebar group, dialogs, click-to-insert) | [PLAN](PLAN-prompt-library.md) · [#50](https://github.com/juchengquan/hummingbird/pull/50) |
+| 2026-05-23 | Prompt library — Phase 1 (sidebar group, dialogs, click-to-insert) | [PLAN](_done/PLAN-prompt-library.md) · [#50](https://github.com/juchengquan/hummingbird/pull/50) |
 | 2026-05-23 | Editor diff mode for AI commands (toggle, review pill, keyboard nav) | [PLAN](_done/PLAN-editor-diff-mode.md) · [#49](https://github.com/juchengquan/hummingbird/pull/49) |
 | 2026-05-23 | Cross-device sync for `Message.generatedImages` (metadata column + reconcile) | [#45](https://github.com/juchengquan/hummingbird/pull/45) |
 | 2026-05-23 | DOCX / CSV / text file previews | `647b23d` |
@@ -95,13 +96,12 @@ Earlier features (kept for reference, no specific date):
 
 The `🪜` rows are partial ships — their finished phases are documented
 inside the plan; only the listed phase(s) remain. The slash-commands
-core shipped and is archived in [`_done/`](_done/PLAN-slash-commands.md);
-its two pending sub-surfaces are tracked below (prompt-library Phase 3
-for `@`, and the slash-action-commands plan for `/` run-now commands).
+core and the full prompt-library (all 3 phases) shipped and are
+archived in [`_done/`](_done/); slash-commands' remaining `/` run-now
+sub-surface is tracked below as its own plan.
 
 | Plan | Status | Sketch |
 |---|---|---|
-| 🪜 [Prompt library](PLAN-prompt-library.md) | Phases 1+2 shipped; Phase 3 pending | Pending: `@<slug>` text expansion (reuses the slash autocomplete component) |
 | 📐 [Slash action commands](PLAN-slash-action-commands.md) | planning | `/clear`, `/rename`, `/new`, `/model`, `/help` — run-now commands, no send |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
