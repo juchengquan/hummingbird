@@ -21,6 +21,7 @@ import type {
   ConversationUrlBookmark,
   Document,
   FileExtractionStatus,
+  GeneratedImage,
   McpCapabilities,
   McpResource,
   McpResourceBinding,
@@ -43,6 +44,45 @@ function jsonToSkillPrefs(value: Json | null | undefined): Record<string, boolea
   const out: Record<string, boolean> = {}
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
     if (typeof v === "boolean") out[k] = v
+  }
+  return out
+}
+
+/**
+ * Boundary parser for `messages.generated_images`. Returns the typed
+ * array on a valid payload, null otherwise. We're defensive about each
+ * entry's shape (rather than `as unknown as GeneratedImage[]`) because
+ * a corrupted / hand-edited row shouldn't crash the rehydration —
+ * dropping a bad entry is better than blanking the whole conversation.
+ */
+function parseGeneratedImages(value: Json | null | undefined): GeneratedImage[] | null {
+  if (!Array.isArray(value)) return null
+  const out: GeneratedImage[] = []
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue
+    const e = entry as Record<string, unknown>
+    if (
+      typeof e.id !== "string" ||
+      typeof e.url !== "string" ||
+      typeof e.width !== "number" ||
+      typeof e.height !== "number" ||
+      typeof e.format !== "string" ||
+      typeof e.prompt !== "string" ||
+      (e.mode !== "t2i" && e.mode !== "i2i")
+    ) {
+      continue
+    }
+    const img: GeneratedImage = {
+      id: e.id,
+      url: e.url,
+      width: e.width,
+      height: e.height,
+      format: e.format,
+      prompt: e.prompt,
+      mode: e.mode,
+    }
+    if (typeof e.storagePath === "string") img.storagePath = e.storagePath
+    out.push(img)
   }
   return out
 }
@@ -193,6 +233,13 @@ export async function fetchCloudSnapshot(
       if (m.kind === 'recap') msg.kind = 'recap'
       if (m.recap_message_ids && m.recap_message_ids.length > 0) {
         msg.recapMessageIds = m.recap_message_ids
+      }
+      // JSONB column from migration 0010. Hydrate only when it actually
+      // carries an array — defensive against any future row that has
+      // the column set to a non-array JSON value.
+      const persistedImages = parseGeneratedImages(m.generated_images)
+      if (persistedImages && persistedImages.length > 0) {
+        msg.generatedImages = persistedImages
       }
       list.push(msg)
       messagesByConv.set(m.conversation_id, list)
@@ -540,6 +587,7 @@ export async function bulkUploadLocalState(
     compressed: boolean
     kind: string | null
     recap_message_ids: string[]
+    generated_images: Json
     created_at: string
   }> = []
   for (const c of snapshot.conversations) {
@@ -560,6 +608,10 @@ export async function bulkUploadLocalState(
         compressed: m.compressed ?? false,
         kind: m.kind ?? null,
         recap_message_ids: m.recapMessageIds ?? [],
+        generated_images:
+          m.generatedImages && m.generatedImages.length > 0
+            ? (m.generatedImages as unknown as Json)
+            : null,
         created_at: new Date(m.timestamp).toISOString(),
       })
     })

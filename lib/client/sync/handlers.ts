@@ -13,12 +13,10 @@ import "client-only"
  *   so each emitted op is scoped correctly.
  * - We do NOT push runtime-only fields that have no DB column (see the
  *   notes in `lib/supabase/types.ts`): error / reasoning / attachedFileIds /
- *   suggestions / generatedImages on messages; extraction state / image
- *   data URLs / summary / keyTopics on files; systemPrompt on workspaces.
- *   These stay local. (`generatedImages` are now stored to Supabase Storage
- *   when authenticated and the `storagePath` is captured, but cross-device
- *   sync of the metadata row still needs a `messages.generated_images` DB
- *   column — that's a follow-up.)
+ *   suggestions on messages; extraction state / image data URLs / summary /
+ *   keyTopics on files; systemPrompt on workspaces. These stay local.
+ *   (`generatedImages` IS synced now via the `messages.generated_images`
+ *   JSONB column added in migration 0010 — see the upsert payload below.)
  * - Deletes for child entities (messages of a deleted conversation, etc.)
  *   are NOT emitted — Postgres ON DELETE CASCADE handles them via the
  *   foreign keys defined in migration 0001/0002.
@@ -42,6 +40,7 @@ import type {
   Workspace,
 } from "@/shared/types"
 import type { SyncOp } from "@/client/sync/sync-queue"
+import type { Json } from "@/shared/supabase/types"
 import { toISO } from "@/shared/utils"
 
 // ------------ workspaces ----------------------------------------------------
@@ -284,6 +283,13 @@ function diffMessages(
           compressed: m.compressed ?? false,
           kind: m.kind ?? null,
           recap_message_ids: m.recapMessageIds ?? [],
+          // JSONB: array of {id, url, storagePath?, width, height, format,
+          // prompt, mode}. Null when no images on this message — keeps the
+          // common case at zero JSON bytes on the wire.
+          generated_images:
+            m.generatedImages && m.generatedImages.length > 0
+              ? (m.generatedImages as unknown as Json)
+              : null,
           created_at: toISO(m.timestamp),
         },
       })
@@ -316,6 +322,12 @@ function messageEquals(a: Message, b: Message): boolean {
     (a.compressed ?? false) === (b.compressed ?? false) &&
     (a.kind ?? null) === (b.kind ?? null) &&
     sameStringArray(a.recapMessageIds ?? [], b.recapMessageIds ?? []) &&
+    // Same JSON.stringify trick as `error` / `toolCalls`. Generated
+    // images are small (tens of bytes per entry on the wire — the URL
+    // is the heaviest field) and only present on a fraction of
+    // messages, so this is cheaper than a deep recursive walk.
+    JSON.stringify(a.generatedImages ?? null) ===
+      JSON.stringify(b.generatedImages ?? null) &&
     sameInstant(a.timestamp, b.timestamp)
   )
 }
