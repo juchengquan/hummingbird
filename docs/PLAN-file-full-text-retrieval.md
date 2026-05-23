@@ -1,6 +1,6 @@
 # Plan: File full-text retrieval (A + C)
 
-Status: **🪜 Phases 1 + 2 + 3 shipped**. PRs [#33](https://github.com/juchengquan/hummingbird/pull/33) (caps), [#35](https://github.com/juchengquan/hummingbird/pull/35) (full-text storage), and the in-flight PR for the `searchFiles` ServerSkill + Postgres FTS RPC. Phase 4 (system-prompt wiring) is folded into Phase 3 — `searchFilesSkill.promptFragment` tells the model when/how to call the tool. Phase 5 (UI polish) is the remaining optional follow-up.
+Status: **✅ All 5 phases shipped**. PRs [#33](https://github.com/juchengquan/hummingbird/pull/33) (caps), [#35](https://github.com/juchengquan/hummingbird/pull/35) (full-text storage), [#40](https://github.com/juchengquan/hummingbird/pull/40) (`searchFiles` ServerSkill + Postgres FTS RPC, includes the Phase 4 system-prompt note), [#41](https://github.com/juchengquan/hummingbird/pull/41) (Phase 5 UI affordances). End-to-end smoke recipe lives in [`docs/SUPABASE_TEST.md`](SUPABASE_TEST.md).
 
 ## Why
 

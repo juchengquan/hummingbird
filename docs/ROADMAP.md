@@ -33,7 +33,7 @@ to a representative PR otherwise.
 |---|---|---|
 | 2026-05-22 | "Compress older messages" action with reversible recap | [#37](https://github.com/juchengquan/hummingbird/pull/37) |
 | 2026-05-22 | Sandboxed-iframe live artifacts (TSX/HTML/SVG/Mermaid) | [PLAN](PLAN-live-artifacts.md) · [#36](https://github.com/juchengquan/hummingbird/pull/36) |
-| 2026-05-22 | File full-text retrieval — Phases 1 + 2 (caps + FTS storage) | [PLAN](PLAN-file-full-text-retrieval.md) · [#33](https://github.com/juchengquan/hummingbird/pull/33), [#35](https://github.com/juchengquan/hummingbird/pull/35) |
+| 2026-05-22 | File full-text retrieval — all 5 phases (caps, FTS storage, `searchFiles` skill + RPC, UI affordances) | [PLAN](PLAN-file-full-text-retrieval.md) · [TEST](SUPABASE_TEST.md) · [#33](https://github.com/juchengquan/hummingbird/pull/33), [#35](https://github.com/juchengquan/hummingbird/pull/35), [#40](https://github.com/juchengquan/hummingbird/pull/40), [#41](https://github.com/juchengquan/hummingbird/pull/41) |
 | 2026-05-22 | Media-preview Download + inline Remix shortcut | [#32](https://github.com/juchengquan/hummingbird/pull/32) |
 | 2026-05-22 | Image generation — Storage upload + Remix (I2I) entry | [#29](https://github.com/juchengquan/hummingbird/pull/29) |
 | 2026-05-22 | OpenAI-compatible provider type | [#28](https://github.com/juchengquan/hummingbird/pull/28) |
@@ -92,7 +92,6 @@ progress, until UI / chat-panel wiring picks up.
 | 📐 [Workspace canvas](PLAN-workspace-canvas.md) | planning | Spatial drag-drop view of messages / artifacts / files |
 | 📐 [Project mode](PLAN-project-mode.md) | planning | Workspace → goal + milestones + Kanban tasks (depends on long-running tasks) |
 | 📐 [Small follow-ups batch](PLAN-small-followups.md) | planning | Five half-day items: generatedImages sync, accurate tokens, recap-of-recaps, signed-URL re-sign, roadmap refresh |
-| 🪜 [File full-text retrieval](PLAN-file-full-text-retrieval.md) | Phase 3 pending | `searchFiles` skill + RAG over `files.full_text` |
 | 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 pending | Python backend rewrite (gated on a clear product win) |
 
 ---
