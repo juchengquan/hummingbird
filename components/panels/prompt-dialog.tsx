@@ -31,7 +31,7 @@ import { Input } from "@/components/ui/input"
  *
  * Slug auto-derives from name on first save (handled in the store's
  * `createPrompt`); once saved, the slug stays stable across renames
- * unless the user explicitly edits it. See PLAN-prompt-library.md.
+ * unless the user explicitly edits it. See docs/_done/PLAN-prompt-library.md.
  */
 
 export interface PromptDialogProps {

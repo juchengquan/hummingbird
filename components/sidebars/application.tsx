@@ -394,7 +394,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             with {{variable}} markers fire the variable-fill modal
             first. Mirrors the Documents section structure. Phase 1
             local-only; Phase 2 will add cross-device sync. See
-            docs/PLAN-prompt-library.md. */}
+            docs/_done/PLAN-prompt-library.md. */}
         <SidebarGroup className="group-data-[collapsible=icon]:hidden">
           <SidebarMenu>
             <SidebarMenuItem>

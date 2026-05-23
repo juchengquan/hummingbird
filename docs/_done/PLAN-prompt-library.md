@@ -1,18 +1,19 @@
 # Plan: Prompt library
 
-Status: **✅ Phases 1 + 2 shipped**.
+Status: **✅ All 3 phases shipped**.
 Phase 1 ([#50](https://github.com/juchengquan/hummingbird/pull/50))
 — sidebar group, dialogs, click-to-insert.
-Phase 2 (this PR) — Supabase `prompts` table (migration `0011`),
-`diffPrompts` sync handler, reconcile in/out, RLS. Prompts now
-roam across devices for signed-in users.
-Phase 3 (the **`@<slug>`** trigger — note the symbol, see below) is
-still deferred. **Decision update:** prompts use **`@`**, not `/`.
-Skills own `/` (turn directives); prompts own `@` (text expansion).
-Two symbols, no shared namespace, no collisions. See the "two-symbol
-model" section in `_done/PLAN-slash-commands.md`. Phase 3 reuses the
-symbol-agnostic autocomplete component built by the slash-commands
-(`/`) work and mounts a second instance for `@`.
+Phase 2 ([#53](https://github.com/juchengquan/hummingbird/pull/53))
+— Supabase `prompts` table (migration `0011`), `diffPrompts` sync
+handler, reconcile in/out, RLS. Prompts roam across devices for
+signed-in users.
+Phase 3 (this PR) — the **`@<slug>`** trigger in the chat input.
+`@` for prompts, `/` for skills (two symbols, no shared namespace).
+Pure `lib/shared/prompts/mention-parser.ts` + a second instance of
+the symbol-agnostic `SlashAutocomplete` component over the `prompts`
+slice; picking a prompt expands its template into the input (variable
+fill modal first when it has `{{markers}}`). See the "two-symbol
+model" section in `_done/PLAN-slash-commands.md`.
 
 User-scoped saved prompt templates with placeholder variables, listed
 in the left sidebar (alongside Workspaces / Chats / Documents) and

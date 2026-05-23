@@ -575,7 +575,7 @@ export interface Artifact {
  * User-scoped saved prompt template. Lives in the left sidebar's
  * Prompts group; click-to-insert into the chat input expands the
  * `{{variable}}` markers via the variable-fill modal. See
- * `docs/PLAN-prompt-library.md`.
+ * `docs/_done/PLAN-prompt-library.md`.
  *
  * Phase 1 stores prompts in Zustand only (per-device, no sync).
  * Phase 2 will add a Supabase `prompts` table + the standard
