@@ -1,7 +1,12 @@
 # Plan: Slash action commands
 
-Status: **planning** — no code yet. Builds on the `/` slash surface
-shipped in [#55](https://github.com/juchengquan/hummingbird/pull/55).
+Status: **✅ shipped** in [#61](https://github.com/juchengquan/hummingbird/pull/61)
+— the fast five (`/new`, `/clear`, `/rename`, `/model`, `/help`):
+pure command registry + unified `/` resolver (skill vs command,
+collision-tested), `useSlashCommands` run map with the `/clear`
+confirm + `/help` cheat-sheet dialogs, and grouped Commands/Skills
+autocomplete. Builds on the `/` slash surface shipped in
+[#55](https://github.com/juchengquan/hummingbird/pull/55).
 
 A second kind of `/` command alongside the skill-forcing slashes:
 **action commands** that *do something now* instead of forcing a
@@ -44,7 +49,7 @@ here is conversation-local.
 (run now). They share the symbol but are behaviourally distinct and
 must not collide on a trigger. `@` stays prompts-only (text
 expansion) — unchanged by this plan. See the two-symbol model in
-`_done/PLAN-slash-commands.md`.
+`PLAN-slash-commands.md` (sibling in `_done/`).
 
 ```
 /  ──► skill   (search, fetch, image, files)  → force skill, strip prefix, SEND
