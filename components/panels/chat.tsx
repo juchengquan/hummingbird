@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupTextarea, InputGroupButton } from "@/components/ui/input-group"
 import { cn, toISO } from "@/shared/utils"
 import { ResourcesSidebar } from "@/components/sidebars/resources"
-import { ActiveSkillsChips } from "@/components/skills/active-chips"
+import { ContextPicker } from "@/components/chat/context-picker"
 import { SlashAutocomplete } from "@/components/panels/slash-autocomplete"
 import { SlashHelpDialog } from "@/components/panels/slash-help-dialog"
 import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
@@ -49,7 +49,7 @@ import { ChatHeader } from "@/components/panels/chat-header"
 import { ChatMessage } from "@/components/panels/chat-message"
 import { EmptyChatWelcome } from "@/components/panels/empty-chat-welcome"
 import { SelectionTrigger } from "@/components/selection/selection-trigger"
-import { Plus, ChevronDown, Square, ArrowUp, Repeat2, X } from "lucide-react"
+import { ChevronDown, Square, ArrowUp, Repeat2, X } from "lucide-react"
 import { processSelectedFiles } from "@/client/file-utils"
 import { runExtraction } from "@/client/extract"
 import { persistFile } from "@/client/files/persist"
@@ -141,6 +141,12 @@ export function ChatPanel() {
    * send only. Cleared on send (handleSendMessage) so the next turn
    * resets to the conversation/workspace effective set.
    */
+  // ContextPicker open state is lifted here so the inline preview's
+  // overflow chip can trigger the popover via the same handle.
+  const [contextPickerOpen, setContextPickerOpen] = useState(false)
+  // Whether a file is currently being dragged over the input card.
+  // Drives the drop-zone highlight; cleared on drop or dragleave.
+  const [inputDragActive, setInputDragActive] = useState(false)
   const [mutedSkillsForNext, setMutedSkillsForNext] = useState<Set<SkillId>>(
     () => new Set()
   )
@@ -1550,7 +1556,34 @@ export function ChatPanel() {
             className="hidden"
             onChange={(e) => handleFileSelected(e.target.files)}
           />
-          <div className="relative max-w-3xl mx-auto pointer-events-auto bg-[var(--background)] rounded-3xl border border-[var(--border)] p-2 shadow-sm">
+          <div
+            className={cn(
+              "relative max-w-3xl mx-auto pointer-events-auto bg-[var(--background)] rounded-3xl border border-[var(--border)] p-2 shadow-sm transition-colors",
+              // Drop-zone highlight while a file is being dragged over.
+              // The `+` button used to be the file-attach affordance;
+              // drag-and-drop replaces that role.
+              inputDragActive && "border-[var(--primary)] bg-[var(--primary)]/5"
+            )}
+            onDragOver={(e) => {
+              if (!e.dataTransfer?.types.includes("Files")) return
+              e.preventDefault()
+              e.dataTransfer.dropEffect = "copy"
+              if (!inputDragActive) setInputDragActive(true)
+            }}
+            onDragLeave={(e) => {
+              // `dragleave` fires for every child crossing; only clear
+              // when we leave the wrapper itself.
+              if (e.currentTarget.contains(e.relatedTarget as Node | null))
+                return
+              setInputDragActive(false)
+            }}
+            onDrop={(e) => {
+              if (!e.dataTransfer?.files?.length) return
+              e.preventDefault()
+              setInputDragActive(false)
+              handleFileSelected(e.dataTransfer.files)
+            }}
+          >
             {slashOpen && (
               <SlashAutocomplete
                 triggerChar="/"
@@ -1587,11 +1620,6 @@ export function ChatPanel() {
                 }}
               />
             )}
-            <ActiveSkillsChips
-              className="px-1 pb-1"
-              mutedForNext={mutedSkillsForNext}
-              onToggleMuted={toggleMutedSkillForNext}
-            />
             {pendingReferenceImage && (
               <div className="px-1 pb-1">
                 <ReferenceImageChip
@@ -1611,15 +1639,13 @@ export function ChatPanel() {
               </div>
             )}
             <InputGroup className="bg-transparent border-none shadow-none rounded-none">
-            <InputGroupButton
-              size="icon-sm"
-              onClick={handleAttachClick}
-              className="ml-2 rounded-full transition-transform hover:scale-110 active:scale-95"
-              aria-label="Attach files to this conversation"
-              title="Attach files"
-            >
-              <Plus size={20} />
-            </InputGroupButton>
+            <ContextPicker
+              open={contextPickerOpen}
+              onOpenChange={setContextPickerOpen}
+              mutedSkillIds={mutedSkillsForNext}
+              onToggleMute={toggleMutedSkillForNext}
+              onPickFile={handleAttachClick}
+            />
             <InputGroupTextarea
               ref={textareaRef}
               value={inputValue}
@@ -1728,7 +1754,17 @@ export function ChatPanel() {
           setInputValue(expanded)
           setMentionFillPrompt(null)
           setMentionActiveIndex(0)
-          textareaRef.current?.focus()
+          // Same rAF resize as `pickPromptMention` — programmatic
+          // value changes bypass the textarea's onChange-driven
+          // auto-grow.
+          requestAnimationFrame(() => {
+            const ta = textareaRef.current
+            if (!ta) return
+            ta.focus()
+            ta.style.height = "auto"
+            ta.style.height = `${Math.min(ta.scrollHeight, 150)}px`
+            ta.selectionStart = ta.selectionEnd = ta.value.length
+          })
         }}
       />
 

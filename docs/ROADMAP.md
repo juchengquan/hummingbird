@@ -37,6 +37,8 @@ to a representative PR otherwise.
 
 | When | Feature | Where |
 |---|---|---|
+| 2026-05-24 | Chat input ContextPicker — categorized popover that replaces the `+` button + active-skills chip strip; drag-and-drop file upload on the input card | _local_ |
+| 2026-05-24 | `<Textarea>` auto-grow after programmatic value insert (prompt `@`-mention); `SlashHelpDialog` getSnapshot re-render fix | _local_ |
 | 2026-05-23 | Slash action commands — `/new`, `/clear`, `/rename`, `/model`, `/help` (run-now, no send) | [PLAN](_done/PLAN-slash-action-commands.md) · [#61](https://github.com/juchengquan/hummingbird/pull/61) |
 | 2026-05-23 | Prompt library — Phase 3 (`@<slug>` mention trigger + variable-fill on expand) | [PLAN](_done/PLAN-prompt-library.md) |
 | 2026-05-23 | Slash commands — `/` skill surface (parser, autocomplete, force-skill-for-turn) | [PLAN](_done/PLAN-slash-commands.md) · [#55](https://github.com/juchengquan/hummingbird/pull/55) |
