@@ -10,8 +10,7 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-05-23 (slash action commands #61 shipped + archived
-to `_done/`).
+Last updated: 2026-05-24 (added PLAN-replace-supabase-with-postgres).
 
 > **Plan archive.** Fully-shipped `PLAN-*.md` files live in
 > [`_done/`](_done/). Active plans (planning / phased / decision
@@ -111,6 +110,7 @@ commands, and `@` prompt mentions — all archived in
 | 📐 [Workspace canvas](PLAN-workspace-canvas.md) | planning | Spatial drag-drop view of messages / artifacts / files |
 | 📐 [Project mode](PLAN-project-mode.md) | planning | Workspace → goal + milestones + Kanban tasks (depends on long-running tasks) |
 | 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 2 of 5 done | Done: generatedImages sync (#45), roadmap sweep. Open: accurate tokens, recap-of-recaps, signed-URL re-sign |
+| 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~7.5 days total |
 | 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 pending | Python backend rewrite (gated on a clear product win) |
 
 ---
