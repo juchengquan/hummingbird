@@ -242,7 +242,19 @@ export function ChatPanel() {
     // input. Clearing the `@slug` token entirely.
     setInputValue(expandTemplate(prompt.template, {}))
     setMentionActiveIndex(0)
-    textareaRef.current?.focus()
+    // Programmatic value changes don't trigger the Textarea's own
+    // onChange-driven auto-resize, so we run the same rAF resize that
+    // handleQuoteSelection / pendingChatInput effect use. Move the
+    // caret to the end too so the user picks up where the template
+    // ends.
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current
+      if (!ta) return
+      ta.focus()
+      ta.style.height = "auto"
+      ta.style.height = `${Math.min(ta.scrollHeight, 150)}px`
+      ta.selectionStart = ta.selectionEnd = ta.value.length
+    })
   }, [])
 
 

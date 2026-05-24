@@ -2,6 +2,7 @@
 
 import "client-only"
 
+import { useMemo } from "react"
 import {
   Dialog,
   DialogContent,
@@ -25,7 +26,16 @@ export function SlashHelpDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
-  const prompts = useStore((s) => s.prompts.filter((p) => !p.deletedAt))
+  // Select the stable slice and derive the filtered list with
+  // `useMemo` — inline `.filter()` inside a Zustand selector returns
+  // a fresh array on every read, which React's `useSyncExternalStore`
+  // treats as a state change and loops on ("getSnapshot should be
+  // cached"). Same pattern as MessageLiveArtifacts.
+  const allPrompts = useStore((s) => s.prompts)
+  const prompts = useMemo(
+    () => allPrompts.filter((p) => !p.deletedAt),
+    [allPrompts]
+  )
   const skills = listSlashTriggers()
 
   return (
