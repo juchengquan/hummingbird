@@ -124,6 +124,159 @@ Parity (Part A) is ~80% of the *porting effort*; the agent capabilities
 de-risk the agent design before committing to any service split or
 language change.
 
+## API contract & interfaces
+
+Two layers: the **external HTTP surface** the service exposes (what
+the frontend and any other client calls), and the **internal
+interfaces** the service implements behind that surface. The external
+wire format is already pinned in [`docs/API.md`](API.md) +
+`lib/shared/api-schemas.ts` — treat that as normative and don't
+re-spec it here; this section adds what a *standalone* service needs
+that a colocated one doesn't, plus the internal abstractions.
+
+### External HTTP surface
+
+Endpoints the agent service owns (paths unchanged so `apiClient` only
+needs the base-URL flip):
+
+| Endpoint | Method | Shape | Notes |
+|---|---|---|---|
+| `/api/chat` | POST | SSE stream (custom frame protocol) | The core agent turn. Frame types in `docs/API.md`. |
+| `/api/ai/command` | POST | AI SDK UI message stream | Plate editor. Different stream format. |
+| `/api/ai/copilot` | POST | AI SDK completion stream | Plate editor. |
+| `/api/extract` | POST | `multipart/form-data` → `ExtractionResponse` | File text extraction. |
+| `/api/summarize` | POST | JSON → `{summary,…}` | Summary / compress modes. |
+| `/api/mcp/server` · `/api/mcp/:id/:action` | POST | JSON | MCP discovery + invocation. |
+| `/api/url/fetch` | POST | JSON | webFetch backing route. |
+
+`/api/share/*` is **not** an agent endpoint — it's a data-layer
+concern (mints/revokes tokens against the DB) and stays with whatever
+owns auth + Postgres. Listed in `docs/API.md` for completeness only.
+
+**What a standalone service adds (not needed while colocated):**
+
+- **Auth** — colocated routes read the Supabase session cookie. A
+  separate service should accept `Authorization: Bearer <JWT>` and
+  verify it (Supabase JWT secret, or the data layer's equivalent).
+  Pick bearer-vs-cookie once; it interacts with the deploy-shape
+  decision and `PLAN-replace-supabase-with-postgres.md`'s auth choice.
+- **Health/readiness** — `GET /healthz` (process up) and `GET /readyz`
+  (deps reachable: model gateway, DB, MCP). Needed for container
+  orchestration; the Next.js app never needed these.
+- **Versioning** — pin the contract under `/v1` (or an
+  `Accept-Version` header) so the service and frontend can deploy on
+  independent cadences without a breaking-change footgun.
+- **CORS** — only if deployed on a separate subdomain rather than a
+  same-origin rewrite. Same-origin avoids it entirely (recommended).
+- **Request correlation** — accept/emit an `X-Request-Id` and thread
+  it through logs + the run-state events for cross-service tracing.
+
+### Streaming contract
+
+Two formats exist today and both must be served (or unified):
+
+1. **Custom SSE frame protocol** for `/api/chat` — `text` /
+   `reasoning` / `tool_call` / `tool_result` / `suggestions` /
+   `error` / `done`, with ordering + abort rules in `docs/API.md`.
+2. **AI SDK UI message / completion stream** for the two editor
+   routes — parsed by Plate's `useChat` / `useCompletion`.
+
+A rewrite is the cheap moment to **unify on the AI SDK stream
+format** (decision below); it natively carries tool-call/step/
+reasoning semantics and would let the chat panel adopt
+`@ai-sdk/react`'s `useChat()`. Until then, the contract is "serve
+both, byte-for-byte."
+
+### Internal interfaces the service implements
+
+Language-agnostic signatures (TS-flavored pseudocode; a Python
+service mirrors them as protocols/ABCs). These already exist as
+concrete TS in the current backend — the table notes where, so a TS
+service reuses them and a Python service has a reference impl.
+
+```ts
+// 1. Provider resolution — modelId → a callable model.
+//    Backed by config/models.json + config/providers.json.
+interface ProviderResolver {
+  selectModel(modelId: string, opts?: { apiKeyOverride?: string }): LanguageModel
+  isProviderConfigured(name: string): boolean
+}
+// current impl: lib/server/model-provider.ts + lib/server/providers-config.ts
+
+// 2. Tool / skill — one registration, the agent loop discovers it.
+interface ServerSkill {
+  id: SkillId
+  toolName: string
+  buildTool(requestEntry: SkillRequestEntry | undefined, ctx: SkillRuntimeContext): Tool | null
+  promptFragment(requestEntry: SkillRequestEntry | undefined): string | null
+}
+// current impl: lib/server/skills/registry.ts (SERVER_SKILLS)
+
+// 3. Agent loop — the multi-step driver. Streams frames; respects
+//    a step budget + cancellation; persists each step via RunStore.
+interface AgentLoop {
+  run(input: {
+    messages: ModelMessage[]
+    modelId: string
+    skills: SkillRequestEntry[]
+    mcpServers?: McpServerRef[]
+    maxSteps: number
+    signal: AbortSignal
+    runId?: string            // when durable (long-running tasks)
+  }): AsyncIterable<ChatFrame>  // the SSE frames above
+}
+// partial impl today: the streamText loop in app/api/chat/route.ts
+
+// 4. Durable run state — the defining agent-service capability.
+interface RunStore {
+  createRun(input: { userId: string; goal: string; maxSteps: number }): Promise<Run>
+  appendEvent(runId: string, event: RunEvent): Promise<void>  // idempotent by (runId, step, kind)
+  getRun(runId: string): Promise<Run | null>
+  listEvents(runId: string, sinceStep?: number): Promise<RunEvent[]>  // resume replay
+  cancel(runId: string): Promise<void>
+  isCancelled(runId: string): Promise<boolean>
+}
+// new — schema = tasks + task_events from PLAN-long-running-tasks.md
+
+// 5. MCP client — discovery, invocation, cloud-cred decryption.
+interface McpClient {
+  listTools(server: McpServerRef): Promise<McpTool[]>
+  callTool(server: McpServerRef, name: string, args: unknown): Promise<McpToolResult>
+  readResource(server: McpServerRef, uri: string): Promise<McpResource>
+  resolveCredential(server: McpServerRef): Promise<McpCredential>  // local OR decrypt cloud
+}
+// current impl: lib/server/mcp/* (the cloud path uses MCP_ENCRYPTION_KEY)
+
+// 6. Extraction, auth, rate limiting — boundary services.
+interface Extractor { extract(file: Blob, name: string): Promise<ExtractionResult> }
+interface AuthVerifier { verify(token: string): Promise<{ userId: string } | null> }
+interface RateLimiter { consume(key: string): { allowed: boolean; retryAfterSec: number } }
+// current impls: lib/server/extract* · (cookie session today) · lib/server/rate-limit.ts
+```
+
+### Data dependencies
+
+The service reads/writes a small slice of the data layer directly
+(not via the browser sync path):
+
+- **Reads** `messages` (history reconstruction; `files.full_text` for
+  the `searchFiles` tool), MCP server rows + encrypted creds.
+- **Writes** `tasks` / `task_events` (run state), generated-image
+  Storage objects (imageGen).
+- **Scoping** — every read/write is `user_id`-scoped. With Supabase
+  that's RLS; on plain Postgres the service enforces it in-query (see
+  the Option B caveat in `PLAN-replace-supabase-with-postgres.md` and
+  `PLAN-local-rag.md`). This is the single highest-risk surface for a
+  cross-user leak when RLS isn't doing it for free.
+
+### Contract sync between frontend and service
+
+- **TS service** — import `lib/shared/api-schemas.ts` + `lib/shared/*`
+  types directly. One source of truth, zero drift. Strongly favoured.
+- **Polyglot (Python)** — generate from a shared OpenAPI doc on both
+  sides, or round-trip a fixture set through both implementations in
+  CI. Drift is the dominant risk; budget for the codegen pipeline.
+
 ## Decisions to make before building
 
 1. **Language.** TS-as-separate-service (share `lib/shared/` types +
