@@ -10,7 +10,8 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-05-24 (added PLAN-replace-supabase-with-postgres).
+Last updated: 2026-05-24 (added PLAN-agent-api — language-agnostic
+service-split target shape).
 
 > **Plan archive.** Fully-shipped `PLAN-*.md` files live in
 > [`_done/`](_done/). Active plans (planning / phased / decision
@@ -111,7 +112,8 @@ commands, and `@` prompt mentions — all archived in
 | 📐 [Project mode](PLAN-project-mode.md) | planning | Workspace → goal + milestones + Kanban tasks (depends on long-running tasks) |
 | 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 2 of 5 done | Done: generatedImages sync (#45), roadmap sweep. Open: accurate tokens, recap-of-recaps, signed-URL re-sign |
 | 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~7.5 days total |
-| 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 pending | Python backend rewrite (gated on a clear product win) |
+| 📐 [Agent API as a separate service](PLAN-agent-api.md) | decision doc | Language-agnostic target shape for splitting inference + agent loop out; TS-service or Python, undecided |
+| 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 pending | Contract-first groundwork shipped; companion to the Agent API plan |
 
 ---
 
