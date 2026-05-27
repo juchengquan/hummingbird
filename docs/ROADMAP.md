@@ -10,8 +10,8 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-05-24 (added PLAN-agent-event-model — TaskEvent log
-+ streaming-format decision, grounded in an agent-SDK survey).
+Last updated: 2026-05-27 (agent event-model core shipped #66; remaining
+task slices — incl. the task-card UI — enumerated in the plan).
 
 > **Plan archive.** Fully-shipped `PLAN-*.md` files live in
 > [`_done/`](_done/). Active plans (planning / phased / decision
@@ -37,6 +37,7 @@ to a representative PR otherwise.
 
 | When | Feature | Where |
 |---|---|---|
+| 2026-05-27 | Agent event-model core — `TaskEvent` IR + projection + `RunEmitter` + wire codec (pure, `lib/shared/agent/`) | [PLAN](PLAN-agent-event-model.md) · [#66](https://github.com/juchengquan/hummingbird/pull/66) |
 | 2026-05-24 | Chat input ContextPicker — categorized popover that replaces the `+` button + active-skills chip strip; drag-and-drop file upload on the input card | _local_ |
 | 2026-05-24 | `<Textarea>` auto-grow after programmatic value insert (prompt `@`-mention); `SlashHelpDialog` getSnapshot re-render fix | _local_ |
 | 2026-05-23 | Slash action commands — `/new`, `/clear`, `/rename`, `/model`, `/help` (run-now, no send) | [PLAN](_done/PLAN-slash-action-commands.md) · [#61](https://github.com/juchengquan/hummingbird/pull/61) |
@@ -107,8 +108,8 @@ commands, and `@` prompt mentions — all archived in
 |---|---|---|
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
-| 📐 [Long-running task mode](PLAN-long-running-tasks.md) | planning | Async step-based agent with progress + notifications |
-| 📐 [Agent event model & streaming format](PLAN-agent-event-model.md) | decision doc | TaskEvent log + AI-SDK data-stream format; survey of OpenAI/Claude/LangGraph/Deep-Agents event taxonomies. Foundation for long-running tasks |
+| 🪜 [Agent event model & streaming format](PLAN-agent-event-model.md) | core shipped (#66) | Pure core (IR + projection + emitter + wire codec) done. Remaining slices: persistence → runner → route → resume → **task-card UI** → polish |
+| 📐 [Long-running task mode](PLAN-long-running-tasks.md) | planning | Async step-based agent: persistence + runner + route + resume + **task-card UI** (the surface — distinct from the chat bubble) + notifications. Builds on the event-model core |
 | 📐 [Workspace canvas](PLAN-workspace-canvas.md) | planning | Spatial drag-drop view of messages / artifacts / files |
 | 📐 [Project mode](PLAN-project-mode.md) | planning | Workspace → goal + milestones + Kanban tasks (depends on long-running tasks) |
 | 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 2 of 5 done | Done: generatedImages sync (#45), roadmap sweep. Open: accurate tokens, recap-of-recaps, signed-URL re-sign |
