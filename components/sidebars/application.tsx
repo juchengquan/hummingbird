@@ -53,6 +53,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     renameDocument,
     deleteDocument,
   } = useStore()
+  const sidebarWidth = useStore((s) => s.sidebarWidth)
+  const setSidebarWidth = useStore((s) => s.setSidebarWidth)
 
   const workspaceConversations = useWorkspaceConversations()
   const workspaceDocuments = useWorkspaceDocuments()
@@ -163,11 +165,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </div>
       </SidebarHeader>
 
-      <SidebarContent>
+      <SidebarContent className="gap-1">
         {/* 1. Workspaces (top-level tab). Editor moved to the right activity
             bar in ResourcesSidebar so workflow tools live alongside the
             context tabs (Files / Notes / Artifacts / Skills). */}
-        <SidebarGroup>
+        <SidebarGroup className="mb-0">
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
@@ -185,7 +187,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         {/* 2. Chats — file management moved to the right rail (`<ResourcesSidebar/>`),
             which mounts in both `chat` and `workspaces` views. The left
             sidebar no longer carries a Resources entry. */}
-        <SidebarGroup className="group-data-[collapsible=icon]:hidden">
+        <SidebarGroup className="group-data-[collapsible=icon]:hidden py-0">
           <SidebarMenu>
             {sidebarCollapsed ? (
               [...filteredConversations].sort((a, b) => {
@@ -259,7 +261,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                           </button>
                         )}
                       </div>
-                      <SidebarMenu className="gap-0.5">
+                      <SidebarMenu className="gap-0 max-h-56 overflow-y-auto">
                         {[...filteredConversations].sort((a, b) => {
                           if (a.pinned && !b.pinned) return -1
                           if (!a.pinned && b.pinned) return 1
@@ -293,7 +295,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         {/* 3. Editor — workspace-scoped editor docs. Mirrors the Chats
             section: collapsed icon-mode shows one row per doc; expanded
             mode shows a search + list with hover-revealed actions. */}
-        <SidebarGroup className="group-data-[collapsible=icon]:hidden">
+        <SidebarGroup className="group-data-[collapsible=icon]:hidden py-0">
           <SidebarMenu>
             {sidebarCollapsed ? (
               filteredDocuments.map((doc) => (
@@ -321,7 +323,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                     >
                       <CollapsibleTrigger>
                         <FileText size={14} className="mr-2 shrink-0" />
-                        {"Editor"}
+                        {"Editors"}
                         <ChevronRight className="ml-auto transition-transform group-data-[state=open]/collapsible:rotate-90" />
                       </CollapsibleTrigger>
                     </SidebarGroupLabel>
@@ -359,7 +361,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                           </button>
                         )}
                       </div>
-                      <SidebarMenu className="gap-0.5">
+                      <SidebarMenu className="gap-0 max-h-56 overflow-y-auto">
                         {filteredDocuments.map((doc) => (
                           <SidebarMenuItem key={doc.id}>
                             <DocumentItem
@@ -391,7 +393,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             first. Mirrors the Editor section structure. Phase 1
             local-only; Phase 2 will add cross-device sync. See
             docs/_done/PLAN-prompt-library.md. */}
-        <SidebarGroup className="group-data-[collapsible=icon]:hidden">
+        <SidebarGroup className="group-data-[collapsible=icon]:hidden py-0">
           <SidebarMenu>
             <SidebarMenuItem>
               <Collapsible
@@ -444,7 +446,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                         </button>
                       )}
                     </div>
-                    <SidebarMenu className="gap-0.5">
+                    <SidebarMenu className="gap-0 max-h-56 overflow-y-auto">
                       {filteredPrompts.map((p) => (
                         <SidebarMenuItem key={p.id}>
                           <PromptItem
@@ -499,6 +501,63 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarFooter>
 
       <SidebarRail />
+      {!sidebarCollapsed && (
+        <SidebarResizeHandle
+          sidebarWidth={sidebarWidth}
+          setSidebarWidth={setSidebarWidth}
+        />
+      )}
     </Sidebar>
+  )
+}
+
+/**
+ * Thin drag handle on the right edge of the left sidebar. Tracks
+ * horizontal mouse drag to resize. Clamped 172–480px.
+ */
+function SidebarResizeHandle({
+  sidebarWidth,
+  setSidebarWidth,
+}: {
+  sidebarWidth: number
+  setSidebarWidth: (w: number) => void
+}) {
+  const dragging = React.useRef(false)
+
+  React.useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!dragging.current) return
+      setSidebarWidth(e.clientX)
+    }
+    const onUp = () => {
+      dragging.current = false
+      document.body.style.cursor = ""
+      document.body.style.userSelect = ""
+    }
+    window.addEventListener("mousemove", onMove)
+    window.addEventListener("mouseup", onUp)
+    return () => {
+      window.removeEventListener("mousemove", onMove)
+      window.removeEventListener("mouseup", onUp)
+    }
+  }, [setSidebarWidth])
+
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar"
+      aria-valuenow={sidebarWidth}
+      aria-valuemin={172}
+      aria-valuemax={480}
+      onMouseDown={() => {
+        dragging.current = true
+        document.body.style.cursor = "col-resize"
+        document.body.style.userSelect = "none"
+      }}
+      className="absolute top-0 -right-2 w-4 h-full cursor-col-resize z-20
+        after:absolute after:top-0 after:bottom-0 after:left-1/2 after:w-px after:-translate-x-px
+        after:bg-[var(--border)] hover:after:bg-[var(--primary)]/40 after:transition-colors"
+    />
   )
 }

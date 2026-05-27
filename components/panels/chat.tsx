@@ -936,6 +936,21 @@ export function ChatPanel() {
                   .map((img) => ({ ...img, mode }))
                 if (images.length > 0) {
                   appendMessageGeneratedImages(ph.id, images)
+                  // Auto-archive each generated image as an artifact
+                  // so it appears in the Artifacts tab alongside code blocks.
+                  images.forEach((img) => {
+                    const title = img.prompt
+                      ? img.prompt.slice(0, 80).trim()
+                      : `Generated image`
+                    createArtifact({
+                      conversationId: targetConvId,
+                      messageId: ph.id,
+                      kind: "image",
+                      title,
+                      content: img.url,
+                      storagePath: img.storagePath ?? null,
+                    })
+                  })
                 }
               }
             } else if (parsed.type === "suggestions" && Array.isArray(parsed.values)) {

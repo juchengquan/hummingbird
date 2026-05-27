@@ -52,6 +52,20 @@ import { parseTemplate } from '@/shared/prompts/expand'
 // uniqueness, just unique-within-a-user's-library.
 const nanoid = uuid
 
+const SIDEBAR_WIDTH_MIN = 160
+const SIDEBAR_WIDTH_MAX = 480
+function clampSidebarWidth(n: number): number {
+  if (!Number.isFinite(n)) return 256
+  return Math.max(SIDEBAR_WIDTH_MIN, Math.min(SIDEBAR_WIDTH_MAX, Math.round(n)))
+}
+
+const RESOURCES_SIDEBAR_WIDTH_MIN = 200
+const RESOURCES_SIDEBAR_WIDTH_MAX = 400
+function clampResourcesSidebarWidth(n: number): number {
+  if (!Number.isFinite(n)) return 272
+  return Math.max(RESOURCES_SIDEBAR_WIDTH_MIN, Math.min(RESOURCES_SIDEBAR_WIDTH_MAX, Math.round(n)))
+}
+
 /**
  * Slugify a prompt name for the future `/<slug>` slash trigger. Lowercase,
  * spaces and punctuation collapsed to single dashes, leading/trailing
@@ -326,10 +340,18 @@ interface AppState {
 
   // Sidebar
   sidebarCollapsed: boolean
+  /** Custom sidebar width in px. Default 256 (16rem). Clamped 172–480.
+   *  Only applies when the sidebar is expanded (not icon-collapsed). */
+  sidebarWidth: number
+  setSidebarWidth: (width: number) => void
 
   // Right resources sidebar (chat view)
   resourcesSidebarOpen: boolean
   resourcesSidebarTab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins' | 'mcp' | 'links'
+  /** Custom right-rail content width in px. Default 272 (17rem).
+   *  Clamped 200–400. */
+  resourcesSidebarWidth: number
+  setResourcesSidebarWidth: (width: number) => void
   /** Per-user editor preferences. Persisted across reloads.
    *  - `aiReviewChanges`: when true (default), AI `edit`-mode output
    *    lands as Plate suggestion marks the user can accept/reject
@@ -665,6 +687,7 @@ interface AppState {
     language?: string | null
     title?: string
     content: string
+    storagePath?: string | null
   }) => Artifact
   deleteArtifact: (artifactId: string) => void
   togglePinArtifact: (artifactId: string) => void
@@ -854,11 +877,13 @@ export const useStore = create<AppState>()(
 
       // Sidebar
       sidebarCollapsed: false,
+      sidebarWidth: 256,
 
       // Right resources sidebar — default open on first load; the mobile
       // override happens in ResourcesSidebar's first-mount effect.
       resourcesSidebarOpen: true,
       resourcesSidebarTab: 'files',
+      resourcesSidebarWidth: 272,
       editorPrefs: { aiReviewChanges: true },
 
       // Session-only selection-driven explain state (excluded from
@@ -932,6 +957,10 @@ export const useStore = create<AppState>()(
       toggleResourcesSidebar: () =>
         set((state) => ({ resourcesSidebarOpen: !state.resourcesSidebarOpen })),
       setResourcesSidebarTab: (tab) => set({ resourcesSidebarTab: tab }),
+      setSidebarWidth: (width: number) =>
+        set({ sidebarWidth: clampSidebarWidth(width) }),
+      setResourcesSidebarWidth: (width: number) =>
+        set({ resourcesSidebarWidth: clampResourcesSidebarWidth(width) }),
       setEditorPref: (key, value) =>
         set((state) => ({
           editorPrefs: { ...state.editorPrefs, [key]: value },
@@ -1703,7 +1732,7 @@ export const useStore = create<AppState>()(
       },
 
       // Artifacts actions
-      createArtifact: ({ conversationId, messageId = null, kind, language = null, title, content }) => {
+      createArtifact: ({ conversationId, messageId = null, kind, language = null, title, content, storagePath = null }) => {
         const fallbackTitle =
           title ?? content.split('\n')[0].slice(0, 60).trim() ?? 'Untitled'
         const conv = get().conversations.find((c) => c.id === conversationId)
@@ -1717,7 +1746,7 @@ export const useStore = create<AppState>()(
           language,
           title: fallbackTitle || 'Untitled',
           content,
-          storagePath: null,
+          storagePath,
           pinned: false,
           createdAt: new Date(),
         }
@@ -2945,6 +2974,8 @@ export const useStore = create<AppState>()(
         activeDocumentId: state.activeDocumentId,
         resourcesSidebarOpen: state.resourcesSidebarOpen,
         resourcesSidebarTab: state.resourcesSidebarTab,
+        sidebarWidth: state.sidebarWidth,
+        resourcesSidebarWidth: state.resourcesSidebarWidth,
         editorPrefs: state.editorPrefs,
         localOnlyMode: state.localOnlyMode,
         localFilesOnly: state.localFilesOnly,
@@ -3155,12 +3186,9 @@ export const useWorkspaceDocuments = (): Document[] => {
   if (!activeWorkspaceId) return []
   return documents
     .filter((d) => d.workspaceId === activeWorkspaceId)
-    .sort((a, b) => {
-      const ap = a.position ?? Number.POSITIVE_INFINITY
-      const bp = b.position ?? Number.POSITIVE_INFINITY
-      if (ap !== bp) return ap - bp
-      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-    })
+    .sort((a, b) =>
+      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    )
 }
 
 /** Non-deleted prompts scoped to the active workspace, sorted by

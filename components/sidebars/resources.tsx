@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import { PanelRightClose, PanelRightOpen, FolderOpen, StickyNote, Archive, Sparkles, PencilLine, Pin, Plug, Globe } from "lucide-react"
+import { PanelRightClose, PanelRightOpen, FolderOpen, StickyNote, Archive, Sparkles, FileText, Pin, Plug, Globe, MessagesSquare } from "lucide-react"
 import { cn } from "@/shared/utils"
 import {
   useStore,
@@ -51,7 +51,6 @@ const ALL_RAIL_TABS = [
 // Width tokens picked so the open total (icon bar + content) equals the
 // previous w-80 (320px), keeping the chat column width unchanged for users.
 const RAIL_WIDTH_CLASS = "w-12" // 48px
-const CONTENT_WIDTH_CLASS = "w-[272px]"
 
 interface ResourcesSidebarProps {
   /**
@@ -78,6 +77,8 @@ export function ResourcesSidebar({ mode = "chat" }: ResourcesSidebarProps = {}) 
   const setOpen = useStore((s) => s.setResourcesSidebarOpen)
   const toggleOpen = useStore((s) => s.toggleResourcesSidebar)
   const setTab = useStore((s) => s.setResourcesSidebarTab)
+  const panelWidth = useStore((s) => s.resourcesSidebarWidth)
+  const setPanelWidth = useStore((s) => s.setResourcesSidebarWidth)
   const activeView = useStore((s) => s.activeView)
   const setActiveView = useStore((s) => s.setActiveView)
   const resourcesCount = useWorkspaceResources().length
@@ -149,17 +150,27 @@ export function ResourcesSidebar({ mode = "chat" }: ResourcesSidebarProps = {}) 
           it slides in with the panel rather than reappearing late. */}
       <div
         className={cn(
-          "h-full min-h-0 shrink-0 overflow-hidden",
+          "h-full min-h-0 shrink-0 overflow-hidden relative",
           "transition-[width] duration-200 ease-out",
           open
-            ? cn(CONTENT_WIDTH_CLASS, "border-l border-[var(--border)]")
+            ? "border-l border-[var(--border)]"
             : "w-0 border-l-0"
         )}
+        style={open ? { width: panelWidth } : undefined}
         aria-hidden={!open}
       >
-        <div className={cn("flex flex-col h-full min-h-0", CONTENT_WIDTH_CLASS)}>
+        <div
+          className="flex flex-col h-full min-h-0"
+          style={{ width: panelWidth }}
+        >
           <ChatResourcesPanel mode={isWorkspaceMode ? "manage" : "chat"} />
         </div>
+        {open && (
+          <RightRailResizeHandle
+            panelWidth={panelWidth}
+            setPanelWidth={setPanelWidth}
+          />
+        )}
       </div>
 
       {/* Activity bar — always rendered at fixed width; its position never
@@ -182,15 +193,17 @@ export function ResourcesSidebar({ mode = "chat" }: ResourcesSidebarProps = {}) 
         </button>
         <div className="my-1 h-px w-6 bg-[var(--border)]" />
 
-        {/* Editor launcher — switches the main area to the editor view. Not
-            a context tab; it's a workflow launcher. */}
+        {/* Editor/Chat quick-switch — context-sensitive launcher.
+            When viewing Chat → opens Editor. When viewing Editor →
+            opens Chat. Otherwise → opens Editor (default). */}
         <Tooltip>
           <TooltipTrigger asChild>
             <button
               type="button"
-              onClick={() => setActiveView("editor")}
-              aria-label="Editor"
-              aria-pressed={activeView === "editor"}
+              onClick={() =>
+                setActiveView(activeView === "editor" ? "chat" : "editor")
+              }
+              aria-label={activeView === "editor" ? "Chat" : "Editor"}
               className={cn(
                 "p-1.5 rounded transition-colors",
                 activeView === "editor"
@@ -198,11 +211,15 @@ export function ResourcesSidebar({ mode = "chat" }: ResourcesSidebarProps = {}) 
                   : "text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--accent)]/50"
               )}
             >
-              <PencilLine size={16} />
+              {activeView === "editor" ? (
+                <MessagesSquare size={16} />
+              ) : (
+                <FileText size={16} />
+              )}
             </button>
           </TooltipTrigger>
           <TooltipContent side="left" sideOffset={6}>
-            Editor
+            {activeView === "editor" ? "Chat" : "Editor"}
           </TooltipContent>
         </Tooltip>
         <div className="my-1 h-px w-6 bg-[var(--border)]" />
@@ -283,5 +300,68 @@ function RailTabButton({
         {count > 0 && <span className="opacity-60 ml-1">({count})</span>}
       </TooltipContent>
     </Tooltip>
+  )
+}
+
+/**
+ * Drag handle on the LEFT edge of the right-rail content panel.
+ * Tracks horizontal mouse drag to resize the panel. The panel
+ * is anchored to the right edge, so dragging left increases width,
+ * dragging right decreases it. Clamped 200–400px.
+ */
+function RightRailResizeHandle({
+  panelWidth,
+  setPanelWidth,
+}: {
+  panelWidth: number
+  setPanelWidth: (w: number) => void
+}) {
+  const dragging = useRef(false)
+  const startX = useRef(0)
+  const startWidth = useRef(panelWidth)
+
+  useEffect(() => {
+    startWidth.current = panelWidth
+  }, [panelWidth])
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!dragging.current) return
+      // Panel is right-aligned. Dragging left (dx < 0) → wider.
+      const dx = startX.current - e.clientX
+      setPanelWidth(startWidth.current + dx)
+    }
+    const onUp = () => {
+      dragging.current = false
+      document.body.style.cursor = ""
+      document.body.style.userSelect = ""
+    }
+    window.addEventListener("mousemove", onMove)
+    window.addEventListener("mouseup", onUp)
+    return () => {
+      window.removeEventListener("mousemove", onMove)
+      window.removeEventListener("mouseup", onUp)
+    }
+  }, [setPanelWidth])
+
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize panel"
+      aria-valuenow={panelWidth}
+      aria-valuemin={200}
+      aria-valuemax={400}
+      onMouseDown={(e) => {
+        dragging.current = true
+        startX.current = e.clientX
+        startWidth.current = panelWidth
+        document.body.style.cursor = "col-resize"
+        document.body.style.userSelect = "none"
+      }}
+      className="absolute top-0 -left-2 w-4 h-full cursor-col-resize z-20
+        after:absolute after:top-0 after:bottom-0 after:left-1/2 after:w-px after:-translate-x-px
+        after:bg-[var(--border)] hover:after:bg-[var(--primary)]/40 after:transition-colors"
+    />
   )
 }
