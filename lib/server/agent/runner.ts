@@ -108,6 +108,11 @@ export interface StreamTextStepConfig {
    *  e.g. `setPlan`, which already shows up as the plan/todo list. The
    *  model still sees the tool result; only the UI event is suppressed. */
   silentTools?: Set<string>
+  /** Coalesce streamed token deltas into one `token` event per this many
+   *  chars (per channel), cutting the per-token event + DB-write volume
+   *  while keeping streaming visually smooth. Flushes on channel switch,
+   *  before any non-token part, and at stream end. Defaults to 96. */
+  tokenFlushChars?: number
 }
 
 /**
@@ -118,6 +123,7 @@ export interface StreamTextStepConfig {
  */
 export function makeStreamTextStep(config: StreamTextStepConfig): RunStepFn {
   const { model, system, messages, tools, silentTools } = config
+  const flushChars = config.tokenFlushChars ?? 96
 
   return async ({ signal, emitter }) => {
     const hasTools = Object.keys(tools).length > 0
@@ -134,20 +140,25 @@ export function makeStreamTextStep(config: StreamTextStepConfig): RunStepFn {
         : {}),
     })
 
+    // Coalesce token deltas per channel: buffer until `flushChars`, a
+    // channel switch, or a non-token part, then emit one `token` event.
+    // One DB row per ~chunk instead of per token, with the wire still
+    // updating frequently enough to read as live streaming.
+    const coalescer = makeTokenCoalescer(emitter, flushChars)
+
     let finishReason = "stop"
     for await (const part of result.fullStream) {
       switch (part.type) {
         case "text-delta": {
-          const delta = partText(part)
-          if (delta) emitter.token(delta, "text")
+          coalescer.push("text", partText(part))
           break
         }
         case "reasoning-delta": {
-          const delta = partText(part)
-          if (delta) emitter.token(delta, "reasoning")
+          coalescer.push("reasoning", partText(part))
           break
         }
         case "tool-call": {
+          coalescer.flushAll()
           const p = part as {
             toolCallId?: string
             toolName?: string
@@ -158,6 +169,7 @@ export function makeStreamTextStep(config: StreamTextStepConfig): RunStepFn {
           break
         }
         case "tool-result": {
+          coalescer.flushAll()
           const p = part as {
             toolCallId?: string
             toolName?: string
@@ -174,6 +186,7 @@ export function makeStreamTextStep(config: StreamTextStepConfig): RunStepFn {
           break
         }
         case "tool-error": {
+          coalescer.flushAll()
           const p = part as { toolName?: string; error?: unknown }
           const msg =
             p.error instanceof Error
@@ -195,6 +208,8 @@ export function makeStreamTextStep(config: StreamTextStepConfig): RunStepFn {
           break
       }
     }
+    // Emit any trailing buffered text/reasoning for this step.
+    coalescer.flushAll()
 
     // Feed the model's response (assistant + tool messages) back in so
     // the next step continues the conversation.
@@ -210,6 +225,48 @@ export function makeStreamTextStep(config: StreamTextStepConfig): RunStepFn {
 function partText(part: unknown): string {
   const p = part as { delta?: string; text?: string }
   return p.delta ?? p.text ?? ""
+}
+
+/**
+ * Per-channel token buffer. `push` accumulates a delta and emits a
+ * single coalesced `token` event once the buffer reaches `flushChars`;
+ * switching channels flushes the other channel first so text/reasoning
+ * stay correctly interleaved. Exposed for unit testing the boundary
+ * logic without driving a live model. Only needs the emitter's `token`.
+ */
+export function makeTokenCoalescer(
+  emitter: Pick<RunEmitter, "token">,
+  flushChars: number
+) {
+  let textBuf = ""
+  let reasoningBuf = ""
+  const flush = (channel: "text" | "reasoning") => {
+    if (channel === "text" && textBuf) {
+      emitter.token(textBuf, "text")
+      textBuf = ""
+    } else if (channel === "reasoning" && reasoningBuf) {
+      emitter.token(reasoningBuf, "reasoning")
+      reasoningBuf = ""
+    }
+  }
+  return {
+    push(channel: "text" | "reasoning", delta: string) {
+      if (!delta) return
+      if (channel === "text") {
+        flush("reasoning")
+        textBuf += delta
+        if (textBuf.length >= flushChars) flush("text")
+      } else {
+        flush("text")
+        reasoningBuf += delta
+        if (reasoningBuf.length >= flushChars) flush("reasoning")
+      }
+    },
+    flushAll() {
+      flush("text")
+      flush("reasoning")
+    },
+  }
 }
 
 /** Mirror the chat route's tool-output summarization: a one-line
