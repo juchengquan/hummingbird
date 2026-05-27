@@ -348,6 +348,8 @@ interface AppState {
   // Right resources sidebar (chat view)
   resourcesSidebarOpen: boolean
   resourcesSidebarTab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins' | 'mcp' | 'links'
+  // Tasks panel (chat view) — the live surface for long-running agent runs.
+  tasksPanelOpen: boolean
   /** Custom right-rail content width in px. Default 272 (17rem).
    *  Clamped 200–400. */
   resourcesSidebarWidth: number
@@ -492,6 +494,8 @@ interface AppState {
   setResourcesSidebarOpen: (open: boolean) => void
   toggleResourcesSidebar: () => void
   setResourcesSidebarTab: (tab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins' | 'mcp' | 'links') => void
+  setTasksPanelOpen: (open: boolean) => void
+  toggleTasksPanel: () => void
   setEditorPref: <K extends keyof AppState['editorPrefs']>(
     key: K,
     value: AppState['editorPrefs'][K]
@@ -883,6 +887,8 @@ export const useStore = create<AppState>()(
       // override happens in ResourcesSidebar's first-mount effect.
       resourcesSidebarOpen: true,
       resourcesSidebarTab: 'files',
+      // Tasks panel — closed until the user launches a task.
+      tasksPanelOpen: false,
       resourcesSidebarWidth: 272,
       editorPrefs: { aiReviewChanges: true },
 
@@ -957,6 +963,9 @@ export const useStore = create<AppState>()(
       toggleResourcesSidebar: () =>
         set((state) => ({ resourcesSidebarOpen: !state.resourcesSidebarOpen })),
       setResourcesSidebarTab: (tab) => set({ resourcesSidebarTab: tab }),
+      setTasksPanelOpen: (open: boolean) => set({ tasksPanelOpen: open }),
+      toggleTasksPanel: () =>
+        set((state) => ({ tasksPanelOpen: !state.tasksPanelOpen })),
       setSidebarWidth: (width: number) =>
         set({ sidebarWidth: clampSidebarWidth(width) }),
       setResourcesSidebarWidth: (width: number) =>
@@ -2974,6 +2983,7 @@ export const useStore = create<AppState>()(
         activeDocumentId: state.activeDocumentId,
         resourcesSidebarOpen: state.resourcesSidebarOpen,
         resourcesSidebarTab: state.resourcesSidebarTab,
+        tasksPanelOpen: state.tasksPanelOpen,
         sidebarWidth: state.sidebarWidth,
         resourcesSidebarWidth: state.resourcesSidebarWidth,
         editorPrefs: state.editorPrefs,

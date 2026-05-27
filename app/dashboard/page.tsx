@@ -22,6 +22,7 @@ import { useHydrated, useStore } from "@/client/hooks/use-store"
 import { useSync } from "@/client/hooks/use-sync"
 import { useReconcile } from "@/client/hooks/use-reconcile"
 import { ReconcileDialog } from "@/components/auth/reconcile-dialog"
+import { TaskRunProvider } from "@/client/agent/task-run-context"
 
 // Plate.js + all its plugins are heavy (~200KB pre-minify). Defer the
 // editor chunk until the user actually switches to the editor view so
@@ -99,7 +100,9 @@ function DashboardShell() {
       <SyncMount />
       <ReconcileMount />
       <AppSidebar />
-      <MainArea />
+      <TaskRunProvider>
+        <MainArea />
+      </TaskRunProvider>
       <CommandPalette />
       <PdfViewerHost />
       <UrlPreviewHost />
