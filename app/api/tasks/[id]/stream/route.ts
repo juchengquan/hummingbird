@@ -6,7 +6,7 @@ import { createUIMessageStream, createUIMessageStreamResponse } from "ai"
 import { NextResponse } from "next/server"
 
 import { getSupabaseServerClient } from "@/server/supabase/server"
-import { getRun, listEventsSince } from "@/server/agent/store"
+import { getRun, listEventsSince, reconcileStaleRuns } from "@/server/agent/store"
 import {
   isTerminalStatus,
   type RunStatus,
@@ -84,6 +84,16 @@ export async function GET(
       { code: "not_found", message: "Run not found." },
       { status: 404 }
     )
+  }
+
+  // Reconnecting is the moment to garbage-collect dead runs: if this (or
+  // any of the user's) runs is `running` but the producer died without a
+  // terminal event, fail it now so the replay below settles cleanly
+  // instead of poll-tailing to the wall-clock cap.
+  try {
+    await reconcileStaleRuns(db, userId)
+  } catch (err) {
+    console.error("[tasks] reconcile:", err)
   }
 
   // `Last-Event-ID` carries the last seq the client already has; replay
