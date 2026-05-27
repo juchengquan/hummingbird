@@ -27,6 +27,7 @@ import {
   CompressSummarizeResponseSchema,
   RevokeShareResponseSchema,
   type ChatRequestInput,
+  type TaskRequestInput,
   type CreateShareRequestInput,
   type CreateShareResponse,
   type ExtractionResponse,
@@ -58,6 +59,11 @@ function url(path: string): string {
  */
 export const apiUrls = {
   chat: () => url("/api/chat"),
+  tasks: () => url("/api/tasks"),
+  taskCancel: (id: string) =>
+    url(`/api/tasks/${encodeURIComponent(id)}/cancel`),
+  taskStream: (id: string) =>
+    url(`/api/tasks/${encodeURIComponent(id)}/stream`),
   aiCommand: () => url("/api/ai/command"),
   aiCopilot: () => url("/api/ai/copilot"),
   extract: () => url("/api/extract"),
@@ -124,6 +130,56 @@ async function chatStream(
     }
   }
   return { ok: true, status: res.status, body: res.body }
+}
+
+// --- /api/tasks (long-running agent — streaming) ----------------------------
+
+/**
+ * Start a long-running task. Returns the raw AI-SDK data stream of
+ * `data-agent-event` parts (see `lib/shared/agent/wire.ts`); the caller
+ * decodes each part with `fromDataPart` and folds it through
+ * `reduceRun`. Same `{ok, status, body, error}` envelope as `chatStream`.
+ */
+async function tasksStart(
+  body: TaskRequestInput,
+  options?: { signal?: AbortSignal }
+): Promise<ChatStreamResult> {
+  const res = await fetch(apiUrls.tasks(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const errBody = await readErrorBody(res)
+    return {
+      ok: false,
+      status: res.status,
+      body: null,
+      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+    }
+  }
+  return { ok: true, status: res.status, body: res.body }
+}
+
+/**
+ * Request cancellation of a running task. The server flips the run's
+ * status to `cancelled`; the runner settles on its next between-step
+ * poll. Idempotent — cancelling an already-settled run is a no-op.
+ */
+async function tasksCancel(
+  id: string
+): Promise<{ ok: boolean; status: number; error?: { code?: string; message?: string } }> {
+  const res = await fetch(apiUrls.taskCancel(id), { method: "POST" })
+  if (!res.ok) {
+    const errBody = await readErrorBody(res)
+    return {
+      ok: false,
+      status: res.status,
+      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+    }
+  }
+  return { ok: true, status: res.status }
 }
 
 // --- /api/extract -----------------------------------------------------------
@@ -394,6 +450,7 @@ async function urlFetchBookmark(url: string): Promise<
 export const apiClient = {
   urls: apiUrls,
   chat: { stream: chatStream },
+  tasks: { start: tasksStart, cancel: tasksCancel },
   extract,
   summarize: {
     file: summarizeFile,
