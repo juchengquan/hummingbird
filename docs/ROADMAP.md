@@ -10,8 +10,8 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-05-24 (added PLAN-agent-api — language-agnostic
-service-split target shape).
+Last updated: 2026-05-24 (added PLAN-agent-event-model — TaskEvent log
++ streaming-format decision, grounded in an agent-SDK survey).
 
 > **Plan archive.** Fully-shipped `PLAN-*.md` files live in
 > [`_done/`](_done/). Active plans (planning / phased / decision
@@ -108,6 +108,7 @@ commands, and `@` prompt mentions — all archived in
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
 | 📐 [Long-running task mode](PLAN-long-running-tasks.md) | planning | Async step-based agent with progress + notifications |
+| 📐 [Agent event model & streaming format](PLAN-agent-event-model.md) | decision doc | TaskEvent log + AI-SDK data-stream format; survey of OpenAI/Claude/LangGraph/Deep-Agents event taxonomies. Foundation for long-running tasks |
 | 📐 [Workspace canvas](PLAN-workspace-canvas.md) | planning | Spatial drag-drop view of messages / artifacts / files |
 | 📐 [Project mode](PLAN-project-mode.md) | planning | Workspace → goal + milestones + Kanban tasks (depends on long-running tasks) |
 | 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 2 of 5 done | Done: generatedImages sync (#45), roadmap sweep. Open: accurate tokens, recap-of-recaps, signed-URL re-sign |
