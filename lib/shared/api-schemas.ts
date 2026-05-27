@@ -344,6 +344,24 @@ export const RevokeShareResponseSchema = z.object({
   ok: z.literal(true),
 })
 
+// --- /api/tasks (long-running task — streaming) -----------------------------
+// A task is a chat-shaped request that runs as a multi-step agent loop and
+// streams the AI-SDK data stream of `data-agent-event` parts (see
+// `lib/shared/agent/wire.ts`). Reuses the chat message + skills shapes;
+// adds `conversationId` (the run is scoped to a conversation) and `maxSteps`.
+
+export const TaskRequestSchema = z.object({
+  messages: z.array(ModelMessageSchema).min(1),
+  conversationId: z.string().min(1).max(64),
+  model: z.string().max(100).optional(),
+  workspaceSystemPrompt: z.string().max(20_000).optional(),
+  workspaceId: z.string().max(64).optional(),
+  /** Step ceiling for the loop. Clamped server-side. */
+  maxSteps: z.number().int().min(1).max(50).optional(),
+  /** Same per-skill entries as the chat request. */
+  skills: ChatRequestSchema.shape.skills,
+})
+
 // --- Generic error envelope -------------------------------------------------
 // Non-streaming routes return `{ error, code?, message? }` with a non-2xx
 // status on failure. Frontend categorisation lives in lib/api-errors.ts.
@@ -357,6 +375,7 @@ export const ErrorResponseSchema = z.object({
 // --- TS types (inferred from the schemas above) -----------------------------
 
 export type ChatRequestInput = z.infer<typeof ChatRequestSchema>
+export type TaskRequestInput = z.infer<typeof TaskRequestSchema>
 export type CopilotRequestInput = z.infer<typeof CopilotRequestSchema>
 export type ExtractionResponse = z.infer<typeof ExtractionResponseSchema>
 export type SummarizeRequestInput = z.infer<typeof SummarizeRequestSchema>
