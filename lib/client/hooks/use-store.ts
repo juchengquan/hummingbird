@@ -313,6 +313,8 @@ interface AppState {
   // Right resources sidebar (chat view)
   resourcesSidebarOpen: boolean
   resourcesSidebarTab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins' | 'mcp' | 'links'
+  // Tasks panel (chat view) — the live surface for long-running agent runs.
+  tasksPanelOpen: boolean
   /** Per-user editor preferences. Persisted across reloads.
    *  - `aiReviewChanges`: when true (default), AI `edit`-mode output
    *    lands as Plate suggestion marks the user can accept/reject
@@ -453,6 +455,8 @@ interface AppState {
   setResourcesSidebarOpen: (open: boolean) => void
   toggleResourcesSidebar: () => void
   setResourcesSidebarTab: (tab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins' | 'mcp' | 'links') => void
+  setTasksPanelOpen: (open: boolean) => void
+  toggleTasksPanel: () => void
   setEditorPref: <K extends keyof AppState['editorPrefs']>(
     key: K,
     value: AppState['editorPrefs'][K]
@@ -826,6 +830,8 @@ export const useStore = create<AppState>()(
       // override happens in ResourcesSidebar's first-mount effect.
       resourcesSidebarOpen: true,
       resourcesSidebarTab: 'files',
+      // Tasks panel — closed until the user launches a task.
+      tasksPanelOpen: false,
       editorPrefs: { aiReviewChanges: true },
 
       // Session-only selection-driven explain state (excluded from
@@ -899,6 +905,9 @@ export const useStore = create<AppState>()(
       toggleResourcesSidebar: () =>
         set((state) => ({ resourcesSidebarOpen: !state.resourcesSidebarOpen })),
       setResourcesSidebarTab: (tab) => set({ resourcesSidebarTab: tab }),
+      setTasksPanelOpen: (open: boolean) => set({ tasksPanelOpen: open }),
+      toggleTasksPanel: () =>
+        set((state) => ({ tasksPanelOpen: !state.tasksPanelOpen })),
       setEditorPref: (key, value) =>
         set((state) => ({
           editorPrefs: { ...state.editorPrefs, [key]: value },
@@ -2883,6 +2892,7 @@ export const useStore = create<AppState>()(
         activeDocumentId: state.activeDocumentId,
         resourcesSidebarOpen: state.resourcesSidebarOpen,
         resourcesSidebarTab: state.resourcesSidebarTab,
+        tasksPanelOpen: state.tasksPanelOpen,
         editorPrefs: state.editorPrefs,
         localOnlyMode: state.localOnlyMode,
         localFilesOnly: state.localFilesOnly,
