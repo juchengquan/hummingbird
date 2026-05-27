@@ -26,6 +26,7 @@ import { useStore } from "@/client/hooks/use-store"
 import {
   useWorkspaceConversations,
   useWorkspaceDocuments,
+  useWorkspacePrompts,
 } from "@/client/hooks/use-store"
 import { ConversationItem } from "@/components/sidebars/conversation-item"
 import { DocumentItem } from "@/components/sidebars/document-item"
@@ -33,8 +34,6 @@ import { PromptItem } from "@/components/sidebars/prompt-item"
 import { PromptDialog } from "@/components/panels/prompt-dialog"
 import { PromptVariableFill } from "@/components/panels/prompt-variable-fill"
 import { AccountMenu } from "@/components/auth/account-menu"
-import { ThemeToggle } from "@/components/theme-toggle"
-import { HelpPopover } from "@/components/help-popover"
 import type { Prompt } from "@/shared/types"
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
@@ -57,6 +56,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
   const workspaceConversations = useWorkspaceConversations()
   const workspaceDocuments = useWorkspaceDocuments()
+  const workspacePrompts = useWorkspacePrompts()
   const { state } = useSidebar()
   const sidebarCollapsed = state === "collapsed"
 
@@ -75,20 +75,16 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const [promptDialogOpen, setPromptDialogOpen] = React.useState(false)
   const [varFillPrompt, setVarFillPrompt] = React.useState<Prompt | null>(null)
 
-  const allPrompts = useStore((s) => s.prompts)
   const deletePromptAction = useStore((s) => s.deletePrompt)
   const setPendingChatInput = useStore((s) => s.setPendingChatInput)
 
-  // Visible prompts = non-deleted, sorted by updatedAt desc, optionally
-  // filtered by search query (name match only in v1).
+  // Visible prompts = workspace-scoped, non-deleted, sorted by updatedAt desc,
+  // optionally filtered by search query (name match only in v1).
   const filteredPrompts = React.useMemo(() => {
     const q = promptQuery.trim().toLowerCase()
-    const visible = allPrompts
-      .filter((p) => !p.deletedAt)
-      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
-    if (!q) return visible
-    return visible.filter((p) => p.name.toLowerCase().includes(q))
-  }, [allPrompts, promptQuery])
+    if (!q) return workspacePrompts
+    return workspacePrompts.filter((p) => p.name.toLowerCase().includes(q))
+  }, [workspacePrompts, promptQuery])
 
   const handleSelectPrompt = (prompt: Prompt) => {
     // Click-to-insert. If the prompt has no variables, the template
@@ -294,7 +290,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           </SidebarMenu>
         </SidebarGroup>
 
-        {/* 3. Documents — workspace-scoped editor docs. Mirrors the Chats
+        {/* 3. Editor — workspace-scoped editor docs. Mirrors the Chats
             section: collapsed icon-mode shows one row per doc; expanded
             mode shows a search + list with hover-revealed actions. */}
         <SidebarGroup className="group-data-[collapsible=icon]:hidden">
@@ -325,7 +321,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                     >
                       <CollapsibleTrigger>
                         <FileText size={14} className="mr-2 shrink-0" />
-                        {"Documents"}
+                        {"Editor"}
                         <ChevronRight className="ml-auto transition-transform group-data-[state=open]/collapsible:rotate-90" />
                       </CollapsibleTrigger>
                     </SidebarGroupLabel>
@@ -346,11 +342,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                           className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] pointer-events-none"
                         />
                         <SidebarInput
-                          placeholder="Search documents…"
+                          placeholder="Search editors…"
                           value={docQuery}
                           onChange={(e) => setDocQuery(e.target.value)}
                           className="pl-7 pr-7 h-7 text-xs"
-                          aria-label="Search documents"
+                          aria-label="Search editors"
                         />
                         {docQuery && (
                           <button
@@ -391,8 +387,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
         {/* 4. Prompts — user-scoped saved templates. Click a row to
             insert the prompt into the current chat input; templates
-            with {{variable}} markers fire the variable-fill modal
-            first. Mirrors the Documents section structure. Phase 1
+            with {variable} markers fire the variable-fill modal
+            first. Mirrors the Editor section structure. Phase 1
             local-only; Phase 2 will add cross-device sync. See
             docs/_done/PLAN-prompt-library.md. */}
         <SidebarGroup className="group-data-[collapsible=icon]:hidden">
@@ -499,17 +495,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       />
 
       <SidebarFooter>
-        <div className="flex items-center w-full gap-1">
-          <div className="flex-1 min-w-0">
-            <AccountMenu />
-          </div>
-          {/* Help + Theme toggle are extra utilities — hide them in
-              icon-collapsed mode so only the account icon remains. */}
-          <div className="flex items-center gap-1 shrink-0 group-data-[collapsible=icon]:hidden">
-            <HelpPopover />
-            <ThemeToggle />
-          </div>
-        </div>
+        <AccountMenu />
       </SidebarFooter>
 
       <SidebarRail />

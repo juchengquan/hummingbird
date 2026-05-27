@@ -12,9 +12,7 @@ import {
   useActiveConversation,
   useConversationPinnedExplanations,
   useWorkspaceMcpResources,
-  useConversationPrivateMcpResources,
   useWorkspaceUrlBookmarks,
-  useConversationPrivateUrlBookmarks,
 } from "@/client/hooks/use-store"
 import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
 import { SKILLS } from "@/shared/skills/registry"
@@ -42,10 +40,10 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip
 // keeps the most-used icons within easy thumb reach at the top.
 const ALL_RAIL_TABS = [
   { id: "files" as const, label: "Files", Icon: FolderOpen },
+  { id: "links" as const, label: "Links", Icon: Globe },
   { id: "notes" as const, label: "Notes", Icon: StickyNote },
   { id: "artifacts" as const, label: "Artifacts", Icon: Archive },
   { id: "pins" as const, label: "Pins", Icon: Pin },
-  { id: "links" as const, label: "Links", Icon: Globe },
   { id: "mcp" as const, label: "MCP", Icon: Plug },
   { id: "skills" as const, label: "Skills", Icon: Sparkles },
 ]
@@ -86,11 +84,8 @@ export function ResourcesSidebar({ mode = "chat" }: ResourcesSidebarProps = {}) 
   const notesCount = useWorkspaceNotes().length
   const artifactsCount = useWorkspaceArtifacts().length
   const pinsCount = useConversationPinnedExplanations().length
-  const mcpWorkspaceCount = useWorkspaceMcpResources().length
-  const mcpPrivateCount = useConversationPrivateMcpResources().length
-  const mcpCount = mcpWorkspaceCount + mcpPrivateCount
-  const linksCount =
-    useWorkspaceUrlBookmarks().length + useConversationPrivateUrlBookmarks().length
+  const mcpCount = useWorkspaceMcpResources().length
+  const linksCount = useWorkspaceUrlBookmarks().length
   const workspace = useActiveWorkspace()
   const conversation = useActiveConversation()
   const skillsActive = SKILLS.filter((s) =>

@@ -182,6 +182,13 @@ export const ChatRequestSchema = z.object({
               .optional(),
           })
           .optional(),
+        /** Optional structured config for the `searchFiles` skill. Single
+         *  `maxCalls` field; server already clamps via clampMaxSearchFiles. */
+        fileSearchConfig: z
+          .object({
+            maxCalls: z.number().int().min(1).max(50).optional(),
+          })
+          .optional(),
       })
     )
     .max(10)

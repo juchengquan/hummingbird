@@ -480,6 +480,7 @@ export async function fetchCloudSnapshot(
 
     const prompts: Prompt[] = (promptsRes.data ?? []).map((p) => ({
       id: p.id,
+      workspaceId: p.workspace_id,
       name: p.name,
       slug: p.slug,
       template: p.template,
@@ -860,14 +861,13 @@ export async function bulkUploadLocalState(
     if (error) return { ok: false, error: `artifacts: ${error.message}` }
   }
 
-  // Prompts — user-scoped saved templates. No `workspace_id` (see the
-  // migration comment for why). Soft-delete fields round-trip via
-  // `deleted_at`.
+  // Prompts — workspace-scoped saved templates.
   if (snapshot.prompts.length > 0) {
     const { error } = await client.from("prompts").upsert(
       snapshot.prompts.map((p) => ({
         id: p.id,
         user_id: userId,
+        workspace_id: p.workspaceId,
         name: p.name,
         slug: p.slug,
         template: p.template,

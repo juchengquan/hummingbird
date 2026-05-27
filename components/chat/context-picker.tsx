@@ -24,7 +24,6 @@ import {
   Pause,
   Plus,
   Server,
-  Wrench,
   X,
   Bookmark as BookmarkIcon,
 } from "lucide-react"
@@ -37,7 +36,6 @@ import {
 } from "@/components/ui/popover"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/shared/utils"
-import { formatFileSize } from "@/client/file-utils"
 import { useStore } from "@/client/hooks/use-store"
 import {
   useAttachedContext,
@@ -189,21 +187,20 @@ function PickerBody({
   }, [])
 
   return (
-    <div ref={rootRef} className="py-1.5">
+    <div ref={rootRef} className="py-1">
       {/* Skills */}
-      <Section title="Skills">
-        {ctx.skills.length === 0 ? (
-          <EmptyHint>No skills enabled.</EmptyHint>
-        ) : (
-          ctx.skills.map((s) => (
-            <SkillRow
-              key={s.id}
-              skill={s}
-              muted={mutedSkillIds.has(s.id)}
-              onToggleMute={() => onToggleMute(s.id)}
-            />
-          ))
-        )}
+      <Section
+        title="Skills"
+        emptyHint={ctx.skills.length === 0 ? "none enabled" : undefined}
+      >
+        {ctx.skills.map((s) => (
+          <SkillRow
+            key={s.id}
+            skill={s}
+            muted={mutedSkillIds.has(s.id)}
+            onToggleMute={() => onToggleMute(s.id)}
+          />
+        ))}
         <AddRow onClick={() => jumpToTab("skills")} label="Manage skills" />
       </Section>
 
@@ -211,30 +208,31 @@ function PickerBody({
 
       {/* Files: workspace + conversation merged for compactness, but
           differentiated visually so the user knows which lane each is in. */}
-      <Section title="Files">
-        {ctx.workspaceFiles.length === 0 && ctx.conversationFiles.length === 0 ? (
-          <EmptyHint>No files attached.</EmptyHint>
-        ) : (
-          <>
-            {ctx.workspaceFiles.map((f) => (
-              <FileRow
-                key={f.id}
-                file={f}
-                onDetach={() => toggleConversationFileSelection(f.id)}
-              />
-            ))}
-            {ctx.conversationFiles.map((f) => (
-              <FileRow
-                key={f.id}
-                file={f}
-                onDetach={() => {
-                  if (activeConversationId)
-                    removeConversationFile(activeConversationId, f.id)
-                }}
-              />
-            ))}
-          </>
-        )}
+      <Section
+        title="Files"
+        emptyHint={
+          ctx.workspaceFiles.length === 0 && ctx.conversationFiles.length === 0
+            ? "none attached"
+            : undefined
+        }
+      >
+        {ctx.workspaceFiles.map((f) => (
+          <FileRow
+            key={f.id}
+            file={f}
+            onDetach={() => toggleConversationFileSelection(f.id)}
+          />
+        ))}
+        {ctx.conversationFiles.map((f) => (
+          <FileRow
+            key={f.id}
+            file={f}
+            onDetach={() => {
+              if (activeConversationId)
+                removeConversationFile(activeConversationId, f.id)
+            }}
+          />
+        ))}
         <AddRow onClick={onPickFile} label="Upload file" />
         <AddRow
           onClick={() => jumpToTab("files")}
@@ -245,18 +243,17 @@ function PickerBody({
       <Divider />
 
       {/* URL bookmarks */}
-      <Section title="Bookmarks">
-        {ctx.bookmarks.length === 0 ? (
-          <EmptyHint>No URLs attached.</EmptyHint>
-        ) : (
-          ctx.bookmarks.map((b) => (
-            <BookmarkRow
-              key={b.id}
-              bookmark={b}
-              onDetach={() => toggleConversationUrlBookmarkSelection(b.id)}
-            />
-          ))
-        )}
+      <Section
+        title="Bookmarks"
+        emptyHint={ctx.bookmarks.length === 0 ? "none attached" : undefined}
+      >
+        {ctx.bookmarks.map((b) => (
+          <BookmarkRow
+            key={b.id}
+            bookmark={b}
+            onDetach={() => toggleConversationUrlBookmarkSelection(b.id)}
+          />
+        ))}
         <AddRow onClick={() => jumpToTab("links")} label="Add URL" />
       </Section>
 
@@ -264,18 +261,19 @@ function PickerBody({
         <>
           <Divider />
           {/* MCP resources */}
-          <Section title="MCP resources">
-            {ctx.mcpResources.length === 0 ? (
-              <EmptyHint>No resources attached.</EmptyHint>
-            ) : (
-              ctx.mcpResources.map((r) => (
-                <McpRow
-                  key={r.id}
-                  resource={r}
-                  onDetach={() => toggleConversationMcpResourceSelection(r.id)}
-                />
-              ))
-            )}
+          <Section
+            title="MCP resources"
+            emptyHint={
+              ctx.mcpResources.length === 0 ? "none attached" : undefined
+            }
+          >
+            {ctx.mcpResources.map((r) => (
+              <McpRow
+                key={r.id}
+                resource={r}
+                onDetach={() => toggleConversationMcpResourceSelection(r.id)}
+              />
+            ))}
             <AddRow
               onClick={() => jumpToTab("mcp")}
               label="Manage MCP servers"
@@ -289,31 +287,33 @@ function PickerBody({
 
 function Section({
   title,
+  emptyHint,
   children,
 }: {
   title: string
+  /** When set, rendered inline next to the title (no own row). Caller
+   *  passes this when the section has no items, so the picker collapses
+   *  the empty state into a single header line. */
+  emptyHint?: string
   children: React.ReactNode
 }) {
   return (
     <div className="px-2">
-      <p className="px-1.5 py-1 text-[10px] uppercase tracking-wide text-[var(--muted-foreground)] font-medium">
-        {title}
+      <p className="px-1.5 pt-0.5 pb-px text-[10px] uppercase tracking-wide text-[var(--muted-foreground)] font-medium flex items-baseline gap-2">
+        <span>{title}</span>
+        {emptyHint && (
+          <span className="text-[10px] normal-case tracking-normal italic font-normal text-[var(--muted-foreground)]/70">
+            {emptyHint}
+          </span>
+        )}
       </p>
-      <ul className="space-y-0.5">{children}</ul>
+      <ul>{children}</ul>
     </div>
   )
 }
 
 function Divider() {
-  return <div className="my-1.5 h-px bg-[var(--border)] mx-2" />
-}
-
-function EmptyHint({ children }: { children: React.ReactNode }) {
-  return (
-    <li className="px-1.5 py-1 text-[11px] text-[var(--muted-foreground)] italic">
-      {children}
-    </li>
-  )
+  return <div className="my-1 h-px bg-[var(--border)] mx-2" />
 }
 
 function SkillRow({
@@ -330,7 +330,7 @@ function SkillRow({
     <li>
       <div
         className={cn(
-          "group/row flex items-center gap-2 rounded-md px-1.5 py-1.5",
+          "group/row flex items-center gap-2 rounded-md px-1.5 py-1",
           "hover:bg-[var(--accent)] transition-colors",
           muted && "opacity-60"
         )}
@@ -398,7 +398,7 @@ function FileRow({
     <li>
       <div
         className={cn(
-          "group/row flex items-center gap-2 rounded-md px-1.5 py-1.5",
+          "group/row flex items-center gap-2 rounded-md px-1.5 py-1",
           "hover:bg-[var(--accent)] transition-colors"
         )}
       >
@@ -413,19 +413,19 @@ function FileRow({
             className="shrink-0 text-[var(--muted-foreground)]"
           />
         )}
-        <div className="flex-1 min-w-0">
-          <p className="text-xs truncate">{file.name}</p>
-          <p className="text-[10px] text-[var(--muted-foreground)] flex items-center gap-1">
-            {formatFileSize(file.size)}
-            {isPrivate && (
-              <>
-                <span aria-hidden>·</span>
-                <Lock size={9} aria-hidden />
-                <span>only this chat</span>
-              </>
-            )}
-          </p>
-        </div>
+        <span className="text-xs flex-1 min-w-0 truncate">{file.name}</span>
+        {isPrivate && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Lock
+                size={10}
+                className="shrink-0 text-[var(--muted-foreground)]"
+                aria-label="Only this chat"
+              />
+            </TooltipTrigger>
+            <TooltipContent side="left">Only this chat</TooltipContent>
+          </Tooltip>
+        )}
         <DetachButton onClick={onDetach} label={`Detach ${file.name}`} />
       </div>
     </li>
@@ -443,17 +443,14 @@ function BookmarkRow({
     <li>
       <div
         className={cn(
-          "group/row flex items-center gap-2 rounded-md px-1.5 py-1.5",
+          "group/row flex items-center gap-2 rounded-md px-1.5 py-1",
           "hover:bg-[var(--accent)] transition-colors"
         )}
       >
         <BookmarkIcon size={14} className="shrink-0 text-[var(--muted-foreground)]" />
-        <div className="flex-1 min-w-0">
-          <p className="text-xs truncate">{bookmark.title}</p>
-          <p className="text-[10px] text-[var(--muted-foreground)] truncate">
-            {bookmark.url}
-          </p>
-        </div>
+        <span className="text-xs flex-1 min-w-0 truncate" title={bookmark.url}>
+          {bookmark.title}
+        </span>
         <DetachButton onClick={onDetach} label={`Detach ${bookmark.title}`} />
       </div>
     </li>
@@ -471,18 +468,17 @@ function McpRow({
     <li>
       <div
         className={cn(
-          "group/row flex items-center gap-2 rounded-md px-1.5 py-1.5",
+          "group/row flex items-center gap-2 rounded-md px-1.5 py-1",
           "hover:bg-[var(--accent)] transition-colors"
         )}
       >
         <Server size={14} className="shrink-0 text-[var(--muted-foreground)]" />
-        <div className="flex-1 min-w-0">
-          <p className="text-xs truncate">{resource.name}</p>
-          <p className="text-[10px] text-[var(--muted-foreground)] truncate flex items-center gap-1">
-            <Wrench size={9} aria-hidden />
-            {resource.serverName}
-          </p>
-        </div>
+        <span
+          className="text-xs flex-1 min-w-0 truncate"
+          title={resource.serverName}
+        >
+          {resource.name}
+        </span>
         <DetachButton onClick={onDetach} label={`Detach ${resource.name}`} />
       </div>
     </li>
@@ -527,7 +523,7 @@ function AddRow({
         type="button"
         onClick={onClick}
         className={cn(
-          "w-full flex items-center gap-2 rounded-md px-1.5 py-1.5 text-left",
+          "w-full flex items-center gap-2 rounded-md px-1.5 py-1 text-left",
           "text-[11px] text-[var(--muted-foreground)]",
           "hover:bg-[var(--accent)] hover:text-[var(--foreground)] transition-colors",
           "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]"

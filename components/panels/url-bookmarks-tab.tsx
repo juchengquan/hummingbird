@@ -1,8 +1,8 @@
 "use client"
 
-import { useCallback, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import { format, formatDistanceToNow } from "date-fns"
-import { Eye, ExternalLink, Globe, Lock, Plus, RefreshCw, X } from "lucide-react"
+import { Eye, ExternalLink, Globe, Plus, RefreshCw, Search, X } from "lucide-react"
 
 import { openUrlPreview } from "@/components/right-panel-slot"
 import { toast } from "sonner"
@@ -11,7 +11,6 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import {
   useStore,
-  useConversationPrivateUrlBookmarks,
   useConversationSelectedUrlBookmarkIds,
   useWorkspaceUrlBookmarks,
 } from "@/client/hooks/use-store"
@@ -33,31 +32,30 @@ import type { UrlBookmark } from "@/shared/types"
  */
 export function UrlBookmarksTab() {
   const activeWorkspaceId = useStore((s) => s.activeWorkspaceId)
-  const activeConversationId = useStore((s) => s.activeConversationId)
   const workspaceBookmarks = useWorkspaceUrlBookmarks()
-  const privateBookmarks = useConversationPrivateUrlBookmarks()
   const selectedIds = useConversationSelectedUrlBookmarkIds()
 
   const addUrlBookmark = useStore((s) => s.addUrlBookmark)
   const updateUrlBookmark = useStore((s) => s.updateUrlBookmark)
   const removeUrlBookmark = useStore((s) => s.removeUrlBookmark)
-  const addConversationUrlBookmark = useStore(
-    (s) => s.addConversationUrlBookmark
-  )
-  const removeConversationUrlBookmark = useStore(
-    (s) => s.removeConversationUrlBookmark
-  )
   const toggleSelection = useStore(
     (s) => s.toggleConversationUrlBookmarkSelection
   )
 
-  const [addOpen, setAddOpen] = useState<"workspace" | "conversation" | null>(
-    null
-  )
+  const [query, setQuery] = useState("")
+  const [addOpen, setAddOpen] = useState<"workspace" | null>(null)
   const [refreshingId, setRefreshingId] = useState<string | null>(null)
 
+  const filtered = useMemo(() => {
+    if (!query.trim()) return workspaceBookmarks
+    const q = query.toLowerCase()
+    return workspaceBookmarks.filter(b =>
+      b.title.toLowerCase().includes(q) || b.url.toLowerCase().includes(q)
+    )
+  }, [workspaceBookmarks, query])
+
   const handleAdd = useCallback(
-    async (url: string, lane: "workspace" | "conversation") => {
+    async (url: string) => {
       const result = await apiClient.url.fetch(url)
       if (!result.ok) {
         toast.error(result.error.message ?? "Failed to fetch URL", {
@@ -75,11 +73,7 @@ export function UrlBookmarksTab() {
         description: result.bookmark.description,
         faviconUrl: result.bookmark.faviconUrl,
       })
-      if (lane === "conversation" && activeConversationId) {
-        addConversationUrlBookmark(activeConversationId, bookmark.id)
-      } else if (lane === "workspace") {
-        toggleSelection(bookmark.id)
-      }
+      toggleSelection(bookmark.id)
       const truncatedNote = result.bookmark.contentTruncated
         ? " (truncated at 200 KB)"
         : ""
@@ -88,13 +82,7 @@ export function UrlBookmarksTab() {
       })
       setAddOpen(null)
     },
-    [
-      activeConversationId,
-      activeWorkspaceId,
-      addConversationUrlBookmark,
-      addUrlBookmark,
-      toggleSelection,
-    ]
+    [activeWorkspaceId, addUrlBookmark, toggleSelection]
   )
 
   const handleRefresh = useCallback(
@@ -133,32 +121,13 @@ export function UrlBookmarksTab() {
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      {/* This conversation — private pinned bookmarks. */}
-      {activeConversationId && (
-        <UrlBookmarkSection
-          title="This conversation"
-          icon={Lock}
-          bookmarks={privateBookmarks}
-          emptyHint="No bookmarks pinned. Use + to attach a URL only this conversation can see."
-          addLabel="Pin a URL to this conversation"
-          onAdd={() => setAddOpen("conversation")}
-          refreshingId={refreshingId}
-          onRefresh={handleRefresh}
-          rowAction={{
-            kind: "remove",
-            onClick: (bookmark) =>
-              removeConversationUrlBookmark(activeConversationId, bookmark.id),
-          }}
-        />
-      )}
-
       {/* Workspace bookmarks — tickable rows. */}
       <div className="flex-1 min-h-0 flex flex-col border-t border-[var(--border)]">
         <div className="shrink-0 h-11 px-3 flex items-center justify-between gap-2 border-b border-[var(--border)]">
           <div className="flex items-center gap-1.5 min-w-0">
             <Globe size={11} className="shrink-0 text-[var(--muted-foreground)]" />
             <p className="text-[11px] font-medium text-[var(--foreground)] truncate">
-              Workspace bookmarks
+              Bookmarks
             </p>
             <span className="text-[10px] text-[var(--muted-foreground)] shrink-0">
               {workspaceBookmarks.length}
@@ -174,14 +143,35 @@ export function UrlBookmarksTab() {
             <Plus size={14} />
           </button>
         </div>
+
+        {/* Search */}
+        <div className="shrink-0 px-3 py-2 border-b border-[var(--border)]">
+          <div className="relative">
+            <Search
+              size={12}
+              className="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
+            />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search bookmarks"
+              className="h-7 pl-7 text-xs"
+            />
+          </div>
+        </div>
+
         <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2">
           {workspaceBookmarks.length === 0 ? (
             <TabEmptyState icon={Globe} onClick={() => setAddOpen("workspace")}>
               No bookmarks yet. Add a URL to save it as workspace context.
             </TabEmptyState>
+          ) : filtered.length === 0 ? (
+            <div className="px-3 py-6 text-center text-xs text-[var(--muted-foreground)]">
+              No bookmarks match &ldquo;{query}&rdquo;
+            </div>
           ) : (
             <ul className="space-y-0.5">
-              {workspaceBookmarks.map((bookmark) => {
+              {filtered.map((bookmark) => {
                 const attached = selectedIds.includes(bookmark.id)
                 return (
                   <BookmarkRow
@@ -203,7 +193,6 @@ export function UrlBookmarksTab() {
 
       <AddBookmarkDialog
         open={addOpen !== null}
-        lane={addOpen}
         onOpenChange={(o) => !o && setAddOpen(null)}
         onAdd={handleAdd}
       />
@@ -211,67 +200,79 @@ export function UrlBookmarksTab() {
   )
 }
 
-function UrlBookmarkSection({
-  title,
-  icon: Icon,
-  bookmarks,
-  emptyHint,
-  addLabel,
+function AddBookmarkDialog({
+  open,
+  onOpenChange,
   onAdd,
-  refreshingId,
-  onRefresh,
-  rowAction,
 }: {
-  title: string
-  icon: typeof Lock
-  bookmarks: UrlBookmark[]
-  emptyHint: string
-  addLabel: string
-  onAdd: () => void
-  refreshingId: string | null
-  onRefresh: (bookmark: UrlBookmark) => Promise<void>
-  rowAction: { kind: "remove"; onClick: (bookmark: UrlBookmark) => void }
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onAdd: (url: string) => Promise<void>
 }) {
+  const [url, setUrl] = useState("")
+  const [submitting, setSubmitting] = useState(false)
+
+  const close = () => {
+    if (submitting) return
+    setUrl("")
+    onOpenChange(false)
+  }
+
+  const submit = async () => {
+    const trimmed = url.trim()
+    if (!trimmed) return
+    setSubmitting(true)
+    try {
+      await onAdd(trimmed)
+      setUrl("")
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (!open) return null
+
   return (
-    <div className="shrink-0 border-b border-[var(--border)]">
-      <div className="h-11 px-3 flex items-center justify-between gap-2 border-b border-[var(--border)]">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <Icon size={11} className="shrink-0 text-[var(--muted-foreground)]" />
-          <p className="text-[11px] font-medium text-[var(--foreground)] truncate">
-            {title}
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 backdrop-blur-sm pt-32"
+      onClick={(e) => e.target === e.currentTarget && close()}
+    >
+      <div className="w-full max-w-md mx-4 rounded-lg bg-[var(--background)] border border-[var(--border)] shadow-lg">
+        <div className="px-4 py-3 border-b border-[var(--border)]">
+          <h2 className="text-sm font-medium text-[var(--foreground)]">
+            Add a workspace bookmark
+          </h2>
+          <p className="mt-1 text-[11px] text-[var(--muted-foreground)]">
+            The server fetches the page, extracts text (up to 200 KB), and
+            caches it. Private URLs and IP addresses are rejected.
           </p>
-          <span className="text-[10px] text-[var(--muted-foreground)] shrink-0">
-            {bookmarks.length}
-          </span>
         </div>
-        <button
-          type="button"
-          onClick={onAdd}
-          aria-label={addLabel}
-          title={addLabel}
-          className="shrink-0 h-7 w-7 inline-flex items-center justify-center rounded-md text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] transition-colors"
-        >
-          <Plus size={14} />
-        </button>
+        <div className="px-4 py-3 space-y-2">
+          <Input
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !submitting) {
+                e.preventDefault()
+                void submit()
+              }
+              if (e.key === "Escape") close()
+            }}
+            placeholder="https://example.com/article"
+            className="text-sm font-mono"
+            autoFocus
+            type="url"
+          />
+        </div>
+        <div className="px-4 py-3 border-t border-[var(--border)] flex justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={close} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button type="button" onClick={() => void submit()} disabled={submitting || !url.trim()}>
+            {submitting ? "Fetching…" : "Save bookmark"}
+          </Button>
+        </div>
       </div>
-      {bookmarks.length === 0 ? (
-        <p className="px-3 py-2 text-[11px] text-[var(--muted-foreground)]">
-          {emptyHint}
-        </p>
-      ) : (
-        <ul className="px-2 py-1.5 space-y-0.5">
-          {bookmarks.map((bookmark) => (
-            <BookmarkRow
-              key={bookmark.id}
-              bookmark={bookmark}
-              refreshing={refreshingId === bookmark.id}
-              onRefresh={() => void onRefresh(bookmark)}
-              onRemove={() => rowAction.onClick(bookmark)}
-              removeTitle="Remove from this conversation"
-            />
-          ))}
-        </ul>
-      )}
     </div>
   )
 }
@@ -411,86 +412,6 @@ function BookmarkRow({
         </button>
       </div>
     </li>
-  )
-}
-
-function AddBookmarkDialog({
-  open,
-  lane,
-  onOpenChange,
-  onAdd,
-}: {
-  open: boolean
-  lane: "workspace" | "conversation" | null
-  onOpenChange: (open: boolean) => void
-  onAdd: (url: string, lane: "workspace" | "conversation") => Promise<void>
-}) {
-  const [url, setUrl] = useState("")
-  const [submitting, setSubmitting] = useState(false)
-
-  const close = () => {
-    if (submitting) return
-    setUrl("")
-    onOpenChange(false)
-  }
-
-  const submit = async () => {
-    if (!lane) return
-    const trimmed = url.trim()
-    if (!trimmed) return
-    setSubmitting(true)
-    try {
-      await onAdd(trimmed, lane)
-      setUrl("")
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  if (!open) return null
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 backdrop-blur-sm pt-32"
-      onClick={(e) => e.target === e.currentTarget && close()}
-    >
-      <div className="w-full max-w-md mx-4 rounded-lg bg-[var(--background)] border border-[var(--border)] shadow-lg">
-        <div className="px-4 py-3 border-b border-[var(--border)]">
-          <h2 className="text-sm font-medium text-[var(--foreground)]">
-            {lane === "conversation" ? "Pin a URL to this conversation" : "Add a workspace bookmark"}
-          </h2>
-          <p className="mt-1 text-[11px] text-[var(--muted-foreground)]">
-            The server fetches the page, extracts text (up to 200 KB), and
-            caches it. Private URLs and IP addresses are rejected.
-          </p>
-        </div>
-        <div className="px-4 py-3 space-y-2">
-          <Input
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !submitting) {
-                e.preventDefault()
-                void submit()
-              }
-              if (e.key === "Escape") close()
-            }}
-            placeholder="https://example.com/article"
-            className="text-sm font-mono"
-            autoFocus
-            type="url"
-          />
-        </div>
-        <div className="px-4 py-3 border-t border-[var(--border)] flex justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={close} disabled={submitting}>
-            Cancel
-          </Button>
-          <Button type="button" onClick={() => void submit()} disabled={submitting || !url.trim()}>
-            {submitting ? "Fetching…" : "Save bookmark"}
-          </Button>
-        </div>
-      </div>
-    </div>
   )
 }
 

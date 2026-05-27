@@ -109,6 +109,11 @@ export interface Workspace {
    */
   imageGenConfig?: import("./skills/image-gen-config").ImageGenConfig
   /**
+   * Workspace-level config for the `searchFiles` skill — just a per-turn
+   * cap today. Same cascade pattern as `webFetchConfig`.
+   */
+  fileSearchConfig?: import("./skills/file-search-config").FileSearchConfig
+  /**
    * User-defined ordering within the workspaces list, set by
    * `reorderWorkspaces`. The drag-and-drop UI in the Workspaces panel
    * writes monotonically increasing integers; the render order falls
@@ -519,6 +524,11 @@ export interface Conversation {
    */
   imageGenConfig?: import("./skills/image-gen-config").ImageGenConfig
   /**
+   * Per-conversation override of the workspace `searchFiles` config.
+   * Same field-by-field cascade as `webFetchConfig`.
+   */
+  fileSearchConfig?: import("./skills/file-search-config").FileSearchConfig
+  /**
    * Conversation this one was forked from. Set by `forkConversation`;
    * undefined for top-of-tree chats. Used by the branches dialog to
    * render the fork tree.
@@ -574,7 +584,7 @@ export interface Artifact {
 /**
  * User-scoped saved prompt template. Lives in the left sidebar's
  * Prompts group; click-to-insert into the chat input expands the
- * `{{variable}}` markers via the variable-fill modal. See
+ * `{variable}` markers via the variable-fill modal. See
  * `docs/_done/PLAN-prompt-library.md`.
  *
  * Phase 1 stores prompts in Zustand only (per-device, no sync).
@@ -585,12 +595,15 @@ export interface Artifact {
  */
 export interface Prompt {
   id: string
+  /** Workspace this prompt belongs to. Scoped like conversations — switching
+   *  workspaces shows only that workspace's prompts. */
+  workspaceId: string
   /** User-facing label. Slug derives from this on first save. */
   name: string
   /** Identifier for the future `/<slug>` slash trigger. Derived from
    *  `name` on creation, then editable independently. */
   slug: string
-  /** Plain text with `{{variable}}` markers — see
+  /** Plain text with `{variable}` markers — see
    *  `lib/shared/prompts/expand.ts`. */
   template: string
   /** Variable names in first-appearance order, derived from `template`

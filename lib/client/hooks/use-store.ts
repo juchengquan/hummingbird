@@ -117,6 +117,7 @@ export type {
 } from '@/shared/types'
 
 type Theme = 'system' | 'dark' | 'light'
+type ColorScheme = 'default' | 'anthropic'
 
 // Read theme from localStorage synchronously to prevent flash
 function getInitialTheme(): Theme {
@@ -214,6 +215,22 @@ function mergeImageGenConfig(
   }
   if (Object.keys(next).length === 0) return undefined
   return next as import('@/shared/skills/image-gen-config').ImageGenConfig
+}
+
+function mergeFileSearchConfig(
+  base: import('@/shared/skills/file-search-config').FileSearchConfig | undefined,
+  patch: Partial<import('@/shared/skills/file-search-config').FileSearchConfig>
+):
+  | import('@/shared/skills/file-search-config').FileSearchConfig
+  | undefined {
+  const next: Record<string, unknown> = { ...(base ?? {}) }
+  for (const key of Object.keys(patch) as Array<keyof typeof patch>) {
+    const value = patch[key]
+    if (value === undefined) delete next[key as string]
+    else next[key as string] = value
+  }
+  if (Object.keys(next).length === 0) return undefined
+  return next as import('@/shared/skills/file-search-config').FileSearchConfig
 }
 
 function mergeWebSearchConfig(
@@ -508,6 +525,12 @@ interface AppState {
     workspaceId: string,
     patch: Partial<import("@/shared/skills/image-gen-config").ImageGenConfig> | null
   ) => void
+  /** Patch the workspace-level `searchFiles` config. Same cascade
+   *  semantics as `patchWorkspaceWebFetchConfig`. */
+  patchWorkspaceFileSearchConfig: (
+    workspaceId: string,
+    patch: Partial<import("@/shared/skills/file-search-config").FileSearchConfig> | null
+  ) => void
   setActiveWorkspace: (workspaceId: string) => void
 
   // Resource actions
@@ -653,6 +676,7 @@ interface AppState {
   // optional `slug` for cases (import, duplicate-with-rename) where the
   // caller wants control.
   createPrompt: (input: {
+    workspaceId: string
     name: string
     template: string
     slug?: string
@@ -724,6 +748,12 @@ interface AppState {
   patchConversationImageGenConfig: (
     conversationId: string,
     patch: Partial<import("@/shared/skills/image-gen-config").ImageGenConfig> | null
+  ) => void
+  /** Patch the per-conversation `searchFiles` config override (same shape
+   *  and semantics as `patchWorkspaceFileSearchConfig`). */
+  patchConversationFileSearchConfig: (
+    conversationId: string,
+    patch: Partial<import("@/shared/skills/file-search-config").FileSearchConfig> | null
   ) => void
   /** Toggle a file's attachment to the active conversation (no-op if no active conversation). */
   toggleConversationFileSelection: (fileId: string) => void
@@ -808,6 +838,8 @@ interface AppState {
   // Theme actions
   setTheme: (theme: Theme) => void
   toggleTheme: () => void
+  colorScheme: ColorScheme
+  setColorScheme: (scheme: ColorScheme) => void
 }
 
 export const useStore = create<AppState>()(
@@ -815,6 +847,7 @@ export const useStore = create<AppState>()(
     (set, get) => ({
       // Theme
       theme: getInitialTheme(),
+      colorScheme: 'default' as ColorScheme,
 
       // Active main-area view
       activeView: 'workspaces',
@@ -1180,6 +1213,19 @@ export const useStore = create<AppState>()(
             }
             const merged = mergeImageGenConfig(w.imageGenConfig, patch)
             return { ...w, imageGenConfig: merged, updatedAt: new Date() }
+          }),
+        })),
+      patchWorkspaceFileSearchConfig: (workspaceId, patch) =>
+        set((state) => ({
+          workspaces: state.workspaces.map((w) => {
+            if (w.id !== workspaceId) return w
+            if (patch === null) {
+              const { fileSearchConfig: _drop, ...rest } = w
+              void _drop
+              return { ...rest, updatedAt: new Date() }
+            }
+            const merged = mergeFileSearchConfig(w.fileSearchConfig, patch)
+            return { ...w, fileSearchConfig: merged, updatedAt: new Date() }
           }),
         })),
       setActiveWorkspace: (workspaceId: string) =>
@@ -1698,15 +1744,16 @@ export const useStore = create<AppState>()(
         set((state) => ({ editorReloadToken: state.editorReloadToken + 1 })),
 
       // Prompt actions
-      createPrompt: ({ name, template, slug }) => {
+      createPrompt: ({ workspaceId, name, template, slug }) => {
         const now = new Date()
         const baseSlug = slug?.trim() || defaultSlug(name)
         const uniqueSlug = ensureUniquePromptSlug(
           baseSlug,
-          get().prompts
+          get().prompts.filter(p => p.workspaceId === workspaceId)
         )
         const prompt: Prompt = {
           id: nanoid(),
+          workspaceId,
           name: name.trim(),
           slug: uniqueSlug,
           template,
@@ -2021,6 +2068,19 @@ export const useStore = create<AppState>()(
             }
             const merged = mergeImageGenConfig(c.imageGenConfig, patch)
             return { ...c, imageGenConfig: merged, updatedAt: new Date() }
+          }),
+        })),
+      patchConversationFileSearchConfig: (conversationId, patch) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id !== conversationId) return c
+            if (patch === null) {
+              const { fileSearchConfig: _drop, ...rest } = c
+              void _drop
+              return { ...rest, updatedAt: new Date() }
+            }
+            const merged = mergeFileSearchConfig(c.fileSearchConfig, patch)
+            return { ...c, fileSearchConfig: merged, updatedAt: new Date() }
           }),
         })),
       togglePin: (conversationId: string) =>
@@ -2440,6 +2500,7 @@ export const useStore = create<AppState>()(
         const nextIndex = (currentIndex + 1) % themes.length
         set({ theme: themes[nextIndex] })
       },
+      setColorScheme: (scheme: ColorScheme) => set({ colorScheme: scheme }),
     }),
     {
       name: 'hummingbird-storage',
@@ -2862,6 +2923,7 @@ export const useStore = create<AppState>()(
       },
       partialize: (state) => ({
         theme: state.theme,
+        colorScheme: state.colorScheme,
         activeView: state.activeView,
         workspaces: state.workspaces,
         activeWorkspaceId: state.activeWorkspaceId,
@@ -3099,6 +3161,17 @@ export const useWorkspaceDocuments = (): Document[] => {
       if (ap !== bp) return ap - bp
       return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
     })
+}
+
+/** Non-deleted prompts scoped to the active workspace, sorted by
+ *  updatedAt desc. */
+export const useWorkspacePrompts = (): Prompt[] => {
+  const prompts = useStore((state) => state.prompts)
+  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
+  if (!activeWorkspaceId) return []
+  return prompts
+    .filter((p) => p.workspaceId === activeWorkspaceId && !p.deletedAt)
+    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
 }
 
 /** Current open document, or null when the workspace has none yet. */

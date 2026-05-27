@@ -1,14 +1,14 @@
 /**
  * Pure helpers for the prompt library's templating syntax.
  *
- * Templates are plain text with `{{variable}}` markers. Variable
+ * Templates are plain text with `{variable}` markers. Variable
  * names are user-visible labels (not identifiers) — any non-empty
  * trimmed string between the braces. The same variable can appear
  * multiple times and is filled once.
  *
- * No escape syntax in v1. If a user genuinely needs literal `{{`
- * in output, the workaround is `{ {` with a space; revisit if
- * anyone hits the limit.
+ * Escape: `{{` produces a literal `{`, `}}` produces a literal `}`.
+ * This way users can include braces in their output by doubling
+ * them — a single `{` always introduces a variable marker.
  */
 
 export interface ParsedTemplate {
@@ -24,38 +24,42 @@ export type TemplateSegment =
   | { kind: "text"; value: string }
   | { kind: "var"; name: string }
 
-const VAR_RE = /\{\{\s*([^{}]+?)\s*\}\}/g
+/** Sentinel for escaped `{{` → `{`. Must be a single char that never
+ *  appears in user input (null byte). */
+const ESC_OPEN = "\x00"
+/** Sentinel for escaped `}}` → `}`. */
+const ESC_CLOSE = "\x01"
+
+const VAR_RE = /\{([^{}]+)\}/g
 
 /**
  * Walks the template once, splitting into text + variable segments
- * and collecting variable names in order. The regex matches a non-
- * greedy run of non-brace characters between `{{` and `}}`, with
- * whitespace tolerated inside the braces.
+ * and collecting variable names in order. Handles `{{` / `}}`
+ * escape sequences first so literal braces aren't picked up as
+ * variable markers.
  *
- * Empty (`{{}}`), whitespace-only (`{{ }}`), and nested-brace cases
- * are treated as literal text — the regex's `[^{}]+?` class refuses
- * to match empty or to consume inner braces.
+ * `{name}` → variable (name trimmed, 1+ non-brace chars).
+ * `{{` → literal `{`.
+ * `}}` → literal `}`.
+ * Unmatched `{` without matching `}` → literal text.
  */
 export function parseTemplate(template: string): ParsedTemplate {
+  // First pass: replace escape sequences with sentinels so the
+  // variable regex doesn't mistake `{{hello}}` for a variable.
+  const escaped = template.replace(/\{\{/g, ESC_OPEN).replace(/\}\}/g, ESC_CLOSE)
+
   const segments: TemplateSegment[] = []
   const seen = new Set<string>()
   const variables: string[] = []
   let cursor = 0
-  // Reset lastIndex so repeated calls don't leak state via the
-  // module-scoped regex.
-  VAR_RE.lastIndex = 0
-  for (const match of template.matchAll(VAR_RE)) {
+
+  for (const match of escaped.matchAll(VAR_RE)) {
     const start = match.index ?? 0
     const end = start + match[0].length
     const name = match[1].trim()
-    // Whitespace-only / empty braces match the regex but yield an empty
-    // name after trim. Skip without advancing the cursor — the surrounding
-    // text emit on the next iteration (or the final tail slice) will
-    // include the braces as literal text. Same behavior as not matching
-    // at all.
     if (!name) continue
     if (start > cursor) {
-      segments.push({ kind: "text", value: template.slice(cursor, start) })
+      segments.push({ kind: "text", value: unescape(escaped.slice(cursor, start)) })
     }
     segments.push({ kind: "var", name })
     if (!seen.has(name)) {
@@ -64,17 +68,16 @@ export function parseTemplate(template: string): ParsedTemplate {
     }
     cursor = end
   }
-  if (cursor < template.length) {
-    segments.push({ kind: "text", value: template.slice(cursor) })
+  if (cursor < escaped.length) {
+    segments.push({ kind: "text", value: unescape(escaped.slice(cursor)) })
   }
   return { template, variables, segments }
 }
 
 /**
  * Substitutes the values from `fills` into a template. Missing
- * variables are left as `{{name}}` in the output so the user can
- * see what's still unfilled (the variable-fill modal makes this
- * impossible in practice, but the function tolerates it).
+ * variables are left as `{name}` in the output so the user can
+ * see what's still unfilled.
  *
  * Whitespace tolerance: a value that's `undefined` or `null`
  * leaves the marker in place; an empty string substitutes empty
@@ -84,14 +87,18 @@ export function expandTemplate(
   template: string,
   fills: Record<string, string | undefined | null>
 ): string {
-  return template.replace(VAR_RE, (match, raw) => {
+  // Escape literal brace pairs before substitution.
+  let result = template.replace(/\{\{/g, ESC_OPEN).replace(/\}\}/g, ESC_CLOSE)
+  result = result.replace(VAR_RE, (match, raw) => {
     const name = String(raw).trim()
-    // Whitespace-only braces are literal text — mirror parseTemplate's
-    // behavior so `{{}}` and `{{ }}` round-trip consistently through
-    // parse → expand.
     if (!name) return match
     const value = fills[name]
     if (value === undefined || value === null) return match
     return value
   })
+  return unescape(result)
+}
+
+function unescape(s: string): string {
+  return s.replace(new RegExp(ESC_OPEN, "g"), "{").replace(new RegExp(ESC_CLOSE, "g"), "}")
 }

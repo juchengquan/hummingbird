@@ -115,6 +115,7 @@ commands, and `@` prompt mentions — all archived in
 | 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 2 of 5 done | Done: generatedImages sync (#45), roadmap sweep. Open: accurate tokens, recap-of-recaps, signed-URL re-sign |
 | 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~7.5 days total |
 | 📐 [Agent API as a separate service](PLAN-agent-api.md) | decision doc | Language-agnostic target shape for splitting inference + agent loop out; TS-service or Python, undecided |
+| 📐 [Typed prompt variables](PLAN-typed-prompt-variables.md) | deferred | Likely over-engineering — only build if users ask |
 | 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 pending | Contract-first groundwork shipped; companion to the Agent API plan |
 
 ---
