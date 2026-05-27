@@ -1,9 +1,15 @@
 "use client"
 import "client-only"
 
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
 import { apiClient } from "@/client/api-client"
+import {
+  clearActiveTask,
+  saveActiveTask,
+} from "@/client/agent/active-task"
+import { notifyTaskFinished } from "@/client/agent/notify"
+import { isTerminalStatus } from "@/shared/agent/events"
 import {
   EMPTY_RUN_VIEW,
   reduceRun,
@@ -11,6 +17,17 @@ import {
 } from "@/shared/agent/project"
 import { decodeTaskEventStream } from "@/shared/agent/stream"
 import type { TaskRequestInput } from "@/shared/api-schemas"
+
+export interface UseTaskRunOptions {
+  /** When set, persist a resume pointer for this conversation as the run
+   *  streams and clear it on settle — enables resume-on-reload. */
+  conversationId?: string
+  /** Conversation title carried into the resume pointer + notification. */
+  title?: string
+  /** Fire a browser notification when the run settles while the tab is
+   *  hidden. Permission must be requested separately. */
+  notifyOnFinish?: boolean
+}
 
 export interface UseTaskRunResult {
   /** The folded projection of the event log so far. */
@@ -39,7 +56,7 @@ export interface UseTaskRunResult {
  * a ref so a reconnect can continue from the current cursor without a
  * stale closure. One run at a time — `start`/`resume` abort the prior.
  */
-export function useTaskRun(): UseTaskRunResult {
+export function useTaskRun(options?: UseTaskRunOptions): UseTaskRunResult {
   const [view, setView] = useState<TaskRunView>(EMPTY_RUN_VIEW)
   const [runId, setRunId] = useState<string | null>(null)
   const [isRunning, setIsRunning] = useState(false)
@@ -48,6 +65,14 @@ export function useTaskRun(): UseTaskRunResult {
   const abortRef = useRef<AbortController | null>(null)
   const viewRef = useRef<TaskRunView>(EMPTY_RUN_VIEW)
   const runIdRef = useRef<string | null>(null)
+  // Latest options without re-creating the stream callbacks each render.
+  const optsRef = useRef(options)
+  useEffect(() => {
+    optsRef.current = options
+  })
+  // Last (status, step) we wrote to the resume pointer, so token-only
+  // updates don't hammer localStorage.
+  const persistedRef = useRef<{ status: string; step: number } | null>(null)
 
   const consume = useCallback(async (body: ReadableStream<Uint8Array>) => {
     for await (const event of decodeTaskEventStream(body)) {
@@ -58,6 +83,31 @@ export function useTaskRun(): UseTaskRunResult {
       const next = reduceRun(viewRef.current, event)
       viewRef.current = next
       setView(next)
+
+      const opts = optsRef.current
+      const id = runIdRef.current
+      if (opts?.conversationId && id) {
+        if (isTerminalStatus(next.status)) {
+          clearActiveTask()
+          persistedRef.current = null
+          if (opts.notifyOnFinish && next.status === "done") {
+            notifyTaskFinished(next, { title: opts.title })
+          }
+        } else if (
+          persistedRef.current?.status !== next.status ||
+          persistedRef.current?.step !== next.step
+        ) {
+          persistedRef.current = { status: next.status, step: next.step }
+          saveActiveTask({
+            runId: id,
+            conversationId: opts.conversationId,
+            cursor: next.cursor,
+            status: next.status,
+            title: opts.title,
+            updatedAt: new Date().toISOString(),
+          })
+        }
+      }
     }
   }, [])
 
@@ -68,6 +118,7 @@ export function useTaskRun(): UseTaskRunResult {
       abortRef.current = controller
       viewRef.current = EMPTY_RUN_VIEW
       runIdRef.current = null
+      persistedRef.current = null
       setView(EMPTY_RUN_VIEW)
       setRunId(null)
       setError(null)
@@ -100,6 +151,7 @@ export function useTaskRun(): UseTaskRunResult {
       const controller = new AbortController()
       abortRef.current = controller
       runIdRef.current = id
+      persistedRef.current = null
       setRunId(id)
       setError(null)
       setIsRunning(true)
@@ -138,6 +190,7 @@ export function useTaskRun(): UseTaskRunResult {
     abortRef.current = null
     viewRef.current = EMPTY_RUN_VIEW
     runIdRef.current = null
+    persistedRef.current = null
     setView(EMPTY_RUN_VIEW)
     setRunId(null)
     setError(null)
