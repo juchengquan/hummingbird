@@ -808,6 +808,107 @@ export type Database = {
           },
         ]
       }
+      task_events: {
+        Row: {
+          created_at: string
+          id: number
+          kind: string
+          payload: Json
+          seq: number
+          step: number
+          task_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: number
+          kind: string
+          payload: Json
+          seq: number
+          step: number
+          task_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: number
+          kind?: string
+          payload?: Json
+          seq?: number
+          step?: number
+          task_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_events_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tasks: {
+        Row: {
+          conversation_id: string
+          created_at: string
+          finished_at: string | null
+          goal: string
+          id: string
+          max_steps: number
+          result_message_id: string | null
+          started_at: string | null
+          status: string
+          step: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          conversation_id: string
+          created_at?: string
+          finished_at?: string | null
+          goal: string
+          id: string
+          max_steps?: number
+          result_message_id?: string | null
+          started_at?: string | null
+          status: string
+          step?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          conversation_id?: string
+          created_at?: string
+          finished_at?: string | null
+          goal?: string
+          id?: string
+          max_steps?: number
+          result_message_id?: string | null
+          started_at?: string | null
+          status?: string
+          step?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tasks_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_result_message_id_fkey"
+            columns: ["result_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       url_bookmarks: {
         Row: {
           content: string
