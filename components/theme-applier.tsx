@@ -13,6 +13,7 @@ import { useStore } from "@/client/hooks/use-store"
  */
 export function ThemeApplier() {
   const theme = useStore((s) => s.theme)
+  const colorScheme = useStore((s) => s.colorScheme)
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -35,6 +36,12 @@ export function ThemeApplier() {
     mq.addEventListener("change", apply)
     return () => mq.removeEventListener("change", apply)
   }, [theme])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const root = document.documentElement
+    root.classList.toggle("anthropic", colorScheme === "anthropic")
+  }, [colorScheme])
 
   return null
 }

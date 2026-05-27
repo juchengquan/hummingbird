@@ -220,7 +220,7 @@ export function ChatPanel() {
    * `@` prompt-mention autocomplete. Sibling of the `/` skill surface
    * — mutually exclusive because each requires its own leading char.
    * Picking a prompt expands its template into the input (replacing
-   * the `@slug`); prompts with `{{variable}}` markers route through
+   * the `@slug`); prompts with `{variable}` markers route through
    * the fill modal first. See prompt-library Phase 3 in
    * `docs/_done/PLAN-prompt-library.md`.
    */
@@ -974,6 +974,21 @@ export function ChatPanel() {
                   .map((img) => ({ ...img, mode }))
                 if (images.length > 0) {
                   appendMessageGeneratedImages(ph.id, images)
+                  // Auto-archive each generated image as an artifact
+                  // so it appears in the Artifacts tab alongside code blocks.
+                  images.forEach((img) => {
+                    const title = img.prompt
+                      ? img.prompt.slice(0, 80).trim()
+                      : `Generated image`
+                    createArtifact({
+                      conversationId: targetConvId,
+                      messageId: ph.id,
+                      kind: "image",
+                      title,
+                      content: img.url,
+                      storagePath: img.storagePath ?? null,
+                    })
+                  })
                 }
               }
             } else if (parsed.type === "suggestions" && Array.isArray(parsed.values)) {
@@ -1813,7 +1828,7 @@ export function ChatPanel() {
       <ResourcesSidebar />
 
       {/* Variable-fill modal for `@`-mention prompts that carry
-          `{{variable}}` markers. On insert it drops the expanded
+          `{variable}` markers. On insert it drops the expanded
           template into the chat input. */}
       <PromptVariableFill
         open={mentionFillPrompt !== null}

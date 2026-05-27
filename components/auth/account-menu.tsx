@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { LogIn, LogOut, Loader2, CloudOff, Cloud, HardDrive, Trash2 } from "lucide-react"
+import { LogIn, LogOut, Loader2, CloudOff, Cloud, HardDrive, Trash2, Sun, Moon, Monitor } from "lucide-react"
 import { toast } from "sonner"
 import {
   Popover,
@@ -34,6 +34,10 @@ export function AccountMenu() {
   const setLocalOnlyMode = useStore((s) => s.setLocalOnlyMode)
   const localFilesOnly = useStore((s) => s.localFilesOnly)
   const setLocalFilesOnly = useStore((s) => s.setLocalFilesOnly)
+  const theme = useStore((s) => s.theme)
+  const setTheme = useStore((s) => s.setTheme)
+  const colorScheme = useStore((s) => s.colorScheme)
+  const setColorScheme = useStore((s) => s.setColorScheme)
   const { state } = useSidebar()
   const collapsed = state === "collapsed"
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -198,6 +202,80 @@ export function AccountMenu() {
           }
         />
         <div className="border-t my-1" />
+        {/* Color scheme */}
+        <div className="px-2 py-1">
+          <p className="text-[10px] font-medium text-[var(--muted-foreground)] mb-1">Color scheme</p>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              onClick={() => setColorScheme("default")}
+              className={cn(
+                "flex-1 h-7 rounded text-[10px] font-medium transition-colors border",
+                colorScheme === "default"
+                  ? "bg-[var(--primary)]/15 text-[var(--primary)] border-[var(--primary)]/40"
+                  : "bg-transparent text-[var(--muted-foreground)] border-[var(--border)] hover:border-[var(--muted-foreground)]/40"
+              )}
+            >
+              Default
+            </button>
+            <button
+              type="button"
+              onClick={() => setColorScheme("anthropic")}
+              className={cn(
+                "flex-1 h-7 rounded text-[10px] font-medium transition-colors border",
+                colorScheme === "anthropic"
+                  ? "bg-[var(--primary)]/15 text-[var(--primary)] border-[var(--primary)]/40"
+                  : "bg-transparent text-[var(--muted-foreground)] border-[var(--border)] hover:border-[var(--muted-foreground)]/40"
+              )}
+            >
+              Anthropic
+            </button>
+          </div>
+        </div>
+        {/* Theme */}
+        <div className="px-2 py-1.5">
+          <p className="text-[10px] font-medium text-[var(--muted-foreground)] mb-1">Theme</p>
+          <div className="flex gap-1">
+            {[
+              { value: "light" as const, label: "Light", icon: Sun },
+              { value: "dark" as const, label: "Dark", icon: Moon },
+              { value: "system" as const, label: "System", icon: Monitor },
+            ].map(({ value, label, icon: Icon }) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setTheme(value)}
+                className={cn(
+                  "flex-1 h-7 rounded text-[10px] font-medium transition-colors border inline-flex items-center justify-center gap-1",
+                  theme === value
+                    ? "bg-[var(--primary)]/15 text-[var(--primary)] border-[var(--primary)]/40"
+                    : "bg-transparent text-[var(--muted-foreground)] border-[var(--border)] hover:border-[var(--muted-foreground)]/40"
+                )}
+              >
+                <Icon size={10} />
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="border-t my-1" />
+        {/* Help */}
+        <div className="px-2 py-1">
+          <p className="text-[10px] font-medium text-[var(--muted-foreground)] mb-1">Help</p>
+          <AccMenuShortcut keys={["⌘", "K"]} label="Command palette (or Ctrl+K)" />
+          <AccMenuShortcut keys={["⏎"]} label="Send message" />
+          <AccMenuShortcut keys={["⇧", "⏎"]} label="New line in input" />
+          <AccMenuShortcut keys={["Esc"]} label="Close dialogs / cancel editing" />
+          <div className="mt-1.5 space-y-0.5">
+            {ACC_TIPS.map((t) => (
+              <div key={t.title} className="text-[10px] leading-snug">
+                <span className="font-medium text-[var(--foreground)]">{t.title}</span>
+                <span className="text-[var(--muted-foreground)]"> — {t.detail}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="border-t my-1" />
         <div className="px-2 py-1.5">
           <div className="flex items-center justify-between text-[10px] text-[var(--muted-foreground)]">
             <span>Local file cache</span>
@@ -232,6 +310,28 @@ export function AccountMenu() {
         </Button>
       </PopoverContent>
     </Popover>
+  )
+}
+
+const ACC_TIPS: { title: string; detail: string }[] = [
+  { title: "Attach files", detail: "Click + to upload to the workspace and attach to this chat." },
+  { title: "Save outputs", detail: "Hover an assistant message → archive icon saves code or markdown." },
+  { title: "Bookmark a reply", detail: "Hover → bookmark icon. Bookmarks live in the Notes tab." },
+  { title: "Per-workspace persona", detail: "Workspaces have a system prompt — set it on the workspaces tab." },
+]
+
+function AccMenuShortcut({ keys, label }: { keys: string[]; label: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-[10px] py-0.5">
+      <span className="text-[var(--foreground)]">{label}</span>
+      <span className="flex items-center gap-0.5 shrink-0">
+        {keys.map((k, i) => (
+          <kbd key={i} className="inline-flex items-center justify-center min-w-[1.5em] h-4 px-1 rounded border border-[var(--border)] bg-[var(--background)] text-[9px] font-mono text-[var(--foreground)]">
+            {k}
+          </kbd>
+        ))}
+      </span>
+    </div>
   )
 }
 

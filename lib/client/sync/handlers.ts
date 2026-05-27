@@ -973,6 +973,7 @@ export function diffPrompts(prev: Prompt[], next: Prompt[]): SyncOp[] {
         clientOpId: "",
         row: {
           id: p.id,
+          workspace_id: p.workspaceId,
           name: p.name,
           slug: p.slug,
           template: p.template,

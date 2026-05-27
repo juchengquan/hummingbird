@@ -5,7 +5,7 @@
  *
  * An `@` mention expands a saved prompt template into the chat input:
  * typing `@persona` and picking it replaces the input with the
- * prompt's template (then the `{{variable}}` fill modal, if any).
+ * prompt's template (then the `{variable}` fill modal, if any).
  * Unlike a `/` skill slash, it is NOT a turn directive and nothing is
  * stripped at send time — by the time the user sends, the input is
  * just expanded text they can edit.

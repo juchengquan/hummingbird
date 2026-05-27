@@ -5,9 +5,10 @@ import { diffPrompts } from "./handlers"
 function make(id: string, overrides: Partial<Prompt> = {}): Prompt {
   return {
     id,
+    workspaceId: "ws-default",
     name: `Prompt ${id}`,
     slug: `prompt-${id}`,
-    template: `Hello, {{name}}!`,
+    template: `Hello, {name}!`,
     variables: ["name"],
     createdAt: new Date("2026-05-23T00:00:00Z"),
     updatedAt: new Date("2026-05-23T00:00:00Z"),

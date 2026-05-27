@@ -99,22 +99,20 @@ export function FilesTabBody({
       </div>
 
       {/* Search */}
-      {resources.length > 0 && (
-        <div className="shrink-0 px-3 py-2 border-b border-[var(--border)]">
-          <div className="relative">
-            <Search
-              size={12}
-              className="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
-            />
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search files"
-              className="h-7 pl-7 text-xs"
-            />
-          </div>
+      <div className="shrink-0 px-3 py-2 border-b border-[var(--border)]">
+        <div className="relative">
+          <Search
+            size={12}
+            className="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
+          />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search files"
+            className="h-7 pl-7 text-xs"
+          />
         </div>
-      )}
+      </div>
 
       {/* List */}
       <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2">

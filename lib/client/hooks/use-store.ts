@@ -52,6 +52,20 @@ import { parseTemplate } from '@/shared/prompts/expand'
 // uniqueness, just unique-within-a-user's-library.
 const nanoid = uuid
 
+const SIDEBAR_WIDTH_MIN = 160
+const SIDEBAR_WIDTH_MAX = 480
+function clampSidebarWidth(n: number): number {
+  if (!Number.isFinite(n)) return 256
+  return Math.max(SIDEBAR_WIDTH_MIN, Math.min(SIDEBAR_WIDTH_MAX, Math.round(n)))
+}
+
+const RESOURCES_SIDEBAR_WIDTH_MIN = 200
+const RESOURCES_SIDEBAR_WIDTH_MAX = 400
+function clampResourcesSidebarWidth(n: number): number {
+  if (!Number.isFinite(n)) return 272
+  return Math.max(RESOURCES_SIDEBAR_WIDTH_MIN, Math.min(RESOURCES_SIDEBAR_WIDTH_MAX, Math.round(n)))
+}
+
 /**
  * Slugify a prompt name for the future `/<slug>` slash trigger. Lowercase,
  * spaces and punctuation collapsed to single dashes, leading/trailing
@@ -117,6 +131,7 @@ export type {
 } from '@/shared/types'
 
 type Theme = 'system' | 'dark' | 'light'
+type ColorScheme = 'default' | 'anthropic'
 
 // Read theme from localStorage synchronously to prevent flash
 function getInitialTheme(): Theme {
@@ -216,6 +231,22 @@ function mergeImageGenConfig(
   return next as import('@/shared/skills/image-gen-config').ImageGenConfig
 }
 
+function mergeFileSearchConfig(
+  base: import('@/shared/skills/file-search-config').FileSearchConfig | undefined,
+  patch: Partial<import('@/shared/skills/file-search-config').FileSearchConfig>
+):
+  | import('@/shared/skills/file-search-config').FileSearchConfig
+  | undefined {
+  const next: Record<string, unknown> = { ...(base ?? {}) }
+  for (const key of Object.keys(patch) as Array<keyof typeof patch>) {
+    const value = patch[key]
+    if (value === undefined) delete next[key as string]
+    else next[key as string] = value
+  }
+  if (Object.keys(next).length === 0) return undefined
+  return next as import('@/shared/skills/file-search-config').FileSearchConfig
+}
+
 function mergeWebSearchConfig(
   base: import('@/shared/skills/web-search-config').WebSearchConfig | undefined,
   patch: Partial<import('@/shared/skills/web-search-config').WebSearchConfig>
@@ -309,12 +340,20 @@ interface AppState {
 
   // Sidebar
   sidebarCollapsed: boolean
+  /** Custom sidebar width in px. Default 256 (16rem). Clamped 172–480.
+   *  Only applies when the sidebar is expanded (not icon-collapsed). */
+  sidebarWidth: number
+  setSidebarWidth: (width: number) => void
 
   // Right resources sidebar (chat view)
   resourcesSidebarOpen: boolean
   resourcesSidebarTab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins' | 'mcp' | 'links'
   // Tasks panel (chat view) — the live surface for long-running agent runs.
   tasksPanelOpen: boolean
+  /** Custom right-rail content width in px. Default 272 (17rem).
+   *  Clamped 200–400. */
+  resourcesSidebarWidth: number
+  setResourcesSidebarWidth: (width: number) => void
   /** Per-user editor preferences. Persisted across reloads.
    *  - `aiReviewChanges`: when true (default), AI `edit`-mode output
    *    lands as Plate suggestion marks the user can accept/reject
@@ -512,6 +551,12 @@ interface AppState {
     workspaceId: string,
     patch: Partial<import("@/shared/skills/image-gen-config").ImageGenConfig> | null
   ) => void
+  /** Patch the workspace-level `searchFiles` config. Same cascade
+   *  semantics as `patchWorkspaceWebFetchConfig`. */
+  patchWorkspaceFileSearchConfig: (
+    workspaceId: string,
+    patch: Partial<import("@/shared/skills/file-search-config").FileSearchConfig> | null
+  ) => void
   setActiveWorkspace: (workspaceId: string) => void
 
   // Resource actions
@@ -646,6 +691,7 @@ interface AppState {
     language?: string | null
     title?: string
     content: string
+    storagePath?: string | null
   }) => Artifact
   deleteArtifact: (artifactId: string) => void
   togglePinArtifact: (artifactId: string) => void
@@ -657,6 +703,7 @@ interface AppState {
   // optional `slug` for cases (import, duplicate-with-rename) where the
   // caller wants control.
   createPrompt: (input: {
+    workspaceId: string
     name: string
     template: string
     slug?: string
@@ -728,6 +775,12 @@ interface AppState {
   patchConversationImageGenConfig: (
     conversationId: string,
     patch: Partial<import("@/shared/skills/image-gen-config").ImageGenConfig> | null
+  ) => void
+  /** Patch the per-conversation `searchFiles` config override (same shape
+   *  and semantics as `patchWorkspaceFileSearchConfig`). */
+  patchConversationFileSearchConfig: (
+    conversationId: string,
+    patch: Partial<import("@/shared/skills/file-search-config").FileSearchConfig> | null
   ) => void
   /** Toggle a file's attachment to the active conversation (no-op if no active conversation). */
   toggleConversationFileSelection: (fileId: string) => void
@@ -812,6 +865,8 @@ interface AppState {
   // Theme actions
   setTheme: (theme: Theme) => void
   toggleTheme: () => void
+  colorScheme: ColorScheme
+  setColorScheme: (scheme: ColorScheme) => void
 }
 
 export const useStore = create<AppState>()(
@@ -819,12 +874,14 @@ export const useStore = create<AppState>()(
     (set, get) => ({
       // Theme
       theme: getInitialTheme(),
+      colorScheme: 'default' as ColorScheme,
 
       // Active main-area view
       activeView: 'workspaces',
 
       // Sidebar
       sidebarCollapsed: false,
+      sidebarWidth: 256,
 
       // Right resources sidebar — default open on first load; the mobile
       // override happens in ResourcesSidebar's first-mount effect.
@@ -832,6 +889,7 @@ export const useStore = create<AppState>()(
       resourcesSidebarTab: 'files',
       // Tasks panel — closed until the user launches a task.
       tasksPanelOpen: false,
+      resourcesSidebarWidth: 272,
       editorPrefs: { aiReviewChanges: true },
 
       // Session-only selection-driven explain state (excluded from
@@ -908,6 +966,10 @@ export const useStore = create<AppState>()(
       setTasksPanelOpen: (open: boolean) => set({ tasksPanelOpen: open }),
       toggleTasksPanel: () =>
         set((state) => ({ tasksPanelOpen: !state.tasksPanelOpen })),
+      setSidebarWidth: (width: number) =>
+        set({ sidebarWidth: clampSidebarWidth(width) }),
+      setResourcesSidebarWidth: (width: number) =>
+        set({ resourcesSidebarWidth: clampResourcesSidebarWidth(width) }),
       setEditorPref: (key, value) =>
         set((state) => ({
           editorPrefs: { ...state.editorPrefs, [key]: value },
@@ -1189,6 +1251,19 @@ export const useStore = create<AppState>()(
             }
             const merged = mergeImageGenConfig(w.imageGenConfig, patch)
             return { ...w, imageGenConfig: merged, updatedAt: new Date() }
+          }),
+        })),
+      patchWorkspaceFileSearchConfig: (workspaceId, patch) =>
+        set((state) => ({
+          workspaces: state.workspaces.map((w) => {
+            if (w.id !== workspaceId) return w
+            if (patch === null) {
+              const { fileSearchConfig: _drop, ...rest } = w
+              void _drop
+              return { ...rest, updatedAt: new Date() }
+            }
+            const merged = mergeFileSearchConfig(w.fileSearchConfig, patch)
+            return { ...w, fileSearchConfig: merged, updatedAt: new Date() }
           }),
         })),
       setActiveWorkspace: (workspaceId: string) =>
@@ -1666,7 +1741,7 @@ export const useStore = create<AppState>()(
       },
 
       // Artifacts actions
-      createArtifact: ({ conversationId, messageId = null, kind, language = null, title, content }) => {
+      createArtifact: ({ conversationId, messageId = null, kind, language = null, title, content, storagePath = null }) => {
         const fallbackTitle =
           title ?? content.split('\n')[0].slice(0, 60).trim() ?? 'Untitled'
         const conv = get().conversations.find((c) => c.id === conversationId)
@@ -1680,7 +1755,7 @@ export const useStore = create<AppState>()(
           language,
           title: fallbackTitle || 'Untitled',
           content,
-          storagePath: null,
+          storagePath,
           pinned: false,
           createdAt: new Date(),
         }
@@ -1707,15 +1782,16 @@ export const useStore = create<AppState>()(
         set((state) => ({ editorReloadToken: state.editorReloadToken + 1 })),
 
       // Prompt actions
-      createPrompt: ({ name, template, slug }) => {
+      createPrompt: ({ workspaceId, name, template, slug }) => {
         const now = new Date()
         const baseSlug = slug?.trim() || defaultSlug(name)
         const uniqueSlug = ensureUniquePromptSlug(
           baseSlug,
-          get().prompts
+          get().prompts.filter(p => p.workspaceId === workspaceId)
         )
         const prompt: Prompt = {
           id: nanoid(),
+          workspaceId,
           name: name.trim(),
           slug: uniqueSlug,
           template,
@@ -2030,6 +2106,19 @@ export const useStore = create<AppState>()(
             }
             const merged = mergeImageGenConfig(c.imageGenConfig, patch)
             return { ...c, imageGenConfig: merged, updatedAt: new Date() }
+          }),
+        })),
+      patchConversationFileSearchConfig: (conversationId, patch) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id !== conversationId) return c
+            if (patch === null) {
+              const { fileSearchConfig: _drop, ...rest } = c
+              void _drop
+              return { ...rest, updatedAt: new Date() }
+            }
+            const merged = mergeFileSearchConfig(c.fileSearchConfig, patch)
+            return { ...c, fileSearchConfig: merged, updatedAt: new Date() }
           }),
         })),
       togglePin: (conversationId: string) =>
@@ -2449,6 +2538,7 @@ export const useStore = create<AppState>()(
         const nextIndex = (currentIndex + 1) % themes.length
         set({ theme: themes[nextIndex] })
       },
+      setColorScheme: (scheme: ColorScheme) => set({ colorScheme: scheme }),
     }),
     {
       name: 'hummingbird-storage',
@@ -2871,6 +2961,7 @@ export const useStore = create<AppState>()(
       },
       partialize: (state) => ({
         theme: state.theme,
+        colorScheme: state.colorScheme,
         activeView: state.activeView,
         workspaces: state.workspaces,
         activeWorkspaceId: state.activeWorkspaceId,
@@ -2893,6 +2984,8 @@ export const useStore = create<AppState>()(
         resourcesSidebarOpen: state.resourcesSidebarOpen,
         resourcesSidebarTab: state.resourcesSidebarTab,
         tasksPanelOpen: state.tasksPanelOpen,
+        sidebarWidth: state.sidebarWidth,
+        resourcesSidebarWidth: state.resourcesSidebarWidth,
         editorPrefs: state.editorPrefs,
         localOnlyMode: state.localOnlyMode,
         localFilesOnly: state.localFilesOnly,
@@ -3103,12 +3196,20 @@ export const useWorkspaceDocuments = (): Document[] => {
   if (!activeWorkspaceId) return []
   return documents
     .filter((d) => d.workspaceId === activeWorkspaceId)
-    .sort((a, b) => {
-      const ap = a.position ?? Number.POSITIVE_INFINITY
-      const bp = b.position ?? Number.POSITIVE_INFINITY
-      if (ap !== bp) return ap - bp
-      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-    })
+    .sort((a, b) =>
+      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    )
+}
+
+/** Non-deleted prompts scoped to the active workspace, sorted by
+ *  updatedAt desc. */
+export const useWorkspacePrompts = (): Prompt[] => {
+  const prompts = useStore((state) => state.prompts)
+  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
+  if (!activeWorkspaceId) return []
+  return prompts
+    .filter((p) => p.workspaceId === activeWorkspaceId && !p.deletedAt)
+    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
 }
 
 /** Current open document, or null when the workspace has none yet. */

@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { FileText, Lock, Plus, Server, X } from "lucide-react"
+import { FileText, Plus, Server, X } from "lucide-react"
 
 import {
   Dialog,
@@ -15,15 +15,17 @@ import {
   useStore,
   useWorkspaceMcpResources,
   useWorkspaceMcpServers,
-  useConversationPrivateMcpResources,
   useConversationSelectedMcpResourceIds,
 } from "@/client/hooks/use-store"
 import { TabEmptyState } from "@/components/panels/tab-empty-state"
 import { cn } from "@/shared/utils"
-import type { McpResource, McpServer } from "@/shared/types"
+import type { McpServer } from "@/shared/types"
 
 /**
- * MCP tab — workspace + conversation-private resources from MCP
+ * MCP tab — workspace-level MCP resources from configured servers.
+ *
+ * Resources are bound to the workspace and tickable on/off for the
+ * current conversation. No conversation-private lane.
  * servers. Mirrors the Files tab's two-stack layout:
  *   - "This conversation" — privately pinned (`conversationMcpResources`).
  *   - "Workspace MCP resources" — bound to the workspace
@@ -36,28 +38,18 @@ import type { McpResource, McpServer } from "@/shared/types"
  */
 export function McpTab() {
   const activeWorkspaceId = useStore((s) => s.activeWorkspaceId)
-  const activeConversationId = useStore((s) => s.activeConversationId)
   const servers = useWorkspaceMcpServers()
   const workspaceResources = useWorkspaceMcpResources()
-  const privateResources = useConversationPrivateMcpResources()
   const selectedIds = useConversationSelectedMcpResourceIds()
 
   const upsertMcpResource = useStore((s) => s.upsertMcpResource)
   const addMcpResourceBinding = useStore((s) => s.addMcpResourceBinding)
   const removeMcpResourceBinding = useStore((s) => s.removeMcpResourceBinding)
-  const addConversationMcpResource = useStore(
-    (s) => s.addConversationMcpResource
-  )
-  const removeConversationMcpResource = useStore(
-    (s) => s.removeConversationMcpResource
-  )
   const toggleSelection = useStore(
     (s) => s.toggleConversationMcpResourceSelection
   )
 
-  const [pickerOpen, setPickerOpen] = useState<"workspace" | "conversation" | null>(
-    null
-  )
+  const [pickerOpen, setPickerOpen] = useState<"workspace" | null>(null)
 
   // Resolve the server for each rendered resource so the row can show
   // "GitHub: README.md" style provenance.
@@ -80,8 +72,7 @@ export function McpTab() {
   }, [bindings, activeWorkspaceId])
 
   const handlePicked = (
-    pick: { server: McpServer; uri: string; name: string; description?: string; mimeType?: string },
-    lane: "workspace" | "conversation"
+    pick: { server: McpServer; uri: string; name: string; description?: string; mimeType?: string }
   ) => {
     const resource = upsertMcpResource({
       workspaceId: activeWorkspaceId,
@@ -91,11 +82,7 @@ export function McpTab() {
       description: pick.description,
       mimeType: pick.mimeType,
     })
-    if (lane === "workspace") {
-      addMcpResourceBinding(activeWorkspaceId, resource.id)
-    } else if (activeConversationId) {
-      addConversationMcpResource(activeConversationId, resource.id)
-    }
+    addMcpResourceBinding(activeWorkspaceId, resource.id)
     setPickerOpen(null)
   }
 
@@ -103,30 +90,6 @@ export function McpTab() {
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      {/* This conversation — private pinned resources. */}
-      {activeConversationId && (
-        <McpResourceSection
-          title="This conversation"
-          icon={Lock}
-          resources={privateResources}
-          serverById={serverById}
-          emptyHint="No MCP resources pinned. Use + to attach one only this conversation can see."
-          addDisabled={noServers}
-          addLabel={
-            noServers
-              ? "Configure an MCP server in workspace settings to attach resources."
-              : "Pin a resource to this conversation"
-          }
-          onAdd={() => setPickerOpen("conversation")}
-          rowAction={{
-            kind: "remove",
-            onClick: (resource) =>
-              activeConversationId &&
-              removeConversationMcpResource(activeConversationId, resource.id),
-          }}
-        />
-      )}
-
       {/* Workspace MCP resources — tickable on/off for this conversation. */}
       <div className="flex-1 min-h-0 flex flex-col border-t border-[var(--border)]">
         <div className="shrink-0 h-11 px-3 flex items-center justify-between gap-2 border-b border-[var(--border)]">
@@ -243,98 +206,8 @@ export function McpTab() {
         open={pickerOpen !== null}
         onOpenChange={(o) => !o && setPickerOpen(null)}
         servers={servers}
-        lane={pickerOpen}
         onPick={handlePicked}
       />
-    </div>
-  )
-}
-
-function McpResourceSection({
-  title,
-  icon: Icon,
-  resources,
-  serverById,
-  emptyHint,
-  addDisabled,
-  addLabel,
-  onAdd,
-  rowAction,
-}: {
-  title: string
-  icon: typeof Lock
-  resources: McpResource[]
-  serverById: Map<string, McpServer>
-  emptyHint: string
-  addDisabled?: boolean
-  addLabel?: string
-  onAdd: () => void
-  rowAction: { kind: "remove"; onClick: (resource: McpResource) => void }
-}) {
-  return (
-    <div className="shrink-0 border-b border-[var(--border)]">
-      <div className="h-11 px-3 flex items-center justify-between gap-2 border-b border-[var(--border)]">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <Icon size={11} className="shrink-0 text-[var(--muted-foreground)]" />
-          <p className="text-[11px] font-medium text-[var(--foreground)] truncate">
-            {title}
-          </p>
-          <span className="text-[10px] text-[var(--muted-foreground)] shrink-0">
-            {resources.length}
-          </span>
-        </div>
-        <button
-          type="button"
-          onClick={onAdd}
-          disabled={addDisabled}
-          aria-label={addLabel ?? title}
-          title={addLabel}
-          className={cn(
-            "shrink-0 h-7 w-7 inline-flex items-center justify-center rounded-md transition-colors",
-            addDisabled
-              ? "text-[var(--muted-foreground)]/50 cursor-not-allowed"
-              : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-          )}
-        >
-          <Plus size={14} />
-        </button>
-      </div>
-      {resources.length === 0 ? (
-        <p className="px-3 py-2 text-[11px] text-[var(--muted-foreground)]">
-          {emptyHint}
-        </p>
-      ) : (
-        <ul className="px-2 py-1.5 space-y-0.5">
-          {resources.map((resource) => {
-            const server = serverById.get(resource.serverId)
-            return (
-              <li
-                key={resource.id}
-                className="group/mcp-row relative flex items-start gap-2 px-2 py-1.5 rounded-md hover:bg-[var(--accent)] pr-8"
-              >
-                <FileText size={12} className="mt-0.5 shrink-0 text-[var(--muted-foreground)]" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs font-medium truncate text-[var(--foreground)]">
-                    {resource.name}
-                  </div>
-                  <div className="text-[10px] text-[var(--muted-foreground)] truncate">
-                    {server?.name ?? "Unknown server"} · {resource.uri}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => rowAction.onClick(resource)}
-                  aria-label={`Remove ${resource.name}`}
-                  title="Remove from this conversation"
-                  className="absolute top-1.5 right-1.5 p-1 rounded text-[var(--muted-foreground)] hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)] transition-colors opacity-0 group-hover/mcp-row:opacity-100 focus-within:opacity-100"
-                >
-                  <X size={12} />
-                </button>
-              </li>
-            )
-          })}
-        </ul>
-      )}
     </div>
   )
 }
@@ -343,16 +216,13 @@ function ResourcePickerDialog({
   open,
   onOpenChange,
   servers,
-  lane,
   onPick,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   servers: McpServer[]
-  lane: "workspace" | "conversation" | null
   onPick: (
-    pick: { server: McpServer; uri: string; name: string; description?: string; mimeType?: string },
-    lane: "workspace" | "conversation"
+    pick: { server: McpServer; uri: string; name: string; description?: string; mimeType?: string }
   ) => void
 }) {
   const [query, setQuery] = useState("")
@@ -394,11 +264,7 @@ function ResourcePickerDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>
-            {lane === "conversation"
-              ? "Pin a resource to this conversation"
-              : "Add a resource to the workspace"}
-          </DialogTitle>
+          <DialogTitle>Add a resource to the workspace</DialogTitle>
           <DialogDescription>
             Pick from resources discovered on your configured MCP servers.
             Need more? Hit the refresh button on a server row in workspace
@@ -425,7 +291,7 @@ function ResourcePickerDialog({
                 <button
                   key={`${r.server.id}::${r.uri}::${i}`}
                   type="button"
-                  onClick={() => lane && onPick(r, lane)}
+                  onClick={() => onPick(r)}
                   className="w-full px-3 py-2 text-left flex items-start gap-2 hover:bg-[var(--accent)] transition-colors"
                 >
                   <FileText size={12} className="mt-0.5 shrink-0 text-[var(--muted-foreground)]" />

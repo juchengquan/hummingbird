@@ -46,6 +46,7 @@ export function PromptDialog({ open, onOpenChange, prompt }: PromptDialogProps) 
   const createPrompt = useStore((s) => s.createPrompt)
   const updatePrompt = useStore((s) => s.updatePrompt)
   const deletePrompt = useStore((s) => s.deletePrompt)
+  const activeWorkspaceId = useStore((s) => s.activeWorkspaceId)
   const isEdit = !!prompt
 
   const [name, setName] = useState("")
@@ -76,7 +77,7 @@ export function PromptDialog({ open, onOpenChange, prompt }: PromptDialogProps) 
     if (isEdit && prompt) {
       updatePrompt(prompt.id, { name, template })
     } else {
-      createPrompt({ name, template })
+      createPrompt({ workspaceId: activeWorkspaceId, name, template })
     }
     onOpenChange(false)
   }
@@ -95,9 +96,15 @@ export function PromptDialog({ open, onOpenChange, prompt }: PromptDialogProps) 
           <DialogDescription>
             Save a reusable template. Use{" "}
             <code className="px-1 py-0.5 rounded bg-[var(--muted)] text-xs">
-              {"{{variable}}"}
+              {"{variable}"}
             </code>{" "}
             markers — you&apos;ll be asked to fill them in when inserting.
+            Use <code className="text-[10px] bg-[var(--muted)]/40 rounded px-0.5">
+              {"{{"}
+            </code>{" "}and{" "}
+            <code className="text-[10px] bg-[var(--muted)]/40 rounded px-0.5">
+              {"}}"}
+            </code>{" "}for literal braces.
           </DialogDescription>
         </DialogHeader>
 
@@ -131,7 +138,7 @@ export function PromptDialog({ open, onOpenChange, prompt }: PromptDialogProps) 
               value={template}
               onChange={(e) => setTemplate(e.target.value)}
               placeholder={
-                "Rewrite the following text in the voice of {{persona}}:\n\n{{text}}"
+                "Rewrite the following text in the voice of {persona}:\n\n{text}"
               }
               rows={8}
               className={cn(

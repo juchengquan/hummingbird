@@ -1,9 +1,10 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
-import { ChevronDown, Info, Minus, Pin, Plus, RotateCcw } from "lucide-react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { ChevronDown, Info, Minus, Pin, Plus, RotateCcw, Search } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import {
   Tooltip,
@@ -54,6 +55,14 @@ import {
   type ImageGenAspectRatio,
   type ImageGenConfig,
 } from "@/shared/skills/image-gen-config"
+import {
+  DEFAULT_MAX_FILE_SEARCHES,
+  MAX_MAX_FILE_SEARCHES,
+  MIN_MAX_FILE_SEARCHES,
+  clampMaxFileSearches,
+  resolveFileSearchConfig,
+  type FileSearchConfig,
+} from "@/shared/skills/file-search-config"
 
 /**
  * "Skills" tab in the right activity bar.
@@ -90,6 +99,19 @@ export function SkillsTab() {
   const patchConversationImageGenConfig = useStore(
     (s) => s.patchConversationImageGenConfig
   )
+  const patchWorkspaceFileSearchConfig = useStore(
+    (s) => s.patchWorkspaceFileSearchConfig
+  )
+  const patchConversationFileSearchConfig = useStore(
+    (s) => s.patchConversationFileSearchConfig
+  )
+
+  const [query, setQuery] = useState("")
+  const filteredSkills = useMemo(() => {
+    if (!query.trim()) return SKILLS
+    const q = query.toLowerCase()
+    return SKILLS.filter(s => s.name.toLowerCase().includes(q))
+  }, [query])
 
   // Without a workspace there's nothing to edit. With workspace but no
   // conversation, we drop into "workspace defaults" mode: 2-segment
@@ -120,8 +142,25 @@ export function SkillsTab() {
           )}
         </p>
       </div>
+
+      {/* Search */}
+      <div className="shrink-0 px-3 py-2 border-b border-[var(--border)]">
+        <div className="relative">
+          <Search
+            size={12}
+            className="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
+          />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search skills"
+            className="h-7 pl-7 text-xs"
+          />
+        </div>
+      </div>
+
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
-        {SKILLS.map((skill) => (
+        {filteredSkills.map((skill) => (
           <SkillRow
             key={skill.id}
             skill={skill}
@@ -135,6 +174,8 @@ export function SkillsTab() {
             conversationWebFetchConfig={conversation?.webFetchConfig}
             workspaceImageGenConfig={workspace.imageGenConfig}
             conversationImageGenConfig={conversation?.imageGenConfig}
+            workspaceFileSearchConfig={workspace.fileSearchConfig}
+            conversationFileSearchConfig={conversation?.fileSearchConfig}
             onPatchWorkspace={(patch) =>
               patchWorkspaceWebSearchConfig(workspace.id, patch)
             }
@@ -157,6 +198,14 @@ export function SkillsTab() {
             onPatchConversationImageGen={(patch) => {
               if (conversation) {
                 patchConversationImageGenConfig(conversation.id, patch)
+              }
+            }}
+            onPatchWorkspaceFileSearch={(patch) =>
+              patchWorkspaceFileSearchConfig(workspace.id, patch)
+            }
+            onPatchConversationFileSearch={(patch) => {
+              if (conversation) {
+                patchConversationFileSearchConfig(conversation.id, patch)
               }
             }}
             onSetEffective={(value) => {
@@ -206,6 +255,10 @@ interface SkillRowProps {
   workspaceImageGenConfig: ImageGenConfig | undefined
   /** Conversation-level imageGen config override. */
   conversationImageGenConfig: ImageGenConfig | undefined
+  /** Workspace-level searchFiles config (cap). */
+  workspaceFileSearchConfig: FileSearchConfig | undefined
+  /** Conversation-level searchFiles config override. */
+  conversationFileSearchConfig: FileSearchConfig | undefined
   onPatchWorkspace: (
     patch: Partial<WebSearchConfig> | null
   ) => void
@@ -223,6 +276,12 @@ interface SkillRowProps {
   ) => void
   onPatchConversationImageGen: (
     patch: Partial<ImageGenConfig> | null
+  ) => void
+  onPatchWorkspaceFileSearch: (
+    patch: Partial<FileSearchConfig> | null
+  ) => void
+  onPatchConversationFileSearch: (
+    patch: Partial<FileSearchConfig> | null
   ) => void
   /** Set the *effective* state for this row. With a conversation in
    *  scope this writes the per-chat override; without one it writes the
@@ -247,12 +306,16 @@ function SkillRow({
   conversationWebFetchConfig,
   workspaceImageGenConfig,
   conversationImageGenConfig,
+  workspaceFileSearchConfig,
+  conversationFileSearchConfig,
   onPatchWorkspace,
   onPatchConversation,
   onPatchWorkspaceWebFetch,
   onPatchConversationWebFetch,
   onPatchWorkspaceImageGen,
   onPatchConversationImageGen,
+  onPatchWorkspaceFileSearch,
+  onPatchConversationFileSearch,
   onSetEffective,
   onPinToWorkspace,
 }: SkillRowProps) {
@@ -271,7 +334,7 @@ function SkillRow({
   // reveal the panel. Local state — ephemeral, resets on remount,
   // intentionally not persisted.
   const hasSettingsPanel =
-    skill.id === "webSearch" || skill.id === "webFetch" || skill.id === "imageGen"
+    skill.id === "webSearch" || skill.id === "webFetch" || skill.id === "imageGen" || skill.id === "searchFiles"
   const [expanded, setExpanded] = useState(false)
 
   return (
@@ -355,6 +418,16 @@ function SkillRow({
           conversationConfig={conversationImageGenConfig}
           onPatchWorkspace={onPatchWorkspaceImageGen}
           onPatchConversation={onPatchConversationImageGen}
+        />
+      )}
+
+      {skill.id === "searchFiles" && expanded && (
+        <FileSearchSettingsPanel
+          hasConversation={hasConversation}
+          workspaceConfig={workspaceFileSearchConfig}
+          conversationConfig={conversationFileSearchConfig}
+          onPatchWorkspace={onPatchWorkspaceFileSearch}
+          onPatchConversation={onPatchConversationFileSearch}
         />
       )}
 
@@ -707,6 +780,53 @@ function AspectRatioRow({
           ))}
         </select>
       </div>
+    </div>
+  )
+}
+
+interface FileSearchSettingsPanelProps {
+  hasConversation: boolean
+  workspaceConfig: FileSearchConfig | undefined
+  conversationConfig: FileSearchConfig | undefined
+  onPatchWorkspace: (patch: Partial<FileSearchConfig> | null) => void
+  onPatchConversation: (patch: Partial<FileSearchConfig> | null) => void
+}
+
+/**
+ * Expanded settings shown under the File search row. Just the per-turn
+ * max-calls stepper today; same cascade semantics as the webFetch
+ * panel (workspace default vs conversation override).
+ */
+function FileSearchSettingsPanel({
+  hasConversation,
+  workspaceConfig,
+  conversationConfig,
+  onPatchWorkspace,
+  onPatchConversation,
+}: FileSearchSettingsPanelProps) {
+  const resolved = resolveFileSearchConfig(workspaceConfig, conversationConfig)
+  const editingConversation = hasConversation
+  const patch = (p: Partial<FileSearchConfig>) => {
+    if (editingConversation) onPatchConversation(p)
+    else onPatchWorkspace(p)
+  }
+  const ownConfig = editingConversation ? conversationConfig : workspaceConfig
+
+  return (
+    <div className="space-y-2.5 pt-1">
+      <MaxCallsStepper
+        label="Max searches"
+        effective={resolved.maxCalls}
+        ownValue={ownConfig?.maxCalls}
+        workspaceValue={workspaceConfig?.maxCalls}
+        editingConversation={editingConversation}
+        min={MIN_MAX_FILE_SEARCHES}
+        max={MAX_MAX_FILE_SEARCHES}
+        defaultValue={DEFAULT_MAX_FILE_SEARCHES}
+        clamp={clampMaxFileSearches}
+        onCommit={(value) => patch({ maxCalls: value })}
+        onReset={() => patch({ maxCalls: undefined })}
+      />
     </div>
   )
 }

@@ -11,6 +11,7 @@ import type { Prompt } from "@/shared/types"
 function p(overrides: Partial<Prompt> & { slug: string; name: string }): Prompt {
   return {
     id: overrides.id ?? overrides.slug,
+    workspaceId: overrides.workspaceId ?? "ws-default",
     name: overrides.name,
     slug: overrides.slug,
     template: overrides.template ?? "body",

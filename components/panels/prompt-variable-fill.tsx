@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 
-import { expandTemplate } from "@/shared/prompts/expand"
+import { expandTemplate, parseTemplate } from "@/shared/prompts/expand"
 import type { Prompt } from "@/shared/types"
 import { cn } from "@/shared/utils"
 
@@ -19,7 +19,7 @@ import {
 import { Input } from "@/components/ui/input"
 
 /**
- * Variable fill-in modal — opens when a prompt with `{{variable}}`
+ * Variable fill-in modal — opens when a prompt with `{variable}`
  * markers is clicked from the sidebar. One text input per variable,
  * tab between them. Submit (Enter on last field or click Insert)
  * expands the template and hands the result to `onInsert` (which the
@@ -28,7 +28,7 @@ import { Input } from "@/components/ui/input"
  *
  * Single-line text inputs in v1 — the plan flags richer variable
  * types (multi-line, URL, enum) as deferred. Plain text covers the
- * 90% case for "rewrite in {{voice}}" style prompts.
+ * 90% case for "rewrite in {voice}" style prompts.
  */
 
 export interface PromptVariableFillProps {
@@ -59,12 +59,13 @@ export function PromptVariableFill({
 
   if (!prompt) return null
 
+  const parsed = parseTemplate(prompt.template)
   const allFilled = prompt.variables.every((v) => (fills[v] ?? "").length > 0)
 
   function handleInsert() {
     if (!prompt) return
     // Allow inserting even with partial fills — missing markers stay
-    // as `{{var}}` in the chat input so the user can edit in place if
+    // as `{var}` in the chat input so the user can edit in place if
     // they want. Empty-string values intentionally substitute empty
     // (see expandTemplate docs).
     onInsert(expandTemplate(prompt.template, fills))
@@ -73,7 +74,7 @@ export function PromptVariableFill({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Fill in: {prompt.name}</DialogTitle>
           <DialogDescription className="text-xs">
@@ -83,7 +84,31 @@ export function PromptVariableFill({
           </DialogDescription>
         </DialogHeader>
 
+        {/* Template preview — shows the full prompt with
+            {variables} highlighted as primary-colored pill badges.
+            Scrolls when the template is long. */}
+        <div className="rounded-md border border-[var(--border)] bg-[var(--muted)]/30 p-3 max-h-[120px] overflow-y-auto">
+          <p className="text-xs font-mono leading-relaxed whitespace-pre-wrap break-words text-[var(--foreground)]">
+            {parsed.segments.map((seg, i) =>
+              seg.kind === "text" ? (
+                <span key={i}>{seg.value}</span>
+              ) : (
+                <span
+                  key={i}
+                  className={cn(
+                    "inline rounded px-1 py-px mx-px font-semibold",
+                    "bg-[var(--primary)]/15 text-[var(--primary)]"
+                  )}
+                >
+                  {`{${seg.name}}`}
+                </span>
+              )
+            )}
+          </p>
+        </div>
+
         <form
+          autoComplete="off"
           onSubmit={(e) => {
             e.preventDefault()
             handleInsert()
@@ -103,6 +128,7 @@ export function PromptVariableFill({
               </label>
               <Input
                 id={`var-${variable}`}
+                name={`fv-${i}`}
                 ref={i === 0 ? firstInputRef : undefined}
                 value={fills[variable] ?? ""}
                 onChange={(e) =>

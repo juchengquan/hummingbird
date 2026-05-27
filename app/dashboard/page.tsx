@@ -84,10 +84,18 @@ function ReconcileMount() {
   )
 }
 
-export default function Page() {
+function DashboardShell() {
+  const sidebarWidth = useStore((state) => state.sidebarWidth)
+  const sidebarCollapsed = useStore((state) => state.sidebarCollapsed)
+
   return (
     <SidebarProvider
-      style={{ height: "100svh", minHeight: 0, overflow: "hidden" }}
+      style={{
+        height: "100svh",
+        minHeight: 0,
+        overflow: "hidden",
+        ...(!sidebarCollapsed ? { "--sidebar-width": `${sidebarWidth}px` } : {}),
+      } as React.CSSProperties}
     >
       <SyncMount />
       <ReconcileMount />
@@ -106,4 +114,8 @@ export default function Page() {
       <Toaster closeButton />
     </SidebarProvider>
   )
+}
+
+export default function Page() {
+  return <DashboardShell />
 }

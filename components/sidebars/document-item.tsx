@@ -70,7 +70,7 @@ export function DocumentItem({
   return (
     <div
       className={cn(
-        "group/document relative flex w-full items-center gap-2 overflow-visible rounded-md px-2 py-1 text-sm cursor-pointer",
+        "group/document relative flex w-full items-center gap-2 overflow-visible rounded-md px-2 py-0.5 text-xs cursor-pointer",
         isActive &&
           "bg-[var(--sidebar-accent)] text-[var(--sidebar-accent-foreground)]",
         !isActive &&
