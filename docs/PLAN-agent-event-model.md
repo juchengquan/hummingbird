@@ -1,8 +1,12 @@
 # Plan: Agent event model & streaming format
 
-Status: **decision doc** — no code yet. Settles the message/event
-taxonomy and wire format that long-running tasks (and the eventual
-agent-service split) depend on. Split out of
+Status: **🪜 core shipped** ([#66](https://github.com/juchengquan/hummingbird/pull/66)
+— the pure IR + projection + emitter + wire codec in
+`lib/shared/agent/`); stateful slices (persistence → runner → route →
+resume → **task-card UI** → polish) pending — see *Implementation
+slices* below. Settles the message/event taxonomy and wire format
+that long-running tasks (and the eventual agent-service split) depend
+on. Split out of
 `PLAN-long-running-tasks.md` because it's the *load-bearing* design:
 the runner, persistence, resume, and UI all fall out of it, and the
 agent-service plan (`PLAN-agent-api.md`) flagged "streaming format"
@@ -263,3 +267,38 @@ current TS backend** (no service split, no language decision needed),
 prove it with a single linear task, then layer the runner and UI on
 top. The `data-*` extension list above is the contract to build
 against.
+
+## Implementation slices
+
+The model is being built bottom-up — pure core first, then the
+stateful pieces, then the surfaces. Each slice lands on the one above.
+Feature-level detail for the runner/route/UI lives in
+`PLAN-long-running-tasks.md`; this list is the build order.
+
+1. ✅ **Event-model core** — IR + projection (`reduceRun`/`projectRun`)
+   + `RunEmitter` + wire codec, all pure, in `lib/shared/agent/`.
+   Shipped in [#66](https://github.com/juchengquan/hummingbird/pull/66).
+2. ⬜ **Persistence** — `tasks` + `task_events` tables, migration, RLS
+   (own-your-rows); the `RunEmitter` sink writes here.
+3. ⬜ **Runner loop** — step driver (`streamText` + `stepCountIs(1)`
+   per step) that drives `RunEmitter`, checkpoints after each tool
+   result, polls cancel between steps. Single-agent, linear v1.
+4. ⬜ **Task route** — `POST /api/tasks` (create + run + emit the
+   AI-SDK `data-agent-event` stream) and `POST /api/tasks/:id/cancel`.
+5. ⬜ **Resume endpoint** — `GET /api/tasks/:id/stream` honouring
+   `Last-Event-ID`: replay `task_events` from `seq+1`, then tail live.
+6. ⬜ **Task-card UI** — the in-flight surface (distinct from the chat
+   bubble). Mounts the stream through `reduceRun` and renders the
+   `TaskRunView`: status + step counter, the live plan/todo, tool
+   pills, streaming text/reasoning, and a Cancel button. On settle the
+   result lands as a normal assistant `Message` (the durable record);
+   the card collapses. See `PLAN-long-running-tasks.md` Phase 2
+   (`TaskStrip`).
+7. ⬜ **Cross-surface polish** — sidebar status badge (cheap status
+   channel), finish-while-away browser notification, resume-on-reload.
+
+Slices 2–7 each need infrastructure (DB / routes / UI), unlike the
+pure core. **Decision gate before slice 4:** the serverless
+execution-cap risk (`PLAN-agent-api.md`) — confirm the deploy target
+(Pro/Enterprise or self-host) before investing in the long-running
+route; the resume endpoint (slice 5) mitigates but doesn't remove it.
