@@ -35,22 +35,76 @@ robustness.
 
 ## Workstreams
 
-### 1. Chat-panel integration — *the blocker* (≈ 1 day)
+### 1. Hybrid UI — chat entry + dedicated Tasks panel — *the blocker* (≈ 2 days)
 
 Today there is **no UI entry point**: slices 6–9 are reachable only
-from code. Make the feature usable:
+from code. Make the feature usable.
 
-- A **"Run as task"** toggle next to the model picker in the chat
-  header (mirror `PLAN-long-running-tasks.md` Phase 2).
-- Branch `handleSendMessage` (`components/panels/chat.tsx`): when the
-  toggle is on, drive `useTaskRun().start(...)` instead of
-  `apiClient.chat.stream`.
-- Mount `<TaskStrip>` above the message list, fed by the hook's `view`,
-  with the existing Cancel wiring.
-- On settle, hoist `view.resultText` into a normal assistant `Message`
-  in the store (the durable chat record) and let the strip collapse.
+**Why not inline-in-chat.** A task is async and long-lived — you fire
+it and come back. The chat thread is turn-based and singular; a
+5-minute / 25-step run clutters it, one inline strip can't show
+multiple runs or a history, and the conversation should stay the record
+of *answers*, not a live console. So we split entry from control:
 
-Depends on nothing. Highest value — without it the rest is dormant.
+- **Chat = entry point + durable result.** The prompt *is* the task
+  goal (natural launch point), and the settled answer lands back in the
+  thread as a normal assistant `Message` (workstream #2 makes this the
+  server-side record). The conversation reads normally on reload.
+- **Tasks panel = the live control room.** A new toggleable panel
+  (alongside `SourcesSidebar` / `EditorSidebar`) lists in-flight and
+  recent runs and expands the selected one to the full live
+  `TaskRunView`. This is where progress, the plan/todo, tool pills,
+  streaming text, and Cancel live — and it naturally holds *multiple*
+  and *past* tasks.
+
+This fits the app's existing multi-panel architecture (toggleable
+panels driven by the Zustand store, per `CLAUDE.md`), and it's the
+shape that doesn't need redoing once concurrent / background tasks
+arrive (#6, Phase 5).
+
+**Pieces:**
+
+- **Launch:** a **"Run as task"** toggle next to the model picker in the
+  chat header (mirror `PLAN-long-running-tasks.md` Phase 2). When on,
+  `handleSendMessage` (`components/panels/chat.tsx`) drives
+  `useTaskRun().start(...)` instead of `apiClient.chat.stream`, and
+  opens the Tasks panel.
+- **Inline affordance:** a minimal, collapsed `TaskStrip` row in the
+  thread — "Task running · step N/M · view →" — that focuses the panel
+  on click. Not the full surface; just a pointer + status so the user
+  knows where it went. (`TaskStrip` already collapses to a one-liner on
+  settle; add a compact `variant="inline"`.)
+- **Tasks panel** (`components/panels/tasks.tsx` + a
+  `TasksSidebar`): a run list (status dot + goal + step counter, newest
+  first) over the top, the selected run's full `<TaskStrip>` below.
+  Store wiring mirrors the other panels (`lib/hooks/use-store.ts`:
+  `tasksPanelOpen`, width, `activeTaskId`).
+- **State:** lift `useTaskRun` to a small provider/store so both the
+  chat strip and the panel read one source of truth, and so a run
+  survives navigating between conversations. Persist the active run via
+  the existing `active-task` pointer (already built) for resume-on-reload.
+- **Settle:** result becomes a `Message` (see #2); the panel row flips
+  to a "finished · N steps" badge; the inline strip collapses.
+
+**Sketch (panel layout):**
+
+```
+┌─ Tasks ───────────────────────────┐
+│ ● Research AI SDK notes  3/25  ⏵   │ ← run list (active highlighted)
+│ ✓ Summarize Q3 deck      done      │
+│ ✗ Scrape pricing table   failed    │
+├────────────────────────────────────┤
+│ Running · Step 3 / 25      [Cancel] │ ← selected run = full TaskStrip
+│ ▸ plan / todo                       │
+│ 🌐 Searching the web for "…"        │
+│ streaming answer text…              │
+└────────────────────────────────────┘
+```
+
+Depends on nothing (uses existing `useTaskRun` / `TaskStrip` /
+`TaskStatusDot`). Highest value — without it the rest is dormant. The
+two days vs. one reflects the extra panel + shared-state lift over the
+old inline-only plan; the payoff is the design survives concurrency.
 
 ### 2. Materialize the result as a durable Message server-side (≈ half day)
 
