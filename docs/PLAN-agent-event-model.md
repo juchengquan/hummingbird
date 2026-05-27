@@ -1,10 +1,11 @@
 # Plan: Agent event model & streaming format
 
-Status: **🪜 core shipped** ([#66](https://github.com/juchengquan/hummingbird/pull/66)
-— the pure IR + projection + emitter + wire codec in
-`lib/shared/agent/`); stateful slices (persistence → runner → route →
-resume → **task-card UI** → polish) pending — see *Implementation
-slices* below. Settles the message/event taxonomy and wire format
+Status: **🪜 core + full vertical slice landing.** Core shipped in
+[#66](https://github.com/juchengquan/hummingbird/pull/66) (pure IR +
+projection + emitter + wire codec) and persistence in
+[#68](https://github.com/juchengquan/hummingbird/pull/68); the runner →
+route → resume → task-card UI → polish slices land together in the
+agent-tasks PR — see *Implementation slices* below. Settles the message/event taxonomy and wire format
 that long-running tasks (and the eventual agent-service split) depend
 on. Split out of
 `PLAN-long-running-tasks.md` because it's the *load-bearing* design:
@@ -278,27 +279,37 @@ Feature-level detail for the runner/route/UI lives in
 1. ✅ **Event-model core** — IR + projection (`reduceRun`/`projectRun`)
    + `RunEmitter` + wire codec, all pure, in `lib/shared/agent/`.
    Shipped in [#66](https://github.com/juchengquan/hummingbird/pull/66).
-2. ⬜ **Persistence** — `tasks` + `task_events` tables, migration, RLS
-   (own-your-rows); the `RunEmitter` sink writes here.
-3. ⬜ **Runner loop** — step driver (`streamText` + `stepCountIs(1)`
+2. ✅ **Persistence** — `tasks` + `task_events` tables, migration, RLS
+   (own-your-rows); the `RunEmitter` sink writes here. Shipped in
+   [#68](https://github.com/juchengquan/hummingbird/pull/68)
+   (`lib/server/agent/persistence.ts`).
+3. ✅ **Runner loop** — step driver (`streamText` + `stepCountIs(1)`
    per step) that drives `RunEmitter`, checkpoints after each tool
    result, polls cancel between steps. Single-agent, linear v1.
-4. ⬜ **Task route** — `POST /api/tasks` (create + run + emit the
+   `lib/server/agent/runner.ts` + `store.ts`.
+4. ✅ **Task route** — `POST /api/tasks` (create + run + emit the
    AI-SDK `data-agent-event` stream) and `POST /api/tasks/:id/cancel`.
-5. ⬜ **Resume endpoint** — `GET /api/tasks/:id/stream` honouring
-   `Last-Event-ID`: replay `task_events` from `seq+1`, then tail live.
-6. ⬜ **Task-card UI** — the in-flight surface (distinct from the chat
-   bubble). Mounts the stream through `reduceRun` and renders the
-   `TaskRunView`: status + step counter, the live plan/todo, tool
-   pills, streaming text/reasoning, and a Cancel button. On settle the
-   result lands as a normal assistant `Message` (the durable record);
-   the card collapses. See `PLAN-long-running-tasks.md` Phase 2
-   (`TaskStrip`).
-7. ⬜ **Cross-surface polish** — sidebar status badge (cheap status
-   channel), finish-while-away browser notification, resume-on-reload.
+   `app/api/tasks/`.
+5. ✅ **Resume endpoint** — `GET /api/tasks/:id/stream` honouring
+   `Last-Event-ID`: replay `task_events` from `seq+1`, then poll-tail
+   live (no pub/sub in v1; a terminal-row + wall-clock backstop bound
+   an orphaned run).
+6. ✅ **Task-card UI** — the in-flight surface (distinct from the chat
+   bubble). `useTaskRun` mounts the stream through `reduceRun`
+   (decoder: `lib/shared/agent/stream.ts`); `TaskStrip`
+   (`components/agent/`) renders the `TaskRunView`: status + step
+   counter, the live plan/todo, tool pills, streaming text/reasoning,
+   and a Cancel button, collapsing to a badge on settle. Wiring the
+   "Run as task" toggle into the chat panel (`PLAN-long-running-tasks.md`
+   Phase 2) is the remaining browser-tested integration.
+7. ✅ **Cross-surface polish** — resume pointer (`active-task` codec +
+   localStorage), finish-while-away browser notification, and a
+   `TaskStatusDot` for the sidebar. Mounting the dot on conversation
+   rows + the reload auto-resume call are the remaining UI wiring.
 
 Slices 2–7 each need infrastructure (DB / routes / UI), unlike the
-pure core. **Decision gate before slice 4:** the serverless
+pure core. **Decision gate before slice 4 (resolved):** the serverless
 execution-cap risk (`PLAN-agent-api.md`) — confirm the deploy target
-(Pro/Enterprise or self-host) before investing in the long-running
-route; the resume endpoint (slice 5) mitigates but doesn't remove it.
+(Pro/Enterprise or self-host) before relying on the long-running route
+in production; the resume endpoint (slice 5) mitigates but doesn't
+remove it.
