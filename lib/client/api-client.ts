@@ -60,6 +60,7 @@ function url(path: string): string {
 export const apiUrls = {
   chat: () => url("/api/chat"),
   tasks: () => url("/api/tasks"),
+  taskSweep: () => url("/api/tasks/sweep"),
   taskCancel: (id: string) =>
     url(`/api/tasks/${encodeURIComponent(id)}/cancel`),
   taskStream: (id: string) =>
@@ -209,6 +210,22 @@ async function tasksCancel(
     }
   }
   return { ok: true, status: res.status }
+}
+
+/**
+ * Reconcile the caller's orphaned runs (best-effort). Called on
+ * dashboard mount so runs whose function died mid-stream get flipped to
+ * `failed` server-side. Returns the count reconciled; swallows failures.
+ */
+async function tasksSweep(): Promise<number> {
+  try {
+    const res = await fetch(apiUrls.taskSweep(), { method: "POST" })
+    if (!res.ok) return 0
+    const data = (await res.json()) as { failed?: number }
+    return typeof data.failed === "number" ? data.failed : 0
+  } catch {
+    return 0
+  }
 }
 
 // --- /api/extract -----------------------------------------------------------
@@ -479,7 +496,7 @@ async function urlFetchBookmark(url: string): Promise<
 export const apiClient = {
   urls: apiUrls,
   chat: { stream: chatStream },
-  tasks: { start: tasksStart, resume: tasksResume, cancel: tasksCancel },
+  tasks: { start: tasksStart, resume: tasksResume, cancel: tasksCancel, sweep: tasksSweep },
   extract,
   summarize: {
     file: summarizeFile,

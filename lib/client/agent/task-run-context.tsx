@@ -23,9 +23,11 @@ import {
   type ReactNode,
 } from "react"
 
+import { loadActiveTask } from "@/client/agent/active-task"
+import { ensureTaskNotificationPermission } from "@/client/agent/notify"
 import { useStore } from "@/client/hooks/use-store"
 import { useTaskRun } from "@/client/hooks/use-task-run"
-import type { RunStatus } from "@/shared/agent/events"
+import { isTerminalStatus, type RunStatus } from "@/shared/agent/events"
 import type { TaskRunView } from "@/shared/agent/project"
 import type { TaskRequestInput } from "@/shared/api-schemas"
 
@@ -95,6 +97,38 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
     [run, setTasksPanelOpen]
   )
 
+  // Notification permission is best requested on a user gesture — ask
+  // when the user opts into task mode (a settled task fires a
+  // finish-while-away notification; see useTaskRun's notifyOnFinish).
+  const handleSetRunAsTask = useCallback((v: boolean) => {
+    setRunAsTask(v)
+    if (v) void ensureTaskNotificationPermission()
+  }, [])
+
+  // Resume-on-reload: if a run was still active when the tab closed
+  // (its localStorage pointer survives), reconnect and re-attach the
+  // panel. The resume endpoint reconciles dead runs on reconnect, so a
+  // run that died while away replays its synthetic failure and settles.
+  // Runs once on mount; `run.resume` is reached via a ref so this
+  // doesn't re-fire as the hook re-renders.
+  const runRef = useRef(run)
+  useEffect(() => {
+    runRef.current = run
+  })
+  const resumedRef = useRef(false)
+  useEffect(() => {
+    if (resumedRef.current) return
+    resumedRef.current = true
+    const pointer = loadActiveTask()
+    if (!pointer || isTerminalStatus(pointer.status)) return
+    runConvRef.current = pointer.conversationId
+    prevStatusRef.current = null
+    setRunConversationId(pointer.conversationId)
+    setRunTitle(pointer.title)
+    setTasksPanelOpen(true)
+    void runRef.current.resume(pointer.runId, pointer.cursor)
+  }, [setTasksPanelOpen])
+
   const value: TaskRunContextValue = {
     view: run.view,
     runId: run.runId,
@@ -102,7 +136,7 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
     error: run.error,
     runConversationId,
     runAsTask,
-    setRunAsTask,
+    setRunAsTask: handleSetRunAsTask,
     startTask,
     cancel: run.cancel,
   }

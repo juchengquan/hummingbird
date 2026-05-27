@@ -135,3 +135,82 @@ export async function isRunCancelled(
   if (error) return false // a probe failure shouldn't kill the run
   return data?.status === "cancelled"
 }
+
+/** Latest event row for a run (highest seq), or null. Used both to
+ *  compute the next seq for a synthetic event and to judge liveness. */
+async function latestEvent(
+  db: DB,
+  runId: string,
+  userId: string
+): Promise<{ seq: number; step: number; createdAt: string } | null> {
+  const { data, error } = await db
+    .from("task_events")
+    .select("seq,step,created_at")
+    .eq("task_id", runId)
+    .eq("user_id", userId)
+    .order("seq", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error || !data) return null
+  return { seq: data.seq, step: data.step, createdAt: data.created_at }
+}
+
+/**
+ * Append a terminal `result` event out-of-band and settle the run — used
+ * to fail an orphaned run (the producer died without a terminal event).
+ * Seq follows the last event so resume replays it; idempotent via the
+ * (task_id, seq) unique index.
+ */
+export async function appendSyntheticResult(
+  db: DB,
+  runId: string,
+  userId: string,
+  opts: { status: "done" | "failed"; error?: string }
+): Promise<void> {
+  const last = await latestEvent(db, runId, userId)
+  const event: TaskEvent = {
+    runId,
+    seq: (last?.seq ?? 0) + 1,
+    step: last?.step ?? 0,
+    createdAt: new Date().toISOString(),
+    kind: "result",
+    status: opts.status,
+    ...(opts.error !== undefined ? { error: opts.error } : {}),
+  }
+  await appendEvent(db, event, userId)
+  await updateRun(db, runId, userId, { status: opts.status, finished: true })
+}
+
+/**
+ * Fail this user's orphaned runs: any `queued`/`running` row whose most
+ * recent activity (latest event, else `started_at`) is older than
+ * `olderThanMs`. Liveness is judged by event recency — a live run emits
+ * events continuously (coalesced tokens, step boundaries), so this only
+ * catches genuinely dead runs (function killed mid-stream). RLS-scoped
+ * to `userId`; returns how many were reconciled.
+ */
+export async function reconcileStaleRuns(
+  db: DB,
+  userId: string,
+  olderThanMs = 180_000
+): Promise<number> {
+  const { data, error } = await db
+    .from("tasks")
+    .select("id,started_at")
+    .eq("user_id", userId)
+    .in("status", ["queued", "running"])
+  if (error) throw new Error(`reconcileStaleRuns: ${error.message}`)
+  const now = Date.now()
+  let failed = 0
+  for (const row of data ?? []) {
+    const last = await latestEvent(db, row.id, userId)
+    const ref = last?.createdAt ?? row.started_at
+    if (!ref || now - new Date(ref).getTime() <= olderThanMs) continue
+    await appendSyntheticResult(db, row.id, userId, {
+      status: "failed",
+      error: "Task stopped unexpectedly (no recent activity).",
+    })
+    failed += 1
+  }
+  return failed
+}
