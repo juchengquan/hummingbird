@@ -163,6 +163,35 @@ async function tasksStart(
 }
 
 /**
+ * Reconnect to a run's event log. Replays from `cursor` (the last
+ * `seq` already folded) via the native `Last-Event-ID` SSE header, then
+ * tails until the run settles. Same stream envelope as `tasksStart`.
+ */
+async function tasksResume(
+  id: string,
+  options?: { cursor?: number; signal?: AbortSignal }
+): Promise<ChatStreamResult> {
+  const headers: Record<string, string> = {}
+  if (options?.cursor && options.cursor > 0) {
+    headers["Last-Event-ID"] = String(options.cursor)
+  }
+  const res = await fetch(apiUrls.taskStream(id), {
+    headers,
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const errBody = await readErrorBody(res)
+    return {
+      ok: false,
+      status: res.status,
+      body: null,
+      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+    }
+  }
+  return { ok: true, status: res.status, body: res.body }
+}
+
+/**
  * Request cancellation of a running task. The server flips the run's
  * status to `cancelled`; the runner settles on its next between-step
  * poll. Idempotent — cancelling an already-settled run is a no-op.
@@ -450,7 +479,7 @@ async function urlFetchBookmark(url: string): Promise<
 export const apiClient = {
   urls: apiUrls,
   chat: { stream: chatStream },
-  tasks: { start: tasksStart, cancel: tasksCancel },
+  tasks: { start: tasksStart, resume: tasksResume, cancel: tasksCancel },
   extract,
   summarize: {
     file: summarizeFile,
