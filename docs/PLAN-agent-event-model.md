@@ -173,6 +173,62 @@ aligns with `PLAN-agent-api.md`'s "unify on the AI SDK format" lean,
 makes the chat-route and editor-route formats finally consistent, and
 means the resume/replay logic is the only genuinely new wire concern.
 
+## Multi-SDK adapter layer
+
+If the backend runs different agent SDKs underneath (OpenAI Agents
+SDK, Claude Agent SDK, LangGraph / Deep Agents, the bare AI-SDK loop
+we have today), the `TaskEvent` taxonomy is the **canonical
+intermediate representation (IR)**: each SDK gets a thin **adapter**
+that maps its native stream → `TaskEvent`s, the log stays the system
+of record, and the AI-SDK-v5 wire format is just one projection out.
+The frontend never sees an OpenAI run-item or a Claude
+`content_block_delta` — only our normalized events. That decoupling
+is the point of the model.
+
+```
+OpenAI Agents SDK ─┐
+Claude Agent SDK  ─┤   adapter[i]      append-only        projections
+LangGraph         ─┼─▶ native → ─────▶ TaskEvent log ─┬─▶ AI-SDK wire (useChat)
+Deep Agents       ─┤   TaskEvent       (source of      ├─▶ settled Message
+bare AI-SDK loop  ─┘                    truth, seq)    └─▶ status badge
+```
+
+**It is an adapter, not a passthrough.** Four places need real
+translation, not field-renaming — pin them before the first adapter
+is wired:
+
+1. **"Step" is SDK-specific; the IR owns the definition.** AI SDK = one
+   LLM call; LangGraph = a graph node (possibly many calls or none);
+   OpenAI Agents = a run-item. Each adapter conforms its native unit
+   to *our* `step`, or `step` is incomparable across SDKs.
+
+2. **The taxonomy is a superset; each adapter fills a subset.**
+   Handoffs/sub-agents (OpenAI, Deep Agents) have no Claude-SDK
+   equivalent; approvals (`mcp_approval`) don't exist elsewhere; plan/
+   todo is Deep-Agents-shaped. **Contract rule: consumers degrade
+   gracefully when an event `kind` never appears** — the UI must not
+   assume any given kind shows up.
+
+3. **State-shaped SDKs need state→event synthesis.** LangGraph
+   `values`/`updates` and Deep Agents `todos[]` are state
+   snapshots/deltas, not an event stream. The adapter diffs successive
+   states into events — or emits snapshot-carrying events, which is
+   why `data-plan` carries the full list each time (see Open
+   questions) rather than deltas.
+
+4. **We own `seq` for client replay even when the SDK checkpoints.**
+   If an SDK runs its own loop with its own checkpointing (LangGraph
+   checkpoints, OpenAI server-side run state), the adapter still
+   assigns our monotonic `seq` and persists as events flow through.
+   Two checkpoint systems can coexist, but **ours is authoritative for
+   the client-facing stream** — the SDK's is an implementation detail
+   of how *it* resumes its own loop.
+
+Net: the model caters for multiple SDKs by construction, provided the
+`TaskEvent` IR is treated as authoritative and each adapter is allowed
+to (a) define its step mapping, (b) populate only the kinds it can,
+and (c) synthesize events from state where the SDK is state-shaped.
+
 ## Resume / cursor protocol
 
 The one thing no SDK format gives us for free: **reconnect-and-resume.**
