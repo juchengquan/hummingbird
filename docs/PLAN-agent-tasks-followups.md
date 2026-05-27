@@ -1,12 +1,14 @@
 # Plan: Agent tasks — follow-ups after the runner→UI slice
 
-Status: **📋 proposed.** Builds on the shipped long-running-task stack:
+Status: **🛠️ mostly shipped.** Builds on the long-running-task stack:
 event-model core ([#66](https://github.com/juchengquan/hummingbird/pull/66)),
 persistence ([#68](https://github.com/juchengquan/hummingbird/pull/68)),
-and the runner → route → resume → task-card UI → polish slices
-([#69](https://github.com/juchengquan/hummingbird/pull/69)). This doc
-enumerates what's left to turn that infrastructure into a usable,
-robust feature.
+the runner → route → resume → task-card UI → polish slices
+([#69](https://github.com/juchengquan/hummingbird/pull/69)), and the
+hybrid UI + durable result ([#72](https://github.com/juchengquan/hummingbird/pull/72)).
+Workstreams #1–#5 plus the MCP / budget / resume-on-reload grab-bag are
+now implemented; only the two architectural items (realtime tail, HITL
+approvals) remain deferred — see the marks below.
 
 ## What already exists
 
@@ -35,7 +37,7 @@ robustness.
 
 ## Workstreams
 
-### 1. Hybrid UI — chat entry + dedicated Tasks panel — *the blocker* (≈ 2 days)
+### 1. Hybrid UI — chat entry + dedicated Tasks panel — ✅ shipped (#72)
 
 Today there is **no UI entry point**: slices 6–9 are reachable only
 from code. Make the feature usable.
@@ -106,7 +108,13 @@ Depends on nothing (uses existing `useTaskRun` / `TaskStrip` /
 two days vs. one reflects the extra panel + shared-state lift over the
 old inline-only plan; the payoff is the design survives concurrency.
 
-### 2. Materialize the result as a durable Message server-side (≈ half day)
+### 2. Materialize the result as a durable Message — ✅ shipped (#72, client-authored)
+
+> Shipped as a **client-authored** message on settle rather than the
+> server-side insert below: the app is local-first with client→server
+> push sync, so a server insert would fight the sync model. The original
+> design is kept for context.
+
 
 The route persists `task_events` but **never writes the answer into
 `messages` nor sets `tasks.result_message_id`** (the column and the
@@ -125,7 +133,12 @@ event log but no assistant bubble.
 
 Pairs naturally with #1.
 
-### 3. Orphaned-run reconciliation (≈ half day)
+### 3. Orphaned-run reconciliation — ✅ shipped
+
+> `reconcileStaleRuns` (liveness judged by latest `task_events` row, not
+> `tasks.updated_at`) + `appendSyntheticResult`; wired into the resume
+> endpoint (GC on reconnect) and `POST /api/tasks/sweep`.
+
 
 If the serverless function is killed mid-run (the execution-cap risk
 from `PLAN-agent-api.md`), the `tasks` row is stuck `running` forever —
@@ -140,7 +153,12 @@ nothing reconciles it, and resume poll-tails until its wall-clock cap.
 Priority scales with the deploy target: critical on capped serverless,
 deferrable on a long-cap / self-host target.
 
-### 4. Produce `plan` / todo events (≈ half day)
+### 4. Produce `plan` / todo events — ✅ shipped
+
+> A run-scoped `setPlan` tool emits `plan` events (suppressed from the
+> tool-pill strip via the runner's `silentTools`); system prompt tells
+> the model to plan up front.
+
 
 `TaskStrip` renders a plan list, but `makeStreamTextStep` never emits
 `plan` events — the section is permanently empty.
@@ -152,7 +170,13 @@ deferrable on a long-cap / self-host target.
 
 Self-contained; makes the existing UI meaningful.
 
-### 5. Coalesce token persistence (≈ half day)
+### 5. Coalesce token persistence — ✅ shipped
+
+> `makeTokenCoalescer` buffers deltas per channel and emits one `token`
+> event per ~96 chars (deviates from the plan's "per-token on wire" —
+> coalesces wire + disk together for simplicity/correctness; ~96-char
+> chunks still read as live).
+
 
 Every token is a separate `task_events` insert, serialized through the
 persistence chain and drained at end-of-request — a long run is
@@ -165,33 +189,37 @@ thousands of writes and a slow tail.
 - Resume fidelity is preserved — `reduceRun` folds a coalesced token
   the same as many small ones; the cursor just advances in bigger hops.
 
-### 6. Smaller / deferred
+### 6. Smaller items
 
-- **MCP tools in the task route.** The chat route registers them; the
-  task route skips them in v1. Lift the same `loadEffectiveMcpServers`
-  + `buildMcpTool` wiring across.
-- **Per-IP budget gate.** The task route runs tools without the
-  chat route's `consumeBudget`; `maxSteps` is the only bound today.
-- **Poll-tail → realtime.** Swap the resume endpoint's 1 s poll for
-  Supabase Realtime / Postgres `LISTEN/NOTIFY`.
-- **Route-level integration tests.** Runner / decoder / codec are
-  unit-tested; the route handlers (auth, sink wiring, persistence
-  chain) are not.
-- **Human-in-the-loop approvals.** The `approval` events are reserved
-  but unused — wire them for destructive MCP actions.
-- **Reload auto-resume + notification-permission UX.** The primitives
-  exist (`loadActiveTask`, `ensureTaskNotificationPermission`); they
-  need a mount-time call and a permission prompt tied to a user gesture.
+- ✅ **MCP tools in the task route.** Cloud-mode looked up server-side
+  from `workspaceId` (already sent); local-mode accepted via
+  `mcpServers` in the schema (client wiring for local-mode is the one
+  remaining sub-item — cloud-mode works as-is).
+- ✅ **Per-IP budget gate.** The task route now gates skill tools behind
+  the same sliding-window buckets as chat (image gen tighter).
+- ✅ **Reload auto-resume + notification-permission UX.** Provider reads
+  the persisted pointer on mount and reconnects; enabling task mode
+  requests Notification permission.
+- 🔶 **Route-level integration tests.** Pure units are covered
+  (`setPlan` emit, token coalescer, decoder, codec, runner control
+  flow). Full handler tests (auth + sink + persistence chain) need a
+  Supabase + AI-SDK harness the repo doesn't have yet — still open.
+- ⬜ **Poll-tail → realtime (deferred).** Swap the resume endpoint's 1 s
+  poll for Supabase Realtime / `LISTEN/NOTIFY`. Needs infra; the poll
+  works for v1.
+- ⬜ **Human-in-the-loop approvals (deferred).** The `approval` events
+  are reserved but unused. Wiring them means the runner must *pause*
+  across function invocations and wait for an approve/reject — which
+  doesn't fit the single-invocation runner; it depends on the durable-
+  execution / queue work (`PLAN-long-running-tasks.md` Phase 5).
 
 ## Recommended sequencing
 
-1. **#1 + #2 in one PR** — turns plumbing into a usable feature; #2 is
-   small and #1 depends on having a durable result to render. This is
-   the next PR.
-2. **#4** — cheap, and makes the in-flight surface look complete.
-3. **#3** — gate on the deploy target; do it before relying on tasks in
-   a capped serverless production.
-4. **#5**, then the #6 grab-bag as needed.
+Workstreams #1–#5 and the tractable #6 items are done. The two remaining
+(realtime tail, HITL approvals) are architectural and deferred: realtime
+needs Supabase Realtime infra; HITL needs durable cross-invocation pause
+(Phase 5 of `PLAN-long-running-tasks.md`). Route-level integration tests
+remain a worthwhile follow-up once a Supabase/AI-SDK test harness exists.
 
 ## Out of scope
 
