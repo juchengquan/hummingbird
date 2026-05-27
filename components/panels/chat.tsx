@@ -5,12 +5,14 @@ import { useChatScroll } from "@/components/panels/use-chat-scroll"
 import { toast } from "sonner"
 import { useStore, useHydrated, useIsConversationTyping } from "@/client/hooks/use-store"
 import { apiClient } from "@/client/api-client"
-import type { ChatRequestInput } from "@/shared/api-schemas"
+import type { ChatRequestInput, TaskRequestInput } from "@/shared/api-schemas"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupTextarea, InputGroupButton } from "@/components/ui/input-group"
 import { cn, toISO } from "@/shared/utils"
 import { ResourcesSidebar } from "@/components/sidebars/resources"
+import { TasksSidebar } from "@/components/sidebars/tasks"
+import { useTaskRunContext } from "@/client/agent/task-run-context"
 import { ContextPicker } from "@/components/chat/context-picker"
 import { SlashAutocomplete } from "@/components/panels/slash-autocomplete"
 import { SlashHelpDialog } from "@/components/panels/slash-help-dialog"
@@ -49,7 +51,7 @@ import { ChatHeader } from "@/components/panels/chat-header"
 import { ChatMessage } from "@/components/panels/chat-message"
 import { EmptyChatWelcome } from "@/components/panels/empty-chat-welcome"
 import { SelectionTrigger } from "@/components/selection/selection-trigger"
-import { ChevronDown, Square, ArrowUp, Repeat2, X } from "lucide-react"
+import { ChevronDown, Square, ArrowUp, Repeat2, X, Loader2, ChevronRight } from "lucide-react"
 import { processSelectedFiles } from "@/client/file-utils"
 import { runExtraction } from "@/client/extract"
 import { persistFile } from "@/client/files/persist"
@@ -103,6 +105,7 @@ export function ChatPanel() {
   const pinExplanation = useStore((state) => state.pinExplanation)
   const setResourcesSidebarTab = useStore((state) => state.setResourcesSidebarTab)
   const setResourcesSidebarOpen = useStore((state) => state.setResourcesSidebarOpen)
+  const setTasksPanelOpen = useStore((state) => state.setTasksPanelOpen)
   const activeConversation = useMemo(
     () => conversations.find((c) => c.id === activeConversationId) || null,
     [conversations, activeConversationId]
@@ -276,6 +279,16 @@ export function ChatPanel() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const messages = useMemo(() => activeConversation?.messages || [], [activeConversation])
+
+  // Long-running task mode. The provider (mounted at the dashboard root)
+  // owns the single active run so the chat panel and the Tasks panel
+  // share it. Kept in a ref so `callChatAPI` can reach `startTask`
+  // without re-memoizing on every render.
+  const taskRun = useTaskRunContext()
+  const taskRunRef = useRef(taskRun)
+  useEffect(() => {
+    taskRunRef.current = taskRun
+  }, [taskRun])
 
   // SelectionTrigger needs the conversation slice up to (and including)
   // the message the selection lives in. We resolve the scope attribute
@@ -489,6 +502,10 @@ export function ChatPanel() {
          *  arg (not read from state) so a retry re-applies the same
          *  forced set deterministically. */
         forcedSkillIds?: SkillId[]
+        /** When true, launch the turn as a long-running task (Tasks
+         *  panel) instead of an inline chat stream. Reuses the same
+         *  model / skills / history resolution. */
+        asTask?: boolean
       }
     ) => {
       // Read the model freshly from the store rather than via the closure.
@@ -618,6 +635,27 @@ export function ChatPanel() {
             ],
           }
         })
+
+      // Task mode: hand off to the shared task runner (Tasks panel)
+      // instead of the inline chat stream. Everything above (model,
+      // workspace prompt, enabled skills, message history) is reused;
+      // the inline streaming machinery below is skipped entirely. The
+      // result lands back as an assistant Message on settle (see
+      // TaskRunProvider).
+      if (options?.asTask) {
+        taskRunRef.current.startTask(
+          {
+            messages: buildMessages() as TaskRequestInput["messages"],
+            conversationId: targetConvId,
+            model: modelForCall,
+            workspaceSystemPrompt,
+            workspaceId: activeWorkspaceId || undefined,
+            skills: enabledSkills,
+          },
+          { title: conv?.title }
+        )
+        return
+      }
 
       const controller = new AbortController()
       // If this conversation already has an in-flight controller
@@ -1153,6 +1191,12 @@ export function ChatPanel() {
 
   const handleSendMessage = () => {
     if (!inputValue.trim() || isStreaming) return
+    // v1 runs a single task at a time — block a second launch while one
+    // is in flight (the panel shows the active run + a Cancel button).
+    if (taskRun.runAsTask && taskRun.isRunning) {
+      toast.error("A task is already running. Cancel it first.")
+      return
+    }
 
     const trimmed = inputValue.trim()
     // Resolve a leading `/` directive. A **command** runs now and does
@@ -1210,6 +1254,7 @@ export function ChatPanel() {
     callChatAPIRef.current(history, {
       referenceImage: pendingRef ? { url: pendingRef.url } : undefined,
       forcedSkillIds,
+      asTask: taskRun.runAsTask,
     })
   }
 
@@ -1466,6 +1511,8 @@ export function ChatPanel() {
             // a retry on the next plain model change).
             if (!open) pendingRetryRef.current = null
           }}
+          runAsTask={taskRun.runAsTask}
+          onRunAsTaskChange={taskRun.setRunAsTask}
         />
         <div className="flex-1 min-h-0 overflow-hidden">
           {/* ScrollArea fills the full messages column so its right-edge
@@ -1556,6 +1603,26 @@ export function ChatPanel() {
             className="hidden"
             onChange={(e) => handleFileSelected(e.target.files)}
           />
+          {/* Inline task pointer — while a task launched from this
+              conversation is running, show a one-line status that opens
+              the Tasks panel. The full live surface lives in the panel. */}
+          {taskRun.isRunning &&
+            taskRun.runConversationId === activeConversationId && (
+              <button
+                type="button"
+                onClick={() => setTasksPanelOpen(true)}
+                className="max-w-3xl mx-auto mb-2 w-full pointer-events-auto flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs text-[var(--muted-foreground)] hover:bg-[var(--secondary)] transition-colors"
+              >
+                <Loader2 size={12} className="animate-spin text-[var(--primary)]" />
+                <span>
+                  Task running · step {taskRun.view.step}
+                  {taskRun.view.maxSteps ? ` / ${taskRun.view.maxSteps}` : ""}
+                </span>
+                <span className="ml-auto flex items-center gap-0.5 text-[var(--foreground)]">
+                  View <ChevronRight size={12} />
+                </span>
+              </button>
+            )}
           <div
             className={cn(
               "relative max-w-3xl mx-auto pointer-events-auto bg-[var(--background)] rounded-3xl border border-[var(--border)] p-2 shadow-sm transition-colors",
@@ -1737,6 +1804,10 @@ export function ChatPanel() {
           setResourcesSidebarOpen(true)
         }}
       />
+
+      {/* Tasks side panel — the live control room for long-running
+          runs. Sits left of the resources rail; zero-width when closed. */}
+      <TasksSidebar />
 
       {/* Resources side panel */}
       <ResourcesSidebar />

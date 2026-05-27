@@ -14,6 +14,7 @@ import {
   PanelRight,
   Share2,
   GitBranch,
+  Zap,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -72,6 +73,10 @@ interface ChatHeaderProps {
    *  programmatically when the user clicks `Change model` on an error). */
   modelPickerOpen: boolean
   onModelPickerOpenChange: (open: boolean) => void
+  /** "Run as task" mode — next send launches a long-running agent task
+   *  in the Tasks panel instead of an inline chat turn. */
+  runAsTask: boolean
+  onRunAsTaskChange: (v: boolean) => void
 }
 
 export function ChatHeader({
@@ -79,6 +84,8 @@ export function ChatHeader({
   onModelPick,
   modelPickerOpen,
   onModelPickerOpenChange,
+  runAsTask,
+  onRunAsTaskChange,
 }: ChatHeaderProps) {
   const workspace = useActiveWorkspace()
   const conversation = useActiveConversation()
@@ -358,6 +365,25 @@ export function ChatHeader({
               ))}
             </SelectContent>
           </Select>
+        )}
+
+        {/* Run-as-task toggle — when on, the next send launches a
+            long-running agent task (Tasks panel) instead of a chat turn. */}
+        {!renaming && (
+          <Button
+            variant={runAsTask ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => onRunAsTaskChange(!runAsTask)}
+            className={cn(
+              "h-7 text-xs gap-1 shrink-0",
+              runAsTask && "text-[var(--primary)]"
+            )}
+            aria-pressed={runAsTask}
+            title="Run the next message as a long-running task"
+          >
+            <Zap size={14} />
+            Task
+          </Button>
         )}
 
         {/* Actions */}
