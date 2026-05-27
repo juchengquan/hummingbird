@@ -367,6 +367,10 @@ export const TaskRequestSchema = z.object({
   maxSteps: z.number().int().min(1).max(50).optional(),
   /** Same per-skill entries as the chat request. */
   skills: ChatRequestSchema.shape.skills,
+  /** Local-mode MCP servers (with creds), same shape as the chat
+   *  request. Cloud-mode servers are looked up server-side from
+   *  `workspaceId`, so this is only needed for local-mode. */
+  mcpServers: ChatRequestSchema.shape.mcpServers,
 })
 
 // --- Generic error envelope -------------------------------------------------

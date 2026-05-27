@@ -18,6 +18,9 @@ import {
   type SkillRequestEntry,
 } from "@/server/skills/registry"
 import type { SkillId } from "@/shared/skills/types"
+import { buildMcpTool, mcpToolName } from "@/server/mcp/tools"
+import { loadEffectiveMcpServers } from "@/server/mcp/load-servers"
+import { createSlidingWindow, rateLimitKey } from "@/server/rate-limit"
 import { getSupabaseServerClient } from "@/server/supabase/server"
 import type { TaskEvent } from "@/shared/agent/events"
 import { RunEmitter } from "@/shared/agent/emitter"
@@ -36,6 +39,21 @@ import {
 // `maxSteps` is the in-loop bound regardless.
 const DEFAULT_MAX_STEPS = 25
 const MAX_MAX_STEPS = 50
+
+// Per-IP abuse gates for the task route's tool calls, mirroring the
+// chat route. `maxSteps` bounds a single run; these bound outbound
+// volume across runs. Image gen gets a tighter, env-tunable ceiling
+// because each call costs ~1–3¢ vs. fractions of a cent for web tools.
+const taskWebToolLimit = createSlidingWindow({ windowMs: 60_000, max: 30 })
+const TASK_IMAGE_GEN_PER_MINUTE = (() => {
+  const raw = Number(process.env.MINIMAX_IMAGE_RATE_LIMIT_PER_MINUTE)
+  if (!Number.isFinite(raw) || raw <= 0) return 5
+  return Math.min(Math.floor(raw), 60)
+})()
+const taskImageGenLimit = createSlidingWindow({
+  windowMs: 60_000,
+  max: TASK_IMAGE_GEN_PER_MINUTE,
+})
 
 /** Pull the most recent user message text for the `tasks.goal` column. */
 function lastUserText(messages: ModelMessage[]): string {
@@ -61,6 +79,7 @@ function buildTaskSystemPrompt(opts: {
   workspaceSystemPrompt?: string
   enabledSkillIds: SkillId[]
   skillRequestEntries: SkillRequestEntry[]
+  mcpServers?: { name: string; toolCount: number }[]
 }): string {
   const trimmedWorkspace = opts.workspaceSystemPrompt?.trim()
   const enabled = new Set<SkillId>(opts.enabledSkillIds)
@@ -77,6 +96,15 @@ function buildTaskSystemPrompt(opts: {
     notes.length > 0
       ? `Available capabilities:\n${notes.map((n) => `- ${n}`).join("\n")}`
       : null
+  const activeMcp = (opts.mcpServers ?? []).filter((s) => s.toolCount > 0)
+  const mcpLine =
+    activeMcp.length > 0
+      ? `You also have tools from connected MCP servers (prefixed ` +
+        `\`mcp__<serverId>__<toolName>\`); call them when relevant. ` +
+        `Connected:\n${activeMcp
+          .map((s) => `- "${s.name}" (${s.toolCount} tools)`)
+          .join("\n")}`
+      : null
   return [
     trimmedWorkspace,
     "You are an autonomous agent inside the Hummingbird app, working on a " +
@@ -87,6 +115,7 @@ function buildTaskSystemPrompt(opts: {
       "complete. When you have finished, write a clear final answer in " +
       "Markdown.",
     skillsLine,
+    mcpLine,
   ]
     .filter(Boolean)
     .join("\n\n")
@@ -153,9 +182,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ code, message }, { status })
   }
 
-  // Build the tool map from the enabled skills. v1 runs without the
-  // per-IP web-tool budget gate the chat route uses — `maxSteps` is the
-  // bound on a task run. MCP tools are a documented follow-up.
+  // Build the tool map from the enabled skills, gated by the same
+  // per-IP buckets the chat route uses (image gen on its own tighter
+  // ceiling). `maxSteps` bounds one run; these bound outbound volume.
+  const ipKey = rateLimitKey(req)
+  const consumeWebToolBudget = () => taskWebToolLimit.consume(ipKey)
+  const consumeImageGenBudget = () => taskImageGenLimit.consume(ipKey)
   const enabledSet = new Set<SkillId>(enabledSkillIds)
   const entryById = new Map<string, SkillRequestEntry>(
     skillRequestEntries.map((s) => [s.id, s])
@@ -163,10 +195,31 @@ export async function POST(req: NextRequest) {
   const tools: Record<string, unknown> = {}
   for (const skill of SERVER_SKILLS) {
     if (!enabledSet.has(skill.id)) continue
+    const consumeBudget =
+      skill.id === "imageGen" ? consumeImageGenBudget : consumeWebToolBudget
     const tool = skill.buildTool(entryById.get(skill.id), {
       signal: req.signal,
+      consumeBudget,
     })
     if (tool) tools[skill.toolName] = tool
+  }
+
+  // Register MCP-exposed tools. Cloud-mode servers are looked up
+  // server-side from `workspaceId`; local-mode servers arrive (with
+  // creds) in `body.mcpServers`. Tool names are prefixed
+  // `mcp__<serverId>__<toolName>` so they don't collide.
+  const mcpServers = await loadEffectiveMcpServers(
+    body.workspaceId,
+    body.mcpServers
+  )
+  for (const server of mcpServers) {
+    for (const descriptor of server.capabilities?.tools ?? []) {
+      tools[mcpToolName(server.id, descriptor.name)] = buildMcpTool(
+        server,
+        descriptor,
+        server.credentials
+      )
+    }
   }
 
   const runId = crypto.randomUUID()
@@ -188,6 +241,10 @@ export async function POST(req: NextRequest) {
     workspaceSystemPrompt: body.workspaceSystemPrompt,
     enabledSkillIds,
     skillRequestEntries,
+    mcpServers: mcpServers.map((s) => ({
+      name: s.name,
+      toolCount: s.capabilities?.tools?.length ?? 0,
+    })),
   })
 
   const stream = createUIMessageStream({
