@@ -23,6 +23,7 @@ import type { TaskEvent } from "@/shared/agent/events"
 import { RunEmitter } from "@/shared/agent/emitter"
 import { toDataPart } from "@/shared/agent/wire"
 import { makeStreamTextStep, runAgentLoop } from "@/server/agent/runner"
+import { PLAN_TOOL_NAME, makePlanTool } from "@/server/agent/plan-tool"
 import {
   appendEvent,
   createRun,
@@ -79,9 +80,12 @@ function buildTaskSystemPrompt(opts: {
   return [
     trimmedWorkspace,
     "You are an autonomous agent inside the Hummingbird app, working on a " +
-      "multi-step task. Plan your approach, call the available tools as " +
-      "needed, and keep going until the task is complete. When you have " +
-      "finished, write a clear final answer in Markdown.",
+      "multi-step task. Start by calling `setPlan` with a short todo list " +
+      "of the steps you intend to take, then update it (via `setPlan` " +
+      "again) as steps move to 'in_progress' and 'completed'. Call the " +
+      "available tools as needed and keep going until the task is " +
+      "complete. When you have finished, write a clear final answer in " +
+      "Markdown.",
     skillsLine,
   ]
     .filter(Boolean)
@@ -220,11 +224,19 @@ export async function POST(req: NextRequest) {
       }
 
       const emitter = new RunEmitter({ runId, maxSteps }, sink)
+      // The plan tool is bound to this run's emitter, so it's added here
+      // (inside the run) rather than to the shared `tools` map above.
+      const runTools: Record<string, unknown> = {
+        ...tools,
+        [PLAN_TOOL_NAME]: makePlanTool(emitter),
+      }
       const runStep = makeStreamTextStep({
         model,
         system,
         messages: body.messages as ModelMessage[],
-        tools,
+        tools: runTools,
+        // setPlan surfaces as the plan/todo list, not a tool pill.
+        silentTools: new Set([PLAN_TOOL_NAME]),
       })
 
       await runAgentLoop({

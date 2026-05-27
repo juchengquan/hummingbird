@@ -104,6 +104,10 @@ export interface StreamTextStepConfig {
   /** AI-SDK tool map (same objects the chat route builds from
    *  `SERVER_SKILLS` + MCP). */
   tools: Record<string, unknown>
+  /** Tool names whose call/result should NOT surface as tool pills —
+   *  e.g. `setPlan`, which already shows up as the plan/todo list. The
+   *  model still sees the tool result; only the UI event is suppressed. */
+  silentTools?: Set<string>
 }
 
 /**
@@ -113,7 +117,7 @@ export interface StreamTextStepConfig {
  * produced a final answer (`finishReason !== 'tool-calls'`).
  */
 export function makeStreamTextStep(config: StreamTextStepConfig): RunStepFn {
-  const { model, system, messages, tools } = config
+  const { model, system, messages, tools, silentTools } = config
 
   return async ({ signal, emitter }) => {
     const hasTools = Object.keys(tools).length > 0
@@ -149,6 +153,7 @@ export function makeStreamTextStep(config: StreamTextStepConfig): RunStepFn {
             toolName?: string
             input?: unknown
           }
+          if (silentTools?.has(p.toolName ?? "")) break
           emitter.toolInput(p.toolCallId ?? "", p.toolName ?? "", p.input ?? {})
           break
         }
@@ -158,6 +163,7 @@ export function makeStreamTextStep(config: StreamTextStepConfig): RunStepFn {
             toolName?: string
             output?: unknown
           }
+          if (silentTools?.has(p.toolName ?? "")) break
           const { summary, results } = summarizeToolOutput(p.output)
           emitter.toolOutput(
             p.toolCallId ?? "",
