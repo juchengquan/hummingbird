@@ -102,6 +102,25 @@ describe("RunEmitter — tool + plan + error payloads", () => {
     em.artifactRef("a1")
     expect(events.map((e) => e.kind)).toEqual(["plan", "step_error", "artifact_ref"])
   })
+
+  test("startSeq / startStep seed counters for a HITL continuation", () => {
+    const events: TaskEvent[] = []
+    let tick = 0
+    const em = new RunEmitter(
+      {
+        runId: "r1",
+        now: () => new Date(++tick * 1000).toISOString(),
+        startSeq: 12,
+        startStep: 3,
+      },
+      (e) => events.push(e)
+    )
+    em.status("running")
+    em.startStep() // continues from step 3 → 4
+    em.token("hi")
+    expect(events.map((e) => e.seq)).toEqual([13, 14, 15])
+    expect(events.map((e) => e.step)).toEqual([3, 4, 4])
+  })
 })
 
 describe("RunEmitter ↔ projectRun — producer/consumer agree", () => {

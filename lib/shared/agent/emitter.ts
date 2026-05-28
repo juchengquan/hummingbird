@@ -47,11 +47,18 @@ export interface RunEmitterOptions {
   maxSteps?: number
   /** Injectable clock — defaults to `Date.now`-based ISO. */
   now?: () => string
+  /** Seed the seq counter for a continuation invocation (HITL resume).
+   *  The next emitted event gets `seq = startSeq + 1`. Defaults to 0
+   *  (fresh run starts at 1). */
+  startSeq?: number
+  /** Seed the step counter for a continuation. The next `startStep()`
+   *  produces `startStep + 1`. Defaults to 0. */
+  startStep?: number
 }
 
 export class RunEmitter {
-  private seqCounter = 0
-  private stepCounter = 0
+  private seqCounter: number
+  private stepCounter: number
   private isSettled = false
   private readonly runId: string
   private readonly maxSteps: number | undefined
@@ -63,6 +70,8 @@ export class RunEmitter {
     this.maxSteps = options.maxSteps
     this.clock = options.now ?? (() => new Date().toISOString())
     this.sink = sink
+    this.seqCounter = options.startSeq ?? 0
+    this.stepCounter = options.startStep ?? 0
   }
 
   /** True once the run has emitted a terminal event. Further emits

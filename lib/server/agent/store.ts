@@ -14,7 +14,8 @@ import "server-only"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import type { TaskEvent, RunStatus } from "@/shared/agent/events"
-import type { Database } from "@/shared/supabase/types"
+import type { Database, Json } from "@/shared/supabase/types"
+import type { RunCheckpoint } from "./checkpoint"
 import { rowsToTaskEvents, taskEventToRow } from "./persistence"
 
 type DB = SupabaseClient<Database>
@@ -118,6 +119,45 @@ export async function listEventsSince(
     .order("seq", { ascending: true })
   if (error) throw new Error(`listEventsSince: ${error.message}`)
   return rowsToTaskEvents(data ?? [])
+}
+
+/**
+ * Persist the run state at a HITL suspend point. Stored in
+ * `tasks.checkpoint` as JSONB; the continuation invocation loads it via
+ * `loadCheckpoint` to seed the runner.
+ */
+export async function saveCheckpoint(
+  db: DB,
+  runId: string,
+  userId: string,
+  checkpoint: RunCheckpoint
+): Promise<void> {
+  const { error } = await db
+    .from("tasks")
+    .update({
+      checkpoint: checkpoint as unknown as Json,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", runId)
+    .eq("user_id", userId)
+  if (error) throw new Error(`saveCheckpoint: ${error.message}`)
+}
+
+/** Load the checkpoint, or `null` if the run hasn't been suspended. */
+export async function loadCheckpoint(
+  db: DB,
+  runId: string,
+  userId: string
+): Promise<RunCheckpoint | null> {
+  const { data, error } = await db
+    .from("tasks")
+    .select("checkpoint")
+    .eq("id", runId)
+    .eq("user_id", userId)
+    .maybeSingle()
+  if (error) throw new Error(`loadCheckpoint: ${error.message}`)
+  if (!data?.checkpoint || typeof data.checkpoint !== "object") return null
+  return data.checkpoint as unknown as RunCheckpoint
 }
 
 /** Cheap cancel probe the runner polls between steps. */
