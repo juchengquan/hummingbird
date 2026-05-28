@@ -60,6 +60,31 @@ export function mcpToolName(serverId: string, toolName: string): string {
   return `mcp__${serverId}__${toolName}`
 }
 
+/**
+ * Build a HITL-gated mirror of an MCP tool — same description and
+ * input schema, but **no `execute`**. The model can emit a tool call
+ * with this name; the AI SDK won't run anything, so the runner can
+ * suspend the run for human approval and (on approve) execute the real
+ * tool out-of-band via `callTool`. The `requestKind: "approval"` UI
+ * card shows the tool name + args before any side effect happens.
+ */
+export function buildGatedMcpTool(
+  server: Pick<McpServer, "id" | "name">,
+  descriptor: McpToolDescriptor
+) {
+  const schema =
+    descriptor.inputSchema && typeof descriptor.inputSchema === "object"
+      ? (descriptor.inputSchema as Parameters<typeof jsonSchema>[0])
+      : ({ type: "object", properties: {} } as Parameters<typeof jsonSchema>[0])
+  return tool({
+    description:
+      (descriptor.description ??
+        `MCP tool from "${server.name}" (no description provided).`) +
+      " (Requires human approval before running.)",
+    inputSchema: jsonSchema(schema),
+  })
+}
+
 function toFullServer(
   partial: Pick<McpServer, "id" | "name" | "url" | "transport">
 ): McpServer {

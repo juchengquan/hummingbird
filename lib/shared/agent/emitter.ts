@@ -47,11 +47,18 @@ export interface RunEmitterOptions {
   maxSteps?: number
   /** Injectable clock — defaults to `Date.now`-based ISO. */
   now?: () => string
+  /** Seed the seq counter for a continuation invocation (HITL resume).
+   *  The next emitted event gets `seq = startSeq + 1`. Defaults to 0
+   *  (fresh run starts at 1). */
+  startSeq?: number
+  /** Seed the step counter for a continuation. The next `startStep()`
+   *  produces `startStep + 1`. Defaults to 0. */
+  startStep?: number
 }
 
 export class RunEmitter {
-  private seqCounter = 0
-  private stepCounter = 0
+  private seqCounter: number
+  private stepCounter: number
   private isSettled = false
   private readonly runId: string
   private readonly maxSteps: number | undefined
@@ -63,6 +70,8 @@ export class RunEmitter {
     this.maxSteps = options.maxSteps
     this.clock = options.now ?? (() => new Date().toISOString())
     this.sink = sink
+    this.seqCounter = options.startSeq ?? 0
+    this.stepCounter = options.startStep ?? 0
   }
 
   /** True once the run has emitted a terminal event. Further emits
@@ -74,6 +83,13 @@ export class RunEmitter {
   /** Current step number (0 before the first `startStep`). */
   get step(): number {
     return this.stepCounter
+  }
+
+  /** Highest `seq` emitted so far. The HITL suspend path persists this
+   *  in the checkpoint so the continuation's emitter resumes the
+   *  sequence (via `startSeq`). */
+  get seq(): number {
+    return this.seqCounter
   }
 
   // --- lifecycle -----------------------------------------------------
@@ -140,6 +156,31 @@ export class RunEmitter {
 
   artifactRef(artifactId: string): void {
     this.emit({ kind: "artifact_ref", artifactId })
+  }
+
+  /** Open a HITL input request (approval-gated tool, askUser choice, or
+   *  askUser input). The matching `inputResponse` clears it. */
+  inputRequest(req: {
+    approvalId: string
+    requestKind?: "approval" | "choice" | "input"
+    tool?: string
+    toolCallId?: string
+    args?: unknown
+    prompt?: string
+    options?: { id: string; label: string }[]
+    multi?: boolean
+  }): void {
+    this.emit({ kind: "approval", phase: "request", ...req })
+  }
+
+  /** Record the human's answer to a pending input request. */
+  inputResponse(res: {
+    approvalId: string
+    approved?: boolean
+    selection?: string[]
+    value?: string
+  }): void {
+    this.emit({ kind: "approval", phase: "response", ...res })
   }
 
   // --- terminal ------------------------------------------------------

@@ -26,7 +26,7 @@ const CONTENT_WIDTH_CLASS = "w-[272px]"
 export function TasksSidebar() {
   const open = useStore((s) => s.tasksPanelOpen)
   const setOpen = useStore((s) => s.setTasksPanelOpen)
-  const { view, runId, isRunning, error, cancel } = useTaskRunContext()
+  const { view, runId, isRunning, error, cancel, respond } = useTaskRunContext()
 
   return (
     <aside data-state={open ? "expanded" : "collapsed"} className="h-full flex">
@@ -58,6 +58,7 @@ export function TasksSidebar() {
                 isRunning={isRunning}
                 error={error}
                 onCancel={cancel}
+                onRespond={respond}
               />
             ) : (
               <p className="text-xs text-[var(--muted-foreground)]">

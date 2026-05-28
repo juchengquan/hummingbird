@@ -57,6 +57,20 @@ export interface TaskRunView {
   resultText: string | null
   /** Highest `seq` folded — the resume cursor to reconnect from. */
   cursor: number
+  /** Set while the run is paused waiting for a human (HITL). Null
+   *  otherwise. */
+  pendingInput: PendingInput | null
+}
+
+export interface PendingInput {
+  requestId: string
+  kind: "approval" | "choice" | "input"
+  tool?: string
+  toolCallId?: string
+  args?: unknown
+  prompt?: string
+  options?: { id: string; label: string }[]
+  multi?: boolean
 }
 
 export const EMPTY_RUN_VIEW: TaskRunView = {
@@ -72,6 +86,7 @@ export const EMPTY_RUN_VIEW: TaskRunView = {
   fatalError: null,
   resultText: null,
   cursor: 0,
+  pendingInput: null,
 }
 
 /** Fold a single event into a view, returning a new view. Events with
@@ -125,13 +140,30 @@ export function reduceRun(view: TaskRunView, event: TaskEvent): TaskRunView {
       next.resultText = event.finalText ?? next.text
       next.fatalError = event.status === "failed" ? event.error ?? "Run failed" : null
       return next
+    case "approval":
+      // Request opens a pending input; response clears it. Anything
+      // else (the run already settled, a duplicate) is a no-op.
+      if (event.phase === "request") {
+        next.pendingInput = {
+          requestId: event.approvalId,
+          kind: event.requestKind ?? "approval",
+          tool: event.tool,
+          toolCallId: event.toolCallId,
+          args: event.args,
+          prompt: event.prompt,
+          options: event.options,
+          multi: event.multi,
+        }
+      } else if (event.phase === "response") {
+        next.pendingInput = null
+      }
+      return next
     // step_start / step_end already handled by the `step` bump above;
-    // handoff / approval / compact carry no view state in v1 (the
-    // cursor + step advance is enough). Reserved for later.
+    // handoff / compact carry no view state in v1 (the cursor + step
+    // advance is enough). Reserved for later.
     case "step_start":
     case "step_end":
     case "handoff":
-    case "approval":
     case "compact":
       return next
     default:

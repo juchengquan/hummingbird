@@ -16,7 +16,10 @@ import {
   type TaskRunView,
 } from "@/shared/agent/project"
 import { decodeTaskEventStream } from "@/shared/agent/stream"
-import type { TaskRequestInput } from "@/shared/api-schemas"
+import type {
+  RespondRequestInput,
+  TaskRequestInput,
+} from "@/shared/api-schemas"
 
 export interface UseTaskRunOptions {
   /** When set, persist a resume pointer for this conversation as the run
@@ -45,6 +48,8 @@ export interface UseTaskRunResult {
   resume: (runId: string, cursor?: number) => Promise<void>
   /** Request cancellation and close the local stream. */
   cancel: () => Promise<void>
+  /** Resolve a HITL pending input and consume the continuation stream. */
+  respond: (runId: string, body: RespondRequestInput) => Promise<void>
   /** Drop all state and abort any open stream. */
   reset: () => void
 }
@@ -185,6 +190,39 @@ export function useTaskRun(options?: UseTaskRunOptions): UseTaskRunResult {
     if (id) await apiClient.tasks.cancel(id)
   }, [])
 
+  const respond = useCallback(
+    async (id: string, body: RespondRequestInput) => {
+      abortRef.current?.abort()
+      const controller = new AbortController()
+      abortRef.current = controller
+      runIdRef.current = id
+      setRunId(id)
+      setError(null)
+      setIsRunning(true)
+      try {
+        const result = await apiClient.tasks.respond(id, body, {
+          signal: controller.signal,
+        })
+        if (!result.ok || !result.body) {
+          setError(
+            result.error?.message ?? `Respond failed (HTTP ${result.status}).`
+          )
+          return
+        }
+        await consume(result.body)
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          setError(
+            err instanceof Error ? err.message : "Respond stream failed."
+          )
+        }
+      } finally {
+        if (abortRef.current === controller) setIsRunning(false)
+      }
+    },
+    [consume]
+  )
+
   const reset = useCallback(() => {
     abortRef.current?.abort()
     abortRef.current = null
@@ -197,5 +235,5 @@ export function useTaskRun(options?: UseTaskRunOptions): UseTaskRunResult {
     setIsRunning(false)
   }, [])
 
-  return { view, runId, isRunning, error, start, resume, cancel, reset }
+  return { view, runId, isRunning, error, start, resume, cancel, respond, reset }
 }

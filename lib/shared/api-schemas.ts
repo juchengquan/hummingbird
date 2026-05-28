@@ -371,6 +371,33 @@ export const TaskRequestSchema = z.object({
    *  request. Cloud-mode servers are looked up server-side from
    *  `workspaceId`, so this is only needed for local-mode. */
   mcpServers: ChatRequestSchema.shape.mcpServers,
+  /** Tool names (full, prefixed for MCP) that require human approval
+   *  before running. The runner registers them without an `execute`;
+   *  the model can call them but the SDK won't run them — the run
+   *  suspends so the human can approve/reject. v1 source: the client
+   *  passes the list explicitly (e.g. all MCP tools from sensitive
+   *  servers). Server-side policy (per-tool flags) is a follow-up. */
+  requireApprovalFor: z.array(z.string().min(1)).max(64).optional(),
+})
+
+// --- /api/tasks/:id/respond -------------------------------------------------
+// Resolve a HITL pending input — approve/reject a gated tool, choose
+// one of the options, or supply a value. Only the fields for the
+// request's `kind` need to be set. Returns the continuation stream.
+
+export const RespondRequestSchema = z.object({
+  requestId: z.string().min(1),
+  /** `requestKind: "approval"` — required for tool gates. */
+  approved: z.boolean().optional(),
+  /** `requestKind: "approval"` — edited args to use instead of what
+   *  the model proposed. Server validates before executing. */
+  args: z.unknown().optional(),
+  /** `requestKind: "choice"` — picked option ids. */
+  selection: z.array(z.string()).optional(),
+  /** `requestKind: "input"` — free-text value. */
+  value: z.string().optional(),
+  /** Local-mode MCP creds re-supplied for the continuation. */
+  mcpServers: ChatRequestSchema.shape.mcpServers,
 })
 
 // --- Generic error envelope -------------------------------------------------
@@ -387,6 +414,7 @@ export const ErrorResponseSchema = z.object({
 
 export type ChatRequestInput = z.infer<typeof ChatRequestSchema>
 export type TaskRequestInput = z.infer<typeof TaskRequestSchema>
+export type RespondRequestInput = z.infer<typeof RespondRequestSchema>
 export type CopilotRequestInput = z.infer<typeof CopilotRequestSchema>
 export type ExtractionResponse = z.infer<typeof ExtractionResponseSchema>
 export type SummarizeRequestInput = z.infer<typeof SummarizeRequestSchema>

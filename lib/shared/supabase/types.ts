@@ -854,6 +854,7 @@ export type Database = {
       }
       tasks: {
         Row: {
+          checkpoint: Json | null
           conversation_id: string
           created_at: string
           finished_at: string | null
@@ -868,6 +869,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          checkpoint?: Json | null
           conversation_id: string
           created_at?: string
           finished_at?: string | null
@@ -882,6 +884,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          checkpoint?: Json | null
           conversation_id?: string
           created_at?: string
           finished_at?: string | null
