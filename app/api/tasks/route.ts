@@ -21,6 +21,7 @@ import type { SkillId } from "@/shared/skills/types"
 import { buildGatedMcpTool, buildMcpTool, mcpToolName } from "@/server/mcp/tools"
 import { loadEffectiveMcpServers } from "@/server/mcp/load-servers"
 import { ASK_USER_TOOL_NAME, requestKindFor } from "@/server/agent/input-policy"
+import { makeAskUserTool } from "@/server/agent/ask-user-tool"
 import type { RunCheckpoint } from "@/server/agent/checkpoint"
 import { createSlidingWindow, rateLimitKey } from "@/server/rate-limit"
 import { getSupabaseServerClient } from "@/server/supabase/server"
@@ -144,8 +145,10 @@ function buildTaskSystemPrompt(opts: {
       "of the steps you intend to take, then update it (via `setPlan` " +
       "again) as steps move to 'in_progress' and 'completed'. Call the " +
       "available tools as needed and keep going until the task is " +
-      "complete. When you have finished, write a clear final answer in " +
-      "Markdown.",
+      "complete. If you need a decision from the user (which option to " +
+      "pick, a value to use), call `askUser` — the run pauses and the " +
+      "user's answer comes back as the tool's result. When you have " +
+      "finished, write a clear final answer in Markdown.",
     skillsLine,
     mcpLine,
   ]
@@ -244,7 +247,11 @@ export async function POST(req: NextRequest) {
   // Approval-gated MCP tools (`body.requireApprovalFor` includes their
   // prefixed name) are registered WITHOUT an `execute` — the SDK can't
   // run them, so the model calling one is the suspend point for HITL.
-  const gatedToolNames = new Set(body.requireApprovalFor ?? [])
+  // `askUser` is always gated — it has no execute by definition, so
+  // any call to it must suspend the run for the human's answer.
+  const gatedToolNames = new Set<string>(body.requireApprovalFor ?? [])
+  gatedToolNames.add(ASK_USER_TOOL_NAME)
+  tools[ASK_USER_TOOL_NAME] = makeAskUserTool()
   const mcpServers = await loadEffectiveMcpServers(
     body.workspaceId,
     body.mcpServers

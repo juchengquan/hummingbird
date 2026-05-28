@@ -13,6 +13,7 @@ import {
 import { categorizeError } from "@/shared/api-errors"
 import { RespondRequestSchema } from "@/shared/api-schemas"
 import { ASK_USER_TOOL_NAME, requestKindFor } from "@/server/agent/input-policy"
+import { makeAskUserTool } from "@/server/agent/ask-user-tool"
 import { buildGatedMcpTool, buildMcpTool, mcpToolName } from "@/server/mcp/tools"
 import { callTool } from "@/server/mcp/client"
 import { loadEffectiveMcpServers } from "@/server/mcp/load-servers"
@@ -171,7 +172,10 @@ export async function POST(
   // client re-supplies `requireApprovalFor`). The client is expected to
   // re-supply gating via the start route on the *next* fresh run; on a
   // continuation, gating is implicit only on the tool that paused us.
-  const gatedToolNames = new Set<string>()
+  // `askUser` is always gated on continuations too — the model may
+  // call it again after answering the previous question.
+  const gatedToolNames = new Set<string>([ASK_USER_TOOL_NAME])
+  tools[ASK_USER_TOOL_NAME] = makeAskUserTool()
   for (const server of mcpServers) {
     for (const descriptor of server.capabilities?.tools ?? []) {
       const name = mcpToolName(server.id, descriptor.name)
@@ -485,8 +489,10 @@ function buildTaskSystemPrompt(opts: {
       "of the steps you intend to take, then update it (via `setPlan` " +
       "again) as steps move to 'in_progress' and 'completed'. Call the " +
       "available tools as needed and keep going until the task is " +
-      "complete. When you have finished, write a clear final answer in " +
-      "Markdown.",
+      "complete. If you need a decision from the user (which option to " +
+      "pick, a value to use), call `askUser` — the run pauses and the " +
+      "user's answer comes back as the tool's result. When you have " +
+      "finished, write a clear final answer in Markdown.",
     skillsLine,
     mcpLine,
   ]

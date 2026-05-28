@@ -173,13 +173,13 @@ function InputRequestCard({
     }
   }
   const kind = input.kind ?? "approval"
-  if (kind !== "approval") {
-    // choice / input land in Phase 5 — surface as a hint for now.
+  if (kind === "choice") {
     return (
-      <div className="rounded-md border border-[var(--border)] bg-[var(--muted)]/30 p-2 text-xs text-[var(--muted-foreground)]">
-        Awaiting human input ({kind}) — UI not implemented in this phase.
-      </div>
+      <ChoiceCard input={input} busy={busy} onSubmit={submit} />
     )
+  }
+  if (kind === "input") {
+    return <InputCard input={input} busy={busy} onSubmit={submit} />
   }
   const args = formatArgs(input.args)
   return (
@@ -215,6 +215,98 @@ function InputRequestCard({
           Reject
         </Button>
       </div>
+    </div>
+  )
+}
+
+function ChoiceCard({
+  input,
+  busy,
+  onSubmit,
+}: {
+  input: PendingInput
+  busy: boolean
+  onSubmit: (answer: RespondAnswer) => void | Promise<void>
+}) {
+  const options = input.options ?? []
+  const multi = !!input.multi
+  const [selected, setSelected] = useState<string[]>([])
+  const toggle = (id: string) => {
+    if (multi) {
+      setSelected((prev) =>
+        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+      )
+    } else {
+      setSelected([id])
+    }
+  }
+  const canSubmit = selected.length > 0 && !busy
+  return (
+    <div className="rounded-md border border-[var(--primary)]/40 bg-[var(--primary)]/5 p-2 space-y-2">
+      <p className="text-xs">{input.prompt ?? "Pick one:"}</p>
+      <ul className="space-y-1">
+        {options.map((opt) => {
+          const checked = selected.includes(opt.id)
+          return (
+            <li key={opt.id}>
+              <label className="flex items-center gap-2 text-xs cursor-pointer">
+                <input
+                  type={multi ? "checkbox" : "radio"}
+                  name={`choice-${input.requestId}`}
+                  checked={checked}
+                  onChange={() => toggle(opt.id)}
+                  disabled={busy}
+                />
+                <span>{opt.label}</span>
+              </label>
+            </li>
+          )
+        })}
+      </ul>
+      <Button
+        size="xs"
+        variant="default"
+        disabled={!canSubmit}
+        onClick={() => onSubmit({ selection: selected })}
+      >
+        <Check />
+        Submit
+      </Button>
+    </div>
+  )
+}
+
+function InputCard({
+  input,
+  busy,
+  onSubmit,
+}: {
+  input: PendingInput
+  busy: boolean
+  onSubmit: (answer: RespondAnswer) => void | Promise<void>
+}) {
+  const [value, setValue] = useState("")
+  const canSubmit = value.trim().length > 0 && !busy
+  return (
+    <div className="rounded-md border border-[var(--primary)]/40 bg-[var(--primary)]/5 p-2 space-y-2">
+      <p className="text-xs">{input.prompt ?? "Your input:"}</p>
+      <textarea
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        disabled={busy}
+        rows={3}
+        className="w-full rounded border border-[var(--border)] bg-[var(--background)] p-1.5 text-xs"
+        placeholder="Type your answer…"
+      />
+      <Button
+        size="xs"
+        variant="default"
+        disabled={!canSubmit}
+        onClick={() => onSubmit({ value })}
+      >
+        <Check />
+        Submit
+      </Button>
     </div>
   )
 }
