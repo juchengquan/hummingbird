@@ -1,8 +1,11 @@
 "use client"
 
+import { useState } from "react"
+
 import {
   Ban,
   CheckCircle2,
+  Check,
   Circle,
   CircleDot,
   Loader2,
@@ -19,8 +22,16 @@ import {
 } from "@/components/skills/tool-call-strip"
 import { isTerminalStatus, type RunStatus } from "@/shared/agent/events"
 import type { PlanItem } from "@/shared/agent/events"
-import type { TaskRunView } from "@/shared/agent/project"
+import type { PendingInput, TaskRunView } from "@/shared/agent/project"
+import type { RespondRequestInput } from "@/shared/api-schemas"
 import { cn } from "@/shared/utils"
+
+export interface RespondAnswer {
+  approved?: boolean
+  args?: unknown
+  selection?: string[]
+  value?: string
+}
 
 interface TaskStripProps {
   view: TaskRunView
@@ -30,6 +41,9 @@ interface TaskStripProps {
    *  own `view.fatalError`. */
   error?: string | null
   onCancel?: () => void
+  /** Called when the human answers a `view.pendingInput`. The caller
+   *  is responsible for hitting the respond endpoint. */
+  onRespond?: (body: RespondRequestInput) => void | Promise<void>
   className?: string
 }
 
@@ -45,6 +59,7 @@ export function TaskStrip({
   isRunning,
   error,
   onCancel,
+  onRespond,
   className,
 }: TaskStripProps) {
   const terminal = isTerminalStatus(view.status)
@@ -100,6 +115,10 @@ export function TaskStrip({
         ) : null}
       </div>
 
+      {view.pendingInput && onRespond ? (
+        <InputRequestCard input={view.pendingInput} onRespond={onRespond} />
+      ) : null}
+
       {view.plan.length > 0 ? <PlanList items={view.plan} /> : null}
 
       {calls.length > 0 ? <ToolCallStrip calls={calls} /> : null}
@@ -131,6 +150,82 @@ export function TaskStrip({
       ) : null}
     </div>
   )
+}
+
+/** The "Approve / Reject" card shown when the run is paused on an
+ *  approval-gated tool. v1 — binary only; `choice` and `input` kinds
+ *  are added in the next phase. */
+function InputRequestCard({
+  input,
+  onRespond,
+}: {
+  input: PendingInput
+  onRespond: (body: RespondRequestInput) => void | Promise<void>
+}) {
+  const [busy, setBusy] = useState(false)
+  const submit = async (answer: RespondAnswer) => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await onRespond({ requestId: input.requestId, ...answer })
+    } finally {
+      setBusy(false)
+    }
+  }
+  const kind = input.kind ?? "approval"
+  if (kind !== "approval") {
+    // choice / input land in Phase 5 — surface as a hint for now.
+    return (
+      <div className="rounded-md border border-[var(--border)] bg-[var(--muted)]/30 p-2 text-xs text-[var(--muted-foreground)]">
+        Awaiting human input ({kind}) — UI not implemented in this phase.
+      </div>
+    )
+  }
+  const args = formatArgs(input.args)
+  return (
+    <div className="rounded-md border border-[var(--primary)]/40 bg-[var(--primary)]/5 p-2 space-y-2">
+      <div className="text-xs">
+        <p className="font-medium">Approve action?</p>
+        <p className="text-[var(--muted-foreground)]">
+          The agent wants to call <code>{input.tool}</code>.
+        </p>
+        {args ? (
+          <pre className="mt-1 max-h-32 overflow-auto rounded bg-[var(--background)] p-1.5 text-[10px]">
+            {args}
+          </pre>
+        ) : null}
+      </div>
+      <div className="flex items-center gap-1.5">
+        <Button
+          size="xs"
+          variant="default"
+          disabled={busy}
+          onClick={() => submit({ approved: true })}
+        >
+          <Check />
+          Approve
+        </Button>
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={busy}
+          onClick={() => submit({ approved: false })}
+        >
+          <X />
+          Reject
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function formatArgs(args: unknown): string {
+  if (args == null) return ""
+  try {
+    return JSON.stringify(args, null, 2)
+  } catch {
+    return String(args)
+  }
 }
 
 function PlanList({ items }: { items: PlanItem[] }) {

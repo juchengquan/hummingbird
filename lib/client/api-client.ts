@@ -28,6 +28,7 @@ import {
   RevokeShareResponseSchema,
   type ChatRequestInput,
   type TaskRequestInput,
+  type RespondRequestInput,
   type CreateShareRequestInput,
   type CreateShareResponse,
   type ExtractionResponse,
@@ -63,6 +64,8 @@ export const apiUrls = {
   taskSweep: () => url("/api/tasks/sweep"),
   taskCancel: (id: string) =>
     url(`/api/tasks/${encodeURIComponent(id)}/cancel`),
+  taskRespond: (id: string) =>
+    url(`/api/tasks/${encodeURIComponent(id)}/respond`),
   taskStream: (id: string) =>
     url(`/api/tasks/${encodeURIComponent(id)}/stream`),
   aiCommand: () => url("/api/ai/command"),
@@ -210,6 +213,34 @@ async function tasksCancel(
     }
   }
   return { ok: true, status: res.status }
+}
+
+/**
+ * Resolve a HITL pending input on a paused run — approve/reject a
+ * gated tool, choose option(s), or submit a value. Returns the
+ * continuation stream (same envelope as `tasksStart` / `tasksResume`).
+ */
+async function tasksRespond(
+  id: string,
+  body: RespondRequestInput,
+  options?: { signal?: AbortSignal }
+): Promise<ChatStreamResult> {
+  const res = await fetch(apiUrls.taskRespond(id), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const errBody = await readErrorBody(res)
+    return {
+      ok: false,
+      status: res.status,
+      body: null,
+      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+    }
+  }
+  return { ok: true, status: res.status, body: res.body }
 }
 
 /**
@@ -496,7 +527,13 @@ async function urlFetchBookmark(url: string): Promise<
 export const apiClient = {
   urls: apiUrls,
   chat: { stream: chatStream },
-  tasks: { start: tasksStart, resume: tasksResume, cancel: tasksCancel, sweep: tasksSweep },
+  tasks: {
+    start: tasksStart,
+    resume: tasksResume,
+    cancel: tasksCancel,
+    respond: tasksRespond,
+    sweep: tasksSweep,
+  },
   extract,
   summarize: {
     file: summarizeFile,

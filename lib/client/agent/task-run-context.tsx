@@ -29,7 +29,10 @@ import { useStore } from "@/client/hooks/use-store"
 import { useTaskRun } from "@/client/hooks/use-task-run"
 import { isTerminalStatus, type RunStatus } from "@/shared/agent/events"
 import type { TaskRunView } from "@/shared/agent/project"
-import type { TaskRequestInput } from "@/shared/api-schemas"
+import type {
+  RespondRequestInput,
+  TaskRequestInput,
+} from "@/shared/api-schemas"
 
 interface TaskRunContextValue {
   view: TaskRunView
@@ -45,6 +48,8 @@ interface TaskRunContextValue {
   /** Launch a task: records its conversation, opens the panel, streams. */
   startTask: (body: TaskRequestInput, opts?: { title?: string }) => void
   cancel: () => Promise<void>
+  /** Resolve a HITL pending input on the active paused run. */
+  respond: (body: RespondRequestInput) => Promise<void>
 }
 
 const TaskRunContext = createContext<TaskRunContextValue | null>(null)
@@ -129,6 +134,15 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
     void runRef.current.resume(pointer.runId, pointer.cursor)
   }, [setTasksPanelOpen])
 
+  const respond = useCallback(
+    async (body: RespondRequestInput) => {
+      const id = run.runId
+      if (!id) return
+      await run.respond(id, body)
+    },
+    [run]
+  )
+
   const value: TaskRunContextValue = {
     view: run.view,
     runId: run.runId,
@@ -139,6 +153,7 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
     setRunAsTask: handleSetRunAsTask,
     startTask,
     cancel: run.cancel,
+    respond,
   }
 
   return (
