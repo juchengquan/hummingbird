@@ -1,6 +1,25 @@
 # Plan: Long-running task mode
 
-Status: **planning** — no code yet.
+Status: **✅ shipped (superseded).** The "long-running task mode"
+described here landed via the agent stack:
+
+- Phases 1–4 (schema + runner + chat integration + cross-conversation
+  surfacing + resume-on-reload) shipped across
+  [#66](https://github.com/juchengquan/hummingbird/pull/66) →
+  [#73](https://github.com/juchengquan/hummingbird/pull/73), plus the
+  hybrid Tasks-panel UI in
+  [#72](https://github.com/juchengquan/hummingbird/pull/72) and HITL
+  approvals in
+  [#76](https://github.com/juchengquan/hummingbird/pull/76).
+- Phase 5 (real queue / durable background execution) is now its own
+  architecture doc: `PLAN-agent-task-queue.md`.
+
+Active follow-up tracking lives in `PLAN-small-followups.md` and
+`PLAN-agent-task-queue.md`. The text below is the **original** design
+sketch — kept for context; details supersede via the linked PRs and
+plans.
+
+---
 
 A separate "task" surface for prompts that need many tool calls, much
 context, or many minutes to finish — *"research the top 10 React

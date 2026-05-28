@@ -1,11 +1,13 @@
 # Plan: Human-in-the-loop approvals for agent tasks
 
-Status: **📋 proposed (architecture).** The `approval` event kind and the
-`paused` status are already reserved in the event IR
-(`lib/shared/agent/events.ts`); nothing drives them yet. This doc
-designs the foundational change needed to make them work — pausing a run
-for a human decision and resuming it later — and proposes a v1 that
-ships **without** a job queue.
+Status: **✅ shipped.** Phases 1–5 merged in
+[#76](https://github.com/juchengquan/hummingbird/pull/76):
+durable checkpoint + emitter seed (Phase 1), suspend mechanism +
+respond endpoint + gated-tool policy (Phase 2+3), client respond
+plumbing + approval card (Phase 4), `askUser` tool + multi-choice /
+free-input cards (Phase 5). Phase 6 (queue-backed continuation
+without a browser) is the foundational change tracked separately in
+`PLAN-agent-task-queue.md`.
 
 ## Goal
 
