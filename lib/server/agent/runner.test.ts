@@ -136,6 +136,44 @@ describe("runAgentLoop — control flow", () => {
     expect(view.fatalError).toBe("gateway 500")
   })
 
+  test("a pendingInput step returns suspended without settling the emitter", async () => {
+    const { emitter, events } = harness()
+    let calls = 0
+    const runStep: RunStepFn = async () => {
+      calls += 1
+      if (calls === 1) return { done: false } // one tool round
+      return {
+        done: false,
+        pendingInput: {
+          toolCallId: "tc1",
+          tool: "mcp__srv__write",
+          args: { foo: "bar" },
+        },
+      }
+    }
+    const result = await runAgentLoop({
+      emitter,
+      maxSteps: 10,
+      signal: new AbortController().signal,
+      isCancelled: () => false,
+      runStep,
+    })
+    expect(result).toEqual({
+      kind: "suspended",
+      pendingInput: {
+        toolCallId: "tc1",
+        tool: "mcp__srv__write",
+        args: { foo: "bar" },
+      },
+    })
+    // No terminal event yet — the emitter is NOT settled.
+    expect(emitter.settled).toBe(false)
+    const last = events.at(-1)
+    expect(last?.kind).not.toBe("result")
+    // The view reflects two steps without a status flip.
+    expect(projectRun(events).step).toBe(2)
+  })
+
   test("no events are emitted after the terminal one", async () => {
     const { emitter, events } = harness()
     const runStep: RunStepFn = async ({ emitter }) => {

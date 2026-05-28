@@ -138,14 +138,46 @@ export interface HandoffEvent extends TaskEventBase {
   phase: "enter" | "exit"
 }
 
-/** Human-in-the-loop approval gate (OpenAI mcp_approval). Reserved. */
+/** A choice option for `requestKind: 'choice'` input requests. */
+export interface InputRequestOption {
+  id: string
+  label: string
+}
+
+/**
+ * Human-in-the-loop input request/response — the suspend point of an
+ * agent run. Binary tool-approval is the default kind; `choice` and
+ * `input` (raised by an `askUser` tool) ride on the same machinery
+ * with different payload shapes. See `PLAN-agent-hitl-approvals.md`.
+ */
 export interface ApprovalEvent extends TaskEventBase {
   kind: "approval"
   approvalId: string
   phase: "request" | "response"
+  /** Defaults to `"approval"` when omitted (back-compat for the binary
+   *  gate). */
+  requestKind?: "approval" | "choice" | "input"
+  /** Tool name (gated tool, or `askUser`). */
   tool?: string
-  /** Only on `phase: "response"`. */
+  /** Tool-call id from the AI SDK — needed on response to match the
+   *  result back to the right pending call. */
+  toolCallId?: string
+  /** The tool's args at suspend time (for the approval card to show
+   *  *what* is being approved). */
+  args?: unknown
+  /** Free-text prompt for `choice` / `input`. */
+  prompt?: string
+  /** Options for `requestKind: "choice"`. */
+  options?: InputRequestOption[]
+  /** Allow multiple selections for `choice`. */
+  multi?: boolean
+  // -- response-only fields --
+  /** `requestKind: "approval"` response. */
   approved?: boolean
+  /** `requestKind: "choice"` response — picked option ids. */
+  selection?: string[]
+  /** `requestKind: "input"` response. */
+  value?: string
 }
 
 /** History compaction mid-run (Claude compact boundary). */

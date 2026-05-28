@@ -38,12 +38,31 @@ export interface RunStepContext {
   emitter: RunEmitter
 }
 
+export interface PendingInputDescriptor {
+  /** AI-SDK tool-call id — needed on response to match the result back
+   *  to the right pending call. */
+  toolCallId: string
+  /** Tool name (gated MCP tool, or `askUser`). */
+  tool: string
+  args?: unknown
+}
+
 export interface RunStepOutcome {
   /** false → the model called tools; loop again. true → final answer. */
   done: boolean
+  /** Set when the step ended on a no-execute gated tool call — the
+   *  runner suspends the run for human input instead of looping. */
+  pendingInput?: PendingInputDescriptor
 }
 
 export type RunStepFn = (ctx: RunStepContext) => Promise<RunStepOutcome>
+
+/** Outcome of `runAgentLoop`. Settled (terminal event already emitted)
+ *  or suspended (run is `paused`; the route checkpoints + emits the
+ *  input request). */
+export type AgentLoopResult =
+  | { kind: "settled" }
+  | { kind: "suspended"; pendingInput: PendingInputDescriptor }
 
 export interface AgentLoopOptions {
   emitter: RunEmitter
@@ -60,34 +79,47 @@ export interface AgentLoopOptions {
  * (`status: cancelled` or `result: done|failed`) — the emitter drops
  * anything after, so a late tool callback can't append past the end.
  */
-export async function runAgentLoop(opts: AgentLoopOptions): Promise<void> {
+export async function runAgentLoop(
+  opts: AgentLoopOptions
+): Promise<AgentLoopResult> {
   const { emitter, maxSteps, signal, isCancelled, runStep } = opts
-  emitter.status("running")
+  // Only emit `status: running` on a fresh start. A continuation
+  // invocation (HITL resume) is already at the current step counter
+  // (seeded via `startStep`), so the first status emit is the route's
+  // job before calling back in.
+  if (emitter.step === 0) emitter.status("running")
   try {
-    for (let step = 1; step <= maxSteps; step++) {
+    for (let step = emitter.step + 1; step <= maxSteps; step++) {
       if (signal.aborted || (await isCancelled())) {
         emitter.status("cancelled")
-        return
+        return { kind: "settled" }
       }
       emitter.startStep()
       const outcome = await runStep({ step, signal, emitter })
       emitter.endStep()
+      if (outcome.pendingInput) {
+        // Suspend without settling — the route persists the checkpoint
+        // and emits the input request + `status: paused`.
+        return { kind: "suspended", pendingInput: outcome.pendingInput }
+      }
       if (outcome.done) {
         emitter.result("done")
-        return
+        return { kind: "settled" }
       }
     }
     // Hit the step cap without a final answer. Settle anyway —
     // `finalText` falls back to the accumulated token text downstream.
     emitter.result("done")
+    return { kind: "settled" }
   } catch (err) {
     if (signal.aborted) {
       emitter.status("cancelled")
-      return
+      return { kind: "settled" }
     }
     emitter.result("failed", {
       error: err instanceof Error ? err.message : "Run failed",
     })
+    return { kind: "settled" }
   }
 }
 
@@ -108,6 +140,11 @@ export interface StreamTextStepConfig {
    *  e.g. `setPlan`, which already shows up as the plan/todo list. The
    *  model still sees the tool result; only the UI event is suppressed. */
   silentTools?: Set<string>
+  /** Tool names registered WITHOUT an `execute` (approval-gated MCP
+   *  tools, askUser). When the model calls one, the SDK can't run it;
+   *  the step returns a `pendingInput` outcome so the runner suspends
+   *  the run for human input. */
+  gatedTools?: Set<string>
   /** Coalesce streamed token deltas into one `token` event per this many
    *  chars (per channel), cutting the per-token event + DB-write volume
    *  while keeping streaming visually smooth. Flushes on channel switch,
@@ -122,7 +159,7 @@ export interface StreamTextStepConfig {
  * produced a final answer (`finishReason !== 'tool-calls'`).
  */
 export function makeStreamTextStep(config: StreamTextStepConfig): RunStepFn {
-  const { model, system, messages, tools, silentTools } = config
+  const { model, system, messages, tools, silentTools, gatedTools } = config
   const flushChars = config.tokenFlushChars ?? 96
 
   return async ({ signal, emitter }) => {
@@ -147,6 +184,7 @@ export function makeStreamTextStep(config: StreamTextStepConfig): RunStepFn {
     const coalescer = makeTokenCoalescer(emitter, flushChars)
 
     let finishReason = "stop"
+    let pendingInput: PendingInputDescriptor | undefined
     for await (const part of result.fullStream) {
       switch (part.type) {
         case "text-delta": {
@@ -163,6 +201,17 @@ export function makeStreamTextStep(config: StreamTextStepConfig): RunStepFn {
             toolCallId?: string
             toolName?: string
             input?: unknown
+          }
+          // A no-execute gated tool: capture the FIRST one as the
+          // suspend point. The SDK can't run it (no execute), so the
+          // step ends with `finishReason: 'tool-calls'` and no result
+          // message — the runner suspends here.
+          if (gatedTools?.has(p.toolName ?? "") && !pendingInput) {
+            pendingInput = {
+              toolCallId: p.toolCallId ?? "",
+              tool: p.toolName ?? "",
+              args: p.input,
+            }
           }
           if (silentTools?.has(p.toolName ?? "")) break
           emitter.toolInput(p.toolCallId ?? "", p.toolName ?? "", p.input ?? {})
@@ -216,6 +265,9 @@ export function makeStreamTextStep(config: StreamTextStepConfig): RunStepFn {
     const response = await result.response
     if (response?.messages?.length) messages.push(...response.messages)
 
+    if (pendingInput) {
+      return { done: false, pendingInput }
+    }
     // `tool-calls` means the model wants another round; anything else
     // (stop / length / content-filter) ends the run.
     return { done: finishReason !== "tool-calls" }

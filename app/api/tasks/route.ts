@@ -18,8 +18,10 @@ import {
   type SkillRequestEntry,
 } from "@/server/skills/registry"
 import type { SkillId } from "@/shared/skills/types"
-import { buildMcpTool, mcpToolName } from "@/server/mcp/tools"
+import { buildGatedMcpTool, buildMcpTool, mcpToolName } from "@/server/mcp/tools"
 import { loadEffectiveMcpServers } from "@/server/mcp/load-servers"
+import { ASK_USER_TOOL_NAME, requestKindFor } from "@/server/agent/input-policy"
+import type { RunCheckpoint } from "@/server/agent/checkpoint"
 import { createSlidingWindow, rateLimitKey } from "@/server/rate-limit"
 import { getSupabaseServerClient } from "@/server/supabase/server"
 import type { TaskEvent } from "@/shared/agent/events"
@@ -31,6 +33,7 @@ import {
   appendEvent,
   createRun,
   isRunCancelled,
+  saveCheckpoint,
   updateRun,
 } from "@/server/agent/store"
 
@@ -54,6 +57,35 @@ const taskImageGenLimit = createSlidingWindow({
   windowMs: 60_000,
   max: TASK_IMAGE_GEN_PER_MINUTE,
 })
+
+/** Pull `prompt` / `options` / `multi` out of an `askUser` tool's args
+ *  so the input-request event carries them for the panel to render. */
+function extractAskUserFields(args: object): {
+  prompt?: string
+  options?: { id: string; label: string }[]
+  multi?: boolean
+} {
+  const a = args as Record<string, unknown>
+  const out: {
+    prompt?: string
+    options?: { id: string; label: string }[]
+    multi?: boolean
+  } = {}
+  if (typeof a.prompt === "string") out.prompt = a.prompt
+  if (Array.isArray(a.options)) {
+    out.options = a.options
+      .map((o) => {
+        if (!o || typeof o !== "object") return null
+        const id = (o as { id?: unknown }).id
+        const label = (o as { label?: unknown }).label
+        if (typeof id !== "string" || typeof label !== "string") return null
+        return { id, label }
+      })
+      .filter((x): x is { id: string; label: string } => x !== null)
+  }
+  if (typeof a.multi === "boolean") out.multi = a.multi
+  return out
+}
 
 /** Pull the most recent user message text for the `tasks.goal` column. */
 function lastUserText(messages: ModelMessage[]): string {
@@ -208,17 +240,21 @@ export async function POST(req: NextRequest) {
   // server-side from `workspaceId`; local-mode servers arrive (with
   // creds) in `body.mcpServers`. Tool names are prefixed
   // `mcp__<serverId>__<toolName>` so they don't collide.
+  //
+  // Approval-gated MCP tools (`body.requireApprovalFor` includes their
+  // prefixed name) are registered WITHOUT an `execute` — the SDK can't
+  // run them, so the model calling one is the suspend point for HITL.
+  const gatedToolNames = new Set(body.requireApprovalFor ?? [])
   const mcpServers = await loadEffectiveMcpServers(
     body.workspaceId,
     body.mcpServers
   )
   for (const server of mcpServers) {
     for (const descriptor of server.capabilities?.tools ?? []) {
-      tools[mcpToolName(server.id, descriptor.name)] = buildMcpTool(
-        server,
-        descriptor,
-        server.credentials
-      )
+      const name = mcpToolName(server.id, descriptor.name)
+      tools[name] = gatedToolNames.has(name)
+        ? buildGatedMcpTool(server, descriptor)
+        : buildMcpTool(server, descriptor, server.credentials)
     }
   }
 
@@ -287,22 +323,63 @@ export async function POST(req: NextRequest) {
         ...tools,
         [PLAN_TOOL_NAME]: makePlanTool(emitter),
       }
+      const runMessages = body.messages as ModelMessage[]
       const runStep = makeStreamTextStep({
         model,
         system,
-        messages: body.messages as ModelMessage[],
+        messages: runMessages,
         tools: runTools,
         // setPlan surfaces as the plan/todo list, not a tool pill.
         silentTools: new Set([PLAN_TOOL_NAME]),
+        // The runner suspends when the model calls any of these (they
+        // are registered without `execute`); the route handles the
+        // suspend below.
+        gatedTools: gatedToolNames,
       })
 
-      await runAgentLoop({
+      const result = await runAgentLoop({
         emitter,
         maxSteps,
         signal: req.signal,
         isCancelled: () => isRunCancelled(db, runId, userId),
         runStep,
       })
+
+      if (result.kind === "suspended") {
+        // HITL pause: persist the run state for a fresh invocation to
+        // continue, then emit the input request + `status: paused`. The
+        // emitter is NOT settled, so further emits on continuation
+        // proceed normally.
+        const pi = result.pendingInput
+        const checkpoint: RunCheckpoint = {
+          messages: runMessages,
+          step: emitter.step,
+          seq: emitter.seq,
+          config: {
+            model: modelId,
+            workspaceSystemPrompt: body.workspaceSystemPrompt,
+            workspaceId: body.workspaceId,
+            skills: body.skills,
+            maxSteps,
+          },
+        }
+        try {
+          await saveCheckpoint(db, runId, userId, checkpoint)
+        } catch (err) {
+          console.error("[tasks] saveCheckpoint:", err)
+        }
+        emitter.inputRequest({
+          approvalId: pi.toolCallId,
+          requestKind: requestKindFor(pi.tool, pi.args),
+          tool: pi.tool,
+          toolCallId: pi.toolCallId,
+          args: pi.args,
+          ...(pi.tool === ASK_USER_TOOL_NAME && pi.args && typeof pi.args === "object"
+            ? extractAskUserFields(pi.args)
+            : {}),
+        })
+        emitter.status("paused")
+      }
 
       await chain
     },
