@@ -212,6 +212,81 @@ resolves. Confirm no "in progress" rows refer to merged branches.
 
 ---
 
+## 6. Local-mode MCP creds on task launch / respond
+
+**Why.** The chat route forwards local-mode MCP servers (creds in
+`localStorage`) in `body.mcpServers`; the task route's `startTask` in
+`components/panels/chat.tsx` and the `respond` flow in
+`lib/client/agent/task-run-context.tsx` don't — so a task can only use
+**cloud-mode** MCP. Cloud is the common case (we ship it server-side
+via `loadEffectiveMcpServers(workspaceId, …)`), but local-mode MCP
+silently doesn't apply to tasks today.
+
+**Approach.** Extract the local-mode `mcpServers` collection that
+already runs in `callChatAPI` (around the `mcpStore.mcpServers` filter
++ `getLocalCred` map) into a small helper next to `callChatAPI` and
+call it from the task branch + the provider's `respond`. The route
++ schema already accept the field; this is purely client wiring.
+
+**Verification.** Add a local-mode MCP server with a tool, launch a
+task that needs it → the model can call it; verify the suspend/respond
+loop still works when the same local-mode tool is the gated one.
+
+**Out of scope.** Pushing local creds to the server for queued /
+background HITL continuation (the long-term plan in
+`PLAN-agent-task-queue.md` open questions).
+
+---
+
+## 7. Per-tool server-side approval flags
+
+**Why.** Today the gated-tool list for a task is `body.requireApprovalFor`
+(an explicit list of prefixed names from the client). For a workspace
+that has e.g. a "Filesystem-Writer" MCP server, we want server-side
+policy: any tool on that server requires approval, no client opt-in
+needed.
+
+**Approach.** Add a `requires_approval boolean default false` column to
+`mcp_servers` (and/or a per-tool override on the descriptor). In the
+task route, when building tools, union `body.requireApprovalFor` with
+the server's flag — gate accordingly. Surface a toggle in the MCP
+server config dialog.
+
+**Verification.** Toggle a server's flag → next task pauses on any of
+its tool calls regardless of `body.requireApprovalFor`. Toggle off →
+runs through.
+
+**Out of scope.** Per-tool granularity within a server. Defaults
+(e.g. "always-gate destructive verbs"). The MCP spec evolution.
+
+---
+
+## 8. Route-handler integration tests for the task stack
+
+**Why.** Pure logic in the agent stack is unit-tested (`reduceRun`,
+`RunEmitter`, `makeStreamTextStep` control flow with a fake step,
+the SSE decoder, the active-task codec). The HTTP handlers
+themselves (`app/api/tasks/route.ts`, `[id]/respond/route.ts`,
+`[id]/stream/route.ts`, `sweep/route.ts`) aren't — auth, body
+validation, sink wiring, persistence chain, suspend → checkpoint,
+respond → continuation are all integration-level today.
+
+**Approach.** A small Supabase + AI-SDK harness — likely an in-memory
+`SupabaseClient` stub matching the chained-query API the store uses,
+plus a fake `streamText` driver (we already have `RunStepFn` as the
+seam for the loop). Then a handful of end-to-end tests: start →
+settle, start → cancel, suspend → respond approve, suspend → respond
+reject, resume mid-run, sweep flips stale runs to `failed`.
+
+**Verification.** `bun test` covers the handler paths without hitting
+Supabase or a real model. New tests live next to the routes
+(`*.handler.test.ts`).
+
+**Out of scope.** Full e2e with a real model / Supabase — that's the
+browser walkthrough in `docs/VERIFY-agent-tasks.md`.
+
+---
+
 ## How to ship one
 
 1. Pick an item.

@@ -1,11 +1,20 @@
 # Plan: Agent event model & streaming format
 
-Status: **🪜 core + full vertical slice landing.** Core shipped in
-[#66](https://github.com/juchengquan/hummingbird/pull/66) (pure IR +
-projection + emitter + wire codec) and persistence in
-[#68](https://github.com/juchengquan/hummingbird/pull/68); the runner →
-route → resume → task-card UI → polish slices land together in the
-agent-tasks PR — see *Implementation slices* below. Settles the message/event taxonomy and wire format
+Status: **✅ shipped.** All seven slices merged. Core in
+[#66](https://github.com/juchengquan/hummingbird/pull/66) (IR +
+projection + emitter + wire codec); persistence in
+[#68](https://github.com/juchengquan/hummingbird/pull/68); runner →
+route → resume → task-card UI → polish in
+[#69](https://github.com/juchengquan/hummingbird/pull/69); the
+chat-integrated hybrid UI in
+[#72](https://github.com/juchengquan/hummingbird/pull/72); and the
+remaining follow-up grab-bag (plan events, token coalescing, orphan
+reconcile, MCP + budget, resume-on-reload, notifications) in
+[#73](https://github.com/juchengquan/hummingbird/pull/73). HITL pause
+/ resume ([#76](https://github.com/juchengquan/hummingbird/pull/76))
+extended the IR (the `approval` event grew optional input-request /
+response fields; `paused` status now drives the suspend point) but
+the protocol itself is stable. Settles the message/event taxonomy and wire format
 that long-running tasks (and the eventual agent-service split) depend
 on. Split out of
 `PLAN-long-running-tasks.md` because it's the *load-bearing* design:

@@ -1,14 +1,19 @@
 # Plan: Agent tasks — follow-ups after the runner→UI slice
 
-Status: **🛠️ mostly shipped.** Builds on the long-running-task stack:
-event-model core ([#66](https://github.com/juchengquan/hummingbird/pull/66)),
-persistence ([#68](https://github.com/juchengquan/hummingbird/pull/68)),
-the runner → route → resume → task-card UI → polish slices
-([#69](https://github.com/juchengquan/hummingbird/pull/69)), and the
-hybrid UI + durable result ([#72](https://github.com/juchengquan/hummingbird/pull/72)).
-Workstreams #1–#5 plus the MCP / budget / resume-on-reload grab-bag are
-now implemented; only the two architectural items (realtime tail, HITL
-approvals) remain deferred — see the marks below.
+Status: **✅ shipped (or moved out).** Workstreams #1–#5 and the
+tractable #6 grab-bag landed across
+[#72](https://github.com/juchengquan/hummingbird/pull/72) (hybrid UI +
+durable result) and
+[#73](https://github.com/juchengquan/hummingbird/pull/73) (plan
+events, token coalescing, orphan reconcile, MCP + budget,
+resume-on-reload, notifications). The two architectural items
+originally listed as deferred now have their own plans:
+**HITL approvals** is `PLAN-agent-hitl-approvals.md` (shipped in
+[#76](https://github.com/juchengquan/hummingbird/pull/76)) and
+**realtime tail** is folded into `PLAN-agent-task-queue.md`
+(planning). Small open items moved to `PLAN-small-followups.md`:
+local-mode MCP client wiring for tasks, per-tool server-side approval
+flags, route-handler integration tests.
 
 ## What already exists
 

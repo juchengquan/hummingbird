@@ -10,8 +10,10 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-05-27 (agent event-model core shipped #66; remaining
-task slices — incl. the task-card UI — enumerated in the plan).
+Last updated: 2026-05-28 (long-running agent tasks fully shipped —
+runner → route → resume → hybrid UI → follow-ups → HITL approvals
+(approve/reject, choice, free-input). Queue-backed continuation
+(Phase 6) is now an architecture plan, not yet implemented).
 
 > **Plan archive.** Fully-shipped `PLAN-*.md` files live in
 > [`_done/`](_done/). Active plans (planning / phased / decision
@@ -27,6 +29,8 @@ task slices — incl. the task-card UI — enumerated in the plan).
 - 📐 **Planned** — `PLAN-*.md` exists, no code yet.
 - 💡 **Backlog** — see `BACKLOG.md`. No plan yet.
 - 🪜 **Phased** — partial ship; sub-phases tracked inside the plan.
+- ⏸ **Deferred** — `PLAN-*.md` exists; explicit decision not to build
+  until evidence demands it (e.g. real user requests).
 
 ---
 
@@ -37,7 +41,16 @@ to a representative PR otherwise.
 
 | When | Feature | Where |
 |---|---|---|
-| 2026-05-27 | Agent event-model core — `TaskEvent` IR + projection + `RunEmitter` + wire codec (pure, `lib/shared/agent/`) | [PLAN](PLAN-agent-event-model.md) · [#66](https://github.com/juchengquan/hummingbird/pull/66) |
+| 2026-05-28 | **Long-running agent tasks — HITL approvals.** Durable checkpoint + `RunEmitter` seed (Phase 1), suspend mechanism + `POST /api/tasks/:id/respond` + gated-tool policy (Phases 2/3), approval card + client respond plumbing (Phase 4), `askUser` tool + multi-choice / free-input (Phase 5). | [PLAN](_done/PLAN-agent-hitl-approvals.md) · [#76](https://github.com/juchengquan/hummingbird/pull/76) |
+| 2026-05-28 | Verify-checklist additions for HITL (`askUser`, approval, suspend → reload → respond, interaction edges) | [#77](https://github.com/juchengquan/hummingbird/pull/77) |
+| 2026-05-28 | Agent task-queue **architecture plan** (Phase 6 — durable background execution + chunking) | [PLAN](PLAN-agent-task-queue.md) · [#78](https://github.com/juchengquan/hummingbird/pull/78) |
+| 2026-05-28 | Long-running agent tasks — **follow-ups grab-bag.** `setPlan` tool + live todo, token coalescing (~96 chars), orphan reconciliation + sweep route, MCP tools (cloud-mode) + per-IP budget gate, resume-on-reload via active-task pointer, finish-while-away notification | [PLAN](_done/PLAN-agent-tasks-followups.md) · [#73](https://github.com/juchengquan/hummingbird/pull/73) |
+| 2026-05-28 | Long-running agent tasks — **hybrid UI** (Run-as-task header toggle, dedicated Tasks panel + inline pointer) + client-authored result `Message` | [#72](https://github.com/juchengquan/hummingbird/pull/72) |
+| 2026-05-28 | Sidebar resizing + layout responsiveness | _local_ (`0af83d9`) |
+| 2026-05-28 | Typed prompt variables (workspace-scoped prompts migration only; type-annotation feature deliberately deferred) | [PLAN](PLAN-typed-prompt-variables.md) · `9b3c84f` |
+| 2026-05-27 | Long-running agent tasks — **runner → route → resume → task-card UI → polish** (the five core slices, infrastructure layer; chat-panel wiring landed in #72) | [#69](https://github.com/juchengquan/hummingbird/pull/69) |
+| 2026-05-27 | Agent **persistence** — `tasks` + `task_events` tables (migration `0012`), row codec, RLS | [#68](https://github.com/juchengquan/hummingbird/pull/68) |
+| 2026-05-27 | Agent **event-model core** — `TaskEvent` IR + projection + `RunEmitter` + wire codec (pure, `lib/shared/agent/`) | [PLAN](_done/PLAN-agent-event-model.md) · [#66](https://github.com/juchengquan/hummingbird/pull/66) |
 | 2026-05-24 | Chat input ContextPicker — categorized popover that replaces the `+` button + active-skills chip strip; drag-and-drop file upload on the input card | _local_ |
 | 2026-05-24 | `<Textarea>` auto-grow after programmatic value insert (prompt `@`-mention); `SlashHelpDialog` getSnapshot re-render fix | _local_ |
 | 2026-05-23 | Slash action commands — `/new`, `/clear`, `/rename`, `/model`, `/help` (run-now, no send) | [PLAN](_done/PLAN-slash-action-commands.md) · [#61](https://github.com/juchengquan/hummingbird/pull/61) |
@@ -99,24 +112,24 @@ Earlier features (kept for reference, no specific date):
 ## Planned (have a PLAN, no code yet)
 
 The `🪜` rows are partial ships — their finished phases are documented
-inside the plan; only the listed phase(s) remain. The entire slash /
-mention surface now ships: skill slashes, the `/` run-now action
-commands, and `@` prompt mentions — all archived in
-[`_done/`](_done/).
+inside the plan; only the listed phase(s) remain. The entire long-running
+agent-tasks stack (event-model, runner, route, resume, hybrid UI,
+HITL approvals) now ships — its plans live in [`_done/`](_done/). The
+**queue-backed continuation** plan below is the one substantive piece
+of that arc still pending implementation.
 
 | Plan | Status | Sketch |
 |---|---|---|
+| 📐 [Agent task queue (durable background execution)](PLAN-agent-task-queue.md) | planning | Move continuations onto a `task_jobs` queue + worker so runs survive a closed tab, beat the serverless execution cap (via chunking), can auto-retry, and unlock scheduled / background HITL. Recommended first PR: job table + chunking |
+| 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 3 of 8 done | Done: generatedImages sync (#45), recap-of-recaps (#63), roadmap sweep. Open: accurate tokens, signed-URL re-sign, local-mode MCP creds for tasks, per-tool server-side approval flags, task-route integration tests |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
-| 🪜 [Agent event model & streaming format](PLAN-agent-event-model.md) | core shipped (#66) | Pure core (IR + projection + emitter + wire codec) done. Remaining slices: persistence → runner → route → resume → **task-card UI** → polish |
-| 📐 [Long-running task mode](PLAN-long-running-tasks.md) | planning | Async step-based agent: persistence + runner + route + resume + **task-card UI** (the surface — distinct from the chat bubble) + notifications. Builds on the event-model core |
 | 📐 [Workspace canvas](PLAN-workspace-canvas.md) | planning | Spatial drag-drop view of messages / artifacts / files |
-| 📐 [Project mode](PLAN-project-mode.md) | planning | Workspace → goal + milestones + Kanban tasks (depends on long-running tasks) |
-| 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 2 of 5 done | Done: generatedImages sync (#45), roadmap sweep. Open: accurate tokens, recap-of-recaps, signed-URL re-sign |
+| 📐 [Project mode](PLAN-project-mode.md) | planning | Workspace → goal + milestones + Kanban tasks. Dependency (long-running tasks) is now met |
 | 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~7.5 days total |
-| 📐 [Agent API as a separate service](PLAN-agent-api.md) | decision doc | Language-agnostic target shape for splitting inference + agent loop out; TS-service or Python, undecided |
-| 📐 [Typed prompt variables](PLAN-typed-prompt-variables.md) | deferred | Likely over-engineering — only build if users ask |
-| 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 pending | Contract-first groundwork shipped; companion to the Agent API plan |
+| 📐 [Agent API as a separate service](PLAN-agent-api.md) | decision doc | Language-agnostic target shape for splitting inference + agent loop out; TS-service or Python, undecided. Distinct from the in-process task queue above |
+| 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 pending | Phase 1 (contract-first frontend ⇄ API surface) shipped; Phase 2 stands up the Python backend |
+| ⏸ [Typed prompt variables](PLAN-typed-prompt-variables.md) | deferred | Workspace-scoping migration shipped (`9b3c84f`); the typing UI itself remains deliberately deferred |
 
 ---
 
