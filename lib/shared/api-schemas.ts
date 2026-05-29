@@ -385,6 +385,23 @@ export const TaskRequestSchema = z.object({
 // one of the options, or supply a value. Only the fields for the
 // request's `kind` need to be set. Returns the continuation stream.
 
+/**
+ * `POST /api/tasks` reply — `202 { runId }`. The client then opens
+ * `GET /api/tasks/:id/stream` to watch events as the worker produces
+ * them. There is no inline stream from POST after Phase 6 steps 3+4
+ * (`PLAN-agent-task-queue.md`).
+ */
+export const TaskStartResponseSchema = z.object({
+  runId: z.string().min(1),
+})
+
+/** `POST /api/tasks/:id/respond` reply — `202 { ok: true }`. The
+ *  client uses its existing resume-stream subscription to see the
+ *  continuation. */
+export const RespondResponseSchema = z.object({
+  ok: z.literal(true),
+})
+
 export const RespondRequestSchema = z.object({
   requestId: z.string().min(1),
   /** `requestKind: "approval"` — required for tool gates. */
@@ -415,6 +432,8 @@ export const ErrorResponseSchema = z.object({
 export type ChatRequestInput = z.infer<typeof ChatRequestSchema>
 export type TaskRequestInput = z.infer<typeof TaskRequestSchema>
 export type RespondRequestInput = z.infer<typeof RespondRequestSchema>
+export type TaskStartResponse = z.infer<typeof TaskStartResponseSchema>
+export type RespondResponse = z.infer<typeof RespondResponseSchema>
 export type CopilotRequestInput = z.infer<typeof CopilotRequestSchema>
 export type ExtractionResponse = z.infer<typeof ExtractionResponseSchema>
 export type SummarizeRequestInput = z.infer<typeof SummarizeRequestSchema>
