@@ -135,13 +135,28 @@ errors:
       store from Phase 1 (PR #50) now round-trips to Supabase.
       Soft-delete via `deleted_at`; unique `(user_id, slug)` on
       live rows. Idempotent.
+12. `supabase/migrations/0012_prompts_workspace.sql`
+    - Adds workspace scoping to prompts (typed-prompt-variables groundwork).
+13. `supabase/migrations/0012_tasks.sql`
+    - Creates `tasks` + `task_events` — the long-running agent task
+      runner's durable run header + append-only event log. (Shares the
+      `0012` prefix with `prompts_workspace`; both are distinct files
+      and apply independently.)
+14. `supabase/migrations/0013_task_checkpoint.sql`
+    - Adds the HITL checkpoint column for suspend/resume on agent tasks.
+15. `supabase/migrations/0014_project_mode.sql`
+    - Adds `is_project` / `goal` / `milestones` to `workspaces` and
+      creates the `project_tasks` Kanban-card table (links optionally to
+      a `tasks` run + an `artifacts` deliverable). Backs project mode
+      (`docs/PLAN-project-mode.md`). Idempotent.
 
-After running all eleven, sanity-check from the **Table Editor**:
-seventeen tables should be listed (`profiles`, `workspaces`,
+After running all fifteen, sanity-check from the **Table Editor**:
+twenty tables should be listed (`profiles`, `workspaces`,
 `conversations`, `messages`, `files`, `resources`, `conversation_files`,
 `artifacts`, `notes`, `prompts`, `shares`, `mcp_servers`,
 `mcp_resources`, `mcp_resource_bindings`, `conversation_mcp_resources`,
-`url_bookmarks`, `conversation_url_bookmarks`), each showing
+`url_bookmarks`, `conversation_url_bookmarks`, `tasks`, `task_events`,
+`project_tasks`), each showing
 the RLS shield icon indicating policies are active. The **Storage**
 sidebar should show a `user-files` private bucket with the four
 policies attached.

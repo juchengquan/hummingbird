@@ -1,6 +1,16 @@
 # Plan: Project mode
 
-Status: **planning** — no code yet (depends on long-running tasks).
+Status: **🪜 Phase 1 shipped** (schema + project toggle, PR #64).
+Phases 2–5 pending (Kanban board, AI breakdown, run-as-task, polish).
+The long-running-tasks dependency is met (shipped). Phase 1 landed:
+migration `0014_project_mode.sql` (workspace `is_project`/`goal`/
+`milestones` columns + `project_tasks` table + RLS), the `Workspace`
+project fields + `ProjectTask`/`Milestone` types, the
+`setWorkspaceProjectConfig` store mutator, workspace-column sync
+(diff + reconcile + bulk-upload + supabase types), and the project
+toggle + goal field in the workspace detail sheet. Milestones UI is
+deferred to Phase 5 (inert until the board lands); the column + type
+ship now so the schema/sync are complete.
 
 Promote a workspace to a "project" with a goal, milestones, and a
 Kanban-style task surface. The AI helps break the goal into tasks,

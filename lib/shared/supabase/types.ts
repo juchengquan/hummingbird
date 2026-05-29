@@ -978,7 +978,10 @@ export type Database = {
         Row: {
           created_at: string
           default_model: string | null
+          goal: string | null
           id: string
+          is_project: boolean
+          milestones: Json | null
           name: string
           position: number | null
           skill_prefs: Json
@@ -989,7 +992,10 @@ export type Database = {
         Insert: {
           created_at?: string
           default_model?: string | null
+          goal?: string | null
           id: string
+          is_project?: boolean
+          milestones?: Json | null
           name: string
           position?: number | null
           skill_prefs?: Json
@@ -1000,13 +1006,55 @@ export type Database = {
         Update: {
           created_at?: string
           default_model?: string | null
+          goal?: string | null
           id?: string
+          is_project?: boolean
+          milestones?: Json | null
           name?: string
           position?: number | null
           skill_prefs?: Json
           system_prompt?: string | null
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      project_tasks: {
+        Row: {
+          artifact_id: string | null
+          created_at: string
+          id: string
+          position: number
+          status: string
+          task_id: string | null
+          title: string
+          updated_at: string
+          user_id: string
+          workspace_id: string
+        }
+        Insert: {
+          artifact_id?: string | null
+          created_at?: string
+          id: string
+          position: number
+          status: string
+          task_id?: string | null
+          title: string
+          updated_at?: string
+          user_id: string
+          workspace_id: string
+        }
+        Update: {
+          artifact_id?: string | null
+          created_at?: string
+          id?: string
+          position?: number
+          status?: string
+          task_id?: string | null
+          title?: string
+          updated_at?: string
+          user_id?: string
+          workspace_id?: string
         }
         Relationships: []
       }

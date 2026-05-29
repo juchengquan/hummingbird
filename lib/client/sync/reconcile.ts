@@ -28,6 +28,7 @@ import type {
   McpServer,
   Message,
   MessageError,
+  Milestone,
   Note,
   Prompt,
   Resource,
@@ -47,6 +48,23 @@ function jsonToSkillPrefs(value: Json | null | undefined): Record<string, boolea
     if (typeof v === "boolean") out[k] = v
   }
   return out
+}
+
+/** Boundary parser for `workspaces.milestones` (jsonb array). Drops
+ *  malformed entries rather than crashing rehydration. Undefined when
+ *  the column is null / not an array / empty. */
+function jsonToMilestones(value: Json | null | undefined): Milestone[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const out: Milestone[] = []
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue
+    const e = entry as Record<string, unknown>
+    if (typeof e.title !== "string") continue
+    const m: Milestone = { title: e.title }
+    if (typeof e.dueDate === "string") m.dueDate = e.dueDate
+    out.push(m)
+  }
+  return out.length > 0 ? out : undefined
 }
 
 /**
@@ -259,6 +277,9 @@ export async function fetchCloudSnapshot(
         skillPrefs: jsonToSkillPrefs(w.skill_prefs),
         defaultModel: w.default_model ?? undefined,
         position: w.position ?? undefined,
+        isProject: w.is_project ?? undefined,
+        goal: w.goal ?? undefined,
+        milestones: jsonToMilestones(w.milestones),
         createdAt: new Date(w.created_at),
         updatedAt: new Date(w.updated_at),
       }))
@@ -536,6 +557,9 @@ export async function bulkUploadLocalState(
         system_prompt: w.systemPrompt ?? null,
         skill_prefs: w.skillPrefs ?? {},
         default_model: w.defaultModel ?? null,
+        is_project: w.isProject ?? false,
+        goal: w.goal ?? null,
+        milestones: (w.milestones ?? null) as unknown as Json,
         // Fall back to array index when the local snapshot pre-dates
         // the explicit `position` field (v13 migration). Preserves the
         // user's current visible order on first cloud upload.

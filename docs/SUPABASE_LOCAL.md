@@ -84,12 +84,14 @@ Everything the app uses today. The codebase has zero hosted-only
 dependencies (no Realtime, no Edge Functions, no managed-only features),
 so every feature gated by `lib/shared/supabase/env.ts` lights up:
 
-- All eleven migrations (`supabase/migrations/0001_schema.sql`,
+- All fifteen migrations (`supabase/migrations/0001_schema.sql`,
   `0002_rls_policies.sql`, `0003_storage.sql`,
   `0004_conversation_files.sql`, `0005_mcp.sql`,
   `0006_url_bookmarks.sql`, `0007_file_full_text.sql`,
   `0008_message_compression.sql`, `0009_search_file_sections.sql`,
-  `0010_message_generated_images.sql`, `0011_prompts.sql`) apply
+  `0010_message_generated_images.sql`, `0011_prompts.sql`,
+  `0012_prompts_workspace.sql`, `0012_tasks.sql`,
+  `0013_task_checkpoint.sql`, `0014_project_mode.sql`) apply
   identically. `0005_mcp.sql` enables `pgcrypto` itself — no separate
   extension toggle.
 - **MCP integration** — full tools + resources + cloud-mode

@@ -114,6 +114,19 @@ export interface Workspace {
    */
   fileSearchConfig?: import("./skills/file-search-config").FileSearchConfig
   /**
+   * Project mode (see `docs/PLAN-project-mode.md`). When true, the
+   * workspace becomes a "project": the workspace detail sheet reveals
+   * the goal + milestones fields and the right rail gains a Tasks
+   * (Kanban) tab. Default/undefined = a plain folder workspace.
+   */
+  isProject?: boolean
+  /** Free-text objective for the project. Only meaningful when
+   *  `isProject`. Drives the "break this down into tasks" AI action. */
+  goal?: string
+  /** Optional milestone list for the project. Inert until the board /
+   *  progress UI lands; carried here so the schema + sync are complete. */
+  milestones?: Milestone[]
+  /**
    * User-defined ordering within the workspaces list, set by
    * `reorderWorkspaces`. The drag-and-drop UI in the Workspaces panel
    * writes monotonically increasing integers; the render order falls
@@ -121,6 +134,39 @@ export interface Workspace {
    * before the field was introduced).
    */
   position?: number
+}
+
+/** A single project milestone. `dueDate` is an ISO date string when
+ *  set. Stored as a jsonb array on the workspace row. */
+export interface Milestone {
+  title: string
+  dueDate?: string
+}
+
+/** Kanban column a project task sits in. Mirrors the
+ *  `project_tasks.status` CHECK in migration `0014`. */
+export type ProjectTaskStatus = "todo" | "in_progress" | "done" | "cancelled"
+
+/**
+ * A Kanban card in a project workspace (see `docs/PLAN-project-mode.md`).
+ * The card is the durable to-do; `taskId` optionally links it to a
+ * long-running run that executes it, and `artifactId` to the
+ * deliverable that run produced. A card with neither is a manual
+ * to-do.
+ */
+export interface ProjectTask {
+  id: string
+  workspaceId: string
+  title: string
+  status: ProjectTaskStatus
+  /** Order within the (workspace, status) column. */
+  position: number
+  /** The long-running task run this card spawned, if any. */
+  taskId?: string
+  /** The artifact the run produced, if any. */
+  artifactId?: string
+  createdAt: Date
+  updatedAt: Date
 }
 
 /**

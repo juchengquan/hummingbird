@@ -10,10 +10,11 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-05-28 (long-running agent tasks fully shipped —
-runner → route → resume → hybrid UI → follow-ups → HITL approvals
-(approve/reject, choice, free-input). Queue-backed continuation
-(Phase 6) is now an architecture plan, not yet implemented).
+Last updated: 2026-05-28 (project mode Phase 1 shipped — schema +
+project toggle; Kanban board + AI breakdown + run-as-task pending.
+Long-running agent tasks fully shipped — runner → route → resume →
+hybrid UI → follow-ups → HITL approvals. Queue-backed continuation
+(Phase 6) is an architecture plan, not yet implemented).
 
 > **Plan archive.** Fully-shipped `PLAN-*.md` files live in
 > [`_done/`](_done/). Active plans (planning / phased / decision
@@ -41,6 +42,7 @@ to a representative PR otherwise.
 
 | When | Feature | Where |
 |---|---|---|
+| 2026-05-28 | **Project mode — Phase 1** (schema + project toggle): `0014_project_mode` migration (workspace `is_project`/`goal`/`milestones` + `project_tasks` table), types, `setWorkspaceProjectConfig`, workspace-column sync, detail-sheet toggle + goal | [PLAN](PLAN-project-mode.md) · [#64](https://github.com/juchengquan/hummingbird/pull/64) |
 | 2026-05-28 | **Long-running agent tasks — HITL approvals.** Durable checkpoint + `RunEmitter` seed (Phase 1), suspend mechanism + `POST /api/tasks/:id/respond` + gated-tool policy (Phases 2/3), approval card + client respond plumbing (Phase 4), `askUser` tool + multi-choice / free-input (Phase 5). | [PLAN](_done/PLAN-agent-hitl-approvals.md) · [#76](https://github.com/juchengquan/hummingbird/pull/76) |
 | 2026-05-28 | Verify-checklist additions for HITL (`askUser`, approval, suspend → reload → respond, interaction edges) | [#77](https://github.com/juchengquan/hummingbird/pull/77) |
 | 2026-05-28 | Agent task-queue **architecture plan** (Phase 6 — durable background execution + chunking) | [PLAN](PLAN-agent-task-queue.md) · [#78](https://github.com/juchengquan/hummingbird/pull/78) |
@@ -125,7 +127,7 @@ of that arc still pending implementation.
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
 | 📐 [Workspace canvas](PLAN-workspace-canvas.md) | planning | Spatial drag-drop view of messages / artifacts / files |
-| 📐 [Project mode](PLAN-project-mode.md) | planning | Workspace → goal + milestones + Kanban tasks. Dependency (long-running tasks) is now met |
+| 🪜 [Project mode](PLAN-project-mode.md) | Phase 1 shipped (#64) | Workspace → goal + milestones + Kanban tasks. Phase 1 (schema + project toggle) done; Phases 2–5 (board, AI breakdown, run-as-task, polish) pending |
 | 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~7.5 days total |
 | 📐 [Agent API as a separate service](PLAN-agent-api.md) | decision doc | Language-agnostic target shape for splitting inference + agent loop out; TS-service or Python, undecided. Distinct from the in-process task queue above |
 | 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 pending | Phase 1 (contract-first frontend ⇄ API surface) shipped; Phase 2 stands up the Python backend |
