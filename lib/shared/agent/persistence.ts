@@ -1,5 +1,3 @@
-import "server-only"
-
 /**
  * Persistence row codec for the agent event log — `TaskEvent` ↔ a
  * `task_events` row (migration `0012_tasks.sql`). The DB row shape is
@@ -8,7 +6,9 @@ import "server-only"
  * by `seq` and the index works) and stashes the kind-specific fields
  * in a `payload` JSONB blob. This module is the pure mapping between
  * the two — analogous to the wire codec (`lib/shared/agent/wire.ts`)
- * but for the database boundary.
+ * but for the database boundary. Lives in `shared/` because the client
+ * also decodes rows now: Supabase Realtime push delivers them direct
+ * to the browser (`lib/client/agent/realtime.ts`).
  *
  * `rowToEvent` re-validates through the same `TaskEventSchema` the
  * wire codec uses, so a row written by a newer producer (a future
