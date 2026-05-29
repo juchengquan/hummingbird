@@ -1,13 +1,19 @@
 # Plan: Queue-backed continuation (durable background execution)
 
-Status: **🪜 steps 1–4 shipped** ([#82](https://github.com/juchengquan/hummingbird/pull/82)
-— `task_jobs` table + worker + chunking; [#85](https://github.com/juchengquan/hummingbird/pull/85)
-— async `start`/`respond` actions). Remaining: step 5 (cleanup — delete
-the inline POST streaming machinery, surface a "Queued" status pill)
-and the optional step 6 (Realtime swap) / step 7 (scheduling). See the
-"Migration / phasing within Phase 6" section. This is the deferred
-Phase 6 of `PLAN-agent-hitl-approvals.md` and the queue half of
-`PLAN-long-running-tasks.md` Phase 5. The HITL design ships v1 with the
+Status: **🪜 steps 1–6 shipped**
+([#82](https://github.com/juchengquan/hummingbird/pull/82) —
+`task_jobs` table + worker + chunking;
+[#85](https://github.com/juchengquan/hummingbird/pull/85) — async
+`start`/`respond` actions move into the worker;
+[#88](https://github.com/juchengquan/hummingbird/pull/88) — Supabase
+Realtime live tail + visible Queued state). Only the optional **step
+7** (scheduling — `task_schedules` table + cron resolver for "run
+every morning") remains. The inline POST streaming machinery has been
+removed; the worker is the single producer of agent-event rows. See
+the "Migration / phasing within Phase 6" section. This is the
+deferred Phase 6 of `PLAN-agent-hitl-approvals.md` and the queue half
+of `PLAN-long-running-tasks.md` Phase 5. The HITL design ships v1
+with the
 **user's browser** driving every continuation (the click on Approve
 starts a fresh function via `POST /api/tasks/:id/respond`). That works
 but constrains the model: closing the tab kills any work that hasn't
