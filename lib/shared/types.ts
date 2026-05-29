@@ -121,6 +121,15 @@ export interface Workspace {
    * before the field was introduced).
    */
   position?: number
+  /**
+   * Spatial-canvas layout for this workspace — node positions +
+   * connections + viewport. Node *bodies* are projected from the live
+   * store (messages / artifacts / notes / files / bookmarks) at render
+   * time; only layout lives here. Undefined until the user adds the
+   * first node. See `lib/shared/canvas/types.ts` and the Workspace
+   * canvas plan.
+   */
+  canvasState?: import("./canvas/types").CanvasState
 }
 
 /**
@@ -616,4 +625,4 @@ export interface Prompt {
   deletedAt?: Date
 }
 
-export type MainView = 'workspaces' | 'chat' | 'resources' | 'editor'
+export type MainView = 'workspaces' | 'chat' | 'resources' | 'editor' | 'canvas'
