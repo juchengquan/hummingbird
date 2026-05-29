@@ -25,15 +25,6 @@ export type CanvasNodeKind =
   | "url-bookmark"
   | "sticky"
 
-/** All non-sticky kinds project from a backing store row by id. */
-export const PROJECTED_NODE_KINDS: readonly CanvasNodeKind[] = [
-  "chat-message",
-  "artifact",
-  "note",
-  "file",
-  "url-bookmark",
-]
-
 export interface CanvasNodePosition {
   x: number
   y: number

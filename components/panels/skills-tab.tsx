@@ -1139,33 +1139,6 @@ function TruncatedTitle({ name }: { name: string }) {
   )
 }
 
-function Segment({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <Button
-      type="button"
-      onClick={onClick}
-      variant="ghost"
-      size="sm"
-      className={cn(
-        "h-7 rounded-none text-[10px] px-1 border-r border-[var(--border)] last:border-r-0",
-        active
-          ? "bg-[var(--primary)]/10 text-[var(--primary)] hover:bg-[var(--primary)]/15"
-          : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-      )}
-    >
-      {children}
-    </Button>
-  )
-}
-
 /**
  * "Save this on/off as the workspace default" affordance shown next to
  * the per-chat toggle. Renders a small pin icon with a Radix tooltip on

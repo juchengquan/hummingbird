@@ -26,7 +26,6 @@ import { z } from "zod"
 import { validateOutboundUrl } from "@/server/url/validate"
 import {
   clampMaxImageGenerations,
-  DEFAULT_IMAGE_GEN_ASPECT_RATIO,
   IMAGE_GEN_ASPECT_RATIOS,
   MAX_IMAGES_PER_CALL,
   resolveImageGenConfig,

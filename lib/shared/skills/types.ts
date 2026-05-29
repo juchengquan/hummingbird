@@ -74,16 +74,6 @@ export interface SkillDescriptor {
 
 export type SkillPrefs = Partial<Record<SkillId, boolean>>
 
-/**
- * Three-state intent the user can express per skill on a conversation:
- *   - "inherit" → no per-conversation override, fall back to workspace
- *   - true      → on for this conversation, overriding workspace
- *   - false     → off for this conversation, overriding workspace
- *
- * Stored as `SkillPrefs`: presence of the key = override, absence = inherit.
- */
-export type SkillIntent = "inherit" | "on" | "off"
-
 export function resolveSkill(
   skill: SkillDescriptor,
   workspacePrefs: SkillPrefs | undefined,
@@ -96,12 +86,4 @@ export function resolveSkill(
     return Boolean(workspacePrefs[skill.id])
   }
   return skill.default
-}
-
-export function getConversationIntent(
-  skill: SkillDescriptor,
-  conversationPrefs: SkillPrefs | undefined
-): SkillIntent {
-  if (!conversationPrefs || !(skill.id in conversationPrefs)) return "inherit"
-  return conversationPrefs[skill.id] ? "on" : "off"
 }

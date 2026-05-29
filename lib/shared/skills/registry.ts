@@ -59,7 +59,3 @@ export const SKILLS: SkillDescriptor[] = [
     slashTriggers: ["files", "file"],
   },
 ]
-
-export function getSkill(id: string): SkillDescriptor | undefined {
-  return SKILLS.find((s) => s.id === id)
-}
