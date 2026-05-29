@@ -10,11 +10,12 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-05-28 (project mode Phases 1–2 shipped — schema +
-toggle + Kanban board; AI breakdown + run-as-task pending.
-Long-running agent tasks fully shipped — runner → route → resume →
-hybrid UI → follow-ups → HITL approvals. Queue-backed continuation
-(Phase 6) is an architecture plan, not yet implemented).
+Last updated: 2026-05-29 (sweep — agent task-queue Phase 6 steps 1–6
+all shipped via #82/#85/#88: jobs + worker + chunking, async POST
+routes, Realtime live tail, visible Queued state. Only step 7
+(scheduling) remains optional. Workspace canvas Phases 1–3 (#83);
+project mode Phase 1 + Phase 2 board (#81/#86) shipped — AI breakdown
++ run-as-task pending).
 
 > **Plan archive.** Fully-shipped `PLAN-*.md` files live in
 > [`_done/`](_done/). Active plans (planning / phased / decision
@@ -42,9 +43,13 @@ to a representative PR otherwise.
 
 | When | Feature | Where |
 |---|---|---|
+| 2026-05-29 | Agent task queue — **Realtime live tail + visible Queued state** (Phase 6 steps 5+6): `0018_realtime_task_events` adds `task_events` to the Realtime publication; `subscribeTaskEvents` pushes rows to the browser in parallel with the existing poll-tail (idempotent via reduceRun seq); inline pointer differentiates `queued` from `running` | [PLAN](PLAN-agent-task-queue.md) · [#88](https://github.com/juchengquan/hummingbird/pull/88) |
 | 2026-05-29 | **Project mode — Phase 3** ("break this down" AI action): `project-breakdown` mode on `/api/summarize` (goal → task titles, deduped), `apiClient.summarize.projectBreakdown` + Zod schemas, "Generate tasks" button + checkbox import picker on the board | [PLAN](PLAN-project-mode.md) · [#89](https://github.com/juchengquan/hummingbird/pull/89) |
 | 2026-05-28 | **Project mode — Phase 2** (Kanban board): `projectTasks` store slice + mutators, pure reorder helper, `project_tasks` sync (diff/reconcile/bulk-upload), gated Tasks rail tab (desktop + mobile), dnd-kit board with manual add / drag / delete | [PLAN](PLAN-project-mode.md) · [#86](https://github.com/juchengquan/hummingbird/pull/86) |
 | 2026-05-28 | **Project mode — Phase 1** (schema + project toggle): `0016_project_mode` migration (workspace `is_project`/`goal`/`milestones` + `project_tasks` table), types, `setWorkspaceProjectConfig`, workspace-column sync, detail-sheet toggle + goal | [PLAN](PLAN-project-mode.md) · [#81](https://github.com/juchengquan/hummingbird/pull/81) |
+| 2026-05-28 | Agent task queue — **async POST** `/api/tasks` + `/respond` move into the worker (Phase 6 steps 3–4); route enqueues + 202, client opens the resume stream | [PLAN](PLAN-agent-task-queue.md) · [#85](https://github.com/juchengquan/hummingbird/pull/85) |
+| 2026-05-28 | **Workspace canvas** — spatial react-flow view (Phases 1–3): canvas surface + node renderers, `canvas_state` persistence + sync (`0015_workspace_canvas`), add / connect / focus | [PLAN](PLAN-workspace-canvas.md) · [#83](https://github.com/juchengquan/hummingbird/pull/83) |
+| 2026-05-28 | Agent task queue — **`task_jobs` table + worker + chunking** (Phase 6 steps 1–2): `0014_task_jobs` migration, `enqueueJob`/`processNextJob`, `shouldYield` re-enqueue beating the execution cap | [PLAN](PLAN-agent-task-queue.md) · [#82](https://github.com/juchengquan/hummingbird/pull/82) |
 | 2026-05-28 | **Long-running agent tasks — HITL approvals.** Durable checkpoint + `RunEmitter` seed (Phase 1), suspend mechanism + `POST /api/tasks/:id/respond` + gated-tool policy (Phases 2/3), approval card + client respond plumbing (Phase 4), `askUser` tool + multi-choice / free-input (Phase 5). | [PLAN](_done/PLAN-agent-hitl-approvals.md) · [#76](https://github.com/juchengquan/hummingbird/pull/76) |
 | 2026-05-28 | Verify-checklist additions for HITL (`askUser`, approval, suspend → reload → respond, interaction edges) | [#77](https://github.com/juchengquan/hummingbird/pull/77) |
 | 2026-05-28 | Agent task-queue **architecture plan** (Phase 6 — durable background execution + chunking) | [PLAN](PLAN-agent-task-queue.md) · [#78](https://github.com/juchengquan/hummingbird/pull/78) |
@@ -119,16 +124,16 @@ The `🪜` rows are partial ships — their finished phases are documented
 inside the plan; only the listed phase(s) remain. The entire long-running
 agent-tasks stack (event-model, runner, route, resume, hybrid UI,
 HITL approvals) now ships — its plans live in [`_done/`](_done/). The
-**queue-backed continuation** plan below is the one substantive piece
-of that arc still pending implementation.
+queue-backed continuation is **mostly shipped** too (Phase 6 steps 1–6
+via #82/#85/#88); only the optional step 7 (scheduling) remains.
 
 | Plan | Status | Sketch |
 |---|---|---|
-| 📐 [Agent task queue (durable background execution)](PLAN-agent-task-queue.md) | planning | Move continuations onto a `task_jobs` queue + worker so runs survive a closed tab, beat the serverless execution cap (via chunking), can auto-retry, and unlock scheduled / background HITL. Recommended first PR: job table + chunking |
+| 🪜 [Agent task queue (durable background execution)](PLAN-agent-task-queue.md) | steps 1–6 shipped (#82, #85, #88) | `task_jobs` queue + worker + chunking + async start/respond + Realtime live tail + visible Queued state done. Remaining: optional step 7 (scheduling — `task_schedules` + cron resolver for "run every morning") |
 | 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 3 of 8 done | Done: generatedImages sync (#45), recap-of-recaps (#63), roadmap sweep. Open: accurate tokens, signed-URL re-sign, local-mode MCP creds for tasks, per-tool server-side approval flags, task-route integration tests |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
-| 📐 [Workspace canvas](PLAN-workspace-canvas.md) | planning | Spatial drag-drop view of messages / artifacts / files |
+| ✅ [Workspace canvas](PLAN-workspace-canvas.md) | All phases shipped | Spatial react-flow view of messages / artifacts / files. Phases 1–3 in #83 (surface + nodes + persistence + add/connect/focus); Phases 4–5 (auto-position, inline edge labels, snap-to-grid, keyboard nav, PNG export) in `claude/canvas-phases-4-5` (PR pending) |
 | 🪜 [Project mode](PLAN-project-mode.md) | Phases 1–3 shipped (#81, #86, #89) | Workspace → goal + milestones + Kanban tasks. Schema + toggle + board (CRUD/drag/sync) + AI breakdown done; Phases 4–5 (run-as-task, polish) pending |
 | 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~7.5 days total |
 | 📐 [Agent API as a separate service](PLAN-agent-api.md) | decision doc | Language-agnostic target shape for splitting inference + agent loop out; TS-service or Python, undecided. Distinct from the in-process task queue above |
