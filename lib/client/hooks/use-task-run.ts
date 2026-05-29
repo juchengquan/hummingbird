@@ -9,7 +9,8 @@ import {
   saveActiveTask,
 } from "@/client/agent/active-task"
 import { notifyTaskFinished } from "@/client/agent/notify"
-import { isTerminalStatus } from "@/shared/agent/events"
+import { subscribeTaskEvents } from "@/client/agent/realtime"
+import { isTerminalStatus, type TaskEvent } from "@/shared/agent/events"
 import {
   EMPTY_RUN_VIEW,
   reduceRun,
@@ -79,87 +80,113 @@ export function useTaskRun(options?: UseTaskRunOptions): UseTaskRunResult {
   // updates don't hammer localStorage.
   const persistedRef = useRef<{ status: string; step: number } | null>(null)
 
-  /** One stream worth of events — used directly by the outer `consume`
-   *  and by the auto-reconnect loop. Kept above its caller so the
-   *  useCallback exhaustive-deps check stays clean. */
-  const consumeOnce = useCallback(async (body: ReadableStream<Uint8Array>) => {
-    for await (const event of decodeTaskEventStream(body)) {
-      if (!runIdRef.current && event.runId) {
-        runIdRef.current = event.runId
-        setRunId(event.runId)
-      }
-      const next = reduceRun(viewRef.current, event)
-      viewRef.current = next
-      setView(next)
+  /** Fold one event into the view + side-effect (active-task pointer,
+   *  finish notification). Both the SSE stream decoder and the
+   *  Realtime subscription call this — `reduceRun` is idempotent by
+   *  `seq`, so a duplicate delivery (event arrived on both paths) is a
+   *  no-op on the second one. */
+  const foldEvent = useCallback((event: TaskEvent) => {
+    if (!runIdRef.current && event.runId) {
+      runIdRef.current = event.runId
+      setRunId(event.runId)
+    }
+    const next = reduceRun(viewRef.current, event)
+    if (next === viewRef.current) return
+    viewRef.current = next
+    setView(next)
 
-      const opts = optsRef.current
-      const id = runIdRef.current
-      if (opts?.conversationId && id) {
-        if (isTerminalStatus(next.status)) {
-          clearActiveTask()
-          persistedRef.current = null
-          if (opts.notifyOnFinish && next.status === "done") {
-            notifyTaskFinished(next, { title: opts.title })
-          }
-        } else if (
-          persistedRef.current?.status !== next.status ||
-          persistedRef.current?.step !== next.step
-        ) {
-          persistedRef.current = { status: next.status, step: next.step }
-          saveActiveTask({
-            runId: id,
-            conversationId: opts.conversationId,
-            cursor: next.cursor,
-            status: next.status,
-            title: opts.title,
-            updatedAt: new Date().toISOString(),
-          })
+    const opts = optsRef.current
+    const id = runIdRef.current
+    if (opts?.conversationId && id) {
+      if (isTerminalStatus(next.status)) {
+        clearActiveTask()
+        persistedRef.current = null
+        if (opts.notifyOnFinish && next.status === "done") {
+          notifyTaskFinished(next, { title: opts.title })
         }
+      } else if (
+        persistedRef.current?.status !== next.status ||
+        persistedRef.current?.step !== next.step
+      ) {
+        persistedRef.current = { status: next.status, step: next.step }
+        saveActiveTask({
+          runId: id,
+          conversationId: opts.conversationId,
+          cursor: next.cursor,
+          status: next.status,
+          title: opts.title,
+          updatedAt: new Date().toISOString(),
+        })
       }
     }
   }, [])
 
-  const consume = useCallback(
+  /** One stream worth of events — used directly by the outer `consume`
+   *  and by the auto-reconnect loop. Kept above its caller so the
+   *  useCallback exhaustive-deps check stays clean. */
+  const consumeOnce = useCallback(
     async (body: ReadableStream<Uint8Array>) => {
-      await consumeOnce(body)
-      // Auto-reconnect on a non-terminal close. This is how chunking
-      // (the task-queue plan) ends up transparent: the inline POST
-      // stream closes when the route yields to a worker (status stays
-      // `running`, no terminal event); the client opens a fresh resume
-      // stream a beat later and folds the worker's events as they
-      // arrive. We bail out as soon as the run settles, the user
-      // pauses for HITL, the user cancels, or nothing was streamed at
-      // all (treated as the server having nothing to say — preventing
-      // a tight reconnect loop on a genuinely broken endpoint).
-      while (
-        !abortRef.current?.signal.aborted &&
-        viewRef.current.cursor > 0 &&
-        !isStableStatus(viewRef.current.status) &&
-        runIdRef.current
-      ) {
-        await new Promise<void>((resolve) => {
-          const t = setTimeout(resolve, 1500)
-          abortRef.current?.signal.addEventListener(
-            "abort",
-            () => {
-              clearTimeout(t)
-              resolve()
-            },
-            { once: true }
-          )
-        })
-        if (abortRef.current?.signal.aborted) break
-        const id = runIdRef.current
-        if (!id) break
-        const next = await apiClient.tasks.resume(id, {
-          cursor: viewRef.current.cursor,
-          signal: abortRef.current?.signal,
-        })
-        if (!next.ok || !next.body) break
-        await consumeOnce(next.body)
+      for await (const event of decodeTaskEventStream(body)) {
+        foldEvent(event)
       }
     },
-    [consumeOnce]
+    [foldEvent]
+  )
+
+  const consume = useCallback(
+    async (body: ReadableStream<Uint8Array>) => {
+      // Realtime live tail in parallel with the SSE replay. The worker
+      // writes into `task_events`; the subscription pushes those rows
+      // to the browser within ~100ms instead of the resume endpoint's
+      // 1s poll. Idempotent against the poll-tail (reduceRun drops
+      // events with `seq <= cursor`), so running both is safe and
+      // serves as resilience if Realtime hiccups.
+      const id = runIdRef.current
+      const unsubscribeRealtime = id
+        ? subscribeTaskEvents(id, { onEvent: foldEvent })
+        : null
+
+      try {
+        await consumeOnce(body)
+        // Auto-reconnect on a non-terminal close. With Realtime
+        // present, this is mostly the fallback for anonymous mode or a
+        // Realtime hiccup — the subscription typically delivers new
+        // events first and the resume call returns nothing fresh. We
+        // bail when the run settles, the user pauses for HITL, the
+        // user cancels, or nothing was streamed at all (preventing a
+        // tight reconnect loop on a genuinely broken endpoint).
+        while (
+          !abortRef.current?.signal.aborted &&
+          viewRef.current.cursor > 0 &&
+          !isStableStatus(viewRef.current.status) &&
+          runIdRef.current
+        ) {
+          await new Promise<void>((resolve) => {
+            const t = setTimeout(resolve, 1500)
+            abortRef.current?.signal.addEventListener(
+              "abort",
+              () => {
+                clearTimeout(t)
+                resolve()
+              },
+              { once: true }
+            )
+          })
+          if (abortRef.current?.signal.aborted) break
+          const liveId = runIdRef.current
+          if (!liveId) break
+          const next = await apiClient.tasks.resume(liveId, {
+            cursor: viewRef.current.cursor,
+            signal: abortRef.current?.signal,
+          })
+          if (!next.ok || !next.body) break
+          await consumeOnce(next.body)
+        }
+      } finally {
+        unsubscribeRealtime?.()
+      }
+    },
+    [consumeOnce, foldEvent]
   )
 
   const start = useCallback(
