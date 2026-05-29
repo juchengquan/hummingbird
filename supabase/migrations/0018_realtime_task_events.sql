@@ -1,5 +1,5 @@
 -- verify-supabase-types: skip
--- 0017_realtime_task_events.sql — enable Supabase Realtime on task_events
+-- 0018_realtime_task_events.sql — enable Supabase Realtime on task_events
 --
 -- Phase 6 step 6 of PLAN-agent-task-queue.md. With the worker writing
 -- events into `task_events` from a background invocation, the client
