@@ -27,6 +27,7 @@ import {
 } from "@/shared/slash-resolver"
 import { useSlashCommands } from "@/client/hooks/use-slash-commands"
 import type { CommandId } from "@/shared/commands/registry"
+import { TASK_MODES, type TaskModeId } from "@/shared/task-modes/registry"
 import {
   isTypingPromptMention,
   matchPromptMentions,
@@ -495,6 +496,10 @@ export function ChatPanel() {
          *  panel) instead of an inline chat stream. Reuses the same
          *  model / skills / history resolution. */
         asTask?: boolean
+        /** Task mode for this turn — `'research'` triggers Deep
+         *  Research mode in the worker (`PLAN-deep-research.md`).
+         *  Only meaningful when `asTask` is true. */
+        taskMode?: "default" | "research"
       }
     ) => {
       // Read the model freshly from the store rather than via the closure.
@@ -592,6 +597,9 @@ export function ChatPanel() {
             workspaceSystemPrompt,
             workspaceId: activeWorkspaceId || undefined,
             skills: enabledSkills,
+            ...(options.taskMode && options.taskMode !== "default"
+              ? { mode: options.taskMode }
+              : {}),
           },
           { title: conv?.title }
         )
@@ -1159,7 +1167,8 @@ export function ChatPanel() {
     const trimmed = inputValue.trim()
     // Resolve a leading `/` directive. A **command** runs now and does
     // NOT send a message; a **skill** forces a capability on and is
-    // stripped from the visible message.
+    // stripped from the visible message; a **task_mode** forces a
+    // task-mode launch (`/research <goal>` → research-mode task).
     const slash = resolveSlash(trimmed)
     if (slash?.kind === "command") {
       slashCommands.run(slash.commandId, slash.arg)
@@ -1167,10 +1176,23 @@ export function ChatPanel() {
       if (textareaRef.current) textareaRef.current.style.height = "auto"
       return // ← no message added, no API call
     }
-    const forcedSkillIds =
-      slash?.kind === "skill" ? [slash.skillId] : undefined
-    const messageContent =
-      slash?.kind === "skill" ? slash.remainder : trimmed
+    // Task-mode dispatch — pulls forced skills + bumps maxSteps via
+    // the route. Sends the body as the message and forces asTask=true
+    // for this turn, regardless of the chat-input toggle.
+    let taskModeForCall: TaskModeId | undefined
+    let forcedSkillIds: SkillId[] | undefined
+    let messageContent: string
+    if (slash?.kind === "task_mode") {
+      taskModeForCall = slash.modeId
+      const descriptor = TASK_MODES.find((m) => m.id === slash.modeId)
+      forcedSkillIds = descriptor?.forcedSkillIds
+      messageContent = slash.goal
+    } else if (slash?.kind === "skill") {
+      forcedSkillIds = [slash.skillId]
+      messageContent = slash.remainder
+    } else {
+      messageContent = trimmed
+    }
     // `/search ` with no query is a no-op (don't send an empty turn);
     // the user is mid-compose. The send button stays available.
     if (!messageContent) return
@@ -1212,7 +1234,11 @@ export function ChatPanel() {
     callChatAPIRef.current(history, {
       referenceImage: pendingRef ? { url: pendingRef.url } : undefined,
       forcedSkillIds,
-      asTask: taskRun.runAsTask,
+      // `/research <goal>` forces task mode on for this turn even if
+      // the chat-input toggle is off — the mode is the meaningful
+      // signal, not the toggle.
+      asTask: taskRun.runAsTask || !!taskModeForCall,
+      taskMode: taskModeForCall,
     })
   }
 

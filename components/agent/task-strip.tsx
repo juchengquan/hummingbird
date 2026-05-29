@@ -8,6 +8,7 @@ import {
   Check,
   Circle,
   CircleDot,
+  FileText,
   Loader2,
   Pause,
   X,
@@ -44,6 +45,14 @@ interface TaskStripProps {
   /** Called when the human answers a `view.pendingInput`. The caller
    *  is responsible for hitting the respond endpoint. */
   onRespond?: (body: RespondRequestInput) => void | Promise<void>
+  /** Optional "Open in editor" affordance for settled tasks whose
+   *  output is a document (research mode — `PLAN-deep-research.md`).
+   *  Rendered only when the run settles `done` AND a `resultText`
+   *  exists. The caller is responsible for the hand-off (append to
+   *  active doc, etc.). */
+  onOpenInEditor?: () => void
+  /** Label for the open-in-editor button. Defaults to "Open in editor". */
+  openInEditorLabel?: string
   className?: string
 }
 
@@ -60,10 +69,17 @@ export function TaskStrip({
   error,
   onCancel,
   onRespond,
+  onOpenInEditor,
+  openInEditorLabel = "Open in editor",
   className,
 }: TaskStripProps) {
   const terminal = isTerminalStatus(view.status)
   const errMsg = error ?? view.fatalError
+  const canOpenInEditor =
+    view.status === "done" &&
+    !!onOpenInEditor &&
+    !!view.resultText &&
+    view.resultText.trim().length > 0
 
   if (terminal) {
     return (
@@ -77,6 +93,17 @@ export function TaskStrip({
         <span>{terminalSummary(view)}</span>
         {errMsg ? (
           <span className="text-[var(--destructive)] truncate">· {errMsg}</span>
+        ) : null}
+        {canOpenInEditor ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            className="ml-auto"
+            onClick={onOpenInEditor}
+          >
+            <FileText />
+            {openInEditorLabel}
+          </Button>
         ) : null}
       </div>
     )
