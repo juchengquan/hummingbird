@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import { PanelRightClose, PanelRightOpen, FolderOpen, StickyNote, Archive, Sparkles, FileText, Pin, Plug, Globe, MessagesSquare } from "lucide-react"
+import { PanelRightClose, PanelRightOpen, FolderOpen, StickyNote, Archive, Sparkles, FileText, Pin, Plug, Globe, MessagesSquare, KanbanSquare } from "lucide-react"
 import { cn } from "@/shared/utils"
 import {
   useStore,
@@ -13,6 +13,7 @@ import {
   useConversationPinnedExplanations,
   useWorkspaceMcpResources,
   useWorkspaceUrlBookmarks,
+  useWorkspaceProjectTasks,
 } from "@/client/hooks/use-store"
 import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
 import { SKILLS } from "@/shared/skills/registry"
@@ -48,6 +49,10 @@ const ALL_RAIL_TABS = [
   { id: "skills" as const, label: "Skills", Icon: Sparkles },
 ]
 
+// Project-board tab — only shown for project-mode workspaces, prepended
+// ahead of the everyday tabs (it's the primary surface for a project).
+const PROJECT_TAB = { id: "project" as const, label: "Tasks", Icon: KanbanSquare }
+
 // Width tokens picked so the open total (icon bar + content) equals the
 // previous w-80 (320px), keeping the chat column width unchanged for users.
 const RAIL_WIDTH_CLASS = "w-12" // 48px
@@ -67,10 +72,6 @@ interface ResourcesSidebarProps {
 
 export function ResourcesSidebar({ mode = "chat" }: ResourcesSidebarProps = {}) {
   const isWorkspaceMode = mode === "workspaces"
-  // Rail always shows the full tab set; `mode` only changes how the Files
-  // tab renders (`manage` mode hides the per-conversation attach UI when
-  // there's no conversation context).
-  const railTabs = ALL_RAIL_TABS
 
   const open = useStore((s) => s.resourcesSidebarOpen)
   const tab = useStore((s) => s.resourcesSidebarTab)
@@ -87,11 +88,18 @@ export function ResourcesSidebar({ mode = "chat" }: ResourcesSidebarProps = {}) 
   const pinsCount = useConversationPinnedExplanations().length
   const mcpCount = useWorkspaceMcpResources().length
   const linksCount = useWorkspaceUrlBookmarks().length
+  const projectTasksCount = useWorkspaceProjectTasks().length
   const workspace = useActiveWorkspace()
   const conversation = useActiveConversation()
   const skillsActive = SKILLS.filter((s) =>
     resolveSkill(s, workspace?.skillPrefs, conversation?.skillPrefs)
   ).length
+
+  // Project-mode workspaces get the Tasks board tab at the head of the
+  // rail; everyone gets the standard set.
+  const railTabs = workspace?.isProject
+    ? [PROJECT_TAB, ...ALL_RAIL_TABS]
+    : ALL_RAIL_TABS
 
   // First-mount mobile override: only fires once per browser, and only if
   // user hasn't toggled since the v6 migration seeded `true`.
@@ -134,6 +142,7 @@ export function ResourcesSidebar({ mode = "chat" }: ResourcesSidebarProps = {}) 
     mcp: mcpCount,
     pins: pinsCount,
     skills: skillsActive,
+    project: projectTasksCount,
   }
 
   return (

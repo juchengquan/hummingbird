@@ -30,6 +30,7 @@ import type {
   MessageError,
   Milestone,
   Note,
+  ProjectTask,
   Prompt,
   Resource,
   UploadedFile,
@@ -117,6 +118,7 @@ export interface CloudSnapshot {
   notes: Note[]
   artifacts: Artifact[]
   prompts: Prompt[]
+  projectTasks: ProjectTask[]
   mcpServers: McpServer[]
   mcpResources: McpResource[]
   mcpResourceBindings: McpResourceBinding[]
@@ -140,6 +142,7 @@ export async function fetchCloudSnapshot(
     notesRes,
     artifactsRes,
     promptsRes,
+    projectTasksRes,
     mcpServersRes,
     mcpResourcesRes,
     mcpResourceBindingsRes,
@@ -158,6 +161,7 @@ export async function fetchCloudSnapshot(
       notesRes,
       artifactsRes,
       promptsRes,
+      projectTasksRes,
       mcpServersRes,
       mcpResourcesRes,
       mcpResourceBindingsRes,
@@ -179,6 +183,7 @@ export async function fetchCloudSnapshot(
       client.from("notes").select("*").eq("user_id", userId),
       client.from("artifacts").select("*").eq("user_id", userId),
       client.from("prompts").select("*").eq("user_id", userId),
+      client.from("project_tasks").select("*").eq("user_id", userId),
       // MCP: pull metadata only — `credentials_encrypted` stays on the
       // server. Cloud-mode servers come back without a `credentials`
       // field on the store; the chat / proxy routes decrypt on
@@ -216,6 +221,7 @@ export async function fetchCloudSnapshot(
     notesRes.error ||
     artifactsRes.error ||
     promptsRes.error ||
+    projectTasksRes.error ||
     mcpServersRes.error ||
     mcpResourcesRes.error ||
     mcpResourceBindingsRes.error ||
@@ -516,6 +522,20 @@ export async function fetchCloudSnapshot(
       ...(p.deleted_at ? { deletedAt: new Date(p.deleted_at) } : {}),
     }))
 
+    const projectTasks: ProjectTask[] = (projectTasksRes.data ?? []).map((t) => ({
+      id: t.id,
+      workspaceId: t.workspace_id,
+      title: t.title,
+      // DB `status` is loose text; trust the CHECK constraint + the
+      // store's typed mutators. Cast back to the union.
+      status: t.status as ProjectTask["status"],
+      position: t.position,
+      taskId: t.task_id ?? undefined,
+      artifactId: t.artifact_id ?? undefined,
+      createdAt: new Date(t.created_at),
+      updatedAt: new Date(t.updated_at),
+    }))
+
     return {
       workspaces,
       documents,
@@ -526,6 +546,7 @@ export async function fetchCloudSnapshot(
       notes,
       artifacts,
       prompts,
+      projectTasks,
       mcpServers,
       mcpResources,
       mcpResourceBindings,
@@ -910,6 +931,28 @@ export async function bulkUploadLocalState(
     if (error) return { ok: false, error: `prompts: ${error.message}` }
   }
 
+  // Project-task cards. FKs to `tasks` / `artifacts` are nullable and
+  // those rows (when set) belong to other upserts already flushed
+  // above; a card whose run/artifact isn't present just keeps a
+  // dangling-safe NULL after the FK's ON DELETE SET NULL.
+  if (snapshot.projectTasks.length > 0) {
+    const { error } = await client.from("project_tasks").upsert(
+      snapshot.projectTasks.map((t) => ({
+        id: t.id,
+        user_id: userId,
+        workspace_id: t.workspaceId,
+        title: t.title,
+        status: t.status,
+        position: t.position,
+        task_id: t.taskId ?? null,
+        artifact_id: t.artifactId ?? null,
+        created_at: t.createdAt.toISOString(),
+        updated_at: t.updatedAt.toISOString(),
+      }))
+    )
+    if (error) return { ok: false, error: `project_tasks: ${error.message}` }
+  }
+
   return { ok: true }
 }
 
@@ -972,6 +1015,7 @@ export function applyCloudSnapshot(snapshot: CloudSnapshot): void {
     notes: snapshot.notes,
     artifacts: snapshot.artifacts,
     prompts: snapshot.prompts,
+    projectTasks: snapshot.projectTasks,
     mcpServers: snapshot.mcpServers,
     mcpResources: snapshot.mcpResources,
     mcpResourceBindings: snapshot.mcpResourceBindings,
@@ -990,6 +1034,7 @@ export function applyCloudSnapshot(snapshot: CloudSnapshot): void {
     notes: snapshot.notes,
     artifacts: snapshot.artifacts,
     prompts: snapshot.prompts,
+    projectTasks: snapshot.projectTasks,
     mcpServers: snapshot.mcpServers,
     mcpResources: snapshot.mcpResources,
     mcpResourceBindings: snapshot.mcpResourceBindings,

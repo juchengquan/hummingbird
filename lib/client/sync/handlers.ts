@@ -34,6 +34,7 @@ import type {
   McpServer,
   Message,
   Note,
+  ProjectTask,
   Prompt,
   Resource,
   UploadedFile,
@@ -1026,6 +1027,65 @@ function promptEquals(a: Prompt, b: Prompt): boolean {
     sameInstant(a.createdAt, b.createdAt) &&
     sameInstant(a.updatedAt, b.updatedAt) &&
     sameInstantOrNull(a.deletedAt, b.deletedAt)
+  )
+}
+
+// ------------ project_tasks -------------------------------------------------
+// Hard-delete entity (no soft-delete tombstone). A card removed from
+// the local array emits a `delete` op.
+
+export function diffProjectTasks(
+  prev: ProjectTask[],
+  next: ProjectTask[]
+): SyncOp[] {
+  const ops: SyncOp[] = []
+  const prevById = byId(prev)
+  const nextById = byId(next)
+
+  for (const t of next) {
+    const before = prevById.get(t.id)
+    if (!before || !projectTaskEquals(before, t)) {
+      ops.push({
+        kind: "upsert",
+        target: "project_tasks",
+        clientOpId: "",
+        row: {
+          id: t.id,
+          workspace_id: t.workspaceId,
+          title: t.title,
+          status: t.status,
+          position: t.position,
+          task_id: t.taskId ?? null,
+          artifact_id: t.artifactId ?? null,
+          created_at: toISO(t.createdAt),
+          updated_at: toISO(t.updatedAt),
+        },
+      })
+    }
+  }
+  for (const t of prev) {
+    if (!nextById.has(t.id)) {
+      ops.push({
+        kind: "delete",
+        target: "project_tasks",
+        clientOpId: "",
+        where: { column: "id", value: t.id },
+      })
+    }
+  }
+  return ops
+}
+
+function projectTaskEquals(a: ProjectTask, b: ProjectTask): boolean {
+  return (
+    a.workspaceId === b.workspaceId &&
+    a.title === b.title &&
+    a.status === b.status &&
+    a.position === b.position &&
+    (a.taskId ?? null) === (b.taskId ?? null) &&
+    (a.artifactId ?? null) === (b.artifactId ?? null) &&
+    sameInstant(a.createdAt, b.createdAt) &&
+    sameInstant(a.updatedAt, b.updatedAt)
   )
 }
 
