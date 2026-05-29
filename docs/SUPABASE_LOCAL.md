@@ -90,9 +90,9 @@ so every feature gated by `lib/shared/supabase/env.ts` lights up:
   `0006_url_bookmarks.sql`, `0007_file_full_text.sql`,
   `0008_message_compression.sql`, `0009_search_file_sections.sql`,
   `0010_message_generated_images.sql`, `0011_prompts.sql`,
-  `0012_prompts_workspace.sql`, `0012_tasks.sql`,
-  `0013_task_checkpoint.sql`, `0014_task_jobs.sql`,
-  `0015_workspace_canvas.sql`, `0016_project_mode.sql`) apply
+  `0012_tasks.sql`, `0013_task_checkpoint.sql`,
+  `0014_task_jobs.sql`, `0015_workspace_canvas.sql`,
+  `0016_project_mode.sql`, `0017_prompts_workspace.sql`) apply
   identically. `0005_mcp.sql` enables `pgcrypto` itself — no separate
   extension toggle.
 - **MCP integration** — full tools + resources + cloud-mode

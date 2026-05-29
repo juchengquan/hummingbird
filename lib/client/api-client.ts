@@ -25,6 +25,7 @@ import {
   FileSummarizeResponseSchema,
   ConversationSummarizeResponseSchema,
   CompressSummarizeResponseSchema,
+  ProjectBreakdownResponseSchema,
   RevokeShareResponseSchema,
   type ChatRequestInput,
   type TaskRequestInput,
@@ -35,6 +36,7 @@ import {
   type FileSummarizeResponse,
   type ConversationSummarizeResponse,
   type CompressSummarizeResponse,
+  type ProjectBreakdownResponse,
   type SummarizeRequestInput,
 } from "@/shared/api-schemas"
 
@@ -385,6 +387,29 @@ async function summarizeCompress(
   }
 }
 
+/**
+ * Breaks a project goal into proposed task titles for the Kanban board
+ * (project-mode "Generate tasks" action). Returns null on failure; the
+ * caller surfaces a toast.
+ */
+async function summarizeProjectBreakdown(
+  body: Extract<SummarizeRequestInput, { mode: "project-breakdown" }>,
+  options?: { signal?: AbortSignal }
+): Promise<ProjectBreakdownResponse | null> {
+  try {
+    const res = await fetch(apiUrls.summarize(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: options?.signal,
+    })
+    if (!res.ok) return null
+    return ProjectBreakdownResponseSchema.parse(await res.json())
+  } catch {
+    return null
+  }
+}
+
 // --- /api/share -------------------------------------------------------------
 
 export interface ShareCreateResult {
@@ -566,6 +591,7 @@ export const apiClient = {
     file: summarizeFile,
     conversation: summarizeConversation,
     compress: summarizeCompress,
+    projectBreakdown: summarizeProjectBreakdown,
   },
   share: {
     create: createShare,

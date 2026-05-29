@@ -1620,7 +1620,10 @@ export function ChatPanel() {
           />
           {/* Inline task pointer — while a task launched from this
               conversation is running, show a one-line status that opens
-              the Tasks panel. The full live surface lives in the panel. */}
+              the Tasks panel. The full live surface lives in the panel.
+              "Queued" appears in the brief window after POST 202 while
+              the worker is being picked up; "Running · step N/M" once
+              the loop is actually advancing. */}
           {taskRun.isRunning &&
             taskRun.runConversationId === activeConversationId && (
               <button
@@ -1630,8 +1633,11 @@ export function ChatPanel() {
               >
                 <Loader2 size={12} className="animate-spin text-[var(--primary)]" />
                 <span>
-                  Task running · step {taskRun.view.step}
-                  {taskRun.view.maxSteps ? ` / ${taskRun.view.maxSteps}` : ""}
+                  {taskRun.view.status === "queued"
+                    ? "Task queued · waiting for worker"
+                    : `Task running · step ${taskRun.view.step}${
+                        taskRun.view.maxSteps ? ` / ${taskRun.view.maxSteps}` : ""
+                      }`}
                 </span>
                 <span className="ml-auto flex items-center gap-0.5 text-[var(--foreground)]">
                   View <ChevronRight size={12} />

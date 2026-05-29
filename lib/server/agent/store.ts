@@ -16,7 +16,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import type { TaskEvent, RunStatus } from "@/shared/agent/events"
 import type { Database, Json } from "@/shared/supabase/types"
 import type { RunCheckpoint } from "./checkpoint"
-import { rowsToTaskEvents, taskEventToRow } from "./persistence"
+import { rowsToTaskEvents, taskEventToRow } from "@/shared/agent/persistence"
 
 type DB = SupabaseClient<Database>
 export type TaskRow = Database["public"]["Tables"]["tasks"]["Row"]

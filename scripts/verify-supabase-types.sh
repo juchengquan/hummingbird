@@ -10,9 +10,15 @@
 # producing confusing typecheck errors.
 #
 # This script is the CI gate that catches "you forgot to regen": if a
-# pushed branch touches any file under `supabase/migrations/` but doesn't
-# also touch `lib/shared/supabase/types.ts`, it fails with a clear
-# remediation message.
+# pushed branch ADDS or MODIFIES a migration under `supabase/migrations/`
+# but doesn't also touch `lib/shared/supabase/types.ts`, it fails with a
+# clear remediation message.
+#
+# Pure renames and deletions are exempt: shuffling a migration's filename
+# (e.g. resolving a number collision) or removing one changes no schema
+# shape, so codegen output is unaffected and `types.ts` legitimately
+# needs no update. Only Added (A) / Modified (M) migration files require
+# a paired types regen — detected via `git diff --diff-filter=AM`.
 #
 # It's deliberately lightweight — no `supabase start`, no docker pull,
 # no full type regeneration. Booting the Supabase stack in CI adds
@@ -32,18 +38,20 @@ BASE_REF="${1:-origin/dev}"
 MIGRATIONS_DIR="supabase/migrations"
 TYPES_FILE="lib/shared/supabase/types.ts"
 
-# What changed between the PR base and HEAD?
-CHANGED=$(git diff --name-only "$BASE_REF...HEAD" 2>/dev/null)
-if [ -z "$CHANGED" ]; then
-  # No diff or comparison failed (e.g. base ref missing locally). Nothing
-  # to check — exit clean rather than spuriously failing.
+# Added/modified migrations between the PR base and HEAD. `--diff-filter=AM`
+# excludes pure renames (R) and deletions (D) — those don't alter schema
+# shape, so they don't require a types regen.
+MIGRATIONS_AM=$(git diff --name-only --diff-filter=AM "$BASE_REF...HEAD" \
+  -- "$MIGRATIONS_DIR" 2>/dev/null)
+if [ -z "$MIGRATIONS_AM" ]; then
+  # No added/changed migrations (none at all, or only renames/deletes) →
+  # no alignment requirement. Also covers the base-ref-missing case (the
+  # diff returns empty), exiting clean rather than spuriously failing.
   exit 0
 fi
 
-if ! echo "$CHANGED" | grep -q "^$MIGRATIONS_DIR/"; then
-  # Migrations untouched → no alignment requirement.
-  exit 0
-fi
+# Full changed-file list, used for the types-file check + the diagnostic.
+CHANGED=$(git diff --name-only "$BASE_REF...HEAD" 2>/dev/null)
 
 if echo "$CHANGED" | grep -q "^$TYPES_FILE\$"; then
   # Both touched → the convention is satisfied. (We can't actually verify
@@ -52,12 +60,38 @@ if echo "$CHANGED" | grep -q "^$TYPES_FILE\$"; then
   exit 0
 fi
 
-# Migrations changed; types didn't. Fail loudly with instructions.
+# Allow an explicit opt-out for migrations that genuinely don't change
+# generated types — enabling a Realtime publication on an existing
+# table, granting RPC privileges, swapping an index. A first-line
+# marker (`-- verify-supabase-types: skip`) on EVERY added/modified
+# migration of the PR opts the whole pairing out. Missing the marker
+# on any one of them re-engages the check, so the discipline still
+# bites for actual schema changes.
+ONLY_SKIPPABLE=true
+for f in $MIGRATIONS_AM; do
+  if [ ! -f "$f" ]; then
+    # Race or out-of-tree file — keep the check engaged.
+    ONLY_SKIPPABLE=false
+    break
+  fi
+  if ! head -1 "$f" | grep -qiE '^--[[:space:]]*verify-supabase-types:[[:space:]]*skip'; then
+    ONLY_SKIPPABLE=false
+    break
+  fi
+done
+if [ "$ONLY_SKIPPABLE" = "true" ]; then
+  echo "✓ Supabase types alignment skipped (all added/changed migrations carry the opt-out marker)."
+  exit 0
+fi
+
+# A migration was added/changed; types didn't move. Fail loudly.
 cat >&2 <<EOF
 ✗ Supabase types alignment check failed
 
-  Files under \`$MIGRATIONS_DIR/\` were changed in this PR, but
-  \`$TYPES_FILE\` was not.
+  These migrations were added or modified, but
+  \`$TYPES_FILE\` was not:
+
+$(echo "$MIGRATIONS_AM" | sed 's/^/    /')
 
   The generated types file must be regenerated alongside any schema
   change so the typed Supabase client stays in sync with the actual

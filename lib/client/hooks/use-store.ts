@@ -25,12 +25,15 @@ import type {
   ArtifactKind,
   GeneratedImage,
   Prompt,
+  ProjectTask,
+  ProjectTaskStatus,
   ToolCallRecord,
   ToolCallResult,
   PinnedExplanation,
 } from '@/shared/types'
 import { DEFAULT_CHAT_MODEL } from '@/shared/models'
 import { buildCompressedMessages } from '@/shared/compression'
+import { moveProjectTask as moveProjectTaskPure, nextPosition } from '@/shared/project-tasks'
 import { deleteBlob as deleteLocalBlob, clearAll as clearLocalBlobs } from '@/client/files/local-store'
 import {
   bulkTombstoneByKind,
@@ -46,6 +49,7 @@ import {
 import { reviveDates } from '@/client/store/revive-dates'
 import { uuid } from '@/shared/uuid'
 import { parseTemplate } from '@/shared/prompts/expand'
+import { placeRelatedNode } from '@/shared/canvas/placement'
 
 // Short, URL-safe id for prompts. Re-uses the existing uuid helper so we
 // don't add a nanoid dep; the slice doesn't need RFC4122 cryptographic
@@ -347,7 +351,7 @@ interface AppState {
 
   // Right resources sidebar (chat view)
   resourcesSidebarOpen: boolean
-  resourcesSidebarTab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins' | 'mcp' | 'links'
+  resourcesSidebarTab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins' | 'mcp' | 'links' | 'project'
   // Tasks panel (chat view) — the live surface for long-running agent runs.
   tasksPanelOpen: boolean
   /** Custom right-rail content width in px. Default 272 (17rem).
@@ -396,6 +400,11 @@ interface AppState {
   // Workspaces
   workspaces: Workspace[]
   activeWorkspaceId: string
+
+  // Project mode — Kanban cards for project workspaces. Flat array
+  // across all workspaces; the board filters by workspaceId. See
+  // `docs/PLAN-project-mode.md`.
+  projectTasks: ProjectTask[]
 
   // Documents — rich-text docs inside a workspace. A workspace owns N
   // documents; `activeDocumentId` tracks which one the editor panel is
@@ -493,7 +502,7 @@ interface AppState {
   setActiveView: (view: MainView) => void
   setResourcesSidebarOpen: (open: boolean) => void
   toggleResourcesSidebar: () => void
-  setResourcesSidebarTab: (tab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins' | 'mcp' | 'links') => void
+  setResourcesSidebarTab: (tab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins' | 'mcp' | 'links' | 'project') => void
   setTasksPanelOpen: (open: boolean) => void
   toggleTasksPanel: () => void
   setEditorPref: <K extends keyof AppState['editorPrefs']>(
@@ -713,6 +722,25 @@ interface AppState {
   togglePinArtifact: (artifactId: string) => void
   updateArtifactTitle: (artifactId: string, title: string) => void
   requestEditorReload: () => void
+
+  // Project task (Kanban card) actions. New cards land at the tail of
+  // the To-do column. `moveProjectTask` handles drag (reorder + column
+  // change) via the pure helper in `lib/shared/project-tasks.ts`.
+  createProjectTask: (input: {
+    workspaceId: string
+    title: string
+    status?: ProjectTaskStatus
+  }) => ProjectTask
+  updateProjectTask: (
+    taskId: string,
+    patch: Partial<Pick<ProjectTask, "title" | "status" | "taskId" | "artifactId">>
+  ) => void
+  moveProjectTask: (
+    taskId: string,
+    toStatus: ProjectTaskStatus,
+    toIndex: number
+  ) => void
+  deleteProjectTask: (taskId: string) => void
 
   // Prompt actions — user-scoped saved templates. Slug is auto-derived
   // from `name` on create via `defaultSlug()`; the create action accepts
@@ -955,6 +983,9 @@ export const useStore = create<AppState>()(
       prompts: [],
       pendingChatInput: null,
 
+      // Project mode (Kanban cards)
+      projectTasks: [],
+
       // Conversations
       conversations: getDefaultConversations().map((c: Conversation) => ({
         ...c,
@@ -1076,6 +1107,7 @@ export const useStore = create<AppState>()(
           const newNotes = state.notes.filter((n) => n.workspaceId !== workspaceId)
           const newArtifacts = state.artifacts.filter((a) => a.workspaceId !== workspaceId)
           const newDocuments = state.documents.filter((d) => d.workspaceId !== workspaceId)
+          const newProjectTasks = state.projectTasks.filter((t) => t.workspaceId !== workspaceId)
           // Drop conversation-private joins whose conversation lived in
           // this workspace, then GC files that lost their last reference.
           // `gcOrphanedAttachments` does the ref-count + tombstone logic;
@@ -1169,6 +1201,7 @@ export const useStore = create<AppState>()(
             notes: newNotes,
             artifacts: newArtifacts,
             documents: newDocuments,
+            projectTasks: newProjectTasks,
             activeDocumentId: newActiveDocumentId,
             mcpServers: newMcpServers,
             mcpResourceBindings: newMcpBindings,
@@ -1799,6 +1832,37 @@ export const useStore = create<AppState>()(
           createdAt: new Date(),
         }
         set((state) => ({ artifacts: [newArtifact, ...state.artifacts] }))
+        // Canvas Phase 4 — auto-place. If this workspace's canvas is in
+        // use AND the source message is already a node on it, drop the
+        // new artifact beside that message with a connecting edge. Gated
+        // on the message being present so we never force a canvas on a
+        // user who isn't using one, and never add an orphan with no
+        // anchor. Artifacts are only created from chat view (never while
+        // the canvas panel is mounted), so the panel's mount-seed picks
+        // this up — no live-reconcile needed. See lib/shared/canvas/placement.
+        if (messageId) {
+          const ws = get().workspaces.find((w) => w.id === workspaceId)
+          const canvas = ws?.canvasState
+          if (
+            canvas &&
+            canvas.nodes.length > 0 &&
+            canvas.nodes.some((n) => n.id === messageId)
+          ) {
+            const nextCanvas = placeRelatedNode(
+              canvas,
+              messageId,
+              { id: newArtifact.id, kind: "artifact" },
+              { connect: true }
+            )
+            set((state) => ({
+              workspaces: state.workspaces.map((w) =>
+                w.id === workspaceId
+                  ? { ...w, canvasState: nextCanvas, updatedAt: new Date() }
+                  : w
+              ),
+            }))
+          }
+        }
         return newArtifact
       },
       deleteArtifact: (artifactId: string) =>
@@ -1819,6 +1883,56 @@ export const useStore = create<AppState>()(
         })),
       requestEditorReload: () =>
         set((state) => ({ editorReloadToken: state.editorReloadToken + 1 })),
+
+      // Project task (Kanban card) actions
+      createProjectTask: ({ workspaceId, title, status = "todo" }) => {
+        const now = new Date()
+        const task: ProjectTask = {
+          id: uuid(),
+          workspaceId,
+          title,
+          status,
+          position: nextPosition(
+            get().projectTasks.filter((t) => t.workspaceId === workspaceId),
+            status
+          ),
+          createdAt: now,
+          updatedAt: now,
+        }
+        set((state) => ({ projectTasks: [...state.projectTasks, task] }))
+        return task
+      },
+      updateProjectTask: (taskId, patch) =>
+        set((state) => ({
+          projectTasks: state.projectTasks.map((t) =>
+            t.id === taskId ? { ...t, ...patch, updatedAt: new Date() } : t
+          ),
+        })),
+      moveProjectTask: (taskId, toStatus, toIndex) =>
+        set((state) => {
+          const task = state.projectTasks.find((t) => t.id === taskId)
+          if (!task) return state
+          // Reorder only within the moved card's workspace; merge the
+          // result back over the flat cross-workspace array.
+          const wsId = task.workspaceId
+          const wsTasks = state.projectTasks.filter((t) => t.workspaceId === wsId)
+          const reordered = moveProjectTaskPure(
+            wsTasks,
+            taskId,
+            toStatus,
+            toIndex,
+            new Date()
+          )
+          if (reordered === wsTasks) return state
+          const byId = new Map(reordered.map((t) => [t.id, t]))
+          return {
+            projectTasks: state.projectTasks.map((t) => byId.get(t.id) ?? t),
+          }
+        }),
+      deleteProjectTask: (taskId) =>
+        set((state) => ({
+          projectTasks: state.projectTasks.filter((t) => t.id !== taskId),
+        })),
 
       // Prompt actions
       createPrompt: ({ workspaceId, name, template, slug }) => {
@@ -3029,6 +3143,7 @@ export const useStore = create<AppState>()(
         localOnlyMode: state.localOnlyMode,
         localFilesOnly: state.localFilesOnly,
         prompts: state.prompts,
+        projectTasks: state.projectTasks,
         // pendingChatInput is deliberately NOT persisted — it's a
         // one-shot event signal, not durable state. Surviving a reload
         // would re-trigger an insert on next mount.
@@ -3298,4 +3413,13 @@ export const useConversationPinnedExplanations = () => {
   const activeConversationId = useStore((state) => state.activeConversationId)
   if (!activeConversationId) return [] as PinnedExplanation[]
   return pins.filter((p) => p.conversationId === activeConversationId)
+}
+
+/** Project-task cards for the active workspace (all columns, unsorted —
+ *  the board groups + sorts by column via `columnTasks`). */
+export const useWorkspaceProjectTasks = () => {
+  const projectTasks = useStore((state) => state.projectTasks)
+  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
+  if (!activeWorkspaceId) return [] as ProjectTask[]
+  return projectTasks.filter((t) => t.workspaceId === activeWorkspaceId)
 }
