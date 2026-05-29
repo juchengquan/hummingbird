@@ -175,16 +175,29 @@ export function useTaskRun(options?: UseTaskRunOptions): UseTaskRunResult {
       setError(null)
       setIsRunning(true)
       try {
-        const result = await apiClient.tasks.start(body, {
+        // POST enqueues the start job and returns `{ runId }`. The
+        // worker writes events into `task_events`; we open the resume
+        // stream to watch them as they're produced.
+        const enq = await apiClient.tasks.start(body, {
           signal: controller.signal,
         })
-        if (!result.ok || !result.body) {
+        if (!enq.ok || !enq.runId) {
+          setError(enq.error?.message ?? `Task failed (HTTP ${enq.status}).`)
+          return
+        }
+        runIdRef.current = enq.runId
+        setRunId(enq.runId)
+        const stream = await apiClient.tasks.resume(enq.runId, {
+          cursor: 0,
+          signal: controller.signal,
+        })
+        if (!stream.ok || !stream.body) {
           setError(
-            result.error?.message ?? `Task failed (HTTP ${result.status}).`
+            stream.error?.message ?? `Resume failed (HTTP ${stream.status}).`
           )
           return
         }
-        await consume(result.body)
+        await consume(stream.body)
       } catch (err) {
         if (!controller.signal.aborted) {
           setError(err instanceof Error ? err.message : "Task stream failed.")
@@ -242,20 +255,35 @@ export function useTaskRun(options?: UseTaskRunOptions): UseTaskRunResult {
       const controller = new AbortController()
       abortRef.current = controller
       runIdRef.current = id
+      persistedRef.current = null
       setRunId(id)
       setError(null)
       setIsRunning(true)
       try {
-        const result = await apiClient.tasks.respond(id, body, {
+        // POST enqueues the respond job and returns 202 — the worker
+        // injects the human's answer and continues the loop. We open
+        // the resume stream from the current cursor so the panel sees
+        // the continuation's events as they're persisted.
+        const enq = await apiClient.tasks.respond(id, body, {
           signal: controller.signal,
         })
-        if (!result.ok || !result.body) {
+        if (!enq.ok) {
           setError(
-            result.error?.message ?? `Respond failed (HTTP ${result.status}).`
+            enq.error?.message ?? `Respond failed (HTTP ${enq.status}).`
           )
           return
         }
-        await consume(result.body)
+        const stream = await apiClient.tasks.resume(id, {
+          cursor: viewRef.current.cursor,
+          signal: controller.signal,
+        })
+        if (!stream.ok || !stream.body) {
+          setError(
+            stream.error?.message ?? `Resume failed (HTTP ${stream.status}).`
+          )
+          return
+        }
+        await consume(stream.body)
       } catch (err) {
         if (!controller.signal.aborted) {
           setError(

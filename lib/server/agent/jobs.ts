@@ -40,16 +40,56 @@ export async function enqueueContinueJob(
   db: DB,
   input: { taskId: string; userId: string; delayMs?: number }
 ): Promise<void> {
-  const scheduledAt = new Date(Date.now() + (input.delayMs ?? 0)).toISOString()
+  await enqueue(db, input.taskId, input.userId, "continue", {}, input.delayMs)
+}
+
+/** Insert a `start` job. The route writes the initial checkpoint
+ *  before calling this — the worker reads everything it needs from
+ *  there, so no per-job payload. */
+export async function enqueueStartJob(
+  db: DB,
+  input: { taskId: string; userId: string }
+): Promise<void> {
+  await enqueue(db, input.taskId, input.userId, "start", {})
+}
+
+/** Insert a `respond` job. The payload carries the human's answer; the
+ *  worker pairs it with the pending tool call in the checkpoint. */
+export async function enqueueRespondJob(
+  db: DB,
+  input: {
+    taskId: string
+    userId: string
+    payload: {
+      requestId: string
+      approved?: boolean
+      selection?: string[]
+      value?: string
+      args?: unknown
+    }
+  }
+): Promise<void> {
+  await enqueue(db, input.taskId, input.userId, "respond", input.payload as unknown as Json)
+}
+
+async function enqueue(
+  db: DB,
+  taskId: string,
+  userId: string,
+  action: JobAction,
+  payload: Json,
+  delayMs?: number
+): Promise<void> {
+  const scheduledAt = new Date(Date.now() + (delayMs ?? 0)).toISOString()
   const { error } = await db.from("task_jobs").insert({
-    task_id: input.taskId,
-    user_id: input.userId,
-    action: "continue",
-    payload: {} as Json,
+    task_id: taskId,
+    user_id: userId,
+    action,
+    payload,
     status: "queued",
     scheduled_at: scheduledAt,
   })
-  if (error) throw new Error(`enqueueContinueJob: ${error.message}`)
+  if (error) throw new Error(`enqueue ${action}: ${error.message}`)
 }
 
 /**
