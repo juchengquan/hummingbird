@@ -1,15 +1,16 @@
 # Plan: Workspace canvas
 
-Status: **🪜 Phases 1–3 shipped** on `claude/workspace-canvas` (PR
-pending) — canvas surface + node renderers (Phase 1), `canvas_state`
-persistence + sync (Phase 2), add / connect / focus (Phase 3).
-**Phase 4** (auto-position new artifacts near their source) and
-**Phase 5** (mini-map polish, keyboard nav, PNG/SVG export,
-snap-to-grid) remain. Implementation notes that diverged from this
-plan: uses `@xyflow/react` v12 (the current package for react-flow;
-the v11 `reactflow` name predates React 19), and edge labels use a
-minimal double-click prompt rather than an inline editor (folded into
-Phase 5 polish).
+Status: **✅ All phases shipped.** Phases 1–3 in #83 (canvas surface +
+node renderers, `canvas_state` persistence + sync, add / connect /
+focus). Phases 4–5 in `claude/canvas-phases-4-5` (PR pending):
+auto-position artifacts near their source message (Phase 4); inline
+edge-label editor, snap-to-grid, keyboard nav (Esc deselect + arrow
+nudge), and PNG export (Phase 5). Mini-map shipped back in Phase 1.
+Implementation notes that diverged from this plan: uses
+`@xyflow/react` v12 (the current package for react-flow; the v11
+`reactflow` name predates React 19). Not built (deliberately, beyond
+the plan's scope): SVG export and auto-layout solver — open as
+follow-ups only if requested.
 
 A freeform spatial view of a workspace's content. Chat messages,
 artifacts, notes, and files become draggable cards on an infinite
