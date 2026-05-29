@@ -19,7 +19,9 @@ complete via #81/#86/#89/#91/#94; workspace canvas via #83/#90; agent
 task-queue steps 1–6 via #82/#85/#88. Only the optional queue step 7
 (scheduling) remains in the agent-task arc. Code-cleanup Phase 1
 shipped via #96 — lint baseline now 0 warnings, 4 dead exports
-removed; 5 structural phases pending in `PLAN-code-cleanup.md`.)
+removed; 5 structural phases pending in `PLAN-code-cleanup.md`.
+Deep Research mode plan added — promoted from SURVEY §4.1; 4 phases,
+Phase 1 ships the end-to-end loop with no DB changes.)
 
 > **Plan archive.** Fully-shipped `PLAN-*.md` files live in
 > [`_done/`](_done/). Active plans (planning / phased / decision
@@ -139,6 +141,7 @@ via #82/#85/#88); only the optional step 7 (scheduling) remains.
 | 🪜 [Agent task queue (durable background execution)](PLAN-agent-task-queue.md) | steps 1–6 shipped (#82, #85, #88) | `task_jobs` queue + worker + chunking + async start/respond + Realtime live tail + visible Queued state done. Remaining: optional step 7 (scheduling — `task_schedules` + cron resolver for "run every morning") |
 | 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 3 done, 1 moot, 4 open | Done: generatedImages sync (#45), recap-of-recaps (#63), roadmap sweep. Moot: local-mode MCP creds for tasks (rejected up front by #85). Open: accurate tokens, signed-URL re-sign, per-tool server-side approval flags, task-route integration tests |
 | 🪜 [Code cleanup](PLAN-code-cleanup.md) | Phase 1 shipped (#96) | 6 phases of housecleaning after a long feature push — lint baseline + dead exports done; sync test coverage, reconcile factor-out, `use-store.ts` slice split, `chat.tsx` send-pipeline extraction, dead code sweep pending. No functional changes |
+| 📐 [Deep Research mode](PLAN-deep-research.md) | planning | Multi-step research agent that composes the task queue + web search + Plate editor into a "thread → cited Markdown report" flow. 4 phases; Phase 1 ships `/research <goal>` end-to-end with the smallest possible new surface (mode flag + research-mode system prompt + "Open in editor" button) |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
 | 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~7.5 days total |
