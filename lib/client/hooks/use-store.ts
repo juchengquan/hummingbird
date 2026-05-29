@@ -46,6 +46,7 @@ import {
 import { reviveDates } from '@/client/store/revive-dates'
 import { uuid } from '@/shared/uuid'
 import { parseTemplate } from '@/shared/prompts/expand'
+import { placeRelatedNode } from '@/shared/canvas/placement'
 
 // Short, URL-safe id for prompts. Re-uses the existing uuid helper so we
 // don't add a nanoid dep; the slice doesn't need RFC4122 cryptographic
@@ -1799,6 +1800,37 @@ export const useStore = create<AppState>()(
           createdAt: new Date(),
         }
         set((state) => ({ artifacts: [newArtifact, ...state.artifacts] }))
+        // Canvas Phase 4 — auto-place. If this workspace's canvas is in
+        // use AND the source message is already a node on it, drop the
+        // new artifact beside that message with a connecting edge. Gated
+        // on the message being present so we never force a canvas on a
+        // user who isn't using one, and never add an orphan with no
+        // anchor. Artifacts are only created from chat view (never while
+        // the canvas panel is mounted), so the panel's mount-seed picks
+        // this up — no live-reconcile needed. See lib/shared/canvas/placement.
+        if (messageId) {
+          const ws = get().workspaces.find((w) => w.id === workspaceId)
+          const canvas = ws?.canvasState
+          if (
+            canvas &&
+            canvas.nodes.length > 0 &&
+            canvas.nodes.some((n) => n.id === messageId)
+          ) {
+            const nextCanvas = placeRelatedNode(
+              canvas,
+              messageId,
+              { id: newArtifact.id, kind: "artifact" },
+              { connect: true }
+            )
+            set((state) => ({
+              workspaces: state.workspaces.map((w) =>
+                w.id === workspaceId
+                  ? { ...w, canvasState: nextCanvas, updatedAt: new Date() }
+                  : w
+              ),
+            }))
+          }
+        }
         return newArtifact
       },
       deleteArtifact: (artifactId: string) =>
