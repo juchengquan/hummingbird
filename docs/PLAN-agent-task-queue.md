@@ -1,20 +1,18 @@
 # Plan: Queue-backed continuation (durable background execution)
 
-Status: **🪜 steps 1–4 shipped** ([#82](https://github.com/juchengquan/hummingbird/pull/82)
-— `task_jobs` table + worker + chunking; [#85](https://github.com/juchengquan/hummingbird/pull/85)
-— async `start`/`respond` actions). Remaining: step 5 (cleanup — delete
-the inline POST streaming machinery, surface a "Queued" status pill)
-and the optional step 6 (Realtime swap) / step 7 (scheduling). See the
-"Migration / phasing within Phase 6" section. This is the deferred
-Phase 6 of `PLAN-agent-hitl-approvals.md` and the queue half of
-`PLAN-long-running-tasks.md` Phase 5. The HITL design ships v1 with the
+Status: **🪜 Phases 1–6 shipped.** Steps 1+2 (job table + worker shell + `continue` chunking) in [#82](https://github.com/juchengquan/hummingbird/pull/82); steps 3+4 (`start`/`respond` actions move into the worker, POST routes become enqueue + 202) in [#85](https://github.com/juchengquan/hummingbird/pull/85); steps 5+6 (Queued status event + UI label, Realtime live tail of `task_events`) in [#88](https://github.com/juchengquan/hummingbird/pull/88). **Only step 7 (Scheduling) remains optional.** The original recommendation below — "smallest valuable first PR: steps 1+2" — already happened.
+
+This is the deferred Phase 6 of
+`PLAN-agent-hitl-approvals.md` and the queue half of
+`PLAN-long-running-tasks.md` Phase 5. The HITL design shipped v1 with the
 **user's browser** driving every continuation (the click on Approve
-starts a fresh function via `POST /api/tasks/:id/respond`). That works
-but constrains the model: closing the tab kills any work that hasn't
-suspended, runs longer than the serverless execution cap get truncated,
-and there's no way to retry on transient failures or run a task on a
-schedule. This doc proposes the next step — moving continuations onto a
-**job queue + worker**, leaving the rest of the design intact.
+started a fresh function via `POST /api/tasks/:id/respond`). That worked
+but constrained the model: closing the tab killed any work that hadn't
+suspended, runs longer than the serverless execution cap got truncated,
+and there was no way to retry on transient failures or run a task on a
+schedule. This doc proposed the next step — moving continuations onto a
+**job queue + worker**, leaving the rest of the design intact. As of
+the PRs above, that move is largely shipped.
 
 ## What the browser-driven v1 can't do
 
@@ -177,24 +175,32 @@ everything.
 
 ## Migration / phasing within Phase 6
 
-1. **`task_jobs` table + worker shell** — migration; `enqueueJob`,
-   `processNextJob`; unit tests for dispatch.
-2. **`continue` action + chunking** — adds `shouldYield` to
+1. ✅ **`task_jobs` table + worker shell** — migration; `enqueueJob`,
+   `processNextJob`; unit tests for dispatch. (Shipped in [#82](https://github.com/juchengquan/hummingbird/pull/82).)
+2. ✅ **`continue` action + chunking** — adds `shouldYield` to
    `runAgentLoop`, the new `AgentLoopResult: 'yielded'`, and worker
    re-enqueue. Lands as a pure improvement to long runs (no HITL change
-   yet). This also benefits all current tasks.
-3. **`start` action** — move the loop body of `POST /api/tasks` into
+   yet). This also benefits all current tasks. (Shipped in [#82](https://github.com/juchengquan/hummingbird/pull/82).)
+3. ✅ **`start` action** — move the loop body of `POST /api/tasks` into
    the worker; route becomes enqueue + 202; client `useTaskRun.start`
-   opens the resume stream after enqueueing.
-4. **`respond` action** — same for `/respond`. Removes the dual-path
-   tension where HITL has two ways to continue.
-5. **Cleanup** — delete the inline streaming machinery from POST
-   routes. Surface a "Queued" status event in the UI for the brief
-   pre-pickup window.
-6. **(Optional) Realtime swap** — `task_events` channel; the resume
-   stream endpoint forwards Realtime push instead of polling. Cuts
-   reconnect-to-first-event latency from ~1 s to sub-second.
-7. **(Optional) Scheduling** — a `task_schedules` table + cron
+   opens the resume stream after enqueueing. (Shipped in [#85](https://github.com/juchengquan/hummingbird/pull/85).)
+4. ✅ **`respond` action** — same for `/respond`. Removes the dual-path
+   tension where HITL has two ways to continue. (Shipped in [#85](https://github.com/juchengquan/hummingbird/pull/85).)
+5. ✅ **Cleanup** — POST routes are `enqueue + 202`; a synthetic
+   `status:queued` event is persisted before enqueue so the client's
+   resume stream has something to render immediately; the UI surfaces a
+   "Queued" label (`components/agent/task-strip.tsx`). (Shipped alongside
+   [#88](https://github.com/juchengquan/hummingbird/pull/88).) Not pruned:
+   a deliberate **inline-bootstrap optimisation** in `POST /api/tasks`
+   (`TASK_START_BOOTSTRAP_MS`-budgeted `processNextJob`) so short prompts
+   complete pre-response; this is a latency play, not cleanup debt — keep
+   or drop is its own decision, not part of the queue-completion plan.
+6. ✅ **Realtime swap** — `0018_realtime_task_events` adds `task_events`
+   to the Realtime publication; `subscribeTaskEvents` pushes rows to the
+   browser in parallel with the existing poll-tail (idempotent via the
+   reducer's seq dedup). Cuts pickup-to-first-event latency from ~1 s
+   to sub-second. (Shipped in [#88](https://github.com/juchengquan/hummingbird/pull/88).)
+7. 📋 **(Optional) Scheduling** — a `task_schedules` table + cron
    resolver that periodically enqueues `start` jobs from a cron
    expression. Unlocks "run every morning."
 
@@ -233,16 +239,37 @@ everything.
   inline worker for Inngest or pg-boss") — same change, told from the
   long-running-task angle. This doc subsumes it.
 - **`PLAN-agent-tasks-followups.md`** — Phase 6 closes the "realtime
-  tail (deferred)" item via step 6 (optional realtime swap).
+  tail (deferred)" item via step 6 (shipped in #88).
 - **`PLAN-agent-api.md`** — the agent-service split. Phase 6 makes the
   in-process worker easy to lift into a separate service later: the
   worker contract is the same; only deployment changes.
 
 ## Recommendation / next step
 
-The smallest valuable first PR: **steps 1 + 2** (job table + chunking),
-which removes the execution-cap ceiling without changing any client
-behavior or HTTP contracts. It buys real value for current long tasks,
-proves the worker shell, and leaves the `start` / `respond` migrations
-(steps 3–4) for a follow-on PR where the UX surface change is staged
-deliberately.
+**The original recommendation has been executed, and steps 5+6 alongside
+it.** Steps 1–4 landed in [#82](https://github.com/juchengquan/hummingbird/pull/82) + [#85](https://github.com/juchengquan/hummingbird/pull/85); steps 5+6 (Queued status persisted before enqueue, "Queued" label in the UI, POST routes `enqueue + 202`, Realtime `task_events` push) landed in [#88](https://github.com/juchengquan/hummingbird/pull/88). Every continuation now flows through the queue, with sub-second pickup-to-first-event latency.
+
+**One optional follow-on remains:**
+
+- **Step 7 (Scheduling)** — worth doing when a real "run every
+  morning" use case lands. The existing queue handles most of the
+  work; this layers on a `task_schedules` table + cron resolver that
+  periodically enqueues `start` jobs from a cron expression.
+
+**Open architectural question (not strictly part of this plan):** the
+inline-bootstrap optimisation in `POST /api/tasks`
+(`TASK_START_BOOTSTRAP_MS`-budgeted inline `processNextJob`) gives
+short prompts low pickup latency, but reintroduces a "the POST request
+runs work" property the queue migration was supposed to eliminate.
+Worth a deliberate keep/drop decision before step 7 — see the
+[trade-offs](#trade-offs--open-questions) section.
+
+Earlier draft of this section (steps 1 + 2 as the smallest first PR)
+preserved for context:
+
+> The smallest valuable first PR: **steps 1 + 2** (job table + chunking),
+> which removes the execution-cap ceiling without changing any client
+> behavior or HTTP contracts. It buys real value for current long tasks,
+> proves the worker shell, and leaves the `start` / `respond` migrations
+> (steps 3–4) for a follow-on PR where the UX surface change is staged
+> deliberately.
