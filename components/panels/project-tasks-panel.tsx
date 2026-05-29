@@ -20,15 +20,18 @@ import {
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import { useDroppable } from "@dnd-kit/core"
-import { Plus, X } from "lucide-react"
+import { Loader2, Plus, Sparkles, X } from "lucide-react"
+import { toast } from "sonner"
 
 import {
   useActiveWorkspace,
   useStore,
   useWorkspaceProjectTasks,
 } from "@/client/hooks/use-store"
+import { apiClient } from "@/client/api-client"
 import { columnTasks, PROJECT_TASK_COLUMNS } from "@/shared/project-tasks"
 import type { ProjectTask, ProjectTaskStatus } from "@/shared/types"
+import { Button } from "@/components/ui/button"
 import { cn } from "@/shared/utils"
 
 const COLUMN_LABELS: Record<ProjectTaskStatus, string> = {
@@ -52,6 +55,10 @@ export function ProjectTasksPanel() {
   const moveProjectTask = useStore((s) => s.moveProjectTask)
 
   const [activeId, setActiveId] = useState<string | null>(null)
+  // "Generate tasks" (Phase 3) breakdown picker state. `proposed` holds
+  // the model's suggested titles awaiting the user's import selection.
+  const [generating, setGenerating] = useState(false)
+  const [proposed, setProposed] = useState<string[] | null>(null)
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   )
@@ -66,6 +73,26 @@ export function ProjectTasksPanel() {
   }, [tasks])
 
   const activeTask = activeId ? tasks.find((t) => t.id === activeId) ?? null : null
+
+  const goal = workspace?.goal?.trim() ?? ""
+  const generateTasks = async () => {
+    if (!workspace || !goal || generating) return
+    setGenerating(true)
+    try {
+      const res = await apiClient.summarize.projectBreakdown({
+        mode: "project-breakdown",
+        goal,
+        existingTitles: tasks.map((t) => t.title),
+      })
+      if (!res || res.titles.length === 0) {
+        toast.error("Couldn't generate tasks. Try again or refine the goal.")
+        return
+      }
+      setProposed(res.titles)
+    } finally {
+      setGenerating(false)
+    }
+  }
 
   if (!workspace?.isProject) {
     return (
@@ -103,13 +130,49 @@ export function ProjectTasksPanel() {
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="shrink-0 h-11 px-3 border-b border-[var(--border)] flex items-center">
+      <div className="shrink-0 h-11 px-3 border-b border-[var(--border)] flex items-center justify-between gap-2">
         <p className="text-[11px] text-[var(--muted-foreground)] truncate">
           {tasks.length === 0
             ? "No tasks yet"
             : `${byColumn.done.length}/${tasks.filter((t) => t.status !== "cancelled").length} done`}
         </p>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={generateTasks}
+          disabled={!goal || generating}
+          title={
+            goal
+              ? "Break the project goal into tasks"
+              : "Set a project goal in workspace settings first"
+          }
+          className="h-7 px-2 gap-1.5 shrink-0 text-[11px]"
+        >
+          {generating ? (
+            <Loader2 size={12} className="animate-spin" />
+          ) : (
+            <Sparkles size={12} />
+          )}
+          Generate tasks
+        </Button>
       </div>
+
+      {proposed && (
+        <BreakdownPicker
+          titles={proposed}
+          onCancel={() => setProposed(null)}
+          onImport={(picked) => {
+            picked.forEach((title) =>
+              createProjectTask({ workspaceId: workspace.id, title })
+            )
+            setProposed(null)
+            toast.success(
+              `Added ${picked.length} task${picked.length === 1 ? "" : "s"}`
+            )
+          }}
+        />
+      )}
 
       <div className="flex-1 overflow-y-auto p-2 space-y-3">
         <DndContext
@@ -135,6 +198,68 @@ export function ProjectTasksPanel() {
             {activeTask ? <CardShell task={activeTask} dragging /> : null}
           </DragOverlay>
         </DndContext>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The "Generate tasks" results panel — model-proposed titles with
+ * checkboxes; the user picks which to import as To-do cards. All start
+ * checked (the common case is "take them all").
+ */
+function BreakdownPicker({
+  titles,
+  onImport,
+  onCancel,
+}: {
+  titles: string[]
+  onImport: (picked: string[]) => void
+  onCancel: () => void
+}) {
+  const [checked, setChecked] = useState<boolean[]>(() => titles.map(() => true))
+  const pickedCount = checked.filter(Boolean).length
+
+  return (
+    <div className="shrink-0 mx-2 mt-2 rounded-md border border-[var(--primary)]/30 bg-[var(--primary)]/5 p-2">
+      <p className="text-[11px] font-medium text-[var(--foreground)] mb-1.5 px-0.5">
+        Proposed tasks — pick which to add
+      </p>
+      <div className="space-y-0.5 max-h-48 overflow-y-auto">
+        {titles.map((title, i) => (
+          <label
+            key={i}
+            className="flex items-start gap-2 px-1 py-1 rounded hover:bg-[var(--accent)]/40 cursor-pointer"
+          >
+            <input
+              type="checkbox"
+              checked={checked[i]}
+              onChange={(e) =>
+                setChecked((prev) => {
+                  const next = [...prev]
+                  next[i] = e.target.checked
+                  return next
+                })
+              }
+              className="mt-0.5 shrink-0 accent-[var(--primary)]"
+            />
+            <span className="text-xs leading-snug">{title}</span>
+          </label>
+        ))}
+      </div>
+      <div className="flex items-center justify-end gap-1.5 mt-2">
+        <Button variant="ghost" size="sm" onClick={onCancel} className="h-7 text-xs">
+          Cancel
+        </Button>
+        <Button
+          size="sm"
+          disabled={pickedCount === 0}
+          onClick={() => onImport(titles.filter((_, i) => checked[i]))}
+          className="h-7 text-xs gap-1.5"
+        >
+          <Plus size={13} />
+          Add {pickedCount > 0 ? pickedCount : ""}
+        </Button>
       </div>
     </div>
   )

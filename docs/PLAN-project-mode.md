@@ -1,9 +1,13 @@
 # Plan: Project mode
 
-Status: **🪜 Phases 1–2 shipped** (schema + toggle, PR #81; Kanban
-board + CRUD + drag + sync, PR #86). Phases 3–5 pending (AI
-breakdown, run-as-task, polish — milestone bar / sidebar chip /
-export). Phase 2 added the `projectTasks` store slice + mutators
+Status: **🪜 Phases 1–3 shipped** (schema + toggle, PR #81; Kanban
+board + CRUD + drag + sync, PR #86; "break this down" AI breakdown,
+PR #89). Phases 4–5 pending (run-as-task, polish — milestone bar /
+sidebar chip / export). Phase 3 added a `project-breakdown` mode on
+`/api/summarize` (goal → 5–8 task titles, deduped against existing
+cards), the `apiClient.summarize.projectBreakdown` method + Zod wire
+schemas, and a "Generate tasks" button + checkbox import picker in
+the board header. Phase 2 added the `projectTasks` store slice + mutators
 (`createProjectTask`/`updateProjectTask`/`moveProjectTask`/
 `deleteProjectTask`), the pure `lib/shared/project-tasks.ts` reorder
 helper, full `project_tasks` sync (diff + reconcile + bulk upload),

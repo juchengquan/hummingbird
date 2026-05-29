@@ -301,10 +301,18 @@ const CompressSummarizeRequest = z.object({
   model: z.string().max(100).optional(),
 })
 
+const ProjectBreakdownRequest = z.object({
+  mode: z.literal('project-breakdown'),
+  goal: z.string().min(1).max(4000),
+  existingTitles: z.array(z.string().max(300)).max(100).optional(),
+  model: z.string().max(100).optional(),
+})
+
 export const SummarizeRequestSchema = z.discriminatedUnion('mode', [
   FileSummarizeRequest,
   ConversationSummarizeRequest,
   CompressSummarizeRequest,
+  ProjectBreakdownRequest,
 ])
 
 export const FileSummarizeResponseSchema = z.object({
@@ -324,6 +332,12 @@ export const CompressSummarizeResponseSchema = z.object({
    *  decisions, and any file/URL references the assistant might still
    *  need to reason about. */
   recap: z.string().min(1).max(10_000),
+})
+
+export const ProjectBreakdownResponseSchema = z.object({
+  /** Proposed task titles for the project board. The user picks which
+   *  to import; each becomes a To-do card. */
+  titles: z.array(z.string().min(1).max(300)).max(20),
 })
 
 // --- /api/share -------------------------------------------------------------
@@ -440,6 +454,7 @@ export type SummarizeRequestInput = z.infer<typeof SummarizeRequestSchema>
 export type FileSummarizeResponse = z.infer<typeof FileSummarizeResponseSchema>
 export type ConversationSummarizeResponse = z.infer<typeof ConversationSummarizeResponseSchema>
 export type CompressSummarizeResponse = z.infer<typeof CompressSummarizeResponseSchema>
+export type ProjectBreakdownResponse = z.infer<typeof ProjectBreakdownResponseSchema>
 export type CreateShareRequestInput = z.infer<typeof CreateShareRequestSchema>
 export type CreateShareResponse = z.infer<typeof CreateShareResponseSchema>
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>

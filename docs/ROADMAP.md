@@ -42,6 +42,7 @@ to a representative PR otherwise.
 
 | When | Feature | Where |
 |---|---|---|
+| 2026-05-29 | **Project mode — Phase 3** ("break this down" AI action): `project-breakdown` mode on `/api/summarize` (goal → task titles, deduped), `apiClient.summarize.projectBreakdown` + Zod schemas, "Generate tasks" button + checkbox import picker on the board | [PLAN](PLAN-project-mode.md) · [#89](https://github.com/juchengquan/hummingbird/pull/89) |
 | 2026-05-28 | **Project mode — Phase 2** (Kanban board): `projectTasks` store slice + mutators, pure reorder helper, `project_tasks` sync (diff/reconcile/bulk-upload), gated Tasks rail tab (desktop + mobile), dnd-kit board with manual add / drag / delete | [PLAN](PLAN-project-mode.md) · [#86](https://github.com/juchengquan/hummingbird/pull/86) |
 | 2026-05-28 | **Project mode — Phase 1** (schema + project toggle): `0016_project_mode` migration (workspace `is_project`/`goal`/`milestones` + `project_tasks` table), types, `setWorkspaceProjectConfig`, workspace-column sync, detail-sheet toggle + goal | [PLAN](PLAN-project-mode.md) · [#81](https://github.com/juchengquan/hummingbird/pull/81) |
 | 2026-05-28 | **Long-running agent tasks — HITL approvals.** Durable checkpoint + `RunEmitter` seed (Phase 1), suspend mechanism + `POST /api/tasks/:id/respond` + gated-tool policy (Phases 2/3), approval card + client respond plumbing (Phase 4), `askUser` tool + multi-choice / free-input (Phase 5). | [PLAN](_done/PLAN-agent-hitl-approvals.md) · [#76](https://github.com/juchengquan/hummingbird/pull/76) |
@@ -128,7 +129,7 @@ of that arc still pending implementation.
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
 | 📐 [Workspace canvas](PLAN-workspace-canvas.md) | planning | Spatial drag-drop view of messages / artifacts / files |
-| 🪜 [Project mode](PLAN-project-mode.md) | Phases 1–2 shipped (#81, #86) | Workspace → goal + milestones + Kanban tasks. Schema + toggle + board (CRUD/drag/sync) done; Phases 3–5 (AI breakdown, run-as-task, polish) pending |
+| 🪜 [Project mode](PLAN-project-mode.md) | Phases 1–3 shipped (#81, #86, #89) | Workspace → goal + milestones + Kanban tasks. Schema + toggle + board (CRUD/drag/sync) + AI breakdown done; Phases 4–5 (run-as-task, polish) pending |
 | 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~7.5 days total |
 | 📐 [Agent API as a separate service](PLAN-agent-api.md) | decision doc | Language-agnostic target shape for splitting inference + agent loop out; TS-service or Python, undecided. Distinct from the in-process task queue above |
 | 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 pending | Phase 1 (contract-first frontend ⇄ API surface) shipped; Phase 2 stands up the Python backend |
