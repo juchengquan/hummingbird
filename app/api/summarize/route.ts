@@ -56,10 +56,22 @@ const CompressSummaryBody = z.object({
   model: z.string().max(100).optional(),
 })
 
+// Project-breakdown mode: turn a project goal into a short list of
+// actionable task titles for the Kanban board. Output is a JSON array
+// of strings. `existingTitles` lets the model avoid proposing dupes of
+// cards already on the board.
+const ProjectBreakdownBody = z.object({
+  mode: z.literal('project-breakdown'),
+  goal: z.string().min(1).max(4000),
+  existingTitles: z.array(z.string().max(300)).max(100).optional(),
+  model: z.string().max(100).optional(),
+})
+
 const BodySchema = z.discriminatedUnion('mode', [
   FileSummaryBody,
   ConversationSummaryBody,
   CompressSummaryBody,
+  ProjectBreakdownBody,
 ])
 
 function buildFilePrompt(name: string | undefined, text: string) {
@@ -121,6 +133,27 @@ ${transcript}
 """`
 }
 
+function buildProjectBreakdownPrompt(
+  goal: string,
+  existingTitles: string[] | undefined
+) {
+  const existing =
+    existingTitles && existingTitles.length > 0
+      ? `\n\nThe board already has these tasks — do NOT repeat them:\n${existingTitles
+          .map((t) => `- ${t}`)
+          .join('\n')}`
+      : ''
+  return `Break the following project goal into 5-8 concrete, actionable task titles. Each title is a short imperative phrase (e.g. "Draft the API schema", "Set up CI"), not a sentence. Order them roughly by sequence.${existing}
+
+Reply with strict JSON only, no prose:
+{"titles": ["task one", "task two", "..."]}
+
+Goal:
+"""
+${goal}
+"""`
+}
+
 function stripJsonFences(text: string): string {
   return text
     .trim()
@@ -157,7 +190,9 @@ export async function POST(req: NextRequest) {
       ? buildFilePrompt(body.name, body.text)
       : body.mode === 'conversation'
         ? buildConversationPrompt(body.messages)
-        : buildCompressPrompt(body.messages)
+        : body.mode === 'compress'
+          ? buildCompressPrompt(body.messages)
+          : buildProjectBreakdownPrompt(body.goal, body.existingTitles)
 
   try {
     const result = await generateText({
