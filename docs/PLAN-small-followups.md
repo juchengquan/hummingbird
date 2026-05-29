@@ -212,29 +212,22 @@ resolves. Confirm no "in progress" rows refer to merged branches.
 
 ---
 
-## 6. Local-mode MCP creds on task launch / respond
+## ~~6. Local-mode MCP creds on task launch / respond~~ ❌ moot
 
-**Why.** The chat route forwards local-mode MCP servers (creds in
-`localStorage`) in `body.mcpServers`; the task route's `startTask` in
-`components/panels/chat.tsx` and the `respond` flow in
-`lib/client/agent/task-run-context.tsx` don't — so a task can only use
-**cloud-mode** MCP. Cloud is the common case (we ship it server-side
-via `loadEffectiveMcpServers(workspaceId, …)`), but local-mode MCP
-silently doesn't apply to tasks today.
+Superseded by [#85](https://github.com/juchengquan/hummingbird/pull/85)
+(Phase 6 steps 3+4 of the task-queue plan). Tasks now run
+**asynchronously in a background worker** that has no path to the
+browser-held credentials, so the start and respond routes
+**deliberately reject** `body.mcpServers` up front with a clear error
+("Local-mode MCP servers aren't supported in async task mode. Connect
+the server as a cloud-mode workspace MCP, or use the chat route for
+this workflow.").
 
-**Approach.** Extract the local-mode `mcpServers` collection that
-already runs in `callChatAPI` (around the `mcpStore.mcpServers` filter
-+ `getLocalCred` map) into a small helper next to `callChatAPI` and
-call it from the task branch + the provider's `respond`. The route
-+ schema already accept the field; this is purely client wiring.
-
-**Verification.** Add a local-mode MCP server with a tool, launch a
-task that needs it → the model can call it; verify the suspend/respond
-loop still works when the same local-mode tool is the gated one.
-
-**Out of scope.** Pushing local creds to the server for queued /
-background HITL continuation (the long-term plan in
-`PLAN-agent-task-queue.md` open questions).
+A future path to lift this limitation is documented in
+`PLAN-agent-task-queue.md` under *Trade-offs / open questions* —
+e.g. pushing local creds to Supabase (encrypted) on enqueue with a
+TTL evict. Not on the current roadmap; cloud-mode MCP covers the
+common case.
 
 ---
 
