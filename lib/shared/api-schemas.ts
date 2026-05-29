@@ -432,6 +432,66 @@ export const RespondRequestSchema = z.object({
 })
 
 // --- Generic error envelope -------------------------------------------------
+// --- /api/tasks/schedules (recurring task runs) -----------------------------
+// Step 7 of PLAN-agent-task-queue.md. A schedule row is a saved spec for
+// a task plus a cron expression + IANA timezone; the tick walks due
+// rows and enqueues a `start` job. See lib/server/agent/schedules.ts.
+
+const CronExpressionSchema = z
+  .string()
+  .min(1)
+  .max(100)
+  // 5-field (minute hour dom month dow) — the cron-parser library
+  // accepts more variants but pinning the shape here makes UI hints
+  // and validation messages crisper. Use `*` for "every".
+  .regex(
+    /^\S+\s+\S+\s+\S+\s+\S+\s+\S+$/,
+    "Cron must be 5 space-separated fields (e.g. '0 8 * * *')."
+  )
+
+export const ScheduleCreateSchema = z.object({
+  workspaceId: z.string().min(1).max(64),
+  name: z.string().min(1).max(200),
+  prompt: z.string().min(1).max(20_000),
+  cron: CronExpressionSchema,
+  /** IANA timezone identifier, e.g. "America/Los_Angeles". Defaults
+   *  to UTC server-side. */
+  timezone: z.string().min(1).max(100).optional(),
+  enabled: z.boolean().optional(),
+  /** Model id; falls back to the workspace's pinned model + global
+   *  default when null. */
+  model: z.string().max(100).nullable().optional(),
+  systemPrompt: z.string().max(20_000).nullable().optional(),
+  skills: ChatRequestSchema.shape.skills,
+  maxSteps: z.number().int().min(1).max(50).nullable().optional(),
+})
+
+export const ScheduleUpdateSchema = ScheduleCreateSchema.partial()
+
+export const ScheduleResponseSchema = z.object({
+  id: z.string(),
+  workspaceId: z.string(),
+  name: z.string(),
+  prompt: z.string(),
+  cron: z.string(),
+  timezone: z.string(),
+  enabled: z.boolean(),
+  model: z.string().nullable(),
+  systemPrompt: z.string().nullable(),
+  skills: ChatRequestSchema.shape.skills,
+  maxSteps: z.number().nullable(),
+  lastRunAt: z.string().nullable(),
+  lastRunTaskId: z.string().nullable(),
+  nextRunAt: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+})
+
+export const ScheduleListResponseSchema = z.object({
+  schedules: z.array(ScheduleResponseSchema),
+})
+
+// --- Generic error envelope -------------------------------------------------
 // Non-streaming routes return `{ error, code?, message? }` with a non-2xx
 // status on failure. Frontend categorisation lives in lib/api-errors.ts.
 
@@ -448,6 +508,10 @@ export type TaskRequestInput = z.infer<typeof TaskRequestSchema>
 export type RespondRequestInput = z.infer<typeof RespondRequestSchema>
 export type TaskStartResponse = z.infer<typeof TaskStartResponseSchema>
 export type RespondResponse = z.infer<typeof RespondResponseSchema>
+export type ScheduleCreateInput = z.infer<typeof ScheduleCreateSchema>
+export type ScheduleUpdateInput = z.infer<typeof ScheduleUpdateSchema>
+export type ScheduleResponse = z.infer<typeof ScheduleResponseSchema>
+export type ScheduleListResponse = z.infer<typeof ScheduleListResponseSchema>
 export type CopilotRequestInput = z.infer<typeof CopilotRequestSchema>
 export type ExtractionResponse = z.infer<typeof ExtractionResponseSchema>
 export type SummarizeRequestInput = z.infer<typeof SummarizeRequestSchema>

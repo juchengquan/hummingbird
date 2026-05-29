@@ -17,6 +17,7 @@ import type { NextRequest } from "next/server"
 import { NextResponse } from "next/server"
 
 import { getSupabaseAdminClient } from "@/server/supabase/admin"
+import { dispatchDueSchedules } from "@/server/agent/schedules"
 import { processNextJob, type ProcessOutcome } from "@/server/agent/worker"
 
 const TICK_BUDGET_MS = (() => {
@@ -65,6 +66,18 @@ async function handle(req: NextRequest) {
   }
 
   const deadline = Date.now() + TICK_BUDGET_MS
+
+  // Step 7 — first walk task_schedules for due rows and enqueue start
+  // jobs for them. Has to happen before the worker loop so a schedule
+  // that fires right now actually runs this tick instead of waiting
+  // for the next one.
+  let scheduledFired = 0
+  try {
+    scheduledFired = await dispatchDueSchedules(db)
+  } catch (err) {
+    console.error("[tasks/tick] dispatchDueSchedules:", err)
+  }
+
   const outcomes: ProcessOutcome[] = []
   // Loop until idle (no claim) or the tick's deadline is near. Each job
   // gets its own per-job budget inside `processNextJob`, so this loop
@@ -78,6 +91,7 @@ async function handle(req: NextRequest) {
   }
 
   return NextResponse.json({
+    scheduledFired,
     processed: outcomes.filter((o) => o.kind === "processed").length,
     failed: outcomes.filter((o) => o.kind === "failed").length,
     skipped: outcomes.filter((o) => o.kind === "skipped").length,

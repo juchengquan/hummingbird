@@ -30,6 +30,11 @@ import {
   type ChatRequestInput,
   type TaskRequestInput,
   type RespondRequestInput,
+  ScheduleListResponseSchema,
+  ScheduleResponseSchema,
+  type ScheduleCreateInput,
+  type ScheduleResponse,
+  type ScheduleUpdateInput,
   type CreateShareRequestInput,
   type CreateShareResponse,
   type ExtractionResponse,
@@ -64,6 +69,9 @@ export const apiUrls = {
   chat: () => url("/api/chat"),
   tasks: () => url("/api/tasks"),
   taskSweep: () => url("/api/tasks/sweep"),
+  taskSchedules: () => url("/api/tasks/schedules"),
+  taskScheduleById: (id: string) =>
+    url(`/api/tasks/schedules/${encodeURIComponent(id)}`),
   taskCancel: (id: string) =>
     url(`/api/tasks/${encodeURIComponent(id)}/cancel`),
   taskRespond: (id: string) =>
@@ -286,6 +294,87 @@ async function tasksSweep(): Promise<number> {
   } catch {
     return 0
   }
+}
+
+// --- /api/tasks/schedules (recurring task runs) ----------------------------
+
+async function schedulesList(): Promise<ScheduleResponse[]> {
+  try {
+    const res = await fetch(apiUrls.taskSchedules())
+    if (!res.ok) return []
+    const data = ScheduleListResponseSchema.parse(await res.json())
+    return data.schedules
+  } catch {
+    return []
+  }
+}
+
+async function schedulesCreate(
+  body: ScheduleCreateInput
+): Promise<
+  | { ok: true; status: number; schedule: ScheduleResponse }
+  | { ok: false; status: number; error: { code?: string; message?: string } }
+> {
+  const res = await fetch(apiUrls.taskSchedules(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const errBody = await readErrorBody(res)
+    return {
+      ok: false,
+      status: res.status,
+      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+    }
+  }
+  return {
+    ok: true,
+    status: res.status,
+    schedule: ScheduleResponseSchema.parse(await res.json()),
+  }
+}
+
+async function schedulesUpdate(
+  id: string,
+  patch: ScheduleUpdateInput
+): Promise<
+  | { ok: true; status: number; schedule: ScheduleResponse }
+  | { ok: false; status: number; error: { code?: string; message?: string } }
+> {
+  const res = await fetch(apiUrls.taskScheduleById(id), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) {
+    const errBody = await readErrorBody(res)
+    return {
+      ok: false,
+      status: res.status,
+      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+    }
+  }
+  return {
+    ok: true,
+    status: res.status,
+    schedule: ScheduleResponseSchema.parse(await res.json()),
+  }
+}
+
+async function schedulesDelete(
+  id: string
+): Promise<{ ok: boolean; status: number; error?: { code?: string; message?: string } }> {
+  const res = await fetch(apiUrls.taskScheduleById(id), { method: "DELETE" })
+  if (!res.ok) {
+    const errBody = await readErrorBody(res)
+    return {
+      ok: false,
+      status: res.status,
+      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+    }
+  }
+  return { ok: true, status: res.status }
 }
 
 // --- /api/extract -----------------------------------------------------------
@@ -585,6 +674,12 @@ export const apiClient = {
     cancel: tasksCancel,
     respond: tasksRespond,
     sweep: tasksSweep,
+    schedules: {
+      list: schedulesList,
+      create: schedulesCreate,
+      update: schedulesUpdate,
+      delete: schedulesDelete,
+    },
   },
   extract,
   summarize: {

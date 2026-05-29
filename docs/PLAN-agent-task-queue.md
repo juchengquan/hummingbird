@@ -1,6 +1,6 @@
 # Plan: Queue-backed continuation (durable background execution)
 
-Status: **🪜 Phases 1–6 shipped.** Steps 1+2 (job table + worker shell + `continue` chunking) in [#82](https://github.com/juchengquan/hummingbird/pull/82); steps 3+4 (`start`/`respond` actions move into the worker, POST routes become enqueue + 202) in [#85](https://github.com/juchengquan/hummingbird/pull/85); steps 5+6 (Queued status event + UI label, Realtime live tail of `task_events`) in [#88](https://github.com/juchengquan/hummingbird/pull/88). **Only step 7 (Scheduling) remains optional.** The original recommendation below — "smallest valuable first PR: steps 1+2" — already happened.
+Status: **✅ All steps shipped.** Steps 1+2 (job table + worker shell + `continue` chunking) in [#82](https://github.com/juchengquan/hummingbird/pull/82); steps 3+4 (`start`/`respond` actions move into the worker, POST routes become enqueue + 202) in [#85](https://github.com/juchengquan/hummingbird/pull/85); steps 5+6 (Queued status event + UI label, Realtime live tail of `task_events`) in [#88](https://github.com/juchengquan/hummingbird/pull/88); step 7 (recurring task runs via `task_schedules` + cron resolver + tick dispatch + workspace-scoped UI) in [#99](https://github.com/juchengquan/hummingbird/pull/99). The original recommendation below — "smallest valuable first PR: steps 1+2" — already happened.
 
 This is the deferred Phase 6 of
 `PLAN-agent-hitl-approvals.md` and the queue half of

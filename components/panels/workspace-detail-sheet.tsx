@@ -23,6 +23,7 @@ import {
 import { useStore } from "@/client/hooks/use-store"
 import { CHAT_MODELS } from "@/shared/models"
 import { WorkspaceMcpSection } from "@/components/panels/workspace-mcp-section"
+import { ScheduleSection } from "@/components/panels/schedule-section"
 import type { Workspace } from "@/shared/types"
 
 interface WorkspaceDetailSheetProps {
@@ -200,6 +201,10 @@ function WorkspaceDetailBody({ workspace }: { workspace: Workspace }) {
 
         <div className="pt-3 border-t border-[var(--border)]">
           <WorkspaceMcpSection workspaceId={workspace.id} />
+        </div>
+
+        <div className="pt-3 border-t border-[var(--border)]">
+          <ScheduleSection workspaceId={workspace.id} />
         </div>
 
         <div className="pt-2 border-t border-[var(--border)] grid grid-cols-2 gap-3 text-[11px] text-[var(--muted-foreground)]">

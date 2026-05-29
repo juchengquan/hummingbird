@@ -911,6 +911,81 @@ export type Database = {
           },
         ]
       }
+      task_schedules: {
+        Row: {
+          created_at: string
+          cron: string
+          enabled: boolean
+          id: string
+          last_run_at: string | null
+          last_run_task_id: string | null
+          max_steps: number | null
+          model: string | null
+          name: string
+          next_run_at: string
+          prompt: string
+          skills: Json | null
+          system_prompt: string | null
+          timezone: string
+          updated_at: string
+          user_id: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          cron: string
+          enabled?: boolean
+          id?: string
+          last_run_at?: string | null
+          last_run_task_id?: string | null
+          max_steps?: number | null
+          model?: string | null
+          name: string
+          next_run_at: string
+          prompt: string
+          skills?: Json | null
+          system_prompt?: string | null
+          timezone?: string
+          updated_at?: string
+          user_id: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          cron?: string
+          enabled?: boolean
+          id?: string
+          last_run_at?: string | null
+          last_run_task_id?: string | null
+          max_steps?: number | null
+          model?: string | null
+          name?: string
+          next_run_at?: string
+          prompt?: string
+          skills?: Json | null
+          system_prompt?: string | null
+          timezone?: string
+          updated_at?: string
+          user_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_schedules_last_run_task_id_fkey"
+            columns: ["last_run_task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_schedules_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tasks: {
         Row: {
           checkpoint: Json | null
