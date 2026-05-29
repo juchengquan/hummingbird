@@ -20,7 +20,7 @@ import {
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import { useDroppable } from "@dnd-kit/core"
-import { Loader2, Plus, Sparkles, X } from "lucide-react"
+import { Loader2, Play, Plus, Sparkles, X } from "lucide-react"
 import { toast } from "sonner"
 
 import {
@@ -29,6 +29,7 @@ import {
   useWorkspaceProjectTasks,
 } from "@/client/hooks/use-store"
 import { apiClient } from "@/client/api-client"
+import { useProjectTaskRun } from "@/client/hooks/use-project-task-run"
 import { columnTasks, PROJECT_TASK_COLUMNS } from "@/shared/project-tasks"
 import type { ProjectTask, ProjectTaskStatus } from "@/shared/types"
 import { Button } from "@/components/ui/button"
@@ -365,6 +366,21 @@ function CardShell({
   dragging?: boolean
 }) {
   const deleteProjectTask = useStore((s) => s.deleteProjectTask)
+  const workspace = useActiveWorkspace()
+  // Phase 4 — kick off a long-running agent task using the card title
+  // as the goal. The hook also watches an attached run via Realtime
+  // and auto-transitions the card when it settles.
+  const run = useProjectTaskRun(task, workspace ?? undefined)
+
+  const canLaunch =
+    !dragging &&
+    !task.taskId &&
+    (task.status === "todo" || task.status === "cancelled")
+  const runActive = !!task.taskId && task.status === "in_progress"
+  const stepLabel = runActive
+    ? `step ${run.view.step}${run.view.maxSteps ? ` / ${run.view.maxSteps}` : ""}`
+    : null
+
   return (
     <div
       className={cn(
@@ -373,18 +389,56 @@ function CardShell({
         dragging && "shadow-lg"
       )}
     >
-      <p className="pr-5 leading-snug break-words">{task.title}</p>
+      <p
+        className={cn(
+          "pr-5 leading-snug break-words",
+          task.status === "done" && "text-[var(--muted-foreground)] line-through",
+          task.status === "cancelled" && "text-[var(--muted-foreground)] italic"
+        )}
+      >
+        {task.title}
+      </p>
+      {runActive && (
+        <div className="mt-1 flex items-center gap-1.5 text-[10px] text-[var(--muted-foreground)]">
+          <Loader2 size={10} className="animate-spin text-[var(--primary)]" />
+          <span>Running · {stepLabel}</span>
+        </div>
+      )}
+      {run.error && !runActive && (
+        <p className="mt-1 text-[10px] text-[var(--destructive)] break-words">
+          {run.error}
+        </p>
+      )}
       {!dragging && (
-        <button
-          type="button"
-          // stop dnd listeners on the parent from swallowing the click.
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={() => deleteProjectTask(task.id)}
-          aria-label="Delete task"
-          className="absolute top-1 right-1 p-0.5 rounded text-[var(--muted-foreground)] opacity-0 group-hover/card:opacity-100 hover:text-[var(--destructive)] transition-opacity"
-        >
-          <X size={12} />
-        </button>
+        <div className="absolute top-1 right-1 flex items-center gap-0.5 opacity-0 group-hover/card:opacity-100 transition-opacity">
+          {canLaunch && (
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => void run.launch()}
+              disabled={run.starting}
+              aria-label="Run as task"
+              title="Run as task"
+              className="p-0.5 rounded text-[var(--muted-foreground)] hover:text-[var(--primary)] disabled:opacity-50"
+            >
+              {run.starting ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <Play size={12} />
+              )}
+            </button>
+          )}
+          <button
+            type="button"
+            // stop dnd listeners on the parent from swallowing the click.
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => deleteProjectTask(task.id)}
+            aria-label="Delete task"
+            className="p-0.5 rounded text-[var(--muted-foreground)] hover:text-[var(--destructive)]"
+          >
+            <X size={12} />
+          </button>
+        </div>
       )}
     </div>
   )
