@@ -13,6 +13,7 @@ import {
 import { categorizeError } from "@/shared/api-errors"
 import { RespondRequestSchema } from "@/shared/api-schemas"
 import { ASK_USER_TOOL_NAME, requestKindFor } from "@/server/agent/input-policy"
+import { buildTaskSystemPrompt } from "@/server/agent/task-prompt"
 import { makeAskUserTool } from "@/server/agent/ask-user-tool"
 import { buildGatedMcpTool, buildMcpTool, mcpToolName } from "@/server/mcp/tools"
 import { callTool } from "@/server/mcp/client"
@@ -37,6 +38,17 @@ import {
   saveCheckpoint,
   updateRun,
 } from "@/server/agent/store"
+import { enqueueContinueJob } from "@/server/agent/jobs"
+
+/** Wall-clock budget for the respond route's continuation — sized to
+ *  leave headroom under the function cap and yield to a worker when
+ *  the chunk overruns. Mirrors `TASK_ROUTE_BUDGET_MS` in the start
+ *  route; deploy targets with a higher cap can raise it via env. */
+const RESPOND_ROUTE_BUDGET_MS = (() => {
+  const raw = Number(process.env.TASK_ROUTE_BUDGET_MS)
+  if (Number.isFinite(raw) && raw > 0) return Math.floor(raw)
+  return 45_000
+})()
 
 /**
  * Resolve a HITL pending input — approve/reject a gated tool, choose
@@ -290,11 +302,13 @@ export async function POST(
         gatedTools: gatedToolNames,
       })
 
+      const deadline = Date.now() + RESPOND_ROUTE_BUDGET_MS
       const result = await runAgentLoop({
         emitter,
         maxSteps: checkpoint.config.maxSteps,
         signal: req.signal,
         isCancelled: () => isRunCancelled(db, runId, userId),
+        shouldYield: () => Date.now() > deadline,
         runStep,
       })
 
@@ -322,6 +336,23 @@ export async function POST(
             : {}),
         })
         emitter.status("paused")
+      } else if (result.kind === "yielded") {
+        // Same time-budget handoff as the start route — checkpoint the
+        // continuation's state and enqueue a `continue` job. The
+        // emitter is NOT settled; status stays `running` while the
+        // worker picks up.
+        const nextCheckpoint: RunCheckpoint = {
+          messages,
+          step: emitter.step,
+          seq: emitter.seq,
+          config: checkpoint.config,
+        }
+        try {
+          await saveCheckpoint(db, runId, userId, nextCheckpoint)
+          await enqueueContinueJob(db, { taskId: runId, userId })
+        } catch (err) {
+          console.error("[tasks/respond] yield handoff:", err)
+        }
       }
 
       await chain
@@ -452,50 +483,3 @@ function extractAskUserFields(args: object): {
   return out
 }
 
-function buildTaskSystemPrompt(opts: {
-  workspaceSystemPrompt?: string
-  enabledSkillIds: SkillId[]
-  skillRequestEntries: SkillRequestEntry[]
-  mcpServers: { name: string; toolCount: number }[]
-}): string {
-  const trimmedWorkspace = opts.workspaceSystemPrompt?.trim()
-  const enabled = new Set<SkillId>(opts.enabledSkillIds)
-  const entryById = new Map<string, SkillRequestEntry>(
-    opts.skillRequestEntries.map((s) => [s.id, s])
-  )
-  const notes: string[] = []
-  for (const skill of SERVER_SKILLS) {
-    if (!enabled.has(skill.id)) continue
-    const fragment = skill.promptFragment(entryById.get(skill.id))
-    if (fragment) notes.push(fragment)
-  }
-  const skillsLine =
-    notes.length > 0
-      ? `Available capabilities:\n${notes.map((n) => `- ${n}`).join("\n")}`
-      : null
-  const activeMcp = (opts.mcpServers ?? []).filter((s) => s.toolCount > 0)
-  const mcpLine =
-    activeMcp.length > 0
-      ? `You also have tools from connected MCP servers (prefixed ` +
-        `\`mcp__<serverId>__<toolName>\`); call them when relevant. ` +
-        `Connected:\n${activeMcp
-          .map((s) => `- "${s.name}" (${s.toolCount} tools)`)
-          .join("\n")}`
-      : null
-  return [
-    trimmedWorkspace,
-    "You are an autonomous agent inside the Hummingbird app, working on a " +
-      "multi-step task. Start by calling `setPlan` with a short todo list " +
-      "of the steps you intend to take, then update it (via `setPlan` " +
-      "again) as steps move to 'in_progress' and 'completed'. Call the " +
-      "available tools as needed and keep going until the task is " +
-      "complete. If you need a decision from the user (which option to " +
-      "pick, a value to use), call `askUser` — the run pauses and the " +
-      "user's answer comes back as the tool's result. When you have " +
-      "finished, write a clear final answer in Markdown.",
-    skillsLine,
-    mcpLine,
-  ]
-    .filter(Boolean)
-    .join("\n\n")
-}

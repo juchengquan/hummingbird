@@ -79,7 +79,10 @@ export function useTaskRun(options?: UseTaskRunOptions): UseTaskRunResult {
   // updates don't hammer localStorage.
   const persistedRef = useRef<{ status: string; step: number } | null>(null)
 
-  const consume = useCallback(async (body: ReadableStream<Uint8Array>) => {
+  /** One stream worth of events — used directly by the outer `consume`
+   *  and by the auto-reconnect loop. Kept above its caller so the
+   *  useCallback exhaustive-deps check stays clean. */
+  const consumeOnce = useCallback(async (body: ReadableStream<Uint8Array>) => {
     for await (const event of decodeTaskEventStream(body)) {
       if (!runIdRef.current && event.runId) {
         runIdRef.current = event.runId
@@ -115,6 +118,49 @@ export function useTaskRun(options?: UseTaskRunOptions): UseTaskRunResult {
       }
     }
   }, [])
+
+  const consume = useCallback(
+    async (body: ReadableStream<Uint8Array>) => {
+      await consumeOnce(body)
+      // Auto-reconnect on a non-terminal close. This is how chunking
+      // (the task-queue plan) ends up transparent: the inline POST
+      // stream closes when the route yields to a worker (status stays
+      // `running`, no terminal event); the client opens a fresh resume
+      // stream a beat later and folds the worker's events as they
+      // arrive. We bail out as soon as the run settles, the user
+      // pauses for HITL, the user cancels, or nothing was streamed at
+      // all (treated as the server having nothing to say — preventing
+      // a tight reconnect loop on a genuinely broken endpoint).
+      while (
+        !abortRef.current?.signal.aborted &&
+        viewRef.current.cursor > 0 &&
+        !isStableStatus(viewRef.current.status) &&
+        runIdRef.current
+      ) {
+        await new Promise<void>((resolve) => {
+          const t = setTimeout(resolve, 1500)
+          abortRef.current?.signal.addEventListener(
+            "abort",
+            () => {
+              clearTimeout(t)
+              resolve()
+            },
+            { once: true }
+          )
+        })
+        if (abortRef.current?.signal.aborted) break
+        const id = runIdRef.current
+        if (!id) break
+        const next = await apiClient.tasks.resume(id, {
+          cursor: viewRef.current.cursor,
+          signal: abortRef.current?.signal,
+        })
+        if (!next.ok || !next.body) break
+        await consumeOnce(next.body)
+      }
+    },
+    [consumeOnce]
+  )
 
   const start = useCallback(
     async (body: TaskRequestInput) => {
@@ -236,4 +282,12 @@ export function useTaskRun(options?: UseTaskRunOptions): UseTaskRunResult {
   }, [])
 
   return { view, runId, isRunning, error, start, resume, cancel, respond, reset }
+}
+
+/** Statuses where the auto-reconnect loop should stop — terminal
+ *  outcomes plus `paused` (HITL takes over via `respond`). Anything
+ *  else (`queued` / `running`) signals the worker is still cooking,
+ *  so we open a fresh stream and keep watching. */
+function isStableStatus(status: TaskRunView["status"]): boolean {
+  return status === "paused" || isTerminalStatus(status)
 }

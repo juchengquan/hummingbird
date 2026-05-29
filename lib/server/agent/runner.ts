@@ -57,12 +57,17 @@ export interface RunStepOutcome {
 
 export type RunStepFn = (ctx: RunStepContext) => Promise<RunStepOutcome>
 
-/** Outcome of `runAgentLoop`. Settled (terminal event already emitted)
- *  or suspended (run is `paused`; the route checkpoints + emits the
- *  input request). */
+/** Outcome of `runAgentLoop`. Three non-terminal possibilities — the
+ *  route/worker decides what to do next:
+ *  - `settled`: terminal event emitted, nothing more to do.
+ *  - `suspended`: HITL pause. Persist checkpoint + emit input request.
+ *  - `yielded`: chunk break (we used up our time budget but the run
+ *    isn't finished). Persist checkpoint + enqueue a `continue` job.
+ *    Status stays `running`; no terminal event is emitted. */
 export type AgentLoopResult =
   | { kind: "settled" }
   | { kind: "suspended"; pendingInput: PendingInputDescriptor }
+  | { kind: "yielded" }
 
 export interface AgentLoopOptions {
   emitter: RunEmitter
@@ -71,6 +76,13 @@ export interface AgentLoopOptions {
   /** Polled before each step so an out-of-band cancel (the DB status
    *  flipped by `/cancel`) stops the run between steps. */
   isCancelled: () => boolean | Promise<boolean>
+  /** Polled before each step so the loop can voluntarily yield when
+   *  we're close to the serverless function's execution cap. The
+   *  current step always finishes; only the next-step gate sees the
+   *  yield. Returning `true` produces a `yielded` result without
+   *  settling — the route/worker persists the checkpoint and enqueues
+   *  a `continue` job. */
+  shouldYield?: () => boolean
   runStep: RunStepFn
 }
 
@@ -82,7 +94,7 @@ export interface AgentLoopOptions {
 export async function runAgentLoop(
   opts: AgentLoopOptions
 ): Promise<AgentLoopResult> {
-  const { emitter, maxSteps, signal, isCancelled, runStep } = opts
+  const { emitter, maxSteps, signal, isCancelled, shouldYield, runStep } = opts
   // Only emit `status: running` on a fresh start. A continuation
   // invocation (HITL resume) is already at the current step counter
   // (seeded via `startStep`), so the first status emit is the route's
@@ -93,6 +105,12 @@ export async function runAgentLoop(
       if (signal.aborted || (await isCancelled())) {
         emitter.status("cancelled")
         return { kind: "settled" }
+      }
+      // Time-budget gate — before starting the next step, check whether
+      // the surrounding function is close to its execution cap. The
+      // caller persists the checkpoint and enqueues a `continue` job.
+      if (shouldYield?.()) {
+        return { kind: "yielded" }
       }
       emitter.startStep()
       const outcome = await runStep({ step, signal, emitter })
