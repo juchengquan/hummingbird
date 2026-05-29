@@ -37,6 +37,7 @@ import type {
 } from "@/shared/types"
 import type { AppSupabaseClient } from "@/client/supabase/client"
 import type { Json } from "@/shared/supabase/types"
+import { parseCanvasState } from "@/shared/canvas/types"
 import { useStore } from "@/client/hooks/use-store"
 import { setSyncSnapshot } from "@/client/hooks/use-sync"
 
@@ -259,6 +260,10 @@ export async function fetchCloudSnapshot(
         skillPrefs: jsonToSkillPrefs(w.skill_prefs),
         defaultModel: w.default_model ?? undefined,
         position: w.position ?? undefined,
+        // Defensive parse — a malformed canvas_state shouldn't blank the
+        // workspace. parseCanvasState drops bad nodes/edges; null when the
+        // column is empty (no canvas yet).
+        canvasState: parseCanvasState(w.canvas_state) ?? undefined,
         createdAt: new Date(w.created_at),
         updatedAt: new Date(w.updated_at),
       }))
@@ -540,6 +545,7 @@ export async function bulkUploadLocalState(
         // the explicit `position` field (v13 migration). Preserves the
         // user's current visible order on first cloud upload.
         position: w.position ?? i,
+        canvas_state: (w.canvasState ?? null) as unknown as Json | null,
         created_at: w.createdAt.toISOString(),
         updated_at: w.updatedAt.toISOString(),
       }))

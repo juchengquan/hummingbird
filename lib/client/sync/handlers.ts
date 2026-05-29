@@ -65,6 +65,15 @@ export function diffWorkspaces(prev: Workspace[], next: Workspace[]): SyncOp[] {
           skill_prefs: w.skillPrefs ?? {},
           default_model: w.defaultModel ?? null,
           position: w.position ?? null,
+          // Canvas layout (node positions + edges + viewport). `updatedAt`
+          // is bumped by setWorkspaceCanvasState on every change, so the
+          // workspaceEquals updatedAt check already triggers this upsert —
+          // we just need the column in the row. Cast through unknown: the
+          // CanvasState object is JSONB-serialisable but not structurally
+          // a `Json` to TS.
+          canvas_state: (w.canvasState ?? null) as unknown as
+            | import("@/shared/supabase/types").Json
+            | null,
           created_at: toISO(w.createdAt),
           updated_at: toISO(w.updatedAt),
         },
