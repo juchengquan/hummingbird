@@ -1,6 +1,6 @@
 "use client"
 
-import { FolderOpen, StickyNote, Archive, Sparkles, Pin, Plug, Globe } from "lucide-react"
+import { FolderOpen, StickyNote, Archive, Sparkles, Pin, Plug, Globe, KanbanSquare } from "lucide-react"
 import { cn } from "@/shared/utils"
 import { SKILLS } from "@/shared/skills/registry"
 import { resolveSkill } from "@/shared/skills/types"
@@ -21,6 +21,7 @@ import {
   useConversationPrivateMcpResources,
   useWorkspaceUrlBookmarks,
   useConversationPrivateUrlBookmarks,
+  useWorkspaceProjectTasks,
 } from "@/client/hooks/use-store"
 import { ChatResourcesPanel } from "@/components/panels/chat-resources-panel"
 
@@ -50,6 +51,8 @@ const TABS = [
   { id: "skills" as const, label: "Skills", Icon: Sparkles },
 ]
 
+const PROJECT_TAB = { id: "project" as const, label: "Tasks", Icon: KanbanSquare }
+
 export function ResourcesMobileDrawer({
   open,
   onOpenChange,
@@ -64,11 +67,14 @@ export function ResourcesMobileDrawer({
     useWorkspaceMcpResources().length + useConversationPrivateMcpResources().length
   const linksCount =
     useWorkspaceUrlBookmarks().length + useConversationPrivateUrlBookmarks().length
+  const projectTasksCount = useWorkspaceProjectTasks().length
   const workspace = useActiveWorkspace()
   const conversation = useActiveConversation()
   const skillsActive = SKILLS.filter((s) =>
     resolveSkill(s, workspace?.skillPrefs, conversation?.skillPrefs)
   ).length
+
+  const tabs = workspace?.isProject ? [PROJECT_TAB, ...TABS] : TABS
 
   const counts: Record<typeof tab, number> = {
     files: filesCount,
@@ -78,6 +84,7 @@ export function ResourcesMobileDrawer({
     mcp: mcpCount,
     pins: pinsCount,
     skills: skillsActive,
+    project: projectTasksCount,
   }
 
   return (
@@ -90,7 +97,7 @@ export function ResourcesMobileDrawer({
         {/* Tab strip — only used by the mobile drawer. The desktop sidebar
             uses the activity bar in <ResourcesSidebar/>. */}
         <div className="shrink-0 flex border-b border-[var(--border)]">
-          {TABS.map(({ id, label, Icon }) => {
+          {tabs.map(({ id, label, Icon }) => {
             const active = tab === id
             const count = counts[id]
             return (

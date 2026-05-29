@@ -69,6 +69,7 @@ export type SyncTarget =
   | "url_bookmarks"
   | "conversation_url_bookmarks"
   | "prompts"
+  | "project_tasks"
 
 interface QueueState {
   ops: SyncOp[]

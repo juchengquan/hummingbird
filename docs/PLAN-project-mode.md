@@ -1,7 +1,15 @@
 # Plan: Project mode
 
-Status: **🪜 Phase 1 shipped** (schema + project toggle, PR #64).
-Phases 2–5 pending (Kanban board, AI breakdown, run-as-task, polish).
+Status: **🪜 Phases 1–2 shipped** (schema + toggle, PR #64; Kanban
+board + CRUD + drag + sync, PR #82). Phases 3–5 pending (AI
+breakdown, run-as-task, polish — milestone bar / sidebar chip /
+export). Phase 2 added the `projectTasks` store slice + mutators
+(`createProjectTask`/`updateProjectTask`/`moveProjectTask`/
+`deleteProjectTask`), the pure `lib/shared/project-tasks.ts` reorder
+helper, full `project_tasks` sync (diff + reconcile + bulk upload),
+the gated "Tasks" rail tab (desktop + mobile), and the
+`ProjectTasksPanel` dnd-kit board. Manual add is wired now; per-card
+"Run as task" arrives in Phase 4.
 The long-running-tasks dependency is met (shipped). Phase 1 landed:
 migration `0014_project_mode.sql` (workspace `is_project`/`goal`/
 `milestones` columns + `project_tasks` table + RLS), the `Workspace`
