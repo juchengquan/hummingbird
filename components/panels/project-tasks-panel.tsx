@@ -2,7 +2,7 @@
 
 import "client-only"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   DndContext,
   DragOverlay,
@@ -20,7 +20,7 @@ import {
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import { useDroppable } from "@dnd-kit/core"
-import { Loader2, Plus, Sparkles, X } from "lucide-react"
+import { ExternalLink, Loader2, Play, Plus, Sparkles, X } from "lucide-react"
 import { toast } from "sonner"
 
 import {
@@ -28,11 +28,31 @@ import {
   useStore,
   useWorkspaceProjectTasks,
 } from "@/client/hooks/use-store"
+import { useTaskRunContext } from "@/client/agent/task-run-context"
 import { apiClient } from "@/client/api-client"
+import { resolveEnabledSkills } from "@/shared/skills/resolve-enabled-skills"
 import { columnTasks, PROJECT_TASK_COLUMNS } from "@/shared/project-tasks"
+import type { TaskRequestInput } from "@/shared/api-schemas"
 import type { ProjectTask, ProjectTaskStatus } from "@/shared/types"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/shared/utils"
+
+/**
+ * Live state for the one card whose run is currently being observed.
+ * Threaded down to the cards so the active card shows a spinner + step
+ * counter (mirroring the chat-header task strip). Only one run is in
+ * flight at a time — the substrate (`useTaskRun`) is single-run.
+ */
+interface CardRunInfo {
+  /** The runId of the active run, matched against `task.taskId`. */
+  activeRunId: string | null
+  /** The card optimistically moved to In progress before its runId
+   *  arrived — matched against `task.id` so the spinner shows instantly. */
+  pendingCardId: string | null
+  running: boolean
+  step: number
+  maxSteps: number | null
+}
 
 const COLUMN_LABELS: Record<ProjectTaskStatus, string> = {
   todo: "To-do",
@@ -53,15 +73,155 @@ export function ProjectTasksPanel() {
   const tasks = useWorkspaceProjectTasks()
   const createProjectTask = useStore((s) => s.createProjectTask)
   const moveProjectTask = useStore((s) => s.moveProjectTask)
+  const updateProjectTask = useStore((s) => s.updateProjectTask)
+  const createArtifact = useStore((s) => s.createArtifact)
+  const createConversation = useStore((s) => s.createConversation)
+  const appendToActiveDocumentOrCreate = useStore(
+    (s) => s.appendToActiveDocumentOrCreate
+  )
+  const requestEditorReload = useStore((s) => s.requestEditorReload)
+  const setActiveView = useStore((s) => s.setActiveView)
+  const artifacts = useStore((s) => s.artifacts)
+
+  const taskRun = useTaskRunContext()
 
   const [activeId, setActiveId] = useState<string | null>(null)
   // "Generate tasks" (Phase 3) breakdown picker state. `proposed` holds
   // the model's suggested titles awaiting the user's import selection.
   const [generating, setGenerating] = useState(false)
   const [proposed, setProposed] = useState<string[] | null>(null)
+  // Phase 4 "Run as task". The card optimistically moved to In progress
+  // while its runId is still pending (startTask is fire-and-forget; the
+  // runId arrives a beat later on the first stream event).
+  const [pendingCardId, setPendingCardId] = useState<string | null>(null)
+  // Guards the terminal-edge handler so a card is settled once per run
+  // even though `view` updates on every token. Holds the last runId we
+  // already settled.
+  const settledRunRef = useRef<string | null>(null)
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   )
+
+  // Stamp the runId onto the launched card once it arrives (so the card
+  // re-attaches to the run across reloads via `taskId`), or revert the
+  // optimistic move if the start failed before producing a runId.
+  const runId = taskRun.runId
+  const runError = taskRun.error
+  useEffect(() => {
+    if (!pendingCardId) return
+    if (runId) {
+      updateProjectTask(pendingCardId, { taskId: runId })
+      setPendingCardId(null)
+    } else if (runError) {
+      moveProjectTask(pendingCardId, "todo", 0)
+      setPendingCardId(null)
+      toast.error("Couldn't start the task.")
+    }
+  }, [pendingCardId, runId, runError, updateProjectTask, moveProjectTask])
+
+  // Observe the active run's status and drive its card: on `done`, move
+  // it to Done and link the result as a markdown artifact; on
+  // `failed`/`cancelled`, move it back to To-do. Keyed by runId so a
+  // resumed-on-reload run (whose card is matched by `taskId`) settles
+  // correctly too.
+  const status = taskRun.view.status
+  const resultText = taskRun.view.resultText
+  const streamedText = taskRun.view.text
+  useEffect(() => {
+    if (!runId) return
+    if (status !== "done" && status !== "failed" && status !== "cancelled") {
+      return
+    }
+    if (settledRunRef.current === runId) return
+    const card = useStore.getState().projectTasks.find((t) => t.taskId === runId)
+    if (!card) return
+    settledRunRef.current = runId
+
+    if (status === "done") {
+      if (!card.artifactId) {
+        const text = (resultText ?? streamedText).trim()
+        const convId =
+          taskRun.runConversationId ?? useStore.getState().activeConversationId
+        if (text && convId) {
+          const artifact = createArtifact({
+            conversationId: convId,
+            kind: "markdown",
+            title: card.title,
+            content: text,
+          })
+          updateProjectTask(card.id, { artifactId: artifact.id })
+        }
+      }
+      moveProjectTask(card.id, "done", 0)
+    } else {
+      moveProjectTask(card.id, "todo", 0)
+      if (status === "failed") {
+        toast.error("Task failed — card moved back to To-do.")
+      }
+    }
+  }, [
+    runId,
+    status,
+    resultText,
+    streamedText,
+    taskRun.runConversationId,
+    createArtifact,
+    updateProjectTask,
+    moveProjectTask,
+  ])
+
+  // Launch a long-running task for a card: workspace system prompt +
+  // skills cascade + the card title as the goal. The result lands as an
+  // assistant message in the workspace's conversation (authored by the
+  // task runner) and, on the board, as a linked markdown artifact.
+  const runCard = (card: ProjectTask) => {
+    if (!workspace || taskRun.isRunning || pendingCardId) return
+    const state = useStore.getState()
+    const active = state.conversations.find(
+      (c) => c.id === state.activeConversationId
+    )
+    const conversationId =
+      active && active.workspaceId === workspace.id
+        ? active.id
+        : createConversation(workspace.id).id
+
+    const body: TaskRequestInput = {
+      messages: [{ role: "user", content: card.title }],
+      conversationId,
+      model: workspace.defaultModel,
+      workspaceSystemPrompt: workspace.systemPrompt?.trim() || undefined,
+      workspaceId: workspace.id,
+      skills: resolveEnabledSkills({ workspace }),
+    }
+    settledRunRef.current = null
+    setPendingCardId(card.id)
+    moveProjectTask(card.id, "in_progress", 0)
+    taskRun.startTask(body, { title: card.title })
+  }
+
+  // Send a card's linked artifact to the editor (Phase 4 deliverable
+  // surface). Mirrors the artifacts tab's "Send to editor".
+  const viewResult = (card: ProjectTask) => {
+    const artifact = card.artifactId
+      ? artifacts.find((a) => a.id === card.artifactId)
+      : undefined
+    if (!artifact) {
+      toast.error("This task's result is no longer available.")
+      return
+    }
+    appendToActiveDocumentOrCreate(artifact.content)
+    requestEditorReload()
+    setActiveView("editor")
+    toast.success("Sent result to editor")
+  }
+
+  const run: CardRunInfo = {
+    activeRunId: runId,
+    pendingCardId,
+    running: taskRun.isRunning,
+    step: taskRun.view.step,
+    maxSteps: taskRun.view.maxSteps,
+  }
 
   // Cards grouped per column, memoised so drag re-renders stay cheap.
   const byColumn = useMemo(() => {
@@ -187,6 +347,9 @@ export function ProjectTasksPanel() {
               key={status}
               status={status}
               tasks={byColumn[status]}
+              run={run}
+              onRun={runCard}
+              onViewResult={viewResult}
               onAdd={
                 status === "todo"
                   ? (title) => createProjectTask({ workspaceId: workspace.id, title })
@@ -268,10 +431,16 @@ function BreakdownPicker({
 function Column({
   status,
   tasks,
+  run,
+  onRun,
+  onViewResult,
   onAdd,
 }: {
   status: ProjectTaskStatus
   tasks: ProjectTask[]
+  run: CardRunInfo
+  onRun: (task: ProjectTask) => void
+  onViewResult: (task: ProjectTask) => void
   onAdd?: (title: string) => void
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status })
@@ -307,7 +476,13 @@ function Column({
       >
         <div className="space-y-1.5 min-h-[8px]">
           {tasks.map((t) => (
-            <SortableCard key={t.id} task={t} />
+            <SortableCard
+              key={t.id}
+              task={t}
+              run={run}
+              onRun={onRun}
+              onViewResult={onViewResult}
+            />
           ))}
         </div>
       </SortableContext>
@@ -341,7 +516,17 @@ function Column({
   )
 }
 
-function SortableCard({ task }: { task: ProjectTask }) {
+function SortableCard({
+  task,
+  run,
+  onRun,
+  onViewResult,
+}: {
+  task: ProjectTask
+  run: CardRunInfo
+  onRun: (task: ProjectTask) => void
+  onViewResult: (task: ProjectTask) => void
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: task.id })
   return (
@@ -352,19 +537,45 @@ function SortableCard({ task }: { task: ProjectTask }) {
       {...attributes}
       {...listeners}
     >
-      <CardShell task={task} />
+      <CardShell
+        task={task}
+        run={run}
+        onRun={onRun}
+        onViewResult={onViewResult}
+      />
     </div>
   )
 }
 
 function CardShell({
   task,
+  run,
+  onRun,
+  onViewResult,
   dragging,
 }: {
   task: ProjectTask
+  run?: CardRunInfo
+  onRun?: (task: ProjectTask) => void
+  onViewResult?: (task: ProjectTask) => void
   dragging?: boolean
 }) {
   const deleteProjectTask = useStore((s) => s.deleteProjectTask)
+  // This card is the one actively running iff its runId matches the
+  // active run, or it's the just-launched card whose runId hasn't
+  // arrived yet.
+  const isRunning =
+    !!run?.running &&
+    ((!!task.taskId && task.taskId === run.activeRunId) ||
+      task.id === run.pendingCardId)
+  const canRun =
+    !dragging &&
+    !!onRun &&
+    task.status === "todo" &&
+    !isRunning &&
+    !run?.running
+  const canViewResult = !dragging && !!onViewResult && !!task.artifactId
+
   return (
     <div
       className={cn(
@@ -374,7 +585,48 @@ function CardShell({
       )}
     >
       <p className="pr-5 leading-snug break-words">{task.title}</p>
-      {!dragging && (
+
+      {isRunning && (
+        <div className="mt-1 flex items-center gap-1.5 text-[10px] text-[var(--muted-foreground)]">
+          <Loader2 size={11} className="animate-spin" />
+          <span className="tabular-nums">
+            {run && run.maxSteps
+              ? `Step ${run.step}/${run.maxSteps}`
+              : run && run.step > 0
+                ? `Step ${run.step}`
+                : "Working…"}
+          </span>
+        </div>
+      )}
+
+      {(canRun || canViewResult) && (
+        <div className="mt-1 flex items-center gap-2">
+          {canRun && (
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => onRun?.(task)}
+              className="flex items-center gap-1 text-[10px] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            >
+              <Play size={11} />
+              Run as task
+            </button>
+          )}
+          {canViewResult && (
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => onViewResult?.(task)}
+              className="flex items-center gap-1 text-[10px] text-[var(--primary)] hover:underline"
+            >
+              <ExternalLink size={11} />
+              View result
+            </button>
+          )}
+        </div>
+      )}
+
+      {!dragging && !isRunning && (
         <button
           type="button"
           // stop dnd listeners on the parent from swallowing the click.

@@ -33,18 +33,7 @@ import {
 } from "@/shared/prompts/mention-parser"
 import { expandTemplate } from "@/shared/prompts/expand"
 import { PromptVariableFill } from "@/components/panels/prompt-variable-fill"
-import {
-  resolveWebSearchConfig,
-  type WebSearchConfig,
-} from "@/shared/skills/web-search-config"
-import {
-  resolveWebFetchConfig,
-  type WebFetchConfig,
-} from "@/shared/skills/web-fetch-config"
-import {
-  resolveImageGenConfig,
-  type ImageGenConfig,
-} from "@/shared/skills/image-gen-config"
+import { resolveEnabledSkills } from "@/shared/skills/resolve-enabled-skills"
 import { SmartPasteChip } from "@/components/chat/smart-paste-chip"
 import { detectPasteKind, type PasteDetection } from "@/shared/smart-paste/detect"
 import { ChatHeader } from "@/components/panels/chat-header"
@@ -529,62 +518,14 @@ export function ChatPanel() {
       // minus any skills the user muted for this one send via the chip ×
       // button. Mute wins over slash-force in the rare case both name the
       // same skill (explicit "off" beats explicit "on").
-      const forcedSkillIds = new Set(options?.forcedSkillIds ?? [])
-      const enabledSkills = SKILLS.filter(
-        (s) =>
-          (resolveSkill(s, activeWorkspace?.skillPrefs, conv?.skillPrefs) ||
-            forcedSkillIds.has(s.id)) &&
-          !mutedSkillsForNext.has(s.id)
-      ).map((s) => {
-        const entry: {
-          id: string
-          webSearchConfig?: WebSearchConfig
-          webFetchConfig?: WebFetchConfig
-          imageGenConfig?: ImageGenConfig
-        } = {
-          id: s.id,
-        }
-        if (s.id === 'webSearch') {
-          // Cascade conversation override → workspace default → built-in.
-          // Resolver clamps + fills in provider defaults.
-          const resolved = resolveWebSearchConfig(
-            activeWorkspace?.webSearchConfig,
-            conv?.webSearchConfig
-          )
-          entry.webSearchConfig = {
-            maxCalls: resolved.maxCalls,
-            tavily: {
-              enabled: resolved.tavily.enabled,
-              searchDepth: resolved.tavily.searchDepth,
-            },
-            brave: {
-              enabled: resolved.brave.enabled,
-              freshness: resolved.brave.freshness,
-            },
-            exa: {
-              enabled: resolved.exa.enabled,
-              type: resolved.exa.type,
-            },
-          }
-        }
-        if (s.id === 'webFetch') {
-          const resolved = resolveWebFetchConfig(
-            activeWorkspace?.webFetchConfig,
-            conv?.webFetchConfig
-          )
-          entry.webFetchConfig = { maxCalls: resolved.maxCalls }
-        }
-        if (s.id === 'imageGen') {
-          const resolved = resolveImageGenConfig(
-            activeWorkspace?.imageGenConfig,
-            conv?.imageGenConfig
-          )
-          entry.imageGenConfig = {
-            maxCalls: resolved.maxCalls,
-            aspectRatio: resolved.aspectRatio,
-          }
-        }
-        return entry
+      // Cascade conversation override → workspace default → built-in,
+      // unioned with slash-forced skills, minus any muted for this one
+      // send. Mute wins over slash-force when both name the same skill.
+      const enabledSkills = resolveEnabledSkills({
+        workspace: activeWorkspace,
+        conversation: conv,
+        forcedSkillIds: options?.forcedSkillIds,
+        mutedSkillIds: mutedSkillsForNext,
       })
       // Index workspace entities up front so the three attachment-collection
       // loops below are O(attached) instead of O(attached × workspace-total).
