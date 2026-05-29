@@ -190,4 +190,62 @@ describe("runAgentLoop — control flow", () => {
     const terminalIdx = events.findIndex((e) => e.kind === "result")
     expect(terminalIdx).toBe(events.length - 1) // result is last
   })
+
+  test("shouldYield between steps returns yielded without settling", async () => {
+    const { emitter, events } = harness()
+    let calls = 0
+    const runStep: RunStepFn = async () => {
+      calls += 1
+      return { done: false }
+    }
+    // Yield after the second step's pre-check (steps 1 and 2 run, then
+    // step 3's gate trips). 1st pre-check (step=1): emitter.step=0 → false;
+    // 2nd (step=2): emitter.step=1 → false; 3rd (step=3): emitter.step=2
+    // → true.
+    const result = await runAgentLoop({
+      emitter,
+      maxSteps: 10,
+      signal: new AbortController().signal,
+      isCancelled: () => false,
+      shouldYield: () => emitter.step >= 2,
+      runStep,
+    })
+    expect(result).toEqual({ kind: "yielded" })
+    expect(calls).toBe(2)
+    expect(emitter.settled).toBe(false)
+    // No terminal event — the route is responsible for enqueueing
+    // `continue` and saving the checkpoint.
+    expect(events.findIndex((e) => e.kind === "result")).toBe(-1)
+    // Status stays at `running` (no `cancelled` / `paused` either).
+    expect(projectRun(events).status).toBe("running")
+  })
+
+  test("a continuation loop (startStep seed) yields against the seeded counter", async () => {
+    const events: TaskEvent[] = []
+    let tick = 0
+    const emitter = new RunEmitter(
+      {
+        runId: "r1",
+        maxSteps: 25,
+        now: () => new Date(++tick).toISOString(),
+        // Simulate resuming after 8 steps already ran (HITL or prior yield).
+        startSeq: 50,
+        startStep: 8,
+      },
+      (e) => events.push(e)
+    )
+    emitter.status("running") // continuation emits this itself
+    const runStep: RunStepFn = async () => ({ done: false })
+    const result = await runAgentLoop({
+      emitter,
+      maxSteps: 25,
+      signal: new AbortController().signal,
+      isCancelled: () => false,
+      // Yield once we've done one more step on top of the seeded 8.
+      shouldYield: () => emitter.step >= 9,
+      runStep,
+    })
+    expect(result).toEqual({ kind: "yielded" })
+    expect(emitter.step).toBe(9)
+  })
 })
