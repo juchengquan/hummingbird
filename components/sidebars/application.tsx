@@ -1,5 +1,5 @@
 import * as React from "react"
-import { BookOpen, LayoutDashboard, Plus, ChevronRight, Pin, MessageSquare, MessagesSquare, FileText, Search, X } from "lucide-react"
+import { BookOpen, LayoutDashboard, LayoutGrid, Plus, ChevronRight, Pin, MessageSquare, MessagesSquare, FileText, Search, X } from "lucide-react"
 import {
   Sidebar,
   SidebarContent,
@@ -179,6 +179,16 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               >
                 <LayoutDashboard />
                 <span className="group-data-[collapsible=icon]:hidden">Workspaces</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip="Canvas"
+                onClick={() => setActiveView("canvas")}
+                isActive={activeView === "canvas"}
+              >
+                <LayoutGrid />
+                <span className="group-data-[collapsible=icon]:hidden">Canvas</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>

@@ -39,6 +39,21 @@ const EditorPanel = dynamic(
   }
 )
 
+// React Flow (~50KB) + the canvas node renderers only load when the user
+// switches to the Canvas view — keeps it off the initial chat bundle, same
+// rationale as the editor split above.
+const CanvasPanel = dynamic(
+  () => import("@/components/panels/canvas").then((m) => m.CanvasPanel),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-full w-full flex items-center justify-center text-sm text-[var(--muted-foreground)]">
+        Loading canvas…
+      </div>
+    ),
+  }
+)
+
 function MainArea() {
   const activeView = useStore((state) => state.activeView)
   // Wait for the persist middleware to finish loading from localStorage
@@ -55,6 +70,7 @@ function MainArea() {
       {activeView === "chat" && <ChatPanel />}
       {activeView === "resources" && <ResourcePanel />}
       {activeView === "editor" && <EditorPanel />}
+      {activeView === "canvas" && <CanvasPanel />}
     </SidebarInset>
   )
 }
