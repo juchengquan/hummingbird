@@ -154,3 +154,14 @@ together are the contract that has to survive that swap.
 - Zustand selectors are used for reactive state (`useStore(state => state.property)`)
 - Tailwind classes are composed using the `cn()` utility from `lib/utils.ts`
 - Components are organized by feature (panels, sidebars) rather than by type
+
+## Working with PRs
+
+- **Auto-subscribe to every PR you create.** Immediately after a
+  successful `mcp__github__create_pull_request`, call
+  `mcp__github__subscribe_pr_activity` with the same `owner`, `repo`,
+  and the new PR's `pullNumber` — without waiting for the user to ask.
+  Then handle CI failures and review comments as they arrive, per the
+  PR-activity-event guidance in the system prompt.
+- If the user explicitly says not to watch a particular PR, skip the
+  subscribe for that one — but the default is on.
