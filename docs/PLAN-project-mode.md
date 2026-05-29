@@ -1,9 +1,18 @@
 # Plan: Project mode
 
-Status: **🪜 Phases 1–3 shipped** (schema + toggle, PR #81; Kanban
+Status: **🪜 Phases 1–4 shipped** (schema + toggle, PR #81; Kanban
 board + CRUD + drag + sync, PR #86; "break this down" AI breakdown,
-PR #89). Phases 4–5 pending (run-as-task, polish — milestone bar /
-sidebar chip / export). Phase 3 added a `project-breakdown` mode on
+PR #89; per-card "Run as task", PR #91). Phase 5 pending (polish —
+milestone bar / sidebar chip / export). Phase 4 wired a "Run as task"
+action on To-do cards: it launches a long-running task via the shared
+`useTaskRunContext` (single-run substrate) using the workspace system
+prompt + skills cascade + the card title as the goal. The card moves
+to In progress with a live spinner + step counter, then to Done on
+settle, where the result is linked back as a markdown artifact
+(surfaced via a "View result" → editor action); a failed/cancelled run
+moves the card back to To-do. The skills cascade was extracted into a
+shared `resolveEnabledSkills` helper (now used by both the chat send
+path and the card run). Phase 3 added a `project-breakdown` mode on
 `/api/summarize` (goal → 5–8 task titles, deduped against existing
 cards), the `apiClient.summarize.projectBreakdown` method + Zod wire
 schemas, and a "Generate tasks" button + checkbox import picker in
@@ -155,7 +164,21 @@ route — decide during implementation based on prompt complexity).
 Returns a list of 5-10 task titles; user picks which to import.
 Imported tasks land in the To-do column.
 
-### Phase 4 — "Run this task" → long-running task (≈ half day)
+### Phase 4 — "Run this task" → long-running task ✅ shipped (#91)
+
+Shipped notes: the card reuses the shared `useTaskRunContext` rather
+than spinning up its own runner, so it inherits resume-on-reload and
+the Tasks-panel control room for free — at the cost of the substrate's
+single-run-at-a-time limit (the Run button is disabled on every card
+while one is in flight). The run is scoped to the workspace's active
+conversation (or a fresh one); its result lands there as an assistant
+message (authored by the runner) and, on the board, as a linked
+markdown artifact built from the result text on the done-edge — the
+`artifact_ref` event channel is dormant today, so the board synthesises
+the deliverable client-side. Card re-attaches to its run across reloads
+by matching `taskId` against the resumed run. Concurrent multi-card
+runs + richer artifact extraction (when `artifact_ref` lands) are
+follow-ups.
 
 - A `Run` button on each To-do card kicks off a long-running task
   using the workspace's `systemPrompt` + skills cascade + the task

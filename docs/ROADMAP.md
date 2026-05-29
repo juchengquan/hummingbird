@@ -10,12 +10,12 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-05-29 (sweep — agent task-queue Phase 6 steps 1–6
-all shipped via #82/#85/#88: jobs + worker + chunking, async POST
-routes, Realtime live tail, visible Queued state. Only step 7
+Last updated: 2026-05-29 (project mode Phases 1–4 shipped:
+#81/#86/#89/#91 — schema + toggle, Kanban board, AI breakdown,
+per-card "Run as task". Phase 5 polish pending. Agent task-queue
+Phase 6 steps 1–6 all shipped via #82/#85/#88; only step 7
 (scheduling) remains optional. Workspace canvas Phases 1–3 (#83);
-project mode Phase 1 + Phase 2 board (#81/#86) shipped — AI breakdown
-+ run-as-task pending).
+Phases 4–5 pending in #90).
 
 > **Plan archive.** Fully-shipped `PLAN-*.md` files live in
 > [`_done/`](_done/). Active plans (planning / phased / decision
@@ -43,8 +43,8 @@ to a representative PR otherwise.
 
 | When | Feature | Where |
 |---|---|---|
+| 2026-05-29 | **Project mode — Phase 4** (per-card "Run as task"): To-do cards launch a long-running task via the shared `useTaskRunContext` (workspace prompt + skills cascade + card title as goal); card moves In progress → Done with a live spinner/step counter, result linked back as a markdown artifact ("View result" → editor); shared `resolveEnabledSkills` helper extracted from the chat send path | [PLAN](PLAN-project-mode.md) · [#91](https://github.com/juchengquan/hummingbird/pull/91) |
 | 2026-05-29 | Agent task queue — **Realtime live tail + visible Queued state** (Phase 6 steps 5+6): `0018_realtime_task_events` adds `task_events` to the Realtime publication; `subscribeTaskEvents` pushes rows to the browser in parallel with the existing poll-tail (idempotent via reduceRun seq); inline pointer differentiates `queued` from `running` | [PLAN](PLAN-agent-task-queue.md) · [#88](https://github.com/juchengquan/hummingbird/pull/88) |
-| 2026-05-29 | **Project mode — Phase 3** ("break this down" AI action): `project-breakdown` mode on `/api/summarize` (goal → task titles, deduped), `apiClient.summarize.projectBreakdown` + Zod schemas, "Generate tasks" button + checkbox import picker on the board | [PLAN](PLAN-project-mode.md) · [#89](https://github.com/juchengquan/hummingbird/pull/89) |
 | 2026-05-28 | **Project mode — Phase 2** (Kanban board): `projectTasks` store slice + mutators, pure reorder helper, `project_tasks` sync (diff/reconcile/bulk-upload), gated Tasks rail tab (desktop + mobile), dnd-kit board with manual add / drag / delete | [PLAN](PLAN-project-mode.md) · [#86](https://github.com/juchengquan/hummingbird/pull/86) |
 | 2026-05-28 | **Project mode — Phase 1** (schema + project toggle): `0016_project_mode` migration (workspace `is_project`/`goal`/`milestones` + `project_tasks` table), types, `setWorkspaceProjectConfig`, workspace-column sync, detail-sheet toggle + goal | [PLAN](PLAN-project-mode.md) · [#81](https://github.com/juchengquan/hummingbird/pull/81) |
 | 2026-05-28 | Agent task queue — **async POST** `/api/tasks` + `/respond` move into the worker (Phase 6 steps 3–4); route enqueues + 202, client opens the resume stream | [PLAN](PLAN-agent-task-queue.md) · [#85](https://github.com/juchengquan/hummingbird/pull/85) |
@@ -134,7 +134,7 @@ via #82/#85/#88); only the optional step 7 (scheduling) remains.
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
 | ✅ [Workspace canvas](PLAN-workspace-canvas.md) | All phases shipped | Spatial react-flow view of messages / artifacts / files. Phases 1–3 in #83 (surface + nodes + persistence + add/connect/focus); Phases 4–5 (auto-position, inline edge labels, snap-to-grid, keyboard nav, PNG export) in `claude/canvas-phases-4-5` (PR pending) |
-| 🪜 [Project mode](PLAN-project-mode.md) | Phases 1–3 shipped (#81, #86, #89) | Workspace → goal + milestones + Kanban tasks. Schema + toggle + board (CRUD/drag/sync) + AI breakdown done; Phases 4–5 (run-as-task, polish) pending |
+| 🪜 [Project mode](PLAN-project-mode.md) | Phases 1–4 shipped (#81, #86, #89, #91) | Workspace → goal + milestones + Kanban tasks. Schema + toggle + board (CRUD/drag/sync) + AI breakdown + run-as-task done; Phase 5 (polish — milestone bar / sidebar chip / export) pending |
 | 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~7.5 days total |
 | 📐 [Agent API as a separate service](PLAN-agent-api.md) | decision doc | Language-agnostic target shape for splitting inference + agent loop out; TS-service or Python, undecided. Distinct from the in-process task queue above |
 | 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 pending | Phase 1 (contract-first frontend ⇄ API surface) shipped; Phase 2 stands up the Python backend |
