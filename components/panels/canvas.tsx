@@ -2,11 +2,13 @@
 
 import "@xyflow/react/dist/style.css"
 
-import { useCallback, useEffect, useMemo, useRef } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   addEdge,
   Background,
   Controls,
+  getNodesBounds,
+  getViewportForBounds,
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
@@ -18,15 +20,20 @@ import {
   type Node,
   type ReactFlowInstance,
 } from "@xyflow/react"
+import { toPng } from "html-to-image"
+import { Download, Grid2x2, Grid2x2Check } from "lucide-react"
+import { toast } from "sonner"
 
 import { useStore, useActiveWorkspace } from "@/client/hooks/use-store"
 import { uuid } from "@/shared/uuid"
+import { Button } from "@/components/ui/button"
 import {
   emptyCanvasState,
   type CanvasNodeKind,
   type CanvasState,
 } from "@/shared/canvas/types"
 import { canvasNodeTypes, type CanvasNodeData } from "@/components/canvas/canvas-nodes"
+import { EditableEdge, type EditableEdgeData } from "@/components/canvas/canvas-edge"
 import {
   CanvasToolbar,
   type AddableGroups,
@@ -36,6 +43,11 @@ import {
 type RfNode = Node<CanvasNodeData>
 
 const PERSIST_DEBOUNCE_MS = 450
+/** Grid step for snap-to-grid + keyboard nudge. */
+const GRID = 16
+/** Module-const so the object identity is stable across renders (React
+ *  Flow warns when edgeTypes/nodeTypes change identity each render). */
+const canvasEdgeTypes = { editable: EditableEdge }
 /** How many recent messages the add-picker offers (flattening every
  *  conversation's history would be unbounded). */
 const MESSAGE_PICKER_LIMIT = 40
@@ -107,6 +119,12 @@ function CanvasInner({ workspaceId }: { workspaceId: string }) {
 
   const [nodes, setNodes, onNodesChange] = useNodesState<RfNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
+
+  // Edge currently in inline-label-edit mode (set by double-click).
+  const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null)
+  // Snap-to-grid toggle (session-local, not persisted).
+  const [snapEnabled, setSnapEnabled] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   // Live workspace collections for the add-picker + dead-ref pruning.
   // (The node renderers read their own bodies; these drive what's
@@ -249,23 +267,44 @@ function CanvasInner({ workspaceId }: { workspaceId: string }) {
     [setEdges, persistNow]
   )
 
+  // Inline edge-label editing (Phase 5). Double-click an edge → its
+  // midpoint input opens; commit writes the label + persists.
   const onEdgeDoubleClick = useCallback(
-    (_: React.MouseEvent, edge: Edge) => {
-      // Minimal label affordance: prompt for text. A richer inline editor
-      // is a polish follow-up (see PLAN Phase 5).
-      const next = window.prompt(
-        "Edge label",
-        typeof edge.label === "string" ? edge.label : ""
-      )
-      if (next === null) return
+    (_: React.MouseEvent, edge: Edge) => setEditingEdgeId(edge.id),
+    []
+  )
+  const onCommitEdgeLabel = useCallback(
+    (edgeId: string, label: string) => {
       setEdges((eds) =>
         eds.map((e) =>
-          e.id === edge.id ? { ...e, label: next || undefined } : e
+          e.id === edgeId ? { ...e, label: label || undefined } : e
         )
       )
+      setEditingEdgeId(null)
       persistNow()
     },
     [setEdges, persistNow]
+  )
+  const onStartEditEdge = useCallback(
+    (edgeId: string) => setEditingEdgeId(edgeId),
+    []
+  )
+
+  // Thread the editing id + callbacks into every edge's data, and force
+  // the editable edge type. Mirrors the sticky-node handler injection.
+  const edgesWithHandlers = useMemo<Edge[]>(
+    () =>
+      edges.map((e) => ({
+        ...e,
+        type: "editable",
+        data: {
+          ...(e.data ?? {}),
+          editingEdgeId,
+          onStartEdit: onStartEditEdge,
+          onCommitLabel: onCommitEdgeLabel,
+        } satisfies EditableEdgeData,
+      })),
+    [edges, editingEdgeId, onStartEditEdge, onCommitEdgeLabel]
   )
 
   const centerPosition = useCallback(() => {
@@ -371,6 +410,106 @@ function CanvasInner({ workspaceId }: { workspaceId: string }) {
     onCanvasIds,
   ])
 
+  // Keyboard nav (Phase 5): Esc deselects + cancels edge-label editing;
+  // arrow keys nudge selected nodes by one grid step. Ignored while a
+  // form field is focused (sticky textarea, edge-label input) so typing
+  // isn't hijacked. Mounted only while the canvas view is active.
+  useEffect(() => {
+    const NUDGE: Record<string, [number, number]> = {
+      ArrowUp: [0, -GRID],
+      ArrowDown: [0, GRID],
+      ArrowLeft: [-GRID, 0],
+      ArrowRight: [GRID, 0],
+    }
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.isContentEditable)
+      ) {
+        return
+      }
+      if (e.key === "Escape") {
+        setEditingEdgeId(null)
+        setNodes((ns) =>
+          ns.some((n) => n.selected)
+            ? ns.map((n) => (n.selected ? { ...n, selected: false } : n))
+            : ns
+        )
+        setEdges((es) =>
+          es.some((ed) => ed.selected)
+            ? es.map((ed) => (ed.selected ? { ...ed, selected: false } : ed))
+            : es
+        )
+        return
+      }
+      const delta = NUDGE[e.key]
+      if (!delta) return
+      let moved = false
+      setNodes((ns) =>
+        ns.map((n) => {
+          if (!n.selected) return n
+          moved = true
+          return {
+            ...n,
+            position: { x: n.position.x + delta[0], y: n.position.y + delta[1] },
+          }
+        })
+      )
+      if (moved) {
+        e.preventDefault()
+        persistDebounced()
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [setNodes, setEdges, persistDebounced])
+
+  // Export the whole canvas as a PNG (Phase 5). Fits all nodes with a
+  // margin, paints the themed background, downloads. Best-effort —
+  // surfaces a toast on failure rather than throwing.
+  const exportPng = useCallback(async () => {
+    const flowNodes = rf.getNodes()
+    if (flowNodes.length === 0) {
+      toast("Canvas is empty — nothing to export")
+      return
+    }
+    const viewport =
+      wrapperRef.current?.querySelector<HTMLElement>(".react-flow__viewport")
+    if (!viewport) return
+    setExporting(true)
+    try {
+      const bounds = getNodesBounds(flowNodes)
+      const pad = 80
+      const width = Math.ceil(bounds.width) + pad * 2
+      const height = Math.ceil(bounds.height) + pad * 2
+      const t = getViewportForBounds(bounds, width, height, 0.5, 2, 0.1)
+      const bg =
+        getComputedStyle(document.body).backgroundColor || "#0a0a0a"
+      const dataUrl = await toPng(viewport, {
+        backgroundColor: bg,
+        width,
+        height,
+        style: {
+          width: `${width}px`,
+          height: `${height}px`,
+          transform: `translate(${t.x}px, ${t.y}px) scale(${t.zoom})`,
+        },
+      })
+      const a = document.createElement("a")
+      a.href = dataUrl
+      a.download = `canvas-${new Date().toISOString().slice(0, 10)}.png`
+      a.click()
+    } catch (err) {
+      console.error("[canvas] PNG export failed", err)
+      toast.error("Couldn't export the canvas as PNG")
+    } finally {
+      setExporting(false)
+    }
+  }, [rf])
+
   const onInit = useCallback(
     (instance: ReactFlowInstance<RfNode, Edge>) => {
       instance.setViewport(rf.getViewport())
@@ -385,6 +524,31 @@ function CanvasInner({ workspaceId }: { workspaceId: string }) {
         onAdd={addProjectedNode}
         onAddSticky={addSticky}
       />
+      {/* Top-right controls: snap-to-grid toggle + PNG export. */}
+      <div className="absolute right-3 top-3 z-10 flex items-center gap-1.5">
+        <Button
+          size="sm"
+          variant={snapEnabled ? "secondary" : "ghost"}
+          onClick={() => setSnapEnabled((v) => !v)}
+          className="h-8 gap-1.5 shadow-sm"
+          title={snapEnabled ? "Snap to grid: on" : "Snap to grid: off"}
+          aria-pressed={snapEnabled}
+        >
+          {snapEnabled ? <Grid2x2Check size={14} /> : <Grid2x2 size={14} />}
+          Snap
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={exportPng}
+          disabled={exporting}
+          className="h-8 gap-1.5 shadow-sm"
+          title="Export canvas as PNG"
+        >
+          <Download size={14} />
+          {exporting ? "Exporting…" : "PNG"}
+        </Button>
+      </div>
       {nodes.length === 0 && (
         <div className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center">
           <p className="text-sm text-[var(--muted-foreground)] text-center max-w-xs px-6">
@@ -397,7 +561,7 @@ function CanvasInner({ workspaceId }: { workspaceId: string }) {
       )}
       <ReactFlow
         nodes={nodesWithHandlers}
-        edges={edges}
+        edges={edgesWithHandlers}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
@@ -408,6 +572,9 @@ function CanvasInner({ workspaceId }: { workspaceId: string }) {
         onMoveEnd={persistDebounced}
         onInit={onInit}
         nodeTypes={canvasNodeTypes}
+        edgeTypes={canvasEdgeTypes}
+        snapToGrid={snapEnabled}
+        snapGrid={[GRID, GRID]}
         deleteKeyCode={["Backspace", "Delete"]}
         proOptions={{ hideAttribution: true }}
         fitView={false}
