@@ -135,26 +135,28 @@ errors:
       store from Phase 1 (PR #50) now round-trips to Supabase.
       Soft-delete via `deleted_at`; unique `(user_id, slug)` on
       live rows. Idempotent.
-12. `supabase/migrations/0012_prompts_workspace.sql`
-    - Adds workspace scoping to prompts (typed-prompt-variables groundwork).
-13. `supabase/migrations/0012_tasks.sql`
+12. `supabase/migrations/0012_tasks.sql`
     - Creates `tasks` + `task_events` — the long-running agent task
-      runner's durable run header + append-only event log. (Shares the
-      `0012` prefix with `prompts_workspace`; both are distinct files
-      and apply independently.)
-14. `supabase/migrations/0013_task_checkpoint.sql`
+      runner's durable run header + append-only event log.
+13. `supabase/migrations/0013_task_checkpoint.sql`
     - Adds the HITL checkpoint column for suspend/resume on agent tasks.
-15. `supabase/migrations/0014_task_jobs.sql`
+14. `supabase/migrations/0014_task_jobs.sql`
     - Creates the `task_jobs` queue table backing durable background
       execution (agent task queue, Phase 6).
-16. `supabase/migrations/0015_workspace_canvas.sql`
+15. `supabase/migrations/0015_workspace_canvas.sql`
     - Adds `canvas_state jsonb` to `workspaces` for the spatial
       canvas view.
-17. `supabase/migrations/0016_project_mode.sql`
+16. `supabase/migrations/0016_project_mode.sql`
     - Adds `is_project` / `goal` / `milestones` to `workspaces` and
       creates the `project_tasks` Kanban-card table (links optionally to
       a `tasks` run + an `artifacts` deliverable). Backs project mode
       (`docs/PLAN-project-mode.md`). Idempotent.
+17. `supabase/migrations/0017_prompts_workspace.sql`
+    - Adds `workspace_id` to `prompts` (0011 created them user-scoped);
+      prompts are now workspace-scoped like conversations and
+      documents. Best-effort backfills existing rows to the user's
+      first workspace, then sets the column `not null`. Idempotent.
+      (Renamed from a `0012` that collided with `0012_tasks`; see #80.)
 
 After running all seventeen, sanity-check from the **Table Editor**:
 twenty-one tables should be listed (`profiles`, `workspaces`,

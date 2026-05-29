@@ -24,6 +24,7 @@ import { ArtifactsTab } from "@/components/panels/artifacts-tab"
 import { PinsTab } from "@/components/panels/pins-tab"
 import { SkillsTab } from "@/components/panels/skills-tab"
 import { McpTab } from "@/components/panels/mcp-tab"
+import { ProjectTasksPanel } from "@/components/panels/project-tasks-panel"
 import { UrlBookmarksTab } from "@/components/panels/url-bookmarks-tab"
 import { FilesTabBody } from "@/components/panels/files-tab-body"
 import { ConversationFilesSection } from "@/components/panels/conversation-files-section"
@@ -173,7 +174,9 @@ export function ChatResourcesPanel({ mode = "chat" }: ChatResourcesPanelProps = 
     <div className="flex flex-col w-full h-full min-h-0">
       {/* Tab strip removed — the icon column in <ResourcesSidebar/> is the
           tab switcher now. Just render the active tab's body. */}
-      {tab === "notes" ? (
+      {tab === "project" ? (
+        <ProjectTasksPanel />
+      ) : tab === "notes" ? (
         <NotesTab />
       ) : tab === "artifacts" ? (
         <ArtifactsTab />

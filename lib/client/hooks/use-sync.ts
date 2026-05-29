@@ -32,6 +32,7 @@ import {
   diffMcpResources,
   diffMcpServers,
   diffNotes,
+  diffProjectTasks,
   diffPrompts,
   diffResources,
   diffUrlBookmarks,
@@ -48,6 +49,7 @@ import type {
   McpResourceBinding,
   McpServer,
   Note,
+  ProjectTask,
   Prompt,
   Resource,
   UploadedFile,
@@ -65,6 +67,7 @@ interface Snapshot {
   notes: Note[]
   artifacts: Artifact[]
   prompts: Prompt[]
+  projectTasks: ProjectTask[]
   mcpServers: McpServer[]
   mcpResources: McpResource[]
   mcpResourceBindings: McpResourceBinding[]
@@ -88,6 +91,7 @@ function takeSnapshot(): Snapshot {
     notes: s.notes,
     artifacts: s.artifacts,
     prompts: s.prompts,
+    projectTasks: s.projectTasks,
     mcpServers: s.mcpServers,
     mcpResources: s.mcpResources,
     mcpResourceBindings: s.mcpResourceBindings,
@@ -139,6 +143,7 @@ export function useSync(): void {
         notes: state.notes,
         artifacts: state.artifacts,
         prompts: state.prompts,
+        projectTasks: state.projectTasks,
         mcpServers: state.mcpServers,
         mcpResources: state.mcpResources,
         mcpResourceBindings: state.mcpResourceBindings,
@@ -162,6 +167,7 @@ export function useSync(): void {
         prev.notes === next.notes &&
         prev.artifacts === next.artifacts &&
         prev.prompts === next.prompts &&
+        prev.projectTasks === next.projectTasks &&
         prev.mcpServers === next.mcpServers &&
         prev.mcpResources === next.mcpResources &&
         prev.mcpResourceBindings === next.mcpResourceBindings &&
@@ -199,6 +205,9 @@ export function useSync(): void {
           : []),
         ...(prev.prompts !== next.prompts
           ? diffPrompts(prev.prompts, next.prompts)
+          : []),
+        ...(prev.projectTasks !== next.projectTasks
+          ? diffProjectTasks(prev.projectTasks, next.projectTasks)
           : []),
         ...(prev.mcpServers !== next.mcpServers
           ? diffMcpServers(prev.mcpServers, next.mcpServers)
@@ -298,6 +307,7 @@ export function setSyncSnapshot(snapshot: {
   notes: Note[]
   artifacts: Artifact[]
   prompts: Prompt[]
+  projectTasks: ProjectTask[]
   mcpServers: McpServer[]
   mcpResources: McpResource[]
   mcpResourceBindings: McpResourceBinding[]
