@@ -60,6 +60,30 @@ if echo "$CHANGED" | grep -q "^$TYPES_FILE\$"; then
   exit 0
 fi
 
+# Allow an explicit opt-out for migrations that genuinely don't change
+# generated types — enabling a Realtime publication on an existing
+# table, granting RPC privileges, swapping an index. A first-line
+# marker (`-- verify-supabase-types: skip`) on EVERY added/modified
+# migration of the PR opts the whole pairing out. Missing the marker
+# on any one of them re-engages the check, so the discipline still
+# bites for actual schema changes.
+ONLY_SKIPPABLE=true
+for f in $MIGRATIONS_AM; do
+  if [ ! -f "$f" ]; then
+    # Race or out-of-tree file — keep the check engaged.
+    ONLY_SKIPPABLE=false
+    break
+  fi
+  if ! head -1 "$f" | grep -qiE '^--[[:space:]]*verify-supabase-types:[[:space:]]*skip'; then
+    ONLY_SKIPPABLE=false
+    break
+  fi
+done
+if [ "$ONLY_SKIPPABLE" = "true" ]; then
+  echo "✓ Supabase types alignment skipped (all added/changed migrations carry the opt-out marker)."
+  exit 0
+fi
+
 # A migration was added/changed; types didn't move. Fail loudly.
 cat >&2 <<EOF
 ✗ Supabase types alignment check failed
