@@ -1,8 +1,9 @@
 # Plan: Workspace canvas
 
-Status: **🪜 Phases 1–3 shipped** on `claude/workspace-canvas` (PR
-pending) — canvas surface + node renderers (Phase 1), `canvas_state`
-persistence + sync (Phase 2), add / connect / focus (Phase 3).
+Status: **🪜 Phases 1–3 shipped** in [#83](https://github.com/juchengquan/hummingbird/pull/83)
+— canvas surface + node renderers (Phase 1), `canvas_state`
+persistence + sync (Phase 2, migration `0015_workspace_canvas`),
+add / connect / focus (Phase 3).
 **Phase 4** (auto-position new artifacts near their source) and
 **Phase 5** (mini-map polish, keyboard nav, PNG/SVG export,
 snap-to-grid) remain. Implementation notes that diverged from this
