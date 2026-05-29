@@ -557,6 +557,14 @@ interface AppState {
     workspaceId: string,
     patch: Partial<import("@/shared/skills/file-search-config").FileSearchConfig> | null
   ) => void
+  /** Replace the workspace's spatial-canvas layout wholesale. Unlike the
+   *  skill-config patchers this is a full set (the canvas panel owns the
+   *  in-session React Flow state and writes the settled snapshot back on
+   *  drag-stop / connect / add / delete). `null` clears the canvas. */
+  setWorkspaceCanvasState: (
+    workspaceId: string,
+    state: import("@/shared/canvas/types").CanvasState | null
+  ) => void
   setActiveWorkspace: (workspaceId: string) => void
 
   // Resource actions
@@ -1264,6 +1272,18 @@ export const useStore = create<AppState>()(
             }
             const merged = mergeFileSearchConfig(w.fileSearchConfig, patch)
             return { ...w, fileSearchConfig: merged, updatedAt: new Date() }
+          }),
+        })),
+      setWorkspaceCanvasState: (workspaceId, canvasState) =>
+        set((state) => ({
+          workspaces: state.workspaces.map((w) => {
+            if (w.id !== workspaceId) return w
+            if (canvasState === null) {
+              const { canvasState: _drop, ...rest } = w
+              void _drop
+              return { ...rest, updatedAt: new Date() }
+            }
+            return { ...w, canvasState, updatedAt: new Date() }
           }),
         })),
       setActiveWorkspace: (workspaceId: string) =>

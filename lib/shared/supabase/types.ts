@@ -1035,6 +1035,7 @@ export type Database = {
       }
       workspaces: {
         Row: {
+          canvas_state: Json | null
           created_at: string
           default_model: string | null
           id: string
@@ -1046,6 +1047,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          canvas_state?: Json | null
           created_at?: string
           default_model?: string | null
           id: string
@@ -1057,6 +1059,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          canvas_state?: Json | null
           created_at?: string
           default_model?: string | null
           id?: string
