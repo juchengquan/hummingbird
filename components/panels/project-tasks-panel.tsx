@@ -20,7 +20,17 @@ import {
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import { useDroppable } from "@dnd-kit/core"
-import { ExternalLink, Loader2, Play, Plus, Sparkles, X } from "lucide-react"
+import {
+  Download,
+  Eye,
+  EyeOff,
+  ExternalLink,
+  Loader2,
+  Play,
+  Plus,
+  Sparkles,
+  X,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import {
@@ -30,8 +40,13 @@ import {
 } from "@/client/hooks/use-store"
 import { useTaskRunContext } from "@/client/agent/task-run-context"
 import { apiClient } from "@/client/api-client"
+import { downloadAsFile, safeFilename } from "@/client/export"
 import { resolveEnabledSkills } from "@/shared/skills/resolve-enabled-skills"
 import { columnTasks, PROJECT_TASK_COLUMNS } from "@/shared/project-tasks"
+import {
+  projectProgress,
+  projectToMarkdown,
+} from "@/shared/project-markdown"
 import type { TaskRequestInput } from "@/shared/api-schemas"
 import type { ProjectTask, ProjectTaskStatus } from "@/shared/types"
 import { Button } from "@/components/ui/button"
@@ -90,6 +105,9 @@ export function ProjectTasksPanel() {
   // the model's suggested titles awaiting the user's import selection.
   const [generating, setGenerating] = useState(false)
   const [proposed, setProposed] = useState<string[] | null>(null)
+  // Phase 5 quick-filter — hides the Done column to focus on what's
+  // left. Lightweight (local) since it's a transient view preference.
+  const [hideDone, setHideDone] = useState(false)
   // Phase 4 "Run as task". The card optimistically moved to In progress
   // while its runId is still pending (startTask is fire-and-forget; the
   // runId arrives a beat later on the first stream event).
@@ -235,6 +253,16 @@ export function ProjectTasksPanel() {
   const activeTask = activeId ? tasks.find((t) => t.id === activeId) ?? null : null
 
   const goal = workspace?.goal?.trim() ?? ""
+
+  // Phase 5 — Markdown export. All inputs come from the store; no
+  // network roundtrip. Filename mirrors conversation export.
+  const exportProject = () => {
+    if (!workspace) return
+    const md = projectToMarkdown(workspace, tasks, artifacts)
+    downloadAsFile(`${safeFilename(workspace.name)}-project.md`, md)
+    toast.success("Project exported")
+  }
+
   const generateTasks = async () => {
     if (!workspace || !goal || generating) return
     setGenerating(true)
@@ -288,35 +316,99 @@ export function ProjectTasksPanel() {
     moveProjectTask(taskId, destStatus, destIndex < 0 ? 0 : destIndex)
   }
 
+  const progress = projectProgress(tasks)
+  const milestones = workspace.milestones ?? []
+  const visibleColumns = hideDone
+    ? PROJECT_TASK_COLUMNS.filter((c) => c !== "done")
+    : PROJECT_TASK_COLUMNS
+
   return (
     <div className="flex flex-col h-full min-h-0">
       <div className="shrink-0 h-11 px-3 border-b border-[var(--border)] flex items-center justify-between gap-2">
-        <p className="text-[11px] text-[var(--muted-foreground)] truncate">
-          {tasks.length === 0
+        <p className="text-[11px] text-[var(--muted-foreground)] truncate tabular-nums">
+          {progress.total === 0
             ? "No tasks yet"
-            : `${byColumn.done.length}/${tasks.filter((t) => t.status !== "cancelled").length} done`}
+            : `${progress.done}/${progress.total} done`}
         </p>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={generateTasks}
-          disabled={!goal || generating}
-          title={
-            goal
-              ? "Break the project goal into tasks"
-              : "Set a project goal in workspace settings first"
-          }
-          className="h-7 px-2 gap-1.5 shrink-0 text-[11px]"
-        >
-          {generating ? (
-            <Loader2 size={12} className="animate-spin" />
-          ) : (
-            <Sparkles size={12} />
-          )}
-          Generate tasks
-        </Button>
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={() => setHideDone((v) => !v)}
+            disabled={progress.total === 0}
+            aria-label={hideDone ? "Show done column" : "Hide done column"}
+            title={hideDone ? "Show done column" : "Hide done column"}
+            className="h-7 w-7 grid place-items-center rounded text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--accent)]/50 disabled:opacity-40"
+          >
+            {hideDone ? <EyeOff size={13} /> : <Eye size={13} />}
+          </button>
+          <button
+            type="button"
+            onClick={exportProject}
+            disabled={progress.total === 0 && !goal && milestones.length === 0}
+            aria-label="Export project as Markdown"
+            title="Export project as Markdown"
+            className="h-7 w-7 grid place-items-center rounded text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--accent)]/50 disabled:opacity-40"
+          >
+            <Download size={13} />
+          </button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={generateTasks}
+            disabled={!goal || generating}
+            title={
+              goal
+                ? "Break the project goal into tasks"
+                : "Set a project goal in workspace settings first"
+            }
+            className="h-7 px-2 gap-1.5 text-[11px]"
+          >
+            {generating ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <Sparkles size={12} />
+            )}
+            Generate tasks
+          </Button>
+        </div>
       </div>
+
+      {(progress.total > 0 || milestones.length > 0) && (
+        <div className="shrink-0 px-3 py-2 border-b border-[var(--border)] space-y-1.5">
+          {progress.total > 0 && (
+            <div
+              className="h-1 rounded bg-[var(--muted)]/40 overflow-hidden"
+              role="progressbar"
+              aria-valuenow={progress.done}
+              aria-valuemin={0}
+              aria-valuemax={progress.total}
+              aria-label="Project progress"
+            >
+              <div
+                className="h-full bg-[var(--primary)] transition-all"
+                style={{
+                  width: `${(progress.done / progress.total) * 100}%`,
+                }}
+              />
+            </div>
+          )}
+          {milestones.length > 0 && (
+            <ul className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-[var(--muted-foreground)]">
+              {milestones.map((m, i) => (
+                <li key={i} className="truncate">
+                  • {m.title}
+                  {m.dueDate && (
+                    <span className="ml-1 tabular-nums opacity-70">
+                      ({m.dueDate})
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {proposed && (
         <BreakdownPicker
@@ -342,7 +434,7 @@ export function ProjectTasksPanel() {
           onDragEnd={onDragEnd}
           onDragCancel={() => setActiveId(null)}
         >
-          {PROJECT_TASK_COLUMNS.map((status) => (
+          {visibleColumns.map((status) => (
             <Column
               key={status}
               status={status}

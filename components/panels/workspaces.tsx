@@ -48,6 +48,7 @@ export function WorkspacesPanel() {
     reorderWorkspaces,
     conversations,
     resources,
+    projectTasks,
     createConversation,
     setActiveConversation,
     setActiveView,
@@ -85,16 +86,29 @@ export function WorkspacesPanel() {
   }, [])
 
   const countsByWorkspace = React.useMemo(() => {
-    const counts: Record<string, { chats: number; files: number }> = {}
-    for (const w of workspaces) counts[w.id] = { chats: 0, files: 0 }
+    const counts: Record<
+      string,
+      { chats: number; files: number; tasksDone: number; tasksTotal: number }
+    > = {}
+    for (const w of workspaces) {
+      counts[w.id] = { chats: 0, files: 0, tasksDone: 0, tasksTotal: 0 }
+    }
     for (const c of conversations) {
       if (counts[c.workspaceId]) counts[c.workspaceId].chats += 1
     }
     for (const r of resources) {
       if (counts[r.workspaceId]) counts[r.workspaceId].files += 1
     }
+    // Project mode N/M chip: count done over non-cancelled. Mirrors
+    // `projectProgress` in lib/shared/project-markdown.
+    for (const t of projectTasks) {
+      const c = counts[t.workspaceId]
+      if (!c || t.status === "cancelled") continue
+      c.tasksTotal += 1
+      if (t.status === "done") c.tasksDone += 1
+    }
     return counts
-  }, [workspaces, conversations, resources])
+  }, [workspaces, conversations, resources, projectTasks])
 
   // Creating a new workspace opens its settings sheet immediately so the
   // user lands in the rename field with a focused surface.
@@ -338,7 +352,12 @@ export function WorkspacesPanel() {
           >
             <div className="p-6 space-y-3">
               {workspaces.map((ws) => {
-                const counts = countsByWorkspace[ws.id] ?? { chats: 0, files: 0 }
+                const counts = countsByWorkspace[ws.id] ?? {
+                  chats: 0,
+                  files: 0,
+                  tasksDone: 0,
+                  tasksTotal: 0,
+                }
                 return (
                   <WorkspaceRow
                     key={ws.id}
@@ -346,6 +365,7 @@ export function WorkspacesPanel() {
                     name={ws.name}
                     updatedAt={ws.updatedAt}
                     counts={counts}
+                    isProject={!!ws.isProject}
                     isActive={ws.id === activeWorkspaceId}
                     deletable={workspaces.length > 1}
                     onActivate={() => setActiveWorkspace(ws.id)}
