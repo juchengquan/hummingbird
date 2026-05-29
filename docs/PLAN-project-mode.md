@@ -1,9 +1,15 @@
 # Plan: Project mode
 
-Status: **🪜 Phases 1–4 shipped** (schema + toggle, PR #81; Kanban
+Status: **✅ All phases shipped** (schema + toggle, PR #81; Kanban
 board + CRUD + drag + sync, PR #86; "break this down" AI breakdown,
-PR #89; per-card "Run as task", PR #91). Phase 5 pending (polish —
-milestone bar / sidebar chip / export). Phase 4 wired a "Run as task"
+PR #89; per-card "Run as task", PR #91; polish, PR #94). Phase 5
+landed the milestones editor in the workspace detail sheet, a
+combined progress-bar + milestones strip at the top of the Tasks
+tab, a "Hide done" quick filter + Markdown export button in the
+panel header (pure `projectToMarkdown` helper in
+`lib/shared/project-markdown.ts` covering goal + milestones + tasks +
+artifacts inlined), and an `N/M done` chip on each project workspace's
+row in the index. Phase 4 wired a "Run as task"
 action on To-do cards: it launches a long-running task via the shared
 `useTaskRunContext` (single-run substrate) using the workspace system
 prompt + skills cascade + the card title as the goal. The card moves
@@ -190,12 +196,26 @@ follow-ups.
 - A small spinner + step counter on the card while running, similar
   to the chat-header task strip.
 
-### Phase 5 — Polish (deferred)
+### Phase 5 — Polish ✅ shipped (#94)
 
-- Milestone progress bar at the top of the Tasks tab.
-- Workspace sidebar entry shows the `N/M done` chip.
-- Quick filter (To-do only, blocked, etc.).
-- Export a project as Markdown (goal + milestones + tasks + artifacts).
+Shipped notes: milestones are informational (no card linkage), so the
+"progress bar" is overall (done over non-cancelled tasks, matching the
+sidebar chip), and milestones render as a chip strip below the bar.
+Quick filter is a single "Hide done" toggle — simpler than per-status
+chips and covers the most common case. The Markdown export inlines
+markdown artifacts as indented blocks and code/json artifacts as
+fenced blocks (binary artifacts get a `_Artifact: title_` placeholder).
+
+- Milestone progress bar at the top of the Tasks tab — combined widget
+  (overall % done over non-cancelled cards + chip strip of milestone
+  titles & optional due dates). Editor lives in the workspace detail
+  sheet.
+- Workspace sidebar entry shows the `N/M done` chip — added to the
+  workspace index `WorkspaceRow` (only when `isProject`).
+- Quick filter ("Hide done" eye toggle in the panel header).
+- Export a project as Markdown — `projectToMarkdown` (pure, tested in
+  `lib/shared/project-markdown.test.ts`) → goal + milestones + tasks
+  grouped by column with linked artifacts inlined.
 
 ## Verification
 

@@ -192,6 +192,10 @@ function WorkspaceDetailBody({ workspace }: { workspace: Workspace }) {
               />
             </div>
           )}
+
+          {workspace.isProject && (
+            <MilestonesEditor workspace={workspace} />
+          )}
         </div>
 
         <div className="pt-3 border-t border-[var(--border)]">
@@ -210,6 +214,100 @@ function WorkspaceDetailBody({ workspace }: { workspace: Workspace }) {
         </div>
       </div>
     </>
+  )
+}
+
+/**
+ * Tiny editor for `workspace.milestones` — title (required) + optional
+ * ISO date, with add/remove/reorder-not-yet. Phase 5: milestones are
+ * informational (no card linkage), so this is a flat list, not a join.
+ */
+function MilestonesEditor({ workspace }: { workspace: Workspace }) {
+  const setWorkspaceProjectConfig = useStore(
+    (s) => s.setWorkspaceProjectConfig
+  )
+  const milestones = workspace.milestones ?? []
+  const [draftTitle, setDraftTitle] = useState("")
+  const [draftDate, setDraftDate] = useState("")
+
+  const update = (next: typeof milestones) =>
+    setWorkspaceProjectConfig(workspace.id, { milestones: next })
+
+  const addMilestone = () => {
+    const title = draftTitle.trim()
+    if (!title) return
+    const next = [
+      ...milestones,
+      draftDate ? { title, dueDate: draftDate } : { title },
+    ]
+    update(next)
+    setDraftTitle("")
+    setDraftDate("")
+  }
+
+  const removeMilestone = (i: number) => {
+    update(milestones.filter((_, idx) => idx !== i))
+  }
+
+  return (
+    <div className="mt-3">
+      <label className="text-[10px] uppercase tracking-wide text-[var(--muted-foreground)] font-medium">
+        Milestones
+      </label>
+      <div className="mt-1 space-y-1">
+        {milestones.map((m, i) => (
+          <div
+            key={i}
+            className="flex items-center gap-2 rounded border border-[var(--border)] px-2 py-1"
+          >
+            <span className="flex-1 min-w-0 text-xs truncate">{m.title}</span>
+            {m.dueDate && (
+              <span className="text-[10px] tabular-nums text-[var(--muted-foreground)] shrink-0">
+                {m.dueDate}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => removeMilestone(i)}
+              aria-label={`Remove milestone "${m.title}"`}
+              className="shrink-0 text-[var(--muted-foreground)] hover:text-[var(--destructive)] text-xs"
+            >
+              ×
+            </button>
+          </div>
+        ))}
+        <div className="flex items-center gap-1.5">
+          <Input
+            value={draftTitle}
+            onChange={(e) => setDraftTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault()
+                addMilestone()
+              }
+            }}
+            placeholder="Milestone title"
+            className="flex-1 h-7 text-xs"
+          />
+          <Input
+            type="date"
+            value={draftDate}
+            onChange={(e) => setDraftDate(e.target.value)}
+            className="h-7 text-xs w-[130px]"
+            aria-label="Milestone due date"
+          />
+          <button
+            type="button"
+            onClick={addMilestone}
+            disabled={!draftTitle.trim()}
+            aria-label="Add milestone"
+            className="shrink-0 h-7 px-2 text-xs rounded border border-[var(--border)] hover:bg-[var(--accent)]/50 disabled:opacity-40"
+          >
+            Add
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 

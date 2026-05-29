@@ -7,6 +7,7 @@ import {
   Folder,
   FolderOpen,
   GripVertical,
+  KanbanSquare,
   MessageSquare,
   Settings2,
   Trash2,
@@ -21,7 +22,10 @@ interface WorkspaceRowProps {
   workspaceId: string
   name: string
   updatedAt: Date | string
-  counts: { chats: number; files: number }
+  counts: { chats: number; files: number; tasksDone: number; tasksTotal: number }
+  /** Show the project N/M done chip when true (only meaningful if the
+   *  workspace is in project mode). */
+  isProject: boolean
   isActive: boolean
   deletable: boolean
   /** Single-click on the row — set active without leaving the index view. */
@@ -39,6 +43,7 @@ export function WorkspaceRow({
   name,
   updatedAt,
   counts,
+  isProject,
   isActive,
   deletable,
   onActivate,
@@ -113,6 +118,15 @@ export function WorkspaceRow({
       </div>
 
       <div className="shrink-0 hidden sm:flex items-center gap-4 text-xs text-[var(--muted-foreground)]">
+        {isProject && (
+          <span
+            className="flex items-center gap-1 tabular-nums"
+            title="Project tasks done"
+          >
+            <KanbanSquare size={12} />
+            {counts.tasksDone}/{counts.tasksTotal}
+          </span>
+        )}
         <span className="flex items-center gap-1">
           <MessageSquare size={12} />
           {counts.chats} {counts.chats === 1 ? "chat" : "chats"}
