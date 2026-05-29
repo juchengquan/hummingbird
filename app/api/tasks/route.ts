@@ -1,8 +1,22 @@
 import "server-only"
 
-import type { NextRequest } from "next/server"
+/**
+ * `POST /api/tasks` — start a long-running agent task.
+ *
+ * After Phase 6 steps 3+4 of `PLAN-agent-task-queue.md` this route is
+ * a thin enqueuer: it validates the request, writes the initial
+ * checkpoint, emits a synthetic `status:queued` event so the client's
+ * resume stream has something to show immediately, enqueues a `start`
+ * job, optionally bootstraps the worker for a few seconds (so short
+ * runs feel synchronous instead of waiting on the minute-granularity
+ * cron), and returns `202 { runId }`.
+ *
+ * Everything model-facing — system prompt, tool registration, the
+ * actual loop — happens in `lib/server/agent/worker.ts`. The client
+ * watches via `GET /api/tasks/:id/stream`.
+ */
 
-import { createUIMessageStream, createUIMessageStreamResponse } from "ai"
+import type { NextRequest } from "next/server"
 import type { ModelMessage } from "ai"
 import { NextResponse } from "next/server"
 
@@ -13,94 +27,33 @@ import {
 } from "@/server/model-provider"
 import { categorizeError } from "@/shared/api-errors"
 import { TaskRequestSchema } from "@/shared/api-schemas"
-import {
-  SERVER_SKILLS,
-  type SkillRequestEntry,
-} from "@/server/skills/registry"
 import type { SkillId } from "@/shared/skills/types"
-import { buildGatedMcpTool, buildMcpTool, mcpToolName } from "@/server/mcp/tools"
-import { loadEffectiveMcpServers } from "@/server/mcp/load-servers"
-import { ASK_USER_TOOL_NAME, requestKindFor } from "@/server/agent/input-policy"
-import { buildTaskSystemPrompt } from "@/server/agent/task-prompt"
-import { makeAskUserTool } from "@/server/agent/ask-user-tool"
-import type { RunCheckpoint } from "@/server/agent/checkpoint"
-import { createSlidingWindow, rateLimitKey } from "@/server/rate-limit"
+import type { SkillRequestEntry } from "@/server/skills/registry"
 import { getSupabaseServerClient } from "@/server/supabase/server"
+import { getSupabaseAdminClient } from "@/server/supabase/admin"
 import type { TaskEvent } from "@/shared/agent/events"
-import { RunEmitter } from "@/shared/agent/emitter"
-import { toDataPart } from "@/shared/agent/wire"
-import { makeStreamTextStep, runAgentLoop } from "@/server/agent/runner"
-import { PLAN_TOOL_NAME, makePlanTool } from "@/server/agent/plan-tool"
+import type { RunCheckpoint } from "@/server/agent/checkpoint"
 import {
   appendEvent,
   createRun,
-  isRunCancelled,
   saveCheckpoint,
-  updateRun,
 } from "@/server/agent/store"
-import { enqueueContinueJob } from "@/server/agent/jobs"
+import { enqueueStartJob } from "@/server/agent/jobs"
+import { processNextJob } from "@/server/agent/worker"
 
-// The serverless function may keep streaming for a while; the actual
-// ceiling is the deploy target's execution cap (see PLAN-agent-api.md).
-// `maxSteps` is the in-loop bound regardless.
 const DEFAULT_MAX_STEPS = 25
 const MAX_MAX_STEPS = 50
 
-/** Wall-clock budget for the inline route's runner. Yields back to the
- *  job queue when this is exceeded so the run survives beyond the
- *  function's execution cap. Sized to leave ~15 s headroom on a 60 s
- *  cap; deploy targets with a higher cap can raise it via env. */
-const TASK_ROUTE_BUDGET_MS = (() => {
-  const raw = Number(process.env.TASK_ROUTE_BUDGET_MS)
-  if (Number.isFinite(raw) && raw > 0) return Math.floor(raw)
-  return 45_000
+/** Wall-clock budget for the inline bootstrap of the worker. Short
+ *  enough that the POST returns quickly even on a slow first chunk,
+ *  long enough that simple prompts often complete before the cron's
+ *  next tick. */
+const TASK_START_BOOTSTRAP_MS = (() => {
+  const raw = Number(process.env.TASK_START_BOOTSTRAP_MS)
+  if (Number.isFinite(raw) && raw >= 0) return Math.floor(raw)
+  return 8_000
 })()
 
-// Per-IP abuse gates for the task route's tool calls, mirroring the
-// chat route. `maxSteps` bounds a single run; these bound outbound
-// volume across runs. Image gen gets a tighter, env-tunable ceiling
-// because each call costs ~1–3¢ vs. fractions of a cent for web tools.
-const taskWebToolLimit = createSlidingWindow({ windowMs: 60_000, max: 30 })
-const TASK_IMAGE_GEN_PER_MINUTE = (() => {
-  const raw = Number(process.env.MINIMAX_IMAGE_RATE_LIMIT_PER_MINUTE)
-  if (!Number.isFinite(raw) || raw <= 0) return 5
-  return Math.min(Math.floor(raw), 60)
-})()
-const taskImageGenLimit = createSlidingWindow({
-  windowMs: 60_000,
-  max: TASK_IMAGE_GEN_PER_MINUTE,
-})
-
-/** Pull `prompt` / `options` / `multi` out of an `askUser` tool's args
- *  so the input-request event carries them for the panel to render. */
-function extractAskUserFields(args: object): {
-  prompt?: string
-  options?: { id: string; label: string }[]
-  multi?: boolean
-} {
-  const a = args as Record<string, unknown>
-  const out: {
-    prompt?: string
-    options?: { id: string; label: string }[]
-    multi?: boolean
-  } = {}
-  if (typeof a.prompt === "string") out.prompt = a.prompt
-  if (Array.isArray(a.options)) {
-    out.options = a.options
-      .map((o) => {
-        if (!o || typeof o !== "object") return null
-        const id = (o as { id?: unknown }).id
-        const label = (o as { label?: unknown }).label
-        if (typeof id !== "string" || typeof label !== "string") return null
-        return { id, label }
-      })
-      .filter((x): x is { id: string; label: string } => x !== null)
-  }
-  if (typeof a.multi === "boolean") out.multi = a.multi
-  return out
-}
-
-/** Pull the most recent user message text for the `tasks.goal` column. */
 function lastUserText(messages: ModelMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]
@@ -128,7 +81,6 @@ export async function POST(req: NextRequest) {
       { status: 503 }
     )
   }
-
   const { data: userData, error: authError } = await db.auth.getUser()
   if (authError || !userData.user) {
     return NextResponse.json(
@@ -160,16 +112,11 @@ export async function POST(req: NextRequest) {
   const body = parsed.data
   const modelId = body.model || DEFAULT_CHAT_MODEL
   const maxSteps = Math.min(body.maxSteps ?? DEFAULT_MAX_STEPS, MAX_MAX_STEPS)
-  const enabledSkillIds: SkillId[] = (body.skills ?? []).map(
-    (s) => s.id as SkillId
-  )
-  const skillRequestEntries: SkillRequestEntry[] = body.skills ?? []
 
-  // Resolve the model before opening the stream so an unconfigured
-  // provider returns a clean 401 instead of an error mid-stream.
-  let model
+  // Fail fast on a misconfigured provider — the worker would otherwise
+  // fail the job after the route has already returned 202.
   try {
-    model = selectModel(modelId)
+    selectModel(modelId)
   } catch (error) {
     if (error instanceof ProviderUnavailableError) {
       return NextResponse.json(
@@ -181,52 +128,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ code, message }, { status })
   }
 
-  // Build the tool map from the enabled skills, gated by the same
-  // per-IP buckets the chat route uses (image gen on its own tighter
-  // ceiling). `maxSteps` bounds one run; these bound outbound volume.
-  const ipKey = rateLimitKey(req)
-  const consumeWebToolBudget = () => taskWebToolLimit.consume(ipKey)
-  const consumeImageGenBudget = () => taskImageGenLimit.consume(ipKey)
-  const enabledSet = new Set<SkillId>(enabledSkillIds)
-  const entryById = new Map<string, SkillRequestEntry>(
-    skillRequestEntries.map((s) => [s.id, s])
-  )
-  const tools: Record<string, unknown> = {}
-  for (const skill of SERVER_SKILLS) {
-    if (!enabledSet.has(skill.id)) continue
-    const consumeBudget =
-      skill.id === "imageGen" ? consumeImageGenBudget : consumeWebToolBudget
-    const tool = skill.buildTool(entryById.get(skill.id), {
-      signal: req.signal,
-      consumeBudget,
-    })
-    if (tool) tools[skill.toolName] = tool
-  }
-
-  // Register MCP-exposed tools. Cloud-mode servers are looked up
-  // server-side from `workspaceId`; local-mode servers arrive (with
-  // creds) in `body.mcpServers`. Tool names are prefixed
-  // `mcp__<serverId>__<toolName>` so they don't collide.
-  //
-  // Approval-gated MCP tools (`body.requireApprovalFor` includes their
-  // prefixed name) are registered WITHOUT an `execute` — the SDK can't
-  // run them, so the model calling one is the suspend point for HITL.
-  // `askUser` is always gated — it has no execute by definition, so
-  // any call to it must suspend the run for the human's answer.
-  const gatedToolNames = new Set<string>(body.requireApprovalFor ?? [])
-  gatedToolNames.add(ASK_USER_TOOL_NAME)
-  tools[ASK_USER_TOOL_NAME] = makeAskUserTool()
-  const mcpServers = await loadEffectiveMcpServers(
-    body.workspaceId,
-    body.mcpServers
-  )
-  for (const server of mcpServers) {
-    for (const descriptor of server.capabilities?.tools ?? []) {
-      const name = mcpToolName(server.id, descriptor.name)
-      tools[name] = gatedToolNames.has(name)
-        ? buildGatedMcpTool(server, descriptor)
-        : buildMcpTool(server, descriptor, server.credentials)
-    }
+  // Local-mode MCP creds (`body.mcpServers`) live in the browser; the
+  // background worker has no way to use them. Cloud-mode MCP works as
+  // usual via `body.workspaceId`. Silently dropping `mcpServers` here
+  // would surface as confusing tool-not-found errors deeper in; tell
+  // the client up front so they can omit the field or fall back to the
+  // chat route for local-mode-MCP workflows.
+  if (body.mcpServers && body.mcpServers.length > 0) {
+    return NextResponse.json(
+      {
+        code: "invalid_request",
+        message:
+          "Local-mode MCP servers aren't supported in async task mode. " +
+          "Connect the server as a cloud-mode workspace MCP, or use the " +
+          "chat route for this workflow.",
+      },
+      { status: 400 }
+    )
   }
 
   const runId = crypto.randomUUID()
@@ -244,139 +162,82 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ code, message }, { status })
   }
 
-  const system = buildTaskSystemPrompt({
-    workspaceSystemPrompt: body.workspaceSystemPrompt,
-    enabledSkillIds,
-    skillRequestEntries,
-    mcpServers: mcpServers.map((s) => ({
-      name: s.name,
-      toolCount: s.capabilities?.tools?.length ?? 0,
-    })),
-  })
+  // The worker is system-driven; cast `skills` to the registry's
+  // request-entry shape (same as the chat route does).
+  const skillRequestEntries: SkillRequestEntry[] = body.skills ?? []
+  const enabledSkillIds: SkillId[] = skillRequestEntries.map(
+    (s) => s.id as SkillId
+  )
 
-  const stream = createUIMessageStream({
-    execute: async ({ writer }) => {
-      // Persistence runs off the hot path: the sink writes each event to
-      // the wire immediately (smooth streaming) and chains the DB write
-      // so inserts serialize without blocking the loop. We drain the
-      // chain before returning so a resume read sees the full log.
-      let chain: Promise<void> = Promise.resolve()
-      const enqueue = (work: () => Promise<void>) => {
-        chain = chain.then(work).catch((err) => {
-          console.error("[tasks] persist:", err)
-        })
-      }
-      const sink = (event: TaskEvent) => {
-        writer.write(toDataPart(event))
-        enqueue(() => appendEvent(db, event, userId))
-        if (event.kind === "status") {
-          enqueue(() =>
-            updateRun(db, runId, userId, {
-              status: event.status,
-              step: event.step,
-            })
-          )
-        } else if (event.kind === "result") {
-          enqueue(() =>
-            updateRun(db, runId, userId, {
-              status: event.status,
-              step: event.step,
-              finished: true,
-            })
-          )
-        }
-      }
-
-      const emitter = new RunEmitter({ runId, maxSteps }, sink)
-      // The plan tool is bound to this run's emitter, so it's added here
-      // (inside the run) rather than to the shared `tools` map above.
-      const runTools: Record<string, unknown> = {
-        ...tools,
-        [PLAN_TOOL_NAME]: makePlanTool(emitter),
-      }
-      const runMessages = body.messages as ModelMessage[]
-      const runStep = makeStreamTextStep({
-        model,
-        system,
-        messages: runMessages,
-        tools: runTools,
-        // setPlan surfaces as the plan/todo list, not a tool pill.
-        silentTools: new Set([PLAN_TOOL_NAME]),
-        // The runner suspends when the model calls any of these (they
-        // are registered without `execute`); the route handles the
-        // suspend below.
-        gatedTools: gatedToolNames,
-      })
-
-      const deadline = Date.now() + TASK_ROUTE_BUDGET_MS
-      const result = await runAgentLoop({
-        emitter,
-        maxSteps,
-        signal: req.signal,
-        isCancelled: () => isRunCancelled(db, runId, userId),
-        shouldYield: () => Date.now() > deadline,
-        runStep,
-      })
-
-      const checkpointConfig = {
-        model: modelId,
-        workspaceSystemPrompt: body.workspaceSystemPrompt,
-        workspaceId: body.workspaceId,
-        skills: body.skills,
-        maxSteps,
-        requireApprovalFor: body.requireApprovalFor,
-      } as const
-
-      if (result.kind === "suspended") {
-        // HITL pause: persist the run state for a fresh invocation to
-        // continue, then emit the input request + `status: paused`. The
-        // emitter is NOT settled, so further emits on continuation
-        // proceed normally.
-        const pi = result.pendingInput
-        const checkpoint: RunCheckpoint = {
-          messages: runMessages,
-          step: emitter.step,
-          seq: emitter.seq,
-          config: checkpointConfig,
-        }
-        try {
-          await saveCheckpoint(db, runId, userId, checkpoint)
-        } catch (err) {
-          console.error("[tasks] saveCheckpoint:", err)
-        }
-        emitter.inputRequest({
-          approvalId: pi.toolCallId,
-          requestKind: requestKindFor(pi.tool, pi.args),
-          tool: pi.tool,
-          toolCallId: pi.toolCallId,
-          args: pi.args,
-          ...(pi.tool === ASK_USER_TOOL_NAME && pi.args && typeof pi.args === "object"
-            ? extractAskUserFields(pi.args)
-            : {}),
-        })
-        emitter.status("paused")
-      } else if (result.kind === "yielded") {
-        // Time-budget yield: persist state and hand off to a background
-        // `continue` job. Status stays `running` — there's no terminal
-        // event. The client's stream closes here; it auto-reconnects
-        // via the resume endpoint to pick up where the worker leaves off.
-        const checkpoint: RunCheckpoint = {
-          messages: runMessages,
-          step: emitter.step,
-          seq: emitter.seq,
-          config: checkpointConfig,
-        }
-        try {
-          await saveCheckpoint(db, runId, userId, checkpoint)
-          await enqueueContinueJob(db, { taskId: runId, userId })
-        } catch (err) {
-          console.error("[tasks] yield handoff:", err)
-        }
-      }
-
-      await chain
+  // Initial checkpoint — seq=1 because we're about to emit a single
+  // `status:queued` event before any worker invocation. The worker
+  // builds its emitter with `startSeq=1, startStep=0`; the runner's
+  // first event then becomes seq=2 (`status:running`, auto-emitted at
+  // step==0). `enabledSkillIds` is computed from `skills` in the
+  // worker — we just persist the user-supplied shape.
+  const checkpoint: RunCheckpoint = {
+    messages: body.messages as ModelMessage[],
+    step: 0,
+    seq: 1,
+    config: {
+      model: modelId,
+      workspaceSystemPrompt: body.workspaceSystemPrompt,
+      workspaceId: body.workspaceId,
+      skills: body.skills,
+      maxSteps,
+      requireApprovalFor: body.requireApprovalFor,
     },
-  })
+  }
+  try {
+    await saveCheckpoint(db, runId, userId, checkpoint)
+  } catch (error) {
+    const { status, code, message } = categorizeError(error)
+    return NextResponse.json({ code, message }, { status })
+  }
+  // Touch `enabledSkillIds` so the unused-import linter is happy
+  // without dropping a reference that documents intent; the worker
+  // recomputes from the persisted config.
+  void enabledSkillIds
 
-  return createUIMessageStreamResponse({ stream })
+  // Synthetic `status:queued` event so the client's resume stream has
+  // something to show during the brief window between POST and the
+  // worker picking up.
+  const queuedEvent: TaskEvent = {
+    runId,
+    seq: 1,
+    step: 0,
+    createdAt: new Date().toISOString(),
+    kind: "status",
+    status: "queued",
+    maxSteps,
+  }
+  try {
+    await appendEvent(db, queuedEvent, userId)
+  } catch (err) {
+    console.error("[tasks] queued-event:", err)
+  }
+
+  try {
+    await enqueueStartJob(db, { taskId: runId, userId })
+  } catch (error) {
+    const { status, code, message } = categorizeError(error)
+    return NextResponse.json({ code, message }, { status })
+  }
+
+  // Bootstrap: run the worker once inline so short prompts complete
+  // before the response returns (events are in `task_events` by the
+  // time the client opens its resume stream). Best-effort; failures
+  // here don't fail the POST — the cron picks the job up next minute.
+  if (TASK_START_BOOTSTRAP_MS > 0) {
+    const admin = getSupabaseAdminClient()
+    if (admin) {
+      try {
+        await processNextJob(admin, { budgetMs: TASK_START_BOOTSTRAP_MS })
+      } catch (err) {
+        console.error("[tasks] bootstrap:", err)
+      }
+    }
+  }
+
+  return NextResponse.json({ runId }, { status: 202 })
 }

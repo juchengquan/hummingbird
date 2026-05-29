@@ -136,18 +136,29 @@ async function chatStream(
   return { ok: true, status: res.status, body: res.body }
 }
 
-// --- /api/tasks (long-running agent — streaming) ----------------------------
+// --- /api/tasks (long-running agent — enqueue + stream) -------------------
+
+/** Result of `tasksStart` / `tasksRespond`. The POST is a thin enqueue
+ *  (returns 202); the caller opens `tasksResume` to watch events as the
+ *  worker emits them. */
+export interface TaskEnqueueResult {
+  ok: boolean
+  status: number
+  runId?: string
+  error?: { code?: string; message?: string }
+}
 
 /**
- * Start a long-running task. Returns the raw AI-SDK data stream of
- * `data-agent-event` parts (see `lib/shared/agent/wire.ts`); the caller
- * decodes each part with `fromDataPart` and folds it through
- * `reduceRun`. Same `{ok, status, body, error}` envelope as `chatStream`.
+ * Start a long-running task. After Phase 6 steps 3+4 of
+ * `PLAN-agent-task-queue.md` this is a JSON POST that enqueues a `start`
+ * job and returns `202 { runId }`. The caller then opens
+ * `tasksResume(runId, 0)` to watch events as the background worker
+ * produces them.
  */
 async function tasksStart(
   body: TaskRequestInput,
   options?: { signal?: AbortSignal }
-): Promise<ChatStreamResult> {
+): Promise<TaskEnqueueResult> {
   const res = await fetch(apiUrls.tasks(), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -159,11 +170,26 @@ async function tasksStart(
     return {
       ok: false,
       status: res.status,
-      body: null,
       error: { code: errBody.code, message: errBody.message ?? errBody.error },
     }
   }
-  return { ok: true, status: res.status, body: res.body }
+  try {
+    const data = (await res.json()) as { runId?: string }
+    if (typeof data.runId !== "string" || !data.runId) {
+      return {
+        ok: false,
+        status: res.status,
+        error: { code: "invalid_response", message: "Server did not return a runId." },
+      }
+    }
+    return { ok: true, status: res.status, runId: data.runId }
+  } catch {
+    return {
+      ok: false,
+      status: res.status,
+      error: { code: "invalid_response", message: "Server response was not JSON." },
+    }
+  }
 }
 
 /**
@@ -217,14 +243,16 @@ async function tasksCancel(
 
 /**
  * Resolve a HITL pending input on a paused run — approve/reject a
- * gated tool, choose option(s), or submit a value. Returns the
- * continuation stream (same envelope as `tasksStart` / `tasksResume`).
+ * gated tool, choose option(s), or submit a value. After Phase 6
+ * steps 3+4, this is a thin JSON POST that enqueues a `respond` job
+ * and returns 202. The caller relies on its existing resume-stream
+ * subscription to see the continuation.
  */
 async function tasksRespond(
   id: string,
   body: RespondRequestInput,
   options?: { signal?: AbortSignal }
-): Promise<ChatStreamResult> {
+): Promise<{ ok: boolean; status: number; error?: { code?: string; message?: string } }> {
   const res = await fetch(apiUrls.taskRespond(id), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -236,11 +264,10 @@ async function tasksRespond(
     return {
       ok: false,
       status: res.status,
-      body: null,
       error: { code: errBody.code, message: errBody.message ?? errBody.error },
     }
   }
-  return { ok: true, status: res.status, body: res.body }
+  return { ok: true, status: res.status }
 }
 
 /**
