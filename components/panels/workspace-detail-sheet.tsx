@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/sheet"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import { Switch } from "@/components/ui/switch"
 import {
   Select,
   SelectContent,
@@ -50,6 +51,7 @@ function WorkspaceDetailBody({ workspace }: { workspace: Workspace }) {
   const renameWorkspace = useStore((s) => s.renameWorkspace)
   const setWorkspaceSystemPrompt = useStore((s) => s.setWorkspaceSystemPrompt)
   const setWorkspaceDefaultModel = useStore((s) => s.setWorkspaceDefaultModel)
+  const setWorkspaceProjectConfig = useStore((s) => s.setWorkspaceProjectConfig)
 
   // Local editable name with auto-save on blur (or Enter). Reset when the
   // viewed workspace changes.
@@ -152,6 +154,44 @@ function WorkspaceDetailBody({ workspace }: { workspace: Workspace }) {
             Auto-applied when you open this workspace. The chat-input model picker
             still overrides per session.
           </p>
+        </div>
+
+        <div className="pt-3 border-t border-[var(--border)]">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <label className="text-[10px] uppercase tracking-wide text-[var(--muted-foreground)] font-medium">
+                Project mode
+              </label>
+              <p className="mt-0.5 text-[10px] text-[var(--muted-foreground)]">
+                Turn this workspace into a project with a goal and a
+                Kanban task board.
+              </p>
+            </div>
+            <Switch
+              checked={workspace.isProject ?? false}
+              onCheckedChange={(checked) =>
+                setWorkspaceProjectConfig(workspace.id, { isProject: checked })
+              }
+              aria-label="Toggle project mode"
+            />
+          </div>
+
+          {workspace.isProject && (
+            <div className="mt-3">
+              <label className="text-[10px] uppercase tracking-wide text-[var(--muted-foreground)] font-medium">
+                Goal
+              </label>
+              <Textarea
+                value={workspace.goal ?? ""}
+                onChange={(e) =>
+                  setWorkspaceProjectConfig(workspace.id, { goal: e.target.value })
+                }
+                placeholder="What is this project trying to accomplish? The AI can break this into tasks."
+                className="mt-1 text-xs resize-y min-h-[80px]"
+                rows={4}
+              />
+            </div>
+          )}
         </div>
 
         <div className="pt-3 border-t border-[var(--border)]">

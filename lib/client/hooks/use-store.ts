@@ -526,6 +526,14 @@ interface AppState {
   deleteWorkspace: (workspaceId: string) => void
   renameWorkspace: (workspaceId: string, name: string) => void
   setWorkspaceSystemPrompt: (workspaceId: string, prompt: string) => void
+  /** Patch the project-mode config on a workspace (toggle / goal /
+   *  milestones). Only the keys present in `patch` are written, so
+   *  e.g. flipping the toggle leaves an existing goal untouched. See
+   *  `docs/PLAN-project-mode.md`. */
+  setWorkspaceProjectConfig: (
+    workspaceId: string,
+    patch: Partial<Pick<Workspace, "isProject" | "goal" | "milestones">>
+  ) => void
   /** Pin a default chat model on a workspace. Empty string clears the pin. */
   setWorkspaceDefaultModel: (workspaceId: string, modelId: string) => void
   /** Set a workspace skill default. `null` clears the entry (skill returns to default). */
@@ -1189,6 +1197,17 @@ export const useStore = create<AppState>()(
               ? { ...w, systemPrompt: prompt, updatedAt: new Date() }
               : w
           ),
+        })),
+      setWorkspaceProjectConfig: (workspaceId, patch) =>
+        set((state) => ({
+          workspaces: state.workspaces.map((w) => {
+            if (w.id !== workspaceId) return w
+            const next = { ...w, updatedAt: new Date() }
+            if ("isProject" in patch) next.isProject = patch.isProject
+            if ("goal" in patch) next.goal = patch.goal
+            if ("milestones" in patch) next.milestones = patch.milestones
+            return next
+          }),
         })),
       setWorkspaceDefaultModel: (workspaceId: string, modelId: string) =>
         set((state) => {

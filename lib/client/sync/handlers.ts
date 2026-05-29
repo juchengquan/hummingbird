@@ -74,6 +74,9 @@ export function diffWorkspaces(prev: Workspace[], next: Workspace[]): SyncOp[] {
           canvas_state: (w.canvasState ?? null) as unknown as
             | import("@/shared/supabase/types").Json
             | null,
+          is_project: w.isProject ?? false,
+          goal: w.goal ?? null,
+          milestones: w.milestones ?? null,
           created_at: toISO(w.createdAt),
           updated_at: toISO(w.updatedAt),
         },
@@ -100,6 +103,9 @@ function workspaceEquals(a: Workspace, b: Workspace): boolean {
     sameSkillPrefs(a.skillPrefs, b.skillPrefs) &&
     (a.defaultModel ?? null) === (b.defaultModel ?? null) &&
     (a.position ?? null) === (b.position ?? null) &&
+    (a.isProject ?? false) === (b.isProject ?? false) &&
+    (a.goal ?? null) === (b.goal ?? null) &&
+    JSON.stringify(a.milestones ?? null) === JSON.stringify(b.milestones ?? null) &&
     sameInstant(a.createdAt, b.createdAt) &&
     sameInstant(a.updatedAt, b.updatedAt)
   )
