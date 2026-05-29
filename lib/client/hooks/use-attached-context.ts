@@ -96,9 +96,16 @@ export function useAttachedContext(): AttachedContext {
 
   // Selected bookmark / MCP-resource id sets live on the conversation
   // row; access via store rather than dedicated selectors to keep this
-  // hook self-contained.
-  const selectedUrlBookmarkIds = conversation?.selectedUrlBookmarkIds ?? []
-  const selectedMcpResourceIds = conversation?.selectedMcpResourceIds ?? []
+  // hook self-contained. Memoised so the empty-array fallback doesn't
+  // get a fresh reference on every render and bust the outer useMemo.
+  const selectedUrlBookmarkIds = useMemo(
+    () => conversation?.selectedUrlBookmarkIds ?? [],
+    [conversation?.selectedUrlBookmarkIds]
+  )
+  const selectedMcpResourceIds = useMemo(
+    () => conversation?.selectedMcpResourceIds ?? [],
+    [conversation?.selectedMcpResourceIds]
+  )
 
   return useMemo<AttachedContext>(() => {
     // --- Skills: enabled (resolved cascade), ordered by registry. ---
