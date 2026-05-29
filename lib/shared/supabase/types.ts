@@ -852,6 +852,65 @@ export type Database = {
           },
         ]
       }
+      task_jobs: {
+        Row: {
+          action: string
+          attempts: number
+          created_at: string
+          error: Json | null
+          finished_at: string | null
+          id: string
+          max_attempts: number
+          payload: Json
+          scheduled_at: string
+          started_at: string | null
+          status: string
+          task_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          action: string
+          attempts?: number
+          created_at?: string
+          error?: Json | null
+          finished_at?: string | null
+          id?: string
+          max_attempts?: number
+          payload?: Json
+          scheduled_at?: string
+          started_at?: string | null
+          status?: string
+          task_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          action?: string
+          attempts?: number
+          created_at?: string
+          error?: Json | null
+          finished_at?: string | null
+          id?: string
+          max_attempts?: number
+          payload?: Json
+          scheduled_at?: string
+          started_at?: string | null
+          status?: string
+          task_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_jobs_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tasks: {
         Row: {
           checkpoint: Json | null

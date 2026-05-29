@@ -27,6 +27,10 @@ export interface CheckpointConfig {
   workspaceId?: string
   skills: TaskRequestInput["skills"]
   maxSteps: number
+  /** Approval-gated tool names from the original `start` request, so
+   *  a continuation re-applies the same policy and a sensitive tool
+   *  call on a later chunk still suspends. */
+  requireApprovalFor?: string[]
 }
 
 export interface RunCheckpoint {
