@@ -26,6 +26,7 @@ import {
   ConversationSummarizeResponseSchema,
   CompressSummarizeResponseSchema,
   ProjectBreakdownResponseSchema,
+  RefreshImageUrlResponseSchema,
   RevokeShareResponseSchema,
   type ChatRequestInput,
   type TaskRequestInput,
@@ -89,6 +90,7 @@ export const apiUrls = {
     url(`/api/mcp/${encodeURIComponent(serverId)}/${action}`),
   mcpServer: () => url("/api/mcp/server"),
   urlFetch: () => url("/api/url/fetch"),
+  imagesRefreshUrl: () => url("/api/images/refresh-url"),
 }
 
 /**
@@ -527,6 +529,46 @@ async function createShare(
   }
 }
 
+/**
+ * Re-sign an expired generated-image URL from its `storagePath`. Returns
+ * the fresh URL, or `null` if Supabase isn't configured / the caller
+ * isn't signed in / the object went missing. The caller is responsible
+ * for updating wherever the old URL was held (typically
+ * `Message.generatedImages[i].url`).
+ *
+ * Concurrent calls for the same `storagePath` are deduped via an
+ * in-flight cache so a 4-up grid with all four URLs expired only
+ * fires one network round-trip per distinct path.
+ */
+const refreshUrlInflight = new Map<string, Promise<string | null>>()
+
+async function refreshGeneratedImageUrl(
+  storagePath: string
+): Promise<string | null> {
+  const cached = refreshUrlInflight.get(storagePath)
+  if (cached) return cached
+  const promise = (async () => {
+    try {
+      const res = await fetch(apiUrls.imagesRefreshUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storagePath }),
+      })
+      if (!res.ok) return null
+      const parsed = RefreshImageUrlResponseSchema.safeParse(await res.json())
+      return parsed.success ? parsed.data.url : null
+    } catch {
+      return null
+    }
+  })()
+  refreshUrlInflight.set(storagePath, promise)
+  try {
+    return await promise
+  } finally {
+    refreshUrlInflight.delete(storagePath)
+  }
+}
+
 async function revokeShare(token: string): Promise<{ ok: boolean; status: number; error?: string }> {
   const res = await fetch(apiUrls.shareToken(token), { method: "DELETE" })
   if (!res.ok) {
@@ -691,6 +733,9 @@ export const apiClient = {
   share: {
     create: createShare,
     revoke: revokeShare,
+  },
+  images: {
+    refreshUrl: refreshGeneratedImageUrl,
   },
   mcp: { proxy: mcpProxyCall, upsertCloudServer: mcpUpsertCloudServer },
   url: { fetch: urlFetchBookmark },

@@ -140,7 +140,18 @@ content quality tuning beyond the prompt change.
 
 ---
 
-## 4. Lazy signed-URL re-sign for generated images
+## ~~4. Lazy signed-URL re-sign for generated images~~ ✅ shipped
+
+`signGeneratedImageUrl(storagePath, client?)` helper +
+`POST /api/images/refresh-url` route (auth + first-path-segment-vs-
+`auth.uid()` check), `RefreshImageUrlRequestSchema` + response shape
+in `api-schemas.ts`, `apiClient.images.refreshUrl(storagePath)` with
+in-flight dedupe by storagePath, gallery `<img onError>` → refresh →
+new `updateMessageGeneratedImageUrl` mutator on the messages slice.
+One refresh attempt per tile mount; subsequent failures fall through
+to the browser's broken-image placeholder. Data-URL fallbacks skip
+the refresh path. Tests for the request schema cover the
+path-traversal + empty/missing-field rejections.
 
 **Why.** Signed URLs minted by `persistGeneratedImages` have a
 1-year TTL (`SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 365`). Anyone
