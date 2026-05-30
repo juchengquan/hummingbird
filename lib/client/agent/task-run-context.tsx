@@ -22,6 +22,7 @@ import {
   useState,
   type ReactNode,
 } from "react"
+import { toast } from "sonner"
 
 import { loadActiveTask } from "@/client/agent/active-task"
 import { ensureTaskNotificationPermission } from "@/client/agent/notify"
@@ -29,6 +30,7 @@ import { useStore } from "@/client/hooks/use-store"
 import { useTaskRun } from "@/client/hooks/use-task-run"
 import { isTerminalStatus, type RunStatus } from "@/shared/agent/events"
 import type { TaskRunView } from "@/shared/agent/project"
+import { deriveResearchReportTitle } from "@/shared/agent/research-report"
 import type {
   RespondRequestInput,
   TaskRequestInput,
@@ -62,6 +64,20 @@ const TaskRunContext = createContext<TaskRunContextValue | null>(null)
 export function TaskRunProvider({ children }: { children: ReactNode }) {
   const addMessage = useStore((s) => s.addMessage)
   const setTasksPanelOpen = useStore((s) => s.setTasksPanelOpen)
+  // Research-mode auto-handoff (Phase 2). The settled report lands in
+  // a fresh workspace document AND a markdown artifact, so the user
+  // sees the same content in both the editor panel + the workspace
+  // artifacts list. The Phase 1 "Open report in editor" button on the
+  // Tasks strip remains as a manual re-apply.
+  const createDocument = useStore((s) => s.createDocument)
+  const setDocumentContent = useStore((s) => s.setDocumentContent)
+  const setActiveDocument = useStore((s) => s.setActiveDocument)
+  const createArtifact = useStore((s) => s.createArtifact)
+  const activeWorkspaceIdRef = useRef<string | null>(null)
+  const activeWorkspaceIdLive = useStore((s) => s.activeWorkspaceId)
+  useEffect(() => {
+    activeWorkspaceIdRef.current = activeWorkspaceIdLive
+  }, [activeWorkspaceIdLive])
 
   const [runAsTask, setRunAsTask] = useState(false)
   const [runConversationId, setRunConversationId] = useState<string | null>(null)
@@ -75,6 +91,7 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
     conversationId: runConversationId ?? undefined,
     title: runTitle,
     notifyOnFinish: true,
+    mode: runMode ?? undefined,
   })
 
   // Author the result Message exactly once, on the running→done edge,
@@ -83,8 +100,15 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
   // message). The conversation is captured at launch, not read live, so
   // switching conversations mid-run still lands the answer in the right
   // thread.
+  //
+  // Research mode (Phase 2): on the same done edge, also hand the
+  // report off to the editor — create a dedicated workspace document
+  // titled from the report's first heading, set it active so the
+  // editor snaps to it, and register a `kind: 'markdown'` artifact
+  // linked back to the just-authored message.
   const prevStatusRef = useRef<RunStatus | null>(null)
   const runConvRef = useRef<string | null>(null)
+  const runModeRef = useRef<"default" | "research" | null>(null)
   const status = run.view.status
   useEffect(() => {
     const prev = prevStatusRef.current
@@ -93,16 +117,49 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
     const convId = runConvRef.current
     if (!convId) return
     const text = (run.view.resultText ?? run.view.text).trim()
-    if (text) addMessage({ role: "assistant", content: text }, convId)
-  }, [status, run.view.resultText, run.view.text, addMessage])
+    if (!text) return
+    const msg = addMessage({ role: "assistant", content: text }, convId)
+
+    if (runModeRef.current !== "research") return
+    const workspaceId = activeWorkspaceIdRef.current
+    if (!workspaceId) return
+    const title = deriveResearchReportTitle(text, runConvRef.current ?? undefined)
+    // Create a fresh doc per report rather than appending to the
+    // active one — keeps each research run as its own deliverable so
+    // a workspace can accumulate a library of reports. The Phase 1
+    // manual button still appends-or-creates if the user wants the
+    // mixed-content behaviour.
+    const doc = createDocument(workspaceId, title)
+    setDocumentContent(doc.id, text)
+    setActiveDocument(doc.id)
+    createArtifact({
+      conversationId: convId,
+      messageId: msg.id,
+      kind: "markdown",
+      title,
+      content: text,
+    })
+    toast.success("Report opened in the editor")
+  }, [
+    status,
+    run.view.resultText,
+    run.view.text,
+    addMessage,
+    createDocument,
+    setDocumentContent,
+    setActiveDocument,
+    createArtifact,
+  ])
 
   const startTask = useCallback(
     (body: TaskRequestInput, opts?: { title?: string }) => {
+      const mode = body.mode ?? "default"
       runConvRef.current = body.conversationId
+      runModeRef.current = mode
       prevStatusRef.current = null
       setRunConversationId(body.conversationId)
       setRunTitle(opts?.title)
-      setRunMode(body.mode ?? "default")
+      setRunMode(mode)
       setTasksPanelOpen(true)
       void run.start(body)
     },
@@ -133,10 +190,13 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
     resumedRef.current = true
     const pointer = loadActiveTask()
     if (!pointer || isTerminalStatus(pointer.status)) return
+    const resumedMode = pointer.mode ?? "default"
     runConvRef.current = pointer.conversationId
+    runModeRef.current = resumedMode
     prevStatusRef.current = null
     setRunConversationId(pointer.conversationId)
     setRunTitle(pointer.title)
+    setRunMode(resumedMode)
     setTasksPanelOpen(true)
     void runRef.current.resume(pointer.runId, pointer.cursor)
   }, [setTasksPanelOpen])
