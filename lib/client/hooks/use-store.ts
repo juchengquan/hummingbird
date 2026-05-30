@@ -5,8 +5,6 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import type {
   UploadedFile,
   Workspace,
-  Resource,
-  ConversationFile,
   McpServer,
   McpResource,
   McpResourceBinding,
@@ -21,14 +19,12 @@ import type {
   ToolCallRecord,
 } from '@/shared/types'
 import { buildCompressedMessages } from '@/shared/compression'
-import { deleteBlob as deleteLocalBlob, clearAll as clearLocalBlobs } from '@/client/files/local-store'
 import {
   bulkTombstoneByKind,
   cloneAttachmentSelections,
   forkConversationJoins,
   gcOrphanedAttachment,
   gcOrphanedAttachments,
-  tombstoneFile,
   tombstoneMcpResource,
   type AttachmentRef,
 } from '@/client/store/cascade'
@@ -92,6 +88,18 @@ import {
   type PendingSelectionAction,
   type UiSlice,
 } from "./store/slices/ui"
+import { createFilesSlice, type FilesSlice } from "./store/slices/files"
+import {
+  createResourcesSlice,
+  useWorkspaceResources,
+  type ResourcesSlice,
+} from "./store/slices/resources"
+import {
+  createConversationFilesSlice,
+  useConversationPrivateFiles,
+  useConversationSelectedFileIds,
+  type ConversationFilesSlice,
+} from "./store/slices/conversation-files"
 
 export type {
   UploadedFile,
@@ -185,13 +193,16 @@ export interface AppState
     ProjectTasksSlice,
     DocumentsSlice,
     UrlBookmarksSlice,
-    UiSlice {
+    UiSlice,
+    FilesSlice,
+    ResourcesSlice,
+    ConversationFilesSlice {
   // UI state (theme, colorScheme, activeView, sidebars/panels,
   // editorPrefs, pins, selection bus, local-only/local-files toggles,
   // pendingChatInput) — see UiSlice in store/slices/ui.ts.
 
-  // Files
-  files: UploadedFile[]
+  // Files — see FilesSlice in store/slices/files.ts (files[] + add/
+  // remove/clear/setExtraction/setStorage).
 
   // Workspaces
   workspaces: Workspace[]
@@ -205,14 +216,9 @@ export interface AppState
   // (documents[] + activeDocumentId + create/delete/rename/setContent/
   // append/setActive/appendToActiveOrCreate).
 
-  // Resources (file-to-workspace associations)
-  resources: Resource[]
-
-  // Conversation-private file attachments (file-to-conversation join).
-  // Sits alongside `resources`: a `fileId` can be in either, both, or
-  // neither. Private files are scoped to one conversation and never
-  // appear in the workspace library.
-  conversationFiles: ConversationFile[]
+  // Resources (file-to-workspace) — see ResourcesSlice.
+  // Conversation-private files (file-to-conversation join) — see
+  // ConversationFilesSlice.
 
   // MCP — workspace-scoped server bindings + the resources they expose.
   // Same lane model as files: workspace library (`mcpResourceBindings`)
@@ -314,19 +320,8 @@ export interface AppState
   ) => void
   setActiveWorkspace: (workspaceId: string) => void
 
-  // Resource actions
-  addResource: (workspaceId: string, fileId: string) => void
-  removeResource: (resourceId: string) => void
-
-  // Conversation-private file actions
-  /** Attach a file privately to a conversation. The file is **not**
-   *  added to the workspace library — it lives only inside this chat.
-   *  No-op if the join already exists. */
-  addConversationFile: (conversationId: string, fileId: string) => void
-  /** Detach a private file from a conversation. If this was the last
-   *  reference to the underlying `UploadedFile` (no `resources` row and
-   *  no other `conversationFiles` row), the file is GC'd. */
-  removeConversationFile: (conversationId: string, fileId: string) => void
+  // Resource actions — see ResourcesSlice.
+  // Conversation-private file actions — see ConversationFilesSlice.
 
   // MCP server actions
   /** Create a new MCP server config in the active workspace. Returns
@@ -423,26 +418,7 @@ export interface AppState
 
   // setPendingChatInput — see UiSlice.
 
-  // File actions
-  addFile: (file: UploadedFile) => void
-  removeFile: (fileId: string) => void
-  clearFiles: () => void
-  setFileExtraction: (
-    fileId: string,
-    patch: Partial<
-      Pick<
-        UploadedFile,
-        | 'extractionStatus'
-        | 'extractedText'
-        | 'extractionTruncated'
-        | 'extractedKind'
-        | 'imageDataUrl'
-        | 'summary'
-        | 'keyTopics'
-      >
-    >
-  ) => void
-  setFileStorage: (fileId: string, patch: { storagePath?: string | null }) => void
+  // File actions — see FilesSlice.
 
   // Conversation actions
   createConversation: (workspaceId?: string) => Conversation
@@ -481,10 +457,8 @@ export interface AppState
     conversationId: string,
     patch: Partial<import("@/shared/skills/file-search-config").FileSearchConfig> | null
   ) => void
-  /** Toggle a file's attachment to the active conversation (no-op if no active conversation). */
-  toggleConversationFileSelection: (fileId: string) => void
-  /** Clear all attached files on the active conversation. */
-  clearConversationFileSelection: () => void
+  // toggleConversationFileSelection / clearConversationFileSelection —
+  // see ConversationFilesSlice.
   togglePin: (conversationId: string) => void
   setActiveConversation: (conversationId: string | null) => void
 
@@ -551,9 +525,11 @@ export const useStore = create<AppState>()(
       ...createDocumentsSlice(set, get, api),
       ...createUrlBookmarksSlice(set, get, api),
       ...createUiSlice(set, get, api),
+      ...createFilesSlice(set, get, api),
+      ...createResourcesSlice(set, get, api),
+      ...createConversationFilesSlice(set, get, api),
 
-      // Files
-      files: [],
+      // Files — see FilesSlice
 
       // Workspaces
       workspaces: getDefaultWorkspaces(),
@@ -561,11 +537,8 @@ export const useStore = create<AppState>()(
 
       // Documents — see DocumentsSlice
 
-      // Resources
-      resources: [],
-
-      // Conversation-private file attachments
-      conversationFiles: [],
+      // Resources — see ResourcesSlice
+      // Conversation-private files — see ConversationFilesSlice
 
       // MCP — server bindings and the resources they expose
       mcpServers: [],
@@ -910,73 +883,6 @@ export const useStore = create<AppState>()(
           }
         }),
 
-      // Resource actions
-      addResource: (workspaceId: string, fileId: string) => {
-        const newResource: Resource = {
-          id: uuid(),
-          workspaceId,
-          fileId,
-          addedAt: new Date(),
-        }
-        set((state) => ({
-          resources: [...state.resources, newResource],
-        }))
-      },
-      removeResource: (resourceId: string) =>
-        set((state) => {
-          const target = state.resources.find((r) => r.id === resourceId)
-          const newResources = state.resources.filter((r) => r.id !== resourceId)
-          if (!target) return { resources: newResources }
-          // Strip the fileId from every conversation's selection — once the
-          // resource is gone the workspace-library tick no longer makes sense.
-          const newConversations = state.conversations.map((c) =>
-            c.selectedFileIds.includes(target.fileId)
-              ? {
-                  ...c,
-                  selectedFileIds: c.selectedFileIds.filter((id) => id !== target.fileId),
-                }
-              : c
-          )
-          const orphanPatch = gcOrphanedAttachment(
-            { ...state, resources: newResources, conversations: newConversations },
-            { kind: 'file', id: target.fileId }
-          )
-          return { resources: newResources, conversations: newConversations, ...orphanPatch }
-        }),
-
-      // Conversation-private file actions
-      addConversationFile: (conversationId: string, fileId: string) =>
-        set((state) => {
-          // Idempotent: don't add a second join row for the same pair.
-          if (
-            state.conversationFiles.some(
-              (cf) => cf.conversationId === conversationId && cf.fileId === fileId
-            )
-          ) {
-            return state
-          }
-          const newJoin: ConversationFile = {
-            id: uuid(),
-            conversationId,
-            fileId,
-            addedAt: new Date(),
-          }
-          return {
-            conversationFiles: [...state.conversationFiles, newJoin],
-          }
-        }),
-      removeConversationFile: (conversationId: string, fileId: string) =>
-        set((state) => {
-          const newConversationFiles = state.conversationFiles.filter(
-            (cf) => !(cf.conversationId === conversationId && cf.fileId === fileId)
-          )
-          const orphanPatch = gcOrphanedAttachment(
-            { ...state, conversationFiles: newConversationFiles },
-            { kind: 'file', id: fileId }
-          )
-          return { conversationFiles: newConversationFiles, ...orphanPatch }
-        }),
-
       // MCP server actions
       addMcpServer: ({ workspaceId, name, url, credentialMode, credentialFingerprint, enabled = true }) => {
         const now = new Date()
@@ -1277,64 +1183,6 @@ export const useStore = create<AppState>()(
         })),
       setActiveAgent: (agentId) => set({ activeAgentId: agentId }),
 
-      // File actions
-      addFile: (file: UploadedFile) =>
-        set((state) => ({ files: [...state.files, file] })),
-      removeFile: (fileId: string) => {
-        // Fire-and-forget — IDB delete is best-effort and shouldn't block
-        // the UI update. The metadata row stays (tombstoned) so future
-        // references — message `attachedFileIds`, notes, citations —
-        // resolve to a "removed" label instead of dangling.
-        void deleteLocalBlob(fileId)
-        set((state) => ({
-          files: state.files.map((f) =>
-            f.id === fileId && !f.deletedAt ? tombstoneFile(f) : f
-          ),
-          // Atomic cascade: drop every live join row that references this
-          // file. The metadata stub remains for historical references but
-          // join rows shouldn't claim the file is still attached.
-          resources: state.resources.filter((r) => r.fileId !== fileId),
-          conversationFiles: state.conversationFiles.filter(
-            (cf) => cf.fileId !== fileId
-          ),
-          conversations: state.conversations.map((c) =>
-            c.selectedFileIds.includes(fileId)
-              ? { ...c, selectedFileIds: c.selectedFileIds.filter((id) => id !== fileId) }
-              : c
-          ),
-        }))
-      },
-      clearFiles: () => {
-        void clearLocalBlobs()
-        set((state) => ({
-          files: state.files.map((f) => (f.deletedAt ? f : tombstoneFile(f))),
-          resources: [],
-          conversationFiles: [],
-          conversations: state.conversations.map((c) =>
-            c.selectedFileIds.length > 0 ? { ...c, selectedFileIds: [] } : c
-          ),
-        }))
-      },
-      setFileExtraction: (fileId, patch) =>
-        set((state) => ({
-          files: state.files.map((f) =>
-            f.id === fileId ? { ...f, ...patch } : f
-          ),
-        })),
-      setFileStorage: (fileId, patch) =>
-        set((state) => ({
-          files: state.files.map((f) =>
-            f.id === fileId
-              ? {
-                  ...f,
-                  ...(patch.storagePath !== undefined
-                    ? { storagePath: patch.storagePath ?? undefined }
-                    : {}),
-                }
-              : f
-          ),
-        })),
-
       // Conversation actions
       createConversation: (workspaceId?: string) => {
         const activeWorkspaceId = workspaceId || get().activeWorkspaceId
@@ -1553,33 +1401,6 @@ export const useStore = create<AppState>()(
             c.id === conversationId ? { ...c, pinned: !c.pinned } : c
           ),
         })),
-      toggleConversationFileSelection: (fileId: string) =>
-        set((state) => {
-          const id = state.activeConversationId
-          if (!id) return state
-          return {
-            conversations: state.conversations.map((c) =>
-              c.id === id
-                ? {
-                    ...c,
-                    selectedFileIds: c.selectedFileIds.includes(fileId)
-                      ? c.selectedFileIds.filter((x) => x !== fileId)
-                      : [...c.selectedFileIds, fileId],
-                  }
-                : c
-            ),
-          }
-        }),
-      clearConversationFileSelection: () =>
-        set((state) => {
-          const id = state.activeConversationId
-          if (!id) return state
-          return {
-            conversations: state.conversations.map((c) =>
-              c.id === id ? { ...c, selectedFileIds: [] } : c
-            ),
-          }
-        }),
       setActiveConversation: (conversationId: string | null) =>
         set({ activeConversationId: conversationId }),
 
@@ -1907,47 +1728,14 @@ export const useIsConversationTyping = (conversationId: string | null): boolean 
   )
 }
 
-/**
- * Returns the file IDs the active conversation has attached as context for its
- * next message. Empty array if there's no active conversation.
- */
-export const useConversationSelectedFileIds = (): string[] => {
-  const conv = useActiveConversation()
-  return conv?.selectedFileIds ?? []
-}
-
 export const useWorkspaceConversations = () => {
   const conversations = useStore((state) => state.conversations)
   const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
   return conversations.filter((c) => c.workspaceId === activeWorkspaceId)
 }
 
-export const useWorkspaceResources = () => {
-  const resources = useStore((state) => state.resources)
-  const files = useStore((state) => state.files)
-  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
-  const workspaceResources = resources.filter((r) => r.workspaceId === activeWorkspaceId)
-  return workspaceResources
-    .map((r) => files.find((f) => f.id === r.fileId))
-    .filter((f): f is UploadedFile => !!f && !f.deletedAt)
-}
-
-/**
- * Files attached privately to the active conversation. These do NOT
- * appear in the workspace library — they're scoped to one chat. Empty
- * when there's no active conversation. Inner-joins against `files[]`
- * so dangling refs are skipped silently.
- */
-export const useConversationPrivateFiles = (): UploadedFile[] => {
-  const conversationFiles = useStore((state) => state.conversationFiles)
-  const files = useStore((state) => state.files)
-  const activeConversationId = useStore((state) => state.activeConversationId)
-  if (!activeConversationId) return []
-  return conversationFiles
-    .filter((cf) => cf.conversationId === activeConversationId)
-    .map((cf) => files.find((f) => f.id === cf.fileId))
-    .filter((f): f is UploadedFile => !!f && !f.deletedAt)
-}
+export { useWorkspaceResources }
+export { useConversationPrivateFiles, useConversationSelectedFileIds }
 
 /** MCP servers belonging to the active workspace (live, non-tombstoned). */
 export const useWorkspaceMcpServers = (): McpServer[] => {
