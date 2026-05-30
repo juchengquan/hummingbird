@@ -1,9 +1,25 @@
 # Plan: Deep Research mode
 
-Status: 📐 planning. Promoted from
-[`SURVEY-market-2026.md` §4.1](SURVEY-market-2026.md). Targets four
-phases; Phase 1 is the smallest end-to-end loop, Phases 2–4 progressively
-add HITL on the plan, workspace-knowledge sources, and polish.
+Status: **✅ All 4 phases shipped + wire-up.** Phase 1 ships the
+end-to-end loop ([#101](https://github.com/juchengquan/hummingbird/pull/101))
+— `/research <goal>` slash, `mode` flag, research-mode system prompt,
+"Open in editor" button. Phase 2 ships auto editor hand-off on settle
+([#103](https://github.com/juchengquan/hummingbird/pull/103))
+— chat message + workspace doc + markdown artifact, resume-on-reload
+preserves `mode`. Phase 3 ships workspace-knowledge sources via
+`searchFiles` ([#104](https://github.com/juchengquan/hummingbird/pull/104))
+— research mode force-enables `searchFiles`; the system prompt
+branches files-first when enabled. Phase 4 ships the citation
+formatter ([#105](https://github.com/juchengquan/hummingbird/pull/105))
+— pure `formatResearchCitations` renumbers inline `[N]` markers and
+dedupes the `## Sources` block. Wire-up
+([#106](https://github.com/juchengquan/hummingbird/pull/106))
+applies the formatter in the Phase 2 auto-handoff so the chat
+message, doc, and artifact all carry canonical citations.
+
+Plan promoted from [`SURVEY-market-2026.md` §4.1](../SURVEY-market-2026.md).
+Originally lived at `docs/PLAN-deep-research.md`; moved here on
+completion per the archive convention in [`ROADMAP.md`](../ROADMAP.md).
 
 ## What "Deep Research" is
 
@@ -216,7 +232,7 @@ Acceptance:
 ### Phase 4 — Polish (~300 lines)
 
 - Parallel section research via subagents (composes with
-  [`SURVEY-market-2026.md` §4.5](SURVEY-market-2026.md) if subagents
+  [`SURVEY-market-2026.md` §4.5](../SURVEY-market-2026.md) if subagents
   ship first).
 - Structured citation formatter (canonical `[N]` ordering across
   sections, deduped Sources block).
@@ -251,7 +267,7 @@ Acceptance:
   notes as a research artifact; Phase 4 exposes per-section re-run.
 - **Output format alternatives** (Audio Overview, slide deck,
   presentation) — out of scope for this plan; tracked under
-  [`SURVEY-market-2026.md` §4.2](SURVEY-market-2026.md).
+  [`SURVEY-market-2026.md` §4.2](../SURVEY-market-2026.md).
 - **Concurrency safety.** Two `/research` runs on the same workspace
   shouldn't collide. Already handled — each task gets its own runId
   and event log.
@@ -279,5 +295,5 @@ that turns "click to open" into "opens automatically", which is what
 makes the feature feel finished.
 
 Phase 3 and Phase 4 are optional follow-ons and can be re-prioritised
-against the rest of the [`SURVEY-market-2026.md` §6 slate](SURVEY-market-2026.md)
+against the rest of the [`SURVEY-market-2026.md` §6 slate](../SURVEY-market-2026.md)
 when the time comes.
