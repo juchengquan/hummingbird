@@ -62,7 +62,7 @@ same first move.
 | Operational complexity | **+!** | ~ (2 services) | – (2 services + 2 languages) | ~ |
 | Contract drift risk | **+!** (no boundary) | **+!** (shared types) | – (OpenAPI codegen needed) | depends on worker lang |
 | Reversibility | **+!** | + | ~ | + |
-| Cost (hosting only) | $0 | +$5-15/mo | +$5-15/mo | +$5-15/mo |
+| Cost (hosting only) | $0 | host-dependent (self-host: $0; managed PaaS: typically $5-15/mo) | host-dependent (same as B) | host-dependent (same as B) |
 | Future Python ML deps | – | – | **+!** | + (if Py) |
 
 **Where each option wins:**
@@ -213,8 +213,14 @@ Phase 6.
 - Auth middleware: verify Supabase JWT (`PyJWT` + the JWT secret).
 - `docker-compose.yml` at repo root for local dev: spins up Next.js +
   the Python service together.
-- Deploy target: **Fly.io** (free tier + good SSE + tiny ops surface)
-  or Railway. Pick one; document.
+- **Deploy target: TBD.** The plan is host-agnostic at the application
+  layer — the container only needs to (a) expose HTTP, (b) reach
+  Supabase, and (c) keep running for as long as a single task does
+  (no per-request execution cap). Concrete options to weigh later:
+  self-host on Hetzner / a home server / k8s, or a managed PaaS
+  (Fly.io, Railway, Render, Modal, etc.). The Phase 0 ship is the
+  Dockerfile + a `docker run` command that works anywhere; the
+  hosting decision can land between Phase 0 and Phase 1.
 - OpenAPI emission already on by default in FastAPI; add `openapi-typescript`
   to the Next.js build to regenerate `lib/shared/api-schemas.generated.ts`
   in CI. Lint fails if it drifts.
@@ -345,22 +351,29 @@ Python is down).
 - Implement `/api/chat` in Python. Reuses the agent loop from Phase
   2-3, just without the durable-state writes (chat turns are
   ephemeral by design).
-- Vercel rewrite: `/api/chat`, `/api/tasks/*`, `/api/extract`,
-  `/api/summarize`, `/api/mcp/*`, `/api/url/fetch`, `/api/images/*`
-  → Python service. Conditional on the feature flag; flag off →
-  Next.js handles.
+- Same-origin routing — the frontend hits `/api/chat` as today.
+  Either: (a) the Next.js route handler proxies to the Python
+  service over HTTP (works on any host, including self-hosted
+  behind a reverse proxy), or (b) if deployed on Vercel, a
+  Vercel rewrite forwards the path directly without a Next.js
+  function in the middle (one less hop). Conditional on the
+  feature flag; flag off → Next.js handles inline.
+- Covers: `/api/chat`, `/api/tasks/*`, `/api/extract`,
+  `/api/summarize`, `/api/mcp/*`, `/api/url/fetch`, `/api/images/*`.
 - `lib/client/api-client.ts` doesn't change (paths are the same).
   Frontend doesn't know it's talking to Python.
 
 **Risks:**
-- Vercel rewrite + SSE buffering. Some edge cases buffer; needs
-  testing. Mitigation: verify on the deploy target before flagging
-  users.
+- SSE buffering through whatever sits between the browser and the
+  Python service (Vercel rewrite, an Nginx in front of a self-host,
+  a CDN with default buffering). Streaming requires chunked transfer
+  + flushed writes; verify on the chosen host before flagging users.
 - Cookie auth ↔ JWT bearer. The chat route currently reads the
   Supabase session cookie. The Python service expects a bearer token.
-  Mitigation: the rewrite injects the cookie's JWT as a bearer header.
+  Mitigation: whatever does the proxying injects the cookie's JWT as
+  a bearer header.
 
-**Rollback:** flip flag off; rewrite stops; Next.js handles.
+**Rollback:** flip flag off; the proxy / rewrite stops; Next.js handles.
 
 **Verification:** flagged users have full chat parity. Streaming
 matches TS output within tolerance. Browser tab open for an hour
@@ -425,7 +438,7 @@ state is fully working.
 | 2 | Runner behaviour drift | Fixture round-trip suite |
 | 3 | MCP cred decryption | Side-by-side CI tests |
 | 3 | Streaming format change is user-visible | Separate flag, A/B test |
-| 4 | SSE buffering through Vercel rewrite | Verify on deploy target before users |
+| 4 | SSE buffering through the proxy / CDN sitting in front of the agent service | Verify on the chosen host before users |
 | 5 | One-way door on deletion | 2-week observation window |
 
 ---
@@ -448,12 +461,18 @@ door, and only after a 2-week parity observation.
 
 ## Cost
 
-**Hosting (incremental):**
-- Fly.io: ~$5/mo for a 256MB shared-CPU machine (free tier covers
-  Phase 0-1).
-- Railway: ~$5/mo on the Hobby plan.
-- Modal: $30 free credits/mo (GPU-friendly if you later run local
-  inference).
+**Hosting (incremental):** host-dependent — picked between Phase 0
+and Phase 1, not committed to up front. Concrete weighings for context:
+- Self-host (Hetzner / home server / existing k8s): **$0 incremental**
+  if there's spare capacity; the only added cost is the operational
+  surface (monitoring, restarts, certs). Same fixed cost as the box
+  itself.
+- Managed PaaS (Fly.io, Railway, Render, etc.): typically **$5-15/mo**
+  for a small always-on container at the scale this plan targets.
+  Most have a free tier that covers Phase 0-1.
+- GPU-adjacent (Modal): pay-per-use. Worth considering only if you
+  later want to run local inference; not load-bearing for any phase
+  of this plan.
 
 **Engineering:**
 - 4-6 weeks of focused effort end-to-end.
@@ -506,23 +525,32 @@ door, and only after a 2-week parity observation.
 
 ## Decisions still to make before Phase 0
 
-1. **Deploy target** — Fly.io / Railway / Render / Modal / self-host
-   on Hetzner. Recommendation: **Fly.io** (free tier for Phase 0-1,
-   then ~$5/mo; good SSE support; clean ops).
-2. **Python framework** — FastAPI (recommended; mature, OpenAPI
+1. **Python framework** — FastAPI (recommended; mature, OpenAPI
    built-in) vs Litestar (newer, similar shape).
-3. **Provider SDK** — LiteLLM (one interface, many providers; less
+2. **Provider SDK** — LiteLLM (one interface, many providers; less
    provider-specific) vs direct `anthropic` / `openai` SDKs (more
    control, better streaming). Recommendation: **direct SDKs** for
    Phase 2-3 (parity matters); revisit if it becomes a pain.
-4. **Contract sync** — OpenAPI codegen direction (recommended:
+3. **Contract sync** — OpenAPI codegen direction (recommended:
    FastAPI emits, TS consumes).
-5. **Same-origin vs subdomain** — recommended: same-origin via Vercel
-   rewrite (no CORS, no cookie domain pain).
-6. **Editor AI routes (`/api/ai/command`, `/api/ai/copilot`)** — port
+4. **Editor AI routes (`/api/ai/command`, `/api/ai/copilot`)** — port
    or keep in Next.js? Recommendation: **keep in Next.js** for at
    least Phase 1-3. They're tightly Plate-coupled and rarely the
    bottleneck. Re-evaluate after Phase 5.
+
+**Deliberately deferred** (decide between Phase 0 and Phase 1, not
+up front):
+
+- **Deploy target / host.** The plan is host-agnostic. Could be
+  self-hosted (Hetzner, home server, k8s) or a managed PaaS (Fly.io,
+  Railway, Render, Modal, etc.). What the plan needs from the host:
+  HTTP, Supabase egress, long-running processes (no per-request
+  cap), and an SSE-friendly proxy in front (no buffering).
+- **Same-origin vs subdomain.** Same-origin (a proxy / rewrite that
+  keeps the browser hitting `app.example.com/api/*`) avoids CORS and
+  cookie-domain pain. Subdomain (`api.example.com`) is fine if a
+  reverse proxy isn't an option. The choice is host-specific and
+  doesn't change the code.
 
 ---
 
@@ -534,7 +562,8 @@ If you green-light Option C:
 2. Add a Dockerfile + `pyproject.toml`.
 3. Scaffold FastAPI with `GET /healthz` + JWT middleware.
 4. Add the OpenAPI codegen step to CI.
-5. Stand up the Fly.io app + deploy the empty service.
+5. Confirm `docker run` works against a local Supabase project. Pick
+   the host (self-host or PaaS) between this step and Phase 1.
 6. Open a tracking PR titled "agent-py Phase 0 — scaffolding".
 
 That's Phase 0. Phase 1 starts the moment scaffolding lands.
