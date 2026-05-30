@@ -41,6 +41,10 @@ import {
 import { useTaskRunContext } from "@/client/agent/task-run-context"
 import { apiClient } from "@/client/api-client"
 import { downloadAsFile, safeFilename } from "@/client/export"
+import {
+  composeSystemPrompts,
+  resolveAgent,
+} from "@/shared/agents/resolve"
 import { resolveEnabledSkills } from "@/shared/skills/resolve-enabled-skills"
 import { columnTasks, PROJECT_TASK_COLUMNS } from "@/shared/project-tasks"
 import {
@@ -203,13 +207,36 @@ export function ProjectTasksPanel() {
         ? active.id
         : createConversation(workspace.id).id
 
+    // Persona overrides (`PLAN-custom-agents.md` Phase 3): if the user
+    // has pinned a persona in this session, apply its model + system
+    // prompt + forced skills + MCP allow-list to the card's launch so
+    // the same recipe used for chat carries into Kanban "Run as task".
+    const activeAgent = state.activeAgentId
+      ? state.agents.find(
+          (a) =>
+            a.id === state.activeAgentId &&
+            a.workspaceId === workspace.id &&
+            !a.deletedAt
+        )
+      : null
+    const resolved = resolveAgent(activeAgent ?? null)
+
     const body: TaskRequestInput = {
       messages: [{ role: "user", content: card.title }],
       conversationId,
-      model: workspace.defaultModel,
-      workspaceSystemPrompt: workspace.systemPrompt?.trim() || undefined,
+      model: resolved.modelId ?? workspace.defaultModel,
+      workspaceSystemPrompt: composeSystemPrompts(
+        workspace.systemPrompt,
+        resolved.systemPrompt
+      ),
       workspaceId: workspace.id,
-      skills: resolveEnabledSkills({ workspace }),
+      skills: resolveEnabledSkills({
+        workspace,
+        forcedSkillIds: resolved.forcedSkillIds,
+      }),
+      ...(resolved.allowedMcpServerIds
+        ? { allowedMcpServerIds: resolved.allowedMcpServerIds }
+        : {}),
     }
     settledRunRef.current = null
     setPendingCardId(card.id)

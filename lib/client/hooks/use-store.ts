@@ -18,6 +18,7 @@ import type {
   ConversationUrlBookmark,
   Message,
   MessageError,
+  Agent,
   Conversation,
   MainView,
   Note,
@@ -58,6 +59,7 @@ import {
   clampResourcesSidebarWidth,
   clampSidebarWidth,
   defaultSlug,
+  ensureUniqueAgentSlug,
   ensureUniquePromptSlug,
   mergeFileSearchConfig,
   mergeImageGenConfig,
@@ -298,6 +300,15 @@ interface AppState {
   // chat input via `pendingChatInput`. See docs/_done/PLAN-prompt-library.md.
   // Phase 1: local-only. Phase 2 will add Supabase sync.
   prompts: Prompt[]
+
+  // Custom agents / personas (`PLAN-custom-agents.md`). Saved bundles of
+  // { name, system prompt, model, allowed skills, allowed MCP servers }
+  // invoked via `/<slug>` from the chat input or pinned per conversation.
+  agents: Agent[]
+  /** Currently pinned persona for the active conversation. Cleared by
+   *  the user or on conversation switch. Null when no persona is
+   *  pinned. */
+  activeAgentId: string | null
 
   /** One-shot signal from anywhere in the app to ChatPanel's local input
    *  state. Set by sidebar prompt click (after variable expansion) or
@@ -613,6 +624,41 @@ interface AppState {
    *  programmatically for future surfaces. */
   restorePrompt: (promptId: string) => void
 
+  // Agent / persona actions — workspace-scoped saved bundles
+  // (`PLAN-custom-agents.md`). Slug is auto-derived from `name` on
+  // create via `defaultSlug()`; the create action accepts optional
+  // `slug` for import / duplicate-with-rename callers.
+  createAgent: (input: {
+    workspaceId: string
+    name: string
+    systemPrompt?: string
+    modelId?: string
+    allowedSkillIds?: string[]
+    allowedMcpServerIds?: string[]
+    slug?: string
+    icon?: string
+  }) => Agent
+  updateAgent: (
+    agentId: string,
+    patch: Partial<
+      Pick<
+        Agent,
+        | "name"
+        | "slug"
+        | "systemPrompt"
+        | "modelId"
+        | "allowedSkillIds"
+        | "allowedMcpServerIds"
+        | "icon"
+        | "pinned"
+      >
+    >
+  ) => void
+  deleteAgent: (agentId: string) => void
+  restoreAgent: (agentId: string) => void
+  /** Pin a persona to the active conversation. Pass null to clear. */
+  setActiveAgent: (agentId: string | null) => void
+
   /** Set the one-shot chat-input seed read by ChatPanel. Pass null to
    *  clear. ChatPanel clears immediately after reading. */
   setPendingChatInput: (value: string | null) => void
@@ -830,6 +876,8 @@ export const useStore = create<AppState>()(
 
       // Prompts (Phase 1: local-only)
       prompts: [],
+      agents: [],
+      activeAgentId: null,
       pendingChatInput: null,
 
       // Project mode (Kanban cards)
@@ -1850,6 +1898,96 @@ export const useStore = create<AppState>()(
               : p
           ),
         })),
+
+      // Agent / persona actions (`PLAN-custom-agents.md`)
+      createAgent: ({
+        workspaceId,
+        name,
+        systemPrompt = "",
+        modelId,
+        allowedSkillIds = [],
+        allowedMcpServerIds = [],
+        slug,
+        icon,
+      }) => {
+        const now = new Date()
+        const baseSlug = slug?.trim() || defaultSlug(name)
+        const uniqueSlug = ensureUniqueAgentSlug(
+          baseSlug,
+          get().agents.filter((a) => a.workspaceId === workspaceId)
+        )
+        const agent: Agent = {
+          id: uuid(),
+          workspaceId,
+          name: name.trim(),
+          slug: uniqueSlug,
+          systemPrompt,
+          allowedSkillIds: [...allowedSkillIds],
+          allowedMcpServerIds: [...allowedMcpServerIds],
+          createdAt: now,
+          updatedAt: now,
+          ...(modelId ? { modelId } : {}),
+          ...(icon ? { icon } : {}),
+        }
+        set((state) => ({ agents: [...state.agents, agent] }))
+        return agent
+      },
+      updateAgent: (agentId, patch) =>
+        set((state) => ({
+          agents: state.agents.map((a) => {
+            if (a.id !== agentId) return a
+            const nextName = patch.name?.trim() ?? a.name
+            let nextSlug = a.slug
+            if (patch.slug !== undefined) {
+              const requested = patch.slug.trim() || defaultSlug(nextName)
+              nextSlug = ensureUniqueAgentSlug(
+                requested,
+                state.agents.filter((x) => x.workspaceId === a.workspaceId),
+                a.id
+              )
+            }
+            return {
+              ...a,
+              name: nextName,
+              slug: nextSlug,
+              systemPrompt: patch.systemPrompt ?? a.systemPrompt,
+              modelId:
+                patch.modelId !== undefined ? patch.modelId : a.modelId,
+              allowedSkillIds:
+                patch.allowedSkillIds !== undefined
+                  ? [...patch.allowedSkillIds]
+                  : a.allowedSkillIds,
+              allowedMcpServerIds:
+                patch.allowedMcpServerIds !== undefined
+                  ? [...patch.allowedMcpServerIds]
+                  : a.allowedMcpServerIds,
+              icon: patch.icon !== undefined ? patch.icon : a.icon,
+              pinned:
+                patch.pinned !== undefined ? patch.pinned : a.pinned,
+              updatedAt: new Date(),
+            }
+          }),
+        })),
+      deleteAgent: (agentId) =>
+        set((state) => ({
+          agents: state.agents.map((a) =>
+            a.id === agentId
+              ? { ...a, deletedAt: new Date(), updatedAt: new Date() }
+              : a
+          ),
+          // If the deleted persona was active, unpin it.
+          activeAgentId:
+            state.activeAgentId === agentId ? null : state.activeAgentId,
+        })),
+      restoreAgent: (agentId) =>
+        set((state) => ({
+          agents: state.agents.map((a) =>
+            a.id === agentId
+              ? { ...a, deletedAt: undefined, updatedAt: new Date() }
+              : a
+          ),
+        })),
+      setActiveAgent: (agentId) => set({ activeAgentId: agentId }),
 
       setPendingChatInput: (value) => set({ pendingChatInput: value }),
 
@@ -2992,6 +3130,8 @@ export const useStore = create<AppState>()(
         localOnlyMode: state.localOnlyMode,
         localFilesOnly: state.localFilesOnly,
         prompts: state.prompts,
+        agents: state.agents,
+        activeAgentId: state.activeAgentId,
         projectTasks: state.projectTasks,
         // pendingChatInput is deliberately NOT persisted — it's a
         // one-shot event signal, not durable state. Surviving a reload

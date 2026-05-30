@@ -195,6 +195,9 @@ export async function POST(req: NextRequest) {
       maxSteps,
       requireApprovalFor: body.requireApprovalFor,
       mode,
+      ...(body.allowedMcpServerIds
+        ? { allowedMcpServerIds: body.allowedMcpServerIds }
+        : {}),
     },
   }
   try {

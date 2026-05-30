@@ -671,4 +671,44 @@ export interface Prompt {
   deletedAt?: Date
 }
 
+/**
+ * Custom agent / persona — `PLAN-custom-agents.md`. A saved bundle of
+ * { name, system prompt, model, allowed skills, allowed MCP servers }
+ * the user invokes via `/<slug>` in the chat input. Same workspace-
+ * scoped + soft-delete + sync pattern as `Prompt`.
+ */
+export interface Agent {
+  id: string
+  /** Workspace this persona belongs to. */
+  workspaceId: string
+  /** User-facing label. */
+  name: string
+  /** Slash trigger token, derived from `name` on creation. Unique per
+   *  (workspace, !deletedAt). */
+  slug: string
+  /** Free-text system prompt. Appended after the workspace's own
+   *  `systemPrompt` when the persona is active. Empty string is fine —
+   *  signals "model + skills only, no prompt reshape." */
+  systemPrompt: string
+  /** Optional model override. Falls back to workspace `defaultModel` →
+   *  global `DEFAULT_CHAT_MODEL` when unset. */
+  modelId?: string
+  /** Skills force-enabled when this persona is active. Explicit list, no
+   *  cascade inheritance — the user picks exactly which skills are
+   *  available. */
+  allowedSkillIds: string[]
+  /** MCP server ids (cloud-mode) the persona is allowed to call. Empty
+   *  array = no MCP for this persona; present = only those servers.
+   *  Enforced server-side in `loadEffectiveMcpServers`. (Phase 2.) */
+  allowedMcpServerIds: string[]
+  /** Optional Lucide icon name. UI defaults to a generic icon. */
+  icon?: string
+  /** Sticky at the top of the sidebar listing. */
+  pinned?: boolean
+  createdAt: Date
+  updatedAt: Date
+  /** Soft-delete marker — same convention as other sync'd entities. */
+  deletedAt?: Date
+}
+
 export type MainView = 'workspaces' | 'chat' | 'resources' | 'editor' | 'canvas'

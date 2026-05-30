@@ -17,7 +17,7 @@ import type { FileSearchConfig } from "@/shared/skills/file-search-config"
 import type { ImageGenConfig } from "@/shared/skills/image-gen-config"
 import type { WebFetchConfig } from "@/shared/skills/web-fetch-config"
 import type { WebSearchConfig } from "@/shared/skills/web-search-config"
-import type { McpServer, Prompt } from "@/shared/types"
+import type { Agent, McpServer, Prompt } from "@/shared/types"
 
 // --- sidebar widths --------------------------------------------------------
 
@@ -80,6 +80,28 @@ export function ensureUniquePromptSlug(
   }
   // Pathological fallback — every numeric suffix taken. Append a random
   // tail to escape. Shouldn't happen in any sane library.
+  return `${base}-${uuid().slice(0, 6)}`
+}
+
+/** Mirror of `ensureUniquePromptSlug` for personas
+ *  (`PLAN-custom-agents.md`). The schema enforces uniqueness per
+ *  (workspace, slug) where `deleted_at is null`, so this helper checks
+ *  against the workspace's non-tombstoned personas only. */
+export function ensureUniqueAgentSlug(
+  base: string,
+  agents: Agent[],
+  excludeAgentId?: string
+): string {
+  const taken = new Set(
+    agents
+      .filter((a) => a.id !== excludeAgentId && !a.deletedAt)
+      .map((a) => a.slug)
+  )
+  if (!taken.has(base)) return base
+  for (let n = 2; n < 10_000; n++) {
+    const candidate = `${base}-${n}`
+    if (!taken.has(candidate)) return candidate
+  }
   return `${base}-${uuid().slice(0, 6)}`
 }
 

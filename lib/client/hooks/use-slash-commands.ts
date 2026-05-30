@@ -36,6 +36,10 @@ export interface UseSlashCommandsResult {
   confirmClear: () => void
   helpOpen: boolean
   setHelpOpen: (open: boolean) => void
+  /** `/personas` opens the manage-personas dialog
+   *  (`PLAN-custom-agents.md`). */
+  personasOpen: boolean
+  setPersonasOpen: (open: boolean) => void
 }
 
 export function useSlashCommands({
@@ -50,6 +54,7 @@ export function useSlashCommands({
 
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
+  const [personasOpen, setPersonasOpen] = useState(false)
 
   const confirmClear = useCallback(() => {
     clearMessages()
@@ -107,6 +112,10 @@ export function useSlashCommands({
           setHelpOpen(true)
           break
         }
+        case "personas": {
+          setPersonasOpen(true)
+          break
+        }
       }
     },
     [
@@ -126,5 +135,7 @@ export function useSlashCommands({
     confirmClear,
     helpOpen,
     setHelpOpen,
+    personasOpen,
+    setPersonasOpen,
   }
 }

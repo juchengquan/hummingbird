@@ -16,6 +16,7 @@ import { useTaskRunContext } from "@/client/agent/task-run-context"
 import { ContextPicker } from "@/components/chat/context-picker"
 import { SlashAutocomplete } from "@/components/panels/slash-autocomplete"
 import { SlashHelpDialog } from "@/components/panels/slash-help-dialog"
+import { AgentsDialog } from "@/components/panels/agents-dialog"
 import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { SKILLS } from "@/shared/skills/registry"
 import { resolveSkill, type SkillId } from "@/shared/skills/types"
@@ -28,6 +29,7 @@ import {
 import { useSlashCommands } from "@/client/hooks/use-slash-commands"
 import type { CommandId } from "@/shared/commands/registry"
 import { TASK_MODES, type TaskModeId } from "@/shared/task-modes/registry"
+import { composeSystemPrompts, resolveAgent } from "@/shared/agents/resolve"
 import {
   isTypingPromptMention,
   matchPromptMentions,
@@ -49,7 +51,7 @@ import { getLocalCred } from "@/client/mcp/local-creds"
 
 import { autoArchiveCodeBlocks as autoArchiveCodeBlocksPure } from "@/client/chat/auto-archive-code-blocks"
 import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/shared/upload-config"
-import type { Message, MessageError, MessageErrorCode, Prompt } from "@/shared/types"
+import type { Agent, Message, MessageError, MessageErrorCode, Prompt } from "@/shared/types"
 import type { LiveToolCall } from "@/components/skills/tool-call-strip"
 
 export function ChatPanel() {
@@ -82,6 +84,7 @@ export function ChatPanel() {
   const activeConversationId = useStore((state) => state.activeConversationId)
   const conversations = useStore((state) => state.conversations)
   const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
+  const activeAgentId = useStore((state) => state.activeAgentId)
   const workspaces = useStore((state) => state.workspaces)
   const addFile = useStore((state) => state.addFile)
   const addConversationFile = useStore((state) => state.addConversationFile)
@@ -165,13 +168,24 @@ export function ChatPanel() {
    */
   const [slashActiveIndex, setSlashActiveIndex] = useState(0)
   const [slashDismissed, setSlashDismissed] = useState(false)
-  // The `/` menu now lists both action commands and skills, grouped.
+  // Personas live alongside skills + commands + modes in the slash
+  // surface (`PLAN-custom-agents.md`). Pass the active workspace's
+  // non-deleted personas in so the resolver + autocomplete can pick
+  // up `/<slug>` triggers.
+  const allAgents = useStore((s) => s.agents)
+  const workspaceAgents = useMemo(
+    () =>
+      allAgents.filter(
+        (a) => a.workspaceId === activeWorkspaceId && !a.deletedAt
+      ),
+    [allAgents, activeWorkspaceId]
+  )
   const slashMatches = useMemo<SlashMenuEntry[]>(
     () =>
       isTypingSlashCommand(inputValue)
-        ? matchSlashMenu(inputValue.slice(1))
+        ? matchSlashMenu(inputValue.slice(1), { agents: workspaceAgents })
         : [],
-    [inputValue]
+    [inputValue, workspaceAgents]
   )
   const slashOpen = !slashDismissed && slashMatches.length > 0
   // Keep the highlighted row in range as the match set shrinks while
@@ -474,6 +488,13 @@ export function ChatPanel() {
          *  Research mode in the worker (`PLAN-deep-research.md`).
          *  Only meaningful when `asTask` is true. */
         taskMode?: "default" | "research"
+        /** Custom-agent system prompt for this turn — appended after
+         *  the workspace's system prompt. See `PLAN-custom-agents.md`. */
+        agentSystemPrompt?: string
+        /** Per-turn MCP allow-list — when set, cloud-mode MCP servers
+         *  are filtered to this list. Sourced from the active persona
+         *  in `handleSendMessage`. */
+        allowedMcpServerIds?: string[]
       }
     ) => {
       // Read the model freshly from the store rather than via the closure.
@@ -490,7 +511,10 @@ export function ChatPanel() {
       if (!targetConvId) return
       const conv = conversations.find((c) => c.id === targetConvId)
       const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
-      const workspaceSystemPrompt = activeWorkspace?.systemPrompt?.trim() || undefined
+      const workspaceSystemPrompt = composeSystemPrompts(
+        activeWorkspace?.systemPrompt,
+        options?.agentSystemPrompt ?? ""
+      )
       // Resolve which skills are effectively on for this turn so the route
       // knows which tools to register.
       // Effective set = (workspace/conversation cascade ∪ slash-forced)
@@ -573,6 +597,9 @@ export function ChatPanel() {
             skills: enabledSkills,
             ...(options.taskMode && options.taskMode !== "default"
               ? { mode: options.taskMode }
+              : {}),
+            ...(options.allowedMcpServerIds
+              ? { allowedMcpServerIds: options.allowedMcpServerIds }
               : {}),
           },
           { title: conv?.title }
@@ -1142,20 +1169,20 @@ export function ChatPanel() {
     // Resolve a leading `/` directive. A **command** runs now and does
     // NOT send a message; a **skill** forces a capability on and is
     // stripped from the visible message; a **task_mode** forces a
-    // task-mode launch (`/research <goal>` → research-mode task).
-    const slash = resolveSlash(trimmed)
+    // task-mode launch (`/research <goal>` → research-mode task);
+    // an **agent** applies the persona's recipe and pins the persona
+    // for the turn (`PLAN-custom-agents.md`).
+    const slash = resolveSlash(trimmed, { agents: workspaceAgents })
     if (slash?.kind === "command") {
       slashCommands.run(slash.commandId, slash.arg)
       setInputValue("")
       if (textareaRef.current) textareaRef.current.style.height = "auto"
       return // ← no message added, no API call
     }
-    // Task-mode dispatch — pulls forced skills + bumps maxSteps via
-    // the route. Sends the body as the message and forces asTask=true
-    // for this turn, regardless of the chat-input toggle.
     let taskModeForCall: TaskModeId | undefined
     let forcedSkillIds: SkillId[] | undefined
     let messageContent: string
+    let activeAgentForCall: Agent | null = null
     if (slash?.kind === "task_mode") {
       taskModeForCall = slash.modeId
       const descriptor = TASK_MODES.find((m) => m.id === slash.modeId)
@@ -1164,8 +1191,26 @@ export function ChatPanel() {
     } else if (slash?.kind === "skill") {
       forcedSkillIds = [slash.skillId]
       messageContent = slash.remainder
+    } else if (slash?.kind === "agent") {
+      activeAgentForCall = workspaceAgents.find((a) => a.id === slash.agentId) ?? null
+      messageContent = slash.remainder
     } else {
       messageContent = trimmed
+    }
+    // If no /<persona> for this turn but a persona is pinned via the
+    // chat-header (`activeAgentId`), apply the pinned recipe.
+    if (!activeAgentForCall && activeAgentId) {
+      activeAgentForCall =
+        workspaceAgents.find((a) => a.id === activeAgentId) ?? null
+    }
+    if (activeAgentForCall) {
+      const resolved = resolveAgent(activeAgentForCall)
+      forcedSkillIds = [
+        ...(forcedSkillIds ?? []),
+        ...resolved.forcedSkillIds.filter(
+          (s) => !forcedSkillIds?.includes(s as SkillId)
+        ),
+      ] as SkillId[]
     }
     // `/search ` with no query is a no-op (don't send an empty turn);
     // the user is mid-compose. The send button stays available.
@@ -1205,6 +1250,7 @@ export function ChatPanel() {
     }
 
     const history = [...messages, userMessage]
+    const agentResolved = activeAgentForCall ? resolveAgent(activeAgentForCall) : null
     callChatAPIRef.current(history, {
       referenceImage: pendingRef ? { url: pendingRef.url } : undefined,
       forcedSkillIds,
@@ -1213,6 +1259,15 @@ export function ChatPanel() {
       // signal, not the toggle.
       asTask: taskRun.runAsTask || !!taskModeForCall,
       taskMode: taskModeForCall,
+      // Persona overrides for this turn (`PLAN-custom-agents.md`).
+      // Persona modelId beats the chat-input's session-picked model;
+      // persona system prompt is appended after the workspace's;
+      // persona MCP allow-list narrows the cloud-mode server set
+      // (Phase 2 — server-side enforcement in `loadEffectiveMcpServers`).
+      modelOverride: agentResolved?.modelId,
+      agentSystemPrompt: agentResolved?.systemPrompt,
+      allowedMcpServerIds:
+        agentResolved?.allowedMcpServerIds ?? undefined,
     })
   }
 
@@ -1817,6 +1872,10 @@ export function ChatPanel() {
       <SlashHelpDialog
         open={slashCommands.helpOpen}
         onOpenChange={slashCommands.setHelpOpen}
+      />
+      <AgentsDialog
+        open={slashCommands.personasOpen}
+        onOpenChange={slashCommands.setPersonasOpen}
       />
     </div>
   )
