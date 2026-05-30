@@ -1,10 +1,15 @@
-"""Phase 0 smoke tests — health + readiness endpoints.
+"""Phase 1 smoke tests — health + readiness endpoints.
 
-These are the only invariants Phase 0 commits to:
+Invariants:
   - /healthz returns 200 regardless of configuration
-  - /readyz returns 200 and accurately reports which configs are present
+  - /readyz returns 200 and accurately reports which configs are
+    present + whether the DB pool is open
   - the response shape matches the documented schema (mirrored in the
     OpenAPI doc consumed by the Next.js codegen pipeline)
+
+The poll loop is disabled in these tests (`enable_poller=False`) so
+the lifespan doesn't try to open a Postgres pool against env-derived
+config that isn't a real DB.
 """
 
 from __future__ import annotations
@@ -17,7 +22,7 @@ from agent_py.main import create_app
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(create_app())
+    return TestClient(create_app(enable_poller=False))
 
 
 def test_healthz_returns_ok(client: TestClient) -> None:
@@ -36,40 +41,40 @@ def test_healthz_returns_ok(client: TestClient) -> None:
     assert isinstance(body["version"], str) and body["version"]
 
 
-def test_readyz_reports_config_state(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Readiness should report which configs are set.
-
-    In Phase 0 readiness == config-present, not config-reachable. Phase 1
-    will tighten this by actually hitting Supabase.
-    """
-    # Both unset (default in tests).
+def test_readyz_reports_config_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Readiness should report which configs are set + DB pool state."""
     monkeypatch.delenv("SUPABASE_URL", raising=False)
     monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
-    fresh_client = TestClient(create_app())
-    r = fresh_client.get("/readyz")
+    monkeypatch.delenv("SUPABASE_DB_URL", raising=False)
+    client = TestClient(create_app(enable_poller=False))
+    r = client.get("/readyz")
     assert r.status_code == 200
     body = r.json()
     assert body["status"] == "ok"
     assert body["checks"] == {
         "supabase_url_configured": False,
+        "supabase_db_configured": False,
         "jwt_secret_configured": False,
+        "db_pool_open": False,
     }
 
 
-def test_readyz_picks_up_configured_envs(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_readyz_picks_up_configured_envs(monkeypatch: pytest.MonkeyPatch) -> None:
     """When env vars are set, readiness reflects that.
 
-    Creating a fresh app picks up the new env via the settings factory
-    (the conftest fixture clears the cache before this test runs).
+    `db_pool_open` stays False because we don't actually open a pool
+    in this test (no real Postgres). Phase 1 readiness reports
+    "config + pool state", not "Postgres reachable".
     """
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret")
-    client = TestClient(create_app())
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret-32-bytes-minimum-len!")
+    monkeypatch.setenv("SUPABASE_DB_URL", "postgresql://localhost/example")
+    client = TestClient(create_app(enable_poller=False))
     r = client.get("/readyz")
     assert r.status_code == 200
     assert r.json()["checks"] == {
         "supabase_url_configured": True,
+        "supabase_db_configured": True,
         "jwt_secret_configured": True,
+        "db_pool_open": False,
     }
