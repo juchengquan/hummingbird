@@ -4,12 +4,10 @@ import { useState, useRef, useEffect, useMemo, useCallback } from "react"
 import { useChatScroll } from "@/components/panels/use-chat-scroll"
 import { toast } from "sonner"
 import { useStore, useHydrated, useIsConversationTyping } from "@/client/hooks/use-store"
-import { apiClient } from "@/client/api-client"
-import type { ChatRequestInput, TaskRequestInput } from "@/shared/api-schemas"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupTextarea, InputGroupButton } from "@/components/ui/input-group"
-import { cn, toISO } from "@/shared/utils"
+import { cn } from "@/shared/utils"
 import { ResourcesSidebar } from "@/components/sidebars/resources"
 import { TasksSidebar } from "@/components/sidebars/tasks"
 import { useTaskRunContext } from "@/client/agent/task-run-context"
@@ -29,14 +27,13 @@ import {
 import { useSlashCommands } from "@/client/hooks/use-slash-commands"
 import type { CommandId } from "@/shared/commands/registry"
 import { TASK_MODES, type TaskModeId } from "@/shared/task-modes/registry"
-import { composeSystemPrompts, resolveAgent } from "@/shared/agents/resolve"
+import { resolveAgent } from "@/shared/agents/resolve"
 import {
   isTypingPromptMention,
   matchPromptMentions,
 } from "@/shared/prompts/mention-parser"
 import { expandTemplate } from "@/shared/prompts/expand"
 import { PromptVariableFill } from "@/components/panels/prompt-variable-fill"
-import { resolveEnabledSkills } from "@/shared/skills/resolve-enabled-skills"
 import { SmartPasteChip } from "@/components/chat/smart-paste-chip"
 import { detectPasteKind, type PasteDetection } from "@/shared/smart-paste/detect"
 import { ChatHeader } from "@/components/panels/chat-header"
@@ -47,33 +44,18 @@ import { ChevronDown, Square, ArrowUp, Repeat2, X, Loader2, ChevronRight } from 
 import { processSelectedFiles } from "@/client/file-utils"
 import { runExtraction } from "@/client/extract"
 import { persistFile } from "@/client/files/persist"
-import { getLocalCred } from "@/client/mcp/local-creds"
 
-import { autoArchiveCodeBlocks as autoArchiveCodeBlocksPure } from "@/client/chat/auto-archive-code-blocks"
-import { buildAttachments } from "@/client/chat/build-attachments"
-import { buildTransmittedMessages } from "@/client/chat/build-messages"
+import { useChatSend } from "@/client/hooks/use-chat-send"
 import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/shared/upload-config"
-import type { Agent, Message, MessageError, MessageErrorCode, Prompt } from "@/shared/types"
-import type { LiveToolCall } from "@/components/skills/tool-call-strip"
+import type { Agent, Prompt } from "@/shared/types"
 
 export function ChatPanel() {
   const addMessage = useStore((state) => state.addMessage)
   const deleteMessage = useStore((state) => state.deleteMessage)
   const updateMessage = useStore((state) => state.updateMessage)
-  const appendToMessage = useStore((state) => state.appendToMessage)
-  const appendToMessageReasoning = useStore((state) => state.appendToMessageReasoning)
   const truncateMessagesAfter = useStore((state) => state.truncateMessagesAfter)
-  const setMessageError = useStore((state) => state.setMessageError)
-  const setMessageSuggestions = useStore((state) => state.setMessageSuggestions)
-  const setMessageReasoningDuration = useStore((state) => state.setMessageReasoningDuration)
-  const setMessageToolCalls = useStore((state) => state.setMessageToolCalls)
-  const appendMessageGeneratedImages = useStore(
-    (state) => state.appendMessageGeneratedImages
-  )
-  // Per-conversation typing flag. Reads via a memoised selector so
-  // switching to a non-streaming conversation while another is mid-
-  // stream doesn't show "typing…" here.
-  const setConversationTyping = useStore((state) => state.setConversationTyping)
+  // Per-conversation typing flag is sourced from `useChatSend` /
+  // `useIsConversationTyping` below.
   const pendingReferenceImage = useStore(
     (state) => state.pendingReferenceImage
   )
@@ -93,7 +75,6 @@ export function ChatPanel() {
   const conversationFiles = useStore((state) => state.conversationFiles)
   const setFileExtraction = useStore((state) => state.setFileExtraction)
   const setFileStorage = useStore((state) => state.setFileStorage)
-  const createArtifact = useStore((state) => state.createArtifact)
   const pinExplanation = useStore((state) => state.pinExplanation)
   const setResourcesSidebarTab = useStore((state) => state.setResourcesSidebarTab)
   const setResourcesSidebarOpen = useStore((state) => state.setResourcesSidebarOpen)
@@ -104,26 +85,20 @@ export function ChatPanel() {
   )
   const hydrated = useHydrated()
   const [inputValue, setInputValue] = useState("")
-  // Per-conversation streaming flags. Keeping a Set lets the chat panel
-  // know which conversations are mid-stream so switching to another
-  // conv while one is streaming doesn't blanket-disable the send
-  // button. `isStreaming` below is the *active conversation*'s flag.
-  const [streamingConvIds, setStreamingConvIds] = useState<Set<string>>(
-    () => new Set()
-  )
-  const isStreaming =
-    activeConversationId !== null && streamingConvIds.has(activeConversationId)
+  // Send pipeline lives in its own hook (see lib/client/hooks/use-chat-send).
+  // The hook owns the abort-controller map, the streaming-conv-ids Set,
+  // the live tool-call buffer, and `mockAIResponse` — what used to be
+  // the ~620-line callChatAPI callback on this component. Destructure
+  // the stable members so callbacks can depend on `send`/`stop`
+  // directly without re-creating on every render.
+  const {
+    send: chatSendMessage,
+    stop: chatStop,
+    isStreaming: isConversationStreaming,
+    liveToolCalls: chatLiveToolCalls,
+  } = useChatSend()
+  const isStreaming = isConversationStreaming(activeConversationId)
   const isTyping = useIsConversationTyping(activeConversationId)
-  const markStreaming = useCallback((convId: string, on: boolean) => {
-    setStreamingConvIds((prev) => {
-      const has = prev.has(convId)
-      if (on === has) return prev
-      const next = new Set(prev)
-      if (on) next.add(convId)
-      else next.delete(convId)
-      return next
-    })
-  }, [])
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
   /**
    * Per-message live tool-call state — keyed by message id. Populated as
@@ -270,28 +245,15 @@ export function ChatPanel() {
   }, [])
 
 
-  const [liveToolCalls, setLiveToolCalls] = useState<
-    Record<string, LiveToolCall[]>
-  >({})
-  // Per-conversation abort controllers. Map<convId, controller>. The
-  // Stop button on the active conversation aborts that conversation's
-  // controller only — other conversations keep streaming. Cleaned up
-  // when the stream ends (success, error, or abort).
-  const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
   const inputFileRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const messages = useMemo(() => activeConversation?.messages || [], [activeConversation])
 
-  // Long-running task mode. The provider (mounted at the dashboard root)
-  // owns the single active run so the chat panel and the Tasks panel
-  // share it. Kept in a ref so `callChatAPI` can reach `startTask`
-  // without re-memoizing on every render.
+  // Long-running task mode. The provider owns the active run; this
+  // panel reads `runAsTask` / `isRunning` for the header toggle. The
+  // send hook holds its own ref for `startTask` (see useChatSend).
   const taskRun = useTaskRunContext()
-  const taskRunRef = useRef(taskRun)
-  useEffect(() => {
-    taskRunRef.current = taskRun
-  }, [taskRun])
 
   // SelectionTrigger needs the conversation slice up to (and including)
   // the message the selection lives in. We resolve the scope attribute
@@ -414,666 +376,6 @@ export function ChatPanel() {
     isTyping,
   })
 
-  // Mock fallback used when the AI Gateway key isn't configured.
-  // Includes a fake reasoning block so the Thinking… UI is exercisable
-  // without a live reasoning-capable model.
-  const mockAIResponse = useCallback(
-    (userMessage: string, convId: string) => {
-      setConversationTyping(convId, true)
-      setTimeout(() => {
-        const reasoning = [
-          `User asked: "${userMessage}".`,
-          "",
-          "Step 1 — Parse the request: they want a brief explanation.",
-          "Step 2 — Consider whether any state is relevant. The mock path doesn't actually call a model, so I'll keep this short.",
-          "Step 3 — Draft a reply that makes the mock origin obvious so it isn't confused with real model output.",
-        ].join("\n")
-        const aiContent = `_Mock response (set \`AI_GATEWAY_API_KEY\` to enable real AI)_\n\nRegarding "${userMessage}": this is placeholder text.`
-        // Pin to the originating conv id so the mock answer still lands
-        // in the right tab if the user switched away while waiting.
-        addMessage({ role: "assistant", content: aiContent, reasoning }, convId)
-        setConversationTyping(convId, false)
-      }, 300)
-    },
-    [setConversationTyping, addMessage]
-  )
-
-  // After a stream completes, auto-archive substantial / renderable
-  // code blocks so they become first-class artifacts without the user
-  // having to remember the Save-as-artifact button. The thresholds + the
-  // archive logic live in `autoArchiveCodeBlocksPure`; this wrapper just
-  // re-reads the message from the store (the streaming loop's `Message`
-  // reference is stale because `appendToMessage` updates immutably) and
-  // hands it to the pure helper.
-  const autoArchiveCodeBlocks = useCallback(
-    (assistantMessageId: string, conversationId: string) => {
-      const conv = useStore
-        .getState()
-        .conversations.find((c) => c.id === conversationId)
-      const message = conv?.messages.find((m) => m.id === assistantMessageId)
-      if (!message) return
-      autoArchiveCodeBlocksPure(
-        {
-          content: message.content,
-          messageId: assistantMessageId,
-          conversationId,
-        },
-        createArtifact
-      )
-    },
-    [createArtifact]
-  )
-
-  // Build the message list and file context the API expects, sent up to and
-  // including the most recent user message.
-  const callChatAPI = useCallback(
-    async (
-      history: Message[],
-      options?: {
-        modelOverride?: string
-        isRetry?: boolean
-        /** I2I reference URL to forward to the server for this turn.
-         *  Captured by the caller (`handleSendMessage`) ahead of the
-         *  store clear so a retry doesn't quietly re-attach a reference
-         *  the user already dismissed. */
-        referenceImage?: { url: string }
-        /** Skill ids forced on for this turn by a `/slash` command,
-         *  on top of the workspace/conversation cascade. Passed as an
-         *  arg (not read from state) so a retry re-applies the same
-         *  forced set deterministically. */
-        forcedSkillIds?: SkillId[]
-        /** When true, launch the turn as a long-running task (Tasks
-         *  panel) instead of an inline chat stream. Reuses the same
-         *  model / skills / history resolution. */
-        asTask?: boolean
-        /** Task mode for this turn — `'research'` triggers Deep
-         *  Research mode in the worker (`PLAN-deep-research.md`).
-         *  Only meaningful when `asTask` is true. */
-        taskMode?: "default" | "research"
-        /** Custom-agent system prompt for this turn — appended after
-         *  the workspace's system prompt. See `PLAN-custom-agents.md`. */
-        agentSystemPrompt?: string
-        /** Per-turn MCP allow-list — when set, cloud-mode MCP servers
-         *  are filtered to this list. Sourced from the active persona
-         *  in `handleSendMessage`. */
-        allowedMcpServerIds?: string[]
-      }
-    ) => {
-      // Read the model freshly from the store rather than via the closure.
-      // Lets retry-after-model-change use the new value without waiting for
-      // this callback's useEffect-driven ref refresh to catch up.
-      const modelForCall = options?.modelOverride ?? useStore.getState().chatModel
-      const isRetry = options?.isRetry ?? false
-      // Capture the conversation id at send time. Every "is this conv
-      // streaming?" / "this conv's controller" decision below uses
-      // `targetConvId` instead of reading `activeConversationId`
-      // mid-flight, so switching conversations during a stream
-      // doesn't move the stream's UI state onto the wrong chat.
-      const targetConvId = activeConversationId
-      if (!targetConvId) return
-      const conv = conversations.find((c) => c.id === targetConvId)
-      const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
-      const workspaceSystemPrompt = composeSystemPrompts(
-        activeWorkspace?.systemPrompt,
-        options?.agentSystemPrompt ?? ""
-      )
-      // Resolve which skills are effectively on for this turn so the route
-      // knows which tools to register.
-      // Effective set = (workspace/conversation cascade ∪ slash-forced)
-      // minus any skills the user muted for this one send via the chip ×
-      // button. Mute wins over slash-force in the rare case both name the
-      // same skill (explicit "off" beats explicit "on").
-      // Cascade conversation override → workspace default → built-in,
-      // unioned with slash-forced skills, minus any muted for this one
-      // send. Mute wins over slash-force when both name the same skill.
-      const enabledSkills = resolveEnabledSkills({
-        workspace: activeWorkspace,
-        conversation: conv,
-        forcedSkillIds: options?.forcedSkillIds,
-        mutedSkillIds: mutedSkillsForNext,
-      })
-      // Resolve attachments + the API message list via the pure
-      // helpers in `lib/client/chat/`. Attachment policy (union of
-      // workspace + conversation-private lanes, de-dup, drop
-      // tombstones, images on the last user turn only) lives there.
-      const { attachedFiles, attachedImageUrls } =
-        buildAttachments({
-          conversation: conv,
-          files,
-          conversationFiles,
-        })
-      const buildMessages = () =>
-        buildTransmittedMessages(history, attachedImageUrls)
-
-      // Task mode: hand off to the shared task runner (Tasks panel)
-      // instead of the inline chat stream. Everything above (model,
-      // workspace prompt, enabled skills, message history) is reused;
-      // the inline streaming machinery below is skipped entirely. The
-      // result lands back as an assistant Message on settle (see
-      // TaskRunProvider).
-      if (options?.asTask) {
-        taskRunRef.current.startTask(
-          {
-            messages: buildMessages() as TaskRequestInput["messages"],
-            conversationId: targetConvId,
-            model: modelForCall,
-            workspaceSystemPrompt,
-            workspaceId: activeWorkspaceId || undefined,
-            skills: enabledSkills,
-            ...(options.taskMode && options.taskMode !== "default"
-              ? { mode: options.taskMode }
-              : {}),
-            ...(options.allowedMcpServerIds
-              ? { allowedMcpServerIds: options.allowedMcpServerIds }
-              : {}),
-          },
-          { title: conv?.title }
-        )
-        return
-      }
-
-      const controller = new AbortController()
-      // If this conversation already has an in-flight controller
-      // (very rare — user double-clicks Send before the previous
-      // turn lands a placeholder), abort the old one first so we
-      // don't leak its event listener.
-      abortControllersRef.current.get(targetConvId)?.abort()
-      abortControllersRef.current.set(targetConvId, controller)
-      setConversationTyping(targetConvId, true)
-      markStreaming(targetConvId, true)
-      let placeholder: Message | null = null
-      let firstChunk = true
-      // Reasoning duration capture: first/last chunk timestamps so we can
-      // persist the elapsed ms on the message. Set on the first reasoning
-      // chunk; refreshed on each subsequent chunk so the difference at
-      // stream end equals total reasoning time.
-      let reasoningStart: number | null = null
-      let reasoningLast: number | null = null
-
-      const surfaceError = (error: MessageError) => {
-        setConversationTyping(targetConvId, false)
-        if (placeholder) {
-          setMessageError(placeholder.id, error)
-        } else {
-          const created = addMessage({ role: "assistant", content: "" }, targetConvId)
-          setMessageError(created.id, error)
-        }
-      }
-
-      // Bundle the enabled MCP servers for this workspace into the
-      // chat payload. For each local-mode server we attach the
-      // credential straight from `localStorage` — it never lives in
-      // any store partition that syncs. Cloud-mode servers stay out
-      // of the body for now (Stage 3 will let the server look them
-      // up via Supabase + pgcrypto).
-      const mcpStore = useStore.getState()
-      const mcpServersForRequest = mcpStore.mcpServers
-        .filter(
-          (s) =>
-            s.workspaceId === activeWorkspaceId &&
-            !s.deletedAt &&
-            s.enabled &&
-            s.credentialMode === "local" &&
-            // Only ship servers with at least one discovered tool —
-            // empty capability lists are noise.
-            (s.capabilities?.tools?.length ?? 0) > 0
-        )
-        .map((s) => ({
-          id: s.id,
-          name: s.name,
-          url: s.url,
-          transport: s.transport,
-          enabled: s.enabled,
-          capabilities: s.capabilities,
-          credentials: getLocalCred(s.id) ?? undefined,
-        }))
-
-      // Build the unified attachments payload — files + MCP resources
-      // + URL bookmarks in one discriminated array. Workspace-ticked
-      // + conversation-pinned, de-duped per kind, tombstones filtered.
-      // See `lib/shared/attachments.ts` for the union shape.
-      const attachmentsForRequest: ChatRequestInput["attachments"] = []
-
-      for (const file of attachedFiles) {
-        attachmentsForRequest.push({
-          kind: "file",
-          summary: {
-            name: file.name,
-            size: file.size,
-            type: file.type,
-            text: file.extractedText,
-            truncated: file.extractionTruncated,
-            kind: file.extractedKind,
-          },
-        })
-      }
-
-      const mcpResourcesById = new Map(
-        mcpStore.mcpResources.map((r) => [r.id, r])
-      )
-      const workspaceMcpIds = conv?.selectedMcpResourceIds ?? []
-      const privateMcpIds = conv
-        ? mcpStore.conversationMcpResources
-            .filter((cmr) => cmr.conversationId === conv.id)
-            .map((cmr) => cmr.resourceId)
-        : []
-      const attachedMcpResourceIds = [
-        ...new Set([...workspaceMcpIds, ...privateMcpIds]),
-      ]
-      for (const id of attachedMcpResourceIds) {
-        const resource = mcpResourcesById.get(id)
-        if (!resource || resource.deletedAt) continue
-        attachmentsForRequest.push({
-          kind: "mcp_resource",
-          ref: {
-            id: resource.id,
-            serverId: resource.serverId,
-            uri: resource.uri,
-            name: resource.name,
-            mimeType: resource.mimeType,
-          },
-        })
-      }
-
-      const urlBookmarksById = new Map(
-        mcpStore.urlBookmarks.map((b) => [b.id, b])
-      )
-      const workspaceUrlIds = conv?.selectedUrlBookmarkIds ?? []
-      const privateUrlIds = conv
-        ? mcpStore.conversationUrlBookmarks
-            .filter((cub) => cub.conversationId === conv.id)
-            .map((cub) => cub.bookmarkId)
-        : []
-      const attachedUrlBookmarkIds = [
-        ...new Set([...workspaceUrlIds, ...privateUrlIds]),
-      ]
-      for (const id of attachedUrlBookmarkIds) {
-        const bookmark = urlBookmarksById.get(id)
-        if (!bookmark || bookmark.deletedAt) continue
-        attachmentsForRequest.push({
-          kind: "url_bookmark",
-          bookmark: {
-            id: bookmark.id,
-            url: bookmark.url,
-            title: bookmark.title,
-            content: bookmark.content,
-            contentTruncated: bookmark.contentTruncated,
-            fetchedAt: toISO(bookmark.fetchedAt),
-          },
-        })
-      }
-
-      // Read at send-time rather than subscribing — the flag is a boolean
-      // that doesn't need to re-trigger anything mid-flight; just snapshot
-      // the user's current preference so the server knows whether to
-      // route generated images to Supabase Storage or fall back to data
-      // URLs (same semantic the client uses for file uploads in
-      // `persist.ts`).
-      const localFilesOnly = useStore.getState().localFilesOnly
-
-      try {
-        const result = await apiClient.chat.stream(
-          {
-            model: modelForCall,
-            messages: buildMessages() as ChatRequestInput["messages"],
-            workspaceSystemPrompt,
-            workspaceId: activeWorkspaceId || undefined,
-            skills: enabledSkills,
-            mcpServers: mcpServersForRequest.length > 0 ? mcpServersForRequest : undefined,
-            attachments:
-              attachmentsForRequest.length > 0 ? attachmentsForRequest : undefined,
-            referenceImage: options?.referenceImage,
-            localFilesOnly: localFilesOnly || undefined,
-          },
-          { signal: controller.signal }
-        )
-
-        if (!result.ok) {
-          if (result.status === 401) {
-            setConversationTyping(targetConvId, false)
-            markStreaming(targetConvId, false)
-            const lastUser = [...history].reverse().find((m) => m.role === "user")
-            if (lastUser) mockAIResponse(lastUser.content, targetConvId)
-            return
-          }
-          surfaceError({
-            code: (result.error?.code as MessageErrorCode) || "unknown",
-            status: result.status,
-            model: modelForCall,
-            detail: result.error?.message,
-          })
-          return
-        }
-
-        if (!result.body) {
-          surfaceError({
-            code: "provider",
-            status: result.status,
-            model: modelForCall,
-            detail: "No response body.",
-          })
-          return
-        }
-
-        const reader = result.body.getReader()
-        const decoder = new TextDecoder()
-        let buffer = ""
-        let streamError: { code?: string; message?: string } | null = null
-
-        // Server emits SSE frames: `data: <json>\n\n`. The payload is one of:
-        //   { type: 'text',      value: string }
-        //   { type: 'reasoning', value: string }
-        //   { type: 'error',     code: string, message: string }
-        //   { type: 'done' }
-        // We parse line-by-line and dispatch text vs reasoning into the
-        // placeholder. The placeholder is created on the first event of
-        // either kind, so reasoning-first models still show typing UI
-        // disappearing as soon as any output arrives.
-        const ensurePlaceholder = () => {
-          if (placeholder) return placeholder
-          setConversationTyping(targetConvId, false)
-          placeholder = addMessage({ role: "assistant", content: "" }, targetConvId)
-          firstChunk = false
-          return placeholder
-        }
-
-        outer: while (true) {
-          const { value, done } = await reader.read()
-          if (done) break
-          buffer += decoder.decode(value, { stream: true })
-
-          let nlIndex: number
-          while ((nlIndex = buffer.indexOf("\n\n")) !== -1) {
-            const frame = buffer.slice(0, nlIndex)
-            buffer = buffer.slice(nlIndex + 2)
-            if (!frame.startsWith("data:")) continue
-            const payload = frame.slice(5).trim()
-            if (!payload) continue
-            let parsed: {
-              type?: string
-              value?: string
-              values?: string[]
-              code?: string
-              message?: string
-              id?: string
-              name?: string
-              args?: unknown
-              summary?: string
-              results?: Array<{ title?: string; url?: string; snippet?: string }>
-              mode?: string
-              images?: unknown[]
-            }
-            try {
-              parsed = JSON.parse(payload)
-            } catch {
-              continue
-            }
-            if (parsed.type === "text" && typeof parsed.value === "string") {
-              const p = ensurePlaceholder()
-              appendToMessage(p.id, parsed.value)
-            } else if (parsed.type === "reasoning" && typeof parsed.value === "string") {
-              const p = ensurePlaceholder()
-              const now = Date.now()
-              if (reasoningStart === null) reasoningStart = now
-              reasoningLast = now
-              appendToMessageReasoning(p.id, parsed.value)
-            } else if (parsed.type === "tool_call" && parsed.id && parsed.name) {
-              const p = ensurePlaceholder()
-              const id = parsed.id
-              const name = parsed.name
-              const argsLabel = typeof (parsed.args as { query?: string })?.query === "string"
-                ? (parsed.args as { query: string }).query
-                : undefined
-              setLiveToolCalls((prev) => ({
-                ...prev,
-                [p.id]: [
-                  ...(prev[p.id] ?? []),
-                  { id, name, argsLabel, status: "running" },
-                ],
-              }))
-            } else if (parsed.type === "tool_result" && parsed.id) {
-              const ph = placeholder as Message | null
-              if (ph) {
-                const id = parsed.id
-                const summary = parsed.summary
-                // Validate at the boundary — server should always produce
-                // complete entries but JSON-over-the-wire is `unknown` to TS.
-                const results = Array.isArray(parsed.results)
-                  ? parsed.results
-                      .filter(
-                        (r): r is { title: string; url: string; snippet: string } =>
-                          typeof r?.title === "string" &&
-                          typeof r?.url === "string" &&
-                          typeof r?.snippet === "string"
-                      )
-                  : undefined
-                setLiveToolCalls((prev) => ({
-                  ...prev,
-                  [ph.id]: (prev[ph.id] ?? []).map((t) =>
-                    t.id === id
-                      ? { ...t, status: "done", summary, results }
-                      : t
-                  ),
-                }))
-              }
-            } else if (parsed.type === "tool_image" && Array.isArray(parsed.images)) {
-              // generateImage produced images; the server pre-persisted
-              // each Minimax URL to a durable form (data URL today,
-              // Supabase signed URL in a future PR) so the message
-              // survives reload. Validate at the boundary; drop
-              // malformed entries silently.
-              const ph = placeholder as Message | null
-              if (ph) {
-                const mode: "t2i" | "i2i" = parsed.mode === "i2i" ? "i2i" : "t2i"
-                const images = (parsed.images as Array<Record<string, unknown>>)
-                  .filter(
-                    (img): img is {
-                      id: string
-                      url: string
-                      storagePath?: string
-                      width: number
-                      height: number
-                      format: string
-                      prompt: string
-                      mode: "t2i" | "i2i"
-                    } =>
-                      typeof img?.id === "string" &&
-                      typeof img?.url === "string" &&
-                      typeof img?.width === "number" &&
-                      typeof img?.height === "number" &&
-                      typeof img?.format === "string" &&
-                      typeof img?.prompt === "string" &&
-                      (img.storagePath === undefined ||
-                        typeof img.storagePath === "string")
-                  )
-                  .map((img) => ({ ...img, mode }))
-                if (images.length > 0) {
-                  appendMessageGeneratedImages(ph.id, images)
-                  // Auto-archive each generated image as an artifact
-                  // so it appears in the Artifacts tab alongside code blocks.
-                  images.forEach((img) => {
-                    const title = img.prompt
-                      ? img.prompt.slice(0, 80).trim()
-                      : `Generated image`
-                    createArtifact({
-                      conversationId: targetConvId,
-                      messageId: ph.id,
-                      kind: "image",
-                      title,
-                      content: img.url,
-                      storagePath: img.storagePath ?? null,
-                    })
-                  })
-                }
-              }
-            } else if (parsed.type === "suggestions" && Array.isArray(parsed.values)) {
-              // Same TS-can't-narrow-through-closure issue as the catch
-              // below; restore what we know with a cast.
-              const ph = placeholder as Message | null
-              if (ph) {
-                setMessageSuggestions(ph.id, parsed.values)
-              }
-            } else if (parsed.type === "error") {
-              streamError = { code: parsed.code, message: parsed.message }
-              break outer
-            } else if (parsed.type === "done") {
-              break outer
-            }
-          }
-        }
-
-        if (streamError) {
-          surfaceError({
-            code: (streamError.code as MessageErrorCode) || "unknown",
-            model: modelForCall,
-            detail: streamError.message,
-          })
-        } else if (firstChunk) {
-          surfaceError({
-            code: "provider",
-            model: modelForCall,
-            detail: "The model returned an empty response.",
-          })
-        } else if (placeholder) {
-          const ph = placeholder as Message
-          // Pass the id, not the captured Message — the local reference is
-          // stale (it still has the empty initial content); `autoArchive`
-          // re-reads the actual streamed content from the store. The
-          // conversation id is captured from `targetConvId` so a stream
-          // that finished while the user was on a different tab still
-          // archives into the originating conversation.
-          autoArchiveCodeBlocks(ph.id, targetConvId)
-          // Persist reasoning duration so the "Thought for X.Xs" badge
-          // survives reload. Captured during the stream; written here so
-          // we only commit on successful completion.
-          if (reasoningStart !== null && reasoningLast !== null) {
-            setMessageReasoningDuration(
-              ph.id,
-              Math.max(0, reasoningLast - reasoningStart)
-            )
-          }
-          // Flush the live tool-call buffer onto the message so the pill
-          // survives reload. We drop the in-flight (running) entries: a
-          // tool that never returned doesn't belong in the durable record.
-          const liveSnapshot = liveToolCalls[ph.id] ?? []
-          const persisted = liveSnapshot
-            .filter((t) => t.status === "done")
-            .map(({ id, name, argsLabel, summary, results }) => ({
-              id,
-              name,
-              argsLabel,
-              summary,
-              ...(results && results.length > 0 ? { results } : {}),
-            }))
-          if (persisted.length > 0) {
-            setMessageToolCalls(ph.id, persisted)
-          }
-        }
-      } catch (err) {
-        const aborted =
-          (err instanceof DOMException && err.name === "AbortError") ||
-          controller.signal.aborted
-        // TS can't narrow `placeholder` through the SSE loop's nested
-        // ensurePlaceholder closure; the type assertion just restores
-        // what we already know.
-        const ph = placeholder as Message | null
-        if (aborted) {
-          if (ph && ph.content === "") {
-            deleteMessage(ph.id)
-          }
-        } else {
-          // Distinguish offline from generic network failure — gives the
-          // user a concrete next action (reconnect) instead of "Network error".
-          const offline = typeof navigator !== "undefined" && navigator.onLine === false
-          // Auto-retry-once: a transient blip on a brand-new request (no
-          // placeholder content yet, online, not already a retry) tries one
-          // silent recovery after 1s before surfacing the error to the user.
-          // Anything past the first chunk has visible state we shouldn't
-          // duplicate or rewind, so we skip the retry there.
-          const phEmpty = !ph || ph.content === ""
-          if (!isRetry && !offline && phEmpty) {
-            if (ph) deleteMessage(ph.id)
-            setConversationTyping(targetConvId, false)
-            markStreaming(targetConvId, false)
-            setTimeout(() => {
-              callChatAPIRef.current(history, {
-                modelOverride: options?.modelOverride,
-                isRetry: true,
-              })
-            }, 1000)
-            return
-          }
-          const detail = offline
-            ? "You appear to be offline. Reconnect and click Retry."
-            : err instanceof Error
-              ? err.message
-              : "Network error"
-          surfaceError({
-            code: "network",
-            model: modelForCall,
-            detail,
-          })
-        }
-      } finally {
-        setConversationTyping(targetConvId, false)
-        markStreaming(targetConvId, false)
-        // Drop live tool-call pills now that the stream is finished. The
-        // markdown footer the server appended carries the durable record.
-        const ph = placeholder as Message | null
-        if (ph) {
-          setLiveToolCalls((prev) => {
-            if (!(ph.id in prev)) return prev
-            const next = { ...prev }
-            delete next[ph.id]
-            return next
-          })
-        }
-        // Clear this conversation's controller entry only if it's
-        // still the one we set — guards against a follow-up send
-        // for the same conversation overwriting the slot.
-        if (abortControllersRef.current.get(targetConvId) === controller) {
-          abortControllersRef.current.delete(targetConvId)
-        }
-      }
-    },
-    [
-      activeConversationId,
-      activeWorkspaceId,
-      addMessage,
-      appendMessageGeneratedImages,
-      appendToMessage,
-      appendToMessageReasoning,
-      autoArchiveCodeBlocks,
-      conversationFiles,
-      conversations,
-      createArtifact,
-      deleteMessage,
-      files,
-      liveToolCalls,
-      mockAIResponse,
-      mutedSkillsForNext,
-      setConversationTyping,
-      markStreaming,
-      setMessageError,
-      setMessageReasoningDuration,
-      setMessageToolCalls,
-      setMessageSuggestions,
-      workspaces,
-    ]
-  )
-
-  const callChatAPIRef = useRef(callChatAPI)
-  useEffect(() => {
-    callChatAPIRef.current = callChatAPI
-  }, [callChatAPI])
-
-  const handleStop = useCallback(() => {
-    // Stop only the *active* conversation's stream. Other conversations
-    // mid-stream stay running — they each have their own controller
-    // in the map.
-    if (!activeConversationId) return
-    abortControllersRef.current.get(activeConversationId)?.abort()
-  }, [activeConversationId])
 
   const handleAttachClick = useCallback(() => {
     inputFileRef.current?.click()
@@ -1141,6 +443,11 @@ export function ChatPanel() {
     if (slash?.kind === "command") {
       slashCommands.run(slash.commandId, slash.arg)
       setInputValue("")
+      // React Compiler's `react-hooks/immutability` newly flags this
+      // vanilla `ref.current.style` reset after Phase 2 shrank the
+      // component — the pattern is unchanged from dev. Disabling for
+      // this single DOM reset that React's own docs endorse.
+      // eslint-disable-next-line react-hooks/immutability
       if (textareaRef.current) textareaRef.current.style.height = "auto"
       return // ← no message added, no API call
     }
@@ -1201,12 +508,16 @@ export function ChatPanel() {
     })
 
     setInputValue("")
-    // Per-message skill mutes were for this one send — reset.
+    // Per-message skill mutes were for this one send — snapshot before
+    // the clear so the pipeline below still sees the user's choices for
+    // *this* turn, then reset so the next turn falls back to the
+    // workspace/conversation cascade.
+    const mutedForThisTurn = new Set(mutedSkillsForNext)
     if (mutedSkillsForNext.size > 0) setMutedSkillsForNext(new Set())
     if (pasteDetection) setPasteDetection(null)
     // Snapshot the remix reference and clear it — one-shot semantics.
     // The chip disappears immediately; the in-flight request still gets
-    // the URL via callChatAPI's `options.referenceImage` arg.
+    // the URL via the hook's `options.referenceImage` arg.
     const pendingRef = useStore.getState().pendingReferenceImage
     if (pendingRef) useStore.getState().setPendingReferenceImage(null)
 
@@ -1216,9 +527,10 @@ export function ChatPanel() {
 
     const history = [...messages, userMessage]
     const agentResolved = activeAgentForCall ? resolveAgent(activeAgentForCall) : null
-    callChatAPIRef.current(history, {
+    chatSendMessage(history, {
       referenceImage: pendingRef ? { url: pendingRef.url } : undefined,
       forcedSkillIds,
+      mutedSkillIds: mutedForThisTurn,
       // `/research <goal>` forces task mode on for this turn even if
       // the chat-input toggle is off — the mode is the meaningful
       // signal, not the toggle.
@@ -1312,9 +624,15 @@ export function ChatPanel() {
         ...conv.messages.slice(0, idx),
         { ...conv.messages[idx], content: newContent },
       ]
-      callChatAPIRef.current(newHistory)
+      chatSendMessage(newHistory)
     },
-    [conversations, activeConversationId, updateMessage, truncateMessagesAfter]
+    [
+      conversations,
+      activeConversationId,
+      updateMessage,
+      truncateMessagesAfter,
+      chatSendMessage,
+    ]
   )
 
   const handleRegenerateAssistantMessage = useCallback(
@@ -1325,9 +643,14 @@ export function ChatPanel() {
       if (idx <= 0) return
       truncateMessagesAfter(messageId, true)
       const newHistory = conv.messages.slice(0, idx)
-      callChatAPIRef.current(newHistory)
+      chatSendMessage(newHistory)
     },
-    [conversations, activeConversationId, truncateMessagesAfter]
+    [
+      conversations,
+      activeConversationId,
+      truncateMessagesAfter,
+      chatSendMessage,
+    ]
   )
 
   const forkConversation = useStore((s) => s.forkConversation)
@@ -1350,9 +673,9 @@ export function ChatPanel() {
       if (idx === -1) return
       const newHistory = conv.messages.slice(0, idx)
       deleteMessage(messageId)
-      callChatAPIRef.current(newHistory, modelOverride ? { modelOverride } : undefined)
+      chatSendMessage(newHistory, modelOverride ? { modelOverride } : undefined)
     },
-    [conversations, activeConversationId, deleteMessage]
+    [conversations, activeConversationId, deleteMessage, chatSendMessage]
   )
 
   // Picker may be opened from the bottom select OR from an error bubble's
@@ -1395,7 +718,12 @@ export function ChatPanel() {
     if (!next.startsWith("/") && slashDismissed) setSlashDismissed(false)
     // Same re-arm for the `@` mention menu.
     if (!next.startsWith("@") && mentionDismissed) setMentionDismissed(false)
+    // React Compiler's `react-hooks/immutability` newly flags this
+    // vanilla auto-resize after Phase 2 shrank the component; the
+    // pattern is unchanged from dev. Disabling for this textarea
+    // auto-grow that React's own docs endorse.
     if (textareaRef.current) {
+      // eslint-disable-next-line react-hooks/immutability
       textareaRef.current.style.height = "auto"
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 150)}px`
     }
@@ -1509,7 +837,7 @@ export function ChatPanel() {
                       message={message}
                       index={index}
                       isLastAssistant={message.id === lastAssistantId}
-                      liveToolCalls={liveToolCalls[message.id]}
+                      liveToolCalls={chatLiveToolCalls[message.id]}
                       pdfCitationFileId={pdfByMessage.get(message.id)}
                       onDelete={deleteMessage}
                       onEditUserMessage={handleEditUserMessage}
@@ -1721,7 +1049,7 @@ export function ChatPanel() {
                 <div className="relative h-8 w-8 mr-2 shrink-0">
                   <InputGroupButton
                     size="icon-sm"
-                    onClick={handleStop}
+                    onClick={chatStop}
                     aria-label="Stop generating"
                     aria-hidden={!showStop}
                     tabIndex={showStop ? 0 : -1}
