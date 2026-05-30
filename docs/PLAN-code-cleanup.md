@@ -266,10 +266,10 @@ store reads — into `lib/client/chat/auto-archive-code-blocks.ts`
 plus a 7-test characterisation file. `chat.tsx`: 1872 → 1846
 (−26 LOC).
 
-**Follow-up — now has its own plan:** pulling `callChatAPI` into a
+**Follow-up — shipped (its own plan):** pulling `callChatAPI` into a
 `useChatSend` hook, plus the attachment build, smart-paste, and the
-drag-and-drop file ingestion, is specced in
-[`PLAN-chat-send-extraction.md`](PLAN-chat-send-extraction.md).
+drag-and-drop file ingestion, was specced and completed in
+[`PLAN-chat-send-extraction.md`](_done/PLAN-chat-send-extraction.md).
 
 Original plan text follows for archival.
 
