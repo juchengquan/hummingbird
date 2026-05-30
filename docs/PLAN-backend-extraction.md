@@ -1,7 +1,13 @@
 # Plan: Frontend / backend extraction (Python-ready)
 
-Status: **Phase 1 ✅ shipped**; Phase 2 happens when a Python backend
-is ready to point at; Phase 3 is optional.
+Status: **Phase 1 ✅ shipped.** Phase 2 (stand up the Python backend)
+is now under way as [`PLAN-agent-api.md`](PLAN-agent-api.md) —
+that plan's Phase 0 scaffolded the FastAPI service (#119) and Phases
+1–5 will move the agent loop + tools + MCP onto it. The contract-first
+work shipped here (apiClient + Zod schemas + `docs/API.md`) is the
+surface the Python service binds to, so Phase 2 here is satisfied
+incrementally by `PLAN-agent-api`. Phase 3 (deeper folder restructure
+into `frontend/` + `backend/` directories) remains optional.
 
 ## Why
 

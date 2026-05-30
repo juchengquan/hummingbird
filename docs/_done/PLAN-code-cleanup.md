@@ -1,14 +1,18 @@
 # Plan: Code cleanup
 
-Status: **✅ All six phases shipped** (#96 Phase 1; combined PR for
-Phases 2–6 below). Sync layer is now tested per-entity, reconcile's
-per-entity upsert pattern is factored, pure helpers came out of
-`use-store.ts`, the auto-archive heuristic came out of `chat.tsx`,
-and the lint baseline + dead-export sweep are complete. The
-heaviest structural splits (full `use-store.ts` slice split + full
-`chat.tsx` send-pipeline extraction) were deliberately scoped down
-because combining them with the other phases in one PR was too
-risky; they remain as focused follow-ups.
+Status: **✅ All six phases shipped** (#96 Phase 1; #102 for Phases
+2–6). Sync layer is now tested per-entity, reconcile's per-entity
+upsert pattern is factored, pure helpers came out of `use-store.ts`,
+the auto-archive heuristic came out of `chat.tsx`, and the lint
+baseline + dead-export sweep are complete. The heaviest structural
+splits — the full `use-store.ts` slice split and the full `chat.tsx`
+send-pipeline extraction — were deliberately scoped down here and
+each shipped as its own focused follow-up plan:
+[`_done/PLAN-store-slice-split.md`](PLAN-store-slice-split.md) (#115)
+and [`_done/PLAN-chat-send-extraction.md`](PLAN-chat-send-extraction.md)
+(#112 / #113). Originally lived at `docs/PLAN-code-cleanup.md`; moved
+here on completion per the archive convention in
+[`ROADMAP.md`](../ROADMAP.md).
 
 A focused housecleaning pass across the codebase after a long stretch
 of feature work. Goal: improve maintainability without changing user-
