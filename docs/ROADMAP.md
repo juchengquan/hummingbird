@@ -17,10 +17,18 @@ refreshed: its "prove the loop first" precondition (Step 1) is met,
 so it's now a live go/no-go rather than a wait — default stay
 in-process. Earlier in the day: PLAN-project-mode + PLAN-workspace-
 canvas → _done/ (all phases ship); small-followups #6 — local-mode
-MCP creds for tasks — marked moot per #85. Code-cleanup Phases 1–6
-via #96 + #102 (lint baseline 0 warnings, sync test coverage, helpers
-extracted; tests 559 → 660). Deep Research mode plan added — 4
-phases, Phase 1 ships the end-to-end loop with no DB changes.)
+MCP creds for tasks — marked moot per #85, which rejects local-mode
+in async task mode by design. Project mode complete via
+#81/#86/#89/#91/#94; workspace canvas via #83/#90. Code-cleanup
+Phases 1–6 via #96 + #102 — lint baseline now 0 warnings, sync test
+coverage complete, reconcile factored, pure helpers extracted from
+`use-store.ts`, `autoArchiveCodeBlocks` extracted from `chat.tsx`;
+tests 559 → 660. Full per-entity store-slice split + full chat.tsx
+send-pipeline extraction remain as scoped follow-ups. Deep Research
+mode plan added — promoted from SURVEY §4.1; 4 phases, Phase 1
+ships the end-to-end loop with no DB changes. Custom agents /
+personas plan added — promoted from SURVEY §4.4; 3 phases, Phase 1
+ships CRUD + `/<persona>` slash with no MCP scoping or sharing.)
 
 > **Plan archive.** Fully-shipped `PLAN-*.md` files live in
 > [`_done/`](_done/). Active plans (planning / phased / decision
@@ -139,8 +147,11 @@ now ships — its plans live in [`_done/`](_done/).
 | Plan | Status | Sketch |
 |---|---|---|
 | 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 3 done, 1 moot, 4 open | Done: generatedImages sync (#45), recap-of-recaps (#63), roadmap sweep. Moot: local-mode MCP creds for tasks (rejected up front by #85). Open: accurate tokens, signed-URL re-sign, per-tool server-side approval flags, task-route integration tests |
-| 🪜 [Code cleanup](PLAN-code-cleanup.md) | Phases 1–6 shipped (#96, #102) | 6 phases of housecleaning after a long feature push. Phase 1 cleared lint baseline + 4 dead exports; Phases 2–6 added per-entity sync diff tests, factored `reconcile.ts`, extracted store helpers + the `chat.tsx` auto-archive heuristic, and removed a residual dead export. Full per-entity store-slice split + full `chat.tsx` send-pipeline extraction were scoped down to focused follow-up PRs (too risky to combine). No functional changes |
+| 🪜 [Code cleanup](PLAN-code-cleanup.md) | Phases 1–6 shipped (#96, #102) | 6 phases of housecleaning after a long feature push. Phase 1 cleared lint baseline + 4 dead exports; Phases 2–6 added per-entity sync diff tests, factored `reconcile.ts`, extracted store helpers + the `chat.tsx` auto-archive heuristic, and removed a residual dead export. Full per-entity store-slice split + full `chat.tsx` send-pipeline extraction spun out to their own plans below. No functional changes |
+| 📐 [Store slice split](PLAN-store-slice-split.md) | planning | Cleanup Phase 4 follow-up — split `use-store.ts` (3,274 LOC, ~180 mutators) into per-entity slice modules composed into one `useStore`. Persisted shape + migration frozen; no behaviour change. Higher-risk, own PR |
+| 📐 [Chat send-pipeline extraction](PLAN-chat-send-extraction.md) | planning | Cleanup Phase 5 follow-up — pull the ~620-line `callChatAPI` out of `chat.tsx` into a `useChatSend` hook + pure attachment/message builders. Streaming + abort + task-mode handoff preserved; no behaviour change. Higher-risk, own PR |
 | 📐 [Deep Research mode](PLAN-deep-research.md) | planning | Multi-step research agent that composes the task queue + web search + Plate editor into a "thread → cited Markdown report" flow. 4 phases; Phase 1 ships `/research <goal>` end-to-end with the smallest possible new surface (mode flag + research-mode system prompt + "Open in editor" button) |
+| 📐 [Custom agents / personas](PLAN-custom-agents.md) | planning | Reusable saved bundle of `{ name, system prompt, model, allowed skills, allowed MCP servers }` invoked via `/<persona>`. Builds on the existing prompt library schema + sync, the skill cascade, and MCP cloud-mode. Promoted from SURVEY §4.4. 3 phases; Phase 1 ships CRUD + slash invocation, Phase 2 adds MCP allow-list + share-by-URL, Phase 3 links into Kanban "Run as task" |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
 | 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~7.5 days total |
