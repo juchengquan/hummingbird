@@ -1,9 +1,13 @@
 # Plan: Store slice split
 
-Status: **📐 Planned.** No code yet. Spun out of
+Status: **✅ Shipped.** Spun out of
 [`PLAN-code-cleanup.md`](PLAN-code-cleanup.md) Phase 4, which shipped
 the low-risk pure-helper extraction (`store-helpers.ts`) and
-explicitly deferred the full split to its own focused PR.
+explicitly deferred the full split to its own focused PR. That split
+landed: `use-store.ts` went 3,414 → 263 LOC across 16 per-entity
+slices under `lib/client/hooks/store/slices/` + the extracted
+`store/migrate.ts` + `store/persist.ts`. Persisted shape + version
+frozen and guarded by `store/persist.test.ts`; no behaviour change.
 
 A purely organisational refactor of `lib/client/hooks/use-store.ts` —
 split the one 3,274-line Zustand store into per-entity slice modules

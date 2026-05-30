@@ -49,7 +49,8 @@ bun run check:ci     # typecheck + lint + build + audit:bundle (full CI gate loc
 
 ### State Management
 
-The app uses **Zustand** with localStorage persistence (`lib/hooks/use-store.ts`):
+The app uses **Zustand** with localStorage persistence
+(`lib/client/hooks/use-store.ts`):
 
 - **Main store (`useStore`)**: Panel visibility, theme, conversations, messages, files, editor content
 - **Session store (`useSessionStore`)**: Ephemeral state using sessionStorage (selected files for current session)
@@ -62,6 +63,31 @@ interface UploadedFile { id, name, size, type, uploadedAt }
 ```
 
 The store persists: theme, conversations, activeConversationId, files, documentContent, panel states, and panel widths.
+
+**Slice layout** (`docs/PLAN-store-slice-split.md`). `use-store.ts` is a
+thin composition + re-export hub: `AppState` is the union of per-entity
+slice interfaces, and the `create()` body is one spread per slice. Each
+slice lives in `lib/client/hooks/store/slices/<entity>.ts` and exports a
+`<Name>Slice` interface + a `create<Name>Slice` factory (the standard
+Zustand "slices pattern", typed against the full `StoreState` via
+`SliceCreator<T>` so a slice can read siblings through `get()`). Slices:
+`ui`, `chat`, `workspaces`, `conversations`, `messages`, `documents`,
+`files`, `resources`, `conversation-files`, `mcp`, `url-bookmarks`,
+`notes`, `artifacts`, `project-tasks`, `prompts`, `agents`. Selector
+hooks (`useActiveWorkspace`, etc.) live beside their slice and are
+re-exported from `use-store.ts` so consumer import paths don't change.
+
+To find a mutator, open the slice named for its entity (e.g.
+`deleteWorkspace` → `store/slices/workspaces.ts`). Cross-entity cascades
+(`deleteWorkspace`, `deleteConversation`, `forkConversation`, file/MCP/
+bookmark removals) live in the owning slice and reach siblings through
+the shared `set`/`get`. The persist plumbing is split out too:
+`store/migrate.ts` (`runMigrations` + `STORE_VERSION`) and
+`store/persist.ts` (`partializeState` + `reviveAndPruneState`). **The
+persisted localStorage shape + `STORE_VERSION` are a frozen contract** —
+`store/persist.test.ts` pins the exact persisted key set, so adding or
+removing a persisted key needs a matching `runMigrations` step + version
+bump.
 
 ### Panel System
 
