@@ -147,5 +147,53 @@ async def is_run_cancelled(
     return bool(row and row["status"] == "cancelled")
 
 
+_LOAD_CHECKPOINT_SQL = """
+SELECT checkpoint FROM public.tasks
+WHERE id = $1 AND user_id = $2;
+"""
+
+
+async def load_checkpoint(
+    pool: asyncpg.Pool,
+    *,
+    run_id: str,
+    user_id: str,
+) -> dict[str, object] | None:
+    """Read the `tasks.checkpoint` jsonb column.
+
+    Shape mirrors `RunCheckpoint` in `lib/server/agent/checkpoint.ts` —
+    `{messages, step, seq, config: {model, system?, workspaceId?,
+    skills, maxSteps, mode?, ...}}`. Returns the raw dict; the
+    executor / step fn coerce the bits they need.
+
+    Returns `None` when the row isn't found (RLS reject, race with
+    delete) or when `checkpoint` is null (never written — shouldn't
+    happen post-route but defensive against the early Phase 2a flow
+    which can race in tests). The caller decides whether to bail or
+    fall back."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            _LOAD_CHECKPOINT_SQL,
+            _coerce_uuid(run_id),
+            _coerce_uuid(user_id),
+        )
+    if not row:
+        return None
+    raw = row["checkpoint"]
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        # asyncpg returns jsonb as `str` unless a codec is registered.
+        # Decode lazily here so callers don't have to.
+        try:
+            decoded = json.loads(raw)
+        except Exception:
+            return None
+        return decoded if isinstance(decoded, dict) else None
+    if isinstance(raw, dict):
+        return raw
+    return None
+
+
 def _coerce_uuid(value: str) -> uuid.UUID:
     return uuid.UUID(value)

@@ -60,6 +60,12 @@ class Settings(BaseSettings):
     fast enough that a real Phase 4+ workload would feel responsive, slow
     enough that the dry-run replica isn't fighting the TS worker."""
 
+    # --- Model providers --------------------------------------------------
+    ANTHROPIC_API_KEY: str = ""
+    """Anthropic API key — Phase 2b enables real model streaming when set.
+    Empty falls back to the Phase 2a stub step fn so the executor stays
+    runnable in development without a live key."""
+
     # --- Service identity -------------------------------------------------
     SERVICE_NAME: str = "agent-py"
     SERVICE_PORT: int = 8000

@@ -1,18 +1,21 @@
 # Plan: Agent API as a separate service
 
-Status: **🪜 Phased — Phases 0+1+2a shipped, Phase 2b pending.** Option
-C (Python service) green-lit. Phase 0 (scaffolding) + Phase 1 (read-
-only poller) + Phase 2a (executor pattern + feature flag) live in
-`services/agent-py/`. Host decided (self-host on a small VM — see
-§Host decision). The earlier "decision-doc — Step 1 done" status is
-retained in the prior-status note below for context.
+Status: **🪜 Phased — Phases 0 + 1 + 2a + 2b-1 shipped, Phase 2b-2
+pending.** Option C (Python service) green-lit. Phase 0 (scaffolding),
+Phase 1 (read-only poller), Phase 2a (executor pattern + feature
+flag), and Phase 2b-1 (real Anthropic text streaming, no tools yet)
+all live in `services/agent-py/`. Host decided (self-host on a small
+VM — see §Host decision). The earlier "decision-doc — Step 1 done"
+status is retained in the prior-status note below for context.
 
 > **Note on phase numbering.** The original plan called Phase 2 a
 > single 1-week slice (executor + 3 tools + provider port). It split
-> in flight into a structural Phase 2a (this PR — executor pattern
-> with a stub step fn) and a Phase 2b that lands the real model
-> call + tools. The PRs landed in that order so each was reviewable
-> independently. Total effort is unchanged.
+> in flight into a structural Phase 2a (executor pattern with a stub
+> step fn), and a Phase 2b that lands the real model call + tools.
+> Phase 2b then split again into 2b-1 (real model streaming, no
+> tools) and 2b-2 (the tool registry + first three tools +
+> tool-related event kinds). The PRs landed in that order so each
+> was reviewable independently. Total effort is unchanged.
 
 > **Prior status (kept for context).** The plan's precondition — "prove
 > the agent loop + durable run state in the current TS backend first"
