@@ -46,11 +46,8 @@ import { processSelectedFiles } from "@/client/file-utils"
 import { runExtraction } from "@/client/extract"
 import { persistFile } from "@/client/files/persist"
 import { getLocalCred } from "@/client/mcp/local-creds"
-import { extractCodeBlocks } from "@/shared/code-blocks"
-import { detectArtifactShell } from "@/client/live-artifact/detect"
 
-const AUTO_ARCHIVE_MIN_LINES = 15
-const AUTO_ARCHIVE_MAX_PER_MESSAGE = 3
+import { autoArchiveCodeBlocks as autoArchiveCodeBlocksPure } from "@/client/chat/auto-archive-code-blocks"
 import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/shared/upload-config"
 import type { Message, MessageError, MessageErrorCode, Prompt } from "@/shared/types"
 import type { LiveToolCall } from "@/components/skills/tool-call-strip"
@@ -425,51 +422,28 @@ export function ChatPanel() {
     [setConversationTyping, addMessage]
   )
 
-  // After a stream completes, auto-archive substantial code blocks so they
-  // become first-class artifacts without the user having to remember the
-  // Save-as-artifact button. Conservative threshold (>= AUTO_ARCHIVE_MIN_LINES)
-  // and capped count keep the artifacts panel from flooding. Renderable
-  // blocks (tsx/jsx/html/svg/mermaid, or content that sniffs as one)
-  // bypass the line threshold — the point of those is to be *previewed*,
-  // not archived for length. A 6-line `<Button>` JSX block is just as
-  // worth showing inline as a 60-line one.
+  // After a stream completes, auto-archive substantial / renderable
+  // code blocks so they become first-class artifacts without the user
+  // having to remember the Save-as-artifact button. The thresholds + the
+  // archive logic live in `autoArchiveCodeBlocksPure`; this wrapper just
+  // re-reads the message from the store (the streaming loop's `Message`
+  // reference is stale because `appendToMessage` updates immutably) and
+  // hands it to the pure helper.
   const autoArchiveCodeBlocks = useCallback(
     (assistantMessageId: string, conversationId: string) => {
-      // Caller supplies the conversation id explicitly so this works
-      // for streams that completed while the user was looking at a
-      // different conversation tab. Re-read the message from the store
-      // using the id (the streaming loop holds a stale `Message`
-      // reference because `appendToMessage` updates the store
-      // immutably).
       const conv = useStore
         .getState()
         .conversations.find((c) => c.id === conversationId)
       const message = conv?.messages.find((m) => m.id === assistantMessageId)
       if (!message) return
-      const blocks = extractCodeBlocks(message.content)
-      const eligible = blocks.filter(
-        (b) =>
-          b.lines >= AUTO_ARCHIVE_MIN_LINES ||
-          detectArtifactShell({ language: b.language ?? null, content: b.code })
-            .renderable
-      )
-      if (eligible.length === 0) return
-      const capped = eligible.slice(0, AUTO_ARCHIVE_MAX_PER_MESSAGE)
-      capped.forEach((b, i) => {
-        const lang = (b.language ?? "").toLowerCase()
-        const kind = lang === "json" ? "json" : "code"
-        createArtifact({
-          conversationId,
+      autoArchiveCodeBlocksPure(
+        {
+          content: message.content,
           messageId: assistantMessageId,
-          kind,
-          language: b.language,
-          title:
-            capped.length === 1
-              ? `Code${b.language ? ` (${b.language})` : ""}`
-              : `Code ${i + 1}${b.language ? ` (${b.language})` : ""}`,
-          content: b.code,
-        })
-      })
+          conversationId,
+        },
+        createArtifact
+      )
     },
     [createArtifact]
   )

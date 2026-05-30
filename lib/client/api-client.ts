@@ -695,5 +695,3 @@ export const apiClient = {
   mcp: { proxy: mcpProxyCall, upsertCloudServer: mcpUpsertCloudServer },
   url: { fetch: urlFetchBookmark },
 }
-
-export type ApiClient = typeof apiClient

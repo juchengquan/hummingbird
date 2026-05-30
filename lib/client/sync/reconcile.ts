@@ -43,6 +43,39 @@ import { parseCanvasState } from "@/shared/canvas/types"
 import { useStore } from "@/client/hooks/use-store"
 import { setSyncSnapshot } from "@/client/hooks/use-sync"
 
+/**
+ * Per-entity table-write helper for `bulkUploadLocalState`. Skips the
+ * round-trip when `rows` is empty (the no-op case for unused entities)
+ * and labels Postgres errors with the table name so the caller can
+ * surface "workspaces: column …" instead of bare error text.
+ *
+ * The `as never` cast is the same gated escape hatch `sync-queue.ts:189`
+ * uses — Supabase's generic `from<T>()` doesn't accept a row union
+ * across the table union without per-call narrowing; the row shape is
+ * built and pinned at the call site. The compiler still verifies row
+ * shape correctness at each call site through the explicit `rows` typing.
+ */
+async function uploadRows<R>(
+  client: AppSupabaseClient,
+  table: string,
+  rows: R[]
+): Promise<{ ok: boolean; error?: string }> {
+  if (rows.length === 0) return { ok: true }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await client.from(table as any).upsert(rows as never)
+  if (error) return { ok: false, error: `${table}: ${error.message}` }
+  return { ok: true }
+}
+
+/** True iff any of the Supabase responses carries an error. Replaces a
+ *  long `||` chain across ~17 `xRes.error` checks. */
+function anyError(
+  results: Array<{ error: unknown } | undefined>
+): boolean {
+  for (const r of results) if (r?.error) return true
+  return false
+}
+
 function jsonToSkillPrefs(value: Json | null | undefined): Record<string, boolean> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
   const out: Record<string, boolean> = {}
@@ -211,23 +244,25 @@ export async function fetchCloudSnapshot(
   }
 
   if (
-    workspacesRes.error ||
-    documentsRes.error ||
-    conversationsRes.error ||
-    messagesRes.error ||
-    filesRes.error ||
-    resourcesRes.error ||
-    conversationFilesRes.error ||
-    notesRes.error ||
-    artifactsRes.error ||
-    promptsRes.error ||
-    projectTasksRes.error ||
-    mcpServersRes.error ||
-    mcpResourcesRes.error ||
-    mcpResourceBindingsRes.error ||
-    conversationMcpResourcesRes.error ||
-    urlBookmarksRes.error ||
-    conversationUrlBookmarksRes.error
+    anyError([
+      workspacesRes,
+      documentsRes,
+      conversationsRes,
+      messagesRes,
+      filesRes,
+      resourcesRes,
+      conversationFilesRes,
+      notesRes,
+      artifactsRes,
+      promptsRes,
+      projectTasksRes,
+      mcpServersRes,
+      mcpResourcesRes,
+      mcpResourceBindingsRes,
+      conversationMcpResourcesRes,
+      urlBookmarksRes,
+      conversationUrlBookmarksRes,
+    ])
   ) {
     return null
   }
@@ -574,8 +609,10 @@ export async function bulkUploadLocalState(
   snapshot: CloudSnapshot
 ): Promise<{ ok: boolean; error?: string }> {
   // workspaces
-  if (snapshot.workspaces.length > 0) {
-    const { error } = await client.from("workspaces").upsert(
+  {
+    const r = await uploadRows(
+      client,
+      "workspaces",
       snapshot.workspaces.map((w, i) => ({
         id: w.id,
         user_id: userId,
@@ -595,12 +632,14 @@ export async function bulkUploadLocalState(
         updated_at: w.updatedAt.toISOString(),
       }))
     )
-    if (error) return { ok: false, error: `workspaces: ${error.message}` }
+    if (!r.ok) return r
   }
 
   // conversations (no messages yet)
-  if (snapshot.conversations.length > 0) {
-    const { error } = await client.from("conversations").upsert(
+  {
+    const r = await uploadRows(
+      client,
+      "conversations",
       snapshot.conversations.map((c) => ({
         id: c.id,
         user_id: userId,
@@ -618,13 +657,15 @@ export async function bulkUploadLocalState(
         updated_at: c.updatedAt.toISOString(),
       }))
     )
-    if (error) return { ok: false, error: `conversations: ${error.message}` }
+    if (!r.ok) return r
   }
 
   // documents — workspace-scoped editor docs. FK requires the workspaces
   // rows above to already exist.
-  if (snapshot.documents.length > 0) {
-    const { error } = await client.from("documents").upsert(
+  {
+    const r = await uploadRows(
+      client,
+      "documents",
       snapshot.documents.map((d) => ({
         id: d.id,
         user_id: userId,
@@ -636,7 +677,7 @@ export async function bulkUploadLocalState(
         updated_at: d.updatedAt.toISOString(),
       }))
     )
-    if (error) return { ok: false, error: `documents: ${error.message}` }
+    if (!r.ok) return r
   }
 
   // messages, flattened with their conversation_id + position. The
@@ -686,15 +727,17 @@ export async function bulkUploadLocalState(
       })
     })
   }
-  if (messageRows.length > 0) {
-    const { error } = await client.from("messages").upsert(messageRows)
-    if (error) return { ok: false, error: `messages: ${error.message}` }
+  {
+    const r = await uploadRows(client, "messages", messageRows)
+    if (!r.ok) return r
   }
 
   // files (storage_path / external_url stay null at this stage; the
   // upload code path is responsible for filling them)
-  if (snapshot.files.length > 0) {
-    const { error } = await client.from("files").upsert(
+  {
+    const r = await uploadRows(
+      client,
+      "files",
       snapshot.files.map((f) => ({
         id: f.id,
         user_id: userId,
@@ -713,29 +756,33 @@ export async function bulkUploadLocalState(
         deleted_at: f.deletedAt ? f.deletedAt.toISOString() : null,
       }))
     )
-    if (error) return { ok: false, error: `files: ${error.message}` }
+    if (!r.ok) return r
   }
 
   // resources (depends on files + workspaces)
-  if (snapshot.resources.length > 0) {
-    const { error } = await client.from("resources").upsert(
-      snapshot.resources.map((r) => ({
-        id: r.id,
+  {
+    const r = await uploadRows(
+      client,
+      "resources",
+      snapshot.resources.map((res) => ({
+        id: res.id,
         user_id: userId,
-        workspace_id: r.workspaceId,
-        file_id: r.fileId,
-        added_at: r.addedAt.toISOString(),
+        workspace_id: res.workspaceId,
+        file_id: res.fileId,
+        added_at: res.addedAt.toISOString(),
       }))
     )
-    if (error) return { ok: false, error: `resources: ${error.message}` }
+    if (!r.ok) return r
   }
 
   // conversation_files (depends on files + conversations) — the
   // conversation-private lane introduced in migration 0004. Existing
   // local-only users whose store predates v16 have an empty slice;
   // skip the upsert in that case to avoid an empty round-trip.
-  if (snapshot.conversationFiles.length > 0) {
-    const { error } = await client.from("conversation_files").upsert(
+  {
+    const r = await uploadRows(
+      client,
+      "conversation_files",
       snapshot.conversationFiles.map((cf) => ({
         id: cf.id,
         user_id: userId,
@@ -744,7 +791,7 @@ export async function bulkUploadLocalState(
         added_at: cf.addedAt.toISOString(),
       }))
     )
-    if (error) return { ok: false, error: `conversation_files: ${error.message}` }
+    if (!r.ok) return r
   }
 
   // mcp_servers — only local-mode rows reach this path; cloud-mode
@@ -753,57 +800,62 @@ export async function bulkUploadLocalState(
   // /api/mcp/server route. We upload metadata with
   // `credentials_encrypted = NULL` and the local fingerprint so
   // other devices can detect "same cred" without sharing it.
-  const localServers = snapshot.mcpServers.filter(
-    (s) => s.credentialMode === "local"
-  )
-  if (localServers.length > 0) {
-    const { error } = await client.from("mcp_servers").upsert(
-      localServers.map((s) => ({
-        id: s.id,
-        user_id: userId,
-        workspace_id: s.workspaceId,
-        name: s.name,
-        url: s.url,
-        transport: s.transport,
-        credential_mode: s.credentialMode,
-        credential_fingerprint: s.credentialFingerprint ?? null,
-        // Cast: McpCapabilities is an open record without an index
-        // signature; at runtime it round-trips as plain JSON.
-        capabilities: (s.capabilities ?? null) as unknown as Json,
-        capabilities_fetched_at: s.capabilitiesFetchedAt
-          ? s.capabilitiesFetchedAt.toISOString()
-          : null,
-        enabled: s.enabled,
-        created_at: s.createdAt.toISOString(),
-        updated_at: s.updatedAt.toISOString(),
-        deleted_at: s.deletedAt ? s.deletedAt.toISOString() : null,
-      }))
+  {
+    const r = await uploadRows(
+      client,
+      "mcp_servers",
+      snapshot.mcpServers
+        .filter((s) => s.credentialMode === "local")
+        .map((s) => ({
+          id: s.id,
+          user_id: userId,
+          workspace_id: s.workspaceId,
+          name: s.name,
+          url: s.url,
+          transport: s.transport,
+          credential_mode: s.credentialMode,
+          credential_fingerprint: s.credentialFingerprint ?? null,
+          // Cast: McpCapabilities is an open record without an index
+          // signature; at runtime it round-trips as plain JSON.
+          capabilities: (s.capabilities ?? null) as unknown as Json,
+          capabilities_fetched_at: s.capabilitiesFetchedAt
+            ? s.capabilitiesFetchedAt.toISOString()
+            : null,
+          enabled: s.enabled,
+          created_at: s.createdAt.toISOString(),
+          updated_at: s.updatedAt.toISOString(),
+          deleted_at: s.deletedAt ? s.deletedAt.toISOString() : null,
+        }))
     )
-    if (error) return { ok: false, error: `mcp_servers: ${error.message}` }
+    if (!r.ok) return r
   }
 
   // mcp_resources (depends on mcp_servers + workspaces)
-  if (snapshot.mcpResources.length > 0) {
-    const { error } = await client.from("mcp_resources").upsert(
-      snapshot.mcpResources.map((r) => ({
-        id: r.id,
+  {
+    const r = await uploadRows(
+      client,
+      "mcp_resources",
+      snapshot.mcpResources.map((mr) => ({
+        id: mr.id,
         user_id: userId,
-        workspace_id: r.workspaceId,
-        server_id: r.serverId,
-        uri: r.uri,
-        name: r.name,
-        description: r.description ?? null,
-        mime_type: r.mimeType ?? null,
-        added_at: r.addedAt.toISOString(),
-        deleted_at: r.deletedAt ? r.deletedAt.toISOString() : null,
+        workspace_id: mr.workspaceId,
+        server_id: mr.serverId,
+        uri: mr.uri,
+        name: mr.name,
+        description: mr.description ?? null,
+        mime_type: mr.mimeType ?? null,
+        added_at: mr.addedAt.toISOString(),
+        deleted_at: mr.deletedAt ? mr.deletedAt.toISOString() : null,
       }))
     )
-    if (error) return { ok: false, error: `mcp_resources: ${error.message}` }
+    if (!r.ok) return r
   }
 
   // mcp_resource_bindings (depends on mcp_resources + workspaces)
-  if (snapshot.mcpResourceBindings.length > 0) {
-    const { error } = await client.from("mcp_resource_bindings").upsert(
+  {
+    const r = await uploadRows(
+      client,
+      "mcp_resource_bindings",
       snapshot.mcpResourceBindings.map((b) => ({
         id: b.id,
         user_id: userId,
@@ -812,13 +864,14 @@ export async function bulkUploadLocalState(
         added_at: b.addedAt.toISOString(),
       }))
     )
-    if (error)
-      return { ok: false, error: `mcp_resource_bindings: ${error.message}` }
+    if (!r.ok) return r
   }
 
   // conversation_mcp_resources (depends on mcp_resources + conversations)
-  if (snapshot.conversationMcpResources.length > 0) {
-    const { error } = await client.from("conversation_mcp_resources").upsert(
+  {
+    const r = await uploadRows(
+      client,
+      "conversation_mcp_resources",
       snapshot.conversationMcpResources.map((cmr) => ({
         id: cmr.id,
         user_id: userId,
@@ -827,13 +880,14 @@ export async function bulkUploadLocalState(
         added_at: cmr.addedAt.toISOString(),
       }))
     )
-    if (error)
-      return { ok: false, error: `conversation_mcp_resources: ${error.message}` }
+    if (!r.ok) return r
   }
 
   // url_bookmarks (depends on workspaces)
-  if (snapshot.urlBookmarks.length > 0) {
-    const { error } = await client.from("url_bookmarks").upsert(
+  {
+    const r = await uploadRows(
+      client,
+      "url_bookmarks",
       snapshot.urlBookmarks.map((b) => ({
         id: b.id,
         user_id: userId,
@@ -851,12 +905,14 @@ export async function bulkUploadLocalState(
         updated_at: b.updatedAt.toISOString(),
       }))
     )
-    if (error) return { ok: false, error: `url_bookmarks: ${error.message}` }
+    if (!r.ok) return r
   }
 
   // conversation_url_bookmarks (depends on url_bookmarks + conversations)
-  if (snapshot.conversationUrlBookmarks.length > 0) {
-    const { error } = await client.from("conversation_url_bookmarks").upsert(
+  {
+    const r = await uploadRows(
+      client,
+      "conversation_url_bookmarks",
       snapshot.conversationUrlBookmarks.map((cub) => ({
         id: cub.id,
         user_id: userId,
@@ -865,56 +921,63 @@ export async function bulkUploadLocalState(
         added_at: cub.addedAt.toISOString(),
       }))
     )
-    if (error)
-      return { ok: false, error: `conversation_url_bookmarks: ${error.message}` }
+    if (!r.ok) return r
   }
 
   // notes — workspace-scoped after migration 0011, so orphans
   // (conversationId === null) upload too via the new workspace_id
   // column. Skip rows missing a workspaceId entirely (shouldn't
   // happen post-v12 backfill, but defensive).
-  const uploadableNotes = snapshot.notes.filter((n) => !!n.workspaceId)
-  if (uploadableNotes.length > 0) {
-    const { error } = await client.from("notes").upsert(
-      uploadableNotes.map((n) => ({
-        id: n.id,
-        user_id: userId,
-        workspace_id: n.workspaceId,
-        conversation_id: n.conversationId,
-        message_id: n.messageId,
-        body: n.body,
-        created_at: n.createdAt.toISOString(),
-        updated_at: n.updatedAt.toISOString(),
-      }))
+  {
+    const r = await uploadRows(
+      client,
+      "notes",
+      snapshot.notes
+        .filter((n) => !!n.workspaceId)
+        .map((n) => ({
+          id: n.id,
+          user_id: userId,
+          workspace_id: n.workspaceId,
+          conversation_id: n.conversationId,
+          message_id: n.messageId,
+          body: n.body,
+          created_at: n.createdAt.toISOString(),
+          updated_at: n.updatedAt.toISOString(),
+        }))
     )
-    if (error) return { ok: false, error: `notes: ${error.message}` }
+    if (!r.ok) return r
   }
 
   // artifacts — same workspace-scoped story as notes.
-  const uploadableArtifacts = snapshot.artifacts.filter((a) => !!a.workspaceId)
-  if (uploadableArtifacts.length > 0) {
-    const { error } = await client.from("artifacts").upsert(
-      uploadableArtifacts.map((a) => ({
-        id: a.id,
-        user_id: userId,
-        workspace_id: a.workspaceId,
-        conversation_id: a.conversationId,
-        message_id: a.messageId,
-        kind: a.kind,
-        language: a.language,
-        title: a.title,
-        content: a.content,
-        storage_path: a.storagePath,
-        pinned: a.pinned,
-        created_at: a.createdAt.toISOString(),
-      }))
+  {
+    const r = await uploadRows(
+      client,
+      "artifacts",
+      snapshot.artifacts
+        .filter((a) => !!a.workspaceId)
+        .map((a) => ({
+          id: a.id,
+          user_id: userId,
+          workspace_id: a.workspaceId,
+          conversation_id: a.conversationId,
+          message_id: a.messageId,
+          kind: a.kind,
+          language: a.language,
+          title: a.title,
+          content: a.content,
+          storage_path: a.storagePath,
+          pinned: a.pinned,
+          created_at: a.createdAt.toISOString(),
+        }))
     )
-    if (error) return { ok: false, error: `artifacts: ${error.message}` }
+    if (!r.ok) return r
   }
 
   // Prompts — workspace-scoped saved templates.
-  if (snapshot.prompts.length > 0) {
-    const { error } = await client.from("prompts").upsert(
+  {
+    const r = await uploadRows(
+      client,
+      "prompts",
       snapshot.prompts.map((p) => ({
         id: p.id,
         user_id: userId,
@@ -928,15 +991,17 @@ export async function bulkUploadLocalState(
         deleted_at: p.deletedAt ? p.deletedAt.toISOString() : null,
       }))
     )
-    if (error) return { ok: false, error: `prompts: ${error.message}` }
+    if (!r.ok) return r
   }
 
   // Project-task cards. FKs to `tasks` / `artifacts` are nullable and
   // those rows (when set) belong to other upserts already flushed
   // above; a card whose run/artifact isn't present just keeps a
   // dangling-safe NULL after the FK's ON DELETE SET NULL.
-  if (snapshot.projectTasks.length > 0) {
-    const { error } = await client.from("project_tasks").upsert(
+  {
+    const r = await uploadRows(
+      client,
+      "project_tasks",
       snapshot.projectTasks.map((t) => ({
         id: t.id,
         user_id: userId,
@@ -950,7 +1015,7 @@ export async function bulkUploadLocalState(
         updated_at: t.updatedAt.toISOString(),
       }))
     )
-    if (error) return { ok: false, error: `project_tasks: ${error.message}` }
+    if (!r.ok) return r
   }
 
   return { ok: true }

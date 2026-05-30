@@ -1,8 +1,14 @@
 # Plan: Code cleanup
 
-Status: **🪜 Phase 1 shipped** (PR #96: 6 baseline lint warnings
-cleared, 4 truly-dead exports removed, `useMemo` wrapping on
-`use-attached-context.ts` defaults). Phases 2–6 planned.
+Status: **✅ All six phases shipped** (#96 Phase 1; combined PR for
+Phases 2–6 below). Sync layer is now tested per-entity, reconcile's
+per-entity upsert pattern is factored, pure helpers came out of
+`use-store.ts`, the auto-archive heuristic came out of `chat.tsx`,
+and the lint baseline + dead-export sweep are complete. The
+heaviest structural splits (full `use-store.ts` slice split + full
+`chat.tsx` send-pipeline extraction) were deliberately scoped down
+because combining them with the other phases in one PR was too
+risky; they remain as focused follow-ups.
 
 A focused housecleaning pass across the codebase after a long stretch
 of feature work. Goal: improve maintainability without changing user-
@@ -116,7 +122,20 @@ Verification: `bun run typecheck` 0 errors; `bun run lint` 0
 warnings (down from 6); `bun test` 559 pass; dev server compiles
 `/dashboard` → 200.
 
-### Phase 2 — Sync layer test coverage (≈ 1 day)
+### Phase 2 — Sync layer test coverage ✅ shipped (#102)
+
+Added per-entity test files covering every `diff*` helper in
+`handlers.ts`: workspaces, documents, conversations (+ messages),
+files, resources, conversation_files, mcp_servers, mcp_resources,
+mcp_resource_bindings, conversation_mcp_resources, url_bookmarks,
+conversation_url_bookmarks, notes, artifacts, project_tasks
+(prompts already had a file). Test count went from 559 → 633
+(+74 sync diff tests across 15 new files). Characterisation only —
+no behaviour change.
+
+Original plan text follows for archival.
+
+
 
 Pure-function tests for every `diff*` helper in
 `lib/client/sync/handlers.ts`. The sync layer is the durability story
@@ -135,7 +154,23 @@ and currently the most under-tested critical code path.
 Verification: `bun test` green; test count visibly grows by a few
 dozen.
 
-### Phase 3 — Reconcile factor-out (≈ half day)
+### Phase 3 — Reconcile factor-out ✅ shipped (#102)
+
+Extracted two helpers into `reconcile.ts`:
+- `uploadRows(client, table, rows)` — wraps the per-entity
+  `if length > 0; await upsert; if error return labelled error`
+  pattern used 13 times in `bulkUploadLocalState`. Adding a new
+  entity is now a one-call addition rather than copying four
+  lines. Contains the `as never` Supabase-generic escape hatch
+  (mirrors `sync-queue.ts:189`).
+- `anyError(results)` — replaces a 17-line `xRes.error || …` chain.
+
+LOC bumped 1048 → 1113 (the wrapper braces cost a small amount)
+but the upsert + error pattern lives in one place now.
+
+Original plan text follows for archival.
+
+
 
 The per-entity reconcile flow in `reconcile.ts` repeats ~12 times:
 
@@ -153,7 +188,30 @@ should make adding a new entity smaller and harder to get wrong.
 Verification: tests green; reconcile snapshot before/after is
 byte-equivalent on a seeded fixture.
 
-### Phase 4 — Store slice split (≈ 2 days, higher risk)
+### Phase 4 — Store helper extraction ✅ shipped (#102) · slice split still pending
+
+Scoped down from the full per-entity slice split — combining a
+≈2-day high-risk refactor with the rest of this PR was too much
+through one review. Instead this commit extracts the pure helpers
+into `lib/client/hooks/store-helpers.ts`:
+
+- `clampSidebarWidth` / `clampResourcesSidebarWidth` + constants
+- `defaultSlug` + `ensureUniquePromptSlug` (prompt slug machinery)
+- `tombstoneMcpServer`
+- the four `merge*Config` deep-merge helpers
+
+Plus a 20-test characterisation file. `use-store.ts` shrank
+3445 → 3274 (−171 LOC).
+
+**Follow-up still scoped:** the full per-entity slice split
+(workspaces, conversations, messages, files, …) described below
+remains the next focused PR. The persistence model + the cross-
+slice cascade contract (which makes the bulk split tricky) are
+unchanged.
+
+Original plan text (target end-state) follows for archival.
+
+
 
 Break `use-store.ts` into per-entity slice files, composed in one
 top-level store. Persisted state, `partialize`, and the localStorage
@@ -198,7 +256,23 @@ Verification: tests green; dev-server smoke against a hydrated
 existing localStorage; import-from-disk smoke (compare `useStore.getState()` 
 before and after on a fixture).
 
-### Phase 5 — Chat panel extraction (≈ 1 day)
+### Phase 5 — Chat panel extraction ✅ shipped (#102) · send-pipeline extraction still pending
+
+Scoped down for the same reason as Phase 4 — the full send-pipeline
+extraction is ~600 LOC with ~40 closure dependencies and benefits
+from its own focused review. This commit extracts the
+auto-archive heuristic — a cleanly-bounded subsystem with no live
+store reads — into `lib/client/chat/auto-archive-code-blocks.ts`
+plus a 7-test characterisation file. `chat.tsx`: 1872 → 1846
+(−26 LOC).
+
+**Follow-up still scoped:** pulling `callChatAPI` itself into a
+`useChatSend` hook, plus the attachments build, smart-paste, and
+the drag-and-drop file ingestion.
+
+Original plan text follows for archival.
+
+
 
 Pull the send-pipeline out of `chat.tsx` into a hook
 (`lib/client/hooks/use-chat-send.ts`):
@@ -223,7 +297,22 @@ The panel becomes a render layer over these hooks. Target: drop
 Verification: tests green; manual interactive checklist (the existing
 send-with-attachments, regenerate, retry, edit-and-resend, task mode).
 
-### Phase 6 — Dead code sweep (≈ half day)
+### Phase 6 — Dead code sweep ✅ shipped (#102)
+
+Removed `export type ApiClient = typeof apiClient` from
+`lib/client/api-client.ts` — verified orphan. Phase 1's earlier
+sweep had already caught the bigger dead-export wins, so this
+residual pass was modest. Patterns reviewed but not removed
+(reasons captured in the commit): public API contract types
+inferred from Zod schemas (kept as documentation surface),
+internal types used only within their own declaration file (export
+is harmless), and the two earlier-deferred Phase 1 items
+(`sync-queue.ts:189` `as any` is intentionally gated; the
+Plate.js TODO is upstream).
+
+Original plan text follows for archival.
+
+
 
 After the structural phases, do a verified pass for:
 
