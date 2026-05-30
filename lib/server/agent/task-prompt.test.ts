@@ -68,3 +68,48 @@ describe("buildTaskSystemPrompt — research mode", () => {
     expect(p).toContain("research agent")
   })
 })
+
+describe("buildTaskSystemPrompt — research mode + searchFiles (Phase 3)", () => {
+  test("without searchFiles, step 2b is web-only and uses the web-search wording", () => {
+    const p = buildTaskSystemPrompt({
+      enabledSkillIds: ["webSearch", "webFetch"],
+      skillRequestEntries: [],
+      mode: "research",
+    })
+    expect(p).toContain("Use `webSearch` to find candidate sources")
+    // Files-first wording should NOT appear when files aren't enabled.
+    expect(p).not.toContain("If any attached file looks relevant")
+    expect(p).not.toContain("searchFiles({ fileId, query })")
+  })
+
+  test("with searchFiles enabled, step 2b is files-first and the Sources block mentions attached files", () => {
+    const p = buildTaskSystemPrompt({
+      enabledSkillIds: ["webSearch", "webFetch", "searchFiles"],
+      skillRequestEntries: [],
+      mode: "research",
+    })
+    expect(p).toContain("If any attached file looks relevant")
+    expect(p).toContain("call `searchFiles({ fileId, query })` first")
+    // Both channels are still mentioned for gap-pass and synthesis.
+    expect(p).toContain("`webSearch` to find broader candidate sources")
+    expect(p).toContain("`[N] file: <name>`")
+    expect(p).toContain("(or `searchFiles` against a relevant file)")
+  })
+
+  test("default-mode prompt is unaffected by searchFiles being enabled", () => {
+    const a = buildTaskSystemPrompt({
+      enabledSkillIds: [],
+      skillRequestEntries: [],
+    })
+    const b = buildTaskSystemPrompt({
+      enabledSkillIds: ["searchFiles"],
+      skillRequestEntries: [],
+    })
+    // The skills-line note for searchFiles attaches in (b), but the
+    // hard-coded loop block stays identical between the two — research-
+    // mode files-first branching must not leak into default mode.
+    expect(a).toContain("autonomous agent")
+    expect(b).toContain("autonomous agent")
+    expect(b).not.toContain("If any attached file looks relevant")
+  })
+})

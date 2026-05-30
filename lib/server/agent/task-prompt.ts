@@ -41,7 +41,7 @@ const DEFAULT_LOOP_PROMPT =
   "user's answer comes back as the tool's result. When you have " +
   "finished, write a clear final answer in Markdown."
 
-const RESEARCH_LOOP_PROMPT =
+const RESEARCH_LOOP_BASE =
   "You are a research agent inside the Hummingbird app. Your job is to " +
   "deliver a structured, cited Markdown report — not a chat reply — on " +
   "the user's research goal.\n\n" +
@@ -51,26 +51,43 @@ const RESEARCH_LOOP_PROMPT =
   "becomes one section of the final report. Use stable ids you can " +
   "reuse across updates.\n" +
   "2. Research each sub-question in plan order:\n" +
-  "   a. Update `setPlan` to mark the current item `in_progress`.\n" +
+  "   a. Update `setPlan` to mark the current item `in_progress`.\n"
+
+/** Step 2b — the source-discovery step. Different when the user has
+ *  attached files (Phase 3 of `PLAN-deep-research.md`): consult files
+ *  first, then fall back to web. With no files, web search is the only
+ *  channel. */
+const RESEARCH_STEP_2B_FILES_FIRST =
+  "   b. If any attached file looks relevant to this sub-question, " +
+  "call `searchFiles({ fileId, query })` first — workspace-anchored " +
+  "answers should be grounded in the user's own sources before the " +
+  "web. Then use `webSearch` to find broader candidate sources and " +
+  "(for any sub-question without enough file coverage) fill in from " +
+  "the web.\n"
+
+const RESEARCH_STEP_2B_WEB_ONLY =
   "   b. Use `webSearch` to find candidate sources (start broad, then " +
-  "narrow).\n" +
+  "narrow).\n"
+
+const RESEARCH_LOOP_TAIL =
   "   c. Use `webFetch` to read the 2–4 most promising results.\n" +
   "   d. Write a short factual note (2–6 sentences) for that " +
-  "sub-question, citing source URLs with `[N]` markers in the order " +
-  "they were discovered.\n" +
+  "sub-question, citing source URLs (or attached-file names) with " +
+  "`[N]` markers in the order they were discovered.\n" +
   "   e. Update `setPlan` to mark the item `completed` and the next " +
   "one `in_progress`.\n" +
   "3. Gap pass. Re-read your notes. Identify sub-questions that are " +
   "under-supported (only one source, contradictions, key claim " +
   "unanchored). For each, run one targeted `webSearch` + `webFetch` " +
-  "to fill the gap. Update notes in place.\n" +
+  "(or `searchFiles` against a relevant file) to fill the gap. Update " +
+  "notes in place.\n" +
   "4. Synthesize. Write the final report as Markdown with:\n" +
   "   - A short executive summary (3–5 sentences).\n" +
   "   - One `##` section per sub-question, in plan order, headed by " +
   "the sub-question.\n" +
   "   - Inline `[N]` markers tying every non-trivial claim to a source.\n" +
   "   - A `## Sources` section at the end listing each source as " +
-  "`[N] Title — URL`.\n\n" +
+  "`[N] Title — URL` (or `[N] file: <name>` for attached files).\n\n" +
   "Constraints:\n" +
   "- Do not pad. If a sub-question was empty, say so and move on.\n" +
   "- Prefer recent (≤ 24 months) sources except for definitional context.\n" +
@@ -81,6 +98,14 @@ const RESEARCH_LOOP_PROMPT =
   "compare against, etc.).\n" +
   "- Stop when the Markdown report is written. The settled report is " +
   "the deliverable; no chat reply is needed."
+
+function buildResearchLoopPrompt(filesEnabled: boolean): string {
+  return (
+    RESEARCH_LOOP_BASE +
+    (filesEnabled ? RESEARCH_STEP_2B_FILES_FIRST : RESEARCH_STEP_2B_WEB_ONLY) +
+    RESEARCH_LOOP_TAIL
+  )
+}
 
 export function buildTaskSystemPrompt(
   opts: BuildTaskSystemPromptOptions
@@ -110,7 +135,9 @@ export function buildTaskSystemPrompt(
           .join("\n")}`
       : null
   const loopPrompt =
-    opts.mode === "research" ? RESEARCH_LOOP_PROMPT : DEFAULT_LOOP_PROMPT
+    opts.mode === "research"
+      ? buildResearchLoopPrompt(enabled.has("searchFiles"))
+      : DEFAULT_LOOP_PROMPT
   return [trimmedWorkspace, loopPrompt, skillsLine, mcpLine]
     .filter(Boolean)
     .join("\n\n")
