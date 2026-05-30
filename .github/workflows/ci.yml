@@ -72,3 +72,69 @@ jobs:
         run: |
           bash scripts/verify-supabase-types.sh \
             origin/${{ github.event.pull_request.base.ref }}
+
+  # Python agent service (PLAN-agent-api.md). Phase 0 ships the FastAPI
+  # scaffolding + auth middleware; this job gates that they stay
+  # lint-clean, type-clean, and test-clean. Runs in parallel with the
+  # main `ci` job since they share no inputs.
+  agent-py:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/agent-py
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.5.4"
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Format check (ruff)
+        run: uv run ruff format --check .
+
+      - name: Type-check (mypy)
+        run: uv run mypy src
+
+      - name: Test (pytest)
+        run: uv run pytest
+
+  # Drift gate for the TS types generated from the agent service's
+  # OpenAPI doc. Regenerates against the live FastAPI schema and fails
+  # if the checked-in `lib/shared/agent-py-types.generated.ts` is out
+  # of date.
+  agent-py-types-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: agent-py
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.5.4"
+          enable-cache: true
+
+      - name: Install bun deps
+        run: bun install --frozen-lockfile
+
+      - name: Sync agent-py deps
+        working-directory: services/agent-py
+        run: uv sync --frozen
+
+      - name: Check generated types are up to date
+        run: bun run codegen:agent-types:check
