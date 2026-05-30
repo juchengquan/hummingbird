@@ -182,22 +182,28 @@ When adding a new endpoint, follow the checklist at the bottom of
 the eventual swap to a Python backend; the client + schemas + doc
 together are the contract that has to survive that swap.
 
-## Agent service (Python — Phase 0)
+## Agent service (Python — Phases 0+1)
 
 `services/agent-py/` is the new Python agent service per
-[`docs/PLAN-agent-api.md`](docs/PLAN-agent-api.md). Phase 0 ships
-**scaffolding only** — FastAPI app, JWT middleware, `GET /healthz` +
-`GET /readyz` + `GET /v1/whoami`. No agent logic yet (that's Phase 2+).
+[`docs/PLAN-agent-api.md`](docs/PLAN-agent-api.md). **Phase 0**
+shipped the scaffolding (FastAPI + JWT auth + OpenAPI codegen).
+**Phase 1** added a background `task_jobs` poll loop in dry-run
+mode — claims a job, structured-logs it, releases it back so the
+canonical TS worker picks it up. No agent execution yet (that's
+Phase 2+).
 
-Stack: Python 3.12 · FastAPI · uv (package manager) · PyJWT · pytest ·
-ruff · mypy.
+Stack: Python 3.12 · FastAPI · uv (package manager) · PyJWT ·
+asyncpg · structlog · pytest · ruff · mypy.
 
 | Path | What |
 |---|---|
-| `services/agent-py/src/agent_py/main.py` | FastAPI app + endpoints. |
+| `services/agent-py/src/agent_py/main.py` | FastAPI app + endpoints. Lifespan owns the DB pool + the poller task. |
 | `services/agent-py/src/agent_py/auth.py` | Supabase JWT verification middleware (HS256 against `SUPABASE_JWT_SECRET`). |
-| `services/agent-py/src/agent_py/settings.py` | `pydantic-settings` config. Reads the repo-level `.env` so the same vars work in both services. |
-| `services/agent-py/tests/` | Phase 0 contract tests (health + every auth failure mode). |
+| `services/agent-py/src/agent_py/settings.py` | `pydantic-settings` config. Reads the repo-level `.env`. |
+| `services/agent-py/src/agent_py/db.py` | asyncpg pool lifecycle. Open on startup if `SUPABASE_DB_URL` is set; close on shutdown. |
+| `services/agent-py/src/agent_py/jobs.py` | `claim_next_job` using `FOR UPDATE SKIP LOCKED` + `release_job_to_queue` (Phase 1 dry-run release). |
+| `services/agent-py/src/agent_py/poller.py` | Async tick loop. Cancellation-safe; transient-error tolerant. |
+| `services/agent-py/tests/` | 27 tests covering health + auth (Phase 0) + db lifecycle / jobs SQL contract / poller control flow (Phase 1). |
 | `services/agent-py/Dockerfile` | Multi-stage uv build, slim runtime, non-root user. |
 | `docker-compose.yml` (repo root) | Spins up the agent service alongside `bun dev`. |
 | `lib/shared/agent-py-types.generated.ts` | TS types generated from FastAPI's OpenAPI doc — the **source of truth** for the Python ⇄ TS contract. Regen with `bun run codegen:agent-types`. CI fails on drift via `codegen:agent-types:check`. |
@@ -205,14 +211,18 @@ ruff · mypy.
 **Configuration:** `SUPABASE_JWT_SECRET` is required for any
 auth-protected endpoint (without it, those endpoints return 503 — a
 distinct signal from 401 so monitoring can alert on misconfig).
-`SUPABASE_URL` is read but only reported by `/readyz` until Phase 1
-wires the actual Postgres connection. The service reads the same
-top-level `.env` as Next.js.
+`SUPABASE_DB_URL` is required to enable the poller — must be the
+**direct** Postgres connection (`db.<project>.supabase.co:5432`), NOT
+the transaction pooler (`*.pooler.supabase.com:6543`), because
+`FOR UPDATE SKIP LOCKED` needs an open transaction. With it empty,
+the poller no-ops every tick (`/healthz` + `/readyz` still respond).
+`WORKER_DRY_RUN` defaults to `true` (Phase 1 contract); flip to
+`false` only in Phase 2+ when the executor branch lands. The service
+reads the same top-level `.env` as Next.js.
 
-**Deploy target is deliberately TBD** — see "Deliberately deferred" in
-`PLAN-agent-api.md`. Phase 0 ships a Dockerfile that runs anywhere
-(self-host on Hetzner / home server / k8s, or a managed PaaS); the
-hosting decision lands between Phase 0 and Phase 1.
+**Deploy target decided** — self-host on a small VM (Hetzner CX22 as
+the named example, ~€4.5/mo; home server / NAS as a parallel option
+if uptime is good). Reasoning in `PLAN-agent-api.md` §Host decision.
 
 ## Development Patterns
 

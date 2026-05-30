@@ -1,9 +1,11 @@
 # Plan: Agent API as a separate service
 
-Status: **🪜 Phased — Phase 0 in flight.** Option C (Python service)
-green-lit. Phase 0 scaffolding shipped via the agent-py PR; Phase 1+
-pending. The earlier "decision-doc — Step 1 done" status is retained
-in the prior-status note below for context.
+Status: **🪜 Phased — Phases 0+1 shipped, Phase 2 pending.** Option
+C (Python service) green-lit. Phase 0 (scaffolding) + Phase 1 (read-
+only `task_jobs` poller) live in `services/agent-py/`. Host decided
+(self-host on a small VM — see §Host decision). The earlier "decision-
+doc — Step 1 done" status is retained in the prior-status note below
+for context.
 
 > **Prior status (kept for context).** The plan's precondition — "prove
 > the agent loop + durable run state in the current TS backend first"
@@ -240,38 +242,35 @@ PyJWT · pytest · ruff · mypy. CI gate added (`agent-py` +
 **Verification:** `curl localhost:8000/healthz` returns 200 in dev;
 container builds in CI; OpenAPI codegen runs.
 
-### Phase 1 — Read-only queue replica (3-5 days)
+### Phase 1 — Read-only queue replica ✅ shipped
 
-**Ships:** the Python service polls `task_jobs` alongside the TS
+**Shipped:** the Python service polls `task_jobs` alongside the TS
 worker, but **logs only — never executes.** Proves connectivity, RLS,
 job-claim semantics.
 
-**Scope:**
-- Port `lib/server/agent/jobs.ts:claimNextJob` to Python (atomic
-  `UPDATE ... RETURNING` on `task_jobs`).
-- Run alongside the TS worker; both poll. The TS worker is canonical
-  — its `claimNextJob` wins almost every race because it's already
-  the production path. Python claims occasionally; log + release
-  (back to `pending`).
-- Structured log every claim: `task_id`, `action`, `payload_size`.
-- No checkpoint reads. No event writes. No tool execution.
+Lives under `services/agent-py/`:
+- `db.py` — asyncpg pool lifecycle.
+- `jobs.py` — `claim_next_job` using `FOR UPDATE SKIP LOCKED` (single
+  statement; cleaner than the TS PostgREST two-step pattern) +
+  `release_job_to_queue` for the Phase 1 dry-run release.
+- `poller.py` — async tick loop wired into the FastAPI lifespan.
+  Cancellation propagates cleanly on shutdown; transient errors don't
+  kill the loop.
+- `WORKER_DRY_RUN` (default `true`) and `POLL_INTERVAL_SECONDS`
+  (default `5.0`) added to `Settings`.
+- `/readyz` extended to report `supabase_db_configured` +
+  `db_pool_open`.
+- 17 new unit tests (db lifecycle / jobs SQL contract / poller
+  control flow / cancellation).
 
-**Why this is the right next step:** the queue is the thinnest
-possible end-to-end slice that proves the Python service can do real
-work safely. Wrong → release the job, TS retries. Zero blast radius.
+Verification in production: watch for `lifespan.poller.started` →
+`poller.claimed` / `poller.released` pairs at the configured
+interval. `task_jobs` rows never stay in `running` after release
+(predicate-guarded UPDATE). The TS worker stays canonical; Python
+release puts the row back so TS picks it up on its next tick.
 
-**Risks:**
-- Dual claim — both workers try to claim the same job. Mitigated by
-  Postgres's `FOR UPDATE SKIP LOCKED` in `claimNextJob`.
-- Python releases stale job → re-runs. Mitigated by the same idempotency
-  guarantees the existing TS path relies on (events keyed on
-  `(task_id, seq)`).
-
-**Rollback:** stop polling. No state change.
-
-**Verification:** in production, observe the Python service claiming
-~0.5% of jobs (the race rate); the TS worker claims the rest.
-`task_jobs` stays clean (no stuck pendings).
+**Rollback:** stop polling (cancel the asyncio task; `lifespan`
+handles this on container shutdown). No state change.
 
 ### Phase 2 — Python handles one action end-to-end (1 week)
 

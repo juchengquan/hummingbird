@@ -41,6 +41,25 @@ class Settings(BaseSettings):
     """Required for auth-protected endpoints. When empty, JWT middleware
     refuses every request with 503."""
 
+    SUPABASE_DB_URL: str = ""
+    """Direct Postgres connection string (`postgresql://...`). Required for
+    the Phase 1+ poll loop — when empty the poller still starts but no-ops
+    on every tick (no pool, nothing to claim). Use the *direct* connection,
+    NOT the transaction pooler — `FOR UPDATE SKIP LOCKED` needs an open
+    transaction which the pooler doesn't expose."""
+
+    # --- Worker -----------------------------------------------------------
+    WORKER_DRY_RUN: bool = True
+    """Phase 1 default: claim jobs, log them, release back to the queue.
+    The TS worker picks them up. Flip to False in Phase 2+ when the
+    executor branch lands. Until then, a False here logs an error and
+    still releases so we never silently drop work."""
+
+    POLL_INTERVAL_SECONDS: float = 5.0
+    """Seconds between claim attempts. Five matches a healthy idle rate —
+    fast enough that a real Phase 4+ workload would feel responsive, slow
+    enough that the dry-run replica isn't fighting the TS worker."""
+
     # --- Service identity -------------------------------------------------
     SERVICE_NAME: str = "agent-py"
     SERVICE_PORT: int = 8000

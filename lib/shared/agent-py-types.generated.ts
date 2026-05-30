@@ -43,10 +43,10 @@ export interface paths {
          * Readyz
          * @description Readiness probe — reports configured dependencies.
          *
-         *     Phase 0 only reports whether config is *present*, not whether the
-         *     deps are *reachable* (no Supabase round-trip yet). Phase 1 will
-         *     add a `SELECT 1` against Postgres and reach the JWKS / discovery
-         *     endpoint.
+         *     Phase 0 only reported config presence; Phase 1 additionally
+         *     reports whether the Postgres pool is open (which is the closest
+         *     we get to "Postgres reachable" without a per-request `SELECT 1`).
+         *     Phase 2+ may add a `SELECT 1` if we see false-positive ready.
          */
         get: operations["readyz_readyz_get"];
         put?: never;
@@ -104,8 +104,12 @@ export interface components {
         ReadinessChecks: {
             /** Supabase Url Configured */
             supabase_url_configured: boolean;
+            /** Supabase Db Configured */
+            supabase_db_configured: boolean;
             /** Jwt Secret Configured */
             jwt_secret_configured: boolean;
+            /** Db Pool Open */
+            db_pool_open: boolean;
         };
         /** ReadinessResponse */
         ReadinessResponse: {
