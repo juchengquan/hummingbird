@@ -10,17 +10,21 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-05-30 (sweep — store-slice-split (#115, all 5 steps)
-and chat-send-pipeline extraction (#112/#113, all 5 phases) both
-shipped through all their plan phases; their plan docs now live in
-`docs/_done/` and the matching ROADMAP rows have graduated from
-Planned to Shipped. Earlier in the day: Deep Research mode + Custom
-agents / personas + the agent task-queue arc all shipped through all
-their phases too — see Shipped table. PLAN-agent-api precondition
-remains met; now a live go/no-go. Active plans now: small-followups
-(4 open: tokens / signed-URL re-sign / per-tool approval flags /
-task-route integration tests), cross-conversation-memory, local-rag,
-replace-supabase, agent-api, backend-extraction, typed-prompt-vars.)
+Last updated: 2026-05-30 (PLAN-agent-api refresh — the doc is now a
+phased plan instead of a decision doc. Recommendation: Option C
+(Python FastAPI service) if you want the Python ecosystem,
+otherwise Option D (hybrid — only the worker moves out). 4-6 weeks
+of focused effort, phases 0-4 are flag-flip reversible. The
+"prove the loop in-process first" precondition is met (long-running-
+task / HITL / queue arc shipped); the split itself is now a live
+go/no-go. Earlier in the day: signed-URL re-sign for generated
+images (#116, small-followups #4) shipped; store-slice-split (#115)
+and chat-send-pipeline extraction (#112/#113) merged; Deep Research
+mode + Custom agents / personas + the agent task-queue arc all
+shipped through all their phases. Active plans now: small-followups
+(3 open: tokens / per-tool approval flags / task-route integration
+tests), cross-conversation-memory, local-rag, replace-supabase,
+agent-api (now phased), backend-extraction, typed-prompt-vars.)
 
 > **Plan archive.** Fully-shipped `PLAN-*.md` files live in
 > [`_done/`](_done/). Active plans (planning / phased / decision
@@ -147,7 +151,7 @@ now ships — its plans live in [`_done/`](_done/).
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
 | 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~7.5 days total |
-| 📐 [Agent API as a separate service](PLAN-agent-api.md) | decision doc — Step 1 done | Language-agnostic target shape for splitting inference + agent loop out; TS-service or Python, undecided. The plan's precondition ("prove the loop + durable run state in-process first") is **met** — the whole agent stack shipped. Now a live go/no-go gated only on wanting Python or independent scale; default is stay in-process |
+| 📐 [Agent API as a separate service](PLAN-agent-api.md) | phased plan — awaiting go-ahead | Six-phase plan to move the agent loop + worker + tools out of Next.js into a separate (recommended: Python FastAPI) service. Step 1 (prove the loop in-process) is **done** — see the long-running-task / HITL / queue arc. Decision matrix covers 4 options (stay in-process / TS service / Python service / hybrid worker-only); recommendation is Python if you want the ecosystem, hybrid TS otherwise. 4-6 weeks of focused effort; phases 0-4 are flag-flip reversible, phase 5 (delete TS path) is the only one-way door |
 | 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 pending | Phase 1 (contract-first frontend ⇄ API surface) shipped; Phase 2 stands up the Python backend |
 | ⏸ [Typed prompt variables](PLAN-typed-prompt-variables.md) | deferred | Workspace-scoping migration shipped (`9b3c84f`); the typing UI itself remains deliberately deferred |
 
