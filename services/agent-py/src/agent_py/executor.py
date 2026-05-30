@@ -266,9 +266,7 @@ def _default_make_step_fn(
             "executor.using_stub_step_fn",
             run_id=payload.run_id,
             reason=(
-                "no_api_key"
-                if client is None
-                else ("no_model" if not model else "no_messages")
+                "no_api_key" if client is None else ("no_model" if not model else "no_messages")
             ),
         )
         return _stub_step_fn
@@ -295,6 +293,7 @@ async def _stub_step_fn(ctx: RunStepContext) -> RunStepOutcome:
 
 
 # --- checkpoint coercion ----------------------------------------------------
+
 
 def _max_steps_from(checkpoint: dict[str, Any], fallback: int) -> int:
     """Pull `config.maxSteps` from the checkpoint, falling back to the
