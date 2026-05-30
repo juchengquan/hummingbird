@@ -414,7 +414,10 @@ function ChatMessageImpl({
                 {!isUser &&
                   message.generatedImages &&
                   message.generatedImages.length > 0 && (
-                    <GeneratedImagesGallery images={message.generatedImages} />
+                    <GeneratedImagesGallery
+                      images={message.generatedImages}
+                      messageId={message.id}
+                    />
                   )}
                 {isUser &&
                   message.attachedFileIds &&

@@ -59,6 +59,16 @@ export interface MessagesSlice {
   setMessageToolCalls: (messageId: string, toolCalls: ToolCallRecord[]) => void
   setMessageSuggestions: (messageId: string, suggestions: string[]) => void
   appendMessageGeneratedImages: (messageId: string, images: GeneratedImage[]) => void
+  /** Replace the `url` on a single generated image. Used by the lazy
+   *  signed-URL re-sign path (`apiClient.images.refreshUrl`) so the
+   *  refreshed URL persists across re-renders without touching the
+   *  rest of the image record. No-op if the message or image id
+   *  doesn't exist. */
+  updateMessageGeneratedImageUrl: (
+    messageId: string,
+    imageId: string,
+    url: string
+  ) => void
   setMessageError: (messageId: string, error: MessageError) => void
   clearMessageError: (messageId: string) => void
 }
@@ -278,6 +288,27 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
             if (m.id !== messageId) return m
             const next = [...(m.generatedImages ?? []), ...images]
             return { ...m, generatedImages: next }
+          }),
+        }
+      }),
+    })),
+  updateMessageGeneratedImageUrl: (messageId, imageId, url) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) => {
+        if (!c.messages.some((m) => m.id === messageId)) return c
+        return {
+          ...c,
+          messages: c.messages.map((m) => {
+            if (m.id !== messageId) return m
+            const images = m.generatedImages
+            if (!images) return m
+            let changed = false
+            const next = images.map((img) => {
+              if (img.id !== imageId || img.url === url) return img
+              changed = true
+              return { ...img, url }
+            })
+            return changed ? { ...m, generatedImages: next } : m
           }),
         }
       }),

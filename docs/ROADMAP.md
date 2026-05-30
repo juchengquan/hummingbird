@@ -10,20 +10,16 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-05-30 (sweep — Deep Research mode + Custom agents
-/ personas both shipped through ALL their plan phases; their plan
-docs moved from `docs/` to `docs/_done/` and the matching ROADMAP
-rows graduated from Planned to Shipped. Deep Research: 4 phases via
-#101/#103/#104/#105 + wire-up #106, all referenced from one Shipped
-row. Custom agents: 3 phases in one PR with one commit per phase
-(#110) preceded by the plan doc (#107). Agent task-queue arc
-complete earlier in the day — step 7 scheduling shipped via #100,
-plan moved to _done/; the full long-running-task / HITL / queue
-stack is now done. PLAN-agent-api precondition met; now a live
-go/no-go. Project mode + workspace canvas → _done/ via #81–#94 +
-#83/#90. Code-cleanup Phases 1–6 via #96 + #102; tests 559 → 743
-across all of today's work. Active plans now: store-slice-split,
-cross-conversation-memory, local-rag,
+Last updated: 2026-05-30 (sweep — store-slice-split (#115, all 5 steps)
+and chat-send-pipeline extraction (#112/#113, all 5 phases) both
+shipped through all their plan phases; their plan docs now live in
+`docs/_done/` and the matching ROADMAP rows have graduated from
+Planned to Shipped. Earlier in the day: Deep Research mode + Custom
+agents / personas + the agent task-queue arc all shipped through all
+their phases too — see Shipped table. PLAN-agent-api precondition
+remains met; now a live go/no-go. Active plans now: small-followups
+(4 open: tokens / signed-URL re-sign / per-tool approval flags /
+task-route integration tests), cross-conversation-memory, local-rag,
 replace-supabase, agent-api, backend-extraction, typed-prompt-vars.)
 
 > **Plan archive.** Fully-shipped `PLAN-*.md` files live in
@@ -52,6 +48,8 @@ to a representative PR otherwise.
 
 | When | Feature | Where |
 |---|---|---|
+| 2026-05-30 | **Store slice split — all 5 steps**: `use-store.ts` (3,414 LOC) split into 16 per-entity slice modules under `lib/client/hooks/store/slices/` (`ui`, `chat`, `workspaces`, `conversations`, `messages`, `documents`, `files`, `resources`, `conversation-files`, `mcp`, `url-bookmarks`, `notes`, `artifacts`, `project-tasks`, `prompts`, `agents`) composed into one persisted `useStore` via the standard Zustand "slices pattern" + `SliceCreator<T>`. Persist plumbing extracted to `store/migrate.ts` + `store/persist.ts`; frozen-shape contract pinned by `persist.test.ts` (any add/remove of a persisted key now fails CI until a migration step + `STORE_VERSION` bump are added). `use-store.ts` 3,414 → 263 LOC; no behaviour / persisted-shape / consumer-API change. Tests 761 → 770 | [PLAN](_done/PLAN-store-slice-split.md) · [#115](https://github.com/juchengquan/hummingbird/pull/115) |
+| 2026-05-30 | **Chat send-pipeline extraction — all 5 phases**: pure attachment + message builders + `useChatSend` hook covering abort map / streaming flags / live tool-call buffer / mock fallback / 620-LOC pipeline (Phases 1–2, #112); `useSmartPaste` + `useChatDropzone` hooks (Phases 3–4, #113); slash + mention autocomplete state machines → `useSlashAutocomplete` + `usePromptMentionAutocomplete` over a shared pure `navigateAutocomplete` reducer (Phase 5). `chat.tsx` 1,872 → 1,058 (−814 cumulative), clearing the <1,100 target | [PLAN](_done/PLAN-chat-send-extraction.md) · [#112](https://github.com/juchengquan/hummingbird/pull/112) · [#113](https://github.com/juchengquan/hummingbird/pull/113) |
 | 2026-05-30 | **Custom agents / personas — all 3 phases**: `0020_agents` migration + workspace-scoped `Agent` type + store slice + `/personas` manage dialog + chat dispatch wiring (Phase 1); MCP allow-list server-side enforcement (`loadEffectiveMcpServers` filter, persisted in `CheckpointConfig`) + share-by-URL (base64url JSON via `?import-agent=`, dropping unknown MCP refs on import) (Phase 2); project-mode "Run as task" picks up the pinned persona's model + prompt + skills + MCP scope (Phase 3) | [PLAN](_done/PLAN-custom-agents.md) · [#107](https://github.com/juchengquan/hummingbird/pull/107) · [#110](https://github.com/juchengquan/hummingbird/pull/110) |
 | 2026-05-30 | **Deep Research mode — all 4 phases**: `/research <goal>` slash + research-mode system prompt + manual "Open in editor" button (Phase 1, #101); auto chat-msg + workspace doc + markdown artifact on settle, resume-on-reload carries `mode` (Phase 2, #103); `searchFiles` force-enabled in research mode + files-first prompt branch (Phase 3, #104); pure `formatResearchCitations` renumbers inline `[N]` markers and dedupes the Sources block (Phase 4, #105); auto-handoff wire-up applies the formatter to chat-msg + doc + artifact (#106) | [PLAN](_done/PLAN-deep-research.md) · [#99](https://github.com/juchengquan/hummingbird/pull/99) · [#101](https://github.com/juchengquan/hummingbird/pull/101) · [#103](https://github.com/juchengquan/hummingbird/pull/103) · [#104](https://github.com/juchengquan/hummingbird/pull/104) · [#105](https://github.com/juchengquan/hummingbird/pull/105) · [#106](https://github.com/juchengquan/hummingbird/pull/106) |
 | 2026-05-29 | **Code cleanup — Phases 2–6**: sync-layer test coverage (15 new test files, +74 `diff*` tests), reconcile factor-out (`uploadRows` + `anyError` helpers), store-helper extraction (`store-helpers.ts`, −171 LOC from `use-store.ts`, +20 tests), `autoArchiveCodeBlocks` extraction from `chat.tsx` (+7 tests), residual dead-code sweep. Tests 559 → 660; full per-entity store-slice split + full `chat.tsx` send-pipeline extraction remain as scoped follow-ups | [PLAN](PLAN-code-cleanup.md) · [#102](https://github.com/juchengquan/hummingbird/pull/102) |
@@ -144,10 +142,8 @@ now ships — its plans live in [`_done/`](_done/).
 
 | Plan | Status | Sketch |
 |---|---|---|
-| 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 3 done, 1 moot, 4 open | Done: generatedImages sync (#45), recap-of-recaps (#63), roadmap sweep. Moot: local-mode MCP creds for tasks (rejected up front by #85). Open: accurate tokens, signed-URL re-sign, per-tool server-side approval flags, task-route integration tests |
-| 🪜 [Code cleanup](PLAN-code-cleanup.md) | Phases 1–6 shipped (#96, #102) | 6 phases of housecleaning after a long feature push. Phase 1 cleared lint baseline + 4 dead exports; Phases 2–6 added per-entity sync diff tests, factored `reconcile.ts`, extracted store helpers + the `chat.tsx` auto-archive heuristic, and removed a residual dead export. Full per-entity store-slice split + full `chat.tsx` send-pipeline extraction spun out to their own plans below. No functional changes |
-| 📐 [Store slice split](PLAN-store-slice-split.md) | planning | Cleanup Phase 4 follow-up — split `use-store.ts` (3,274 LOC, ~180 mutators) into per-entity slice modules composed into one `useStore`. Persisted shape + migration frozen; no behaviour change. Higher-risk, own PR |
-| ✅ [Chat send-pipeline extraction](_done/PLAN-chat-send-extraction.md) | Complete (#112, #113, + autocomplete follow-up) | Cleanup Phase 5 follow-up. Phases 1–2 (#112): pure attachment + message builders + `useChatSend` hook (abort map, streaming flags, live tool-call buffer, mock fallback, 620-LOC pipeline). Phases 3–4 (#113): `useSmartPaste` + `useChatDropzone` hooks. Phase 5: slash + mention autocomplete state machines → `useSlashAutocomplete` + `usePromptMentionAutocomplete` over a shared pure `navigateAutocomplete` reducer (dissolving the `handleKeyDown` tangle). `chat.tsx` 1872 → 1058 (−814 cumulative), clearing the <1,100 target |
+| 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 4 done, 1 moot, 3 open | Done: generatedImages sync (#45), recap-of-recaps (#63), roadmap sweep, signed-URL re-sign. Moot: local-mode MCP creds for tasks (rejected up front by #85). Open: accurate tokens, per-tool server-side approval flags, task-route integration tests |
+| 🪜 [Code cleanup](PLAN-code-cleanup.md) | Phases 1–6 shipped (#96, #102) | 6 phases of housecleaning after a long feature push. Phase 1 cleared lint baseline + 4 dead exports; Phases 2–6 added per-entity sync diff tests, factored `reconcile.ts`, extracted store helpers + the `chat.tsx` auto-archive heuristic, and removed a residual dead export. The full per-entity store-slice split and the full `chat.tsx` send-pipeline extraction have both shipped — see their rows in **Shipped** above. No functional changes |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
 | 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~7.5 days total |

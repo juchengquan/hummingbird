@@ -2,9 +2,11 @@
 
 import "client-only"
 
+import { useRef } from "react"
 import { Copy, Download, ExternalLink, Maximize2, Repeat2 } from "lucide-react"
 import { toast } from "sonner"
 
+import { apiClient } from "@/client/api-client"
 import type { GeneratedImage } from "@/shared/types"
 import { useStore } from "@/client/hooks/use-store"
 import { cn } from "@/shared/utils"
@@ -49,8 +51,15 @@ function stageRemix(
  */
 export function GeneratedImagesGallery({
   images,
+  messageId,
 }: {
   images: GeneratedImage[]
+  /** Owning message id — required to wire the lazy signed-URL re-sign
+   *  path (`<img onError>` → `apiClient.images.refreshUrl` → store
+   *  mutator). When omitted, an expired image falls back to the
+   *  browser's broken-image placeholder (the preview surfaces that
+   *  embed the gallery outside a real conversation pass nothing). */
+  messageId?: string
 }) {
   if (images.length === 0) return null
   const openAt = (i: number) =>
@@ -61,7 +70,7 @@ export function GeneratedImagesGallery({
 
   return (
     <div className="mt-2 mb-1">
-      <GalleryLayout images={images} onOpen={openAt} />
+      <GalleryLayout images={images} onOpen={openAt} messageId={messageId} />
       <p className="mt-1.5 text-[11px] text-[var(--muted-foreground)] italic">
         {captionFor(images)}
       </p>
@@ -83,9 +92,11 @@ function toViewerItem(image: GeneratedImage): ImageViewerItem {
 function GalleryLayout({
   images,
   onOpen,
+  messageId,
 }: {
   images: GeneratedImage[]
   onOpen: (i: number) => void
+  messageId?: string
 }) {
   // Single, double, quad → straightforward grids. The "3" case picks
   // the same 2×2 grid as 4 with the last slot empty rather than
@@ -106,6 +117,7 @@ function GalleryLayout({
           // Single hero gets a tighter max-height so it doesn't
           // overflow short chat panels.
           single={images.length === 1}
+          messageId={messageId}
         />
       ))}
     </div>
@@ -116,6 +128,7 @@ function ImageTile({
   image,
   onOpen,
   single,
+  messageId,
 }: {
   image: GeneratedImage
   /** Called by the Expand button to open the lightbox at this tile's
@@ -123,8 +136,20 @@ function ImageTile({
    *  acts via the hover toolbar instead. */
   onOpen: () => void
   single: boolean
+  messageId?: string
 }) {
   const remixable = canRemix(image.url)
+  const updateMessageGeneratedImageUrl = useStore(
+    (s) => s.updateMessageGeneratedImageUrl
+  )
+  // Prevent an infinite refresh loop on a path that refuses to re-sign
+  // (object deleted out-of-band, RLS reject, etc.). One attempt per tile
+  // mount; the broken-image placeholder takes over after that.
+  const refreshAttempted = useRef(false)
+  // Only worth attempting when (1) the URL came from Supabase Storage
+  // (has a `storagePath`) and (2) we know which message to update
+  // afterwards. Data-URL fallbacks and orphan previews skip the refresh.
+  const canRefresh = !!image.storagePath && !!messageId
   return (
     <div
       className={cn(
@@ -147,6 +172,20 @@ function ImageTile({
         alt={image.prompt}
         loading="lazy"
         className="block w-full h-auto object-cover"
+        onError={
+          canRefresh
+            ? async () => {
+                if (refreshAttempted.current) return
+                refreshAttempted.current = true
+                const fresh = await apiClient.images.refreshUrl(
+                  image.storagePath!
+                )
+                if (fresh) {
+                  updateMessageGeneratedImageUrl(messageId!, image.id, fresh)
+                }
+              }
+            : undefined
+        }
       />
       {image.mode === "i2i" && (
         <span className="pointer-events-none absolute top-1.5 left-1.5 text-[10px] font-medium uppercase tracking-wide bg-black/55 text-white px-1.5 py-0.5 rounded-sm">

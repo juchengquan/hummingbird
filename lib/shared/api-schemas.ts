@@ -502,6 +502,26 @@ export const ScheduleListResponseSchema = z.object({
 })
 
 // --- Generic error envelope -------------------------------------------------
+// --- POST /api/images/refresh-url -------------------------------------------
+//
+// Re-sign an expired generated-image URL. The bytes live in Supabase
+// Storage at `storagePath`; the route mints a fresh long-lived URL.
+
+export const RefreshImageUrlRequestSchema = z.object({
+  storagePath: z
+    .string()
+    .min(1)
+    .max(512)
+    // Defensive: the route also checks the first segment matches
+    // auth.uid(), but reject obvious path-traversal attempts up front.
+    .refine((p) => !p.includes(".."), "storagePath must not contain ..")
+    .refine((p) => !p.startsWith("/"), "storagePath must not start with /"),
+})
+
+export const RefreshImageUrlResponseSchema = z.object({
+  url: z.string().min(1),
+})
+
 // Non-streaming routes return `{ error, code?, message? }` with a non-2xx
 // status on failure. Frontend categorisation lives in lib/api-errors.ts.
 
@@ -531,4 +551,6 @@ export type CompressSummarizeResponse = z.infer<typeof CompressSummarizeResponse
 export type ProjectBreakdownResponse = z.infer<typeof ProjectBreakdownResponseSchema>
 export type CreateShareRequestInput = z.infer<typeof CreateShareRequestSchema>
 export type CreateShareResponse = z.infer<typeof CreateShareResponseSchema>
+export type RefreshImageUrlRequestInput = z.infer<typeof RefreshImageUrlRequestSchema>
+export type RefreshImageUrlResponse = z.infer<typeof RefreshImageUrlResponseSchema>
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>
