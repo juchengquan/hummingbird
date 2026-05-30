@@ -203,11 +203,11 @@ into `lib/client/hooks/store-helpers.ts`:
 Plus a 20-test characterisation file. `use-store.ts` shrank
 3445 → 3274 (−171 LOC).
 
-**Follow-up still scoped:** the full per-entity slice split
-(workspaces, conversations, messages, files, …) described below
-remains the next focused PR. The persistence model + the cross-
-slice cascade contract (which makes the bulk split tricky) are
-unchanged.
+**Follow-up — now has its own plan:** the full per-entity slice split
+(workspaces, conversations, messages, files, …) is specced in
+[`PLAN-store-slice-split.md`](PLAN-store-slice-split.md). The
+persistence model + the cross-slice cascade contract (which make the
+bulk split tricky) are unchanged.
 
 Original plan text (target end-state) follows for archival.
 
@@ -266,9 +266,10 @@ store reads — into `lib/client/chat/auto-archive-code-blocks.ts`
 plus a 7-test characterisation file. `chat.tsx`: 1872 → 1846
 (−26 LOC).
 
-**Follow-up still scoped:** pulling `callChatAPI` itself into a
-`useChatSend` hook, plus the attachments build, smart-paste, and
-the drag-and-drop file ingestion.
+**Follow-up — now has its own plan:** pulling `callChatAPI` into a
+`useChatSend` hook, plus the attachment build, smart-paste, and the
+drag-and-drop file ingestion, is specced in
+[`PLAN-chat-send-extraction.md`](PLAN-chat-send-extraction.md).
 
 Original plan text follows for archival.
 
