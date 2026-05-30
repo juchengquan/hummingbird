@@ -212,12 +212,12 @@ bets in the middle, infrastructure last. Each item below would get its own
    commercial assistant ships this now. _Effort: medium._
 3. **Deep Research mode** — highest distinctiveness-per-effort given the
    chat-plus-editor architecture. Builds on the task queue. _Effort:
-   medium-large._
+   medium-large._ ✅ Plan promoted to [`PLAN-deep-research.md`](PLAN-deep-research.md); all 4 phases shipped (#101 / #103 / #104 / #105 / #106).
 4. **Audio overviews (Phase 1 of §4.2)** — ship audio first; video and
    mind-map as follow-ons. _Effort: medium._
 5. **Custom agents / personas with scoped tool perms** — unlocks future
    agent marketplace work. Built from existing skills + prompt library.
-   _Effort: medium._
+   _Effort: medium._ ✅ Plan promoted to [`PLAN-custom-agents.md`](PLAN-custom-agents.md); 3 phases proposed.
 6. **Outbound MCP server (workspace-as-MCP)** — a moat move; no peer except
    AnythingLLM has this. _Effort: medium._
 7. **Subagents + Live agent visibility window** — extends queue depth and
