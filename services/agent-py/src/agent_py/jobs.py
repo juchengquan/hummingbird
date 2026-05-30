@@ -124,6 +124,48 @@ async def release_job_to_queue(pool: asyncpg.Pool, job_id: str) -> bool:
     return len(parts) == 2 and parts[0] == "UPDATE" and parts[1] != "0"
 
 
+_MARK_DONE_SQL = """
+UPDATE public.task_jobs
+SET status = 'done',
+    finished_at = now(),
+    updated_at = now()
+WHERE id = $1;
+"""
+
+
+async def mark_job_done(pool: asyncpg.Pool, job_id: str) -> None:
+    """Settle a job as completed. Phase 2a calls this after the
+    executor returns successfully — the task row's terminal status
+    is set separately by the executor via `store.update_run`."""
+    async with pool.acquire() as conn:
+        await conn.execute(_MARK_DONE_SQL, _coerce_uuid(job_id))
+
+
+_MARK_FAILED_SQL = """
+UPDATE public.task_jobs
+SET status = 'failed',
+    finished_at = now(),
+    error = jsonb_build_object('message', $2::text),
+    updated_at = now()
+WHERE id = $1;
+"""
+
+
+async def mark_job_failed(
+    pool: asyncpg.Pool,
+    job_id: str,
+    *,
+    error: str,
+) -> None:
+    """Mark a job as failed terminally. Phase 2a calls this when the
+    executor returns an error outcome. The TS path uses retryable
+    backoff via `markJobFailed`; Phase 2a defers that to keep the
+    executor's failure semantics simple — a failure here is
+    terminal until Phase 3 wires the retry logic."""
+    async with pool.acquire() as conn:
+        await conn.execute(_MARK_FAILED_SQL, _coerce_uuid(job_id), error)
+
+
 def _row_to_claimed(row: asyncpg.Record) -> ClaimedJob:
     payload = row["payload"]
     # asyncpg returns jsonb as a string by default unless a codec is

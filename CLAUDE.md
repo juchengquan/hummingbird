@@ -182,15 +182,18 @@ When adding a new endpoint, follow the checklist at the bottom of
 the eventual swap to a Python backend; the client + schemas + doc
 together are the contract that has to survive that swap.
 
-## Agent service (Python — Phases 0+1)
+## Agent service (Python — Phases 0+1+2a)
 
 `services/agent-py/` is the new Python agent service per
 [`docs/PLAN-agent-api.md`](docs/PLAN-agent-api.md). **Phase 0**
 shipped the scaffolding (FastAPI + JWT auth + OpenAPI codegen).
 **Phase 1** added a background `task_jobs` poll loop in dry-run
-mode — claims a job, structured-logs it, releases it back so the
-canonical TS worker picks it up. No agent execution yet (that's
-Phase 2+).
+mode — claims a job, structured-logs it, releases it back. **Phase 2a**
+added the executor pattern end-to-end: TaskEvent IR, RunEmitter,
+RunStore writes, the agent loop, per-user feature flag, and the
+executor that runs `start` actions for flagged users. Step fn is a
+stub emitting a canned event stream — real model + tools land in
+Phase 2b.
 
 Stack: Python 3.12 · FastAPI · uv (package manager) · PyJWT ·
 asyncpg · structlog · pytest · ruff · mypy.
@@ -201,9 +204,15 @@ asyncpg · structlog · pytest · ruff · mypy.
 | `services/agent-py/src/agent_py/auth.py` | Supabase JWT verification middleware (HS256 against `SUPABASE_JWT_SECRET`). |
 | `services/agent-py/src/agent_py/settings.py` | `pydantic-settings` config. Reads the repo-level `.env`. |
 | `services/agent-py/src/agent_py/db.py` | asyncpg pool lifecycle. Open on startup if `SUPABASE_DB_URL` is set; close on shutdown. |
-| `services/agent-py/src/agent_py/jobs.py` | `claim_next_job` using `FOR UPDATE SKIP LOCKED` + `release_job_to_queue` (Phase 1 dry-run release). |
-| `services/agent-py/src/agent_py/poller.py` | Async tick loop. Cancellation-safe; transient-error tolerant. |
-| `services/agent-py/tests/` | 27 tests covering health + auth (Phase 0) + db lifecycle / jobs SQL contract / poller control flow (Phase 1). |
+| `services/agent-py/src/agent_py/jobs.py` | `claim_next_job` (Phase 1) + `release_job_to_queue` (Phase 1 dry-run) + `mark_job_done` / `mark_job_failed` (Phase 2a settlement). |
+| `services/agent-py/src/agent_py/events.py` | TaskEvent IR — status / step_start / step_end / token / result. Shape mirrors `lib/shared/agent/events.ts`. |
+| `services/agent-py/src/agent_py/emitter.py` | RunEmitter — monotonic seq, settle-once. |
+| `services/agent-py/src/agent_py/store.py` | RunStore — `append_event` (idempotent on `(task_id, seq)`), `update_run`, `set_task_handler` (`metadata.handler = 'python'`), `is_run_cancelled`. |
+| `services/agent-py/src/agent_py/runner.py` | `run_agent_loop` — pure orchestration with injected RunStepFn. |
+| `services/agent-py/src/agent_py/feature_flag.py` | Per-user flag check — `auth.users.raw_user_meta_data->>'agent_backend' == 'python'`. Defensive on every shape; DB error → fall back to "not flagged". |
+| `services/agent-py/src/agent_py/executor.py` | `execute_start` — stamps handler, runs loop, updates task row terminal. Step fn is a Phase 2a stub; Phase 2b swaps in the real model call. |
+| `services/agent-py/src/agent_py/poller.py` | Async tick loop. Dispatch tree: dry-run → release; live + unflagged → release; live + flagged + non-`start` → release; live + flagged + `start` → execute then mark_done/failed. |
+| `services/agent-py/tests/` | 62 tests covering health + auth (Phase 0) + db / jobs / poller dry-run (Phase 1) + events / emitter / runner / feature_flag / executor / poller live-mode dispatch (Phase 2a). |
 | `services/agent-py/Dockerfile` | Multi-stage uv build, slim runtime, non-root user. |
 | `docker-compose.yml` (repo root) | Spins up the agent service alongside `bun dev`. |
 | `lib/shared/agent-py-types.generated.ts` | TS types generated from FastAPI's OpenAPI doc — the **source of truth** for the Python ⇄ TS contract. Regen with `bun run codegen:agent-types`. CI fails on drift via `codegen:agent-types:check`. |
@@ -217,7 +226,12 @@ the transaction pooler (`*.pooler.supabase.com:6543`), because
 `FOR UPDATE SKIP LOCKED` needs an open transaction. With it empty,
 the poller no-ops every tick (`/healthz` + `/readyz` still respond).
 `WORKER_DRY_RUN` defaults to `true` (Phase 1 contract); flip to
-`false` only in Phase 2+ when the executor branch lands. The service
+`false` to enable the Phase 2a executor. With it `false`, the
+per-user feature flag (`auth.users.raw_user_meta_data->>'agent_backend'`)
+gates whether Python executes a given user's runs vs releases for the
+TS worker. To opt a user in: `UPDATE auth.users SET raw_user_meta_data
+= COALESCE(raw_user_meta_data, '{}'::jsonb) ||
+'{"agent_backend":"python"}'::jsonb WHERE id = '<uuid>';`. The service
 reads the same top-level `.env` as Next.js.
 
 **Deploy target decided** — self-host on a small VM (Hetzner CX22 as

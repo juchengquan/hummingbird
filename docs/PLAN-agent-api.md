@@ -1,11 +1,18 @@
 # Plan: Agent API as a separate service
 
-Status: **🪜 Phased — Phases 0+1 shipped, Phase 2 pending.** Option
+Status: **🪜 Phased — Phases 0+1+2a shipped, Phase 2b pending.** Option
 C (Python service) green-lit. Phase 0 (scaffolding) + Phase 1 (read-
-only `task_jobs` poller) live in `services/agent-py/`. Host decided
-(self-host on a small VM — see §Host decision). The earlier "decision-
-doc — Step 1 done" status is retained in the prior-status note below
-for context.
+only poller) + Phase 2a (executor pattern + feature flag) live in
+`services/agent-py/`. Host decided (self-host on a small VM — see
+§Host decision). The earlier "decision-doc — Step 1 done" status is
+retained in the prior-status note below for context.
+
+> **Note on phase numbering.** The original plan called Phase 2 a
+> single 1-week slice (executor + 3 tools + provider port). It split
+> in flight into a structural Phase 2a (this PR — executor pattern
+> with a stub step fn) and a Phase 2b that lands the real model
+> call + tools. The PRs landed in that order so each was reviewable
+> independently. Total effort is unchanged.
 
 > **Prior status (kept for context).** The plan's precondition — "prove
 > the agent loop + durable run state in the current TS backend first"
@@ -272,46 +279,70 @@ release puts the row back so TS picks it up on its next tick.
 **Rollback:** stop polling (cancel the asyncio task; `lifespan`
 handles this on container shutdown). No state change.
 
-### Phase 2 — Python handles one action end-to-end (1 week)
+### Phase 2a — Executor pattern + feature flag ✅ shipped
 
-**Ships:** Python handles `start` actions for users on the feature
-flag. TS handles `continue` / `respond` and all unflagged users.
+**Shipped:** the executor end-to-end plumbing for `start` actions on
+flagged users. Step fn is a stub; real model + tools land in Phase 2b.
+
+Lives at `services/agent-py/`:
+- `events.py` — TaskEvent IR (status / step_start / step_end / token
+  / result) matching `lib/shared/agent/events.ts` so rows from
+  either producer flow through the same projection reducer.
+- `emitter.py` — RunEmitter with monotonic `seq` + settle-once.
+- `store.py` — `append_event` (idempotent on `(task_id, seq)`),
+  `update_run`, `set_task_handler` (`metadata.handler = 'python'`),
+  `is_run_cancelled` cancel probe.
+- `runner.py` — `run_agent_loop`: status → start_step → step →
+  end_step → cancel-check; settles on done or `max_steps`.
+- `feature_flag.py` — reads
+  `auth.users.raw_user_meta_data->>'agent_backend'`. Defensive on
+  every shape; any DB error falls back to "not flagged" (Phase 2
+  invariant: never silently route TO Python on error).
+- `executor.py` — `execute_start(pool, payload)`: stamps handler,
+  runs loop, updates task row terminal, returns ExecutorOutcome.
+- `jobs.py` extended with `mark_job_done` + `mark_job_failed`.
+- `poller.py` dispatch tree: dry-run → release; live + unflagged →
+  release; live + flagged + non-`start` → release; live + flagged
+  + `start` → execute then mark_done/failed.
+- 35 new unit tests (events / emitter / runner / feature_flag /
+  executor / poller dispatch decision tree).
+
+**Verification:** in production, set
+`raw_user_meta_data->>'agent_backend' = 'python'` on a test user;
+their next `start` task is handled by Python. `tasks.metadata.handler`
+reads `'python'` for that row. The stub step fn emits a canned event
+stream so the UI sees a real (if placeholder) projection.
+
+### Phase 2b — Real model + tools (1 week)
+
+**Ships:** swap the stub `_stub_step_fn` for an Anthropic SDK call;
+add the first tool (`webFetch`) and the tool registry shape; surface
+streaming tokens + tool calls into the event log.
 
 **Scope:**
-- Port the agent loop: `runAgentLoop` + `makeStreamTextStep` from
-  `lib/server/agent/runner.ts` to Python. ~370 LOC of TS → ~500 LOC
-  of Python (FastAPI + LiteLLM or direct Anthropic/OpenAI SDKs).
-  Step budget + cancellation + idempotent event emission preserved.
-- Port the tool registry shape. Port **3 tools**: `webSearch` (Tavily),
-  `webFetch`, `searchFiles`. Skip imageGen + MCP for now.
-- Port `lib/server/agent/store.ts` (run state writes) and
-  `lib/server/agent/checkpoint.ts`.
-- Feature flag: `users.metadata.agent_backend = 'python'` flags an
-  individual user. Worker checks on claim — if flag is off, releases
-  the job for the TS worker.
-- `tasks.metadata.handler` records which service executed each run,
-  for postmortems.
+- Port `makeStreamTextStep` from `lib/server/agent/runner.ts` to
+  Python. The runner control flow doesn't change — only the
+  default `make_step_fn` factory swaps.
+- Port the tool registry shape from
+  `lib/server/skills/registry.ts`. Add `webFetch` as the first tool.
+  `webSearch` (Tavily) and `searchFiles` slot in alongside without
+  changing the registry shape.
+- Add `token` + `tool_input` + `tool_output` + `step_error` to the
+  TaskEvent union — already declared in events.py, just need
+  emitter methods + payload mapping.
+- Tool authentication: optional env keys for the Python service.
 
 **Risks:**
 - Behaviour drift between TS and Python runners. Mitigation: fixture
-  round-trip — record a set of real runs from the TS worker, replay
-  inputs through the Python runner, diff the event streams. Land
-  the fixture suite in this phase.
-- LiteLLM streaming quirks vs Vercel AI SDK. Mitigation: pick one
-  flagship model (Claude Sonnet) and pin behaviour for it first;
-  generalise once parity is proven.
-- Tool authentication. The Tavily / Brave keys move into the Python
-  service's env. Document the migration.
+  round-trip — record real TS runs, replay inputs through Python,
+  diff event streams. Land the fixture suite here.
+- Streaming format quirks. Mitigation: pin one flagship model
+  (Claude Sonnet) first.
 
-**Rollback:** flip flag off for the affected users. Next claim goes to
-the TS worker.
+**Rollback:** revert the `make_step_fn` change; stub returns. Flag
+flips still gate per-user routing.
 
-**Verification:** a flagged user can launch a task with only the 3
-ported tools, watch it stream, see it settle. Event stream matches a
-reference TS run within tolerance (token-count, step-count, tool-call
-shapes).
-
-### Phase 3 — Tool + MCP parity (2 weeks)
+### Phase 3 — `continue` / `respond` + MCP parity (2 weeks)
 
 **Ships:** Python handles all task actions for flagged users with the
 full tool set, including MCP.

@@ -10,20 +10,27 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-05-30 (PLAN-agent-api Phase 1 shipped —
-`services/agent-py/` now polls `task_jobs` in dry-run alongside the
-TS worker: `db.py` (asyncpg pool lifecycle), `jobs.py`
-(`claim_next_job` using `FOR UPDATE SKIP LOCKED` + dry-run release),
-`poller.py` (async tick loop wired into FastAPI lifespan, transient-
-error tolerant, cancellation-clean). Settings extended with
-`SUPABASE_DB_URL` + `WORKER_DRY_RUN` + `POLL_INTERVAL_SECONDS`;
-`/readyz` reports DB pool state; 17 new unit tests. Earlier today:
-agent-py Phase 0 (#119), host decision (#120), signed-URL re-sign
+Last updated: 2026-05-30 (PLAN-agent-api Phase 2a shipped —
+`services/agent-py/` now has the executor pattern end-to-end:
+TaskEvent IR (`events.py`), RunEmitter with monotonic seq +
+settle-once (`emitter.py`), RunStore writes (`store.py`: append_event
+idempotent on (task_id, seq), update_run, set_task_handler stamping
+metadata.handler='python', is_run_cancelled probe), the agent loop
+(`runner.py`: run_agent_loop with injected RunStepFn), per-user
+feature flag (`feature_flag.py`: reads auth.users.raw_user_meta_data
+->>'agent_backend', defensive on every shape, safe-fallback on DB
+error), and the executor (`executor.py`: execute_start drives loop +
+DB sink + terminal task update). Poller wired to dispatch tree:
+dry-run→release; live+unflagged→release; live+flagged+non-start→
+release; live+flagged+start→execute then mark_done/failed. Step fn
+is a stub for now; Phase 2b swaps it for the real model call.
+Tests 62 total (+35 vs Phase 1). Earlier today: agent-py Phase 1
+(#121), Phase 0 (#119), host decision (#120), signed-URL re-sign
 (#116), store-slice-split (#115), chat-send-pipeline (#112/#113),
 Deep Research mode + Custom agents / personas + agent task-queue
 arc. Active plans now: small-followups (3 open: tokens / per-tool
-approval flags / task-route integration tests), agent-api (Phase 2
-pending — executor branch + 3 tools), cross-conversation-memory,
+approval flags / task-route integration tests), agent-api (Phase 2b
+pending — Anthropic SDK + 1 tool), cross-conversation-memory,
 local-rag, replace-supabase, backend-extraction, typed-prompt-vars.)
 
 > **Plan archive.** Fully-shipped `PLAN-*.md` files live in
@@ -151,7 +158,7 @@ now ships — its plans live in [`_done/`](_done/).
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
 | 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~7.5 days total |
-| 🪜 [Agent API as a separate service](PLAN-agent-api.md) | Phases 0+1 shipped — Phase 2 pending | Six-phase plan to move the agent loop + worker + tools out of Next.js into a Python FastAPI service. **Option C (Python) green-lit**; **Phase 0** (scaffolding) + **Phase 1** (read-only `task_jobs` poller using `FOR UPDATE SKIP LOCKED`, dry-run release, async lifespan) both shipped at `services/agent-py/`. Host decision landed: self-host on a small VM (~€4.5/mo Hetzner CX22, or home server / NAS) — reasoning in PLAN-agent-api §Host decision. Phase 2 lands the executor branch (port `runAgentLoop` + 3 tools); Phase 3 adds MCP + remaining tools + streaming format switch; Phase 4 ports the chat turn; Phase 5 cuts over; Phase 6 tidies. ~4-6 weeks total; phases 0-4 are flag-flip reversible |
+| 🪜 [Agent API as a separate service](PLAN-agent-api.md) | Phases 0+1+2a shipped — Phase 2b pending | Six-phase plan to move the agent loop + worker + tools out of Next.js into a Python FastAPI service. **Option C (Python) green-lit**; **Phase 0** (scaffolding), **Phase 1** (read-only `task_jobs` poller), **Phase 2a** (executor pattern + per-user feature flag + RunEmitter + RunStore + run_agent_loop with stub step fn) all shipped at `services/agent-py/`. Host decision landed: self-host on a small VM (~€4.5/mo Hetzner CX22, or home server / NAS) — reasoning in PLAN-agent-api §Host decision. Phase 2b swaps the stub for an Anthropic SDK call + 1 tool; Phase 3 ports continue/respond + MCP; Phase 4 ports the chat turn; Phase 5 cuts over; Phase 6 tidies. ~3-5 weeks remaining; phases 0-4 are flag-flip reversible |
 | 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 pending | Phase 1 (contract-first frontend ⇄ API surface) shipped; Phase 2 stands up the Python backend |
 | ⏸ [Typed prompt variables](PLAN-typed-prompt-variables.md) | deferred | Workspace-scoping migration shipped (`9b3c84f`); the typing UI itself remains deliberately deferred |
 
