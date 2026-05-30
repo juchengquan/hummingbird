@@ -25,7 +25,6 @@ import type {
   Artifact,
   ArtifactKind,
   GeneratedImage,
-  Prompt,
   ProjectTask,
   ProjectTaskStatus,
   ToolCallRecord,
@@ -47,7 +46,6 @@ import {
   type AttachmentRef,
 } from '@/client/store/cascade'
 import { uuid } from '@/shared/uuid'
-import { parseTemplate } from '@/shared/prompts/expand'
 import { placeRelatedNode } from '@/shared/canvas/placement'
 
 // Short, URL-safe id for prompts. Re-uses the existing uuid helper so we
@@ -58,7 +56,6 @@ import {
   clampSidebarWidth,
   defaultSlug,
   ensureUniqueAgentSlug,
-  ensureUniquePromptSlug,
   mergeFileSearchConfig,
   mergeImageGenConfig,
   mergeWebFetchConfig,
@@ -68,6 +65,11 @@ import {
 import { runMigrations, STORE_VERSION } from "./store/migrate"
 import { partializeState, reviveAndPruneState } from "./store/persist"
 import { createChatSlice, type ChatSlice } from "./store/slices/chat"
+import {
+  createPromptsSlice,
+  useWorkspacePrompts,
+  type PromptsSlice,
+} from "./store/slices/prompts"
 
 export type {
   UploadedFile,
@@ -187,7 +189,7 @@ export type PendingSelectionAction =
     }
   | { type: 'quote'; text: string }
 
-export interface AppState extends ChatSlice {
+export interface AppState extends ChatSlice, PromptsSlice {
   // Theme
   theme: Theme
 
@@ -296,11 +298,8 @@ export interface AppState extends ChatSlice {
   /** Bumped to force the editor to reload its content (e.g. on "Send to editor"). */
   editorReloadToken: number
 
-  // Prompts — user-scoped saved templates. Listed in the left sidebar's
-  // Prompts group; click-to-insert drops the expanded template into the
-  // chat input via `pendingChatInput`. See docs/_done/PLAN-prompt-library.md.
-  // Phase 1: local-only. Phase 2 will add Supabase sync.
-  prompts: Prompt[]
+  // Prompts — see PromptsSlice in store/slices/prompts.ts
+  // (prompts[] + create/update/delete/restore).
 
   // Custom agents / personas (`PLAN-custom-agents.md`). Saved bundles of
   // { name, system prompt, model, allowed skills, allowed MCP servers }
@@ -571,28 +570,6 @@ export interface AppState extends ChatSlice {
   ) => void
   deleteProjectTask: (taskId: string) => void
 
-  // Prompt actions — user-scoped saved templates. Slug is auto-derived
-  // from `name` on create via `defaultSlug()`; the create action accepts
-  // optional `slug` for cases (import, duplicate-with-rename) where the
-  // caller wants control.
-  createPrompt: (input: {
-    workspaceId: string
-    name: string
-    template: string
-    slug?: string
-  }) => Prompt
-  updatePrompt: (
-    promptId: string,
-    patch: Partial<Pick<Prompt, "name" | "slug" | "template">>
-  ) => void
-  /** Soft-delete — sets `deletedAt`. The Phase 2 sync layer reads the
-   *  marker; the UI filters it out everywhere. */
-  deletePrompt: (promptId: string) => void
-  /** Clears the soft-delete marker. Restored prompts re-appear in the
-   *  sidebar list. Currently no Undo UI for this in v1 — exposed
-   *  programmatically for future surfaces. */
-  restorePrompt: (promptId: string) => void
-
   // Agent / persona actions — workspace-scoped saved bundles
   // (`PLAN-custom-agents.md`). Slug is auto-derived from `name` on
   // create via `defaultSlug()`; the create action accepts optional
@@ -771,6 +748,7 @@ export const useStore = create<AppState>()(
     (set, get, api) => ({
       // --- Extracted slices (PLAN-store-slice-split) -------------------
       ...createChatSlice(set, get, api),
+      ...createPromptsSlice(set, get, api),
 
       // Theme
       theme: getInitialTheme(),
@@ -835,8 +813,7 @@ export const useStore = create<AppState>()(
       artifacts: [],
       editorReloadToken: 0,
 
-      // Prompts (Phase 1: local-only)
-      prompts: [],
+      // Prompts (Phase 1: local-only) — see PromptsSlice
       agents: [],
       activeAgentId: null,
       pendingChatInput: null,
@@ -1783,74 +1760,6 @@ export const useStore = create<AppState>()(
       deleteProjectTask: (taskId) =>
         set((state) => ({
           projectTasks: state.projectTasks.filter((t) => t.id !== taskId),
-        })),
-
-      // Prompt actions
-      createPrompt: ({ workspaceId, name, template, slug }) => {
-        const now = new Date()
-        const baseSlug = slug?.trim() || defaultSlug(name)
-        const uniqueSlug = ensureUniquePromptSlug(
-          baseSlug,
-          get().prompts.filter(p => p.workspaceId === workspaceId)
-        )
-        const prompt: Prompt = {
-          id: uuid(),
-          workspaceId,
-          name: name.trim(),
-          slug: uniqueSlug,
-          template,
-          variables: parseTemplate(template).variables,
-          createdAt: now,
-          updatedAt: now,
-        }
-        set((state) => ({ prompts: [...state.prompts, prompt] }))
-        return prompt
-      },
-      updatePrompt: (promptId, patch) =>
-        set((state) => ({
-          prompts: state.prompts.map((p) => {
-            if (p.id !== promptId) return p
-            const nextName = patch.name?.trim() ?? p.name
-            const nextTemplate = patch.template ?? p.template
-            // Slug rules:
-            //   - Explicit slug in patch wins (after slug-collision check).
-            //   - Otherwise keep the existing slug stable across renames.
-            //     (Auto-rederiving from name would break muscle memory once
-            //     Phase 3 slash triggers ship.)
-            let nextSlug = p.slug
-            if (patch.slug !== undefined) {
-              const requested = patch.slug.trim() || defaultSlug(nextName)
-              nextSlug = ensureUniquePromptSlug(
-                requested,
-                state.prompts,
-                p.id
-              )
-            }
-            return {
-              ...p,
-              name: nextName,
-              slug: nextSlug,
-              template: nextTemplate,
-              variables: parseTemplate(nextTemplate).variables,
-              updatedAt: new Date(),
-            }
-          }),
-        })),
-      deletePrompt: (promptId) =>
-        set((state) => ({
-          prompts: state.prompts.map((p) =>
-            p.id === promptId
-              ? { ...p, deletedAt: new Date(), updatedAt: new Date() }
-              : p
-          ),
-        })),
-      restorePrompt: (promptId) =>
-        set((state) => ({
-          prompts: state.prompts.map((p) =>
-            p.id === promptId
-              ? { ...p, deletedAt: undefined, updatedAt: new Date() }
-              : p
-          ),
         })),
 
       // Agent / persona actions (`PLAN-custom-agents.md`)
@@ -2834,16 +2743,7 @@ export const useWorkspaceDocuments = (): Document[] => {
     )
 }
 
-/** Non-deleted prompts scoped to the active workspace, sorted by
- *  updatedAt desc. */
-export const useWorkspacePrompts = (): Prompt[] => {
-  const prompts = useStore((state) => state.prompts)
-  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
-  if (!activeWorkspaceId) return []
-  return prompts
-    .filter((p) => p.workspaceId === activeWorkspaceId && !p.deletedAt)
-    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
-}
+export { useWorkspacePrompts }
 
 /** Current open document, or null when the workspace has none yet. */
 export const useActiveDocument = (): Document | null => {
