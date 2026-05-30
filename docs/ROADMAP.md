@@ -10,21 +10,17 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-05-30 (sweep — PLAN-project-mode + PLAN-workspace-
-canvas moved to _done/ now that all phases ship; PLAN-agent-task-queue
-status bumped from steps 1–4 to steps 1–6 to reflect #88; small-
-followups #6 — local-mode MCP creds for tasks — marked moot per #85,
-which rejects local-mode in async task mode by design. Project mode
-complete via #81/#86/#89/#91/#94; workspace canvas via #83/#90; agent
-task-queue steps 1–6 via #82/#85/#88. Only the optional queue step 7
-(scheduling) remains in the agent-task arc. Code-cleanup Phases 1–6
-shipped via #96 + #102 — lint baseline now 0 warnings, sync test
-coverage complete, reconcile factored, pure helpers extracted from
-`use-store.ts`, `autoArchiveCodeBlocks` extracted from `chat.tsx`;
-tests 559 → 660. Full per-entity store-slice split + full chat.tsx
-send-pipeline extraction remain as scoped follow-ups. Deep Research
-mode plan added — promoted from SURVEY §4.1; 4 phases, Phase 1
-ships the end-to-end loop with no DB changes.)
+Last updated: 2026-05-30 (agent task-queue arc **complete** — step 7
+scheduling shipped via #100, plan moved to _done/; the full
+long-running-task / HITL / queue stack is now done. PLAN-agent-api
+refreshed: its "prove the loop first" precondition (Step 1) is met,
+so it's now a live go/no-go rather than a wait — default stay
+in-process. Earlier in the day: PLAN-project-mode + PLAN-workspace-
+canvas → _done/ (all phases ship); small-followups #6 — local-mode
+MCP creds for tasks — marked moot per #85. Code-cleanup Phases 1–6
+via #96 + #102 (lint baseline 0 warnings, sync test coverage, helpers
+extracted; tests 559 → 660). Deep Research mode plan added — 4
+phases, Phase 1 ships the end-to-end loop with no DB changes.)
 
 > **Plan archive.** Fully-shipped `PLAN-*.md` files live in
 > [`_done/`](_done/). Active plans (planning / phased / decision
@@ -57,15 +53,16 @@ to a representative PR otherwise.
 | 2026-05-29 | **Project mode — Phase 5 polish** (all phases complete): milestones editor in the workspace detail sheet, progress bar + milestone chip strip at the top of the Tasks tab, "Hide done" quick filter, Markdown export (`projectToMarkdown` pure helper → goal + milestones + tasks-by-column with linked artifacts inlined), `N/M done` chip on each project workspace's index row | [PLAN](_done/PLAN-project-mode.md) · [#94](https://github.com/juchengquan/hummingbird/pull/94) |
 | 2026-05-29 | **Project mode — Phase 4** (per-card "Run as task"): To-do cards launch a long-running task via the shared `useTaskRunContext` (workspace prompt + skills cascade + card title as goal); card moves In progress → Done with a live spinner/step counter, result linked back as a markdown artifact ("View result" → editor); shared `resolveEnabledSkills` helper extracted from the chat send path | [PLAN](_done/PLAN-project-mode.md) · [#91](https://github.com/juchengquan/hummingbird/pull/91) |
 | 2026-05-29 | **Workspace canvas — Phases 4–5** (final polish): auto-position artifacts near their source message (Phase 4); inline edge-label editor, snap-to-grid, keyboard nav (Esc deselect, arrow nudge), and PNG export (Phase 5). Mini-map already shipped in Phase 1 | [PLAN](_done/PLAN-workspace-canvas.md) · [#90](https://github.com/juchengquan/hummingbird/pull/90) |
-| 2026-05-29 | Agent task queue — **Realtime live tail + visible Queued state** (Phase 6 steps 5+6): `0018_realtime_task_events` adds `task_events` to the Realtime publication; `subscribeTaskEvents` pushes rows to the browser in parallel with the existing poll-tail (idempotent via reduceRun seq); inline pointer differentiates `queued` from `running` | [PLAN](PLAN-agent-task-queue.md) · [#88](https://github.com/juchengquan/hummingbird/pull/88) |
+| 2026-05-29 | Agent task queue — **scheduled task runs** (Phase 6 step 7, closes the arc): `0019_task_schedules` table + RLS, `nextRunFromCron` resolver (cron-parser), `dispatchDueSchedules` in the tick, `GET/POST /api/tasks/schedules` + `PATCH/DELETE /:id`, workspace-detail Schedules section | [PLAN](_done/PLAN-agent-task-queue.md) · [#100](https://github.com/juchengquan/hummingbird/pull/100) |
+| 2026-05-29 | Agent task queue — **Realtime live tail + visible Queued state** (Phase 6 steps 5+6): `0018_realtime_task_events` adds `task_events` to the Realtime publication; `subscribeTaskEvents` pushes rows to the browser in parallel with the existing poll-tail (idempotent via reduceRun seq); inline pointer differentiates `queued` from `running` | [PLAN](_done/PLAN-agent-task-queue.md) · [#88](https://github.com/juchengquan/hummingbird/pull/88) |
 | 2026-05-28 | **Project mode — Phase 2** (Kanban board): `projectTasks` store slice + mutators, pure reorder helper, `project_tasks` sync (diff/reconcile/bulk-upload), gated Tasks rail tab (desktop + mobile), dnd-kit board with manual add / drag / delete | [PLAN](_done/PLAN-project-mode.md) · [#86](https://github.com/juchengquan/hummingbird/pull/86) |
 | 2026-05-28 | **Project mode — Phase 1** (schema + project toggle): `0016_project_mode` migration (workspace `is_project`/`goal`/`milestones` + `project_tasks` table), types, `setWorkspaceProjectConfig`, workspace-column sync, detail-sheet toggle + goal | [PLAN](_done/PLAN-project-mode.md) · [#81](https://github.com/juchengquan/hummingbird/pull/81) |
-| 2026-05-28 | Agent task queue — **async POST** `/api/tasks` + `/respond` move into the worker (Phase 6 steps 3–4); route enqueues + 202, client opens the resume stream | [PLAN](PLAN-agent-task-queue.md) · [#85](https://github.com/juchengquan/hummingbird/pull/85) |
+| 2026-05-28 | Agent task queue — **async POST** `/api/tasks` + `/respond` move into the worker (Phase 6 steps 3–4); route enqueues + 202, client opens the resume stream | [PLAN](_done/PLAN-agent-task-queue.md) · [#85](https://github.com/juchengquan/hummingbird/pull/85) |
 | 2026-05-28 | **Workspace canvas** — spatial react-flow view (Phases 1–3): canvas surface + node renderers, `canvas_state` persistence + sync (`0015_workspace_canvas`), add / connect / focus | [PLAN](_done/PLAN-workspace-canvas.md) · [#83](https://github.com/juchengquan/hummingbird/pull/83) |
-| 2026-05-28 | Agent task queue — **`task_jobs` table + worker + chunking** (Phase 6 steps 1–2): `0014_task_jobs` migration, `enqueueJob`/`processNextJob`, `shouldYield` re-enqueue beating the execution cap | [PLAN](PLAN-agent-task-queue.md) · [#82](https://github.com/juchengquan/hummingbird/pull/82) |
+| 2026-05-28 | Agent task queue — **`task_jobs` table + worker + chunking** (Phase 6 steps 1–2): `0014_task_jobs` migration, `enqueueJob`/`processNextJob`, `shouldYield` re-enqueue beating the execution cap | [PLAN](_done/PLAN-agent-task-queue.md) · [#82](https://github.com/juchengquan/hummingbird/pull/82) |
 | 2026-05-28 | **Long-running agent tasks — HITL approvals.** Durable checkpoint + `RunEmitter` seed (Phase 1), suspend mechanism + `POST /api/tasks/:id/respond` + gated-tool policy (Phases 2/3), approval card + client respond plumbing (Phase 4), `askUser` tool + multi-choice / free-input (Phase 5). | [PLAN](_done/PLAN-agent-hitl-approvals.md) · [#76](https://github.com/juchengquan/hummingbird/pull/76) |
 | 2026-05-28 | Verify-checklist additions for HITL (`askUser`, approval, suspend → reload → respond, interaction edges) | [#77](https://github.com/juchengquan/hummingbird/pull/77) |
-| 2026-05-28 | Agent task-queue **architecture plan** (Phase 6 — durable background execution + chunking) | [PLAN](PLAN-agent-task-queue.md) · [#78](https://github.com/juchengquan/hummingbird/pull/78) |
+| 2026-05-28 | Agent task-queue **architecture plan** (Phase 6 — durable background execution + chunking) | [PLAN](_done/PLAN-agent-task-queue.md) · [#78](https://github.com/juchengquan/hummingbird/pull/78) |
 | 2026-05-28 | Long-running agent tasks — **follow-ups grab-bag.** `setPlan` tool + live todo, token coalescing (~96 chars), orphan reconciliation + sweep route, MCP tools (cloud-mode) + per-IP budget gate, resume-on-reload via active-task pointer, finish-while-away notification | [PLAN](_done/PLAN-agent-tasks-followups.md) · [#73](https://github.com/juchengquan/hummingbird/pull/73) |
 | 2026-05-28 | Long-running agent tasks — **hybrid UI** (Run-as-task header toggle, dedicated Tasks panel + inline pointer) + client-authored result `Message` | [#72](https://github.com/juchengquan/hummingbird/pull/72) |
 | 2026-05-28 | Sidebar resizing + layout responsiveness | _local_ (`0af83d9`) |
@@ -136,20 +133,18 @@ Earlier features (kept for reference, no specific date):
 The `🪜` rows are partial ships — their finished phases are documented
 inside the plan; only the listed phase(s) remain. The entire long-running
 agent-tasks stack (event-model, runner, route, resume, hybrid UI,
-HITL approvals) now ships — its plans live in [`_done/`](_done/). The
-queue-backed continuation is **mostly shipped** too (Phase 6 steps 1–6
-via #82/#85/#88); only the optional step 7 (scheduling) remains.
+HITL approvals, **and the queue-backed continuation incl. scheduling**)
+now ships — its plans live in [`_done/`](_done/).
 
 | Plan | Status | Sketch |
 |---|---|---|
-| 🪜 [Agent task queue (durable background execution)](PLAN-agent-task-queue.md) | steps 1–6 shipped (#82, #85, #88) | `task_jobs` queue + worker + chunking + async start/respond + Realtime live tail + visible Queued state done. Remaining: optional step 7 (scheduling — `task_schedules` + cron resolver for "run every morning") |
 | 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 3 done, 1 moot, 4 open | Done: generatedImages sync (#45), recap-of-recaps (#63), roadmap sweep. Moot: local-mode MCP creds for tasks (rejected up front by #85). Open: accurate tokens, signed-URL re-sign, per-tool server-side approval flags, task-route integration tests |
 | 🪜 [Code cleanup](PLAN-code-cleanup.md) | Phases 1–6 shipped (#96, #102) | 6 phases of housecleaning after a long feature push. Phase 1 cleared lint baseline + 4 dead exports; Phases 2–6 added per-entity sync diff tests, factored `reconcile.ts`, extracted store helpers + the `chat.tsx` auto-archive heuristic, and removed a residual dead export. Full per-entity store-slice split + full `chat.tsx` send-pipeline extraction were scoped down to focused follow-up PRs (too risky to combine). No functional changes |
 | 📐 [Deep Research mode](PLAN-deep-research.md) | planning | Multi-step research agent that composes the task queue + web search + Plate editor into a "thread → cited Markdown report" flow. 4 phases; Phase 1 ships `/research <goal>` end-to-end with the smallest possible new surface (mode flag + research-mode system prompt + "Open in editor" button) |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
 | 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~7.5 days total |
-| 📐 [Agent API as a separate service](PLAN-agent-api.md) | decision doc | Language-agnostic target shape for splitting inference + agent loop out; TS-service or Python, undecided. Distinct from the in-process task queue above |
+| 📐 [Agent API as a separate service](PLAN-agent-api.md) | decision doc — Step 1 done | Language-agnostic target shape for splitting inference + agent loop out; TS-service or Python, undecided. The plan's precondition ("prove the loop + durable run state in-process first") is **met** — the whole agent stack shipped. Now a live go/no-go gated only on wanting Python or independent scale; default is stay in-process |
 | 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 pending | Phase 1 (contract-first frontend ⇄ API surface) shipped; Phase 2 stands up the Python backend |
 | ⏸ [Typed prompt variables](PLAN-typed-prompt-variables.md) | deferred | Workspace-scoping migration shipped (`9b3c84f`); the typing UI itself remains deliberately deferred |
 

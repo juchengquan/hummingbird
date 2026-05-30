@@ -1,11 +1,27 @@
 # Plan: Agent API as a separate service (language-agnostic)
 
-Status: **planning** — no code yet, **tech stack undecided**. This is
-an architecture/decision doc. It defines *what* the agent backend must
-do and *where the service boundary sits*, deliberately without picking
-a language — the implementation could be a separate **TypeScript**
-service (Hono / Nitro / Express) or **Python** (FastAPI), and the
-contract is identical either way.
+Status: **decision doc — Step 1 now shipped, the split itself still
+unbuilt + tech-stack undecided.** This is an architecture/decision
+doc. It defines *what* the agent backend must do and *where the
+service boundary sits*, deliberately without picking a language — the
+implementation could be a separate **TypeScript** service (Hono /
+Nitro / Express) or **Python** (FastAPI), and the contract is
+identical either way.
+
+> **Update (2026-05-30).** The plan's own precondition — "prove the
+> agent loop + durable run state in the current TS backend first"
+> (Step 1) — is **done.** The whole long-running-task + HITL +
+> queue stack shipped in-process: durable run state
+> (`tasks` / `task_events` / `task_checkpoint`), the multi-step
+> `runAgentLoop`, cancellation + resume, chunking past the execution
+> cap, scheduling. See `_done/PLAN-agent-event-model.md`,
+> `_done/PLAN-agent-hitl-approvals.md`, and
+> `_done/PLAN-agent-task-queue.md`. That retires this plan's biggest
+> risk ("speculative infra — building the service before the agent
+> design is proven"). The remaining open work is genuinely just the
+> *split decision* (language + streaming format) and the *move*
+> itself — neither urgent, both now low-risk for a TS service. The
+> per-section status notes below mark what's concretely built.
 
 Companion to two existing infra plans:
 - `PLAN-backend-extraction.md` — the **contract-first groundwork**
@@ -124,6 +140,17 @@ Parity (Part A) is ~80% of the *porting effort*; the agent capabilities
 de-risk the agent design before committing to any service split or
 language change.
 
+> **Status: Part B is built in-process.** All six capabilities now
+> exist in the current TS backend: the multi-step loop
+> (`lib/server/agent/runner.ts`, `runAgentLoop` with a step budget +
+> `shouldYield`), the tool registry (`lib/server/skills/registry.ts`),
+> durable run state (`tasks` / `task_events` / `task_checkpoint` +
+> `lib/server/agent/store.ts`), cancellation + idempotent resume,
+> per-IP budgets / step ceilings, and structured run events. So the
+> "prototype Part B first to de-risk" move the paragraph above
+> recommends is **done** — the agent design is proven; only the
+> service split + language choice remain.
+
 ## API contract & interfaces
 
 Two layers: the **external HTTP surface** the service exposes (what
@@ -225,7 +252,9 @@ interface AgentLoop {
     runId?: string            // when durable (long-running tasks)
   }): AsyncIterable<ChatFrame>  // the SSE frames above
 }
-// partial impl today: the streamText loop in app/api/chat/route.ts
+// impl today: app/api/chat/route.ts (chat turn) AND the full durable
+// agent loop in lib/server/agent/runner.ts (runAgentLoop +
+// makeStreamTextStep) used by the task routes / worker.
 
 // 4. Durable run state — the defining agent-service capability.
 interface RunStore {
@@ -236,7 +265,10 @@ interface RunStore {
   cancel(runId: string): Promise<void>
   isCancelled(runId: string): Promise<boolean>
 }
-// new — schema = tasks + task_events from PLAN-long-running-tasks.md
+// SHIPPED — lib/server/agent/store.ts over tasks + task_events +
+// task_checkpoint (migrations 0012/0013). appendEvent is idempotent on
+// (task_id, seq); listEventsSince powers resume replay; checkpoint
+// rows carry the messages array for cross-invocation continuation.
 
 // 5. MCP client — discovery, invocation, cloud-cred decryption.
 interface McpClient {
@@ -309,12 +341,16 @@ The service reads/writes a small slice of the data layer directly
 This plan is target-shape only; sequencing folds into the two
 companion plans:
 
-- **Step 0 (done):** `backend-extraction` Phase 1 — `apiClient` +
+- **Step 0 (✅ done):** `backend-extraction` Phase 1 — `apiClient` +
   schemas + `docs/API.md`. The seam exists.
-- **Step 1:** Build durable run state + the agent loop **in the
-  current TS backend** (this is `PLAN-long-running-tasks.md`). Proves
-  the agent design with zero service/language risk.
-- **Step 2:** Pick the language + streaming format (decisions above).
+- **Step 1 (✅ done):** durable run state + the agent loop **in the
+  current TS backend** — shipped as the long-running-task / HITL /
+  queue stack (`_done/PLAN-agent-event-model.md`,
+  `_done/PLAN-agent-hitl-approvals.md`,
+  `_done/PLAN-agent-task-queue.md`). The agent design is proven with
+  zero service/language risk taken on, exactly as intended.
+- **Step 2 (← we are here):** Pick the language + streaming format
+  (decisions above). No code; a go/no-go + two choices.
 - **Step 3:** Stand up the separate service serving the same paths;
   flip `NEXT_PUBLIC_API_BASE_URL` (or a same-origin rewrite).
   Decommission the in-Next.js routes once parity is proven.
@@ -336,15 +372,24 @@ companion plans:
 - **"Two services to run locally"** — dev workflow gets a second
   process. Document in `CLAUDE.md`; a Compose file or `concurrently`
   script when it lands.
-- **Speculative infra** — building the service before the agent design
-  is proven ages badly. Hence Step 1 (prove the loop in-place) before
-  Step 3 (split it out).
+- **Speculative infra** — ~~building the service before the agent
+  design is proven ages badly~~ **(retired).** Step 1 is done: the
+  agent loop + durable run state are proven in-place. Splitting now
+  would be moving working, exercised code — not building on spec.
 
 ## Recommendation
 
-1. **Don't split yet.** Prove the agent loop + durable run state in the
-   current TS backend (Step 1 = long-running-tasks). That's where the
-   value and the design risk live, and it's language-neutral.
+1. **Step 1 is done — the question is now a live go/no-go, not "wait."**
+   The agent loop + durable run state are proven in the current TS
+   backend, so the old "don't split yet, prove the loop first" advice
+   has been satisfied. The split is no longer blocked on de-risking;
+   it's blocked only on *wanting* it. The two real triggers:
+   (a) a concrete need for **Python** (an ML/agent library the TS
+   ecosystem can't match), or (b) the in-process worker starts
+   hurting the frontend's deploy/scale cadence enough to want them
+   truly separate. **Absent one of those, staying in-process is the
+   right call** — the chunking + queue work already neutralised the
+   execution-cap pressure that originally motivated a split.
 2. **When you do split, default to a TS service** unless a concrete
    Python-only dependency shows up. Sharing `lib/shared/` types + Zod
    + the existing AI SDK / skill / MCP code makes the split a *move*,
@@ -354,5 +399,6 @@ companion plans:
    want `useChat()` on the frontend; otherwise keep the custom SSE
    protocol (already documented, already works).
 
-The single highest-leverage next step is **Step 1**, which needs no
-decision on language or service boundary at all.
+The next step is a **decision, not code**: confirm whether trigger (a)
+or (b) is real. If neither is, this plan stays a (now-de-risked)
+parking-brake doc and the effort goes elsewhere on the roadmap.
