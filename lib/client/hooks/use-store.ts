@@ -5,7 +5,6 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import type {
   UploadedFile,
   Workspace,
-  Document,
   Resource,
   ConversationFile,
   McpServer,
@@ -25,14 +24,11 @@ import type {
   Artifact,
   ArtifactKind,
   GeneratedImage,
-  ProjectTask,
-  ProjectTaskStatus,
   ToolCallRecord,
   ToolCallResult,
   PinnedExplanation,
 } from '@/shared/types'
 import { buildCompressedMessages } from '@/shared/compression'
-import { moveProjectTask as moveProjectTaskPure, nextPosition } from '@/shared/project-tasks'
 import { deleteBlob as deleteLocalBlob, clearAll as clearLocalBlobs } from '@/client/files/local-store'
 import {
   bulkTombstoneByKind,
@@ -82,6 +78,18 @@ import {
   useWorkspaceArtifacts,
   type ArtifactsSlice,
 } from "./store/slices/artifacts"
+import {
+  createProjectTasksSlice,
+  useWorkspaceProjectTasks,
+  type ProjectTasksSlice,
+} from "./store/slices/project-tasks"
+import {
+  createDocumentsSlice,
+  useActiveDocument,
+  useActiveDocumentContent,
+  useWorkspaceDocuments,
+  type DocumentsSlice,
+} from "./store/slices/documents"
 
 export type {
   UploadedFile,
@@ -205,7 +213,9 @@ export interface AppState
   extends ChatSlice,
     PromptsSlice,
     NotesSlice,
-    ArtifactsSlice {
+    ArtifactsSlice,
+    ProjectTasksSlice,
+    DocumentsSlice {
   // Theme
   theme: Theme
 
@@ -271,17 +281,13 @@ export interface AppState
   workspaces: Workspace[]
   activeWorkspaceId: string
 
-  // Project mode — Kanban cards for project workspaces. Flat array
-  // across all workspaces; the board filters by workspaceId. See
-  // `docs/PLAN-project-mode.md`.
-  projectTasks: ProjectTask[]
+  // Project mode — Kanban cards. See ProjectTasksSlice in
+  // store/slices/project-tasks.ts (projectTasks[] + create/update/
+  // move/delete).
 
-  // Documents — rich-text docs inside a workspace. A workspace owns N
-  // documents; `activeDocumentId` tracks which one the editor panel is
-  // showing. Switching workspaces resyncs `activeDocumentId` to that
-  // workspace's most-recently-updated doc (or null if none yet).
-  documents: Document[]
-  activeDocumentId: string | null
+  // Documents — see DocumentsSlice in store/slices/documents.ts
+  // (documents[] + activeDocumentId + create/delete/rename/setContent/
+  // append/setActive/appendToActiveOrCreate).
 
   // Resources (file-to-workspace associations)
   resources: Resource[]
@@ -544,24 +550,6 @@ export interface AppState
    *  conversation (mirrors the file + MCP-resource selection). */
   toggleConversationUrlBookmarkSelection: (bookmarkId: string) => void
 
-  // Project task (Kanban card) actions. New cards land at the tail of
-  // the To-do column. `moveProjectTask` handles drag (reorder + column
-  // change) via the pure helper in `lib/shared/project-tasks.ts`.
-  createProjectTask: (input: {
-    workspaceId: string
-    title: string
-    status?: ProjectTaskStatus
-  }) => ProjectTask
-  updateProjectTask: (
-    taskId: string,
-    patch: Partial<Pick<ProjectTask, "title" | "status" | "taskId" | "artifactId">>
-  ) => void
-  moveProjectTask: (
-    taskId: string,
-    toStatus: ProjectTaskStatus,
-    toIndex: number
-  ) => void
-  deleteProjectTask: (taskId: string) => void
 
   // Agent / persona actions — workspace-scoped saved bundles
   // (`PLAN-custom-agents.md`). Slug is auto-derived from `name` on
@@ -714,20 +702,6 @@ export interface AppState
   setMessageError: (messageId: string, error: MessageError) => void
   clearMessageError: (messageId: string) => void
 
-  // Document actions. Workspaces own N documents; one is active at a
-  // time across the app (top-level `activeDocumentId`).
-  createDocument: (workspaceId: string, title?: string) => Document
-  deleteDocument: (documentId: string) => void
-  renameDocument: (documentId: string, title: string) => void
-  setDocumentContent: (documentId: string, content: string) => void
-  /** Append a markdown fragment to a document with a horizontal-rule
-   *  separator. Used by "Send to editor" sites so prior work isn't
-   *  overwritten. */
-  appendToDocument: (documentId: string, fragment: string) => void
-  setActiveDocument: (documentId: string | null) => void
-  /** Convenience for "Send to editor" callers: appends to the active
-   *  document, or creates one in the active workspace if none is set. */
-  appendToActiveDocumentOrCreate: (fragment: string) => void
 
   // Theme actions
   setTheme: (theme: Theme) => void
@@ -744,6 +718,8 @@ export const useStore = create<AppState>()(
       ...createPromptsSlice(set, get, api),
       ...createNotesSlice(set, get, api),
       ...createArtifactsSlice(set, get, api),
+      ...createProjectTasksSlice(set, get, api),
+      ...createDocumentsSlice(set, get, api),
 
       // Theme
       theme: getInitialTheme(),
@@ -781,9 +757,7 @@ export const useStore = create<AppState>()(
       workspaces: getDefaultWorkspaces(),
       activeWorkspaceId: DEFAULT_WORKSPACE_ID,
 
-      // Documents
-      documents: [],
-      activeDocumentId: null,
+      // Documents — see DocumentsSlice
 
       // Resources
       resources: [],
@@ -810,8 +784,7 @@ export const useStore = create<AppState>()(
       activeAgentId: null,
       pendingChatInput: null,
 
-      // Project mode (Kanban cards)
-      projectTasks: [],
+      // Project mode (Kanban cards) — see ProjectTasksSlice
 
       // Conversations
       conversations: getDefaultConversations().map((c: Conversation) => ({
@@ -1578,55 +1551,6 @@ export const useStore = create<AppState>()(
         }),
 
 
-      // Project task (Kanban card) actions
-      createProjectTask: ({ workspaceId, title, status = "todo" }) => {
-        const now = new Date()
-        const task: ProjectTask = {
-          id: uuid(),
-          workspaceId,
-          title,
-          status,
-          position: nextPosition(
-            get().projectTasks.filter((t) => t.workspaceId === workspaceId),
-            status
-          ),
-          createdAt: now,
-          updatedAt: now,
-        }
-        set((state) => ({ projectTasks: [...state.projectTasks, task] }))
-        return task
-      },
-      updateProjectTask: (taskId, patch) =>
-        set((state) => ({
-          projectTasks: state.projectTasks.map((t) =>
-            t.id === taskId ? { ...t, ...patch, updatedAt: new Date() } : t
-          ),
-        })),
-      moveProjectTask: (taskId, toStatus, toIndex) =>
-        set((state) => {
-          const task = state.projectTasks.find((t) => t.id === taskId)
-          if (!task) return state
-          // Reorder only within the moved card's workspace; merge the
-          // result back over the flat cross-workspace array.
-          const wsId = task.workspaceId
-          const wsTasks = state.projectTasks.filter((t) => t.workspaceId === wsId)
-          const reordered = moveProjectTaskPure(
-            wsTasks,
-            taskId,
-            toStatus,
-            toIndex,
-            new Date()
-          )
-          if (reordered === wsTasks) return state
-          const byId = new Map(reordered.map((t) => [t.id, t]))
-          return {
-            projectTasks: state.projectTasks.map((t) => byId.get(t.id) ?? t),
-          }
-        }),
-      deleteProjectTask: (taskId) =>
-        set((state) => ({
-          projectTasks: state.projectTasks.filter((t) => t.id !== taskId),
-        })),
 
       // Agent / persona actions (`PLAN-custom-agents.md`)
       createAgent: ({
@@ -2284,104 +2208,6 @@ export const useStore = create<AppState>()(
           }),
         })),
 
-      // Document actions
-      createDocument: (workspaceId: string, title?: string) => {
-        const now = new Date()
-        // Default title: "Untitled" + a disambiguator scoped to the
-        // workspace (so the doc list doesn't show three "Untitled"s).
-        const existingCount = get().documents.filter(
-          (d) => d.workspaceId === workspaceId
-        ).length
-        const defaultTitle =
-          existingCount === 0 ? 'Untitled' : `Untitled ${existingCount + 1}`
-        const newDoc: Document = {
-          id: uuid(),
-          workspaceId,
-          title: title?.trim() || defaultTitle,
-          content: '',
-          position: existingCount,
-          createdAt: now,
-          updatedAt: now,
-        }
-        set((state) => ({
-          documents: [newDoc, ...state.documents],
-        }))
-        return newDoc
-      },
-      deleteDocument: (documentId: string) =>
-        set((state) => {
-          const newDocuments = state.documents.filter((d) => d.id !== documentId)
-          // If the active doc was the one deleted, swap to the next most-
-          // recently-updated doc in the same workspace (or null).
-          let newActiveDocumentId = state.activeDocumentId
-          if (state.activeDocumentId === documentId) {
-            const deleted = state.documents.find((d) => d.id === documentId)
-            const wsId = deleted?.workspaceId
-            const fallback = newDocuments
-              .filter((d) => d.workspaceId === wsId)
-              .sort(
-                (a, b) =>
-                  new Date(b.updatedAt).getTime() -
-                  new Date(a.updatedAt).getTime()
-              )[0]
-            newActiveDocumentId = fallback?.id ?? null
-          }
-          return {
-            documents: newDocuments,
-            activeDocumentId: newActiveDocumentId,
-          }
-        }),
-      renameDocument: (documentId: string, title: string) =>
-        set((state) => {
-          const trimmed = title.trim()
-          if (!trimmed) return state
-          return {
-            documents: state.documents.map((d) =>
-              d.id === documentId ? { ...d, title: trimmed, updatedAt: new Date() } : d
-            ),
-          }
-        }),
-      setDocumentContent: (documentId: string, content: string) =>
-        set((state) => ({
-          documents: state.documents.map((d) =>
-            d.id === documentId
-              ? { ...d, content, updatedAt: new Date() }
-              : d
-          ),
-        })),
-      appendToDocument: (documentId: string, fragment: string) =>
-        set((state) => ({
-          documents: state.documents.map((d) => {
-            if (d.id !== documentId) return d
-            const trimmedFragment = fragment.trim()
-            if (!trimmedFragment) return d
-            const existing = (d.content ?? '').trim()
-            const next = existing
-              ? `${existing}\n\n---\n\n${trimmedFragment}\n`
-              : `${trimmedFragment}\n`
-            return { ...d, content: next, updatedAt: new Date() }
-          }),
-        })),
-      setActiveDocument: (documentId: string | null) =>
-        set({ activeDocumentId: documentId }),
-      appendToActiveDocumentOrCreate: (fragment: string) => {
-        const trimmed = fragment.trim()
-        if (!trimmed) return
-        const state = get()
-        const targetId =
-          state.activeDocumentId ??
-          (state.activeWorkspaceId
-            ? get().createDocument(state.activeWorkspaceId).id
-            : null)
-        if (!targetId) return
-        if (!state.activeDocumentId) {
-          // The doc we just created — make it active so the editor opens
-          // to it after the upcoming reload.
-          set({ activeDocumentId: targetId })
-        }
-        get().appendToDocument(targetId, trimmed)
-      },
-
       // Theme actions
       setTheme: (theme: Theme) => set({ theme }),
       toggleTheme: () => {
@@ -2571,34 +2397,11 @@ export const useConversationSelectedUrlBookmarkIds = (): string[] => {
 
 export { useConversationNotes, useWorkspaceNotes, useMessageBookmark }
 
-/** Documents in the active workspace, sorted by position (asc) and then
- *  by updatedAt (desc) as a tiebreaker. Switching workspaces re-runs the
- *  derivation through the `activeWorkspaceId` dependency. */
-export const useWorkspaceDocuments = (): Document[] => {
-  const documents = useStore((state) => state.documents)
-  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
-  if (!activeWorkspaceId) return []
-  return documents
-    .filter((d) => d.workspaceId === activeWorkspaceId)
-    .sort((a, b) =>
-      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-    )
-}
-
 export { useWorkspacePrompts }
-
-/** Current open document, or null when the workspace has none yet. */
-export const useActiveDocument = (): Document | null => {
-  const documents = useStore((state) => state.documents)
-  const activeDocumentId = useStore((state) => state.activeDocumentId)
-  if (!activeDocumentId) return null
-  return documents.find((d) => d.id === activeDocumentId) ?? null
-}
-
-/** Convenience: just the active doc's `content`. Empty string when none. */
-export const useActiveDocumentContent = (): string => {
-  const doc = useActiveDocument()
-  return doc?.content ?? ''
+export {
+  useWorkspaceDocuments,
+  useActiveDocument,
+  useActiveDocumentContent,
 }
 
 export { useConversationArtifacts, useWorkspaceArtifacts }
@@ -2610,11 +2413,4 @@ export const useConversationPinnedExplanations = () => {
   return pins.filter((p) => p.conversationId === activeConversationId)
 }
 
-/** Project-task cards for the active workspace (all columns, unsorted —
- *  the board groups + sorts by column via `columnTasks`). */
-export const useWorkspaceProjectTasks = () => {
-  const projectTasks = useStore((state) => state.projectTasks)
-  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
-  if (!activeWorkspaceId) return [] as ProjectTask[]
-  return projectTasks.filter((t) => t.workspaceId === activeWorkspaceId)
-}
+export { useWorkspaceProjectTasks }
