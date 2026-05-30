@@ -17,14 +17,8 @@ import type {
   MessageError,
   Agent,
   Conversation,
-  MainView,
-  Note,
-  Artifact,
-  ArtifactKind,
   GeneratedImage,
   ToolCallRecord,
-  ToolCallResult,
-  PinnedExplanation,
 } from '@/shared/types'
 import { buildCompressedMessages } from '@/shared/compression'
 import { deleteBlob as deleteLocalBlob, clearAll as clearLocalBlobs } from '@/client/files/local-store'
@@ -44,8 +38,6 @@ import { uuid } from '@/shared/uuid'
 // don't add a nanoid dep; the slice doesn't need RFC4122 cryptographic
 // uniqueness, just unique-within-a-user's-library.
 import {
-  clampResourcesSidebarWidth,
-  clampSidebarWidth,
   defaultSlug,
   ensureUniqueAgentSlug,
   mergeFileSearchConfig,
@@ -94,6 +86,12 @@ import {
   useWorkspaceUrlBookmarks,
   type UrlBookmarksSlice,
 } from "./store/slices/url-bookmarks"
+import {
+  createUiSlice,
+  useConversationPinnedExplanations,
+  type PendingSelectionAction,
+  type UiSlice,
+} from "./store/slices/ui"
 
 export type {
   UploadedFile,
@@ -119,22 +117,6 @@ export type {
   GeneratedImage,
   ToolCallRecord,
 } from '@/shared/types'
-
-type Theme = 'system' | 'dark' | 'light'
-type ColorScheme = 'default' | 'anthropic'
-
-// Read theme from localStorage synchronously to prevent flash
-function getInitialTheme(): Theme {
-  if (typeof window === 'undefined') return 'dark'
-  try {
-    const stored = localStorage.getItem('hummingbird-storage')
-    if (stored) {
-      const parsed = JSON.parse(stored)
-      return parsed.state?.theme || 'dark'
-    }
-  } catch {}
-  return 'dark'
-}
 
 // Track hydration state for SSR/client synchronization. We expose it via
 // useSyncExternalStore so subscribers update when Zustand's persist
@@ -195,24 +177,6 @@ const getDefaultConversations = (): Conversation[] => {
   ]
 }
 
-/**
- * Bus payload for selection-driven actions dispatched from outside the
- * `SelectionTrigger` (currently: the ⌘K command palette). The palette
- * captures `window.getSelection()` at open time, then fires one of these
- * via `fireSelectionAction`. `SelectionTrigger` consumes + clears it.
- *
- * `rect` is a plain object (not a `DOMRect`) so it survives any future
- * serialization without coupling consumers to the live DOM range.
- */
-export type PendingSelectionAction =
-  | {
-      type: 'explain'
-      text: string
-      scope: string
-      rect: { top: number; left: number; right: number; bottom: number; width: number; height: number }
-    }
-  | { type: 'quote'; text: string }
-
 export interface AppState
   extends ChatSlice,
     PromptsSlice,
@@ -220,64 +184,11 @@ export interface AppState
     ArtifactsSlice,
     ProjectTasksSlice,
     DocumentsSlice,
-    UrlBookmarksSlice {
-  // Theme
-  theme: Theme
-
-  // Active main-area view (single source of truth — see MainArea in dashboard/page.tsx)
-  activeView: MainView
-
-  // Sidebar
-  sidebarCollapsed: boolean
-  /** Custom sidebar width in px. Default 256 (16rem). Clamped 172–480.
-   *  Only applies when the sidebar is expanded (not icon-collapsed). */
-  sidebarWidth: number
-  setSidebarWidth: (width: number) => void
-
-  // Right resources sidebar (chat view)
-  resourcesSidebarOpen: boolean
-  resourcesSidebarTab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins' | 'mcp' | 'links' | 'project'
-  // Tasks panel (chat view) — the live surface for long-running agent runs.
-  tasksPanelOpen: boolean
-  /** Custom right-rail content width in px. Default 272 (17rem).
-   *  Clamped 200–400. */
-  resourcesSidebarWidth: number
-  setResourcesSidebarWidth: (width: number) => void
-  /** Per-user editor preferences. Persisted across reloads.
-   *  - `aiReviewChanges`: when true (default), AI `edit`-mode output
-   *    lands as Plate suggestion marks the user can accept/reject
-   *    per chunk. When false, the AI's output replaces the selected
-   *    text directly (the pre-diff-mode behaviour). */
-  editorPrefs: {
-    aiReviewChanges: boolean
-  }
-
-  /** Session-only pinned explanations from the selection-driven Explain
-   *  action. Excluded from `partialize` — by design, pins vanish on
-   *  reload. Scoped to a conversation via the `conversationId` field. */
-  pinnedExplanations: PinnedExplanation[]
-
-  /** One-shot bus for selection-driven actions dispatched from outside
-   *  the SelectionTrigger (e.g. the command palette). The trigger
-   *  subscribes; on consumption it calls `clearSelectionAction`.
-   *  Excluded from `partialize`. */
-  pendingSelectionAction: PendingSelectionAction | null
-
-  /**
-   * When true, behave as if Supabase isn't configured — no sync, no
-   * reconcile pulls, no auth flows. Lets users opt out even when
-   * `NEXT_PUBLIC_SUPABASE_URL` is set (e.g., on a shared machine).
-   * Survives reloads via partialize.
-   */
-  localOnlyMode: boolean
-
-  /**
-   * When true, raw file blobs are kept in IndexedDB instead of being
-   * uploaded to Supabase Storage. Extracted text + metadata still sync
-   * (it's small), but the actual blob never leaves the device. Useful
-   * when the user wants to stay under Supabase Storage quotas.
-   */
-  localFilesOnly: boolean
+    UrlBookmarksSlice,
+    UiSlice {
+  // UI state (theme, colorScheme, activeView, sidebars/panels,
+  // editorPrefs, pins, selection bus, local-only/local-files toggles,
+  // pendingChatInput) — see UiSlice in store/slices/ui.ts.
 
   // Files
   files: UploadedFile[]
@@ -334,12 +245,7 @@ export interface AppState
    *  pinned. */
   activeAgentId: string | null
 
-  /** One-shot signal from anywhere in the app to ChatPanel's local input
-   *  state. Set by sidebar prompt click (after variable expansion) or
-   *  any future surface that wants to seed the input. ChatPanel's
-   *  useEffect reads, copies to local state, then clears (so the same
-   *  string can be inserted again later without dedup confusion). */
-  pendingChatInput: string | null
+  // pendingChatInput — see UiSlice.
 
   // Conversations
   conversations: Conversation[]
@@ -349,35 +255,7 @@ export interface AppState
   // streamingContent, chatModel, pendingReferenceImage,
   // sessionModelOverridden + their setters).
 
-  // View / sidebar actions
-  toggleSidebar: () => void
-  setActiveView: (view: MainView) => void
-  setResourcesSidebarOpen: (open: boolean) => void
-  toggleResourcesSidebar: () => void
-  setResourcesSidebarTab: (tab: 'files' | 'notes' | 'artifacts' | 'skills' | 'pins' | 'mcp' | 'links' | 'project') => void
-  setTasksPanelOpen: (open: boolean) => void
-  toggleTasksPanel: () => void
-  setEditorPref: <K extends keyof AppState['editorPrefs']>(
-    key: K,
-    value: AppState['editorPrefs'][K]
-  ) => void
-  /** Pin an explanation produced by the selection-driven Explain
-   *  action. Returns the inserted record (with id + createdAt set). */
-  pinExplanation: (input: {
-    conversationId: string
-    selection: string
-    content: string
-    model: string
-    results?: ToolCallResult[]
-  }) => PinnedExplanation
-  unpinExplanation: (id: string) => void
-  /** Drop all pins for a conversation. Used when a conversation is
-   *  deleted so we don't leak references to a vanished `conversationId`. */
-  clearPinnedExplanationsForConversation: (conversationId: string) => void
-  fireSelectionAction: (action: PendingSelectionAction) => void
-  clearSelectionAction: () => void
-  setLocalOnlyMode: (value: boolean) => void
-  setLocalFilesOnly: (value: boolean) => void
+  // View / sidebar / theme / pins / selection actions — see UiSlice.
 
   // Workspace actions
   createWorkspace: (name: string) => Workspace
@@ -543,9 +421,7 @@ export interface AppState
   /** Pin a persona to the active conversation. Pass null to clear. */
   setActiveAgent: (agentId: string | null) => void
 
-  /** Set the one-shot chat-input seed read by ChatPanel. Pass null to
-   *  clear. ChatPanel clears immediately after reading. */
-  setPendingChatInput: (value: string | null) => void
+  // setPendingChatInput — see UiSlice.
 
   // File actions
   addFile: (file: UploadedFile) => void
@@ -660,11 +536,7 @@ export interface AppState
   clearMessageError: (messageId: string) => void
 
 
-  // Theme actions
-  setTheme: (theme: Theme) => void
-  toggleTheme: () => void
-  colorScheme: ColorScheme
-  setColorScheme: (scheme: ColorScheme) => void
+  // Theme actions + colorScheme — see UiSlice.
 }
 
 export const useStore = create<AppState>()(
@@ -678,35 +550,7 @@ export const useStore = create<AppState>()(
       ...createProjectTasksSlice(set, get, api),
       ...createDocumentsSlice(set, get, api),
       ...createUrlBookmarksSlice(set, get, api),
-
-      // Theme
-      theme: getInitialTheme(),
-      colorScheme: 'default' as ColorScheme,
-
-      // Active main-area view
-      activeView: 'workspaces',
-
-      // Sidebar
-      sidebarCollapsed: false,
-      sidebarWidth: 256,
-
-      // Right resources sidebar — default open on first load; the mobile
-      // override happens in ResourcesSidebar's first-mount effect.
-      resourcesSidebarOpen: true,
-      resourcesSidebarTab: 'files',
-      // Tasks panel — closed until the user launches a task.
-      tasksPanelOpen: false,
-      resourcesSidebarWidth: 272,
-      editorPrefs: { aiReviewChanges: true },
-
-      // Session-only selection-driven explain state (excluded from
-      // partialize — pins vanish on reload by design).
-      pinnedExplanations: [],
-      pendingSelectionAction: null,
-
-      // Local-only mode — off by default; users opt in via AccountMenu.
-      localOnlyMode: false,
-      localFilesOnly: false,
+      ...createUiSlice(set, get, api),
 
       // Files
       files: [],
@@ -738,7 +582,6 @@ export const useStore = create<AppState>()(
       // Prompts (Phase 1: local-only) — see PromptsSlice
       agents: [],
       activeAgentId: null,
-      pendingChatInput: null,
 
       // Project mode (Kanban cards) — see ProjectTasksSlice
 
@@ -749,54 +592,6 @@ export const useStore = create<AppState>()(
         selectedFileIds: c.selectedFileIds ?? [],
       })),
       activeConversationId: 'demo-1',
-
-      // View / sidebar actions
-      toggleSidebar: () =>
-        set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
-      setActiveView: (view: MainView) => set({ activeView: view }),
-      setResourcesSidebarOpen: (open: boolean) =>
-        set({ resourcesSidebarOpen: open }),
-      toggleResourcesSidebar: () =>
-        set((state) => ({ resourcesSidebarOpen: !state.resourcesSidebarOpen })),
-      setResourcesSidebarTab: (tab) => set({ resourcesSidebarTab: tab }),
-      setTasksPanelOpen: (open: boolean) => set({ tasksPanelOpen: open }),
-      toggleTasksPanel: () =>
-        set((state) => ({ tasksPanelOpen: !state.tasksPanelOpen })),
-      setSidebarWidth: (width: number) =>
-        set({ sidebarWidth: clampSidebarWidth(width) }),
-      setResourcesSidebarWidth: (width: number) =>
-        set({ resourcesSidebarWidth: clampResourcesSidebarWidth(width) }),
-      setEditorPref: (key, value) =>
-        set((state) => ({
-          editorPrefs: { ...state.editorPrefs, [key]: value },
-        })),
-      pinExplanation: (input) => {
-        const pin: PinnedExplanation = {
-          id: uuid(),
-          conversationId: input.conversationId,
-          selection: input.selection,
-          content: input.content,
-          model: input.model,
-          results: input.results,
-          createdAt: Date.now(),
-        }
-        set((state) => ({ pinnedExplanations: [pin, ...state.pinnedExplanations] }))
-        return pin
-      },
-      unpinExplanation: (id) =>
-        set((state) => ({
-          pinnedExplanations: state.pinnedExplanations.filter((p) => p.id !== id),
-        })),
-      clearPinnedExplanationsForConversation: (conversationId) =>
-        set((state) => ({
-          pinnedExplanations: state.pinnedExplanations.filter(
-            (p) => p.conversationId !== conversationId
-          ),
-        })),
-      fireSelectionAction: (action) => set({ pendingSelectionAction: action }),
-      clearSelectionAction: () => set({ pendingSelectionAction: null }),
-      setLocalOnlyMode: (value) => set({ localOnlyMode: value }),
-      setLocalFilesOnly: (value) => set({ localFilesOnly: value }),
 
       // Workspace actions
       createWorkspace: (name: string) => {
@@ -1482,8 +1277,6 @@ export const useStore = create<AppState>()(
         })),
       setActiveAgent: (agentId) => set({ activeAgentId: agentId }),
 
-      setPendingChatInput: (value) => set({ pendingChatInput: value }),
-
       // File actions
       addFile: (file: UploadedFile) =>
         set((state) => ({ files: [...state.files, file] })),
@@ -2048,16 +1841,6 @@ export const useStore = create<AppState>()(
           }),
         })),
 
-      // Theme actions
-      setTheme: (theme: Theme) => set({ theme }),
-      toggleTheme: () => {
-        const currentTheme = get().theme
-        const themes: Theme[] = ['system', 'dark', 'light']
-        const currentIndex = themes.indexOf(currentTheme)
-        const nextIndex = (currentIndex + 1) % themes.length
-        set({ theme: themes[nextIndex] })
-      },
-      setColorScheme: (scheme: ColorScheme) => set({ colorScheme: scheme }),
     }),
     {
       name: 'hummingbird-storage',
@@ -2223,11 +2006,7 @@ export {
 
 export { useConversationArtifacts, useWorkspaceArtifacts }
 
-export const useConversationPinnedExplanations = () => {
-  const pins = useStore((state) => state.pinnedExplanations)
-  const activeConversationId = useStore((state) => state.activeConversationId)
-  if (!activeConversationId) return [] as PinnedExplanation[]
-  return pins.filter((p) => p.conversationId === activeConversationId)
-}
+export { useConversationPinnedExplanations }
+export type { PendingSelectionAction }
 
 export { useWorkspaceProjectTasks }
