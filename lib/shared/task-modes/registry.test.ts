@@ -69,6 +69,13 @@ describe("listTaskModeTriggers", () => {
     expect(research?.trigger).toBe("research")
     expect(research?.aliases).toContain("research")
   })
+
+  it("research forces webSearch + webFetch + searchFiles", () => {
+    const research = TASK_MODES.find((m) => m.id === "research")
+    expect(research?.forcedSkillIds).toContain("webSearch")
+    expect(research?.forcedSkillIds).toContain("webFetch")
+    expect(research?.forcedSkillIds).toContain("searchFiles")
+  })
 })
 
 describe("task-mode registry integrity", () => {

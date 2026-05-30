@@ -55,7 +55,11 @@ export const TASK_MODES: TaskModeDescriptor[] = [
     title: "Deep research",
     description: "Multi-step research task → cited Markdown report",
     argHint: "<goal>",
-    forcedSkillIds: ["webSearch", "webFetch"],
+    // `searchFiles` is added so the agent can ground claims in the
+    // user's attached files (Phase 3 of `PLAN-deep-research.md`).
+    // Anonymous users / runs with no attached files get gracefully-
+    // degraded errors from the tool and the agent moves on.
+    forcedSkillIds: ["webSearch", "webFetch", "searchFiles"],
     defaultMaxSteps: 35,
     icon: Microscope,
   },
