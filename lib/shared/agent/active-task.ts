@@ -25,6 +25,11 @@ export const ActiveTaskSchema = z.object({
   status: runStatusSchema,
   /** Conversation title, for the finish-while-away notification. */
   title: z.string().optional(),
+  /** Task mode of the run (`PLAN-deep-research.md` — Phase 2). Carried
+   *  in the pointer so a reload-resume of a research-mode task still
+   *  fires the editor auto-handoff on settle. Older pointers without
+   *  this field parse as `undefined` → treated as default mode. */
+  mode: z.enum(["default", "research"]).optional(),
   /** ISO timestamp of the last update — lets a stale pointer be aged out. */
   updatedAt: z.string().min(1),
 })

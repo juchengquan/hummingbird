@@ -31,6 +31,10 @@ export interface UseTaskRunOptions {
   /** Fire a browser notification when the run settles while the tab is
    *  hidden. Permission must be requested separately. */
   notifyOnFinish?: boolean
+  /** Task mode (`PLAN-deep-research.md`). Persisted in the resume
+   *  pointer so a reload-resume can branch on it (research-mode
+   *  auto-handoff into the editor on settle). */
+  mode?: "default" | "research"
 }
 
 export interface UseTaskRunResult {
@@ -115,6 +119,7 @@ export function useTaskRun(options?: UseTaskRunOptions): UseTaskRunResult {
           cursor: next.cursor,
           status: next.status,
           title: opts.title,
+          ...(opts.mode && opts.mode !== "default" ? { mode: opts.mode } : {}),
           updatedAt: new Date().toISOString(),
         })
       }
