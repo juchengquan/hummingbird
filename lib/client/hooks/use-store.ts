@@ -32,7 +32,6 @@ import type {
   ToolCallResult,
   PinnedExplanation,
 } from '@/shared/types'
-import { DEFAULT_CHAT_MODEL } from '@/shared/models'
 import { buildCompressedMessages } from '@/shared/compression'
 import { moveProjectTask as moveProjectTaskPure, nextPosition } from '@/shared/project-tasks'
 import { deleteBlob as deleteLocalBlob, clearAll as clearLocalBlobs } from '@/client/files/local-store'
@@ -68,6 +67,7 @@ import {
 } from "./store-helpers"
 import { runMigrations, STORE_VERSION } from "./store/migrate"
 import { partializeState, reviveAndPruneState } from "./store/persist"
+import { createChatSlice, type ChatSlice } from "./store/slices/chat"
 
 export type {
   UploadedFile,
@@ -187,7 +187,7 @@ export type PendingSelectionAction =
     }
   | { type: 'quote'; text: string }
 
-export interface AppState {
+export interface AppState extends ChatSlice {
   // Theme
   theme: Theme
 
@@ -322,41 +322,9 @@ export interface AppState {
   conversations: Conversation[]
   activeConversationId: string | null
 
-  // Chat
-  /** Conversation ids currently mid-stream — populated by chat.tsx
-   *  when it starts a send, cleared on stream end (or abort/error).
-   *  Per-conversation so switching to another chat while one is
-   *  streaming doesn't blanket-disable input everywhere; see
-   *  `useIsConversationTyping(id)` for the derived per-conversation
-   *  flag. Not persisted: streaming state is ephemeral. */
-  typingConversationIds: string[]
-  streamingContent: string
-  chatModel: string
-  /**
-   * Pending image-to-image reference for the next user message. Set by
-   * the "Remix" action on a `GeneratedImagesGallery` tile; cleared on
-   * send or on explicit dismiss. Lives only at the runtime layer — not
-   * persisted (and intentionally not synced) because it's an in-flight
-   * compose-time hint, not a property of any saved message.
-   *
-   * The URL must be publicly fetchable for the Minimax server to load
-   * it (signed Supabase Storage URLs qualify; `data:` URLs do not, so
-   * Remix is gated on a non-data URL upstream).
-   */
-  pendingReferenceImage: {
-    url: string
-    /** Optional source prompt — used in the chip caption so the user
-     *  knows which image they're remixing. */
-    sourcePrompt?: string
-  } | null
-  /**
-   * True when the user has touched the chat-input model picker since
-   * the current workspace was activated. Suppresses the workspace's
-   * `defaultModel` from re-applying on every render. Resets when the
-   * active workspace changes. Not persisted — this is a per-session
-   * intent flag.
-   */
-  sessionModelOverridden: boolean
+  // Chat — see ChatSlice in store/slices/chat.ts (typingConversationIds,
+  // streamingContent, chatModel, pendingReferenceImage,
+  // sessionModelOverridden + their setters).
 
   // View / sidebar actions
   toggleSidebar: () => void
@@ -767,17 +735,6 @@ export interface AppState {
    *  doesn't refer to a recap. */
   uncompressRecap: (conversationId: string, recapMessageId: string) => void
   clearMessages: () => void
-  /** Mark a conversation as "typing" (loading dots above the
-   *  message list). Idempotent — passing `true` twice for the same
-   *  id is a no-op. */
-  setConversationTyping: (conversationId: string, typing: boolean) => void
-  /** Set the pending I2I reference for the next user message. Pass
-   *  `null` to clear. */
-  setPendingReferenceImage: (
-    value: { url: string; sourcePrompt?: string } | null
-  ) => void
-  setStreamingContent: (content: string) => void
-  setChatModel: (model: string) => void
   appendToMessage: (messageId: string, chunk: string) => void
   appendToMessageReasoning: (messageId: string, chunk: string) => void
   setMessageReasoningDuration: (messageId: string, durationMs: number) => void
@@ -811,7 +768,10 @@ export interface AppState {
 
 export const useStore = create<AppState>()(
   persist(
-    (set, get) => ({
+    (set, get, api) => ({
+      // --- Extracted slices (PLAN-store-slice-split) -------------------
+      ...createChatSlice(set, get, api),
+
       // Theme
       theme: getInitialTheme(),
       colorScheme: 'default' as ColorScheme,
@@ -891,13 +851,6 @@ export const useStore = create<AppState>()(
         selectedFileIds: c.selectedFileIds ?? [],
       })),
       activeConversationId: 'demo-1',
-
-      // Chat
-      typingConversationIds: [],
-      streamingContent: '',
-      chatModel: DEFAULT_CHAT_MODEL,
-      sessionModelOverridden: false,
-      pendingReferenceImage: null,
 
       // View / sidebar actions
       toggleSidebar: () =>
@@ -2434,22 +2387,6 @@ export const useStore = create<AppState>()(
             return c
           }),
         })),
-      setConversationTyping: (conversationId: string, typing: boolean) =>
-        set((state) => {
-          const has = state.typingConversationIds.includes(conversationId)
-          if (typing && has) return {}
-          if (!typing && !has) return {}
-          return {
-            typingConversationIds: typing
-              ? [...state.typingConversationIds, conversationId]
-              : state.typingConversationIds.filter((id) => id !== conversationId),
-          }
-        }),
-      setPendingReferenceImage: (value) =>
-        set({ pendingReferenceImage: value }),
-      setStreamingContent: (content: string) => set({ streamingContent: content }),
-      setChatModel: (model: string) =>
-        set({ chatModel: model, sessionModelOverridden: true }),
       appendToMessage: (messageId: string, chunk: string) =>
         set((state) => ({
           conversations: state.conversations.map((c) => {
