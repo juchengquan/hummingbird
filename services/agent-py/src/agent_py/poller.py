@@ -1,19 +1,21 @@
-"""The Phase 1 read-only poll loop.
+"""The agent service's poll loop.
 
 Runs as a background asyncio task started from FastAPI's lifespan.
 On each tick:
   1. Try to claim the next ready job (`jobs.claim_next_job`).
-  2. If a job was claimed, structured-log the claim.
-  3. **Release it immediately** so the TS worker picks it up.
+  2. If nothing's claimed, sleep.
+  3. If a job's claimed, decide what to do with it:
+     - `WORKER_DRY_RUN=True` (default) → log + release. The TS worker
+       picks it up. This was the Phase 1 happy path.
+     - `WORKER_DRY_RUN=False` + user flagged (Phase 2+) → execute via
+       `executor.execute_start`. On success mark the job done; on
+       failure mark it failed.
+     - `WORKER_DRY_RUN=False` + user not flagged → release. The TS
+       worker stays canonical for unflagged users until Phase 5.
 
-That's the whole job. No checkpoint reads, no event writes, no tool
-execution. The point is to prove connectivity + RLS + the claim
-contract without touching production work paths.
-
-When `WORKER_DRY_RUN` is False (Phase 2+), the poller stops releasing
-— the loop will hand off to the executor instead. Today's code path
-keeps the release unconditional; a future PR adds the dispatch
-branch.
+Phase 2a only ships the `start` action path. `respond` / `continue`
+actions still always release — they belong to Phase 3 (HITL) and
+Phase 3 (chunk continuation) respectively.
 
 Stopping:
   - The loop runs until the asyncio task is cancelled.
@@ -29,7 +31,7 @@ from collections.abc import Awaitable, Callable
 
 import structlog
 
-from . import db, jobs
+from . import db, executor, feature_flag, jobs
 from .settings import Settings
 
 logger = structlog.get_logger(__name__)
@@ -125,12 +127,53 @@ async def _tick(settings: Settings) -> None:
         )
         return
 
-    # Phase 2 lands the execute branch here. For now, a non-dry-run
-    # claim is a misconfiguration — log loudly and release anyway
-    # so we don't accidentally swallow work.
-    logger.error(
-        "poller.dry_run_disabled_but_no_executor",
-        job_id=job.id,
-        hint="Set WORKER_DRY_RUN=true until Phase 2 lands.",
+    # Live mode. Per-user feature flag gates whether Python executes
+    # this user's runs vs. releases for the TS worker. The flag is
+    # `auth.users.raw_user_meta_data->>'agent_backend' == 'python'`;
+    # see `feature_flag.py` for the contract.
+    flagged = await feature_flag.is_user_flagged_to_python(pool, job.user_id)
+    if not flagged:
+        released = await jobs.release_job_to_queue(pool, job.id)
+        logger.info(
+            "poller.released",
+            job_id=job.id,
+            released=released,
+            reason="user_not_flagged",
+        )
+        return
+
+    # Phase 2a only handles the `start` action end-to-end.
+    # `respond` / `continue` belong to later phases — release them
+    # back so the TS worker handles them in the meantime.
+    if job.action != "start":
+        released = await jobs.release_job_to_queue(pool, job.id)
+        logger.info(
+            "poller.released",
+            job_id=job.id,
+            released=released,
+            reason="action_not_supported_yet",
+            action=job.action,
+        )
+        return
+
+    payload = executor.StartActionPayload(
+        run_id=job.task_id,
+        user_id=job.user_id,
     )
-    await jobs.release_job_to_queue(pool, job.id)
+    outcome = await executor.execute_start(pool, payload)
+    if outcome.settled:
+        await jobs.mark_job_done(pool, job.id)
+        logger.info(
+            "poller.executed",
+            job_id=job.id,
+            run_id=job.task_id,
+            action=job.action,
+        )
+    else:
+        await jobs.mark_job_failed(pool, job.id, error=outcome.error or "unknown")
+        logger.error(
+            "poller.execute_failed",
+            job_id=job.id,
+            run_id=job.task_id,
+            error=outcome.error,
+        )
