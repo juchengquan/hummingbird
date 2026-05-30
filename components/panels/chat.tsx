@@ -50,6 +50,8 @@ import { persistFile } from "@/client/files/persist"
 import { getLocalCred } from "@/client/mcp/local-creds"
 
 import { autoArchiveCodeBlocks as autoArchiveCodeBlocksPure } from "@/client/chat/auto-archive-code-blocks"
+import { buildAttachments } from "@/client/chat/build-attachments"
+import { buildTransmittedMessages } from "@/client/chat/build-messages"
 import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/shared/upload-config"
 import type { Agent, Message, MessageError, MessageErrorCode, Prompt } from "@/shared/types"
 import type { LiveToolCall } from "@/components/skills/tool-call-strip"
@@ -530,55 +532,18 @@ export function ChatPanel() {
         forcedSkillIds: options?.forcedSkillIds,
         mutedSkillIds: mutedSkillsForNext,
       })
-      // Index workspace entities up front so the three attachment-collection
-      // loops below are O(attached) instead of O(attached × workspace-total).
-      const filesById = new Map(files.map((f) => [f.id, f]))
-      // Merge the two lanes: workspace-ticked via `selectedFileIds` plus
-      // conversation-private joins via `conversationFiles`. De-dup by id
-      // so a file in both lanes is sent once. Tombstoned files drop out —
-      // they still render as "removed" placeholders in the message chips
-      // via `MessageAttachments`, just not sent upstream.
-      const workspaceFileIds = conv?.selectedFileIds ?? []
-      const privateFileIds = conv
-        ? conversationFiles
-            .filter((cf) => cf.conversationId === conv.id)
-            .map((cf) => cf.fileId)
-        : []
-      const attachedFileIds = [...new Set([...workspaceFileIds, ...privateFileIds])]
-      const attachedFiles = attachedFileIds
-        .map((id) => filesById.get(id))
-        .filter((f): f is NonNullable<typeof f> => !!f && !f.deletedAt)
-      // Attach images only to the most recent user message — re-sending them
-      // on every turn would explode the token bill and isn't how vision
-      // chats are typically structured.
-      const attachedImageUrls = attachedFiles
-        .filter((f) => f.extractedKind === "image" && f.imageDataUrl)
-        .map((f) => f.imageDataUrl as string)
-      // Drop messages the user compressed out of context — the recap
-      // message that replaced them stays in the array and travels to
-      // the model as a regular assistant turn, which is the whole
-      // point of the compression action.
-      const transmittedHistory = history.filter((m) => !m.compressed)
-      const buildMessages = () =>
-        transmittedHistory.map((m, i) => {
-          const isLastUser =
-            i === transmittedHistory.length - 1 &&
-            m.role === "user" &&
-            attachedImageUrls.length > 0
-          if (!isLastUser) {
-            return { role: m.role, content: m.content }
-          }
-          return {
-            role: m.role,
-            content: [
-              { type: "text" as const, text: m.content },
-              ...attachedImageUrls.map((url) => ({
-                type: "image" as const,
-                image: url,
-              })),
-            ],
-          }
+      // Resolve attachments + the API message list via the pure
+      // helpers in `lib/client/chat/`. Attachment policy (union of
+      // workspace + conversation-private lanes, de-dup, drop
+      // tombstones, images on the last user turn only) lives there.
+      const { attachedFiles, attachedImageUrls } =
+        buildAttachments({
+          conversation: conv,
+          files,
+          conversationFiles,
         })
+      const buildMessages = () =>
+        buildTransmittedMessages(history, attachedImageUrls)
 
       // Task mode: hand off to the shared task runner (Tasks panel)
       // instead of the inline chat stream. Everything above (model,
