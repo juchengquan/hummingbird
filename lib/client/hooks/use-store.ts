@@ -13,8 +13,6 @@ import type {
   ConversationMcpResource,
   McpCapabilities,
   McpCredentialMode,
-  UrlBookmark,
-  ConversationUrlBookmark,
   Message,
   MessageError,
   Agent,
@@ -38,7 +36,6 @@ import {
   gcOrphanedAttachments,
   tombstoneFile,
   tombstoneMcpResource,
-  tombstoneUrlBookmark,
   type AttachmentRef,
 } from '@/client/store/cascade'
 import { uuid } from '@/shared/uuid'
@@ -90,6 +87,13 @@ import {
   useWorkspaceDocuments,
   type DocumentsSlice,
 } from "./store/slices/documents"
+import {
+  createUrlBookmarksSlice,
+  useConversationPrivateUrlBookmarks,
+  useConversationSelectedUrlBookmarkIds,
+  useWorkspaceUrlBookmarks,
+  type UrlBookmarksSlice,
+} from "./store/slices/url-bookmarks"
 
 export type {
   UploadedFile,
@@ -215,7 +219,8 @@ export interface AppState
     NotesSlice,
     ArtifactsSlice,
     ProjectTasksSlice,
-    DocumentsSlice {
+    DocumentsSlice,
+    UrlBookmarksSlice {
   // Theme
   theme: Theme
 
@@ -306,11 +311,9 @@ export interface AppState
   mcpResourceBindings: McpResourceBinding[]
   conversationMcpResources: ConversationMcpResource[]
 
-  // URL bookmarks — saved web pages. Third source type after files
-  // and MCP resources; workspace-library rows ticked on per conversation
-  // via `Conversation.selectedUrlBookmarkIds`, plus a private lane.
-  urlBookmarks: UrlBookmark[]
-  conversationUrlBookmarks: ConversationUrlBookmark[]
+  // URL bookmarks — see UrlBookmarksSlice in store/slices/url-bookmarks.ts
+  // (urlBookmarks[] + conversationUrlBookmarks[] + add/update/remove/
+  // private-pin/toggle-selection).
 
   // Notes — see NotesSlice in store/slices/notes.ts (notes[] +
   // create/update/delete/toggleMessageBookmark).
@@ -503,52 +506,6 @@ export interface AppState
    *  conversation (mirrors `toggleConversationFileSelection`). */
   toggleConversationMcpResourceSelection: (resourceId: string) => void
 
-  // URL bookmark actions
-  /** Add a freshly-fetched bookmark to the active workspace. The
-   *  caller is responsible for the `/api/url/fetch` round-trip and
-   *  passes the extracted fields here. Returns the inserted row. */
-  addUrlBookmark: (input: {
-    workspaceId: string
-    url: string
-    title: string
-    content: string
-    contentTruncated: boolean
-    contentHash: string
-    description?: string
-    faviconUrl?: string
-  }) => UrlBookmark
-  /** Replace the cached content of a bookmark after a manual refresh.
-   *  Bumps `fetchedAt` + `updatedAt` automatically. */
-  updateUrlBookmark: (
-    bookmarkId: string,
-    patch: Partial<
-      Pick<
-        UrlBookmark,
-        | 'title'
-        | 'content'
-        | 'contentTruncated'
-        | 'contentHash'
-        | 'description'
-        | 'faviconUrl'
-      >
-    >
-  ) => void
-  /** Tombstone a bookmark. Drops all joins and selection ids
-   *  atomically; metadata stub (url, title, createdAt) remains so
-   *  historical message references resolve cleanly. */
-  removeUrlBookmark: (bookmarkId: string) => void
-  /** Pin a bookmark privately to a conversation. No-op if already
-   *  pinned. */
-  addConversationUrlBookmark: (conversationId: string, bookmarkId: string) => void
-  /** Unpin a private bookmark. GC's the underlying bookmark when no
-   *  other live join references it. */
-  removeConversationUrlBookmark: (
-    conversationId: string,
-    bookmarkId: string
-  ) => void
-  /** Toggle a workspace-library bookmark on/off for the active
-   *  conversation (mirrors the file + MCP-resource selection). */
-  toggleConversationUrlBookmarkSelection: (bookmarkId: string) => void
 
 
   // Agent / persona actions — workspace-scoped saved bundles
@@ -720,6 +677,7 @@ export const useStore = create<AppState>()(
       ...createArtifactsSlice(set, get, api),
       ...createProjectTasksSlice(set, get, api),
       ...createDocumentsSlice(set, get, api),
+      ...createUrlBookmarksSlice(set, get, api),
 
       // Theme
       theme: getInitialTheme(),
@@ -771,9 +729,7 @@ export const useStore = create<AppState>()(
       mcpResourceBindings: [],
       conversationMcpResources: [],
 
-      // URL bookmarks
-      urlBookmarks: [],
-      conversationUrlBookmarks: [],
+      // URL bookmarks — see UrlBookmarksSlice
 
       // Notes — see NotesSlice
 
@@ -1433,122 +1389,6 @@ export const useStore = create<AppState>()(
           }
         }),
 
-      // URL bookmark actions
-      addUrlBookmark: ({
-        workspaceId,
-        url,
-        title,
-        content,
-        contentTruncated,
-        contentHash,
-        description,
-        faviconUrl,
-      }) => {
-        const now = new Date()
-        const newBookmark: UrlBookmark = {
-          id: uuid(),
-          workspaceId,
-          url,
-          title,
-          content,
-          contentTruncated,
-          fetchedAt: now,
-          contentHash,
-          description,
-          faviconUrl,
-          createdAt: now,
-          updatedAt: now,
-        }
-        set((state) => ({ urlBookmarks: [...state.urlBookmarks, newBookmark] }))
-        return newBookmark
-      },
-      updateUrlBookmark: (bookmarkId, patch) =>
-        set((state) => ({
-          urlBookmarks: state.urlBookmarks.map((b) =>
-            b.id === bookmarkId && !b.deletedAt
-              ? {
-                  ...b,
-                  ...patch,
-                  fetchedAt: new Date(),
-                  updatedAt: new Date(),
-                }
-              : b
-          ),
-        })),
-      removeUrlBookmark: (bookmarkId) =>
-        set((state) => ({
-          urlBookmarks: state.urlBookmarks.map((b) =>
-            b.id === bookmarkId && !b.deletedAt ? tombstoneUrlBookmark(b) : b
-          ),
-          // Atomic cascade: drop join rows and selection ids that
-          // reference the bookmark.
-          conversationUrlBookmarks: state.conversationUrlBookmarks.filter(
-            (cub) => cub.bookmarkId !== bookmarkId
-          ),
-          conversations: state.conversations.map((c) => {
-            const selected = c.selectedUrlBookmarkIds ?? []
-            const filtered = selected.filter((id) => id !== bookmarkId)
-            return filtered.length === selected.length
-              ? c
-              : { ...c, selectedUrlBookmarkIds: filtered }
-          }),
-        })),
-      addConversationUrlBookmark: (conversationId, bookmarkId) =>
-        set((state) => {
-          if (
-            state.conversationUrlBookmarks.some(
-              (cub) =>
-                cub.conversationId === conversationId &&
-                cub.bookmarkId === bookmarkId
-            )
-          ) {
-            return state
-          }
-          const newJoin: ConversationUrlBookmark = {
-            id: uuid(),
-            conversationId,
-            bookmarkId,
-            addedAt: new Date(),
-          }
-          return {
-            conversationUrlBookmarks: [
-              ...state.conversationUrlBookmarks,
-              newJoin,
-            ],
-          }
-        }),
-      removeConversationUrlBookmark: (conversationId, bookmarkId) =>
-        set((state) => {
-          const newJoins = state.conversationUrlBookmarks.filter(
-            (cub) =>
-              !(
-                cub.conversationId === conversationId &&
-                cub.bookmarkId === bookmarkId
-              )
-          )
-          const orphanPatch = gcOrphanedAttachment(
-            { ...state, conversationUrlBookmarks: newJoins },
-            { kind: 'url_bookmark', id: bookmarkId }
-          )
-          return { conversationUrlBookmarks: newJoins, ...orphanPatch }
-        }),
-      toggleConversationUrlBookmarkSelection: (bookmarkId) =>
-        set((state) => {
-          const id = state.activeConversationId
-          if (!id) return state
-          return {
-            conversations: state.conversations.map((c) => {
-              if (c.id !== id) return c
-              const selected = c.selectedUrlBookmarkIds ?? []
-              return {
-                ...c,
-                selectedUrlBookmarkIds: selected.includes(bookmarkId)
-                  ? selected.filter((x) => x !== bookmarkId)
-                  : [...selected, bookmarkId],
-              }
-            }),
-          }
-        }),
 
 
 
@@ -2366,33 +2206,10 @@ export const useConversationSelectedMcpResourceIds = (): string[] => {
   return conv?.selectedMcpResourceIds ?? []
 }
 
-/** Live URL bookmarks in the active workspace. */
-export const useWorkspaceUrlBookmarks = (): UrlBookmark[] => {
-  const urlBookmarks = useStore((state) => state.urlBookmarks)
-  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
-  return urlBookmarks.filter(
-    (b) => b.workspaceId === activeWorkspaceId && !b.deletedAt
-  )
-}
-
-/** URL bookmarks pinned privately to the active conversation. */
-export const useConversationPrivateUrlBookmarks = (): UrlBookmark[] => {
-  const conversationUrlBookmarks = useStore(
-    (state) => state.conversationUrlBookmarks
-  )
-  const urlBookmarks = useStore((state) => state.urlBookmarks)
-  const activeConversationId = useStore((state) => state.activeConversationId)
-  if (!activeConversationId) return []
-  return conversationUrlBookmarks
-    .filter((cub) => cub.conversationId === activeConversationId)
-    .map((cub) => urlBookmarks.find((b) => b.id === cub.bookmarkId))
-    .filter((b): b is UrlBookmark => !!b && !b.deletedAt)
-}
-
-/** Workspace URL bookmarks ticked on for the active conversation. */
-export const useConversationSelectedUrlBookmarkIds = (): string[] => {
-  const conv = useActiveConversation()
-  return conv?.selectedUrlBookmarkIds ?? []
+export {
+  useWorkspaceUrlBookmarks,
+  useConversationPrivateUrlBookmarks,
+  useConversationSelectedUrlBookmarkIds,
 }
 
 export { useConversationNotes, useWorkspaceNotes, useMessageBookmark }
