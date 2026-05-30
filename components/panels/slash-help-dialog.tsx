@@ -37,6 +37,15 @@ export function SlashHelpDialog({
     () => allPrompts.filter((p) => !p.deletedAt),
     [allPrompts]
   )
+  const allAgents = useStore((s) => s.agents)
+  const activeWorkspaceId = useStore((s) => s.activeWorkspaceId)
+  const agents = useMemo(
+    () =>
+      allAgents.filter(
+        (a) => a.workspaceId === activeWorkspaceId && !a.deletedAt
+      ),
+    [allAgents, activeWorkspaceId]
+  )
   const skills = listSlashTriggers()
 
   return (
@@ -78,6 +87,18 @@ export function SlashHelpDialog({
                 desc={s.skill.name}
               />
             ))}
+          </Section>
+
+          <Section title="/ Personas — apply a saved AI recipe (PLAN-custom-agents.md)">
+            {agents.length === 0 ? (
+              <p className="text-[13px] text-[var(--muted-foreground)] italic">
+                No saved personas yet. Run <code>/personas</code> to create one.
+              </p>
+            ) : (
+              agents.map((a) => (
+                <Row key={a.id} token={`/${a.slug} …`} desc={a.name} />
+              ))
+            )}
           </Section>
 
           <Section title="@ Prompts — insert a saved template">

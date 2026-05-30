@@ -13,11 +13,24 @@
  */
 
 import type { LucideIcon } from "lucide-react"
-import { CircleHelp, Cpu, Eraser, Pencil, Plus } from "lucide-react"
+import {
+  CircleHelp,
+  Cpu,
+  Eraser,
+  Pencil,
+  Plus,
+  UserCircle,
+} from "lucide-react"
 
 export type CommandArgKind = "none" | "optional" | "required"
 
-export type CommandId = "new" | "clear" | "rename" | "model" | "help"
+export type CommandId =
+  | "new"
+  | "clear"
+  | "rename"
+  | "model"
+  | "help"
+  | "personas"
 
 export interface CommandDescriptor {
   id: CommandId
@@ -81,6 +94,15 @@ export const COMMANDS: CommandDescriptor[] = [
     description: "List every / command and @ prompt trigger",
     argKind: "none",
     icon: CircleHelp,
+  },
+  {
+    id: "personas",
+    trigger: "personas",
+    aliases: ["personas", "agents"],
+    title: "Manage personas",
+    description: "Create, edit, and pin custom AI personas (`PLAN-custom-agents.md`)",
+    argKind: "none",
+    icon: UserCircle,
   },
 ]
 

@@ -34,6 +34,57 @@ export type Database = {
   }
   public: {
     Tables: {
+      agents: {
+        Row: {
+          allowed_mcp_server_ids: string[]
+          allowed_skill_ids: string[]
+          created_at: string
+          deleted_at: string | null
+          icon: string | null
+          id: string
+          model_id: string | null
+          name: string
+          pinned: boolean
+          slug: string
+          system_prompt: string
+          updated_at: string
+          user_id: string
+          workspace_id: string
+        }
+        Insert: {
+          allowed_mcp_server_ids?: string[]
+          allowed_skill_ids?: string[]
+          created_at?: string
+          deleted_at?: string | null
+          icon?: string | null
+          id: string
+          model_id?: string | null
+          name: string
+          pinned?: boolean
+          slug: string
+          system_prompt?: string
+          updated_at?: string
+          user_id: string
+          workspace_id: string
+        }
+        Update: {
+          allowed_mcp_server_ids?: string[]
+          allowed_skill_ids?: string[]
+          created_at?: string
+          deleted_at?: string | null
+          icon?: string | null
+          id?: string
+          model_id?: string | null
+          name?: string
+          pinned?: boolean
+          slug?: string
+          system_prompt?: string
+          updated_at?: string
+          user_id?: string
+          workspace_id?: string
+        }
+        Relationships: []
+      }
       artifacts: {
         Row: {
           content: string | null
