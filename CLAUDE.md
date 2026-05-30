@@ -21,6 +21,14 @@ bun run lint         # Run ESLint
 bun run typecheck    # Run `tsc --noEmit`
 bun run check        # typecheck + lint (fast — mirrors CI without build/audit)
 bun run check:ci     # typecheck + lint + build + audit:bundle (full CI gate locally)
+
+# Agent service (Python — Phase 0 of PLAN-agent-api.md)
+docker compose up agent-py            # run service in container
+bun run codegen:agent-types           # regen lib/shared/agent-py-types.generated.ts
+bun run codegen:agent-types:check     # CI mode — fail if drifted
+
+# Or to develop the agent service on the host:
+cd services/agent-py && uv sync && uv run uvicorn agent_py.main:app --reload
 ```
 
 ## Architecture
@@ -173,6 +181,38 @@ When adding a new endpoint, follow the checklist at the bottom of
 `docs/API.md`. The plan in `docs/PLAN-backend-extraction.md` describes
 the eventual swap to a Python backend; the client + schemas + doc
 together are the contract that has to survive that swap.
+
+## Agent service (Python — Phase 0)
+
+`services/agent-py/` is the new Python agent service per
+[`docs/PLAN-agent-api.md`](docs/PLAN-agent-api.md). Phase 0 ships
+**scaffolding only** — FastAPI app, JWT middleware, `GET /healthz` +
+`GET /readyz` + `GET /v1/whoami`. No agent logic yet (that's Phase 2+).
+
+Stack: Python 3.12 · FastAPI · uv (package manager) · PyJWT · pytest ·
+ruff · mypy.
+
+| Path | What |
+|---|---|
+| `services/agent-py/src/agent_py/main.py` | FastAPI app + endpoints. |
+| `services/agent-py/src/agent_py/auth.py` | Supabase JWT verification middleware (HS256 against `SUPABASE_JWT_SECRET`). |
+| `services/agent-py/src/agent_py/settings.py` | `pydantic-settings` config. Reads the repo-level `.env` so the same vars work in both services. |
+| `services/agent-py/tests/` | Phase 0 contract tests (health + every auth failure mode). |
+| `services/agent-py/Dockerfile` | Multi-stage uv build, slim runtime, non-root user. |
+| `docker-compose.yml` (repo root) | Spins up the agent service alongside `bun dev`. |
+| `lib/shared/agent-py-types.generated.ts` | TS types generated from FastAPI's OpenAPI doc — the **source of truth** for the Python ⇄ TS contract. Regen with `bun run codegen:agent-types`. CI fails on drift via `codegen:agent-types:check`. |
+
+**Configuration:** `SUPABASE_JWT_SECRET` is required for any
+auth-protected endpoint (without it, those endpoints return 503 — a
+distinct signal from 401 so monitoring can alert on misconfig).
+`SUPABASE_URL` is read but only reported by `/readyz` until Phase 1
+wires the actual Postgres connection. The service reads the same
+top-level `.env` as Next.js.
+
+**Deploy target is deliberately TBD** — see "Deliberately deferred" in
+`PLAN-agent-api.md`. Phase 0 ships a Dockerfile that runs anywhere
+(self-host on Hetzner / home server / k8s, or a managed PaaS); the
+hosting decision lands between Phase 0 and Phase 1.
 
 ## Development Patterns
 

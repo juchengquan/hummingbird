@@ -1,8 +1,9 @@
 # Plan: Agent API as a separate service
 
-Status: **📐 Phased plan** — supersedes the previous decision doc. The
-old doc lived as `decision-doc — Step 1 done`; this rewrite turns it
-into a button-to-push plan once you confirm the recommendation.
+Status: **🪜 Phased — Phase 0 in flight.** Option C (Python service)
+green-lit. Phase 0 scaffolding shipped via the agent-py PR; Phase 1+
+pending. The earlier "decision-doc — Step 1 done" status is retained
+in the prior-status note below for context.
 
 > **Prior status (kept for context).** The plan's precondition — "prove
 > the agent loop + durable run state in the current TS backend first"
@@ -200,10 +201,14 @@ Six phases, ~4-6 weeks of focused effort end-to-end. Every phase is
 behind a per-user feature flag and reversible by flag flip until
 Phase 6.
 
-### Phase 0 — Scaffolding (1-2 days)
+### Phase 0 — Scaffolding ✅ shipped
 
-**Ships:** a Python service that boots, authenticates, and responds to
-`/healthz`. No agent logic, no production traffic.
+**Shipped:** a Python service that boots, authenticates, and responds
+to `/healthz`. No agent logic, no production traffic.
+
+Lives at `services/agent-py/`. Stack: Python 3.12 · FastAPI · uv ·
+PyJWT · pytest · ruff · mypy. CI gate added (`agent-py` +
+`agent-py-types-drift` jobs in `.github/workflows/ci.yml`).
 
 **Scope:**
 - `services/agent-py/` directory in this repo (monorepo for now;

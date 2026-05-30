@@ -10,21 +10,20 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-05-30 (PLAN-agent-api refresh — the doc is now a
-phased plan instead of a decision doc. Recommendation: Option C
-(Python FastAPI service) if you want the Python ecosystem,
-otherwise Option D (hybrid — only the worker moves out). 4-6 weeks
-of focused effort, phases 0-4 are flag-flip reversible. The
-"prove the loop in-process first" precondition is met (long-running-
-task / HITL / queue arc shipped); the split itself is now a live
-go/no-go. Earlier in the day: signed-URL re-sign for generated
-images (#116, small-followups #4) shipped; store-slice-split (#115)
-and chat-send-pipeline extraction (#112/#113) merged; Deep Research
-mode + Custom agents / personas + the agent task-queue arc all
-shipped through all their phases. Active plans now: small-followups
-(3 open: tokens / per-tool approval flags / task-route integration
-tests), cross-conversation-memory, local-rag, replace-supabase,
-agent-api (now phased), backend-extraction, typed-prompt-vars.)
+Last updated: 2026-05-30 (PLAN-agent-api Phase 0 shipped —
+`services/agent-py/` scaffolded with FastAPI + uv + JWT middleware +
+pytest/ruff/mypy + OpenAPI codegen wired through `lib/shared/
+agent-py-types.generated.ts`; CI gates `agent-py` + `agent-py-types-
+drift` added. Option C green-lit; deploy target remains TBD (decided
+between Phase 0 and Phase 1). The previous "decision doc → phased
+plan" rewrite earlier today (#117/#118) is the basis. Other items
+today: signed-URL re-sign (#116, small-followups #4 done), store-
+slice-split (#115), chat-send-pipeline extraction (#112/#113), Deep
+Research mode + Custom agents / personas + agent task-queue arc all
+shipped. Active plans now: small-followups (3 open: tokens / per-
+tool approval flags / task-route integration tests), agent-api (now
+Phase 1+ pending), cross-conversation-memory, local-rag,
+replace-supabase, backend-extraction, typed-prompt-vars.)
 
 > **Plan archive.** Fully-shipped `PLAN-*.md` files live in
 > [`_done/`](_done/). Active plans (planning / phased / decision
@@ -151,7 +150,7 @@ now ships — its plans live in [`_done/`](_done/).
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
 | 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~7.5 days total |
-| 📐 [Agent API as a separate service](PLAN-agent-api.md) | phased plan — awaiting go-ahead | Six-phase plan to move the agent loop + worker + tools out of Next.js into a separate (recommended: Python FastAPI) service. Step 1 (prove the loop in-process) is **done** — see the long-running-task / HITL / queue arc. Decision matrix covers 4 options (stay in-process / TS service / Python service / hybrid worker-only); recommendation is Python if you want the ecosystem, hybrid TS otherwise. 4-6 weeks of focused effort; phases 0-4 are flag-flip reversible, phase 5 (delete TS path) is the only one-way door |
+| 🪜 [Agent API as a separate service](PLAN-agent-api.md) | Phase 0 shipped — Phase 1 pending | Six-phase plan to move the agent loop + worker + tools out of Next.js into a Python FastAPI service. **Option C (Python) green-lit**; Phase 0 (scaffolding: FastAPI app, JWT middleware, OpenAPI codegen, CI gate) shipped. Phase 1 reads `task_jobs` in dry-run; Phase 2-5 port the loop + tools + MCP; Phase 6 tidies. ~4-6 weeks total; phases 0-4 are flag-flip reversible. Deploy target deliberately TBD until between Phase 0 and Phase 1 |
 | 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 pending | Phase 1 (contract-first frontend ⇄ API surface) shipped; Phase 2 stands up the Python backend |
 | ⏸ [Typed prompt variables](PLAN-typed-prompt-variables.md) | deferred | Workspace-scoping migration shipped (`9b3c84f`); the typing UI itself remains deliberately deferred |
 
