@@ -10,25 +10,21 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-05-30 (agent task-queue arc **complete** — step 7
-scheduling shipped via #100, plan moved to _done/; the full
-long-running-task / HITL / queue stack is now done. PLAN-agent-api
-refreshed: its "prove the loop first" precondition (Step 1) is met,
-so it's now a live go/no-go rather than a wait — default stay
-in-process. Earlier in the day: PLAN-project-mode + PLAN-workspace-
-canvas → _done/ (all phases ship); small-followups #6 — local-mode
-MCP creds for tasks — marked moot per #85, which rejects local-mode
-in async task mode by design. Project mode complete via
-#81/#86/#89/#91/#94; workspace canvas via #83/#90. Code-cleanup
-Phases 1–6 via #96 + #102 — lint baseline now 0 warnings, sync test
-coverage complete, reconcile factored, pure helpers extracted from
-`use-store.ts`, `autoArchiveCodeBlocks` extracted from `chat.tsx`;
-tests 559 → 660. Full per-entity store-slice split + full chat.tsx
-send-pipeline extraction remain as scoped follow-ups. Deep Research
-mode plan added — promoted from SURVEY §4.1; 4 phases, Phase 1
-ships the end-to-end loop with no DB changes. Custom agents /
-personas plan added — promoted from SURVEY §4.4; 3 phases, Phase 1
-ships CRUD + `/<persona>` slash with no MCP scoping or sharing.)
+Last updated: 2026-05-30 (sweep — Deep Research mode + Custom agents
+/ personas both shipped through ALL their plan phases; their plan
+docs moved from `docs/` to `docs/_done/` and the matching ROADMAP
+rows graduated from Planned to Shipped. Deep Research: 4 phases via
+#101/#103/#104/#105 + wire-up #106, all referenced from one Shipped
+row. Custom agents: 3 phases in one PR with one commit per phase
+(#110) preceded by the plan doc (#107). Agent task-queue arc
+complete earlier in the day — step 7 scheduling shipped via #100,
+plan moved to _done/; the full long-running-task / HITL / queue
+stack is now done. PLAN-agent-api precondition met; now a live
+go/no-go. Project mode + workspace canvas → _done/ via #81–#94 +
+#83/#90. Code-cleanup Phases 1–6 via #96 + #102; tests 559 → 743
+across all of today's work. Active plans now: store-slice-split,
+chat-send-extraction, cross-conversation-memory, local-rag,
+replace-supabase, agent-api, backend-extraction, typed-prompt-vars.)
 
 > **Plan archive.** Fully-shipped `PLAN-*.md` files live in
 > [`_done/`](_done/). Active plans (planning / phased / decision
@@ -56,6 +52,8 @@ to a representative PR otherwise.
 
 | When | Feature | Where |
 |---|---|---|
+| 2026-05-30 | **Custom agents / personas — all 3 phases**: `0020_agents` migration + workspace-scoped `Agent` type + store slice + `/personas` manage dialog + chat dispatch wiring (Phase 1); MCP allow-list server-side enforcement (`loadEffectiveMcpServers` filter, persisted in `CheckpointConfig`) + share-by-URL (base64url JSON via `?import-agent=`, dropping unknown MCP refs on import) (Phase 2); project-mode "Run as task" picks up the pinned persona's model + prompt + skills + MCP scope (Phase 3) | [PLAN](_done/PLAN-custom-agents.md) · [#107](https://github.com/juchengquan/hummingbird/pull/107) · [#110](https://github.com/juchengquan/hummingbird/pull/110) |
+| 2026-05-30 | **Deep Research mode — all 4 phases**: `/research <goal>` slash + research-mode system prompt + manual "Open in editor" button (Phase 1, #101); auto chat-msg + workspace doc + markdown artifact on settle, resume-on-reload carries `mode` (Phase 2, #103); `searchFiles` force-enabled in research mode + files-first prompt branch (Phase 3, #104); pure `formatResearchCitations` renumbers inline `[N]` markers and dedupes the Sources block (Phase 4, #105); auto-handoff wire-up applies the formatter to chat-msg + doc + artifact (#106) | [PLAN](_done/PLAN-deep-research.md) · [#99](https://github.com/juchengquan/hummingbird/pull/99) · [#101](https://github.com/juchengquan/hummingbird/pull/101) · [#103](https://github.com/juchengquan/hummingbird/pull/103) · [#104](https://github.com/juchengquan/hummingbird/pull/104) · [#105](https://github.com/juchengquan/hummingbird/pull/105) · [#106](https://github.com/juchengquan/hummingbird/pull/106) |
 | 2026-05-29 | **Code cleanup — Phases 2–6**: sync-layer test coverage (15 new test files, +74 `diff*` tests), reconcile factor-out (`uploadRows` + `anyError` helpers), store-helper extraction (`store-helpers.ts`, −171 LOC from `use-store.ts`, +20 tests), `autoArchiveCodeBlocks` extraction from `chat.tsx` (+7 tests), residual dead-code sweep. Tests 559 → 660; full per-entity store-slice split + full `chat.tsx` send-pipeline extraction remain as scoped follow-ups | [PLAN](PLAN-code-cleanup.md) · [#102](https://github.com/juchengquan/hummingbird/pull/102) |
 | 2026-05-29 | **Code cleanup — Phase 1** (quick wins): cleared all 6 baseline lint warnings (unused imports/identifiers, missing useCallback deps in `chat.tsx`, useMemo wrapping in `use-attached-context.ts`); deleted 4 truly-dead exports (`PROJECTED_NODE_KINDS`, `SkillIntent`, `getConversationIntent`, `getSkill`). No functional changes | [PLAN](PLAN-code-cleanup.md) · [#96](https://github.com/juchengquan/hummingbird/pull/96) |
 | 2026-05-29 | **Project mode — Phase 5 polish** (all phases complete): milestones editor in the workspace detail sheet, progress bar + milestone chip strip at the top of the Tasks tab, "Hide done" quick filter, Markdown export (`projectToMarkdown` pure helper → goal + milestones + tasks-by-column with linked artifacts inlined), `N/M done` chip on each project workspace's index row | [PLAN](_done/PLAN-project-mode.md) · [#94](https://github.com/juchengquan/hummingbird/pull/94) |
@@ -150,8 +148,6 @@ now ships — its plans live in [`_done/`](_done/).
 | 🪜 [Code cleanup](PLAN-code-cleanup.md) | Phases 1–6 shipped (#96, #102) | 6 phases of housecleaning after a long feature push. Phase 1 cleared lint baseline + 4 dead exports; Phases 2–6 added per-entity sync diff tests, factored `reconcile.ts`, extracted store helpers + the `chat.tsx` auto-archive heuristic, and removed a residual dead export. Full per-entity store-slice split + full `chat.tsx` send-pipeline extraction spun out to their own plans below. No functional changes |
 | 📐 [Store slice split](PLAN-store-slice-split.md) | planning | Cleanup Phase 4 follow-up — split `use-store.ts` (3,274 LOC, ~180 mutators) into per-entity slice modules composed into one `useStore`. Persisted shape + migration frozen; no behaviour change. Higher-risk, own PR |
 | 📐 [Chat send-pipeline extraction](PLAN-chat-send-extraction.md) | planning | Cleanup Phase 5 follow-up — pull the ~620-line `callChatAPI` out of `chat.tsx` into a `useChatSend` hook + pure attachment/message builders. Streaming + abort + task-mode handoff preserved; no behaviour change. Higher-risk, own PR |
-| 📐 [Deep Research mode](PLAN-deep-research.md) | planning | Multi-step research agent that composes the task queue + web search + Plate editor into a "thread → cited Markdown report" flow. 4 phases; Phase 1 ships `/research <goal>` end-to-end with the smallest possible new surface (mode flag + research-mode system prompt + "Open in editor" button) |
-| 📐 [Custom agents / personas](PLAN-custom-agents.md) | planning | Reusable saved bundle of `{ name, system prompt, model, allowed skills, allowed MCP servers }` invoked via `/<persona>`. Builds on the existing prompt library schema + sync, the skill cascade, and MCP cloud-mode. Promoted from SURVEY §4.4. 3 phases; Phase 1 ships CRUD + slash invocation, Phase 2 adds MCP allow-list + share-by-URL, Phase 3 links into Kanban "Run as task" |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
 | 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~7.5 days total |

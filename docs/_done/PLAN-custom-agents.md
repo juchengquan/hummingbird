@@ -1,10 +1,20 @@
 # Plan: Custom agents / personas
 
-Status: 📐 planning. Promoted from
-[`SURVEY-market-2026.md` §4.4](SURVEY-market-2026.md). Three phases;
-Phase 1 is the smallest viable surface (CRUD + slash invocation),
-Phases 2–3 layer on MCP allow-listing + share-by-URL and project-mode
-integration.
+Status: **✅ All 3 phases shipped.** Phase 1 ships schema + CRUD +
+`/<persona>` slash invocation — `0020_agents.sql` migration, `Agent`
+type, store slice + `/personas` manage dialog, chat dispatch wires
+the new `agent` slash kind. Phase 2 ships MCP allow-list + share-by-URL
+— `loadEffectiveMcpServers` filter, `lib/shared/agents/share.ts`
+encode/decode, `agent-import-listener` reads `?import-agent=` URL
+param. Phase 3 ships project-mode integration — Kanban "Run as task"
+picks up the pinned persona's model + system prompt + skills + MCP
+allow-list. All three landed in a single PR with one commit per phase
+([#110](https://github.com/juchengquan/hummingbird/pull/110)); plan
+doc itself in [#107](https://github.com/juchengquan/hummingbird/pull/107).
+
+Plan promoted from [`SURVEY-market-2026.md` §4.4](../SURVEY-market-2026.md).
+Originally lived at `docs/PLAN-custom-agents.md`; moved here on
+completion per the archive convention in [`ROADMAP.md`](../ROADMAP.md).
 
 ## What "personas" are, in plain language
 
