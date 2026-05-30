@@ -491,6 +491,10 @@ export function ChatPanel() {
         /** Custom-agent system prompt for this turn — appended after
          *  the workspace's system prompt. See `PLAN-custom-agents.md`. */
         agentSystemPrompt?: string
+        /** Per-turn MCP allow-list — when set, cloud-mode MCP servers
+         *  are filtered to this list. Sourced from the active persona
+         *  in `handleSendMessage`. */
+        allowedMcpServerIds?: string[]
       }
     ) => {
       // Read the model freshly from the store rather than via the closure.
@@ -593,6 +597,9 @@ export function ChatPanel() {
             skills: enabledSkills,
             ...(options.taskMode && options.taskMode !== "default"
               ? { mode: options.taskMode }
+              : {}),
+            ...(options.allowedMcpServerIds
+              ? { allowedMcpServerIds: options.allowedMcpServerIds }
               : {}),
           },
           { title: conv?.title }
@@ -1254,9 +1261,13 @@ export function ChatPanel() {
       taskMode: taskModeForCall,
       // Persona overrides for this turn (`PLAN-custom-agents.md`).
       // Persona modelId beats the chat-input's session-picked model;
-      // persona system prompt is appended after the workspace's.
+      // persona system prompt is appended after the workspace's;
+      // persona MCP allow-list narrows the cloud-mode server set
+      // (Phase 2 — server-side enforcement in `loadEffectiveMcpServers`).
       modelOverride: agentResolved?.modelId,
       agentSystemPrompt: agentResolved?.systemPrompt,
+      allowedMcpServerIds:
+        agentResolved?.allowedMcpServerIds ?? undefined,
     })
   }
 

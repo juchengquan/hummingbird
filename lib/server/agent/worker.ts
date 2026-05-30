@@ -206,10 +206,13 @@ async function runRespond(
   const finalArgs = payload.args !== undefined ? payload.args : pending.args
 
   // Local-mode MCP creds aren't carried into the job — the worker can
-  // only reach cloud-mode servers.
+  // only reach cloud-mode servers. Persona allow-list (Phase 2 of
+  // PLAN-custom-agents.md) further restricts which cloud servers are
+  // visible for this run.
   const mcpServersForResult = await loadEffectiveMcpServers(
     checkpoint.config.workspaceId,
-    undefined
+    undefined,
+    { allowedServerIds: checkpoint.config.allowedMcpServerIds }
   )
   const resultText = await buildToolResult({
     kind,
@@ -357,7 +360,8 @@ async function runChunk(
   tools[ASK_USER_TOOL_NAME] = makeAskUserTool()
   const mcpServers = await loadEffectiveMcpServers(
     checkpoint.config.workspaceId,
-    undefined
+    undefined,
+    { allowedServerIds: checkpoint.config.allowedMcpServerIds }
   )
   for (const server of mcpServers) {
     for (const descriptor of server.capabilities?.tools ?? []) {

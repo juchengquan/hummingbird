@@ -397,6 +397,11 @@ export const TaskRequestSchema = z.object({
    *  per-section search → gap pass → synthesize a cited Markdown
    *  report). `undefined` / omission keeps default behaviour. */
   mode: z.enum(["default", "research"]).optional(),
+  /** MCP server allow-list for this run (`PLAN-custom-agents.md`
+   *  Phase 2). When set, only cloud-mode MCP servers whose id appears
+   *  here are loaded server-side. `undefined` / omission means "no
+   *  restriction" (cascade through workspace defaults). */
+  allowedMcpServerIds: z.array(z.string().max(64)).max(64).optional(),
 })
 
 // --- /api/tasks/:id/respond -------------------------------------------------

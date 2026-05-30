@@ -1,9 +1,14 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Plus, Trash2, UserCircle } from "lucide-react"
+import { Link2, Plus, Trash2, UserCircle } from "lucide-react"
+import { toast } from "sonner"
 
 import { useStore } from "@/client/hooks/use-store"
+import {
+  encodeAgentShareToken,
+  toShareable,
+} from "@/shared/agents/share"
 import { SKILLS } from "@/shared/skills/registry"
 import type { Agent } from "@/shared/types"
 
@@ -71,6 +76,19 @@ export function AgentsDialog({ open, onOpenChange }: AgentsDialogProps) {
     setShowForm(false)
   }
 
+  const copyAgentShareUrl = (a: Agent) => {
+    try {
+      const token = encodeAgentShareToken(toShareable(a))
+      const origin =
+        typeof window !== "undefined" ? window.location.origin : ""
+      const url = `${origin}/?import-agent=${token}`
+      void navigator.clipboard.writeText(url)
+      toast.success("Share URL copied to clipboard")
+    } catch {
+      toast.error("Couldn't generate share URL")
+    }
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg max-h-[80vh] overflow-y-auto">
@@ -135,6 +153,14 @@ export function AgentsDialog({ open, onOpenChange }: AgentsDialogProps) {
                         /{a.slug}
                       </div>
                     </div>
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      onClick={() => copyAgentShareUrl(a)}
+                      title="Copy a share URL — recipients can import this persona into their workspace."
+                    >
+                      <Link2 size={12} />
+                    </Button>
                     <Button size="xs" variant="ghost" onClick={() => handleEdit(a)}>
                       Edit
                     </Button>
@@ -168,6 +194,7 @@ interface AgentFormProps {
     systemPrompt?: string
     modelId?: string
     allowedSkillIds?: string[]
+    allowedMcpServerIds?: string[]
   }) => void
   onCancel: () => void
   onDelete?: () => void
@@ -189,9 +216,34 @@ function AgentForm({
   const [allowedSkillIds, setAllowedSkillIds] = useState<Set<string>>(
     () => new Set(initial?.allowedSkillIds ?? [])
   )
+  const [allowedMcpServerIds, setAllowedMcpServerIds] = useState<Set<string>>(
+    () => new Set(initial?.allowedMcpServerIds ?? [])
+  )
+
+  // Workspace's cloud-mode MCP servers — the universe a persona can
+  // allow. Local-mode is excluded because tasks can't use it (per #85).
+  const allMcpServers = useStore((s) => s.mcpServers)
+  const workspaceMcpServers = useMemo(
+    () =>
+      allMcpServers.filter(
+        (m) =>
+          m.workspaceId === workspaceId &&
+          !m.deletedAt &&
+          m.credentialMode === "cloud"
+      ),
+    [allMcpServers, workspaceId]
+  )
 
   const toggleSkill = (id: string) => {
     setAllowedSkillIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+  const toggleMcp = (id: string) => {
+    setAllowedMcpServerIds((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
@@ -207,6 +259,7 @@ function AgentForm({
       systemPrompt: systemPrompt,
       modelId: modelId.trim() || undefined,
       allowedSkillIds: [...allowedSkillIds],
+      allowedMcpServerIds: [...allowedMcpServerIds],
     })
   }
 
@@ -269,6 +322,35 @@ function AgentForm({
                 }
               >
                 {s.name}
+              </button>
+            )
+          })}
+        </div>
+      </Field>
+      <Field
+        label="Allowed MCP servers"
+        hint={
+          workspaceMcpServers.length === 0
+            ? "No cloud-mode MCP servers in this workspace. Add one in Settings → MCP first."
+            : "Cloud-mode MCP servers this persona can call. Empty = no MCP for this persona's turns."
+        }
+      >
+        <div className="flex flex-wrap gap-2">
+          {workspaceMcpServers.map((m) => {
+            const checked = allowedMcpServerIds.has(m.id)
+            return (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => toggleMcp(m.id)}
+                className={
+                  "px-2 py-1 rounded-md border text-[11px] transition-colors " +
+                  (checked
+                    ? "border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--foreground)]"
+                    : "border-[var(--border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]")
+                }
+              >
+                {m.name}
               </button>
             )
           })}

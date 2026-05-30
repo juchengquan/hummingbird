@@ -42,16 +42,28 @@ export interface RequestMcpServer {
  *
  * When `workspaceId` is empty, only local servers come back (no
  * filter to constrain the cloud query).
+ *
+ * An optional `allowedServerIds` array (Phase 2 of
+ * `PLAN-custom-agents.md`) acts as a per-turn allow-list — when
+ * provided, every returned server's id must appear in the set. Empty
+ * array means "no MCP for this turn" (a persona's explicit shut-off).
+ * `undefined` / omission means "no restriction" (default behaviour).
  */
 export async function loadEffectiveMcpServers(
   workspaceId: string | undefined,
-  bodyServers: RequestMcpServer[] | undefined
+  bodyServers: RequestMcpServer[] | undefined,
+  opts?: { allowedServerIds?: readonly string[] | null }
 ): Promise<EffectiveMcpServer[]> {
+  const allow =
+    opts?.allowedServerIds === undefined || opts?.allowedServerIds === null
+      ? null
+      : new Set(opts.allowedServerIds)
   const out: EffectiveMcpServer[] = []
 
   // Local-mode: pass through as-is, dropping disabled rows.
   for (const s of bodyServers ?? []) {
     if (s.enabled === false) continue
+    if (allow && !allow.has(s.id)) continue
     out.push({
       id: s.id,
       name: s.name,
@@ -112,7 +124,9 @@ export async function loadEffectiveMcpServers(
     })
   )
   for (const server of decrypted) {
-    if (server) out.push(server)
+    if (!server) continue
+    if (allow && !allow.has(server.id)) continue
+    out.push(server)
   }
 
   return out

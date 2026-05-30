@@ -36,6 +36,13 @@ export interface CheckpointConfig {
    *  every chunk after a yield keeps the same prompt. Untouched runs
    *  (older or default) read undefined → behave as `'default'`. */
   mode?: "default" | "research"
+  /** MCP server allow-list for this run (`PLAN-custom-agents.md`
+   *  Phase 2). When set, only servers whose id appears here are
+   *  loaded for tool registration. Empty array means "no MCP for
+   *  this persona". `undefined` / omission means "no restriction"
+   *  (cascade through workspace). Persisted so chunks after a yield
+   *  re-apply the same scope. */
+  allowedMcpServerIds?: string[]
 }
 
 export interface RunCheckpoint {
