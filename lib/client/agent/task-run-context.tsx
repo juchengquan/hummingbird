@@ -45,6 +45,11 @@ interface TaskRunContextValue {
   /** The chat-input "Run as task" mode toggle. */
   runAsTask: boolean
   setRunAsTask: (v: boolean) => void
+  /** Task mode of the active run (default / research, etc.). Carried
+   *  in the context so settled-task UI (e.g. the research "Open in
+   *  editor" button) can branch without reading the server checkpoint.
+   *  `null` until a run starts. */
+  runMode: "default" | "research" | null
   /** Launch a task: records its conversation, opens the panel, streams. */
   startTask: (body: TaskRequestInput, opts?: { title?: string }) => void
   cancel: () => Promise<void>
@@ -61,6 +66,7 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
   const [runAsTask, setRunAsTask] = useState(false)
   const [runConversationId, setRunConversationId] = useState<string | null>(null)
   const [runTitle, setRunTitle] = useState<string | undefined>(undefined)
+  const [runMode, setRunMode] = useState<"default" | "research" | null>(null)
 
   // Hook options are read at fold time via the hook's own ref, so
   // passing the latest run conversation/title here is enough for the
@@ -96,6 +102,7 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
       prevStatusRef.current = null
       setRunConversationId(body.conversationId)
       setRunTitle(opts?.title)
+      setRunMode(body.mode ?? "default")
       setTasksPanelOpen(true)
       void run.start(body)
     },
@@ -151,6 +158,7 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
     runConversationId,
     runAsTask,
     setRunAsTask: handleSetRunAsTask,
+    runMode,
     startTask,
     cancel: run.cancel,
     respond,

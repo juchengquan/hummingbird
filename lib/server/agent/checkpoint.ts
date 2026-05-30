@@ -31,6 +31,11 @@ export interface CheckpointConfig {
    *  a continuation re-applies the same policy and a sensitive tool
    *  call on a later chunk still suspends. */
   requireApprovalFor?: string[]
+  /** Task mode (`PLAN-deep-research.md`). `'research'` swaps the
+   *  default system prompt for the research-mode loop. Persisted so
+   *  every chunk after a yield keeps the same prompt. Untouched runs
+   *  (older or default) read undefined → behave as `'default'`. */
+  mode?: "default" | "research"
 }
 
 export interface RunCheckpoint {

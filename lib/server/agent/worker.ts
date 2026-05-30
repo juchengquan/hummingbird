@@ -376,6 +376,7 @@ async function runChunk(
       name: s.name,
       toolCount: s.capabilities?.tools?.length ?? 0,
     })),
+    mode: checkpoint.config.mode,
   })
 
   const runMessages: ModelMessage[] = [...checkpoint.messages]

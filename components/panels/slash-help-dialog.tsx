@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog"
 import { COMMANDS } from "@/shared/commands/registry"
 import { listSlashTriggers } from "@/shared/skills/slash-parser"
+import { TASK_MODES } from "@/shared/task-modes/registry"
 import { useStore } from "@/client/hooks/use-store"
 
 /**
@@ -49,6 +50,16 @@ export function SlashHelpDialog({
         </DialogHeader>
 
         <div className="space-y-5 text-sm">
+          <Section title="/ Modes — launch a long-running task">
+            {TASK_MODES.map((m) => (
+              <Row
+                key={m.id}
+                token={`/${m.trigger} ${m.argHint}`}
+                desc={m.description}
+              />
+            ))}
+          </Section>
+
           <Section title="/ Commands — run now, nothing is sent">
             {COMMANDS.map((c) => (
               <Row

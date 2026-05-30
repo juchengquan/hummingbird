@@ -43,6 +43,11 @@ import { processNextJob } from "@/server/agent/worker"
 
 const DEFAULT_MAX_STEPS = 25
 const MAX_MAX_STEPS = 50
+/** Research-mode runs are by nature long (plan → per-section search →
+ *  gap pass → synthesis). Bumped above the default so a plan of 8
+ *  sub-questions × ~3 steps each fits without the user having to
+ *  remember to override `maxSteps`. Still capped by `MAX_MAX_STEPS`. */
+const RESEARCH_DEFAULT_MAX_STEPS = 35
 
 /** Wall-clock budget for the inline bootstrap of the worker. Short
  *  enough that the POST returns quickly even on a slow first chunk,
@@ -111,7 +116,10 @@ export async function POST(req: NextRequest) {
   }
   const body = parsed.data
   const modelId = body.model || DEFAULT_CHAT_MODEL
-  const maxSteps = Math.min(body.maxSteps ?? DEFAULT_MAX_STEPS, MAX_MAX_STEPS)
+  const mode = body.mode ?? "default"
+  const defaultMaxForMode =
+    mode === "research" ? RESEARCH_DEFAULT_MAX_STEPS : DEFAULT_MAX_STEPS
+  const maxSteps = Math.min(body.maxSteps ?? defaultMaxForMode, MAX_MAX_STEPS)
 
   // Fail fast on a misconfigured provider — the worker would otherwise
   // fail the job after the route has already returned 202.
@@ -186,6 +194,7 @@ export async function POST(req: NextRequest) {
       skills: body.skills,
       maxSteps,
       requireApprovalFor: body.requireApprovalFor,
+      mode,
     },
   }
   try {

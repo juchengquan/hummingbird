@@ -392,6 +392,11 @@ export const TaskRequestSchema = z.object({
    *  passes the list explicitly (e.g. all MCP tools from sensitive
    *  servers). Server-side policy (per-tool flags) is a follow-up. */
   requireApprovalFor: z.array(z.string().min(1)).max(64).optional(),
+  /** Task mode (`PLAN-deep-research.md`). `'research'` swaps the
+   *  default system prompt for the research-mode loop (plan →
+   *  per-section search → gap pass → synthesize a cited Markdown
+   *  report). `undefined` / omission keeps default behaviour. */
+  mode: z.enum(["default", "research"]).optional(),
 })
 
 // --- /api/tasks/:id/respond -------------------------------------------------

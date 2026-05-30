@@ -1,6 +1,8 @@
 "use client"
 
+import { useCallback } from "react"
 import { X } from "lucide-react"
+import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { TaskStrip } from "@/components/agent/task-strip"
@@ -26,7 +28,30 @@ const CONTENT_WIDTH_CLASS = "w-[272px]"
 export function TasksSidebar() {
   const open = useStore((s) => s.tasksPanelOpen)
   const setOpen = useStore((s) => s.setTasksPanelOpen)
-  const { view, runId, isRunning, error, cancel, respond } = useTaskRunContext()
+  const appendToActiveDocumentOrCreate = useStore(
+    (s) => s.appendToActiveDocumentOrCreate
+  )
+  const activeWorkspaceId = useStore((s) => s.activeWorkspaceId)
+  const { view, runId, isRunning, error, cancel, respond, runMode } =
+    useTaskRunContext()
+
+  // Research-mode tasks produce a Markdown report — Phase 1 hands it
+  // off to the editor on demand. `appendToActiveDocumentOrCreate` will
+  // create a workspace doc if none is active, and set it active so the
+  // editor panel snaps to it. See `PLAN-deep-research.md`.
+  const handleOpenInEditor = useCallback(() => {
+    const text = view.resultText?.trim()
+    if (!text) return
+    if (!activeWorkspaceId) {
+      toast.error("Select a workspace first")
+      return
+    }
+    appendToActiveDocumentOrCreate(text)
+    toast.success("Report added to the editor")
+  }, [view.resultText, activeWorkspaceId, appendToActiveDocumentOrCreate])
+
+  const onOpenInEditor =
+    runMode === "research" ? handleOpenInEditor : undefined
 
   return (
     <aside data-state={open ? "expanded" : "collapsed"} className="h-full flex">
@@ -59,6 +84,8 @@ export function TasksSidebar() {
                 error={error}
                 onCancel={cancel}
                 onRespond={respond}
+                onOpenInEditor={onOpenInEditor}
+                openInEditorLabel="Open report in editor"
               />
             ) : (
               <p className="text-xs text-[var(--muted-foreground)]">
