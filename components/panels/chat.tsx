@@ -45,6 +45,7 @@ import { runExtraction } from "@/client/extract"
 import { persistFile } from "@/client/files/persist"
 
 import { useChatSend } from "@/client/hooks/use-chat-send"
+import { useChatDropzone } from "@/client/hooks/use-chat-dropzone"
 import { useSmartPaste } from "@/client/hooks/use-smart-paste"
 import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/shared/upload-config"
 import type { Agent, Prompt } from "@/shared/types"
@@ -114,9 +115,9 @@ export function ChatPanel() {
   // ContextPicker open state is lifted here so the inline preview's
   // overflow chip can trigger the popover via the same handle.
   const [contextPickerOpen, setContextPickerOpen] = useState(false)
-  // Whether a file is currently being dragged over the input card.
-  // Drives the drop-zone highlight; cleared on drop or dragleave.
-  const [inputDragActive, setInputDragActive] = useState(false)
+  // File drop overlay for the chat input card — state + drag handlers
+  // owned by `useChatDropzone`. The ingestion callback is
+  // `handleFileSelected` (the same one the `+`-button picker uses).
   const [mutedSkillsForNext, setMutedSkillsForNext] = useState<Set<SkillId>>(
     () => new Set()
   )
@@ -423,6 +424,10 @@ export function ChatPanel() {
       setFileStorage,
     ]
   )
+
+  // File-drop overlay — bound to the same ingestion callback as the
+  // `+`-button picker, so drop and pick share one path.
+  const dropzone = useChatDropzone({ onFiles: handleFileSelected })
 
   const handleSendMessage = () => {
     if (!inputValue.trim() || isStreaming) return
@@ -924,27 +929,9 @@ export function ChatPanel() {
               // Drop-zone highlight while a file is being dragged over.
               // The `+` button used to be the file-attach affordance;
               // drag-and-drop replaces that role.
-              inputDragActive && "border-[var(--primary)] bg-[var(--primary)]/5"
+              dropzone.active && "border-[var(--primary)] bg-[var(--primary)]/5"
             )}
-            onDragOver={(e) => {
-              if (!e.dataTransfer?.types.includes("Files")) return
-              e.preventDefault()
-              e.dataTransfer.dropEffect = "copy"
-              if (!inputDragActive) setInputDragActive(true)
-            }}
-            onDragLeave={(e) => {
-              // `dragleave` fires for every child crossing; only clear
-              // when we leave the wrapper itself.
-              if (e.currentTarget.contains(e.relatedTarget as Node | null))
-                return
-              setInputDragActive(false)
-            }}
-            onDrop={(e) => {
-              if (!e.dataTransfer?.files?.length) return
-              e.preventDefault()
-              setInputDragActive(false)
-              handleFileSelected(e.dataTransfer.files)
-            }}
+            {...dropzone.bindings}
           >
             {slashOpen && (
               <SlashAutocomplete
