@@ -46,7 +46,6 @@ import {
   type AttachmentRef,
 } from '@/client/store/cascade'
 import { uuid } from '@/shared/uuid'
-import { placeRelatedNode } from '@/shared/canvas/placement'
 
 // Short, URL-safe id for prompts. Re-uses the existing uuid helper so we
 // don't add a nanoid dep; the slice doesn't need RFC4122 cryptographic
@@ -70,6 +69,19 @@ import {
   useWorkspacePrompts,
   type PromptsSlice,
 } from "./store/slices/prompts"
+import {
+  createNotesSlice,
+  useConversationNotes,
+  useMessageBookmark,
+  useWorkspaceNotes,
+  type NotesSlice,
+} from "./store/slices/notes"
+import {
+  createArtifactsSlice,
+  useConversationArtifacts,
+  useWorkspaceArtifacts,
+  type ArtifactsSlice,
+} from "./store/slices/artifacts"
 
 export type {
   UploadedFile,
@@ -189,7 +201,11 @@ export type PendingSelectionAction =
     }
   | { type: 'quote'; text: string }
 
-export interface AppState extends ChatSlice, PromptsSlice {
+export interface AppState
+  extends ChatSlice,
+    PromptsSlice,
+    NotesSlice,
+    ArtifactsSlice {
   // Theme
   theme: Theme
 
@@ -290,13 +306,12 @@ export interface AppState extends ChatSlice, PromptsSlice {
   urlBookmarks: UrlBookmark[]
   conversationUrlBookmarks: ConversationUrlBookmark[]
 
-  // Notes (free-form notes & message bookmarks, scoped to a conversation)
-  notes: Note[]
+  // Notes — see NotesSlice in store/slices/notes.ts (notes[] +
+  // create/update/delete/toggleMessageBookmark).
 
-  // Artifacts (assistant-generated content captured by the user)
-  artifacts: Artifact[]
-  /** Bumped to force the editor to reload its content (e.g. on "Send to editor"). */
-  editorReloadToken: number
+  // Artifacts — see ArtifactsSlice in store/slices/artifacts.ts
+  // (artifacts[] + editorReloadToken + create/delete/togglePin/
+  // updateTitle/requestEditorReload).
 
   // Prompts — see PromptsSlice in store/slices/prompts.ts
   // (prompts[] + create/update/delete/restore).
@@ -529,28 +544,6 @@ export interface AppState extends ChatSlice, PromptsSlice {
    *  conversation (mirrors the file + MCP-resource selection). */
   toggleConversationUrlBookmarkSelection: (bookmarkId: string) => void
 
-  // Notes actions
-  createNote: (input: { conversationId: string | null; messageId?: string | null; body?: string }) => Note
-  updateNoteBody: (noteId: string, body: string) => void
-  deleteNote: (noteId: string) => void
-  /** Returns the resulting bookmark note if created, or null if removed. */
-  toggleMessageBookmark: (conversationId: string, messageId: string) => Note | null
-
-  // Artifacts actions
-  createArtifact: (input: {
-    conversationId: string
-    messageId?: string | null
-    kind: ArtifactKind
-    language?: string | null
-    title?: string
-    content: string
-    storagePath?: string | null
-  }) => Artifact
-  deleteArtifact: (artifactId: string) => void
-  togglePinArtifact: (artifactId: string) => void
-  updateArtifactTitle: (artifactId: string, title: string) => void
-  requestEditorReload: () => void
-
   // Project task (Kanban card) actions. New cards land at the tail of
   // the To-do column. `moveProjectTask` handles drag (reorder + column
   // change) via the pure helper in `lib/shared/project-tasks.ts`.
@@ -749,6 +742,8 @@ export const useStore = create<AppState>()(
       // --- Extracted slices (PLAN-store-slice-split) -------------------
       ...createChatSlice(set, get, api),
       ...createPromptsSlice(set, get, api),
+      ...createNotesSlice(set, get, api),
+      ...createArtifactsSlice(set, get, api),
 
       // Theme
       theme: getInitialTheme(),
@@ -806,12 +801,9 @@ export const useStore = create<AppState>()(
       urlBookmarks: [],
       conversationUrlBookmarks: [],
 
-      // Notes
-      notes: [],
+      // Notes — see NotesSlice
 
-      // Artifacts
-      artifacts: [],
-      editorReloadToken: 0,
+      // Artifacts — see ArtifactsSlice
 
       // Prompts (Phase 1: local-only) — see PromptsSlice
       agents: [],
@@ -1585,132 +1577,6 @@ export const useStore = create<AppState>()(
           }
         }),
 
-      // Notes actions
-      createNote: ({ conversationId, messageId = null, body = '' }) => {
-        const conv = conversationId
-          ? get().conversations.find((c) => c.id === conversationId)
-          : undefined
-        const workspaceId = conv?.workspaceId ?? get().activeWorkspaceId
-        const now = new Date()
-        const newNote: Note = {
-          id: uuid(),
-          workspaceId,
-          conversationId,
-          messageId,
-          body,
-          createdAt: now,
-          updatedAt: now,
-        }
-        set((state) => ({ notes: [newNote, ...state.notes] }))
-        return newNote
-      },
-      updateNoteBody: (noteId: string, body: string) =>
-        set((state) => ({
-          notes: state.notes.map((n) =>
-            n.id === noteId ? { ...n, body, updatedAt: new Date() } : n
-          ),
-        })),
-      deleteNote: (noteId: string) =>
-        set((state) => ({
-          notes: state.notes.filter((n) => n.id !== noteId),
-        })),
-      toggleMessageBookmark: (conversationId: string, messageId: string) => {
-        const existing = get().notes.find(
-          (n) => n.conversationId === conversationId && n.messageId === messageId
-        )
-        if (existing) {
-          set((state) => ({
-            notes: state.notes.filter((n) => n.id !== existing.id),
-          }))
-          return null
-        }
-        const conv = get().conversations.find((c) => c.id === conversationId)
-        const workspaceId = conv?.workspaceId ?? get().activeWorkspaceId
-        const now = new Date()
-        const newNote: Note = {
-          id: uuid(),
-          workspaceId,
-          conversationId,
-          messageId,
-          body: '',
-          createdAt: now,
-          updatedAt: now,
-        }
-        set((state) => ({ notes: [newNote, ...state.notes] }))
-        return newNote
-      },
-
-      // Artifacts actions
-      createArtifact: ({ conversationId, messageId = null, kind, language = null, title, content, storagePath = null }) => {
-        const fallbackTitle =
-          title ?? content.split('\n')[0].slice(0, 60).trim() ?? 'Untitled'
-        const conv = get().conversations.find((c) => c.id === conversationId)
-        const workspaceId = conv?.workspaceId ?? get().activeWorkspaceId
-        const newArtifact: Artifact = {
-          id: uuid(),
-          workspaceId,
-          conversationId,
-          messageId,
-          kind,
-          language,
-          title: fallbackTitle || 'Untitled',
-          content,
-          storagePath,
-          pinned: false,
-          createdAt: new Date(),
-        }
-        set((state) => ({ artifacts: [newArtifact, ...state.artifacts] }))
-        // Canvas Phase 4 — auto-place. If this workspace's canvas is in
-        // use AND the source message is already a node on it, drop the
-        // new artifact beside that message with a connecting edge. Gated
-        // on the message being present so we never force a canvas on a
-        // user who isn't using one, and never add an orphan with no
-        // anchor. Artifacts are only created from chat view (never while
-        // the canvas panel is mounted), so the panel's mount-seed picks
-        // this up — no live-reconcile needed. See lib/shared/canvas/placement.
-        if (messageId) {
-          const ws = get().workspaces.find((w) => w.id === workspaceId)
-          const canvas = ws?.canvasState
-          if (
-            canvas &&
-            canvas.nodes.length > 0 &&
-            canvas.nodes.some((n) => n.id === messageId)
-          ) {
-            const nextCanvas = placeRelatedNode(
-              canvas,
-              messageId,
-              { id: newArtifact.id, kind: "artifact" },
-              { connect: true }
-            )
-            set((state) => ({
-              workspaces: state.workspaces.map((w) =>
-                w.id === workspaceId
-                  ? { ...w, canvasState: nextCanvas, updatedAt: new Date() }
-                  : w
-              ),
-            }))
-          }
-        }
-        return newArtifact
-      },
-      deleteArtifact: (artifactId: string) =>
-        set((state) => ({
-          artifacts: state.artifacts.filter((a) => a.id !== artifactId),
-        })),
-      togglePinArtifact: (artifactId: string) =>
-        set((state) => ({
-          artifacts: state.artifacts.map((a) =>
-            a.id === artifactId ? { ...a, pinned: !a.pinned } : a
-          ),
-        })),
-      updateArtifactTitle: (artifactId: string, title: string) =>
-        set((state) => ({
-          artifacts: state.artifacts.map((a) =>
-            a.id === artifactId ? { ...a, title } : a
-          ),
-        })),
-      requestEditorReload: () =>
-        set((state) => ({ editorReloadToken: state.editorReloadToken + 1 })),
 
       // Project task (Kanban card) actions
       createProjectTask: ({ workspaceId, title, status = "todo" }) => {
@@ -2703,31 +2569,7 @@ export const useConversationSelectedUrlBookmarkIds = (): string[] => {
   return conv?.selectedUrlBookmarkIds ?? []
 }
 
-export const useConversationNotes = () => {
-  const notes = useStore((state) => state.notes)
-  const activeConversationId = useStore((state) => state.activeConversationId)
-  if (!activeConversationId) return [] as Note[]
-  return notes.filter((n) => n.conversationId === activeConversationId)
-}
-
-/** Notes visible in the active workspace. Replaces the per-conversation
- *  view in the right rail's Notes tab — notes now survive conversation
- *  deletion and accumulate at the workspace level. */
-export const useWorkspaceNotes = () => {
-  const notes = useStore((state) => state.notes)
-  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
-  if (!activeWorkspaceId) return [] as Note[]
-  return notes.filter((n) => n.workspaceId === activeWorkspaceId)
-}
-
-export const useMessageBookmark = (messageId: string) => {
-  const notes = useStore((state) => state.notes)
-  const activeConversationId = useStore((state) => state.activeConversationId)
-  if (!activeConversationId) return null
-  return notes.find(
-    (n) => n.conversationId === activeConversationId && n.messageId === messageId
-  ) ?? null
-}
+export { useConversationNotes, useWorkspaceNotes, useMessageBookmark }
 
 /** Documents in the active workspace, sorted by position (asc) and then
  *  by updatedAt (desc) as a tiebreaker. Switching workspaces re-runs the
@@ -2759,33 +2601,7 @@ export const useActiveDocumentContent = (): string => {
   return doc?.content ?? ''
 }
 
-export const useConversationArtifacts = () => {
-  const artifacts = useStore((state) => state.artifacts)
-  const activeConversationId = useStore((state) => state.activeConversationId)
-  if (!activeConversationId) return [] as Artifact[]
-  return artifacts
-    .filter((a) => a.conversationId === activeConversationId)
-    .sort((a, b) => {
-      if (a.pinned && !b.pinned) return -1
-      if (!a.pinned && b.pinned) return 1
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    })
-}
-
-/** Artifacts visible in the active workspace. Same shape as
- *  `useConversationArtifacts` but scoped one level up. */
-export const useWorkspaceArtifacts = () => {
-  const artifacts = useStore((state) => state.artifacts)
-  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
-  if (!activeWorkspaceId) return [] as Artifact[]
-  return artifacts
-    .filter((a) => a.workspaceId === activeWorkspaceId)
-    .sort((a, b) => {
-      if (a.pinned && !b.pinned) return -1
-      if (!a.pinned && b.pinned) return 1
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    })
-}
+export { useConversationArtifacts, useWorkspaceArtifacts }
 
 export const useConversationPinnedExplanations = () => {
   const pins = useStore((state) => state.pinnedExplanations)
