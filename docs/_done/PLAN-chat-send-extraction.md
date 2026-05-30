@@ -1,12 +1,13 @@
 # Plan: Chat send-pipeline extraction
 
-Status: **🪜 Phases 1–4 shipped** (PRs #112 and #113). Phase 4's
-plan-stated stretch (smart-paste + dropzone) landed in #113
-alongside Phase 3's panel slimming. Optional follow-up still
-pending: extracting the slash + prompt-mention autocomplete state
-machines (they share `handleKeyDown` branches; tangle risk —
-separate focused PR). Spun out of
-[`PLAN-code-cleanup.md`](PLAN-code-cleanup.md) Phase 5, which shipped
+Status: **✅ Complete** (PRs #112, #113, and the autocomplete
+follow-up). Phase 4's plan-stated stretch (smart-paste + dropzone)
+landed in #113 alongside Phase 3's panel slimming. The final
+follow-up — extracting the slash + prompt-mention autocomplete state
+machines (Phase 5 below) — shipped in a focused PR that also brought
+`chat.tsx` under the original <1,100-line target (now **1,058 LOC**,
+down from the pre-extraction **1,872**). Spun out of
+[`PLAN-code-cleanup.md`](../PLAN-code-cleanup.md) Phase 5, which shipped
 the low-risk piece (`autoArchiveCodeBlocks` → its own module) and
 explicitly deferred the full send-pipeline extraction to its own
 focused PR.
@@ -180,13 +181,11 @@ Combined into PR #113 with Phase 4's stretch extractions (smart-paste
 + dropzone). `chat.tsx` 1224 → 1194 LOC; cumulative drop from the
 pre-extraction 1872 baseline is **−678 LOC**.
 
-The original <1,100 target wasn't quite hit (the rebase that landed
-between Phase 2 and Phase 3 pulled in custom-agents code adding ~50
-LOC of agent resolution to `handleSendMessage`). Reaching it cleanly
-needs the slash / prompt-mention autocomplete state-machine
-extractions — those share `handleKeyDown` branches and have real
-tangle risk, so they're an explicit follow-up rather than rushed
-into this PR.
+The original <1,100 target wasn't hit *in this PR* (the rebase that
+landed between Phase 2 and Phase 3 pulled in custom-agents code adding
+~50 LOC of agent resolution to `handleSendMessage`). It was reached in
+the Phase 5 follow-up below, which extracted the slash / prompt-mention
+autocomplete state machines.
 
 ### Phase 4 — Smart-paste + dropzone ✅ shipped (#113)
 
@@ -199,12 +198,51 @@ into this PR.
   onto the drop target. Ingestion stays in the panel via `onFiles`
   so drop and `+`-button picker share one path.
 
-Optional follow-up that didn't make this PR (explicit deferral):
-extract the slash + prompt-mention autocomplete state machines
-(`use-slash-autocomplete`, `use-prompt-mention-autocomplete`). They
+Optional follow-up that didn't make this PR (deferred to Phase 5):
+extract the slash + prompt-mention autocomplete state machines. They
 share `handleKeyDown` arrow-key branches; extraction needs a
 cooperative pattern (event-handler composition or a tiny `cmdk`-style
-internal abstraction) and warrants its own focused PR.
+internal abstraction) and warranted its own focused PR.
+
+### Phase 5 — Autocomplete state machines ✅ shipped
+
+The deferred follow-up. The `/` slash menu and `@` prompt-mention menu
+were two parallel state machines tangled into the panel: each owned a
+`useState` index + dismiss flag + `useMemo` match set + a clamp effect,
+plus duplicated arrow/enter/escape branches inside the shared
+`handleKeyDown`, plus a `pick*` callback and the JSX wiring.
+
+Extracted into:
+
+- `lib/shared/autocomplete-nav.ts` — the **pure, tested** navigation
+  reducer (`navigateAutocomplete(key, count, activeIndex)` →
+  `move` / `pick` / `dismiss` / `passthrough`). This is the "tiny
+  `cmdk`-style abstraction" the deferral anticipated: it dissolves the
+  duplicated `handleKeyDown` branches into one source of truth that
+  both menus call. +6 unit tests.
+- `lib/client/hooks/use-slash-autocomplete.ts` — owns the slash index,
+  Escape-dismiss flag (re-armed off `inputValue` via its own effect),
+  match set, clamp effect, `pick`, and a boolean-returning `onKeyDown`.
+  Pick side-effects that touch the textarea / input (`runCommand`,
+  `setInputValue`, `focusInput`) are injected as callbacks. The
+  `useSlashCommands` runtime stays in the panel (the send path + its
+  dialogs use it).
+- `lib/client/hooks/use-prompt-mention-autocomplete.ts` — sibling for
+  `@`. Additionally owns the variable-fill modal state (`fillPrompt`,
+  `setFillPrompt`, `completeFill`); the panel's `resizeInput` callback
+  carries the shared rAF auto-grow.
+
+`handleKeyDown` collapsed to cooperative composition:
+
+```ts
+if (slash.onKeyDown(e)) return
+if (mention.onKeyDown(e)) return
+if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendMessage() }
+```
+
+Result: `chat.tsx` **1,194 → 1,058 LOC** (−136), clearing the original
+<1,100 target. No behaviour change — same triggers, same nav keys, same
+expansion + fill-modal flow. `bun run check` clean; 771 tests pass.
 
 ## Verification
 

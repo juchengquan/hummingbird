@@ -18,21 +18,10 @@ import { AgentsDialog } from "@/components/panels/agents-dialog"
 import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { SKILLS } from "@/shared/skills/registry"
 import { resolveSkill, type SkillId } from "@/shared/skills/types"
-import { isTypingSlashCommand } from "@/shared/skills/slash-parser"
-import {
-  matchSlashMenu,
-  resolveSlash,
-  type SlashMenuEntry,
-} from "@/shared/slash-resolver"
+import { resolveSlash } from "@/shared/slash-resolver"
 import { useSlashCommands } from "@/client/hooks/use-slash-commands"
-import type { CommandId } from "@/shared/commands/registry"
 import { TASK_MODES, type TaskModeId } from "@/shared/task-modes/registry"
 import { resolveAgent } from "@/shared/agents/resolve"
-import {
-  isTypingPromptMention,
-  matchPromptMentions,
-} from "@/shared/prompts/mention-parser"
-import { expandTemplate } from "@/shared/prompts/expand"
 import { PromptVariableFill } from "@/components/panels/prompt-variable-fill"
 import { SmartPasteChip } from "@/components/chat/smart-paste-chip"
 import { ChatHeader } from "@/components/panels/chat-header"
@@ -47,8 +36,10 @@ import { persistFile } from "@/client/files/persist"
 import { useChatSend } from "@/client/hooks/use-chat-send"
 import { useChatDropzone } from "@/client/hooks/use-chat-dropzone"
 import { useSmartPaste } from "@/client/hooks/use-smart-paste"
+import { useSlashAutocomplete } from "@/client/hooks/use-slash-autocomplete"
+import { usePromptMentionAutocomplete } from "@/client/hooks/use-prompt-mention-autocomplete"
 import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/shared/upload-config"
-import type { Agent, Prompt } from "@/shared/types"
+import type { Agent } from "@/shared/types"
 
 export function ChatPanel() {
   const addMessage = useStore((state) => state.addMessage)
@@ -138,19 +129,11 @@ export function ChatPanel() {
    */
   const smartPaste = useSmartPaste()
 
-  /**
-   * `/` slash-command autocomplete. `slashActiveIndex` is the
-   * highlighted row; `slashDismissed` lets Escape close the menu for
-   * the duration of the current slash token (reset once the input no
-   * longer starts with `/`). Skill triggers only — prompt templates
-   * use `@` (a separate surface, prompt-library Phase 3).
-   */
-  const [slashActiveIndex, setSlashActiveIndex] = useState(0)
-  const [slashDismissed, setSlashDismissed] = useState(false)
   // Personas live alongside skills + commands + modes in the slash
   // surface (`PLAN-custom-agents.md`). Pass the active workspace's
   // non-deleted personas in so the resolver + autocomplete can pick
-  // up `/<slug>` triggers.
+  // up `/<slug>` triggers. Used by both the slash autocomplete and the
+  // send-time `resolveSlash`.
   const allAgents = useStore((s) => s.agents)
   const workspaceAgents = useMemo(
     () =>
@@ -159,96 +142,53 @@ export function ChatPanel() {
       ),
     [allAgents, activeWorkspaceId]
   )
-  const slashMatches = useMemo<SlashMenuEntry[]>(
-    () =>
-      isTypingSlashCommand(inputValue)
-        ? matchSlashMenu(inputValue.slice(1), { agents: workspaceAgents })
-        : [],
-    [inputValue, workspaceAgents]
-  )
-  const slashOpen = !slashDismissed && slashMatches.length > 0
-  // Keep the highlighted row in range as the match set shrinks while
-  // typing.
-  useEffect(() => {
-    setSlashActiveIndex((i) => (i >= slashMatches.length ? 0 : i))
-  }, [slashMatches.length])
 
+  // The `/` action-command runtime (`/new`, `/clear`, `/model`, …). Owns
+  // its own confirm + help + personas dialogs, rendered below. Stays in
+  // the panel because the send path and those dialogs use it too.
   const slashCommands = useSlashCommands({
     openModelPicker: () => setModelPickerOpen(true),
     isStreaming,
   })
 
-  const pickSlashEntry = useCallback(
-    (entry: SlashMenuEntry) => {
-      // Skill picks and arg-taking commands complete to `/trigger ` so
-      // the user types the body. Instant commands (argKind 'none') run
-      // immediately and clear the input.
-      const instant = entry.kind === "command" && entry.argKind === "none"
-      if (instant) {
-        slashCommands.run(entry.id as CommandId, "")
-        setInputValue("")
-      } else {
-        setInputValue(`/${entry.trigger} `)
-      }
-      setSlashActiveIndex(0)
-      textareaRef.current?.focus()
-    },
-    [slashCommands]
-  )
-
-  /**
-   * `@` prompt-mention autocomplete. Sibling of the `/` skill surface
-   * — mutually exclusive because each requires its own leading char.
-   * Picking a prompt expands its template into the input (replacing
-   * the `@slug`); prompts with `{variable}` markers route through
-   * the fill modal first. See prompt-library Phase 3 in
-   * `docs/_done/PLAN-prompt-library.md`.
-   */
   const prompts = useStore((state) => state.prompts)
-  const [mentionActiveIndex, setMentionActiveIndex] = useState(0)
-  const [mentionDismissed, setMentionDismissed] = useState(false)
-  const [mentionFillPrompt, setMentionFillPrompt] = useState<Prompt | null>(null)
-  const mentionMatches = useMemo(
-    () =>
-      isTypingPromptMention(inputValue)
-        ? matchPromptMentions(inputValue.slice(1), prompts)
-        : [],
-    [inputValue, prompts]
-  )
-  const mentionOpen = !mentionDismissed && mentionMatches.length > 0
-  useEffect(() => {
-    setMentionActiveIndex((i) => (i >= mentionMatches.length ? 0 : i))
-  }, [mentionMatches.length])
-
-  const pickPromptMention = useCallback((prompt: Prompt) => {
-    if (prompt.variables.length > 0) {
-      // Defer expansion to the fill modal; it calls back with the
-      // expanded text which we drop into the input.
-      setMentionFillPrompt(prompt)
-      return
-    }
-    // No variables — expand (a no-op substitution) straight into the
-    // input. Clearing the `@slug` token entirely.
-    setInputValue(expandTemplate(prompt.template, {}))
-    setMentionActiveIndex(0)
-    // Programmatic value changes don't trigger the Textarea's own
-    // onChange-driven auto-resize, so we run the same rAF resize that
-    // handleQuoteSelection / pendingChatInput effect use. Move the
-    // caret to the end too so the user picks up where the template
-    // ends.
-    requestAnimationFrame(() => {
-      const ta = textareaRef.current
-      if (!ta) return
-      ta.focus()
-      ta.style.height = "auto"
-      ta.style.height = `${Math.min(ta.scrollHeight, 150)}px`
-      ta.selectionStart = ta.selectionEnd = ta.value.length
-    })
-  }, [])
-
 
   const inputFileRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  /**
+   * The `/` slash-command and `@` prompt-mention autocomplete menus.
+   * Each hook owns its highlighted-row index, Escape-dismiss flag,
+   * derived match set, and keyboard navigation (shared
+   * `navigateAutocomplete` reducer). They're mutually exclusive — each
+   * needs its own leading char. The pick side-effects that touch the
+   * textarea / input stay here as injected callbacks.
+   */
+  const slash = useSlashAutocomplete({
+    inputValue,
+    agents: workspaceAgents,
+    runCommand: (id) => slashCommands.run(id, ""),
+    setInputValue,
+    focusInput: () => textareaRef.current?.focus(),
+  })
+  const mention = usePromptMentionAutocomplete({
+    inputValue,
+    prompts,
+    setInputValue,
+    // Programmatic value changes bypass the Textarea's onChange-driven
+    // auto-grow, so run the same rAF resize the other programmatic input
+    // writes use, and move the caret to the end.
+    resizeInput: () => {
+      requestAnimationFrame(() => {
+        const ta = textareaRef.current
+        if (!ta) return
+        ta.focus()
+        ta.style.height = "auto"
+        ta.style.height = `${Math.min(ta.scrollHeight, 150)}px`
+        ta.selectionStart = ta.selectionEnd = ta.value.length
+      })
+    },
+  })
 
   const messages = useMemo(() => activeConversation?.messages || [], [activeConversation])
 
@@ -449,11 +389,6 @@ export function ChatPanel() {
     if (slash?.kind === "command") {
       slashCommands.run(slash.commandId, slash.arg)
       setInputValue("")
-      // React Compiler's `react-hooks/immutability` newly flags this
-      // vanilla `ref.current.style` reset after Phase 2 shrank the
-      // component — the pattern is unchanged from dev. Disabling for
-      // this single DOM reset that React's own docs endorse.
-      // eslint-disable-next-line react-hooks/immutability
       if (textareaRef.current) textareaRef.current.style.height = "auto"
       return // ← no message added, no API call
     }
@@ -555,61 +490,12 @@ export function ChatPanel() {
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // While the slash menu is open, the nav keys drive it instead of
-    // the textarea / send.
-    if (slashOpen) {
-      if (e.key === "ArrowDown") {
-        e.preventDefault()
-        setSlashActiveIndex((i) => (i + 1) % slashMatches.length)
-        return
-      }
-      if (e.key === "ArrowUp") {
-        e.preventDefault()
-        setSlashActiveIndex(
-          (i) => (i - 1 + slashMatches.length) % slashMatches.length
-        )
-        return
-      }
-      if (e.key === "Enter" || e.key === "Tab") {
-        e.preventDefault()
-        const entry = slashMatches[slashActiveIndex]
-        if (entry) pickSlashEntry(entry)
-        return
-      }
-      if (e.key === "Escape") {
-        e.preventDefault()
-        setSlashDismissed(true)
-        return
-      }
-    }
-    // Same nav-key capture for the `@` mention menu. Mutually exclusive
-    // with the slash menu (each needs its own leading char), so the
-    // two blocks never both fire.
-    if (mentionOpen) {
-      if (e.key === "ArrowDown") {
-        e.preventDefault()
-        setMentionActiveIndex((i) => (i + 1) % mentionMatches.length)
-        return
-      }
-      if (e.key === "ArrowUp") {
-        e.preventDefault()
-        setMentionActiveIndex(
-          (i) => (i - 1 + mentionMatches.length) % mentionMatches.length
-        )
-        return
-      }
-      if (e.key === "Enter" || e.key === "Tab") {
-        e.preventDefault()
-        const prompt = mentionMatches[mentionActiveIndex]
-        if (prompt) pickPromptMention(prompt)
-        return
-      }
-      if (e.key === "Escape") {
-        e.preventDefault()
-        setMentionDismissed(true)
-        return
-      }
-    }
+    // The autocomplete menus get first crack at the nav keys; each
+    // returns true once it consumes the key so it drives its highlight /
+    // pick / dismiss instead of the textarea or send. They're mutually
+    // exclusive (each needs its own leading char), so at most one fires.
+    if (slash.onKeyDown(e)) return
+    if (mention.onKeyDown(e)) return
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       handleSendMessage()
@@ -719,17 +605,10 @@ export function ChatPanel() {
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const next = e.target.value
     setInputValue(next)
-    // Re-arm the slash menu once the input no longer starts with `/`
-    // (so a prior Escape doesn't keep it closed forever).
-    if (!next.startsWith("/") && slashDismissed) setSlashDismissed(false)
-    // Same re-arm for the `@` mention menu.
-    if (!next.startsWith("@") && mentionDismissed) setMentionDismissed(false)
-    // React Compiler's `react-hooks/immutability` newly flags this
-    // vanilla auto-resize after Phase 2 shrank the component; the
-    // pattern is unchanged from dev. Disabling for this textarea
-    // auto-grow that React's own docs endorse.
+    // The slash / mention menus re-arm their own Escape-dismiss flags
+    // off `inputValue` (see each hook's effect), so there's nothing to
+    // do here for them.
     if (textareaRef.current) {
-      // eslint-disable-next-line react-hooks/immutability
       textareaRef.current.style.height = "auto"
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 150)}px`
     }
@@ -933,39 +812,39 @@ export function ChatPanel() {
             )}
             {...dropzone.bindings}
           >
-            {slashOpen && (
+            {slash.open && (
               <SlashAutocomplete
                 triggerChar="/"
-                entries={slashMatches.map((m) => ({
+                entries={slash.matches.map((m) => ({
                   id: `${m.kind}:${m.id}`,
                   label: m.trigger,
                   hint: m.hint,
                   icon: m.icon,
                   groupLabel: m.group,
                 }))}
-                activeIndex={slashActiveIndex}
-                onHoverIndex={setSlashActiveIndex}
+                activeIndex={slash.activeIndex}
+                onHoverIndex={slash.setActiveIndex}
                 onPick={(entry) => {
-                  const match = slashMatches.find(
+                  const match = slash.matches.find(
                     (m) => `${m.kind}:${m.id}` === entry.id
                   )
-                  if (match) pickSlashEntry(match)
+                  if (match) slash.pick(match)
                 }}
               />
             )}
-            {mentionOpen && (
+            {mention.open && (
               <SlashAutocomplete
                 triggerChar="@"
-                entries={mentionMatches.map((m) => ({
+                entries={mention.matches.map((m) => ({
                   id: m.id,
                   label: m.slug,
                   hint: m.name,
                 }))}
-                activeIndex={mentionActiveIndex}
-                onHoverIndex={setMentionActiveIndex}
+                activeIndex={mention.activeIndex}
+                onHoverIndex={mention.setActiveIndex}
                 onPick={(entry) => {
-                  const prompt = mentionMatches.find((m) => m.id === entry.id)
-                  if (prompt) pickPromptMention(prompt)
+                  const prompt = mention.matches.find((m) => m.id === entry.id)
+                  if (prompt) mention.pick(prompt)
                 }}
               />
             )}
@@ -1098,27 +977,12 @@ export function ChatPanel() {
           `{variable}` markers. On insert it drops the expanded
           template into the chat input. */}
       <PromptVariableFill
-        open={mentionFillPrompt !== null}
+        open={mention.fillPrompt !== null}
         onOpenChange={(open) => {
-          if (!open) setMentionFillPrompt(null)
+          if (!open) mention.setFillPrompt(null)
         }}
-        prompt={mentionFillPrompt}
-        onInsert={(expanded) => {
-          setInputValue(expanded)
-          setMentionFillPrompt(null)
-          setMentionActiveIndex(0)
-          // Same rAF resize as `pickPromptMention` — programmatic
-          // value changes bypass the textarea's onChange-driven
-          // auto-grow.
-          requestAnimationFrame(() => {
-            const ta = textareaRef.current
-            if (!ta) return
-            ta.focus()
-            ta.style.height = "auto"
-            ta.style.height = `${Math.min(ta.scrollHeight, 150)}px`
-            ta.selectionStart = ta.selectionEnd = ta.value.length
-          })
-        }}
+        prompt={mention.fillPrompt}
+        onInsert={mention.completeFill}
       />
 
       {/* `/clear` destructive confirm + `/help` cheat-sheet — owned by

@@ -23,7 +23,7 @@ stack is now done. PLAN-agent-api precondition met; now a live
 go/no-go. Project mode + workspace canvas → _done/ via #81–#94 +
 #83/#90. Code-cleanup Phases 1–6 via #96 + #102; tests 559 → 743
 across all of today's work. Active plans now: store-slice-split,
-chat-send-extraction, cross-conversation-memory, local-rag,
+cross-conversation-memory, local-rag,
 replace-supabase, agent-api, backend-extraction, typed-prompt-vars.)
 
 > **Plan archive.** Fully-shipped `PLAN-*.md` files live in
@@ -147,7 +147,7 @@ now ships — its plans live in [`_done/`](_done/).
 | 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 3 done, 1 moot, 4 open | Done: generatedImages sync (#45), recap-of-recaps (#63), roadmap sweep. Moot: local-mode MCP creds for tasks (rejected up front by #85). Open: accurate tokens, signed-URL re-sign, per-tool server-side approval flags, task-route integration tests |
 | 🪜 [Code cleanup](PLAN-code-cleanup.md) | Phases 1–6 shipped (#96, #102) | 6 phases of housecleaning after a long feature push. Phase 1 cleared lint baseline + 4 dead exports; Phases 2–6 added per-entity sync diff tests, factored `reconcile.ts`, extracted store helpers + the `chat.tsx` auto-archive heuristic, and removed a residual dead export. Full per-entity store-slice split + full `chat.tsx` send-pipeline extraction spun out to their own plans below. No functional changes |
 | 📐 [Store slice split](PLAN-store-slice-split.md) | planning | Cleanup Phase 4 follow-up — split `use-store.ts` (3,274 LOC, ~180 mutators) into per-entity slice modules composed into one `useStore`. Persisted shape + migration frozen; no behaviour change. Higher-risk, own PR |
-| 🪜 [Chat send-pipeline extraction](PLAN-chat-send-extraction.md) | Phases 1–4 shipped (#112, #113) | Cleanup Phase 5 follow-up. Phases 1–2 (#112): pure attachment + message builders + `useChatSend` hook (abort map, streaming flags, live tool-call buffer, mock fallback, 620-LOC pipeline). Phases 3–4 (#113): `useSmartPaste` + `useChatDropzone` hooks. `chat.tsx` 1872 → 1194 (−678 cumulative). Optional slash + mention autocomplete extraction left as a scoped follow-up (shared `handleKeyDown` tangle risk) |
+| ✅ [Chat send-pipeline extraction](_done/PLAN-chat-send-extraction.md) | Complete (#112, #113, + autocomplete follow-up) | Cleanup Phase 5 follow-up. Phases 1–2 (#112): pure attachment + message builders + `useChatSend` hook (abort map, streaming flags, live tool-call buffer, mock fallback, 620-LOC pipeline). Phases 3–4 (#113): `useSmartPaste` + `useChatDropzone` hooks. Phase 5: slash + mention autocomplete state machines → `useSlashAutocomplete` + `usePromptMentionAutocomplete` over a shared pure `navigateAutocomplete` reducer (dissolving the `handleKeyDown` tangle). `chat.tsx` 1872 → 1058 (−814 cumulative), clearing the <1,100 target |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
 | 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~7.5 days total |
