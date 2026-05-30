@@ -28,6 +28,7 @@ import { loadActiveTask } from "@/client/agent/active-task"
 import { ensureTaskNotificationPermission } from "@/client/agent/notify"
 import { useStore } from "@/client/hooks/use-store"
 import { useTaskRun } from "@/client/hooks/use-task-run"
+import { formatResearchCitations } from "@/shared/agent/citation-formatter"
 import { isTerminalStatus, type RunStatus } from "@/shared/agent/events"
 import type { TaskRunView } from "@/shared/agent/project"
 import { deriveResearchReportTitle } from "@/shared/agent/research-report"
@@ -116,8 +117,18 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
     if (prev === "done" || status !== "done") return
     const convId = runConvRef.current
     if (!convId) return
-    const text = (run.view.resultText ?? run.view.text).trim()
-    if (!text) return
+    const rawText = (run.view.resultText ?? run.view.text).trim()
+    if (!rawText) return
+    // Research-mode reports go through the citation formatter
+    // (`PLAN-deep-research.md` §Phase 4): inline `[N]` markers get
+    // remapped to canonical first-appearance order and the `## Sources`
+    // block is deduped. Pass-through (returns input unchanged) for any
+    // markdown without a `## Sources` block, so the same call is safe
+    // for default-mode results too.
+    const text =
+      runModeRef.current === "research"
+        ? formatResearchCitations(rawText)
+        : rawText
     const msg = addMessage({ role: "assistant", content: text }, convId)
 
     if (runModeRef.current !== "research") return
