@@ -35,7 +35,6 @@ import {
 import { expandTemplate } from "@/shared/prompts/expand"
 import { PromptVariableFill } from "@/components/panels/prompt-variable-fill"
 import { SmartPasteChip } from "@/components/chat/smart-paste-chip"
-import { detectPasteKind, type PasteDetection } from "@/shared/smart-paste/detect"
 import { ChatHeader } from "@/components/panels/chat-header"
 import { ChatMessage } from "@/components/panels/chat-message"
 import { EmptyChatWelcome } from "@/components/panels/empty-chat-welcome"
@@ -46,6 +45,8 @@ import { runExtraction } from "@/client/extract"
 import { persistFile } from "@/client/files/persist"
 
 import { useChatSend } from "@/client/hooks/use-chat-send"
+import { useChatDropzone } from "@/client/hooks/use-chat-dropzone"
+import { useSmartPaste } from "@/client/hooks/use-smart-paste"
 import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/shared/upload-config"
 import type { Agent, Prompt } from "@/shared/types"
 
@@ -114,9 +115,9 @@ export function ChatPanel() {
   // ContextPicker open state is lifted here so the inline preview's
   // overflow chip can trigger the popover via the same handle.
   const [contextPickerOpen, setContextPickerOpen] = useState(false)
-  // Whether a file is currently being dragged over the input card.
-  // Drives the drop-zone highlight; cleared on drop or dragleave.
-  const [inputDragActive, setInputDragActive] = useState(false)
+  // File drop overlay for the chat input card — state + drag handlers
+  // owned by `useChatDropzone`. The ingestion callback is
+  // `handleFileSelected` (the same one the `+`-button picker uses).
   const [mutedSkillsForNext, setMutedSkillsForNext] = useState<Set<SkillId>>(
     () => new Set()
   )
@@ -130,11 +131,12 @@ export function ChatPanel() {
   }, [])
 
   /**
-   * Smart-paste chip detection. Lives in component state because it's
-   * a per-input ephemeral hint — never persists, clears on send or when
-   * the input edits away from the detected snippet.
+   * Smart-paste chip — paste-detection state + the paste event handler
+   * + the auto-dismiss-on-input rule live in `useSmartPaste`; this
+   * panel keeps the apply action (it touches the textarea ref and
+   * `setInputValue`, which are panel concerns).
    */
-  const [pasteDetection, setPasteDetection] = useState<PasteDetection | null>(null)
+  const smartPaste = useSmartPaste()
 
   /**
    * `/` slash-command autocomplete. `slashActiveIndex` is the
@@ -423,6 +425,10 @@ export function ChatPanel() {
     ]
   )
 
+  // File-drop overlay — bound to the same ingestion callback as the
+  // `+`-button picker, so drop and pick share one path.
+  const dropzone = useChatDropzone({ onFiles: handleFileSelected })
+
   const handleSendMessage = () => {
     if (!inputValue.trim() || isStreaming) return
     // v1 runs a single task at a time — block a second launch while one
@@ -514,7 +520,7 @@ export function ChatPanel() {
     // workspace/conversation cascade.
     const mutedForThisTurn = new Set(mutedSkillsForNext)
     if (mutedSkillsForNext.size > 0) setMutedSkillsForNext(new Set())
-    if (pasteDetection) setPasteDetection(null)
+    if (smartPaste.detection) smartPaste.dismiss()
     // Snapshot the remix reference and clear it — one-shot semantics.
     // The chip disappears immediately; the in-flight request still gets
     // the URL via the hook's `options.referenceImage` arg.
@@ -727,33 +733,15 @@ export function ChatPanel() {
       textareaRef.current.style.height = "auto"
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 150)}px`
     }
-    // Auto-dismiss the smart-paste chip if the user has edited the input
-    // enough that the originally-pasted snippet is no longer present.
-    if (pasteDetection && !next.includes(pasteDetection.snippet.slice(0, 80))) {
-      setPasteDetection(null)
-    }
-  }
-
-  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const pasted = e.clipboardData.getData("text")
-    if (!pasted) return
-    // Only show the chip when the paste *is* the input (or close to it).
-    // If the user is pasting into an existing draft, the chip's "replace
-    // input" semantics would be surprising — bail in that case.
-    const ta = e.currentTarget
-    const existing = ta.value.trim()
-    if (existing.length > 0 && !pasted.includes(existing) && !existing.includes(pasted.slice(0, 40))) {
-      return
-    }
-    const detection = detectPasteKind(pasted)
-    if (detection) {
-      setPasteDetection(detection)
-    }
+    // Auto-dismiss the smart-paste chip if the user has edited the
+    // input enough that the originally-pasted snippet is no longer
+    // present. (Owned by `useSmartPaste`.)
+    smartPaste.syncFromInput(next)
   }
 
   const applyPasteAction = (prompt: string) => {
     setInputValue(prompt)
-    setPasteDetection(null)
+    smartPaste.dismiss()
     if (textareaRef.current) {
       // Refocus and resize after the state has flushed.
       requestAnimationFrame(() => {
@@ -941,27 +929,9 @@ export function ChatPanel() {
               // Drop-zone highlight while a file is being dragged over.
               // The `+` button used to be the file-attach affordance;
               // drag-and-drop replaces that role.
-              inputDragActive && "border-[var(--primary)] bg-[var(--primary)]/5"
+              dropzone.active && "border-[var(--primary)] bg-[var(--primary)]/5"
             )}
-            onDragOver={(e) => {
-              if (!e.dataTransfer?.types.includes("Files")) return
-              e.preventDefault()
-              e.dataTransfer.dropEffect = "copy"
-              if (!inputDragActive) setInputDragActive(true)
-            }}
-            onDragLeave={(e) => {
-              // `dragleave` fires for every child crossing; only clear
-              // when we leave the wrapper itself.
-              if (e.currentTarget.contains(e.relatedTarget as Node | null))
-                return
-              setInputDragActive(false)
-            }}
-            onDrop={(e) => {
-              if (!e.dataTransfer?.files?.length) return
-              e.preventDefault()
-              setInputDragActive(false)
-              handleFileSelected(e.dataTransfer.files)
-            }}
+            {...dropzone.bindings}
           >
             {slashOpen && (
               <SlashAutocomplete
@@ -1008,12 +978,12 @@ export function ChatPanel() {
                 />
               </div>
             )}
-            {pasteDetection && (
+            {smartPaste.detection && (
               <div className="px-1 pb-1">
                 <SmartPasteChip
-                  detection={pasteDetection}
+                  detection={smartPaste.detection}
                   onApply={applyPasteAction}
-                  onDismiss={() => setPasteDetection(null)}
+                  onDismiss={smartPaste.dismiss}
                 />
               </div>
             )}
@@ -1030,7 +1000,7 @@ export function ChatPanel() {
               value={inputValue}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
+              onPaste={smartPaste.onPaste}
               placeholder="Ask me anything!"
               rows={1}
               className="min-h-[44px] max-h-[160px] m-2 transition-all focus:outline-none focus:ring-2 focus:ring-primary/30"

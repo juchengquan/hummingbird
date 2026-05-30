@@ -1,9 +1,11 @@
 # Plan: Chat send-pipeline extraction
 
-Status: **🪜 Phases 1–2 shipped** (PR #112). Phase 3 ("slim the
-panel" beyond −693 LOC) and Phase 4 (optional smart-paste +
-dropzone extraction) are scoped follow-ups; each can be picked up
-separately. Spun out of
+Status: **🪜 Phases 1–4 shipped** (PRs #112 and #113). Phase 4's
+plan-stated stretch (smart-paste + dropzone) landed in #113
+alongside Phase 3's panel slimming. Optional follow-up still
+pending: extracting the slash + prompt-mention autocomplete state
+machines (they share `handleKeyDown` branches; tangle risk —
+separate focused PR). Spun out of
 [`PLAN-code-cleanup.md`](PLAN-code-cleanup.md) Phase 5, which shipped
 the low-risk piece (`autoArchiveCodeBlocks` → its own module) and
 explicitly deferred the full send-pipeline extraction to its own
@@ -172,21 +174,37 @@ One PR, staged internally so each step is green before the next:
 - Preserve: per-conv abort map, `getState()` fresh reads, the
   `callChatAPIRef` latest-version behaviour (now internal to the hook).
 
-### Phase 3 — Slim the panel · pending follow-up
+### Phase 3 — Slim the panel ✅ shipped (#113)
 
-`chat.tsx` landed at 1,179 LOC after Phase 2 (target was <1,100).
-The remaining ~80 LOC is mostly render-side input handling — slash
-menu, prompt mentions, smart-paste chip, drag-and-drop. Further
-trimming overlaps with Phase 4's optional extractions and is a
-separate focused PR.
-- `chat.tsx` keeps only render + local input state + the handlers that
-  call `send`/`stop` (edit, regenerate, retry, fork, suggestion,
-  model-pick, fallback).
-- Target under ~1,100 lines.
+Combined into PR #113 with Phase 4's stretch extractions (smart-paste
++ dropzone). `chat.tsx` 1224 → 1194 LOC; cumulative drop from the
+pre-extraction 1872 baseline is **−678 LOC**.
 
-### Phase 4 — Optional stretch (only if clean) · pending follow-up
-- Extract smart-paste detection (`use-smart-paste`) and drag-and-drop
-  file ingestion (`use-chat-dropzone`). Drop from scope if they tangle.
+The original <1,100 target wasn't quite hit (the rebase that landed
+between Phase 2 and Phase 3 pulled in custom-agents code adding ~50
+LOC of agent resolution to `handleSendMessage`). Reaching it cleanly
+needs the slash / prompt-mention autocomplete state-machine
+extractions — those share `handleKeyDown` branches and have real
+tangle risk, so they're an explicit follow-up rather than rushed
+into this PR.
+
+### Phase 4 — Smart-paste + dropzone ✅ shipped (#113)
+
+- `lib/client/hooks/use-smart-paste.ts` — chip detection state, paste
+  event handler, the 80-char-fingerprint auto-dismiss rule, explicit
+  `dismiss()` for send. Panel keeps `applyPasteAction` since it
+  touches the textarea ref + `setInputValue`. +4 tests.
+- `lib/client/hooks/use-chat-dropzone.ts` — overlay highlight state +
+  the three drag handlers as a `bindings` object the panel spreads
+  onto the drop target. Ingestion stays in the panel via `onFiles`
+  so drop and `+`-button picker share one path.
+
+Optional follow-up that didn't make this PR (explicit deferral):
+extract the slash + prompt-mention autocomplete state machines
+(`use-slash-autocomplete`, `use-prompt-mention-autocomplete`). They
+share `handleKeyDown` arrow-key branches; extraction needs a
+cooperative pattern (event-handler composition or a tiny `cmdk`-style
+internal abstraction) and warrants its own focused PR.
 
 ## Verification
 
