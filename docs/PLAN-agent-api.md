@@ -546,16 +546,153 @@ and Phase 1, not committed to up front. Concrete weighings for context:
 **Deliberately deferred** (decide between Phase 0 and Phase 1, not
 up front):
 
-- **Deploy target / host.** The plan is host-agnostic. Could be
-  self-hosted (Hetzner, home server, k8s) or a managed PaaS (Fly.io,
-  Railway, Render, Modal, etc.). What the plan needs from the host:
-  HTTP, Supabase egress, long-running processes (no per-request
-  cap), and an SSE-friendly proxy in front (no buffering).
 - **Same-origin vs subdomain.** Same-origin (a proxy / rewrite that
   keeps the browser hitting `app.example.com/api/*`) avoids CORS and
   cookie-domain pain. Subdomain (`api.example.com`) is fine if a
   reverse proxy isn't an option. The choice is host-specific and
-  doesn't change the code.
+  doesn't change the code. Falls out of the host decision below.
+
+---
+
+## Host decision (decided between Phase 0 and Phase 1)
+
+Phase 0 is host-agnostic by design — the Dockerfile runs anywhere.
+Phase 1 is the moment the service starts polling `task_jobs` in
+production, so it needs a real home. This section is the
+decision record.
+
+### What the host has to provide
+
+| Requirement | Why |
+|---|---|
+| Long-running container (no per-request cap) | The whole reason to split — we're escaping Vercel's 60s/300s cap. |
+| Stable single instance | Phase 1-4 traffic is one polling worker plus per-user task streams. The `task_jobs` queue handles concurrency; horizontal scaling is Phase 5+. |
+| Outbound HTTPS to Supabase | Read `messages`, write `task_events`, decrypt MCP creds. |
+| Inbound HTTPS, SSE-friendly | The chat panel will eventually stream from the service. SSE requires `proxy_buffering off` (or equivalent). |
+| 256-512 MB RAM | Python 3.12 + FastAPI + AI SDK clients fit comfortably. Phase 2-3 may push to 512 MB. |
+| Reasonably close to Supabase region | Every read/write hop matters during agent loops. |
+| Predictable ops surface | This is a side project, not a SaaS — fewer moving parts is the win. |
+
+### Options considered
+
+**Serverless (Lambda, Cloud Run scale-to-zero, Vercel functions):**
+**Rejected.** Cold starts on the agent path defeat the purpose;
+scale-to-zero means the polling worker stops. Could configure
+min-instance=1, but at that point you're paying serverless prices
+for a persistent VM.
+
+**Modal:** Rejected. Pay-per-use is excellent for batch ML, awkward
+for a persistent web service that wants to be always-warm.
+
+**Heroku:** Functional but expensive and stagnant vs. modern
+alternatives.
+
+**The real shortlist:**
+
+| | Self-host: home server / NAS | Self-host: Hetzner CX11 | PaaS: Fly.io | PaaS: Railway |
+|---|---|---|---|---|
+| **Marginal cost** | $0 (electricity already paid) | ~€4.5/mo (~$5) | $0 free tier → ~$5/mo at modest traffic | $5/mo Hobby |
+| **Ops surface** | High — you're on-call for power, internet, OS updates | Medium — VM updates, firewall, certs | Very low — `fly deploy` ships it | Very low — `git push` ships it |
+| **Latency to Supabase** | Depends on home connection + Supabase region | Excellent in EU; good worldwide | Anycast — good everywhere | Good (US-based) |
+| **SSE** | Native (you control the proxy) | Native (you control the proxy) | Native, documented support | Native |
+| **Platform risk** | None (you own it) | None (commodity VM) | Moderate (Fly has rewritten pricing twice recently) | Low |
+| **Upgrade path** | Move the container off-prem when traffic warrants it | Resize CX11 → CX21 in place; migrate to dedicated if needed | Scale `fly machines` count | Bump plan |
+| **Reversibility** | Highest — it's just `docker compose up` | High — same | High | High |
+
+### Recommendation
+
+**Pick self-host on a small Hetzner Cloud VM (CX22 or smaller), with
+the home-server / NAS as a parallel option if you already have one
+with stable uptime.**
+
+Reasoning, tied to the actual situation:
+
+1. **Cost.** Hetzner CX22 is roughly €4.5/mo for 2 vCPU / 4 GB / 40 GB
+   SSD. Cheaper than every PaaS in the shortlist, comfortably
+   over-provisioned for Phase 1-4, EU-based (latency is good against
+   Supabase EU projects).
+2. **Stated preference.** You said earlier: *"more likely we can have
+   it hosted locally or other places that we can decide later."*
+   Self-host respects that lean — the deploy target stays under your
+   control, no platform-pricing risk, no PaaS lock-in to unwind later.
+3. **Ops surface is manageable.** This is one stateless container.
+   Updates via `docker pull && docker compose up -d`. No state to
+   back up. Failure means re-run the container — the durable run
+   state lives in Supabase, not on the host.
+4. **No long-term lock-in.** If self-host turns out to be painful, the
+   Dockerfile redeploys to any PaaS in the shortlist with zero code
+   change.
+
+**Home server / NAS substitutes cleanly** if (a) the box has good
+uptime, (b) the home internet connection is stable enough that
+intermittent outages won't strand running tasks for the duration of
+the outage, and (c) you're comfortable exposing it to the internet via
+a tunnel (Tailscale / Cloudflare Tunnel) or a port-forward + Caddy.
+For Phase 1 (which only polls Supabase outbound) you don't strictly
+need inbound at all — Phase 4 is when the chat panel reaches the
+service, by which time you can decide.
+
+### What "Hetzner CX22" actually looks like in practice
+
+For sizing reference — Phase 1-4 will fit comfortably in the smallest
+plan tier; this is a placeholder for the kind of VM the deploy uses,
+not a hard pick of provider.
+
+```
+1. Provision a VM (Ubuntu 24.04 LTS, the smallest tier offered).
+2. Install Docker + Docker Compose.
+3. Clone the repo (or pull a pre-built image). docker compose up agent-py.
+4. Put Caddy or Nginx in front for TLS + reverse proxy.
+   IMPORTANT: `proxy_buffering off` for the SSE routes.
+5. Tailscale or a firewall to limit inbound until Phase 4 needs it.
+6. Monit / restart-on-failure via the `restart: unless-stopped`
+   compose policy.
+```
+
+Caddy config sketch (for whenever the chat panel needs to reach the
+service in Phase 4):
+
+```caddy
+agent.example.com {
+  reverse_proxy localhost:8000 {
+    flush_interval -1     # SSE: never buffer
+    transport http {
+      keepalive_idle 75s
+    }
+  }
+}
+```
+
+### What the choice gives up
+
+- **Multi-region** out of the box — would need a PaaS or a managed
+  multi-region setup. Not relevant for Phase 1-4; revisit when there
+  are users in distinct regions.
+- **Easy A/B-of-regions** — same.
+- **One-command scale-up** — Hetzner's resize is a reboot; PaaS would
+  be a click. Acceptable for a side project.
+
+### When to revisit
+
+- **If the worker becomes user-facing latency-critical.** A PaaS with
+  edge-routed inbound (Fly.io, Cloudflare) starts to pay for itself.
+- **If you onboard non-EU users** and Supabase + self-host are both
+  EU-based — latency to the user matters more than latency to the DB.
+- **If ops becomes the bottleneck.** If a Saturday morning gets
+  swallowed by patching the host, that's the signal to flip to PaaS.
+
+Until any of those triggers fires, the self-host stays.
+
+### Same-origin vs subdomain (falls out of the host decision)
+
+With self-host: **subdomain** (`agent.example.com`) is easiest. CORS
+config is one Caddy directive; the Next.js frontend sends cookies on
+its own origin only and the Python service uses bearer tokens.
+
+If a same-origin rewrite is preferred later (no CORS at all), it
+needs Vercel rewrites in front, which means the Next.js deploy
+forwards `/api/*` to the agent service — works fine but adds an
+extra hop. Defer until there's a reason to want it.
 
 ---
 
