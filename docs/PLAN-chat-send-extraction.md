@@ -1,6 +1,9 @@
 # Plan: Chat send-pipeline extraction
 
-Status: **📐 Planned.** No code yet. Spun out of
+Status: **🪜 Phases 1–2 shipped** (PR #112). Phase 3 ("slim the
+panel" beyond −693 LOC) and Phase 4 (optional smart-paste +
+dropzone extraction) are scoped follow-ups; each can be picked up
+separately. Spun out of
 [`PLAN-code-cleanup.md`](PLAN-code-cleanup.md) Phase 5, which shipped
 the low-risk piece (`autoArchiveCodeBlocks` → its own module) and
 explicitly deferred the full send-pipeline extraction to its own
@@ -153,7 +156,7 @@ and calls the pure builders + the task handoff.
 
 One PR, staged internally so each step is green before the next:
 
-### Phase 1 — Extract the pure builders (lowest risk)
+### Phase 1 — Extract the pure builders ✅ shipped (#112)
 - `buildTransmittedMessages` — history → payload (compressed-drop,
   last-user image attach). Pure; **unit-tested**.
 - `buildAttachments` — workspace + conversation file/image/MCP
@@ -161,7 +164,7 @@ One PR, staged internally so each step is green before the next:
 - Wire `callChatAPI` to call them in place. No structural change to the
   panel yet — just delegating. Verify tests + dev smoke.
 
-### Phase 2 — Move the pipeline into `useChatSend`
+### Phase 2 — Move the pipeline into `useChatSend` ✅ shipped (#112)
 - Create the hook; move `callChatAPI`'s body + the
   `abortControllersRef` map + `handleStop` into it.
 - The hook reads its mutators via `useStore` internally; the panel
@@ -169,13 +172,19 @@ One PR, staged internally so each step is green before the next:
 - Preserve: per-conv abort map, `getState()` fresh reads, the
   `callChatAPIRef` latest-version behaviour (now internal to the hook).
 
-### Phase 3 — Slim the panel
+### Phase 3 — Slim the panel · pending follow-up
+
+`chat.tsx` landed at 1,179 LOC after Phase 2 (target was <1,100).
+The remaining ~80 LOC is mostly render-side input handling — slash
+menu, prompt mentions, smart-paste chip, drag-and-drop. Further
+trimming overlaps with Phase 4's optional extractions and is a
+separate focused PR.
 - `chat.tsx` keeps only render + local input state + the handlers that
   call `send`/`stop` (edit, regenerate, retry, fork, suggestion,
   model-pick, fallback).
 - Target under ~1,100 lines.
 
-### Phase 4 — Optional stretch (only if clean)
+### Phase 4 — Optional stretch (only if clean) · pending follow-up
 - Extract smart-paste detection (`use-smart-paste`) and drag-and-drop
   file ingestion (`use-chat-dropzone`). Drop from scope if they tangle.
 
