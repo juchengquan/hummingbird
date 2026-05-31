@@ -126,7 +126,17 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Install dependencies
+      # Root deps first — Phase 4 routes reuse `@/server/url/*` and
+      # `@/server/mcp/*`, whose transitive imports
+      # (`@modelcontextprotocol/sdk`, `mammoth`, `pdf-parse`, `xlsx`,
+      # `node-html-parser`, `server-only`) live in the root
+      # `package.json`. Without this, tsc + the test runner can't
+      # resolve them.
+      - name: Install root dependencies
+        working-directory: ${{ github.workspace }}
+        run: bun install --frozen-lockfile
+
+      - name: Install agent-ts dependencies
         run: bun install --frozen-lockfile
 
       - name: Typecheck
