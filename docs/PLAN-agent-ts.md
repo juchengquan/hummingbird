@@ -277,6 +277,47 @@ Python service consumed. The delta is exactly the "re-use
 existing TS implementations" lever — `lib/server/{agent,skills,mcp,url,image-storage}.ts`
 already exists and works.
 
+## Follow-ups (recorded during implementation)
+
+Items that came up while building Phases 0+ that diverge from or
+elaborate on the plan above. Each is small and can be discussed
+individually on the implementation PR.
+
+### A. `postgres` driver vs reusing `lib/server/agent/jobs.ts`
+
+The plan's architecture-mirror table says
+"`jobs.py`, `store.py`, … direct re-export from `lib/server/agent/`".
+That doesn't work for `jobs.ts` specifically: the existing TS jobs
+module goes through the Supabase JS client (which talks to
+PostgREST), and PostgREST can't open a real transaction. That means
+`FOR UPDATE SKIP LOCKED` loses its lock guarantee — two workers
+could claim the same row.
+
+Phase 1 ports `jobs.ts` to `postgres` (porsager/postgres) instead,
+matching `agent-py`'s asyncpg approach. ~80 LOC of glue, keeps the
+queue contract identical across stacks.
+
+The other lib/server/agent files (`store.ts`, `checkpoint.ts`,
+`schedules.ts`) have the same Supabase-REST coupling. Phase 2
+will port them similarly. Net change to the architecture table:
+`jobs.py / store.py / checkpoint.ts` → **port** rather than
+re-export.
+
+### B. `mock.module` is process-wide in Bun
+
+Bun's `mock.module(...)` mutates the global module registry —
+mocks declared in one test file leak into every other file in the
+same `bun test` run. The Phase 1 poller tests originally used
+`mock.module("../src/db", ...)` and broke the health tests by
+making `hasPool()` return true everywhere.
+
+The fix used: dependency injection. `runPollLoop(env, { deps })`
+takes a `PollerDeps` interface; production callers omit it and
+get the real DB-backed implementation. The same pattern works for
+the executor and route handlers and is what `agent-py` uses with
+its `MakeStepFn` injection point. This is now the default test
+seam for `services/agent-ts/` — no `mock.module` anywhere.
+
 ## Open questions for the green-light decision
 
 1. **Runtime: Bun or Node?** Bun matches the frontend
