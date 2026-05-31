@@ -13,6 +13,14 @@ dependencies = [
     "structlog>=24.4.0",
     "anthropic>=0.40.0",
     "httpx>=0.27.0",
+    # Phase 3e: file extraction. Each lib is dynamic-imported in the
+    # extraction module so the agent loop itself doesn't pay their
+    # startup cost.
+    "pypdf>=4.0.0",
+    "python-docx>=1.1.0",
+    "openpyxl>=3.1.0",
+    "lxml>=5.0.0",
+    "python-multipart>=0.0.9",
 ]
 
 [dependency-groups]
@@ -60,4 +68,12 @@ strict = true
 # Any rather than fail every import.
 [[tool.mypy.overrides]]
 module = ["asyncpg", "asyncpg.*"]
+ignore_missing_imports = true
+
+# pypdf + python-docx + openpyxl + lxml — extraction libs. Some ship
+# stubs in separate packages we'd rather not add; lxml's stubs are
+# notoriously incomplete. Treat as Any at the import boundary; we
+# wrap their narrow surface in our own types.
+[[tool.mypy.overrides]]
+module = ["pypdf", "pypdf.*", "docx", "docx.*", "openpyxl", "openpyxl.*", "lxml", "lxml.*"]
 ignore_missing_imports = true

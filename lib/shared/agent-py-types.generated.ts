@@ -57,6 +57,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/extract": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Extract
+         * @description Extract text from an uploaded file. Mirrors
+         *     `app/api/extract/route.ts` — accepts multipart/form-data with
+         *     a `file` field and returns a structured `ExtractionResponse`
+         *     matching `ExtractionResponseSchema` on the TS side.
+         *
+         *     Auth-protected (JWT) — Phase 4 cuts the frontend over to this
+         *     endpoint, at which point the existing Next.js route can be
+         *     deleted. Until then both producers exist and the wire schema
+         *     keeps them aligned.
+         *
+         *     File-size cap matches the Next.js side (`FILE_SIZE_LIMIT` in
+         *     `lib/shared/upload-config.ts`); FastAPI enforces multipart size
+         *     at the framework level. A read failure surfaces as 500 with
+         *     the parser's error message so the frontend can show it to the
+         *     user without trying to recover.
+         */
+        post: operations["extract_v1_extract_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/whoami": {
         parameters: {
             query?: never;
@@ -86,6 +120,38 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** Body_extract_v1_extract_post */
+        Body_extract_v1_extract_post: {
+            /**
+             * File
+             * @description The uploaded file to extract text from.
+             */
+            file: string;
+        };
+        /**
+         * ExtractionResponse
+         * @description Mirrors `ExtractionResponseSchema` in
+         *     `lib/shared/api-schemas.ts` for kind / text / truncated / language.
+         *     Keeps snake_case on `full_text` to match the rest of the Python
+         *     service's wire format (see `WhoAmIResponse.user_id`); the
+         *     generated TS types reflect that so the Phase 4 cutover doesn't
+         *     have to recase fields.
+         */
+        ExtractionResponse: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "pdf" | "docx" | "markdown" | "csv" | "json" | "text" | "image" | "html" | "code" | "spreadsheet" | "unsupported";
+            /** Text */
+            text: string;
+            /** Truncated */
+            truncated: boolean;
+            /** Full Text */
+            full_text?: string | null;
+            /** Language */
+            language?: string | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -182,6 +248,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReadinessResponse"];
+                };
+            };
+        };
+    };
+    extract_v1_extract_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_extract_v1_extract_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExtractionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
