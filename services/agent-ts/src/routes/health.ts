@@ -11,6 +11,7 @@
 
 import { Hono } from "hono"
 
+import { hasPool } from "../db"
 import { getEnv } from "../env"
 import packageInfo from "../../package.json"
 
@@ -33,8 +34,7 @@ healthRoutes.get("/readyz", (c) => {
       supabase_url_configured: Boolean(env.SUPABASE_URL),
       supabase_db_configured: Boolean(env.SUPABASE_DB_URL),
       jwt_secret_configured: Boolean(env.SUPABASE_JWT_SECRET),
-      // Phase 1 grows this with `db_pool_open` once the pool exists.
-      db_pool_open: false,
+      db_pool_open: hasPool(),
     },
   })
 })

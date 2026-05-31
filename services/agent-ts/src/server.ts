@@ -9,10 +9,16 @@
  */
 
 import { createApp } from "./app"
+import { closePool, hasPool, initPool } from "./db"
 import { getEnv } from "./env"
+import { runPollLoop } from "./poller"
 
 const env = getEnv()
 const app = createApp()
+
+// Open the DB pool before binding the port so /readyz reflects the
+// real state by the first probe.
+initPool()
 
 // eslint-disable-next-line no-console
 console.log(`[${env.SERVICE_NAME}] listening on http://localhost:${env.SERVICE_PORT}`)
@@ -22,12 +28,29 @@ const server = Bun.serve({
   fetch: app.fetch,
 })
 
-// Graceful shutdown — close the HTTP server on SIGTERM so in-flight
-// requests get a chance to finish before the container is killed.
-const shutdown = () => {
+// Background poll loop runs until SIGTERM. The promise is intentionally
+// not awaited — it terminates when the AbortController fires.
+const pollerController = new AbortController()
+if (hasPool()) {
+  // eslint-disable-next-line no-console
+  console.log(
+    `[${env.SERVICE_NAME}] poller starting interval=${env.POLL_INTERVAL_SECONDS}s dry_run=${env.WORKER_DRY_RUN}`,
+  )
+  void runPollLoop(env, { signal: pollerController.signal })
+} else {
+  // eslint-disable-next-line no-console
+  console.log(`[${env.SERVICE_NAME}] poller skipped — SUPABASE_DB_URL not set`)
+}
+
+// Graceful shutdown — stop the HTTP server, abort the poller, close
+// the pool. Order matters: stop accepting new connections first, let
+// in-flight requests finish, then tear down the worker / pool.
+const shutdown = async () => {
   // eslint-disable-next-line no-console
   console.log(`[${env.SERVICE_NAME}] shutting down`)
   server.stop()
+  pollerController.abort()
+  await closePool()
   process.exit(0)
 }
 process.on("SIGTERM", shutdown)
