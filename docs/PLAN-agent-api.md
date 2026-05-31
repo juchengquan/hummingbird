@@ -1,91 +1,73 @@
 # Plan: Agent API as a separate service
 
-Status: **🪜 Phased — Phases 0 + 1 + 2a + 2b-1 + 2b-2 + 3a + 3b + 3c-1
-+ 3c-2 + 3d-1 + 3d-2 + 3e + 3f-1 + 3f-2 + 3g + 4-1 + 4-2 + 4-3 + 4-4a
-+ 4-4b shipped, cutover + decommission deliberately deferred — both
-stacks stay live. Phase 4-4a (`POST /v1/url/fetch` with SSRF guard +
-HTML extraction, and `POST /v1/images/refresh-url` for re-signing
-expired generated-image Storage URLs) + Phase 4-4b (`POST /v1/summarize`
-covering file / conversation / compress / project-breakdown via
-Anthropic — non-Anthropic `model` ids fall back to
-`claude-3-5-haiku`; and `POST /v1/mcp/{server_id}/{action}` for
-discover / call / read, accepting `X-MCP-Credentials` for local-mode
-or falling back to cloud-mode decryption via
-`fetch_decrypted_credentials`) round out the JSON-in/JSON-out route
-ports. Phase 4-3: `/v1/chat` accepts
-`enable_tools: true` in the request body, loops Anthropic
-`messages.stream` + tool execution until the model produces a
-text-only answer (or `max_steps` is hit), and emits per-step
-`tool_call` / `tool_result` frames (custom wire) or
-`tool-input-available` / `tool-output-available` frames (AI SDK
-wire). Built-in tools come from `default_tool_registry(context=None)`
-— `webFetch` always; `webSearch` / `generateImage` opt-in on the
-relevant env vars. `searchFiles` + cloud MCP need a DB pool +
-workspace context the chat route doesn't thread today; those slot in
-when the request grows a workspace_id field. Cutover + decommission deliberately deferred —
-both stacks stay live; the user selects backend per the Phase 4-2
-toggle. Phase 3g (this slice): the Python `/v1/chat` endpoint now
-accepts `?format=ai-sdk` and emits the AI SDK v5 UI message stream
-protocol (start / start-step / text-start / text-delta / text-end /
-finish-step / finish + `[DONE]` terminator, plus the
-`x-vercel-ai-ui-message-stream: v1` response header) so a consumer
-using `@ai-sdk/react`'s `useChat()` can read Python output natively.
-Default `format=custom` keeps the existing TS-consumer-compatible
-wire shape unchanged.**
-Option C (Python service) green-lit. Phase 0 (scaffolding), Phase 1
-(read-only poller), Phase 2a (executor pattern + feature flag), Phase
-2b-1 (real Anthropic text streaming + `ANTHROPIC_BASE_URL` override),
-Phase 2b-2 (tool wiring + `webFetch`), Phase 3a (`continue` action +
-chunk-break yield), Phase 3b (suspend path + `respond` action), Phase
-3c-1 (`webSearch` via Tavily), Phase 3c-2 (`searchFiles` tool with
-RLS impersonation), Phase 3d-1 (`generateImage` tool — Minimax T2I/
-I2I), Phase 3d-2 (Supabase Storage persistence for generated images),
-Phase 3e (file extraction + POST `/v1/extract`), and **Phase 3f-1
-(MCP client wrapper + credential decryption)** all live in
-`services/agent-py/`. The MCP client mirrors `lib/server/mcp/client.ts`
-— `discover` / `call_tool` / `read_resource` over streamable-HTTP via
-the official `mcp` Python SDK. `mcp_credentials.fetch_decrypted_credentials`
-calls the `mcp_get_decrypted_credentials` SECURITY DEFINER RPC under
-the same `SET LOCAL ROLE authenticated` + `request.jwt.claims` user
-impersonation that `searchFiles` (Phase 3c-2) uses. **Phase 3f-2**
-(`mcp_tools.py` + executor integration) wires cloud-mode MCP tools
-into the registry: when the checkpoint carries `config.workspaceId`,
-`extend_registry_with_mcp` loads enabled `mcp_servers` rows under
-RLS impersonation, decrypts each cred via the SECURITY DEFINER RPC,
-and registers each cached tool as `mcp__<server>__<tool>` so the
-Anthropic step fn sees them alongside the built-in tool set. The extractor mirrors `app/api/extract/route.ts`
-— same dispatch order (plain text → PDF → DOCX → HTML → code → XLSX
-→ image → unsupported), same budgets (100 KB inline / 128 KB code /
-1 MB full-text), backed by `pypdf` + `python-docx` + `openpyxl` +
-`lxml`. The Phase 4 cutover swaps frontend uploads from the Next.js
-route to this endpoint without changing the wire shape. The HITL
-pair: the Anthropic step fn detects gated tools (named in
-`checkpoint.config.requireApprovalFor`), captures the call as
-`pending_input`, and returns without executing; the runner returns
-`AgentLoopResult(kind="suspended")`; the executor saves the
-checkpoint, emits `approval: request` + `status: paused`, and waits
-for a `respond` job. `execute_respond` loads the checkpoint, finds
-the pending tool_use by id, builds a `tool_result` from the user's
-answer, appends it as a user turn, emits `input_response`, then
-resumes the loop with seeded emitter seq/step. `webSearch` is
-config-gated: registered in `default_tool_registry()` only when
-`TAVILY_API_KEY` is set (mirrors the TS skill-cascade where a missing
-provider hides the skill). `searchFiles` is config-gated on the new
-`ToolContext` (pool + user_id); calls the `search_file_sections`
-Postgres RPC under `SET LOCAL ROLE authenticated` + `request.jwt.claims
-= {sub: <user_id>, role: 'authenticated'}` so RLS on `files` evaluates
-against the user — service-role pool can't bypass per-user visibility.
-`generateImage` is config-gated on `MINIMAX_CN_API_KEY` (same env var
-the TS side reads, so a single `.env` covers both); a narrow textual
-SSRF blocklist guards `referenceImageUrl` until the full
-DNS-resolution port lands. When `SUPABASE_URL` +
-`SUPABASE_SERVICE_ROLE_KEY` are also set, each Minimax URL is mirrored
-into `user-files/<user_id>/generated/<image_id>.<ext>` and the model
-receives a long-lived signed URL (1-year TTL) instead of the
-short-lived Minimax URL; per-image persistence failures fall back to
-the raw Minimax URL so the tool stays usable. Host decided (self-host on a small
-VM — see §Host decision). The earlier "decision-doc — Step 1 done"
-status is retained in the prior-status note below for context.
+Status: **🪜 Phased — Phases 0 through 4-4b shipped. Phases 5
+(default-on + decommission) and 6 (tidy + archive) explicitly
+deferred — both Python and TS stacks stay live; the user picks
+backend via the Phase 4-2 selector.**
+
+Companion plans:
+- [`PLAN-agent-ts.md`](./PLAN-agent-ts.md) — phased plan for a TS
+  twin of `services/agent-py/` (`services/agent-ts/`). Same
+  architecture, same selector mechanism, different runtime.
+
+## Shipped
+
+Option C (Python service) green-lit, end-to-end live in
+`services/agent-py/`:
+
+| Phase | Slice | What landed |
+|---|---|---|
+| 0 | Scaffolding | FastAPI + JWT auth + OpenAPI codegen |
+| 1 | Read-only poller | `task_jobs` claim/release loop in dry-run |
+| 2a | Executor pattern | TaskEvent IR, RunEmitter, RunStore, runner, per-user feature flag |
+| 2b-1 | Anthropic streaming | Real `messages.stream` + `ANTHROPIC_BASE_URL` override |
+| 2b-2 | Tool wiring | Tool descriptor + registry + `webFetch` |
+| 3a | `continue` action | Chunk-break yield + resume |
+| 3b | `respond` action | HITL suspend → approve / reject → resume |
+| 3c-1 | `webSearch` | Tavily backend, env-gated |
+| 3c-2 | `searchFiles` | FTS over user files under RLS impersonation |
+| 3d-1 | `generateImage` | Minimax T2I/I2I client + tool |
+| 3d-2 | Image persistence | Supabase Storage upload + signed URL |
+| 3e | File extraction | PDF/DOCX/XLSX/HTML/code/text + `POST /v1/extract` |
+| 3f-1 | MCP client | Streamable-HTTP wrapper + cloud-cred decryption |
+| 3f-2 | MCP tools | Cloud-mode MCP discovered + registered as `mcp__<server>__<tool>` |
+| 3g | AI SDK format | `?format=ai-sdk` on `/v1/chat` emits v5 UI message stream |
+| 4-1 | Python `/v1/chat` | SSE text streaming, JWT-protected |
+| 4-2 | Frontend selector | Account-menu toggle, `NEXT_PUBLIC_AGENT_PY_URL` gate |
+| 4-3 | Chat tools | `enable_tools` + tool-call/result frames in both formats |
+| 4-4a | URL + image refresh | `POST /v1/url/fetch`, `POST /v1/images/refresh-url` |
+| 4-4b | Summarize + MCP proxy | `POST /v1/summarize`, `POST /v1/mcp/{server}/{action}` |
+
+## Explicitly deferred
+
+- **Phase 5 — Default-on + decommission** (originally "Python
+  canonical for all users; TS worker + agent routes deleted").
+  Per the project's standing policy **both stacks stay live and
+  the user selects backend per-account**, so the cutover lever
+  isn't pulled. Stays in §Phase 5 below as a written option, not
+  a roadmap item.
+- **Phase 6 — Tidy + archive**. Premature while both stacks are
+  live. When (if) Phase 5 ever flips, Phase 6 follows.
+
+## Open follow-ups (smaller refinements documented in PR threads)
+
+- Frontend `useChat()` adoption (consumer is still on the custom
+  SSE shape; the Python endpoint already supports AI-SDK format
+  via Phase 3g).
+- Frontend selector for non-chat endpoints — `apiClient` only
+  dispatches `/v1/chat` to Python today; URL fetch / summarize /
+  MCP proxy / refresh-url all stay on the TS routes by default.
+- `workspaceId` field on `POST /v1/chat` → unlocks `searchFiles`
+  + cloud MCP for chat tools (today those need a `ToolContext`
+  with a workspace).
+- Per-skill config (`webSearchConfig`, `imageGenConfig`, …)
+  honoured by `/v1/chat`.
+- Provider-categorised errors (`rate_limit`, `auth`,
+  `context_window`) — currently bucketed as generic `upstream`.
+- `POST /v1/mcp/server` CRUD endpoint + `mcp_upsert_server_with_credentials`
+  write path.
+- Per-IP rate buckets + idle watchdog on `/v1/chat`.
+- Real DNS-rebinding test against actual DNS (currently mocked).
 
 > **Note on phase numbering.** The original plan called Phase 2 a
 > single 1-week slice (executor + 3 tools + provider port). It split
@@ -496,7 +478,13 @@ Python is down).
 matches TS output within tolerance. Browser tab open for an hour
 exercising all paths (text, tool calls, attachments, MCP, abort, retry).
 
-### Phase 5 — Default-on, then decommission (1 week)
+### Phase 5 — Default-on, then decommission (1 week) — ⏸ deferred
+
+> **Status: explicitly deferred.** Project policy is "keep both
+> stacks live; the user selects backend via the Phase 4-2 toggle."
+> The plan below is retained as a written option, not a roadmap
+> item. Revisit only if the selector eventually gets retired (which
+> isn't planned).
 
 **Ships:** Python is canonical for all users. TS worker + agent
 routes are deleted.
@@ -531,7 +519,12 @@ state is fully working.
 
 **Verification:** all users on Python. No TS worker logs for 1 week.
 
-### Phase 6 — Tidy + docs (1-2 days)
+### Phase 6 — Tidy + docs (1-2 days) — ⏸ deferred
+
+> **Status: explicitly deferred.** Phase 6 is the cleanup pass
+> that follows a decommission. With Phase 5 deferred indefinitely,
+> archiving this plan would be premature — the doc still
+> describes a live, in-use stack.
 
 **Ships:** the new normal documented; obsolete plans archived.
 
