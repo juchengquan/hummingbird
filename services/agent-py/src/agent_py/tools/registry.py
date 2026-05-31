@@ -112,6 +112,9 @@ def default_tool_registry(
 
     Tool inclusion is config-aware:
     - `webFetch` is unconditional — no upstream credential needed.
+    - `webSearch` registers only when `TAVILY_API_KEY` is set (mirrors
+      the TS skill-cascade behaviour where a missing provider hides
+      the skill rather than surfacing a per-call error).
     - `searchFiles` registers only when `context` is provided (needs
       pool + user_id for the per-user RLS-impersonated RPC call).
       Tests + dev code that pass `context=None` see the same registry
@@ -124,10 +127,13 @@ def default_tool_registry(
     # Lazy imports keep registry construction cheap and avoid
     # circular imports if a tool ever needs to read the registry.
     from .web_fetch import build_web_fetch_tool
+    from .web_search import build_web_search_tool, is_web_search_configured
 
     out: dict[str, ToolDescriptor] = {
         "webFetch": build_web_fetch_tool(),
     }
+    if is_web_search_configured():
+        out["webSearch"] = build_web_search_tool()
     if context is not None:
         from .search_files import build_search_files_tool
 

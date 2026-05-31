@@ -74,6 +74,13 @@ class Settings(BaseSettings):
     `MINIMAX_CN_BASE_URL` override pattern. Has no effect when
     `ANTHROPIC_API_KEY` is empty (the stub step fn doesn't reach a network)."""
 
+    # --- Web search -------------------------------------------------------
+    TAVILY_API_KEY: str = ""
+    """Tavily web-search API key — Phase 3c-1. When set the `webSearch`
+    tool registers itself in the default tool registry; otherwise the
+    tool is omitted entirely (model never sees it). Mirrors the TS
+    side's `TAVILY_API_KEY` env var so a single `.env` works for both."""
+
     # --- Image generation -------------------------------------------------
     MINIMAX_CN_API_KEY: str = ""
     """Minimax API key — shared between the chat-bypass (TS side) and the
