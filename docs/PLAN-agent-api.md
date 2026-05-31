@@ -1,9 +1,17 @@
 # Plan: Agent API as a separate service
 
 Status: **🪜 Phased — Phases 0 + 1 + 2a + 2b-1 + 2b-2 + 3a + 3b + 3c-1
-+ 3c-2 + 3d-1 + 3d-2 + 3e + 3f-1 + 3f-2 + 4-1 shipped, Phases 3g + 4-2+
-pending. Cutover + decommission deliberately deferred — both stacks
-stay live.**
++ 3c-2 + 3d-1 + 3d-2 + 3e + 3f-1 + 3f-2 + 3g + 4-1 + 4-2 shipped,
+Phases 4-3+ pending. Cutover + decommission deliberately deferred —
+both stacks stay live; the user selects backend per the Phase 4-2
+toggle. Phase 3g (this slice): the Python `/v1/chat` endpoint now
+accepts `?format=ai-sdk` and emits the AI SDK v5 UI message stream
+protocol (start / start-step / text-start / text-delta / text-end /
+finish-step / finish + `[DONE]` terminator, plus the
+`x-vercel-ai-ui-message-stream: v1` response header) so a consumer
+using `@ai-sdk/react`'s `useChat()` can read Python output natively.
+Default `format=custom` keeps the existing TS-consumer-compatible
+wire shape unchanged.**
 Option C (Python service) green-lit. Phase 0 (scaffolding), Phase 1
 (read-only poller), Phase 2a (executor pattern + feature flag), Phase
 2b-1 (real Anthropic text streaming + `ANTHROPIC_BASE_URL` override),

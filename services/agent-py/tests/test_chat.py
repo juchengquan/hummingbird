@@ -23,6 +23,7 @@ from agent_py.chat import (
     ChatConfig,
     ChatMessage,
     chat_stream,
+    chat_stream_ai_sdk,
     resolve_anthropic_client,
     sse_frame,
 )
@@ -154,6 +155,130 @@ async def test_chat_stream_passes_max_tokens_and_messages() -> None:
         {"role": "user", "content": "a"},
         {"role": "assistant", "content": "b"},
         {"role": "user", "content": "c"},
+    ]
+
+
+# --- chat_stream_ai_sdk (Phase 3g — AI SDK UI message stream) ---------
+
+
+def _parse_ai_sdk_frames(frames: list[str]) -> list[Any]:
+    """Decode a list of AI-SDK SSE frames into their JSON payloads.
+    The `[DONE]` terminator is kept as the string ``"[DONE]"`` so
+    tests can assert on its position without juggling stripping."""
+    out: list[Any] = []
+    for f in frames:
+        stripped = f.removeprefix("data: ").rstrip()
+        if stripped == "[DONE]":
+            out.append("[DONE]")
+        else:
+            out.append(json.loads(stripped))
+    return out
+
+
+@pytest.mark.asyncio
+async def test_ai_sdk_stream_emits_full_lifecycle() -> None:
+    """Happy path: start → start-step → text-start → text-delta…
+    → text-end → finish-step → finish → [DONE]. Each text-delta
+    carries the same `id` as the matching text-start."""
+    client = _FakeClient(["Hello", " world"])
+    frames = [f async for f in chat_stream_ai_sdk(client=client, config=_config())]
+    payloads = _parse_ai_sdk_frames(frames)
+    # Lifecycle envelopes + [DONE] terminator.
+    types = [p["type"] if isinstance(p, dict) else p for p in payloads]
+    assert types == [
+        "start",
+        "start-step",
+        "text-start",
+        "text-delta",
+        "text-delta",
+        "text-end",
+        "finish-step",
+        "finish",
+        "[DONE]",
+    ]
+
+    # text-start / -delta / -end all reference the same id.
+    text_id = payloads[2]["id"]
+    assert payloads[3] == {"type": "text-delta", "id": text_id, "delta": "Hello"}
+    assert payloads[4] == {"type": "text-delta", "id": text_id, "delta": " world"}
+    assert payloads[5] == {"type": "text-end", "id": text_id}
+
+
+@pytest.mark.asyncio
+async def test_ai_sdk_stream_emits_error_then_done_no_finish() -> None:
+    """Error path: emit text-end (closing the open text block) +
+    error + [DONE]. Intentionally skip `finish` — mirrors the AI SDK
+    convention and lets `useChat()` distinguish completion from
+    failure."""
+    client = _FakeClient([], raises=RuntimeError("rate limited"))
+    frames = [f async for f in chat_stream_ai_sdk(client=client, config=_config())]
+    payloads = _parse_ai_sdk_frames(frames)
+    types = [p["type"] if isinstance(p, dict) else p for p in payloads]
+    assert types == [
+        "start",
+        "start-step",
+        "text-start",
+        "text-end",
+        "error",
+        "[DONE]",
+    ]
+    error_payload = payloads[4]
+    assert error_payload["errorText"] == "rate limited"
+
+
+@pytest.mark.asyncio
+async def test_ai_sdk_stream_error_after_partial_text() -> None:
+    """If the SDK yields a delta and THEN raises, the emitted text
+    deltas survive and the text block is properly closed before
+    error is emitted."""
+    # The default `_FakeStream` raises BEFORE the loop body, which
+    # would short-circuit text-start handling — define an inline
+    # stream that yields one delta and then raises.
+
+    class _PartialStream:
+        def __init__(self) -> None:
+            self._done = False
+
+        async def __aenter__(self) -> _PartialStream:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        @property
+        def text_stream(self) -> AsyncIterator[str]:
+            return self._iter()
+
+        async def _iter(self) -> AsyncIterator[str]:
+            yield "first chunk "
+            raise RuntimeError("died mid-stream")
+
+    class _PartialMessages:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        def stream(self, **kwargs: Any) -> _PartialStream:
+            self.calls.append(kwargs)
+            return _PartialStream()
+
+    class _PartialClient:
+        def __init__(self) -> None:
+            self.messages = _PartialMessages()
+
+    client2 = _PartialClient()
+    frames = [f async for f in chat_stream_ai_sdk(client=client2, config=_config())]
+    payloads = _parse_ai_sdk_frames(frames)
+    types = [p["type"] if isinstance(p, dict) else p for p in payloads]
+    # One text-delta lands between text-start and text-end on the
+    # error path — partial output is preserved, not dropped.
+    assert types == [
+        "start",
+        "start-step",
+        "text-start",
+        "text-delta",
+        "text-end",
+        "error",
+        "[DONE]",
     ]
 
 
