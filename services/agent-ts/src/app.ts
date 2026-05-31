@@ -12,6 +12,7 @@
 
 import { Hono } from "hono"
 
+import { chatRoutes } from "./routes/chat"
 import { healthRoutes } from "./routes/health"
 import { whoamiRoutes } from "./routes/whoami"
 import type { AuthVars } from "./middleware/auth"
@@ -27,6 +28,7 @@ export function createApp(): Hono<{ Variables: AppVariables }> {
 
   // Auth-protected /v1 routes.
   app.route("/", whoamiRoutes)
+  app.route("/", chatRoutes)
 
   return app
 }
