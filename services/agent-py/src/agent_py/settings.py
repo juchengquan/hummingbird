@@ -74,6 +74,20 @@ class Settings(BaseSettings):
     `MINIMAX_CN_BASE_URL` override pattern. Has no effect when
     `ANTHROPIC_API_KEY` is empty (the stub step fn doesn't reach a network)."""
 
+    # --- Image generation -------------------------------------------------
+    MINIMAX_CN_API_KEY: str = ""
+    """Minimax API key — shared between the chat-bypass (TS side) and the
+    Python service's `generateImage` tool. Empty = the `generateImage` tool
+    is omitted from the registry; the model still sees the rest of the tool
+    set. Same env var the TS side reads, so a single `.env` covers both."""
+
+    MINIMAX_CN_BASE_URL: str = ""
+    """Optional Minimax host override. When set, the `generateImage` tool
+    derives its endpoint as `<origin>/v1/image_generation` (chat and image
+    live under different paths on the same host). Empty falls back to the
+    international endpoint `https://api.minimaxi.com/v1/image_generation`.
+    Same env var the TS side reads."""
+
     # --- Service identity -------------------------------------------------
     SERVICE_NAME: str = "agent-py"
     SERVICE_PORT: int = 8000

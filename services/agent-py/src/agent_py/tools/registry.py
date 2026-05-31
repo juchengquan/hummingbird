@@ -116,6 +116,10 @@ def default_tool_registry(
       pool + user_id for the per-user RLS-impersonated RPC call).
       Tests + dev code that pass `context=None` see the same registry
       shape they did pre-Phase-3c-2.
+    - `generateImage` registers only when `MINIMAX_CN_API_KEY` is set
+      (mirrors the TS side's `isImageGenConfigured()` gate). Absent
+      key → tool is omitted; the model is told as much by the
+      prompt fragment when it ports.
     """
     # Lazy imports keep registry construction cheap and avoid
     # circular imports if a tool ever needs to read the registry.
@@ -128,4 +132,9 @@ def default_tool_registry(
         from .search_files import build_search_files_tool
 
         out["searchFiles"] = build_search_files_tool(context)
+
+    from .image_gen import build_image_gen_tool, is_image_gen_configured
+
+    if is_image_gen_configured():
+        out["generateImage"] = build_image_gen_tool()
     return out
