@@ -1,19 +1,24 @@
 # Plan: Agent API as a separate service
 
-Status: **🪜 Phased — Phases 0 + 1 + 2a + 2b-1 + 2b-2 + 3a shipped,
-Phase 3b pending.** Option C (Python service) green-lit. Phase 0
-(scaffolding), Phase 1 (read-only poller), Phase 2a (executor pattern
-+ feature flag), Phase 2b-1 (real Anthropic text streaming +
+Status: **🪜 Phased — Phases 0 + 1 + 2a + 2b-1 + 2b-2 + 3a + 3b
+shipped, Phase 3c+ pending.** Option C (Python service) green-lit.
+Phase 0 (scaffolding), Phase 1 (read-only poller), Phase 2a (executor
+pattern + feature flag), Phase 2b-1 (real Anthropic text streaming +
 `ANTHROPIC_BASE_URL` override), Phase 2b-2 (tool wiring + `webFetch`),
-and **Phase 3a (`continue` action + chunk-break yield)** all live in
-`services/agent-py/`. The yield path extends `run_agent_loop` with a
-`should_yield: Callable[[], bool]` gate polled between steps; when it
-fires the loop returns `AgentLoopResult(kind="yielded")` without
-emitting a terminal event, and the executor saves the latest
-checkpoint + enqueues a `continue` job that picks up where the chunk
-left off. Host decided (self-host on a small VM — see §Host
-decision). The earlier "decision-doc — Step 1 done" status is
-retained in the prior-status note below for context.
+Phase 3a (`continue` action + chunk-break yield), and **Phase 3b
+(suspend path + `respond` action)** all live in `services/agent-py/`.
+The HITL pair: the Anthropic step fn detects gated tools (named in
+`checkpoint.config.requireApprovalFor`), captures the call as
+`pending_input`, and returns without executing; the runner returns
+`AgentLoopResult(kind="suspended")`; the executor saves the
+checkpoint, emits `approval: request` + `status: paused`, and waits
+for a `respond` job. `execute_respond` loads the checkpoint, finds
+the pending tool_use by id, builds a `tool_result` from the user's
+answer, appends it as a user turn, emits `input_response`, then
+resumes the loop with seeded emitter seq/step. Host decided
+(self-host on a small VM — see §Host decision). The earlier
+"decision-doc — Step 1 done" status is retained in the prior-status
+note below for context.
 
 > **Note on phase numbering.** The original plan called Phase 2 a
 > single 1-week slice (executor + 3 tools + provider port). It split

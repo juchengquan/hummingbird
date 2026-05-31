@@ -27,11 +27,13 @@ Stopping:
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import Awaitable, Callable
 
 import structlog
 
 from . import db, executor, feature_flag, jobs
+from .jobs import ClaimedJob
 from .settings import Settings
 
 logger = structlog.get_logger(__name__)
@@ -43,6 +45,43 @@ SleepFn = Callable[[float], Awaitable[None]]
 
 async def _default_sleep(seconds: float) -> None:
     await asyncio.sleep(seconds)
+
+
+def _respond_payload_from_job(job: ClaimedJob) -> executor.RespondActionPayload | None:
+    """Parse a `respond` job's payload into a typed RespondActionPayload.
+
+    The TS route writes `{requestId, approved?, selection?, value?, args?}`
+    into `task_jobs.payload`. Missing `requestId` is fatal (no way to
+    find the pending tool call); the other fields are kind-specific
+    and any subset may be set or none."""
+    payload_raw = job.payload or {}
+    request_id = payload_raw.get("requestId")
+    if not isinstance(request_id, str) or not request_id:
+        return None
+    out = executor.RespondActionPayload(
+        run_id=job.task_id,
+        user_id=job.user_id,
+        request_id=request_id,
+    )
+    approved_raw = payload_raw.get("approved")
+    selection_raw = payload_raw.get("selection")
+    value_raw = payload_raw.get("value")
+    args_raw = payload_raw.get("args")
+    # Frozen dataclass — clone with `dataclasses.replace` for each
+    # optional field that's set. Explicit per-field replace keeps
+    # mypy happy without a `**kwargs` cast.
+    if isinstance(approved_raw, bool):
+        out = dataclasses.replace(out, approved=approved_raw)
+    if isinstance(selection_raw, list):
+        out = dataclasses.replace(
+            out,
+            selection=[s for s in selection_raw if isinstance(s, str)],
+        )
+    if isinstance(value_raw, str):
+        out = dataclasses.replace(out, value=value_raw)
+    if isinstance(args_raw, dict):
+        out = dataclasses.replace(out, args=args_raw)
+    return out
 
 
 async def run_poll_loop(
@@ -142,10 +181,9 @@ async def _tick(settings: Settings) -> None:
         )
         return
 
-    # Phase 3a adds `continue` end-to-end (chunk resume after a
-    # time-budget yield). `respond` (HITL) still rides the TS worker
-    # — release for now.
-    if job.action not in ("start", "continue"):
+    # Phase 3b: `start`, `continue`, and `respond` all dispatch to
+    # the Python executor. No other actions exist today.
+    if job.action not in ("start", "continue", "respond"):
         released = await jobs.release_job_to_queue(pool, job.id)
         logger.info(
             "poller.released",
@@ -156,14 +194,33 @@ async def _tick(settings: Settings) -> None:
         )
         return
 
-    payload = executor.StartActionPayload(
-        run_id=job.task_id,
-        user_id=job.user_id,
-    )
-    if job.action == "continue":
-        outcome = await executor.execute_continue(pool, payload)
+    if job.action == "respond":
+        respond_payload = _respond_payload_from_job(job)
+        if respond_payload is None:
+            await jobs.mark_job_failed(pool, job.id, error="respond: invalid payload")
+            logger.error(
+                "poller.respond_invalid_payload",
+                job_id=job.id,
+                payload_keys=sorted(job.payload.keys()) if job.payload else [],
+            )
+            return
+        outcome = await executor.execute_respond(pool, respond_payload)
+    elif job.action == "continue":
+        outcome = await executor.execute_continue(
+            pool,
+            executor.StartActionPayload(
+                run_id=job.task_id,
+                user_id=job.user_id,
+            ),
+        )
     else:
-        outcome = await executor.execute_start(pool, payload)
+        outcome = await executor.execute_start(
+            pool,
+            executor.StartActionPayload(
+                run_id=job.task_id,
+                user_id=job.user_id,
+            ),
+        )
     if outcome.settled:
         await jobs.mark_job_done(pool, job.id)
         logger.info(

@@ -106,6 +106,47 @@ async def execute_start(
     )
 
 
+@dataclass(frozen=True)
+class RespondActionPayload:
+    """User's answer to a HITL pending input. Mirrors the TS shape
+    written by `POST /api/tasks/:id/respond` (`requestId`, optional
+    `approved` / `selection` / `value`, optional `args` edit).
+
+    One of `approved` / `selection` / `value` is set based on the
+    pending input's request kind (approval / choice / input). All
+    fields besides `request_id` are optional so a malformed job
+    payload doesn't crash the executor — `_build_tool_result_text`
+    falls back to a "no answer" message."""
+
+    run_id: str
+    user_id: str
+    request_id: str
+    approved: bool | None = None
+    selection: list[str] | None = None
+    value: str | None = None
+    args: dict[str, Any] | None = None
+
+
+async def execute_respond(
+    pool: asyncpg.Pool,
+    payload: RespondActionPayload,
+    *,
+    make_step_fn: MakeStepFn | None = None,
+) -> ExecutorOutcome:
+    """Run a `respond` action — resume a suspended run with the user's
+    answer to a HITL approval / choice / input request.
+
+    Loads the checkpoint, finds the pending tool_use block matching
+    `request_id`, builds a `tool_result` block from the answer, appends
+    it as a user turn, emits an `input_response` event so the client
+    clears its pending-input state, then runs a chunk (same yield /
+    settle / re-suspend semantics as `continue`).
+
+    Settle / cancel / yield / re-suspend semantics are identical to
+    `continue` after the result message is appended."""
+    return await _run_respond(pool, payload, make_step_fn)
+
+
 async def execute_continue(
     pool: asyncpg.Pool,
     payload: StartActionPayload,
@@ -220,6 +261,45 @@ async def _run_chunk(
             is_cancelled=is_cancelled,
             should_yield=should_yield,
         )
+
+        # Suspend path (Phase 3b): the step fn detected a gated tool
+        # call and stopped before running it. Persist the latest state
+        # (including the assistant turn with the pending tool_use),
+        # emit `approval: request` + `status: paused`, update the
+        # `tasks` row to paused. The poller marks the job done; a
+        # `respond` action arrives later and resumes the loop with the
+        # user's answer appended as a tool_result.
+        if result.kind == "suspended":
+            assert result.pending_input is not None
+            pending = result.pending_input
+            next_checkpoint = _build_checkpoint(checkpoint, live_messages, emitter)
+            await store.save_checkpoint(
+                pool,
+                run_id=payload.run_id,
+                user_id=payload.user_id,
+                checkpoint=next_checkpoint,
+            )
+            await emitter.input_request(
+                approval_id=pending.tool_call_id,
+                request_kind="approval",
+                tool=pending.tool,
+                tool_call_id=pending.tool_call_id,
+                args=pending.args,
+            )
+            await emitter.status("paused")
+            await store.update_run(
+                pool,
+                run_id=payload.run_id,
+                user_id=payload.user_id,
+                status="paused",
+            )
+            logger.info(
+                "executor.suspended",
+                run_id=payload.run_id,
+                tool=pending.tool,
+                tool_call_id=pending.tool_call_id,
+            )
+            return ExecutorOutcome(settled=True)
 
         # Yield path: persist the latest state + enqueue a continue
         # job so another chunk picks up. The task row stays `running`
@@ -392,6 +472,13 @@ def _default_make_step_fn(
     # `checkpoint.config` can narrow the visible set per run.
     tools = list(default_tool_registry().values())
 
+    # Phase 3b: read the run's gated-tool allow-list. Names match
+    # `tools[].name` (skill names + prefixed MCP tool names). When
+    # the model calls one of these the step fn captures it as a
+    # `pending_input` instead of executing — the runner suspends and
+    # the executor emits an approval request.
+    gated = _gated_tools_from(checkpoint)
+
     return make_anthropic_step_fn(
         AnthropicStepConfig(
             client=client,
@@ -399,8 +486,322 @@ def _default_make_step_fn(
             system=system,
             messages=messages,
             tools=tools,
+            gated_tool_names=gated,
         )
     )
+
+
+def _gated_tools_from(checkpoint: dict[str, Any]) -> set[str]:
+    """Pull `config.requireApprovalFor` from the checkpoint as a set
+    of tool names. Empty / missing → no gated tools (everything
+    executes inline). Matches the TS path's union of `askUser` +
+    explicit allow-list; the Python service hasn't ported `askUser`
+    yet (lands with the rest of HITL polish) so for now only the
+    explicit list applies."""
+    cfg = checkpoint.get("config")
+    if not isinstance(cfg, dict):
+        return set()
+    raw = cfg.get("requireApprovalFor")
+    if not isinstance(raw, list):
+        return set()
+    return {item for item in raw if isinstance(item, str) and item}
+
+
+async def _run_respond(
+    pool: asyncpg.Pool,
+    payload: RespondActionPayload,
+    make_step_fn: MakeStepFn | None,
+) -> ExecutorOutcome:
+    """Implementation of `execute_respond`. Kept separate from
+    `_run_chunk` because the pre-loop setup is different — we have
+    to find the pending tool call and append its result before the
+    loop resumes."""
+    start_payload = StartActionPayload(
+        run_id=payload.run_id,
+        user_id=payload.user_id,
+    )
+    checkpoint = await store.load_checkpoint(
+        pool,
+        run_id=payload.run_id,
+        user_id=payload.user_id,
+    )
+    if checkpoint is None:
+        logger.error(
+            "executor.respond.no_checkpoint",
+            run_id=payload.run_id,
+            user_id=payload.user_id,
+        )
+        return ExecutorOutcome(settled=False, error="respond: no checkpoint for run")
+
+    live_messages = _messages_from(checkpoint)
+    pending = _find_pending_tool_call(live_messages, payload.request_id)
+    if pending is None:
+        logger.error(
+            "executor.respond.pending_not_found",
+            run_id=payload.run_id,
+            request_id=payload.request_id,
+        )
+        return ExecutorOutcome(
+            settled=False,
+            error=f"respond: pending tool call {payload.request_id} not found",
+        )
+
+    # Determine the request kind from the pending tool. For Phase 3b
+    # the only kind we natively support is `approval` (binary
+    # gate); `choice` + `input` ride on the same wire shape and will
+    # land when the `askUser` tool ports.
+    request_kind = "approval"
+    final_args = payload.args if payload.args is not None else pending["args"]
+    tool_result_text = await _build_tool_result_text(
+        request_kind=request_kind,
+        tool_name=pending["tool_name"],
+        approved=payload.approved,
+        selection=payload.selection,
+        value=payload.value,
+        final_args=final_args,
+    )
+
+    # Append the user turn carrying the tool_result.
+    live_messages.append(
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": pending["tool_call_id"],
+                    "content": tool_result_text,
+                }
+            ],
+        }
+    )
+
+    start_seq = _int_or(checkpoint.get("seq"), 0)
+    start_step = _int_or(checkpoint.get("step"), 0)
+    sink = _make_db_sink(pool, user_id=payload.user_id)
+    emitter = RunEmitter(
+        run_id=payload.run_id,
+        sink=sink,
+        start_seq=start_seq,
+        start_step=start_step,
+    )
+
+    # Persist BEFORE emitting so a crash between emit + save can't
+    # lose the appended tool_result. Mirrors the TS path.
+    interim_checkpoint = _build_checkpoint(checkpoint, live_messages, emitter)
+    await store.save_checkpoint(
+        pool,
+        run_id=payload.run_id,
+        user_id=payload.user_id,
+        checkpoint=interim_checkpoint,
+    )
+
+    try:
+        await store.set_task_handler(
+            pool,
+            run_id=payload.run_id,
+            user_id=payload.user_id,
+            handler="python",
+        )
+        # Emit input_response (clears pending_input on the projection)
+        # then status:running before stepping again.
+        await emitter.input_response(
+            approval_id=payload.request_id,
+            approved=payload.approved,
+            selection=payload.selection,
+            value=payload.value,
+        )
+        await emitter.status("running")
+
+        step_fn = (make_step_fn or _default_make_step_fn)(start_payload, checkpoint, live_messages)
+        max_steps = _max_steps_from(checkpoint, start_payload.max_steps)
+
+        async def is_cancelled() -> bool:
+            return await store.is_run_cancelled(
+                pool,
+                run_id=payload.run_id,
+                user_id=payload.user_id,
+            )
+
+        deadline_s = _chunk_deadline_s()
+
+        def should_yield() -> bool:
+            return deadline_s is not None and asyncio.get_event_loop().time() > deadline_s
+
+        result: AgentLoopResult = await run_agent_loop(
+            emitter=emitter,
+            max_steps=max_steps,
+            run_step=step_fn,
+            is_cancelled=is_cancelled,
+            should_yield=should_yield,
+        )
+
+        if result.kind == "suspended":
+            # Re-suspended (the user's answer unblocked the model and
+            # it called another gated tool). Same handling as the
+            # original suspend path in `_run_chunk`.
+            assert result.pending_input is not None
+            re_pending = result.pending_input
+            next_checkpoint = _build_checkpoint(checkpoint, live_messages, emitter)
+            await store.save_checkpoint(
+                pool,
+                run_id=payload.run_id,
+                user_id=payload.user_id,
+                checkpoint=next_checkpoint,
+            )
+            await emitter.input_request(
+                approval_id=re_pending.tool_call_id,
+                request_kind="approval",
+                tool=re_pending.tool,
+                tool_call_id=re_pending.tool_call_id,
+                args=re_pending.args,
+            )
+            await emitter.status("paused")
+            await store.update_run(
+                pool,
+                run_id=payload.run_id,
+                user_id=payload.user_id,
+                status="paused",
+            )
+            return ExecutorOutcome(settled=True)
+
+        if result.kind == "yielded":
+            next_checkpoint = _build_checkpoint(checkpoint, live_messages, emitter)
+            await store.save_checkpoint(
+                pool,
+                run_id=payload.run_id,
+                user_id=payload.user_id,
+                checkpoint=next_checkpoint,
+            )
+            await jobs.enqueue_continue_job(
+                pool,
+                task_id=payload.run_id,
+                user_id=payload.user_id,
+            )
+            return ExecutorOutcome(settled=True)
+
+        if result.kind == "cancelled":
+            await store.update_run(
+                pool,
+                run_id=payload.run_id,
+                user_id=payload.user_id,
+                status="cancelled",
+                finished=True,
+            )
+        else:
+            await store.update_run(
+                pool,
+                run_id=payload.run_id,
+                user_id=payload.user_id,
+                status="done",
+                step=emitter.step,
+                finished=True,
+            )
+        return ExecutorOutcome(settled=True)
+
+    except Exception as exc:
+        logger.error(
+            "executor.respond.failed",
+            run_id=payload.run_id,
+            user_id=payload.user_id,
+            error=str(exc),
+        )
+        try:
+            if not emitter.settled:
+                await emitter.result("failed", error=str(exc))
+            await store.update_run(
+                pool,
+                run_id=payload.run_id,
+                user_id=payload.user_id,
+                status="failed",
+                finished=True,
+            )
+        except Exception:
+            pass
+        return ExecutorOutcome(settled=False, error=str(exc))
+
+
+def _find_pending_tool_call(
+    messages: list[dict[str, Any]],
+    request_id: str,
+) -> dict[str, Any] | None:
+    """Walk the messages back-to-front looking for an assistant turn
+    that contains a `tool_use` block with id == request_id. Returns
+    `{tool_call_id, tool_name, args}` or None.
+
+    Mirrors `findPendingToolCall` in `lib/server/agent/worker.ts`.
+    Back-to-front so we find the most recent unmatched call first;
+    a tool_use only "matches" until a tool_result with the same id
+    is appended, so by the time `respond` runs there should be
+    exactly one unmatched call (the one the user is responding to)."""
+    for entry in reversed(messages):
+        if entry.get("role") != "assistant":
+            continue
+        content = entry.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") != "tool_use":
+                continue
+            if block.get("id") != request_id:
+                continue
+            args = block.get("input")
+            if not isinstance(args, dict):
+                args = {}
+            return {
+                "tool_call_id": str(block.get("id") or ""),
+                "tool_name": str(block.get("name") or ""),
+                "args": dict(args),
+            }
+    return None
+
+
+async def _build_tool_result_text(
+    *,
+    request_kind: str,
+    tool_name: str,
+    approved: bool | None,
+    selection: list[str] | None,
+    value: str | None,
+    final_args: Any,
+) -> str:
+    """Build the text fed back to the model as the `tool_result.content`.
+
+    Mirrors `buildToolResult` in `lib/server/agent/worker.ts` shape:
+      - approval rejected → "User declined ..."
+      - approval approved → execute the matching tool when we have
+        a descriptor; placeholder otherwise (MCP tools land in Phase 3f)
+      - choice → "User selected: <ids>" or "(no selection)"
+      - input → the raw value or "(no value)" """
+    if request_kind == "approval":
+        if approved is False:
+            return (
+                "User declined to run this action. "
+                "Consider an alternative or ask the user how to proceed."
+            )
+        descriptor = default_tool_registry().get(tool_name)
+        if descriptor is None:
+            return (
+                f'(Approved, but the tool "{tool_name}" is not registered '
+                "in the Python service yet. MCP tools land in Phase 3f of "
+                "PLAN-agent-api.)"
+            )
+        try:
+            args = final_args if isinstance(final_args, dict) else {}
+            result = await descriptor.execute(args)
+            return result.text
+        except Exception as exc:
+            return f"Tool error: {exc}"
+    if request_kind == "choice":
+        sel = selection or []
+        if not sel:
+            return "(User submitted no selection.)"
+        return f"User selected: {', '.join(sel)}"
+    # input
+    if isinstance(value, str) and value:
+        return value
+    return "(User submitted no value.)"
 
 
 async def _stub_step_fn(ctx: RunStepContext) -> RunStepOutcome:
@@ -434,11 +835,20 @@ def _messages_from(checkpoint: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract `messages` from the checkpoint as Anthropic-shaped
     dicts.
 
-    The TS side stores `ModelMessage[]` from the AI SDK — a discriminated
-    union with `role` + `content` (string or content-parts array). For
-    Phase 2b-1 we only forward text content; multimodal (images, file
-    parts) lands when tool support arrives in 2b-2. A part with no
-    extractable text is dropped silently."""
+    The checkpoint stores a list of `{role, content}` entries where
+    `content` is either a string OR a list of content blocks
+    (`text`, `tool_use`, `tool_result`, …). Phase 3b preserves the
+    block list verbatim when it's Anthropic-shaped so a suspended +
+    resumed run keeps its tool_use ↔ tool_result chain intact.
+
+    A run started TS-side stores AI-SDK-shaped blocks (`type:
+    'text' | 'tool-call' | 'tool-result'` with `toolCallId` etc.)
+    which Phase 2b-1 flattened to text-only. The translator from
+    AI-SDK → Anthropic wire format is a Phase 3c+ port — until it
+    lands, runs that mix TS-suspend with Python-respond may lose
+    tool context. Same-worker Python flows (start → suspend →
+    respond, all Python) work today because Python writes
+    Anthropic-shaped blocks both ways."""
     raw = checkpoint.get("messages")
     if not isinstance(raw, list):
         return []
@@ -449,28 +859,34 @@ def _messages_from(checkpoint: dict[str, Any]) -> list[dict[str, Any]]:
         role = entry.get("role")
         if role not in ("user", "assistant"):
             # `system` is hoisted out (Anthropic takes it as a separate
-            # `system=` arg); `tool` messages aren't in scope until
-            # tool support lands.
+            # `system=` arg); `tool` role is the AI-SDK shape that the
+            # Python provider doesn't emit.
             continue
-        text = _entry_text(entry.get("content"))
-        if not text:
+        content = entry.get("content")
+        if isinstance(content, str):
+            if content:
+                out.append({"role": role, "content": content})
             continue
-        out.append({"role": role, "content": text})
+        if isinstance(content, list):
+            blocks = _normalise_content_blocks(content)
+            if blocks:
+                out.append({"role": role, "content": blocks})
+            continue
     return out
 
 
-def _entry_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for p in content:
-            if isinstance(p, dict) and p.get("type") == "text":
-                t = p.get("text")
-                if isinstance(t, str):
-                    parts.append(t)
-        return "".join(parts)
-    return ""
+def _normalise_content_blocks(content: list[Any]) -> list[dict[str, Any]]:
+    """Pass Anthropic-shape content blocks through, dropping anything
+    we don't recognise. Future work: translate AI-SDK shapes
+    (`type: 'tool-call'`, `'tool-result'`) into Anthropic ones."""
+    out: list[dict[str, Any]] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        block_type = block.get("type")
+        if block_type in ("text", "tool_use", "tool_result", "image"):
+            out.append(dict(block))
+    return out
 
 
 def _str_or_none(value: Any) -> str | None:
@@ -542,7 +958,9 @@ def _chunk_deadline_s() -> float | None:
 __all__ = [
     "ExecutorOutcome",
     "MakeStepFn",
+    "RespondActionPayload",
     "StartActionPayload",
     "execute_continue",
+    "execute_respond",
     "execute_start",
 ]
