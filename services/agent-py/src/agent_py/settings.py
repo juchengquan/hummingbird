@@ -89,6 +89,16 @@ class Settings(BaseSettings):
     tool is omitted entirely (model never sees it). Mirrors the TS
     side's `TAVILY_API_KEY` env var so a single `.env` works for both."""
 
+    # --- MCP --------------------------------------------------------------
+    MCP_ENCRYPTION_KEY: str = ""
+    """Symmetric key for decrypting cloud-mode MCP server credentials
+    via the `mcp_get_decrypted_credentials` SECURITY DEFINER Postgres
+    function (defined in `0005_mcp.sql`). Same env var the Next.js
+    side reads. Empty (or shorter than 16 chars) → the Python service
+    treats every cloud-mode MCP cred as if the row didn't exist, so
+    those servers are silently skipped — matches the TS path's
+    `getMcpEncryptionKey()` guard."""
+
     # --- Image generation -------------------------------------------------
     MINIMAX_CN_API_KEY: str = ""
     """Minimax API key — shared between the chat-bypass (TS side) and the
