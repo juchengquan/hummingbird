@@ -81,14 +81,23 @@ def tool_to_anthropic_param(tool: ToolDescriptor) -> dict[str, Any]:
 
 
 def default_tool_registry() -> dict[str, ToolDescriptor]:
-    """Process-wide default registry. Today: just `webFetch`. Future
-    tools (`webSearch`, `searchFiles`, …) register here, keyed by
-    tool name. The executor passes either the full list or a filtered
-    subset (e.g. by checkpoint config) to the step fn factory."""
-    # Lazy import keeps the registry construction cheap and avoids
+    """Process-wide default registry. The executor passes either the
+    full list or a filtered subset (e.g. by checkpoint config) to the
+    step fn factory.
+
+    Tool inclusion is config-aware: `webSearch` is registered only
+    when `TAVILY_API_KEY` is set (mirrors the TS skill-cascade
+    behaviour where a missing provider hides the skill rather than
+    surfacing a per-call error). `webFetch` is unconditional — no
+    upstream credential needed."""
+    # Lazy imports keep registry construction cheap and avoid
     # circular imports if a tool ever needs to read the registry.
     from .web_fetch import build_web_fetch_tool
+    from .web_search import build_web_search_tool, is_web_search_configured
 
-    return {
+    out: dict[str, ToolDescriptor] = {
         "webFetch": build_web_fetch_tool(),
     }
+    if is_web_search_configured():
+        out["webSearch"] = build_web_search_tool()
+    return out

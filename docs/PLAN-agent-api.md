@@ -1,18 +1,21 @@
 # Plan: Agent API as a separate service
 
-Status: **🪜 Phased — Phases 0 + 1 + 2a + 2b-1 + 2b-2 + 3a shipped,
-Phase 3b pending.** Option C (Python service) green-lit. Phase 0
-(scaffolding), Phase 1 (read-only poller), Phase 2a (executor pattern
-+ feature flag), Phase 2b-1 (real Anthropic text streaming +
-`ANTHROPIC_BASE_URL` override), Phase 2b-2 (tool wiring + `webFetch`),
-and **Phase 3a (`continue` action + chunk-break yield)** all live in
-`services/agent-py/`. The yield path extends `run_agent_loop` with a
-`should_yield: Callable[[], bool]` gate polled between steps; when it
-fires the loop returns `AgentLoopResult(kind="yielded")` without
-emitting a terminal event, and the executor saves the latest
-checkpoint + enqueues a `continue` job that picks up where the chunk
-left off. Host decided (self-host on a small VM — see §Host
-decision). The earlier "decision-doc — Step 1 done" status is
+Status: **🪜 Phased — Phases 0 + 1 + 2a + 2b-1 + 2b-2 + 3a + 3c-1
+shipped, Phases 3b + 3c-2+ pending.** Option C (Python service)
+green-lit. Phase 0 (scaffolding), Phase 1 (read-only poller),
+Phase 2a (executor pattern + feature flag), Phase 2b-1 (real
+Anthropic text streaming + `ANTHROPIC_BASE_URL` override),
+Phase 2b-2 (tool wiring + `webFetch`), Phase 3a (`continue` action +
+chunk-break yield), and **Phase 3c-1 (`webSearch` via Tavily)** all
+live in `services/agent-py/`. `webSearch` is config-gated:
+registered in `default_tool_registry()` only when `TAVILY_API_KEY`
+is set, hiding the tool entirely from the model when unconfigured
+(mirrors the TS skill-cascade behaviour). `searchFiles` (Phase 3c-2)
+and `imageGen` (Phase 3d) land separately — `searchFiles` needs the
+RLS-impersonation pattern (auth-as-user via Supabase REST) which
+deserves its own focused PR. Host decided (self-host on a small VM
+— see §Host decision). The earlier "decision-doc — Step 1 done"
+status is
 retained in the prior-status note below for context.
 
 > **Note on phase numbering.** The original plan called Phase 2 a

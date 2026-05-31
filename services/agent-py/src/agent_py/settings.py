@@ -74,6 +74,12 @@ class Settings(BaseSettings):
     `MINIMAX_CN_BASE_URL` override pattern. Has no effect when
     `ANTHROPIC_API_KEY` is empty (the stub step fn doesn't reach a network)."""
 
+    TAVILY_API_KEY: str = ""
+    """Tavily web-search API key — Phase 3c. When set the `webSearch`
+    tool registers itself in the default tool registry; otherwise the
+    tool is omitted entirely (model never sees it). Mirrors the TS
+    side's `TAVILY_API_KEY` env var so a single `.env` works for both."""
+
     # --- Service identity -------------------------------------------------
     SERVICE_NAME: str = "agent-py"
     SERVICE_PORT: int = 8000
