@@ -55,20 +55,32 @@ class RunStepFn(Protocol):
     async def __call__(self, ctx: RunStepContext) -> RunStepOutcome: ...
 
 
-AgentLoopResultKind = Literal["settled", "cancelled"]
+AgentLoopResultKind = Literal["settled", "cancelled", "yielded"]
 
 
 @dataclass(frozen=True)
 class AgentLoopResult:
-    """Loop outcome. Phase 2a only emits `settled` (happy path) or
-    `cancelled` (cancel detected between steps). `suspended` (HITL)
-    + `yielded` (chunk break) land in Phase 3+ when the executor
-    needs them."""
+    """Loop outcome. Three non-terminal possibilities — the executor
+    decides what to do next:
+
+    - `settled`: terminal event emitted (`result: done|failed`),
+      nothing more to do.
+    - `cancelled`: cancel detected between steps; emitter emitted
+      `status: cancelled`. Same handling as `settled` (the run is
+      over), but distinguished so the executor doesn't ALSO call
+      `mark_job_failed`.
+    - `yielded`: time-budget gate fired between steps. No terminal
+      event emitted; the executor saves the checkpoint and enqueues
+      a `continue` job so another chunk picks up where this one left
+      off. Mirrors the TS path's "settle without terminal" semantics.
+
+    Phase 3 will add `suspended` (HITL) alongside `yielded`."""
 
     kind: AgentLoopResultKind
 
 
 IsCancelledFn = Callable[[], Awaitable[bool]]
+ShouldYieldFn = Callable[[], bool]
 
 
 async def run_agent_loop(
@@ -77,21 +89,32 @@ async def run_agent_loop(
     max_steps: int,
     run_step: RunStepFn,
     is_cancelled: IsCancelledFn,
+    should_yield: ShouldYieldFn | None = None,
 ) -> AgentLoopResult:
-    """Drive a run to completion. Emits exactly one terminal event
-    (`status: cancelled` or `result: done|failed`) — the emitter
-    drops anything after, so a late callback can't append past the
-    end.
+    """Drive a run to completion or a chunk-break point. Emits exactly
+    one terminal event (`status: cancelled` or `result: done|failed`)
+    on `settled` / `cancelled`; emits nothing terminal on `yielded`
+    (the executor persists the checkpoint and re-enqueues).
 
-    Step counting mirrors the TS path: `emitter.step` starts at 0 on
-    a fresh run; the first iteration calls `start_step` which bumps
-    to 1, runs the step fn, then `end_step`. The loop iterates until
-    the step fn returns `done=True` or we hit `max_steps`.
+    Step counting mirrors the TS path: `emitter.step` starts at the
+    seeded value (0 on fresh start, >0 on `continue` after resume).
+    Each iteration:
+      1. Check cancelled — if so, emit `status: cancelled`, return.
+      2. Check `should_yield()` — if so, return `yielded` without
+         emitting anything (the executor's checkpoint write + the
+         re-enqueue do the rest).
+      3. Run one step. Append `step_start` → `run_step` → `step_end`.
+      4. If `outcome.done` → emit `result: done`, return.
+
+    The yield gate fires BEFORE a step starts so we never abandon a
+    step mid-flight; budget calibration assumes a step can run to
+    completion within the headroom the executor leaves below the
+    function cap.
     """
     # Only emit `status: running` on a fresh start. A continuation
-    # (Phase 3 HITL resume) seeds the emitter at the current step
-    # counter; the first status emit is the route's job before
-    # calling back in.
+    # (Phase 3 HITL resume, or a `continue` chunk after a yield) seeds
+    # the emitter at the current step counter; the status event was
+    # already emitted on the original `start` action.
     if emitter.step == 0:
         await emitter.status("running")
 
@@ -99,6 +122,9 @@ async def run_agent_loop(
         if await is_cancelled():
             await emitter.status("cancelled")
             return AgentLoopResult(kind="cancelled")
+
+        if should_yield is not None and should_yield():
+            return AgentLoopResult(kind="yielded")
 
         await emitter.start_step()
         outcome = await run_step(RunStepContext(step=emitter.step, emitter=emitter))

@@ -121,12 +121,12 @@ async def test_live_mode_unflagged_user_releases(
 
 
 @pytest.mark.asyncio
-async def test_live_mode_flagged_non_start_action_releases(
+async def test_live_mode_flagged_respond_action_releases(
     live_settings: Settings,
 ) -> None:
-    """Phase 2a only handles `start`. `continue` / `respond` belong
-    to later phases and get released so the TS worker handles them."""
-    job = _make_job(action="continue")
+    """`respond` (HITL) still rides the TS worker — Phase 3b will
+    port it. Phase 3a only added `continue` end-to-end."""
+    job = _make_job(action="respond")
     db._pool = MagicMock()
     try:
         with (
@@ -137,11 +137,45 @@ async def test_live_mode_flagged_non_start_action_releases(
                 "is_user_flagged_to_python",
                 new=AsyncMock(return_value=True),
             ),
-            patch.object(executor, "execute_start", new=AsyncMock()) as execute,
+            patch.object(executor, "execute_start", new=AsyncMock()) as execute_start,
+            patch.object(executor, "execute_continue", new=AsyncMock()) as execute_continue,
         ):
             await poller._tick(live_settings)
             release.assert_awaited_once_with(db._pool, job.id)
-            execute.assert_not_called()
+            execute_start.assert_not_called()
+            execute_continue.assert_not_called()
+    finally:
+        db._pool = None
+
+
+@pytest.mark.asyncio
+async def test_live_mode_flagged_continue_action_dispatches_to_executor(
+    live_settings: Settings,
+) -> None:
+    """Phase 3a: `continue` jobs route to `executor.execute_continue`
+    for flagged users. The job's settled outcome marks it done."""
+    job = _make_job(action="continue")
+    db._pool = MagicMock()
+    try:
+        with (
+            patch.object(jobs, "claim_next_job", new=AsyncMock(return_value=job)),
+            patch.object(jobs, "release_job_to_queue", new=AsyncMock()) as release,
+            patch.object(jobs, "mark_job_done", new=AsyncMock()) as mark_done,
+            patch.object(
+                feature_flag,
+                "is_user_flagged_to_python",
+                new=AsyncMock(return_value=True),
+            ),
+            patch.object(
+                executor,
+                "execute_continue",
+                new=AsyncMock(return_value=executor.ExecutorOutcome(settled=True)),
+            ) as execute,
+        ):
+            await poller._tick(live_settings)
+            execute.assert_awaited_once()
+            mark_done.assert_awaited_once_with(db._pool, job.id)
+            release.assert_not_called()
     finally:
         db._pool = None
 
