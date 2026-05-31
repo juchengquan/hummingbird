@@ -96,10 +96,16 @@ class ToolContext:
     cloud-mode, image storage) will read additional fields from this.
 
     `None` context means "no per-user state available" — tools that
-    require it (e.g. `searchFiles`) are omitted from the registry."""
+    require it (e.g. `searchFiles`) are omitted from the registry.
+
+    `workspace_id` (Phase 3f-2) opts the registry into cloud-mode MCP
+    tool discovery — `extend_registry_with_mcp` walks the workspace's
+    `mcp_servers` rows and registers each cached tool under
+    `mcp__<server>__<tool>`. Tools that don't need it ignore it."""
 
     pool: asyncpg.Pool
     user_id: str
+    workspace_id: str | None = None
 
 
 def default_tool_registry(
