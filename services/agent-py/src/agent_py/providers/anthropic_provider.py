@@ -29,7 +29,12 @@ from typing import Any, Protocol
 import structlog
 
 from ..coalescer import make_token_coalescer
-from ..runner import RunStepContext, RunStepFn, RunStepOutcome
+from ..runner import (
+    PendingInputDescriptor,
+    RunStepContext,
+    RunStepFn,
+    RunStepOutcome,
+)
 from ..tools import (
     ToolDescriptor,
     ToolError,
@@ -109,6 +114,14 @@ class AnthropicStepConfig:
     system: str | None
     messages: list[dict[str, Any]]
     tools: list[ToolDescriptor] = field(default_factory=list)
+    # Set of tool names that require human approval before they run.
+    # When the model emits a `tool_use` block for one of these the
+    # step fn captures it as a `pending_input` and returns without
+    # executing. The runner returns `kind="suspended"`; the executor
+    # saves the checkpoint and emits the approval request. Set
+    # source: `checkpoint.config.requireApprovalFor` from the TS
+    # route + the always-gated `askUser` tool name when it lands.
+    gated_tool_names: set[str] = field(default_factory=set)
     max_tokens: int = DEFAULT_MAX_TOKENS
 
 
@@ -177,10 +190,38 @@ def make_anthropic_step_fn(config: AnthropicStepConfig) -> RunStepFn:
             config.messages.append({"role": "assistant", "content": content_blocks})
             return RunStepOutcome(done=True)
 
-        # Tools requested. Append the assistant turn first (Anthropic
-        # requires the assistant message containing the tool_use to
-        # precede the user turn carrying the tool_result), then
-        # invoke each tool and build the tool_result blocks.
+        # Tools requested. Check for any gated tool first — if the
+        # model called one, we suspend the run for human approval
+        # rather than executing anything in this step. The assistant
+        # turn still gets appended (Anthropic requires it to precede
+        # the eventual tool_result on resume), but no tool_result is
+        # written until the `respond` action appends one.
+        for block in tool_use_blocks:
+            tool_name = _block_field(block, "name") or ""
+            if tool_name in config.gated_tool_names:
+                tool_call_id = _block_field(block, "id") or ""
+                args = _block_field(block, "input") or {}
+                if not isinstance(args, dict):
+                    args = {}
+                # Emit a tool_input event for the UI even though the
+                # tool didn't actually run — the strip shows "Tool X
+                # is awaiting approval".
+                await ctx.emitter.tool_input(
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                    args=dict(args),
+                )
+                config.messages.append({"role": "assistant", "content": content_blocks})
+                return RunStepOutcome(
+                    done=False,
+                    pending_input=PendingInputDescriptor(
+                        tool_call_id=tool_call_id,
+                        tool=tool_name,
+                        args=dict(args),
+                    ),
+                )
+
+        # No gated tool — execute everything, append result, loop.
         config.messages.append({"role": "assistant", "content": content_blocks})
 
         tool_result_blocks: list[dict[str, Any]] = []
