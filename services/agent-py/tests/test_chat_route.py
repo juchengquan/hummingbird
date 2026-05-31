@@ -199,3 +199,62 @@ def test_chat_max_tokens_default_applied(client: TestClient) -> None:
         client.post("/v1/chat", json=_valid_body(), headers=_auth())
     # Default from chat.DEFAULT_MAX_TOKENS = 4096.
     assert captured.get("max_tokens") == 4096
+
+
+# --- format=ai-sdk (Phase 3g) -----------------------------------------
+
+
+def test_chat_ai_sdk_format_emits_ui_message_stream(client: TestClient) -> None:
+    """`?format=ai-sdk` switches the wire to the AI SDK v5 UI
+    message-stream protocol. Response carries the
+    `x-vercel-ai-ui-message-stream: v1` header `useChat()` reads
+    to confirm the protocol, and the body terminates with
+    `data: [DONE]`."""
+    import json
+
+    fake = _FakeClient(["Hello", " world"])
+    with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
+        r = client.post(
+            "/v1/chat?format=ai-sdk",
+            json=_valid_body(),
+            headers=_auth(),
+        )
+    assert r.status_code == 200
+    assert "text/event-stream" in r.headers["content-type"]
+    assert r.headers.get("x-vercel-ai-ui-message-stream") == "v1"
+
+    events = [e for e in r.text.split("\n\n") if e.startswith("data: ")]
+    payloads = [e.removeprefix("data: ") for e in events]
+    types: list[str] = []
+    for p in payloads:
+        if p == "[DONE]":
+            types.append("[DONE]")
+        else:
+            types.append(json.loads(p)["type"])
+    assert types == [
+        "start",
+        "start-step",
+        "text-start",
+        "text-delta",
+        "text-delta",
+        "text-end",
+        "finish-step",
+        "finish",
+        "[DONE]",
+    ]
+
+
+def test_chat_custom_format_does_not_set_ai_sdk_header(client: TestClient) -> None:
+    """Default `format=custom` should NOT advertise the AI SDK
+    protocol — only the explicit ai-sdk path opts in."""
+    fake = _FakeClient(["ok"])
+    with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
+        r = client.post("/v1/chat", json=_valid_body(), headers=_auth())
+    assert "x-vercel-ai-ui-message-stream" not in {k.lower() for k in r.headers}
+
+
+def test_chat_rejects_unknown_format(client: TestClient) -> None:
+    """Invalid `format` value → 422. The literal type on the route
+    enforces the enum."""
+    r = client.post("/v1/chat?format=bogus", json=_valid_body(), headers=_auth())
+    assert r.status_code == 422

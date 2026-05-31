@@ -107,16 +107,28 @@ export interface paths {
          *     Mirrors `app/api/chat/route.ts` on the TS side. Accepts a
          *     narrow request (messages + model + optional system prompt
          *     + optional max_tokens) and streams Anthropic deltas back as
-         *     SSE frames whose payload shape matches what the existing
-         *     Next.js chat consumer (`use-chat-send.ts`) parses — text /
-         *     error / done frames keep the wire identical so a frontend
-         *     selector can swap between TS and Python without changing the
-         *     consumer.
+         *     SSE frames.
+         *
+         *     Wire format is selectable via the `?format=` query parameter:
+         *
+         *       - `format=custom` (default) — `{type:"text|error|done"}`
+         *         frames that match the existing Next.js chat consumer
+         *         (`use-chat-send.ts`). Phase 4-1 + 4-2 baseline so the
+         *         selector can swap between TS and Python without changing
+         *         the consumer.
+         *
+         *       - `format=ai-sdk` — Phase 3g — AI SDK v5 UI message stream
+         *         (`start`/`text-start`/`text-delta`/`text-end`/`finish` +
+         *         `[DONE]` terminator), so a consumer using
+         *         `@ai-sdk/react`'s `useChat()` can read Python output
+         *         natively. Response adds the
+         *         `x-vercel-ai-ui-message-stream: v1` header the SDK uses
+         *         to advertise its protocol version.
          *
          *     Phase 4-1 is **text-only**: tools / skills / attachments /
          *     MCP all deferred. The Python service already has the
          *     agent-loop machinery for tool use (Phase 2b-2 + 3c+);
-         *     wiring it into the streaming chat path lands in Phase 4-2.
+         *     wiring it into the streaming chat path lands in Phase 4-3+.
          *
          *     Returns 503 when `ANTHROPIC_API_KEY` is unset — fast-fail
          *     signal to monitoring that the deploy is misconfigured rather
@@ -359,7 +371,9 @@ export interface operations {
     };
     chat_v1_chat_post: {
         parameters: {
-            query?: never;
+            query?: {
+                format?: "custom" | "ai-sdk";
+            };
             header?: {
                 authorization?: string | null;
             };
