@@ -1,8 +1,18 @@
 # Plan: Agent API as a separate service
 
 Status: **🪜 Phased — Phases 0 + 1 + 2a + 2b-1 + 2b-2 + 3a + 3b + 3c-1
-+ 3c-2 + 3d-1 + 3d-2 + 3e + 3f-1 + 3f-2 + 3g + 4-1 + 4-2 shipped,
-Phases 4-3+ pending. Cutover + decommission deliberately deferred —
++ 3c-2 + 3d-1 + 3d-2 + 3e + 3f-1 + 3f-2 + 3g + 4-1 + 4-2 + 4-3 shipped,
+Phases 4-4+ pending. Phase 4-3 (this slice): `/v1/chat` now accepts
+`enable_tools: true` in the request body, loops Anthropic
+`messages.stream` + tool execution until the model produces a
+text-only answer (or `max_steps` is hit), and emits per-step
+`tool_call` / `tool_result` frames (custom wire) or
+`tool-input-available` / `tool-output-available` frames (AI SDK
+wire). Built-in tools come from `default_tool_registry(context=None)`
+— `webFetch` always; `webSearch` / `generateImage` opt-in on the
+relevant env vars. `searchFiles` + cloud MCP need a DB pool +
+workspace context the chat route doesn't thread today; those slot in
+when the request grows a workspace_id field. Cutover + decommission deliberately deferred —
 both stacks stay live; the user selects backend per the Phase 4-2
 toggle. Phase 3g (this slice): the Python `/v1/chat` endpoint now
 accepts `?format=ai-sdk` and emits the AI SDK v5 UI message stream

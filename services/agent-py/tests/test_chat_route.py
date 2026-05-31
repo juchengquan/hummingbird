@@ -258,3 +258,89 @@ def test_chat_rejects_unknown_format(client: TestClient) -> None:
     enforces the enum."""
     r = client.post("/v1/chat?format=bogus", json=_valid_body(), headers=_auth())
     assert r.status_code == 422
+
+
+# --- enable_tools dispatch (Phase 4-3) --------------------------------
+
+
+def test_chat_enable_tools_dispatches_to_tool_stream(client: TestClient) -> None:
+    """With `enable_tools: true`, the route uses the tool-enabled
+    stream, which calls `messages.stream` with a `tools` kwarg
+    populated from `default_tool_registry()`."""
+    import json as _json
+    from unittest.mock import patch as _patch
+
+    fake = _FakeClient(["only text"])
+
+    real_stream = fake.messages.stream
+    captured: dict[str, Any] = {}
+
+    def capture(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return real_stream(**kwargs)
+
+    fake.messages.stream = capture  # type: ignore[assignment]
+    with (
+        _patch.object(main_module, "resolve_anthropic_client", return_value=fake),
+        # Patch `get_final_message` on the fake stream the route gets
+        # so the tool-enabled loop terminates after one iteration.
+        _patch.object(
+            _FakeStream,
+            "get_final_message",
+            new=lambda self: _async_return({"content": [{"type": "text", "text": "only text"}]}),
+            create=True,
+        ),
+    ):
+        r = client.post(
+            "/v1/chat",
+            json=_valid_body(enable_tools=True),
+            headers=_auth(),
+        )
+    assert r.status_code == 200
+    # `tools` kwarg present + non-empty → tool dispatch fired.
+    assert "tools" in captured
+    assert len(captured["tools"]) > 0
+    # webFetch is unconditional in the default registry — sanity-check
+    # the descriptor surface.
+    tool_names = {t["name"] for t in captured["tools"]}
+    assert "webFetch" in tool_names
+
+    # Body still terminates cleanly with done frame.
+    events = [e for e in r.text.split("\n\n") if e.startswith("data: ")]
+    parsed = [_json.loads(e.removeprefix("data: ")) for e in events]
+    assert parsed[-1]["type"] == "done"
+
+
+def _async_return(value: Any):  # type: ignore[no-untyped-def]
+    async def _wrapped() -> Any:
+        return value
+
+    return _wrapped()
+
+
+def test_chat_enable_tools_false_skips_tool_dispatch(client: TestClient) -> None:
+    """Default `enable_tools=False` → no `tools` kwarg, route uses
+    the Phase 4-1 text-only path."""
+    fake = _FakeClient(["just text"])
+    real_stream = fake.messages.stream
+    captured: dict[str, Any] = {}
+
+    def capture(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return real_stream(**kwargs)
+
+    fake.messages.stream = capture  # type: ignore[assignment]
+    with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
+        client.post("/v1/chat", json=_valid_body(), headers=_auth())
+    assert "tools" not in captured
+
+
+def test_chat_max_steps_clamped_at_schema_level(client: TestClient) -> None:
+    """The wire schema clamps `max_steps` to [1, 20] — out of range
+    → 422 before we even touch Anthropic."""
+    r = client.post(
+        "/v1/chat",
+        json=_valid_body(enable_tools=True, max_steps=999),
+        headers=_auth(),
+    )
+    assert r.status_code == 422
