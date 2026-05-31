@@ -206,6 +206,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/summarize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Summarize
+         * @description Summarisation endpoint — Phase 4-4b of PLAN-agent-api.
+         *     Python mirror of `app/api/summarize/route.ts`.
+         *
+         *     Four modes via discriminated union on `mode`: file /
+         *     conversation / compress / project-breakdown. Three return
+         *     JSON; compress returns `{recap: str}` markdown.
+         *
+         *     Notable difference from TS: this endpoint only talks to
+         *     Anthropic (no Vercel-gateway routing). When the caller's
+         *     `model` doesn't look like an Anthropic id (e.g. the TS
+         *     default `google/gemini-2.5-flash`), we fall back to
+         *     `claude-3-5-haiku-20241022`. Caller behaviour is unaffected
+         *     because the field is still accepted; the TS-shape body comes
+         *     through unchanged.
+         */
+        post: operations["summarize_v1_summarize_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/{server_id}/{action}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mcp Proxy
+         * @description MCP proxy — Phase 4-4b of PLAN-agent-api. Python mirror of
+         *     `app/api/mcp/[serverId]/[action]/route.ts`.
+         *
+         *     Actions:
+         *       - `discover` → returns `{capabilities}` from the MCP
+         *         handshake (tools / resources / prompts).
+         *       - `call` → invokes a tool, returns `{result: {text,
+         *         is_error}}`.
+         *       - `read` → reads a resource by URI, returns `{result:
+         *         {text?, mime_type?}}`.
+         *
+         *     Credentials come from two places:
+         *       1. `X-MCP-Credentials` header (local-mode — the client
+         *          attaches the cred from localStorage). Decoded as
+         *          base64-JSON, same shape the TS path expects.
+         *       2. Cloud-mode fallback when no header — looks up the
+         *          server row by id under per-user RLS impersonation,
+         *          decrypts the credential via the SECURITY DEFINER RPC.
+         *
+         *     If neither produces a credential and the upstream MCP server
+         *     actually requires auth, the call fails upstream and the
+         *     proxy surfaces it as 502 — same as TS.
+         */
+        post: operations["mcp_proxy_v1_mcp__server_id___action__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/whoami": {
         parameters: {
             query?: never;
@@ -309,6 +383,30 @@ export interface components {
             /** Max Steps */
             max_steps?: number | null;
         };
+        /** CompressSummariseBody */
+        CompressSummariseBody: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            mode: "compress";
+            /** Messages */
+            messages: components["schemas"]["SummariseMessage"][];
+            /** Model */
+            model?: string | null;
+        };
+        /** ConversationSummariseBody */
+        ConversationSummariseBody: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            mode: "conversation";
+            /** Messages */
+            messages: components["schemas"]["SummariseMessage"][];
+            /** Model */
+            model?: string | null;
+        };
         /**
          * ExtractionResponse
          * @description Mirrors `ExtractionResponseSchema` in
@@ -333,6 +431,20 @@ export interface components {
             /** Language */
             language?: string | null;
         };
+        /** FileSummariseBody */
+        FileSummariseBody: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            mode: "file";
+            /** Name */
+            name?: string | null;
+            /** Text */
+            text: string;
+            /** Model */
+            model?: string | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -346,6 +458,56 @@ export interface components {
             service: string;
             /** Version */
             version: string;
+        };
+        /**
+         * McpProxyBody
+         * @description One body shape for all three actions. `tool` is required for
+         *     `call`, `uri` for `read`; the route validates per-action.
+         */
+        McpProxyBody: {
+            server: components["schemas"]["McpServerBody"];
+            /** Tool */
+            tool?: string | null;
+            /** Input */
+            input?: {
+                [key: string]: unknown;
+            } | null;
+            /** Uri */
+            uri?: string | null;
+        };
+        /**
+         * McpServerBody
+         * @description Subset of `McpServer` the proxy actually needs. Mirrors the
+         *     TS `ServerSchema` in the route. Transport is fixed at `http`
+         *     matching the DB CHECK constraint.
+         */
+        McpServerBody: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Url */
+            url: string;
+            /**
+             * Transport
+             * @default http
+             * @constant
+             */
+            transport: "http";
+        };
+        /** ProjectBreakdownBody */
+        ProjectBreakdownBody: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            mode: "project-breakdown";
+            /** Goal */
+            goal: string;
+            /** Existingtitles */
+            existingTitles?: string[] | null;
+            /** Model */
+            model?: string | null;
         };
         /** ReadinessChecks */
         ReadinessChecks: {
@@ -379,6 +541,13 @@ export interface components {
         RefreshImageUrlResponse: {
             /** Url */
             url: string;
+        };
+        /** SummariseMessage */
+        SummariseMessage: {
+            /** Role */
+            role: string;
+            /** Content */
+            content: string;
         };
         /**
          * UrlFetchRequest
@@ -593,6 +762,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RefreshImageUrlResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    summarize_v1_summarize_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileSummariseBody"] | components["schemas"]["ConversationSummariseBody"] | components["schemas"]["CompressSummariseBody"] | components["schemas"]["ProjectBreakdownBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mcp_proxy_v1_mcp__server_id___action__post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-MCP-Credentials"?: string | null;
+                authorization?: string | null;
+            };
+            path: {
+                server_id: string;
+                action: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpProxyBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
