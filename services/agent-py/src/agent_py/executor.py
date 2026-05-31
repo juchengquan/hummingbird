@@ -24,6 +24,8 @@ Anthropic SDK or the checkpoint loader.
 
 from __future__ import annotations
 
+import asyncio
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -31,7 +33,7 @@ from typing import Any
 import asyncpg
 import structlog
 
-from . import store
+from . import jobs, store
 from .emitter import EventSink, RunEmitter
 from .events import TaskEvent
 from .providers.anthropic_provider import (
@@ -56,7 +58,10 @@ logger = structlog.get_logger(__name__)
 # (model + system + messages from `tasks.checkpoint`) and hands both
 # the payload and the loaded checkpoint to the factory. Tests pass a
 # fake that ignores the args and returns a canned `RunStepFn`.
-MakeStepFn = Callable[["StartActionPayload", dict[str, Any]], RunStepFn]
+MakeStepFn = Callable[
+    ["StartActionPayload", dict[str, Any], list[dict[str, Any]]],
+    RunStepFn,
+]
 
 
 @dataclass(frozen=True)
@@ -89,22 +94,101 @@ async def execute_start(
     *,
     make_step_fn: MakeStepFn | None = None,
 ) -> ExecutorOutcome:
-    """Run a `start` action end-to-end.
+    """Run a `start` action end-to-end. See `_run_chunk` for the
+    settle / cancel / yield contract — `start` is just the chunk-run
+    path with `start_seq=0` / `start_step=0` (the runner auto-emits
+    `status: running` at step==0)."""
+    return await _run_chunk(
+        pool,
+        payload=payload,
+        make_step_fn=make_step_fn,
+        resume=False,
+    )
+
+
+async def execute_continue(
+    pool: asyncpg.Pool,
+    payload: StartActionPayload,
+    *,
+    make_step_fn: MakeStepFn | None = None,
+) -> ExecutorOutcome:
+    """Run a `continue` action — pick up after a chunk-break yield.
+
+    Same shape as `execute_start` but seeds the emitter at the
+    checkpoint's saved `seq` / `step`, so the resumed events follow
+    the originals monotonically. The runner skips the
+    `status: running` emit since `start` already wrote it on the
+    original chunk.
+
+    Settle / cancel / failure semantics are identical to `start`. A
+    yielded chunk re-saves the checkpoint with the latest messages +
+    step + seq and enqueues yet another `continue` job."""
+    return await _run_chunk(
+        pool,
+        payload=payload,
+        make_step_fn=make_step_fn,
+        resume=True,
+    )
+
+
+async def _run_chunk(
+    pool: asyncpg.Pool,
+    *,
+    payload: StartActionPayload,
+    make_step_fn: MakeStepFn | None,
+    resume: bool,
+) -> ExecutorOutcome:
+    """Shared body for `execute_start` + `execute_continue`.
 
     The contract the poller depends on:
-      - On success → returns `ExecutorOutcome(settled=True)`. The
-        `tasks` row is `status='done'`, `finished_at` set.
+      - On settle (`done`) → returns `ExecutorOutcome(settled=True)`.
+        The `tasks` row is `status='done'`, `finished_at` set.
+      - On cancel detected between steps → same outcome (the cancel
+        landed cleanly, no need to mark the job failed).
+      - On yield (time budget exhausted) → returns
+        `ExecutorOutcome(settled=True)` too, BUT the `tasks` row is
+        left `running`; the executor has already saved the
+        checkpoint and enqueued a `continue` job that picks up.
       - On model / tool / DB error → returns
         `ExecutorOutcome(settled=False, error=...)`. The poller
         marks the job failed; the row gets a synthetic
         `result: failed` event.
 
-    Cancellation (`tasks.status='cancelled'` flipped out-of-band)
-    is observed between steps; the loop emits `status: cancelled`
-    and returns with `settled=True` (the cancel landed cleanly).
-    """
+    `resume=True` seeds the emitter at the checkpoint's saved
+    `seq` / `step` so a re-tail picks up monotonically. `resume=False`
+    seeds at zero, and the runner auto-emits `status: running`."""
+    checkpoint = await store.load_checkpoint(
+        pool,
+        run_id=payload.run_id,
+        user_id=payload.user_id,
+    )
+    if checkpoint is None:
+        logger.warning(
+            "executor.no_checkpoint",
+            run_id=payload.run_id,
+            user_id=payload.user_id,
+            resume=resume,
+        )
+        checkpoint = {}
+
+    start_seq = _int_or(checkpoint.get("seq"), 0) if resume else 0
+    start_step = _int_or(checkpoint.get("step"), 0) if resume else 0
+
     sink = _make_db_sink(pool, user_id=payload.user_id)
-    emitter = RunEmitter(run_id=payload.run_id, sink=sink)
+    emitter = RunEmitter(
+        run_id=payload.run_id,
+        sink=sink,
+        start_seq=start_seq,
+        start_step=start_step,
+    )
+
+    # Track the mutable message history the step fn appends to —
+    # `_default_make_step_fn` builds it from the checkpoint and hands
+    # the SAME list to `AnthropicStepConfig.messages`, which the step
+    # mutates in place when tools are called. On yield we need to read
+    # the current state to persist; the closure captures it here so we
+    # don't have to plumb a getter through the step-fn factory.
+    live_messages: list[dict[str, Any]] = _messages_from(checkpoint)
 
     try:
         await store.set_task_handler(
@@ -114,26 +198,7 @@ async def execute_start(
             handler="python",
         )
 
-        # Phase 2b: load the checkpoint that the TS route wrote when it
-        # accepted this task. Carries the model id, system prompt, and
-        # the user's message history that the step fn needs to call
-        # the model. None = row missing or null checkpoint; fall back
-        # to the stub so the run settles cleanly with a synthetic
-        # answer instead of stalling.
-        checkpoint = await store.load_checkpoint(
-            pool,
-            run_id=payload.run_id,
-            user_id=payload.user_id,
-        )
-        if checkpoint is None:
-            logger.warning(
-                "executor.no_checkpoint",
-                run_id=payload.run_id,
-                user_id=payload.user_id,
-            )
-            checkpoint = {}
-
-        step_fn = (make_step_fn or _default_make_step_fn)(payload, checkpoint)
+        step_fn = (make_step_fn or _default_make_step_fn)(payload, checkpoint, live_messages)
         max_steps = _max_steps_from(checkpoint, payload.max_steps)
 
         async def is_cancelled() -> bool:
@@ -143,12 +208,44 @@ async def execute_start(
                 user_id=payload.user_id,
             )
 
+        deadline_s = _chunk_deadline_s()
+
+        def should_yield() -> bool:
+            return deadline_s is not None and asyncio.get_event_loop().time() > deadline_s
+
         result: AgentLoopResult = await run_agent_loop(
             emitter=emitter,
             max_steps=max_steps,
             run_step=step_fn,
             is_cancelled=is_cancelled,
+            should_yield=should_yield,
         )
+
+        # Yield path: persist the latest state + enqueue a continue
+        # job so another chunk picks up. The task row stays `running`
+        # (no terminal event emitted). The poller marks THIS job done
+        # because the chunk completed cleanly — there's just more work
+        # to do on a later one.
+        if result.kind == "yielded":
+            next_checkpoint = _build_checkpoint(checkpoint, live_messages, emitter)
+            await store.save_checkpoint(
+                pool,
+                run_id=payload.run_id,
+                user_id=payload.user_id,
+                checkpoint=next_checkpoint,
+            )
+            await jobs.enqueue_continue_job(
+                pool,
+                task_id=payload.run_id,
+                user_id=payload.user_id,
+            )
+            logger.info(
+                "executor.yielded",
+                run_id=payload.run_id,
+                step=emitter.step,
+                seq=emitter.seq,
+            )
+            return ExecutorOutcome(settled=True)
 
         # Reflect terminal status into the `tasks` row. The emitter
         # already wrote the terminal event; this is just the table
@@ -260,6 +357,7 @@ def _resolve_anthropic_client() -> AsyncAnthropicClient | None:
 def _default_make_step_fn(
     payload: StartActionPayload,
     checkpoint: dict[str, Any],
+    messages: list[dict[str, Any]],
 ) -> RunStepFn:
     """Default step-fn picker.
 
@@ -267,10 +365,14 @@ def _default_make_step_fn(
     fall back to the Phase 2a stub when the API key is unset OR the
     checkpoint is incomplete (no model / no messages). The stub keeps
     development + CI runnable without any provider credentials.
+
+    `messages` is the live, mutable list the chunk-runner owns — the
+    Anthropic step appends assistant + tool_result turns to it as it
+    runs, and the runner's yield path reads from it to persist the
+    checkpoint. Passing it in keeps the chunk-runner authoritative.
     """
     client = _resolve_anthropic_client()
     model = _str_or_none(checkpoint.get("config", {}).get("model"))
-    messages = _messages_from(checkpoint)
     system = _str_or_none(checkpoint.get("config", {}).get("workspaceSystemPrompt"))
 
     if client is None or not model or not messages:
@@ -375,11 +477,72 @@ def _str_or_none(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def _int_or(value: Any, fallback: int) -> int:
+    """Coerce a checkpoint jsonb number to int, falling back when the
+    field is missing / non-numeric. Both `seq` and `step` are read
+    through this on resume."""
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return fallback
+
+
+def _build_checkpoint(
+    original: dict[str, Any],
+    messages: list[dict[str, Any]],
+    emitter: RunEmitter,
+) -> dict[str, object]:
+    """Build the jsonb body for `tasks.checkpoint` on a yield save.
+
+    Shape matches `RunCheckpoint` on the TS side:
+    `{messages, step, seq, config}`. `config` is the original loaded
+    block (model / system / skills / maxSteps / mode / …); on a yield
+    we keep it identical — the next chunk runs with the same setup."""
+    cfg = original.get("config")
+    return {
+        "messages": list(messages),
+        "step": emitter.step,
+        "seq": emitter.seq,
+        "config": cfg if isinstance(cfg, dict) else {},
+    }
+
+
+# Time budget for one chunk before the runner voluntarily yields. The
+# TS side uses 45s as a default (Vercel Hobby cap is 60s; 15s headroom
+# leaves room for the current step to finish + the checkpoint write +
+# the enqueue). For self-host VMs there's no hard cap; we still chunk
+# so a long run can't monopolise a worker process.
+_DEFAULT_CHUNK_BUDGET_S = 45.0
+
+
+def _chunk_deadline_s() -> float | None:
+    """Compute an event-loop monotonic timestamp past which the runner
+    should yield. None disables chunking entirely (set
+    `WORKER_CHUNK_BUDGET_S=0` to opt out — useful in tests + when the
+    deploy target has no execution cap and a single big chunk is
+    fine). Reads the env var directly rather than threading it
+    through `get_settings()` so test invocations don't have to clear
+    the cached Settings singleton."""
+    raw = os.environ.get("WORKER_CHUNK_BUDGET_S")
+    if raw is not None:
+        try:
+            budget = float(raw)
+        except ValueError:
+            budget = _DEFAULT_CHUNK_BUDGET_S
+    else:
+        budget = _DEFAULT_CHUNK_BUDGET_S
+    if budget <= 0:
+        return None
+    return asyncio.get_event_loop().time() + budget
+
+
 # Re-export so callers (and the poller) can wire a custom step fn
 # without depending on private internals.
 __all__ = [
     "ExecutorOutcome",
     "MakeStepFn",
     "StartActionPayload",
+    "execute_continue",
     "execute_start",
 ]

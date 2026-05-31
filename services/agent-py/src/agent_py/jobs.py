@@ -166,6 +166,32 @@ async def mark_job_failed(
         await conn.execute(_MARK_FAILED_SQL, _coerce_uuid(job_id), error)
 
 
+_ENQUEUE_SQL = """
+INSERT INTO public.task_jobs (task_id, user_id, action, payload, status, scheduled_at)
+VALUES ($1, $2, $3, $4::jsonb, 'queued', now());
+"""
+
+
+async def enqueue_continue_job(
+    pool: asyncpg.Pool,
+    *,
+    task_id: str,
+    user_id: str,
+) -> None:
+    """Insert a `continue` job. Phase 3a calls this on the chunk-break
+    path — the executor saved a checkpoint, now the worker (Python OR
+    TS, whichever wins the next claim) picks up from there. Payload is
+    empty: `continue` reads everything from `tasks.checkpoint`."""
+    async with pool.acquire() as conn:
+        await conn.execute(
+            _ENQUEUE_SQL,
+            _coerce_uuid(task_id),
+            _coerce_uuid(user_id),
+            "continue",
+            json.dumps({}),
+        )
+
+
 def _row_to_claimed(row: asyncpg.Record) -> ClaimedJob:
     payload = row["payload"]
     # asyncpg returns jsonb as a string by default unless a codec is

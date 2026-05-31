@@ -78,6 +78,13 @@ class RunEmitter:
         return self._step
 
     @property
+    def seq(self) -> int:
+        """Highest seq emitted so far — read by the executor on
+        chunk-break yield to persist into the new checkpoint, so the
+        next chunk's emitter seeds at `seq+1`."""
+        return self._seq
+
+    @property
     def settled(self) -> bool:
         return self._settled
 

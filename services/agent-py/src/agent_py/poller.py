@@ -142,10 +142,10 @@ async def _tick(settings: Settings) -> None:
         )
         return
 
-    # Phase 2a only handles the `start` action end-to-end.
-    # `respond` / `continue` belong to later phases — release them
-    # back so the TS worker handles them in the meantime.
-    if job.action != "start":
+    # Phase 3a adds `continue` end-to-end (chunk resume after a
+    # time-budget yield). `respond` (HITL) still rides the TS worker
+    # — release for now.
+    if job.action not in ("start", "continue"):
         released = await jobs.release_job_to_queue(pool, job.id)
         logger.info(
             "poller.released",
@@ -160,7 +160,10 @@ async def _tick(settings: Settings) -> None:
         run_id=job.task_id,
         user_id=job.user_id,
     )
-    outcome = await executor.execute_start(pool, payload)
+    if job.action == "continue":
+        outcome = await executor.execute_continue(pool, payload)
+    else:
+        outcome = await executor.execute_start(pool, payload)
     if outcome.settled:
         await jobs.mark_job_done(pool, job.id)
         logger.info(

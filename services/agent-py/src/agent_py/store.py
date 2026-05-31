@@ -195,5 +195,38 @@ async def load_checkpoint(
     return None
 
 
+_SAVE_CHECKPOINT_SQL = """
+UPDATE public.tasks
+SET checkpoint = $3::jsonb,
+    updated_at = now()
+WHERE id = $1 AND user_id = $2;
+"""
+
+
+async def save_checkpoint(
+    pool: asyncpg.Pool,
+    *,
+    run_id: str,
+    user_id: str,
+    checkpoint: dict[str, object],
+) -> None:
+    """Overwrite the `tasks.checkpoint` jsonb column with the executor's
+    current state. Phase 3a uses this on the chunk-break path
+    (`AgentLoopResult.kind == "yielded"`): we persist `messages` +
+    `step` + `seq` + the same `config` we loaded, then enqueue a
+    `continue` job that picks up from here.
+
+    Same shape as `RunCheckpoint` in `lib/server/agent/checkpoint.ts`
+    so a Python-written checkpoint is loadable by the TS worker
+    (defence in depth — flag flip should never strand a run mid-loop)."""
+    async with pool.acquire() as conn:
+        await conn.execute(
+            _SAVE_CHECKPOINT_SQL,
+            _coerce_uuid(run_id),
+            _coerce_uuid(user_id),
+            json.dumps(checkpoint),
+        )
+
+
 def _coerce_uuid(value: str) -> uuid.UUID:
     return uuid.UUID(value)
