@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "types": ["bun-types"],
+    "baseUrl": "../..",
+    "paths": {
+      "@/*": ["./*"],
+      "@/client/*": ["./lib/client/*"],
+      "@/server/*": ["./lib/server/*"],
+      "@/shared/*": ["./lib/shared/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules"]
+}

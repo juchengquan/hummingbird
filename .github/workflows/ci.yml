@@ -108,6 +108,33 @@ jobs:
       - name: Test (pytest)
         run: uv run pytest
 
+  # TS twin of the Python agent service (services/agent-ts/).
+  # See docs/PLAN-agent-ts.md. Same gate shape as agent-py: a
+  # typecheck + a test run. Runs in parallel with the main CI job
+  # since they share no inputs.
+  agent-ts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: services/agent-ts
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun test
+
   # Drift gate for the TS types generated from the agent service's
   # OpenAPI doc. Regenerates against the live FastAPI schema and fails
   # if the checked-in `lib/shared/agent-py-types.generated.ts` is out

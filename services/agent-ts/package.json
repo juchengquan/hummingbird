@@ -1,0 +1,26 @@
+{
+  "name": "agent-ts",
+  "version": "0.1.0",
+  "description": "Hummingbird agent service — TypeScript implementation (twin of services/agent-py).",
+  "module": "src/server.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun --watch src/server.ts",
+    "start": "bun src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src tests",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "hono": "^4.6.0",
+    "@hono/zod-openapi": "^0.18.0",
+    "jose": "^5.10.0",
+    "postgres": "^3.4.5",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.0",
+    "typescript": "^5.6.0"
+  }
+}
