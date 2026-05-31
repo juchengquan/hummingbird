@@ -1,17 +1,25 @@
 # Plan: Agent API as a separate service
 
 Status: **🪜 Phased — Phases 0 + 1 + 2a + 2b-1 + 2b-2 + 3a + 3b + 3c-1
-+ 3c-2 + 3d-1 + 3d-2 + 3e shipped, Phases 3f+ pending.** Option C
-(Python service) green-lit. Phase 0 (scaffolding), Phase 1 (read-only
-poller), Phase 2a (executor pattern + feature flag), Phase 2b-1 (real
-Anthropic text streaming + `ANTHROPIC_BASE_URL` override), Phase 2b-2
-(tool wiring + `webFetch`), Phase 3a (`continue` action + chunk-break
-yield), Phase 3b (suspend path + `respond` action), Phase 3c-1
-(`webSearch` via Tavily), Phase 3c-2 (`searchFiles` tool with RLS
-impersonation), Phase 3d-1 (`generateImage` tool — Minimax T2I/I2I),
-Phase 3d-2 (Supabase Storage persistence for generated images), and
-**Phase 3e (file extraction + POST `/v1/extract`)** all live in
-`services/agent-py/`. The extractor mirrors `app/api/extract/route.ts`
++ 3c-2 + 3d-1 + 3d-2 + 3e + 3f-1 shipped, Phases 3f-2 + 3g pending.**
+Option C (Python service) green-lit. Phase 0 (scaffolding), Phase 1
+(read-only poller), Phase 2a (executor pattern + feature flag), Phase
+2b-1 (real Anthropic text streaming + `ANTHROPIC_BASE_URL` override),
+Phase 2b-2 (tool wiring + `webFetch`), Phase 3a (`continue` action +
+chunk-break yield), Phase 3b (suspend path + `respond` action), Phase
+3c-1 (`webSearch` via Tavily), Phase 3c-2 (`searchFiles` tool with
+RLS impersonation), Phase 3d-1 (`generateImage` tool — Minimax T2I/
+I2I), Phase 3d-2 (Supabase Storage persistence for generated images),
+Phase 3e (file extraction + POST `/v1/extract`), and **Phase 3f-1
+(MCP client wrapper + credential decryption)** all live in
+`services/agent-py/`. The MCP client mirrors `lib/server/mcp/client.ts`
+— `discover` / `call_tool` / `read_resource` over streamable-HTTP via
+the official `mcp` Python SDK. `mcp_credentials.fetch_decrypted_credentials`
+calls the `mcp_get_decrypted_credentials` SECURITY DEFINER RPC under
+the same `SET LOCAL ROLE authenticated` + `request.jwt.claims` user
+impersonation that `searchFiles` (Phase 3c-2) uses. Phase 3f-2 wires
+MCP tools into `default_tool_registry` as `mcp__<server>__<tool>`
+entries; this PR is the foundation. The extractor mirrors `app/api/extract/route.ts`
 — same dispatch order (plain text → PDF → DOCX → HTML → code → XLSX
 → image → unsupported), same budgets (100 KB inline / 128 KB code /
 1 MB full-text), backed by `pypdf` + `python-docx` + `openpyxl` +
