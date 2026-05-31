@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { LogIn, LogOut, Loader2, CloudOff, Cloud, HardDrive, Trash2, Sun, Moon, Monitor } from "lucide-react"
+import { LogIn, LogOut, Loader2, CloudOff, Cloud, HardDrive, Trash2, Sun, Moon, Monitor, Bot } from "lucide-react"
 import { toast } from "sonner"
 import {
   Popover,
@@ -17,6 +17,7 @@ import { useSidebar } from "@/components/ui/sidebar"
 import { cn } from "@/shared/utils"
 import { clearAll, estimateUsage } from "@/client/files/local-store"
 import { formatFileSize } from "@/client/file-utils"
+import { isAgentPyConfigured } from "@/client/api-client"
 
 /**
  * Sidebar footer auth + local-mode surface.
@@ -33,6 +34,9 @@ export function AccountMenu() {
   const localOnlyMode = useStore((s) => s.localOnlyMode)
   const setLocalOnlyMode = useStore((s) => s.setLocalOnlyMode)
   const localFilesOnly = useStore((s) => s.localFilesOnly)
+  const chatBackend = useStore((s) => s.chatBackend)
+  const setChatBackend = useStore((s) => s.setChatBackend)
+  const agentPyAvailable = isAgentPyConfigured()
   const setLocalFilesOnly = useStore((s) => s.setLocalFilesOnly)
   const theme = useStore((s) => s.theme)
   const setTheme = useStore((s) => s.setTheme)
@@ -201,6 +205,29 @@ export function AccountMenu() {
               : "Stop uploading raw files (keep them on this device)"
           }
         />
+        {/* Chat backend selector. Phase 4-2 of PLAN-agent-api —
+            users can route their chat turns at the new Python agent
+            service while the TS route stays live. Only surfaces when
+            `NEXT_PUBLIC_AGENT_PY_URL` is set; without it the toggle
+            would do nothing. */}
+        {agentPyAvailable && (
+          <ToggleRow
+            icon={Bot}
+            label="Python agent backend"
+            description={
+              chatBackend === "python"
+                ? "Chat turns route to the Python agent service (experimental — text-only)"
+                : "Chat turns use the Next.js route (default, full feature set)"
+            }
+            checked={chatBackend === "python"}
+            onCheckedChange={(v) => setChatBackend(v ? "python" : "ts")}
+            ariaLabel={
+              chatBackend === "python"
+                ? "Switch back to the Next.js chat backend"
+                : "Switch to the Python agent chat backend"
+            }
+          />
+        )}
         <div className="border-t my-1" />
         {/* Color scheme */}
         <div className="px-2 py-1">

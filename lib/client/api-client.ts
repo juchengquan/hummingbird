@@ -56,6 +56,29 @@ const API_BASE_URL = (
     : ""
 ).replace(/\/+$/, "")
 
+/**
+ * Base URL for the Python agent service (`services/agent-py/`). Set
+ * to its origin (e.g. `http://localhost:8000` in dev) to enable the
+ * "Chat backend → Python" toggle in the account menu. Empty / unset →
+ * the apiClient ignores the `backend: 'python'` option and falls
+ * through to the TS route, so a misconfigured deploy degrades safely.
+ *
+ * Phase 4-2 of `PLAN-agent-api.md`. Per user policy, both stacks
+ * stay live indefinitely — this is the selector wire, not a cutover.
+ */
+export const AGENT_PY_BASE_URL = (
+  typeof process !== "undefined" && process.env.NEXT_PUBLIC_AGENT_PY_URL
+    ? process.env.NEXT_PUBLIC_AGENT_PY_URL
+    : ""
+).replace(/\/+$/, "")
+
+/** Whether the Python agent endpoint is reachable as a backend
+ *  option. The UI toggle hides itself when this is false so users
+ *  don't see a switch that does nothing. */
+export function isAgentPyConfigured(): boolean {
+  return AGENT_PY_BASE_URL.length > 0
+}
+
 function url(path: string): string {
   return `${API_BASE_URL}${path}`
 }
@@ -119,22 +142,131 @@ export interface ChatStreamResult {
   error?: { code?: string; message?: string }
 }
 
+export type ChatBackendOption = "ts" | "python"
+
+export interface ChatStreamOptions {
+  signal?: AbortSignal
+  /** Which backend to call. Defaults to `'ts'` — the Next.js route.
+   *  `'python'` calls the agent service's `/v1/chat`; requires a
+   *  reachable `NEXT_PUBLIC_AGENT_PY_URL` AND a `pythonAuthToken`,
+   *  otherwise the call silently falls through to the TS route. */
+  backend?: ChatBackendOption
+  /** Supabase session JWT, required when `backend === 'python'`.
+   *  Caller resolves via `supabase.auth.getSession()`. */
+  pythonAuthToken?: string | null
+}
+
 /**
  * Initiates a chat request. Returns the raw stream so the caller can
  * parse the SSE frames itself — the protocol is documented in
  * `docs/API.md`. The chat panel currently does this inline because the
  * frame handling is tightly coupled to its placeholder + tool-call
  * state machine.
+ *
+ * Phase 4-2: backend dispatch. `options.backend === 'python'` routes
+ * to the agent service's `/v1/chat` when configured + authed, falling
+ * back to the TS route on any prerequisite failure. The SSE wire
+ * shape matches across both producers (text / error / done frames)
+ * so the consumer (`use-chat-send.ts`) doesn't branch on backend.
  */
 async function chatStream(
   body: ChatRequestInput,
-  options?: { signal?: AbortSignal }
+  options?: ChatStreamOptions
+): Promise<ChatStreamResult> {
+  const usePython =
+    options?.backend === "python" &&
+    AGENT_PY_BASE_URL.length > 0 &&
+    typeof options.pythonAuthToken === "string" &&
+    options.pythonAuthToken.length > 0
+
+  if (usePython) {
+    return chatStreamPython(body, options as Required<ChatStreamOptions>)
+  }
+  return chatStreamTs(body, options)
+}
+
+async function chatStreamTs(
+  body: ChatRequestInput,
+  options?: ChatStreamOptions
 ): Promise<ChatStreamResult> {
   const res = await fetch(apiUrls.chat(), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
     signal: options?.signal,
+  })
+  if (!res.ok) {
+    const errBody = await readErrorBody(res)
+    return {
+      ok: false,
+      status: res.status,
+      body: null,
+      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+    }
+  }
+  return { ok: true, status: res.status, body: res.body }
+}
+
+/**
+ * Narrow the TS-shaped chat request body to what the Python `/v1/chat`
+ * endpoint accepts today (Phase 4-1 schema): messages + model +
+ * optional system + max_tokens. Skills / attachments / MCP / etc. are
+ * dropped silently — Python rejects them with `extra="ignore"` anyway,
+ * but trimming client-side keeps the payload small and the intent
+ * explicit. Tools + skills land in a later phase.
+ */
+function narrowToPythonBody(body: ChatRequestInput): Record<string, unknown> {
+  // Coerce each message's content to a plain string. The TS schema
+  // allows structured content parts; the Python schema accepts only
+  // `string`. We pull the joined text for compatibility — keeps the
+  // first slice viable until the Python endpoint grows multimodal
+  // support.
+  const messages = body.messages.map((m) => ({
+    role: m.role,
+    content: typeof m.content === "string" ? m.content : flattenTextParts(m.content),
+  }))
+  const out: Record<string, unknown> = {
+    model: body.model ?? "",
+    messages,
+  }
+  if (body.workspaceSystemPrompt) {
+    out.system = body.workspaceSystemPrompt
+  }
+  return out
+}
+
+function flattenTextParts(content: unknown): string {
+  if (typeof content === "string") return content
+  if (!Array.isArray(content)) return ""
+  const parts: string[] = []
+  for (const part of content) {
+    if (part && typeof part === "object" && "type" in part && (part as { type: string }).type === "text") {
+      const text = (part as { text?: unknown }).text
+      if (typeof text === "string") parts.push(text)
+    }
+  }
+  return parts.join("")
+}
+
+async function chatStreamPython(
+  body: ChatRequestInput,
+  options: ChatStreamOptions
+): Promise<ChatStreamResult> {
+  const narrowed = narrowToPythonBody(body)
+  // Empty model would land as a 422 — let the TS fallback handle it
+  // since `model` is required on the Python schema but optional in
+  // the TS shape. The chat panel always sets it in practice.
+  if (!narrowed.model) {
+    return chatStreamTs(body, options)
+  }
+  const res = await fetch(`${AGENT_PY_BASE_URL}/v1/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${options.pythonAuthToken}`,
+    },
+    body: JSON.stringify(narrowed),
+    signal: options.signal,
   })
   if (!res.ok) {
     const errBody = await readErrorBody(res)

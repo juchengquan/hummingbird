@@ -8,7 +8,7 @@ import { uuid } from "@/shared/uuid"
  * step in `runMigrations`. Wired into the `version` field of the persist
  * config in `use-store.ts`.
  */
-export const STORE_VERSION = 19
+export const STORE_VERSION = 20
 
 /**
  * Sequential schema migrations from older persisted shapes to the
@@ -373,6 +373,13 @@ export function runMigrations(
         return obj
       })
     }
+  }
+  if (fromVersion < 20) {
+    // Chat-backend selector added (Phase 4-2 of PLAN-agent-api).
+    // Default to 'ts' so existing users keep hitting the Next.js
+    // route unchanged. Users who want the Python agent service have
+    // to opt in via the account-menu toggle.
+    if (!("chatBackend" in state)) state.chatBackend = "ts"
   }
   return persistedState
 }
