@@ -36,6 +36,7 @@ import structlog
 from . import jobs, store
 from .emitter import EventSink, RunEmitter
 from .events import TaskEvent
+from .mcp_tools import extend_registry_with_mcp
 from .providers.anthropic_provider import (
     AnthropicStepConfig,
     AsyncAnthropicClient,
@@ -50,6 +51,7 @@ from .runner import (
 )
 from .settings import get_settings
 from .tools import ToolContext, default_tool_registry
+from .tools.registry import ToolDescriptor
 
 logger = structlog.get_logger(__name__)
 
@@ -244,10 +246,39 @@ async def _run_chunk(
             handler="python",
         )
 
-        tool_context = ToolContext(pool=pool, user_id=payload.user_id)
-        step_fn = (make_step_fn or _default_make_step_fn)(
-            payload, checkpoint, live_messages, tool_context
+        # Phase 3f-2: pull `workspaceId` off the checkpoint config so
+        # cloud-mode MCP discovery (`extend_registry_with_mcp`) knows
+        # which workspace to enumerate. Absent → context.workspace_id
+        # stays None and MCP tools are skipped entirely (Phase 2b-2
+        # behaviour). The TS checkpoint always writes `workspaceId`;
+        # missing field is the test/dev path.
+        cfg = checkpoint.get("config")
+        workspace_id = (
+            _str_or_none(cfg.get("workspaceId")) if isinstance(cfg, dict) else None
         )
+        tool_context = ToolContext(pool=pool, user_id=payload.user_id, workspace_id=workspace_id)
+        # Phase 3f-2: discover cloud-mode MCP tools when we have a
+        # workspace. Custom `make_step_fn` overrides (tests) skip this
+        # — they don't go through `_default_make_step_fn`, so injecting
+        # extra tools wouldn't reach them anyway.
+        if make_step_fn is None:
+            extra_tools: dict[str, ToolDescriptor] = {}
+            if workspace_id:
+                await extend_registry_with_mcp(
+                    extra_tools,
+                    pool=pool,
+                    user_id=payload.user_id,
+                    workspace_id=workspace_id,
+                )
+            step_fn = _default_make_step_fn(
+                payload,
+                checkpoint,
+                live_messages,
+                tool_context,
+                extra_tools=extra_tools or None,
+            )
+        else:
+            step_fn = make_step_fn(payload, checkpoint, live_messages, tool_context)
         max_steps = _max_steps_from(checkpoint, payload.max_steps)
 
         async def is_cancelled() -> bool:
@@ -447,6 +478,8 @@ def _default_make_step_fn(
     checkpoint: dict[str, Any],
     messages: list[dict[str, Any]],
     context: ToolContext | None = None,
+    *,
+    extra_tools: dict[str, ToolDescriptor] | None = None,
 ) -> RunStepFn:
     """Default step-fn picker.
 
@@ -464,6 +497,11 @@ def _default_make_step_fn(
     tools that reach external systems on the user's behalf (currently
     just `searchFiles`). None = registry omits those tools — fine
     for tests / dev with no DB.
+
+    `extra_tools` (Phase 3f-2) is the pre-discovered cloud-mode MCP
+    tool set — the chunk-runner builds it via `extend_registry_with_mcp`
+    before calling us. Kwarg-only so existing `MakeStepFn` callers
+    (tests) don't need to know it exists.
     """
     client = _resolve_anthropic_client()
     model = _str_or_none(checkpoint.get("config", {}).get("model"))
@@ -484,7 +522,10 @@ def _default_make_step_fn(
     # case the step settles on first call, identical to Phase 2b-1
     # behaviour) or call any of them. A future config flag on
     # `checkpoint.config` can narrow the visible set per run.
-    tools = list(default_tool_registry(context=context).values())
+    tools_dict = default_tool_registry(context=context)
+    if extra_tools:
+        tools_dict.update(extra_tools)
+    tools = list(tools_dict.values())
 
     # Phase 3b: read the run's gated-tool allow-list. Names match
     # `tools[].name` (skill names + prefixed MCP tool names). When
