@@ -1,22 +1,25 @@
 # Plan: Agent API as a separate service
 
-Status: **🪜 Phased — Phases 0 + 1 + 2a + 2b-1 + 2b-2 + 3a + 3c-1
-shipped, Phases 3b + 3c-2+ pending.** Option C (Python service)
-green-lit. Phase 0 (scaffolding), Phase 1 (read-only poller),
-Phase 2a (executor pattern + feature flag), Phase 2b-1 (real
-Anthropic text streaming + `ANTHROPIC_BASE_URL` override),
-Phase 2b-2 (tool wiring + `webFetch`), Phase 3a (`continue` action +
-chunk-break yield), and **Phase 3c-1 (`webSearch` via Tavily)** all
-live in `services/agent-py/`. `webSearch` is config-gated:
-registered in `default_tool_registry()` only when `TAVILY_API_KEY`
-is set, hiding the tool entirely from the model when unconfigured
-(mirrors the TS skill-cascade behaviour). `searchFiles` (Phase 3c-2)
-and `imageGen` (Phase 3d) land separately — `searchFiles` needs the
-RLS-impersonation pattern (auth-as-user via Supabase REST) which
-deserves its own focused PR. Host decided (self-host on a small VM
-— see §Host decision). The earlier "decision-doc — Step 1 done"
-status is
-retained in the prior-status note below for context.
+Status: **🪜 Phased — Phases 0 + 1 + 2a + 2b-1 + 2b-2 + 3a + 3c-1 + 3c-2
+shipped, Phases 3b + 3d+ pending or in-flight (parallel PRs).** Option
+C (Python service) green-lit. Phase 0 (scaffolding), Phase 1 (read-only
+poller), Phase 2a (executor pattern + feature flag), Phase 2b-1 (real
+Anthropic text streaming + `ANTHROPIC_BASE_URL` override), Phase 2b-2
+(tool wiring + `webFetch`), Phase 3a (`continue` action + chunk-break
+yield), **Phase 3c-1 (`webSearch` via Tavily)**, and **Phase 3c-2
+(`searchFiles` tool with RLS impersonation)** all live in
+`services/agent-py/`. `webSearch` is config-gated: registered in
+`default_tool_registry()` only when `TAVILY_API_KEY` is set, hiding
+the tool entirely from the model when unconfigured (mirrors the TS
+skill-cascade behaviour). `searchFiles` is config-gated on the new
+`ToolContext` (pool + user_id); calls the `search_file_sections`
+Postgres RPC under `SET LOCAL ROLE authenticated` +
+`request.jwt.claims = {sub: <user_id>, role: 'authenticated'}` so RLS
+on `files` evaluates against the user — service-role pool can't bypass
+per-user visibility. `imageGen` (Phase 3d) lands separately. Phase 3b
+(suspend + respond) ships in a parallel PR. Host decided (self-host on
+a small VM — see §Host decision). The earlier "decision-doc — Step 1
+done" status is retained in the prior-status note below for context.
 
 > **Note on phase numbering.** The original plan called Phase 2 a
 > single 1-week slice (executor + 3 tools + provider port). It split

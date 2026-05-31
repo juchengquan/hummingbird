@@ -10,15 +10,23 @@ for us).
 `tool_result.content`; `summary` is the UI-pill text;
 `source_results` is the optional Sources-strip rows (search-shaped
 outputs use it, fetch-shaped don't).
-"""
+
+`ToolContext` (Phase 3c-2) carries the per-run state any tool needs
+to reach external systems on the user's behalf — today just the
+asyncpg pool + the user_id (for RLS impersonation in `searchFiles`).
+Tools that don't need it ignore it; tools that do close over it via
+their `build_*_tool(context)` factory."""
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..events import ToolCallResult
+
+if TYPE_CHECKING:
+    import asyncpg
 
 
 @dataclass(frozen=True)
@@ -80,16 +88,38 @@ def tool_to_anthropic_param(tool: ToolDescriptor) -> dict[str, Any]:
     }
 
 
-def default_tool_registry() -> dict[str, ToolDescriptor]:
+@dataclass(frozen=True)
+class ToolContext:
+    """Per-run state tools need to reach external systems on the user's
+    behalf. Today: the asyncpg pool + the user's id (for RLS
+    impersonation via `store._set_user_context`). Future tools (MCP
+    cloud-mode, image storage) will read additional fields from this.
+
+    `None` context means "no per-user state available" — tools that
+    require it (e.g. `searchFiles`) are omitted from the registry."""
+
+    pool: asyncpg.Pool
+    user_id: str
+
+
+def default_tool_registry(
+    *,
+    context: ToolContext | None = None,
+) -> dict[str, ToolDescriptor]:
     """Process-wide default registry. The executor passes either the
     full list or a filtered subset (e.g. by checkpoint config) to the
     step fn factory.
 
-    Tool inclusion is config-aware: `webSearch` is registered only
-    when `TAVILY_API_KEY` is set (mirrors the TS skill-cascade
-    behaviour where a missing provider hides the skill rather than
-    surfacing a per-call error). `webFetch` is unconditional — no
-    upstream credential needed."""
+    Tool inclusion is config-aware:
+    - `webFetch` is unconditional — no upstream credential needed.
+    - `webSearch` registers only when `TAVILY_API_KEY` is set (mirrors
+      the TS skill-cascade behaviour where a missing provider hides
+      the skill rather than surfacing a per-call error).
+    - `searchFiles` registers only when `context` is provided (needs
+      pool + user_id for the per-user RLS-impersonated RPC call).
+      Tests + dev code that pass `context=None` see the same registry
+      shape they did pre-Phase-3c-2.
+    """
     # Lazy imports keep registry construction cheap and avoid
     # circular imports if a tool ever needs to read the registry.
     from .web_fetch import build_web_fetch_tool
@@ -100,4 +130,8 @@ def default_tool_registry() -> dict[str, ToolDescriptor]:
     }
     if is_web_search_configured():
         out["webSearch"] = build_web_search_tool()
+    if context is not None:
+        from .search_files import build_search_files_tool
+
+        out["searchFiles"] = build_search_files_tool(context)
     return out
