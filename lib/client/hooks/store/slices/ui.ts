@@ -14,6 +14,10 @@ import type { SliceCreator } from "../types"
 export type Theme = "system" | "dark" | "light"
 export type ColorScheme = "default" | "anthropic"
 
+/** Which `/api/chat` producer the apiClient hits. See `chatBackend`
+ *  on the UI slice for the full rationale. */
+export type ChatBackend = "ts" | "python"
+
 /** Tab ids for the right resources sidebar. */
 export type ResourcesSidebarTab =
   | "files"
@@ -124,6 +128,26 @@ export interface UiSlice {
    *  useEffect reads, copies to local state, then clears. */
   pendingChatInput: string | null
 
+  /**
+   * Backend selector for `/api/chat` streaming.
+   *
+   * - `'ts'` (default) — Next.js route `/api/chat` (the existing,
+   *   feature-complete stack with skills / attachments / MCP / etc.).
+   * - `'python'` — the Phase 4-1 agent service at
+   *   `<NEXT_PUBLIC_AGENT_PY_URL>/v1/chat`. Text-only today; tools
+   *   and skills land in later phases.
+   *
+   * Per `PLAN-agent-api.md`, both stacks stay live indefinitely —
+   * this setting is the user-facing selector, NOT a phased cutover.
+   * The toggle only surfaces in the UI when `NEXT_PUBLIC_AGENT_PY_URL`
+   * is set; without it, every value here is treated as 'ts'.
+   *
+   * Survives reloads via partialize (so a user who switched stays
+   * switched). Default is 'ts' — existing users see no behaviour
+   * change post-update.
+   */
+  chatBackend: ChatBackend
+
   // View / sidebar actions
   toggleSidebar: () => void
   setActiveView: (view: MainView) => void
@@ -156,6 +180,7 @@ export interface UiSlice {
   setLocalOnlyMode: (value: boolean) => void
   setLocalFilesOnly: (value: boolean) => void
   setPendingChatInput: (value: string | null) => void
+  setChatBackend: (value: ChatBackend) => void
 
   // Theme actions
   setTheme: (theme: Theme) => void
@@ -185,6 +210,7 @@ export const createUiSlice: SliceCreator<UiSlice> = (set, get) => ({
   localOnlyMode: false,
   localFilesOnly: false,
   pendingChatInput: null,
+  chatBackend: "ts",
 
   toggleSidebar: () =>
     set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
@@ -231,6 +257,7 @@ export const createUiSlice: SliceCreator<UiSlice> = (set, get) => ({
   setLocalOnlyMode: (value) => set({ localOnlyMode: value }),
   setLocalFilesOnly: (value) => set({ localFilesOnly: value }),
   setPendingChatInput: (value) => set({ pendingChatInput: value }),
+  setChatBackend: (value) => set({ chatBackend: value }),
 
   setTheme: (theme) => set({ theme }),
   toggleTheme: () => {
