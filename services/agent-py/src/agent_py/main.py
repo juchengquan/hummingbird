@@ -17,10 +17,19 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import AsyncIterator
-from typing import Annotated
+from typing import Annotated, Any, Literal
 
 import structlog
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Header,
+    HTTPException,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -40,9 +49,28 @@ from .chat import (
     chat_stream_with_tools_ai_sdk,
     resolve_anthropic_client,
 )
+from .db import get_pool, has_pool
 from .extraction import ExtractionKind, extract_file
+from .image_storage import sign_storage_path
+from .mcp_client import McpEndpoint
+from .mcp_client import call_tool as mcp_call_tool
+from .mcp_client import discover as mcp_discover
+from .mcp_client import read_resource as mcp_read_resource
+from .mcp_credentials import fetch_decrypted_credentials
 from .settings import Settings, get_settings
+from .summarise import (
+    SummariseError,
+    summarise_compress,
+    summarise_conversation,
+    summarise_file,
+    summarise_project_breakdown,
+)
+from .summarise import (
+    resolve_model as summarise_resolve_model,
+)
 from .tools import ToolDescriptor, default_tool_registry
+from .url_fetch import FetchError, fetch_url_bookmark
+from .url_validate import normalize_url
 
 logger = structlog.get_logger(__name__)
 
@@ -304,6 +332,310 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
             headers=headers,
         )
 
+    @app.post("/v1/url/fetch", tags=["url"])
+    async def url_fetch(
+        body: UrlFetchRequest,
+        _claims: Annotated[dict[str, object], Depends(get_current_user)],
+    ) -> UrlFetchResponse:
+        """Fetch + extract a URL as a bookmark snapshot. Phase 4-4-a
+        of PLAN-agent-api — Python mirror of `app/api/url/fetch/route.ts`.
+
+        Pipeline:
+          1. Normalise the URL (prepend https:// for bare-domain
+             input, lowercase host, strip fragment).
+          2. SSRF gate — scheme allowlist, textual hostname blocklist,
+             DNS rebinding defence (resolve + private-IP check).
+          3. Fetch with 10s timeout, manual redirect handling (5 hops
+             max, each re-validated), 5 MB body cap.
+          4. Extract title / content / description / favicon via lxml.
+
+        Error → status mapping mirrors the TS path: validation /
+        unsupported_content_type → 400, timeout → 408, body_too_large
+        → 413, http_error / too_many_redirects / network → 502.
+        """
+        normalized = normalize_url(body.url)
+        if normalized is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "invalid_url", "message": "URL is not parseable"},
+            )
+        result = await fetch_url_bookmark(normalized)
+        if isinstance(result, FetchError):
+            # Translate the structured error to the documented HTTP
+            # status code. Mirrors the TS route's `httpStatusFor`.
+            raise HTTPException(
+                status_code=_url_fetch_error_status(result.code),
+                detail={
+                    "code": result.code,
+                    "message": result.message,
+                    **({"status": result.status} if result.status is not None else {}),
+                },
+            )
+        snap = result.snapshot
+        if snap is None:
+            # Belt-and-braces — `FetchOk` always carries a snapshot
+            # in practice, but the typed shape is `BookmarkSnapshot |
+            # None` so guard anyway.
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={"code": "missing_snapshot", "message": "Empty fetch result."},
+            )
+        return UrlFetchResponse(
+            ok=True,
+            bookmark=BookmarkSnapshotModel(
+                url=snap.url,
+                title=snap.title,
+                content=snap.content,
+                content_truncated=snap.content_truncated,
+                content_hash=snap.content_hash,
+                description=snap.description,
+                favicon_url=snap.favicon_url,
+            ),
+        )
+
+    @app.post("/v1/images/refresh-url", tags=["images"])
+    async def images_refresh_url(
+        body: RefreshImageUrlRequest,
+        claims: Annotated[dict[str, object], Depends(get_current_user)],
+    ) -> RefreshImageUrlResponse:
+        """Re-sign an expired generated-image URL. Phase 4-4-a of
+        PLAN-agent-api — Python mirror of
+        `app/api/images/refresh-url/route.ts`.
+
+        Authorisation: the bucket layout is `<user_id>/...` (see
+        `0003_storage.sql`); we reject any `storage_path` whose first
+        segment doesn't match the JWT's `sub` claim before touching
+        Storage. RLS would also reject the call but a clean 403 is
+        friendlier than fighting an opaque Storage error.
+
+        Returns 404 when the object doesn't exist OR Storage isn't
+        configured (both look the same from the API's perspective).
+        """
+        user_id = claims.get("sub")
+        if not isinstance(user_id, str) or not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"code": "auth", "message": "Token has no subject."},
+            )
+
+        first_segment = body.storage_path.split("/", 1)[0]
+        if first_segment != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "forbidden",
+                    "message": "Storage path does not belong to you.",
+                },
+            )
+
+        url = await sign_storage_path(body.storage_path)
+        if url is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "code": "not_found",
+                    "message": ("Could not re-sign the URL — object may be missing."),
+                },
+            )
+        return RefreshImageUrlResponse(url=url)
+
+    @app.post("/v1/summarize", tags=["summarize"])
+    async def summarize(
+        body: SummariseRequest,
+        _claims: Annotated[dict[str, object], Depends(get_current_user)],
+    ) -> dict[str, Any]:
+        """Summarisation endpoint — Phase 4-4b of PLAN-agent-api.
+        Python mirror of `app/api/summarize/route.ts`.
+
+        Four modes via discriminated union on `mode`: file /
+        conversation / compress / project-breakdown. Three return
+        JSON; compress returns `{recap: str}` markdown.
+
+        Notable difference from TS: this endpoint only talks to
+        Anthropic (no Vercel-gateway routing). When the caller's
+        `model` doesn't look like an Anthropic id (e.g. the TS
+        default `google/gemini-2.5-flash`), we fall back to
+        `claude-3-5-haiku-20241022`. Caller behaviour is unaffected
+        because the field is still accepted; the TS-shape body comes
+        through unchanged.
+        """
+        client = resolve_anthropic_client()
+        if client is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "auth",
+                    "message": "ANTHROPIC_API_KEY is not configured.",
+                },
+            )
+
+        model = summarise_resolve_model(body.model)
+
+        if isinstance(body, FileSummariseBody):
+            result = await summarise_file(
+                client=client, model=model, name=body.name, text=body.text
+            )
+        elif isinstance(body, ConversationSummariseBody):
+            result = await summarise_conversation(
+                client=client,
+                model=model,
+                messages=[ChatMessage(role=m.role, content=m.content) for m in body.messages],
+            )
+        elif isinstance(body, CompressSummariseBody):
+            result = await summarise_compress(
+                client=client,
+                model=model,
+                messages=[ChatMessage(role=m.role, content=m.content) for m in body.messages],
+            )
+        else:
+            # ProjectBreakdownBody — the remaining variant.
+            result = await summarise_project_breakdown(
+                client=client,
+                model=model,
+                goal=body.goal,
+                existing_titles=body.existing_titles,
+            )
+
+        if isinstance(result, SummariseError):
+            # `provider` / `invalid_json` both surface as 502 — the
+            # request was valid; the upstream model failed or
+            # disobeyed the format. Same mapping the TS route uses.
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"code": result.code, "message": result.message},
+            )
+        return result.payload
+
+    @app.post("/v1/mcp/{server_id}/{action}", tags=["mcp"])
+    async def mcp_proxy(
+        server_id: str,
+        action: str,
+        body: McpProxyBody,
+        claims: Annotated[dict[str, object], Depends(get_current_user)],
+        x_mcp_credentials: Annotated[str | None, Header(alias="X-MCP-Credentials")] = None,
+    ) -> dict[str, Any]:
+        """MCP proxy — Phase 4-4b of PLAN-agent-api. Python mirror of
+        `app/api/mcp/[serverId]/[action]/route.ts`.
+
+        Actions:
+          - `discover` → returns `{capabilities}` from the MCP
+            handshake (tools / resources / prompts).
+          - `call` → invokes a tool, returns `{result: {text,
+            is_error}}`.
+          - `read` → reads a resource by URI, returns `{result:
+            {text?, mime_type?}}`.
+
+        Credentials come from two places:
+          1. `X-MCP-Credentials` header (local-mode — the client
+             attaches the cred from localStorage). Decoded as
+             base64-JSON, same shape the TS path expects.
+          2. Cloud-mode fallback when no header — looks up the
+             server row by id under per-user RLS impersonation,
+             decrypts the credential via the SECURITY DEFINER RPC.
+
+        If neither produces a credential and the upstream MCP server
+        actually requires auth, the call fails upstream and the
+        proxy surfaces it as 502 — same as TS."""
+        if action not in ("discover", "call", "read"):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+        # Path / body server id mismatch protects against a buggy
+        # client accidentally hitting the wrong server config.
+        if body.server.id != server_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "serverId_mismatch", "message": "Path / body id mismatch."},
+            )
+
+        credentials = _decode_mcp_credential_header(x_mcp_credentials)
+        # Cloud lookup only when the header didn't supply a cred AND
+        # we can resolve a user id from the JWT.
+        if credentials is None and has_pool():
+            user_id = claims.get("sub")
+            if isinstance(user_id, str) and user_id:
+                credentials = await fetch_decrypted_credentials(
+                    get_pool(), user_id=user_id, server_id=server_id
+                )
+
+        endpoint = McpEndpoint(id=server_id, name=body.server.name, url=body.server.url)
+
+        try:
+            if action == "discover":
+                caps = await mcp_discover(endpoint, credentials=credentials)
+                return {
+                    "capabilities": {
+                        "tools": (
+                            [
+                                {
+                                    "name": t.name,
+                                    "description": t.description,
+                                    "inputSchema": t.input_schema,
+                                }
+                                for t in caps.tools
+                            ]
+                            if caps.tools is not None
+                            else None
+                        ),
+                        "resources": (
+                            [
+                                {
+                                    "uri": r.uri,
+                                    "name": r.name,
+                                    "description": r.description,
+                                    "mimeType": r.mime_type,
+                                }
+                                for r in caps.resources
+                            ]
+                            if caps.resources is not None
+                            else None
+                        ),
+                        "prompts": (
+                            [{"name": p.name, "description": p.description} for p in caps.prompts]
+                            if caps.prompts is not None
+                            else None
+                        ),
+                    }
+                }
+            if action == "call":
+                if not body.tool:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={"code": "invalid_body", "message": "`tool` required."},
+                    )
+                tool_result = await mcp_call_tool(
+                    endpoint, credentials, body.tool, body.input or {}
+                )
+                return {
+                    "result": {
+                        "text": tool_result.text,
+                        "isError": tool_result.is_error,
+                    }
+                }
+            # action == "read"
+            if not body.uri:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"code": "invalid_body", "message": "`uri` required."},
+                )
+            res = await mcp_read_resource(endpoint, credentials, body.uri)
+            return {
+                "result": {"text": res.text, "mimeType": res.mime_type},
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            # Never include credentials in error responses.
+            logger.warning(
+                "mcp.proxy_failed",
+                server=server_id,
+                action=action,
+                error=str(exc),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"code": "mcp_call_failed", "message": str(exc)},
+            ) from exc
+
     @app.get("/v1/whoami", tags=["auth"], response_model=WhoAmIResponse)
     def whoami(
         claims: Annotated[dict[str, object], Depends(get_current_user)],
@@ -395,6 +727,147 @@ class ExtractionResponse(BaseModel):
     truncated: bool
     full_text: str | None = None
     language: str | None = None
+
+
+# --- /v1/url/fetch -------------------------------------------------------
+
+
+class UrlFetchRequest(BaseModel):
+    """Mirrors the TS `{ url }` body schema. Length capped to defeat
+    pathological inputs — the SSRF gate runs after this."""
+
+    url: str = Field(min_length=1, max_length=2000)
+
+
+class BookmarkSnapshotModel(BaseModel):
+    """Mirrors `BookmarkSnapshot` in `lib/server/url/fetch.ts`. Kept
+    snake_case on the wire to match the rest of the Python service's
+    convention (see `ExtractionResponse.full_text`)."""
+
+    url: str
+    title: str
+    content: str
+    content_truncated: bool
+    content_hash: str
+    description: str | None = None
+    favicon_url: str | None = None
+
+
+class UrlFetchResponse(BaseModel):
+    ok: bool
+    bookmark: BookmarkSnapshotModel
+
+
+def _url_fetch_error_status(code: str) -> int:
+    """Translate `FetchError.code` to its HTTP status. Mirrors
+    `httpStatusFor` in the TS route."""
+    if code in ("validation", "unsupported_content_type"):
+        return status.HTTP_400_BAD_REQUEST
+    if code == "timeout":
+        return status.HTTP_408_REQUEST_TIMEOUT
+    if code == "body_too_large":
+        return status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+    if code in ("too_many_redirects", "http_error", "network"):
+        return status.HTTP_502_BAD_GATEWAY
+    return status.HTTP_500_INTERNAL_SERVER_ERROR
+
+
+# --- /v1/images/refresh-url ---------------------------------------------
+
+
+class RefreshImageUrlRequest(BaseModel):
+    """Mirrors `RefreshImageUrlRequestSchema` in
+    `lib/shared/api-schemas.ts`. The TS field is `storagePath`; the
+    Python wire uses `storage_path` to match the rest of the
+    service's convention."""
+
+    storage_path: str = Field(min_length=1, max_length=1000)
+
+
+class RefreshImageUrlResponse(BaseModel):
+    url: str
+
+
+# --- /v1/summarize ------------------------------------------------------
+
+
+class SummariseMessage(BaseModel):
+    role: str = Field(pattern="^(user|assistant)$")
+    content: str = Field(min_length=1, max_length=200_000)
+
+
+class FileSummariseBody(BaseModel):
+    mode: Literal["file"]
+    name: str | None = Field(default=None, max_length=500)
+    text: str = Field(min_length=1, max_length=50_000)
+    model: str | None = Field(default=None, max_length=100)
+
+
+class ConversationSummariseBody(BaseModel):
+    mode: Literal["conversation"]
+    messages: list[SummariseMessage] = Field(min_length=1, max_length=200)
+    model: str | None = Field(default=None, max_length=100)
+
+
+class CompressSummariseBody(BaseModel):
+    mode: Literal["compress"]
+    messages: list[SummariseMessage] = Field(min_length=2, max_length=200)
+    model: str | None = Field(default=None, max_length=100)
+
+
+class ProjectBreakdownBody(BaseModel):
+    mode: Literal["project-breakdown"]
+    goal: str = Field(min_length=1, max_length=4000)
+    existing_titles: list[str] | None = Field(default=None, max_length=100, alias="existingTitles")
+    model: str | None = Field(default=None, max_length=100)
+    model_config = {"populate_by_name": True}
+
+
+SummariseRequest = Annotated[
+    FileSummariseBody | ConversationSummariseBody | CompressSummariseBody | ProjectBreakdownBody,
+    Field(discriminator="mode"),
+]
+
+
+# --- /v1/mcp/{server_id}/{action} --------------------------------------
+
+
+class McpServerBody(BaseModel):
+    """Subset of `McpServer` the proxy actually needs. Mirrors the
+    TS `ServerSchema` in the route. Transport is fixed at `http`
+    matching the DB CHECK constraint."""
+
+    id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    url: str = Field(min_length=1)
+    transport: Literal["http"] = "http"
+
+
+class McpProxyBody(BaseModel):
+    """One body shape for all three actions. `tool` is required for
+    `call`, `uri` for `read`; the route validates per-action."""
+
+    server: McpServerBody
+    tool: str | None = Field(default=None, min_length=1)
+    input: dict[str, Any] | None = None
+    uri: str | None = Field(default=None, min_length=1)
+
+
+def _decode_mcp_credential_header(raw: str | None) -> dict[str, Any] | None:
+    """Decode the `X-MCP-Credentials` header. TS uses base64-encoded
+    JSON; we accept the same shape so a frontend client can hit the
+    Python proxy without changing its serialization. Returns None on
+    any decode error — caller may fall through to cloud lookup."""
+    if not raw:
+        return None
+    import base64
+
+    try:
+        decoded = base64.b64decode(raw, validate=True).decode("utf-8")
+        parsed = __import__("json").loads(decoded)
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 # Module-level app for `uvicorn agent_py.main:app`. Tests use `create_app()`

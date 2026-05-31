@@ -141,6 +141,145 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/url/fetch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Url Fetch
+         * @description Fetch + extract a URL as a bookmark snapshot. Phase 4-4-a
+         *     of PLAN-agent-api — Python mirror of `app/api/url/fetch/route.ts`.
+         *
+         *     Pipeline:
+         *       1. Normalise the URL (prepend https:// for bare-domain
+         *          input, lowercase host, strip fragment).
+         *       2. SSRF gate — scheme allowlist, textual hostname blocklist,
+         *          DNS rebinding defence (resolve + private-IP check).
+         *       3. Fetch with 10s timeout, manual redirect handling (5 hops
+         *          max, each re-validated), 5 MB body cap.
+         *       4. Extract title / content / description / favicon via lxml.
+         *
+         *     Error → status mapping mirrors the TS path: validation /
+         *     unsupported_content_type → 400, timeout → 408, body_too_large
+         *     → 413, http_error / too_many_redirects / network → 502.
+         */
+        post: operations["url_fetch_v1_url_fetch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/images/refresh-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Images Refresh Url
+         * @description Re-sign an expired generated-image URL. Phase 4-4-a of
+         *     PLAN-agent-api — Python mirror of
+         *     `app/api/images/refresh-url/route.ts`.
+         *
+         *     Authorisation: the bucket layout is `<user_id>/...` (see
+         *     `0003_storage.sql`); we reject any `storage_path` whose first
+         *     segment doesn't match the JWT's `sub` claim before touching
+         *     Storage. RLS would also reject the call but a clean 403 is
+         *     friendlier than fighting an opaque Storage error.
+         *
+         *     Returns 404 when the object doesn't exist OR Storage isn't
+         *     configured (both look the same from the API's perspective).
+         */
+        post: operations["images_refresh_url_v1_images_refresh_url_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/summarize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Summarize
+         * @description Summarisation endpoint — Phase 4-4b of PLAN-agent-api.
+         *     Python mirror of `app/api/summarize/route.ts`.
+         *
+         *     Four modes via discriminated union on `mode`: file /
+         *     conversation / compress / project-breakdown. Three return
+         *     JSON; compress returns `{recap: str}` markdown.
+         *
+         *     Notable difference from TS: this endpoint only talks to
+         *     Anthropic (no Vercel-gateway routing). When the caller's
+         *     `model` doesn't look like an Anthropic id (e.g. the TS
+         *     default `google/gemini-2.5-flash`), we fall back to
+         *     `claude-3-5-haiku-20241022`. Caller behaviour is unaffected
+         *     because the field is still accepted; the TS-shape body comes
+         *     through unchanged.
+         */
+        post: operations["summarize_v1_summarize_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/{server_id}/{action}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mcp Proxy
+         * @description MCP proxy — Phase 4-4b of PLAN-agent-api. Python mirror of
+         *     `app/api/mcp/[serverId]/[action]/route.ts`.
+         *
+         *     Actions:
+         *       - `discover` → returns `{capabilities}` from the MCP
+         *         handshake (tools / resources / prompts).
+         *       - `call` → invokes a tool, returns `{result: {text,
+         *         is_error}}`.
+         *       - `read` → reads a resource by URI, returns `{result:
+         *         {text?, mime_type?}}`.
+         *
+         *     Credentials come from two places:
+         *       1. `X-MCP-Credentials` header (local-mode — the client
+         *          attaches the cred from localStorage). Decoded as
+         *          base64-JSON, same shape the TS path expects.
+         *       2. Cloud-mode fallback when no header — looks up the
+         *          server row by id under per-user RLS impersonation,
+         *          decrypts the credential via the SECURITY DEFINER RPC.
+         *
+         *     If neither produces a credential and the upstream MCP server
+         *     actually requires auth, the call fails upstream and the
+         *     proxy surfaces it as 502 — same as TS.
+         */
+        post: operations["mcp_proxy_v1_mcp__server_id___action__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/whoami": {
         parameters: {
             query?: never;
@@ -177,6 +316,28 @@ export interface components {
              * @description The uploaded file to extract text from.
              */
             file: string;
+        };
+        /**
+         * BookmarkSnapshotModel
+         * @description Mirrors `BookmarkSnapshot` in `lib/server/url/fetch.ts`. Kept
+         *     snake_case on the wire to match the rest of the Python service's
+         *     convention (see `ExtractionResponse.full_text`).
+         */
+        BookmarkSnapshotModel: {
+            /** Url */
+            url: string;
+            /** Title */
+            title: string;
+            /** Content */
+            content: string;
+            /** Content Truncated */
+            content_truncated: boolean;
+            /** Content Hash */
+            content_hash: string;
+            /** Description */
+            description?: string | null;
+            /** Favicon Url */
+            favicon_url?: string | null;
         };
         /**
          * ChatMessageRequest
@@ -222,6 +383,30 @@ export interface components {
             /** Max Steps */
             max_steps?: number | null;
         };
+        /** CompressSummariseBody */
+        CompressSummariseBody: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            mode: "compress";
+            /** Messages */
+            messages: components["schemas"]["SummariseMessage"][];
+            /** Model */
+            model?: string | null;
+        };
+        /** ConversationSummariseBody */
+        ConversationSummariseBody: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            mode: "conversation";
+            /** Messages */
+            messages: components["schemas"]["SummariseMessage"][];
+            /** Model */
+            model?: string | null;
+        };
         /**
          * ExtractionResponse
          * @description Mirrors `ExtractionResponseSchema` in
@@ -246,6 +431,20 @@ export interface components {
             /** Language */
             language?: string | null;
         };
+        /** FileSummariseBody */
+        FileSummariseBody: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            mode: "file";
+            /** Name */
+            name?: string | null;
+            /** Text */
+            text: string;
+            /** Model */
+            model?: string | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -259,6 +458,56 @@ export interface components {
             service: string;
             /** Version */
             version: string;
+        };
+        /**
+         * McpProxyBody
+         * @description One body shape for all three actions. `tool` is required for
+         *     `call`, `uri` for `read`; the route validates per-action.
+         */
+        McpProxyBody: {
+            server: components["schemas"]["McpServerBody"];
+            /** Tool */
+            tool?: string | null;
+            /** Input */
+            input?: {
+                [key: string]: unknown;
+            } | null;
+            /** Uri */
+            uri?: string | null;
+        };
+        /**
+         * McpServerBody
+         * @description Subset of `McpServer` the proxy actually needs. Mirrors the
+         *     TS `ServerSchema` in the route. Transport is fixed at `http`
+         *     matching the DB CHECK constraint.
+         */
+        McpServerBody: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Url */
+            url: string;
+            /**
+             * Transport
+             * @default http
+             * @constant
+             */
+            transport: "http";
+        };
+        /** ProjectBreakdownBody */
+        ProjectBreakdownBody: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            mode: "project-breakdown";
+            /** Goal */
+            goal: string;
+            /** Existingtitles */
+            existingTitles?: string[] | null;
+            /** Model */
+            model?: string | null;
         };
         /** ReadinessChecks */
         ReadinessChecks: {
@@ -276,6 +525,44 @@ export interface components {
             /** Status */
             status: string;
             checks: components["schemas"]["ReadinessChecks"];
+        };
+        /**
+         * RefreshImageUrlRequest
+         * @description Mirrors `RefreshImageUrlRequestSchema` in
+         *     `lib/shared/api-schemas.ts`. The TS field is `storagePath`; the
+         *     Python wire uses `storage_path` to match the rest of the
+         *     service's convention.
+         */
+        RefreshImageUrlRequest: {
+            /** Storage Path */
+            storage_path: string;
+        };
+        /** RefreshImageUrlResponse */
+        RefreshImageUrlResponse: {
+            /** Url */
+            url: string;
+        };
+        /** SummariseMessage */
+        SummariseMessage: {
+            /** Role */
+            role: string;
+            /** Content */
+            content: string;
+        };
+        /**
+         * UrlFetchRequest
+         * @description Mirrors the TS `{ url }` body schema. Length capped to defeat
+         *     pathological inputs — the SSRF gate runs after this.
+         */
+        UrlFetchRequest: {
+            /** Url */
+            url: string;
+        };
+        /** UrlFetchResponse */
+        UrlFetchResponse: {
+            /** Ok */
+            ok: boolean;
+            bookmark: components["schemas"]["BookmarkSnapshotModel"];
         };
         /** ValidationError */
         ValidationError: {
@@ -405,6 +692,154 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    url_fetch_v1_url_fetch_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UrlFetchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UrlFetchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    images_refresh_url_v1_images_refresh_url_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RefreshImageUrlRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RefreshImageUrlResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    summarize_v1_summarize_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileSummariseBody"] | components["schemas"]["ConversationSummariseBody"] | components["schemas"]["CompressSummariseBody"] | components["schemas"]["ProjectBreakdownBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mcp_proxy_v1_mcp__server_id___action__post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-MCP-Credentials"?: string | null;
+                authorization?: string | null;
+            };
+            path: {
+                server_id: string;
+                action: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpProxyBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
