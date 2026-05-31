@@ -47,6 +47,7 @@ from .runner import (
     run_agent_loop,
 )
 from .settings import get_settings
+from .tools import default_tool_registry
 
 logger = structlog.get_logger(__name__)
 
@@ -282,12 +283,20 @@ def _default_make_step_fn(
         )
         return _stub_step_fn
 
+    # Phase 2b-2: wire the default tool registry into every real
+    # Anthropic run. The model may ignore tools entirely (in which
+    # case the step settles on first call, identical to Phase 2b-1
+    # behaviour) or call any of them. A future config flag on
+    # `checkpoint.config` can narrow the visible set per run.
+    tools = list(default_tool_registry().values())
+
     return make_anthropic_step_fn(
         AnthropicStepConfig(
             client=client,
             model=model,
             system=system,
             messages=messages,
+            tools=tools,
         )
     )
 

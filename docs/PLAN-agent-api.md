@@ -1,12 +1,19 @@
 # Plan: Agent API as a separate service
 
-Status: **🪜 Phased — Phases 0 + 1 + 2a + 2b-1 shipped, Phase 2b-2
+Status: **🪜 Phased — Phases 0 + 1 + 2a + 2b-1 + 2b-2 shipped, Phase 3
 pending.** Option C (Python service) green-lit. Phase 0 (scaffolding),
 Phase 1 (read-only poller), Phase 2a (executor pattern + feature
-flag), and Phase 2b-1 (real Anthropic text streaming, no tools yet)
-all live in `services/agent-py/`. Host decided (self-host on a small
-VM — see §Host decision). The earlier "decision-doc — Step 1 done"
-status is retained in the prior-status note below for context.
+flag), Phase 2b-1 (real Anthropic text streaming + optional
+`ANTHROPIC_BASE_URL` override), and **Phase 2b-2 (tool wiring +
+`webFetch`)** all live in `services/agent-py/`. The tool wiring
+extends `make_anthropic_step_fn` to pass tool descriptors to
+`messages.stream(...)`, walk `final_message.content` for `tool_use`
+blocks, emit `tool_input` / `tool_output` / `step_error` events, and
+feed `tool_result` blocks back to the model for the next loop
+iteration; the `webFetch` tool ports the TS surface (HTTP GET + HTML
+stripping). Host decided (self-host on a small VM — see §Host
+decision). The earlier "decision-doc — Step 1 done" status is
+retained in the prior-status note below for context.
 
 > **Note on phase numbering.** The original plan called Phase 2 a
 > single 1-week slice (executor + 3 tools + provider port). It split
