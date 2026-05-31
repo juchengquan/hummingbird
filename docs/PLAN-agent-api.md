@@ -1,8 +1,12 @@
 # Plan: Agent API as a separate service
 
 Status: **🪜 Phased — Phases 0 + 1 + 2a + 2b-1 + 2b-2 + 3a + 3b + 3c-1
-+ 3c-2 + 3d-1 + 3d-2 + 3e + 3f-1 + 3f-2 + 3g + 4-1 + 4-2 + 4-3 shipped,
-Phases 4-4+ pending. Phase 4-3 (this slice): `/v1/chat` now accepts
++ 3c-2 + 3d-1 + 3d-2 + 3e + 3f-1 + 3f-2 + 3g + 4-1 + 4-2 + 4-3 + 4-4a
+shipped, Phases 4-4b+ pending. Phase 4-4a (this slice): ports
+`POST /v1/url/fetch` (URL bookmark fetcher with SSRF + extraction)
+and `POST /v1/images/refresh-url` (re-sign an expired generated-image
+Storage URL). Both surface the same wire shapes as their TS
+counterparts. Phase 4-4b will port `/v1/summarize` + `/v1/mcp/*`. Phase 4-3 (this slice): `/v1/chat` now accepts
 `enable_tools: true` in the request body, loops Anthropic
 `messages.stream` + tool execution until the model produces a
 text-only answer (or `max_steps` is hit), and emits per-step

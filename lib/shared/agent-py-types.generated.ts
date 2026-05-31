@@ -141,6 +141,71 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/url/fetch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Url Fetch
+         * @description Fetch + extract a URL as a bookmark snapshot. Phase 4-4-a
+         *     of PLAN-agent-api — Python mirror of `app/api/url/fetch/route.ts`.
+         *
+         *     Pipeline:
+         *       1. Normalise the URL (prepend https:// for bare-domain
+         *          input, lowercase host, strip fragment).
+         *       2. SSRF gate — scheme allowlist, textual hostname blocklist,
+         *          DNS rebinding defence (resolve + private-IP check).
+         *       3. Fetch with 10s timeout, manual redirect handling (5 hops
+         *          max, each re-validated), 5 MB body cap.
+         *       4. Extract title / content / description / favicon via lxml.
+         *
+         *     Error → status mapping mirrors the TS path: validation /
+         *     unsupported_content_type → 400, timeout → 408, body_too_large
+         *     → 413, http_error / too_many_redirects / network → 502.
+         */
+        post: operations["url_fetch_v1_url_fetch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/images/refresh-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Images Refresh Url
+         * @description Re-sign an expired generated-image URL. Phase 4-4-a of
+         *     PLAN-agent-api — Python mirror of
+         *     `app/api/images/refresh-url/route.ts`.
+         *
+         *     Authorisation: the bucket layout is `<user_id>/...` (see
+         *     `0003_storage.sql`); we reject any `storage_path` whose first
+         *     segment doesn't match the JWT's `sub` claim before touching
+         *     Storage. RLS would also reject the call but a clean 403 is
+         *     friendlier than fighting an opaque Storage error.
+         *
+         *     Returns 404 when the object doesn't exist OR Storage isn't
+         *     configured (both look the same from the API's perspective).
+         */
+        post: operations["images_refresh_url_v1_images_refresh_url_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/whoami": {
         parameters: {
             query?: never;
@@ -177,6 +242,28 @@ export interface components {
              * @description The uploaded file to extract text from.
              */
             file: string;
+        };
+        /**
+         * BookmarkSnapshotModel
+         * @description Mirrors `BookmarkSnapshot` in `lib/server/url/fetch.ts`. Kept
+         *     snake_case on the wire to match the rest of the Python service's
+         *     convention (see `ExtractionResponse.full_text`).
+         */
+        BookmarkSnapshotModel: {
+            /** Url */
+            url: string;
+            /** Title */
+            title: string;
+            /** Content */
+            content: string;
+            /** Content Truncated */
+            content_truncated: boolean;
+            /** Content Hash */
+            content_hash: string;
+            /** Description */
+            description?: string | null;
+            /** Favicon Url */
+            favicon_url?: string | null;
         };
         /**
          * ChatMessageRequest
@@ -276,6 +363,37 @@ export interface components {
             /** Status */
             status: string;
             checks: components["schemas"]["ReadinessChecks"];
+        };
+        /**
+         * RefreshImageUrlRequest
+         * @description Mirrors `RefreshImageUrlRequestSchema` in
+         *     `lib/shared/api-schemas.ts`. The TS field is `storagePath`; the
+         *     Python wire uses `storage_path` to match the rest of the
+         *     service's convention.
+         */
+        RefreshImageUrlRequest: {
+            /** Storage Path */
+            storage_path: string;
+        };
+        /** RefreshImageUrlResponse */
+        RefreshImageUrlResponse: {
+            /** Url */
+            url: string;
+        };
+        /**
+         * UrlFetchRequest
+         * @description Mirrors the TS `{ url }` body schema. Length capped to defeat
+         *     pathological inputs — the SSRF gate runs after this.
+         */
+        UrlFetchRequest: {
+            /** Url */
+            url: string;
+        };
+        /** UrlFetchResponse */
+        UrlFetchResponse: {
+            /** Ok */
+            ok: boolean;
+            bookmark: components["schemas"]["BookmarkSnapshotModel"];
         };
         /** ValidationError */
         ValidationError: {
@@ -405,6 +523,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    url_fetch_v1_url_fetch_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UrlFetchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UrlFetchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    images_refresh_url_v1_images_refresh_url_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RefreshImageUrlRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RefreshImageUrlResponse"];
                 };
             };
             /** @description Validation Error */

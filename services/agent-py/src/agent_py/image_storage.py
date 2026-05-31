@@ -248,6 +248,75 @@ def _mime_to_ext(mime: str, *, fallback: str) -> str:
     return sub
 
 
+async def sign_storage_path(
+    storage_path: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> str | None:
+    """Mint a fresh signed URL for an already-uploaded object at
+    `storage_path` in the `user-files` bucket. Used by Phase 4-4-a's
+    `/v1/images/refresh-url` route — a year-old chat hits an expired
+    signed URL; the bytes are still in Storage at the same path, we
+    just need a new signature.
+
+    Returns the signed URL on success or ``None`` when:
+      - Storage isn't configured (missing `SUPABASE_URL` /
+        `SUPABASE_SERVICE_ROLE_KEY`),
+      - the object doesn't exist (sign returns 404),
+      - the sign call fails (network, malformed response, etc.).
+
+    The caller is responsible for the auth check; this helper only
+    mints the URL. Mirrors the TS `signGeneratedImageUrl` shape."""
+    if not is_storage_configured():
+        return None
+
+    settings = get_settings()
+    base = settings.SUPABASE_URL.rstrip("/")
+    service_key = settings.SUPABASE_SERVICE_ROLE_KEY.strip()
+
+    own_client = client is None
+    if client is None:
+        client = httpx.AsyncClient(timeout=UPLOAD_TIMEOUT_S)
+    try:
+        sign_url = f"{base}/storage/v1/object/sign/{STORAGE_BUCKET}/{storage_path}"
+        try:
+            response = await client.post(
+                sign_url,
+                json={"expiresIn": SIGNED_URL_TTL_SECONDS},
+                headers={
+                    "Authorization": f"Bearer {service_key}",
+                    "apikey": service_key,
+                },
+            )
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "image_storage.sign_failed",
+                path=storage_path,
+                error=str(exc),
+            )
+            return None
+        if response.status_code >= 400:
+            logger.info(
+                "image_storage.sign_http_error",
+                path=storage_path,
+                status=response.status_code,
+            )
+            return None
+        try:
+            payload = response.json()
+        except Exception:
+            return None
+        signed = payload.get("signedURL") if isinstance(payload, dict) else None
+        if not isinstance(signed, str) or not signed:
+            return None
+        if signed.startswith("/"):
+            signed = f"{base}/storage/v1{signed}"
+        return signed
+    finally:
+        if own_client:
+            await client.aclose()
+
+
 __all__ = [
     "DOWNLOAD_TIMEOUT_S",
     "MAX_BYTES_PER_IMAGE",
@@ -258,4 +327,5 @@ __all__ = [
     "PersistedImage",
     "is_storage_configured",
     "persist_generated_image",
+    "sign_storage_path",
 ]
