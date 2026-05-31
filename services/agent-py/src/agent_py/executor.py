@@ -49,7 +49,7 @@ from .runner import (
     run_agent_loop,
 )
 from .settings import get_settings
-from .tools import default_tool_registry
+from .tools import ToolContext, default_tool_registry
 
 logger = structlog.get_logger(__name__)
 
@@ -59,7 +59,12 @@ logger = structlog.get_logger(__name__)
 # the payload and the loaded checkpoint to the factory. Tests pass a
 # fake that ignores the args and returns a canned `RunStepFn`.
 MakeStepFn = Callable[
-    ["StartActionPayload", dict[str, Any], list[dict[str, Any]]],
+    [
+        "StartActionPayload",
+        dict[str, Any],
+        list[dict[str, Any]],
+        "ToolContext | None",
+    ],
     RunStepFn,
 ]
 
@@ -198,7 +203,10 @@ async def _run_chunk(
             handler="python",
         )
 
-        step_fn = (make_step_fn or _default_make_step_fn)(payload, checkpoint, live_messages)
+        tool_context = ToolContext(pool=pool, user_id=payload.user_id)
+        step_fn = (make_step_fn or _default_make_step_fn)(
+            payload, checkpoint, live_messages, tool_context
+        )
         max_steps = _max_steps_from(checkpoint, payload.max_steps)
 
         async def is_cancelled() -> bool:
@@ -358,6 +366,7 @@ def _default_make_step_fn(
     payload: StartActionPayload,
     checkpoint: dict[str, Any],
     messages: list[dict[str, Any]],
+    context: ToolContext | None = None,
 ) -> RunStepFn:
     """Default step-fn picker.
 
@@ -370,6 +379,11 @@ def _default_make_step_fn(
     Anthropic step appends assistant + tool_result turns to it as it
     runs, and the runner's yield path reads from it to persist the
     checkpoint. Passing it in keeps the chunk-runner authoritative.
+
+    `context` (Phase 3c-2) carries the asyncpg pool + user_id for
+    tools that reach external systems on the user's behalf (currently
+    just `searchFiles`). None = registry omits those tools — fine
+    for tests / dev with no DB.
     """
     client = _resolve_anthropic_client()
     model = _str_or_none(checkpoint.get("config", {}).get("model"))
@@ -390,7 +404,7 @@ def _default_make_step_fn(
     # case the step settles on first call, identical to Phase 2b-1
     # behaviour) or call any of them. A future config flag on
     # `checkpoint.config` can narrow the visible set per run.
-    tools = list(default_tool_registry().values())
+    tools = list(default_tool_registry(context=context).values())
 
     return make_anthropic_step_fn(
         AnthropicStepConfig(

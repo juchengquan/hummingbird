@@ -230,3 +230,86 @@ async def save_checkpoint(
 
 def _coerce_uuid(value: str) -> uuid.UUID:
     return uuid.UUID(value)
+
+
+# --- RLS impersonation -----------------------------------------------------
+#
+# Tools that read user-owned data (`searchFiles` over `files`, MCP cloud-mode
+# creds when ported in Phase 3f, etc.) must NOT use the service-role pool's
+# default authentication — that would bypass per-user RLS on the underlying
+# tables. Supabase's RLS policies key off `auth.uid()` which reads from the
+# `request.jwt.claims` GUC.
+#
+# The pattern:
+#   1. Open a transaction on the pool.
+#   2. `SET LOCAL ROLE authenticated` — drops from `postgres` / service role
+#      to the role RLS policies are written against.
+#   3. `SET LOCAL "request.jwt.claims" = '{"sub":"<user_id>","role":"authenticated"}'`
+#      — what `auth.uid()` reads. JSON encoded so the GUC carries valid claims.
+#   4. Run the actual query / RPC.
+#   5. Transaction commits (or rolls back); the SET LOCALs scope-out.
+#
+# Mirrors how PostgREST (Supabase's REST proxy) impersonates a user for the
+# duration of a request. Direct-Postgres callers (this service) do it manually.
+
+_SET_ROLE_SQL = "SET LOCAL ROLE authenticated;"
+
+
+async def _set_user_context(conn: asyncpg.Connection, *, user_id: str) -> None:
+    """Within an open transaction, drop to the `authenticated` role and stamp
+    the user's id as the JWT claim so `auth.uid()` returns it. Subsequent
+    queries on this connection run under per-user RLS.
+
+    The SET LOCAL settings unwind on transaction end, so callers MUST
+    `async with conn.transaction():` around this + the query they care about.
+    Caller responsibility — we don't open the transaction here so callers
+    can compose multiple queries under the same impersonation.
+    """
+    await conn.execute(_SET_ROLE_SQL)
+    claims = json.dumps({"sub": user_id, "role": "authenticated"})
+    # `request.jwt.claims` is the GUC PostgREST + Supabase RLS read. Use
+    # `set_config` (not `SET LOCAL` directly) so we can bind the JSON via
+    # parameter — `SET` doesn't accept query params.
+    await conn.execute(
+        "SELECT set_config('request.jwt.claims', $1, true);",
+        claims,
+    )
+
+
+# --- searchFiles RPC -------------------------------------------------------
+
+
+async def search_file_sections(
+    pool: asyncpg.Pool,
+    *,
+    user_id: str,
+    file_id: str,
+    query: str,
+    max_fragments: int = 3,
+    max_words: int = 120,
+    min_words: int = 30,
+) -> list[dict[str, object]]:
+    """Call the `search_file_sections` Postgres RPC under the user's auth
+    context (RLS on `files` evaluates against `auth.uid()` = `user_id`).
+
+    Returns a list of `{excerpt: str, rank: float}` dicts — one row per
+    matching file (the function filters by `p_file_id`, so in practice this
+    is always 0 or 1 entries). Empty list = no match OR the file doesn't
+    belong to this user (RLS hides the row, same outcome). Tool callers
+    distinguish via `rank == 0` for "no FTS hits" vs "no row at all"
+    treated the same way.
+
+    Raises on connection / transaction failure; the caller wraps in a
+    ToolError so the model sees a clean message instead of a stack trace.
+    """
+    async with pool.acquire() as conn, conn.transaction():
+        await _set_user_context(conn, user_id=user_id)
+        rows = await conn.fetch(
+            "SELECT excerpt, rank FROM public.search_file_sections($1, $2, $3, $4, $5);",
+            _coerce_uuid(file_id),
+            query,
+            max_fragments,
+            max_words,
+            min_words,
+        )
+    return [{"excerpt": r["excerpt"], "rank": float(r["rank"])} for r in rows]
