@@ -133,7 +133,11 @@ jobs:
         run: bun run typecheck
 
       - name: Test
-        run: bun test
+        # Use `bun run test` (not `bun test`) so the package.json
+        # script's `--conditions=react-server` flag applies — Phase 4
+        # routes reuse `lib/server/*` modules whose `import "server-only"`
+        # marker only resolves to a no-op under that condition.
+        run: bun run test
 
   # Drift gate for the TS types generated from the agent service's
   # OpenAPI doc. Regenerates against the live FastAPI schema and fails
