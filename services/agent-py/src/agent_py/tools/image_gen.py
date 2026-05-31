@@ -39,9 +39,15 @@ from urllib.parse import urlparse
 
 import structlog
 
+from ..image_storage import (
+    PersistedImage,
+    PersistError,
+    is_storage_configured,
+    persist_generated_image,
+)
 from ..settings import get_settings
 from .minimax_image_client import minimax_generate_image
-from .registry import ToolDescriptor, ToolError, ToolInvocationResult
+from .registry import ToolContext, ToolDescriptor, ToolError, ToolInvocationResult
 
 logger = structlog.get_logger(__name__)
 
@@ -127,6 +133,47 @@ def _validate_reference_url(raw: str) -> str | None:
     return None
 
 
+async def _persist_or_passthrough(
+    *,
+    user_id: str | None,
+    minimax_urls: list[str],
+) -> list[str]:
+    """Mirror each Minimax URL into Supabase Storage when possible.
+    Returns one URL per input — either a signed Storage URL (success)
+    or the original Minimax URL (Storage not configured, no user
+    context, or per-image failure). Order matches the input."""
+    if user_id is None or not is_storage_configured():
+        return minimax_urls
+
+    import time
+    import uuid
+
+    out: list[str] = []
+    for idx, minimax_url in enumerate(minimax_urls):
+        # Stable per-image id — `<unix-ms>-<rand>` matches the TS
+        # path's `${Date.now()}-${i}` shape while avoiding collisions
+        # within the same millisecond.
+        image_id = f"{int(time.time() * 1000)}-{idx}-{uuid.uuid4().hex[:8]}"
+        result = await persist_generated_image(
+            minimax_url,
+            user_id=user_id,
+            image_id=image_id,
+        )
+        if isinstance(result, PersistedImage):
+            out.append(result.url)
+        else:
+            persist_err: PersistError = result
+            logger.warning(
+                "image_gen.persist_failed_falling_back",
+                user_id=user_id,
+                image_id=image_id,
+                code=persist_err.code,
+                error=persist_err.message,
+            )
+            out.append(minimax_url)
+    return out
+
+
 def _build_text(prompt: str, mode: str, urls: list[str]) -> str:
     """The model-facing tool result. One numbered line per URL so the
     model can cite them; the URLs themselves render inline in the
@@ -187,6 +234,7 @@ IMAGE_GEN_INPUT_SCHEMA: dict[str, Any] = {
 
 def build_image_gen_tool(
     *,
+    context: ToolContext | None = None,
     max_calls_per_turn: int = DEFAULT_MAX_CALLS_PER_TURN,
 ) -> ToolDescriptor:
     """Construct the `generateImage` descriptor. The returned tool
@@ -196,7 +244,15 @@ def build_image_gen_tool(
 
     The factory reads settings lazily on each call so a key flip in
     test fixtures or a runtime reload is picked up. Production runs
-    set the env var once at startup."""
+    set the env var once at startup.
+
+    `context` enables Phase 3d-2 Storage persistence: when both the
+    context (`user_id`) AND `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`
+    are available, each Minimax URL gets mirrored into
+    `user-files/<user_id>/generated/<image_id>.<ext>` and the model
+    receives a long-lived signed URL. Without one or the other, the
+    tool surfaces the raw Minimax URL inline (Phase 3d-1 behaviour,
+    works but URL expires in a few hours)."""
 
     # Per-turn counter — incremented inside `execute` so a re-build
     # of the descriptor resets the count (one descriptor per agent
@@ -273,7 +329,15 @@ def build_image_gen_tool(
             # stable codes.
             raise ToolError(f"generateImage [{result.code}]: {result.message}")
 
-        urls = [img.url for img in result.images]
+        # Phase 3d-2: persist each image into Supabase Storage when
+        # we have a user context AND Storage is configured. Per-image
+        # failures fall back to the raw Minimax URL so the model still
+        # gets *something* — the user-facing degradation is "URL
+        # expires in hours instead of a year" rather than a tool error.
+        urls = await _persist_or_passthrough(
+            user_id=context.user_id if context else None,
+            minimax_urls=[img.url for img in result.images],
+        )
         text = _build_text(prompt, mode, urls)
         summary = f"{len(urls)} image{'s' if len(urls) != 1 else ''} ({mode})"
         return ToolInvocationResult(text=text, summary=summary)
