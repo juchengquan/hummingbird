@@ -47,6 +47,7 @@ from .runner import (
     run_agent_loop,
 )
 from .settings import get_settings
+from .tools import default_tool_registry
 
 logger = structlog.get_logger(__name__)
 
@@ -229,7 +230,8 @@ def _resolve_anthropic_client() -> AsyncAnthropicClient | None:
     global _anthropic_client
     if _anthropic_client is not None:
         return _anthropic_client
-    api_key = get_settings().ANTHROPIC_API_KEY
+    settings = get_settings()
+    api_key = settings.ANTHROPIC_API_KEY
     if not api_key:
         return None
     # Real SDK import — only paid for when configured. Tests that
@@ -237,11 +239,21 @@ def _resolve_anthropic_client() -> AsyncAnthropicClient | None:
     # point, so this branch never runs under pytest.
     from anthropic import AsyncAnthropic
 
-    # mypy doesn't see that the SDK satisfies our Protocol via
-    # structural subtyping here — the Protocol's `messages.stream`
-    # signature is intentionally narrower than the SDK's full
-    # overload set.
-    _anthropic_client = AsyncAnthropic(api_key=api_key)  # type: ignore[assignment]
+    # Optional `ANTHROPIC_BASE_URL` override lets a deploy point at
+    # any Anthropic-compatible endpoint (proxy, self-hosted gateway,
+    # Minimax's `/anthropic/v1` host, …). Only pass the kwarg when set
+    # so the SDK falls back to its own default otherwise. mypy doesn't
+    # see the SDK satisfies our Protocol via structural subtyping —
+    # the Protocol's `messages.stream` signature is intentionally
+    # narrower than the SDK's full overload set.
+    base_url = settings.ANTHROPIC_BASE_URL.strip()
+    if base_url:
+        _anthropic_client = AsyncAnthropic(  # type: ignore[assignment]
+            api_key=api_key,
+            base_url=base_url,
+        )
+    else:
+        _anthropic_client = AsyncAnthropic(api_key=api_key)  # type: ignore[assignment]
     return _anthropic_client
 
 
@@ -271,12 +283,20 @@ def _default_make_step_fn(
         )
         return _stub_step_fn
 
+    # Phase 2b-2: wire the default tool registry into every real
+    # Anthropic run. The model may ignore tools entirely (in which
+    # case the step settles on first call, identical to Phase 2b-1
+    # behaviour) or call any of them. A future config flag on
+    # `checkpoint.config` can narrow the visible set per run.
+    tools = list(default_tool_registry().values())
+
     return make_anthropic_step_fn(
         AnthropicStepConfig(
             client=client,
             model=model,
             system=system,
             messages=messages,
+            tools=tools,
         )
     )
 

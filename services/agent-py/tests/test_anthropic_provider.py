@@ -31,11 +31,22 @@ from agent_py.runner import RunStepContext
 
 class _FakeStream:
     """The `async with` target. Exposes `.text_stream` yielding the
-    canned deltas, then exits cleanly."""
+    canned deltas, then exits cleanly. `final_content` is the list of
+    content blocks `get_final_message().content` returns — by default
+    a single text block matching the streamed deltas, so the step
+    settles. Tool tests pass a content list that includes `tool_use`
+    blocks to drive the loop."""
 
-    def __init__(self, deltas: list[str], raise_on: int | None = None) -> None:
+    def __init__(
+        self,
+        deltas: list[str],
+        *,
+        raise_on: int | None = None,
+        final_content: list[dict[str, Any]] | None = None,
+    ) -> None:
         self._deltas = deltas
         self._raise_on = raise_on
+        self._final_content = final_content
 
     async def __aenter__(self) -> _FakeStream:
         return self
@@ -53,21 +64,66 @@ class _FakeStream:
                 raise RuntimeError("anthropic transport error")
             yield delta
 
+    async def get_final_message(self) -> dict[str, Any]:
+        if self._final_content is not None:
+            return {"content": self._final_content}
+        return {"content": [{"type": "text", "text": "".join(self._deltas)}]}
+
 
 class _FakeMessages:
-    def __init__(self, deltas: list[str], raise_on: int | None = None) -> None:
+    def __init__(
+        self,
+        deltas: list[str],
+        *,
+        raise_on: int | None = None,
+        final_content_seq: list[list[dict[str, Any]]] | None = None,
+    ) -> None:
         self._deltas = deltas
         self._raise_on = raise_on
+        # Sequence of final-content lists — one per `stream()` call.
+        # Tool-loop tests need a different content list per step (first
+        # call returns tool_use; second returns text). `None` means use
+        # the default echo-the-deltas content every call.
+        self._final_content_seq = final_content_seq
+        self._call = 0
         self.last_kwargs: dict[str, Any] | None = None
+        self.all_kwargs: list[dict[str, Any]] = []
 
     def stream(self, **kwargs: Any) -> _FakeStream:
-        self.last_kwargs = kwargs
-        return _FakeStream(self._deltas, raise_on=self._raise_on)
+        # Snapshot the kwargs at call time — the step appends to
+        # `messages` after we return, so a direct reference would
+        # show the mutated list to the test. Deep-copying the list
+        # is enough; nested dicts in the wire-shape are read-only.
+        snapshot = dict(kwargs)
+        if "messages" in snapshot:
+            snapshot["messages"] = list(snapshot["messages"])
+        self.last_kwargs = snapshot
+        self.all_kwargs.append(snapshot)
+        final_content: list[dict[str, Any]] | None = None
+        if self._final_content_seq is not None:
+            idx = min(self._call, len(self._final_content_seq) - 1)
+            final_content = self._final_content_seq[idx]
+        self._call += 1
+        return _FakeStream(
+            self._deltas,
+            raise_on=self._raise_on,
+            final_content=final_content,
+        )
 
 
 class _FakeClient:
-    def __init__(self, deltas: list[str], raise_on: int | None = None) -> None:
-        self.messages = _FakeMessages(deltas, raise_on=raise_on)
+    def __init__(
+        self,
+        deltas: list[str],
+        *,
+        raise_on: int | None = None,
+        final_content_seq: list[list[dict[str, Any]]] | None = None,
+    ) -> None:
+        self.messages = _FakeMessages(
+            deltas,
+            raise_on=raise_on,
+            final_content_seq=final_content_seq,
+        )
 
 
 # --- Helpers --------------------------------------------------------------

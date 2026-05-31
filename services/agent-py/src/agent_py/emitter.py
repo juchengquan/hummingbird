@@ -30,9 +30,13 @@ from .events import (
     RunStatus,
     StatusEvent,
     StepEndEvent,
+    StepErrorEvent,
     StepStartEvent,
     TaskEvent,
     TokenEvent,
+    ToolCallResult,
+    ToolInputEvent,
+    ToolOutputEvent,
     is_terminal_status,
 )
 
@@ -129,6 +133,75 @@ class RunEmitter:
                 created_at=_now_iso(),
                 text=text,
                 channel=channel,
+            )
+        )
+
+    async def tool_input(
+        self,
+        *,
+        tool_call_id: str,
+        tool_name: str,
+        args: dict[str, object],
+    ) -> None:
+        """Emit a `tool_input` event — the model called a tool. Args
+        are final/complete at emit time (the Anthropic SDK collects
+        the streamed JSON deltas into a final input object before we
+        emit)."""
+        if self._settled:
+            return
+        await self._emit(
+            ToolInputEvent(
+                run_id=self._run_id,
+                seq=self._next_seq(),
+                step=self._step,
+                created_at=_now_iso(),
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                args=args,
+            )
+        )
+
+    async def tool_output(
+        self,
+        *,
+        tool_call_id: str,
+        tool_name: str,
+        summary: str,
+        results: list[ToolCallResult] | None = None,
+    ) -> None:
+        """Emit a `tool_output` event — the tool resolved. `summary`
+        is a one-line user-facing description ("Fetched <title>",
+        "5 results"); `results` is set when the output is a list of
+        sources for the rail (`webSearch`-shaped)."""
+        if self._settled:
+            return
+        await self._emit(
+            ToolOutputEvent(
+                run_id=self._run_id,
+                seq=self._next_seq(),
+                step=self._step,
+                created_at=_now_iso(),
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                summary=summary,
+                results=results,
+            )
+        )
+
+    async def step_error(self, message: str, *, will_retry: bool = True) -> None:
+        """Emit a non-fatal step error. The model usually recovers next
+        step; this is just a UI signal that *something* went sideways
+        without aborting the run."""
+        if self._settled:
+            return
+        await self._emit(
+            StepErrorEvent(
+                run_id=self._run_id,
+                seq=self._next_seq(),
+                step=self._step,
+                created_at=_now_iso(),
+                message=message,
+                will_retry=will_retry,
             )
         )
 
