@@ -29,16 +29,20 @@ from .auth import get_current_user
 from .chat import (
     AI_SDK_STREAM_HEADER_NAME,
     AI_SDK_STREAM_HEADER_VALUE,
+    DEFAULT_MAX_STEPS,
     DEFAULT_MAX_TOKENS,
     ChatConfig,
     ChatFormat,
     ChatMessage,
     chat_stream,
     chat_stream_ai_sdk,
+    chat_stream_with_tools,
+    chat_stream_with_tools_ai_sdk,
     resolve_anthropic_client,
 )
 from .extraction import ExtractionKind, extract_file
 from .settings import Settings, get_settings
+from .tools import ToolDescriptor, default_tool_registry
 
 logger = structlog.get_logger(__name__)
 
@@ -232,18 +236,39 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
                 detail="ANTHROPIC_API_KEY is not configured on the agent service.",
             )
 
+        # Phase 4-3: optionally register the built-in tools when the
+        # caller flips `enable_tools`. The default registry only
+        # includes context-free tools (e.g. `webFetch`) when no DB
+        # pool is wired in here — `/v1/chat` is request-scoped and
+        # doesn't currently carry a pool / user_id / workspace_id
+        # through to ToolContext. Tools that need RLS impersonation
+        # (`searchFiles`) and MCP can land in a follow-up that
+        # threads the pool through.
+        tools: tuple[ToolDescriptor, ...] = ()
+        if body.enable_tools:
+            tools = tuple(default_tool_registry(context=None).values())
+
         config = ChatConfig(
             model=body.model,
             messages=[ChatMessage(role=m.role, content=m.content) for m in body.messages],
             system=body.system,
             max_tokens=body.max_tokens or DEFAULT_MAX_TOKENS,
+            tools=tools,
+            max_steps=body.max_steps or DEFAULT_MAX_STEPS,
         )
 
-        stream_gen = (
-            chat_stream_ai_sdk(client=client, config=config)
-            if format == "ai-sdk"
-            else chat_stream(client=client, config=config)
-        )
+        if tools:
+            stream_gen = (
+                chat_stream_with_tools_ai_sdk(client=client, config=config)
+                if format == "ai-sdk"
+                else chat_stream_with_tools(client=client, config=config)
+            )
+        else:
+            stream_gen = (
+                chat_stream_ai_sdk(client=client, config=config)
+                if format == "ai-sdk"
+                else chat_stream(client=client, config=config)
+            )
 
         async def event_source() -> AsyncIterator[bytes]:
             async for frame in stream_gen:
@@ -341,13 +366,20 @@ class ChatRequest(BaseModel):
     """Wire shape for POST /v1/chat. Mirrors the subset of
     `ChatRequestSchema` (TS) we honour today — messages + model +
     workspaceSystemPrompt + maxSteps proxied as `max_tokens`. Skills /
-    tools / attachments / MCP / referenceImage all deferred to
-    Phase 4-2."""
+    attachments / MCP / referenceImage deferred.
+
+    Phase 4-3 adds `enable_tools` (opt-in): when true, the route
+    registers the built-in tool set (`webFetch`, plus the
+    `TAVILY_API_KEY`/`MINIMAX_CN_API_KEY`-gated tools) and loops
+    `messages.stream` + tool execution. Default false keeps the
+    text-only Phase 4-1 behaviour."""
 
     messages: list[ChatMessageRequest] = Field(min_length=1, max_length=200)
     model: str = Field(min_length=1, max_length=100)
     system: str | None = Field(default=None, max_length=20_000)
     max_tokens: int | None = Field(default=None, ge=1, le=64_000)
+    enable_tools: bool = False
+    max_steps: int | None = Field(default=None, ge=1, le=20)
 
 
 class ExtractionResponse(BaseModel):

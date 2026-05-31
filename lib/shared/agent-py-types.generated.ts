@@ -197,8 +197,13 @@ export interface components {
          * @description Wire shape for POST /v1/chat. Mirrors the subset of
          *     `ChatRequestSchema` (TS) we honour today — messages + model +
          *     workspaceSystemPrompt + maxSteps proxied as `max_tokens`. Skills /
-         *     tools / attachments / MCP / referenceImage all deferred to
-         *     Phase 4-2.
+         *     attachments / MCP / referenceImage deferred.
+         *
+         *     Phase 4-3 adds `enable_tools` (opt-in): when true, the route
+         *     registers the built-in tool set (`webFetch`, plus the
+         *     `TAVILY_API_KEY`/`MINIMAX_CN_API_KEY`-gated tools) and loops
+         *     `messages.stream` + tool execution. Default false keeps the
+         *     text-only Phase 4-1 behaviour.
          */
         ChatRequest: {
             /** Messages */
@@ -209,6 +214,13 @@ export interface components {
             system?: string | null;
             /** Max Tokens */
             max_tokens?: number | null;
+            /**
+             * Enable Tools
+             * @default false
+             */
+            enable_tools: boolean;
+            /** Max Steps */
+            max_steps?: number | null;
         };
         /**
          * ExtractionResponse
