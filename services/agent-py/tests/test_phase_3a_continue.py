@@ -158,7 +158,9 @@ def _make_step_fn(
     """
     called_with: list[int] = []
 
-    def make(_payload: Any, _checkpoint: Any, _messages: list[Any]) -> RunStepFn:
+    def make(
+        _payload: Any, _checkpoint: Any, _messages: list[Any], _context: Any = None
+    ) -> RunStepFn:
         async def step(ctx: RunStepContext) -> RunStepOutcome:
             called_with.append(ctx.step)
             return RunStepOutcome(done=ctx.step >= done_at)
@@ -300,7 +302,7 @@ async def test_yielded_chunk_saves_checkpoint_and_enqueues_continue() -> None:
     # (controlled by the executor's deadline plumbing) ends the chunk.
     # We force should_yield True by setting WORKER_CHUNK_BUDGET_S=-1
     # so the deadline is in the past from the start.
-    def make(_p: Any, _c: Any, _m: list[Any]) -> RunStepFn:
+    def make(_p: Any, _c: Any, _m: list[Any], _ctx: Any = None) -> RunStepFn:
         async def step(_ctx: RunStepContext) -> RunStepOutcome:
             return RunStepOutcome(done=False)
 

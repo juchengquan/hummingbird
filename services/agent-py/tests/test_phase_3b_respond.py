@@ -102,7 +102,7 @@ def _make_suspend_step(
     call, simulating a gated tool detected by the Anthropic provider."""
     called: list[int] = []
 
-    def make(_p: Any, _c: Any, messages: list[Any]) -> RunStepFn:
+    def make(_p: Any, _c: Any, messages: list[Any], _ctx: Any = None) -> RunStepFn:
         async def step(ctx: RunStepContext) -> RunStepOutcome:
             called.append(ctx.step)
             # Mimic the provider's behaviour: append the assistant
@@ -240,7 +240,7 @@ async def test_respond_with_approved_false_appends_decline_message() -> None:
         collected.append(event)
 
     # Step fn settles immediately after the model sees the decline.
-    def make(_p: Any, _c: Any, _messages: list[Any]) -> RunStepFn:
+    def make(_p: Any, _c: Any, _messages: list[Any], _ctx: Any = None) -> RunStepFn:
         async def step(_ctx: RunStepContext) -> RunStepOutcome:
             return RunStepOutcome(done=True)
 
@@ -300,7 +300,7 @@ async def test_respond_with_approved_unknown_tool_feeds_placeholder() -> None:
     async def sink(event: TaskEvent) -> None:
         pass
 
-    def make(_p: Any, _c: Any, _messages: list[Any]) -> RunStepFn:
+    def make(_p: Any, _c: Any, _messages: list[Any], _ctx: Any = None) -> RunStepFn:
         async def step(_ctx: RunStepContext) -> RunStepOutcome:
             return RunStepOutcome(done=True)
 
