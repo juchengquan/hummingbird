@@ -110,7 +110,7 @@ async def test_step_fn_raising_marks_failed(
     async def broken_step(ctx: RunStepContext) -> RunStepOutcome:
         raise RuntimeError("model timeout")
 
-    def make_broken(_payload, _checkpoint, _messages) -> RunStepFn:
+    def make_broken(_payload, _checkpoint, _messages, _context=None) -> RunStepFn:
         return broken_step
 
     with (
@@ -145,7 +145,7 @@ async def test_step_fn_returning_done_settles_after_one_step(
     async def immediate_done(ctx: RunStepContext) -> RunStepOutcome:
         return RunStepOutcome(done=True)
 
-    def make_immediate(_payload, _checkpoint, _messages) -> RunStepFn:
+    def make_immediate(_payload, _checkpoint, _messages, _context=None) -> RunStepFn:
         return immediate_done
 
     with (
@@ -175,7 +175,9 @@ async def test_checkpoint_max_steps_overrides_payload_default(
         # First step settles; nothing to do here besides return done.
         return RunStepOutcome(done=True)
 
-    def make(payload_: StartActionPayload, checkpoint: dict, _messages: list) -> RunStepFn:
+    def make(
+        payload_: StartActionPayload, checkpoint: dict, _messages: list, _context=None
+    ) -> RunStepFn:
         # We can't easily read `max_steps` post-call without
         # introspecting the loop, so instead we cap with one that's
         # very low and confirm the run uses it. See the helper
