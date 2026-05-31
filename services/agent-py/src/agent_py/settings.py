@@ -66,6 +66,14 @@ class Settings(BaseSettings):
     Empty falls back to the Phase 2a stub step fn so the executor stays
     runnable in development without a live key."""
 
+    ANTHROPIC_BASE_URL: str = ""
+    """Optional override for the Anthropic API base URL. Empty = SDK default
+    (https://api.anthropic.com). Set to point the SDK at an Anthropic-
+    compatible endpoint — proxy, self-hosted gateway, or a region-specific
+    upstream (e.g. Minimax's `/anthropic/v1` host). Mirrors the TS side's
+    `MINIMAX_CN_BASE_URL` override pattern. Has no effect when
+    `ANTHROPIC_API_KEY` is empty (the stub step fn doesn't reach a network)."""
+
     # --- Service identity -------------------------------------------------
     SERVICE_NAME: str = "agent-py"
     SERVICE_PORT: int = 8000
