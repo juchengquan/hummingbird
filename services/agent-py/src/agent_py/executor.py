@@ -253,9 +253,7 @@ async def _run_chunk(
         # behaviour). The TS checkpoint always writes `workspaceId`;
         # missing field is the test/dev path.
         cfg = checkpoint.get("config")
-        workspace_id = (
-            _str_or_none(cfg.get("workspaceId")) if isinstance(cfg, dict) else None
-        )
+        workspace_id = _str_or_none(cfg.get("workspaceId")) if isinstance(cfg, dict) else None
         tool_context = ToolContext(pool=pool, user_id=payload.user_id, workspace_id=workspace_id)
         # Phase 3f-2: discover cloud-mode MCP tools when we have a
         # workspace. Custom `make_step_fn` overrides (tests) skip this
