@@ -26,6 +26,9 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from .events import (
+    ApprovalEvent,
+    ApprovalRequestKind,
+    InputRequestOption,
     ResultEvent,
     RunStatus,
     StatusEvent,
@@ -192,6 +195,70 @@ class RunEmitter:
                 tool_name=tool_name,
                 summary=summary,
                 results=results,
+            )
+        )
+
+    async def input_request(
+        self,
+        *,
+        approval_id: str,
+        request_kind: ApprovalRequestKind | None = None,
+        tool: str | None = None,
+        tool_call_id: str | None = None,
+        args: dict[str, object] | None = None,
+        prompt: str | None = None,
+        options: list[InputRequestOption] | None = None,
+        multi: bool | None = None,
+    ) -> None:
+        """Emit `approval` with `phase='request'` — the run is
+        suspending and the user needs to pick an answer. The executor
+        pairs this with a `status: paused` emit so the projection
+        flips the run into the paused state."""
+        if self._settled:
+            return
+        await self._emit(
+            ApprovalEvent(
+                run_id=self._run_id,
+                seq=self._next_seq(),
+                step=self._step,
+                created_at=_now_iso(),
+                approval_id=approval_id,
+                phase="request",
+                request_kind=request_kind,
+                tool=tool,
+                tool_call_id=tool_call_id,
+                args=args,
+                prompt=prompt,
+                options=options,
+                multi=multi,
+            )
+        )
+
+    async def input_response(
+        self,
+        *,
+        approval_id: str,
+        approved: bool | None = None,
+        selection: list[str] | None = None,
+        value: str | None = None,
+    ) -> None:
+        """Emit `approval` with `phase='response'` — the user answered.
+        Clears `pending_input` on the client's projection. Emitted
+        from the `respond` action before the loop resumes; the
+        approval-id pairs with the matching request emit."""
+        if self._settled:
+            return
+        await self._emit(
+            ApprovalEvent(
+                run_id=self._run_id,
+                seq=self._next_seq(),
+                step=self._step,
+                created_at=_now_iso(),
+                approval_id=approval_id,
+                phase="response",
+                approved=approved,
+                selection=selection,
+                value=value,
             )
         )
 

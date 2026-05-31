@@ -38,14 +38,30 @@ class RunStepContext:
 
 
 @dataclass(frozen=True)
+class PendingInputDescriptor:
+    """A no-execute gated tool call the step fn captured — the run
+    suspends here for human input. Mirror of TS
+    `PendingInputDescriptor` in `lib/server/agent/runner.ts`."""
+
+    tool_call_id: str
+    tool: str
+    args: dict[str, object] | None = None
+
+
+@dataclass(frozen=True)
 class RunStepOutcome:
     """Result of running one step.
 
     `done=True` means the model produced a final answer; the loop
-    settles. `done=False` means the model called tools; loop again.
-    """
+    settles. `done=False` + `pending_input=None` means the model
+    called tools that the step fn executed and the loop should run
+    again. `done=False` + `pending_input=...` means the model called
+    a gated tool (no execute path) and the run suspends for human
+    input — the runner returns `kind="suspended"` carrying the
+    descriptor."""
 
     done: bool
+    pending_input: PendingInputDescriptor | None = None
 
 
 class RunStepFn(Protocol):
@@ -55,12 +71,12 @@ class RunStepFn(Protocol):
     async def __call__(self, ctx: RunStepContext) -> RunStepOutcome: ...
 
 
-AgentLoopResultKind = Literal["settled", "cancelled", "yielded"]
+AgentLoopResultKind = Literal["settled", "cancelled", "yielded", "suspended"]
 
 
 @dataclass(frozen=True)
 class AgentLoopResult:
-    """Loop outcome. Three non-terminal possibilities — the executor
+    """Loop outcome. Four non-terminal possibilities — the executor
     decides what to do next:
 
     - `settled`: terminal event emitted (`result: done|failed`),
@@ -73,10 +89,14 @@ class AgentLoopResult:
       event emitted; the executor saves the checkpoint and enqueues
       a `continue` job so another chunk picks up where this one left
       off. Mirrors the TS path's "settle without terminal" semantics.
-
-    Phase 3 will add `suspended` (HITL) alongside `yielded`."""
+    - `suspended`: a step fn returned `pending_input` (the model
+      called a gated tool). No terminal event emitted; the executor
+      saves the checkpoint, emits `approval: request` + `status:
+      paused`, and waits for a `respond` job. `pending_input` is
+      the descriptor for the gated call awaiting an answer."""
 
     kind: AgentLoopResultKind
+    pending_input: PendingInputDescriptor | None = None
 
 
 IsCancelledFn = Callable[[], Awaitable[bool]]
@@ -129,6 +149,17 @@ async def run_agent_loop(
         await emitter.start_step()
         outcome = await run_step(RunStepContext(step=emitter.step, emitter=emitter))
         await emitter.end_step()
+
+        if outcome.pending_input is not None:
+            # Suspend point — the step fn captured a gated tool call
+            # but didn't execute it. The executor owns the next-step
+            # plumbing (save checkpoint, emit `approval: request` +
+            # `status: paused`); the runner just hands the descriptor
+            # back. No terminal event is emitted here.
+            return AgentLoopResult(
+                kind="suspended",
+                pending_input=outcome.pending_input,
+            )
 
         if outcome.done:
             await emitter.result("done")

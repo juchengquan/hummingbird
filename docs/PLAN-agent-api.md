@@ -1,22 +1,36 @@
 # Plan: Agent API as a separate service
 
-Status: **🪜 Phased — Phases 0 + 1 + 2a + 2b-1 + 2b-2 + 3a + 3c-2 +
-3d-1 shipped, Phases 3b + 3c-1 + 3d-2+ pending or in-flight (parallel
+Status: **🪜 Phased — Phases 0 + 1 + 2a + 2b-1 + 2b-2 + 3a + 3b + 3c-2
++ 3d-1 shipped, Phases 3c-1 + 3d-2+ pending or in-flight (parallel
 PRs).** Option C (Python service) green-lit. Phase 0 (scaffolding),
 Phase 1 (read-only poller), Phase 2a (executor pattern + feature
 flag), Phase 2b-1 (real Anthropic text streaming +
 `ANTHROPIC_BASE_URL` override), Phase 2b-2 (tool wiring + `webFetch`),
-Phase 3a (`continue` action + chunk-break yield), Phase 3c-2
-(`searchFiles` tool with RLS impersonation), and **Phase 3d-1
-(`generateImage` tool — Minimax T2I/I2I, inline URLs)** all live in
-`services/agent-py/`. `generateImage` is config-gated on
-`MINIMAX_CN_API_KEY` (same env var the TS side reads, so a single
-`.env` covers both); a narrow textual SSRF blocklist guards
-`referenceImageUrl` until the full DNS-resolution port lands. Phase
-3d-2 (Supabase Storage persistence + signed URLs) ships next on top.
-Phase 3b (suspend + respond) and Phase 3c-1 (`webSearch` via Tavily)
-ship in parallel PRs. Host decided (self-host on a small VM — see
-§Host decision). The earlier "decision-doc — Step 1 done" status is
+Phase 3a (`continue` action + chunk-break yield), Phase 3b (suspend
+path + `respond` action), Phase 3c-2 (`searchFiles` tool with RLS
+impersonation), and **Phase 3d-1 (`generateImage` tool — Minimax
+T2I/I2I, inline URLs)** all live in `services/agent-py/`. The HITL
+pair: the Anthropic step fn detects gated tools (named in
+`checkpoint.config.requireApprovalFor`), captures the call as
+`pending_input`, and returns without executing; the runner returns
+`AgentLoopResult(kind="suspended")`; the executor saves the
+checkpoint, emits `approval: request` + `status: paused`, and waits
+for a `respond` job. `execute_respond` loads the checkpoint, finds
+the pending tool_use by id, builds a `tool_result` from the user's
+answer, appends it as a user turn, emits `input_response`, then
+resumes the loop with seeded emitter seq/step. `searchFiles` is
+config-gated on the new `ToolContext` (pool + user_id); calls the
+`search_file_sections` Postgres RPC under `SET LOCAL ROLE
+authenticated` + `request.jwt.claims = {sub: <user_id>, role:
+'authenticated'}` so RLS on `files` evaluates against the user —
+service-role pool can't bypass per-user visibility. `generateImage`
+is config-gated on `MINIMAX_CN_API_KEY` (same env var the TS side
+reads, so a single `.env` covers both); a narrow textual SSRF
+blocklist guards `referenceImageUrl` until the full DNS-resolution
+port lands. Phase 3d-2 (Supabase Storage persistence + signed URLs)
+ships next on top. Phase 3c-1 (`webSearch` via Tavily) ships in a
+parallel PR. Host decided (self-host on a small VM — see §Host
+decision). The earlier "decision-doc — Step 1 done" status is
 retained in the prior-status note below for context.
 
 > **Note on phase numbering.** The original plan called Phase 2 a

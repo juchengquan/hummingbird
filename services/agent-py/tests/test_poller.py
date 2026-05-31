@@ -121,29 +121,70 @@ async def test_live_mode_unflagged_user_releases(
 
 
 @pytest.mark.asyncio
-async def test_live_mode_flagged_respond_action_releases(
+async def test_live_mode_flagged_respond_action_dispatches_to_executor(
     live_settings: Settings,
 ) -> None:
-    """`respond` (HITL) still rides the TS worker — Phase 3b will
-    port it. Phase 3a only added `continue` end-to-end."""
-    job = _make_job(action="respond")
+    """Phase 3b: `respond` jobs route to `executor.execute_respond`
+    for flagged users. Payload `{requestId, approved}` is parsed
+    into a typed `RespondActionPayload`."""
+    job = _make_job(
+        action="respond",
+        payload={"requestId": "tu_1", "approved": True},
+    )
     db._pool = MagicMock()
     try:
         with (
             patch.object(jobs, "claim_next_job", new=AsyncMock(return_value=job)),
-            patch.object(jobs, "release_job_to_queue", new=AsyncMock(return_value=True)) as release,
+            patch.object(jobs, "release_job_to_queue", new=AsyncMock()) as release,
+            patch.object(jobs, "mark_job_done", new=AsyncMock()) as mark_done,
             patch.object(
                 feature_flag,
                 "is_user_flagged_to_python",
                 new=AsyncMock(return_value=True),
             ),
-            patch.object(executor, "execute_start", new=AsyncMock()) as execute_start,
-            patch.object(executor, "execute_continue", new=AsyncMock()) as execute_continue,
+            patch.object(
+                executor,
+                "execute_respond",
+                new=AsyncMock(return_value=executor.ExecutorOutcome(settled=True)),
+            ) as execute,
         ):
             await poller._tick(live_settings)
-            release.assert_awaited_once_with(db._pool, job.id)
-            execute_start.assert_not_called()
-            execute_continue.assert_not_called()
+            execute.assert_awaited_once()
+            args = execute.await_args
+            assert args is not None
+            payload = args.args[1]
+            assert isinstance(payload, executor.RespondActionPayload)
+            assert payload.request_id == "tu_1"
+            assert payload.approved is True
+            mark_done.assert_awaited_once_with(db._pool, job.id)
+            release.assert_not_called()
+    finally:
+        db._pool = None
+
+
+@pytest.mark.asyncio
+async def test_live_mode_flagged_respond_invalid_payload_marks_failed(
+    live_settings: Settings,
+) -> None:
+    """If the respond job's payload lacks `requestId` we can't find
+    the pending tool call, so the executor would fail. Catch it at
+    the poller boundary and mark the job failed without dispatching."""
+    job = _make_job(action="respond", payload={"approved": True})  # no requestId
+    db._pool = MagicMock()
+    try:
+        with (
+            patch.object(jobs, "claim_next_job", new=AsyncMock(return_value=job)),
+            patch.object(jobs, "mark_job_failed", new=AsyncMock()) as mark_failed,
+            patch.object(
+                feature_flag,
+                "is_user_flagged_to_python",
+                new=AsyncMock(return_value=True),
+            ),
+            patch.object(executor, "execute_respond", new=AsyncMock()) as execute,
+        ):
+            await poller._tick(live_settings)
+            execute.assert_not_called()
+            mark_failed.assert_awaited_once()
     finally:
         db._pool = None
 

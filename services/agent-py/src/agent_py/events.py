@@ -153,10 +153,58 @@ class StepErrorEvent(TaskEventBase):
     will_retry: bool = True
 
 
+# --- Approval / HITL -------------------------------------------------------
+
+
+@dataclass(kw_only=True, frozen=True)
+class InputRequestOption:
+    """One choice for `requestKind: 'choice'` approval requests.
+    Mirrors `InputRequestOption` in `lib/shared/agent/events.ts`."""
+
+    id: str
+    label: str
+
+
+# Discriminator for what kind of human input the run is waiting on.
+# Defaults to `"approval"` (binary tool-approval, the original Phase 1
+# HITL mechanism); `"choice"` + `"input"` ride on the same machinery
+# with different payload shapes (askUser tool, Phase 5 of HITL).
+ApprovalRequestKind = Literal["approval", "choice", "input"]
+
+
+@dataclass(kw_only=True, frozen=True)
+class ApprovalEvent(TaskEventBase):
+    """Human-in-the-loop input request / response — the suspend point
+    of an agent run. Mirror of `ApprovalEvent` in
+    `lib/shared/agent/events.ts`. `phase: "request"` is emitted when
+    the model calls a gated tool; `phase: "response"` is emitted from
+    the executor's respond path once the user picks an answer.
+
+    On `request`: `request_kind` + `tool` + `tool_call_id` + `args`
+    describe what's pending. On `response`: `approved` / `selection`
+    / `value` carry the user's answer (one of the three is set based
+    on `request_kind`)."""
+
+    kind: Literal["approval"] = field(default="approval", init=False)
+    approval_id: str
+    phase: Literal["request", "response"]
+    request_kind: ApprovalRequestKind | None = None
+    tool: str | None = None
+    tool_call_id: str | None = None
+    args: dict[str, object] | None = None
+    prompt: str | None = None
+    options: list[InputRequestOption] | None = None
+    multi: bool | None = None
+    # Response-only fields:
+    approved: bool | None = None
+    selection: list[str] | None = None
+    value: str | None = None
+
+
 # Discriminated union of the kinds the Python service emits today
-# (Phases 2a + 2b-1 + 2b-2). Newer kinds slot in here as their feature
-# ports; the TS-side projection reducer tolerates unknown kinds, so
-# a Python-only event survives an older client.
+# (Phases 2a + 2b-1 + 2b-2 + 3b). Newer kinds slot in here as their
+# feature ports; the TS-side projection reducer tolerates unknown
+# kinds, so a Python-only event survives an older client.
 TaskEvent = (
     StatusEvent
     | StepStartEvent
@@ -166,6 +214,7 @@ TaskEvent = (
     | ToolInputEvent
     | ToolOutputEvent
     | StepErrorEvent
+    | ApprovalEvent
 )
 
 
@@ -208,5 +257,31 @@ def event_to_row_payload(event: TaskEvent) -> dict[str, object]:
         return tool_payload
     if isinstance(event, StepErrorEvent):
         return {"message": event.message, "willRetry": event.will_retry}
+    if isinstance(event, ApprovalEvent):
+        approval_payload: dict[str, object] = {
+            "approvalId": event.approval_id,
+            "phase": event.phase,
+        }
+        if event.request_kind is not None:
+            approval_payload["requestKind"] = event.request_kind
+        if event.tool is not None:
+            approval_payload["tool"] = event.tool
+        if event.tool_call_id is not None:
+            approval_payload["toolCallId"] = event.tool_call_id
+        if event.args is not None:
+            approval_payload["args"] = event.args
+        if event.prompt is not None:
+            approval_payload["prompt"] = event.prompt
+        if event.options is not None:
+            approval_payload["options"] = [{"id": o.id, "label": o.label} for o in event.options]
+        if event.multi is not None:
+            approval_payload["multi"] = event.multi
+        if event.approved is not None:
+            approval_payload["approved"] = event.approved
+        if event.selection is not None:
+            approval_payload["selection"] = event.selection
+        if event.value is not None:
+            approval_payload["value"] = event.value
+        return approval_payload
     # step_start / step_end carry no payload-only fields.
     return {}
