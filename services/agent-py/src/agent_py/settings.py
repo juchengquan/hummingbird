@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     NOT the transaction pooler — `FOR UPDATE SKIP LOCKED` needs an open
     transaction which the pooler doesn't expose."""
 
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
+    """Service-role key for Supabase Storage REST API access (Phase 3d-2+).
+    When set together with `SUPABASE_URL`, generated images get mirrored
+    into `user-files/<user_id>/generated/...` and the model receives a
+    long-lived signed URL instead of the short-lived Minimax URL. Bypasses
+    RLS (same key Next.js uses for share links); per-user path scoping
+    comes from the trusted `payload.user_id` we stamp into the path."""
+
     # --- Worker -----------------------------------------------------------
     WORKER_DRY_RUN: bool = True
     """Phase 1 default: claim jobs, log them, release back to the queue.

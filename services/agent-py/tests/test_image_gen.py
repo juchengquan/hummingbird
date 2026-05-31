@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from agent_py import settings as settings_module
+from agent_py.image_storage import PersistedImage, PersistError
 from agent_py.tools import image_gen as image_gen_module
 from agent_py.tools.image_gen import (
     DEFAULT_MAX_CALLS_PER_TURN,
@@ -30,7 +31,7 @@ from agent_py.tools.minimax_image_client import (
     MinimaxImageError,
     MinimaxImageSuccess,
 )
-from agent_py.tools.registry import ToolError, default_tool_registry
+from agent_py.tools.registry import ToolContext, ToolError, default_tool_registry
 
 
 def _set_key(monkeypatch: pytest.MonkeyPatch, key: str = "test-key") -> None:
@@ -300,3 +301,139 @@ async def test_tool_passes_settings_to_minimax_client(
 
     assert captured["api_key"] == "k-from-env"
     assert captured["base_url_override"] == "https://api.example.com/anthropic/v1"
+
+
+# --- Phase 3d-2: Storage persistence wiring ----------------------------
+
+
+def _ctx() -> ToolContext:
+    # `pool` is unused on this tool path — the persistence layer talks
+    # to Supabase Storage's REST API, not asyncpg.
+    from unittest.mock import MagicMock
+
+    return ToolContext(pool=MagicMock(), user_id="user-1")
+
+
+@pytest.mark.asyncio
+async def test_persists_when_context_and_storage_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With ToolContext + storage env, each Minimax URL is replaced
+    by a signed Storage URL in the model-facing text."""
+    _set_key(monkeypatch)
+    monkeypatch.setenv("SUPABASE_URL", "https://proj.supabase.test")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "k")
+    settings_module.get_settings.cache_clear()
+
+    tool = build_image_gen_tool(context=_ctx())
+
+    async def fake_persist(url: str, **kwargs: Any) -> PersistedImage:
+        # Echo a deterministic signed URL so the assertion is stable.
+        return PersistedImage(
+            url=f"https://signed.test/{kwargs['image_id']}",
+            storage_path=f"{kwargs['user_id']}/generated/{kwargs['image_id']}.png",
+            format="png",
+        )
+
+    with (
+        patch.object(
+            image_gen_module,
+            "minimax_generate_image",
+            new=AsyncMock(return_value=_ok(["https://m.test/a.png", "https://m.test/b.png"])),
+        ),
+        patch.object(image_gen_module, "persist_generated_image", new=fake_persist),
+    ):
+        out = await tool.execute({"prompt": "x", "count": 2})
+
+    assert "https://signed.test/" in out.text
+    assert "https://m.test/a.png" not in out.text
+
+
+@pytest.mark.asyncio
+async def test_passthrough_when_no_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without ToolContext, Minimax URLs surface inline (Phase 3d-1
+    behaviour)."""
+    _set_key(monkeypatch)
+    monkeypatch.setenv("SUPABASE_URL", "https://proj.supabase.test")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "k")
+    settings_module.get_settings.cache_clear()
+    tool = build_image_gen_tool()  # no context
+
+    persist_called = AsyncMock()
+    with (
+        patch.object(
+            image_gen_module,
+            "minimax_generate_image",
+            new=AsyncMock(return_value=_ok(["https://m.test/x.png"])),
+        ),
+        patch.object(image_gen_module, "persist_generated_image", new=persist_called),
+    ):
+        out = await tool.execute({"prompt": "x"})
+
+    assert "https://m.test/x.png" in out.text
+    persist_called.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_passthrough_when_storage_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Context present but Storage env vars missing → still
+    passthrough (no failure for a deploy without service-role key)."""
+    _set_key(monkeypatch)
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+    settings_module.get_settings.cache_clear()
+    tool = build_image_gen_tool(context=_ctx())
+
+    persist_called = AsyncMock()
+    with (
+        patch.object(
+            image_gen_module,
+            "minimax_generate_image",
+            new=AsyncMock(return_value=_ok(["https://m.test/x.png"])),
+        ),
+        patch.object(image_gen_module, "persist_generated_image", new=persist_called),
+    ):
+        out = await tool.execute({"prompt": "x"})
+
+    assert "https://m.test/x.png" in out.text
+    persist_called.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_persist_failure_falls_back_to_minimax_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Per-image persistence failure → that image keeps the raw
+    Minimax URL; tool still succeeds. Mirrors the TS path's drop-bad-
+    keep-rest policy but at per-image granularity."""
+    _set_key(monkeypatch)
+    monkeypatch.setenv("SUPABASE_URL", "https://proj.supabase.test")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "k")
+    settings_module.get_settings.cache_clear()
+    tool = build_image_gen_tool(context=_ctx())
+
+    call = {"n": 0}
+
+    async def flaky_persist(url: str, **kwargs: Any) -> PersistedImage | PersistError:
+        call["n"] += 1
+        if call["n"] == 1:
+            return PersistError(code="upload", message="500")
+        return PersistedImage(
+            url="https://signed.test/ok", storage_path="u/g/img.png", format="png"
+        )
+
+    with (
+        patch.object(
+            image_gen_module,
+            "minimax_generate_image",
+            new=AsyncMock(return_value=_ok(["https://m.test/a.png", "https://m.test/b.png"])),
+        ),
+        patch.object(image_gen_module, "persist_generated_image", new=flaky_persist),
+    ):
+        out = await tool.execute({"prompt": "x", "count": 2})
+
+    # First image: raw Minimax URL (persist failed). Second: signed URL.
+    assert "https://m.test/a.png" in out.text
+    assert "https://signed.test/ok" in out.text

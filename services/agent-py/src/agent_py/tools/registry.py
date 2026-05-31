@@ -122,7 +122,10 @@ def default_tool_registry(
     - `generateImage` registers only when `MINIMAX_CN_API_KEY` is set
       (mirrors the TS side's `isImageGenConfigured()` gate). Absent
       key → tool is omitted; the model is told as much by the
-      prompt fragment when it ports.
+      prompt fragment when it ports. The tool reads the optional
+      `context` so generated images can be persisted into Supabase
+      Storage under the user's folder (Phase 3d-2). Without context
+      it still works but URLs come back inline from Minimax.
     """
     # Lazy imports keep registry construction cheap and avoid
     # circular imports if a tool ever needs to read the registry.
@@ -142,5 +145,5 @@ def default_tool_registry(
     from .image_gen import build_image_gen_tool, is_image_gen_configured
 
     if is_image_gen_configured():
-        out["generateImage"] = build_image_gen_tool()
+        out["generateImage"] = build_image_gen_tool(context=context)
     return out
