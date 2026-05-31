@@ -91,6 +91,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Chat
+         * @description Streaming chat endpoint — Phase 4-1 of PLAN-agent-api.
+         *
+         *     Mirrors `app/api/chat/route.ts` on the TS side. Accepts a
+         *     narrow request (messages + model + optional system prompt
+         *     + optional max_tokens) and streams Anthropic deltas back as
+         *     SSE frames whose payload shape matches what the existing
+         *     Next.js chat consumer (`use-chat-send.ts`) parses — text /
+         *     error / done frames keep the wire identical so a frontend
+         *     selector can swap between TS and Python without changing the
+         *     consumer.
+         *
+         *     Phase 4-1 is **text-only**: tools / skills / attachments /
+         *     MCP all deferred. The Python service already has the
+         *     agent-loop machinery for tool use (Phase 2b-2 + 3c+);
+         *     wiring it into the streaming chat path lands in Phase 4-2.
+         *
+         *     Returns 503 when `ANTHROPIC_API_KEY` is unset — fast-fail
+         *     signal to monitoring that the deploy is misconfigured rather
+         *     than a silent stub response.
+         */
+        post: operations["chat_v1_chat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/whoami": {
         parameters: {
             query?: never;
@@ -127,6 +165,38 @@ export interface components {
              * @description The uploaded file to extract text from.
              */
             file: string;
+        };
+        /**
+         * ChatMessageRequest
+         * @description One message in the chat history. Tight: role is restricted to
+         *     `user` / `assistant`, content is a flat string. The TS chat schema
+         *     supports multimodal content parts; the Python endpoint accepts a
+         *     narrower shape for now and grows it when tool support lands
+         *     (Phase 4-2).
+         */
+        ChatMessageRequest: {
+            /** Role */
+            role: string;
+            /** Content */
+            content: string;
+        };
+        /**
+         * ChatRequest
+         * @description Wire shape for POST /v1/chat. Mirrors the subset of
+         *     `ChatRequestSchema` (TS) we honour today — messages + model +
+         *     workspaceSystemPrompt + maxSteps proxied as `max_tokens`. Skills /
+         *     tools / attachments / MCP / referenceImage all deferred to
+         *     Phase 4-2.
+         */
+        ChatRequest: {
+            /** Messages */
+            messages: components["schemas"]["ChatMessageRequest"][];
+            /** Model */
+            model: string;
+            /** System */
+            system?: string | null;
+            /** Max Tokens */
+            max_tokens?: number | null;
         };
         /**
          * ExtractionResponse
@@ -274,6 +344,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExtractionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    chat_v1_chat_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

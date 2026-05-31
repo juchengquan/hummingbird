@@ -1,7 +1,9 @@
 # Plan: Agent API as a separate service
 
 Status: **🪜 Phased — Phases 0 + 1 + 2a + 2b-1 + 2b-2 + 3a + 3b + 3c-1
-+ 3c-2 + 3d-1 + 3d-2 + 3e + 3f-1 + 3f-2 shipped, Phase 3g pending.**
++ 3c-2 + 3d-1 + 3d-2 + 3e + 3f-1 + 3f-2 + 4-1 shipped, Phases 3g + 4-2+
+pending. Cutover + decommission deliberately deferred — both stacks
+stay live.**
 Option C (Python service) green-lit. Phase 0 (scaffolding), Phase 1
 (read-only poller), Phase 2a (executor pattern + feature flag), Phase
 2b-1 (real Anthropic text streaming + `ANTHROPIC_BASE_URL` override),

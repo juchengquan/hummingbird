@@ -20,11 +20,19 @@ from collections.abc import AsyncIterator
 from typing import Annotated
 
 import structlog
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
-from pydantic import BaseModel
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from . import __version__, db, poller
 from .auth import get_current_user
+from .chat import (
+    DEFAULT_MAX_TOKENS,
+    ChatConfig,
+    ChatMessage,
+    chat_stream,
+    resolve_anthropic_client,
+)
 from .extraction import ExtractionKind, extract_file
 from .settings import Settings, get_settings
 
@@ -175,6 +183,68 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
             language=result.language,
         )
 
+    @app.post("/v1/chat", tags=["chat"])
+    async def chat(
+        request: Request,
+        body: ChatRequest,
+        _claims: Annotated[dict[str, object], Depends(get_current_user)],
+    ) -> StreamingResponse:
+        """Streaming chat endpoint — Phase 4-1 of PLAN-agent-api.
+
+        Mirrors `app/api/chat/route.ts` on the TS side. Accepts a
+        narrow request (messages + model + optional system prompt
+        + optional max_tokens) and streams Anthropic deltas back as
+        SSE frames whose payload shape matches what the existing
+        Next.js chat consumer (`use-chat-send.ts`) parses — text /
+        error / done frames keep the wire identical so a frontend
+        selector can swap between TS and Python without changing the
+        consumer.
+
+        Phase 4-1 is **text-only**: tools / skills / attachments /
+        MCP all deferred. The Python service already has the
+        agent-loop machinery for tool use (Phase 2b-2 + 3c+);
+        wiring it into the streaming chat path lands in Phase 4-2.
+
+        Returns 503 when `ANTHROPIC_API_KEY` is unset — fast-fail
+        signal to monitoring that the deploy is misconfigured rather
+        than a silent stub response."""
+        client = resolve_anthropic_client()
+        if client is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="ANTHROPIC_API_KEY is not configured on the agent service.",
+            )
+
+        config = ChatConfig(
+            model=body.model,
+            messages=[ChatMessage(role=m.role, content=m.content) for m in body.messages],
+            system=body.system,
+            max_tokens=body.max_tokens or DEFAULT_MAX_TOKENS,
+        )
+
+        async def event_source() -> AsyncIterator[bytes]:
+            async for frame in chat_stream(client=client, config=config):
+                # Bail early if the caller already hung up — saves a
+                # round-trip's worth of unnecessary tokens.
+                if await request.is_disconnected():
+                    logger.info("chat.client_disconnected", model=body.model)
+                    return
+                yield frame.encode("utf-8")
+
+        # `text/event-stream` triggers SSE handling in browser EventSource
+        # / the existing Next.js consumer. Cache-Control + Connection
+        # headers match what production proxies (nginx, Cloudflare) need
+        # to keep the stream from being buffered.
+        return StreamingResponse(
+            event_source(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     @app.get("/v1/whoami", tags=["auth"], response_model=WhoAmIResponse)
     def whoami(
         claims: Annotated[dict[str, object], Depends(get_current_user)],
@@ -220,6 +290,30 @@ class ReadinessResponse(BaseModel):
 class WhoAmIResponse(BaseModel):
     user_id: str | None
     role: str | None
+
+
+class ChatMessageRequest(BaseModel):
+    """One message in the chat history. Tight: role is restricted to
+    `user` / `assistant`, content is a flat string. The TS chat schema
+    supports multimodal content parts; the Python endpoint accepts a
+    narrower shape for now and grows it when tool support lands
+    (Phase 4-2)."""
+
+    role: str = Field(pattern="^(user|assistant)$")
+    content: str = Field(min_length=1, max_length=200_000)
+
+
+class ChatRequest(BaseModel):
+    """Wire shape for POST /v1/chat. Mirrors the subset of
+    `ChatRequestSchema` (TS) we honour today — messages + model +
+    workspaceSystemPrompt + maxSteps proxied as `max_tokens`. Skills /
+    tools / attachments / MCP / referenceImage all deferred to
+    Phase 4-2."""
+
+    messages: list[ChatMessageRequest] = Field(min_length=1, max_length=200)
+    model: str = Field(min_length=1, max_length=100)
+    system: str | None = Field(default=None, max_length=20_000)
+    max_tokens: int | None = Field(default=None, ge=1, le=64_000)
 
 
 class ExtractionResponse(BaseModel):
