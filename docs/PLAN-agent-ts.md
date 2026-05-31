@@ -318,6 +318,80 @@ the executor and route handlers and is what `agent-py` uses with
 its `MakeStepFn` injection point. This is now the default test
 seam for `services/agent-ts/` — no `mock.module` anywhere.
 
+### C. Tools-in-chat: fork the AI SDK or wrap it?
+
+Phase 3 ships text-only chat. The agent-py service ships
+`enable_tools: true` (Phase 4-3) by looping `messages.stream` +
+tool execution and emitting per-step `tool_call` / `tool_result`
+frames. For agent-ts there are two routes:
+
+1. **Use the AI SDK's `streamText({ tools })` directly.** The
+   SDK already supports tools end-to-end and emits `tool-input-*`
+   / `tool-output-*` parts in the UI message stream. We'd reuse
+   the existing `lib/server/skills/registry.ts` (already wired
+   to AI SDK `tool()` shapes) and re-emit `tool_call` /
+   `tool_result` frames for the custom format.
+
+2. **Hand-roll the loop.** Mirrors agent-py's
+   `chat_stream_with_tools` byte-for-byte — own `messages.stream`
+   call, walk final-message content for `tool_use` blocks,
+   execute, append `tool_result`, restart. More work but
+   structurally identical to the Python service.
+
+Recommendation: **option 1**. The AI SDK gives us the loop
+for free, the existing `lib/server/skills/*` already exports the
+right shape, and we get tool-input streaming (partial JSON
+deltas) without writing it ourselves. The custom-format frames
+ride on top via a simple `fullStream` switch — same shape as
+the text-only path in this PR, plus two more cases.
+
+Deferred to a separate PR because it interacts with the
+workspace-context plumbing (`searchFiles` + MCP need a workspace
+id on the request body, just like the Python side does).
+
+### D. `server-only` import marker breaks Bun-only reuse
+
+The reuse-existing-TS-modules lever depends on agent-ts being able
+to `import { fetchUrlBookmark } from "@/server/url/fetch"` and
+`{ discover, callTool } from "@/server/mcp/client"`. Both modules
+start with `import "server-only"` (a Next.js convention that throws
+at module load when imported from a Client Component bundle).
+
+In Bun, `import "server-only"` throws at runtime — there's no
+"react-server" condition active by default. Fix: agent-ts runs
+with `--conditions=react-server` (wired into the `dev` / `start` /
+`test` scripts in `package.json`). The `server-only` package's
+exports map resolves `react-server` to an empty stub, so the
+import becomes a no-op.
+
+Trade-off: this means agent-ts could in principle import
+client-only modules from `lib/client/` without tsc / Bun
+complaining. The fence in `lib/client/*` (`import "client-only"`)
+still throws — `client-only` doesn't have a `react-server`
+fallback in its exports map — so the danger is bounded to
+`lib/server/` modules accidentally reaching into `lib/client/`,
+which is already an ESLint error via `no-restricted-imports`.
+
+### E. Extraction logic stays inside agent-ts (not lifted to `lib/server/`)
+
+The plan's table says
+"`extraction.py` → direct re-export from `app/api/extract/route.ts`
+helpers (refactor to library)". Phase 4 instead copies the
+extraction body into `services/agent-ts/src/extraction.ts`,
+keeping the Next.js route untouched.
+
+Reason: lifting to `lib/server/extraction.ts` would also need
+the Next.js route refactored in the same PR, and the route's
+NextResponse-shaped error returns don't map 1-to-1 to a library
+return type without a bigger touch than this PR warrants. The
+duplication is ~150 LOC and the two stay byte-equivalent for now.
+
+A follow-up PR can lift the extraction primitives to
+`lib/server/extraction.ts` (a pure function over `{name, mimeType,
+data}`) and shrink both producers to glue. That refactor is
+safe to land separately because the wire shape is already
+identical.
+
 ## Open questions for the green-light decision
 
 1. **Runtime: Bun or Node?** Bun matches the frontend

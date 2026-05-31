@@ -6,14 +6,20 @@
  * tests can spin up isolated instances per test with overridden env
  * without leaking state across tests.
  *
- * Phase 0 mounts only health + whoami. Phase 1 adds the lifespan
- * hook for the poll loop; Phase 2+ adds executor + chat + tools.
+ * Phase 0: health + whoami. Phase 1: poll loop (in server.ts).
+ * Phase 2: executor. Phase 3: chat. Phase 4: extract / url-fetch /
+ * refresh-url / summarize / mcp proxy.
  */
 
 import { Hono } from "hono"
 
 import { chatRoutes } from "./routes/chat"
+import { extractRoutes } from "./routes/extract"
 import { healthRoutes } from "./routes/health"
+import { mcpProxyRoutes } from "./routes/mcp-proxy"
+import { refreshUrlRoutes } from "./routes/refresh-url"
+import { summarizeRoutes } from "./routes/summarize"
+import { urlFetchRoutes } from "./routes/url-fetch"
 import { whoamiRoutes } from "./routes/whoami"
 import type { AuthVars } from "./middleware/auth"
 
@@ -29,6 +35,11 @@ export function createApp(): Hono<{ Variables: AppVariables }> {
   // Auth-protected /v1 routes.
   app.route("/", whoamiRoutes)
   app.route("/", chatRoutes)
+  app.route("/", extractRoutes)
+  app.route("/", urlFetchRoutes)
+  app.route("/", refreshUrlRoutes)
+  app.route("/", summarizeRoutes)
+  app.route("/", mcpProxyRoutes)
 
   return app
 }

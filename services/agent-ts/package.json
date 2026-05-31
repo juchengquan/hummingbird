@@ -6,11 +6,11 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun --watch src/server.ts",
-    "start": "bun src/server.ts",
+    "dev": "bun --conditions=react-server --watch src/server.ts",
+    "start": "bun --conditions=react-server src/server.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src tests",
-    "test": "bun test"
+    "test": "bun test --conditions=react-server"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.79",
