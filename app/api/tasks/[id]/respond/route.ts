@@ -21,20 +21,8 @@ import { NextResponse } from "next/server"
 import { categorizeError } from "@/shared/api-errors"
 import { RespondRequestSchema } from "@/shared/api-schemas"
 import { getSupabaseServerClient } from "@/server/supabase/server"
-import { getSupabaseAdminClient } from "@/server/supabase/admin"
 import { getRun } from "@/server/agent/store"
 import { enqueueRespondJob } from "@/server/agent/jobs"
-import { processNextJob } from "@/server/agent/worker"
-import { inlineAgentWorkerEnabled } from "@/server/agent/inline-worker"
-
-/** Bootstrap budget for the respond route — same shape as the start
- *  route, sized to cover the common case of a short tool execution +
- *  a brief follow-up step. */
-const TASK_RESPOND_BOOTSTRAP_MS = (() => {
-  const raw = Number(process.env.TASK_START_BOOTSTRAP_MS)
-  if (Number.isFinite(raw) && raw >= 0) return Math.floor(raw)
-  return 8_000
-})()
 
 export async function POST(
   req: NextRequest,
@@ -126,20 +114,8 @@ export async function POST(
     return NextResponse.json({ code, message }, { status })
   }
 
-  // Bootstrap the worker so the typical "Approve → see the continuation
-  // stream" path feels synchronous. Gated by INLINE_AGENT_WORKER so
-  // deploys running agent-py / agent-ts can hand the queue entirely
-  // to the dedicated services.
-  if (TASK_RESPOND_BOOTSTRAP_MS > 0 && inlineAgentWorkerEnabled()) {
-    const admin = getSupabaseAdminClient()
-    if (admin) {
-      try {
-        await processNextJob(admin, { budgetMs: TASK_RESPOND_BOOTSTRAP_MS })
-      } catch (err) {
-        console.error("[tasks/respond] bootstrap:", err)
-      }
-    }
-  }
-
+  // The dedicated agent service claims the respond job from its
+  // poll loop. POST returns immediately; the client tails
+  // `task_events` as the service settles.
   return NextResponse.json({ ok: true }, { status: 202 })
 }

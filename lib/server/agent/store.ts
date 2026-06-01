@@ -122,9 +122,11 @@ export async function listEventsSince(
 }
 
 /**
- * Persist the run state at a HITL suspend point. Stored in
- * `tasks.checkpoint` as JSONB; the continuation invocation loads it via
- * `loadCheckpoint` to seed the runner.
+ * Persist the run state at the start of a run. Stored in
+ * `tasks.checkpoint` as JSONB; the dedicated agent service loads it
+ * via its own checkpoint reader to seed the runner. Called by
+ * `POST /api/tasks` for the initial checkpoint and by
+ * `lib/server/agent/schedules.ts` for scheduled fires.
  */
 export async function saveCheckpoint(
   db: DB,
@@ -141,39 +143,6 @@ export async function saveCheckpoint(
     .eq("id", runId)
     .eq("user_id", userId)
   if (error) throw new Error(`saveCheckpoint: ${error.message}`)
-}
-
-/** Load the checkpoint, or `null` if the run hasn't been suspended. */
-export async function loadCheckpoint(
-  db: DB,
-  runId: string,
-  userId: string
-): Promise<RunCheckpoint | null> {
-  const { data, error } = await db
-    .from("tasks")
-    .select("checkpoint")
-    .eq("id", runId)
-    .eq("user_id", userId)
-    .maybeSingle()
-  if (error) throw new Error(`loadCheckpoint: ${error.message}`)
-  if (!data?.checkpoint || typeof data.checkpoint !== "object") return null
-  return data.checkpoint as unknown as RunCheckpoint
-}
-
-/** Cheap cancel probe the runner polls between steps. */
-export async function isRunCancelled(
-  db: DB,
-  runId: string,
-  userId: string
-): Promise<boolean> {
-  const { data, error } = await db
-    .from("tasks")
-    .select("status")
-    .eq("id", runId)
-    .eq("user_id", userId)
-    .maybeSingle()
-  if (error) return false // a probe failure shouldn't kill the run
-  return data?.status === "cancelled"
 }
 
 /** Latest event row for a run (highest seq), or null. Used both to
