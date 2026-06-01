@@ -30,6 +30,7 @@ import {
   chatStreamAiSdk,
   resolveAnthropicModel,
 } from "../chat"
+import { buildToolImageInterceptor } from "../image-persistence"
 import type { AuthVars } from "../middleware/auth"
 import { requireAuth } from "../middleware/auth"
 import { buildSkillNotes, buildToolSet, type SkillEntry } from "../skills"
@@ -109,6 +110,9 @@ chatRoutes.post("/v1/chat", requireAuth, async (c) => {
   // Build the toolset + system-prompt fragment when the caller flips
   // enable_tools. Empty toolset (no skills configured) silently
   // degrades to the text-only path.
+  const claims = c.get("claims")
+  const userId = typeof claims.sub === "string" ? claims.sub : ""
+
   const reqSignal = c.req.raw.signal
   // Cast through `unknown` because agent-ts Zod 3 produces a slightly
   // different inferred type than the lib/server skill registry
@@ -143,6 +147,15 @@ chatRoutes.post("/v1/chat", requireAuth, async (c) => {
       : {}),
   }
 
+  // After a `generateImage` tool result, mirror Minimax URLs into
+  // Supabase Storage and emit a `tool_image` frame. Mirrors
+  // `maybeEmitImageFrame` in `app/api/chat/route.ts`.
+  const onToolResult = buildToolImageInterceptor({
+    userId,
+    signal: reqSignal,
+    localFilesOnly: parsed.data.local_files_only === true,
+  })
+
   // Headers production reverse-proxies need so SSE doesn't get buffered.
   c.header("Content-Type", "text/event-stream")
   c.header("Cache-Control", "no-cache, no-transform")
@@ -155,8 +168,8 @@ chatRoutes.post("/v1/chat", requireAuth, async (c) => {
   return stream(c, async (s) => {
     const gen =
       format === "ai-sdk"
-        ? chatStreamAiSdk(model, config)
-        : chatStream(model, config)
+        ? chatStreamAiSdk(model, config, { onToolResult })
+        : chatStream(model, config, { onToolResult })
     for await (const frame of gen) {
       // Bail early if the client hung up — saves tokens on a tab close.
       if (s.aborted) return
