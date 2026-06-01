@@ -108,6 +108,47 @@ jobs:
       - name: Test (pytest)
         run: uv run pytest
 
+  # TS twin of the Python agent service (services/agent-ts/).
+  # See docs/PLAN-agent-ts.md. Same gate shape as agent-py: a
+  # typecheck + a test run. Runs in parallel with the main CI job
+  # since they share no inputs.
+  agent-ts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: services/agent-ts
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # Root deps first — Phase 4 routes reuse `@/server/url/*` and
+      # `@/server/mcp/*`, whose transitive imports
+      # (`@modelcontextprotocol/sdk`, `mammoth`, `pdf-parse`, `xlsx`,
+      # `node-html-parser`, `server-only`) live in the root
+      # `package.json`. Without this, tsc + the test runner can't
+      # resolve them.
+      - name: Install root dependencies
+        working-directory: ${{ github.workspace }}
+        run: bun install --frozen-lockfile
+
+      - name: Install agent-ts dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        # Use `bun run test` (not `bun test`) so the package.json
+        # script's `--conditions=react-server` flag applies — Phase 4
+        # routes reuse `lib/server/*` modules whose `import "server-only"`
+        # marker only resolves to a no-op under that condition.
+        run: bun run test
+
   # Drift gate for the TS types generated from the agent service's
   # OpenAPI doc. Regenerates against the live FastAPI schema and fails
   # if the checked-in `lib/shared/agent-py-types.generated.ts` is out
