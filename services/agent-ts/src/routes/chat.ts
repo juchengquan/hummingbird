@@ -19,6 +19,8 @@ import { Hono } from "hono"
 import { stream } from "hono/streaming"
 import { z } from "zod"
 
+import { ChatRequestSchema as SharedChatRequestSchema } from "@/shared/api-schemas"
+
 import {
   AI_SDK_STREAM_HEADER_NAME,
   AI_SDK_STREAM_HEADER_VALUE,
@@ -34,26 +36,12 @@ import { getPool, hasPool } from "../db"
 import { buildToolImageInterceptor } from "../image-persistence"
 import type { AuthVars } from "../middleware/auth"
 import { requireAuth } from "../middleware/auth"
-import { buildSkillNotes, buildToolSet, type SkillEntry } from "../skills"
+import { buildSkillNotes, buildToolSet } from "../skills"
 
 const MessageSchema = z.object({
   role: z.enum(["user", "assistant"]),
   content: z.string().min(1).max(200_000),
 })
-
-// Skill entries are validated structurally — we accept any object
-// with a string `id` and pass per-skill config objects through
-// untyped. Each skill's `buildTool` performs its own narrowing on
-// the typed `imageGenConfig` / `webSearchConfig` / `webFetchConfig`
-// fields it cares about. This deliberately diverges from the
-// shared `ChatRequestSchema.skills` Zod schema because agent-ts is
-// on Zod 3 while the root is on Zod 4 — incompatible types but the
-// runtime wire shape is identical.
-const SkillEntrySchema = z
-  .object({
-    id: z.string().max(40),
-  })
-  .passthrough()
 
 const ChatRequestSchema = z.object({
   messages: z.array(MessageSchema).min(1).max(200),
@@ -62,15 +50,17 @@ const ChatRequestSchema = z.object({
   max_tokens: z.number().int().min(1).max(64_000).optional(),
   enable_tools: z.boolean().optional(),
   max_steps: z.number().int().min(1).max(20).optional(),
-  /** Active workspace id — agent-py mirror. Unused today but accepted
-   *  for forward-compat with the searchFiles RLS path. */
+  /** Active workspace id — agent-py mirror. Used by `searchFiles`
+   *  and cloud-mode MCP discovery. */
   workspace_id: z.string().max(64).optional(),
   /** Mirror of the chat client's "Store files locally" preference.
    *  Propagates to image persistence (skip Storage upload, fall back
    *  to data-URL). */
   local_files_only: z.boolean().optional(),
-  /** Per-skill request entries — provider toggles + per-skill caps. */
-  skills: z.array(SkillEntrySchema).max(20).optional(),
+  /** Per-skill request entries — provider toggles + per-skill caps.
+   *  Reuses the shared schema directly now that agent-ts and the
+   *  root both run on Zod 4. */
+  skills: SharedChatRequestSchema.shape.skills,
 })
 
 export const chatRoutes = new Hono<{ Variables: AuthVars }>()
@@ -115,11 +105,7 @@ chatRoutes.post("/v1/chat", requireAuth, async (c) => {
   const userId = typeof claims.sub === "string" ? claims.sub : ""
 
   const reqSignal = c.req.raw.signal
-  // Cast through `unknown` because agent-ts Zod 3 produces a slightly
-  // different inferred type than the lib/server skill registry
-  // expects (which was authored against Zod 4 in the root). The
-  // runtime shape is identical — both validate `{ id, ... }`.
-  const skillEntries = (parsed.data.skills ?? []) as unknown as SkillEntry[]
+  const skillEntries = parsed.data.skills ?? []
   const tools = parsed.data.enable_tools
     ? buildToolSet({
         skills: skillEntries,

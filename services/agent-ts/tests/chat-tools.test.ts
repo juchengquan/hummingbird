@@ -330,7 +330,7 @@ describe("buildToolSet / buildSkillNotes", () => {
     ] as unknown as ServerSkill[]
     buildToolSet({
       skills: [
-        { id: "imageGen", imageGenConfig: { maxCalls: 3 } } as unknown as SkillEntry,
+        { id: "imageGen", imageGenConfig: { maxCalls: 3 } } satisfies SkillEntry,
       ],
       registry,
     })
