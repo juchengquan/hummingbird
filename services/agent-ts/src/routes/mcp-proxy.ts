@@ -36,7 +36,7 @@ import { requireAuth } from "../middleware/auth"
 const ServerSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
-  url: z.string().url(),
+  url: z.url(),
   transport: z.literal("http"),
 })
 
