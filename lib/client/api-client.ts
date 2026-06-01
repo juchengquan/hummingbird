@@ -248,11 +248,11 @@ async function chatStreamTs(
 /**
  * Narrow the TS-shaped chat request body to what the agent services'
  * `/v1/chat` endpoint accepts: messages + model + optional system +
- * max_tokens. agent-py and agent-ts share this schema byte-for-byte
- * (Phase 4-1 / Phase 3 respectively). Skills / attachments / MCP /
- * etc. are dropped silently — both services use `extra="ignore"`-
- * equivalent permissive parsing, but trimming client-side keeps the
- * payload small and the intent explicit.
+ * max_tokens + workspace_id + skills[]. agent-py and agent-ts share
+ * this schema byte-for-byte. Attachments / MCP / referenceImage are
+ * dropped silently — both services use permissive parsing, but
+ * trimming client-side keeps the payload small and the intent
+ * explicit.
  */
 function narrowToRemoteBody(body: ChatRequestInput): Record<string, unknown> {
   // Coerce each message's content to a plain string. The TS schema
@@ -269,6 +269,23 @@ function narrowToRemoteBody(body: ChatRequestInput): Record<string, unknown> {
   }
   if (body.workspaceSystemPrompt) {
     out.system = body.workspaceSystemPrompt
+  }
+  if (body.workspaceId) {
+    // Unlocks `searchFiles` + cloud-mode MCP tools on the remote
+    // services. Without it those tools register but are no-op.
+    out.workspace_id = body.workspaceId
+  }
+  if (body.skills && body.skills.length > 0) {
+    // Per-skill config (caps + provider toggles). The remote services
+    // honour the same `{id, webSearchConfig?, imageGenConfig?,
+    // webFetchConfig?}` entries the Next.js inline route consumes.
+    out.skills = body.skills
+  }
+  // `enable_tools` mirrors agent-py's opt-in flag for the tool loop.
+  // When skills are sent + the user has them enabled, default to on
+  // so the experience matches the inline Next.js route.
+  if (body.skills && body.skills.length > 0) {
+    out.enable_tools = true
   }
   return out
 }

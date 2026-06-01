@@ -344,3 +344,100 @@ def test_chat_max_steps_clamped_at_schema_level(client: TestClient) -> None:
         headers=_auth(),
     )
     assert r.status_code == 422
+
+
+# --- workspace_id + per-skill config (Phase 4-3 follow-up) -----------
+
+
+def test_chat_accepts_workspace_id_field(client: TestClient) -> None:
+    """`workspace_id` is optional and just passes through. Without a
+    DB pool wired in (tests don't open one), the route silently
+    falls back to context-less registry — `searchFiles` + MCP omitted
+    but the chat turn still runs."""
+    fake = _FakeClient(["ok"])
+    with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
+        r = client.post(
+            "/v1/chat",
+            json=_valid_body(enable_tools=True, workspace_id="ws-1"),
+            headers=_auth(),
+        )
+    assert r.status_code == 200
+
+
+def test_chat_accepts_skills_array(client: TestClient) -> None:
+    """`skills` array is optional, per-skill config is permissive
+    (extra fields allowed). Sending it shouldn't break the request."""
+    fake = _FakeClient(["ok"])
+    with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
+        r = client.post(
+            "/v1/chat",
+            json=_valid_body(
+                enable_tools=True,
+                skills=[
+                    {"id": "imageGen", "imageGenConfig": {"maxCalls": 3}},
+                    {"id": "webSearch", "webSearchConfig": {"maxCalls": 5}},
+                ],
+            ),
+            headers=_auth(),
+        )
+    assert r.status_code == 200
+
+
+def test_chat_workspace_id_max_length_enforced(client: TestClient) -> None:
+    """`workspace_id` is capped at 64 chars to bound malformed input
+    before it reaches the DB layer."""
+    r = client.post(
+        "/v1/chat",
+        json=_valid_body(enable_tools=True, workspace_id="x" * 65),
+        headers=_auth(),
+    )
+    assert r.status_code == 422
+
+
+def test_chat_skills_array_capped(client: TestClient) -> None:
+    """At most 20 skill entries per request — DoS guard on a list
+    field that could in principle be unbounded."""
+    r = client.post(
+        "/v1/chat",
+        json=_valid_body(
+            enable_tools=True,
+            skills=[{"id": f"skill-{i}"} for i in range(25)],
+        ),
+        headers=_auth(),
+    )
+    assert r.status_code == 422
+
+
+def test_collect_skill_configs_reduces_list_to_dataclass() -> None:
+    """`_collect_skill_configs` walks the request list and reduces
+    to a `SkillConfigs` bundle keyed on the sub-object names."""
+    from agent_py.main import _collect_skill_configs
+    from agent_py.tools import SkillConfigs
+
+    entries = main_module.ChatRequest(
+        messages=[{"role": "user", "content": "x"}],
+        model="claude",
+        enable_tools=True,
+        skills=[
+            {"id": "imageGen", "imageGenConfig": {"maxCalls": 4}},
+            {"id": "webSearch", "webSearchConfig": {"maxCalls": 7}},
+            {"id": "webFetch"},  # No config block — silently skipped.
+        ],
+    ).skills
+
+    result = _collect_skill_configs(entries)
+    assert isinstance(result, SkillConfigs)
+    assert result.image_gen == {"maxCalls": 4}
+    assert result.web_search == {"maxCalls": 7}
+    assert result.web_fetch is None
+
+
+def test_collect_skill_configs_handles_none() -> None:
+    from agent_py.main import _collect_skill_configs
+    from agent_py.tools import SkillConfigs
+
+    result = _collect_skill_configs(None)
+    assert isinstance(result, SkillConfigs)
+    assert result.image_gen is None
+    assert result.web_search is None
+    assert result.web_fetch is None

@@ -15,6 +15,7 @@ the SDK doesn't invoke tools for us.
 """
 
 from .registry import (
+    SkillConfigs,
     ToolContext,
     ToolDescriptor,
     ToolError,
@@ -24,6 +25,7 @@ from .registry import (
 )
 
 __all__ = [
+    "SkillConfigs",
     "ToolContext",
     "ToolDescriptor",
     "ToolError",
