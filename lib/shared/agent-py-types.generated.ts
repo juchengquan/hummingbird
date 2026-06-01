@@ -365,6 +365,11 @@ export interface components {
          *     `TAVILY_API_KEY`/`MINIMAX_CN_API_KEY`-gated tools) and loops
          *     `messages.stream` + tool execution. Default false keeps the
          *     text-only Phase 4-1 behaviour.
+         *
+         *     Phase 4-3 follow-up: `workspace_id` opts the registry into the
+         *     context-bound tools (`searchFiles` + cloud-mode MCP). `skills[]`
+         *     threads per-skill config (caps, provider toggles) — same shape
+         *     the TS side has used since the Phase 4-2 selector landed.
          */
         ChatRequest: {
             /** Messages */
@@ -382,6 +387,35 @@ export interface components {
             enable_tools: boolean;
             /** Max Steps */
             max_steps?: number | null;
+            /** Workspace Id */
+            workspace_id?: string | null;
+            /** Skills */
+            skills?: components["schemas"]["ChatSkillEntry"][] | null;
+        };
+        /**
+         * ChatSkillEntry
+         * @description One entry on `ChatRequest.skills` — the per-skill config the
+         *     client included with this request. Mirrors the TS schema; only
+         *     `id` is required, every config sub-object is optional + permissive
+         *     (extra keys ignored).
+         */
+        ChatSkillEntry: {
+            /** Id */
+            id: string;
+            /** Websearchconfig */
+            webSearchConfig?: {
+                [key: string]: unknown;
+            } | null;
+            /** Webfetchconfig */
+            webFetchConfig?: {
+                [key: string]: unknown;
+            } | null;
+            /** Imagegenconfig */
+            imageGenConfig?: {
+                [key: string]: unknown;
+            } | null;
+        } & {
+            [key: string]: unknown;
         };
         /** CompressSummariseBody */
         CompressSummariseBody: {
