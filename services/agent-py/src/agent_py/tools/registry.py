@@ -190,9 +190,7 @@ def default_tool_registry(
     return out
 
 
-def _clamp_max_calls(
-    raw: Any, *, default: int, lo: int, hi: int
-) -> int:
+def _clamp_max_calls(raw: Any, *, default: int, lo: int, hi: int) -> int:
     """Mirror of the TS side's `clamp*` helpers in
     `lib/shared/skills/image-gen-config.ts`. Coerces a client-side
     value (which might be a stringified number, a float, or absent)
