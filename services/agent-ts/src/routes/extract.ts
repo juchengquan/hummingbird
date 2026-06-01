@@ -1,18 +1,17 @@
 /**
  * `POST /v1/extract` — multipart/form-data with a `file` field.
- * Direct port of agent-py's Phase 4 endpoint, matching the
- * `ExtractionResponseSchema` contract in `lib/shared/api-schemas.ts`.
+ * Mirror of `app/api/extract/route.ts`; both routes are thin glue
+ * over the shared library at `lib/server/extraction.ts`.
  *
  * The same file-size cap as the Next.js route (`FILE_SIZE_LIMIT` in
- * `lib/shared/upload-config.ts`) gates the request. The route is
- * thin glue — the extraction itself lives in `extraction.ts`.
+ * `lib/shared/upload-config.ts`) gates the request.
  */
 
 import { Hono } from "hono"
 
+import { extractFile } from "@/server/extraction"
 import { FILE_SIZE_LIMIT } from "@/shared/upload-config"
 
-import { extractFile } from "../extraction"
 import type { AuthVars } from "../middleware/auth"
 import { requireAuth } from "../middleware/auth"
 

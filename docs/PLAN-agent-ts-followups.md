@@ -135,7 +135,7 @@ stream. We don't have to write the loop machinery from scratch.
 
 ---
 
-## 3. Lift extraction logic into `lib/server/extraction.ts`
+## 3. Lift extraction logic into `lib/server/extraction.ts` — ✅ shipped
 
 **Why.** Agent-ts Phase 4 shipped `services/agent-ts/src/extraction.ts`
 as a ~150 LOC copy of `app/api/extract/route.ts`'s body, with the
