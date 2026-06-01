@@ -79,6 +79,30 @@ export function isAgentPyConfigured(): boolean {
   return AGENT_PY_BASE_URL.length > 0
 }
 
+/**
+ * Base URL for the TypeScript agent service (`services/agent-ts/`).
+ * Set to its origin (e.g. `http://localhost:8001` in dev) to enable
+ * the "TypeScript agent service" option in the account-menu chat-
+ * backend selector. Empty / unset → the apiClient ignores the
+ * `backend: 'ts-service'` option and falls through to the in-Next
+ * TS route, same defensive degradation as `agent-py`.
+ *
+ * Phase 5 of `PLAN-agent-ts.md`. Per project policy, all three
+ * stacks coexist — this is the third option on the selector wire,
+ * not a replacement for either existing backend.
+ */
+export const AGENT_TS_BASE_URL = (
+  typeof process !== "undefined" && process.env.NEXT_PUBLIC_AGENT_TS_URL
+    ? process.env.NEXT_PUBLIC_AGENT_TS_URL
+    : ""
+).replace(/\/+$/, "")
+
+/** Whether the TS agent service endpoint is reachable. Mirrors
+ *  `isAgentPyConfigured` — same UI gating semantics. */
+export function isAgentTsConfigured(): boolean {
+  return AGENT_TS_BASE_URL.length > 0
+}
+
 function url(path: string): string {
   return `${API_BASE_URL}${path}`
 }
@@ -142,18 +166,21 @@ export interface ChatStreamResult {
   error?: { code?: string; message?: string }
 }
 
-export type ChatBackendOption = "ts" | "python"
+export type ChatBackendOption = "ts" | "python" | "ts-service"
 
 export interface ChatStreamOptions {
   signal?: AbortSignal
   /** Which backend to call. Defaults to `'ts'` — the Next.js route.
-   *  `'python'` calls the agent service's `/v1/chat`; requires a
-   *  reachable `NEXT_PUBLIC_AGENT_PY_URL` AND a `pythonAuthToken`,
-   *  otherwise the call silently falls through to the TS route. */
+   *  `'python'` calls the agent-py service's `/v1/chat`; requires a
+   *  reachable `NEXT_PUBLIC_AGENT_PY_URL` AND an `authToken`.
+   *  `'ts-service'` calls the agent-ts service's `/v1/chat`;
+   *  requires `NEXT_PUBLIC_AGENT_TS_URL` AND an `authToken`. Any
+   *  prerequisite missing → silently falls through to the TS route. */
   backend?: ChatBackendOption
-  /** Supabase session JWT, required when `backend === 'python'`.
-   *  Caller resolves via `supabase.auth.getSession()`. */
-  pythonAuthToken?: string | null
+  /** Supabase session JWT, required when `backend === 'python'` or
+   *  `backend === 'ts-service'`. Caller resolves via
+   *  `supabase.auth.getSession()`. */
+  authToken?: string | null
 }
 
 /**
@@ -163,24 +190,35 @@ export interface ChatStreamOptions {
  * frame handling is tightly coupled to its placeholder + tool-call
  * state machine.
  *
- * Phase 4-2: backend dispatch. `options.backend === 'python'` routes
- * to the agent service's `/v1/chat` when configured + authed, falling
- * back to the TS route on any prerequisite failure. The SSE wire
- * shape matches across both producers (text / error / done frames)
- * so the consumer (`use-chat-send.ts`) doesn't branch on backend.
+ * Phase 4-2: agent-py backend dispatch. Phase 5 of PLAN-agent-ts:
+ * agent-ts backend dispatch. `options.backend === 'python'` routes
+ * to agent-py's `/v1/chat`; `'ts-service'` routes to agent-ts's
+ * `/v1/chat`. Either falls back to the in-Next TS route on any
+ * prerequisite failure (URL unset / token missing). The SSE wire
+ * shape matches across all three producers (text / error / done
+ * frames + optional tool_call / tool_result / tool_image) so the
+ * consumer (`use-chat-send.ts`) doesn't branch on backend.
  */
 async function chatStream(
   body: ChatRequestInput,
   options?: ChatStreamOptions
 ): Promise<ChatStreamResult> {
-  const usePython =
+  const token = options?.authToken ?? null
+  const hasToken = typeof token === "string" && token.length > 0
+
+  if (
     options?.backend === "python" &&
     AGENT_PY_BASE_URL.length > 0 &&
-    typeof options.pythonAuthToken === "string" &&
-    options.pythonAuthToken.length > 0
-
-  if (usePython) {
-    return chatStreamPython(body, options as Required<ChatStreamOptions>)
+    hasToken
+  ) {
+    return chatStreamRemote(body, AGENT_PY_BASE_URL, token, options.signal)
+  }
+  if (
+    options?.backend === "ts-service" &&
+    AGENT_TS_BASE_URL.length > 0 &&
+    hasToken
+  ) {
+    return chatStreamRemote(body, AGENT_TS_BASE_URL, token, options.signal)
   }
   return chatStreamTs(body, options)
 }
@@ -208,19 +246,19 @@ async function chatStreamTs(
 }
 
 /**
- * Narrow the TS-shaped chat request body to what the Python `/v1/chat`
- * endpoint accepts today (Phase 4-1 schema): messages + model +
- * optional system + max_tokens. Skills / attachments / MCP / etc. are
- * dropped silently — Python rejects them with `extra="ignore"` anyway,
- * but trimming client-side keeps the payload small and the intent
- * explicit. Tools + skills land in a later phase.
+ * Narrow the TS-shaped chat request body to what the agent services'
+ * `/v1/chat` endpoint accepts: messages + model + optional system +
+ * max_tokens. agent-py and agent-ts share this schema byte-for-byte
+ * (Phase 4-1 / Phase 3 respectively). Skills / attachments / MCP /
+ * etc. are dropped silently — both services use `extra="ignore"`-
+ * equivalent permissive parsing, but trimming client-side keeps the
+ * payload small and the intent explicit.
  */
-function narrowToPythonBody(body: ChatRequestInput): Record<string, unknown> {
+function narrowToRemoteBody(body: ChatRequestInput): Record<string, unknown> {
   // Coerce each message's content to a plain string. The TS schema
-  // allows structured content parts; the Python schema accepts only
+  // allows structured content parts; the remote services accept only
   // `string`. We pull the joined text for compatibility — keeps the
-  // first slice viable until the Python endpoint grows multimodal
-  // support.
+  // first slice viable until both services grow multimodal support.
   const messages = body.messages.map((m) => ({
     role: m.role,
     content: typeof m.content === "string" ? m.content : flattenTextParts(m.content),
@@ -248,25 +286,28 @@ function flattenTextParts(content: unknown): string {
   return parts.join("")
 }
 
-async function chatStreamPython(
+/** Single remote-backend dispatch — used for both agent-py and
+ *  agent-ts. Same wire shape, same JWT-bearer auth, same SSE
+ *  response. Empty `model` short-circuits to the TS route since
+ *  both services treat it as required and would 422. */
+async function chatStreamRemote(
   body: ChatRequestInput,
-  options: ChatStreamOptions
+  baseUrl: string,
+  authToken: string,
+  signal: AbortSignal | undefined,
 ): Promise<ChatStreamResult> {
-  const narrowed = narrowToPythonBody(body)
-  // Empty model would land as a 422 — let the TS fallback handle it
-  // since `model` is required on the Python schema but optional in
-  // the TS shape. The chat panel always sets it in practice.
+  const narrowed = narrowToRemoteBody(body)
   if (!narrowed.model) {
-    return chatStreamTs(body, options)
+    return chatStreamTs(body, { signal })
   }
-  const res = await fetch(`${AGENT_PY_BASE_URL}/v1/chat`, {
+  const res = await fetch(`${baseUrl}/v1/chat`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${options.pythonAuthToken}`,
+      Authorization: `Bearer ${authToken}`,
     },
     body: JSON.stringify(narrowed),
-    signal: options.signal,
+    signal,
   })
   if (!res.ok) {
     const errBody = await readErrorBody(res)

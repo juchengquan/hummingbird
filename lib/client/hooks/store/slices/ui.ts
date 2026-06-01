@@ -16,7 +16,7 @@ export type ColorScheme = "default" | "anthropic"
 
 /** Which `/api/chat` producer the apiClient hits. See `chatBackend`
  *  on the UI slice for the full rationale. */
-export type ChatBackend = "ts" | "python"
+export type ChatBackend = "ts" | "python" | "ts-service"
 
 /** Tab ids for the right resources sidebar. */
 export type ResourcesSidebarTab =

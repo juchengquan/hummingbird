@@ -13,11 +13,12 @@ import { Switch } from "@/components/ui/switch"
 import { AuthDialog } from "@/components/auth/auth-dialog"
 import { useAuth } from "@/client/hooks/use-auth"
 import { useStore } from "@/client/hooks/use-store"
+import type { ChatBackend } from "@/client/hooks/store/slices/ui"
 import { useSidebar } from "@/components/ui/sidebar"
 import { cn } from "@/shared/utils"
 import { clearAll, estimateUsage } from "@/client/files/local-store"
 import { formatFileSize } from "@/client/file-utils"
-import { isAgentPyConfigured } from "@/client/api-client"
+import { isAgentPyConfigured, isAgentTsConfigured } from "@/client/api-client"
 
 /**
  * Sidebar footer auth + local-mode surface.
@@ -37,6 +38,7 @@ export function AccountMenu() {
   const chatBackend = useStore((s) => s.chatBackend)
   const setChatBackend = useStore((s) => s.setChatBackend)
   const agentPyAvailable = isAgentPyConfigured()
+  const agentTsAvailable = isAgentTsConfigured()
   const setLocalFilesOnly = useStore((s) => s.setLocalFilesOnly)
   const theme = useStore((s) => s.theme)
   const setTheme = useStore((s) => s.setTheme)
@@ -205,27 +207,19 @@ export function AccountMenu() {
               : "Stop uploading raw files (keep them on this device)"
           }
         />
-        {/* Chat backend selector. Phase 4-2 of PLAN-agent-api —
-            users can route their chat turns at the new Python agent
-            service while the TS route stays live. Only surfaces when
-            `NEXT_PUBLIC_AGENT_PY_URL` is set; without it the toggle
-            would do nothing. */}
-        {agentPyAvailable && (
-          <ToggleRow
-            icon={Bot}
-            label="Python agent backend"
-            description={
-              chatBackend === "python"
-                ? "Chat turns route to the Python agent service (experimental — text-only)"
-                : "Chat turns use the Next.js route (default, full feature set)"
-            }
-            checked={chatBackend === "python"}
-            onCheckedChange={(v) => setChatBackend(v ? "python" : "ts")}
-            ariaLabel={
-              chatBackend === "python"
-                ? "Switch back to the Next.js chat backend"
-                : "Switch to the Python agent chat backend"
-            }
+        {/* Chat backend selector. Phase 4-2 of PLAN-agent-api +
+            Phase 5 of PLAN-agent-ts — users can route their chat
+            turns at the Python agent service OR the TypeScript
+            agent service while the in-Next TS route stays live.
+            Only surfaces when at least one remote service URL is
+            configured; the segmented selector appears when both
+            are. */}
+        {(agentPyAvailable || agentTsAvailable) && (
+          <ChatBackendSelector
+            value={chatBackend}
+            onChange={setChatBackend}
+            agentPyAvailable={agentPyAvailable}
+            agentTsAvailable={agentTsAvailable}
           />
         )}
         <div className="border-t my-1" />
@@ -414,6 +408,113 @@ function ToggleRow({
         aria-label={ariaLabel}
         className="shrink-0"
       />
+    </div>
+  )
+}
+
+/**
+ * Chat-backend picker. Surfaces a 3-way segmented control when both
+ * remote services are configured, or a one-row Switch when only one
+ * is. The in-Next TS route is always available as the default and
+ * shows up under "Next.js".
+ */
+function ChatBackendSelector({
+  value,
+  onChange,
+  agentPyAvailable,
+  agentTsAvailable,
+}: {
+  value: ChatBackend
+  onChange: (next: ChatBackend) => void
+  agentPyAvailable: boolean
+  agentTsAvailable: boolean
+}) {
+  // When only Python is configured, keep the existing single-Switch
+  // shape so the simple deploy stays visually unchanged.
+  if (agentPyAvailable && !agentTsAvailable) {
+    return (
+      <ToggleRow
+        icon={Bot}
+        label="Python agent backend"
+        description={
+          value === "python"
+            ? "Chat turns route to the Python agent service (experimental)"
+            : "Chat turns use the Next.js route (default, full feature set)"
+        }
+        checked={value === "python"}
+        onCheckedChange={(v) => onChange(v ? "python" : "ts")}
+        ariaLabel={
+          value === "python"
+            ? "Switch back to the Next.js chat backend"
+            : "Switch to the Python agent chat backend"
+        }
+      />
+    )
+  }
+  // Same shape, just for the TS-service-only deploy.
+  if (agentTsAvailable && !agentPyAvailable) {
+    return (
+      <ToggleRow
+        icon={Bot}
+        label="TS agent service backend"
+        description={
+          value === "ts-service"
+            ? "Chat turns route to the TypeScript agent service"
+            : "Chat turns use the Next.js route (default, full feature set)"
+        }
+        checked={value === "ts-service"}
+        onCheckedChange={(v) => onChange(v ? "ts-service" : "ts")}
+        ariaLabel={
+          value === "ts-service"
+            ? "Switch back to the Next.js chat backend"
+            : "Switch to the TypeScript agent service backend"
+        }
+      />
+    )
+  }
+  // Both remote services configured → segmented picker.
+  return (
+    <div
+      className={cn(
+        "w-full flex flex-col gap-1 px-2 py-1.5 rounded-md",
+        "hover:bg-[var(--accent)] transition-colors"
+      )}
+    >
+      <div className="flex items-center gap-2">
+        <Bot size={14} className="shrink-0 text-[var(--muted-foreground)]" />
+        <p className="text-xs font-medium leading-tight">Chat backend</p>
+      </div>
+      <div
+        role="radiogroup"
+        aria-label="Choose which chat backend handles your chat turns"
+        className="flex gap-0.5 mt-1 rounded-md border border-[var(--border)] p-0.5"
+      >
+        {(
+          [
+            { id: "ts", label: "Next.js", desc: "in-process (default)" },
+            { id: "ts-service", label: "TS service", desc: "agent-ts" },
+            { id: "python", label: "Python", desc: "agent-py" },
+          ] as const
+        ).map((opt) => (
+          <button
+            key={opt.id}
+            role="radio"
+            aria-checked={value === opt.id}
+            aria-label={`Use the ${opt.label} chat backend — ${opt.desc}`}
+            type="button"
+            onClick={() => onChange(opt.id)}
+            className={cn(
+              "flex-1 text-[10px] leading-tight px-2 py-1 rounded-sm",
+              "transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]",
+              value === opt.id
+                ? "bg-[var(--background)] font-medium shadow-sm"
+                : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            )}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

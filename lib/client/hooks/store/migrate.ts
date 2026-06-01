@@ -8,7 +8,7 @@ import { uuid } from "@/shared/uuid"
  * step in `runMigrations`. Wired into the `version` field of the persist
  * config in `use-store.ts`.
  */
-export const STORE_VERSION = 20
+export const STORE_VERSION = 21
 
 /**
  * Sequential schema migrations from older persisted shapes to the
@@ -380,6 +380,12 @@ export function runMigrations(
     // route unchanged. Users who want the Python agent service have
     // to opt in via the account-menu toggle.
     if (!("chatBackend" in state)) state.chatBackend = "ts"
+  }
+  if (fromVersion < 21) {
+    // Phase 5 of PLAN-agent-ts widened ChatBackend to also accept
+    // 'ts-service'. Existing 'ts' and 'python' values stay valid —
+    // no rewrites needed. The version bump exists so a downgrade
+    // doesn't see a value it doesn't recognise.
   }
   return persistedState
 }
