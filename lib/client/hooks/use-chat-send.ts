@@ -379,12 +379,13 @@ export function useChatSend(): UseChatSendResult {
       // the server routes generated images to Storage vs. data URLs
       // based on this.
       const localFilesOnly = useStore.getState().localFilesOnly
-      // Phase 4-2 backend selector. Resolve the JWT lazily — only
-      // call into Supabase when the user actually picked Python,
-      // otherwise the TS route doesn't need a token (cookie auth).
+      // Phase 4-2 backend selector + Phase 5 of PLAN-agent-ts.
+      // Resolve the JWT lazily — only call into Supabase when the
+      // user actually picked a remote backend, otherwise the
+      // in-Next TS route doesn't need a token (cookie auth).
       const chatBackend = useStore.getState().chatBackend
-      let pythonAuthToken: string | null = null
-      if (chatBackend === "python") {
+      let authToken: string | null = null
+      if (chatBackend === "python" || chatBackend === "ts-service") {
         try {
           const { getSupabaseBrowserClient } = await import(
             "@/client/supabase/client"
@@ -392,13 +393,13 @@ export function useChatSend(): UseChatSendResult {
           const supa = getSupabaseBrowserClient()
           if (supa) {
             const { data } = await supa.auth.getSession()
-            pythonAuthToken = data.session?.access_token ?? null
+            authToken = data.session?.access_token ?? null
           }
         } catch {
           // Supabase unconfigured or session lookup failed — fall
           // through with a null token; the apiClient will route to
-          // the TS backend as a defensive default.
-          pythonAuthToken = null
+          // the in-Next TS backend as a defensive default.
+          authToken = null
         }
       }
 
@@ -424,7 +425,7 @@ export function useChatSend(): UseChatSendResult {
           {
             signal: controller.signal,
             backend: chatBackend,
-            pythonAuthToken,
+            authToken,
           }
         )
 
