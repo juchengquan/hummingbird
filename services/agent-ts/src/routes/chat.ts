@@ -30,6 +30,7 @@ import {
   chatStreamAiSdk,
   resolveAnthropicModel,
 } from "../chat"
+import { getPool, hasPool } from "../db"
 import { buildToolImageInterceptor } from "../image-persistence"
 import type { AuthVars } from "../middleware/auth"
 import { requireAuth } from "../middleware/auth"
@@ -123,6 +124,8 @@ chatRoutes.post("/v1/chat", requireAuth, async (c) => {
     ? buildToolSet({
         skills: skillEntries,
         signal: reqSignal,
+        userId,
+        sql: hasPool() ? getPool() : null,
       })
     : undefined
   const hasTools = tools && Object.keys(tools).length > 0

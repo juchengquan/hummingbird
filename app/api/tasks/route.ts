@@ -30,7 +30,6 @@ import { TaskRequestSchema } from "@/shared/api-schemas"
 import type { SkillId } from "@/shared/skills/types"
 import type { SkillRequestEntry } from "@/server/skills/registry"
 import { getSupabaseServerClient } from "@/server/supabase/server"
-import { getSupabaseAdminClient } from "@/server/supabase/admin"
 import type { TaskEvent } from "@/shared/agent/events"
 import type { RunCheckpoint } from "@/server/agent/checkpoint"
 import {
@@ -39,8 +38,6 @@ import {
   saveCheckpoint,
 } from "@/server/agent/store"
 import { enqueueStartJob } from "@/server/agent/jobs"
-import { processNextJob } from "@/server/agent/worker"
-import { inlineAgentWorkerEnabled } from "@/server/agent/inline-worker"
 
 const DEFAULT_MAX_STEPS = 25
 const MAX_MAX_STEPS = 50
@@ -49,16 +46,6 @@ const MAX_MAX_STEPS = 50
  *  sub-questions × ~3 steps each fits without the user having to
  *  remember to override `maxSteps`. Still capped by `MAX_MAX_STEPS`. */
 const RESEARCH_DEFAULT_MAX_STEPS = 35
-
-/** Wall-clock budget for the inline bootstrap of the worker. Short
- *  enough that the POST returns quickly even on a slow first chunk,
- *  long enough that simple prompts often complete before the cron's
- *  next tick. */
-const TASK_START_BOOTSTRAP_MS = (() => {
-  const raw = Number(process.env.TASK_START_BOOTSTRAP_MS)
-  if (Number.isFinite(raw) && raw >= 0) return Math.floor(raw)
-  return 8_000
-})()
 
 function lastUserText(messages: ModelMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -237,22 +224,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ code, message }, { status })
   }
 
-  // Bootstrap: run the worker once inline so short prompts complete
-  // before the response returns (events are in `task_events` by the
-  // time the client opens its resume stream). Best-effort; failures
-  // here don't fail the POST — the cron picks the job up next minute.
-  // Gated by INLINE_AGENT_WORKER so deploys running agent-py /
-  // agent-ts can hand the queue entirely to the dedicated services.
-  if (TASK_START_BOOTSTRAP_MS > 0 && inlineAgentWorkerEnabled()) {
-    const admin = getSupabaseAdminClient()
-    if (admin) {
-      try {
-        await processNextJob(admin, { budgetMs: TASK_START_BOOTSTRAP_MS })
-      } catch (err) {
-        console.error("[tasks] bootstrap:", err)
-      }
-    }
-  }
-
+  // The dedicated agent service (`services/agent-py/` or
+  // `services/agent-ts/`) claims the job from its own poll loop —
+  // typically within POLL_INTERVAL_SECONDS. The POST returns
+  // immediately; the client opens its resume stream and tails
+  // `task_events` as the service settles the run.
   return NextResponse.json({ runId }, { status: 202 })
 }

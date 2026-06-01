@@ -295,3 +295,31 @@ any time. **1** and **4** are related (both are about who owns the
 queue contract) — easier to do them together.
 
 Suggested order: **2 → 5 → 3 → (4 + 1 together)**.
+
+## Status update (final)
+
+All five items are now closed:
+
+- ✅ **#1 (`store.ts` / `checkpoint.ts` to `postgres`)** — closed
+  as moot. The in-Next worker (the only consumer that needed
+  transactional `FOR UPDATE SKIP LOCKED`) is gone; the remaining
+  callers of `store.ts` (initial checkpoint write, event readers
+  for the SSE tail) don't need transactions.
+- ✅ **#2 (tools-in-chat)** shipped (PR #143).
+- ✅ **#3 (extraction lift)** shipped (PR #145).
+- ✅ **#4 (Next worker)** soft-retired in PR #145 (gate), fully
+  deleted in this PR — `worker.ts`, the worker-only helpers in
+  `jobs.ts` / `store.ts` / `runner.ts`, and the `processNextJob`
+  bootstrap calls are all gone. The cron tick survives as a
+  schedule-only dispatcher.
+- ✅ **#5 (generateImage persistence)** shipped (PR #143).
+
+Open follow-ups added since:
+- ✅ **`searchFiles` port to agent-ts** — postgres-driver RLS
+  impersonation mirroring agent-py. Closed in this PR.
+
+After this lands, **vanilla deploys must run a dedicated agent
+service (`services/agent-py/` or `services/agent-ts/`) to execute
+tasks** — the Next.js process no longer claims jobs from
+`task_jobs`. Schedules still fire from the Vercel cron tick;
+the dedicated services pick up the enqueued `start` jobs.
