@@ -1,16 +1,18 @@
 /**
  * Tests for `POST /v1/extract`. The extraction primitives themselves
- * (truncation budgets, kind classification) live in `extraction.ts`
- * — exercised directly here so we don't have to feed binary blobs
- * through the multipart parser on every assertion.
+ * (truncation budgets, kind classification) live in the shared
+ * `lib/server/extraction.ts` — exercised directly here so we don't
+ * have to feed binary blobs through the multipart parser on every
+ * assertion.
  */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { SignJWT } from "jose"
 
+import { extractFile } from "@/server/extraction"
+
 import { createApp } from "../src/app"
 import { resetEnvCacheForTest } from "../src/env"
-import { extractFile } from "../src/extraction"
 
 const SECRET = "test-secret-do-not-use-in-prod-32-bytes!"
 

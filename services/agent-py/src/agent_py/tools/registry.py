@@ -108,9 +108,29 @@ class ToolContext:
     workspace_id: str | None = None
 
 
+@dataclass(frozen=True)
+class SkillConfigs:
+    """Per-skill overrides from the request body. Maps the TS
+    `ChatRequestSchema.skills` array shape to the Python registry.
+
+    Each field is a dict (or None) shaped like the matching TS sub-
+    object — e.g. `web_search` ≈ `{maxCalls, tavily, brave, exa}`,
+    `image_gen` ≈ `{maxCalls, aspectRatio}`. Each tool factory reads
+    its own fields lazily; unknown keys are ignored so the wire
+    contract can grow without coordination.
+
+    Phase 4-3 follow-up — pre-existing chat requests omit it and
+    every tool falls back to its built-in default cap."""
+
+    web_search: dict[str, Any] | None = None
+    web_fetch: dict[str, Any] | None = None
+    image_gen: dict[str, Any] | None = None
+
+
 def default_tool_registry(
     *,
     context: ToolContext | None = None,
+    skill_configs: SkillConfigs | None = None,
 ) -> dict[str, ToolDescriptor]:
     """Process-wide default registry. The executor passes either the
     full list or a filtered subset (e.g. by checkpoint config) to the
@@ -132,6 +152,12 @@ def default_tool_registry(
       `context` so generated images can be persisted into Supabase
       Storage under the user's folder (Phase 3d-2). Without context
       it still works but URLs come back inline from Minimax.
+
+    `skill_configs` (Phase 4-3 follow-up) threads the per-request
+    skill overrides — `imageGenConfig.maxCalls` lands on
+    `generateImage`'s per-turn cap, etc. Each factory clamps its
+    own field; out-of-range values fall back to the built-in default
+    (same defensive behaviour as the TS side's `clampMaxImageGenerations`).
     """
     # Lazy imports keep registry construction cheap and avoid
     # circular imports if a tool ever needs to read the registry.
@@ -151,5 +177,33 @@ def default_tool_registry(
     from .image_gen import build_image_gen_tool, is_image_gen_configured
 
     if is_image_gen_configured():
-        out["generateImage"] = build_image_gen_tool(context=context)
+        image_cfg = skill_configs.image_gen if skill_configs else None
+        out["generateImage"] = build_image_gen_tool(
+            context=context,
+            max_calls_per_turn=_clamp_max_calls(
+                image_cfg.get("maxCalls") if image_cfg else None,
+                default=2,
+                lo=1,
+                hi=50,
+            ),
+        )
     return out
+
+
+def _clamp_max_calls(raw: Any, *, default: int, lo: int, hi: int) -> int:
+    """Mirror of the TS side's `clamp*` helpers in
+    `lib/shared/skills/image-gen-config.ts`. Coerces a client-side
+    value (which might be a stringified number, a float, or absent)
+    to a safe integer in [lo, hi], falling back to `default` for
+    anything not parseable."""
+    if raw is None:
+        return default
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return default
+    if n < lo:
+        return lo
+    if n > hi:
+        return hi
+    return n

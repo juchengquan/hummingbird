@@ -25,6 +25,7 @@ import { getSupabaseAdminClient } from "@/server/supabase/admin"
 import { getRun } from "@/server/agent/store"
 import { enqueueRespondJob } from "@/server/agent/jobs"
 import { processNextJob } from "@/server/agent/worker"
+import { inlineAgentWorkerEnabled } from "@/server/agent/inline-worker"
 
 /** Bootstrap budget for the respond route — same shape as the start
  *  route, sized to cover the common case of a short tool execution +
@@ -126,8 +127,10 @@ export async function POST(
   }
 
   // Bootstrap the worker so the typical "Approve → see the continuation
-  // stream" path feels synchronous.
-  if (TASK_RESPOND_BOOTSTRAP_MS > 0) {
+  // stream" path feels synchronous. Gated by INLINE_AGENT_WORKER so
+  // deploys running agent-py / agent-ts can hand the queue entirely
+  // to the dedicated services.
+  if (TASK_RESPOND_BOOTSTRAP_MS > 0 && inlineAgentWorkerEnabled()) {
     const admin = getSupabaseAdminClient()
     if (admin) {
       try {

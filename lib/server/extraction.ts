@@ -1,12 +1,22 @@
+import "server-only"
+
 /**
- * File extraction — direct port of `app/api/extract/route.ts`'s body
- * to a callable library function. Same NPM packages, same budgets,
- * same kind taxonomy.
+ * File extraction — pure server-side library, lifted from
+ * `app/api/extract/route.ts`'s original body. Same NPM packages
+ * (dynamic-imported so they never touch the main bundle), same
+ * per-format budgets, same kind taxonomy.
  *
- * Phase 4 of PLAN-agent-ts. Eventually this should live in
- * `lib/server/extraction.ts` and be shared with the Next.js route
- * (see Follow-up D in PLAN-agent-ts.md); for now keeping it local
- * to the agent-ts service avoids touching the Next.js side.
+ * Two consumers:
+ *   1. `app/api/extract/route.ts` — the Next.js multipart/form-data
+ *      endpoint; calls `extractFile()` after parsing the form.
+ *   2. `services/agent-ts/src/routes/extract.ts` — the Hono mirror
+ *      endpoint on `services/agent-ts/`; same call, same response
+ *      shape (matches `ExtractionResponseSchema` on the wire).
+ *
+ * Lifting this out closes TS follow-up #3 in
+ * `docs/PLAN-agent-ts-followups.md` — the duplicated copy in
+ * `services/agent-ts/src/extraction.ts` is now deleted in favour
+ * of this single source of truth.
  */
 
 const EXTRACTION_BUDGET = 100 * 1024
@@ -101,8 +111,7 @@ export interface ExtractInput {
   data: Buffer
 }
 
-/** Identify + extract a single uploaded file. Mirrors the Next.js
- *  route's body — same kind ordering, same per-format budget. */
+/** Identify + extract a single uploaded file. */
 export async function extractFile(input: ExtractInput): Promise<ExtractionResult> {
   const { name, mimeType: type, data } = input
 

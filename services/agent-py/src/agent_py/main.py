@@ -31,7 +31,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from . import __version__, db, poller
 from .auth import get_current_user
@@ -57,6 +57,7 @@ from .mcp_client import call_tool as mcp_call_tool
 from .mcp_client import discover as mcp_discover
 from .mcp_client import read_resource as mcp_read_resource
 from .mcp_credentials import fetch_decrypted_credentials
+from .mcp_tools import extend_registry_with_mcp
 from .settings import Settings, get_settings
 from .summarise import (
     SummariseError,
@@ -68,7 +69,12 @@ from .summarise import (
 from .summarise import (
     resolve_model as summarise_resolve_model,
 )
-from .tools import ToolDescriptor, default_tool_registry
+from .tools import (
+    SkillConfigs,
+    ToolContext,
+    ToolDescriptor,
+    default_tool_registry,
+)
 from .url_fetch import FetchError, fetch_url_bookmark
 from .url_validate import normalize_url
 
@@ -223,7 +229,7 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
     async def chat(
         request: Request,
         body: ChatRequest,
-        _claims: Annotated[dict[str, object], Depends(get_current_user)],
+        claims: Annotated[dict[str, object], Depends(get_current_user)],
         format: ChatFormat = "custom",
     ) -> StreamingResponse:
         """Streaming chat endpoint — Phase 4-1 of PLAN-agent-api.
@@ -264,17 +270,50 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
                 detail="ANTHROPIC_API_KEY is not configured on the agent service.",
             )
 
-        # Phase 4-3: optionally register the built-in tools when the
-        # caller flips `enable_tools`. The default registry only
-        # includes context-free tools (e.g. `webFetch`) when no DB
-        # pool is wired in here — `/v1/chat` is request-scoped and
-        # doesn't currently carry a pool / user_id / workspace_id
-        # through to ToolContext. Tools that need RLS impersonation
-        # (`searchFiles`) and MCP can land in a follow-up that
-        # threads the pool through.
-        tools: tuple[ToolDescriptor, ...] = ()
+        # Phase 4-3 + follow-up: build a per-request `ToolContext`
+        # so the context-bound tools (`searchFiles`, cloud-mode MCP)
+        # work end-to-end. Pool comes from the lifespan; user_id
+        # from the verified JWT sub claim; workspace_id from the
+        # request body (optional — without it, MCP discovery
+        # silently skips). When the pool is unset (dev / no
+        # SUPABASE_DB_URL) we fall back to `context=None` and lose
+        # the context-bound tools, matching the pre-follow-up
+        # behaviour.
+        tools_dict: dict[str, ToolDescriptor] = {}
         if body.enable_tools:
-            tools = tuple(default_tool_registry(context=None).values())
+            sub_claim = claims.get("sub")
+            user_id: str | None = sub_claim if isinstance(sub_claim, str) else None
+            tool_context: ToolContext | None = None
+            if has_pool() and user_id:
+                tool_context = ToolContext(
+                    pool=get_pool(),
+                    user_id=user_id,
+                    workspace_id=body.workspace_id,
+                )
+            skill_configs = _collect_skill_configs(body.skills)
+            tools_dict = default_tool_registry(
+                context=tool_context,
+                skill_configs=skill_configs,
+            )
+            # Cloud-mode MCP — only when we have a workspace_id and
+            # a pool. Mirrors the wiring in executor.py.
+            if tool_context is not None and tool_context.workspace_id:
+                try:
+                    await extend_registry_with_mcp(
+                        tools_dict,
+                        pool=tool_context.pool,
+                        user_id=tool_context.user_id,
+                        workspace_id=tool_context.workspace_id,
+                    )
+                except Exception as exc:
+                    # MCP discovery failures shouldn't fail the chat
+                    # turn — log and continue without MCP tools.
+                    logger.warning(
+                        "chat.mcp_discovery_failed",
+                        error=str(exc),
+                        workspace_id=tool_context.workspace_id,
+                    )
+        tools: tuple[ToolDescriptor, ...] = tuple(tools_dict.values())
 
         config = ChatConfig(
             model=body.model,
@@ -694,6 +733,20 @@ class ChatMessageRequest(BaseModel):
     content: str = Field(min_length=1, max_length=200_000)
 
 
+class ChatSkillEntry(BaseModel):
+    """One entry on `ChatRequest.skills` — the per-skill config the
+    client included with this request. Mirrors the TS schema; only
+    `id` is required, every config sub-object is optional + permissive
+    (extra keys ignored)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str = Field(max_length=40)
+    webSearchConfig: dict[str, Any] | None = None
+    webFetchConfig: dict[str, Any] | None = None
+    imageGenConfig: dict[str, Any] | None = None
+
+
 class ChatRequest(BaseModel):
     """Wire shape for POST /v1/chat. Mirrors the subset of
     `ChatRequestSchema` (TS) we honour today — messages + model +
@@ -704,7 +757,12 @@ class ChatRequest(BaseModel):
     registers the built-in tool set (`webFetch`, plus the
     `TAVILY_API_KEY`/`MINIMAX_CN_API_KEY`-gated tools) and loops
     `messages.stream` + tool execution. Default false keeps the
-    text-only Phase 4-1 behaviour."""
+    text-only Phase 4-1 behaviour.
+
+    Phase 4-3 follow-up: `workspace_id` opts the registry into the
+    context-bound tools (`searchFiles` + cloud-mode MCP). `skills[]`
+    threads per-skill config (caps, provider toggles) — same shape
+    the TS side has used since the Phase 4-2 selector landed."""
 
     messages: list[ChatMessageRequest] = Field(min_length=1, max_length=200)
     model: str = Field(min_length=1, max_length=100)
@@ -712,6 +770,8 @@ class ChatRequest(BaseModel):
     max_tokens: int | None = Field(default=None, ge=1, le=64_000)
     enable_tools: bool = False
     max_steps: int | None = Field(default=None, ge=1, le=20)
+    workspace_id: str | None = Field(default=None, max_length=64)
+    skills: list[ChatSkillEntry] | None = Field(default=None, max_length=20)
 
 
 class ExtractionResponse(BaseModel):
@@ -827,6 +887,38 @@ SummariseRequest = Annotated[
     FileSummariseBody | ConversationSummariseBody | CompressSummariseBody | ProjectBreakdownBody,
     Field(discriminator="mode"),
 ]
+
+
+def _collect_skill_configs(
+    entries: list[ChatSkillEntry] | None,
+) -> SkillConfigs:
+    """Reduce the request's per-skill list into a `SkillConfigs`
+    bundle. The TS schema sends a list keyed by `id` (`{id, webSearchConfig?,
+    webFetchConfig?, imageGenConfig?, ...}`); we pick out the
+    sub-objects each Python tool factory honours today.
+
+    Tolerant on shape: a list of `null`s / entries with no config
+    object reduce to an empty `SkillConfigs`. Each tool clamps its
+    own value when it's invalid, so we don't validate here."""
+    if not entries:
+        return SkillConfigs()
+    web_search: dict[str, Any] | None = None
+    web_fetch: dict[str, Any] | None = None
+    image_gen: dict[str, Any] | None = None
+    for entry in entries:
+        if entry is None:
+            continue
+        if entry.webSearchConfig:
+            web_search = entry.webSearchConfig
+        if entry.webFetchConfig:
+            web_fetch = entry.webFetchConfig
+        if entry.imageGenConfig:
+            image_gen = entry.imageGenConfig
+    return SkillConfigs(
+        web_search=web_search,
+        web_fetch=web_fetch,
+        image_gen=image_gen,
+    )
 
 
 # --- /v1/mcp/{server_id}/{action} --------------------------------------
