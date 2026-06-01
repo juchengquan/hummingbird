@@ -40,6 +40,7 @@ import {
 } from "@/server/agent/store"
 import { enqueueStartJob } from "@/server/agent/jobs"
 import { processNextJob } from "@/server/agent/worker"
+import { inlineAgentWorkerEnabled } from "@/server/agent/inline-worker"
 
 const DEFAULT_MAX_STEPS = 25
 const MAX_MAX_STEPS = 50
@@ -240,7 +241,9 @@ export async function POST(req: NextRequest) {
   // before the response returns (events are in `task_events` by the
   // time the client opens its resume stream). Best-effort; failures
   // here don't fail the POST — the cron picks the job up next minute.
-  if (TASK_START_BOOTSTRAP_MS > 0) {
+  // Gated by INLINE_AGENT_WORKER so deploys running agent-py /
+  // agent-ts can hand the queue entirely to the dedicated services.
+  if (TASK_START_BOOTSTRAP_MS > 0 && inlineAgentWorkerEnabled()) {
     const admin = getSupabaseAdminClient()
     if (admin) {
       try {

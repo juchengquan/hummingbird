@@ -14,20 +14,33 @@ re-reading the rest.
 
 ---
 
-## 1. Port `store.ts` + `checkpoint.ts` to the `postgres` driver
+## 1. Port `store.ts` + `checkpoint.ts` to the `postgres` driver — ⏸ **moot once #4's gate flips**
 
-**Why.** Phase 1 of agent-ts established that `lib/server/agent/jobs.ts`
-can't be reused as-is — the Supabase JS client talks to PostgREST,
-which can't open a real transaction, so `FOR UPDATE SKIP LOCKED`
-loses its lock guarantee and two workers could claim the same job.
-That phase ported `jobs.ts` to the `postgres` driver
-(`services/agent-ts/src/jobs.ts`) and Phase 2 did the same for the
-store reads/writes the executor needs
-(`services/agent-ts/src/store.ts`). The other side of the
-`lib/server/agent/` line — checkpoint reads, schedule reads,
-arbitrary store helpers the Next.js worker uses — is still on the
-Supabase JS / PostgREST path and would inherit the same lock-loss
-risk if a second worker were pointed at it.
+**Status update.** Follow-up #4's `INLINE_AGENT_WORKER` gate
+([PR #145](https://github.com/juchengquan/hummingbird/pull/145))
+turns this into a no-op for any deploy that runs agent-py or
+agent-ts. Once the in-Next worker is off, nothing inside the
+Next.js process needs `FOR UPDATE SKIP LOCKED` semantics — the
+dedicated services already use their own `postgres`-driver paths
+(see `services/agent-ts/src/jobs.ts` and `services/agent-py/src/
+agent_py/jobs.py`). Keep this section as the rationale for why we
+*don't* need to port the in-Next module, and the trigger for
+deletion: when the gate's default flips to `false`,
+`lib/server/agent/{worker,jobs,store,checkpoint}.ts` can be
+deleted wholesale in the same PR.
+
+**Original rationale (kept for context).** Phase 1 of agent-ts
+established that `lib/server/agent/jobs.ts` can't be reused as-is
+— the Supabase JS client talks to PostgREST, which can't open a
+real transaction, so `FOR UPDATE SKIP LOCKED` loses its lock
+guarantee and two workers could claim the same job. That phase
+ported `jobs.ts` to the `postgres` driver (`services/agent-ts/
+src/jobs.ts`) and Phase 2 did the same for the store reads/writes
+the executor needs (`services/agent-ts/src/store.ts`). The other
+side of the `lib/server/agent/` line — checkpoint reads, schedule
+reads, arbitrary store helpers the Next.js worker uses — is still
+on the Supabase JS / PostgREST path and would inherit the same
+lock-loss risk if a second worker were pointed at it.
 
 Today this is bounded because only the in-Next-process worker uses
 those modules. As soon as we add a second TS runtime that re-uses
@@ -168,7 +181,20 @@ this is its own PR.
 
 ---
 
-## 4. Decide what to do with `lib/server/agent/jobs.ts` + the Next worker
+## 4. Decide what to do with `lib/server/agent/jobs.ts` + the Next worker — 🟡 **soft retirement landed**
+
+**Status update.** The `INLINE_AGENT_WORKER` env flag
+([PR #145](https://github.com/juchengquan/hummingbird/pull/145))
+implements the recommendation below in a non-destructive way.
+Default `true` preserves the current behaviour; deploys running
+agent-py or agent-ts can set it to `false` and the in-Next worker
+goes dormant — `processNextJob` bootstrap calls and the
+`/api/tasks/jobs/tick` cron both no-op. A future PR flips the
+default to `false` and deletes `worker.ts` / `jobs.ts`'s claim
+helpers / `store.ts`'s checkpoint-loader once it's clear nothing
+relies on the in-Next worker.
+
+
 
 **Why.** Today there are three places that could claim jobs from
 `task_jobs`: agent-py (asyncpg, correct), agent-ts (`postgres`,

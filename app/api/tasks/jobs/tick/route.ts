@@ -18,6 +18,7 @@ import { NextResponse } from "next/server"
 
 import { getSupabaseAdminClient } from "@/server/supabase/admin"
 import { dispatchDueSchedules } from "@/server/agent/schedules"
+import { inlineAgentWorkerEnabled } from "@/server/agent/inline-worker"
 import { processNextJob, type ProcessOutcome } from "@/server/agent/worker"
 
 const TICK_BUDGET_MS = (() => {
@@ -43,6 +44,21 @@ async function handle(req: NextRequest) {
       { code: "unavailable", message: "Task tick is disabled (CRON_SECRET not set)." },
       { status: 503 }
     )
+  }
+  if (!inlineAgentWorkerEnabled()) {
+    // Operator has handed the queue to a dedicated service
+    // (agent-py / agent-ts). The cron tick is a no-op in that
+    // mode — the service's own poll loop owns the work.
+    return NextResponse.json({
+      ok: true,
+      processed: 0,
+      idle: 0,
+      skipped: 0,
+      failed: 0,
+      bailed: false,
+      schedulesDispatched: 0,
+      note: "inline_worker_disabled",
+    })
   }
   const auth = req.headers.get("authorization") ?? ""
   const headerOk = auth === `Bearer ${expected}`
