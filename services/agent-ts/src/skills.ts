@@ -13,14 +13,14 @@
  *   - `webFetch` — works (no per-request context).
  *   - `webSearch` — works when at least one provider key (TAVILY,
  *     BRAVE, or EXA) is set in env.
- *   - `imageGen` — works when MINIMAX_CN_API_KEY is set. Image
- *     persistence lands in `image-persistence.ts` (follow-up #5).
- *   - `searchFiles` — registers but returns `not_signed_in` for
- *     every call. The skill expects `getSupabaseServerClient()`
- *     (cookies); agent-ts has the JWT sub claim but no equivalent
- *     RLS-impersonated client wired up yet. Follow-up: port the
- *     RLS-impersonation path from agent-py's `searchFiles`
- *     implementation.
+ *   - `imageGen` — works when MINIMAX_CN_API_KEY is set; persistence
+ *     via `image-persistence.ts`.
+ *   - `searchFiles` — works when the user is signed in AND the
+ *     `postgres` pool is open. The cookie-based skill returned by
+ *     `SERVER_SKILLS` always returns `not_signed_in` inside agent-ts
+ *     (no cookies); we override it with `buildSearchFilesTool` from
+ *     `./search-files`, which talks to Postgres directly under
+ *     per-user RLS impersonation. Mirrors agent-py's wiring.
  */
 
 import type { streamText } from "ai"
@@ -31,6 +31,9 @@ import type {
   SkillRequestEntry,
   SkillRuntimeContext,
 } from "@/server/skills/registry"
+
+import { type Sql } from "./db"
+import { buildSearchFilesTool } from "./search-files"
 
 export type SkillEntry = SkillRequestEntry
 
@@ -52,13 +55,27 @@ export interface BuildToolsOptions {
   /** Optional registry override for tests — defaults to the live
    *  `SERVER_SKILLS` array. */
   registry?: ServerSkill[]
+  /** Verified JWT sub claim. Required for `searchFiles` (RLS uses
+   *  it for `auth.uid()`) and forward-compat with other per-user
+   *  tools. Empty / missing → searchFiles surfaces `not_signed_in`. */
+  userId?: string
+  /** Postgres pool from `db.ts`. When omitted (dev) the
+   *  agent-ts-specific `searchFiles` falls back to an upstream-
+   *  error response without crashing. */
+  sql?: Sql | null
 }
 
 /** Walk the skill registry and build an AI SDK `StreamTextTools` for this
  *  request. Skills that aren't configured (e.g. `imageGen` without
  *  `MINIMAX_CN_API_KEY`) are skipped — their `buildTool` returns
  *  null. The keys of the returned set match each skill's `toolName`
- *  so the model sees `webFetch`, `generateImage`, etc. */
+ *  so the model sees `webFetch`, `generateImage`, etc.
+ *
+ *  Special case: `searchFiles` is overridden with the agent-ts
+ *  Postgres-driver implementation (`./search-files`). The shared
+ *  registry's `searchFilesSkill` resolves Supabase via cookies,
+ *  which we don't have — its tool would always return
+ *  `not_signed_in`. We swap in a working version. */
 export function buildToolSet(opts: BuildToolsOptions = {}): StreamTextTools {
   const registry = opts.registry ?? SERVER_SKILLS
   const entryById = new Map<string, SkillEntry>()
@@ -77,6 +94,15 @@ export function buildToolSet(opts: BuildToolsOptions = {}): StreamTextTools {
 
   const tools: Record<string, unknown> = {}
   for (const skill of registry) {
+    if (skill.id === "searchFiles") {
+      // Override with the postgres-driver version. The cookie path
+      // would never produce a working tool inside agent-ts.
+      tools[skill.toolName] = buildSearchFilesTool({
+        userId: opts.userId ?? "",
+        sql: opts.sql ?? null,
+      })
+      continue
+    }
     const tool = skill.buildTool(entryById.get(skill.id), ctx)
     if (tool) tools[skill.toolName] = tool
   }

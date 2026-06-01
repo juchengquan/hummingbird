@@ -295,3 +295,18 @@ any time. **1** and **4** are related (both are about who owns the
 queue contract) — easier to do them together.
 
 Suggested order: **2 → 5 → 3 → (4 + 1 together)**.
+
+## Status update (post-PR #145)
+
+- ✅ **#2 (tools-in-chat)** shipped (PR #143)
+- ✅ **#3 (extraction lift)** shipped (PR #145)
+- ✅ **#5 (generateImage persistence)** shipped (PR #143)
+- 🟡 **#4 (Next worker)** soft-retired via the `INLINE_AGENT_WORKER`
+  gate (PR #145); full deletion follows.
+- ⏸ **#1 (`store.ts` / `checkpoint.ts` to `postgres`)** moot once
+  #4's default flips.
+
+Open follow-ups added since:
+- ✅ **`searchFiles` port to agent-ts** — postgres-driver RLS
+  impersonation mirroring agent-py. Closes the open follow-up
+  noted in PR #143.
