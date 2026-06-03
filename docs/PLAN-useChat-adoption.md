@@ -180,7 +180,32 @@ Frontend doesn't change in B.1. The AI SDK SSE shape carries
 progressively more of what the custom shape does. B.2 can move
 on as soon as one backend has full parity — agent-ts after B.1a.
 
-#### Phase B.2 — Frontend: swap consumer parser, keep state machine (~2 days)
+#### Phase B.2 — Frontend: swap consumer parser, keep state machine ✅
+
+Shipped via a minimal frame translator instead of `readUIMessageStream()` —
+the existing SSE-on-`\n\n` reader handles both wire formats once it
+normalises the frame shape. The translator (`translateFrame` in
+`lib/client/hooks/use-chat-send.ts`) re-shapes AI SDK v5 parts
+(`text-delta`, `reasoning-delta`, `tool-input-available`,
+`tool-output-available`, `data-tool-image`, `data-suggestions`,
+`error` with `errorText`) into the legacy `{type, value}` envelope so
+the existing handler block stays unchanged. Lifecycle frames
+(`start`, `start-step`, `text-start/end`, `reasoning-start/end`,
+`finish-step`, `finish`) map to no-ops; `[DONE]` is the terminator.
+
+`apiClient.chat.stream()` now asks for `?format=ai-sdk` from all
+three backends. The translator's legacy-passthrough branch makes
+the change reversible — flipping the query param back to `custom`
+on the server side requires no client change.
+
+This deliberately departs from the original "use `readUIMessageStream()`"
+sketch in the plan. The AI SDK helper would have required either
+adopting `useChat()`'s state machine (Option A — too big) or
+shimming its callbacks into ours. The translator is ~120 LOC, has
+no new runtime dependency, and lands the wire-shape consolidation
+the plan was actually trying to achieve.
+
+Original plan kept below for reference:
 
 Replace the manual SSE parser in `use-chat-send.ts` with the
 AI SDK's `readUIMessageStream()` (returns an async iterator of

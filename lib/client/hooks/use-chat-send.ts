@@ -85,6 +85,165 @@ export interface UseChatSendResult {
   liveToolCalls: Record<string, LiveToolCall[]>
 }
 
+/** Shape the stream handler reads. The translator below normalises
+ *  both the legacy custom format (`{type:"text",value}`, `tool_call`,
+ *  `tool_result`, `tool_image`, `suggestions`, `error`, `done`) and
+ *  the AI SDK v5 UI message stream (`text-delta`, `reasoning-delta`,
+ *  `tool-input-available`, `tool-output-available`, `data-tool-image`,
+ *  `data-suggestions`, `error`, lifecycle frames) into this single
+ *  shape so the handler block stays small. */
+interface NormalisedFrame {
+  type?: string
+  value?: string
+  values?: string[]
+  code?: string
+  message?: string
+  id?: string
+  name?: string
+  args?: unknown
+  summary?: string
+  results?: Array<{ title?: string; url?: string; snippet?: string }>
+  mode?: string
+  images?: unknown[]
+}
+
+/** Decode one SSE payload (the JSON between `data: ` and `\n\n`) and
+ *  translate it into our internal shape. Returns null when the frame
+ *  is one of the AI SDK lifecycle no-ops (start, start-step,
+ *  text-start/end, reasoning-start/end, finish-step, finish) or
+ *  when the payload doesn't parse — the handler ignores it.
+ *
+ *  PLAN-useChat-adoption.md Phase B.2. */
+export function translateFrame(payload: string): NormalisedFrame | null {
+  let raw: Record<string, unknown>
+  try {
+    raw = JSON.parse(payload)
+  } catch {
+    return null
+  }
+  const t = raw.type
+  if (typeof t !== "string") return null
+
+  // AI SDK errors use `errorText` instead of `message`. Reshape
+  // before the custom-format passthrough so the downstream handler
+  // gets a consistent `message`.
+  if (t === "error" && typeof raw.errorText === "string") {
+    return { type: "error", message: raw.errorText }
+  }
+
+  // Legacy custom format — pass through unchanged.
+  if (
+    t === "text" ||
+    t === "reasoning" ||
+    t === "tool_call" ||
+    t === "tool_result" ||
+    t === "tool_image" ||
+    t === "suggestions" ||
+    t === "error" ||
+    t === "done"
+  ) {
+    return raw as NormalisedFrame
+  }
+
+  // AI SDK v5 frame types. Re-shape into the same logical envelope
+  // the handler block expects (`{type:"text", value}` etc.) so the
+  // downstream dispatch doesn't need to know which wire format the
+  // backend chose.
+  if (t === "text-delta" && typeof raw.delta === "string") {
+    return { type: "text", value: raw.delta }
+  }
+  if (t === "reasoning-delta" && typeof raw.delta === "string") {
+    return { type: "reasoning", value: raw.delta }
+  }
+  if (t === "tool-input-available") {
+    const toolCallId = raw.toolCallId
+    const toolName = raw.toolName
+    if (typeof toolCallId === "string" && typeof toolName === "string") {
+      return {
+        type: "tool_call",
+        id: toolCallId,
+        name: toolName,
+        args: raw.input,
+      }
+    }
+    return null
+  }
+  if (t === "tool-output-available") {
+    const toolCallId = raw.toolCallId
+    if (typeof toolCallId !== "string") return null
+    // `output` is a JSON-stringified `{summary, results?}` object per
+    // `lib/server/chat/sse-emitter.ts`. Parse it back so we can pull
+    // the summary + sources strip results.
+    let summary: string | undefined
+    let results:
+      | Array<{ title?: string; url?: string; snippet?: string }>
+      | undefined
+    if (typeof raw.output === "string") {
+      try {
+        const out = JSON.parse(raw.output) as {
+          summary?: unknown
+          results?: unknown
+        }
+        if (typeof out.summary === "string") summary = out.summary
+        if (Array.isArray(out.results)) {
+          results = out.results.filter(
+            (r): r is { title?: string; url?: string; snippet?: string } =>
+              typeof r === "object" && r !== null,
+          )
+        }
+      } catch {
+        // ignore — summary stays undefined and the pill shows "done"
+      }
+    }
+    // The emitter also sends `errorText` on the AI SDK side when
+    // `isError` was true on the source frame. Surface as summary so
+    // the pill shows it.
+    if (typeof raw.errorText === "string" && !summary) summary = raw.errorText
+    return {
+      type: "tool_result",
+      id: toolCallId,
+      summary,
+      results,
+    }
+  }
+  if (t === "data-tool-image") {
+    const data = raw.data as
+      | { id?: unknown; mode?: unknown; images?: unknown }
+      | undefined
+    if (!data || typeof data !== "object") return null
+    return {
+      type: "tool_image",
+      id: typeof data.id === "string" ? data.id : undefined,
+      mode: typeof data.mode === "string" ? data.mode : undefined,
+      images: Array.isArray(data.images) ? data.images : undefined,
+    }
+  }
+  if (t === "data-suggestions") {
+    const data = raw.data as { values?: unknown } | undefined
+    if (!data || !Array.isArray(data.values)) return null
+    return {
+      type: "suggestions",
+      values: data.values.filter((v): v is string => typeof v === "string"),
+    }
+  }
+  // Lifecycle frames the handler doesn't need to act on.
+  if (
+    t === "start" ||
+    t === "start-step" ||
+    t === "text-start" ||
+    t === "text-end" ||
+    t === "reasoning-start" ||
+    t === "reasoning-end" ||
+    t === "finish-step" ||
+    t === "finish"
+  ) {
+    return null
+  }
+
+  // Unknown frame type — ignore.
+  return null
+}
+
 export function useChatSend(): UseChatSendResult {
   // --- store mutators read internally (no panel-side dep array) ---
   const addMessage = useStore((s) => s.addMessage)
@@ -489,25 +648,13 @@ export function useChatSend(): UseChatSendResult {
             if (!frame.startsWith("data:")) continue
             const payload = frame.slice(5).trim()
             if (!payload) continue
-            let parsed: {
-              type?: string
-              value?: string
-              values?: string[]
-              code?: string
-              message?: string
-              id?: string
-              name?: string
-              args?: unknown
-              summary?: string
-              results?: Array<{ title?: string; url?: string; snippet?: string }>
-              mode?: string
-              images?: unknown[]
-            }
-            try {
-              parsed = JSON.parse(payload)
-            } catch {
-              continue
-            }
+            // AI SDK v5 UI message stream terminator. PLAN-useChat-
+            // adoption.md Phase B.2 — the consumer accepts both the
+            // custom format and the AI SDK shape side-by-side.
+            if (payload === "[DONE]") break outer
+            const translated = translateFrame(payload)
+            if (!translated) continue
+            const parsed = translated
             if (parsed.type === "text" && typeof parsed.value === "string") {
               const p = ensurePlaceholder()
               appendToMessage(p.id, parsed.value)
