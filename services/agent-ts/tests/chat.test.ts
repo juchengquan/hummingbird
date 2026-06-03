@@ -330,3 +330,89 @@ describe("POST /v1/chat — route surface", () => {
     }
   })
 })
+
+// --- Suggestions JSON parsing (PLAN-useChat-adoption.md Phase B.1d) -
+
+describe("parseSuggestionsJson — agent-ts helper", () => {
+  test("happy path returns the three strings", async () => {
+    const { parseSuggestionsJson } = await import("../src/chat")
+    expect(parseSuggestionsJson('["one","two","three"]')).toEqual([
+      "one",
+      "two",
+      "three",
+    ])
+  })
+
+  test("strips markdown fences", async () => {
+    const { parseSuggestionsJson } = await import("../src/chat")
+    expect(parseSuggestionsJson('```json\n["a","b"]\n```')).toEqual(["a", "b"])
+  })
+
+  test("caps at three entries", async () => {
+    const { parseSuggestionsJson } = await import("../src/chat")
+    expect(parseSuggestionsJson('["a","b","c","d","e"]')).toEqual([
+      "a",
+      "b",
+      "c",
+    ])
+  })
+
+  test("drops empty + overlong entries", async () => {
+    const { parseSuggestionsJson } = await import("../src/chat")
+    const raw = JSON.stringify(["ok", "  ", "x".repeat(200), "fine"])
+    expect(parseSuggestionsJson(raw)).toEqual(["ok", "fine"])
+  })
+
+  test("invalid JSON yields empty", async () => {
+    const { parseSuggestionsJson } = await import("../src/chat")
+    expect(parseSuggestionsJson("not json")).toEqual([])
+    expect(parseSuggestionsJson('{"not":"a list"}')).toEqual([])
+    expect(parseSuggestionsJson("")).toEqual([])
+  })
+})
+
+describe("chatStream — onComplete hook (B.1d)", () => {
+  test("runs once with accumulated text before done", async () => {
+    const captured: Array<{ text: string; format: string }> = []
+    const model = makeModel(["Hello ", "world"])
+    const frames = await collect(
+      chatStream(model, baseConfig, {
+        onComplete: async function* (text: string, fmt: string) {
+          captured.push({ text, format: fmt })
+          yield `data: ${JSON.stringify({ type: "suggestions", values: ["a", "b"] })}\n\n`
+        },
+      }),
+    )
+    const payloads = parseCustom(frames)
+    const types = payloads.map((p) => p.type)
+    expect(types).toEqual(["text", "text", "suggestions", "done"])
+    expect(captured).toEqual([{ text: "Hello world", format: "custom" }])
+  })
+})
+
+describe("chatStreamAiSdk — onComplete hook (B.1d)", () => {
+  test("data-suggestions sits before finish-step", async () => {
+    const captured: Array<{ text: string; format: string }> = []
+    const model = makeModel(["Hello"])
+    const frames = await collect(
+      chatStreamAiSdk(model, baseConfig, {
+        onComplete: async function* (text: string, fmt: string) {
+          captured.push({ text, format: fmt })
+          yield `data: ${JSON.stringify({
+            type: "data-suggestions",
+            data: { values: ["a"] },
+          })}\n\n`
+        },
+      }),
+    )
+    const payloads = parseAiSdk(frames)
+    const types = payloads.map((p) =>
+      typeof p === "string" ? p : (p as { type: string }).type,
+    )
+    expect(types).toContain("data-suggestions")
+    const idxSuggest = types.indexOf("data-suggestions")
+    const idxFinishStep = types.indexOf("finish-step")
+    expect(idxSuggest).toBeLessThan(idxFinishStep)
+    expect(captured).toEqual([{ text: "Hello", format: "ai-sdk" }])
+  })
+})
