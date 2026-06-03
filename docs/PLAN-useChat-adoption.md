@@ -159,22 +159,25 @@ state machine matures into something resembling
 Each phase is a separate PR. Each is reversible (toggle a flag /
 revert one commit) without forcing a co-deploy across stacks.
 
-#### Phase B.1 — Server: extend AI SDK format with our custom parts (~1 day)
+#### Phase B.1 — Server: extend AI SDK format with our custom parts
 
-All three backends already emit AI SDK frames at `?format=ai-sdk`.
-Extend the AI SDK output to include our Hummingbird-specific
-parts:
+Initial sketch had this as a single ~1-day commit; reality forced
+a 4-way split because (a) the three backends aren't symmetric
+(the Next.js inline route has no AI-SDK formatter at all today),
+(b) reasoning isn't a custom data part — it's a first-class AI
+SDK UI part (`reasoning-start` / `reasoning-delta` / `reasoning-end`),
+and (c) suggestions don't exist on the service backends yet.
 
-- `data-reasoning` — `{ type: "data-reasoning", value: string }`
-  for thinking-token streaming.
-- `data-tool-image` — `{ type: "data-tool-image", id, mode,
-  images: [...] }` mirroring our existing `tool_image` frame.
-- `data-suggestions` — `{ type: "data-suggestions", values:
-  string[] }` for the follow-up chips.
+| Sub-phase | Backend | Adds | Status |
+|---|---|---|---|
+| **B.1a** | agent-ts | reasoning channel (built-in AI SDK part) + format-aware tool_image (`data-tool-image`) | ✅ this PR |
+| **B.1b** | agent-py | reasoning channel + `data-tool-image` (requires switching from `text_stream` to the raw event iterator) | pending |
+| **B.1c** | Next.js inline route | parallel AI-SDK formatter (route is custom-only today) emitting text + tool + reasoning + `data-tool-image` | pending |
+| **B.1d** | all three | `data-suggestions` (requires implementing follow-up generation on the service backends; Next.js inline already has it on the custom path) | pending |
 
-Frontend doesn't change yet. The AI SDK SSE shape now carries
-all the information the custom shape does. No consumer reads
-the new parts.
+Frontend doesn't change in B.1. The AI SDK SSE shape carries
+progressively more of what the custom shape does. B.2 can move
+on as soon as one backend has full parity — agent-ts after B.1a.
 
 #### Phase B.2 — Frontend: swap consumer parser, keep state machine (~2 days)
 

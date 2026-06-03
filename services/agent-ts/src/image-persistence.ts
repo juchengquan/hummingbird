@@ -19,7 +19,12 @@
  * right path.
  */
 
-import { sseFrame, type FrameInterceptor, type ToolResultFrame } from "./chat"
+import {
+  sseFrame,
+  type ChatFormat,
+  type FrameInterceptor,
+  type ToolResultFrame,
+} from "./chat"
 import { getEnv } from "./env"
 
 const STORAGE_BUCKET = "user-files"
@@ -63,12 +68,23 @@ interface MinimaxImageOutput {
 
 /** Build the per-request frame interceptor passed to `chatStream` /
  *  `chatStreamAiSdk`. For `generateImage` tool results, downloads +
- *  uploads the images, then yields a `tool_image` SSE frame. Other
- *  tools pass through with no extra frames. */
+ *  uploads the images, then yields a wire frame describing them.
+ *
+ *  The shape depends on `format`:
+ *  - `custom` → `{type: "tool_image", id, mode, images: [...]}` —
+ *    the existing chat-panel consumer reads this.
+ *  - `ai-sdk` → `{type: "data-tool-image", id, data: {id, mode,
+ *    images: [...]}}` — AI SDK v5 custom data part, the shape
+ *    `useChat({onData})` expects. PLAN-useChat-adoption.md Phase B.1.
+ *
+ *  Other tools pass through with no extra frames. */
 export function buildToolImageInterceptor(
   opts: BuildImageInterceptorOpts,
 ): FrameInterceptor {
-  return async function* (frame: ToolResultFrame): AsyncIterable<string> {
+  return async function* (
+    frame: ToolResultFrame,
+    format: ChatFormat,
+  ): AsyncIterable<string> {
     if (frame.name !== "generateImage") return
     const output = frame.output as MinimaxImageOutput | undefined
     if (!output?.ok || !Array.isArray(output.images) || output.images.length === 0) {
@@ -82,20 +98,33 @@ export function buildToolImageInterceptor(
     if (persisted.length === 0) return
     const mode: "t2i" | "i2i" = output.mode === "i2i" ? "i2i" : "t2i"
     const prompt = typeof output.prompt === "string" ? output.prompt : ""
+    const images = persisted.map((img) => ({
+      id: img.id,
+      url: img.url,
+      ...(img.storagePath ? { storagePath: img.storagePath } : {}),
+      width: img.width,
+      height: img.height,
+      format: img.format,
+      prompt,
+      mode,
+    }))
+    if (format === "ai-sdk") {
+      // AI SDK v5 custom data part. `id` collates parts that share
+      // the same id into one logical block on the consumer side; we
+      // key on the tool-call id so multiple `generateImage` calls in
+      // a single turn don't blend together.
+      yield sseFrame({
+        type: "data-tool-image",
+        id: frame.id,
+        data: { id: frame.id, mode, images },
+      })
+      return
+    }
     yield sseFrame({
       type: "tool_image",
       id: frame.id,
       mode,
-      images: persisted.map((img) => ({
-        id: img.id,
-        url: img.url,
-        ...(img.storagePath ? { storagePath: img.storagePath } : {}),
-        width: img.width,
-        height: img.height,
-        format: img.format,
-        prompt,
-        mode,
-      })),
+      images,
     })
   }
 }
