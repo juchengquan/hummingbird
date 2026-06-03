@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -54,6 +55,13 @@ def _valid_body(**overrides: Any) -> dict[str, Any]:
     return base
 
 
+def _text_event(text: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        type="content_block_delta",
+        delta=SimpleNamespace(type="text_delta", text=text),
+    )
+
+
 class _FakeStream:
     def __init__(self, deltas: list[str]) -> None:
         self._deltas = deltas
@@ -64,13 +72,26 @@ class _FakeStream:
     async def __aexit__(self, *args: Any) -> None:
         return None
 
+    def __aiter__(self) -> AsyncIterator[SimpleNamespace]:
+        return self._iter_events()
+
+    async def _iter_events(self) -> AsyncIterator[SimpleNamespace]:
+        for d in self._deltas:
+            yield _text_event(d)
+
     @property
     def text_stream(self) -> AsyncIterator[str]:
-        return self._iter()
+        return self._iter_text()
 
-    async def _iter(self) -> AsyncIterator[str]:
+    async def _iter_text(self) -> AsyncIterator[str]:
         for d in self._deltas:
             yield d
+
+    async def get_final_message(self) -> dict[str, Any]:
+        # Used by the tool-enabled paths; route smoke tests for the
+        # text-only path don't reach this. Tool tests in
+        # test_chat_route.py patch it directly when needed.
+        return {"content": [{"type": "text", "text": "".join(self._deltas)}]}
 
 
 class _FakeMessages:
