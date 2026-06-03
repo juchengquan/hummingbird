@@ -1,9 +1,23 @@
 # Plan: `useChat()` adoption in the chat panel
 
-Status: **📋 Draft.** Open follow-up from
-[`PLAN-agent-api.md`](./PLAN-agent-api.md) and PR #143's
-follow-up note. The chat panel's stream consumer
-(`lib/client/hooks/use-chat-send.ts`) still parses our **custom**
+Status: **✅ B.1–B.3 shipped; B.4 deferred indefinitely.**
+The wire-shape consolidation work is complete: all three backends
+(Next.js inline, agent-py, agent-ts) speak the AI SDK v5 UI message
+stream natively, and the chat consumer reads it through a small
+translator that re-shapes parts into the existing Zustand state
+machine. The legacy custom SSE format (`{type:"text"|"reasoning"|
+"tool_call"|"tool_result"|"tool_image"|"suggestions"|"error"|"done"}`)
+has been retired. B.4 — actually adopting `useChat()` as the state
+machine — stays deferred; see the §Phase B.4 status block for the
+re-open triggers.
+
+Shipped PRs: B.1a #148 · B.1b #149 · B.1c+d #150 · B.1d-services
+#151 · B.2 #152 · B.3 #153.
+
+**Original framing (kept below for context).**
+
+The chat panel's stream consumer
+(`lib/client/hooks/use-chat-send.ts`) used to parse our **custom**
 SSE shape (`{type:"text"|"reasoning"|"tool_call"|"tool_result"|
 "tool_image"|"suggestions"|"error"|"done"}`). The Phase 3g work
 on the backend side already emits an **AI SDK v5 UI message
@@ -249,13 +263,42 @@ Net delta across this PR: **−1500 LOC** of dead code paths
 (custom-format streamers, custom branches in the emitter,
 legacy passthrough in the translator, paired test suites).
 
-#### Phase B.4 — Frontend: incremental adoption of `useChat()` (optional, defer)
+#### Phase B.4 — Frontend: literal `useChat()` adoption — ⏸ deferred indefinitely
 
-Once we've stayed on the AI SDK format for a release cycle, we
-can experiment with replacing the hand-rolled state machine
-with `useChat()` in one panel (e.g. a single-conversation
-"Quick chat" overlay) to validate the reconciliation pattern
-before refactoring the main chat panel.
+**Status:** post-B.3 review concluded this should stay deferred.
+The wire format and the parser are in good shape after B.1–B.3;
+the chat panel works on AI SDK frames; `lib/client/hooks/use-chat-send.ts`
+is well-defined ~800 LOC of state machine. Spending another week
+or two replacing it with `useChat()` for parity is the wrong
+trade — the reasons:
+
+| What we'd gain | What we'd give up |
+|---|---|
+| One less state machine to maintain | A working state machine, with all the Hummingbird-specific extras (reasoning timing, generated-image `storagePath`, follow-up chips, per-message error codes, mock fallback when the AI key is unset, multi-conversation streaming) reimplemented on top of `useChat()`'s abstractions |
+| Alignment with the AI SDK ecosystem | Resolving the Zustand-vs-`useChat()` source-of-truth question: `useChat()` owns its own `messages` array; ours live in Zustand with localStorage persistence + cross-device sync hooks. Reconciling that is the bulk of the work |
+| Generative-UI-style data parts as a first-class consumer | Hook-per-chat-id model — `useChat()` is one instance per stream; we have N conversations potentially streaming concurrently, so we'd need a registry of hooks or per-conversation instances |
+
+**Re-open the discussion when one of these happens:**
+
+1. **A new feature naturally wants `useChat()` data parts** (e.g.,
+   AI SDK Generative UI surfaces, tool-call UI plugins). At that
+   point reaching for the hook in the new surface is cleaner
+   than extending the state machine.
+2. **A non-chat-panel surface needs streaming** — a "quick chat"
+   overlay, an embed, a share view — where standing up the
+   existing state machine is overkill. `useChat()` drops in
+   quickly.
+3. **The hand-rolled state machine becomes a maintenance burden.**
+   Right now it's a known quantity. If it keeps accumulating
+   Hummingbird-specific behaviour without consolidation, the
+   trade flips.
+
+The editor side (`components/editor/use-chat.ts`) already uses
+`useChat()` — proof the integration works for a single-instance
+surface — so the pattern is available when needed without doing
+the main-panel migration first.
+
+The `useChat()` adoption track is functionally done after B.3.
 
 ## Risk + non-goals
 
@@ -272,7 +315,7 @@ before refactoring the main chat panel.
 
 **Explicit non-goals:**
 - Adopting `useChat()` literally in the main chat panel
-  (deferred to Phase B.4 — optional).
+  (Phase B.4 — deferred indefinitely; see status block above).
 - Frontend `messages` ownership migration (Zustand stays the
   source of truth).
 - Tool-call UI redesign. The existing pill / Sources-strip UI
