@@ -171,9 +171,10 @@ and (c) suggestions don't exist on the service backends yet.
 | Sub-phase | Backend | Adds | Status |
 |---|---|---|---|
 | **B.1a** | agent-ts | reasoning channel (built-in AI SDK part) + format-aware tool_image (`data-tool-image`) | ✅ PR #148 |
-| **B.1b** | agent-py | reasoning channel (refactored `_stream_text_deltas` → `_stream_channel_deltas` to walk raw events; `data-tool-image` is N/A — agent-py doesn't emit a `tool_image` frame today and `generateImage` persistence is a separate gap) | ✅ this PR |
-| **B.1c** | Next.js inline route | parallel AI-SDK formatter (route is custom-only today) emitting text + tool + reasoning + `data-tool-image` | pending |
-| **B.1d** | all three | `data-suggestions` (requires implementing follow-up generation on the service backends; Next.js inline already has it on the custom path) | pending |
+| **B.1b** | agent-py | reasoning channel (refactored `_stream_text_deltas` → `_stream_channel_deltas` to walk raw events; `data-tool-image` is N/A — agent-py doesn't emit a `tool_image` frame today and `generateImage` persistence is a separate gap) | ✅ PR #149 |
+| **B.1c** | Next.js inline route | parallel AI-SDK formatter via new `ChatSseEmitter` (`lib/server/chat/sse-emitter.ts`) — emits text + reasoning + tool-input/output + `data-tool-image` on the `?format=ai-sdk` path | ✅ this PR |
+| **B.1d** | Next.js inline route | `data-suggestions` rides on the existing `generateSuggestions` result | ✅ this PR |
+| **B.1d (service backends)** | agent-py + agent-ts | implementing follow-up suggestion generation (requires a second model call) | pending — own PR |
 
 Frontend doesn't change in B.1. The AI SDK SSE shape carries
 progressively more of what the custom shape does. B.2 can move

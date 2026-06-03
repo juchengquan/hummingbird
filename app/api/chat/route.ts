@@ -19,6 +19,13 @@ import { isSearchFilesToolName, isWebSearchToolName } from '@/shared/skills/type
 import { buildMcpTool, mcpToolName } from '@/server/mcp/tools'
 import { loadEffectiveMcpServers, type EffectiveMcpServer } from '@/server/mcp/load-servers'
 import { createSlidingWindow, rateLimitKey } from '@/server/rate-limit'
+import {
+  AI_SDK_STREAM_HEADER_NAME,
+  AI_SDK_STREAM_HEADER_VALUE,
+  ChatSseEmitter,
+  type ChatFormat,
+  type ToolResultPayload,
+} from '@/server/chat/sse-emitter'
 import { persistGeneratedImages, type ImageToPersist } from '@/server/image-storage'
 import { resolveAttachedMcpResources } from '@/server/mcp/inject-resources'
 import {
@@ -198,7 +205,7 @@ function buildSkillsNote(
  */
 async function maybeEmitImageFrame(
   part: { toolCallId?: string; toolName?: string; output?: unknown },
-  send: (payload: unknown) => void,
+  emitter: ChatSseEmitter,
   signal: AbortSignal,
   /** Mirror of `body.localFilesOnly` — when true, force the
    *  persistence layer into its data-URL path instead of uploading to
@@ -245,14 +252,13 @@ async function maybeEmitImageFrame(
 
   const mode: 't2i' | 'i2i' = output.mode === 'i2i' ? 'i2i' : 't2i'
   const prompt = typeof output.prompt === 'string' ? output.prompt : ''
-  send({
-    type: 'tool_image',
+  emitter.toolImage({
     id: part.toolCallId ?? '',
     mode,
     images: persisted.images.map((img) => ({
       id: img.id,
       url: img.url,
-      storagePath: img.storagePath,
+      ...(img.storagePath ? { storagePath: img.storagePath } : {}),
       width: img.width,
       height: img.height,
       format: img.format,
@@ -369,6 +375,18 @@ ${assistantReply.slice(0, 4000)}
 }
 
 export async function POST(req: NextRequest) {
+  // `?format=ai-sdk` opts the response into the AI SDK v5 UI message
+  // stream protocol; default `custom` keeps the existing chat panel
+  // wire format. PLAN-useChat-adoption.md Phase B.1c.
+  const formatParam = req.nextUrl.searchParams.get('format') ?? 'custom'
+  if (formatParam !== 'custom' && formatParam !== 'ai-sdk') {
+    return NextResponse.json(
+      { code: 'invalid_format', message: "format must be 'custom' or 'ai-sdk'." },
+      { status: 422 }
+    )
+  }
+  const format: ChatFormat = formatParam
+
   let raw: unknown
   try {
     raw = await req.json()
@@ -539,18 +557,26 @@ export async function POST(req: NextRequest) {
         : {}),
     })
 
-    // Re-emit `fullStream` as a small SSE protocol so the client can keep
-    // text and reasoning separate. Keeping our own envelope (rather than the
-    // AI SDK's UI message stream) means the chat client doesn't need to be
-    // a `useChat` consumer and we stay in control of the wire format.
+    // Re-emit `fullStream` as SSE in one of two wire formats:
+    //   - `custom` — `{type:"text"|"reasoning"|"tool_call"|...,...}`
+    //     frames the existing chat panel consumer reads.
+    //   - `ai-sdk` — the AI SDK v5 UI message stream protocol, with
+    //     our custom extras (`tool_image`, `suggestions`) riding on
+    //     `data-tool-image` / `data-suggestions` parts.
     //
-    // Frame: `data: {"type":"text"|"reasoning"|"error"|"done", ...}\n\n`
+    // The `ChatSseEmitter` hides the wire shape behind logical
+    // methods (`text` / `reasoning` / `toolCall` / `toolResult` /
+    // `toolImage` / `suggestions` / `error` / `done`). The
+    // fullStream loop below speaks logically; the emitter does the
+    // per-format lifecycle bookkeeping.
     const encoder = new TextEncoder()
     const sse = new ReadableStream({
       async start(controller) {
-        const send = (payload: unknown) => {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
+        const writeLine = (line: string) => {
+          controller.enqueue(encoder.encode(line))
         }
+        const emitter = new ChatSseEmitter(writeLine, format)
+        emitter.start()
         let assistantText = ''
         let sawError = false
         let sawReasoning = false
@@ -591,7 +617,7 @@ export async function POST(req: NextRequest) {
                 ?? ''
               if (delta) {
                 assistantText += delta
-                send({ type: 'text', value: delta })
+                emitter.text(delta)
               }
             } else if (part.type === 'reasoning-delta') {
               const delta = (part as { delta?: string; text?: string }).delta
@@ -599,18 +625,13 @@ export async function POST(req: NextRequest) {
                 ?? ''
               if (delta) {
                 sawReasoning = true
-                send({ type: 'reasoning', value: delta })
+                emitter.reasoning(delta)
               }
             } else if (part.type === 'tool-call') {
               // Surface the call so the UI can show "Searching the web for X…".
               // We trust the tool definitions to produce a small input object.
               const p = part as { toolCallId?: string; toolName?: string; input?: unknown }
-              send({
-                type: 'tool_call',
-                id: p.toolCallId ?? '',
-                name: p.toolName ?? '',
-                args: p.input ?? {},
-              })
+              emitter.toolCall(p.toolCallId ?? '', p.toolName ?? '', p.input)
             } else if (part.type === 'tool-result') {
               const p = part as { toolCallId?: string; toolName?: string; output?: unknown }
               // Compute a short summary string the UI can display instead of
@@ -657,13 +678,13 @@ export async function POST(req: NextRequest) {
                 summary = `${n} excerpt${n === 1 ? '' : 's'}`
               }
               sawToolResult = true
-              send({
-                type: 'tool_result',
+              const trPayload: ToolResultPayload = {
                 id: p.toolCallId ?? '',
                 name: p.toolName ?? '',
                 summary,
                 ...(results ? { results } : {}),
-              })
+              }
+              emitter.toolResult(trPayload)
               // generateImage: persist Minimax's short-lived URLs
               // server-side and emit a separate `tool_image` SSE
               // frame the client renders inline. The model's view
@@ -672,7 +693,7 @@ export async function POST(req: NextRequest) {
               if (p.toolName === 'generateImage') {
                 await maybeEmitImageFrame(
                   p,
-                  send,
+                  emitter,
                   req.signal,
                   body.localFilesOnly === true
                 )
@@ -692,12 +713,14 @@ export async function POST(req: NextRequest) {
               console.warn(
                 `[chat] tool-error (model=${modelId}, tool=${p.toolName}, msg=${errMsg})`
               )
-              send({
-                type: 'tool_result',
-                id: p.toolCallId ?? '',
-                name: p.toolName ?? '',
-                summary: `error: ${errMsg}`,
-              })
+              emitter.toolResult(
+                {
+                  id: p.toolCallId ?? '',
+                  name: p.toolName ?? '',
+                  summary: `error: ${errMsg}`,
+                },
+                true,
+              )
             } else if (part.type === 'finish-step') {
               const p = part as { finishReason?: string }
               stepCount += 1
@@ -718,17 +741,13 @@ export async function POST(req: NextRequest) {
               // rather than silently truncating.
               console.warn(`[chat] provider abort (model=${modelId})`)
               sawError = true
-              send({
-                type: 'error',
-                code: 'provider',
-                message: 'The model provider aborted the response.',
-              })
+              emitter.error('provider', 'The model provider aborted the response.')
             } else if (part.type === 'error') {
               const { code, message } = categorizeError(
                 (part as { error?: unknown }).error
               )
               sawError = true
-              send({ type: 'error', code, message })
+              emitter.error(code, message)
             }
           }
 
@@ -773,11 +792,10 @@ export async function POST(req: NextRequest) {
           // abortSignal through), so we detect it here.
           if (idleTimedOut && !sawError) {
             sawError = true
-            send({
-              type: 'error',
-              code: 'provider',
-              message: `Model stopped responding after ${Math.round(IDLE_TIMEOUT_MS / 1000)}s of silence (last step finish: ${lastStepFinishReason ?? 'unknown'}).`,
-            })
+            emitter.error(
+              'provider',
+              `Model stopped responding after ${Math.round(IDLE_TIMEOUT_MS / 1000)}s of silence (last step finish: ${lastStepFinishReason ?? 'unknown'}).`,
+            )
           }
 
           // Stream ended without a complete answer. Two cases:
@@ -817,14 +835,12 @@ export async function POST(req: NextRequest) {
             console.warn(
               `[chat] truncated-response (model=${modelId}, reason=${reason}, textLen=${assistantText.length}, hadReasoning=${sawReasoning}, hadToolResult=${sawToolResult}, toolErrors=${toolErrorCount}, steps=${stepCount})`
             )
-            send({
-              type: 'error',
-              code: 'provider',
-              message:
-                assistantText.trim().length === 0
-                  ? `The model returned no answer (${hint}; finish reason: ${reason}).`
-                  : `The model was cut off before finishing its answer (${hint}; finish reason: ${reason}).`,
-            })
+            emitter.error(
+              'provider',
+              assistantText.trim().length === 0
+                ? `The model returned no answer (${hint}; finish reason: ${reason}).`
+                : `The model was cut off before finishing its answer (${hint}; finish reason: ${reason}).`,
+            )
           }
 
           // The previous markdown footer is now superseded by the
@@ -851,11 +867,24 @@ export async function POST(req: NextRequest) {
               req.signal
             )
             if (suggestions.length > 0) {
-              send({ type: 'suggestions', values: suggestions })
+              emitter.suggestions(suggestions)
             }
           }
 
-          send({ type: 'done' })
+          if (sawError) {
+            // We already wrote an error frame; for AI-SDK we need
+            // the `[DONE]` terminator without a `finish` so the
+            // consumer's finally-block fires but it can distinguish
+            // completion from failure. For custom we still emit
+            // `done` so the consumer's state machine settles.
+            if (format === 'ai-sdk') {
+              emitter.endAfterError()
+            } else {
+              emitter.done()
+            }
+          } else {
+            emitter.done()
+          }
           controller.close()
         } catch (error) {
           // If the idle watchdog tripped, `streamText`'s upstream call was
@@ -864,15 +893,15 @@ export async function POST(req: NextRequest) {
           // our explicit "stopped responding" error so the user sees the
           // diagnostic, not a generic network error.
           if (idleTimedOut) {
-            send({
-              type: 'error',
-              code: 'provider',
-              message: `Model stopped responding after ${Math.round(IDLE_TIMEOUT_MS / 1000)}s of silence (last step finish: ${lastStepFinishReason ?? 'unknown'}).`,
-            })
+            emitter.error(
+              'provider',
+              `Model stopped responding after ${Math.round(IDLE_TIMEOUT_MS / 1000)}s of silence (last step finish: ${lastStepFinishReason ?? 'unknown'}).`,
+            )
           } else {
             const { code, message } = categorizeError(error)
-            send({ type: 'error', code, message })
+            emitter.error(code, message)
           }
+          emitter.endAfterError()
           controller.close()
         } finally {
           if (idleTimer) clearTimeout(idleTimer)
@@ -884,13 +913,17 @@ export async function POST(req: NextRequest) {
       },
     })
 
-    return new Response(sse, {
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache, no-transform',
-        Connection: 'keep-alive',
-      },
-    })
+    const headers: Record<string, string> = {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    }
+    if (format === 'ai-sdk') {
+      // `useChat()` checks this header to confirm the response speaks
+      // the AI SDK v5 UI message stream protocol.
+      headers[AI_SDK_STREAM_HEADER_NAME] = AI_SDK_STREAM_HEADER_VALUE
+    }
+    return new Response(sse, { headers })
   } catch (error) {
     if (error instanceof ProviderUnavailableError) {
       return NextResponse.json(
