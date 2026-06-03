@@ -170,8 +170,8 @@ and (c) suggestions don't exist on the service backends yet.
 
 | Sub-phase | Backend | Adds | Status |
 |---|---|---|---|
-| **B.1a** | agent-ts | reasoning channel (built-in AI SDK part) + format-aware tool_image (`data-tool-image`) | ✅ this PR |
-| **B.1b** | agent-py | reasoning channel + `data-tool-image` (requires switching from `text_stream` to the raw event iterator) | pending |
+| **B.1a** | agent-ts | reasoning channel (built-in AI SDK part) + format-aware tool_image (`data-tool-image`) | ✅ PR #148 |
+| **B.1b** | agent-py | reasoning channel (refactored `_stream_text_deltas` → `_stream_channel_deltas` to walk raw events; `data-tool-image` is N/A — agent-py doesn't emit a `tool_image` frame today and `generateImage` persistence is a separate gap) | ✅ this PR |
 | **B.1c** | Next.js inline route | parallel AI-SDK formatter (route is custom-only today) emitting text + tool + reasoning + `data-tool-image` | pending |
 | **B.1d** | all three | `data-suggestions` (requires implementing follow-up generation on the service backends; Next.js inline already has it on the custom path) | pending |
 

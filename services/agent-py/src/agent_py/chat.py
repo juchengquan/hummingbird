@@ -131,12 +131,38 @@ async def _stream_text_deltas(
     client: AsyncAnthropicClient,
     config: ChatConfig,
 ) -> AsyncIterator[str | BaseException]:
-    """Open one Anthropic `messages.stream(...)` and yield text deltas
-    until completion. Catches and yields the exception (instead of
-    raising) so the caller can decide how to translate it into the
-    chosen wire format without losing the partial output it already
-    emitted. The yielded item is either a delta string or an
-    exception — caller pattern-matches with `isinstance`."""
+    """Back-compat wrapper around `_stream_channel_deltas` that
+    yields only the text channel. Existing callers that don't care
+    about reasoning continue to work without churn.
+
+    The yielded item is either a delta string or an exception —
+    caller pattern-matches with `isinstance`."""
+    async for channel, item in _stream_channel_deltas(client=client, config=config):
+        if isinstance(item, BaseException):
+            yield item
+            return
+        if channel == "text":
+            yield item
+
+
+async def _stream_channel_deltas(
+    *,
+    client: AsyncAnthropicClient,
+    config: ChatConfig,
+) -> AsyncIterator[tuple[str, str | BaseException]]:
+    """Open one Anthropic `messages.stream(...)` and yield
+    `(channel, delta)` tuples for both text and thinking content.
+
+    Channels:
+      - `"text"` — `text_delta` events; the model's user-visible answer.
+      - `"reasoning"` — `thinking_delta` events; extended-thinking
+        tokens. Only flows when the model + request enable thinking.
+
+    On any exception, yields `("error", exc)` and returns; callers
+    pattern-match with `isinstance(item, BaseException)`. Using a raw
+    event walk rather than the high-level `stream.text_stream` is
+    what lets us see the reasoning channel — the helper filters it
+    out. PLAN-useChat-adoption.md Phase B.1b."""
     anthropic_messages = [{"role": m.role, "content": m.content} for m in config.messages]
     stream_kwargs: dict[str, Any] = {
         "model": config.model,
@@ -148,11 +174,39 @@ async def _stream_text_deltas(
 
     try:
         async with client.messages.stream(**stream_kwargs) as stream:
-            async for delta in stream.text_stream:
-                yield delta
+            async for event in stream:  # type: ignore[attr-defined]
+                pair = _delta_pair_from_event(event)
+                if pair is not None:
+                    yield pair
     except Exception as exc:  # broad — see chat_stream's catch
         logger.warning("chat.stream_failed", error=str(exc), model=config.model)
-        yield exc
+        yield ("error", exc)
+
+
+def _delta_pair_from_event(event: Any) -> tuple[str, str] | None:
+    """Extract a `(channel, delta)` pair from a raw Anthropic stream
+    event, or None when the event isn't a content-delta we care about.
+
+    Walks duck-typed because the SDK uses pydantic models and tests
+    pass synthetic objects; both shapes carry `type` and `delta` /
+    `delta.thinking` / `delta.text` attributes."""
+    if getattr(event, "type", None) != "content_block_delta":
+        return None
+    delta = getattr(event, "delta", None)
+    if delta is None:
+        return None
+    delta_type = getattr(delta, "type", None)
+    if delta_type == "text_delta":
+        text = getattr(delta, "text", None)
+        if isinstance(text, str) and text:
+            return ("text", text)
+        return None
+    if delta_type == "thinking_delta":
+        thinking = getattr(delta, "thinking", None)
+        if isinstance(thinking, str) and thinking:
+            return ("reasoning", thinking)
+        return None
+    return None
 
 
 async def chat_stream(
@@ -165,6 +219,10 @@ async def chat_stream(
 
     The generator emits:
       - `{"type": "text", "value": <delta>}` for each text delta.
+      - `{"type": "reasoning", "value": <delta>}` for extended-
+        thinking deltas. The chat panel consumer already handles
+        this frame type; previously thinking deltas were silently
+        dropped by `_stream_text_deltas`'s text-only filter.
       - `{"type": "error", "code": <stable>, "message": <str>}` on
         any exception; the generator returns after.
       - `{"type": "done"}` as the final frame on a normal completion.
@@ -172,7 +230,7 @@ async def chat_stream(
     Idempotent: each call streams its own `messages.stream` context.
     No DB writes — chat turns are ephemeral by design.
     """
-    async for item in _stream_text_deltas(client=client, config=config):
+    async for channel, item in _stream_channel_deltas(client=client, config=config):
         if isinstance(item, BaseException):
             # Single broad surface — the Anthropic SDK raises a handful
             # of distinct exception types we don't want to wire into
@@ -189,7 +247,10 @@ async def chat_stream(
                 }
             )
             return
-        yield sse_frame({"type": "text", "value": item})
+        if channel == "reasoning":
+            yield sse_frame({"type": "reasoning", "value": item})
+        else:
+            yield sse_frame({"type": "text", "value": item})
 
     yield sse_frame({"type": "done"})
 
@@ -204,39 +265,73 @@ async def chat_stream_ai_sdk(
     own writer (`JsonToSseTransformStream` in `ai/dist/index.js`) so
     `useChat()` consumes the stream natively.
 
-    Frame sequence on a normal completion:
+    Frame sequence on a normal completion (text-only):
         start → start-step → text-start → text-delta… → text-end →
         finish-step → finish → `[DONE]` terminator.
 
-    On an exception mid-stream: emit whatever text-delta we already
-    produced, then `text-end` + `error` + `[DONE]`. `finish` is
-    intentionally skipped on the error path — mirrors the AI SDK's
-    behaviour and lets `useChat()` distinguish completion from
-    failure.
+    With reasoning interleaved (PLAN-useChat-adoption.md Phase B.1b):
+        start → start-step → reasoning-start → reasoning-delta… →
+        reasoning-end → text-start → text-delta… → text-end →
+        finish-step → finish → `[DONE]`.
 
-    `text_id` is a per-message UUID — the SDK requires text-delta /
-    text-end to reference the matching text-start `id`. We use one id
-    for the whole assistant message; multi-block streaming (e.g.
-    reasoning + text channels) would need separate ids per channel.
+    The model can switch channels mid-step; we close the previous
+    channel's block before opening the next so `useChat()` sees
+    matched start/end pairs per id.
+
+    On an exception mid-stream: close any open block, then
+    `error` + `[DONE]`. `finish` is intentionally skipped on the
+    error path — mirrors the AI SDK's behaviour and lets `useChat()`
+    distinguish completion from failure.
     """
-    text_id = uuid.uuid4().hex
-
     yield sse_frame({"type": "start"})
     yield sse_frame({"type": "start-step"})
-    yield sse_frame({"type": "text-start", "id": text_id})
 
-    text_started = True
-    async for item in _stream_text_deltas(client=client, config=config):
+    active_text_id: str | None = None
+    active_reasoning_id: str | None = None
+
+    def close_text() -> list[str]:
+        nonlocal active_text_id
+        if active_text_id is None:
+            return []
+        frame = sse_frame({"type": "text-end", "id": active_text_id})
+        active_text_id = None
+        return [frame]
+
+    def close_reasoning() -> list[str]:
+        nonlocal active_reasoning_id
+        if active_reasoning_id is None:
+            return []
+        frame = sse_frame({"type": "reasoning-end", "id": active_reasoning_id})
+        active_reasoning_id = None
+        return [frame]
+
+    def close_all() -> list[str]:
+        return close_text() + close_reasoning()
+
+    async for channel, item in _stream_channel_deltas(client=client, config=config):
         if isinstance(item, BaseException):
-            if text_started:
-                yield sse_frame({"type": "text-end", "id": text_id})
-                text_started = False
+            for frame in close_all():
+                yield frame
             yield sse_frame({"type": "error", "errorText": str(item) or "Chat stream failed."})
             yield "data: [DONE]\n\n"
             return
-        yield sse_frame({"type": "text-delta", "id": text_id, "delta": item})
+        if channel == "reasoning":
+            for frame in close_text():
+                yield frame
+            if active_reasoning_id is None:
+                active_reasoning_id = uuid.uuid4().hex
+                yield sse_frame({"type": "reasoning-start", "id": active_reasoning_id})
+            yield sse_frame({"type": "reasoning-delta", "id": active_reasoning_id, "delta": item})
+        else:
+            for frame in close_reasoning():
+                yield frame
+            if active_text_id is None:
+                active_text_id = uuid.uuid4().hex
+                yield sse_frame({"type": "text-start", "id": active_text_id})
+            yield sse_frame({"type": "text-delta", "id": active_text_id, "delta": item})
 
-    yield sse_frame({"type": "text-end", "id": text_id})
+    for frame in close_all():
+        yield frame
     yield sse_frame({"type": "finish-step"})
     yield sse_frame({"type": "finish"})
     yield "data: [DONE]\n\n"
@@ -357,8 +452,15 @@ async def chat_stream_with_tools(
             async with client.messages.stream(
                 **_build_stream_kwargs(config, messages, tools_param)
             ) as stream:
-                async for delta in stream.text_stream:
-                    yield sse_frame({"type": "text", "value": delta})
+                async for event in stream:  # type: ignore[attr-defined]
+                    pair = _delta_pair_from_event(event)
+                    if pair is None:
+                        continue
+                    channel, delta = pair
+                    if channel == "reasoning":
+                        yield sse_frame({"type": "reasoning", "value": delta})
+                    else:
+                        yield sse_frame({"type": "text", "value": delta})
                 final_message = await stream.get_final_message()
         except Exception as exc:
             logger.warning(
@@ -463,15 +565,60 @@ async def chat_stream_with_tools_ai_sdk(
 
     for _step in range(config.max_steps):
         yield sse_frame({"type": "start-step"})
-        text_id = uuid.uuid4().hex
-        yield sse_frame({"type": "text-start", "id": text_id})
+
+        # Channel state for THIS step. Each step opens its own
+        # text/reasoning blocks; we close whichever is open before
+        # the step's tool-call frames (or the finish-step boundary).
+        active_text_id: str | None = None
+        active_reasoning_id: str | None = None
+
+        def close_text() -> list[str]:
+            nonlocal active_text_id
+            if active_text_id is None:
+                return []
+            frame = sse_frame({"type": "text-end", "id": active_text_id})
+            active_text_id = None
+            return [frame]
+
+        def close_reasoning() -> list[str]:
+            nonlocal active_reasoning_id
+            if active_reasoning_id is None:
+                return []
+            frame = sse_frame({"type": "reasoning-end", "id": active_reasoning_id})
+            active_reasoning_id = None
+            return [frame]
 
         try:
             async with client.messages.stream(
                 **_build_stream_kwargs(config, messages, tools_param)
             ) as stream:
-                async for delta in stream.text_stream:
-                    yield sse_frame({"type": "text-delta", "id": text_id, "delta": delta})
+                async for event in stream:  # type: ignore[attr-defined]
+                    pair = _delta_pair_from_event(event)
+                    if pair is None:
+                        continue
+                    channel, delta = pair
+                    if channel == "reasoning":
+                        for frame in close_text():
+                            yield frame
+                        if active_reasoning_id is None:
+                            active_reasoning_id = uuid.uuid4().hex
+                            yield sse_frame({"type": "reasoning-start", "id": active_reasoning_id})
+                        yield sse_frame(
+                            {
+                                "type": "reasoning-delta",
+                                "id": active_reasoning_id,
+                                "delta": delta,
+                            }
+                        )
+                    else:
+                        for frame in close_reasoning():
+                            yield frame
+                        if active_text_id is None:
+                            active_text_id = uuid.uuid4().hex
+                            yield sse_frame({"type": "text-start", "id": active_text_id})
+                        yield sse_frame(
+                            {"type": "text-delta", "id": active_text_id, "delta": delta}
+                        )
                 final_message = await stream.get_final_message()
         except Exception as exc:
             logger.warning(
@@ -479,12 +626,18 @@ async def chat_stream_with_tools_ai_sdk(
                 error=str(exc),
                 model=config.model,
             )
-            yield sse_frame({"type": "text-end", "id": text_id})
+            for frame in close_text():
+                yield frame
+            for frame in close_reasoning():
+                yield frame
             yield sse_frame({"type": "error", "errorText": str(exc) or "Chat stream failed."})
             yield "data: [DONE]\n\n"
             return
 
-        yield sse_frame({"type": "text-end", "id": text_id})
+        for frame in close_text():
+            yield frame
+        for frame in close_reasoning():
+            yield frame
 
         blocks = _coerce_content_blocks(final_message)
         tool_use_blocks = [b for b in blocks if b.get("type") == "tool_use"]

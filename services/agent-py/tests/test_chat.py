@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -46,12 +47,41 @@ def test_sse_frame_compact_json() -> None:
 # --- chat_stream ------------------------------------------------------
 
 
+def _text_event(text: str) -> SimpleNamespace:
+    """Synthetic Anthropic `content_block_delta` event with a
+    `text_delta` payload. Matches the shape `_delta_pair_from_event`
+    walks duck-typed."""
+    return SimpleNamespace(
+        type="content_block_delta",
+        delta=SimpleNamespace(type="text_delta", text=text),
+    )
+
+
+def _thinking_event(text: str) -> SimpleNamespace:
+    """Synthetic Anthropic `content_block_delta` event with a
+    `thinking_delta` payload (extended thinking)."""
+    return SimpleNamespace(
+        type="content_block_delta",
+        delta=SimpleNamespace(type="thinking_delta", thinking=text),
+    )
+
+
 class _FakeStream:
     """Stand-in for the Anthropic SDK's `messages.stream` async context
-    manager. Yields a sequence of text deltas, then completes."""
+    manager. Yields a sequence of synthetic events (text or thinking),
+    then completes."""
 
-    def __init__(self, deltas: list[str], raises: Exception | None = None) -> None:
-        self._deltas = deltas
+    def __init__(
+        self,
+        events: list[SimpleNamespace] | None = None,
+        raises: Exception | None = None,
+        *,
+        # Back-compat for tests that pass plain text strings.
+        deltas: list[str] | None = None,
+    ) -> None:
+        if events is None and deltas is not None:
+            events = [_text_event(d) for d in deltas]
+        self._events = events or []
         self._raises = raises
 
     async def __aenter__(self) -> _FakeStream:
@@ -60,15 +90,27 @@ class _FakeStream:
     async def __aexit__(self, *args: Any) -> None:
         return None
 
-    @property
-    def text_stream(self) -> AsyncIterator[str]:
-        return self._iter()
+    def __aiter__(self) -> AsyncIterator[SimpleNamespace]:
+        return self._iter_events()
 
-    async def _iter(self) -> AsyncIterator[str]:
+    async def _iter_events(self) -> AsyncIterator[SimpleNamespace]:
         if self._raises is not None:
             raise self._raises
-        for d in self._deltas:
-            yield d
+        for e in self._events:
+            yield e
+
+    @property
+    def text_stream(self) -> AsyncIterator[str]:
+        return self._iter_text()
+
+    async def _iter_text(self) -> AsyncIterator[str]:
+        # Back-compat for any test that still uses `text_stream`.
+        if self._raises is not None:
+            raise self._raises
+        for e in self._events:
+            delta = getattr(e, "delta", None)
+            if getattr(delta, "type", None) == "text_delta":
+                yield getattr(delta, "text", "")
 
 
 class _FakeMessages:
@@ -83,7 +125,7 @@ class _FakeMessages:
 
 class _FakeClient:
     def __init__(self, deltas: list[str], raises: Exception | None = None) -> None:
-        self.messages = _FakeMessages(_FakeStream(deltas, raises))
+        self.messages = _FakeMessages(_FakeStream(deltas=deltas, raises=raises))
 
 
 def _config(model: str = "claude-3-5-sonnet-20241022", system: str | None = None) -> ChatConfig:
@@ -214,15 +256,16 @@ async def test_ai_sdk_stream_emits_error_then_done_no_finish() -> None:
     frames = [f async for f in chat_stream_ai_sdk(client=client, config=_config())]
     payloads = _parse_ai_sdk_frames(frames)
     types = [p["type"] if isinstance(p, dict) else p for p in payloads]
+    # Pre-delta error: no text-start/text-end emitted (we open the
+    # text channel lazily on the first delta). Mirrors agent-ts's
+    # `chatStreamAiSdk` shape for the same case.
     assert types == [
         "start",
         "start-step",
-        "text-start",
-        "text-end",
         "error",
         "[DONE]",
     ]
-    error_payload = payloads[4]
+    error_payload = payloads[2]
     assert error_payload["errorText"] == "rate limited"
 
 
@@ -245,12 +288,11 @@ async def test_ai_sdk_stream_error_after_partial_text() -> None:
         async def __aexit__(self, *args: Any) -> None:
             return None
 
-        @property
-        def text_stream(self) -> AsyncIterator[str]:
+        def __aiter__(self) -> AsyncIterator[SimpleNamespace]:
             return self._iter()
 
-        async def _iter(self) -> AsyncIterator[str]:
-            yield "first chunk "
+        async def _iter(self) -> AsyncIterator[SimpleNamespace]:
+            yield _text_event("first chunk ")
             raise RuntimeError("died mid-stream")
 
     class _PartialMessages:
@@ -318,3 +360,132 @@ def test_resolve_client_passes_base_url_override(monkeypatch: pytest.MonkeyPatch
         m.setitem(sys.modules, "anthropic", MagicMock(AsyncAnthropic=fake))
         resolve_anthropic_client()
     fake.assert_called_once_with(api_key="sk-test", base_url="https://proxy.example.com")
+
+
+# --- reasoning channel (PLAN-useChat-adoption.md Phase B.1b) -----------
+
+
+class _EventClient:
+    """Variant of `_FakeClient` that takes pre-built events instead of
+    string deltas, so reasoning vs. text channels can be mixed."""
+
+    def __init__(self, events: list[SimpleNamespace]) -> None:
+        self.messages = _FakeMessages(_FakeStream(events=events))
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_emits_reasoning_frames() -> None:
+    """`chat_stream` (custom format) emits `{type: "reasoning"}` for
+    thinking deltas and `{type: "text"}` for text deltas, matching
+    what the chat panel consumer expects."""
+    events = [
+        _thinking_event("Let me "),
+        _thinking_event("think…"),
+        _text_event("The answer is 42."),
+    ]
+    client = _EventClient(events)
+    frames = [f async for f in chat_stream(client=client, config=_config())]
+    payloads = [json.loads(f.removeprefix("data: ").rstrip()) for f in frames]
+    types = [p["type"] for p in payloads]
+    assert types == ["reasoning", "reasoning", "text", "done"]
+    assert payloads[0] == {"type": "reasoning", "value": "Let me "}
+    assert payloads[2] == {"type": "text", "value": "The answer is 42."}
+
+
+@pytest.mark.asyncio
+async def test_ai_sdk_stream_emits_reasoning_lifecycle() -> None:
+    """`chat_stream_ai_sdk` emits the AI SDK's first-class
+    `reasoning-start` / `reasoning-delta` / `reasoning-end` parts with
+    stable per-block ids, and switches cleanly to the text channel."""
+    events = [
+        _thinking_event("alpha "),
+        _thinking_event("beta"),
+        _text_event("gamma"),
+    ]
+    client = _EventClient(events)
+    frames = [f async for f in chat_stream_ai_sdk(client=client, config=_config())]
+    payloads = _parse_ai_sdk_frames(frames)
+    types = [p["type"] if isinstance(p, dict) else p for p in payloads]
+    assert types == [
+        "start",
+        "start-step",
+        "reasoning-start",
+        "reasoning-delta",
+        "reasoning-delta",
+        "reasoning-end",
+        "text-start",
+        "text-delta",
+        "text-end",
+        "finish-step",
+        "finish",
+        "[DONE]",
+    ]
+    # Reasoning block id is stable across start/delta/end.
+    r_start = payloads[2]
+    r_delta = payloads[3]
+    r_end = payloads[5]
+    assert isinstance(r_start, dict) and isinstance(r_delta, dict) and isinstance(r_end, dict)
+    assert r_delta["id"] == r_start["id"]
+    assert r_end["id"] == r_start["id"]
+    assert r_delta["delta"] == "alpha "
+
+
+@pytest.mark.asyncio
+async def test_ai_sdk_stream_closes_text_before_reasoning_resumes() -> None:
+    """If the model interleaves channels (text → thinking → text), we
+    close the previous channel's block before opening the next so
+    `useChat()` sees matched start/end pairs per id."""
+    events = [
+        _text_event("first text"),
+        _thinking_event("paused to think"),
+        _text_event("final text"),
+    ]
+    client = _EventClient(events)
+    frames = [f async for f in chat_stream_ai_sdk(client=client, config=_config())]
+    payloads = _parse_ai_sdk_frames(frames)
+    types = [p["type"] if isinstance(p, dict) else p for p in payloads]
+    # Each channel-switch is preceded by an end frame for the
+    # outgoing channel.
+    assert types == [
+        "start",
+        "start-step",
+        "text-start",
+        "text-delta",
+        "text-end",  # closed before reasoning opens
+        "reasoning-start",
+        "reasoning-delta",
+        "reasoning-end",  # closed before text reopens
+        "text-start",  # new id for the second text block
+        "text-delta",
+        "text-end",
+        "finish-step",
+        "finish",
+        "[DONE]",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_delta_pair_from_event_filters_unknown() -> None:
+    """The duck-typed helper should ignore events that aren't a
+    `content_block_delta` or whose delta type is something we don't
+    surface (input_json_delta, citations_delta, signature_delta)."""
+    from agent_py.chat import _delta_pair_from_event
+
+    # Non-delta event types.
+    assert _delta_pair_from_event(SimpleNamespace(type="message_start")) is None
+    assert _delta_pair_from_event(SimpleNamespace(type="content_block_stop")) is None
+    # Delta event but unrecognised inner type.
+    other = SimpleNamespace(
+        type="content_block_delta",
+        delta=SimpleNamespace(type="input_json_delta", partial_json="{}"),
+    )
+    assert _delta_pair_from_event(other) is None
+    # Empty text is dropped (no SSE noise for blank deltas).
+    empty = SimpleNamespace(
+        type="content_block_delta",
+        delta=SimpleNamespace(type="text_delta", text=""),
+    )
+    assert _delta_pair_from_event(empty) is None
+    # Happy paths.
+    assert _delta_pair_from_event(_text_event("hi")) == ("text", "hi")
+    assert _delta_pair_from_event(_thinking_event("hmm")) == ("reasoning", "hmm")

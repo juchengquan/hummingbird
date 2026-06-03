@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -48,6 +49,13 @@ class _Step:
         self.raises = raises
 
 
+def _text_event(text: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        type="content_block_delta",
+        delta=SimpleNamespace(type="text_delta", text=text),
+    )
+
+
 class _FakeStream:
     def __init__(self, step: _Step) -> None:
         self._step = step
@@ -58,11 +66,21 @@ class _FakeStream:
     async def __aexit__(self, *args: Any) -> None:
         return None
 
+    def __aiter__(self) -> AsyncIterator[SimpleNamespace]:
+        return self._iter_events()
+
+    async def _iter_events(self) -> AsyncIterator[SimpleNamespace]:
+        if self._step.raises is not None:
+            raise self._step.raises
+        for d in self._step.deltas:
+            yield _text_event(d)
+
     @property
     def text_stream(self) -> AsyncIterator[str]:
-        return self._iter()
+        return self._iter_text()
 
-    async def _iter(self) -> AsyncIterator[str]:
+    async def _iter_text(self) -> AsyncIterator[str]:
+        # Back-compat; not used by the production code anymore.
         if self._step.raises is not None:
             raise self._step.raises
         for d in self._step.deltas:
@@ -421,11 +439,12 @@ async def test_with_tools_ai_sdk_upstream_exception_closes_text_then_error() -> 
     ]
     payloads = _parse_ai_sdk_frames(frames)
     types = [p["type"] if isinstance(p, dict) else p for p in payloads]
+    # Pre-delta error: no text-start/text-end emitted (channels open
+    # lazily on the first delta). Matches agent-ts's
+    # `chatStreamAiSdk` and the text-only `chat_stream_ai_sdk` path.
     assert types == [
         "start",
         "start-step",
-        "text-start",
-        "text-end",
         "error",
         "[DONE]",
     ]
