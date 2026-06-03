@@ -100,10 +100,19 @@ export function sseFrame(payload: unknown): string {
 
 /** Optional per-frame interceptor — invoked once per emitted SSE
  *  frame BEFORE it's yielded. The route uses this to fire a
- *  `tool_image` frame after a `generateImage` tool result (Minimax
- *  URL persistence, follow-up #5). Returning frames are concatenated
- *  to the output stream after the original frame. */
-export type FrameInterceptor = (frame: ToolResultFrame) => AsyncIterable<string>
+ *  `tool_image` (custom) or `data-tool-image` (AI SDK) frame after
+ *  a `generateImage` tool result (Minimax URL persistence,
+ *  follow-up #5). Returning frames are concatenated to the output
+ *  stream after the original frame.
+ *
+ *  `format` lets the interceptor emit the shape the consumer
+ *  expects — `tool_image` rides on our custom envelope, while
+ *  `data-tool-image` is the AI SDK v5 data-part equivalent
+ *  (PLAN-useChat-adoption.md Phase B.1). */
+export type FrameInterceptor = (
+  frame: ToolResultFrame,
+  format: ChatFormat,
+) => AsyncIterable<string>
 
 /** Subset of the custom-format `tool_result` frame, surfaced to
  *  interceptors. The route uses this for the `generateImage` →
@@ -141,6 +150,18 @@ export async function* chatStream(
     for await (const part of stream.fullStream) {
       if (part.type === "text-delta" && part.text) {
         yield sseFrame({ type: "text", value: part.text })
+      } else if (
+        part.type === "reasoning-delta" &&
+        typeof (part as { text?: string }).text === "string" &&
+        (part as { text?: string }).text!.length > 0
+      ) {
+        // Mirrors the Next.js inline route's reasoning emission —
+        // the chat panel's consumer (`use-chat-send.ts`) appends
+        // these into the message's reasoning block.
+        yield sseFrame({
+          type: "reasoning",
+          value: (part as { text: string }).text,
+        })
       } else if (part.type === "tool-call") {
         const p = part as {
           toolCallId?: string
@@ -172,12 +193,15 @@ export async function* chatStream(
           ...(isError ? { isError: true } : {}),
         })
         if (options.onToolResult) {
-          for await (const extra of options.onToolResult({
-            type: "tool_result",
-            id,
-            name,
-            output,
-          })) {
+          for await (const extra of options.onToolResult(
+            {
+              type: "tool_result",
+              id,
+              name,
+              output,
+            },
+            "custom",
+          )) {
             yield extra
           }
         }
@@ -228,9 +252,10 @@ export async function* chatStreamAiSdk(
       : {}),
   })
 
-  // Track the active text block id so we can close it cleanly when
-  // a step boundary or tool call lands.
+  // Track the active text + reasoning block ids so we can close
+  // each cleanly when the model switches channels or a step ends.
   let activeTextId: string | null = null
+  let activeReasoningId: string | null = null
   const openText = (): string => {
     if (activeTextId) return activeTextId
     const id = crypto.randomUUID().replace(/-/g, "")
@@ -243,17 +268,51 @@ export async function* chatStreamAiSdk(
     activeTextId = null
     return out
   }
+  const closeReasoning = (): string[] => {
+    if (!activeReasoningId) return []
+    const out = [sseFrame({ type: "reasoning-end", id: activeReasoningId })]
+    activeReasoningId = null
+    return out
+  }
+  /** Close any open channel (text OR reasoning) before emitting a
+   *  step boundary, tool call, error, or finish. The AI SDK's
+   *  `useChat` consumer expects matched start/end pairs per id. */
+  const closeAllChannels = (): string[] => [
+    ...closeText(),
+    ...closeReasoning(),
+  ]
 
   try {
     for await (const part of stream.fullStream) {
       if (part.type === "text-delta" && part.text) {
+        for (const f of closeReasoning()) yield f
         if (!activeTextId) {
           const id = openText()
           yield sseFrame({ type: "text-start", id })
         }
         yield sseFrame({ type: "text-delta", id: activeTextId!, delta: part.text })
-      } else if (part.type === "tool-call") {
+      } else if (
+        part.type === "reasoning-delta" &&
+        typeof (part as { text?: string }).text === "string" &&
+        (part as { text?: string }).text!.length > 0
+      ) {
+        // Reasoning channel — mirror the AI SDK's first-class
+        // reasoning UI part. The custom format collapses both
+        // channels into a single bubble; in AI SDK v5 they're
+        // separate parts that `useChat` renders distinctly.
         for (const f of closeText()) yield f
+        if (!activeReasoningId) {
+          const id = crypto.randomUUID().replace(/-/g, "")
+          activeReasoningId = id
+          yield sseFrame({ type: "reasoning-start", id })
+        }
+        yield sseFrame({
+          type: "reasoning-delta",
+          id: activeReasoningId,
+          delta: (part as { text: string }).text,
+        })
+      } else if (part.type === "tool-call") {
+        for (const f of closeAllChannels()) yield f
         const p = part as {
           toolCallId?: string
           toolName?: string
@@ -282,17 +341,20 @@ export async function* chatStreamAiSdk(
           ...(isError ? { errorText: summariseToolOutput(output) } : {}),
         })
         if (options.onToolResult) {
-          for await (const extra of options.onToolResult({
-            type: "tool_result",
-            id,
-            name,
-            output,
-          })) {
+          for await (const extra of options.onToolResult(
+            {
+              type: "tool_result",
+              id,
+              name,
+              output,
+            },
+            "ai-sdk",
+          )) {
             yield extra
           }
         }
       } else if (part.type === "error") {
-        for (const f of closeText()) yield f
+        for (const f of closeAllChannels()) yield f
         yield sseFrame({
           type: "error",
           errorText:
@@ -303,7 +365,7 @@ export async function* chatStreamAiSdk(
       }
     }
   } catch (err) {
-    for (const f of closeText()) yield f
+    for (const f of closeAllChannels()) yield f
     yield sseFrame({
       type: "error",
       errorText: err instanceof Error ? err.message : String(err),
@@ -312,7 +374,7 @@ export async function* chatStreamAiSdk(
     return
   }
 
-  for (const f of closeText()) yield f
+  for (const f of closeAllChannels()) yield f
   yield sseFrame({ type: "finish-step" })
   yield sseFrame({ type: "finish" })
   yield "data: [DONE]\n\n"

@@ -132,7 +132,7 @@ describe("buildToolImageInterceptor", () => {
       name: "webSearch",
       output: { results: [] },
     }
-    const frames = await collectFrames(interceptor(frame))
+    const frames = await collectFrames(interceptor(frame, "custom"))
     expect(frames).toEqual([])
   })
 
@@ -144,7 +144,7 @@ describe("buildToolImageInterceptor", () => {
       name: "generateImage",
       output: { ok: false, error: "rate_limit" },
     }
-    const frames = await collectFrames(interceptor(frame))
+    const frames = await collectFrames(interceptor(frame, "custom"))
     expect(frames).toEqual([])
   })
 
@@ -165,7 +165,7 @@ describe("buildToolImageInterceptor", () => {
       },
     }
 
-    const frames = await collectFrames(interceptor(frame))
+    const frames = await collectFrames(interceptor(frame, "custom"))
     expect(frames).toHaveLength(1)
     const out = frames[0] as {
       type: string
@@ -218,7 +218,7 @@ describe("buildToolImageInterceptor", () => {
         ],
       },
     }
-    const frames = await collectFrames(interceptor(frame))
+    const frames = await collectFrames(interceptor(frame, "custom"))
     const out = frames[0] as {
       images: Array<{ url: string; storagePath?: string }>
     }
@@ -241,7 +241,7 @@ describe("buildToolImageInterceptor", () => {
         ],
       },
     }
-    const frames = await collectFrames(interceptor(frame))
+    const frames = await collectFrames(interceptor(frame, "custom"))
     const out = frames[0] as {
       images: Array<{ url: string; storagePath?: string }>
     }
@@ -266,7 +266,7 @@ describe("buildToolImageInterceptor", () => {
         ],
       },
     }
-    const frames = await collectFrames(interceptor(frame))
+    const frames = await collectFrames(interceptor(frame, "custom"))
     const out = frames[0] as { images: Array<{ url: string }> }
     expect(out.images[0]?.url.startsWith("data:image/png;base64,")).toBe(true)
   })
@@ -288,7 +288,7 @@ describe("buildToolImageInterceptor — error paths", () => {
         images: [{ id: "x", width: 1, height: 1, format: "png" }],
       },
     }
-    const frames = await collectFrames(interceptor(frame))
+    const frames = await collectFrames(interceptor(frame, "custom"))
     expect(frames).toEqual([])
   })
 
@@ -307,7 +307,7 @@ describe("buildToolImageInterceptor — error paths", () => {
         ],
       },
     }
-    const frames = await collectFrames(interceptor(frame))
+    const frames = await collectFrames(interceptor(frame, "custom"))
     const out = frames[0] as {
       mode: string
       images: Array<{ mode: string; prompt: string }>
@@ -315,5 +315,61 @@ describe("buildToolImageInterceptor — error paths", () => {
     expect(out.mode).toBe("i2i")
     expect(out.images[0]?.mode).toBe("i2i")
     expect(out.images[0]?.prompt).toBe("remix")
+  })
+})
+
+describe("buildToolImageInterceptor — AI SDK format (B.1)", () => {
+  test("emits data-tool-image part with {id, mode, images} payload", async () => {
+    installFetchStub()
+    const interceptor = buildToolImageInterceptor({ userId: "u-1" })
+    const frame: ToolResultFrame = {
+      type: "tool_result",
+      id: "call-ai-1",
+      name: "generateImage",
+      output: {
+        ok: true,
+        mode: "t2i",
+        prompt: "a bird",
+        images: [
+          { id: "x", url: "https://cdn.minimax/img.png", width: 512, height: 512, format: "png" },
+        ],
+      },
+    }
+    const frames = await collectFrames(interceptor(frame, "ai-sdk"))
+    expect(frames).toHaveLength(1)
+    const out = frames[0] as {
+      type: string
+      id: string
+      data: { id: string; mode: string; images: Array<{ id: string; url: string }> }
+    }
+    expect(out.type).toBe("data-tool-image")
+    expect(out.id).toBe("call-ai-1")
+    expect(out.data.mode).toBe("t2i")
+    expect(out.data.images).toHaveLength(1)
+    expect(out.data.images[0]?.url).toContain(SUPABASE_URL)
+  })
+
+  test("ai-sdk format ignores non-generateImage tool results", async () => {
+    const interceptor = buildToolImageInterceptor({ userId: "u-1" })
+    const frame: ToolResultFrame = {
+      type: "tool_result",
+      id: "call-ws",
+      name: "webSearch",
+      output: { results: [] },
+    }
+    const frames = await collectFrames(interceptor(frame, "ai-sdk"))
+    expect(frames).toEqual([])
+  })
+
+  test("ai-sdk format skips when ok:false (same gate as custom)", async () => {
+    const interceptor = buildToolImageInterceptor({ userId: "u-1" })
+    const frame: ToolResultFrame = {
+      type: "tool_result",
+      id: "call-bad",
+      name: "generateImage",
+      output: { ok: false, error: "rate_limit" },
+    }
+    const frames = await collectFrames(interceptor(frame, "ai-sdk"))
+    expect(frames).toEqual([])
   })
 })

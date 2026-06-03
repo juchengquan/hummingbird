@@ -135,6 +135,115 @@ describe("chatStreamAiSdk — AI SDK v5 format", () => {
   })
 })
 
+/** Mock model that emits a reasoning block then a text block.
+ *  Mirrors what Anthropic's extended-thinking models stream. */
+function makeReasoningThenTextModel(opts: {
+  reasoning: string[]
+  text: string[]
+}): MockLanguageModelV2 {
+  return new MockLanguageModelV2({
+    doStream: async () => ({
+      stream: simulateReadableStream({
+        chunks: [
+          { type: "stream-start", warnings: [] },
+          { type: "reasoning-start", id: "r1" },
+          ...opts.reasoning.map((d) => ({
+            type: "reasoning-delta" as const,
+            id: "r1",
+            delta: d,
+          })),
+          { type: "reasoning-end", id: "r1" },
+          { type: "text-start", id: "t1" },
+          ...opts.text.map((d) => ({
+            type: "text-delta" as const,
+            id: "t1",
+            delta: d,
+          })),
+          { type: "text-end", id: "t1" },
+          {
+            type: "finish" as const,
+            finishReason: "stop" as const,
+            usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+          },
+        ],
+      }),
+    }),
+  })
+}
+
+describe("chatStream — reasoning channel (B.1)", () => {
+  test("emits {type:'reasoning',value} alongside text frames", async () => {
+    const model = makeReasoningThenTextModel({
+      reasoning: ["Let me ", "think…"],
+      text: ["The answer ", "is 42."],
+    })
+    const frames = await collect(chatStream(model, baseConfig))
+    const payloads = parseCustom(frames)
+    const types = payloads.map((p) => p.type)
+    // Reasoning frames precede text frames.
+    expect(types).toEqual([
+      "reasoning",
+      "reasoning",
+      "text",
+      "text",
+      "done",
+    ])
+    const reasonings = payloads.filter((p) => p.type === "reasoning")
+    expect(reasonings.map((r) => r.value)).toEqual(["Let me ", "think…"])
+  })
+})
+
+describe("chatStreamAiSdk — reasoning channel (B.1)", () => {
+  test("emits reasoning-start / reasoning-delta / reasoning-end with matched id", async () => {
+    const model = makeReasoningThenTextModel({
+      reasoning: ["alpha ", "beta"],
+      text: ["gamma"],
+    })
+    const frames = await collect(chatStreamAiSdk(model, baseConfig))
+    const payloads = parseAiSdk(frames)
+    const types = payloads.map((p) => (typeof p === "string" ? p : p.type))
+    expect(types).toEqual([
+      "start",
+      "start-step",
+      "reasoning-start",
+      "reasoning-delta",
+      "reasoning-delta",
+      "reasoning-end",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "finish-step",
+      "finish",
+      "[DONE]",
+    ])
+    // The reasoning channel id is stable across start/delta/end.
+    const rStart = payloads[2] as unknown as { id: string }
+    const rDelta = payloads[3] as unknown as { id: string; delta: string }
+    const rEnd = payloads[5] as unknown as { id: string }
+    expect(rDelta.id).toBe(rStart.id)
+    expect(rEnd.id).toBe(rStart.id)
+    expect(rDelta.delta).toBe("alpha ")
+  })
+
+  test("text-start closes any open reasoning block first", async () => {
+    // Drives reasoning ➜ text in one step. The closeReasoning() call
+    // before text-start emits a reasoning-end before the text channel
+    // opens — `useChat` requires matched start/end pairs per id.
+    const model = makeReasoningThenTextModel({
+      reasoning: ["thinking"],
+      text: ["answer"],
+    })
+    const frames = await collect(chatStreamAiSdk(model, baseConfig))
+    const types = parseAiSdk(frames).map((p) =>
+      typeof p === "string" ? p : p.type,
+    )
+    const rEndIdx = types.indexOf("reasoning-end")
+    const tStartIdx = types.indexOf("text-start")
+    expect(rEndIdx).toBeGreaterThan(-1)
+    expect(tStartIdx).toBeGreaterThan(rEndIdx)
+  })
+})
+
 describe("POST /v1/chat — route surface", () => {
   test("rejects missing JWT", async () => {
     const app = createApp()
