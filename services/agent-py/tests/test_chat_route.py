@@ -170,18 +170,27 @@ def test_chat_streams_text_event_stream(client: TestClient) -> None:
     assert "text/event-stream" in ct
     assert r.headers.get("cache-control", "").startswith("no-cache")
     assert r.headers.get("x-accel-buffering") == "no"
+    # AI SDK protocol advertised on every successful response after B.3.
+    assert r.headers.get("x-vercel-ai-ui-message-stream") == "v1"
 
-    # SSE body — text frames + done. We parse loosely (split on \n\n).
+    # SSE body — AI SDK v5 UI message stream. Verify the textual
+    # content arrives via text-delta frames between start/start-step
+    # and finish-step/finish/[DONE].
     body = r.text
     events = [e for e in body.split("\n\n") if e.startswith("data: ")]
-    assert len(events) == 4  # 3 text + 1 done
     import json
 
-    parsed = [json.loads(e.removeprefix("data: ")) for e in events]
-    assert parsed[0] == {"type": "text", "value": "Hello"}
-    assert parsed[1] == {"type": "text", "value": " "}
-    assert parsed[2] == {"type": "text", "value": "world"}
-    assert parsed[3] == {"type": "done"}
+    parsed: list[object] = []
+    for e in events:
+        payload = e.removeprefix("data: ")
+        parsed.append("[DONE]" if payload == "[DONE]" else json.loads(payload))
+    types = [p["type"] if isinstance(p, dict) else p for p in parsed]
+    assert types[0] == "start"
+    assert types[1] == "start-step"
+    assert "text-start" in types
+    deltas = [p["delta"] for p in parsed if isinstance(p, dict) and p["type"] == "text-delta"]
+    assert "".join(deltas) == "Hello world"
+    assert types[-1] == "[DONE]"
 
 
 def test_chat_forwards_system_prompt(client: TestClient) -> None:
@@ -265,20 +274,19 @@ def test_chat_ai_sdk_format_emits_ui_message_stream(client: TestClient) -> None:
     ]
 
 
-def test_chat_custom_format_does_not_set_ai_sdk_header(client: TestClient) -> None:
-    """Default `format=custom` should NOT advertise the AI SDK
-    protocol — only the explicit ai-sdk path opts in."""
+def test_chat_unknown_format_query_param_is_silently_ignored(
+    client: TestClient,
+) -> None:
+    """B.3 retired the dual-format dispatch; the route always emits
+    the AI SDK v5 UI message stream. The `?format=` query param is
+    silently ignored — no 422 on a stale `?format=custom` from an
+    old client."""
     fake = _FakeClient(["ok"])
     with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
-        r = client.post("/v1/chat", json=_valid_body(), headers=_auth())
-    assert "x-vercel-ai-ui-message-stream" not in {k.lower() for k in r.headers}
-
-
-def test_chat_rejects_unknown_format(client: TestClient) -> None:
-    """Invalid `format` value → 422. The literal type on the route
-    enforces the enum."""
-    r = client.post("/v1/chat?format=bogus", json=_valid_body(), headers=_auth())
-    assert r.status_code == 422
+        r = client.post("/v1/chat?format=bogus", json=_valid_body(), headers=_auth())
+    assert r.status_code == 200
+    # Still the AI SDK header.
+    assert r.headers["x-vercel-ai-ui-message-stream"] == "v1"
 
 
 # --- enable_tools dispatch (Phase 4-3) --------------------------------
@@ -288,7 +296,6 @@ def test_chat_enable_tools_dispatches_to_tool_stream(client: TestClient) -> None
     """With `enable_tools: true`, the route uses the tool-enabled
     stream, which calls `messages.stream` with a `tools` kwarg
     populated from `default_tool_registry()`."""
-    import json as _json
     from unittest.mock import patch as _patch
 
     fake = _FakeClient(["only text"])
@@ -326,10 +333,10 @@ def test_chat_enable_tools_dispatches_to_tool_stream(client: TestClient) -> None
     tool_names = {t["name"] for t in captured["tools"]}
     assert "webFetch" in tool_names
 
-    # Body still terminates cleanly with done frame.
+    # Body terminates with the AI SDK `[DONE]` marker.
     events = [e for e in r.text.split("\n\n") if e.startswith("data: ")]
-    parsed = [_json.loads(e.removeprefix("data: ")) for e in events]
-    assert parsed[-1]["type"] == "done"
+    last = events[-1].removeprefix("data: ").strip()
+    assert last == "[DONE]"
 
 
 def _async_return(value: Any):  # type: ignore[no-untyped-def]

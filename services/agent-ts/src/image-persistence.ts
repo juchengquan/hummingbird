@@ -21,7 +21,6 @@
 
 import {
   sseFrame,
-  type ChatFormat,
   type FrameInterceptor,
   type ToolResultFrame,
 } from "./chat"
@@ -66,24 +65,19 @@ interface MinimaxImageOutput {
   }>
 }
 
-/** Build the per-request frame interceptor passed to `chatStream` /
+/** Build the per-request frame interceptor passed to
  *  `chatStreamAiSdk`. For `generateImage` tool results, downloads +
- *  uploads the images, then yields a wire frame describing them.
- *
- *  The shape depends on `format`:
- *  - `custom` → `{type: "tool_image", id, mode, images: [...]}` —
- *    the existing chat-panel consumer reads this.
- *  - `ai-sdk` → `{type: "data-tool-image", id, data: {id, mode,
- *    images: [...]}}` — AI SDK v5 custom data part, the shape
- *    `useChat({onData})` expects. PLAN-useChat-adoption.md Phase B.1.
- *
- *  Other tools pass through with no extra frames. */
+ *  uploads the images, then yields a `data-tool-image` AI SDK v5
+ *  custom data part the consumer renders inline. `id` collates parts
+ *  that share the same id into one logical block on the consumer
+ *  side; we key on the tool-call id so multiple `generateImage`
+ *  calls in a single turn don't blend together. Other tools pass
+ *  through with no extra frames. */
 export function buildToolImageInterceptor(
   opts: BuildImageInterceptorOpts,
 ): FrameInterceptor {
   return async function* (
     frame: ToolResultFrame,
-    format: ChatFormat,
   ): AsyncIterable<string> {
     if (frame.name !== "generateImage") return
     const output = frame.output as MinimaxImageOutput | undefined
@@ -108,23 +102,10 @@ export function buildToolImageInterceptor(
       prompt,
       mode,
     }))
-    if (format === "ai-sdk") {
-      // AI SDK v5 custom data part. `id` collates parts that share
-      // the same id into one logical block on the consumer side; we
-      // key on the tool-call id so multiple `generateImage` calls in
-      // a single turn don't blend together.
-      yield sseFrame({
-        type: "data-tool-image",
-        id: frame.id,
-        data: { id: frame.id, mode, images },
-      })
-      return
-    }
     yield sseFrame({
-      type: "tool_image",
+      type: "data-tool-image",
       id: frame.id,
-      mode,
-      images,
+      data: { id: frame.id, mode, images },
     })
   }
 }

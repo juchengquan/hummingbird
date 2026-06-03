@@ -1,46 +1,26 @@
 """Chat-turn endpoint plumbing — Python mirror of `app/api/chat/route.ts`.
 
-Phase 4-1 of PLAN-agent-api. Ships a text-only `/v1/chat` endpoint
-that streams Anthropic deltas back to the caller as SSE frames whose
-shape matches what the Next.js chat client (`use-chat-send.ts`)
-already parses — so a frontend selector can swap between TS and
-Python without changing the wire consumer.
+Ships a `/v1/chat` endpoint that streams Anthropic deltas back to
+the caller as SSE frames in the AI SDK v5 UI message stream
+protocol — what `@ai-sdk/react`'s `useChat()` consumes natively.
+Frame envelopes match `ai`'s `JsonToSseTransformStream`:
 
-Wire formats:
+    data: {"type":"start"}\\n\\n
+    data: {"type":"start-step"}\\n\\n
+    data: {"type":"text-start","id":"<msg-id>"}\\n\\n
+    data: {"type":"text-delta","id":"<msg-id>","delta":"<chunk>"}\\n\\n
+    data: {"type":"text-end","id":"<msg-id>"}\\n\\n
+    data: {"type":"finish-step"}\\n\\n
+    data: {"type":"finish"}\\n\\n
+    data: [DONE]\\n\\n
 
-  - **custom** (default, matches the existing TS chat consumer):
-        data: {"type": "text", "value": "<delta>"}\\n\\n
-        data: {"type": "error", "code": "...", "message": "..."}\\n\\n
-        data: {"type": "done"}\\n\\n
+Errors emit `{"type":"error","errorText":"..."}` instead of
+`finish` and still write the `[DONE]` terminator so consumers'
+finally-blocks fire.
 
-  - **ai-sdk** (Phase 3g — opt-in via `?format=ai-sdk` on the route):
-    the AI SDK v5 UI message stream protocol, so a frontend that
-    uses `@ai-sdk/react`'s `useChat()` can consume Python output
-    natively. Frame envelopes match `ai`'s `JsonToSseTransformStream`:
-        data: {"type":"start"}\\n\\n
-        data: {"type":"start-step"}\\n\\n
-        data: {"type":"text-start","id":"<msg-id>"}\\n\\n
-        data: {"type":"text-delta","id":"<msg-id>","delta":"<chunk>"}\\n\\n
-        data: {"type":"text-end","id":"<msg-id>"}\\n\\n
-        data: {"type":"finish-step"}\\n\\n
-        data: {"type":"finish"}\\n\\n
-        data: [DONE]\\n\\n
-    Errors emit `{"type":"error","errorText":"..."}` instead of
-    `finish` and still write the `[DONE]` terminator so consumers'
-    finally-blocks fire.
-
-Scope is deliberately narrow for the first slice:
-  - text-only (no tools yet — `tools` arg ignored if passed). The
-    Python service already has the agent-loop machinery for tool
-    use (Phase 2b-2 + 3c+); wiring it into the streaming chat
-    endpoint adds wire-format complexity that belongs in a follow-up.
-  - no skill cascade, no attachments, no MCP, no rate-limit
-    bucketing. All deferred.
-  - no abort plumbing yet — the FastAPI `Request.is_disconnected()`
-    check covers client-side cancellation; idle watchdogs come later.
-
-The selector (which backend the frontend hits) is a Next.js-side
-concern — the Python endpoint just exists and waits to be called.
+The legacy custom wire format (`{type:"text",value}` etc.) was
+retired in B.3 of PLAN-useChat-adoption.md once the frontend
+consumer switched to reading the AI SDK shape.
 """
 
 from __future__ import annotations
@@ -49,7 +29,7 @@ import re
 import uuid
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 import structlog
 
@@ -70,14 +50,13 @@ DEFAULT_MAX_TOKENS = 4096
 #: v5 UI message stream protocol (text-start / text-delta /
 #: text-end / finish / `[DONE]` terminator) for consumers using
 #: ``@ai-sdk/react``'s ``useChat()``.
-ChatFormat = Literal["custom", "ai-sdk"]
-
 #: Post-stream interceptor — awaited once on a successful chat turn
-#: just before the terminal `done` / `finish` frame, with the
-#: accumulated assistant text and the wire format. Any frames it
-#: yields are emitted ahead of the terminator. PLAN-useChat-adoption.md
-#: Phase B.1d — used by the route to fire follow-up suggestion chips.
-OnCompleteFn = Callable[[str, ChatFormat], AsyncIterator[str]]
+#: just before the terminal `finish` frame, with the accumulated
+#: assistant text. Any frames it yields are emitted ahead of the
+#: terminator. PLAN-useChat-adoption.md Phase B.1d — used by the
+#: route to fire follow-up suggestion chips as `data-suggestions`
+#: parts.
+OnCompleteFn = Callable[[str], AsyncIterator[str]]
 
 #: The HTTP response header the AI SDK uses to advertise its
 #: stream protocol version (`x-vercel-ai-ui-message-stream: v1`).
@@ -217,61 +196,6 @@ def _delta_pair_from_event(event: Any) -> tuple[str, str] | None:
     return None
 
 
-async def chat_stream(
-    *,
-    client: AsyncAnthropicClient,
-    config: ChatConfig,
-    on_complete: OnCompleteFn | None = None,
-) -> AsyncIterator[str]:
-    """Run one Anthropic `messages.stream(...)` and yield SSE frames in
-    the custom wire format (matches the existing TS chat consumer).
-
-    The generator emits:
-      - `{"type": "text", "value": <delta>}` for each text delta.
-      - `{"type": "reasoning", "value": <delta>}` for extended-
-        thinking deltas.
-      - `{"type": "error", "code": <stable>, "message": <str>}` on
-        any exception; the generator returns after.
-      - `{"type": "done"}` as the final frame on a normal completion.
-
-    `on_complete` (B.1d): when set, the helper is awaited on the
-    success path before the `done` frame with the accumulated
-    assistant text, and any frames it yields are emitted ahead of
-    `done`. The route uses this for follow-up suggestion chips.
-
-    Idempotent: each call streams its own `messages.stream` context.
-    No DB writes — chat turns are ephemeral by design.
-    """
-    assistant_text = ""
-    async for channel, item in _stream_channel_deltas(client=client, config=config):
-        if isinstance(item, BaseException):
-            # Single broad surface — the Anthropic SDK raises a handful
-            # of distinct exception types we don't want to wire into
-            # stable codes per-type yet. The TS path categorises into
-            # `rate_limit`, `auth`, `context_window`, `upstream`. For
-            # now we pass through the message + a generic "upstream"
-            # code so the client renders something useful; finer
-            # categorisation ports alongside the skill cascade.
-            yield sse_frame(
-                {
-                    "type": "error",
-                    "code": "upstream",
-                    "message": str(item) or "Chat stream failed.",
-                }
-            )
-            return
-        if channel == "reasoning":
-            yield sse_frame({"type": "reasoning", "value": item})
-        else:
-            assistant_text += item
-            yield sse_frame({"type": "text", "value": item})
-
-    if on_complete is not None:
-        async for extra in on_complete(assistant_text, "custom"):
-            yield extra
-    yield sse_frame({"type": "done"})
-
-
 async def chat_stream_ai_sdk(
     *,
     client: AsyncAnthropicClient,
@@ -353,7 +277,7 @@ async def chat_stream_ai_sdk(
     for frame in close_all():
         yield frame
     if on_complete is not None:
-        async for extra in on_complete(assistant_text, "ai-sdk"):
+        async for extra in on_complete(assistant_text):
             yield extra
     yield sse_frame({"type": "finish-step"})
     yield sse_frame({"type": "finish"})
@@ -441,128 +365,6 @@ async def _execute_tool_block(
         return tool_call_id, tool_name, args, msg, msg, True
 
     return tool_call_id, tool_name, args, result.text, result.summary, False
-
-
-async def chat_stream_with_tools(
-    *,
-    client: AsyncAnthropicClient,
-    config: ChatConfig,
-    on_complete: OnCompleteFn | None = None,
-) -> AsyncIterator[str]:
-    """Tool-enabled chat stream in the custom wire format.
-
-    Loops `messages.stream` + tool execution until the model produces a
-    text-only assistant turn (no `tool_use` blocks in `final_message`),
-    `config.max_steps` is hit, or an upstream exception fires.
-
-    Emits SSE frames using the existing TS chat consumer's vocabulary:
-
-      - `{"type":"text","value":<delta>}` per text delta.
-      - `{"type":"tool_call","id":<id>,"name":<n>,"args":<dict>}` when
-        a `tool_use` block is captured (before tool execution).
-      - `{"type":"tool_result","id":<id>,"name":<n>,"result":<text>,
-        "summary":<short>,"isError":<bool>}` after each tool resolves.
-      - `{"type":"error","code":"upstream|max_steps","message":<str>}`
-        on upstream failure or step exhaustion.
-      - `{"type":"done"}` when the model produces a final text-only
-        answer.
-    """
-    tools_param = [tool_to_anthropic_param(t) for t in config.tools] if config.tools else None
-    tools_by_name = {t.name: t for t in config.tools}
-    messages = _to_anthropic_messages(config.messages)
-    assistant_text = ""
-
-    for _step in range(config.max_steps):
-        try:
-            async with client.messages.stream(
-                **_build_stream_kwargs(config, messages, tools_param)
-            ) as stream:
-                async for event in stream:  # type: ignore[attr-defined]
-                    pair = _delta_pair_from_event(event)
-                    if pair is None:
-                        continue
-                    channel, delta = pair
-                    if channel == "reasoning":
-                        yield sse_frame({"type": "reasoning", "value": delta})
-                    else:
-                        assistant_text += delta
-                        yield sse_frame({"type": "text", "value": delta})
-                final_message = await stream.get_final_message()
-        except Exception as exc:
-            logger.warning(
-                "chat.stream_failed",
-                error=str(exc),
-                model=config.model,
-            )
-            yield sse_frame(
-                {
-                    "type": "error",
-                    "code": "upstream",
-                    "message": str(exc) or "Chat stream failed.",
-                }
-            )
-            return
-
-        blocks = _coerce_content_blocks(final_message)
-        tool_use_blocks = [b for b in blocks if b.get("type") == "tool_use"]
-
-        if not tool_use_blocks:
-            if on_complete is not None:
-                async for extra in on_complete(assistant_text, "custom"):
-                    yield extra
-            yield sse_frame({"type": "done"})
-            return
-
-        # Append the assistant turn so the next iteration carries the
-        # full conversation history — Anthropic requires the tool_use
-        # blocks to precede the matching tool_result blocks.
-        messages.append({"role": "assistant", "content": blocks})
-
-        tool_result_blocks: list[dict[str, Any]] = []
-        for block in tool_use_blocks:
-            (
-                tool_call_id,
-                tool_name,
-                args,
-                result_text,
-                summary,
-                is_error,
-            ) = await _execute_tool_block(block, tools_by_name)
-            yield sse_frame(
-                {
-                    "type": "tool_call",
-                    "id": tool_call_id,
-                    "name": tool_name,
-                    "args": args,
-                }
-            )
-            yield sse_frame(
-                {
-                    "type": "tool_result",
-                    "id": tool_call_id,
-                    "name": tool_name,
-                    "result": result_text,
-                    "summary": summary,
-                    "isError": is_error,
-                }
-            )
-            tool_result_blocks.append(
-                _make_tool_result_block(tool_call_id, result_text, is_error=is_error)
-            )
-
-        messages.append({"role": "user", "content": tool_result_blocks})
-
-    # Max steps exhausted without a text-only answer.
-    yield sse_frame(
-        {
-            "type": "error",
-            "code": "max_steps",
-            "message": (
-                f"Chat exceeded {config.max_steps} tool-use iterations "
-                "without producing a final answer."
-            ),
-        }
-    )
 
 
 async def chat_stream_with_tools_ai_sdk(
@@ -676,7 +478,7 @@ async def chat_stream_with_tools_ai_sdk(
 
         if not tool_use_blocks:
             if on_complete is not None:
-                async for extra in on_complete(assistant_text, "ai-sdk"):
+                async for extra in on_complete(assistant_text):
                     yield extra
             yield sse_frame({"type": "finish-step"})
             yield sse_frame({"type": "finish"})
@@ -886,11 +688,8 @@ __all__ = [
     "DEFAULT_MAX_TOKENS",
     "SUGGESTION_MODEL",
     "ChatConfig",
-    "ChatFormat",
     "ChatMessage",
-    "chat_stream",
     "chat_stream_ai_sdk",
-    "chat_stream_with_tools",
     "chat_stream_with_tools_ai_sdk",
     "generate_chat_suggestions",
     "parse_suggestions_json",

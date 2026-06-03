@@ -228,15 +228,26 @@ Chat panel UI, message store, placeholder lifecycle — all
 unchanged. The mock fallback stays. Per-conversation typing /
 abort plumbing stays.
 
-#### Phase B.3 — Server: retire the custom format (~0.5 day)
+#### Phase B.3 — Server: retire the custom format ✅
 
-Once Phase B.2 ships on every supported consumer (we can verify
-via deploy notes; this is a single Next.js app + the optional
-remote services), strip the custom `chat_stream` /
-`chat_stream_with_tools` paths from all three backends.
-`chat_stream_ai_sdk` becomes the only path. `?format=` query
-param becomes vestigial — keep accepting it for one release,
-then drop.
+All three backends are now AI-SDK-only. The custom-format
+streamers (`chat_stream` / `chat_stream_with_tools` on agent-py,
+`chatStream` on agent-ts), the custom branches inside
+`ChatSseEmitter`, and the `format` discriminator on
+`FrameInterceptor` / `OnCompleteFn` are all gone. The
+`?format=` query param is now silently ignored on every route
+(stale clients sending `?format=custom` get an AI SDK response;
+the consumer accepts it).
+
+The frontend already dropped the `?format=ai-sdk` query
+param it asked for in B.2 — the default response is the only
+format, so the query is redundant. The translator in
+`use-chat-send.ts` lost its legacy-passthrough branch too;
+only the AI-SDK re-shaping path remains.
+
+Net delta across this PR: **−1500 LOC** of dead code paths
+(custom-format streamers, custom branches in the emitter,
+legacy passthrough in the translator, paired test suites).
 
 #### Phase B.4 — Frontend: incremental adoption of `useChat()` (optional, defer)
 

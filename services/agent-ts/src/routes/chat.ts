@@ -1,18 +1,18 @@
 /**
- * `POST /v1/chat` — Phase 3 of PLAN-agent-ts + follow-up #2 (tools).
+ * `POST /v1/chat`. Mirrors agent-py's `/v1/chat`. Accepts a narrow
+ * request body (messages + model + optional system + optional
+ * max_tokens + optional tools-enable knobs) and streams the result
+ * as `text/event-stream` in the AI SDK v5 UI message stream format.
  *
- * Mirrors agent-py's `/v1/chat`. Accepts a narrow request body
- * (messages + model + optional system + optional max_tokens +
- * optional tools-enable knobs), dispatches on `?format=` to the
- * custom or AI-SDK wire formatter, and streams the result as
- * `text/event-stream`.
+ * The legacy custom wire format was retired in B.3 of
+ * PLAN-useChat-adoption.md; the `?format=` query param is silently
+ * ignored.
  *
  * Tools are enabled per-request by `enable_tools: true`. When on,
  * we walk the live TS skill registry (`@/server/skills/registry`)
  * for context-free tools (`webFetch`, `webSearch`, `generateImage`)
- * — `searchFiles` is currently best-effort (registers but returns
- * `not_signed_in` until a postgres-based RLS impersonation lands;
- * see `skills.ts` for the note).
+ * — `searchFiles` runs under per-user RLS impersonation via the
+ * postgres pool (see `search-files.ts`).
  */
 
 import { Hono } from "hono"
@@ -25,10 +25,8 @@ import {
   AI_SDK_STREAM_HEADER_NAME,
   AI_SDK_STREAM_HEADER_VALUE,
   type ChatConfig,
-  type ChatFormat,
   DEFAULT_MAX_STEPS,
   DEFAULT_MAX_TOKENS,
-  chatStream,
   chatStreamAiSdk,
   generateChatSuggestions,
   resolveAnthropicModel,
@@ -67,11 +65,10 @@ const ChatRequestSchema = z.object({
 export const chatRoutes = new Hono<{ Variables: AuthVars }>()
 
 chatRoutes.post("/v1/chat", requireAuth, async (c) => {
-  const formatRaw = c.req.query("format") ?? "custom"
-  if (formatRaw !== "custom" && formatRaw !== "ai-sdk") {
-    return c.json({ code: "invalid_format", message: "format must be 'custom' or 'ai-sdk'." }, 422)
-  }
-  const format: ChatFormat = formatRaw
+  // The route now always emits the AI SDK v5 UI message stream
+  // format. The `?format=` query param was the dual-format switch
+  // before B.3 retired the custom path; it's silently ignored if
+  // sent.
 
   let body: unknown
   try {
@@ -151,17 +148,14 @@ chatRoutes.post("/v1/chat", requireAuth, async (c) => {
   c.header("Cache-Control", "no-cache, no-transform")
   c.header("Connection", "keep-alive")
   c.header("X-Accel-Buffering", "no")
-  if (format === "ai-sdk") {
-    c.header(AI_SDK_STREAM_HEADER_NAME, AI_SDK_STREAM_HEADER_VALUE)
-  }
+  c.header(AI_SDK_STREAM_HEADER_NAME, AI_SDK_STREAM_HEADER_VALUE)
 
   // Post-stream chips. Runs once on a successful turn before the
-  // terminal frame; emits `{type:"suggestions"}` on custom format
-  // or `data-suggestions` on AI SDK. Mirrors the Next.js inline
-  // path. PLAN-useChat-adoption.md Phase B.1d.
+  // terminal `finish` frame; emits a `data-suggestions` part the
+  // chat consumer renders as follow-up question chips. Mirrors the
+  // Next.js inline path. PLAN-useChat-adoption.md Phase B.1d.
   const onComplete = async function* (
     assistantText: string,
-    fmt: "custom" | "ai-sdk",
   ): AsyncIterable<string> {
     const suggestions = await generateChatSuggestions(
       config.messages,
@@ -169,24 +163,14 @@ chatRoutes.post("/v1/chat", requireAuth, async (c) => {
       reqSignal,
     )
     if (suggestions.length === 0) return
-    if (fmt === "ai-sdk") {
-      yield `data: ${JSON.stringify({
-        type: "data-suggestions",
-        data: { values: suggestions },
-      })}\n\n`
-    } else {
-      yield `data: ${JSON.stringify({
-        type: "suggestions",
-        values: suggestions,
-      })}\n\n`
-    }
+    yield `data: ${JSON.stringify({
+      type: "data-suggestions",
+      data: { values: suggestions },
+    })}\n\n`
   }
 
   return stream(c, async (s) => {
-    const gen =
-      format === "ai-sdk"
-        ? chatStreamAiSdk(model, config, { onToolResult, onComplete })
-        : chatStream(model, config, { onToolResult, onComplete })
+    const gen = chatStreamAiSdk(model, config, { onToolResult, onComplete })
     for await (const frame of gen) {
       // Bail early if the client hung up — saves tokens on a tab close.
       if (s.aborted) return

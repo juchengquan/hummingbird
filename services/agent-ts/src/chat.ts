@@ -3,46 +3,36 @@
  * `services/agent-py/src/agent_py/chat.py`.
  *
  * Drives the AI SDK's `streamText({ model: anthropic(...), messages, tools })`
- * and re-emits the deltas as SSE in either the **custom** wire
- * format (matches the existing TS chat consumer) or the **AI SDK v5
- * UI message stream** format (matches what `@ai-sdk/react`'s
- * `useChat()` consumes natively).
+ * and re-emits the deltas as SSE in the AI SDK v5 UI message stream
+ * format (what `@ai-sdk/react`'s `useChat()` consumes natively).
  *
- * Phase 3 shipped text-only; this version adds tools (follow-up #2
- * in `PLAN-agent-ts-followups.md`). When `config.tools` is non-empty
- * we lean on the AI SDK's built-in agent loop (`stopWhen: stepCountIs(N)`)
- * — the SDK handles the call → execute → continue cycle and emits
- * `tool-call` / `tool-result` parts on `fullStream`. We re-emit
- * those as our custom-format `tool_call` / `tool_result` frames or
- * the AI SDK's `tool-input-available` / `tool-output-available`
- * frames, mirroring agent-py byte-for-byte.
+ * When `config.tools` is non-empty we lean on the AI SDK's built-in
+ * agent loop (`stopWhen: stepCountIs(N)`) — the SDK handles the
+ * call → execute → continue cycle and emits `tool-call` /
+ * `tool-result` parts on `fullStream`. We re-emit those as the
+ * AI SDK's `tool-input-available` / `tool-output-available` frames.
  *
- * Custom format frames:
- *     data: {"type":"text","value":"<delta>"}\n\n
- *     data: {"type":"tool_call","id":<id>,"name":<name>,"args":<obj>}\n\n
- *     data: {"type":"tool_result","id":<id>,"name":<name>,"summary":<str>,"isError":<bool>}\n\n
- *     data: {"type":"tool_image","id":<id>,"mode":"t2i|i2i","images":[...]}\n\n
- *     data: {"type":"error","code":"upstream","message":"..."}\n\n
- *     data: {"type":"done"}\n\n
+ * Wire format (matches `JsonToSseTransformStream` in the `ai`
+ * package): start / start-step / text-start / text-delta / text-end /
+ * reasoning-start / reasoning-delta / reasoning-end /
+ * tool-input-available / tool-output-available / data-tool-image /
+ * data-suggestions / finish-step / finish / `[DONE]`.
  *
- * AI SDK format frames (matches `JsonToSseTransformStream` in
- * the `ai` package): start / start-step / text-start / text-delta /
- * text-end / tool-input-available / tool-output-available /
- * finish-step / finish / `[DONE]`.
+ * The legacy custom wire format (`{type:"text",value}` etc.) was
+ * retired in B.3 of PLAN-useChat-adoption.md once the frontend
+ * consumer switched to reading the AI SDK shape.
  */
 
 import { anthropic, createAnthropic } from "@ai-sdk/anthropic"
 import type { LanguageModel } from "ai"
 import { generateText, stepCountIs, streamText } from "ai"
 
+import { getEnv } from "./env"
+
 /** `streamText`'s `tools` field type — the same indirection
  *  `app/api/chat/route.ts` uses to avoid the deep `ToolSet`
  *  generic blowing up `tsc`'s instantiation depth budget. */
 export type StreamTextTools = NonNullable<Parameters<typeof streamText>[0]["tools"]>
-
-import { getEnv } from "./env"
-
-export type ChatFormat = "custom" | "ai-sdk"
 
 /** The HTTP response header the AI SDK uses to advertise its
  *  stream protocol version. Mirroring it lets `useChat()` consumers
@@ -100,32 +90,23 @@ export function sseFrame(payload: unknown): string {
 
 /** Optional per-frame interceptor — invoked once per emitted SSE
  *  frame BEFORE it's yielded. The route uses this to fire a
- *  `tool_image` (custom) or `data-tool-image` (AI SDK) frame after
- *  a `generateImage` tool result (Minimax URL persistence,
- *  follow-up #5). Returning frames are concatenated to the output
- *  stream after the original frame.
- *
- *  `format` lets the interceptor emit the shape the consumer
- *  expects — `tool_image` rides on our custom envelope, while
- *  `data-tool-image` is the AI SDK v5 data-part equivalent
- *  (PLAN-useChat-adoption.md Phase B.1). */
+ *  `data-tool-image` frame after a `generateImage` tool result
+ *  (Minimax URL persistence). Returning frames are concatenated to
+ *  the output stream after the original frame. */
 export type FrameInterceptor = (
   frame: ToolResultFrame,
-  format: ChatFormat,
 ) => AsyncIterable<string>
 
 /** Post-stream interceptor — invoked once on a successful chat turn
- *  (no error / no abort) just before the terminal `done` / `finish`
- *  frame. The route uses this to fire suggestion chips with a
- *  second cheap model call (`generateChatSuggestions`). PLAN-
- *  useChat-adoption.md Phase B.1d. The format argument lets the
- *  callback emit `{type: "suggestions"}` (custom) or
- *  `data-suggestions` (AI SDK). */
+ *  (no error / no abort) just before the terminal `finish` frame.
+ *  The route uses this to fire suggestion chips with a second cheap
+ *  model call (`generateChatSuggestions`). Any frames it yields are
+ *  emitted as `data-suggestions` parts via the AI SDK v5 UI message
+ *  stream. PLAN-useChat-adoption.md Phase B.1d / B.3. */
 export type CompletionInterceptor = (
   /** The full accumulated assistant text — sum of all text-delta
    *  parts the stream produced. Reasoning deltas don't count. */
   assistantText: string,
-  format: ChatFormat,
 ) => AsyncIterable<string>
 
 /** Subset of the custom-format `tool_result` frame, surfaced to
@@ -141,119 +122,12 @@ export interface ToolResultFrame {
 /** Drive the AI SDK stream and yield SSE frames in the **custom**
  *  format. Mirrors agent-py's `chat_stream` + `chat_stream_with_tools`
  *  (same loop, single entry point). */
-export async function* chatStream(
-  model: LanguageModel,
-  config: ChatConfig,
-  options: {
-    onToolResult?: FrameInterceptor
-    onComplete?: CompletionInterceptor
-  } = {},
-): AsyncGenerator<string> {
-  let assistantText = ""
-  const hasTools = config.tools && Object.keys(config.tools).length > 0
-  const stream = streamText({
-    model,
-    system: config.system,
-    messages: config.messages.map((m) => ({ role: m.role, content: m.content })),
-    maxOutputTokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
-    ...(hasTools
-      ? {
-          tools: config.tools,
-          stopWhen: stepCountIs(config.maxSteps ?? DEFAULT_MAX_STEPS),
-        }
-      : {}),
-  })
-
-  try {
-    for await (const part of stream.fullStream) {
-      if (part.type === "text-delta" && part.text) {
-        assistantText += part.text
-        yield sseFrame({ type: "text", value: part.text })
-      } else if (
-        part.type === "reasoning-delta" &&
-        typeof (part as { text?: string }).text === "string" &&
-        (part as { text?: string }).text!.length > 0
-      ) {
-        // Mirrors the Next.js inline route's reasoning emission —
-        // the chat panel's consumer (`use-chat-send.ts`) appends
-        // these into the message's reasoning block.
-        yield sseFrame({
-          type: "reasoning",
-          value: (part as { text: string }).text,
-        })
-      } else if (part.type === "tool-call") {
-        const p = part as {
-          toolCallId?: string
-          toolName?: string
-          input?: unknown
-        }
-        yield sseFrame({
-          type: "tool_call",
-          id: p.toolCallId ?? "",
-          name: p.toolName ?? "",
-          args: p.input ?? {},
-        })
-      } else if (part.type === "tool-result") {
-        const p = part as {
-          toolCallId?: string
-          toolName?: string
-          output?: unknown
-        }
-        const id = p.toolCallId ?? ""
-        const name = p.toolName ?? ""
-        const output = p.output
-        const summary = summariseToolOutput(output)
-        const isError = isToolError(output)
-        yield sseFrame({
-          type: "tool_result",
-          id,
-          name,
-          summary,
-          ...(isError ? { isError: true } : {}),
-        })
-        if (options.onToolResult) {
-          for await (const extra of options.onToolResult(
-            {
-              type: "tool_result",
-              id,
-              name,
-              output,
-            },
-            "custom",
-          )) {
-            yield extra
-          }
-        }
-      } else if (part.type === "error") {
-        yield sseFrame({
-          type: "error",
-          code: "upstream",
-          message:
-            part.error instanceof Error ? part.error.message : String(part.error),
-        })
-        return
-      }
-    }
-  } catch (err) {
-    yield sseFrame({
-      type: "error",
-      code: "upstream",
-      message: err instanceof Error ? err.message : String(err),
-    })
-    return
-  }
-  // Success path — fire post-stream chips before the `done` frame.
-  if (options.onComplete) {
-    for await (const extra of options.onComplete(assistantText, "custom")) {
-      yield extra
-    }
-  }
-  yield sseFrame({ type: "done" })
-}
-
-/** Drive the AI SDK stream and yield SSE frames in the **AI SDK v5
- *  UI message stream** format. Mirrors agent-py's `chat_stream_ai_sdk`
- *  + `chat_stream_with_tools_ai_sdk` (same loop, single entry point). */
+/** Drive the AI SDK stream and yield SSE frames in the AI SDK v5
+ *  UI message stream format. Mirrors agent-py's
+ *  `chat_stream_ai_sdk` + `chat_stream_with_tools_ai_sdk` (same
+ *  loop, single entry point). PLAN-useChat-adoption.md Phase B.3
+ *  retired the legacy custom-format `chatStream` companion —
+ *  there's only one wire format now. */
 export async function* chatStreamAiSdk(
   model: LanguageModel,
   config: ChatConfig,
@@ -371,15 +245,12 @@ export async function* chatStreamAiSdk(
           ...(isError ? { errorText: summariseToolOutput(output) } : {}),
         })
         if (options.onToolResult) {
-          for await (const extra of options.onToolResult(
-            {
-              type: "tool_result",
-              id,
-              name,
-              output,
-            },
-            "ai-sdk",
-          )) {
+          for await (const extra of options.onToolResult({
+            type: "tool_result",
+            id,
+            name,
+            output,
+          })) {
             yield extra
           }
         }
@@ -407,7 +278,7 @@ export async function* chatStreamAiSdk(
   for (const f of closeAllChannels()) yield f
   // Success path — fire post-stream chips before `finish-step`.
   if (options.onComplete) {
-    for await (const extra of options.onComplete(assistantText, "ai-sdk")) {
+    for await (const extra of options.onComplete(assistantText)) {
       yield extra
     }
   }

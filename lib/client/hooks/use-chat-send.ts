@@ -85,13 +85,13 @@ export interface UseChatSendResult {
   liveToolCalls: Record<string, LiveToolCall[]>
 }
 
-/** Shape the stream handler reads. The translator below normalises
- *  both the legacy custom format (`{type:"text",value}`, `tool_call`,
- *  `tool_result`, `tool_image`, `suggestions`, `error`, `done`) and
- *  the AI SDK v5 UI message stream (`text-delta`, `reasoning-delta`,
+/** Shape the stream handler reads. The translator below re-shapes
+ *  AI SDK v5 frames (`text-delta`, `reasoning-delta`,
  *  `tool-input-available`, `tool-output-available`, `data-tool-image`,
- *  `data-suggestions`, `error`, lifecycle frames) into this single
- *  shape so the handler block stays small. */
+ *  `data-suggestions`, `error`, lifecycle frames) into this internal
+ *  envelope so the handler block stays small. The legacy custom
+ *  format on the wire was retired in B.3 of
+ *  PLAN-useChat-adoption.md. */
 interface NormalisedFrame {
   type?: string
   value?: string
@@ -124,31 +124,15 @@ export function translateFrame(payload: string): NormalisedFrame | null {
   const t = raw.type
   if (typeof t !== "string") return null
 
-  // AI SDK errors use `errorText` instead of `message`. Reshape
-  // before the custom-format passthrough so the downstream handler
-  // gets a consistent `message`.
+  // AI SDK error frames carry the human-readable text on
+  // `errorText`. Re-shape into the internal `{type:"error",message}`
+  // envelope the handler block expects.
   if (t === "error" && typeof raw.errorText === "string") {
     return { type: "error", message: raw.errorText }
   }
 
-  // Legacy custom format — pass through unchanged.
-  if (
-    t === "text" ||
-    t === "reasoning" ||
-    t === "tool_call" ||
-    t === "tool_result" ||
-    t === "tool_image" ||
-    t === "suggestions" ||
-    t === "error" ||
-    t === "done"
-  ) {
-    return raw as NormalisedFrame
-  }
-
-  // AI SDK v5 frame types. Re-shape into the same logical envelope
-  // the handler block expects (`{type:"text", value}` etc.) so the
-  // downstream dispatch doesn't need to know which wire format the
-  // backend chose.
+  // AI SDK v5 frame types. Re-shape into the internal logical
+  // envelope the handler block expects.
   if (t === "text-delta" && typeof raw.delta === "string") {
     return { type: "text", value: raw.delta }
   }
