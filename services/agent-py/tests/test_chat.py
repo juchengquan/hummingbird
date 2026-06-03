@@ -545,10 +545,7 @@ async def test_on_complete_runs_before_done_on_custom_format() -> None:
         yield 'data: {"type":"suggestions","values":["a","b"]}\n\n'
 
     frames = [
-        f
-        async for f in chat_stream(
-            client=client, config=_config(), on_complete=on_complete
-        )
+        f async for f in chat_stream(client=client, config=_config(), on_complete=on_complete)
     ]
     payloads = [json.loads(f.removeprefix("data: ").rstrip()) for f in frames]
     types = [p["type"] for p in payloads]
@@ -567,9 +564,7 @@ async def test_on_complete_runs_before_finish_on_ai_sdk_format() -> None:
 
     frames = [
         f
-        async for f in chat_stream_ai_sdk(
-            client=client, config=_config(), on_complete=on_complete
-        )
+        async for f in chat_stream_ai_sdk(client=client, config=_config(), on_complete=on_complete)
     ]
     payloads = _parse_ai_sdk_frames(frames)
     types = [p["type"] if isinstance(p, dict) else p for p in payloads]
@@ -596,10 +591,5 @@ async def test_on_complete_not_called_on_error_path() -> None:
         # callback as invoked regardless and yield once.
         yield 'data: {"type":"suggestions","values":["unreached"]}\n\n'
 
-    _ = [
-        f
-        async for f in chat_stream(
-            client=client, config=_config(), on_complete=on_complete
-        )
-    ]
+    _ = [f async for f in chat_stream(client=client, config=_config(), on_complete=on_complete)]
     assert called is False
