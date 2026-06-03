@@ -45,8 +45,9 @@ concern — the Python endpoint just exists and waits to be called.
 
 from __future__ import annotations
 
+import re
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -70,6 +71,13 @@ DEFAULT_MAX_TOKENS = 4096
 #: text-end / finish / `[DONE]` terminator) for consumers using
 #: ``@ai-sdk/react``'s ``useChat()``.
 ChatFormat = Literal["custom", "ai-sdk"]
+
+#: Post-stream interceptor — awaited once on a successful chat turn
+#: just before the terminal `done` / `finish` frame, with the
+#: accumulated assistant text and the wire format. Any frames it
+#: yields are emitted ahead of the terminator. PLAN-useChat-adoption.md
+#: Phase B.1d — used by the route to fire follow-up suggestion chips.
+OnCompleteFn = Callable[[str, ChatFormat], AsyncIterator[str]]
 
 #: The HTTP response header the AI SDK uses to advertise its
 #: stream protocol version (`x-vercel-ai-ui-message-stream: v1`).
@@ -213,6 +221,7 @@ async def chat_stream(
     *,
     client: AsyncAnthropicClient,
     config: ChatConfig,
+    on_complete: OnCompleteFn | None = None,
 ) -> AsyncIterator[str]:
     """Run one Anthropic `messages.stream(...)` and yield SSE frames in
     the custom wire format (matches the existing TS chat consumer).
@@ -220,16 +229,20 @@ async def chat_stream(
     The generator emits:
       - `{"type": "text", "value": <delta>}` for each text delta.
       - `{"type": "reasoning", "value": <delta>}` for extended-
-        thinking deltas. The chat panel consumer already handles
-        this frame type; previously thinking deltas were silently
-        dropped by `_stream_text_deltas`'s text-only filter.
+        thinking deltas.
       - `{"type": "error", "code": <stable>, "message": <str>}` on
         any exception; the generator returns after.
       - `{"type": "done"}` as the final frame on a normal completion.
 
+    `on_complete` (B.1d): when set, the helper is awaited on the
+    success path before the `done` frame with the accumulated
+    assistant text, and any frames it yields are emitted ahead of
+    `done`. The route uses this for follow-up suggestion chips.
+
     Idempotent: each call streams its own `messages.stream` context.
     No DB writes — chat turns are ephemeral by design.
     """
+    assistant_text = ""
     async for channel, item in _stream_channel_deltas(client=client, config=config):
         if isinstance(item, BaseException):
             # Single broad surface — the Anthropic SDK raises a handful
@@ -250,8 +263,12 @@ async def chat_stream(
         if channel == "reasoning":
             yield sse_frame({"type": "reasoning", "value": item})
         else:
+            assistant_text += item
             yield sse_frame({"type": "text", "value": item})
 
+    if on_complete is not None:
+        async for extra in on_complete(assistant_text, "custom"):
+            yield extra
     yield sse_frame({"type": "done"})
 
 
@@ -259,6 +276,7 @@ async def chat_stream_ai_sdk(
     *,
     client: AsyncAnthropicClient,
     config: ChatConfig,
+    on_complete: OnCompleteFn | None = None,
 ) -> AsyncIterator[str]:
     """Run one Anthropic `messages.stream(...)` and yield AI-SDK-v5
     UI-message-stream SSE frames. Frame envelopes match the AI SDK's
@@ -286,6 +304,7 @@ async def chat_stream_ai_sdk(
     yield sse_frame({"type": "start"})
     yield sse_frame({"type": "start-step"})
 
+    assistant_text = ""
     active_text_id: str | None = None
     active_reasoning_id: str | None = None
 
@@ -325,6 +344,7 @@ async def chat_stream_ai_sdk(
         else:
             for frame in close_reasoning():
                 yield frame
+            assistant_text += item
             if active_text_id is None:
                 active_text_id = uuid.uuid4().hex
                 yield sse_frame({"type": "text-start", "id": active_text_id})
@@ -332,6 +352,9 @@ async def chat_stream_ai_sdk(
 
     for frame in close_all():
         yield frame
+    if on_complete is not None:
+        async for extra in on_complete(assistant_text, "ai-sdk"):
+            yield extra
     yield sse_frame({"type": "finish-step"})
     yield sse_frame({"type": "finish"})
     yield "data: [DONE]\n\n"
@@ -424,6 +447,7 @@ async def chat_stream_with_tools(
     *,
     client: AsyncAnthropicClient,
     config: ChatConfig,
+    on_complete: OnCompleteFn | None = None,
 ) -> AsyncIterator[str]:
     """Tool-enabled chat stream in the custom wire format.
 
@@ -446,6 +470,7 @@ async def chat_stream_with_tools(
     tools_param = [tool_to_anthropic_param(t) for t in config.tools] if config.tools else None
     tools_by_name = {t.name: t for t in config.tools}
     messages = _to_anthropic_messages(config.messages)
+    assistant_text = ""
 
     for _step in range(config.max_steps):
         try:
@@ -460,6 +485,7 @@ async def chat_stream_with_tools(
                     if channel == "reasoning":
                         yield sse_frame({"type": "reasoning", "value": delta})
                     else:
+                        assistant_text += delta
                         yield sse_frame({"type": "text", "value": delta})
                 final_message = await stream.get_final_message()
         except Exception as exc:
@@ -481,6 +507,9 @@ async def chat_stream_with_tools(
         tool_use_blocks = [b for b in blocks if b.get("type") == "tool_use"]
 
         if not tool_use_blocks:
+            if on_complete is not None:
+                async for extra in on_complete(assistant_text, "custom"):
+                    yield extra
             yield sse_frame({"type": "done"})
             return
 
@@ -540,6 +569,7 @@ async def chat_stream_with_tools_ai_sdk(
     *,
     client: AsyncAnthropicClient,
     config: ChatConfig,
+    on_complete: OnCompleteFn | None = None,
 ) -> AsyncIterator[str]:
     """Tool-enabled chat stream in the AI SDK v5 UI message stream
     format. Same loop as `chat_stream_with_tools` but rendered into
@@ -560,6 +590,7 @@ async def chat_stream_with_tools_ai_sdk(
     tools_param = [tool_to_anthropic_param(t) for t in config.tools] if config.tools else None
     tools_by_name = {t.name: t for t in config.tools}
     messages = _to_anthropic_messages(config.messages)
+    assistant_text = ""
 
     yield sse_frame({"type": "start"})
 
@@ -613,6 +644,7 @@ async def chat_stream_with_tools_ai_sdk(
                     else:
                         for frame in close_reasoning():
                             yield frame
+                        assistant_text += delta
                         if active_text_id is None:
                             active_text_id = uuid.uuid4().hex
                             yield sse_frame({"type": "text-start", "id": active_text_id})
@@ -643,6 +675,9 @@ async def chat_stream_with_tools_ai_sdk(
         tool_use_blocks = [b for b in blocks if b.get("type") == "tool_use"]
 
         if not tool_use_blocks:
+            if on_complete is not None:
+                async for extra in on_complete(assistant_text, "ai-sdk"):
+                    yield extra
             yield sse_frame({"type": "finish-step"})
             yield sse_frame({"type": "finish"})
             yield "data: [DONE]\n\n"
@@ -728,11 +763,128 @@ def resolve_anthropic_client() -> AsyncAnthropicClient | None:
     return AsyncAnthropic(api_key=api_key)  # type: ignore[return-value]
 
 
+# --- Follow-up suggestions (PLAN-useChat-adoption.md Phase B.1d) -------
+#
+# After a successful chat turn, optionally generate 3 follow-up
+# suggestion chips with a cheap second model call. The chat route
+# emits these via `{type: "suggestions"}` on the custom format or
+# `data-suggestions` on AI SDK.
+
+#: Cheap model for the suggestion call. Same as `summarise.py`'s
+#: default — Anthropic Haiku is fast + cheap and the task is small
+#: (200 tokens of JSON).
+SUGGESTION_MODEL = "claude-3-5-haiku-20241022"
+
+_FENCE_HEAD_RE = re.compile(r"^```(?:json)?\s*\n?", re.IGNORECASE)
+_FENCE_TAIL_RE = re.compile(r"\n?```\s*$")
+
+
+def parse_suggestions_json(raw: str) -> list[str]:
+    """Strip optional markdown fences, then parse + validate as a
+    flat string array. Returns at most 3 short non-empty entries.
+    Permissive — any decode failure yields an empty list.
+    Mirrors `parseSuggestionsJson` in the Next.js inline route."""
+    import json
+
+    cleaned = raw.strip()
+    cleaned = _FENCE_HEAD_RE.sub("", cleaned)
+    cleaned = _FENCE_TAIL_RE.sub("", cleaned)
+    cleaned = cleaned.strip()
+    try:
+        parsed = json.loads(cleaned)
+    except Exception:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    out: list[str] = []
+    for s in parsed:
+        if not isinstance(s, str):
+            continue
+        trimmed = s.strip()
+        if trimmed and len(trimmed) <= 120:
+            out.append(trimmed)
+        if len(out) >= 3:
+            break
+    return out
+
+
+def _last_user_text(history: list[ChatMessage]) -> str:
+    for m in reversed(history):
+        if m.role == "user":
+            return m.content
+    return ""
+
+
+async def generate_chat_suggestions(
+    *,
+    client: AsyncAnthropicClient,
+    history: list[ChatMessage],
+    assistant_reply: str,
+) -> list[str]:
+    """Generate up to 3 follow-up suggestion chips for the current
+    turn. Returns an empty list on any failure — chips are
+    decoration, never block the turn.
+
+    Mirrors `generateSuggestions` in `app/api/chat/route.ts` and
+    `generateChatSuggestions` in `services/agent-ts/src/chat.ts`.
+    """
+    if not assistant_reply.strip():
+        return []
+
+    user_text = _last_user_text(history)
+    prompt = (
+        "Based on this exchange, propose 3 concise follow-up questions "
+        "the user might want to ask next. Each must be under 14 words, "
+        'in the user\'s voice (not "ask the user…"). '
+        "Reply with strict JSON only — a flat array of 3 strings, no "
+        "prose:\n"
+        '["...", "...", "..."]\n\n'
+        f'User asked:\n"""\n{user_text[:4000]}\n"""\n\n'
+        f'Assistant answered:\n"""\n{assistant_reply[:4000]}\n"""'
+    )
+
+    try:
+        # `messages.stream` + drain + `get_final_message` — same
+        # pattern `summarise.py` uses for one-shot generation.
+        stream_kwargs: dict[str, Any] = {
+            "model": SUGGESTION_MODEL,
+            "max_tokens": 200,
+            "temperature": 0.7,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        async with client.messages.stream(**stream_kwargs) as stream:
+            async for _ in stream.text_stream:
+                pass
+            final = await stream.get_final_message()
+    except Exception as exc:
+        logger.info("chat.suggestions_failed", error=str(exc))
+        return []
+
+    content = getattr(final, "content", None)
+    if content is None and isinstance(final, dict):
+        content = final.get("content")
+    parts: list[str] = []
+    for block in content or []:
+        if isinstance(block, dict):
+            if block.get("type") == "text":
+                t = block.get("text")
+                if isinstance(t, str):
+                    parts.append(t)
+        else:
+            btype = getattr(block, "type", None)
+            if btype == "text":
+                t = getattr(block, "text", None)
+                if isinstance(t, str):
+                    parts.append(t)
+    return parse_suggestions_json("".join(parts))
+
+
 __all__ = [
     "AI_SDK_STREAM_HEADER_NAME",
     "AI_SDK_STREAM_HEADER_VALUE",
     "DEFAULT_MAX_STEPS",
     "DEFAULT_MAX_TOKENS",
+    "SUGGESTION_MODEL",
     "ChatConfig",
     "ChatFormat",
     "ChatMessage",
@@ -740,6 +892,8 @@ __all__ = [
     "chat_stream_ai_sdk",
     "chat_stream_with_tools",
     "chat_stream_with_tools_ai_sdk",
+    "generate_chat_suggestions",
+    "parse_suggestions_json",
     "resolve_anthropic_client",
     "sse_frame",
 ]

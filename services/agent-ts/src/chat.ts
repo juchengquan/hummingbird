@@ -33,7 +33,7 @@
 
 import { anthropic, createAnthropic } from "@ai-sdk/anthropic"
 import type { LanguageModel } from "ai"
-import { stepCountIs, streamText } from "ai"
+import { generateText, stepCountIs, streamText } from "ai"
 
 /** `streamText`'s `tools` field type — the same indirection
  *  `app/api/chat/route.ts` uses to avoid the deep `ToolSet`
@@ -114,6 +114,20 @@ export type FrameInterceptor = (
   format: ChatFormat,
 ) => AsyncIterable<string>
 
+/** Post-stream interceptor — invoked once on a successful chat turn
+ *  (no error / no abort) just before the terminal `done` / `finish`
+ *  frame. The route uses this to fire suggestion chips with a
+ *  second cheap model call (`generateChatSuggestions`). PLAN-
+ *  useChat-adoption.md Phase B.1d. The format argument lets the
+ *  callback emit `{type: "suggestions"}` (custom) or
+ *  `data-suggestions` (AI SDK). */
+export type CompletionInterceptor = (
+  /** The full accumulated assistant text — sum of all text-delta
+   *  parts the stream produced. Reasoning deltas don't count. */
+  assistantText: string,
+  format: ChatFormat,
+) => AsyncIterable<string>
+
 /** Subset of the custom-format `tool_result` frame, surfaced to
  *  interceptors. The route uses this for the `generateImage` →
  *  `tool_image` persistence handoff. */
@@ -130,8 +144,12 @@ export interface ToolResultFrame {
 export async function* chatStream(
   model: LanguageModel,
   config: ChatConfig,
-  options: { onToolResult?: FrameInterceptor } = {},
+  options: {
+    onToolResult?: FrameInterceptor
+    onComplete?: CompletionInterceptor
+  } = {},
 ): AsyncGenerator<string> {
+  let assistantText = ""
   const hasTools = config.tools && Object.keys(config.tools).length > 0
   const stream = streamText({
     model,
@@ -149,6 +167,7 @@ export async function* chatStream(
   try {
     for await (const part of stream.fullStream) {
       if (part.type === "text-delta" && part.text) {
+        assistantText += part.text
         yield sseFrame({ type: "text", value: part.text })
       } else if (
         part.type === "reasoning-delta" &&
@@ -223,6 +242,12 @@ export async function* chatStream(
     })
     return
   }
+  // Success path — fire post-stream chips before the `done` frame.
+  if (options.onComplete) {
+    for await (const extra of options.onComplete(assistantText, "custom")) {
+      yield extra
+    }
+  }
   yield sseFrame({ type: "done" })
 }
 
@@ -232,8 +257,12 @@ export async function* chatStream(
 export async function* chatStreamAiSdk(
   model: LanguageModel,
   config: ChatConfig,
-  options: { onToolResult?: FrameInterceptor } = {},
+  options: {
+    onToolResult?: FrameInterceptor
+    onComplete?: CompletionInterceptor
+  } = {},
 ): AsyncGenerator<string> {
+  let assistantText = ""
   const hasTools = config.tools && Object.keys(config.tools).length > 0
 
   yield sseFrame({ type: "start" })
@@ -286,6 +315,7 @@ export async function* chatStreamAiSdk(
     for await (const part of stream.fullStream) {
       if (part.type === "text-delta" && part.text) {
         for (const f of closeReasoning()) yield f
+        assistantText += part.text
         if (!activeTextId) {
           const id = openText()
           yield sseFrame({ type: "text-start", id })
@@ -375,6 +405,12 @@ export async function* chatStreamAiSdk(
   }
 
   for (const f of closeAllChannels()) yield f
+  // Success path — fire post-stream chips before `finish-step`.
+  if (options.onComplete) {
+    for await (const extra of options.onComplete(assistantText, "ai-sdk")) {
+      yield extra
+    }
+  }
   yield sseFrame({ type: "finish-step" })
   yield sseFrame({ type: "finish" })
   yield "data: [DONE]\n\n"
@@ -434,5 +470,99 @@ export function stringifyToolOutput(output: unknown): string {
     return JSON.stringify(output)
   } catch {
     return String(output)
+  }
+}
+
+// --- Follow-up suggestions (B.1d) -------------------------------------
+//
+// After a successful chat turn, optionally generate 3 follow-up
+// suggestion chips with a cheap second model call. The chat route
+// emits these via the SSE emitter (`{type: "suggestions"}` on the
+// custom format, `data-suggestions` on AI SDK).
+
+/** Cheap model for the suggestion call. Same as the summariser path
+ *  in `summarise.ts` — Anthropic Haiku is fast + cheap and the
+ *  suggestion task is small (200 tokens of JSON). */
+const SUGGESTION_MODEL = "claude-3-5-haiku-20241022"
+
+const FENCE_HEAD_RE = /^```(?:json)?\s*\n?/i
+const FENCE_TAIL_RE = /\n?```\s*$/
+
+/** Strip markdown fences the model occasionally wraps JSON in, then
+ *  parse + validate as a flat string array. Returns at most 3
+ *  short non-empty entries. Permissive — any decode failure yields
+ *  an empty array. */
+export function parseSuggestionsJson(raw: string): string[] {
+  const cleaned = raw.trim().replace(FENCE_HEAD_RE, "").replace(FENCE_TAIL_RE, "").trim()
+  try {
+    const parsed = JSON.parse(cleaned) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((s): s is string => typeof s === "string")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0 && s.length <= 120)
+      .slice(0, 3)
+  } catch {
+    return []
+  }
+}
+
+/** Pull the last `user` role message's content. Mirrors the
+ *  Next.js inline route's `lastUserText`. */
+function lastUserText(messages: ChatMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m?.role === "user") return m.content
+  }
+  return ""
+}
+
+/** Generate up to 3 follow-up chips for the current turn. Returns
+ *  an empty array on any failure (the chip strip is decoration —
+ *  never block the chat turn on it).
+ *
+ *  Mirrors `app/api/chat/route.ts:generateSuggestions`. The Next.js
+ *  path uses Gemini via the AI gateway; the service backends talk
+ *  to Anthropic directly, so we use a cheap Haiku call here. */
+export async function generateChatSuggestions(
+  history: ChatMessage[],
+  assistantReply: string,
+  signal: AbortSignal | undefined,
+): Promise<string[]> {
+  if (!assistantReply.trim()) return []
+  const env = getEnv()
+  if (!env.ANTHROPIC_API_KEY) return []
+
+  const userText = lastUserText(history)
+  const prompt =
+    "Based on this exchange, propose 3 concise follow-up questions the user might want to ask next. " +
+    'Each must be under 14 words, in the user\'s voice (not "ask the user…"). ' +
+    "Reply with strict JSON only — a flat array of 3 strings, no prose:\n" +
+    '["...", "...", "..."]\n\n' +
+    `User asked:\n"""\n${userText.slice(0, 4000)}\n"""\n\n` +
+    `Assistant answered:\n"""\n${assistantReply.slice(0, 4000)}\n"""`
+
+  let model: LanguageModel
+  if (env.ANTHROPIC_BASE_URL) {
+    const custom = createAnthropic({
+      apiKey: env.ANTHROPIC_API_KEY,
+      baseURL: env.ANTHROPIC_BASE_URL,
+    })
+    model = custom(SUGGESTION_MODEL)
+  } else {
+    model = anthropic(SUGGESTION_MODEL)
+  }
+
+  try {
+    const out = await generateText({
+      abortSignal: signal,
+      model,
+      prompt,
+      maxOutputTokens: 200,
+      temperature: 0.7,
+    })
+    return parseSuggestionsJson(out.text)
+  } catch {
+    return []
   }
 }

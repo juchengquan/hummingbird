@@ -47,7 +47,9 @@ from .chat import (
     chat_stream_ai_sdk,
     chat_stream_with_tools,
     chat_stream_with_tools_ai_sdk,
+    generate_chat_suggestions,
     resolve_anthropic_client,
+    sse_frame,
 )
 from .db import get_pool, has_pool
 from .extraction import ExtractionKind, extract_file
@@ -324,17 +326,35 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
             max_steps=body.max_steps or DEFAULT_MAX_STEPS,
         )
 
+        # Post-stream chips. Mirrors the Next.js inline route's
+        # behaviour: on a successful turn, ask a cheap Haiku call
+        # for 3 follow-up questions and emit them as `suggestions`
+        # (custom) or `data-suggestions` (AI SDK). Decoration only —
+        # failures are swallowed by `generate_chat_suggestions`.
+        async def on_complete(assistant_text: str, fmt: ChatFormat) -> AsyncIterator[str]:
+            values = await generate_chat_suggestions(
+                client=client,
+                history=config.messages,
+                assistant_reply=assistant_text,
+            )
+            if not values:
+                return
+            if fmt == "ai-sdk":
+                yield sse_frame({"type": "data-suggestions", "data": {"values": values}})
+            else:
+                yield sse_frame({"type": "suggestions", "values": values})
+
         if tools:
             stream_gen = (
-                chat_stream_with_tools_ai_sdk(client=client, config=config)
+                chat_stream_with_tools_ai_sdk(client=client, config=config, on_complete=on_complete)
                 if format == "ai-sdk"
-                else chat_stream_with_tools(client=client, config=config)
+                else chat_stream_with_tools(client=client, config=config, on_complete=on_complete)
             )
         else:
             stream_gen = (
-                chat_stream_ai_sdk(client=client, config=config)
+                chat_stream_ai_sdk(client=client, config=config, on_complete=on_complete)
                 if format == "ai-sdk"
-                else chat_stream(client=client, config=config)
+                else chat_stream(client=client, config=config, on_complete=on_complete)
             )
 
         async def event_source() -> AsyncIterator[bytes]:

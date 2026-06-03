@@ -30,6 +30,7 @@ import {
   DEFAULT_MAX_TOKENS,
   chatStream,
   chatStreamAiSdk,
+  generateChatSuggestions,
   resolveAnthropicModel,
 } from "../chat"
 import { getPool, hasPool } from "../db"
@@ -154,11 +155,38 @@ chatRoutes.post("/v1/chat", requireAuth, async (c) => {
     c.header(AI_SDK_STREAM_HEADER_NAME, AI_SDK_STREAM_HEADER_VALUE)
   }
 
+  // Post-stream chips. Runs once on a successful turn before the
+  // terminal frame; emits `{type:"suggestions"}` on custom format
+  // or `data-suggestions` on AI SDK. Mirrors the Next.js inline
+  // path. PLAN-useChat-adoption.md Phase B.1d.
+  const onComplete = async function* (
+    assistantText: string,
+    fmt: "custom" | "ai-sdk",
+  ): AsyncIterable<string> {
+    const suggestions = await generateChatSuggestions(
+      config.messages,
+      assistantText,
+      reqSignal,
+    )
+    if (suggestions.length === 0) return
+    if (fmt === "ai-sdk") {
+      yield `data: ${JSON.stringify({
+        type: "data-suggestions",
+        data: { values: suggestions },
+      })}\n\n`
+    } else {
+      yield `data: ${JSON.stringify({
+        type: "suggestions",
+        values: suggestions,
+      })}\n\n`
+    }
+  }
+
   return stream(c, async (s) => {
     const gen =
       format === "ai-sdk"
-        ? chatStreamAiSdk(model, config, { onToolResult })
-        : chatStream(model, config, { onToolResult })
+        ? chatStreamAiSdk(model, config, { onToolResult, onComplete })
+        : chatStream(model, config, { onToolResult, onComplete })
     for await (const frame of gen) {
       // Bail early if the client hung up — saves tokens on a tab close.
       if (s.aborted) return

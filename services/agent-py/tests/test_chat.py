@@ -489,3 +489,117 @@ async def test_delta_pair_from_event_filters_unknown() -> None:
     # Happy paths.
     assert _delta_pair_from_event(_text_event("hi")) == ("text", "hi")
     assert _delta_pair_from_event(_thinking_event("hmm")) == ("reasoning", "hmm")
+
+
+# --- Follow-up suggestions (PLAN-useChat-adoption.md Phase B.1d) ------
+
+
+def test_parse_suggestions_json_happy_path() -> None:
+    from agent_py.chat import parse_suggestions_json
+
+    out = parse_suggestions_json('["one", "two", "three"]')
+    assert out == ["one", "two", "three"]
+
+
+def test_parse_suggestions_json_strips_markdown_fences() -> None:
+    from agent_py.chat import parse_suggestions_json
+
+    out = parse_suggestions_json('```json\n["a", "b"]\n```')
+    assert out == ["a", "b"]
+
+
+def test_parse_suggestions_json_caps_at_three() -> None:
+    from agent_py.chat import parse_suggestions_json
+
+    out = parse_suggestions_json('["a", "b", "c", "d", "e"]')
+    assert out == ["a", "b", "c"]
+
+
+def test_parse_suggestions_json_drops_empty_and_overlong() -> None:
+    from agent_py.chat import parse_suggestions_json
+
+    raw = json.dumps(["ok", "  ", "x" * 200, "fine"])
+    out = parse_suggestions_json(raw)
+    # Trimmed empty + overlong (>120 chars) entries get dropped.
+    assert out == ["ok", "fine"]
+
+
+def test_parse_suggestions_json_invalid_yields_empty() -> None:
+    from agent_py.chat import parse_suggestions_json
+
+    assert parse_suggestions_json("not json") == []
+    assert parse_suggestions_json('{"not": "a list"}') == []
+    assert parse_suggestions_json("") == []
+
+
+@pytest.mark.asyncio
+async def test_on_complete_runs_before_done_on_custom_format() -> None:
+    """`chat_stream` invokes `on_complete` with the accumulated
+    assistant text before the terminal `done` frame, and the
+    callback's frames are emitted in order."""
+    client = _FakeClient(["Hello ", "world"])
+    captured: list[tuple[str, str]] = []
+
+    async def on_complete(text: str, fmt: str) -> AsyncIterator[str]:
+        captured.append((text, fmt))
+        yield 'data: {"type":"suggestions","values":["a","b"]}\n\n'
+
+    frames = [
+        f
+        async for f in chat_stream(
+            client=client, config=_config(), on_complete=on_complete
+        )
+    ]
+    payloads = [json.loads(f.removeprefix("data: ").rstrip()) for f in frames]
+    types = [p["type"] for p in payloads]
+    assert types == ["text", "text", "suggestions", "done"]
+    assert captured == [("Hello world", "custom")]
+
+
+@pytest.mark.asyncio
+async def test_on_complete_runs_before_finish_on_ai_sdk_format() -> None:
+    client = _FakeClient(["Hello"])
+    captured: list[tuple[str, str]] = []
+
+    async def on_complete(text: str, fmt: str) -> AsyncIterator[str]:
+        captured.append((text, fmt))
+        yield 'data: {"type":"data-suggestions","data":{"values":["a"]}}\n\n'
+
+    frames = [
+        f
+        async for f in chat_stream_ai_sdk(
+            client=client, config=_config(), on_complete=on_complete
+        )
+    ]
+    payloads = _parse_ai_sdk_frames(frames)
+    types = [p["type"] if isinstance(p, dict) else p for p in payloads]
+    # data-suggestions sits between text-end and finish-step.
+    assert "data-suggestions" in types
+    idx_suggest = types.index("data-suggestions")
+    idx_finish_step = types.index("finish-step")
+    assert idx_suggest < idx_finish_step
+    assert captured == [("Hello", "ai-sdk")]
+
+
+@pytest.mark.asyncio
+async def test_on_complete_not_called_on_error_path() -> None:
+    """When the upstream stream errors, `on_complete` is NOT invoked
+    — chips are decoration, not something to mint over a broken
+    turn."""
+    client = _FakeClient([], raises=RuntimeError("boom"))
+    called = False
+
+    async def on_complete(text: str, fmt: str) -> AsyncIterator[str]:
+        nonlocal called
+        called = True
+        # The generator has to actually yield to count; mark the
+        # callback as invoked regardless and yield once.
+        yield 'data: {"type":"suggestions","values":["unreached"]}\n\n'
+
+    _ = [
+        f
+        async for f in chat_stream(
+            client=client, config=_config(), on_complete=on_complete
+        )
+    ]
+    assert called is False
