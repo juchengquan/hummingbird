@@ -15,11 +15,7 @@ import { MockLanguageModelV2 } from "ai/test"
 
 import { createApp } from "../src/app"
 import { resetEnvCacheForTest } from "../src/env"
-import {
-  chatStream,
-  chatStreamAiSdk,
-  type ChatConfig,
-} from "../src/chat"
+import { chatStreamAiSdk, type ChatConfig } from "../src/chat"
 
 const SECRET = "test-secret-do-not-use-in-prod-32-bytes!"
 
@@ -78,9 +74,6 @@ async function collect(gen: AsyncGenerator<string>): Promise<string[]> {
   return out
 }
 
-function parseCustom(frames: string[]): Array<{ type: string } & Record<string, unknown>> {
-  return frames.map((f) => JSON.parse(f.replace(/^data: /, "").trimEnd()))
-}
 
 function parseAiSdk(frames: string[]): Array<string | { type: string; [k: string]: unknown }> {
   return frames.map((f) => {
@@ -88,27 +81,6 @@ function parseAiSdk(frames: string[]): Array<string | { type: string; [k: string
     return s === "[DONE]" ? "[DONE]" : JSON.parse(s)
   })
 }
-
-describe("chatStream — custom format", () => {
-  test("emits text + done in order", async () => {
-    const model = makeModel(["Hello", " world"])
-    const frames = await collect(chatStream(model, baseConfig))
-    const payloads = parseCustom(frames)
-    expect(payloads).toEqual([
-      { type: "text", value: "Hello" },
-      { type: "text", value: " world" },
-      { type: "done" },
-    ])
-  })
-
-  test("text-delta with empty text is suppressed", async () => {
-    const model = makeModel(["", "ok"])
-    const frames = await collect(chatStream(model, baseConfig))
-    const payloads = parseCustom(frames)
-    const textFrames = payloads.filter((p) => p.type === "text")
-    expect(textFrames).toEqual([{ type: "text", value: "ok" }])
-  })
-})
 
 describe("chatStreamAiSdk — AI SDK v5 format", () => {
   test("full lifecycle (start → start-step → text-start → text-delta… → text-end → finish-step → finish → [DONE])", async () => {
@@ -170,28 +142,6 @@ function makeReasoningThenTextModel(opts: {
     }),
   })
 }
-
-describe("chatStream — reasoning channel (B.1)", () => {
-  test("emits {type:'reasoning',value} alongside text frames", async () => {
-    const model = makeReasoningThenTextModel({
-      reasoning: ["Let me ", "think…"],
-      text: ["The answer ", "is 42."],
-    })
-    const frames = await collect(chatStream(model, baseConfig))
-    const payloads = parseCustom(frames)
-    const types = payloads.map((p) => p.type)
-    // Reasoning frames precede text frames.
-    expect(types).toEqual([
-      "reasoning",
-      "reasoning",
-      "text",
-      "text",
-      "done",
-    ])
-    const reasonings = payloads.filter((p) => p.type === "reasoning")
-    expect(reasonings.map((r) => r.value)).toEqual(["Let me ", "think…"])
-  })
-})
 
 describe("chatStreamAiSdk — reasoning channel (B.1)", () => {
   test("emits reasoning-start / reasoning-delta / reasoning-end with matched id", async () => {
@@ -256,23 +206,6 @@ describe("POST /v1/chat — route surface", () => {
       headers: { "Content-Type": "application/json" },
     })
     expect(res.status).toBe(401)
-  })
-
-  test("rejects invalid format query", async () => {
-    const app = createApp()
-    const token = await makeJwt()
-    const res = await app.request("/v1/chat?format=bogus", {
-      method: "POST",
-      body: JSON.stringify({
-        model: "claude-3-5-haiku-20241022",
-        messages: [{ role: "user", content: "hi" }],
-      }),
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-    })
-    expect(res.status).toBe(422)
   })
 
   test("rejects empty messages", async () => {
@@ -371,33 +304,14 @@ describe("parseSuggestionsJson — agent-ts helper", () => {
   })
 })
 
-describe("chatStream — onComplete hook (B.1d)", () => {
-  test("runs once with accumulated text before done", async () => {
-    const captured: Array<{ text: string; format: string }> = []
-    const model = makeModel(["Hello ", "world"])
-    const frames = await collect(
-      chatStream(model, baseConfig, {
-        onComplete: async function* (text: string, fmt: string) {
-          captured.push({ text, format: fmt })
-          yield `data: ${JSON.stringify({ type: "suggestions", values: ["a", "b"] })}\n\n`
-        },
-      }),
-    )
-    const payloads = parseCustom(frames)
-    const types = payloads.map((p) => p.type)
-    expect(types).toEqual(["text", "text", "suggestions", "done"])
-    expect(captured).toEqual([{ text: "Hello world", format: "custom" }])
-  })
-})
-
 describe("chatStreamAiSdk — onComplete hook (B.1d)", () => {
   test("data-suggestions sits before finish-step", async () => {
-    const captured: Array<{ text: string; format: string }> = []
+    const captured: string[] = []
     const model = makeModel(["Hello"])
     const frames = await collect(
       chatStreamAiSdk(model, baseConfig, {
-        onComplete: async function* (text: string, fmt: string) {
-          captured.push({ text, format: fmt })
+        onComplete: async function* (text: string) {
+          captured.push(text)
           yield `data: ${JSON.stringify({
             type: "data-suggestions",
             data: { values: ["a"] },
@@ -413,6 +327,6 @@ describe("chatStreamAiSdk — onComplete hook (B.1d)", () => {
     const idxSuggest = types.indexOf("data-suggestions")
     const idxFinishStep = types.indexOf("finish-step")
     expect(idxSuggest).toBeLessThan(idxFinishStep)
-    expect(captured).toEqual([{ text: "Hello", format: "ai-sdk" }])
+    expect(captured).toEqual(["Hello"])
   })
 })

@@ -41,11 +41,8 @@ from .chat import (
     DEFAULT_MAX_STEPS,
     DEFAULT_MAX_TOKENS,
     ChatConfig,
-    ChatFormat,
     ChatMessage,
-    chat_stream,
     chat_stream_ai_sdk,
-    chat_stream_with_tools,
     chat_stream_with_tools_ai_sdk,
     generate_chat_suggestions,
     resolve_anthropic_client,
@@ -232,35 +229,18 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
         request: Request,
         body: ChatRequest,
         claims: Annotated[dict[str, object], Depends(get_current_user)],
-        format: ChatFormat = "custom",
     ) -> StreamingResponse:
-        """Streaming chat endpoint — Phase 4-1 of PLAN-agent-api.
+        """Streaming chat endpoint. Mirrors `app/api/chat/route.ts`
+        on the TS side. Accepts a narrow request (messages + model +
+        optional system prompt + optional max_tokens) and streams
+        Anthropic deltas back as SSE frames in the AI SDK v5 UI
+        message stream protocol (what `@ai-sdk/react`'s `useChat()`
+        consumes natively). Adds the `x-vercel-ai-ui-message-stream:
+        v1` header so the SDK can advertise its protocol version.
 
-        Mirrors `app/api/chat/route.ts` on the TS side. Accepts a
-        narrow request (messages + model + optional system prompt
-        + optional max_tokens) and streams Anthropic deltas back as
-        SSE frames.
-
-        Wire format is selectable via the `?format=` query parameter:
-
-          - `format=custom` (default) — `{type:"text|error|done"}`
-            frames that match the existing Next.js chat consumer
-            (`use-chat-send.ts`). Phase 4-1 + 4-2 baseline so the
-            selector can swap between TS and Python without changing
-            the consumer.
-
-          - `format=ai-sdk` — Phase 3g — AI SDK v5 UI message stream
-            (`start`/`text-start`/`text-delta`/`text-end`/`finish` +
-            `[DONE]` terminator), so a consumer using
-            `@ai-sdk/react`'s `useChat()` can read Python output
-            natively. Response adds the
-            `x-vercel-ai-ui-message-stream: v1` header the SDK uses
-            to advertise its protocol version.
-
-        Phase 4-1 is **text-only**: tools / skills / attachments /
-        MCP all deferred. The Python service already has the
-        agent-loop machinery for tool use (Phase 2b-2 + 3c+);
-        wiring it into the streaming chat path lands in Phase 4-3+.
+        The legacy custom wire format was retired in B.3 of
+        PLAN-useChat-adoption.md; the `?format=` query param is
+        silently ignored.
 
         Returns 503 when `ANTHROPIC_API_KEY` is unset — fast-fail
         signal to monitoring that the deploy is misconfigured rather
@@ -328,10 +308,10 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
 
         # Post-stream chips. Mirrors the Next.js inline route's
         # behaviour: on a successful turn, ask a cheap Haiku call
-        # for 3 follow-up questions and emit them as `suggestions`
-        # (custom) or `data-suggestions` (AI SDK). Decoration only —
-        # failures are swallowed by `generate_chat_suggestions`.
-        async def on_complete(assistant_text: str, fmt: ChatFormat) -> AsyncIterator[str]:
+        # for 3 follow-up questions and emit them as
+        # `data-suggestions` parts. Decoration only — failures are
+        # swallowed by `generate_chat_suggestions`.
+        async def on_complete(assistant_text: str) -> AsyncIterator[str]:
             values = await generate_chat_suggestions(
                 client=client,
                 history=config.messages,
@@ -339,23 +319,14 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
             )
             if not values:
                 return
-            if fmt == "ai-sdk":
-                yield sse_frame({"type": "data-suggestions", "data": {"values": values}})
-            else:
-                yield sse_frame({"type": "suggestions", "values": values})
+            yield sse_frame({"type": "data-suggestions", "data": {"values": values}})
 
         if tools:
-            stream_gen = (
-                chat_stream_with_tools_ai_sdk(client=client, config=config, on_complete=on_complete)
-                if format == "ai-sdk"
-                else chat_stream_with_tools(client=client, config=config, on_complete=on_complete)
+            stream_gen = chat_stream_with_tools_ai_sdk(
+                client=client, config=config, on_complete=on_complete
             )
         else:
-            stream_gen = (
-                chat_stream_ai_sdk(client=client, config=config, on_complete=on_complete)
-                if format == "ai-sdk"
-                else chat_stream(client=client, config=config, on_complete=on_complete)
-            )
+            stream_gen = chat_stream_ai_sdk(client=client, config=config, on_complete=on_complete)
 
         async def event_source() -> AsyncIterator[bytes]:
             async for frame in stream_gen:
@@ -365,7 +336,6 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
                     logger.info(
                         "chat.client_disconnected",
                         model=body.model,
-                        format=format,
                     )
                     return
                 yield frame.encode("utf-8")
@@ -373,17 +343,15 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
         # `text/event-stream` triggers SSE handling in browser EventSource
         # / the existing Next.js consumer. Cache-Control + Connection
         # headers match what production proxies (nginx, Cloudflare) need
-        # to keep the stream from being buffered.
+        # to keep the stream from being buffered. The
+        # `x-vercel-ai-ui-message-stream: v1` header is always set
+        # so `useChat()` consumers can confirm the protocol.
         headers = {
             "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            AI_SDK_STREAM_HEADER_NAME: AI_SDK_STREAM_HEADER_VALUE,
         }
-        if format == "ai-sdk":
-            # `useChat()` checks this header to confirm the response
-            # speaks the AI SDK UI message stream protocol. Mirrors
-            # `UI_MESSAGE_STREAM_HEADERS` in the `ai` package.
-            headers[AI_SDK_STREAM_HEADER_NAME] = AI_SDK_STREAM_HEADER_VALUE
 
         return StreamingResponse(
             event_source(),

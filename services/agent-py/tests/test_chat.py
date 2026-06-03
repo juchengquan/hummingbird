@@ -23,7 +23,6 @@ from agent_py import settings as settings_module
 from agent_py.chat import (
     ChatConfig,
     ChatMessage,
-    chat_stream,
     chat_stream_ai_sdk,
     resolve_anthropic_client,
     sse_frame,
@@ -134,70 +133,6 @@ def _config(model: str = "claude-3-5-sonnet-20241022", system: str | None = None
         messages=[ChatMessage(role="user", content="hi")],
         system=system,
     )
-
-
-@pytest.mark.asyncio
-async def test_chat_stream_emits_text_then_done() -> None:
-    client = _FakeClient(["Hello", " world", "!"])
-    frames = [f async for f in chat_stream(client=client, config=_config())]
-    payloads = [json.loads(f.removeprefix("data: ").rstrip()) for f in frames]
-    assert payloads == [
-        {"type": "text", "value": "Hello"},
-        {"type": "text", "value": " world"},
-        {"type": "text", "value": "!"},
-        {"type": "done"},
-    ]
-
-
-@pytest.mark.asyncio
-async def test_chat_stream_error_frame_stops_emission() -> None:
-    client = _FakeClient([], raises=RuntimeError("rate limited"))
-    frames = [f async for f in chat_stream(client=client, config=_config())]
-    assert len(frames) == 1
-    payload = json.loads(frames[0].removeprefix("data: ").rstrip())
-    assert payload["type"] == "error"
-    assert payload["code"] == "upstream"
-    assert "rate limited" in payload["message"]
-
-
-@pytest.mark.asyncio
-async def test_chat_stream_forwards_system_prompt() -> None:
-    client = _FakeClient(["ok"])
-    cfg = _config(system="You are a helpful test bot.")
-    _ = [f async for f in chat_stream(client=client, config=cfg)]
-    assert client.messages.calls[0].get("system") == "You are a helpful test bot."
-
-
-@pytest.mark.asyncio
-async def test_chat_stream_omits_system_kwarg_when_unset() -> None:
-    """Don't pass `system=None` — Anthropic would treat that
-    differently from "no system at all". Omit the kwarg entirely."""
-    client = _FakeClient(["ok"])
-    _ = [f async for f in chat_stream(client=client, config=_config())]
-    assert "system" not in client.messages.calls[0]
-
-
-@pytest.mark.asyncio
-async def test_chat_stream_passes_max_tokens_and_messages() -> None:
-    client = _FakeClient(["x"])
-    cfg = ChatConfig(
-        model="m",
-        messages=[
-            ChatMessage(role="user", content="a"),
-            ChatMessage(role="assistant", content="b"),
-            ChatMessage(role="user", content="c"),
-        ],
-        max_tokens=512,
-    )
-    _ = [f async for f in chat_stream(client=client, config=cfg)]
-    call = client.messages.calls[0]
-    assert call["max_tokens"] == 512
-    assert call["model"] == "m"
-    assert call["messages"] == [
-        {"role": "user", "content": "a"},
-        {"role": "assistant", "content": "b"},
-        {"role": "user", "content": "c"},
-    ]
 
 
 # --- chat_stream_ai_sdk (Phase 3g — AI SDK UI message stream) ---------
@@ -374,25 +309,6 @@ class _EventClient:
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_emits_reasoning_frames() -> None:
-    """`chat_stream` (custom format) emits `{type: "reasoning"}` for
-    thinking deltas and `{type: "text"}` for text deltas, matching
-    what the chat panel consumer expects."""
-    events = [
-        _thinking_event("Let me "),
-        _thinking_event("think…"),
-        _text_event("The answer is 42."),
-    ]
-    client = _EventClient(events)
-    frames = [f async for f in chat_stream(client=client, config=_config())]
-    payloads = [json.loads(f.removeprefix("data: ").rstrip()) for f in frames]
-    types = [p["type"] for p in payloads]
-    assert types == ["reasoning", "reasoning", "text", "done"]
-    assert payloads[0] == {"type": "reasoning", "value": "Let me "}
-    assert payloads[2] == {"type": "text", "value": "The answer is 42."}
-
-
-@pytest.mark.asyncio
 async def test_ai_sdk_stream_emits_reasoning_lifecycle() -> None:
     """`chat_stream_ai_sdk` emits the AI SDK's first-class
     `reasoning-start` / `reasoning-delta` / `reasoning-end` parts with
@@ -533,33 +449,12 @@ def test_parse_suggestions_json_invalid_yields_empty() -> None:
 
 
 @pytest.mark.asyncio
-async def test_on_complete_runs_before_done_on_custom_format() -> None:
-    """`chat_stream` invokes `on_complete` with the accumulated
-    assistant text before the terminal `done` frame, and the
-    callback's frames are emitted in order."""
-    client = _FakeClient(["Hello ", "world"])
-    captured: list[tuple[str, str]] = []
-
-    async def on_complete(text: str, fmt: str) -> AsyncIterator[str]:
-        captured.append((text, fmt))
-        yield 'data: {"type":"suggestions","values":["a","b"]}\n\n'
-
-    frames = [
-        f async for f in chat_stream(client=client, config=_config(), on_complete=on_complete)
-    ]
-    payloads = [json.loads(f.removeprefix("data: ").rstrip()) for f in frames]
-    types = [p["type"] for p in payloads]
-    assert types == ["text", "text", "suggestions", "done"]
-    assert captured == [("Hello world", "custom")]
-
-
-@pytest.mark.asyncio
 async def test_on_complete_runs_before_finish_on_ai_sdk_format() -> None:
     client = _FakeClient(["Hello"])
-    captured: list[tuple[str, str]] = []
+    captured: list[str] = []
 
-    async def on_complete(text: str, fmt: str) -> AsyncIterator[str]:
-        captured.append((text, fmt))
+    async def on_complete(text: str) -> AsyncIterator[str]:
+        captured.append(text)
         yield 'data: {"type":"data-suggestions","data":{"values":["a"]}}\n\n'
 
     frames = [
@@ -573,7 +468,7 @@ async def test_on_complete_runs_before_finish_on_ai_sdk_format() -> None:
     idx_suggest = types.index("data-suggestions")
     idx_finish_step = types.index("finish-step")
     assert idx_suggest < idx_finish_step
-    assert captured == [("Hello", "ai-sdk")]
+    assert captured == ["Hello"]
 
 
 @pytest.mark.asyncio
@@ -584,12 +479,15 @@ async def test_on_complete_not_called_on_error_path() -> None:
     client = _FakeClient([], raises=RuntimeError("boom"))
     called = False
 
-    async def on_complete(text: str, fmt: str) -> AsyncIterator[str]:
+    async def on_complete(text: str) -> AsyncIterator[str]:
         nonlocal called
         called = True
         # The generator has to actually yield to count; mark the
         # callback as invoked regardless and yield once.
-        yield 'data: {"type":"suggestions","values":["unreached"]}\n\n'
+        yield 'data: {"type":"data-suggestions","data":{"values":["unreached"]}}\n\n'
 
-    _ = [f async for f in chat_stream(client=client, config=_config(), on_complete=on_complete)]
+    _ = [
+        f
+        async for f in chat_stream_ai_sdk(client=client, config=_config(), on_complete=on_complete)
+    ]
     assert called is False

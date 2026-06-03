@@ -1,11 +1,9 @@
 /**
- * Follow-up #5 tests — `image-persistence.ts`.
- *
- * The `buildToolImageInterceptor` is meant to fire after a
- * `generateImage` tool result and emit a `tool_image` SSE frame.
- * We exercise the interceptor directly with synthetic
- * `ToolResultFrame` inputs and a mocked global `fetch` to simulate
- * Minimax download + Supabase Storage upload + sign.
+ * Tests for `buildToolImageInterceptor`. After a `generateImage`
+ * tool result lands, the interceptor downloads + uploads each image
+ * to Supabase Storage (or falls back to a data: URL) and emits a
+ * `data-tool-image` AI SDK v5 custom data part. Other tools pass
+ * through with no extra frames.
  */
 
 import {
@@ -51,16 +49,18 @@ interface FetchCall {
 }
 
 /** Install a fetch stub that:
- *   - GET on a Minimax-shaped URL → returns FAKE_PNG bytes
+ *   - GET on a non-Supabase URL → returns FAKE_PNG bytes
  *   - POST .../storage/v1/object/<bucket>/<path>      → 200 (upload)
  *   - POST .../storage/v1/object/sign/<bucket>/<path> → 200 with signedURL
  *
  *  Returns the call log so tests can assert which paths were hit. */
-function installFetchStub(opts: {
-  uploadStatus?: number
-  signStatus?: number
-  signedUrl?: string
-} = {}): FetchCall[] {
+function installFetchStub(
+  opts: {
+    uploadStatus?: number
+    signStatus?: number
+    signedUrl?: string
+  } = {},
+): FetchCall[] {
   const log: FetchCall[] = []
   const uploadStatus = opts.uploadStatus ?? 200
   const signStatus = opts.signStatus ?? 200
@@ -75,46 +75,36 @@ function installFetchStub(opts: {
     log.push({
       url,
       method,
-      contentType: typeof init?.headers === "object"
-        ? (init.headers as Record<string, string>)["Content-Type"]
-        : undefined,
+      contentType:
+        typeof init?.headers === "object"
+          ? (init.headers as Record<string, string>)["Content-Type"]
+          : undefined,
     })
 
-    // Minimax download — anything pointing at `cdn.minimax.io` / arbitrary
-    // external URL that isn't our Supabase URL.
     if (method === "GET" && !url.includes(SUPABASE_URL)) {
       return new Response(FAKE_PNG, {
         status: 200,
         headers: { "Content-Type": "image/png" },
       })
     }
-
     if (url.includes("/storage/v1/object/sign/")) {
-      return new Response(
-        JSON.stringify({ signedURL: signedUrl }),
-        {
-          status: signStatus,
-          headers: { "Content-Type": "application/json" },
-        },
-      )
+      return new Response(JSON.stringify({ signedURL: signedUrl }), {
+        status: signStatus,
+        headers: { "Content-Type": "application/json" },
+      })
     }
-
     if (url.includes("/storage/v1/object/")) {
       return new Response(JSON.stringify({ Key: "x" }), {
         status: uploadStatus,
         headers: { "Content-Type": "application/json" },
       })
     }
-
     return new Response("not stubbed", { status: 500 })
   }) as typeof fetch
-
   return log
 }
 
-async function collectFrames(
-  it: AsyncIterable<string>,
-): Promise<unknown[]> {
+async function collectFrames(it: AsyncIterable<string>): Promise<unknown[]> {
   const out: unknown[] = []
   for await (const f of it) {
     const json = f.replace(/^data: /, "").trimEnd()
@@ -123,7 +113,26 @@ async function collectFrames(
   return out
 }
 
-describe("buildToolImageInterceptor", () => {
+interface DataToolImageFrame {
+  type: "data-tool-image"
+  id: string
+  data: {
+    id: string
+    mode: "t2i" | "i2i"
+    images: Array<{
+      id: string
+      url: string
+      storagePath?: string
+      width: number
+      height: number
+      format: string
+      prompt: string
+      mode: "t2i" | "i2i"
+    }>
+  }
+}
+
+describe("buildToolImageInterceptor — gating", () => {
   test("passes through non-generateImage tool results", async () => {
     const interceptor = buildToolImageInterceptor({ userId: "u-1" })
     const frame: ToolResultFrame = {
@@ -132,11 +141,11 @@ describe("buildToolImageInterceptor", () => {
       name: "webSearch",
       output: { results: [] },
     }
-    const frames = await collectFrames(interceptor(frame, "custom"))
+    const frames = await collectFrames(interceptor(frame))
     expect(frames).toEqual([])
   })
 
-  test("skips when the generateImage output is not ok", async () => {
+  test("skips when generateImage output is not ok", async () => {
     const interceptor = buildToolImageInterceptor({ userId: "u-1" })
     const frame: ToolResultFrame = {
       type: "tool_result",
@@ -144,11 +153,29 @@ describe("buildToolImageInterceptor", () => {
       name: "generateImage",
       output: { ok: false, error: "rate_limit" },
     }
-    const frames = await collectFrames(interceptor(frame, "custom"))
+    const frames = await collectFrames(interceptor(frame))
     expect(frames).toEqual([])
   })
 
-  test("uploads to Storage + emits tool_image frame on success", async () => {
+  test("skips images with no url field", async () => {
+    installFetchStub()
+    const interceptor = buildToolImageInterceptor({ userId: "u-1" })
+    const frame: ToolResultFrame = {
+      type: "tool_result",
+      id: "call-7",
+      name: "generateImage",
+      output: {
+        ok: true,
+        images: [{ id: "x", width: 1, height: 1, format: "png" }],
+      },
+    }
+    const frames = await collectFrames(interceptor(frame))
+    expect(frames).toEqual([])
+  })
+})
+
+describe("buildToolImageInterceptor — happy paths", () => {
+  test("uploads to Storage + emits data-tool-image with signed URL", async () => {
     const log = installFetchStub()
     const interceptor = buildToolImageInterceptor({ userId: "u-1" })
     const frame: ToolResultFrame = {
@@ -160,36 +187,28 @@ describe("buildToolImageInterceptor", () => {
         mode: "t2i",
         prompt: "a cat",
         images: [
-          { id: "x", url: "https://cdn.minimax/img1.png", width: 512, height: 512, format: "png" },
+          {
+            id: "x",
+            url: "https://cdn.minimax/img1.png",
+            width: 512,
+            height: 512,
+            format: "png",
+          },
         ],
       },
     }
-
-    const frames = await collectFrames(interceptor(frame, "custom"))
+    const frames = await collectFrames(interceptor(frame))
     expect(frames).toHaveLength(1)
-    const out = frames[0] as {
-      type: string
-      id: string
-      mode: string
-      images: Array<{
-        id: string
-        url: string
-        storagePath?: string
-        width: number
-        height: number
-        format: string
-        prompt: string
-      }>
-    }
-    expect(out.type).toBe("tool_image")
+    const out = frames[0] as DataToolImageFrame
+    expect(out.type).toBe("data-tool-image")
     expect(out.id).toBe("call-3")
-    expect(out.mode).toBe("t2i")
-    expect(out.images).toHaveLength(1)
-    expect(out.images[0]?.storagePath).toBe("u-1/generated/call-3-0.png")
-    expect(out.images[0]?.url).toContain(SUPABASE_URL)
-    expect(out.images[0]?.prompt).toBe("a cat")
+    expect(out.data.id).toBe("call-3")
+    expect(out.data.mode).toBe("t2i")
+    expect(out.data.images).toHaveLength(1)
+    expect(out.data.images[0]?.storagePath).toBe("u-1/generated/call-3-0.png")
+    expect(out.data.images[0]?.url).toContain(SUPABASE_URL)
+    expect(out.data.images[0]?.prompt).toBe("a cat")
 
-    // Hit order: GET Minimax, POST upload, POST sign.
     const minimaxGets = log.filter((c) => c.method === "GET")
     const storageUploads = log.filter(
       (c) => c.method === "POST" && c.url.includes("/object/user-files/"),
@@ -202,7 +221,38 @@ describe("buildToolImageInterceptor", () => {
     expect(storageSigns).toHaveLength(1)
   })
 
-  test("falls back to data: URL when Storage upload fails", async () => {
+  test("propagates i2i mode + prompt through to the emitted frame", async () => {
+    installFetchStub()
+    const interceptor = buildToolImageInterceptor({ userId: "u-1" })
+    const frame: ToolResultFrame = {
+      type: "tool_result",
+      id: "call-8",
+      name: "generateImage",
+      output: {
+        ok: true,
+        mode: "i2i",
+        prompt: "remix",
+        images: [
+          {
+            id: "x",
+            url: "https://cdn.minimax/img5.png",
+            width: 1,
+            height: 1,
+            format: "png",
+          },
+        ],
+      },
+    }
+    const frames = await collectFrames(interceptor(frame))
+    const out = frames[0] as DataToolImageFrame
+    expect(out.data.mode).toBe("i2i")
+    expect(out.data.images[0]?.mode).toBe("i2i")
+    expect(out.data.images[0]?.prompt).toBe("remix")
+  })
+})
+
+describe("buildToolImageInterceptor — fallback paths", () => {
+  test("data: URL when Storage upload fails", async () => {
     installFetchStub({ uploadStatus: 500 })
     const interceptor = buildToolImageInterceptor({ userId: "u-1" })
     const frame: ToolResultFrame = {
@@ -214,19 +264,25 @@ describe("buildToolImageInterceptor", () => {
         mode: "t2i",
         prompt: "a dog",
         images: [
-          { id: "x", url: "https://cdn.minimax/img2.png", width: 1, height: 1, format: "png" },
+          {
+            id: "x",
+            url: "https://cdn.minimax/img2.png",
+            width: 1,
+            height: 1,
+            format: "png",
+          },
         ],
       },
     }
-    const frames = await collectFrames(interceptor(frame, "custom"))
-    const out = frames[0] as {
-      images: Array<{ url: string; storagePath?: string }>
-    }
-    expect(out.images[0]?.url.startsWith("data:image/png;base64,")).toBe(true)
-    expect(out.images[0]?.storagePath).toBeUndefined()
+    const frames = await collectFrames(interceptor(frame))
+    const out = frames[0] as DataToolImageFrame
+    expect(out.data.images[0]?.url.startsWith("data:image/png;base64,")).toBe(
+      true,
+    )
+    expect(out.data.images[0]?.storagePath).toBeUndefined()
   })
 
-  test("inline data: URL when userId is empty (signed-out caller)", async () => {
+  test("data: URL when userId is empty (signed-out caller)", async () => {
     installFetchStub()
     const interceptor = buildToolImageInterceptor({ userId: "" })
     const frame: ToolResultFrame = {
@@ -237,16 +293,22 @@ describe("buildToolImageInterceptor", () => {
         ok: true,
         mode: "t2i",
         images: [
-          { id: "x", url: "https://cdn.minimax/img3.png", width: 1, height: 1, format: "png" },
+          {
+            id: "x",
+            url: "https://cdn.minimax/img3.png",
+            width: 1,
+            height: 1,
+            format: "png",
+          },
         ],
       },
     }
-    const frames = await collectFrames(interceptor(frame, "custom"))
-    const out = frames[0] as {
-      images: Array<{ url: string; storagePath?: string }>
-    }
-    expect(out.images[0]?.url.startsWith("data:image/png;base64,")).toBe(true)
-    expect(out.images[0]?.storagePath).toBeUndefined()
+    const frames = await collectFrames(interceptor(frame))
+    const out = frames[0] as DataToolImageFrame
+    expect(out.data.images[0]?.url.startsWith("data:image/png;base64,")).toBe(
+      true,
+    )
+    expect(out.data.images[0]?.storagePath).toBeUndefined()
   })
 
   test("localFilesOnly forces data: URL even when authenticated", async () => {
@@ -262,13 +324,21 @@ describe("buildToolImageInterceptor", () => {
       output: {
         ok: true,
         images: [
-          { id: "x", url: "https://cdn.minimax/img4.png", width: 1, height: 1, format: "png" },
+          {
+            id: "x",
+            url: "https://cdn.minimax/img4.png",
+            width: 1,
+            height: 1,
+            format: "png",
+          },
         ],
       },
     }
-    const frames = await collectFrames(interceptor(frame, "custom"))
-    const out = frames[0] as { images: Array<{ url: string }> }
-    expect(out.images[0]?.url.startsWith("data:image/png;base64,")).toBe(true)
+    const frames = await collectFrames(interceptor(frame))
+    const out = frames[0] as DataToolImageFrame
+    expect(out.data.images[0]?.url.startsWith("data:image/png;base64,")).toBe(
+      true,
+    )
   })
 })
 
@@ -277,99 +347,7 @@ describe("buildToolImageInterceptor — error paths", () => {
     installFetchStub()
   })
 
-  test("skips images with no url field", async () => {
-    const interceptor = buildToolImageInterceptor({ userId: "u-1" })
-    const frame: ToolResultFrame = {
-      type: "tool_result",
-      id: "call-7",
-      name: "generateImage",
-      output: {
-        ok: true,
-        images: [{ id: "x", width: 1, height: 1, format: "png" }],
-      },
-    }
-    const frames = await collectFrames(interceptor(frame, "custom"))
-    expect(frames).toEqual([])
-  })
-
-  test("propagates i2i mode tag through to the emitted frame", async () => {
-    const interceptor = buildToolImageInterceptor({ userId: "u-1" })
-    const frame: ToolResultFrame = {
-      type: "tool_result",
-      id: "call-8",
-      name: "generateImage",
-      output: {
-        ok: true,
-        mode: "i2i",
-        prompt: "remix",
-        images: [
-          { id: "x", url: "https://cdn.minimax/img5.png", width: 1, height: 1, format: "png" },
-        ],
-      },
-    }
-    const frames = await collectFrames(interceptor(frame, "custom"))
-    const out = frames[0] as {
-      mode: string
-      images: Array<{ mode: string; prompt: string }>
-    }
-    expect(out.mode).toBe("i2i")
-    expect(out.images[0]?.mode).toBe("i2i")
-    expect(out.images[0]?.prompt).toBe("remix")
-  })
-})
-
-describe("buildToolImageInterceptor — AI SDK format (B.1)", () => {
-  test("emits data-tool-image part with {id, mode, images} payload", async () => {
-    installFetchStub()
-    const interceptor = buildToolImageInterceptor({ userId: "u-1" })
-    const frame: ToolResultFrame = {
-      type: "tool_result",
-      id: "call-ai-1",
-      name: "generateImage",
-      output: {
-        ok: true,
-        mode: "t2i",
-        prompt: "a bird",
-        images: [
-          { id: "x", url: "https://cdn.minimax/img.png", width: 512, height: 512, format: "png" },
-        ],
-      },
-    }
-    const frames = await collectFrames(interceptor(frame, "ai-sdk"))
-    expect(frames).toHaveLength(1)
-    const out = frames[0] as {
-      type: string
-      id: string
-      data: { id: string; mode: string; images: Array<{ id: string; url: string }> }
-    }
-    expect(out.type).toBe("data-tool-image")
-    expect(out.id).toBe("call-ai-1")
-    expect(out.data.mode).toBe("t2i")
-    expect(out.data.images).toHaveLength(1)
-    expect(out.data.images[0]?.url).toContain(SUPABASE_URL)
-  })
-
-  test("ai-sdk format ignores non-generateImage tool results", async () => {
-    const interceptor = buildToolImageInterceptor({ userId: "u-1" })
-    const frame: ToolResultFrame = {
-      type: "tool_result",
-      id: "call-ws",
-      name: "webSearch",
-      output: { results: [] },
-    }
-    const frames = await collectFrames(interceptor(frame, "ai-sdk"))
-    expect(frames).toEqual([])
-  })
-
-  test("ai-sdk format skips when ok:false (same gate as custom)", async () => {
-    const interceptor = buildToolImageInterceptor({ userId: "u-1" })
-    const frame: ToolResultFrame = {
-      type: "tool_result",
-      id: "call-bad",
-      name: "generateImage",
-      output: { ok: false, error: "rate_limit" },
-    }
-    const frames = await collectFrames(interceptor(frame, "ai-sdk"))
-    expect(frames).toEqual([])
-  })
+  // The redundant subset that exercised the AI-SDK shape in a
+  // separate `describe` is dropped — there's only one wire format
+  // now, and every test in this file already asserts on it.
 })

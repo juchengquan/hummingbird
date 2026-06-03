@@ -1,9 +1,10 @@
 """Phase 4-3 tests — tool-enabled streaming in `/v1/chat`.
 
-Covers both wire formats (`chat_stream_with_tools` for the custom
-shape, `chat_stream_with_tools_ai_sdk` for AI SDK v5). The Anthropic
-SDK is faked at the boundary so tests stay hermetic and the multi-step
-loop can be exercised deterministically.
+Covers `chat_stream_with_tools_ai_sdk` — the AI SDK v5 UI message
+stream tool path. The legacy custom-format companion was retired
+in B.3 of PLAN-useChat-adoption.md. The Anthropic SDK is faked at
+the boundary so tests stay hermetic and the multi-step loop can be
+exercised deterministically.
 """
 
 from __future__ import annotations
@@ -19,7 +20,6 @@ import pytest
 from agent_py.chat import (
     ChatConfig,
     ChatMessage,
-    chat_stream_with_tools,
     chat_stream_with_tools_ai_sdk,
 )
 from agent_py.tools.registry import (
@@ -160,174 +160,6 @@ def _parse_ai_sdk_frames(frames: list[str]) -> list[Any]:
         else:
             out.append(json.loads(s))
     return out
-
-
-# --- custom-format tool stream ----------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_with_tools_custom_runs_one_tool_then_settles() -> None:
-    """Step 1: model emits a tool_use. Step 2: model emits final text
-    + no tools. Output sequence: text-pre? + tool_call + tool_result +
-    text + done."""
-    steps = [
-        _Step(
-            deltas=["thinking… "],
-            tool_uses=[{"id": "tu_1", "name": "echo", "input": {"q": "world"}}],
-        ),
-        _Step(deltas=["Hello, world."]),
-    ]
-    client = _FakeClient(steps)
-    frames = [
-        f
-        async for f in chat_stream_with_tools(
-            client=client, config=_config(tools=[_make_echo_tool()])
-        )
-    ]
-    payloads = _parse_custom_frames(frames)
-    types = [p["type"] for p in payloads]
-    assert types == [
-        "text",
-        "tool_call",
-        "tool_result",
-        "text",
-        "done",
-    ]
-    assert payloads[0]["value"] == "thinking… "
-    assert payloads[1] == {
-        "type": "tool_call",
-        "id": "tu_1",
-        "name": "echo",
-        "args": {"q": "world"},
-    }
-    assert payloads[2]["result"] == "echo:world"
-    assert payloads[2]["summary"] == "echoed"
-    assert payloads[2]["isError"] is False
-    assert payloads[3]["value"] == "Hello, world."
-
-
-@pytest.mark.asyncio
-async def test_with_tools_custom_no_tool_calls_settles_first_iteration() -> None:
-    """If the model produces a text-only response on the first try,
-    we emit text + done immediately (no extra step)."""
-    client = _FakeClient([_Step(deltas=["just text"])])
-    frames = [
-        f
-        async for f in chat_stream_with_tools(
-            client=client, config=_config(tools=[_make_echo_tool()])
-        )
-    ]
-    types = [json.loads(f.removeprefix("data: ").rstrip())["type"] for f in frames]
-    assert types == ["text", "done"]
-
-
-@pytest.mark.asyncio
-async def test_with_tools_unknown_tool_returns_is_error() -> None:
-    """Model calls a tool the registry doesn't have. We return an
-    is_error tool_result and let the model recover."""
-    steps = [
-        _Step(
-            deltas=[],
-            tool_uses=[{"id": "tu_1", "name": "ghost", "input": {}}],
-        ),
-        _Step(deltas=["sorry"]),
-    ]
-    client = _FakeClient(steps)
-    frames = [
-        f
-        async for f in chat_stream_with_tools(
-            client=client, config=_config(tools=[_make_echo_tool()])
-        )
-    ]
-    payloads = _parse_custom_frames(frames)
-    tr = next(p for p in payloads if p["type"] == "tool_result")
-    assert tr["isError"] is True
-    assert "unknown tool" in tr["result"]
-
-
-@pytest.mark.asyncio
-async def test_with_tools_tool_error_propagates_as_is_error() -> None:
-    """A tool's execute raising ToolError → is_error tool_result with
-    the error message in `result`."""
-    failing = ToolDescriptor(
-        name="bad",
-        description="d",
-        input_schema={"type": "object"},
-        execute=AsyncMock(side_effect=ToolError("boom")),
-    )
-    steps = [
-        _Step(tool_uses=[{"id": "tu_1", "name": "bad", "input": {}}]),
-        _Step(deltas=["ok"]),
-    ]
-    client = _FakeClient(steps)
-    frames = [
-        f async for f in chat_stream_with_tools(client=client, config=_config(tools=[failing]))
-    ]
-    payloads = _parse_custom_frames(frames)
-    tr = next(p for p in payloads if p["type"] == "tool_result")
-    assert tr["isError"] is True
-    assert "boom" in tr["result"]
-
-
-@pytest.mark.asyncio
-async def test_with_tools_max_steps_emits_error_frame() -> None:
-    """If the model keeps calling tools past max_steps, emit an
-    error frame with `code: max_steps` so the client can surface a
-    "budget exhausted" message."""
-    # Three steps but max_steps=2 — the loop should bail with an error.
-    steps = [_Step(tool_uses=[{"id": f"tu_{i}", "name": "echo", "input": {}}]) for i in range(5)]
-    client = _FakeClient(steps)
-    frames = [
-        f
-        async for f in chat_stream_with_tools(
-            client=client, config=_config(tools=[_make_echo_tool()], max_steps=2)
-        )
-    ]
-    payloads = _parse_custom_frames(frames)
-    last = payloads[-1]
-    assert last["type"] == "error"
-    assert last["code"] == "max_steps"
-
-
-@pytest.mark.asyncio
-async def test_with_tools_messages_grow_across_iterations() -> None:
-    """Each iteration's `messages.stream` call gets a longer message
-    list (assistant + tool_result blocks appended) — confirms the
-    loop carries history forward."""
-    steps = [
-        _Step(tool_uses=[{"id": "tu_1", "name": "echo", "input": {"q": "x"}}]),
-        _Step(deltas=["done"]),
-    ]
-    client = _FakeClient(steps)
-    _ = [
-        f
-        async for f in chat_stream_with_tools(
-            client=client, config=_config(tools=[_make_echo_tool()])
-        )
-    ]
-    # First call: 1 user message. Second call: 3 (user + assistant + user-tool-result).
-    call_lens = [len(c["messages"]) for c in client.messages.calls]
-    assert call_lens == [1, 3]
-
-
-@pytest.mark.asyncio
-async def test_with_tools_upstream_exception_emits_error_frame() -> None:
-    """Anthropic SDK raises mid-stream → emit error + stop (no done)."""
-    steps = [_Step(raises=RuntimeError("rate limited"))]
-    client = _FakeClient(steps)
-    frames = [
-        f
-        async for f in chat_stream_with_tools(
-            client=client, config=_config(tools=[_make_echo_tool()])
-        )
-    ]
-    payloads = _parse_custom_frames(frames)
-    assert len(payloads) == 1
-    assert payloads[0]["type"] == "error"
-    assert "rate limited" in payloads[0]["message"]
-
-
-# --- ai-sdk format tool stream ----------------------------------------
 
 
 @pytest.mark.asyncio

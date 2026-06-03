@@ -23,7 +23,6 @@ import {
   AI_SDK_STREAM_HEADER_NAME,
   AI_SDK_STREAM_HEADER_VALUE,
   ChatSseEmitter,
-  type ChatFormat,
   type ToolResultPayload,
 } from '@/server/chat/sse-emitter'
 import { persistGeneratedImages, type ImageToPersist } from '@/server/image-storage'
@@ -375,18 +374,6 @@ ${assistantReply.slice(0, 4000)}
 }
 
 export async function POST(req: NextRequest) {
-  // `?format=ai-sdk` opts the response into the AI SDK v5 UI message
-  // stream protocol; default `custom` keeps the existing chat panel
-  // wire format. PLAN-useChat-adoption.md Phase B.1c.
-  const formatParam = req.nextUrl.searchParams.get('format') ?? 'custom'
-  if (formatParam !== 'custom' && formatParam !== 'ai-sdk') {
-    return NextResponse.json(
-      { code: 'invalid_format', message: "format must be 'custom' or 'ai-sdk'." },
-      { status: 422 }
-    )
-  }
-  const format: ChatFormat = formatParam
-
   let raw: unknown
   try {
     raw = await req.json()
@@ -575,7 +562,7 @@ export async function POST(req: NextRequest) {
         const writeLine = (line: string) => {
           controller.enqueue(encoder.encode(line))
         }
-        const emitter = new ChatSseEmitter(writeLine, format)
+        const emitter = new ChatSseEmitter(writeLine)
         emitter.start()
         let assistantText = ''
         let sawError = false
@@ -872,16 +859,10 @@ export async function POST(req: NextRequest) {
           }
 
           if (sawError) {
-            // We already wrote an error frame; for AI-SDK we need
-            // the `[DONE]` terminator without a `finish` so the
-            // consumer's finally-block fires but it can distinguish
-            // completion from failure. For custom we still emit
-            // `done` so the consumer's state machine settles.
-            if (format === 'ai-sdk') {
-              emitter.endAfterError()
-            } else {
-              emitter.done()
-            }
+            // Already wrote an error frame — emit `[DONE]` without
+            // `finish` so the consumer's finally-block fires but it
+            // can still distinguish completion from failure.
+            emitter.endAfterError()
           } else {
             emitter.done()
           }
@@ -917,11 +898,9 @@ export async function POST(req: NextRequest) {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
-    }
-    if (format === 'ai-sdk') {
       // `useChat()` checks this header to confirm the response speaks
       // the AI SDK v5 UI message stream protocol.
-      headers[AI_SDK_STREAM_HEADER_NAME] = AI_SDK_STREAM_HEADER_VALUE
+      [AI_SDK_STREAM_HEADER_NAME]: AI_SDK_STREAM_HEADER_VALUE,
     }
     return new Response(sse, { headers })
   } catch (error) {

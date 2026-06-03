@@ -227,10 +227,7 @@ async function chatStreamTs(
   body: ChatRequestInput,
   options?: ChatStreamOptions
 ): Promise<ChatStreamResult> {
-  // Ask the backend for the AI SDK v5 UI message stream format —
-  // the consumer (`use-chat-send.ts`) accepts both the AI SDK and
-  // the legacy custom shape. PLAN-useChat-adoption.md Phase B.2.
-  const res = await fetch(`${apiUrls.chat()}?format=ai-sdk`, {
+  const res = await fetch(apiUrls.chat(), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -320,10 +317,7 @@ async function chatStreamRemote(
   if (!narrowed.model) {
     return chatStreamTs(body, { signal })
   }
-  // Same `?format=ai-sdk` opt-in as the Next.js inline path. All
-  // three backends accept this query param after B.1 — see
-  // PLAN-useChat-adoption.md Phase B.2.
-  const res = await fetch(`${baseUrl}/v1/chat?format=ai-sdk`, {
+  const res = await fetch(`${baseUrl}/v1/chat`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

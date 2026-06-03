@@ -17,7 +17,6 @@ import { z } from "zod"
 import type { ServerSkill } from "@/server/skills/registry"
 
 import {
-  chatStream,
   chatStreamAiSdk,
   isToolError,
   summariseToolOutput,
@@ -94,9 +93,6 @@ function fakeSearchTool(): unknown {
   })
 }
 
-function parseCustom(frames: string[]): Array<{ type: string } & Record<string, unknown>> {
-  return frames.map((f) => JSON.parse(f.replace(/^data: /, "").trimEnd()))
-}
 
 function parseAiSdk(frames: string[]): Array<string | { type: string; [k: string]: unknown }> {
   return frames.map((f) => {
@@ -110,74 +106,6 @@ async function collect(gen: AsyncGenerator<string>): Promise<string[]> {
   for await (const f of gen) out.push(f)
   return out
 }
-
-describe("chatStream — custom format with tools", () => {
-  test("emits tool_call + tool_result frames", async () => {
-    const model = makeToolCallModel({
-      toolCallId: "call-1",
-      toolName: "fakeSearch",
-      input: { query: "hummingbirds" },
-    })
-
-    const tools = { fakeSearch: fakeSearchTool() } as StreamTextTools
-    const config: ChatConfig = {
-      model: "claude-3-5-haiku-20241022",
-      messages,
-      tools,
-      maxSteps: 1,
-    }
-
-    const frames = await collect(chatStream(model, config))
-    const payloads = parseCustom(frames)
-
-    const toolCall = payloads.find((p) => p.type === "tool_call")
-    const toolResult = payloads.find((p) => p.type === "tool_result")
-    expect(toolCall).toMatchObject({
-      type: "tool_call",
-      id: "call-1",
-      name: "fakeSearch",
-      args: { query: "hummingbirds" },
-    })
-    expect(toolResult).toMatchObject({
-      type: "tool_result",
-      id: "call-1",
-      name: "fakeSearch",
-      summary: "2 results",
-    })
-    expect(payloads.at(-1)).toEqual({ type: "done" })
-  })
-
-  test("tool_result includes isError on a failure-shaped output", async () => {
-    const model = makeToolCallModel({
-      toolCallId: "call-x",
-      toolName: "fakeBoom",
-      input: {},
-    })
-    const boomTool: unknown = tool({
-      description: "Fails on purpose",
-      inputSchema: z.object({}),
-      execute: async () => ({ ok: false, error: "network timeout" }),
-    })
-
-    const tools = { fakeBoom: boomTool } as StreamTextTools
-    const config: ChatConfig = {
-      model: "claude-3-5-haiku-20241022",
-      messages,
-      tools,
-      maxSteps: 1,
-    }
-
-    const frames = await collect(chatStream(model, config))
-    const payloads = parseCustom(frames)
-    const toolResult = payloads.find((p) => p.type === "tool_result")
-    expect(toolResult).toMatchObject({
-      type: "tool_result",
-      id: "call-x",
-      isError: true,
-      summary: "network timeout",
-    })
-  })
-})
 
 describe("chatStreamAiSdk — AI SDK v5 format with tools", () => {
   test("emits tool-input-available + tool-output-available", async () => {
