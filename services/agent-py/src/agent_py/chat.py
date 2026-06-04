@@ -29,7 +29,7 @@ import re
 import uuid
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 
@@ -42,6 +42,13 @@ from .settings import get_settings
 from .tools import ToolDescriptor, ToolError, tool_to_anthropic_param
 
 logger = structlog.get_logger(__name__)
+
+#: Stable provider-error categories surfaced on the wire in the
+#: AI SDK error frame's `code` field. The consumer renders a typed
+#: inline error bubble per code (rate-limited → cooldown, auth →
+#: hide Retry, context_window → suggest a larger-context fallback).
+#: `"upstream"` is the catch-all for anything else.
+ProviderErrorCode = Literal["rate_limit", "auth", "context_window", "upstream"]
 
 DEFAULT_MAX_TOKENS = 4096
 
@@ -101,6 +108,74 @@ class ChatConfig:
     max_tokens: int = DEFAULT_MAX_TOKENS
     tools: tuple[ToolDescriptor, ...] = ()
     max_steps: int = DEFAULT_MAX_STEPS
+
+
+#: Regex matching Anthropic's "prompt is too long" / OpenAI-flavoured
+#: "context length exceeded" 400 surfaces. Used by
+#: `categorize_provider_error` to bucket BadRequest 400s into
+#: `context_window` instead of the generic `upstream` bucket. Kept
+#: permissive — every provider phrases the same failure differently.
+_CONTEXT_WINDOW_RE = re.compile(
+    r"prompt is too long"
+    r"|context[_ ]?(?:window|length)"
+    r"|maximum (?:context|tokens)"
+    r"|too many tokens"
+    r"|input is too long"
+    r"|exceeds.*token"
+    r"|reduce.*input",
+    re.IGNORECASE,
+)
+
+
+def categorize_provider_error(exc: BaseException) -> ProviderErrorCode:
+    """Bucket an Anthropic SDK exception into one of the four wire
+    codes. Mirrors `categorizeProviderError` in
+    `services/agent-ts/src/chat.ts` and the shared `categorizeError`
+    in `lib/shared/api-errors.ts`.
+
+    Order matters — rate-limit-with-a-context-window-message would
+    still be a rate limit, not a context bust. We check the Anthropic
+    SDK's typed exceptions first (those are unambiguous) and fall
+    back to string matching the message only for the BadRequest 400
+    surface where the SDK reuses one class for several causes.
+    """
+    # The SDK exception module is imported lazily — the lib pulls in
+    # anyio/httpx and we don't want to require it at chat.py import
+    # time for tests that hit `sse_frame` and never touch the
+    # network path.
+    try:
+        from anthropic import (
+            AuthenticationError,
+            BadRequestError,
+            PermissionDeniedError,
+            RateLimitError,
+        )
+    except ImportError:  # pragma: no cover — anthropic is a hard dep
+        AuthenticationError = PermissionDeniedError = RateLimitError = ()  # type: ignore[assignment,misc]
+        BadRequestError = ()  # type: ignore[assignment,misc]
+
+    if isinstance(exc, RateLimitError):
+        return "rate_limit"
+    if isinstance(exc, (AuthenticationError, PermissionDeniedError)):
+        return "auth"
+    if isinstance(exc, BadRequestError):
+        if _CONTEXT_WINDOW_RE.search(str(exc)):
+            return "context_window"
+        return "upstream"
+
+    # Some upstream gateways (Vercel AI Gateway, self-hosted proxies)
+    # repackage typed errors as generic exceptions with the SDK message
+    # preserved verbatim. Fall back to string-matching the rendered
+    # text so we still bucket those correctly.
+    message = str(exc)
+    lower = message.lower()
+    if ("rate" in lower and "limit" in lower) or "429" in lower or "too many requests" in lower:
+        return "rate_limit"
+    if "401" in lower or "403" in lower or "unauthor" in lower or "forbidden" in lower:
+        return "auth"
+    if _CONTEXT_WINDOW_RE.search(message):
+        return "context_window"
+    return "upstream"
 
 
 def sse_frame(payload: dict[str, Any]) -> str:
@@ -255,7 +330,13 @@ async def chat_stream_ai_sdk(
         if isinstance(item, BaseException):
             for frame in close_all():
                 yield frame
-            yield sse_frame({"type": "error", "errorText": str(item) or "Chat stream failed."})
+            yield sse_frame(
+                {
+                    "type": "error",
+                    "errorText": str(item) or "Chat stream failed.",
+                    "code": categorize_provider_error(item),
+                }
+            )
             yield "data: [DONE]\n\n"
             return
         if channel == "reasoning":
@@ -464,7 +545,13 @@ async def chat_stream_with_tools_ai_sdk(
                 yield frame
             for frame in close_reasoning():
                 yield frame
-            yield sse_frame({"type": "error", "errorText": str(exc) or "Chat stream failed."})
+            yield sse_frame(
+                {
+                    "type": "error",
+                    "errorText": str(exc) or "Chat stream failed.",
+                    "code": categorize_provider_error(exc),
+                }
+            )
             yield "data: [DONE]\n\n"
             return
 
@@ -530,6 +617,7 @@ async def chat_stream_with_tools_ai_sdk(
                 f"Chat exceeded {config.max_steps} tool-use iterations "
                 "without producing a final answer."
             ),
+            "code": "upstream",
         }
     )
     yield "data: [DONE]\n\n"
@@ -689,6 +777,8 @@ __all__ = [
     "SUGGESTION_MODEL",
     "ChatConfig",
     "ChatMessage",
+    "ProviderErrorCode",
+    "categorize_provider_error",
     "chat_stream_ai_sdk",
     "chat_stream_with_tools_ai_sdk",
     "generate_chat_suggestions",

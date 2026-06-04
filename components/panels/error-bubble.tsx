@@ -11,6 +11,7 @@ import type { MessageError } from "@/shared/types"
 const ERROR_TITLES: Record<string, string> = {
   auth: "Authentication failed",
   rate_limit: "Rate limited",
+  context_window: "Conversation too long",
   invalid_model: "Model unavailable",
   provider: "Provider error",
   network: "Network error",
@@ -92,13 +93,22 @@ export function ErrorBubble({
   const title = ERROR_TITLES[error.code] ?? ERROR_TITLES.unknown
   // `auth` means the API key is missing/invalid — retrying with the same
   // setup will hit the same wall. Hide Retry and let the user dismiss or
-  // pick a different model.
-  const canRetrySameModel = error.code !== "auth" && error.code !== "invalid_model"
+  // pick a different model. `context_window` means the conversation
+  // overflowed; retrying same model + same history hits the same wall.
+  const canRetrySameModel =
+    error.code !== "auth" &&
+    error.code !== "invalid_model" &&
+    error.code !== "context_window"
   // Quick-fallback only makes sense when the model itself failed (invalid)
   // or the provider behind it returned an error. For rate_limit / network
   // / unknown, the same-model retry is the right primary action.
+  // `context_window` offers a larger-context fallback model when one is
+  // available so the user can recover in one click.
   const fallback =
-    (error.code === "invalid_model" || error.code === "provider") && onTryFallback
+    (error.code === "invalid_model" ||
+      error.code === "provider" ||
+      error.code === "context_window") &&
+    onTryFallback
       ? pickFallbackModel(error.model)
       : null
 

@@ -370,6 +370,7 @@ export interface ConversationFile {
 export type MessageErrorCode =
   | 'auth'
   | 'rate_limit'
+  | 'context_window'
   | 'invalid_model'
   | 'provider'
   | 'network'

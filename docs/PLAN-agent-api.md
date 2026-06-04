@@ -62,12 +62,23 @@ Option C (Python service) green-lit, end-to-end live in
   with a workspace).
 - Per-skill config (`webSearchConfig`, `imageGenConfig`, …)
   honoured by `/v1/chat`.
-- Provider-categorised errors (`rate_limit`, `auth`,
-  `context_window`) — currently bucketed as generic `upstream`.
 - `POST /v1/mcp/server` CRUD endpoint + `mcp_upsert_server_with_credentials`
   write path.
 - Per-IP rate buckets + idle watchdog on `/v1/chat`.
 - Real DNS-rebinding test against actual DNS (currently mocked).
+
+### Shipped
+
+- **Provider-categorised errors** (`rate_limit`, `auth`,
+  `context_window`, `upstream`) on `/v1/chat`. Both agent-py and
+  agent-ts emit a `code` field on AI SDK v5 `error` frames; the
+  consumer translates it into the typed `MessageError.code` so
+  `ErrorBubble` can pick its surface (cooldown for rate_limit,
+  hide Retry for auth, suggest a larger-context fallback for
+  context_window). The shared `categorizeError` in
+  `lib/shared/api-errors.ts` was extended with `context_window`
+  for parity on the Next.js inline route. See
+  `categorize_provider_error` / `categorizeProviderError`.
 
 > **Note on phase numbering.** The original plan called Phase 2 a
 > single 1-week slice (executor + 3 tools + provider port). It split
