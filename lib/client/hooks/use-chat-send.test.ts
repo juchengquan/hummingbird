@@ -103,6 +103,27 @@ describe("translateFrame — AI SDK v5 → normalised shape", () => {
       message: "boom",
     })
   })
+
+  test("AI SDK error propagates the optional `code` field", () => {
+    expect(
+      translateFrame(
+        '{"type":"error","errorText":"hit the wall","code":"rate_limit"}',
+      ),
+    ).toEqual({
+      type: "error",
+      message: "hit the wall",
+      code: "rate_limit",
+    })
+  })
+
+  test("AI SDK error with non-string code is dropped", () => {
+    expect(
+      translateFrame('{"type":"error","errorText":"boom","code":42}'),
+    ).toEqual({
+      type: "error",
+      message: "boom",
+    })
+  })
 })
 
 describe("translateFrame — lifecycle + edge cases", () => {

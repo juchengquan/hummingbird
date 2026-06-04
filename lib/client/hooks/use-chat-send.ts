@@ -126,9 +126,14 @@ export function translateFrame(payload: string): NormalisedFrame | null {
 
   // AI SDK error frames carry the human-readable text on
   // `errorText`. Re-shape into the internal `{type:"error",message}`
-  // envelope the handler block expects.
+  // envelope the handler block expects. The optional `code` rides
+  // alongside so the consumer can render a typed inline error bubble
+  // (rate_limit / auth / context_window / provider …) — services
+  // emit it from their provider-error categoriser.
   if (t === "error" && typeof raw.errorText === "string") {
-    return { type: "error", message: raw.errorText }
+    const out: NormalisedFrame = { type: "error", message: raw.errorText }
+    if (typeof raw.code === "string") out.code = raw.code
+    return out
   }
 
   // AI SDK v5 frame types. Re-shape into the internal logical

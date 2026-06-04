@@ -8,6 +8,7 @@
 export type ApiErrorCode =
   | 'auth'
   | 'rate_limit'
+  | 'context_window'
   | 'invalid_model'
   | 'provider'
   | 'aborted'
@@ -30,6 +31,16 @@ export function categorizeError(error: unknown): CategorizedError {
 
   if (/rate.?limit|quota|too many requests|429/.test(lower)) {
     return { status: 429, code: 'rate_limit', message }
+  }
+  // Context-window busts surface from Anthropic / OpenAI as 400s with
+  // characteristic phrases. Detect them BEFORE the generic
+  // invalid_model 400-bucket so they don't get miscategorised.
+  if (
+    /prompt is too long|context.?window|context.?length|maximum.*context|maximum.*tokens|too many tokens|input is too long|exceeds.*token|reduce.*input/.test(
+      lower,
+    )
+  ) {
+    return { status: 400, code: 'context_window', message }
   }
   if (/invalid.*model|model.*not.found|unknown model|400/.test(lower)) {
     return { status: 400, code: 'invalid_model', message }

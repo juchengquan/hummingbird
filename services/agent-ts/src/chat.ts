@@ -25,9 +25,67 @@
 
 import { anthropic, createAnthropic } from "@ai-sdk/anthropic"
 import type { LanguageModel } from "ai"
-import { generateText, stepCountIs, streamText } from "ai"
+import { APICallError, generateText, stepCountIs, streamText } from "ai"
 
 import { getEnv } from "./env"
+
+/** Stable provider-error categories surfaced on the wire in the
+ *  AI SDK error frame's `code` field. The consumer renders a typed
+ *  inline error bubble per code (rate-limited → cooldown, auth →
+ *  hide Retry, context_window → suggest a larger-context fallback).
+ *  `"upstream"` is the catch-all for anything else. Mirrors
+ *  `ProviderErrorCode` in `services/agent-py/src/agent_py/chat.py`. */
+export type ProviderErrorCode =
+  | "rate_limit"
+  | "auth"
+  | "context_window"
+  | "upstream"
+
+/** Regex matching context-window busts across provider phrasings —
+ *  Anthropic ("prompt is too long"), OpenAI ("context length exceeded"),
+ *  Gateways re-wrapping either. Kept permissive — every provider
+ *  phrases the same failure differently. */
+const CONTEXT_WINDOW_RE =
+  /prompt is too long|context[_ ]?(?:window|length)|maximum (?:context|tokens)|too many tokens|input is too long|exceeds.*token|reduce.*input/i
+
+/** Bucket an error thrown from `streamText` / the Anthropic SDK into
+ *  one of the four wire codes. We check the typed AI SDK error first
+ *  (those carry a status code so categorisation is unambiguous), then
+ *  fall back to string matching the rendered message for cases where
+ *  an upstream proxy strips the typed envelope.
+ *
+ *  Order matters — rate-limit-with-a-context-window-message would
+ *  still be a rate limit, not a context bust. */
+export function categorizeProviderError(err: unknown): ProviderErrorCode {
+  if (APICallError.isInstance(err)) {
+    const status = err.statusCode
+    if (status === 429) return "rate_limit"
+    if (status === 401 || status === 403) return "auth"
+    if (status === 400 && CONTEXT_WINDOW_RE.test(err.message)) {
+      return "context_window"
+    }
+  }
+
+  const message = err instanceof Error ? err.message : String(err)
+  const lower = message.toLowerCase()
+  if (
+    (lower.includes("rate") && lower.includes("limit")) ||
+    lower.includes("429") ||
+    lower.includes("too many requests")
+  ) {
+    return "rate_limit"
+  }
+  if (
+    lower.includes("401") ||
+    lower.includes("403") ||
+    lower.includes("unauthor") ||
+    lower.includes("forbidden")
+  ) {
+    return "auth"
+  }
+  if (CONTEXT_WINDOW_RE.test(message)) return "context_window"
+  return "upstream"
+}
 
 /** `streamText`'s `tools` field type — the same indirection
  *  `app/api/chat/route.ts` uses to avoid the deep `ToolSet`
@@ -260,6 +318,7 @@ export async function* chatStreamAiSdk(
           type: "error",
           errorText:
             part.error instanceof Error ? part.error.message : String(part.error),
+          code: categorizeProviderError(part.error),
         })
         yield "data: [DONE]\n\n"
         return
@@ -270,6 +329,7 @@ export async function* chatStreamAiSdk(
     yield sseFrame({
       type: "error",
       errorText: err instanceof Error ? err.message : String(err),
+      code: categorizeProviderError(err),
     })
     yield "data: [DONE]\n\n"
     return

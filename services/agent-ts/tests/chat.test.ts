@@ -10,12 +10,16 @@
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { SignJWT } from "jose"
-import { simulateReadableStream } from "ai"
+import { APICallError, simulateReadableStream } from "ai"
 import { MockLanguageModelV2 } from "ai/test"
 
 import { createApp } from "../src/app"
 import { resetEnvCacheForTest } from "../src/env"
-import { chatStreamAiSdk, type ChatConfig } from "../src/chat"
+import {
+  categorizeProviderError,
+  chatStreamAiSdk,
+  type ChatConfig,
+} from "../src/chat"
 
 const SECRET = "test-secret-do-not-use-in-prod-32-bytes!"
 
@@ -301,6 +305,169 @@ describe("parseSuggestionsJson — agent-ts helper", () => {
     expect(parseSuggestionsJson("not json")).toEqual([])
     expect(parseSuggestionsJson('{"not":"a list"}')).toEqual([])
     expect(parseSuggestionsJson("")).toEqual([])
+  })
+})
+
+describe("chatStreamAiSdk — error frame carries provider-categorised code", () => {
+  test("upstream when the model emits an `error` part with a generic Error", async () => {
+    const model = new MockLanguageModelV2({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: "stream-start", warnings: [] },
+            { type: "error", error: new Error("connection reset") },
+          ],
+        }),
+      }),
+    })
+    const frames = await collect(chatStreamAiSdk(model, baseConfig))
+    const payloads = parseAiSdk(frames)
+    const types = payloads.map((p) => (typeof p === "string" ? p : p.type))
+    expect(types).toEqual(["start", "start-step", "error", "[DONE]"])
+    const errFrame = payloads[2] as {
+      type: string
+      errorText: string
+      code: string
+    }
+    expect(errFrame.errorText).toBe("connection reset")
+    expect(errFrame.code).toBe("upstream")
+  })
+
+  test("rate_limit when the upstream error mentions rate limiting", async () => {
+    const model = new MockLanguageModelV2({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: "stream-start", warnings: [] },
+            { type: "error", error: new Error("429 Too Many Requests") },
+          ],
+        }),
+      }),
+    })
+    const frames = await collect(chatStreamAiSdk(model, baseConfig))
+    const payloads = parseAiSdk(frames)
+    const errFrame = payloads[2] as unknown as { code: string }
+    expect(errFrame.code).toBe("rate_limit")
+  })
+
+  test("context_window when a 400-class APICallError mentions prompt overflow", async () => {
+    const apiErr = new APICallError({
+      message: "prompt is too long: 220000 tokens > 200000 maximum",
+      url: "https://api.anthropic.com/v1/messages",
+      requestBodyValues: {},
+      statusCode: 400,
+    })
+    const model = new MockLanguageModelV2({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: "stream-start", warnings: [] },
+            { type: "error", error: apiErr },
+          ],
+        }),
+      }),
+    })
+    const frames = await collect(chatStreamAiSdk(model, baseConfig))
+    const payloads = parseAiSdk(frames)
+    const errFrame = payloads[2] as unknown as { code: string }
+    expect(errFrame.code).toBe("context_window")
+  })
+})
+
+describe("categorizeProviderError — typed AI SDK errors", () => {
+  test("APICallError 429 → rate_limit", () => {
+    const err = new APICallError({
+      message: "rate limited",
+      url: "https://x",
+      requestBodyValues: {},
+      statusCode: 429,
+    })
+    expect(categorizeProviderError(err)).toBe("rate_limit")
+  })
+
+  test("APICallError 401 → auth", () => {
+    const err = new APICallError({
+      message: "invalid x-api-key",
+      url: "https://x",
+      requestBodyValues: {},
+      statusCode: 401,
+    })
+    expect(categorizeProviderError(err)).toBe("auth")
+  })
+
+  test("APICallError 403 → auth", () => {
+    const err = new APICallError({
+      message: "permission denied",
+      url: "https://x",
+      requestBodyValues: {},
+      statusCode: 403,
+    })
+    expect(categorizeProviderError(err)).toBe("auth")
+  })
+
+  test("APICallError 400 with context-window message → context_window", () => {
+    const err = new APICallError({
+      message: "prompt is too long: 250000 > 200000",
+      url: "https://x",
+      requestBodyValues: {},
+      statusCode: 400,
+    })
+    expect(categorizeProviderError(err)).toBe("context_window")
+  })
+
+  test("APICallError 400 without context-window phrase → upstream", () => {
+    const err = new APICallError({
+      message: "messages.0: role must be user|assistant",
+      url: "https://x",
+      requestBodyValues: {},
+      statusCode: 400,
+    })
+    expect(categorizeProviderError(err)).toBe("upstream")
+  })
+})
+
+describe("categorizeProviderError — string-match fallback for generic errors", () => {
+  test("rate-limit phrasing", () => {
+    expect(categorizeProviderError(new Error("Rate limit exceeded"))).toBe(
+      "rate_limit",
+    )
+    expect(categorizeProviderError(new Error("429"))).toBe("rate_limit")
+    expect(categorizeProviderError(new Error("too many requests"))).toBe(
+      "rate_limit",
+    )
+  })
+
+  test("auth phrasing", () => {
+    expect(categorizeProviderError(new Error("Unauthorized: bad key"))).toBe(
+      "auth",
+    )
+    expect(categorizeProviderError(new Error("403 Forbidden"))).toBe("auth")
+  })
+
+  test("context-window phrasing", () => {
+    expect(categorizeProviderError(new Error("input is too long"))).toBe(
+      "context_window",
+    )
+    expect(categorizeProviderError(new Error("context window exceeded"))).toBe(
+      "context_window",
+    )
+  })
+
+  test("unrecognised → upstream", () => {
+    expect(categorizeProviderError(new Error("connection reset"))).toBe(
+      "upstream",
+    )
+    expect(categorizeProviderError("just a string")).toBe("upstream")
+  })
+
+  test("typed rate_limit wins even when message mentions context window", () => {
+    const err = new APICallError({
+      message: "rate limited (context_length 100)",
+      url: "https://x",
+      requestBodyValues: {},
+      statusCode: 429,
+    })
+    expect(categorizeProviderError(err)).toBe("rate_limit")
   })
 })
 

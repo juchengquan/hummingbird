@@ -173,8 +173,14 @@ shapes below are normative.
 { "type": "suggestions", "values": ["...", "..."] }
 
 // Terminal error — stops the stream. `code` matches MessageErrorCode.
-{ "type": "error", "code": "auth" | "rate_limit" | "invalid_model"
-                          | "provider" | "network" | "unknown",
+// Categorisation is best-effort (string-match on provider message +
+// typed-error introspection where available); when no branch claims
+// the error it falls through to "unknown" (Next.js inline route) or
+// "upstream" (agent-py / agent-ts services). The consumer maps both
+// catch-alls to the same generic ErrorBubble surface.
+{ "type": "error", "code": "auth" | "rate_limit" | "context_window"
+                          | "invalid_model" | "provider" | "network"
+                          | "unknown",
   "message": "string" }
 
 // Stream end — last frame of a successful stream.

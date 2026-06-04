@@ -255,6 +255,10 @@ async def test_with_tools_ai_sdk_max_steps_emits_error_no_finish() -> None:
     assert types[-2] == "error"
     err = payloads[-2]
     assert "iterations" in err["errorText"]
+    # The step-budget bust is an agent-loop ceiling, not a provider
+    # failure — keep it in the generic `upstream` bucket so the
+    # consumer's typed bubble doesn't promise a rate-limit cooldown.
+    assert err["code"] == "upstream"
 
 
 @pytest.mark.asyncio
@@ -280,3 +284,6 @@ async def test_with_tools_ai_sdk_upstream_exception_closes_text_then_error() -> 
         "error",
         "[DONE]",
     ]
+    # Categorised — "rate limited" matches the rate_limit string
+    # branch (the RuntimeError has no SDK type to lean on).
+    assert payloads[2]["code"] == "rate_limit"

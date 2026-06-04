@@ -186,7 +186,8 @@ async def test_ai_sdk_stream_emits_error_then_done_no_finish() -> None:
     """Error path: emit text-end (closing the open text block) +
     error + [DONE]. Intentionally skip `finish` — mirrors the AI SDK
     convention and lets `useChat()` distinguish completion from
-    failure."""
+    failure. The error frame carries a provider-categorised `code` so
+    the consumer can render a typed inline bubble."""
     client = _FakeClient([], raises=RuntimeError("rate limited"))
     frames = [f async for f in chat_stream_ai_sdk(client=client, config=_config())]
     payloads = _parse_ai_sdk_frames(frames)
@@ -202,6 +203,10 @@ async def test_ai_sdk_stream_emits_error_then_done_no_finish() -> None:
     ]
     error_payload = payloads[2]
     assert error_payload["errorText"] == "rate limited"
+    # Falls back to message-text matching since RuntimeError doesn't
+    # carry an Anthropic-SDK type. "rate limited" matches the
+    # rate-limit branch.
+    assert error_payload["code"] == "rate_limit"
 
 
 @pytest.mark.asyncio
@@ -257,6 +262,93 @@ async def test_ai_sdk_stream_error_after_partial_text() -> None:
         "error",
         "[DONE]",
     ]
+    # The error frame still carries a `code` even when text streamed
+    # successfully before the exception (mid-stream failure path).
+    error_payload = payloads[5]
+    assert error_payload["code"] == "upstream"
+
+
+# --- categorize_provider_error ----------------------------------------
+
+
+def test_categorize_provider_error_rate_limit_via_sdk_type() -> None:
+    """Anthropic's typed `RateLimitError` maps to `rate_limit`
+    unconditionally — we don't string-match when the SDK gave us the
+    answer."""
+    from anthropic import RateLimitError
+
+    from agent_py.chat import categorize_provider_error
+
+    # The SDK exception classes take (message, response, body) — use
+    # a synthetic mock for response since we only care about the
+    # isinstance check.
+    exc = RateLimitError.__new__(RateLimitError)
+    exc.args = ("hit a limit",)
+    assert categorize_provider_error(exc) == "rate_limit"
+
+
+def test_categorize_provider_error_auth_via_sdk_type() -> None:
+    from anthropic import AuthenticationError, PermissionDeniedError
+
+    from agent_py.chat import categorize_provider_error
+
+    auth = AuthenticationError.__new__(AuthenticationError)
+    auth.args = ("missing api key",)
+    perm = PermissionDeniedError.__new__(PermissionDeniedError)
+    perm.args = ("forbidden",)
+    assert categorize_provider_error(auth) == "auth"
+    assert categorize_provider_error(perm) == "auth"
+
+
+def test_categorize_provider_error_context_window_via_400_message() -> None:
+    """Anthropic packs context-window busts into a generic
+    `BadRequestError` — we inspect the message to disambiguate from
+    other 400s."""
+    from anthropic import BadRequestError
+
+    from agent_py.chat import categorize_provider_error
+
+    exc = BadRequestError.__new__(BadRequestError)
+    exc.args = ("prompt is too long: 250000 tokens > 200000 maximum",)
+    assert categorize_provider_error(exc) == "context_window"
+
+
+def test_categorize_provider_error_bad_request_without_context_phrase() -> None:
+    """A `BadRequestError` whose message doesn't mention a
+    context-window bust stays in the generic `upstream` bucket
+    rather than being mis-categorised as context_window."""
+    from anthropic import BadRequestError
+
+    from agent_py.chat import categorize_provider_error
+
+    exc = BadRequestError.__new__(BadRequestError)
+    exc.args = ("messages.0: role must be 'user' or 'assistant'",)
+    assert categorize_provider_error(exc) == "upstream"
+
+
+def test_categorize_provider_error_string_match_fallback() -> None:
+    """Generic exceptions (a gateway rewrapped the SDK error) get
+    bucketed by message text. Order of priority is rate_limit →
+    auth → context_window → upstream."""
+    from agent_py.chat import categorize_provider_error
+
+    assert categorize_provider_error(RuntimeError("429 too many requests")) == "rate_limit"
+    assert categorize_provider_error(RuntimeError("401 unauthorized")) == "auth"
+    assert categorize_provider_error(RuntimeError("forbidden")) == "auth"
+    assert categorize_provider_error(RuntimeError("input is too long")) == "context_window"
+    assert categorize_provider_error(RuntimeError("connection reset")) == "upstream"
+
+
+def test_categorize_provider_error_rate_limit_wins_over_context_phrase() -> None:
+    """A rate-limit exception whose message coincidentally mentions
+    context windows stays a rate limit. Order of checks matters."""
+    from anthropic import RateLimitError
+
+    from agent_py.chat import categorize_provider_error
+
+    exc = RateLimitError.__new__(RateLimitError)
+    exc.args = ("rate limited: context_length was 100 tokens",)
+    assert categorize_provider_error(exc) == "rate_limit"
 
 
 # --- resolve_anthropic_client -----------------------------------------
