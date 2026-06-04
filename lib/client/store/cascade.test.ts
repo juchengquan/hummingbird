@@ -4,12 +4,14 @@ import {
   gcOrphanedAttachment,
   gcOrphanedAttachments,
   hasLiveReference,
+  stripSelectionId,
   tombstoneFile,
   tombstoneMcpResource,
   tombstoneUrlBookmark,
   type AttachmentRef,
   type CascadeStateView,
 } from "./cascade"
+import type { Conversation } from "@/shared/types"
 
 const emptyState: CascadeStateView = {
   files: [],
@@ -260,5 +262,68 @@ describe("forkConversationJoins", () => {
     const inherited = forkConversationJoins(state, "src", "fork", fakeUuid)
     expect(inherited.conversationFiles).toHaveLength(1)
     expect(inherited.conversationFiles[0].fileId).toBe("f1")
+  })
+})
+
+// --- stripSelectionId ----------------------------------------------------
+
+function conv(
+  id: string,
+  patch: Partial<Conversation> = {},
+): Conversation {
+  return {
+    id,
+    title: id,
+    messages: [],
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    pinned: false,
+    selectedFileIds: [],
+    ...patch,
+  } as Conversation
+}
+
+describe("stripSelectionId", () => {
+  test("file kind: removes the id from every conversation's selectedFileIds", () => {
+    const conversations: Conversation[] = [
+      conv("a", { selectedFileIds: ["f1", "f2"] }),
+      conv("b", { selectedFileIds: ["f1"] }),
+      conv("c", { selectedFileIds: ["f3"] }),
+    ]
+    const out = stripSelectionId(conversations, "file", "f1")
+    expect(out[0].selectedFileIds).toEqual(["f2"])
+    expect(out[1].selectedFileIds).toEqual([])
+    // Untouched conversation keeps identity (React selector hooks
+    // don't churn on unrelated changes).
+    expect(out[2]).toBe(conversations[2])
+  })
+
+  test("mcp_resource kind: handles optional field that's undefined", () => {
+    const conversations: Conversation[] = [
+      conv("a", { selectedMcpResourceIds: ["m1", "m2"] }),
+      conv("b"), // selectedMcpResourceIds undefined
+    ]
+    const out = stripSelectionId(conversations, "mcp_resource", "m1")
+    expect(out[0].selectedMcpResourceIds).toEqual(["m2"])
+    expect(out[1]).toBe(conversations[1])
+  })
+
+  test("url_bookmark kind: filters when present, identity-stable when absent", () => {
+    const conversations: Conversation[] = [
+      conv("a", { selectedUrlBookmarkIds: ["u1"] }),
+      conv("b"),
+    ]
+    const out = stripSelectionId(conversations, "url_bookmark", "u1")
+    expect(out[0].selectedUrlBookmarkIds).toEqual([])
+    expect(out[1]).toBe(conversations[1])
+  })
+
+  test("returns a new array even when nothing changes", () => {
+    // Map always builds a new array; that's fine — only inner identity
+    // matters for memoised selectors that key on conversation refs.
+    const conversations: Conversation[] = [conv("a", { selectedFileIds: ["x"] })]
+    const out = stripSelectionId(conversations, "file", "not-present")
+    expect(out).not.toBe(conversations)
+    expect(out[0]).toBe(conversations[0])
   })
 })

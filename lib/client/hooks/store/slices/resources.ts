@@ -2,7 +2,7 @@ import "client-only"
 
 import type { Resource, UploadedFile } from "@/shared/types"
 import { uuid } from "@/shared/uuid"
-import { gcOrphanedAttachment } from "@/client/store/cascade"
+import { gcOrphanedAttachment, stripSelectionId } from "@/client/store/cascade"
 
 import { useStore } from "../../use-store"
 import type { SliceCreator } from "../types"
@@ -41,14 +41,7 @@ export const createResourcesSlice: SliceCreator<ResourcesSlice> = (set) => ({
       if (!target) return { resources: newResources }
       // Strip the fileId from every conversation's selection — once the
       // resource is gone the workspace-library tick no longer makes sense.
-      const newConversations = state.conversations.map((c) =>
-        c.selectedFileIds.includes(target.fileId)
-          ? {
-              ...c,
-              selectedFileIds: c.selectedFileIds.filter((id) => id !== target.fileId),
-            }
-          : c
-      )
+      const newConversations = stripSelectionId(state.conversations, "file", target.fileId)
       const orphanPatch = gcOrphanedAttachment(
         { ...state, resources: newResources, conversations: newConversations },
         { kind: "file", id: target.fileId }

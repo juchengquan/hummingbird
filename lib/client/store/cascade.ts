@@ -386,6 +386,37 @@ export function cloneAttachmentSelections(
   }
 }
 
+/** Map of `AttachmentKind` → the matching `selected*Ids` field name
+ *  on `Conversation`. Pinned here so the strip helper can map a kind
+ *  to the right array without a chain of `if`s, and so unrelated code
+ *  (selection bus, debug logs) can reuse the same mapping. */
+export const SELECTION_FIELD_BY_KIND = {
+  file: "selectedFileIds",
+  mcp_resource: "selectedMcpResourceIds",
+  url_bookmark: "selectedUrlBookmarkIds",
+} as const satisfies Record<AttachmentKind, keyof ConversationSelectionFields>
+
+/** Strip a single attachment id from every conversation's `selected*Ids`
+ *  array for its kind. Returns a new conversations array — identity-
+ *  stable for conversations that didn't reference the id (so React
+ *  selector hooks don't churn). Keep the per-call cost low: scan once,
+ *  rebuild only the touched conversations.
+ *
+ *  Mirrors the inline pattern that lived in `files.ts`, `resources.ts`,
+ *  `conversation-files.ts`, `url-bookmarks.ts`, and `mcp.ts`. */
+export function stripSelectionId(
+  conversations: Conversation[],
+  kind: AttachmentKind,
+  id: string
+): Conversation[] {
+  const field = SELECTION_FIELD_BY_KIND[kind]
+  return conversations.map((c) => {
+    const current = c[field]
+    if (!current || !current.includes(id)) return c
+    return { ...c, [field]: current.filter((x) => x !== id) }
+  })
+}
+
 export interface ForkedJoins {
   conversationFiles: ConversationFile[]
   conversationMcpResources: ConversationMcpResource[]
