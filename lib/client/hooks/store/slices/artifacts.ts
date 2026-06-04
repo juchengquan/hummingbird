@@ -1,5 +1,7 @@
 import "client-only"
 
+import { useShallow } from "zustand/react/shallow"
+
 import type { Artifact, ArtifactKind } from "@/shared/types"
 import { uuid } from "@/shared/uuid"
 import { placeRelatedNode } from "@/shared/canvas/placement"
@@ -112,30 +114,42 @@ export const createArtifactsSlice: SliceCreator<ArtifactsSlice> = (set, get) => 
     set((state) => ({ editorReloadToken: state.editorReloadToken + 1 })),
 })
 
-export const useConversationArtifacts = () => {
-  const artifacts = useStore((state) => state.artifacts)
-  const activeConversationId = useStore((state) => state.activeConversationId)
-  if (!activeConversationId) return [] as Artifact[]
-  return artifacts
-    .filter((a) => a.conversationId === activeConversationId)
-    .sort((a, b) => {
-      if (a.pinned && !b.pinned) return -1
-      if (!a.pinned && b.pinned) return 1
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    })
+/** Sort comparator shared by both artifact selectors — pinned-first,
+ *  then by `createdAt` desc. Stable, pure, dependency-free. */
+function compareArtifacts(a: Artifact, b: Artifact): number {
+  if (a.pinned && !b.pinned) return -1
+  if (!a.pinned && b.pinned) return 1
+  return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
 }
+
+/** Artifacts visible in the active conversation. Filter + sort run
+ *  inside the Zustand selector under `useShallow` so consumers only
+ *  re-render when the filtered+sorted list actually changes shape —
+ *  adding an artifact to a different conversation is a no-op for
+ *  every consumer of this hook. */
+export const useConversationArtifacts = () =>
+  useStore(
+    useShallow((state) => {
+      if (!state.activeConversationId) return EMPTY_ARTIFACTS
+      return state.artifacts
+        .filter((a) => a.conversationId === state.activeConversationId)
+        .sort(compareArtifacts)
+    }),
+  )
 
 /** Artifacts visible in the active workspace. Same shape as
  *  `useConversationArtifacts` but scoped one level up. */
-export const useWorkspaceArtifacts = () => {
-  const artifacts = useStore((state) => state.artifacts)
-  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
-  if (!activeWorkspaceId) return [] as Artifact[]
-  return artifacts
-    .filter((a) => a.workspaceId === activeWorkspaceId)
-    .sort((a, b) => {
-      if (a.pinned && !b.pinned) return -1
-      if (!a.pinned && b.pinned) return 1
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    })
-}
+export const useWorkspaceArtifacts = () =>
+  useStore(
+    useShallow((state) => {
+      if (!state.activeWorkspaceId) return EMPTY_ARTIFACTS
+      return state.artifacts
+        .filter((a) => a.workspaceId === state.activeWorkspaceId)
+        .sort(compareArtifacts)
+    }),
+  )
+
+/** Frozen empty-array sentinel so the "no active selection" branch
+ *  returns a stable reference (otherwise every render would yield a
+ *  fresh `[]` and break the shallow-equality check in useShallow). */
+const EMPTY_ARTIFACTS: readonly Artifact[] = Object.freeze([])

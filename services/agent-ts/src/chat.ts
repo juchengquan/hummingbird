@@ -416,27 +416,12 @@ export function stringifyToolOutput(output: unknown): string {
  *  suggestion task is small (200 tokens of JSON). */
 const SUGGESTION_MODEL = "claude-3-5-haiku-20241022"
 
-const FENCE_HEAD_RE = /^```(?:json)?\s*\n?/i
-const FENCE_TAIL_RE = /\n?```\s*$/
-
-/** Strip markdown fences the model occasionally wraps JSON in, then
- *  parse + validate as a flat string array. Returns at most 3
- *  short non-empty entries. Permissive — any decode failure yields
- *  an empty array. */
-export function parseSuggestionsJson(raw: string): string[] {
-  const cleaned = raw.trim().replace(FENCE_HEAD_RE, "").replace(FENCE_TAIL_RE, "").trim()
-  try {
-    const parsed = JSON.parse(cleaned) as unknown
-    if (!Array.isArray(parsed)) return []
-    return parsed
-      .filter((s): s is string => typeof s === "string")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0 && s.length <= 120)
-      .slice(0, 3)
-  } catch {
-    return []
-  }
-}
+// `parseSuggestionsJson` moved to `@/shared/suggestions-parser` so
+// the Next.js inline route + agent-ts service share one
+// implementation. Re-exported here for callers / tests that already
+// import it from this module.
+export { parseSuggestionsJson } from "@/shared/suggestions-parser"
+import { parseSuggestionsJson } from "@/shared/suggestions-parser"
 
 /** Pull the last `user` role message's content. Mirrors the
  *  Next.js inline route's `lastUserText`. */

@@ -1,5 +1,7 @@
 import "client-only"
 
+import { useShallow } from "zustand/react/shallow"
+
 import type { Resource, UploadedFile } from "@/shared/types"
 import { uuid } from "@/shared/uuid"
 import { gcOrphanedAttachment, stripSelectionId } from "@/client/store/cascade"
@@ -50,12 +52,20 @@ export const createResourcesSlice: SliceCreator<ResourcesSlice> = (set) => ({
     }),
 })
 
-export const useWorkspaceResources = () => {
-  const resources = useStore((state) => state.resources)
-  const files = useStore((state) => state.files)
-  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
-  const workspaceResources = resources.filter((r) => r.workspaceId === activeWorkspaceId)
-  return workspaceResources
-    .map((r) => files.find((f) => f.id === r.fileId))
-    .filter((f): f is UploadedFile => !!f && !f.deletedAt)
-}
+/** Files attached to the active workspace's library. Builds an
+ *  in-selector id→file Map so the join is O(resources + files) rather
+ *  than the prior O(resources × files). */
+export const useWorkspaceResources = (): UploadedFile[] =>
+  useStore(
+    useShallow((state) => {
+      const byId = new Map<string, UploadedFile>()
+      for (const f of state.files) byId.set(f.id, f)
+      const out: UploadedFile[] = []
+      for (const r of state.resources) {
+        if (r.workspaceId !== state.activeWorkspaceId) continue
+        const f = byId.get(r.fileId)
+        if (f && !f.deletedAt) out.push(f)
+      }
+      return out
+    }),
+  )

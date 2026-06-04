@@ -34,6 +34,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { apiClient } from "@/client/api-client"
 import { useTaskRunContext } from "@/client/agent/task-run-context"
 import { autoArchiveCodeBlocks as autoArchiveCodeBlocksPure } from "@/client/chat/auto-archive-code-blocks"
+import { shouldAutoRetry } from "@/client/chat/auto-retry-decision"
 import { buildAttachments } from "@/client/chat/build-attachments"
 import { buildTransmittedMessages } from "@/client/chat/build-messages"
 import { translateFrame } from "@/client/chat/sse-frame-translator"
@@ -668,13 +669,12 @@ export function useChatSend(): UseChatSendResult {
           // Distinguish offline from generic network failure.
           const offline =
             typeof navigator !== "undefined" && navigator.onLine === false
-          // Auto-retry-once: a transient blip on a brand-new request
-          // (no placeholder content yet, online, not already a retry)
-          // tries one silent recovery after 1s before surfacing the
-          // error. Anything past the first chunk has visible state
-          // we shouldn't duplicate or rewind, so we skip retry there.
-          const phEmpty = !ph || ph.content === ""
-          if (!isRetry && !offline && phEmpty) {
+          // Auto-retry-once decision is the pure policy in
+          // `auto-retry-decision.ts` so the rules can be unit-tested
+          // without a React + Zustand harness. The caller handles the
+          // 1 s timer + the `isRetry: true` flag + the surface-error
+          // fallback.
+          if (shouldAutoRetry({ isRetry, offline, placeholderEmpty: !ph || ph.content === "" })) {
             if (ph) deleteMessage(ph.id)
             setConversationTyping(targetConvId, false)
             markStreaming(targetConvId, false)
