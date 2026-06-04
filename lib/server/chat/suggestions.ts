@@ -17,32 +17,14 @@ import "server-only"
 import { generateText, type ModelMessage } from "ai"
 
 import { selectModel } from "@/server/model-provider"
+import { parseSuggestionsJson } from "@/shared/suggestions-parser"
 
 import { lastUserText } from "./prompt-builders"
 
+// Re-export so existing callers / tests keep their imports stable.
+export { parseSuggestionsJson }
+
 const SUGGESTION_MODEL = "google/gemini-2.5-flash"
-
-const FENCE_HEAD_RE = /^```(?:json)?\s*\n?/
-const FENCE_TAIL_RE = /\n?```\s*$/
-
-/** Strip markdown fences the model occasionally wraps JSON in, then
- *  parse + validate as a flat string array. Returns at most 3 short
- *  non-empty entries. Permissive — any decode failure yields an empty
- *  array. */
-export function parseSuggestionsJson(raw: string): string[] {
-  const cleaned = raw.trim().replace(FENCE_HEAD_RE, "").replace(FENCE_TAIL_RE, "").trim()
-  try {
-    const parsed = JSON.parse(cleaned) as unknown
-    if (!Array.isArray(parsed)) return []
-    return parsed
-      .filter((s): s is string => typeof s === "string")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0 && s.length <= 120)
-      .slice(0, 3)
-  } catch {
-    return []
-  }
-}
 
 /** Generate up to 3 follow-up chips for the current turn. Returns
  *  an empty array on any failure — chips are decoration; failures
