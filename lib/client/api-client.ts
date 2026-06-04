@@ -46,6 +46,46 @@ import {
   type SummarizeRequestInput,
 } from "@/shared/api-schemas"
 
+/** Optional remote-backend dispatch context — used by non-chat
+ *  endpoints that mirror `/v1/...` on agent-py / agent-ts. When
+ *  set on a call's options, the method posts to the remote service
+ *  with a Bearer JWT instead of the in-Next route. Resolved by the
+ *  default-auto branch via `resolveRemoteBackend()` (separate file
+ *  so api-client.ts can stay Zustand-free in unit tests). */
+export interface RemoteDispatch {
+  backend: "python" | "ts-service"
+  baseUrl: string
+  authToken: string
+}
+
+/** Per-call dispatch options for non-chat endpoints. Three states:
+ *  - undefined / { dispatch: 'auto' } (default) — read backend from
+ *    the chat-backend store; resolve the JWT lazily; fall through
+ *    to the in-Next route on any prerequisite miss.
+ *  - { dispatch: 'in-next' } — force the in-Next route regardless
+ *    of the user's backend choice (used for cases where the remote
+ *    service hasn't shipped the endpoint yet, or for endpoints that
+ *    are explicitly in-Next-only).
+ *  - { dispatch: 'remote', remote } — explicit remote dispatch with
+ *    a pre-resolved context. Skips the resolver. */
+export type DispatchOption =
+  | { dispatch?: "auto" }
+  | { dispatch: "in-next" }
+  | { dispatch: "remote"; remote: RemoteDispatch }
+
+/** Internal: turn a `DispatchOption` (or undefined) into a concrete
+ *  `RemoteDispatch | null`. Importing the resolver lazily keeps the
+ *  Zustand store + Supabase client off any callgraph that doesn't
+ *  actually need them. */
+async function resolveDispatch(
+  option: DispatchOption | undefined
+): Promise<RemoteDispatch | null> {
+  if (option?.dispatch === "in-next") return null
+  if (option?.dispatch === "remote") return option.remote
+  const { resolveRemoteBackend } = await import("@/client/api/backend-resolver")
+  return resolveRemoteBackend()
+}
+
 // Empty default = same origin (Next.js routes serving from /api/*).
 // When the Python backend is ready, set NEXT_PUBLIC_API_BASE_URL to its
 // origin (e.g. "https://api.example.com"); the same-origin reverse-proxy
@@ -598,18 +638,44 @@ async function extract(
 
 // --- /api/summarize ---------------------------------------------------------
 
+type SummarizeOptions = { signal?: AbortSignal } & DispatchOption
+
+/** Internal: pick the URL + headers for a summarize POST based on the
+ *  resolved remote-dispatch context. Centralised so the four mode
+ *  variants don't duplicate the branch. */
+function summarizeFetchTarget(remote: RemoteDispatch | null): {
+  url: string
+  headers: Record<string, string>
+} {
+  if (remote) {
+    return {
+      url: `${remote.baseUrl}/v1/summarize`,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${remote.authToken}`,
+      },
+    }
+  }
+  return {
+    url: apiUrls.summarize(),
+    headers: { "Content-Type": "application/json" },
+  }
+}
+
 /**
  * Summarises a single file's extracted text. Returns null on failure —
  * summaries are best-effort decoration on the file row.
  */
 async function summarizeFile(
   body: Extract<SummarizeRequestInput, { mode: "file" }>,
-  options?: { signal?: AbortSignal }
+  options?: SummarizeOptions
 ): Promise<FileSummarizeResponse | null> {
   try {
-    const res = await fetch(apiUrls.summarize(), {
+    const remote = await resolveDispatch(options)
+    const target = summarizeFetchTarget(remote)
+    const res = await fetch(target.url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: target.headers,
       body: JSON.stringify(body),
       signal: options?.signal,
     })
@@ -627,12 +693,14 @@ async function summarizeFile(
  */
 async function summarizeConversation(
   body: Extract<SummarizeRequestInput, { mode: "conversation" }>,
-  options?: { signal?: AbortSignal }
+  options?: SummarizeOptions
 ): Promise<ConversationSummarizeResponse | null> {
   try {
-    const res = await fetch(apiUrls.summarize(), {
+    const remote = await resolveDispatch(options)
+    const target = summarizeFetchTarget(remote)
+    const res = await fetch(target.url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: target.headers,
       body: JSON.stringify(body),
       signal: options?.signal,
     })
@@ -652,12 +720,14 @@ async function summarizeConversation(
  */
 async function summarizeCompress(
   body: Extract<SummarizeRequestInput, { mode: "compress" }>,
-  options?: { signal?: AbortSignal }
+  options?: SummarizeOptions
 ): Promise<CompressSummarizeResponse | null> {
   try {
-    const res = await fetch(apiUrls.summarize(), {
+    const remote = await resolveDispatch(options)
+    const target = summarizeFetchTarget(remote)
+    const res = await fetch(target.url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: target.headers,
       body: JSON.stringify(body),
       signal: options?.signal,
     })
@@ -675,12 +745,14 @@ async function summarizeCompress(
  */
 async function summarizeProjectBreakdown(
   body: Extract<SummarizeRequestInput, { mode: "project-breakdown" }>,
-  options?: { signal?: AbortSignal }
+  options?: SummarizeOptions
 ): Promise<ProjectBreakdownResponse | null> {
   try {
-    const res = await fetch(apiUrls.summarize(), {
+    const remote = await resolveDispatch(options)
+    const target = summarizeFetchTarget(remote)
+    const res = await fetch(target.url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: target.headers,
       body: JSON.stringify(body),
       signal: options?.signal,
     })
@@ -733,16 +805,40 @@ async function createShare(
 const refreshUrlInflight = new Map<string, Promise<string | null>>()
 
 async function refreshGeneratedImageUrl(
-  storagePath: string
+  storagePath: string,
+  options?: DispatchOption
 ): Promise<string | null> {
-  const cached = refreshUrlInflight.get(storagePath)
+  const remote = await resolveDispatch(options)
+  // Cache key includes the backend URL so a backend switch mid-session
+  // doesn't return a stale signed URL from the wrong service. The hot
+  // path (no remote, in-Next) uses just the storage path.
+  const cacheKey = remote
+    ? `${remote.baseUrl}::${storagePath}`
+    : storagePath
+  const cached = refreshUrlInflight.get(cacheKey)
   if (cached) return cached
   const promise = (async () => {
     try {
-      const res = await fetch(apiUrls.imagesRefreshUrl(), {
+      const url = remote
+        ? `${remote.baseUrl}/v1/images/refresh-url`
+        : apiUrls.imagesRefreshUrl()
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      }
+      if (remote) {
+        headers.Authorization = `Bearer ${remote.authToken}`
+      }
+      // Wire shape: agent-py + agent-ts use snake_case
+      // (`storage_path`); the in-Next route uses camelCase
+      // (`storagePath`) per `RefreshImageUrlRequestSchema`. Pick the
+      // right one per target.
+      const body = remote
+        ? { storage_path: storagePath }
+        : { storagePath }
+      const res = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storagePath }),
+        headers,
+        body: JSON.stringify(body),
       })
       if (!res.ok) return null
       const parsed = RefreshImageUrlResponseSchema.safeParse(await res.json())
@@ -751,11 +847,11 @@ async function refreshGeneratedImageUrl(
       return null
     }
   })()
-  refreshUrlInflight.set(storagePath, promise)
+  refreshUrlInflight.set(cacheKey, promise)
   try {
     return await promise
   } finally {
-    refreshUrlInflight.delete(storagePath)
+    refreshUrlInflight.delete(cacheKey)
   }
 }
 
@@ -777,10 +873,15 @@ async function revokeShare(token: string): Promise<{ ok: boolean; status: number
  * toast (creds never leave this function — they're sent via the
  * `X-MCP-Credentials` header, not echoed back).
  */
+type McpProxyOptions = {
+  credentialHeader?: string
+  signal?: AbortSignal
+} & DispatchOption
+
 async function mcpProxyCall(
   action: "discover" | "call" | "read",
   body: Record<string, unknown>,
-  options?: { credentialHeader?: string; signal?: AbortSignal }
+  options?: McpProxyOptions
 ): Promise<
   | { ok: true; status: number; data: Record<string, unknown> }
   | { ok: false; status: number; error: { code?: string; message?: string } }
@@ -799,7 +900,17 @@ async function mcpProxyCall(
   if (options?.credentialHeader) {
     headers["X-MCP-Credentials"] = options.credentialHeader
   }
-  const res = await fetch(apiUrls.mcp(serverId, action), {
+  const remote = await resolveDispatch(options)
+  // Path shape matches the in-Next route (`/api/mcp/:id/:action`) AND
+  // both services (`/v1/mcp/:server_id/:action`). Body + header
+  // formats are byte-identical, so the only branch is the base URL.
+  const url = remote
+    ? `${remote.baseUrl}/v1/mcp/${encodeURIComponent(serverId)}/${action}`
+    : apiUrls.mcp(serverId, action)
+  if (remote) {
+    headers.Authorization = `Bearer ${remote.authToken}`
+  }
+  const res = await fetch(url, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
@@ -874,13 +985,26 @@ export interface UrlFetchSnapshot {
  * fetching (CORS + SSRF defense + extraction); the client just hands
  * over the URL and stores the result.
  */
-async function urlFetchBookmark(url: string): Promise<
+async function urlFetchBookmark(
+  url: string,
+  options?: DispatchOption
+): Promise<
   | { ok: true; status: number; bookmark: UrlFetchSnapshot }
   | { ok: false; status: number; error: { code?: string; message?: string } }
 > {
-  const res = await fetch(apiUrls.urlFetch(), {
+  const remote = await resolveDispatch(options)
+  const target = remote
+    ? `${remote.baseUrl}/v1/url/fetch`
+    : apiUrls.urlFetch()
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  }
+  if (remote) {
+    headers.Authorization = `Bearer ${remote.authToken}`
+  }
+  const res = await fetch(target, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ url }),
   })
   if (!res.ok) {
