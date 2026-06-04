@@ -9,7 +9,11 @@ import type {
   McpCredentialMode,
 } from "@/shared/types"
 import { uuid } from "@/shared/uuid"
-import { gcOrphanedAttachment, tombstoneMcpResource } from "@/client/store/cascade"
+import {
+  gcOrphanedAttachment,
+  stripSelectionId,
+  tombstoneMcpResource,
+} from "@/client/store/cascade"
 
 import { useStore, useActiveConversation } from "../../use-store"
 import { tombstoneMcpServer } from "../../store-helpers"
@@ -227,14 +231,11 @@ export const createMcpSlice: SliceCreator<McpSlice> = (set, get) => ({
       if (!target) return state
       const newBindings = state.mcpResourceBindings.filter((b) => b.id !== bindingId)
       // Strip the resource id from every conversation's selection.
-      const newConversations = state.conversations.map((c) => {
-        const selected = c.selectedMcpResourceIds ?? []
-        if (!selected.includes(target.resourceId)) return c
-        return {
-          ...c,
-          selectedMcpResourceIds: selected.filter((id) => id !== target.resourceId),
-        }
-      })
+      const newConversations = stripSelectionId(
+        state.conversations,
+        "mcp_resource",
+        target.resourceId,
+      )
       const orphanPatch = gcOrphanedAttachment(
         {
           ...state,

@@ -5,7 +5,7 @@ import {
   deleteBlob as deleteLocalBlob,
   clearAll as clearLocalBlobs,
 } from "@/client/files/local-store"
-import { tombstoneFile } from "@/client/store/cascade"
+import { stripSelectionId, tombstoneFile } from "@/client/store/cascade"
 
 import type { SliceCreator } from "../types"
 
@@ -62,11 +62,7 @@ export const createFilesSlice: SliceCreator<FilesSlice> = (set) => ({
       conversationFiles: state.conversationFiles.filter(
         (cf) => cf.fileId !== fileId
       ),
-      conversations: state.conversations.map((c) =>
-        c.selectedFileIds.includes(fileId)
-          ? { ...c, selectedFileIds: c.selectedFileIds.filter((id) => id !== fileId) }
-          : c
-      ),
+      conversations: stripSelectionId(state.conversations, "file", fileId),
     }))
   },
   clearFiles: () => {

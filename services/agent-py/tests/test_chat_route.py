@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 
 from agent_py import main as main_module
 from agent_py.main import create_app
+from agent_py.routers import chat as chat_router
 
 SECRET = "test-secret-do-not-use-in-prod-32-bytes!"
 
@@ -119,7 +120,7 @@ def test_chat_503_when_no_anthropic_key(client: TestClient) -> None:
     """Anthropic key unset → 503. Fast-fail signal to ops; do NOT
     fall through to the stub (the chat path is user-facing, the model
     being absent isn't recoverable on the server side)."""
-    with patch.object(main_module, "resolve_anthropic_client", return_value=None):
+    with patch.object(chat_router, "resolve_anthropic_client", return_value=None):
         r = client.post("/v1/chat", json=_valid_body(), headers=_auth())
     assert r.status_code == 503
     assert "ANTHROPIC_API_KEY" in r.json()["detail"]
@@ -162,7 +163,7 @@ def test_chat_rejects_missing_model(client: TestClient) -> None:
 
 def test_chat_streams_text_event_stream(client: TestClient) -> None:
     fake = _FakeClient(["Hello", " ", "world"])
-    with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
+    with patch.object(chat_router, "resolve_anthropic_client", return_value=fake):
         r = client.post("/v1/chat", json=_valid_body(), headers=_auth())
 
     assert r.status_code == 200
@@ -204,7 +205,7 @@ def test_chat_forwards_system_prompt(client: TestClient) -> None:
         return real_stream(**kwargs)
 
     fake.messages.stream = capture  # type: ignore[assignment]
-    with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
+    with patch.object(chat_router, "resolve_anthropic_client", return_value=fake):
         client.post(
             "/v1/chat",
             json=_valid_body(system="You are a helpful test bot."),
@@ -225,7 +226,7 @@ def test_chat_max_tokens_default_applied(client: TestClient) -> None:
         return real_stream(**kwargs)
 
     fake.messages.stream = capture  # type: ignore[assignment]
-    with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
+    with patch.object(chat_router, "resolve_anthropic_client", return_value=fake):
         client.post("/v1/chat", json=_valid_body(), headers=_auth())
     # Default from chat.DEFAULT_MAX_TOKENS = 4096.
     assert captured.get("max_tokens") == 4096
@@ -243,7 +244,7 @@ def test_chat_ai_sdk_format_emits_ui_message_stream(client: TestClient) -> None:
     import json
 
     fake = _FakeClient(["Hello", " world"])
-    with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
+    with patch.object(chat_router, "resolve_anthropic_client", return_value=fake):
         r = client.post(
             "/v1/chat?format=ai-sdk",
             json=_valid_body(),
@@ -282,7 +283,7 @@ def test_chat_unknown_format_query_param_is_silently_ignored(
     silently ignored — no 422 on a stale `?format=custom` from an
     old client."""
     fake = _FakeClient(["ok"])
-    with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
+    with patch.object(chat_router, "resolve_anthropic_client", return_value=fake):
         r = client.post("/v1/chat?format=bogus", json=_valid_body(), headers=_auth())
     assert r.status_code == 200
     # Still the AI SDK header.
@@ -309,7 +310,7 @@ def test_chat_enable_tools_dispatches_to_tool_stream(client: TestClient) -> None
 
     fake.messages.stream = capture  # type: ignore[assignment]
     with (
-        _patch.object(main_module, "resolve_anthropic_client", return_value=fake),
+        _patch.object(chat_router, "resolve_anthropic_client", return_value=fake),
         # Patch `get_final_message` on the fake stream the route gets
         # so the tool-enabled loop terminates after one iteration.
         _patch.object(
@@ -358,7 +359,7 @@ def test_chat_enable_tools_false_skips_tool_dispatch(client: TestClient) -> None
         return real_stream(**kwargs)
 
     fake.messages.stream = capture  # type: ignore[assignment]
-    with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
+    with patch.object(chat_router, "resolve_anthropic_client", return_value=fake):
         client.post("/v1/chat", json=_valid_body(), headers=_auth())
     assert "tools" not in captured
 
@@ -383,7 +384,7 @@ def test_chat_accepts_workspace_id_field(client: TestClient) -> None:
     falls back to context-less registry — `searchFiles` + MCP omitted
     but the chat turn still runs."""
     fake = _FakeClient(["ok"])
-    with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
+    with patch.object(chat_router, "resolve_anthropic_client", return_value=fake):
         r = client.post(
             "/v1/chat",
             json=_valid_body(enable_tools=True, workspace_id="ws-1"),
@@ -396,7 +397,7 @@ def test_chat_accepts_skills_array(client: TestClient) -> None:
     """`skills` array is optional, per-skill config is permissive
     (extra fields allowed). Sending it shouldn't break the request."""
     fake = _FakeClient(["ok"])
-    with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
+    with patch.object(chat_router, "resolve_anthropic_client", return_value=fake):
         r = client.post(
             "/v1/chat",
             json=_valid_body(

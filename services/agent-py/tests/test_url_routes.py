@@ -10,8 +10,9 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
-from agent_py import main as main_module
 from agent_py.main import create_app
+from agent_py.routers import images as images_router
+from agent_py.routers import url as url_router
 from agent_py.url_fetch import BookmarkSnapshot, FetchError, FetchOk
 
 SECRET = "test-secret-do-not-use-in-prod-32-bytes!"
@@ -69,7 +70,7 @@ def test_url_fetch_happy_path_returns_bookmark(client: TestClient) -> None:
         favicon_url="https://example.com/favicon.ico",
     )
     with patch.object(
-        main_module,
+        url_router,
         "fetch_url_bookmark",
         new=AsyncMock(return_value=FetchOk(snapshot=snap)),
     ):
@@ -100,7 +101,7 @@ def test_url_fetch_error_codes_to_http_status(
 ) -> None:
     """Each `FetchError.code` maps to the documented HTTP status."""
     err = FetchError(code=code, message="x", status=503 if code == "http_error" else None)  # type: ignore[arg-type]
-    with patch.object(main_module, "fetch_url_bookmark", new=AsyncMock(return_value=err)):
+    with patch.object(url_router, "fetch_url_bookmark", new=AsyncMock(return_value=err)):
         r = client.post("/v1/url/fetch", json={"url": "https://example.com"}, headers=_auth())
     assert r.status_code == expected_status
     assert r.json()["detail"]["code"] == code
@@ -132,7 +133,7 @@ def test_refresh_url_403_when_path_doesnt_match_user(
 def test_refresh_url_404_when_sign_fails(client: TestClient) -> None:
     """`sign_storage_path` returns None (object missing OR Storage
     unconfigured) → 404."""
-    with patch.object(main_module, "sign_storage_path", new=AsyncMock(return_value=None)):
+    with patch.object(images_router, "sign_storage_path", new=AsyncMock(return_value=None)):
         r = client.post(
             "/v1/images/refresh-url",
             json={"storage_path": "user-uuid-123/generated/img.png"},
@@ -144,7 +145,7 @@ def test_refresh_url_404_when_sign_fails(client: TestClient) -> None:
 
 def test_refresh_url_happy_path_returns_signed_url(client: TestClient) -> None:
     with patch.object(
-        main_module,
+        images_router,
         "sign_storage_path",
         new=AsyncMock(return_value="https://proj.supabase.test/x?token=abc"),
     ):

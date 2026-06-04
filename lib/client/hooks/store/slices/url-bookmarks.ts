@@ -4,6 +4,7 @@ import type { UrlBookmark, ConversationUrlBookmark } from "@/shared/types"
 import { uuid } from "@/shared/uuid"
 import {
   gcOrphanedAttachment,
+  stripSelectionId,
   tombstoneUrlBookmark,
 } from "@/client/store/cascade"
 
@@ -126,13 +127,7 @@ export const createUrlBookmarksSlice: SliceCreator<UrlBookmarksSlice> = (set) =>
       conversationUrlBookmarks: state.conversationUrlBookmarks.filter(
         (cub) => cub.bookmarkId !== bookmarkId
       ),
-      conversations: state.conversations.map((c) => {
-        const selected = c.selectedUrlBookmarkIds ?? []
-        const filtered = selected.filter((id) => id !== bookmarkId)
-        return filtered.length === selected.length
-          ? c
-          : { ...c, selectedUrlBookmarkIds: filtered }
-      }),
+      conversations: stripSelectionId(state.conversations, "url_bookmark", bookmarkId),
     })),
   addConversationUrlBookmark: (conversationId, bookmarkId) =>
     set((state) => {

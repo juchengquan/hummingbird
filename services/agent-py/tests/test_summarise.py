@@ -16,9 +16,9 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
-from agent_py import main as main_module
 from agent_py.chat import ChatMessage
 from agent_py.main import create_app
+from agent_py.routers import summarize as summarize_router
 from agent_py.summarise import (
     DEFAULT_SUMMARY_MODEL,
     SummariseError,
@@ -264,7 +264,7 @@ def test_summarize_rejects_missing_token(client: TestClient) -> None:
 
 
 def test_summarize_503_when_no_anthropic_key(client: TestClient) -> None:
-    with patch.object(main_module, "resolve_anthropic_client", return_value=None):
+    with patch.object(summarize_router, "resolve_anthropic_client", return_value=None):
         r = client.post(
             "/v1/summarize",
             json={"mode": "file", "text": "hello"},
@@ -284,7 +284,7 @@ def test_summarize_rejects_unknown_mode(client: TestClient) -> None:
 
 def test_summarize_file_happy_path(client: TestClient) -> None:
     fake = _FakeClient('{"summary":"hi","keyTopics":["t"]}')
-    with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
+    with patch.object(summarize_router, "resolve_anthropic_client", return_value=fake):
         r = client.post(
             "/v1/summarize",
             json={"mode": "file", "name": "doc", "text": "hello world"},
@@ -296,7 +296,7 @@ def test_summarize_file_happy_path(client: TestClient) -> None:
 
 def test_summarize_conversation_happy_path(client: TestClient) -> None:
     fake = _FakeClient('{"summary":"s","keyPoints":["k"],"decisions":["d"]}')
-    with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
+    with patch.object(summarize_router, "resolve_anthropic_client", return_value=fake):
         r = client.post(
             "/v1/summarize",
             json={
@@ -315,7 +315,7 @@ def test_summarize_conversation_happy_path(client: TestClient) -> None:
 
 def test_summarize_compress_returns_recap(client: TestClient) -> None:
     fake = _FakeClient("- one\n- two")
-    with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
+    with patch.object(summarize_router, "resolve_anthropic_client", return_value=fake):
         r = client.post(
             "/v1/summarize",
             json={
@@ -337,7 +337,7 @@ def test_summarize_project_breakdown_accepts_existing_titles_alias(
     """Body uses camelCase `existingTitles` (matches the TS wire);
     pydantic alias deserialises it."""
     fake = _FakeClient('{"titles":["t1","t2"]}')
-    with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
+    with patch.object(summarize_router, "resolve_anthropic_client", return_value=fake):
         r = client.post(
             "/v1/summarize",
             json={
@@ -353,7 +353,7 @@ def test_summarize_project_breakdown_accepts_existing_titles_alias(
 
 def test_summarize_provider_error_returns_502(client: TestClient) -> None:
     fake = _FakeClient("", raises=RuntimeError("upstream blew up"))
-    with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
+    with patch.object(summarize_router, "resolve_anthropic_client", return_value=fake):
         r = client.post(
             "/v1/summarize",
             json={"mode": "file", "text": "x"},
@@ -366,7 +366,7 @@ def test_summarize_provider_error_returns_502(client: TestClient) -> None:
 
 def test_summarize_invalid_json_response_returns_502(client: TestClient) -> None:
     fake = _FakeClient("this is not json")
-    with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
+    with patch.object(summarize_router, "resolve_anthropic_client", return_value=fake):
         r = client.post(
             "/v1/summarize",
             json={"mode": "file", "text": "x"},
@@ -380,7 +380,7 @@ def test_summarize_invalid_json_response_returns_502(client: TestClient) -> None
 def test_summarize_falls_back_to_default_model(client: TestClient) -> None:
     """Body sends a non-Anthropic id; route resolves to Haiku."""
     fake = _FakeClient('{"summary":"s","keyTopics":[]}')
-    with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
+    with patch.object(summarize_router, "resolve_anthropic_client", return_value=fake):
         r = client.post(
             "/v1/summarize",
             json={
@@ -397,7 +397,7 @@ def test_summarize_falls_back_to_default_model(client: TestClient) -> None:
 
 def test_summarize_anthropic_model_passes_through(client: TestClient) -> None:
     fake = _FakeClient('{"summary":"s","keyTopics":[]}')
-    with patch.object(main_module, "resolve_anthropic_client", return_value=fake):
+    with patch.object(summarize_router, "resolve_anthropic_client", return_value=fake):
         r = client.post(
             "/v1/summarize",
             json={

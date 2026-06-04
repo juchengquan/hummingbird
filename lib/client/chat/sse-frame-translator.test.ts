@@ -6,7 +6,7 @@
 
 import { describe, expect, test } from "bun:test"
 
-import { translateFrame } from "./use-chat-send"
+import { translateFrame } from "./sse-frame-translator"
 
 describe("translateFrame — AI SDK v5 → normalised shape", () => {
   test("text-delta → text/value", () => {
