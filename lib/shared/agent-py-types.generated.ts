@@ -57,6 +57,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/whoami": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Whoami
+         * @description Auth smoke test — echoes the verified claims (minus secrets).
+         *
+         *     Useful during Phase 0 deployment to confirm the JWT secret and
+         *     the Authorization-header plumbing work end-to-end before any
+         *     real endpoints exist. Deliberately under `/v1` so the prefix
+         *     convention exists from day one.
+         */
+        get: operations["whoami_v1_whoami_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/extract": {
         parameters: {
             query?: never;
@@ -258,31 +283,6 @@ export interface paths {
          *     proxy surfaces it as 502 — same as TS.
          */
         post: operations["mcp_proxy_v1_mcp__server_id___action__post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/whoami": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Whoami
-         * @description Auth smoke test — echoes the verified claims (minus secrets).
-         *
-         *     Useful during Phase 0 deployment to confirm the JWT secret and
-         *     the Authorization-header plumbing work end-to-end before any
-         *     real endpoints exist. Deliberately under `/v1` so the prefix
-         *     convention exists from day one.
-         */
-        get: operations["whoami_v1_whoami_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -651,6 +651,37 @@ export interface operations {
             };
         };
     };
+    whoami_v1_whoami_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhoAmIResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     extract_v1_extract_post: {
         parameters: {
             query?: never;
@@ -856,37 +887,6 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    whoami_v1_whoami_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WhoAmIResponse"];
                 };
             };
             /** @description Validation Error */

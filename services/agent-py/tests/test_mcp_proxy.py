@@ -26,6 +26,7 @@ from agent_py.mcp_client import (
     McpToolDescriptor,
     McpToolResult,
 )
+from agent_py.routers import mcp as mcp_router
 
 SECRET = "test-secret-do-not-use-in-prod-32-bytes!"
 SERVER_ID = "11111111-1111-1111-1111-111111111111"
@@ -94,7 +95,7 @@ def test_mcp_proxy_400_on_path_body_mismatch(client: TestClient) -> None:
 def test_mcp_proxy_400_on_call_missing_tool(client: TestClient) -> None:
     """`call` action requires `body.tool`."""
     body = _server_body()
-    with patch.object(main_module, "mcp_call_tool", new=AsyncMock()):
+    with patch.object(mcp_router, "mcp_call_tool", new=AsyncMock()):
         r = client.post(f"/v1/mcp/{SERVER_ID}/call", json=body, headers=_auth())
     assert r.status_code == 400
     assert r.json()["detail"]["code"] == "invalid_body"
@@ -103,7 +104,7 @@ def test_mcp_proxy_400_on_call_missing_tool(client: TestClient) -> None:
 def test_mcp_proxy_400_on_read_missing_uri(client: TestClient) -> None:
     """`read` action requires `body.uri`."""
     body = _server_body()
-    with patch.object(main_module, "mcp_read_resource", new=AsyncMock()):
+    with patch.object(mcp_router, "mcp_read_resource", new=AsyncMock()):
         r = client.post(f"/v1/mcp/{SERVER_ID}/read", json=body, headers=_auth())
     assert r.status_code == 400
     assert r.json()["detail"]["code"] == "invalid_body"
@@ -124,7 +125,7 @@ def test_mcp_proxy_discover_returns_capabilities(client: TestClient) -> None:
         resources=None,
         prompts=None,
     )
-    with patch.object(main_module, "mcp_discover", new=AsyncMock(return_value=caps)):
+    with patch.object(mcp_router, "mcp_discover", new=AsyncMock(return_value=caps)):
         r = client.post(
             f"/v1/mcp/{SERVER_ID}/discover",
             json=_server_body(),
@@ -148,7 +149,7 @@ def test_mcp_proxy_discover_forwards_header_credentials(
         captured["credentials"] = credentials
         return McpCapabilities()
 
-    with patch.object(main_module, "mcp_discover", new=fake_discover):
+    with patch.object(mcp_router, "mcp_discover", new=fake_discover):
         r = client.post(
             f"/v1/mcp/{SERVER_ID}/discover",
             json=_server_body(),
@@ -175,7 +176,7 @@ def test_mcp_proxy_discover_falls_back_to_cloud_lookup(
         captured["credentials"] = credentials
         return McpCapabilities()
 
-    with patch.object(main_module, "mcp_discover", new=fake_discover):
+    with patch.object(mcp_router, "mcp_discover", new=fake_discover):
         r = client.post(
             f"/v1/mcp/{SERVER_ID}/discover",
             json=_server_body(),
@@ -197,7 +198,7 @@ def test_mcp_proxy_discover_invalid_header_falls_through_to_lookup(
         captured["credentials"] = credentials
         return McpCapabilities()
 
-    with patch.object(main_module, "mcp_discover", new=fake_discover):
+    with patch.object(mcp_router, "mcp_discover", new=fake_discover):
         r = client.post(
             f"/v1/mcp/{SERVER_ID}/discover",
             json=_server_body(),
@@ -213,7 +214,7 @@ def test_mcp_proxy_502_on_upstream_exception(client: TestClient) -> None:
     """Any exception from the MCP client bubbles up as 502 — and
     the error response never includes the credentials object."""
     with patch.object(
-        main_module,
+        mcp_router,
         "mcp_discover",
         new=AsyncMock(side_effect=RuntimeError("upstream down")),
     ):
@@ -237,7 +238,7 @@ def test_mcp_proxy_502_on_upstream_exception(client: TestClient) -> None:
 
 def test_mcp_proxy_call_returns_tool_result(client: TestClient) -> None:
     res = McpToolResult(text="hello from tool", is_error=False)
-    with patch.object(main_module, "mcp_call_tool", new=AsyncMock(return_value=res)):
+    with patch.object(mcp_router, "mcp_call_tool", new=AsyncMock(return_value=res)):
         r = client.post(
             f"/v1/mcp/{SERVER_ID}/call",
             json=_server_body({"tool": "greet", "input": {"name": "world"}}),
@@ -255,7 +256,7 @@ def test_mcp_proxy_call_forwards_input_args(client: TestClient) -> None:
         captured.update({"tool": tool, "args": args})
         return McpToolResult(text="ok", is_error=False)
 
-    with patch.object(main_module, "mcp_call_tool", new=fake_call):
+    with patch.object(mcp_router, "mcp_call_tool", new=fake_call):
         client.post(
             f"/v1/mcp/{SERVER_ID}/call",
             json=_server_body({"tool": "greet", "input": {"q": "hi"}}),
@@ -270,7 +271,7 @@ def test_mcp_proxy_call_is_error_propagates(client: TestClient) -> None:
     returns 200 — the error is in the result body, not a transport
     failure. The frontend renders it as a tool failure."""
     res = McpToolResult(text="upstream said no", is_error=True)
-    with patch.object(main_module, "mcp_call_tool", new=AsyncMock(return_value=res)):
+    with patch.object(mcp_router, "mcp_call_tool", new=AsyncMock(return_value=res)):
         r = client.post(
             f"/v1/mcp/{SERVER_ID}/call",
             json=_server_body({"tool": "x"}),
@@ -285,7 +286,7 @@ def test_mcp_proxy_call_is_error_propagates(client: TestClient) -> None:
 
 def test_mcp_proxy_read_returns_resource_content(client: TestClient) -> None:
     res = McpResourceContent(text="resource body", mime_type="text/plain")
-    with patch.object(main_module, "mcp_read_resource", new=AsyncMock(return_value=res)):
+    with patch.object(mcp_router, "mcp_read_resource", new=AsyncMock(return_value=res)):
         r = client.post(
             f"/v1/mcp/{SERVER_ID}/read",
             json=_server_body({"uri": "file:///some.txt"}),
@@ -298,7 +299,7 @@ def test_mcp_proxy_read_returns_resource_content(client: TestClient) -> None:
 def test_mcp_proxy_read_handles_missing_mime(client: TestClient) -> None:
     """`mime_type=None` survives the wire — the JSON has null."""
     res = McpResourceContent(text=None, mime_type=None)
-    with patch.object(main_module, "mcp_read_resource", new=AsyncMock(return_value=res)):
+    with patch.object(mcp_router, "mcp_read_resource", new=AsyncMock(return_value=res)):
         r = client.post(
             f"/v1/mcp/{SERVER_ID}/read",
             json=_server_body({"uri": "file:///x"}),
