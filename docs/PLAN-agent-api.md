@@ -51,17 +51,6 @@ Option C (Python service) green-lit, end-to-end live in
 
 ## Open follow-ups (smaller refinements documented in PR threads)
 
-- Frontend `useChat()` adoption (consumer is still on the custom
-  SSE shape; the Python endpoint already supports AI-SDK format
-  via Phase 3g).
-- Frontend selector for non-chat endpoints — `apiClient` only
-  dispatches `/v1/chat` to Python today; URL fetch / summarize /
-  MCP proxy / refresh-url all stay on the TS routes by default.
-- `workspaceId` field on `POST /v1/chat` → unlocks `searchFiles`
-  + cloud MCP for chat tools (today those need a `ToolContext`
-  with a workspace).
-- Per-skill config (`webSearchConfig`, `imageGenConfig`, …)
-  honoured by `/v1/chat`.
 - `POST /v1/mcp/server` CRUD endpoint + `mcp_upsert_server_with_credentials`
   write path.
 - Per-IP rate buckets + idle watchdog on `/v1/chat`.
@@ -69,6 +58,20 @@ Option C (Python service) green-lit, end-to-end live in
 
 ### Shipped
 
+- **Frontend `useChat()` adoption** — `lib/client/hooks/use-chat-send.ts`
+  translates AI SDK v5 frames into the consumer's internal envelope;
+  every backend (Next.js inline route, agent-py, agent-ts) emits AI
+  SDK v5 natively. See `PLAN-useChat-adoption.md`.
+- **`workspaceId` field on `POST /v1/chat`** — agent-py threads
+  `workspace_id` into `ToolContext`, unlocking `searchFiles` + cloud-
+  mode MCP for chat tools. agent-ts accepts the field but doesn't
+  use it (no cloud-MCP wiring on that side, and `searchFiles` is
+  per-user RLS only).
+- **Per-skill config** (`webSearchConfig`, `webFetchConfig`,
+  `imageGenConfig`) honoured by `/v1/chat`. Both agent-py
+  (`_collect_skill_configs` → `SkillConfigs`) and agent-ts
+  (`buildToolSet({skills})`) reduce the request's per-skill list
+  into the tool factories the same way the Next.js inline route does.
 - **Provider-categorised errors** (`rate_limit`, `auth`,
   `context_window`, `upstream`) on `/v1/chat`. Both agent-py and
   agent-ts emit a `code` field on AI SDK v5 `error` frames; the
@@ -79,6 +82,16 @@ Option C (Python service) green-lit, end-to-end live in
   `lib/shared/api-errors.ts` was extended with `context_window`
   for parity on the Next.js inline route. See
   `categorize_provider_error` / `categorizeProviderError`.
+- **Frontend selector for non-chat endpoints** — the four endpoints
+  that mirror to agent-py / agent-ts (`/v1/url/fetch`,
+  `/v1/summarize`, `/v1/mcp/{server}/{action}`,
+  `/v1/images/refresh-url`) now honour the chat-backend store
+  selector via the resolver in `lib/client/api/backend-resolver.ts`.
+  Default `dispatch: 'auto'` reads the store + Supabase JWT lazily;
+  callers can opt out with `dispatch: 'in-next'` or pin a context
+  via `dispatch: 'remote'`. Refresh-url converts `storagePath` →
+  `storage_path` on the remote path (the in-Next route keeps
+  camelCase).
 
 > **Note on phase numbering.** The original plan called Phase 2 a
 > single 1-week slice (executor + 3 tools + provider port). It split
