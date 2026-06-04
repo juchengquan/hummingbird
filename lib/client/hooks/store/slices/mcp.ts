@@ -1,5 +1,7 @@
 import "client-only"
 
+import { useShallow } from "zustand/react/shallow"
+
 import type {
   McpServer,
   McpResource,
@@ -18,6 +20,10 @@ import {
 import { useStore, useActiveConversation } from "../../use-store"
 import { tombstoneMcpServer } from "../../store-helpers"
 import type { SliceCreator } from "../types"
+
+/** Frozen empty-array sentinels so the "no active selection" branches
+ *  return stable references under `useShallow`. */
+const EMPTY_MCP_RESOURCES: readonly McpResource[] = Object.freeze([])
 
 /**
  * MCP slice — workspace-scoped server bindings + the resources they
@@ -299,39 +305,55 @@ export const createMcpSlice: SliceCreator<McpSlice> = (set, get) => ({
     }),
 })
 
-/** MCP servers belonging to the active workspace (live, non-tombstoned). */
-export const useWorkspaceMcpServers = (): McpServer[] => {
-  const mcpServers = useStore((state) => state.mcpServers)
-  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
-  return mcpServers.filter(
-    (s) => s.workspaceId === activeWorkspaceId && !s.deletedAt
+/** MCP servers belonging to the active workspace (live, non-tombstoned).
+ *  Filter runs inside the selector under `useShallow` — server toggles
+ *  in other workspaces don't trigger consumer re-renders. */
+export const useWorkspaceMcpServers = (): McpServer[] =>
+  useStore(
+    useShallow((state) =>
+      state.mcpServers.filter(
+        (s) => s.workspaceId === state.activeWorkspaceId && !s.deletedAt,
+      ),
+    ),
   )
-}
 
-/** MCP resources bound to the active workspace's library. */
-export const useWorkspaceMcpResources = (): McpResource[] => {
-  const mcpResourceBindings = useStore((state) => state.mcpResourceBindings)
-  const mcpResources = useStore((state) => state.mcpResources)
-  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
-  return mcpResourceBindings
-    .filter((b) => b.workspaceId === activeWorkspaceId)
-    .map((b) => mcpResources.find((r) => r.id === b.resourceId))
-    .filter((r): r is McpResource => !!r && !r.deletedAt)
-}
-
-/** MCP resources pinned privately to the active conversation. */
-export const useConversationPrivateMcpResources = (): McpResource[] => {
-  const conversationMcpResources = useStore(
-    (state) => state.conversationMcpResources
+/** MCP resources bound to the active workspace's library. The
+ *  resource-id join builds an in-selector Map (O(resources)) so the
+ *  per-binding lookup is O(1) instead of O(resources). Was O(n²)
+ *  before. */
+export const useWorkspaceMcpResources = (): McpResource[] =>
+  useStore(
+    useShallow((state) => {
+      const byId = new Map<string, McpResource>()
+      for (const r of state.mcpResources) byId.set(r.id, r)
+      const out: McpResource[] = []
+      for (const b of state.mcpResourceBindings) {
+        if (b.workspaceId !== state.activeWorkspaceId) continue
+        const r = byId.get(b.resourceId)
+        if (r && !r.deletedAt) out.push(r)
+      }
+      return out
+    }),
   )
-  const mcpResources = useStore((state) => state.mcpResources)
-  const activeConversationId = useStore((state) => state.activeConversationId)
-  if (!activeConversationId) return []
-  return conversationMcpResources
-    .filter((cmr) => cmr.conversationId === activeConversationId)
-    .map((cmr) => mcpResources.find((r) => r.id === cmr.resourceId))
-    .filter((r): r is McpResource => !!r && !r.deletedAt)
-}
+
+/** MCP resources pinned privately to the active conversation. Same
+ *  Map-join shape as `useWorkspaceMcpResources` — O(joins + resources)
+ *  rather than O(joins × resources). */
+export const useConversationPrivateMcpResources = (): McpResource[] =>
+  useStore(
+    useShallow((state) => {
+      if (!state.activeConversationId) return EMPTY_MCP_RESOURCES as McpResource[]
+      const byId = new Map<string, McpResource>()
+      for (const r of state.mcpResources) byId.set(r.id, r)
+      const out: McpResource[] = []
+      for (const cmr of state.conversationMcpResources) {
+        if (cmr.conversationId !== state.activeConversationId) continue
+        const r = byId.get(cmr.resourceId)
+        if (r && !r.deletedAt) out.push(r)
+      }
+      return out
+    }),
+  )
 
 /** Workspace MCP resources ticked on for the active conversation. */
 export const useConversationSelectedMcpResourceIds = (): string[] => {

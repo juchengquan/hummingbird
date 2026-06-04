@@ -1,11 +1,17 @@
 import "client-only"
 
+import { useShallow } from "zustand/react/shallow"
+
 import type { ConversationFile, UploadedFile } from "@/shared/types"
 import { uuid } from "@/shared/uuid"
 import { gcOrphanedAttachment } from "@/client/store/cascade"
 
 import { useStore, useActiveConversation } from "../../use-store"
 import type { SliceCreator } from "../types"
+
+/** Frozen empty-array sentinel so the "no active conversation" branch
+ *  returns a stable reference under `useShallow`. */
+const EMPTY_FILES: readonly UploadedFile[] = Object.freeze([])
 
 /**
  * Conversation-private file slice — the file-to-conversation join. Sits
@@ -102,16 +108,24 @@ export const createConversationFilesSlice: SliceCreator<ConversationFilesSlice> 
  * when there's no active conversation. Inner-joins against `files[]`
  * so dangling refs are skipped silently.
  */
-export const useConversationPrivateFiles = (): UploadedFile[] => {
-  const conversationFiles = useStore((state) => state.conversationFiles)
-  const files = useStore((state) => state.files)
-  const activeConversationId = useStore((state) => state.activeConversationId)
-  if (!activeConversationId) return []
-  return conversationFiles
-    .filter((cf) => cf.conversationId === activeConversationId)
-    .map((cf) => files.find((f) => f.id === cf.fileId))
-    .filter((f): f is UploadedFile => !!f && !f.deletedAt)
-}
+/** Files pinned privately to the active conversation. Builds an
+ *  in-selector id→file Map so the join is O(joins + files) rather
+ *  than the prior O(joins × files). */
+export const useConversationPrivateFiles = (): UploadedFile[] =>
+  useStore(
+    useShallow((state) => {
+      if (!state.activeConversationId) return EMPTY_FILES as UploadedFile[]
+      const byId = new Map<string, UploadedFile>()
+      for (const f of state.files) byId.set(f.id, f)
+      const out: UploadedFile[] = []
+      for (const cf of state.conversationFiles) {
+        if (cf.conversationId !== state.activeConversationId) continue
+        const f = byId.get(cf.fileId)
+        if (f && !f.deletedAt) out.push(f)
+      }
+      return out
+    }),
+  )
 
 /**
  * Returns the file IDs the active conversation has attached as context

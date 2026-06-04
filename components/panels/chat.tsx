@@ -293,19 +293,25 @@ export function ChatPanel() {
   // assistant message would receive a freshly-computed string from a
   // freshly-built map and React.memo on ChatMessage couldn't skip).
   const pdfByMessage = useMemo(() => {
+    // Build the id→file index once instead of doing a linear scan
+    // per attached file id (was O(messages × files × ids)).
+    const filesById = new Map<string, (typeof files)[number]>()
+    for (const f of files) filesById.set(f.id, f)
     const out = new Map<string, string>()
     let currentPdfId: string | undefined
     for (const m of messages) {
       if (m.role === "user" && m.attachedFileIds) {
-        const firstPdf = m.attachedFileIds
-          .map((id) => files.find((f) => f.id === id))
-          .find(
-            (f) =>
-              !!f &&
-              !f.deletedAt &&
-              (f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"))
-          )
-        if (firstPdf) currentPdfId = firstPdf.id
+        for (const id of m.attachedFileIds) {
+          const f = filesById.get(id)
+          if (
+            f &&
+            !f.deletedAt &&
+            (f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"))
+          ) {
+            currentPdfId = f.id
+            break
+          }
+        }
       } else if (m.role === "assistant" && currentPdfId) {
         out.set(m.id, currentPdfId)
       }

@@ -1,5 +1,7 @@
 import "client-only"
 
+import { useShallow } from "zustand/react/shallow"
+
 import type { UrlBookmark, ConversationUrlBookmark } from "@/shared/types"
 import { uuid } from "@/shared/uuid"
 import {
@@ -10,6 +12,10 @@ import {
 
 import { useStore, useActiveConversation } from "../../use-store"
 import type { SliceCreator } from "../types"
+
+/** Frozen empty-array sentinel so the "no active conversation" branch
+ *  returns a stable reference under `useShallow`. */
+const EMPTY_BOOKMARKS: readonly UrlBookmark[] = Object.freeze([])
 
 /**
  * URL-bookmarks slice — saved web pages. Workspace-library rows
@@ -184,28 +190,36 @@ export const createUrlBookmarksSlice: SliceCreator<UrlBookmarksSlice> = (set) =>
     }),
 })
 
-/** Live URL bookmarks in the active workspace. */
-export const useWorkspaceUrlBookmarks = (): UrlBookmark[] => {
-  const urlBookmarks = useStore((state) => state.urlBookmarks)
-  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
-  return urlBookmarks.filter(
-    (b) => b.workspaceId === activeWorkspaceId && !b.deletedAt
+/** Live URL bookmarks in the active workspace. Filter runs inside
+ *  the Zustand selector so re-renders only fire when the filtered
+ *  list actually changes shape. */
+export const useWorkspaceUrlBookmarks = (): UrlBookmark[] =>
+  useStore(
+    useShallow((state) =>
+      state.urlBookmarks.filter(
+        (b) => b.workspaceId === state.activeWorkspaceId && !b.deletedAt,
+      ),
+    ),
   )
-}
 
-/** URL bookmarks pinned privately to the active conversation. */
-export const useConversationPrivateUrlBookmarks = (): UrlBookmark[] => {
-  const conversationUrlBookmarks = useStore(
-    (state) => state.conversationUrlBookmarks
+/** URL bookmarks pinned privately to the active conversation.
+ *  Builds a one-shot id→bookmark index so the join is O(joins) not
+ *  O(joins × bookmarks). */
+export const useConversationPrivateUrlBookmarks = (): UrlBookmark[] =>
+  useStore(
+    useShallow((state) => {
+      if (!state.activeConversationId) return EMPTY_BOOKMARKS as UrlBookmark[]
+      const byId = new Map<string, UrlBookmark>()
+      for (const b of state.urlBookmarks) byId.set(b.id, b)
+      const out: UrlBookmark[] = []
+      for (const cub of state.conversationUrlBookmarks) {
+        if (cub.conversationId !== state.activeConversationId) continue
+        const b = byId.get(cub.bookmarkId)
+        if (b && !b.deletedAt) out.push(b)
+      }
+      return out
+    }),
   )
-  const urlBookmarks = useStore((state) => state.urlBookmarks)
-  const activeConversationId = useStore((state) => state.activeConversationId)
-  if (!activeConversationId) return []
-  return conversationUrlBookmarks
-    .filter((cub) => cub.conversationId === activeConversationId)
-    .map((cub) => urlBookmarks.find((b) => b.id === cub.bookmarkId))
-    .filter((b): b is UrlBookmark => !!b && !b.deletedAt)
-}
 
 /** Workspace URL bookmarks ticked on for the active conversation. */
 export const useConversationSelectedUrlBookmarkIds = (): string[] => {
