@@ -46,6 +46,8 @@ import {
   type SummarizeRequestInput,
 } from "@/shared/api-schemas"
 
+import { narrowToRemoteBody } from "@/client/api/chat-marshalling"
+
 /** Optional remote-backend dispatch context — used by non-chat
  *  endpoints that mirror `/v1/...` on agent-py / agent-ts. When
  *  set on a call's options, the method posts to the remote service
@@ -283,64 +285,6 @@ async function chatStreamTs(
     }
   }
   return { ok: true, status: res.status, body: res.body }
-}
-
-/**
- * Narrow the TS-shaped chat request body to what the agent services'
- * `/v1/chat` endpoint accepts: messages + model + optional system +
- * max_tokens + workspace_id + skills[]. agent-py and agent-ts share
- * this schema byte-for-byte. Attachments / MCP / referenceImage are
- * dropped silently — both services use permissive parsing, but
- * trimming client-side keeps the payload small and the intent
- * explicit.
- */
-function narrowToRemoteBody(body: ChatRequestInput): Record<string, unknown> {
-  // Coerce each message's content to a plain string. The TS schema
-  // allows structured content parts; the remote services accept only
-  // `string`. We pull the joined text for compatibility — keeps the
-  // first slice viable until both services grow multimodal support.
-  const messages = body.messages.map((m) => ({
-    role: m.role,
-    content: typeof m.content === "string" ? m.content : flattenTextParts(m.content),
-  }))
-  const out: Record<string, unknown> = {
-    model: body.model ?? "",
-    messages,
-  }
-  if (body.workspaceSystemPrompt) {
-    out.system = body.workspaceSystemPrompt
-  }
-  if (body.workspaceId) {
-    // Unlocks `searchFiles` + cloud-mode MCP tools on the remote
-    // services. Without it those tools register but are no-op.
-    out.workspace_id = body.workspaceId
-  }
-  if (body.skills && body.skills.length > 0) {
-    // Per-skill config (caps + provider toggles). The remote services
-    // honour the same `{id, webSearchConfig?, imageGenConfig?,
-    // webFetchConfig?}` entries the Next.js inline route consumes.
-    out.skills = body.skills
-  }
-  // `enable_tools` mirrors agent-py's opt-in flag for the tool loop.
-  // When skills are sent + the user has them enabled, default to on
-  // so the experience matches the inline Next.js route.
-  if (body.skills && body.skills.length > 0) {
-    out.enable_tools = true
-  }
-  return out
-}
-
-function flattenTextParts(content: unknown): string {
-  if (typeof content === "string") return content
-  if (!Array.isArray(content)) return ""
-  const parts: string[] = []
-  for (const part of content) {
-    if (part && typeof part === "object" && "type" in part && (part as { type: string }).type === "text") {
-      const text = (part as { text?: unknown }).text
-      if (typeof text === "string") parts.push(text)
-    }
-  }
-  return parts.join("")
 }
 
 /** Single remote-backend dispatch — used for both agent-py and
@@ -640,127 +584,74 @@ async function extract(
 
 type SummarizeOptions = { signal?: AbortSignal } & DispatchOption
 
-/** Internal: pick the URL + headers for a summarize POST based on the
- *  resolved remote-dispatch context. Centralised so the four mode
- *  variants don't duplicate the branch. */
-function summarizeFetchTarget(remote: RemoteDispatch | null): {
-  url: string
-  headers: Record<string, string>
-} {
-  if (remote) {
-    return {
-      url: `${remote.baseUrl}/v1/summarize`,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${remote.authToken}`,
-      },
+/** Internal: one POST + Zod-parse for any summarize mode. The four
+ *  exported methods (file / conversation / compress / projectBreakdown)
+ *  share dispatch + error handling; they differ only in the body's
+ *  `mode` discriminant and the response schema. */
+async function summarizePost<T>(
+  body: SummarizeRequestInput,
+  schema: { parse: (raw: unknown) => T },
+  options?: SummarizeOptions
+): Promise<T | null> {
+  try {
+    const remote = await resolveDispatch(options)
+    const url = remote ? `${remote.baseUrl}/v1/summarize` : apiUrls.summarize()
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
     }
-  }
-  return {
-    url: apiUrls.summarize(),
-    headers: { "Content-Type": "application/json" },
+    if (remote) headers.Authorization = `Bearer ${remote.authToken}`
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: options?.signal,
+    })
+    if (!res.ok) return null
+    return schema.parse(await res.json())
+  } catch {
+    return null
   }
 }
 
-/**
- * Summarises a single file's extracted text. Returns null on failure —
- * summaries are best-effort decoration on the file row.
- */
-async function summarizeFile(
+/** Summarises a single file's extracted text. Returns null on failure —
+ *  summaries are best-effort decoration on the file row. */
+function summarizeFile(
   body: Extract<SummarizeRequestInput, { mode: "file" }>,
   options?: SummarizeOptions
 ): Promise<FileSummarizeResponse | null> {
-  try {
-    const remote = await resolveDispatch(options)
-    const target = summarizeFetchTarget(remote)
-    const res = await fetch(target.url, {
-      method: "POST",
-      headers: target.headers,
-      body: JSON.stringify(body),
-      signal: options?.signal,
-    })
-    if (!res.ok) return null
-    return FileSummarizeResponseSchema.parse(await res.json())
-  } catch {
-    return null
-  }
+  return summarizePost(body, FileSummarizeResponseSchema, options)
 }
 
-/**
- * Summarises a conversation thread. Used by the chat-header
- * "Summarise" action. Returns null on failure; the caller surfaces a
- * toast.
- */
-async function summarizeConversation(
+/** Summarises a conversation thread. Used by the chat-header
+ *  "Summarise" action. Returns null on failure; the caller surfaces a
+ *  toast. */
+function summarizeConversation(
   body: Extract<SummarizeRequestInput, { mode: "conversation" }>,
   options?: SummarizeOptions
 ): Promise<ConversationSummarizeResponse | null> {
-  try {
-    const remote = await resolveDispatch(options)
-    const target = summarizeFetchTarget(remote)
-    const res = await fetch(target.url, {
-      method: "POST",
-      headers: target.headers,
-      body: JSON.stringify(body),
-      signal: options?.signal,
-    })
-    if (!res.ok) return null
-    return ConversationSummarizeResponseSchema.parse(await res.json())
-  } catch {
-    return null
-  }
+  return summarizePost(body, ConversationSummarizeResponseSchema, options)
 }
 
-/**
- * Compresses a slice of older messages into a markdown recap intended
- * to substitute for them in the next chat turn. Used by the chat
- * header's "Compress" action when the context meter is in the
- * warn/danger zone. Returns null on failure; the caller surfaces a
- * toast and aborts the compress.
- */
-async function summarizeCompress(
+/** Compresses a slice of older messages into a markdown recap intended
+ *  to substitute for them in the next chat turn. Used by the chat
+ *  header's "Compress" action when the context meter is in the
+ *  warn/danger zone. Returns null on failure; the caller surfaces a
+ *  toast and aborts the compress. */
+function summarizeCompress(
   body: Extract<SummarizeRequestInput, { mode: "compress" }>,
   options?: SummarizeOptions
 ): Promise<CompressSummarizeResponse | null> {
-  try {
-    const remote = await resolveDispatch(options)
-    const target = summarizeFetchTarget(remote)
-    const res = await fetch(target.url, {
-      method: "POST",
-      headers: target.headers,
-      body: JSON.stringify(body),
-      signal: options?.signal,
-    })
-    if (!res.ok) return null
-    return CompressSummarizeResponseSchema.parse(await res.json())
-  } catch {
-    return null
-  }
+  return summarizePost(body, CompressSummarizeResponseSchema, options)
 }
 
-/**
- * Breaks a project goal into proposed task titles for the Kanban board
- * (project-mode "Generate tasks" action). Returns null on failure; the
- * caller surfaces a toast.
- */
-async function summarizeProjectBreakdown(
+/** Breaks a project goal into proposed task titles for the Kanban board
+ *  (project-mode "Generate tasks" action). Returns null on failure; the
+ *  caller surfaces a toast. */
+function summarizeProjectBreakdown(
   body: Extract<SummarizeRequestInput, { mode: "project-breakdown" }>,
   options?: SummarizeOptions
 ): Promise<ProjectBreakdownResponse | null> {
-  try {
-    const remote = await resolveDispatch(options)
-    const target = summarizeFetchTarget(remote)
-    const res = await fetch(target.url, {
-      method: "POST",
-      headers: target.headers,
-      body: JSON.stringify(body),
-      signal: options?.signal,
-    })
-    if (!res.ok) return null
-    return ProjectBreakdownResponseSchema.parse(await res.json())
-  } catch {
-    return null
-  }
+  return summarizePost(body, ProjectBreakdownResponseSchema, options)
 }
 
 // --- /api/share -------------------------------------------------------------
