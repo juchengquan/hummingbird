@@ -35,7 +35,33 @@ import { getPool, hasPool } from "../db"
 import { buildToolImageInterceptor } from "../image-persistence"
 import type { AuthVars } from "../middleware/auth"
 import { requireAuth } from "../middleware/auth"
+import { createSlidingWindow, rateLimitKey } from "../rate-limit"
 import { buildSkillNotes, buildToolSet } from "../skills"
+
+/** Per-IP turn-rate bucket for /v1/chat. 30 turns/min/IP is generous
+ *  for a human but tight enough to cap a misbehaving script before it
+ *  burns serious tokens. Module-level so buckets survive across
+ *  requests on the same Bun process. Mirrors `_chat_per_ip_limit` in
+ *  `services/agent-py/src/agent_py/routers/chat.py` and the equivalent
+ *  in `app/api/chat/route.ts`. */
+const chatPerIpLimit = createSlidingWindow({ windowMs: 60_000, max: 30 })
+
+/** Test seam — clears the global rate-limit bucket so per-test state
+ *  doesn't leak between cases. */
+export function _resetChatPerIpLimitForTest(): void {
+  chatPerIpLimit._reset()
+}
+
+/** Idle watchdog window. If the upstream produces no SSE frame for
+ *  this many ms, we abort with a synthetic `error` frame so a hung
+ *  provider doesn't pin the connection open. Same 90s as the Next.js
+ *  route's `IDLE_TIMEOUT_MS`. */
+let IDLE_TIMEOUT_MS = 90_000
+
+/** Test seam — shrink the watchdog window so tests don't sit for 90s. */
+export function _setIdleTimeoutForTest(ms: number): void {
+  IDLE_TIMEOUT_MS = ms
+}
 
 const MessageSchema = z.object({
   role: z.enum(["user", "assistant"]),
@@ -69,6 +95,21 @@ chatRoutes.post("/v1/chat", requireAuth, async (c) => {
   // format. The `?format=` query param was the dual-format switch
   // before B.3 retired the custom path; it's silently ignored if
   // sent.
+
+  // Per-IP turn-rate gate. In-process, not shared across workers —
+  // same caveat as the Next.js inline route — but suffices to cap a
+  // misbehaving script before it lights serious tokens on fire.
+  const verdict = chatPerIpLimit.consume(rateLimitKey(c))
+  if (!verdict.allowed) {
+    c.header("Retry-After", String(verdict.retryAfterSec))
+    return c.json(
+      {
+        code: "rate_limit",
+        message: "Too many chat turns. Slow down and retry.",
+      },
+      429,
+    )
+  }
 
   let body: unknown
   try {
@@ -171,10 +212,46 @@ chatRoutes.post("/v1/chat", requireAuth, async (c) => {
 
   return stream(c, async (s) => {
     const gen = chatStreamAiSdk(model, config, { onToolResult, onComplete })
-    for await (const frame of gen) {
-      // Bail early if the client hung up — saves tokens on a tab close.
-      if (s.aborted) return
-      await s.write(frame)
+    const iterator = gen[Symbol.asyncIterator]()
+    // Idle watchdog: race each `next()` against a timeout so a hung
+    // upstream (provider stalled, network half-open) can't pin the
+    // SSE connection open past `IDLE_TIMEOUT_MS`. On timeout we close
+    // the source generator + emit a synthetic `error` + `[DONE]` so
+    // the consumer's finally fires cleanly. Mirrors `_IDLE_TIMEOUT_SEC`
+    // on agent-py and the equivalent watchdog in the Next.js route.
+    const idleSentinel = Symbol("idle")
+    while (true) {
+      if (s.aborted) {
+        await iterator.return?.(undefined)
+        return
+      }
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const timeout = new Promise<typeof idleSentinel>((resolve) => {
+        timer = setTimeout(() => resolve(idleSentinel), IDLE_TIMEOUT_MS)
+      })
+      const next = iterator.next()
+      const winner = await Promise.race([next, timeout])
+      if (timer !== undefined) clearTimeout(timer)
+      if (winner === idleSentinel) {
+        await iterator.return?.(undefined)
+        const secs = Math.round(IDLE_TIMEOUT_MS / 1000)
+        await s.write(
+          `data: ${JSON.stringify({
+            type: "error",
+            errorText: `Model stopped responding after ${secs}s of silence.`,
+            code: "upstream",
+          })}\n\n`,
+        )
+        await s.write("data: [DONE]\n\n")
+        return
+      }
+      const result = winner as IteratorResult<string>
+      if (result.done) return
+      if (s.aborted) {
+        await iterator.return?.(undefined)
+        return
+      }
+      await s.write(result.value)
     }
   })
 })

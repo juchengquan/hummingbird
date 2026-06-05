@@ -470,3 +470,134 @@ def test_collect_skill_configs_handles_none() -> None:
     assert result.image_gen is None
     assert result.web_search is None
     assert result.web_fetch is None
+
+
+# --- Per-IP rate-limit gate -------------------------------------------
+
+
+def test_chat_429_when_per_ip_limit_exhausted(client: TestClient) -> None:
+    """Once an IP burns its per-minute turn budget on the worker, the
+    endpoint returns 429 with `Retry-After` rather than letting the
+    request reach the auth/model dispatch path. Surface mirrors what
+    abuse-prevention monitoring expects."""
+    from agent_py.routers.chat import (
+        _chat_per_ip_limit,
+        _reset_chat_per_ip_limit_for_test,
+    )
+
+    _reset_chat_per_ip_limit_for_test()
+    try:
+        # Hammer the limit's bucket directly so the test doesn't have
+        # to fire 30+ HTTP requests through the auth + Anthropic
+        # patches. The route reads from the same module-level bucket.
+        for _ in range(_chat_per_ip_limit.max):
+            v = _chat_per_ip_limit.consume("testclient")
+            assert v.allowed is True
+
+        body = {
+            "model": "claude-3-5-sonnet-20241022",
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+        r = client.post(
+            "/v1/chat",
+            json=body,
+            headers={
+                "Authorization": f"Bearer {_token()}",
+                "X-Forwarded-For": "testclient",
+            },
+        )
+        assert r.status_code == 429
+        assert r.json()["detail"]["code"] == "rate_limit"
+        assert int(r.headers.get("Retry-After", "0")) >= 1
+    finally:
+        _reset_chat_per_ip_limit_for_test()
+
+
+def test_chat_rate_limit_is_per_ip_not_global(client: TestClient) -> None:
+    """Different forwarded-for IPs hit different buckets. Confirms
+    the route routes per-IP rather than via one shared global
+    counter (which would let one abusive IP starve everyone else)."""
+    from agent_py.routers.chat import (
+        _chat_per_ip_limit,
+        _reset_chat_per_ip_limit_for_test,
+    )
+
+    _reset_chat_per_ip_limit_for_test()
+    try:
+        # Burn IP A's bucket entirely.
+        for _ in range(_chat_per_ip_limit.max):
+            _chat_per_ip_limit.consume("ip-a")
+        # IP B is unaffected — should still be allowed.
+        v = _chat_per_ip_limit.consume("ip-b")
+        assert v.allowed is True
+    finally:
+        _reset_chat_per_ip_limit_for_test()
+
+
+# --- Idle watchdog ----------------------------------------------------
+
+
+def test_chat_idle_watchdog_emits_error_then_done(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the upstream stream goes silent past the watchdog window,
+    the event_source closes the generator and emits a synthetic
+    `error` frame followed by `[DONE]` so the consumer's finally
+    block fires cleanly. Mirrors the Next.js inline route's
+    idle-timeout behaviour."""
+    import agent_py.routers.chat as chat_module
+
+    # Shrink the window so the test doesn't sit for 90s. The route
+    # reads the constant on every event_source iteration so the
+    # patch takes effect for this request.
+    monkeypatch.setattr(chat_module, "_IDLE_TIMEOUT_SEC", 0.05)
+    chat_module._reset_chat_per_ip_limit_for_test()
+
+    class _HangingStream:
+        async def __aenter__(self) -> _HangingStream:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        def __aiter__(self) -> AsyncIterator[Any]:
+            return self._iter()
+
+        async def _iter(self) -> AsyncIterator[Any]:
+            # Yield one delta then hang past the watchdog window.
+            yield SimpleNamespace(
+                type="content_block_delta",
+                delta=SimpleNamespace(type="text_delta", text="hello"),
+            )
+            import asyncio as _asyncio
+
+            await _asyncio.sleep(60)  # >> _IDLE_TIMEOUT_SEC; will be cancelled
+
+    class _HangingMessages:
+        def stream(self, **_kwargs: Any) -> _HangingStream:
+            return _HangingStream()
+
+    class _HangingClient:
+        def __init__(self) -> None:
+            self.messages = _HangingMessages()
+
+    with patch.object(chat_router, "resolve_anthropic_client", return_value=_HangingClient()):
+        r = client.post(
+            "/v1/chat",
+            json={
+                "model": "claude-3-5-sonnet-20241022",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+            headers={"Authorization": f"Bearer {_token()}"},
+        )
+
+    assert r.status_code == 200
+    body = r.text
+    # We get the partial text delta the stream produced before the hang...
+    assert "text-delta" in body
+    # ...then a synthetic error + [DONE] from the watchdog.
+    assert '"type":"error"' in body
+    assert "stopped responding" in body
+    assert "[DONE]" in body
+
+    chat_module._reset_chat_per_ip_limit_for_test()
