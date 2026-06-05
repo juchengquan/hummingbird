@@ -1,6 +1,7 @@
 # Plan: agent-ts follow-ups
 
-Status: **planning** — five independent PRs that fall out of
+Status: **✅ All five items closed** (see §Status update (final) at
+the bottom). Originally five independent PRs that fall out of
 [`PLAN-agent-ts.md`](./PLAN-agent-ts.md). Each one stands alone;
 pick by leverage on a given day. None of them block landing
 agent-ts Phases 0–4 ([#142](https://github.com/juchengquan/hummingbird/pull/142)),
