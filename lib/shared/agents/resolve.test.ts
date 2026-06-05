@@ -53,31 +53,72 @@ describe("resolveAgent", () => {
   })
 })
 
-describe("composeSystemPrompts", () => {
-  test("undefined + empty → undefined", () => {
-    expect(composeSystemPrompts(undefined, "")).toBeUndefined()
-    expect(composeSystemPrompts("  ", "  ")).toBeUndefined()
+describe("composeSystemPrompts — 3-tier (workspace, conversation, persona)", () => {
+  test("all empty → undefined", () => {
+    expect(composeSystemPrompts(undefined, undefined, "")).toBeUndefined()
+    expect(composeSystemPrompts("  ", "  ", "  ")).toBeUndefined()
   })
 
   test("workspace-only", () => {
-    expect(composeSystemPrompts("Be concise.", "")).toBe("Be concise.")
+    expect(composeSystemPrompts("Be concise.", undefined, "")).toBe("Be concise.")
+  })
+
+  test("conversation-only — used as the voice when no other voice", () => {
+    expect(
+      composeSystemPrompts(undefined, "We're planning Q4 OKRs.", ""),
+    ).toBe("We're planning Q4 OKRs.")
   })
 
   test("persona-only", () => {
-    expect(composeSystemPrompts(undefined, "You are a critic.")).toBe(
-      "You are a critic."
+    expect(composeSystemPrompts(undefined, undefined, "You are a critic.")).toBe(
+      "You are a critic.",
     )
   })
 
-  test("workspace + persona joined with a blank line", () => {
-    expect(composeSystemPrompts("Be concise.", "You are a critic.")).toBe(
-      "Be concise.\n\nYou are a critic."
-    )
+  test("workspace + conversation: voice + context, blank-line separated", () => {
+    expect(
+      composeSystemPrompts(
+        "Be concise.",
+        "We're planning Q4 OKRs.",
+        "",
+      ),
+    ).toBe("Be concise.\n\nWe're planning Q4 OKRs.")
   })
 
-  test("both inputs are trimmed before joining", () => {
-    expect(composeSystemPrompts("  Be concise.  ", "  Critic.  ")).toBe(
-      "Be concise.\n\nCritic."
-    )
+  test("persona REPLACES workspace voice; conversation context survives", () => {
+    // The whole point of the additive model: switching personas
+    // doesn't blow away "what this thread is about."
+    expect(
+      composeSystemPrompts(
+        "Be concise.",
+        "We're planning Q4 OKRs.",
+        "You are a critic.",
+      ),
+    ).toBe("You are a critic.\n\nWe're planning Q4 OKRs.")
+  })
+
+  test("persona + conversation, no workspace", () => {
+    expect(
+      composeSystemPrompts(
+        undefined,
+        "We're planning Q4 OKRs.",
+        "You are a critic.",
+      ),
+    ).toBe("You are a critic.\n\nWe're planning Q4 OKRs.")
+  })
+
+  test("all three inputs are trimmed before joining", () => {
+    expect(
+      composeSystemPrompts("  Be concise.  ", "  Context.  ", "  "),
+    ).toBe("Be concise.\n\nContext.")
+  })
+
+  test("empty conversation prompt is a no-op (workspace + persona path unchanged)", () => {
+    expect(
+      composeSystemPrompts("Be concise.", "", "You are a critic."),
+    ).toBe("You are a critic.")
+    expect(
+      composeSystemPrompts("Be concise.", undefined, "You are a critic."),
+    ).toBe("You are a critic.")
   })
 })

@@ -203,11 +203,14 @@ export function useChatSend(): UseChatSendResult {
       if (!targetConvId) return
       const conv = conversations.find((c) => c.id === targetConvId)
       const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
-      // Compose workspace + per-turn persona system prompts. When neither
-      // is set, `composeSystemPrompts` returns undefined and the route
-      // falls back to its built-in default. See `PLAN-custom-agents.md`.
+      // Compose the three system-prompt tiers in the cascade: workspace
+      // voice → conversation thread context → per-turn persona override.
+      // The conversation prompt is **additive** — switching personas does
+      // not drop the thread context. See
+      // `docs/PLAN-conversation-system-prompt.md`.
       const workspaceSystemPrompt = composeSystemPrompts(
         activeWorkspace?.systemPrompt,
+        conv?.systemPrompt,
         options?.agentSystemPrompt ?? ""
       )
 
