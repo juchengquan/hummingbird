@@ -1,6 +1,14 @@
 # Plan: TS twin of the Python agent service (`services/agent-ts/`)
 
-Status: **📋 Draft.** Companion to
+Status: **✅ Shipped — Phases 0 through 5 all live.** `services/agent-ts/`
+mirrors `services/agent-py/` route-for-route (health, whoami,
+extract, chat with tools + suggestions + AI SDK v5 wire format,
+url/fetch, images/refresh-url, summarize, mcp proxy + server-CRUD)
+and the Phase 4-2 frontend selector grew a third option
+(`chatBackend: 'ts-service'`). 128 tests in `services/agent-ts/tests/`
+cover the routes + agent loop + executor end-to-end. Plus all five
+follow-ups in [`PLAN-agent-ts-followups.md`](./PLAN-agent-ts-followups.md)
+closed. Companion to
 [`PLAN-agent-api.md`](./PLAN-agent-api.md), which shipped the
 Python agent service (Option C in that doc's decision matrix).
 This plan describes what it would take to ship a **TypeScript

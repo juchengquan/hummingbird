@@ -10,33 +10,40 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-05-30 (PLAN-agent-api Phase 2a shipped —
-`services/agent-py/` now has the executor pattern end-to-end:
-TaskEvent IR (`events.py`), RunEmitter with monotonic seq +
-settle-once (`emitter.py`), RunStore writes (`store.py`: append_event
-idempotent on (task_id, seq), update_run, set_task_handler stamping
-metadata.handler='python', is_run_cancelled probe), the agent loop
-(`runner.py`: run_agent_loop with injected RunStepFn), per-user
-feature flag (`feature_flag.py`: reads auth.users.raw_user_meta_data
-->>'agent_backend', defensive on every shape, safe-fallback on DB
-error), and the executor (`executor.py`: execute_start drives loop +
-DB sink + terminal task update). Poller wired to dispatch tree:
-dry-run→release; live+unflagged→release; live+flagged+non-start→
-release; live+flagged+start→execute then mark_done/failed. Step fn
-is a stub for now; Phase 2b swaps it for the real model call.
-Tests 62 total (+35 vs Phase 1). Earlier today: agent-py Phase 1
-(#121), Phase 0 (#119), host decision (#120), signed-URL re-sign
-(#116), store-slice-split (#115), chat-send-pipeline (#112/#113),
-Deep Research mode + Custom agents / personas + agent task-queue
-arc. Also: active-plans tidy — PLAN-code-cleanup moved to _done/
-now that all 6 phases ship and both heavy follow-ups (store-slice
-split + chat-send extraction) already shipped on their own rows;
-PLAN-backend-extraction Status refreshed (Phase 2 now satisfied
-incrementally via PLAN-agent-api). Active plans now: small-followups
-(3 open: tokens / per-tool approval flags / task-route integration
-tests), agent-api (Phase 2b pending — Anthropic SDK + 1 tool),
+Last updated: 2026-06-05 (per-IP rate buckets + idle watchdog on
+`/v1/chat` shipped — both agent services now reject 30+ turns/min/IP
+with 429 + `Retry-After`, and a 90s idle watchdog wraps the SSE
+generator on each side so a hung upstream can't pin the connection
+open. Mirrors `chatPerIpLimit` + `IDLE_TIMEOUT_MS` in the Next.js
+inline route. Closes the second-to-last open item in PLAN-agent-api;
+only the real DNS-rebinding test remains. Earlier this session: MCP
+server CRUD endpoint (#160 — `POST /v1/mcp/server` on both services
++ `apiClient.mcp.upsertCloudServer` honours the backend selector via
+DispatchOption); frontend perf pass (#159 — remaining ~10 selector
+hooks under `useShallow` + selector-side `.find` / `Map`-build joins
+across all slices, 100 ms localStorage write coalescing with
+`pagehide` flush, `useDeferredValue` on the chat message list); code
+quality pass (#158 — selector + test coverage extraction + shared
+`parseSuggestionsJson`); chat path + agent-py routers + store
+cascades refactor (#157 — `lib/client/chat/sse-frame-translator.ts`
+extracted; agent-py `main.py` 950 → 120 LOC split into eight
+per-domain routers; `stripSelectionId` helper for the four slices
+that repeated the selection-strip pattern); backend selector for the
+four non-chat endpoints (#156 — `lib/client/api/backend-resolver.ts`
++ `DispatchOption` plumbing on `summarize.*`, `mcp.proxy`,
+`url.fetch`, `images.refreshUrl`); provider-categorised errors on
+`/v1/chat` (#155 — `rate_limit` / `auth` / `context_window` /
+`upstream` codes on all three backends + `MessageError.code` ladder
+on `ErrorBubble`). And before that: `useChat()` adoption track
+(PRs #148–#154) which retired the legacy custom SSE format across
+all three backends; PLAN-agent-api Phases 2b–4-4b (PRs #142–#147).
+PLAN-agent-ts.md fully shipped; PLAN-agent-ts-followups.md all five
+items closed; PLAN-useChat-adoption.md B.1–B.3 done, B.4 deferred
+indefinitely. Active plans now: agent-api (one open: real
+DNS-rebinding test), small-followups (3 open: tokens / per-tool
+approval flags / task-route integration tests),
 cross-conversation-memory, local-rag, replace-supabase,
-backend-extraction, typed-prompt-vars.)
+backend-extraction (Phase 2 satisfied by agent-api), typed-prompt-vars.)
 
 > **Plan archive.** Fully-shipped `PLAN-*.md` files live in
 > [`_done/`](_done/). Active plans (planning / phased / decision
@@ -64,6 +71,15 @@ to a representative PR otherwise.
 
 | When | Feature | Where |
 |---|---|---|
+| 2026-06-05 | **Per-IP rate buckets + idle watchdog on `/v1/chat`** — both agent services gain a 30 turns / minute / IP gate (`SlidingWindow` in Python, `createSlidingWindow` re-exported in agent-ts) returning 429 + `Retry-After` before the auth / model dispatch path; a 90 s idle watchdog wraps the SSE generator's `next()` on both stacks and emits a synthetic `error` (`code: "upstream"`) + `[DONE]` when an upstream stalls past the window. Mirrors `chatPerIpLimit` + `IDLE_TIMEOUT_MS` in the Next.js inline route. Tests +13 agent-py / +3 agent-ts. Closes the second-to-last item in PLAN-agent-api | [PLAN](PLAN-agent-api.md) · [#161](https://github.com/juchengquan/hummingbird/pull/161) |
+| 2026-06-05 | **`POST /v1/mcp/server` CRUD endpoint** — closes the missing write half of the cloud-mode MCP management surface. Both agent services gain `upsert_server_with_credentials` / `upsertServerWithCredentials` wrapping the `mcp_upsert_server_with_credentials` SECURITY DEFINER RPC under per-user RLS impersonation. `apiClient.mcp.upsertCloudServer` honours the backend selector via `DispatchOption` so cloud-mode server CRUD works end-to-end through any of the three backends. Status mapping mirrored: `encryption_key_unset` → 500, RPC failure → 502, missing pool → 503 | [PLAN](PLAN-agent-api.md) · [#160](https://github.com/juchengquan/hummingbird/pull/160) |
+| 2026-06-05 | **Frontend perf pass — selectors + persist debounce + deferred messages**: walked the remaining ~10 selector hooks across `conversations` / `documents` / `notes` / `project-tasks` / `prompts` / `ui` / `workspaces` slices and applied `useShallow` + selector-side `.find` / `Map`-build joins (so adding an artifact to another conversation no longer re-renders the sidebar's workspace-documents list); new `lib/client/hooks/store/debounced-storage.ts` wraps localStorage with a 100 ms coalesce window + `pagehide` flush (collapses the `JSON.stringify` churn from per-token SSE updates into one write per quiet period); `useDeferredValue` on the chat message list keeps the composer input responsive while assistant text streams. +7 tests for the storage wrapper. Verified Plate.js is already gated behind `dynamic()` — the 10 MB chunks on disk never load on initial paint | [#159](https://github.com/juchengquan/hummingbird/pull/159) |
+| 2026-06-05 | **Code quality pass — selector hygiene + chat-path tests + shared parser**: 6 worst-offending selector hooks switched to `useShallow` + Map-build joins (`useConversationArtifacts`, `useWorkspaceArtifacts`, `useWorkspaceMcpResources`, `useConversationPrivateMcpResources`, `useConversationPrivateUrlBookmarks`, `useWorkspaceUrlBookmarks`); chat-path test extraction: `lib/server/chat/prompt-builders.ts` (14 tests covering composition order + MCP-server pluralisation + multimodal `lastUserText`), `lib/server/chat/suggestions.ts`, `lib/client/chat/auto-retry-decision.ts` (5 tests covering each opt-out branch); `parseSuggestionsJson` consolidated into `lib/shared/suggestions-parser.ts` (3 copies → 1 + 2 re-exports). 959 → 987 Next.js tests | [#158](https://github.com/juchengquan/hummingbird/pull/158) |
+| 2026-06-05 | **Chat path + agent-py routers + store cascades refactor — three commits, one PR**: (a) extracted `lib/client/chat/sse-frame-translator.ts` + `lib/client/api/chat-marshalling.ts` from `use-chat-send.ts` + `api-client.ts`, collapsed the four `summarize.*` methods into a single Zod-parameterised helper; (b) split agent-py's `main.py` (950 → 120 LOC) into eight per-domain modules under `services/agent-py/src/agent_py/routers/` (chat / extract / health / images / mcp / summarize / url / whoami) — settings now flow via `Depends(get_settings)` instead of closures; (c) extracted `stripSelectionId(conversations, kind, id)` helper for the four slices (files / resources / mcp / url-bookmarks) that repeated the selection-strip pattern, identity-stable | [#157](https://github.com/juchengquan/hummingbird/pull/157) |
+| 2026-06-05 | **Frontend selector for non-chat endpoints** — the Phase 4-2 chat-backend toggle was previously half-honoured; only `/v1/chat` actually routed to the remote backend. New `lib/client/api/backend-resolver.ts` + `DispatchOption` union (`'auto'` / `'in-next'` / `'remote'`) plumbing on `summarize.*`, `mcp.proxy`, `url.fetch`, `images.refreshUrl`. When the user picks a remote backend, all four endpoints now POST to `{baseUrl}/v1/...` with a Bearer JWT; `storagePath` → `storage_path` rename on the refresh-url remote dispatch. Closes the "frontend selector for non-chat endpoints" follow-up; `workspaceId` + per-skill config + `useChat()` adoption all verified shipped in earlier PRs | [PLAN](PLAN-agent-api.md) · [#156](https://github.com/juchengquan/hummingbird/pull/156) |
+| 2026-06-05 | **Provider-categorised errors on `/v1/chat`** — Anthropic SDK failures now bucket into stable wire codes (`rate_limit`, `auth`, `context_window`, `upstream`) on all three backends: agent-py `categorize_provider_error` checks typed SDK exceptions first then string-matches gateway-rewrapped errors; agent-ts `categorizeProviderError` mirrors the same logic against `APICallError.statusCode`; Next.js `categorizeError` in `lib/shared/api-errors.ts` gains a `context_window` branch with a permissive regex. `MessageError.code` ladder extended; `ErrorBubble` adds a "Conversation too long" surface that hides Retry and suggests a larger-context fallback model | [PLAN](PLAN-agent-api.md) · [#155](https://github.com/juchengquan/hummingbird/pull/155) |
+| 2026-06-02 | **`useChat()` adoption track B.1–B.3 + B.4 closeout** — six PRs that ratified the AI SDK v5 UI message stream as the only wire format across all three backends and put a small translator on the consumer side. B.1a: agent-ts reasoning channel + format-aware `tool_image` (#148). B.1b: agent-py reasoning channel via raw event walk (#149). B.1c+d Next.js: `ChatSseEmitter` + `?format=ai-sdk` (#150). B.1d services: `generate_chat_suggestions` on both services (#151). B.2: `translateFrame` consumer (#152). B.3: retire the legacy custom format (`{type:"text"|"reasoning"|...}`) across all three backends, −1500 LOC net (#153). B.4: closed out as "deferred indefinitely" — adopting `useChat()` as the state machine itself stays unshipped; re-open triggers documented in the plan (#154) | [PLAN](PLAN-useChat-adoption.md) · [#148](https://github.com/juchengquan/hummingbird/pull/148)..[#154](https://github.com/juchengquan/hummingbird/pull/154) |
+| 2026-06-01 | **Agent service services parity (PRs #142–#147)** — agent-py Phase 4-3 chat tools + tools-in-chat (#142, #143); Zod 3→4 upgrade across the root + agent-ts (#144, #147); agent cleanup pass — gate in-Next worker + agent-py `workspaceId` + per-skill config + lift extraction (#145); agent-ts `searchFiles` postgres-driver RLS + retire the in-Next agent worker + useChat adoption plan (#146). After this batch `services/agent-py/` and `services/agent-ts/` both run chat-with-tools end-to-end and the Next.js inline worker is gone — vanilla deploys must run one of the dedicated services | [PLAN](PLAN-agent-api.md) · [PLAN](PLAN-agent-ts.md) · [PLAN](PLAN-agent-ts-followups.md) · [#142](https://github.com/juchengquan/hummingbird/pull/142)..[#147](https://github.com/juchengquan/hummingbird/pull/147) |
 | 2026-05-30 | **Store slice split — all 5 steps**: `use-store.ts` (3,414 LOC) split into 16 per-entity slice modules under `lib/client/hooks/store/slices/` (`ui`, `chat`, `workspaces`, `conversations`, `messages`, `documents`, `files`, `resources`, `conversation-files`, `mcp`, `url-bookmarks`, `notes`, `artifacts`, `project-tasks`, `prompts`, `agents`) composed into one persisted `useStore` via the standard Zustand "slices pattern" + `SliceCreator<T>`. Persist plumbing extracted to `store/migrate.ts` + `store/persist.ts`; frozen-shape contract pinned by `persist.test.ts` (any add/remove of a persisted key now fails CI until a migration step + `STORE_VERSION` bump are added). `use-store.ts` 3,414 → 263 LOC; no behaviour / persisted-shape / consumer-API change. Tests 761 → 770 | [PLAN](_done/PLAN-store-slice-split.md) · [#115](https://github.com/juchengquan/hummingbird/pull/115) |
 | 2026-05-30 | **Chat send-pipeline extraction — all 5 phases**: pure attachment + message builders + `useChatSend` hook covering abort map / streaming flags / live tool-call buffer / mock fallback / 620-LOC pipeline (Phases 1–2, #112); `useSmartPaste` + `useChatDropzone` hooks (Phases 3–4, #113); slash + mention autocomplete state machines → `useSlashAutocomplete` + `usePromptMentionAutocomplete` over a shared pure `navigateAutocomplete` reducer (Phase 5). `chat.tsx` 1,872 → 1,058 (−814 cumulative), clearing the <1,100 target | [PLAN](_done/PLAN-chat-send-extraction.md) · [#112](https://github.com/juchengquan/hummingbird/pull/112) · [#113](https://github.com/juchengquan/hummingbird/pull/113) |
 | 2026-05-30 | **Custom agents / personas — all 3 phases**: `0020_agents` migration + workspace-scoped `Agent` type + store slice + `/personas` manage dialog + chat dispatch wiring (Phase 1); MCP allow-list server-side enforcement (`loadEffectiveMcpServers` filter, persisted in `CheckpointConfig`) + share-by-URL (base64url JSON via `?import-agent=`, dropping unknown MCP refs on import) (Phase 2); project-mode "Run as task" picks up the pinned persona's model + prompt + skills + MCP scope (Phase 3) | [PLAN](_done/PLAN-custom-agents.md) · [#107](https://github.com/juchengquan/hummingbird/pull/107) · [#110](https://github.com/juchengquan/hummingbird/pull/110) |
@@ -158,12 +174,12 @@ now ships — its plans live in [`_done/`](_done/).
 
 | Plan | Status | Sketch |
 |---|---|---|
+| 🪜 [Agent API as a separate service](PLAN-agent-api.md) | Phases 0 through 4-4b shipped; one follow-up open | All six phases of the original plan plus seven of the open follow-ups have shipped: `services/agent-py/` runs end-to-end (chat + tools + MCP + url-fetch + summarize + refresh-url + extract + whoami + health); per-IP rate buckets + idle watchdog (PR #161); `POST /v1/mcp/server` CRUD (#160); provider-categorised errors (#155); frontend selector for non-chat endpoints (#156); `workspace_id` + per-skill config on `/v1/chat` (#145); `useChat()` adoption (#148–#154). **One open item:** real DNS-rebinding test against actual DNS for the MCP-proxy SSRF guard (currently mocked). Phases 5 (default-on + decommission) and 6 (tidy + archive) explicitly deferred — per project policy both Python and TS stacks stay live and the user picks backend per-account via the Phase 4-2 selector |
 | 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 4 done, 1 moot, 3 open | Done: generatedImages sync (#45), recap-of-recaps (#63), roadmap sweep, signed-URL re-sign. Moot: local-mode MCP creds for tasks (rejected up front by #85). Open: accurate tokens, per-tool server-side approval flags, task-route integration tests |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
 | 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~7.5 days total |
-| 🪜 [Agent API as a separate service](PLAN-agent-api.md) | Phases 0+1+2a shipped — Phase 2b pending | Six-phase plan to move the agent loop + worker + tools out of Next.js into a Python FastAPI service. **Option C (Python) green-lit**; **Phase 0** (scaffolding), **Phase 1** (read-only `task_jobs` poller), **Phase 2a** (executor pattern + per-user feature flag + RunEmitter + RunStore + run_agent_loop with stub step fn) all shipped at `services/agent-py/`. Host decision landed: self-host on a small VM (~€4.5/mo Hetzner CX22, or home server / NAS) — reasoning in PLAN-agent-api §Host decision. Phase 2b swaps the stub for an Anthropic SDK call + 1 tool; Phase 3 ports continue/respond + MCP; Phase 4 ports the chat turn; Phase 5 cuts over; Phase 6 tidies. ~3-5 weeks remaining; phases 0-4 are flag-flip reversible |
-| 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 pending | Phase 1 (contract-first frontend ⇄ API surface) shipped; Phase 2 stands up the Python backend |
+| 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 satisfied by agent-api | Phase 1 (contract-first frontend ⇄ API surface) shipped; Phase 2 (stand up a Python backend) satisfied by PLAN-agent-api `services/agent-py/`. The plan stays in `docs/` for the contract narrative but has no open work |
 | ⏸ [Typed prompt variables](PLAN-typed-prompt-variables.md) | deferred | Workspace-scoping migration shipped (`9b3c84f`); the typing UI itself remains deliberately deferred |
 
 ---
