@@ -1,10 +1,16 @@
 import "client-only"
 
+import { useShallow } from "zustand/react/shallow"
+
 import type { Document } from "@/shared/types"
 import { uuid } from "@/shared/uuid"
 
 import { useStore } from "../../use-store"
 import type { SliceCreator } from "../types"
+
+/** Frozen empty-array sentinel for the "no active workspace" branch
+ *  so consumers see a stable reference under `useShallow`. */
+const EMPTY_DOCUMENTS: readonly Document[] = Object.freeze([])
 
 /**
  * Documents slice — rich-text docs inside a workspace. A workspace owns
@@ -132,24 +138,27 @@ export const createDocumentsSlice: SliceCreator<DocumentsSlice> = (set, get) => 
 /** Documents in the active workspace, sorted by position (asc) and then
  *  by updatedAt (desc) as a tiebreaker. Switching workspaces re-runs the
  *  derivation through the `activeWorkspaceId` dependency. */
-export const useWorkspaceDocuments = (): Document[] => {
-  const documents = useStore((state) => state.documents)
-  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
-  if (!activeWorkspaceId) return []
-  return documents
-    .filter((d) => d.workspaceId === activeWorkspaceId)
-    .sort((a, b) =>
-      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-    )
-}
+export const useWorkspaceDocuments = (): Document[] =>
+  useStore(
+    useShallow((state) => {
+      if (!state.activeWorkspaceId) return EMPTY_DOCUMENTS as Document[]
+      return state.documents
+        .filter((d) => d.workspaceId === state.activeWorkspaceId)
+        .sort(
+          (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+        )
+    }),
+  )
 
-/** Current open document, or null when the workspace has none yet. */
-export const useActiveDocument = (): Document | null => {
-  const documents = useStore((state) => state.documents)
-  const activeDocumentId = useStore((state) => state.activeDocumentId)
-  if (!activeDocumentId) return null
-  return documents.find((d) => d.id === activeDocumentId) ?? null
-}
+/** Current open document, or null when the workspace has none yet.
+ *  `.find` lives in the selector so the subscription tracks the
+ *  found object — adding a document to another workspace doesn't
+ *  re-render. */
+export const useActiveDocument = (): Document | null =>
+  useStore(
+    (state) =>
+      state.documents.find((d) => d.id === state.activeDocumentId) ?? null,
+  )
 
 /** Convenience: just the active doc's `content`. Empty string when none. */
 export const useActiveDocumentContent = (): string => {

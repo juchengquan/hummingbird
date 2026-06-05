@@ -1,5 +1,7 @@
 import "client-only"
 
+import { useShallow } from "zustand/react/shallow"
+
 import type { Prompt } from "@/shared/types"
 import { uuid } from "@/shared/uuid"
 import { parseTemplate } from "@/shared/prompts/expand"
@@ -7,6 +9,9 @@ import { parseTemplate } from "@/shared/prompts/expand"
 import { useStore } from "../../use-store"
 import { defaultSlug, ensureUniquePromptSlug } from "../../store-helpers"
 import type { SliceCreator } from "../types"
+
+/** Frozen empty-array sentinel for the "no active workspace" branch. */
+const EMPTY_PROMPTS: readonly Prompt[] = Object.freeze([])
 
 /**
  * Prompts slice — user-scoped saved templates (workspace-scoped rows).
@@ -108,11 +113,14 @@ export const createPromptsSlice: SliceCreator<PromptsSlice> = (set, get) => ({
 
 /** Non-deleted prompts scoped to the active workspace, sorted by
  *  updatedAt desc. */
-export const useWorkspacePrompts = (): Prompt[] => {
-  const prompts = useStore((state) => state.prompts)
-  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
-  if (!activeWorkspaceId) return []
-  return prompts
-    .filter((p) => p.workspaceId === activeWorkspaceId && !p.deletedAt)
-    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
-}
+export const useWorkspacePrompts = (): Prompt[] =>
+  useStore(
+    useShallow((state) => {
+      if (!state.activeWorkspaceId) return EMPTY_PROMPTS as Prompt[]
+      return state.prompts
+        .filter(
+          (p) => p.workspaceId === state.activeWorkspaceId && !p.deletedAt,
+        )
+        .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+    }),
+  )

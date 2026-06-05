@@ -1,5 +1,7 @@
 import "client-only"
 
+import { useShallow } from "zustand/react/shallow"
+
 import type { ProjectTask, ProjectTaskStatus } from "@/shared/types"
 import { uuid } from "@/shared/uuid"
 import {
@@ -8,6 +10,10 @@ import {
 } from "@/shared/project-tasks"
 
 import { useStore } from "../../use-store"
+
+/** Frozen empty-array sentinel so the "no active workspace" branch
+ *  returns a stable reference under `useShallow`. */
+const EMPTY_PROJECT_TASKS: readonly ProjectTask[] = Object.freeze([])
 import type { SliceCreator } from "../types"
 
 /**
@@ -98,9 +104,12 @@ export const createProjectTasksSlice: SliceCreator<ProjectTasksSlice> = (
 
 /** Project-task cards for the active workspace (all columns, unsorted —
  *  the board groups + sorts by column via `columnTasks`). */
-export const useWorkspaceProjectTasks = () => {
-  const projectTasks = useStore((state) => state.projectTasks)
-  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
-  if (!activeWorkspaceId) return [] as ProjectTask[]
-  return projectTasks.filter((t) => t.workspaceId === activeWorkspaceId)
-}
+export const useWorkspaceProjectTasks = () =>
+  useStore(
+    useShallow((state) => {
+      if (!state.activeWorkspaceId) return EMPTY_PROJECT_TASKS as ProjectTask[]
+      return state.projectTasks.filter(
+        (t) => t.workspaceId === state.activeWorkspaceId,
+      )
+    }),
+  )

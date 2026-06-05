@@ -1,5 +1,7 @@
 import "client-only"
 
+import { useShallow } from "zustand/react/shallow"
+
 import type {
   MainView,
   PinnedExplanation,
@@ -10,6 +12,9 @@ import { uuid } from "@/shared/uuid"
 import { useStore } from "../../use-store"
 import { clampResourcesSidebarWidth, clampSidebarWidth } from "../../store-helpers"
 import type { SliceCreator } from "../types"
+
+/** Frozen empty-array sentinel for the "no active conversation" branch. */
+const EMPTY_PINS: readonly PinnedExplanation[] = Object.freeze([])
 
 export type Theme = "system" | "dark" | "light"
 export type ColorScheme = "default" | "anthropic"
@@ -270,9 +275,12 @@ export const createUiSlice: SliceCreator<UiSlice> = (set, get) => ({
   setColorScheme: (scheme) => set({ colorScheme: scheme }),
 })
 
-export const useConversationPinnedExplanations = () => {
-  const pins = useStore((state) => state.pinnedExplanations)
-  const activeConversationId = useStore((state) => state.activeConversationId)
-  if (!activeConversationId) return [] as PinnedExplanation[]
-  return pins.filter((p) => p.conversationId === activeConversationId)
-}
+export const useConversationPinnedExplanations = () =>
+  useStore(
+    useShallow((state) => {
+      if (!state.activeConversationId) return EMPTY_PINS as PinnedExplanation[]
+      return state.pinnedExplanations.filter(
+        (p) => p.conversationId === state.activeConversationId,
+      )
+    }),
+  )

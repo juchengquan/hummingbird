@@ -1,10 +1,16 @@
 import "client-only"
 
+import { useShallow } from "zustand/react/shallow"
+
 import type { Note } from "@/shared/types"
 import { uuid } from "@/shared/uuid"
 
 import { useStore } from "../../use-store"
 import type { SliceCreator } from "../types"
+
+/** Frozen empty-array sentinel so the "no active selection" branches
+ *  return a stable reference under `useShallow`. */
+const EMPTY_NOTES: readonly Note[] = Object.freeze([])
 
 /**
  * Notes slice — free-form notes & message bookmarks. Scoped to a
@@ -85,28 +91,39 @@ export const createNotesSlice: SliceCreator<NotesSlice> = (set, get) => ({
   },
 })
 
-export const useConversationNotes = () => {
-  const notes = useStore((state) => state.notes)
-  const activeConversationId = useStore((state) => state.activeConversationId)
-  if (!activeConversationId) return [] as Note[]
-  return notes.filter((n) => n.conversationId === activeConversationId)
-}
+export const useConversationNotes = () =>
+  useStore(
+    useShallow((state) => {
+      if (!state.activeConversationId) return EMPTY_NOTES as Note[]
+      return state.notes.filter(
+        (n) => n.conversationId === state.activeConversationId,
+      )
+    }),
+  )
 
 /** Notes visible in the active workspace. Replaces the per-conversation
  *  view in the right rail's Notes tab — notes now survive conversation
  *  deletion and accumulate at the workspace level. */
-export const useWorkspaceNotes = () => {
-  const notes = useStore((state) => state.notes)
-  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
-  if (!activeWorkspaceId) return [] as Note[]
-  return notes.filter((n) => n.workspaceId === activeWorkspaceId)
-}
+export const useWorkspaceNotes = () =>
+  useStore(
+    useShallow((state) => {
+      if (!state.activeWorkspaceId) return EMPTY_NOTES as Note[]
+      return state.notes.filter(
+        (n) => n.workspaceId === state.activeWorkspaceId,
+      )
+    }),
+  )
 
-export const useMessageBookmark = (messageId: string) => {
-  const notes = useStore((state) => state.notes)
-  const activeConversationId = useStore((state) => state.activeConversationId)
-  if (!activeConversationId) return null
-  return notes.find(
-    (n) => n.conversationId === activeConversationId && n.messageId === messageId
-  ) ?? null
-}
+/** Bookmark note for a specific message in the active conversation,
+ *  or null. Single-object return — default Zustand `Object.is` suffices,
+ *  so no `useShallow` needed; doing the find inside still ensures the
+ *  subscription tracks the found note ref rather than the whole array. */
+export const useMessageBookmark = (messageId: string) =>
+  useStore(
+    (state) =>
+      state.notes.find(
+        (n) =>
+          n.conversationId === state.activeConversationId &&
+          n.messageId === messageId,
+      ) ?? null,
+  )
