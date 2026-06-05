@@ -142,6 +142,12 @@ export interface paths {
          *     Returns 503 when `ANTHROPIC_API_KEY` is unset — fast-fail
          *     signal to monitoring that the deploy is misconfigured rather
          *     than a silent stub response.
+         *
+         *     Returns 429 when the caller's IP has burned its per-minute turn
+         *     budget on this worker. The bucket is in-process and not shared
+         *     across workers — same caveat as the Next.js inline route — but
+         *     suffices to cap a misbehaving script before it lights serious
+         *     tokens on fire.
          */
         post: operations["chat_v1_chat_post"];
         delete?: never;

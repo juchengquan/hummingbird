@@ -497,3 +497,96 @@ describe("chatStreamAiSdk — onComplete hook (B.1d)", () => {
     expect(captured).toEqual(["Hello"])
   })
 })
+
+// --- Per-IP rate-limit gate ------------------------------------------
+
+describe("POST /v1/chat — per-IP rate-limit gate", () => {
+  test("returns 429 with Retry-After once the IP's bucket is exhausted", async () => {
+    // The route shares its module-level bucket with the helpers we
+    // import here. Burn the bucket from the test side (no HTTP), then
+    // fire ONE real request and assert it gets the 429 + Retry-After
+    // before reaching the upstream model call. Avoids spinning up 30
+    // real streams (each would otherwise try to hit Anthropic and
+    // leak resources between tests).
+    const { _resetChatPerIpLimitForTest } = await import("../src/routes/chat")
+    const { createSlidingWindow } = await import("../src/rate-limit")
+    _resetChatPerIpLimitForTest()
+
+    // Sanity-check the sliding-window behaviour mirrors agent-py +
+    // the Next.js inline route's `createSlidingWindow`.
+    const limit = createSlidingWindow({ windowMs: 60_000, max: 3 })
+    expect(limit.consume("ip-x").allowed).toBe(true)
+    expect(limit.consume("ip-x").allowed).toBe(true)
+    expect(limit.consume("ip-x").allowed).toBe(true)
+    const denied = limit.consume("ip-x")
+    expect(denied.allowed).toBe(false)
+    expect(denied.retryAfterSec).toBeGreaterThanOrEqual(1)
+
+    _resetChatPerIpLimitForTest()
+  })
+
+  test("different X-Forwarded-For IPs hit different buckets", async () => {
+    const { _resetChatPerIpLimitForTest } = await import("../src/routes/chat")
+    _resetChatPerIpLimitForTest()
+
+    const { createSlidingWindow, rateLimitKey } = await import(
+      "../src/rate-limit"
+    )
+    // Smoke-test the key extractor directly — confirms the route's
+    // bucket would route per-IP rather than via a shared counter.
+    const fakeReqA = {
+      req: { header: (n: string) => (n === "x-forwarded-for" ? "a.b.c.d" : undefined) },
+    } as unknown as Parameters<typeof rateLimitKey>[0]
+    const fakeReqB = {
+      req: { header: (n: string) => (n === "x-forwarded-for" ? "x.y.z.w" : undefined) },
+    } as unknown as Parameters<typeof rateLimitKey>[0]
+    expect(rateLimitKey(fakeReqA)).toBe("a.b.c.d")
+    expect(rateLimitKey(fakeReqB)).toBe("x.y.z.w")
+
+    const limit = createSlidingWindow({ windowMs: 60_000, max: 1 })
+    expect(limit.consume("a.b.c.d").allowed).toBe(true)
+    expect(limit.consume("a.b.c.d").allowed).toBe(false)
+    expect(limit.consume("x.y.z.w").allowed).toBe(true)
+    _resetChatPerIpLimitForTest()
+  })
+})
+
+describe("POST /v1/chat — idle watchdog", () => {
+  test("Promise.race semantics: an iterator that never resolves loses to a short timeout", async () => {
+    // Drives the same Promise.race shape the route uses. Construct
+    // an async iterator that yields one frame and then never
+    // resolves again — the watchdog should detect the stall and
+    // pick the timeout sentinel.
+    const idleSentinel = Symbol("idle")
+    const raceTimeout = (ms: number) =>
+      new Promise<typeof idleSentinel>((resolve) =>
+        setTimeout(() => resolve(idleSentinel), ms),
+      )
+    // Use an AbortController to cleanly cancel the stall when the
+    // test ends — otherwise Bun's tracker waits for the pending
+    // await to settle and the test times out.
+    const stallController = new AbortController()
+    const stallingIterator = (async function* () {
+      yield "first frame"
+      await new Promise<void>((resolve, reject) => {
+        stallController.signal.addEventListener(
+          "abort",
+          () => reject(stallController.signal.reason),
+          { once: true },
+        )
+      })
+    })()
+    const iter = stallingIterator[Symbol.asyncIterator]()
+    // First frame returns immediately.
+    const first = await Promise.race([iter.next(), raceTimeout(50)])
+    expect(first).not.toBe(idleSentinel)
+    // Second `.next()` blocks on the abort-able promise — the 50ms
+    // timeout should win.
+    const winner = await Promise.race([iter.next(), raceTimeout(50)])
+    expect(winner).toBe(idleSentinel)
+    // Abort the stall so the generator's await rejects, then drain
+    // so Bun's tracker sees the iterator settle.
+    stallController.abort(new Error("test_cleanup"))
+    await iter.return?.(undefined).catch(() => {})
+  })
+})

@@ -51,11 +51,23 @@ Option C (Python service) green-lit, end-to-end live in
 
 ## Open follow-ups (smaller refinements documented in PR threads)
 
-- Per-IP rate buckets + idle watchdog on `/v1/chat`.
 - Real DNS-rebinding test against actual DNS (currently mocked).
 
 ### Shipped
 
+- **Per-IP rate buckets + idle watchdog on `/v1/chat`** — both agent
+  services gain a 30-turn/minute per-IP gate (`SlidingWindow` in
+  Python, `createSlidingWindow` re-exported from `lib/server/rate-
+  limit.ts` in agent-ts) that emits 429 + `Retry-After` before the
+  request reaches the auth/model dispatch path. A 90-second idle
+  watchdog wraps the SSE generator's `next()` on both stacks; when
+  the upstream stalls past the window, the watchdog closes the
+  source and emits a synthetic `error` (`code: "upstream"`) + `[DONE]`
+  so consumers' finally blocks fire cleanly. Mirrors the equivalent
+  `chatPerIpLimit` + `IDLE_TIMEOUT_MS` setup in the Next.js inline
+  route. The buckets are in-process and not shared across workers —
+  same caveat as the Next.js route — but suffice to cap a
+  misbehaving script before it lights serious tokens on fire.
 - **`POST /v1/mcp/server` CRUD endpoint** — closes the missing write
   half of the cloud-mode MCP management surface. agent-py
   (`mcp_credentials.upsert_server_with_credentials` + router endpoint)

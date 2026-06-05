@@ -4,6 +4,7 @@ Mirrors `app/api/chat/route.ts`.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Annotated, Any
 
@@ -28,6 +29,7 @@ from ..chat import (
 )
 from ..db import get_pool, has_pool
 from ..mcp_tools import extend_registry_with_mcp
+from ..rate_limit import SlidingWindow, rate_limit_key
 from ..tools import (
     SkillConfigs,
     ToolContext,
@@ -38,6 +40,26 @@ from ..tools import (
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["chat"])
+
+# Per-IP turn-rate bucket for /v1/chat. 30 turns / minute per IP is
+# generous for a human but tight enough to cap a misbehaving script
+# before it burns serious tokens. Module-level so buckets survive
+# across requests on the same worker process. Mirrors the equivalent
+# `chatPerIpLimit` in `app/api/chat/route.ts`.
+_chat_per_ip_limit = SlidingWindow(window_ms=60_000, max=30)
+
+
+def _reset_chat_per_ip_limit_for_test() -> None:
+    """Test seam — clears the global rate-limit bucket so per-test
+    state doesn't leak. Production callers never need this."""
+    _chat_per_ip_limit.reset()
+
+
+# Idle watchdog window. If the upstream produces no SSE frame for this
+# many seconds, we abort the stream with an `error` frame so a hung
+# provider doesn't pin the connection open and burn the client's wait
+# budget. Same 90s as `IDLE_TIMEOUT_MS` in the Next.js route.
+_IDLE_TIMEOUT_SEC = 90.0
 
 
 class ChatMessageRequest(BaseModel):
@@ -144,7 +166,24 @@ async def chat(
 
     Returns 503 when `ANTHROPIC_API_KEY` is unset — fast-fail
     signal to monitoring that the deploy is misconfigured rather
-    than a silent stub response."""
+    than a silent stub response.
+
+    Returns 429 when the caller's IP has burned its per-minute turn
+    budget on this worker. The bucket is in-process and not shared
+    across workers — same caveat as the Next.js inline route — but
+    suffices to cap a misbehaving script before it lights serious
+    tokens on fire."""
+    verdict = _chat_per_ip_limit.consume(rate_limit_key(request))
+    if not verdict.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "code": "rate_limit",
+                "message": "Too many chat turns. Slow down and retry.",
+            },
+            headers={"Retry-After": str(verdict.retry_after_sec)},
+        )
+
     client = resolve_anthropic_client()
     if client is None:
         raise HTTPException(
@@ -229,7 +268,40 @@ async def chat(
         stream_gen = chat_stream_ai_sdk(client=client, config=config, on_complete=on_complete)
 
     async def event_source() -> AsyncIterator[bytes]:
-        async for frame in stream_gen:
+        # Idle watchdog: wrap each `__anext__` in `asyncio.wait_for` so a
+        # stuck upstream (provider hung, network half-open, etc.) can't
+        # pin the SSE connection open forever. On timeout we close the
+        # source generator and yield a synthetic `error` + `[DONE]`
+        # frame so consumers' finally-blocks fire cleanly. Mirrors the
+        # in-Next route's `IDLE_TIMEOUT_MS` watchdog around `streamText`'s
+        # `abortSignal`.
+        iterator = stream_gen.__aiter__()
+        while True:
+            try:
+                frame = await asyncio.wait_for(
+                    iterator.__anext__(),
+                    timeout=_IDLE_TIMEOUT_SEC,
+                )
+            except StopAsyncIteration:
+                return
+            except TimeoutError:
+                logger.warning(
+                    "chat.idle_timeout",
+                    model=body.model,
+                    timeout_sec=_IDLE_TIMEOUT_SEC,
+                )
+                await stream_gen.aclose()  # type: ignore[attr-defined]
+                yield sse_frame(
+                    {
+                        "type": "error",
+                        "errorText": (
+                            f"Model stopped responding after {int(_IDLE_TIMEOUT_SEC)}s of silence."
+                        ),
+                        "code": "upstream",
+                    }
+                ).encode("utf-8")
+                yield b"data: [DONE]\n\n"
+                return
             # Bail early if the caller already hung up — saves a
             # round-trip's worth of unnecessary tokens.
             if await request.is_disconnected():
@@ -237,6 +309,7 @@ async def chat(
                     "chat.client_disconnected",
                     model=body.model,
                 )
+                await stream_gen.aclose()  # type: ignore[attr-defined]
                 return
             yield frame.encode("utf-8")
 
