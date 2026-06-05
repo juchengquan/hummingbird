@@ -158,3 +158,84 @@ describe("POST /v1/mcp/{server_id}/{action}", () => {
     expect(body.detail).toContain("uri")
   })
 })
+
+describe("POST /v1/mcp/server (upsert)", () => {
+  const UUID = "11111111-1111-1111-1111-111111111111"
+  const WS_UUID = "11111111-1111-1111-1111-111111111122"
+
+  function validBody(): Record<string, unknown> {
+    return {
+      id: UUID,
+      workspaceId: WS_UUID,
+      name: "Cloud MCP",
+      url: "https://mcp.cloud/sse",
+      credentials: { type: "header", headers: { "X-API-Key": "secret" } },
+      enabled: true,
+    }
+  }
+
+  test("requires auth", async () => {
+    const app = createApp()
+    const res = await app.request("/v1/mcp/server", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(validBody()),
+    })
+    expect(res.status).toBe(401)
+  })
+
+  test("503 when no DB pool is configured", async () => {
+    // No SUPABASE_DB_URL → hasPool() returns false → 503. Mirrors
+    // agent-py's behaviour: clear misconfig signal rather than
+    // letting the RPC fail opaquely later.
+    const app = createApp()
+    const token = await makeJwt()
+    const res = await app.request("/v1/mcp/server", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(validBody()),
+    })
+    expect(res.status).toBe(503)
+    const body = (await res.json()) as { code: string }
+    expect(body.code).toBe("db_unconfigured")
+  })
+
+  test("invalid JSON → 400", async () => {
+    const app = createApp()
+    const token = await makeJwt()
+    const res = await app.request("/v1/mcp/server", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: "{not json",
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { code: string }
+    expect(body.code).toBe("invalid_request")
+  })
+
+  test("missing required field → 422", async () => {
+    const app = createApp()
+    const token = await makeJwt()
+    const bad = validBody()
+    delete bad.name
+    const res = await app.request("/v1/mcp/server", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(bad),
+    })
+    // Validation runs before the hasPool check — same order as
+    // FastAPI's auto-validation on agent-py.
+    expect(res.status).toBe(422)
+    const body = (await res.json()) as { code: string }
+    expect(body.code).toBe("invalid_request")
+  })
+})

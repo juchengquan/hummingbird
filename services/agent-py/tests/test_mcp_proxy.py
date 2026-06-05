@@ -26,6 +26,7 @@ from agent_py.mcp_client import (
     McpToolDescriptor,
     McpToolResult,
 )
+from agent_py.mcp_credentials import UpsertResult
 from agent_py.routers import mcp as mcp_router
 
 SECRET = "test-secret-do-not-use-in-prod-32-bytes!"
@@ -330,3 +331,135 @@ def test_decode_credential_header_garbage() -> None:
 def test_decode_credential_header_non_object() -> None:
     encoded = base64.b64encode(b"[1, 2, 3]").decode()
     assert main_module._decode_mcp_credential_header(encoded) is None
+
+
+# --- POST /v1/mcp/server (upsert) -----------------------------------
+
+
+def _upsert_body(extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Mirrors the in-Next route's body shape so the same payload
+    targets either backend without marshalling."""
+    base: dict[str, Any] = {
+        "id": SERVER_ID,
+        "workspaceId": "11111111-1111-1111-1111-111111111122",
+        "name": "Cloud MCP",
+        "url": "https://mcp.cloud/sse",
+        "credentials": {"type": "header", "headers": {"X-API-Key": "secret"}},
+        "enabled": True,
+    }
+    if extra:
+        base.update(extra)
+    return base
+
+
+def test_mcp_server_upsert_rejects_missing_token(client: TestClient) -> None:
+    r = client.post("/v1/mcp/server", json=_upsert_body())
+    assert r.status_code == 401
+
+
+def test_mcp_server_upsert_503_without_db_pool(client: TestClient) -> None:
+    """No `SUPABASE_DB_URL` → no pool → can't impersonate the user for
+    RLS. Surfaces as 503 (service misconfigured) rather than letting
+    the RPC fail opaquely later."""
+    r = client.post("/v1/mcp/server", json=_upsert_body(), headers=_auth())
+    assert r.status_code == 503
+    assert r.json()["detail"]["code"] == "db_unconfigured"
+
+
+def test_mcp_server_upsert_invalid_body_returns_422(client: TestClient) -> None:
+    """Missing required field → FastAPI's auto-422. Confirms the
+    pydantic schema actually validates."""
+    bad = _upsert_body()
+    del bad["name"]
+    r = client.post("/v1/mcp/server", json=bad, headers=_auth())
+    assert r.status_code == 422
+
+
+def test_mcp_server_upsert_500_when_encryption_key_unset(
+    client: TestClient,
+) -> None:
+    """`encryption_key_unset` → 500 (clear misconfig signal for
+    monitoring). Mirrors the TS route's status mapping."""
+    with (
+        patch.object(mcp_router, "has_pool", return_value=True),
+        patch.object(mcp_router, "get_pool", return_value=AsyncMock()),
+        patch.object(
+            mcp_router,
+            "upsert_server_with_credentials",
+            new=AsyncMock(return_value=UpsertResult(ok=False, error="encryption_key_unset")),
+        ),
+    ):
+        r = client.post("/v1/mcp/server", json=_upsert_body(), headers=_auth())
+    assert r.status_code == 500
+    assert r.json()["detail"]["code"] == "encryption_key_unset"
+
+
+def test_mcp_server_upsert_502_on_other_rpc_failure(client: TestClient) -> None:
+    """Any other RPC error → 502 with a generic `upsert_failed`
+    code. The RPC's error message is forwarded for triage."""
+    with (
+        patch.object(mcp_router, "has_pool", return_value=True),
+        patch.object(mcp_router, "get_pool", return_value=AsyncMock()),
+        patch.object(
+            mcp_router,
+            "upsert_server_with_credentials",
+            new=AsyncMock(return_value=UpsertResult(ok=False, error="row-level security violated")),
+        ),
+    ):
+        r = client.post("/v1/mcp/server", json=_upsert_body(), headers=_auth())
+    assert r.status_code == 502
+    assert r.json()["detail"]["code"] == "upsert_failed"
+    assert "security" in r.json()["detail"]["message"]
+
+
+def test_mcp_server_upsert_happy_path_calls_rpc_with_decoded_credential(
+    client: TestClient,
+) -> None:
+    """The route hands the credentials dict (after dropping
+    None-valued optional fields) verbatim to the upsert helper."""
+    captured: dict[str, Any] = {}
+
+    async def fake_upsert(
+        _pool: Any,
+        *,
+        user_id: str,
+        server_id: str,
+        workspace_id: str,
+        name: str,
+        url: str,
+        credentials: dict[str, Any],
+        capabilities: dict[str, Any] | None = None,
+        enabled: bool = True,
+    ) -> UpsertResult:
+        captured.update(
+            user_id=user_id,
+            server_id=server_id,
+            workspace_id=workspace_id,
+            name=name,
+            url=url,
+            credentials=credentials,
+            capabilities=capabilities,
+            enabled=enabled,
+        )
+        return UpsertResult(ok=True)
+
+    with (
+        patch.object(mcp_router, "has_pool", return_value=True),
+        patch.object(mcp_router, "get_pool", return_value=AsyncMock()),
+        patch.object(
+            mcp_router,
+            "upsert_server_with_credentials",
+            new=fake_upsert,
+        ),
+    ):
+        r = client.post("/v1/mcp/server", json=_upsert_body(), headers=_auth())
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+    # JWT sub from `_auth()` is "user-uuid-1" by convention.
+    assert captured["user_id"] == "user-uuid-1"
+    assert captured["server_id"] == SERVER_ID
+    assert captured["credentials"] == {
+        "type": "header",
+        "headers": {"X-API-Key": "secret"},
+    }
+    assert captured["enabled"] is True

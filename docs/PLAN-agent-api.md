@@ -51,13 +51,21 @@ Option C (Python service) green-lit, end-to-end live in
 
 ## Open follow-ups (smaller refinements documented in PR threads)
 
-- `POST /v1/mcp/server` CRUD endpoint + `mcp_upsert_server_with_credentials`
-  write path.
 - Per-IP rate buckets + idle watchdog on `/v1/chat`.
 - Real DNS-rebinding test against actual DNS (currently mocked).
 
 ### Shipped
 
+- **`POST /v1/mcp/server` CRUD endpoint** — closes the missing write
+  half of the cloud-mode MCP management surface. agent-py
+  (`mcp_credentials.upsert_server_with_credentials` + router endpoint)
+  and agent-ts (`mcp.upsertServerWithCredentials` + Hono route) both
+  wrap the `mcp_upsert_server_with_credentials` SECURITY DEFINER RPC
+  with per-user RLS impersonation; same wire shape as the in-Next
+  route so `apiClient.mcp.upsertCloudServer` honours the backend
+  selector via `DispatchOption`. Status mapping mirrored:
+  `encryption_key_unset` → 500, RPC failure → 502, missing DB pool
+  → 503.
 - **Frontend `useChat()` adoption** — `lib/client/hooks/use-chat-send.ts`
   translates AI SDK v5 frames into the consumer's internal envelope;
   every backend (Next.js inline route, agent-py, agent-ts) emits AI
