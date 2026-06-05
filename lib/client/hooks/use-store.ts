@@ -2,6 +2,8 @@ import "client-only"
 import { useSyncExternalStore } from 'react'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
+
+import { debouncedStorage } from "./store/debounced-storage"
 import { runMigrations, STORE_VERSION } from "./store/migrate"
 import { partializeState, reviveAndPruneState } from "./store/persist"
 import { createChatSlice, type ChatSlice } from "./store/slices/chat"
@@ -188,6 +190,12 @@ export const useStore = create<AppState>()(
         notifyHydrated()
       },
       partialize: partializeState,
+      // Coalesce localStorage writes — the default storage writes the
+      // full partialized state on every mutation; with 28 persisted
+      // keys + per-token SSE updates that's a meaningful amount of
+      // JSON.stringify churn. The wrapper flushes on `pagehide` so
+      // committed state survives navigation.
+      storage: createJSONStorage(() => debouncedStorage()),
     }
   )
 )
