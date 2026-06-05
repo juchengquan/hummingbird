@@ -423,8 +423,12 @@ export const createWorkspacesSlice: SliceCreator<WorkspacesSlice> = (set) => ({
     }),
 })
 
-export const useActiveWorkspace = () => {
-  const workspaces = useStore((state) => state.workspaces)
-  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
-  return workspaces.find((w) => w.id === activeWorkspaceId) || null
-}
+/** The active workspace, or null. `.find` runs inside the Zustand
+ *  selector so the subscription tracks the found workspace ref
+ *  rather than the whole `workspaces` array — unrelated mutations
+ *  (renaming another workspace, etc.) don't re-render consumers. */
+export const useActiveWorkspace = () =>
+  useStore(
+    (state) =>
+      state.workspaces.find((w) => w.id === state.activeWorkspaceId) ?? null,
+  )

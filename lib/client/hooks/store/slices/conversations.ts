@@ -1,5 +1,7 @@
 import "client-only"
 
+import { useShallow } from "zustand/react/shallow"
+
 import type { Conversation, Message } from "@/shared/types"
 import { uuid } from "@/shared/uuid"
 import {
@@ -324,11 +326,18 @@ export const createConversationsSlice: SliceCreator<ConversationsSlice> = (
     set({ activeConversationId: conversationId }),
 })
 
-export const useActiveConversation = () => {
-  const conversations = useStore((state) => state.conversations)
-  const activeConversationId = useStore((state) => state.activeConversationId)
-  return conversations.find((c) => c.id === activeConversationId) || null
-}
+/** The active conversation, or null when no id is set OR the id no
+ *  longer resolves (e.g. cleared by a cascade). The `.find` runs
+ *  inside the Zustand selector so the subscription tracks the found
+ *  object, not the whole `conversations` array — unrelated mutations
+ *  (typing on another conv, new message on a sibling) don't re-render
+ *  consumers of `useActiveConversation()`. */
+export const useActiveConversation = () =>
+  useStore(
+    (state) =>
+      state.conversations.find((c) => c.id === state.activeConversationId) ??
+      null,
+  )
 
 /** True iff the given conversation is currently mid-stream. `null`
  *  conversation id always returns false. Cheap O(n) lookup over the
@@ -339,8 +348,13 @@ export const useIsConversationTyping = (conversationId: string | null): boolean 
   )
 }
 
-export const useWorkspaceConversations = () => {
-  const conversations = useStore((state) => state.conversations)
-  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId)
-  return conversations.filter((c) => c.workspaceId === activeWorkspaceId)
-}
+/** Conversations belonging to the active workspace. Filter runs
+ *  inside the selector under `useShallow` so unrelated changes (a new
+ *  conversation in another workspace, a message arriving on any conv)
+ *  don't re-render the sidebar. */
+export const useWorkspaceConversations = () =>
+  useStore(
+    useShallow((state) =>
+      state.conversations.filter((c) => c.workspaceId === state.activeWorkspaceId),
+    ),
+  )

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect, useMemo, useCallback } from "react"
+import { useState, useRef, useEffect, useMemo, useCallback, useDeferredValue } from "react"
 import { useChatScroll } from "@/components/panels/use-chat-scroll"
 import { toast } from "sonner"
 import { useStore, useHydrated, useIsConversationTyping } from "@/client/hooks/use-store"
@@ -191,6 +191,14 @@ export function ChatPanel() {
   })
 
   const messages = useMemo(() => activeConversation?.messages || [], [activeConversation])
+  // `useDeferredValue` lets React render the message list at lower
+  // priority when the main thread is busy (typing in the input,
+  // scrolling, an unrelated panel updating). Streaming SSE frames
+  // append to `messages` many times per second; deferring keeps the
+  // composer input responsive while assistant text catches up at
+  // its own pace. Identity-stable when nothing changes — no extra
+  // renders triggered.
+  const deferredMessages = useDeferredValue(messages)
 
   // Long-running task mode. The provider owns the active run; this
   // panel reads `runAsTask` / `isRunning` for the header toggle. The
@@ -701,10 +709,10 @@ export function ChatPanel() {
               its own `max-w-5xl mx-auto`. */}
           <ScrollArea className="w-full max-h-[calc(100vh-2.75rem)] h-[calc(100vh-2.75rem)]">
             <div className="max-w-5xl mx-auto px-4 py-4 pb-44 space-y-4">
-              {messages.length === 0 ? (
+              {deferredMessages.length === 0 ? (
                 <EmptyChatWelcome onPickSuggestion={pickSuggestion} />
               ) : (
-                messages.map((message, index) => (
+                deferredMessages.map((message, index) => (
                     <ChatMessage
                       key={message.id}
                       message={message}
