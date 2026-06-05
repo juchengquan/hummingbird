@@ -366,6 +366,7 @@ export async function fetchCloudSnapshot(
         c.selected_url_bookmark_ids && c.selected_url_bookmark_ids.length > 0
           ? c.selected_url_bookmark_ids
           : undefined,
+      systemPrompt: c.system_prompt ?? "",
       skillPrefs: jsonToSkillPrefs(c.skill_prefs),
       parentId: c.parent_id ?? undefined,
       forkedFromMessageId: c.forked_from_message_id ?? undefined,
@@ -647,6 +648,7 @@ export async function bulkUploadLocalState(
         title: c.title,
         pinned: c.pinned,
         selected_file_ids: c.selectedFileIds,
+        system_prompt: c.systemPrompt,
         // document_content / document_updated_at moved onto the workspaces
         // row. Column still exists for one release; client no longer
         // writes to it.

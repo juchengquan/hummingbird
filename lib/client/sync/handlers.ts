@@ -209,6 +209,7 @@ export function diffConversations(
           selected_file_ids: c.selectedFileIds,
           selected_mcp_resource_ids: c.selectedMcpResourceIds ?? [],
           selected_url_bookmark_ids: c.selectedUrlBookmarkIds ?? [],
+          system_prompt: c.systemPrompt,
           // document_content / document_updated_at were promoted to the
           // workspaces row. Column still exists for one release for
           // safety; client no longer writes to it.
@@ -258,6 +259,7 @@ function conversationHeaderEquals(a: Conversation, b: Conversation): boolean {
       b.selectedUrlBookmarkIds ?? []
     ) &&
     sameSkillPrefs(a.skillPrefs, b.skillPrefs) &&
+    a.systemPrompt === b.systemPrompt &&
     (a.parentId ?? null) === (b.parentId ?? null) &&
     (a.forkedFromMessageId ?? null) === (b.forkedFromMessageId ?? null) &&
     sameInstant(a.createdAt, b.createdAt) &&

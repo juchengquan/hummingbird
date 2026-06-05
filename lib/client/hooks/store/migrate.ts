@@ -8,7 +8,7 @@ import { uuid } from "@/shared/uuid"
  * step in `runMigrations`. Wired into the `version` field of the persist
  * config in `use-store.ts`.
  */
-export const STORE_VERSION = 21
+export const STORE_VERSION = 22
 
 /**
  * Sequential schema migrations from older persisted shapes to the
@@ -386,6 +386,22 @@ export function runMigrations(
     // 'ts-service'. Existing 'ts' and 'python' values stay valid —
     // no rewrites needed. The version bump exists so a downgrade
     // doesn't see a value it doesn't recognise.
+  }
+  if (fromVersion < 22) {
+    // `Conversation.systemPrompt` added as the missing middle tier
+    // in the chat-send cascade (workspace → conversation → persona).
+    // Backfill empty so the typed accessor doesn't hit `undefined` and
+    // so the composer trims the empty out of the prompt. See
+    // `docs/PLAN-conversation-system-prompt.md`.
+    const convs = state.conversations
+    if (Array.isArray(convs)) {
+      state.conversations = convs.map((c) => {
+        if (!c || typeof c !== "object") return c
+        const obj = c as Record<string, unknown>
+        if (typeof obj.systemPrompt === "string") return obj
+        return { ...obj, systemPrompt: "" }
+      })
+    }
   }
   return persistedState
 }

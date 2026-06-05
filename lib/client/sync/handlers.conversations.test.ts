@@ -21,6 +21,7 @@ function conv(id: string, overrides: Partial<Conversation> = {}): Conversation {
     createdAt: new Date("2026-05-23T00:00:00Z"),
     updatedAt: new Date("2026-05-23T00:00:00Z"),
     pinned: false,
+    systemPrompt: "",
     selectedFileIds: [],
     ...overrides,
   }
