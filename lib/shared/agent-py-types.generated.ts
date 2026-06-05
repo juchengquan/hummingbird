@@ -248,6 +248,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/mcp/server": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mcp Server Upsert
+         * @description Create or update a cloud-mode MCP server config + its
+         *     encrypted credential ciphertext. Mirrors
+         *     `app/api/mcp/server/route.ts` byte-for-byte on the wire so the
+         *     frontend's `apiClient.mcp.upsertCloudServer` can hit either
+         *     backend.
+         *
+         *     The browser can't call the encryption RPC directly (the
+         *     `MCP_ENCRYPTION_KEY` lives only server-side); this endpoint is
+         *     the only path that can write `credentials_encrypted`. Local-mode
+         *     servers don't need this route — they go through the sync layer
+         *     like any other slice.
+         *
+         *     Returns 401 when no DB pool is configured (auth context cannot
+         *     be established), 500 when `MCP_ENCRYPTION_KEY` is unset (clear
+         *     misconfig signal so monitoring alerts), 502 on any other RPC
+         *     failure.
+         */
+        post: operations["mcp_server_upsert_v1_mcp_server_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/mcp/{server_id}/{action}": {
         parameters: {
             query?: never;
@@ -512,6 +547,50 @@ export interface components {
              * @constant
              */
             transport: "http";
+        };
+        /**
+         * McpServerCredential
+         * @description Plaintext credential the route encrypts before storing. Same
+         *     open shape as `McpCredentials` on the TS side — typically
+         *     `{type?, headers?}`. Empty dict means "no headers needed" (some
+         *     public MCP servers don't require auth).
+         */
+        McpServerCredential: {
+            /** Type */
+            type?: string | null;
+            /** Headers */
+            headers?: {
+                [key: string]: string;
+            } | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * McpServerUpsertBody
+         * @description Wire shape for `POST /v1/mcp/server`. Mirrors the in-Next
+         *     route's `BodySchema` byte-for-byte so the frontend's existing
+         *     `apiClient.mcp.upsertCloudServer` can target either backend with
+         *     no marshalling change.
+         */
+        McpServerUpsertBody: {
+            /** Id */
+            id: string;
+            /** Workspaceid */
+            workspaceId: string;
+            /** Name */
+            name: string;
+            /** Url */
+            url: string;
+            credentials: components["schemas"]["McpServerCredential"];
+            /** Capabilities */
+            capabilities?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean | null;
         };
         /** ProjectBreakdownBody */
         ProjectBreakdownBody: {
@@ -845,6 +924,43 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mcp_server_upsert_v1_mcp_server_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpServerUpsertBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
                     };
                 };
             };

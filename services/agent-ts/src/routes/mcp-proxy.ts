@@ -29,7 +29,11 @@ import { callTool, discover, readResource } from "@/server/mcp/client"
 import type { McpServer } from "@/shared/types"
 
 import { hasPool, getPool } from "../db"
-import { fetchDecryptedCredentials, type McpCredentials } from "../mcp"
+import {
+  fetchDecryptedCredentials,
+  upsertServerWithCredentials,
+  type McpCredentials,
+} from "../mcp"
 import type { AuthVars } from "../middleware/auth"
 import { requireAuth } from "../middleware/auth"
 
@@ -47,9 +51,110 @@ const BodySchema = z.object({
   uri: z.string().min(1).optional(),
 })
 
+/** `POST /v1/mcp/server` body. Mirrors the in-Next route's schema
+ *  byte-for-byte so the frontend's `apiClient.mcp.upsertCloudServer`
+ *  can target either backend without marshalling. */
+const ServerUpsertSchema = z.object({
+  id: z.string().min(1).max(64),
+  workspaceId: z.string().min(1).max(64),
+  name: z.string().min(1).max(200),
+  url: z.string().url().max(2000),
+  credentials: z
+    .object({
+      type: z.string().max(40).optional(),
+      headers: z.record(z.string(), z.string()).optional(),
+    })
+    .passthrough(),
+  capabilities: z
+    .object({
+      tools: z.array(z.unknown()).optional(),
+      resources: z.array(z.unknown()).optional(),
+      prompts: z.array(z.unknown()).optional(),
+    })
+    .passthrough()
+    .optional(),
+  enabled: z.boolean().optional(),
+})
+
 const VALID_ACTIONS = new Set(["discover", "call", "read"] as const)
 
 export const mcpProxyRoutes = new Hono<{ Variables: AuthVars }>()
+
+/** `POST /v1/mcp/server` — write/update a cloud-mode MCP server +
+ *  its encrypted credential. The browser can't call the encrypt RPC
+ *  directly because `MCP_ENCRYPTION_KEY` lives only server-side;
+ *  this route is the only path that writes `credentials_encrypted`.
+ *  Local-mode servers don't need this route — they go through the
+ *  sync layer like any other slice. Mirrors `app/api/mcp/server/route.ts`
+ *  and `POST /v1/mcp/server` on agent-py. */
+mcpProxyRoutes.post("/v1/mcp/server", requireAuth, async (c) => {
+  // Body validation first — matches FastAPI's auto-validation order
+  // on agent-py so both backends return 400/422 for shape problems
+  // before they surface the 503 misconfig signal.
+  let raw: unknown
+  try {
+    raw = await c.req.json()
+  } catch {
+    return c.json({ code: "invalid_request", message: "Body must be JSON." }, 400)
+  }
+  const parsed = ServerUpsertSchema.safeParse(raw)
+  if (!parsed.success) {
+    return c.json(
+      {
+        code: "invalid_request",
+        message: parsed.error.issues[0]?.message ?? "Invalid request body.",
+      },
+      422,
+    )
+  }
+
+  if (!hasPool()) {
+    // Without a pool we can't impersonate the user for RLS, so the
+    // upsert can't succeed even if the encryption key were set.
+    // 503 (service misconfigured) — the caller's token is fine, the
+    // deploy is incomplete.
+    return c.json(
+      {
+        code: "db_unconfigured",
+        message: "SUPABASE_DB_URL is not configured on the agent service.",
+      },
+      503,
+    )
+  }
+
+  const claims = c.get("claims")
+  const userId = typeof claims.sub === "string" ? claims.sub : ""
+  if (!userId) {
+    return c.json({ code: "auth", message: "Token has no subject." }, 401)
+  }
+
+  const result = await upsertServerWithCredentials(getPool(), {
+    userId,
+    serverId: parsed.data.id,
+    workspaceId: parsed.data.workspaceId,
+    name: parsed.data.name,
+    url: parsed.data.url,
+    credentials: parsed.data.credentials as McpCredentials,
+    capabilities: parsed.data.capabilities,
+    enabled: parsed.data.enabled,
+  })
+  if (!result.ok) {
+    if (result.error === "encryption_key_unset") {
+      return c.json(
+        {
+          code: "encryption_key_unset",
+          message: "MCP_ENCRYPTION_KEY is not configured.",
+        },
+        500,
+      )
+    }
+    return c.json(
+      { code: "upsert_failed", message: result.error ?? "RPC failed." },
+      502,
+    )
+  }
+  return c.json({ ok: true })
+})
 
 mcpProxyRoutes.post(
   "/v1/mcp/:serverId/:action",

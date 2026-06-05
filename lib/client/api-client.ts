@@ -831,21 +831,30 @@ async function mcpProxyCall(
  * the route stores the encrypted ciphertext in Supabase and the client
  * forgets it.
  */
-async function mcpUpsertCloudServer(body: {
-  id: string
-  workspaceId: string
-  name: string
-  url: string
-  credentials: { type?: string; headers?: Record<string, string> }
-  capabilities?: Record<string, unknown>
-  enabled?: boolean
-}): Promise<
+async function mcpUpsertCloudServer(
+  body: {
+    id: string
+    workspaceId: string
+    name: string
+    url: string
+    credentials: { type?: string; headers?: Record<string, string> }
+    capabilities?: Record<string, unknown>
+    enabled?: boolean
+  },
+  options?: DispatchOption
+): Promise<
   | { ok: true; status: number }
   | { ok: false; status: number; error: { code?: string; message?: string } }
 > {
-  const res = await fetch(apiUrls.mcpServer(), {
+  const remote = await resolveDispatch(options)
+  const url = remote ? `${remote.baseUrl}/v1/mcp/server` : apiUrls.mcpServer()
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  }
+  if (remote) headers.Authorization = `Bearer ${remote.authToken}`
+  const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(body),
   })
   if (!res.ok) {

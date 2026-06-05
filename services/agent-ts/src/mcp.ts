@@ -28,6 +28,9 @@ import { getEnv } from "./env"
 const SET_ROLE_SQL = "SET LOCAL ROLE authenticated"
 const SET_CLAIMS_SQL = "SELECT set_config('request.jwt.claims', $1, true)"
 const DECRYPT_SQL = "SELECT public.mcp_get_decrypted_credentials($1::uuid, $2::text)"
+const UPSERT_SQL =
+  "SELECT public.mcp_upsert_server_with_credentials(" +
+  "$1::uuid, $2::uuid, $3::text, $4::text, $5::jsonb, $6::text, $7::jsonb, $8::boolean)"
 
 export type McpCredentials = {
   type?: string
@@ -83,5 +86,69 @@ export async function fetchDecryptedCredentials(
     // Don't surface the underlying error — never include the key /
     // SQL / row id in caller-facing output.
     return null
+  }
+}
+
+export interface UpsertServerArgs {
+  userId: string
+  serverId: string
+  workspaceId: string
+  name: string
+  url: string
+  credentials: McpCredentials
+  capabilities?: Record<string, unknown> | null
+  enabled?: boolean
+  /** Test seam — production callers leave undefined. */
+  encryptionKey?: string
+}
+
+export interface UpsertResult {
+  ok: boolean
+  /** Discriminant. `'encryption_key_unset'` → the route maps to 500
+   *  (clear misconfig signal). Any other string → 502 (RPC failure
+   *  — usually an RLS violation or constraint check). */
+  error?: string
+}
+
+/** Insert or update a cloud-mode MCP server row + its encrypted
+ *  credential ciphertext. Wraps the `mcp_upsert_server_with_credentials`
+ *  SECURITY DEFINER RPC. The encryption key is passed as an RPC
+ *  argument so it never lands in pg_catalog. Mirrors
+ *  `upsertServerWithCredential` in `lib/server/mcp/credentials.ts`
+ *  and `upsert_server_with_credentials` in
+ *  `services/agent-py/src/agent_py/mcp_credentials.py`. */
+export async function upsertServerWithCredentials(
+  sql: Sql,
+  args: UpsertServerArgs,
+): Promise<UpsertResult> {
+  const key = (args.encryptionKey ?? getEnv().MCP_ENCRYPTION_KEY ?? "").trim()
+  if (key.length < 16) {
+    // Same guard as `fetchDecryptedCredentials`. Sub-16-char keys
+    // produce weak ciphertext; refuse rather than half-protect.
+    return { ok: false, error: "encryption_key_unset" }
+  }
+
+  try {
+    await sql.begin(async (tx) => {
+      await tx.unsafe(SET_ROLE_SQL)
+      await tx.unsafe(SET_CLAIMS_SQL, [
+        JSON.stringify({ sub: args.userId, role: "authenticated" }),
+      ])
+      await tx.unsafe(UPSERT_SQL, [
+        args.serverId,
+        args.workspaceId,
+        args.name,
+        args.url,
+        JSON.stringify(args.credentials),
+        key,
+        args.capabilities == null ? null : JSON.stringify(args.capabilities),
+        args.enabled ?? true,
+      ])
+    })
+    return { ok: true }
+  } catch (err) {
+    // Surface the error message for triage but never the key / row.
+    // The transaction rolled back automatically — no partial write.
+    return { ok: false, error: err instanceof Error ? err.message : "upsert_failed" }
   }
 }

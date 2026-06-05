@@ -254,3 +254,56 @@ describe("apiClient.images.refreshUrl — dispatch + wire shape", () => {
     expect(log[0].body).toEqual({ storagePath: "u-1/generated/img.png" })
   })
 })
+
+describe("apiClient.mcp.upsertCloudServer — dispatch", () => {
+  function validBody() {
+    return {
+      id: "11111111-1111-1111-1111-111111111111",
+      workspaceId: "11111111-1111-1111-1111-111111111122",
+      name: "Cloud MCP",
+      url: "https://mcp.cloud/sse",
+      credentials: { type: "header", headers: { "X-API-Key": "secret" } },
+      enabled: true,
+    }
+  }
+
+  test("in-Next route posts to /api/mcp/server without auth", async () => {
+    const log = installFetchStub({ jsonBody: { ok: true } })
+    const r = await apiClient.mcp.upsertCloudServer(validBody(), {
+      dispatch: "in-next",
+    })
+    expect(r.ok).toBe(true)
+    expect(log[0].url).toBe("/api/mcp/server")
+    expect(log[0].authorization).toBeUndefined()
+  })
+
+  test("remote dispatch posts to {baseUrl}/v1/mcp/server with bearer JWT", async () => {
+    const log = installFetchStub({ jsonBody: { ok: true } })
+    const r = await apiClient.mcp.upsertCloudServer(validBody(), {
+      dispatch: "remote",
+      remote: REMOTE,
+    })
+    expect(r.ok).toBe(true)
+    expect(log[0].url).toBe("https://agent-py.example/v1/mcp/server")
+    expect(log[0].authorization).toBe("Bearer jwt-test-token")
+    // Same wire shape across both backends — body passes through unchanged.
+    expect((log[0].body as { id: string }).id).toBe(validBody().id)
+  })
+
+  test("remote dispatch surfaces error envelope on non-OK responses", async () => {
+    installFetchStub({
+      status: 500,
+      jsonBody: { code: "encryption_key_unset", message: "key missing" },
+    })
+    const r = await apiClient.mcp.upsertCloudServer(validBody(), {
+      dispatch: "remote",
+      remote: REMOTE,
+    })
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.status).toBe(500)
+      expect(r.error.code).toBe("encryption_key_unset")
+      expect(r.error.message).toBe("key missing")
+    }
+  })
+})
