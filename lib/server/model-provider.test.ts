@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
 import {
+  buildFallbackTable,
   isMinimaxCnConfigured,
   ProviderUnavailableError,
   selectModel,
@@ -123,6 +124,56 @@ describe("selectModel — minimax-cn route precedence", () => {
   test("minimax/* model resolves successfully when minimax-cn is configured", () => {
     const m = selectModel("minimax/minimax-m2.7")
     expect(m).toBeDefined()
+  })
+})
+
+describe("buildFallbackTable — per-provider fallback lookup", () => {
+  test("openrouter provider has entries from the bundled config", () => {
+    const table = buildFallbackTable("openrouter")
+    // The two non-`auto` OpenRouter models in `config/models.json`
+    // each declare a fallbacks list — the auto model deliberately
+    // doesn't, since OpenRouter's own auto-router covers that case.
+    expect(table.get("anthropic/claude-sonnet-4.5")).toEqual([
+      "anthropic/claude-haiku-4.5",
+      "openai/gpt-5-mini",
+    ])
+    expect(table.get("openai/gpt-5")).toEqual([
+      "openai/gpt-5-mini",
+      "anthropic/claude-sonnet-4.5",
+    ])
+    // openrouter/auto has no fallbacks — OpenRouter's own router
+    // does the equivalent on its side.
+    expect(table.has("openrouter/auto")).toBe(false)
+  })
+
+  test("table is keyed by upstreamId, not by hummingbird model id", () => {
+    const table = buildFallbackTable("openrouter")
+    // Confirm the wire key is the upstream — the transform reads
+    // `body.model` which is what the SDK sends.
+    expect(table.has("anthropic/claude-sonnet-4.5")).toBe(true)
+    expect(table.has("openrouter/anthropic/claude-sonnet-4.5")).toBe(false)
+  })
+
+  test("provider with no fallback-bearing routes returns an empty table", () => {
+    // Ollama models in the bundled config have single-route routes
+    // with no fallbacks. The hook short-circuits when the table is
+    // empty, so this is the "no-op" case that costs nothing.
+    expect(buildFallbackTable("ollama").size).toBe(0)
+  })
+
+  test("unknown provider name returns an empty table", () => {
+    expect(buildFallbackTable("does-not-exist").size).toBe(0)
+  })
+
+  test("returned arrays are copies — caller mutation can't poison the registry", () => {
+    const table = buildFallbackTable("openrouter")
+    const list = table.get("anthropic/claude-sonnet-4.5")!
+    list.push("attacker/injected")
+    const fresh = buildFallbackTable("openrouter")
+    expect(fresh.get("anthropic/claude-sonnet-4.5")).toEqual([
+      "anthropic/claude-haiku-4.5",
+      "openai/gpt-5-mini",
+    ])
   })
 })
 
