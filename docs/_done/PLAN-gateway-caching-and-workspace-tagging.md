@@ -1,7 +1,20 @@
 # Plan: Vercel AI Gateway per-workspace tagging (+ caching note)
 
-Status: **planning → in flight.** Zero migrations, zero new env vars, zero new
-dependencies. Item #4 from `docs/PLAN-cross-product-inspirations.md`.
+Status: **Part 2 shipped — Part 1 closed (won't do without a Vercel-gateway
+commitment).** Zero migrations, zero new env vars, zero new dependencies.
+Item #4 from `docs/PLAN-cross-product-inspirations.md`.
+
+> **Closed-out note (2026-06-06).** Per-workspace tagging (Part 2) shipped
+> in [#166](https://github.com/juchengquan/hummingbird/pull/166). Part 1
+> (caching) is **closed as won't-do**, not deferred — Hummingbird's
+> default provider mix (`gateway`, `minimax-cn`, `ollama`, `openrouter`)
+> doesn't pin Vercel as the primary path, and every caching sub-task
+> below requires either Vercel-dashboard access (sub-task 1) or commits
+> to a per-provider caching mechanism (sub-task 2). The prefix-stability
+> work (sub-task 3) is universally valid but earns its keep only against
+> a measured cache miss in production. Reopen this file when (a)
+> production traffic concentrates on a single provider AND (b) telemetry
+> shows you're paying for a cacheable prefix that isn't being cached.
 
 ## SDK reality check (read this first)
 
@@ -107,7 +120,7 @@ client's body construction reads `providerOptions.gateway`; the others ignore th
 `providerOptions` block rather than fabricating a `workspace:undefined` tag bucket on the
 dashboard. Clean facets > noisy ones.
 
-## Caching — what we know
+## Caching — research notes (closed; reopen if production traffic demands it)
 
 Vercel's docs talk about "automatic prompt caching" but the SDK surface is silent on a
 `caching: 'auto'` opt-in. Most likely behaviour:
@@ -123,20 +136,33 @@ Vercel's docs talk about "automatic prompt caching" but the SDK surface is silen
    '1h' }`. This is the **provider-side** cache-control breakpoint. Whether it works
    when routed through the gateway is unverified.
 
-**Verification plan (separate ticket, not this PR):** after this PR lands and tags reach
-the dashboard, look at the cost view for a high-volume workspace. If `cachedInputTokens
-> 0` appears on multi-turn conversations, automatic caching is already happening — no
-code change needed. If not, the follow-up explores `providerOptions.anthropic.cacheControl`
-at the system-prompt level and measures the delta.
+### Per-provider applicability
 
-Punting this out lets the cheap, certain win (tagging) ship today without being held up
-by an SDK research dependency.
+The caching story is not provider-agnostic. Each path Hummingbird routes to has its own
+mechanism (or none):
 
-## Cache-hit invariants to preserve (for the follow-up)
+| Path | Caching mechanism | Sub-tasks valid here |
+|---|---|---|
+| **Vercel AI Gateway** | Auto-cache (maybe; SDK is silent — see above) | 1 (dashboard check), maybe 2 (cacheControl through the gateway is unverified), 3 (prefix stability) |
+| **Direct Anthropic** (`agent-py`, `agent-ts`, `minimax-cn` provider) | Native Anthropic `cache_control: { type: 'ephemeral' }` | 2 (cleanest path — no gateway translation), 3 |
+| **OpenRouter** (`via: "openrouter"`) | OpenRouter's own caching (different headers + body shape — `usage.include` + `cache_control`) | OpenRouter-specific version of 2, plus 3 |
+| **Ollama / vLLM / LM Studio** (`allowInsecureBaseUrl`) | None — local model in memory; no wire cache | 3 only (no cache to hit either) |
+
+### Sub-task triage
+
+- **Sub-task 1 (dashboard check)** — Vercel-only. Requires dashboard access + production
+  traffic on the gateway path. Closed in this plan.
+- **Sub-task 2 (per-provider cache opt-in)** — different research per provider. Closed
+  until a single provider concentrates enough traffic to justify the dig.
+- **Sub-task 3 (prefix-stability invariants)** — universally valid, but pays off only
+  against a measured cache miss. The fixes below are documented for the day that miss
+  shows up; closed until then.
+
+## Cache-hit invariants — research notes (closed)
 
 Independent of which opt-in mechanism eventually lands, automatic caching only pays off
 when the prefix is byte-stable turn-to-turn. Known potential miss sources in Hummingbird's
-current prompt assembly that the caching follow-up should verify (not fix in this PR):
+current prompt assembly that a future caching follow-up should verify:
 
 1. **`Conversation.systemPrompt` edits (PR #165).** Editing thread instructions changes
    the prefix and invalidates the cache for that conversation until the new prefix
@@ -150,7 +176,8 @@ current prompt assembly that the caching follow-up should verify (not fix in thi
    attachment block turn-to-turn. Same fix shape: stable sort key when assembling the
    prompt.
 
-These are observations, not action items for this PR.
+These are observations, not open work — closed until production traffic shows a
+cacheable prefix isn't getting cached.
 
 ## Tests
 
