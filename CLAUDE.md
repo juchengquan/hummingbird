@@ -184,6 +184,20 @@ When adding a new endpoint, follow the checklist at the bottom of
 the eventual swap to a Python backend; the client + schemas + doc
 together are the contract that has to survive that swap.
 
+## The three backends
+
+Hummingbird ships with **three interchangeable backends** for `/v1/chat`
++ the four non-chat endpoints. Two live under `services/`; the third
+is the original Next.js inline implementation split across
+`app/api/**/route.ts` (route handlers — must live there because
+Next.js's App Router resolves URLs by filesystem) and `lib/server/**`
+(server-side libs called by both the route handlers and Server
+Components). The frontend picks one per account via
+`lib/client/api/backend-resolver.ts`'s `DispatchOption` (`'in-next'` /
+`'remote'`). See [`services/README.md`](services/README.md) for the
+full per-surface entry-point map and the rationale for why the third
+backend doesn't live under `services/`.
+
 ## Agent service (Python — Phases 0+1+2a)
 
 `services/agent-py/` is the new Python agent service per
