@@ -189,6 +189,13 @@ function CanvasInner({ workspaceId }: { workspaceId: string }) {
           return liveFileIds.has(id) && state.files.some((f) => f.id === id && !f.deletedAt)
         case "url-bookmark":
           return state.urlBookmarks.some((b) => b.id === id && !b.deletedAt)
+        case "conversation":
+          // Same shape as the other projected kinds: a node only
+          // survives the prune pass while its underlying row is alive.
+          // Sidebar-side deletion → canvas node disappears on the next
+          // re-seed. Workspace scope is enforced by the outer canvas
+          // filter, so no need to re-check workspaceId here.
+          return state.conversations.some((c) => c.id === id)
       }
     }
     const pruned: CanvasState = {
@@ -398,6 +405,13 @@ function CanvasInner({ workspaceId }: { workspaceId: string }) {
       "url-bookmark": wsBookmarks
         .filter((b) => !onCanvasIds.has(b.id))
         .map((b) => ({ id: b.id, label: b.title, sublabel: b.url })),
+      conversation: wsConvs
+        .filter((c) => !onCanvasIds.has(c.id))
+        .map((c) => ({
+          id: c.id,
+          label: c.title || "Untitled",
+          sublabel: c.parentId ? "fork" : undefined,
+        })),
     }
   }, [
     workspaceId,
