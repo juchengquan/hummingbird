@@ -19,7 +19,9 @@ import { memo, useCallback } from "react"
 import { Handle, Position, type NodeProps } from "@xyflow/react"
 import {
   Boxes,
+  GitBranch,
   MessageSquare,
+  MessagesSquare,
   type LucideIcon,
   NotebookPen,
   Paperclip,
@@ -222,6 +224,48 @@ const UrlBookmarkNode = memo(function UrlBookmarkNode({ id }: NodeProps) {
   )
 })
 
+// --- conversation -----------------------------------------------------------
+
+/** Flowchat conversation node. Shows title + message count + a parent-fork
+ *  subtitle when this conversation was forked from another. Click jumps
+ *  into the chat view and sets it active (see `focusCanvasNode`). */
+const ConversationNode = memo(function ConversationNode({ id }: NodeProps) {
+  const conversation = useStore((s) => s.conversations.find((c) => c.id === id))
+  const parentTitle = useStore((s) => {
+    const pid = s.conversations.find((c) => c.id === id)?.parentId
+    if (!pid) return null
+    return s.conversations.find((c) => c.id === pid)?.title ?? null
+  })
+  if (!conversation) {
+    return <RemovedShell icon={MessagesSquare} label="Conversation" />
+  }
+  const messageCount = conversation.messages.length
+  const isFork = !!conversation.parentId
+  return (
+    <NodeShell
+      icon={isFork ? GitBranch : MessagesSquare}
+      label={isFork ? "Fork" : "Conversation"}
+      accent="var(--primary)"
+      onOpen={() => focusCanvasNode("conversation", id)}
+    >
+      <div className="font-medium truncate mb-0.5">
+        {conversation.title || "Untitled"}
+      </div>
+      <div className="text-[var(--muted-foreground)] text-[10px] flex items-center gap-1">
+        <span>
+          {messageCount} message{messageCount === 1 ? "" : "s"}
+        </span>
+        {isFork && parentTitle ? (
+          <>
+            <span aria-hidden>·</span>
+            <span className="truncate">fork of {parentTitle}</span>
+          </>
+        ) : null}
+      </div>
+    </NodeShell>
+  )
+})
+
 // --- sticky -----------------------------------------------------------------
 
 const StickyNodeComp = memo(function StickyNodeComp({ id, data }: NodeProps) {
@@ -270,5 +314,6 @@ export const canvasNodeTypes = {
   note: NoteNode,
   file: FileNode,
   "url-bookmark": UrlBookmarkNode,
+  conversation: ConversationNode,
   sticky: StickyNodeComp,
 }

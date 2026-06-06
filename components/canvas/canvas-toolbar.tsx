@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Boxes, Link2, MessageSquare, NotebookPen, Paperclip, Plus, StickyNote } from "lucide-react"
+import { Boxes, Link2, MessageSquare, MessagesSquare, NotebookPen, Paperclip, Plus, StickyNote } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -31,6 +31,7 @@ const GROUP_META: Array<{
   label: string
   icon: typeof Boxes
 }> = [
+  { kind: "conversation", label: "Conversations", icon: MessagesSquare },
   { kind: "chat-message", label: "Messages", icon: MessageSquare },
   { kind: "artifact", label: "Artifacts", icon: Boxes },
   { kind: "note", label: "Notes", icon: NotebookPen },

@@ -133,6 +133,19 @@ export function focusCanvasNode(kind: CanvasNodeKind, refId: string): void {
       }
       return
     }
+    case "conversation": {
+      // Flowchat — clicking a conversation node jumps into that chat
+      // (set it active + switch the main view). The user stays inside
+      // the fork; no jump-to-parent special-casing.
+      const conv = state.conversations.find((c) => c.id === refId)
+      if (!conv) {
+        toast.error("Conversation no longer exists")
+        return
+      }
+      state.setActiveConversation(refId)
+      state.setActiveView("chat")
+      return
+    }
     case "sticky":
       // Sticky notes are edited in place; nothing to open.
       return

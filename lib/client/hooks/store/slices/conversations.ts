@@ -3,6 +3,7 @@ import "client-only"
 import { useShallow } from "zustand/react/shallow"
 
 import type { Conversation, Message } from "@/shared/types"
+import { placeRelatedNode } from "@/shared/canvas/placement"
 import { uuid } from "@/shared/uuid"
 import {
   cloneAttachmentSelections,
@@ -178,6 +179,38 @@ export const createConversationsSlice: SliceCreator<ConversationsSlice> = (
       // entities (files / MCP resources / URL bookmarks) are
       // shared via their existing ids.
       const inherited = forkConversationJoins(state, source.id, fork.id, uuid)
+      // Flowchat canvas — auto-place a "conversation" node beside the
+      // source-message node when the workspace canvas is in use AND
+      // the source message is already a node on it. Mirrors the
+      // artifact auto-place block (`artifacts.ts` createArtifact).
+      // No edge stored here — fork edges are *derived* at render time
+      // from `parentId` + `forkedFromMessageId` (see
+      // `buildDerivedForkEdges` / commit 3 of PLAN-flowchat-canvas).
+      // Gated on the source-message node being present so we never
+      // force a canvas on a user who isn't using one.
+      let workspaces = state.workspaces
+      const sourceWorkspace = state.workspaces.find(
+        (w) => w.id === source.workspaceId,
+      )
+      const sourceCanvas = sourceWorkspace?.canvasState
+      if (
+        sourceCanvas &&
+        sourceCanvas.nodes.length > 0 &&
+        sourceCanvas.nodes.some((n) => n.id === untilMessageId)
+      ) {
+        const nextCanvas = placeRelatedNode(
+          sourceCanvas,
+          untilMessageId,
+          { id: fork.id, kind: "conversation" },
+        )
+        if (nextCanvas !== sourceCanvas) {
+          workspaces = state.workspaces.map((w) =>
+            w.id === source.workspaceId
+              ? { ...w, canvasState: nextCanvas, updatedAt: new Date() }
+              : w,
+          )
+        }
+      }
       return {
         conversations: [fork, ...state.conversations],
         conversationFiles: [...state.conversationFiles, ...inherited.conversationFiles],
@@ -189,6 +222,7 @@ export const createConversationsSlice: SliceCreator<ConversationsSlice> = (
           ...state.conversationUrlBookmarks,
           ...inherited.conversationUrlBookmarks,
         ],
+        ...(workspaces !== state.workspaces ? { workspaces } : {}),
         activeConversationId: fork.id,
       }
     })
