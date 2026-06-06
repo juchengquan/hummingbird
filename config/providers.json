@@ -7,5 +7,11 @@
     "type": "anthropic",
     "baseURLEnv": "MINIMAX_CN_BASE_URL",
     "apiKeyEnv": "MINIMAX_CN_API_KEY"
+  },
+  "ollama": {
+    "type": "openai",
+    "baseURLEnv": "OLLAMA_BASE_URL",
+    "apiKeyEnv": "OLLAMA_API_KEY",
+    "allowInsecureBaseUrl": true
   }
 }

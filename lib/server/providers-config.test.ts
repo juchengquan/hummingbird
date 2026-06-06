@@ -14,6 +14,8 @@ const ENV_KEYS = [
   "AI_GATEWAY_API_KEY",
   "MINIMAX_CN_BASE_URL",
   "MINIMAX_CN_API_KEY",
+  "OLLAMA_BASE_URL",
+  "OLLAMA_API_KEY",
 ] as const
 
 function snapshotEnv() {
@@ -41,6 +43,14 @@ describe("providers-config — getProviderConfig", () => {
     const cfg = getProviderConfig("minimax-cn")
     expect(cfg).not.toBeNull()
     expect(cfg?.type).toBe("anthropic")
+  })
+  test("returns ollama config with allowInsecureBaseUrl set", () => {
+    const cfg = getProviderConfig("ollama")
+    expect(cfg).not.toBeNull()
+    expect(cfg?.type).toBe("openai")
+    if (cfg?.type === "openai") {
+      expect(cfg.allowInsecureBaseUrl).toBe(true)
+    }
   })
 })
 
@@ -115,6 +125,86 @@ describe("providers-config — resolveProvider (anthropic via env)", () => {
       apiKey: "mm-test-key",
     })
     expect(isProviderConfigured("minimax-cn")).toBe(true)
+  })
+})
+
+describe("providers-config — resolveProvider (ollama / allowInsecureBaseUrl)", () => {
+  let snap: Record<string, string | undefined>
+  beforeEach(() => {
+    snap = snapshotEnv()
+    delete process.env.OLLAMA_BASE_URL
+    delete process.env.OLLAMA_API_KEY
+  })
+  afterEach(() => restoreEnv(snap))
+
+  test("returns null when OLLAMA_BASE_URL is unset (no defaults — opt in only)", () => {
+    expect(resolveProvider("ollama")).toBeNull()
+  })
+
+  test("accepts http://localhost URL + empty apiKey (the canonical Ollama case)", () => {
+    process.env.OLLAMA_BASE_URL = "http://localhost:11434/v1"
+    const r = resolveProvider("ollama")
+    expect(r).toEqual({
+      type: "openai",
+      baseURL: "http://localhost:11434/v1",
+      apiKey: "",
+    })
+  })
+
+  test("accepts http://127.0.0.1 URL + empty apiKey", () => {
+    process.env.OLLAMA_BASE_URL = "http://127.0.0.1:11434/v1"
+    const r = resolveProvider("ollama")
+    expect(r?.type).toBe("openai")
+    if (r?.type === "openai") {
+      expect(r.baseURL).toBe("http://127.0.0.1:11434/v1")
+    }
+  })
+
+  test("forwards apiKey when one is supplied (e.g. a fronting proxy)", () => {
+    process.env.OLLAMA_BASE_URL = "http://localhost:11434/v1"
+    process.env.OLLAMA_API_KEY = "ollama-proxy-key"
+    const r = resolveProvider("ollama")
+    expect(r?.apiKey).toBe("ollama-proxy-key")
+  })
+
+  test("malformed baseURL still fails (URL parser refused)", () => {
+    process.env.OLLAMA_BASE_URL = "not a url"
+    expect(resolveProvider("ollama")).toBeNull()
+  })
+})
+
+describe("providers-config — schema accepts allowInsecureBaseUrl on openai", () => {
+  test("openai with allowInsecureBaseUrl: true", () => {
+    const r = parseConfig({
+      local: {
+        type: "openai",
+        baseURLEnv: "LOCAL_URL",
+        apiKeyEnv: "LOCAL_KEY",
+        allowInsecureBaseUrl: true,
+      },
+    })
+    expect(r.success).toBe(true)
+  })
+
+  test("anthropic does NOT accept allowInsecureBaseUrl (schema-only check)", () => {
+    const r = parseConfig({
+      ant: {
+        type: "anthropic",
+        baseURL: "https://api.example.com/v1",
+        apiKey: "k",
+        allowInsecureBaseUrl: true,
+      },
+    })
+    // Zod's `.extend(...)` is strict on unknown keys when the parent
+    // schema is `$strict`; here we just confirm the flag isn't honoured
+    // — `getProviderConfig`'s parsed shape won't carry it.
+    expect(r.success).toBe(true) // permissive — the flag is silently dropped
+    if (r.success) {
+      const cfg = r.data.ant
+      expect(
+        (cfg as { allowInsecureBaseUrl?: unknown }).allowInsecureBaseUrl,
+      ).toBeUndefined()
+    }
   })
 })
 

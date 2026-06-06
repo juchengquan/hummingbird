@@ -59,6 +59,20 @@
         { "via": "minimax-cn", "upstreamId": "minimax-m2.7" },
         { "via": "gateway" }
       ]
+    },
+    {
+      "id": "ollama/llama3.1:8b",
+      "label": "Llama 3.1 8B (Ollama)",
+      "provider": "Ollama",
+      "contextWindow": 131072,
+      "routes": [{ "via": "ollama", "upstreamId": "llama3.1:8b" }]
+    },
+    {
+      "id": "ollama/qwen3:8b",
+      "label": "Qwen 3 8B (Ollama)",
+      "provider": "Ollama",
+      "contextWindow": 131072,
+      "routes": [{ "via": "ollama", "upstreamId": "qwen3:8b" }]
     }
   ]
 }

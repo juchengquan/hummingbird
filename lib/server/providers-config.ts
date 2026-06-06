@@ -51,6 +51,17 @@ const AnthropicProviderSchema = UrlBaseFieldsSchema.extend({
 
 const OpenAIProviderSchema = UrlBaseFieldsSchema.extend({
   type: z.literal("openai"),
+  /** Opt-in escape hatch for self-hosted local endpoints
+   *  (Ollama, vLLM, LM Studio). When `true`:
+   *    1. The `isSafeBaseUrl` SSRF gate is **skipped** — `http://` and
+   *       loopback / private-network hostnames are allowed.
+   *    2. The API key is **optional** — Ollama and similar local
+   *       servers don't enforce auth, so an unset `apiKeyEnv` is fine.
+   *  Default `false` keeps the safe path: https + public host + key.
+   *  Only set this on providers the deployer fully controls and trusts
+   *  — by enabling it you take responsibility for the upstream URL not
+   *  being a credential-exfiltration sink. */
+  allowInsecureBaseUrl: z.boolean().optional(),
 })
 
 const ProviderSchema = z.discriminatedUnion("type", [
@@ -96,6 +107,11 @@ export interface ResolvedAnthropicProvider {
 export interface ResolvedOpenAIProvider {
   type: "openai"
   baseURL: string
+  /** Empty string when the provider is configured with
+   *  `allowInsecureBaseUrl: true` and no API key is supplied — used by
+   *  local self-hosted endpoints (Ollama, vLLM, LM Studio) that don't
+   *  enforce auth. The dispatcher passes an empty key straight to
+   *  `createOpenAICompatible`, which accepts it. */
   apiKey: string
 }
 export interface ResolvedGatewayProvider {
@@ -136,16 +152,26 @@ function pickBaseURL(cfg: UrlProviderConfig): string | null {
  * api key to an http://localhost:8080 endpoint someone forgot to
  * clear from their .env.
  */
-function isSafeBaseUrl(input: string): boolean {
+/** A parseable URL with `http:` or `https:` and a non-empty hostname.
+ *  This check runs even on `allowInsecureBaseUrl` providers — a
+ *  malformed URL would crash the SDK at request time anyway. */
+function isParseableHttpUrl(input: string): boolean {
   let u: URL
   try {
     u = new URL(input)
   } catch {
     return false
   }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return false
+  if (!u.hostname) return false
+  return true
+}
+
+function isSafeBaseUrl(input: string): boolean {
+  if (!isParseableHttpUrl(input)) return false
+  const u = new URL(input)
   if (u.protocol !== "https:") return false
   const host = u.hostname.toLowerCase()
-  if (!host) return false
   if (host === "localhost") return false
   if (host.endsWith(".local") || host.endsWith(".internal")) return false
   if (/^127\./.test(host)) return false
@@ -172,9 +198,17 @@ function resolveUrlProvider(
 ): { baseURL: string; apiKey: string } | null {
   const apiKey = pickApiKey(cfg)
   const baseURL = pickBaseURL(cfg)
+  // `allowInsecureBaseUrl` is only on the openai-type provider. When set,
+  // it relaxes both the apiKey-required and isSafeBaseUrl checks below.
+  // Use case: Ollama / vLLM / LM Studio on a local box.
+  const allowInsecure =
+    cfg.type === "openai" && cfg.allowInsecureBaseUrl === true
   // Partial-env warning: one of the two is set but not the other.
   // Almost always a config mistake (user pasted half the override).
-  if ((!!apiKey) !== (!!baseURL)) {
+  // Skipped when `allowInsecureBaseUrl` is on, since apiKey is optional
+  // in that mode and "baseURL set, apiKey unset" is a valid Ollama-style
+  // configuration.
+  if (!allowInsecure && (!!apiKey) !== (!!baseURL)) {
     if (!warnedPartial.has(name)) {
       console.warn(
         `[providers] ${name}: only one of ${envLabel(cfg.baseURL, cfg.baseURLEnv)} / ${envLabel(cfg.apiKey, cfg.apiKeyEnv)} is set; both are required. Skipping this provider.`
@@ -183,8 +217,22 @@ function resolveUrlProvider(
     }
     return null
   }
-  if (!apiKey || !baseURL) return null
-  if (!isSafeBaseUrl(baseURL)) {
+  if (!baseURL) return null
+  if (!apiKey && !allowInsecure) return null
+  // Always reject obviously-unparseable URLs — `new URL(value)` would
+  // throw inside the SDK at first request and the error would be
+  // opaque ("undefined fetch"); failing here surfaces it at boot
+  // instead.
+  if (!isParseableHttpUrl(baseURL)) {
+    if (warnedBadUrl.get(name) !== baseURL) {
+      console.warn(
+        `[providers] ${name}: baseURL="${baseURL}" is not a parseable http(s) URL. Skipping this provider.`
+      )
+      warnedBadUrl.set(name, baseURL)
+    }
+    return null
+  }
+  if (!allowInsecure && !isSafeBaseUrl(baseURL)) {
     // Refuse to construct the client — sending the api key as an
     // Authorization header to e.g. http://internal.svc would
     // exfiltrate it. Warn once per distinct bad value.
@@ -196,7 +244,7 @@ function resolveUrlProvider(
     }
     return null
   }
-  return { baseURL, apiKey }
+  return { baseURL, apiKey: apiKey ?? "" }
 }
 
 /** Resolve a provider's credentials at request time. Returns null when
