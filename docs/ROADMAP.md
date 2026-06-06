@@ -10,21 +10,22 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-06-06 (Vercel AI Gateway per-workspace tagging
-shipped — `/api/chat` now attaches `providerOptions.gateway.tags`
-with `workspace:<id>` + `model:<id>` to every Gateway-routed
-`streamText` call, so the Vercel dashboard buckets cost / latency /
-errors per workspace without a Langfuse dependency. Hard no-op on
-non-gateway routes (`minimax-cn`, self-host). Item #4 from
-PLAN-cross-product-inspirations — Part 2 only; Part 1 (caching) is
-split off to a verification follow-up because no version of the
-gateway SDK exposes a `caching: 'auto'` flag and Vercel's automatic
-prompt caching may already be on by default at the platform layer.
-Conversation-level system prompt shipped earlier this session
-(`Conversation.systemPrompt`, the second tier between workspace
-voice and per-turn persona; persona-additive composer, 3-tier
-cascade, "Thread instructions" chat-header dialog). And earlier:
-per-IP rate buckets + idle watchdog on
+Last updated: 2026-06-06 (cross-product-inspirations drawdown — six
+of the fourteen menu items shipped this session. Latest:
+**per-attached-file inline ↔ RAG retrieval toggle** (#169 — item #6
+second half; `Conversation.fileRetrievalModes`, server suppresses the
+inlined body for rag-mode files + auto-enables `searchFiles`, search
+icon toggle in the ContextPicker). Before it: **`#`-mention for files
++ bookmarks** (#168 — item #6 first half; third autocomplete sibling
+beside `/` and `@`); **Ollama + OpenRouter providers + Library tab**
+(#167 — items #2, #3, #5 in one PR: `ollama/*` via
+`allowInsecureBaseUrl`, `openrouter/auto`, cross-conversation index
+of generated images + artifacts); **Vercel AI Gateway per-workspace
+tagging** (#166 — item #4 Part 2; `providerOptions.gateway.tags`,
+Part 1 caching deferred to a verification ticket); **conversation-level
+system prompt** (#165 — item #1; `Conversation.systemPrompt`,
+persona-additive 3-tier composer, "Thread instructions" dialog).
+Earlier: per-IP rate buckets + idle watchdog on
 `/v1/chat`; closes the second-to-last open item in PLAN-agent-api;
 only the real DNS-rebinding test remains. Earlier this session: MCP
 server CRUD endpoint (#160 — `POST /v1/mcp/server` on both services
@@ -81,6 +82,9 @@ to a representative PR otherwise.
 
 | When | Feature | Where |
 |---|---|---|
+| 2026-06-06 | **Per-attached-file inline ↔ RAG retrieval toggle** — second half of inspirations item #6. New `Conversation.fileRetrievalModes` (`Record<fileId, "rag">`, default absent = inline). When a file is flipped to rag the send path drops its `text` from the wire summary + stamps `retrievalMode: "rag"`; the server renderer suppresses the inlined body (rendering a "call `searchFiles`" stub instead) and excludes it from the meta-only footer; the chat route auto-enables `searchFiles` so the file stays reachable. UI: a `<Search>` toggle on each non-image attached-file row in the ContextPicker (highlighted on rag). Migration `0022_conversation_file_retrieval_modes` (+ jsonb-object CHECK), `STORE_VERSION 22→23`, full sync round-trip. Item #6 (RAG half) from PLAN-cross-product-inspirations | [PLAN](PLAN-cross-product-inspirations.md) · [#169](https://github.com/juchengquan/hummingbird/pull/169) |
+| 2026-06-06 | **`#`-mention for files + bookmarks** — first half of inspirations item #6. Third autocomplete sibling beside `/` (skills) and `@` (prompts): `useAttachmentMentionAutocomplete` + a pure `lib/shared/attachment-mentions/parser.ts` (leading-`#`-only trigger, name-prefix > name-substring ranking, bookmarks add a URL-substring fallback tier, fixed workspace-files → private-files → bookmarks kind ordering). Picking attaches the source to the conversation via the existing toggle mutators and strips the `#token`. Reuses the symbol-agnostic `SlashAutocomplete` menu with per-kind `groupLabel`. Notes punted (no conversation-attachment mechanism today). Item #6 (mention half) from PLAN-cross-product-inspirations | [PLAN](PLAN-cross-product-inspirations.md) · [#168](https://github.com/juchengquan/hummingbird/pull/168) |
+| 2026-06-06 | **Ollama + OpenRouter providers + Library tab** — three S-sized inspirations items in one PR. **#2 Ollama:** `ollama/*` model ids route through `createOpenAICompatible`; new `allowInsecureBaseUrl: true` provider flag relaxes the SSRF gate (allows `http://localhost`/loopback/private hosts) + makes the API key optional, with a split-out `isParseableHttpUrl` guard so malformed URLs still fail at boot. **#3 OpenRouter:** `openrouter/*` against the fixed `https://openrouter.ai/api/v1`, incl. `openrouter/auto`. **#5 Library tab:** new `library` MainView + sidebar/⌘K entry; cross-conversation index of generated images + artifacts via a pure `collectWorkspaceLibraryItems` join (read-only derived view, no migration). Items #2/#3/#5 from PLAN-cross-product-inspirations | [PLAN](PLAN-cross-product-inspirations.md) · [#167](https://github.com/juchengquan/hummingbird/pull/167) |
 | 2026-06-06 | **Vercel AI Gateway per-workspace tagging** — `/api/chat` now attaches `providerOptions.gateway.tags` with `workspace:<workspaceId>` + `model:<modelId>` on every Gateway-routed `streamText` call. The dashboard buckets cost / latency / errors per workspace and per model for free, no Langfuse dep. Skipped when `body.workspaceId` is absent so signed-out turns don't pollute the dashboard with a `workspace:undefined` bucket. Hard no-op on non-gateway routes (`minimax-cn` via `@ai-sdk/anthropic`, self-host via `@ai-sdk/openai-compatible`) — those provider clients ignore the entire `gateway` namespace. Item #4 from PLAN-cross-product-inspirations; Part 1 (`caching: 'auto'`) is split into a verification follow-up since no version of `@ai-sdk/gateway` exposes a caching opt-in and Vercel's automatic prompt caching may already be on by default at the platform layer | [PLAN](PLAN-gateway-caching-and-workspace-tagging.md) |
 | 2026-06-06 | **Conversation-level system prompt** — `Conversation.systemPrompt` lands as the second tier between workspace voice and per-turn persona. `composeSystemPrompts(workspace, conversation, persona)` is persona-additive: switching personas replaces the workspace voice but **keeps** the conversation context. "Thread instructions" entry in the chat-header popover opens a 20K-char editor with explicit Save / Clear (not per-keystroke debounce). New `0021_conversation_system_prompt` migration, `STORE_VERSION 21→22` backfill, sync diff carries `system_prompt`. Item #1 from PLAN-cross-product-inspirations | [PLAN](PLAN-conversation-system-prompt.md) |
 | 2026-06-05 | **Per-IP rate buckets + idle watchdog on `/v1/chat`** — both agent services gain a 30 turns / minute / IP gate (`SlidingWindow` in Python, `createSlidingWindow` re-exported in agent-ts) returning 429 + `Retry-After` before the auth / model dispatch path; a 90 s idle watchdog wraps the SSE generator's `next()` on both stacks and emits a synthetic `error` (`code: "upstream"`) + `[DONE]` when an upstream stalls past the window. Mirrors `chatPerIpLimit` + `IDLE_TIMEOUT_MS` in the Next.js inline route. Tests +13 agent-py / +3 agent-ts. Closes the second-to-last item in PLAN-agent-api | [PLAN](PLAN-agent-api.md) · [#161](https://github.com/juchengquan/hummingbird/pull/161) |
@@ -186,6 +190,7 @@ now ships — its plans live in [`_done/`](_done/).
 
 | Plan | Status | Sketch |
 |---|---|---|
+| 🪜 [Cross-product inspirations menu](PLAN-cross-product-inspirations.md) | 6 of 14 shipped | A menu, not a single feature — 14 items synthesised from a five-cohort survey of OSS + commercial AI/chat/agent products. **Shipped:** #1 conversation system prompt (#165), #2 Ollama + #3 OpenRouter + #5 Library (#167), #4 Part 2 gateway tagging (#166), #6 `#`-mention + RAG toggle (#168, #169). **Open:** #4 Part 1 (caching verification), #7 Flowchat canvas, #8 Beam, #9 Elicit tables, #10 Langfuse, #11 Aider editor pair, #12 hybrid search, #13 Letta memory, #14 LangGraph checkpointer. Per-item status + a Shipped tracker live in the plan |
 | 🪜 [Agent API as a separate service](PLAN-agent-api.md) | Phases 0 through 4-4b shipped; one follow-up open | All six phases of the original plan plus seven of the open follow-ups have shipped: `services/agent-py/` runs end-to-end (chat + tools + MCP + url-fetch + summarize + refresh-url + extract + whoami + health); per-IP rate buckets + idle watchdog (PR #161); `POST /v1/mcp/server` CRUD (#160); provider-categorised errors (#155); frontend selector for non-chat endpoints (#156); `workspace_id` + per-skill config on `/v1/chat` (#145); `useChat()` adoption (#148–#154). **One open item:** real DNS-rebinding test against actual DNS for the MCP-proxy SSRF guard (currently mocked). Phases 5 (default-on + decommission) and 6 (tidy + archive) explicitly deferred — per project policy both Python and TS stacks stay live and the user picks backend per-account via the Phase 4-2 selector |
 | 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 4 done, 1 moot, 3 open | Done: generatedImages sync (#45), recap-of-recaps (#63), roadmap sweep, signed-URL re-sign. Moot: local-mode MCP creds for tasks (rejected up front by #85). Open: accurate tokens, per-tool server-side approval flags, task-route integration tests |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
