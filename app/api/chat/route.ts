@@ -294,6 +294,25 @@ export async function POST(req: NextRequest) {
   }
   const upstreamSignal = manualCombined?.signal ?? combinedSignal
 
+  // Per-workspace dashboard facet on the Vercel AI Gateway. `tags` is a
+  // free-form `string[]` the gateway server reads from the request body and
+  // uses to bucket the call on its analytics view. Non-gateway routes
+  // (`minimax-cn` via @ai-sdk/anthropic, self-host via @ai-sdk/openai-compatible)
+  // ignore the entire `gateway` provider-options namespace, so this is a
+  // hard no-op for them — no branching needed. Skip when no `workspaceId`
+  // so signed-out turns don't pollute the dashboard with a phantom
+  // `workspace:undefined` bucket. See
+  // `docs/PLAN-gateway-caching-and-workspace-tagging.md`.
+  const gatewayProviderOptions = body.workspaceId
+    ? {
+        providerOptions: {
+          gateway: {
+            tags: [`workspace:${body.workspaceId}`, `model:${modelId}`],
+          },
+        },
+      }
+    : undefined
+
   try {
     const result = streamText({
       abortSignal: upstreamSignal,
@@ -313,6 +332,7 @@ export async function POST(req: NextRequest) {
       // but the AI SDK's ModelMessage uses tighter inner-part discriminants
       // than the schema's structural fallback. Trust the schema validation.
       messages: body.messages as ModelMessage[],
+      ...(gatewayProviderOptions ?? {}),
       // Only pass `tools` when non-empty — some providers reject the field
       // when present-but-empty. Default stop condition is `stepCountIs(1)`
       // which would prevent the model from continuing after a tool call;
