@@ -111,6 +111,6 @@ describe("partializeState — frozen persisted shape", () => {
   })
 
   test("STORE_VERSION is pinned (bump only with a migration step)", () => {
-    expect(STORE_VERSION).toBe(22)
+    expect(STORE_VERSION).toBe(23)
   })
 })

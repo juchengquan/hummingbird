@@ -8,7 +8,7 @@ import { uuid } from "@/shared/uuid"
  * step in `runMigrations`. Wired into the `version` field of the persist
  * config in `use-store.ts`.
  */
-export const STORE_VERSION = 22
+export const STORE_VERSION = 23
 
 /**
  * Sequential schema migrations from older persisted shapes to the
@@ -400,6 +400,29 @@ export function runMigrations(
         const obj = c as Record<string, unknown>
         if (typeof obj.systemPrompt === "string") return obj
         return { ...obj, systemPrompt: "" }
+      })
+    }
+  }
+  if (fromVersion < 23) {
+    // `Conversation.fileRetrievalModes` added — per-attached-file
+    // RAG-vs-inline override. The field is optional in the type, but
+    // we explicitly seed an empty object on existing rows so the sync
+    // diff has a stable shape to compare against (no spurious
+    // `fileRetrievalModes: undefined` vs `{}` mismatches). See
+    // `docs/PLAN-cross-product-inspirations.md` item #6.
+    const convs = state.conversations
+    if (Array.isArray(convs)) {
+      state.conversations = convs.map((c) => {
+        if (!c || typeof c !== "object") return c
+        const obj = c as Record<string, unknown>
+        if (
+          obj.fileRetrievalModes &&
+          typeof obj.fileRetrievalModes === "object" &&
+          !Array.isArray(obj.fileRetrievalModes)
+        ) {
+          return obj
+        }
+        return { ...obj, fileRetrievalModes: {} }
       })
     }
   }

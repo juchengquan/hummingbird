@@ -85,6 +85,22 @@ function jsonToSkillPrefs(value: Json | null | undefined): Record<string, boolea
   return out
 }
 
+/** Boundary parser for `conversations.file_retrieval_modes` (jsonb
+ *  object). Drops malformed values rather than crashing rehydration.
+ *  Only `"rag"` is meaningful; any other string is treated as default
+ *  (absence). Undefined when the column is empty or non-object so the
+ *  optional type carries its "unset" semantic. */
+function jsonToFileRetrievalModes(
+  value: Json | null | undefined
+): Record<string, "rag"> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  const out: Record<string, "rag"> = {}
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (v === "rag") out[k] = "rag"
+  }
+  return Object.keys(out).length === 0 ? undefined : out
+}
+
 /** Boundary parser for `workspaces.milestones` (jsonb array). Drops
  *  malformed entries rather than crashing rehydration. Undefined when
  *  the column is null / not an array / empty. */
@@ -367,6 +383,7 @@ export async function fetchCloudSnapshot(
           ? c.selected_url_bookmark_ids
           : undefined,
       systemPrompt: c.system_prompt ?? "",
+      fileRetrievalModes: jsonToFileRetrievalModes(c.file_retrieval_modes),
       skillPrefs: jsonToSkillPrefs(c.skill_prefs),
       parentId: c.parent_id ?? undefined,
       forkedFromMessageId: c.forked_from_message_id ?? undefined,
@@ -648,6 +665,7 @@ export async function bulkUploadLocalState(
         title: c.title,
         pinned: c.pinned,
         selected_file_ids: c.selectedFileIds,
+        file_retrieval_modes: (c.fileRetrievalModes ?? {}) as Json,
         system_prompt: c.systemPrompt,
         // document_content / document_updated_at moved onto the workspaces
         // row. Column still exists for one release; client no longer

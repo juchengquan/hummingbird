@@ -41,6 +41,14 @@ export const FileSummarySchema = z.object({
   text: z.string().max(120_000).optional(),
   truncated: z.boolean().optional(),
   kind: z.string().max(40).optional(),
+  /** Per-attachment retrieval mode. Absent / `'inline'` (default) →
+   *  the file's `text` is inlined into the system prompt. `'rag'` →
+   *  the server suppresses the body and instead notes the file as
+   *  retrievable via the `searchFiles` skill. The chat route also
+   *  force-enables `searchFiles` when any attachment is in rag mode
+   *  so the user doesn't have to remember to tick the skill. See
+   *  `docs/PLAN-cross-product-inspirations.md` item #6. */
+  retrievalMode: z.enum(["inline", "rag"]).optional(),
 })
 
 export const McpResourceRefSchema = z.object({

@@ -556,6 +556,14 @@ export interface Conversation {
   systemPrompt: string
   /** Workspace file IDs attached as context for the next message in this conversation. */
   selectedFileIds: string[]
+  /** Per-attached-file retrieval mode override. Absence of an entry =
+   *  default ("inline" — file's extracted text is in the system
+   *  prompt). `"rag"` = the file is NOT inlined, only retrievable via
+   *  the `searchFiles` skill. Maps file id → mode. Only `"rag"` is
+   *  worth persisting; setting back to inline clears the key. Empty
+   *  map on conversations created before v23. See
+   *  `docs/PLAN-cross-product-inspirations.md` item #6. */
+  fileRetrievalModes?: Record<string, "rag">
   /** Workspace MCP-resource IDs (`McpResource.id`, not URIs) ticked on
    *  for this conversation. Empty array on conversations created before
    *  v17 — backfilled defensively. */

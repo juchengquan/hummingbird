@@ -272,6 +272,7 @@ export type Database = {
       conversations: {
         Row: {
           created_at: string
+          file_retrieval_modes: Json
           forked_from_message_id: string | null
           id: string
           parent_id: string | null
@@ -288,6 +289,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          file_retrieval_modes?: Json
           forked_from_message_id?: string | null
           id: string
           parent_id?: string | null
@@ -304,6 +306,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          file_retrieval_modes?: Json
           forked_from_message_id?: string | null
           id?: string
           parent_id?: string | null

@@ -95,6 +95,20 @@ const RENDERERS: Record<AttachmentKind, KindRenderer> = {
     },
     body(item) {
       if (item.kind !== "file") return null
+      // RAG-mode attachments: drop the inline body. Render a stub
+      // pointing the model at `searchFiles` instead — the chat route
+      // force-enables the skill when any rag attachment is present,
+      // so the model has a way to retrieve from the file when needed.
+      // The file's name + metadata still render via `header(item)`
+      // so the model knows the file exists; only the body is
+      // suppressed.
+      if (item.summary.retrievalMode === "rag") {
+        return (
+          "(RAG-mode attachment — body not inlined to save tokens. " +
+          "Call `searchFiles` with relevant query terms to retrieve " +
+          "matching sections from this file.)"
+        )
+      }
       return item.summary.text && item.summary.text.trim().length > 0
         ? item.summary.text
         : null
@@ -280,7 +294,16 @@ function renderSection(
 export function renderMetaOnlyFilesPrompt(
   files: FileSummary[]
 ): string | null {
-  const metaOnly = files.filter((f) => !f.text || f.text.trim().length === 0)
+  // RAG-mode attachments have empty `text` by design — they're not
+  // "we couldn't extract this" cases, they're "we deliberately
+  // skipped inlining." Filter them out so the model doesn't get
+  // contradictory instructions ("ask the user to paste" vs "call
+  // searchFiles").
+  const metaOnly = files.filter(
+    (f) =>
+      f.retrievalMode !== "rag" &&
+      (!f.text || f.text.trim().length === 0),
+  )
   if (metaOnly.length === 0) return null
   const list = metaOnly
     .map((f) => `- ${f.name} (${f.type || "unknown"}, ${formatBytes(f.size)})`)

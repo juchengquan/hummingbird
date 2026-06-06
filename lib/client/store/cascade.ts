@@ -369,7 +369,10 @@ export function tombstoneUrlBookmark(bookmark: UrlBookmark): UrlBookmark {
  *  so the partialized Zustand store doesn't serialize empty arrays. */
 export type ConversationSelectionFields = Pick<
   Conversation,
-  "selectedFileIds" | "selectedMcpResourceIds" | "selectedUrlBookmarkIds"
+  | "selectedFileIds"
+  | "selectedMcpResourceIds"
+  | "selectedUrlBookmarkIds"
+  | "fileRetrievalModes"
 >
 
 export function cloneAttachmentSelections(
@@ -382,6 +385,13 @@ export function cloneAttachmentSelections(
       : undefined,
     selectedUrlBookmarkIds: source.selectedUrlBookmarkIds
       ? [...source.selectedUrlBookmarkIds]
+      : undefined,
+    // Carry retrieval-mode overrides forward — branching is
+    // "continue this same chat," same rationale as the other
+    // selection fields. Cloned defensively so the fork can't mutate
+    // the source's map.
+    fileRetrievalModes: source.fileRetrievalModes
+      ? { ...source.fileRetrievalModes }
       : undefined,
   }
 }

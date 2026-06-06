@@ -207,8 +207,20 @@ export async function POST(req: NextRequest) {
   }
   const body = parsed.data
   const modelId = body.model || DEFAULT_CHAT_MODEL
-  const enabledSkillIds: SkillId[] = (body.skills ?? [])
+  // Auto-enable `searchFiles` whenever any attachment is in RAG mode —
+  // the file is no longer inlined, so the model needs the skill to
+  // reach it. Force-on overrides a missing client toggle but stops
+  // short of overriding an explicit mute (the existing mute path
+  // already won) — RAG attachments would be orphaned without it.
+  const anyRagAttachment = (body.attachments ?? []).some(
+    (a) => a.kind === "file" && a.summary.retrievalMode === "rag",
+  )
+  const clientEnabledSkillIds: SkillId[] = (body.skills ?? [])
     .map((s) => s.id as SkillId)
+  const enabledSkillIds: SkillId[] =
+    anyRagAttachment && !clientEnabledSkillIds.includes("searchFiles" as SkillId)
+      ? [...clientEnabledSkillIds, "searchFiles" as SkillId]
+      : clientEnabledSkillIds
   // Resolve the user-facing webSearch cap from the request. The client
   // Per-IP cross-tool rate limit. The per-turn caps inside each
   // skill tool (e.g. webFetch 5, webSearch 3) are budget hints to

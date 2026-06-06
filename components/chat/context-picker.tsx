@@ -23,6 +23,7 @@ import {
   Paperclip,
   Pause,
   Plus,
+  Search,
   Server,
   X,
   Bookmark as BookmarkIcon,
@@ -146,6 +147,14 @@ function PickerBody({
   )
   const removeConversationFile = useStore((s) => s.removeConversationFile)
   const activeConversationId = useStore((s) => s.activeConversationId)
+  const setConversationFileRetrievalMode = useStore(
+    (s) => s.setConversationFileRetrievalMode
+  )
+  const fileRetrievalModes = useStore((s) => {
+    const id = s.activeConversationId
+    if (!id) return undefined
+    return s.conversations.find((c) => c.id === id)?.fileRetrievalModes
+  })
   const toggleConversationUrlBookmarkSelection = useStore(
     (s) => s.toggleConversationUrlBookmarkSelection
   )
@@ -220,6 +229,15 @@ function PickerBody({
           <FileRow
             key={f.id}
             file={f}
+            mode={fileRetrievalModes?.[f.id] ?? "inline"}
+            onToggleMode={() => {
+              if (!activeConversationId) return
+              const next: "rag" | null =
+                (fileRetrievalModes?.[f.id] ?? "inline") === "rag"
+                  ? null
+                  : "rag"
+              setConversationFileRetrievalMode(activeConversationId, f.id, next)
+            }}
             onDetach={() => toggleConversationFileSelection(f.id)}
           />
         ))}
@@ -227,6 +245,15 @@ function PickerBody({
           <FileRow
             key={f.id}
             file={f}
+            mode={fileRetrievalModes?.[f.id] ?? "inline"}
+            onToggleMode={() => {
+              if (!activeConversationId) return
+              const next: "rag" | null =
+                (fileRetrievalModes?.[f.id] ?? "inline") === "rag"
+                  ? null
+                  : "rag"
+              setConversationFileRetrievalMode(activeConversationId, f.id, next)
+            }}
             onDetach={() => {
               if (activeConversationId)
                 removeConversationFile(activeConversationId, f.id)
@@ -387,13 +414,24 @@ function SkillRow({
 
 function FileRow({
   file,
+  mode,
+  onToggleMode,
   onDetach,
 }: {
   file: AttachedFile
+  /** Current retrieval mode for this attachment. */
+  mode: "inline" | "rag"
+  /** Cycle inline ↔ rag. */
+  onToggleMode: () => void
   onDetach: () => void
 }) {
   const isPrivate = file.kind === "conversationFile"
   const isImage = file.type.startsWith("image/")
+  // Image attachments don't go through the text-extraction +
+  // searchFiles path (they ride as data URLs on the user turn), so
+  // the rag/inline toggle is meaningless for them. Hide the control.
+  const showModeToggle = !isImage
+  const isRag = mode === "rag"
   return (
     <li>
       <div
@@ -424,6 +462,36 @@ function FileRow({
               />
             </TooltipTrigger>
             <TooltipContent side="left">Only this chat</TooltipContent>
+          </Tooltip>
+        )}
+        {showModeToggle && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={onToggleMode}
+                aria-label={
+                  isRag
+                    ? `Switch to full-context for ${file.name}`
+                    : `Switch to searchable-only for ${file.name}`
+                }
+                aria-pressed={isRag}
+                className={cn(
+                  "shrink-0 inline-flex items-center justify-center",
+                  "h-5 w-5 rounded transition-colors",
+                  "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
+                  isRag &&
+                    "bg-[var(--primary)]/10 text-[var(--primary)] hover:text-[var(--primary)]",
+                )}
+              >
+                <Search size={12} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="left" className="max-w-[220px]">
+              {isRag
+                ? "Searchable only — file is not inlined; the model uses the searchFiles skill to retrieve sections. Click to switch to full context."
+                : "Full context — file content is inlined into the prompt. Click to switch to searchable-only (skip inlining; rely on searchFiles)."}
+            </TooltipContent>
           </Tooltip>
         )}
         <DetachButton onClick={onDetach} label={`Detach ${file.name}`} />
