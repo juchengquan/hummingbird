@@ -16,6 +16,7 @@ import {
   Pencil,
   Check,
   X,
+  Image as ImageIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/shared/utils"
@@ -30,6 +31,7 @@ import {
 import {
   useStore,
   useWorkspaceArtifacts,
+  useConversationSelectedArtifactIds,
 } from "@/client/hooks/use-store"
 import { copyText } from "@/client/export"
 import { TabEmptyState } from "@/components/panels/tab-empty-state"
@@ -42,6 +44,7 @@ import type { Artifact } from "@/shared/types"
 function artifactKindIcon(artifact: Artifact) {
   if (artifact.kind === "code") return <Code2 size={12} />
   if (artifact.kind === "json") return <Braces size={12} />
+  if (artifact.kind === "image") return <ImageIcon size={12} />
   return <FileText size={12} />
 }
 
@@ -58,11 +61,18 @@ function asMarkdownForEditor(artifact: Artifact): string {
     }
     return `\`\`\`json\n${pretty}\n\`\`\``
   }
+  if (artifact.kind === "image") {
+    const src = artifact.storagePath ?? artifact.content
+    return artifact.content
+      ? `![${artifact.content.slice(0, 60)}](${src})`
+      : `![](${src})`
+  }
   return artifact.content
 }
 
 export function ArtifactsTab() {
   const artifacts = useWorkspaceArtifacts()
+  const selectedIds = useConversationSelectedArtifactIds()
   const deleteArtifact = useStore((s) => s.deleteArtifact)
   const togglePinArtifact = useStore((s) => s.togglePinArtifact)
   const updateArtifactTitle = useStore((s) => s.updateArtifactTitle)
@@ -71,6 +81,7 @@ export function ArtifactsTab() {
   )
   const requestEditorReload = useStore((s) => s.requestEditorReload)
   const setActiveView = useStore((s) => s.setActiveView)
+  const toggleSelection = useStore((s) => s.toggleConversationArtifactSelection)
 
   const [openId, setOpenId] = useState<string | null>(null)
   const [mounted, setMounted] = useState(false)
@@ -120,17 +131,39 @@ export function ArtifactsTab() {
             to save code blocks or the full reply as an artifact.
           </TabEmptyState>
         ) : (
-          artifacts.map((a) => (
-            <button
-              type="button"
+          artifacts.map((a) => {
+            const attached = selectedIds.includes(a.id)
+            return (
+            <div
               key={a.id}
-              onClick={() => setOpenId(a.id)}
+              role="button"
+              tabIndex={0}
+              onClick={() => toggleSelection(a.id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault()
+                  toggleSelection(a.id)
+                }
+              }}
+              aria-pressed={attached}
               className={cn(
-                "w-full text-left px-2 py-1.5 rounded-md transition-colors flex items-start gap-2",
+                "w-full text-left px-2 py-1.5 rounded-md transition-colors flex items-start gap-2 cursor-pointer",
                 "hover:bg-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
-                a.pinned && "bg-[var(--primary)]/5"
+                attached && "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/40",
+                a.pinned && !attached && "bg-[var(--primary)]/5"
               )}
             >
+              <span
+                aria-hidden
+                className={cn(
+                  "mt-0.5 shrink-0 size-4 rounded-[4px] border inline-flex items-center justify-center transition-colors",
+                  attached
+                    ? "bg-[var(--primary)] border-[var(--primary)] text-[var(--primary-foreground)]"
+                    : "border-[var(--border)] bg-transparent"
+                )}
+              >
+                {attached && <Check size={12} strokeWidth={3} />}
+              </span>
               <span className="mt-0.5 shrink-0 text-[var(--muted-foreground)]">
                 {artifactKindIcon(a)}
               </span>
@@ -147,11 +180,28 @@ export function ArtifactsTab() {
                       {a.language}
                     </span>
                   )}
+                  {a.kind === "image" && (
+                    <span className="px-1 py-px rounded bg-[var(--secondary)]">
+                      image
+                    </span>
+                  )}
                   {mounted && <span>{format(new Date(a.createdAt), "MMM d, h:mm a")}</span>}
                 </div>
               </div>
-            </button>
-          ))
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setOpenId(a.id)
+                }}
+                aria-label={`Preview ${a.title}`}
+                title="Preview"
+                className="p-0.5 rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] transition-colors mt-0.5"
+              >
+                <Eye size={12} />
+              </button>
+            </div>
+          )})
         )}
       </div>
 
@@ -220,6 +270,8 @@ function ArtifactPreviewDialog({
                 <Code2 size={14} />
               ) : artifact.kind === "json" ? (
                 <Braces size={14} />
+              ) : artifact.kind === "image" ? (
+                <ImageIcon size={14} />
               ) : (
                 <FileText size={14} />
               ))}
@@ -276,6 +328,20 @@ function ArtifactPreviewDialog({
             <JsonHighlight content={artifact.content} />
           ) : artifact?.kind === "markdown" ? (
             <MarkdownPreview content={artifact.content} />
+          ) : artifact?.kind === "image" ? (
+            <div className="flex flex-col items-center p-4">
+              {/* eslint-disable-next-line @next/next/no-img-element -- data: URLs + signed Supabase URLs with unknown dimensions; next/image doesn't fit. */}
+              <img
+                src={artifact.storagePath ?? artifact.content}
+                alt={artifact.title}
+                className="max-w-full max-h-[50vh] rounded-md object-contain"
+              />
+              {artifact.content && (
+                <p className="mt-3 text-xs text-[var(--muted-foreground)] text-center max-w-md">
+                  {artifact.content}
+                </p>
+              )}
+            </div>
           ) : (
             <pre className="text-xs p-3 whitespace-pre-wrap break-words font-mono">
               {artifact?.content}

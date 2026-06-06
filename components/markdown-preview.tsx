@@ -4,6 +4,7 @@ import { useCallback, useMemo, useRef } from "react"
 import { marked } from "marked"
 import { cn } from "@/shared/utils"
 import { openPdf } from "@/components/right-panel-slot"
+import { mark as perfMark, count as perfCount } from "@/client/perf-chat-stream"
 import "./markdown-preview.css"
 
 /**
@@ -122,6 +123,8 @@ export function MarkdownPreview({
   const containerRef = useRef<HTMLDivElement>(null)
 
   const html = useMemo(() => {
+    perfMark("humm/chat/markdown-parse:start")
+    perfCount("chat.markdown.parse")
     try {
       const out = marked.parse(content, { async: false })
       let raw = typeof out === "string" ? out : ""
@@ -131,6 +134,8 @@ export function MarkdownPreview({
       return raw
     } catch {
       return ""
+    } finally {
+      perfMark("humm/chat/markdown-parse:end")
     }
   }, [content, pdfCitationFileId, sourceCount, suppressImages])
 

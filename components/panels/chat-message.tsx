@@ -19,6 +19,7 @@ import { ReasoningBlock } from "@/components/panels/reasoning-block"
 import { SourcesStrip } from "@/components/panels/sources-strip"
 import { ErrorBubble } from "@/components/panels/error-bubble"
 import { useStore, useMessageBookmark } from "@/client/hooks/use-store"
+import { mark as perfMark, count as perfCount } from "@/client/perf-chat-stream"
 import type { ArtifactKind } from "@/shared/types"
 import {
   SaveArtifactDialog,
@@ -122,6 +123,8 @@ function ChatMessageImpl({
 
   const isUser = message.role === "user"
 
+  perfMark("humm/chat/render-message:start")
+  perfCount("chat.render.message")
   const activeConversationId = useStore((s) => s.activeConversationId)
   const toggleMessageBookmark = useStore((s) => s.toggleMessageBookmark)
   const uncompressRecap = useStore((s) => s.uncompressRecap)

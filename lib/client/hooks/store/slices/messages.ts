@@ -8,6 +8,7 @@ import type {
 } from "@/shared/types"
 import { uuid } from "@/shared/uuid"
 import { buildCompressedMessages } from "@/shared/compression"
+import { mark as perfMark, count as perfCount } from "@/client/perf-chat-stream"
 
 import type { SliceCreator } from "../types"
 
@@ -202,36 +203,50 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
         return c
       }),
     })),
-  appendToMessage: (messageId, chunk) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.messages.some((m) => m.id === messageId)) {
-          return {
-            ...c,
-            messages: c.messages.map((m) =>
-              m.id === messageId ? { ...m, content: m.content + chunk } : m
-            ),
+  appendToMessage: (messageId, chunk) => {
+    perfMark("humm/chat/append-message:start")
+    perfCount("chat.append.message")
+    set((state) => {
+      const next = {
+        conversations: state.conversations.map((c) => {
+          if (c.messages.some((m) => m.id === messageId)) {
+            return {
+              ...c,
+              messages: c.messages.map((m) =>
+                m.id === messageId ? { ...m, content: m.content + chunk } : m
+              ),
+            }
           }
-        }
-        return c
-      }),
-    })),
-  appendToMessageReasoning: (messageId, chunk) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.messages.some((m) => m.id === messageId)) {
-          return {
-            ...c,
-            messages: c.messages.map((m) =>
-              m.id === messageId
-                ? { ...m, reasoning: (m.reasoning ?? "") + chunk }
-                : m
-            ),
+          return c
+        }),
+      }
+      perfMark("humm/chat/append-message:end")
+      return next
+    })
+  },
+  appendToMessageReasoning: (messageId, chunk) => {
+    perfMark("humm/chat/append-reasoning:start")
+    perfCount("chat.append.reasoning")
+    set((state) => {
+      const next = {
+        conversations: state.conversations.map((c) => {
+          if (c.messages.some((m) => m.id === messageId)) {
+            return {
+              ...c,
+              messages: c.messages.map((m) =>
+                m.id === messageId
+                  ? { ...m, reasoning: (m.reasoning ?? "") + chunk }
+                  : m
+              ),
+            }
           }
-        }
-        return c
-      }),
-    })),
+          return c
+        }),
+      }
+      perfMark("humm/chat/append-reasoning:end")
+      return next
+    })
+  },
   setMessageReasoningDuration: (messageId, durationMs) =>
     set((state) => ({
       conversations: state.conversations.map((c) => {

@@ -3,7 +3,6 @@
 import "client-only"
 
 import * as React from "react"
-import { useShallow } from "zustand/react/shallow"
 import { ArrowUpRight, Image as ImageIcon, MessageSquare, Package } from "lucide-react"
 
 import { useStore } from "@/client/hooks/use-store"
@@ -40,23 +39,26 @@ import { cn } from "@/shared/utils"
 
 const EMPTY_ITEMS: readonly LibraryItem[] = Object.freeze([])
 
-/** Selector for the active workspace's library. Delegates to the pure
- *  `collectWorkspaceLibraryItems` helper so the join logic is
- *  unit-testable; the hook is just the Zustand shim + the empty-array
- *  sentinel. */
+/** Selector for the active workspace's library. Subscribes to the raw
+ *  inputs (workspaceId + conversations + artifacts) — all reference-
+ *  stable in the Zustand store — and memoises the join in React.
+ *
+ *  Why not `useShallow` around `collectWorkspaceLibraryItems`: the helper
+ *  constructs fresh wrapper objects (`{kind, image, timestamp: new
+ *  Date(...), ...}`) on every call. `useShallow` does element-wise
+ *  `Object.is`, so two successive calls always look "changed" — React's
+ *  `useSyncExternalStore` then sees an unstable snapshot and loops
+ *  ("result of getSnapshot should be cached"). Memoising on the
+ *  reference-stable inputs sidesteps that. */
 function useWorkspaceLibrary(): readonly LibraryItem[] {
-  return useStore(
-    useShallow((state) => {
-      const wsId = state.activeWorkspaceId
-      if (!wsId) return EMPTY_ITEMS
-      const items = collectWorkspaceLibraryItems(
-        wsId,
-        state.conversations,
-        state.artifacts,
-      )
-      return items.length === 0 ? EMPTY_ITEMS : items
-    }),
-  )
+  const wsId = useStore((s) => s.activeWorkspaceId)
+  const conversations = useStore((s) => s.conversations)
+  const artifacts = useStore((s) => s.artifacts)
+  return React.useMemo(() => {
+    if (!wsId) return EMPTY_ITEMS
+    const items = collectWorkspaceLibraryItems(wsId, conversations, artifacts)
+    return items.length === 0 ? EMPTY_ITEMS : items
+  }, [wsId, conversations, artifacts])
 }
 
 export function LibraryPanel() {

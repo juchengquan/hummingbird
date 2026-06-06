@@ -6,7 +6,7 @@ import type { Artifact, ArtifactKind } from "@/shared/types"
 import { uuid } from "@/shared/uuid"
 import { placeRelatedNode } from "@/shared/canvas/placement"
 
-import { useStore } from "../../use-store"
+import { useStore, useActiveConversation } from "../../use-store"
 import type { SliceCreator } from "../types"
 
 /**
@@ -36,6 +36,9 @@ export interface ArtifactsSlice {
   togglePinArtifact: (artifactId: string) => void
   updateArtifactTitle: (artifactId: string, title: string) => void
   requestEditorReload: () => void
+  /** Toggle an artifact's selection for the active conversation
+   *  (mirrors the file + URL-bookmark selection pattern). */
+  toggleConversationArtifactSelection: (artifactId: string) => void
 }
 
 export const createArtifactsSlice: SliceCreator<ArtifactsSlice> = (set, get) => ({
@@ -95,9 +98,33 @@ export const createArtifactsSlice: SliceCreator<ArtifactsSlice> = (set, get) => 
     return newArtifact
   },
   deleteArtifact: (artifactId) =>
-    set((state) => ({
-      artifacts: state.artifacts.filter((a) => a.id !== artifactId),
-    })),
+    set((state) => {
+      // Atomic cascade: drop selection ids that reference the artifact
+      // so a deleted artifact doesn't linger as a tick in any
+      // conversation. Mirrors the file/MCP/url-bookmark pattern, but
+      // only allocates a new `conversations` array when at least one
+      // row actually carries this id — keeps the ref stable for
+      // selectors that subscribe to `state.conversations` whole.
+      const touchesAnyConv = state.conversations.some((c) =>
+        c.selectedArtifactIds?.includes(artifactId)
+      )
+      return {
+        artifacts: state.artifacts.filter((a) => a.id !== artifactId),
+        ...(touchesAnyConv
+          ? {
+              conversations: state.conversations.map((c) => {
+                const sel = c.selectedArtifactIds
+                if (!sel || !sel.includes(artifactId)) return c
+                const next = sel.filter((id) => id !== artifactId)
+                return {
+                  ...c,
+                  selectedArtifactIds: next.length > 0 ? next : undefined,
+                }
+              }),
+            }
+          : {}),
+      }
+    }),
   togglePinArtifact: (artifactId) =>
     set((state) => ({
       artifacts: state.artifacts.map((a) =>
@@ -112,6 +139,23 @@ export const createArtifactsSlice: SliceCreator<ArtifactsSlice> = (set, get) => 
     })),
   requestEditorReload: () =>
     set((state) => ({ editorReloadToken: state.editorReloadToken + 1 })),
+  toggleConversationArtifactSelection: (artifactId) =>
+    set((state) => {
+      const id = state.activeConversationId
+      if (!id) return state
+      return {
+        conversations: state.conversations.map((c) => {
+          if (c.id !== id) return c
+          const selected = c.selectedArtifactIds ?? []
+          return {
+            ...c,
+            selectedArtifactIds: selected.includes(artifactId)
+              ? selected.filter((x) => x !== artifactId)
+              : [...selected, artifactId],
+          }
+        }),
+      }
+    }),
 })
 
 /** Sort comparator shared by both artifact selectors — pinned-first,
@@ -153,3 +197,9 @@ export const useWorkspaceArtifacts = () =>
  *  returns a stable reference (otherwise every render would yield a
  *  fresh `[]` and break the shallow-equality check in useShallow). */
 const EMPTY_ARTIFACTS: readonly Artifact[] = Object.freeze([])
+
+/** Workspace artifacts ticked on for the active conversation. */
+export const useConversationSelectedArtifactIds = (): string[] => {
+  const conv = useActiveConversation()
+  return conv?.selectedArtifactIds ?? []
+}

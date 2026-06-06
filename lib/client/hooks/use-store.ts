@@ -22,6 +22,7 @@ import {
 import {
   createArtifactsSlice,
   useConversationArtifacts,
+  useConversationSelectedArtifactIds,
   useWorkspaceArtifacts,
   type ArtifactsSlice,
 } from "./store/slices/artifacts"
@@ -263,7 +264,7 @@ export {
   useActiveDocumentContent,
 }
 
-export { useConversationArtifacts, useWorkspaceArtifacts }
+export { useConversationArtifacts, useWorkspaceArtifacts, useConversationSelectedArtifactIds }
 
 export { useConversationPinnedExplanations }
 export type { PendingSelectionAction }

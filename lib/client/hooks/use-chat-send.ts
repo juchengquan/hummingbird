@@ -597,16 +597,18 @@ export function useChatSend(): UseChatSendResult {
                 if (images.length > 0) {
                   appendMessageGeneratedImages(ph.id, images)
                   images.forEach((img) => {
-                    const title = img.prompt
-                      ? img.prompt.slice(0, 80).trim()
-                      : `Generated image`
                     createArtifact({
                       conversationId: targetConvId,
                       messageId: ph.id,
                       kind: "image",
-                      title,
-                      content: img.url,
-                      storagePath: img.storagePath ?? null,
+                      title: img.prompt
+                        ? img.prompt.slice(0, 80).trim()
+                        : `Generated image`,
+                      // Prompt as text content (small). The image
+                      // reference lives in storagePath so we don't
+                      // bloat the artifact with base64 data URLs.
+                      content: img.prompt ?? "",
+                      storagePath: img.url,
                     })
                   })
                 }

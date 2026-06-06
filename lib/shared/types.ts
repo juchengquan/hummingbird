@@ -571,6 +571,8 @@ export interface Conversation {
   /** Workspace URL-bookmark IDs ticked on for this conversation.
    *  Empty / absent on conversations created before v18. */
   selectedUrlBookmarkIds?: string[]
+  /** Artifact IDs ticked on for this conversation. */
+  selectedArtifactIds?: string[]
   /**
    * Per-conversation skill overrides. Presence of a key = override
    * (true = on, false = off); absence = inherit from the workspace.

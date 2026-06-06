@@ -87,6 +87,7 @@ export function reviveAndPruneState(state: AppState): void {
   const liveUrlBookmarkIds = new Set(
     state.urlBookmarks.filter((b) => !b.deletedAt).map((b) => b.id)
   )
+  const liveArtifactIds = new Set(state.artifacts.map((a) => a.id))
   state.resources = state.resources.filter((r) => liveFileIds.has(r.fileId))
   state.conversationFiles = state.conversationFiles.filter((cf) =>
     liveFileIds.has(cf.fileId)
@@ -108,17 +109,23 @@ export function reviveAndPruneState(state: AppState): void {
     const urlSel = (c.selectedUrlBookmarkIds ?? []).filter((id) =>
       liveUrlBookmarkIds.has(id)
     )
+    const artifactSel = (c.selectedArtifactIds ?? []).filter((id) =>
+      liveArtifactIds.has(id)
+    )
     const fileChanged = fileSel.length !== c.selectedFileIds.length
     const mcpChanged =
       mcpSel.length !== (c.selectedMcpResourceIds ?? []).length
     const urlChanged =
       urlSel.length !== (c.selectedUrlBookmarkIds ?? []).length
-    if (!fileChanged && !mcpChanged && !urlChanged) return c
+    const artifactChanged =
+      artifactSel.length !== (c.selectedArtifactIds ?? []).length
+    if (!fileChanged && !mcpChanged && !urlChanged && !artifactChanged) return c
     return {
       ...c,
       selectedFileIds: fileSel,
       selectedMcpResourceIds: mcpSel.length > 0 ? mcpSel : undefined,
       selectedUrlBookmarkIds: urlSel.length > 0 ? urlSel : undefined,
+      selectedArtifactIds: artifactSel.length > 0 ? artifactSel : undefined,
     }
   })
 }

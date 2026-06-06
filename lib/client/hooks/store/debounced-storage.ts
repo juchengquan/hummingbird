@@ -24,6 +24,7 @@ import "client-only"
  */
 
 import type { StateStorage } from "zustand/middleware"
+import { mark as perfMark, count as perfCount } from "@/client/perf-chat-stream"
 
 export interface DebouncedStorageOptions {
   /** Underlying storage to persist to. Defaults to `localStorage`. */
@@ -71,6 +72,8 @@ export function debouncedStorage(opts: DebouncedStorageOptions = {}): StateStora
       clearTimeout(timer)
       timers.delete(name)
     }
+    perfMark("humm/chat/persist-debounce-flush:start")
+    perfCount("chat.persist.flush")
     try {
       target.setItem(name, value)
     } catch {
@@ -79,6 +82,7 @@ export function debouncedStorage(opts: DebouncedStorageOptions = {}): StateStora
       // never happened). We don't throw because Zustand's persist
       // middleware swallows storage errors too.
     }
+    perfMark("humm/chat/persist-debounce-flush:end")
   }
 
   function flushAll(): void {
