@@ -33,7 +33,7 @@ import { createGateway } from "@ai-sdk/gateway"
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
 import type { LanguageModel } from "ai"
 
-import { getChatModel, type ChatModelRoute } from "@/shared/models"
+import { CHAT_MODELS, getChatModel, type ChatModelRoute } from "@/shared/models"
 import {
   resolveProvider,
   isProviderConfigured,
@@ -94,10 +94,31 @@ function getOrBuildClient(
     // `createOpenAICompatible` requires a `name` for diagnostics — use
     // the provider's configured name so error messages and traces are
     // self-describing.
+    //
+    // Per-route fallbacks (today: openrouter) are wired via
+    // `transformRequestBody`. The hook gets the assembled body just
+    // before it's sent; we use the body's `model` field to look up the
+    // route's `fallbacks` list and inject it as `body.models = [...]`.
+    // OpenRouter reads this field natively; other openai-compatible
+    // endpoints ignore unknown body fields, so installing the hook
+    // unconditionally is a safe no-op for self-hosted / Ollama / vLLM.
+    const fallbacksByUpstreamId = buildFallbackTable(name)
     const client = createOpenAICompatible({
       name,
       baseURL: resolved.baseURL,
       apiKey: resolved.apiKey,
+      transformRequestBody: (body) => {
+        if (fallbacksByUpstreamId.size === 0) return body
+        const upstreamId = typeof body.model === "string" ? body.model : null
+        if (!upstreamId) return body
+        const fallbacks = fallbacksByUpstreamId.get(upstreamId)
+        if (!fallbacks || fallbacks.length === 0) return body
+        // Don't overwrite a `models` field the caller already supplied
+        // (e.g. a future per-request override). Belt-and-braces: today
+        // no caller sets it, but the merge keeps that contract honest.
+        if (Array.isArray(body.models) && body.models.length > 0) return body
+        return { ...body, models: fallbacks }
+      },
     })
     CLIENT_CACHE.set(name, {
       type: "openai",
@@ -110,6 +131,36 @@ function getOrBuildClient(
   const client = createGateway({ apiKey: resolved.apiKey })
   CLIENT_CACHE.set(name, { type: "gateway", apiKey: resolved.apiKey, client })
   return client
+}
+
+/** Walk the bundled model registry once per provider and produce a
+ *  `upstreamId → fallbacks[]` map for the routes that declare a
+ *  `fallbacks` list. The `upstreamId` is what the provider sees as
+ *  `body.model` at request time (`route.upstreamId ?? model.id`),
+ *  which is the same key `transformRequestBody` uses to look up the
+ *  fallback list.
+ *
+ *  Returned empty when no model in this provider has fallbacks — the
+ *  hook then short-circuits and the request body flows through
+ *  untouched. Built lazily inside `getOrBuildClient` so the cache key
+ *  (provider name) lines up with the cached client.
+ *
+ *  Exported for `model-provider.test.ts`. */
+export function buildFallbackTable(providerName: string): Map<string, string[]> {
+  const table = new Map<string, string[]>()
+  for (const model of CHAT_MODELS) {
+    for (const route of model.routes) {
+      if (route.via !== providerName) continue
+      if (!route.fallbacks || route.fallbacks.length === 0) continue
+      const upstreamId = route.upstreamId ?? model.id
+      // First route declaration wins when an upstream id is reused
+      // across model entries (unlikely; guard for it anyway).
+      if (!table.has(upstreamId)) {
+        table.set(upstreamId, [...route.fallbacks])
+      }
+    }
+  }
+  return table
 }
 
 function buildLanguageModel(

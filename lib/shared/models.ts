@@ -17,6 +17,13 @@ const RouteSchema = z.object({
    *  string than this entry's `id` (e.g. stripping the `minimax/` prefix
    *  before sending to Minimax-CN). Defaults to the model `id` itself. */
   upstreamId: z.string().min(1).optional(),
+  /** Ordered list of upstream model ids the provider should fall back
+   *  to if the primary (`upstreamId` / route id) fails. Only honoured
+   *  by providers that recognise the wire field (today: `openrouter`,
+   *  which reads `body.models = [...]` as its fallback list). Other
+   *  providers ignore this field silently — safe to set; no-op
+   *  elsewhere. Cap is loose (8) to keep the body lean. */
+  fallbacks: z.array(z.string().min(1)).max(8).optional(),
 })
 
 const ChatModelSchema = z.object({
