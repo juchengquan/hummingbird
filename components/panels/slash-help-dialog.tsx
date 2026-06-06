@@ -113,6 +113,16 @@ export function SlashHelpDialog({
               ))
             )}
           </Section>
+
+          <Section title="# Attach — files, private files, or bookmarks">
+            <p className="text-[13px] text-[var(--muted-foreground)]">
+              Type <code className="font-mono">#</code> at the start of
+              the message to filter your workspace files and URL
+              bookmarks; pick one and it attaches to this conversation.
+              The <code className="font-mono">#</code> token is cleared
+              from the input after pick.
+            </p>
+          </Section>
         </div>
       </DialogContent>
     </Dialog>

@@ -3,7 +3,14 @@
 import { useState, useRef, useEffect, useMemo, useCallback, useDeferredValue } from "react"
 import { useChatScroll } from "@/components/panels/use-chat-scroll"
 import { toast } from "sonner"
-import { useStore, useHydrated, useIsConversationTyping } from "@/client/hooks/use-store"
+import {
+  useConversationPrivateFiles,
+  useHydrated,
+  useIsConversationTyping,
+  useStore,
+  useWorkspaceResources,
+  useWorkspaceUrlBookmarks,
+} from "@/client/hooks/use-store"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupTextarea, InputGroupButton } from "@/components/ui/input-group"
@@ -38,6 +45,7 @@ import { useChatDropzone } from "@/client/hooks/use-chat-dropzone"
 import { useSmartPaste } from "@/client/hooks/use-smart-paste"
 import { useSlashAutocomplete } from "@/client/hooks/use-slash-autocomplete"
 import { usePromptMentionAutocomplete } from "@/client/hooks/use-prompt-mention-autocomplete"
+import { useAttachmentMentionAutocomplete } from "@/client/hooks/use-attachment-mention-autocomplete"
 import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/shared/upload-config"
 import type { Agent } from "@/shared/types"
 
@@ -65,6 +73,16 @@ export function ChatPanel() {
   const addFile = useStore((state) => state.addFile)
   const addConversationFile = useStore((state) => state.addConversationFile)
   const conversationFiles = useStore((state) => state.conversationFiles)
+  // `#` attachment-mention source pools + toggle mutators.
+  const workspaceResources = useWorkspaceResources()
+  const conversationPrivateFiles = useConversationPrivateFiles()
+  const workspaceUrlBookmarks = useWorkspaceUrlBookmarks()
+  const toggleConversationFileSelection = useStore(
+    (state) => state.toggleConversationFileSelection,
+  )
+  const toggleConversationUrlBookmarkSelection = useStore(
+    (state) => state.toggleConversationUrlBookmarkSelection,
+  )
   const setFileExtraction = useStore((state) => state.setFileExtraction)
   const setFileStorage = useStore((state) => state.setFileStorage)
   const pinExplanation = useStore((state) => state.pinExplanation)
@@ -178,6 +196,39 @@ export function ChatPanel() {
     // Programmatic value changes bypass the Textarea's onChange-driven
     // auto-grow, so run the same rAF resize the other programmatic input
     // writes use, and move the caret to the end.
+    resizeInput: () => {
+      requestAnimationFrame(() => {
+        const ta = textareaRef.current
+        if (!ta) return
+        ta.focus()
+        ta.style.height = "auto"
+        ta.style.height = `${Math.min(ta.scrollHeight, 150)}px`
+        ta.selectionStart = ta.selectionEnd = ta.value.length
+      })
+    },
+  })
+  // `#` attachment-mention — pick a workspace file / private file / URL
+  // bookmark; the picker attaches it to this conversation via the
+  // existing toggle mutators and strips the `#token` from the input.
+  // Sources are memoised so the inner shallow-equal in
+  // `useAttachmentMentionAutocomplete`'s `useMemo` stays stable across
+  // unrelated re-renders.
+  const attachmentSources = useMemo(
+    () => ({
+      workspaceFiles: workspaceResources,
+      privateFiles: conversationPrivateFiles,
+      bookmarks: workspaceUrlBookmarks,
+    }),
+    [workspaceResources, conversationPrivateFiles, workspaceUrlBookmarks],
+  )
+  const attachmentMention = useAttachmentMentionAutocomplete({
+    inputValue,
+    sources: attachmentSources,
+    activeConversationId,
+    toggleConversationFileSelection,
+    addConversationFile,
+    toggleConversationUrlBookmarkSelection,
+    setInputValue,
     resizeInput: () => {
       requestAnimationFrame(() => {
         const ta = textareaRef.current
@@ -510,6 +561,7 @@ export function ChatPanel() {
     // exclusive (each needs its own leading char), so at most one fires.
     if (slash.onKeyDown(e)) return
     if (mention.onKeyDown(e)) return
+    if (attachmentMention.onKeyDown(e)) return
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       handleSendMessage()
@@ -859,6 +911,43 @@ export function ChatPanel() {
                 onPick={(entry) => {
                   const prompt = mention.matches.find((m) => m.id === entry.id)
                   if (prompt) mention.pick(prompt)
+                }}
+              />
+            )}
+            {attachmentMention.open && (
+              <SlashAutocomplete
+                triggerChar="#"
+                entries={attachmentMention.matches.map((m) => {
+                  // Disambiguate the entry id across kinds so a workspace
+                  // file and a bookmark that happen to share a uuid (they
+                  // don't today, but the menu shouldn't have to assume)
+                  // stay distinct keys / pick targets.
+                  const id = `${m.kind}:${m.id}`
+                  if (m.kind === "bookmark") {
+                    return {
+                      id,
+                      label: m.title,
+                      hint: m.url,
+                      groupLabel: "Bookmarks",
+                    }
+                  }
+                  return {
+                    id,
+                    label: m.name,
+                    hint: m.type,
+                    groupLabel:
+                      m.kind === "workspaceFile"
+                        ? "Workspace files"
+                        : "Conversation files",
+                  }
+                })}
+                activeIndex={attachmentMention.activeIndex}
+                onHoverIndex={attachmentMention.setActiveIndex}
+                onPick={(entry) => {
+                  const picked = attachmentMention.matches.find(
+                    (m) => `${m.kind}:${m.id}` === entry.id,
+                  )
+                  if (picked) attachmentMention.pick(picked)
                 }}
               />
             )}
