@@ -198,7 +198,7 @@ Swept PRs #43, #45, #49–53 into the ROADMAP Shipped table and
 fixed the small-followups status line. Recurring chore — re-run
 whenever the table drifts. Original notes kept below.
 
-**Why.** `docs/ROADMAP.md` got stale within hours of landing — a
+**Why.** `docs/MASTER_PLAN.md` got stale within hours of landing — a
 few features shipped immediately after. A periodic sweep keeps it
 useful as a single source of truth.
 
@@ -302,4 +302,5 @@ browser walkthrough in `docs/VERIFY-agent-tasks.md`.
    description so this file can be updated alongside.
 6. After merge, delete the section from this file (or strike-through
    with `~~heading~~` + a one-line "✅ shipped (PR #N)" — same
-   pattern as `BACKLOG.md`).
+   pattern as the **Later — distinctive ideas** section in
+   `MASTER_PLAN.md`).

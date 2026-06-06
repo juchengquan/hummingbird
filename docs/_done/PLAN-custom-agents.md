@@ -14,7 +14,7 @@ doc itself in [#107](https://github.com/juchengquan/hummingbird/pull/107).
 
 Plan promoted from [`SURVEY-market-2026.md` §4.4](../SURVEY-market-2026.md).
 Originally lived at `docs/PLAN-custom-agents.md`; moved here on
-completion per the archive convention in [`ROADMAP.md`](../ROADMAP.md).
+completion per the archive convention in [`MASTER_PLAN.md`](../MASTER_PLAN.md).
 
 ## What "personas" are, in plain language
 

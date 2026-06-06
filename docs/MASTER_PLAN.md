@@ -1,84 +1,222 @@
-# Roadmap
+# Master plan
 
-The single source of truth for what's shipped, what's planned, and
-what's still loose on the backlog. Per-feature detail lives in the
-linked `PLAN-*.md` files; raw ideas not yet shaped into a plan live
-in `BACKLOG.md`.
+Single source of truth for what's shipped, what's next, and what's a
+parking-lot idea — plus the conventions for keeping this file honest.
 
-Update this file whenever a feature ships, a plan lands, or a new
-plan is drafted. When a backlog item gets a plan, link it from the
-**Planned** section below and trim the backlog entry to a one-liner
-pointing at the plan.
+> This file replaces the earlier split between `ROADMAP.md` (shipped +
+> planned tables) and `BACKLOG.md` (loose ideas). Per-feature detail
+> still lives in `PLAN-*.md` — active plans in `docs/`, archived plans
+> in [`docs/_done/`](_done/).
 
-Last updated: 2026-06-06 (cross-product-inspirations drawdown — six
-of the fourteen menu items shipped this session. Latest:
-**per-attached-file inline ↔ RAG retrieval toggle** (#169 — item #6
-second half; `Conversation.fileRetrievalModes`, server suppresses the
-inlined body for rag-mode files + auto-enables `searchFiles`, search
-icon toggle in the ContextPicker). Before it: **`#`-mention for files
-+ bookmarks** (#168 — item #6 first half; third autocomplete sibling
-beside `/` and `@`); **Ollama + OpenRouter providers + Library tab**
-(#167 — items #2, #3, #5 in one PR: `ollama/*` via
-`allowInsecureBaseUrl`, `openrouter/auto`, cross-conversation index
-of generated images + artifacts); **Vercel AI Gateway per-workspace
-tagging** (#166 — item #4 Part 2; `providerOptions.gateway.tags`,
-Part 1 caching deferred to a verification ticket); **conversation-level
-system prompt** (#165 — item #1; `Conversation.systemPrompt`,
-persona-additive 3-tier composer, "Thread instructions" dialog).
-Earlier: per-IP rate buckets + idle watchdog on
-`/v1/chat`; closes the second-to-last open item in PLAN-agent-api;
-only the real DNS-rebinding test remains. Earlier this session: MCP
-server CRUD endpoint (#160 — `POST /v1/mcp/server` on both services
-+ `apiClient.mcp.upsertCloudServer` honours the backend selector via
-DispatchOption); frontend perf pass (#159 — remaining ~10 selector
-hooks under `useShallow` + selector-side `.find` / `Map`-build joins
-across all slices, 100 ms localStorage write coalescing with
-`pagehide` flush, `useDeferredValue` on the chat message list); code
-quality pass (#158 — selector + test coverage extraction + shared
-`parseSuggestionsJson`); chat path + agent-py routers + store
-cascades refactor (#157 — `lib/client/chat/sse-frame-translator.ts`
-extracted; agent-py `main.py` 950 → 120 LOC split into eight
-per-domain routers; `stripSelectionId` helper for the four slices
-that repeated the selection-strip pattern); backend selector for the
-four non-chat endpoints (#156 — `lib/client/api/backend-resolver.ts`
-+ `DispatchOption` plumbing on `summarize.*`, `mcp.proxy`,
-`url.fetch`, `images.refreshUrl`); provider-categorised errors on
-`/v1/chat` (#155 — `rate_limit` / `auth` / `context_window` /
-`upstream` codes on all three backends + `MessageError.code` ladder
-on `ErrorBubble`). And before that: `useChat()` adoption track
-(PRs #148–#154) which retired the legacy custom SSE format across
-all three backends; PLAN-agent-api Phases 2b–4-4b (PRs #142–#147).
-PLAN-agent-ts.md fully shipped; PLAN-agent-ts-followups.md all five
-items closed; PLAN-useChat-adoption.md B.1–B.3 done, B.4 deferred
-indefinitely. Active plans now: agent-api (one open: real
-DNS-rebinding test), small-followups (3 open: tokens / per-tool
-approval flags / task-route integration tests),
-cross-conversation-memory, local-rag, replace-supabase,
-backend-extraction (Phase 2 satisfied by agent-api), typed-prompt-vars.)
-
-> **Plan archive.** Fully-shipped `PLAN-*.md` files live in
-> [`_done/`](_done/). Active plans (planning / phased / decision
-> docs) stay in `docs/`. Links below point at wherever the plan
-> currently lives.
+Last updated: **2026-06-06** — see [Recent activity](#recent-activity)
+just below for the rolling pulse, and the
+[Shipped log](#shipped-log-newest-first) further down for the full
+chronological record.
 
 ---
+
+## Status snapshot
+
+- **10 active plans** in `docs/` (planning / phased / deferred). See
+  [Next — planned work](#next--planned-work-have-a-plan) for the row
+  table.
+- **30 fully-shipped plans archived** under [`docs/_done/`](_done/).
+- **Nothing currently in flight** (no branch with active work that
+  doesn't already have a PR).
+- **Latest ships** (this session, in chronological order): #165 → #166
+  → #167 → #168 → #169, plus the docs landings #170 (cross-product
+  plan refresh) and #171 (third-backend naming). Detail in
+  [Recent activity](#recent-activity).
 
 ## Status legend
 
 - ✅ **Shipped** — merged to `dev`, live in the app.
 - 🚧 **In progress** — branch exists, work underway.
 - 📐 **Planned** — `PLAN-*.md` exists, no code yet.
-- 💡 **Backlog** — see `BACKLOG.md`. No plan yet.
+- 💡 **Backlog** — open idea, no plan yet. See
+  [Later — distinctive ideas](#later--distinctive-ideas-no-plan-yet).
 - 🪜 **Phased** — partial ship; sub-phases tracked inside the plan.
 - ⏸ **Deferred** — `PLAN-*.md` exists; explicit decision not to build
   until evidence demands it (e.g. real user requests).
 
 ---
 
-## Shipped (recent first)
+## Now — actively in progress
 
-Newest at the top. Each row links to the plan if there is one, or
-to a representative PR otherwise.
+| Plan | Branch | Notes |
+|---|---|---|
+| _(nothing actively in flight)_ | | |
+
+---
+
+## Next — planned work (have a `PLAN-*.md`)
+
+The 🪜 rows are partial ships — their finished phases are documented
+inside the plan; only the listed phase(s) remain. The entire
+long-running agent-tasks stack (event-model, runner, route, resume,
+hybrid UI, HITL approvals, **and the queue-backed continuation incl.
+scheduling**) is shipped — its plans live in
+[`_done/`](_done/).
+
+| Plan | Status | Sketch |
+|---|---|---|
+| 🪜 [Cross-product inspirations menu](PLAN-cross-product-inspirations.md) | 6 of 14 shipped | A menu, not a single feature — 14 items synthesised from a five-cohort survey of OSS + commercial AI/chat/agent products. **Shipped:** #1 conversation system prompt (#165), #2 Ollama + #3 OpenRouter + #5 Library (#167), #4 Part 2 gateway tagging (#166), #6 `#`-mention + RAG toggle (#168, #169). **Open:** #4 Part 1 (caching verification), #7 Flowchat canvas, #8 Beam, #9 Elicit tables, #10 Langfuse, #11 Aider editor pair, #12 hybrid search, #13 Letta memory, #14 LangGraph checkpointer. Per-item status + a Shipped tracker live in the plan |
+| 🪜 [Agent API as a separate service](PLAN-agent-api.md) | Phases 0 through 4-4b shipped; one follow-up open | All six phases of the original plan plus seven of the open follow-ups have shipped: `services/agent-py/` runs end-to-end (chat + tools + MCP + url-fetch + summarize + refresh-url + extract + whoami + health); per-IP rate buckets + idle watchdog (PR #161); `POST /v1/mcp/server` CRUD (#160); provider-categorised errors (#155); frontend selector for non-chat endpoints (#156); `workspace_id` + per-skill config on `/v1/chat` (#145); `useChat()` adoption (#148–#154). **One open item:** real DNS-rebinding test against actual DNS for the MCP-proxy SSRF guard (currently mocked). Phases 5 (default-on + decommission) and 6 (tidy + archive) explicitly deferred — per project policy both Python and TS stacks stay live and the user picks backend per-account via the Phase 4-2 selector |
+| 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 4 done, 1 moot, 3 open | Done: generatedImages sync (#45), recap-of-recaps (#63), roadmap sweep, signed-URL re-sign. Moot: local-mode MCP creds for tasks (rejected up front by #85). Open: accurate tokens, per-tool server-side approval flags, task-route integration tests |
+| 📐 [Local Supabase switch](PLAN-local-supabase-switch.md) | planning | Move local dev off the hosted Supabase project onto a `bun run supabase:start` stack on this machine. 5 steps, ~30 min wall-clock. 13 open questions to walk through before execution (cloud data handling, Path A vs Path B, auth-free local mode, etc.) |
+| 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
+| 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
+| 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~2 weeks total. Separate from `PLAN-local-supabase-switch.md`, which keeps Supabase but moves it onto your machine |
+| 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 satisfied by agent-api | Phase 1 (contract-first frontend ⇄ API surface) shipped; Phase 2 (stand up a Python backend) satisfied by PLAN-agent-api `services/agent-py/`. The plan stays in `docs/` for the contract narrative but has no open work |
+| 🪜 [Gateway caching + workspace tagging](PLAN-gateway-caching-and-workspace-tagging.md) | Part 2 shipped, Part 1 deferred | Part 2 (per-workspace tagging — `providerOptions.gateway.tags = ['workspace:<id>', 'model:<id>']`) shipped in #166. Part 1 (prompt caching) deferred — no `caching: 'auto'` exists in `@ai-sdk/gateway` at any version; opening a verification follow-up rather than a build follow-up |
+| ⏸ [Typed prompt variables](PLAN-typed-prompt-variables.md) | deferred | Workspace-scoping migration shipped (`9b3c84f`); the typing UI itself remains deliberately deferred — "do not build unless users explicitly ask" |
+
+---
+
+## Later — distinctive ideas (no plan yet)
+
+Distinctive feature ideas — not yet planned, not yet started, not just
+catch-up with other AI chat apps. Each entry has rough effort, what
+makes it distinctive, and pointers to existing surfaces it would build
+on. Promote to **Next** when an item earns its own `PLAN-*.md`.
+
+### Diff mode for documents
+
+**Why distinctive.** Editor docs are workspace-scoped. When AI suggests
+changes via the Editor, today they're applied in place. A diff mode
+would show before/after with accept/reject per chunk — like
+GitHub's PR review for chat-driven writing.
+
+**Sketch.** When an AI command modifies the editor doc, snapshot the
+pre-change content; render the post-change content with a side-by-side
+or inline diff (`diff-match-patch`) and Accept / Reject buttons per
+hunk. Accepted hunks merge into the doc; rejected ones revert.
+
+**Builds on.** Editor (Plate.js), `setWorkspaceDocument`, the
+existing AI command routes (`/api/ai/command`).
+
+**Effort.** Medium (~300–400 lines). `diff-match-patch` is small.
+
+> **Note.** A different "diff mode" — the AI-command-review toggle in
+> the editor — already shipped via
+> [PLAN-editor-diff-mode.md](_done/PLAN-editor-diff-mode.md) (#49). The
+> idea above is the *broader* per-document-change variant; the shipped
+> one is the per-AI-command-only variant.
+
+### Summarise-older-messages button (context-meter sequel)
+
+**Why distinctive.** The context-window meter
+(`components/panels/context-meter.tsx`) ships the chip + color zones.
+What's still open: a one-click "summarise the first N messages" action
+when the meter enters the danger zone, compressing the history into a
+single recap via a quick `generateText` call.
+
+**Sketch.** Surface a button in the danger zone of the meter. On
+click: snapshot the first N messages → ask the model for a recap →
+replace the snapshotted slice with one synthetic recap message
+(reversible). Heavy UX question: which messages get summarised? Does
+the recap edit history in place or insert as a synthetic message above
+the cutline?
+
+**Builds on.** `buildCompressedMessages` (already exists for the
+recap-of-recaps logic), context-meter chip, `generateText` route.
+
+**Effort.** Medium (~200–300 lines + the UX call).
+
+### Accurate per-family token counting (heuristic replacement)
+
+**Why distinctive.** Current `lib/shared/tokens.ts` uses a chars/4
+heuristic, which undercounts code- and JSON-heavy chats by 1.5–2×. A
+real tokenizer (`js-tiktoken` for OpenAI, separate encoders for
+Claude/Gemini) would make the context meter usable as more than a "you
+might be close" cue.
+
+**Sketch.** Add a `tokenizer` field to each entry in
+`lib/shared/models.ts` (`'cl100k_base'`, `'claude'`, `'gemini'`, etc.);
+swap the chars/4 fall-back for a tokenizer dispatch keyed off the
+active model. Already tracked as Item 2 of
+[PLAN-small-followups.md](PLAN-small-followups.md); kept here too so
+this section's "what's worth doing" view is complete.
+
+**Builds on.** `lib/shared/tokens.ts`, `lib/shared/models.ts`, the
+context-meter chip.
+
+**Effort.** Small-to-medium (~150–250 lines including the per-family
+dispatch). `js-tiktoken` is ~600 KB gzipped — non-trivial bundle cost.
+
+---
+
+## Catch-up watch
+
+Catch-up features that are table stakes for AI chat apps in 2026 —
+worth shipping eventually but not "distinctive." Tracked informally —
+pick them up if a user explicitly asks or a particular need arises.
+
+- Voice input (Whisper)
+- Browser extension
+- Quick actions on selected text
+- Side-by-side model comparison
+- Mobile PWA install + offline drafting
+- Weekly digest emails
+- Cross-conversation lexical search beyond the existing `⌘K` palette
+  (covered partially today; full version is gated on the
+  cross-conversation-memory plan above)
+- Image generation — already shipped (#24, #26, #27, #29) — kept here
+  as a reminder that "table-stakes" lines move; once shipped the row
+  graduates to the Shipped log
+
+---
+
+## Recent activity
+
+Rolling pulse — latest first. The full chronological record lives in
+the [Shipped log](#shipped-log-newest-first) further down.
+
+**This session (2026-06-06):** Cross-product-inspirations drawdown —
+six of the fourteen menu items shipped this session:
+
+- **Per-attached-file inline ↔ RAG retrieval toggle** (#169 — item #6
+  second half; `Conversation.fileRetrievalModes`, server suppresses
+  the inlined body for rag-mode files + auto-enables `searchFiles`,
+  search icon toggle in the ContextPicker).
+- **`#`-mention for files + bookmarks** (#168 — item #6 first half;
+  third autocomplete sibling beside `/` and `@`).
+- **Ollama + OpenRouter providers + Library tab** (#167 — items #2,
+  #3, #5 in one PR: `ollama/*` via `allowInsecureBaseUrl`,
+  `openrouter/auto`, cross-conversation index of generated images +
+  artifacts).
+- **Vercel AI Gateway per-workspace tagging** (#166 — item #4 Part 2;
+  `providerOptions.gateway.tags`, Part 1 caching deferred to a
+  verification ticket).
+- **Conversation-level system prompt** (#165 — item #1;
+  `Conversation.systemPrompt`, persona-additive 3-tier composer,
+  "Thread instructions" dialog).
+
+Plus the docs landings #170 (cross-product plan refresh) and #171
+(third-backend naming).
+
+**Previous session:** Per-IP rate buckets + idle watchdog on `/v1/chat`
+closed the second-to-last open item in PLAN-agent-api; only the real
+DNS-rebinding test remains. Before that: MCP server CRUD endpoint
+(#160), frontend perf pass (#159), code quality pass (#158), chat path
++ agent-py routers + store cascades refactor (#157), backend selector
+for the four non-chat endpoints (#156), provider-categorised errors on
+`/v1/chat` (#155). And before that: `useChat()` adoption track
+(PRs #148–#154) which retired the legacy custom SSE format across all
+three backends; PLAN-agent-api Phases 2b–4-4b (PRs #142–#147).
+
+**Plan-state changes (this session):** Four plans archived into
+[`_done/`](_done/) after verification of full implementation:
+PLAN-agent-ts-followups, PLAN-conversation-system-prompt,
+PLAN-useChat-adoption, PLAN-agent-ts.
+
+---
+
+## Shipped log (newest first)
+
+Each row links to the plan if there is one, or to a representative PR
+otherwise. Plans archived into [`_done/`](_done/) link there;
+still-open phased plans link in-place.
 
 | When | Feature | Where |
 |---|---|---|
@@ -146,7 +284,7 @@ to a representative PR otherwise.
 | 2026-05-22 | Web search — Exa as a third provider | [#18](https://github.com/juchengquan/hummingbird/pull/18) |
 | 2026-05-22 | Model picker refresh + Minimax-CN bypass + Web fetch | `cd2a666` |
 
-Earlier features (kept for reference, no specific date):
+**Earlier features** (kept for reference, no specific date):
 
 - ✅ Conversation graph view (branching/forking)
 - ✅ URL bookmarks as live sources — [PLAN](_done/PLAN-url-bookmarks.md)
@@ -172,48 +310,11 @@ Earlier features (kept for reference, no specific date):
 
 ---
 
-## In progress
-
-| Plan | Branch | Notes |
-|---|---|---|
-| _(nothing actively in flight)_ | | |
-
----
-
-## Planned (have a PLAN, no code yet)
-
-The `🪜` rows are partial ships — their finished phases are documented
-inside the plan; only the listed phase(s) remain. The entire long-running
-agent-tasks stack (event-model, runner, route, resume, hybrid UI,
-HITL approvals, **and the queue-backed continuation incl. scheduling**)
-now ships — its plans live in [`_done/`](_done/).
-
-| Plan | Status | Sketch |
-|---|---|---|
-| 🪜 [Cross-product inspirations menu](PLAN-cross-product-inspirations.md) | 6 of 14 shipped | A menu, not a single feature — 14 items synthesised from a five-cohort survey of OSS + commercial AI/chat/agent products. **Shipped:** #1 conversation system prompt (#165), #2 Ollama + #3 OpenRouter + #5 Library (#167), #4 Part 2 gateway tagging (#166), #6 `#`-mention + RAG toggle (#168, #169). **Open:** #4 Part 1 (caching verification), #7 Flowchat canvas, #8 Beam, #9 Elicit tables, #10 Langfuse, #11 Aider editor pair, #12 hybrid search, #13 Letta memory, #14 LangGraph checkpointer. Per-item status + a Shipped tracker live in the plan |
-| 🪜 [Agent API as a separate service](PLAN-agent-api.md) | Phases 0 through 4-4b shipped; one follow-up open | All six phases of the original plan plus seven of the open follow-ups have shipped: `services/agent-py/` runs end-to-end (chat + tools + MCP + url-fetch + summarize + refresh-url + extract + whoami + health); per-IP rate buckets + idle watchdog (PR #161); `POST /v1/mcp/server` CRUD (#160); provider-categorised errors (#155); frontend selector for non-chat endpoints (#156); `workspace_id` + per-skill config on `/v1/chat` (#145); `useChat()` adoption (#148–#154). **One open item:** real DNS-rebinding test against actual DNS for the MCP-proxy SSRF guard (currently mocked). Phases 5 (default-on + decommission) and 6 (tidy + archive) explicitly deferred — per project policy both Python and TS stacks stay live and the user picks backend per-account via the Phase 4-2 selector |
-| 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 4 done, 1 moot, 3 open | Done: generatedImages sync (#45), recap-of-recaps (#63), roadmap sweep, signed-URL re-sign. Moot: local-mode MCP creds for tasks (rejected up front by #85). Open: accurate tokens, per-tool server-side approval flags, task-route integration tests |
-| 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
-| 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
-| 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~7.5 days total |
-| 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 satisfied by agent-api | Phase 1 (contract-first frontend ⇄ API surface) shipped; Phase 2 (stand up a Python backend) satisfied by PLAN-agent-api `services/agent-py/`. The plan stays in `docs/` for the contract narrative but has no open work |
-| ⏸ [Typed prompt variables](PLAN-typed-prompt-variables.md) | deferred | Workspace-scoping migration shipped (`9b3c84f`); the typing UI itself remains deliberately deferred |
-
----
-
-## Backlog (no plan yet)
-
-The full list lives in [BACKLOG.md](BACKLOG.md). Everything currently
-there now has a plan — see the **Planned** table above. Add new
-ideas to `BACKLOG.md` first; promote them here when they get a plan.
-
----
-
 ## Conventions
 
-When a feature ships:
+### When a feature ships
 
-1. Move the row from **Planned** → **Shipped** here, with date + PR.
+1. Move the row from **Next** → **Shipped log** here, with date + PR.
 2. Update the `PLAN-*.md` file's `Status:` line to `✅ shipped` plus the
    PR link.
 3. **If the plan is fully shipped** (all phases done, nothing pending),
@@ -221,18 +322,23 @@ When a feature ships:
    it (here and from other plans) at `_done/`. Phased plans with
    pending work stay in `docs/` until the last phase lands.
 4. If the work surfaced new follow-ups, append them to the
-   **Small follow-ups batch** plan (or to `BACKLOG.md` if they're
-   full-feature shaped).
+   **Small follow-ups batch** plan (or to **Later — distinctive ideas**
+   above if they're full-feature shaped).
 
-When a new plan is drafted:
+### When a new plan is drafted
 
 1. Add a `PLAN-<name>.md` with `Status: **planning**`.
-2. Link it from **Planned** here.
-3. If it replaces a backlog entry, prune the backlog entry to a single
+2. Link it from **Next** here.
+3. If it replaces a **Later** entry above, prune the entry to a single
    "→ see PLAN-<name>.md" line.
 
-When work starts on a plan:
+### When work starts on a plan
 
 1. Update the `Status:` in the plan file.
-2. Move the row from **Planned** → **In progress** here with the
-   branch name.
+2. Move the row from **Next** → **Now** here with the branch name.
+
+### When a "Later" idea earns a plan
+
+Promote it to **Next** with a one-line link to the new `PLAN-*.md`,
+and either prune the **Later** section entry to a redirect pointer or
+delete it outright if the plan supersedes the prose entirely.

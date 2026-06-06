@@ -12,7 +12,7 @@ each shipped as its own focused follow-up plan:
 and [`_done/PLAN-chat-send-extraction.md`](PLAN-chat-send-extraction.md)
 (#112 / #113). Originally lived at `docs/PLAN-code-cleanup.md`; moved
 here on completion per the archive convention in
-[`ROADMAP.md`](../ROADMAP.md).
+[`MASTER_PLAN.md`](../MASTER_PLAN.md).
 
 A focused housecleaning pass across the codebase after a long stretch
 of feature work. Goal: improve maintainability without changing user-

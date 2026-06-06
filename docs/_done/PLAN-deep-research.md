@@ -19,7 +19,7 @@ message, doc, and artifact all carry canonical citations.
 
 Plan promoted from [`SURVEY-market-2026.md` §4.1](../SURVEY-market-2026.md).
 Originally lived at `docs/PLAN-deep-research.md`; moved here on
-completion per the archive convention in [`ROADMAP.md`](../ROADMAP.md).
+completion per the archive convention in [`MASTER_PLAN.md`](../MASTER_PLAN.md).
 
 ## What "Deep Research" is
 

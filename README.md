@@ -120,7 +120,7 @@ confirm nothing server-only leaked into the client chunks.
 | Set up local Supabase end-to-end | [`docs/SUPABASE_LOCAL.md`](docs/SUPABASE_LOCAL.md) |
 | Deploy against hosted Supabase | [`docs/SUPABASE_SETUP.md`](docs/SUPABASE_SETUP.md) |
 | Understand the API contract | [`docs/API.md`](docs/API.md) |
-| See the roadmap + open ideas | [`docs/ROADMAP.md`](docs/ROADMAP.md), [`docs/BACKLOG.md`](docs/BACKLOG.md) |
+| See the roadmap + open ideas | [`docs/MASTER_PLAN.md`](docs/MASTER_PLAN.md) |
 | Read a plan doc (one per major feature) | `docs/PLAN-*.md` |
 | Pick up where the last agent left off | [`docs/HANDOFF.md`](docs/HANDOFF.md) |
 

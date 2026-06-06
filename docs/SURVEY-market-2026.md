@@ -79,9 +79,9 @@ Numbered roughly by effort, ascending.
    right-click in chat or editor) — every commercial app has it.
    _Effort: small._
 3. **Side-by-side multi-model comparison ("Beam")** — Big-AGI, Msty, LobeChat
-   Agent Groups. Already listed in `BACKLOG.md`'s "What's NOT here."
+   Agent Groups. Already listed in `MASTER_PLAN.md`'s "Catch-up watch."
    _Effort: medium._
-4. **Mobile PWA install + offline drafting** — already in `BACKLOG.md`.
+4. **Mobile PWA install + offline drafting** — already in `MASTER_PLAN.md`.
    _Effort: small._
 5. **Browser sidebar extension** — closes the Comet / Atlas gap at a small
    fraction of the cost. _Effort: medium._

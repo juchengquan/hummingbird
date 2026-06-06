@@ -174,7 +174,7 @@ Single PR:
    `app/api/chat/route.ts`.
 2. **Commit 2 — docs.** Plan update (this file), `PLAN-cross-product-inspirations.md`
    note that #4-Part-2 has shipped + #4-Part-1 is the verification follow-up, and
-   `ROADMAP.md` reflects the same.
+   `MASTER_PLAN.md` reflects the same.
 
 ## Open question
 

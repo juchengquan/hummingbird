@@ -550,7 +550,7 @@ and update docs.
    needed (no GoTrue, so no `auth.uid()`). Drop it from the migration
    sequence.
 
-6. **Update**: `CLAUDE.md`, `ROADMAP.md`, `BACKLOG.md` to reflect the
+6. **Update**: `CLAUDE.md`, `MASTER_PLAN.md` to reflect the
    new stack.
 
 **Verification:**
