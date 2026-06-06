@@ -59,6 +59,43 @@
         { "via": "minimax-cn", "upstreamId": "minimax-m2.7" },
         { "via": "gateway" }
       ]
+    },
+    {
+      "id": "ollama/llama3.1:8b",
+      "label": "Llama 3.1 8B (Ollama)",
+      "provider": "Ollama",
+      "contextWindow": 131072,
+      "routes": [{ "via": "ollama", "upstreamId": "llama3.1:8b" }]
+    },
+    {
+      "id": "ollama/qwen3:8b",
+      "label": "Qwen 3 8B (Ollama)",
+      "provider": "Ollama",
+      "contextWindow": 131072,
+      "routes": [{ "via": "ollama", "upstreamId": "qwen3:8b" }]
+    },
+    {
+      "id": "openrouter/auto",
+      "label": "OpenRouter Auto",
+      "provider": "OpenRouter",
+      "contextWindow": 200000,
+      "routes": [{ "via": "openrouter", "upstreamId": "openrouter/auto" }]
+    },
+    {
+      "id": "openrouter/anthropic/claude-sonnet-4.5",
+      "label": "Claude Sonnet 4.5 (OpenRouter)",
+      "provider": "OpenRouter",
+      "contextWindow": 200000,
+      "routes": [
+        { "via": "openrouter", "upstreamId": "anthropic/claude-sonnet-4.5" }
+      ]
+    },
+    {
+      "id": "openrouter/openai/gpt-5",
+      "label": "GPT-5 (OpenRouter)",
+      "provider": "OpenRouter",
+      "contextWindow": 200000,
+      "routes": [{ "via": "openrouter", "upstreamId": "openai/gpt-5" }]
     }
   ]
 }

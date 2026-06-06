@@ -4,6 +4,7 @@ import dynamic from "next/dynamic"
 import { Toaster } from "sonner"
 import { AppSidebar } from "@/components/sidebars/application"
 import { ChatPanel } from "@/components/panels/chat"
+import { LibraryPanel } from "@/components/panels/library"
 import { ResourcePanel } from "@/components/panels/sources"
 import { WorkspacesPanel } from "@/components/panels/workspaces"
 import { CommandPalette } from "@/components/command-palette"
@@ -72,6 +73,7 @@ function MainArea() {
       {activeView === "resources" && <ResourcePanel />}
       {activeView === "editor" && <EditorPanel />}
       {activeView === "canvas" && <CanvasPanel />}
+      {activeView === "library" && <LibraryPanel />}
     </SidebarInset>
   )
 }

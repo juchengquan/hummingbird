@@ -18,6 +18,7 @@ import {
   Files,
   MessagesSquare,
   MessageSquare,
+  Package,
   Plus,
   Layers,
   Sparkles,
@@ -202,6 +203,10 @@ export function CommandPalette() {
           <CommandItem onSelect={() => goToView("resources")}>
             <Files />
             <span>Go to Files</span>
+          </CommandItem>
+          <CommandItem onSelect={() => goToView("library")}>
+            <Package />
+            <span>Go to Library</span>
           </CommandItem>
         </CommandGroup>
 
