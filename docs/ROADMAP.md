@@ -10,12 +10,22 @@ plan is drafted. When a backlog item gets a plan, link it from the
 **Planned** section below and trim the backlog entry to a one-liner
 pointing at the plan.
 
-Last updated: 2026-06-05 (per-IP rate buckets + idle watchdog on
-`/v1/chat` shipped — both agent services now reject 30+ turns/min/IP
-with 429 + `Retry-After`, and a 90s idle watchdog wraps the SSE
-generator on each side so a hung upstream can't pin the connection
-open. Mirrors `chatPerIpLimit` + `IDLE_TIMEOUT_MS` in the Next.js
-inline route. Closes the second-to-last open item in PLAN-agent-api;
+Last updated: 2026-06-06 (Vercel AI Gateway per-workspace tagging
+shipped — `/api/chat` now attaches `providerOptions.gateway.tags`
+with `workspace:<id>` + `model:<id>` to every Gateway-routed
+`streamText` call, so the Vercel dashboard buckets cost / latency /
+errors per workspace without a Langfuse dependency. Hard no-op on
+non-gateway routes (`minimax-cn`, self-host). Item #4 from
+PLAN-cross-product-inspirations — Part 2 only; Part 1 (caching) is
+split off to a verification follow-up because no version of the
+gateway SDK exposes a `caching: 'auto'` flag and Vercel's automatic
+prompt caching may already be on by default at the platform layer.
+Conversation-level system prompt shipped earlier this session
+(`Conversation.systemPrompt`, the second tier between workspace
+voice and per-turn persona; persona-additive composer, 3-tier
+cascade, "Thread instructions" chat-header dialog). And earlier:
+per-IP rate buckets + idle watchdog on
+`/v1/chat`; closes the second-to-last open item in PLAN-agent-api;
 only the real DNS-rebinding test remains. Earlier this session: MCP
 server CRUD endpoint (#160 — `POST /v1/mcp/server` on both services
 + `apiClient.mcp.upsertCloudServer` honours the backend selector via
@@ -71,6 +81,8 @@ to a representative PR otherwise.
 
 | When | Feature | Where |
 |---|---|---|
+| 2026-06-06 | **Vercel AI Gateway per-workspace tagging** — `/api/chat` now attaches `providerOptions.gateway.tags` with `workspace:<workspaceId>` + `model:<modelId>` on every Gateway-routed `streamText` call. The dashboard buckets cost / latency / errors per workspace and per model for free, no Langfuse dep. Skipped when `body.workspaceId` is absent so signed-out turns don't pollute the dashboard with a `workspace:undefined` bucket. Hard no-op on non-gateway routes (`minimax-cn` via `@ai-sdk/anthropic`, self-host via `@ai-sdk/openai-compatible`) — those provider clients ignore the entire `gateway` namespace. Item #4 from PLAN-cross-product-inspirations; Part 1 (`caching: 'auto'`) is split into a verification follow-up since no version of `@ai-sdk/gateway` exposes a caching opt-in and Vercel's automatic prompt caching may already be on by default at the platform layer | [PLAN](PLAN-gateway-caching-and-workspace-tagging.md) |
+| 2026-06-06 | **Conversation-level system prompt** — `Conversation.systemPrompt` lands as the second tier between workspace voice and per-turn persona. `composeSystemPrompts(workspace, conversation, persona)` is persona-additive: switching personas replaces the workspace voice but **keeps** the conversation context. "Thread instructions" entry in the chat-header popover opens a 20K-char editor with explicit Save / Clear (not per-keystroke debounce). New `0021_conversation_system_prompt` migration, `STORE_VERSION 21→22` backfill, sync diff carries `system_prompt`. Item #1 from PLAN-cross-product-inspirations | [PLAN](PLAN-conversation-system-prompt.md) |
 | 2026-06-05 | **Per-IP rate buckets + idle watchdog on `/v1/chat`** — both agent services gain a 30 turns / minute / IP gate (`SlidingWindow` in Python, `createSlidingWindow` re-exported in agent-ts) returning 429 + `Retry-After` before the auth / model dispatch path; a 90 s idle watchdog wraps the SSE generator's `next()` on both stacks and emits a synthetic `error` (`code: "upstream"`) + `[DONE]` when an upstream stalls past the window. Mirrors `chatPerIpLimit` + `IDLE_TIMEOUT_MS` in the Next.js inline route. Tests +13 agent-py / +3 agent-ts. Closes the second-to-last item in PLAN-agent-api | [PLAN](PLAN-agent-api.md) · [#161](https://github.com/juchengquan/hummingbird/pull/161) |
 | 2026-06-05 | **`POST /v1/mcp/server` CRUD endpoint** — closes the missing write half of the cloud-mode MCP management surface. Both agent services gain `upsert_server_with_credentials` / `upsertServerWithCredentials` wrapping the `mcp_upsert_server_with_credentials` SECURITY DEFINER RPC under per-user RLS impersonation. `apiClient.mcp.upsertCloudServer` honours the backend selector via `DispatchOption` so cloud-mode server CRUD works end-to-end through any of the three backends. Status mapping mirrored: `encryption_key_unset` → 500, RPC failure → 502, missing pool → 503 | [PLAN](PLAN-agent-api.md) · [#160](https://github.com/juchengquan/hummingbird/pull/160) |
 | 2026-06-05 | **Frontend perf pass — selectors + persist debounce + deferred messages**: walked the remaining ~10 selector hooks across `conversations` / `documents` / `notes` / `project-tasks` / `prompts` / `ui` / `workspaces` slices and applied `useShallow` + selector-side `.find` / `Map`-build joins (so adding an artifact to another conversation no longer re-renders the sidebar's workspace-documents list); new `lib/client/hooks/store/debounced-storage.ts` wraps localStorage with a 100 ms coalesce window + `pagehide` flush (collapses the `JSON.stringify` churn from per-token SSE updates into one write per quiet period); `useDeferredValue` on the chat message list keeps the composer input responsive while assistant text streams. +7 tests for the storage wrapper. Verified Plate.js is already gated behind `dynamic()` — the 10 MB chunks on disk never load on initial paint | [#159](https://github.com/juchengquan/hummingbird/pull/159) |

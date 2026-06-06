@@ -1,59 +1,70 @@
-# Plan: Vercel AI Gateway `caching: 'auto'` + per-request `workspace_id` tagging
+# Plan: Vercel AI Gateway per-workspace tagging (+ caching note)
 
-Status: **planning** — small, scoped slice. Zero migrations, zero new env vars, zero new
+Status: **planning → in flight.** Zero migrations, zero new env vars, zero new
 dependencies. Item #4 from `docs/PLAN-cross-product-inspirations.md`.
+
+## SDK reality check (read this first)
+
+The original framing of this item — "`caching: 'auto'` + `metadata.workspaceId` in one
+`streamText` call" — was speculative; the installed SDK doesn't expose either field under
+those exact names. Concretely, after walking the installed and latest gateway SDKs:
+
+- `@ai-sdk/gateway@1.0.15` (installed, transitive via `ai@5.0.28`) declares
+  `gatewayProviderOptions = z.object({ order: z.array(z.string()).optional() })`. Only
+  `order` is typed.
+- `@ai-sdk/gateway@3.0.125` (latest) adds typed `tags: string[]`, `user: string`,
+  `only`, `sort`, `models`, `byok`, `serviceTier`, `zeroDataRetention`,
+  `disallowPromptTraining`, `hipaaCompliant`, `quotaEntityId`, `providerTimeouts`. Still
+  no `caching` field.
+- **No version** of the gateway SDK exposes a `caching: 'auto'` flag. The cache-pricing
+  fields (`cachedInputTokens`, `cacheCreationInputTokens`) are on the model metadata —
+  showing the gateway already meters cache reads when they happen — but the *control*
+  surface for telling the gateway to insert per-provider cache hints isn't in the SDK
+  schema today.
+
+Two practical consequences:
+
+1. The shipping artefact in this PR is **Part 2 (per-workspace tagging) only**. Part 1
+   (caching) is split off into a follow-up — see "Caching — what we know" below.
+2. The tags are written by name (`tags: ['workspace:<id>']`). They run through the AI SDK
+   even though `1.0.15`'s Zod schema doesn't declare `tags` — `streamText` types
+   `providerOptions` as `Record<string, Record<string, JSONValue>>` so unknown keys flow
+   verbatim to the gateway body; the server reads them. We get the per-workspace
+   dashboard view without bumping the SDK.
 
 ## Why
 
-Two thin slices of value off one Gateway feature.
+**Per-workspace dashboard visibility.** The Vercel AI Gateway dashboard already groups by
+model, route, and key. Adding `tags: ['workspace:<workspaceId>']` makes it group by
+workspace too — per-workspace cost, latency, error rate, all in one filter. No Langfuse,
+no LiteLLM, no new infra. Lands the structured tag now so when Langfuse (item #10) arrives,
+the same tag propagates into OTel.
 
-**Part 1 — automatic prompt caching.** Hummingbird's `app/api/chat/route.ts` system prompt
-is the same prefix every turn for a given conversation: workspace voice + `Conversation.systemPrompt`
-+ skills note + MCP tool list + attachment summaries. Anthropic and several other providers
-charge ~10% of the normal input-token rate on cached prefix reads, but only if the request
-carries the correct per-provider cache-breakpoint hint (Anthropic's `cache_control` block,
-Bedrock's `cachePoint`, etc.). The Vercel AI Gateway's `caching: 'auto'` option inserts those
-hints transparently on the request body before forwarding upstream — so Hummingbird can opt
-in without rewriting the prompt-builder for each provider's idiosyncratic cache shape. The
-cost win is largest on multi-turn conversations with non-trivial workspace + thread
-instructions + MCP tool catalogues.
-
-**Part 2 — `workspace_id` on the Gateway dashboard.** The Vercel AI Gateway dashboard already
-groups requests by model, route, and API key. The same dashboard supports custom request
-properties (sent as `metadata` on the call), which become filter facets. Tagging every
-chat-route call with the active workspace id (and incidentally the user id, when there's a
-Supabase session) gives per-workspace cost and latency breakdowns for free — no Langfuse, no
-LiteLLM, no new dashboards. Lands the structured tag now so when Langfuse arrives (item #10
-in `PLAN-cross-product-inspirations.md`) the same tag flows into OTel.
-
-Both parts are cheap to ship, easy to undo, and orthogonal — the cache flag and the metadata
-field are independent toggles on the same `streamText` call.
+A second tag (`model:<modelId>`) costs nothing and gives a per-model breakdown that's
+slightly more granular than the dashboard's built-in model facet (catches retries +
+fallbacks the dashboard sometimes collapses).
 
 ## Non-goals — what this PR is NOT
 
-- **Not Langfuse.** Item #10 is the full distributed-tracing + LLM-as-judge story. This is a
-  pre-cursor that gets the workspace-id tag flowing today; it does not stand in for the
-  Langfuse work.
-- **Not LiteLLM virtual keys / per-workspace dollar budgets.** That's a separate cohort
-  (observability item) and needs a Gateway-or-proxy with a writable usage store. Vercel's
-  dashboard is read-only; budgets aren't enforceable from here.
-- **Not OpenRouter / `openrouter/auto` routing.** Item #3. Different provider, different
-  surface.
-- **Not provider-side caching for the agent-py / agent-ts services** — they call
-  `@ai-sdk/anthropic` directly with `ANTHROPIC_API_KEY`, NOT through the Vercel Gateway, so
-  Part 1 is structurally Next.js-only. See "Open question" below.
+- **Not caching.** Split out. See "Caching — what we know" below.
+- **Not Langfuse.** Item #10 owns full distributed tracing + LLM-as-judge.
+- **Not LiteLLM virtual keys / per-workspace dollar budgets.** Different cohort, needs a
+  writable usage store. Vercel's dashboard is read-only.
+- **Not `metadata.userId` / `gateway.user` tagging.** The chat route doesn't fetch a user
+  today; adding `getSupabaseServerClient().auth.getUser()` on the hot path would cost a
+  per-turn Supabase round-trip (~50–100 ms). And `workspace:<id>` is already a strict
+  superset of "which user" — workspaces have one owner — so per-user reports stay
+  achievable by joining workspace → owner downstream. Deferred until there's a concrete
+  per-user dashboard ask.
+- **Not provider-side changes for agent-py / agent-ts** — they call `@ai-sdk/anthropic`
+  direct, not through the Vercel Gateway. They get observability through the Langfuse
+  roll-up (item #10), not through this PR.
 
 ## Surface area
 
-One call site for the cache flag (`streamText` in the Next.js chat route). One per-request
-metadata field added to the same call. That's it. The wire shape (`ChatRequestSchema`)
-already carries `workspaceId`; no client change needed.
-
-### Part 1 — `caching: 'auto'`
-
-`@ai-sdk/gateway`'s `createGateway()` returns a provider whose model factory accepts
-`providerOptions.gateway.caching` per request. The `app/api/chat/route.ts` `streamText` call
-becomes:
+One server-only change in `app/api/chat/route.ts` — a `providerOptions.gateway.tags`
+field on the existing `streamText` call. The wire schema already carries `workspaceId`;
+no client change. No new dependencies.
 
 ```ts
 streamText({
@@ -61,162 +72,128 @@ streamText({
   model: selectModel(modelId),
   system: buildSystemPrompt({ /* …existing… */ }),
   messages: body.messages as ModelMessage[],
-  providerOptions: {
-    gateway: {
-      // Insert per-provider cache-breakpoint hints automatically. No-op on
-      // non-gateway routes (minimax-cn anthropic-compat) because those
-      // models resolve to a different provider id and never see this key.
-      caching: 'auto',
-      // Per-workspace dashboard facet. Always set when present; omitted
-      // for signed-out usage so we don't fabricate an empty bucket.
-      ...(body.workspaceId
-        ? { metadata: { workspaceId: body.workspaceId } }
-        : {}),
-    },
-  },
+  ...(body.workspaceId
+    ? {
+        providerOptions: {
+          gateway: {
+            // `tags` is a free-form string[] on the gateway dashboard.
+            // Use `key:value` shape per Vercel's own docs example so the
+            // dashboard's tag-grouping renders coherent buckets.
+            tags: [
+              `workspace:${body.workspaceId}`,
+              `model:${modelId}`,
+            ],
+          },
+        },
+      }
+    : {}),
   // …existing tools / stopWhen / prepareStep…
 })
 ```
 
-**Why `providerOptions.gateway.*` and not a header.** The AI SDK Gateway provider exposes
-the cache flag through `providerOptions` (typed by the SDK), not through raw HTTP headers.
-That's the seam that survives gateway SDK version bumps. Setting `Anthropic-Cache-Control`
-manually would only work for the Anthropic path, miss every other provider, and break the
-"unified surface across N providers" thesis of using the gateway in the first place.
+**Why `providerOptions.gateway.*` and not raw headers.** The AI SDK's `streamText`
+serialises `providerOptions` into the request body verbatim (`SharedV2ProviderOptions =
+Record<string, Record<string, JSONValue>>`). The gateway server reads them from the body.
+The provider-creation `headers` field on `createGatewayProvider()` is set once per
+provider instance, not per-request — wrong tool for per-request tagging.
 
-**Why this is safe on non-gateway routes.** `selectModel()` returns either an Anthropic
-client (for `minimax-cn` routes) or an OpenAI-compatible client (for self-hosted /
-OpenRouter routes) or a Gateway client. Only the Gateway client reads `providerOptions.gateway`;
-the others ignore unknown provider option blocks. So the same flag is a hard no-op outside
-the gateway path — no branching, no per-model `if`.
+**Why this is safe on non-gateway routes.** `selectModel()` returns either a Gateway model
+(most paths), an Anthropic model (`minimax-cn` Anthropic-compatible route), or an
+OpenAI-compatible model (self-host / OpenRouter / vLLM / Ollama). Only the Gateway
+client's body construction reads `providerOptions.gateway`; the others ignore the entire
+`gateway` namespace. Hard no-op outside the gateway path, no branching.
 
-### Part 2 — per-workspace + per-user dashboard facets
+**Why guard on `body.workspaceId`.** Signed-out / no-workspace usage skips the whole
+`providerOptions` block rather than fabricating a `workspace:undefined` tag bucket on the
+dashboard. Clean facets > noisy ones.
 
-`providerOptions.gateway.metadata` is the field. Two keys, both optional:
+## Caching — what we know
 
-```ts
-metadata: {
-  ...(body.workspaceId ? { workspaceId: body.workspaceId } : {}),
-  ...(userId ? { userId } : {}),
-}
-```
+Vercel's docs talk about "automatic prompt caching" but the SDK surface is silent on a
+`caching: 'auto'` opt-in. Most likely behaviour:
 
-Where `userId` comes from the Supabase session that already lives in `app/api/chat/route.ts`
-adjacent code (anonymous turns have no userId — `metadata` simply omits the key, no empty
-string). One snake_case-vs-camelCase decision: the Gateway dashboard treats metadata keys as
-opaque strings — match the rest of the codebase's camelCase so future OTel propagation maps
-1:1.
+1. **Gateway-side automatic caching when supported.** The gateway server may already
+   insert the right per-provider cache-breakpoint hint (Anthropic `cache_control`, Bedrock
+   `cachePoint`, etc.) when the prefix is large enough and the model supports it. If so,
+   we're already getting cache hits in production without any code change — the
+   `cachedInputTokens` field on the dashboard / usage response confirms or refutes this
+   per-call.
+2. **Anthropic-only opt-in via the Anthropic provider.** `@ai-sdk/anthropic@^2.0.79`
+   exposes `providerOptions.anthropic.cacheControl = { type: 'ephemeral', ttl?: '5m' |
+   '1h' }`. This is the **provider-side** cache-control breakpoint. Whether it works
+   when routed through the gateway is unverified.
 
-**Privacy posture.** Metadata travels with the API request to the gateway. Vercel retains it
-for billing-window dashboards. The workspace id is a UUID-shaped opaque identifier; the user
-id is also an opaque uid. Neither contains PII directly. We do **not** tag with the model id,
-conversation id, message contents, or any free-text field — those would either bloat the
-dashboard or leak content into a third party. The metadata stays minimal.
+**Verification plan (separate ticket, not this PR):** after this PR lands and tags reach
+the dashboard, look at the cost view for a high-volume workspace. If `cachedInputTokens
+> 0` appears on multi-turn conversations, automatic caching is already happening — no
+code change needed. If not, the follow-up explores `providerOptions.anthropic.cacheControl`
+at the system-prompt level and measures the delta.
 
-## What about agent-py + agent-ts?
+Punting this out lets the cheap, certain win (tagging) ship today without being held up
+by an SDK research dependency.
 
-Both services call `@ai-sdk/anthropic` (TS) / the Anthropic Python SDK (py) directly with
-`ANTHROPIC_API_KEY`, not through the Vercel AI Gateway. So:
+## Cache-hit invariants to preserve (for the follow-up)
 
-- **Part 1 (caching).** Doesn't reach those paths today. Two options for parity:
-  1. **Add Anthropic-native cache-breakpoint hints** in `services/agent-ts/src/chat.ts` and
-     `services/agent-py/src/agent_py/chat.py` — manually attach `cache_control: { type:
-     'ephemeral' }` to the system prompt block and the tool definitions block. Same on-wire
-     effect as `caching: 'auto'` for the Anthropic provider, but limited to Anthropic.
-     Manual; small.
-  2. **Route the services through the Vercel Gateway** by swapping `createAnthropic({ apiKey
-     })` for the Gateway SDK behind an env flag. Larger blast radius — the services would
-     start consuming the gateway's Anthropic quota and inherit its rate-limit behaviour.
-  Recommend **Option 1 in a follow-up PR**, not in this one. Keeps the Next.js plan small
-  and lets the services adopt cache hints on their own timeline.
-- **Part 2 (workspace tagging).** No gateway dashboard to populate. Defer to Langfuse (item
-  #10) — that's where the services will get per-workspace observability.
+Independent of which opt-in mechanism eventually lands, automatic caching only pays off
+when the prefix is byte-stable turn-to-turn. Known potential miss sources in Hummingbird's
+current prompt assembly that the caching follow-up should verify (not fix in this PR):
 
-The plan therefore explicitly **does not** modify the agent-py or agent-ts chat code. They
-continue to work as before, identical wire format.
+1. **`Conversation.systemPrompt` edits (PR #165).** Editing thread instructions changes
+   the prefix and invalidates the cache for that conversation until the new prefix
+   accrues at least one reuse. Acceptable — deliberate edit.
+2. **MCP tool-list ordering.** `loadEffectiveMcpServers` returns servers in whatever
+   order the storage layer yields. If iteration order isn't stable across requests, the
+   tool catalogue text shuffles every turn → cache miss. Verify or pin a deterministic
+   sort (by server id) in `buildSystemPrompt`'s MCP-note builder.
+3. **Attachment summaries.** `resolveAttachments` runs `Promise.all` over MCP resources;
+   results are pushed in resolution order, not request order. Could shuffle the
+   attachment block turn-to-turn. Same fix shape: stable sort key when assembling the
+   prompt.
 
-## Cache-hit invalidation — what to watch out for
-
-The economics only materialise when the cached prefix is genuinely identical turn to turn.
-Three known sources of false-miss in Hummingbird's current prompt assembly:
-
-1. **`Conversation.systemPrompt` edits (PR #165).** Editing thread instructions changes the
-   prefix and invalidates the cache for that conversation until the new prefix accrues at
-   least one reuse. Acceptable — this is a deliberate edit, not noise.
-2. **MCP tool-list ordering.** `loadEffectiveMcpServers` returns servers in whatever order
-   the storage layer hands them back. If the iteration order isn't stable across requests,
-   the tool catalogue text shuffles every turn → cache miss. **Verify or pin a deterministic
-   sort** (by server id) inside `buildSystemPrompt`'s MCP-note builder. Worth a small fix
-   here even if the audit shows it's already stable, because the cache cost of an
-   accidentally-shuffled tool list is real.
-3. **Attachment summaries.** `resolveAttachments` runs concurrently and `mcpRequests`
-   results are pushed in resolution order, not request order. If the model sees the
-   attachment block in a different order each turn → cache miss. Same fix: stable
-   ordering when assembling the prompt.
-
-We are not paying down those issues in this PR — they may already be deterministic. Item
-list, not action list. If a follow-up audit shows non-determinism, the fix is a sort key,
-not a redesign.
+These are observations, not action items for this PR.
 
 ## Tests
 
-- **Unit — `app/api/chat/route.test.ts` (new — there isn't one today).** Mock `streamText`,
-  fire one POST with `workspaceId: "ws-abc"`, assert the SDK call received
-  `providerOptions.gateway.caching === 'auto'` and `providerOptions.gateway.metadata.workspaceId ===
-  "ws-abc"`. One test per branch: workspaceId present, workspaceId absent (metadata key
-  omitted, not empty), userId present, userId absent. Four cases. Tiny.
-- **No new wire-shape test** — `ChatRequestSchema` already covers `workspaceId`; the
-  `providerOptions` value lives entirely server-side.
-- **Manual smoke — the Vercel AI Gateway dashboard** after deploy. Filter by `workspaceId`,
-  confirm the bucket appears. Run two turns in the same conversation, confirm the second
-  shows cache-read tokens > 0 on the cost view. Documented in the PR description as a
-  manual verification step (we don't have a programmatic gateway-dashboard probe).
-- **No agent-py / agent-ts test changes** — those services are untouched.
+Skipped. The change is one server-only field on one `streamText` call. There's no
+existing route-handler test scaffold in `app/api/` and standing one up just for a
+4-line wiring change isn't proportional. Instead:
+
+- **Type-check** (`bun run typecheck`) confirms the body well-formed.
+- **Manual smoke** on the Vercel AI Gateway dashboard post-deploy: send a chat turn with
+  a real workspace; confirm the tag bucket appears. Documented in the PR description.
+
+Once Langfuse lands (item #10), the same tag flows into OTel and a unit test on the
+tag-emission shape becomes worth writing — at that point the assertion is "the OTel span
+carries the right attribute," which has a tractable test target.
 
 ## Sequencing
 
-Single docs-and-code PR, two commits:
+Single PR:
 
-1. **Commit 1 — code change.** The `providerOptions.gateway` block in
-   `app/api/chat/route.ts`, plus the new unit test file.
-2. **Commit 2 — docs.** Update `docs/ROADMAP.md` (move item from planning to shipped) and
-   mark item #4 done in `docs/PLAN-cross-product-inspirations.md`.
-
-Could be one commit, but the split keeps the code commit reviewable without the doc churn.
+1. **Commit 1 — code change.** `providerOptions.gateway.tags` block in
+   `app/api/chat/route.ts`.
+2. **Commit 2 — docs.** Plan update (this file), `PLAN-cross-product-inspirations.md`
+   note that #4-Part-2 has shipped + #4-Part-1 is the verification follow-up, and
+   `ROADMAP.md` reflects the same.
 
 ## Open question
 
-**Should agent-py + agent-ts go through the Vercel Gateway, too?** Today they hit Anthropic
-direct. Routing them through the Gateway would:
+**Should agent-py + agent-ts go through the Vercel Gateway, too?** Today they hit
+Anthropic direct. Routing through the gateway would:
 
+- Surface them on the per-workspace dashboard the same way as Next.js chat.
 - Unify caching, retries, and routing under one config.
-- Surface them on the per-workspace dashboard the same way as the Next.js chat.
-- Inherit the gateway's rate limits and pricing markup (today there's no markup, but that's
-  a third-party policy we'd be subscribing to).
-- Lose the direct-baseURL escape hatch (`ANTHROPIC_BASE_URL` — used for in-region traffic in
-  one deployment topology and the no-network-egress test setup).
+- Inherit the gateway's pricing markup (today: zero) and rate limits.
+- Lose the `ANTHROPIC_BASE_URL` direct-endpoint override (used in one in-region
+  deployment + the no-network-egress test setup).
 
-Defer the decision until item #10 (Langfuse) is sequenced — by then we'll know whether the
-"observability + caching + routing" story consolidates around Vercel's gateway or around
-Langfuse's OTel + a separate routing tier (e.g. LiteLLM). Land Part 1+2 on the Next.js path
-now; revisit the services as part of the larger observability roll-up.
-
-## What's not in scope (revisit later)
-
-- **Cache-aware prompt assembly improvements** — split the prefix into a stable "voice"
-  block + a volatile "context" block so a thread-instructions edit doesn't invalidate the
-  voice. Separate plan if cache-miss telemetry shows it matters.
-- **Bedrock / OpenAI cache-point parity** — `caching: 'auto'` already handles whichever
-  providers the gateway supports; we don't need to chase each upstream.
-- **`metadata.conversationId`** — the gateway dashboard supports it, but the dashboard's
-  cardinality goes up fast (one per conversation per workspace). Hold until we want
-  per-conversation forensics, then add behind a debug flag.
-- **Cost-budget enforcement.** Gateway dashboard is read-only. Budget enforcement is a
-  LiteLLM / Langfuse story, not a Vercel Gateway story.
+Defer until item #10 (Langfuse) is sequenced. Once Langfuse owns observability, the
+"why route through the gateway" calculus shifts.
 
 ## Sources
 
-- [Vercel AI Gateway — automatic prompt caching](https://vercel.com/docs/ai-gateway/models-and-providers/automatic-caching)
-- [Vercel AI Gateway — request metadata](https://vercel.com/docs/ai-gateway/observability) (per-property dashboard filters)
-- [Anthropic prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) — the per-provider mechanic `caching: 'auto'` implements transparently
-- `docs/PLAN-cross-product-inspirations.md` — parent menu, item #4
+- [Vercel AI Gateway — observability & tags](https://vercel.com/docs/ai-gateway/observability)
+- [Vercel AI Gateway — automatic prompt caching](https://vercel.com/docs/ai-gateway/models-and-providers/automatic-caching) (the verification target)
+- `@ai-sdk/gateway@3.0.125` docs (in-package `docs/00-ai-gateway.mdx`) — confirmed the
+  `user` + `tags` provider options' wire shape via the SDK source.
+- `docs/PLAN-cross-product-inspirations.md` — parent menu, item #4.
