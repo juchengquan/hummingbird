@@ -16,6 +16,7 @@ const ENV_KEYS = [
   "MINIMAX_CN_API_KEY",
   "OLLAMA_BASE_URL",
   "OLLAMA_API_KEY",
+  "OPENROUTER_API_KEY",
 ] as const
 
 function snapshotEnv() {
@@ -170,6 +171,29 @@ describe("providers-config — resolveProvider (ollama / allowInsecureBaseUrl)",
   test("malformed baseURL still fails (URL parser refused)", () => {
     process.env.OLLAMA_BASE_URL = "not a url"
     expect(resolveProvider("ollama")).toBeNull()
+  })
+})
+
+describe("providers-config — resolveProvider (openrouter)", () => {
+  let snap: Record<string, string | undefined>
+  beforeEach(() => {
+    snap = snapshotEnv()
+    delete process.env.OPENROUTER_API_KEY
+  })
+  afterEach(() => restoreEnv(snap))
+
+  test("returns null when OPENROUTER_API_KEY is unset", () => {
+    expect(resolveProvider("openrouter")).toBeNull()
+  })
+
+  test("uses the inline baseURL (https://openrouter.ai/api/v1) + env apiKey", () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-test"
+    const r = resolveProvider("openrouter")
+    expect(r).toEqual({
+      type: "openai",
+      baseURL: "https://openrouter.ai/api/v1",
+      apiKey: "sk-or-test",
+    })
   })
 })
 

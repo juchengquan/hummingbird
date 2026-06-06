@@ -13,5 +13,10 @@
     "baseURLEnv": "OLLAMA_BASE_URL",
     "apiKeyEnv": "OLLAMA_API_KEY",
     "allowInsecureBaseUrl": true
+  },
+  "openrouter": {
+    "type": "openai",
+    "baseURL": "https://openrouter.ai/api/v1",
+    "apiKeyEnv": "OPENROUTER_API_KEY"
   }
 }
