@@ -62,18 +62,34 @@ export function resolveAgent(agent: Agent | null | undefined): ResolvedAgent {
 }
 
 /**
- * Combine the persona's system prompt with the workspace's, mirroring
- * how `buildTaskSystemPrompt` already trims + concatenates. Trims and
- * joins with a blank line. Either side may be empty.
+ * Combine the three system-prompt tiers in the chat-send cascade —
+ * workspace voice, conversation context, and active persona — per
+ * `docs/PLAN-conversation-system-prompt.md`. Each input may be empty
+ * or undefined; empties are trimmed out.
+ *
+ * Composition rules:
+ *   - When the persona is active (non-empty `agentSystemPrompt`),
+ *     the workspace prompt drops out. The persona's voice replaces
+ *     the workspace's; the conversation prompt stays.
+ *   - Conversation prompt is **additive** — it represents stable
+ *     thread context (what this chat is about), orthogonal to the
+ *     voice (workspace or persona). It survives persona switching.
+ *   - Order in the joined string is voice → context, blank-line
+ *     separated, so the model reads "you are <voice>" first, then
+ *     "we're working on <context>."
  */
 export function composeSystemPrompts(
   workspaceSystemPrompt: string | undefined,
-  agentSystemPrompt: string
+  conversationSystemPrompt: string | undefined,
+  agentSystemPrompt: string,
 ): string | undefined {
   const w = workspaceSystemPrompt?.trim() ?? ""
+  const c = conversationSystemPrompt?.trim() ?? ""
   const a = agentSystemPrompt.trim()
-  if (!w && !a) return undefined
-  if (!w) return a
-  if (!a) return w
-  return `${w}\n\n${a}`
+  // Persona replaces workspace voice when active; conversation
+  // context stays regardless.
+  const voice = a || w
+  const pieces = [voice, c].filter(Boolean)
+  if (pieces.length === 0) return undefined
+  return pieces.join("\n\n")
 }

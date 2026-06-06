@@ -225,8 +225,11 @@ export function ProjectTasksPanel() {
       messages: [{ role: "user", content: card.title }],
       conversationId,
       model: resolved.modelId ?? workspace.defaultModel,
+      // "Run as task" launches a one-shot task with no conversation
+      // context — middle (conversation) tier is undefined.
       workspaceSystemPrompt: composeSystemPrompts(
         workspace.systemPrompt,
+        undefined,
         resolved.systemPrompt
       ),
       workspaceId: workspace.id,

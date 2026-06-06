@@ -87,3 +87,24 @@ describe("runMigrations", () => {
     expect("webSearchBrave" in (ws.skillPrefs as Record<string, unknown>)).toBe(false)
   })
 })
+
+describe("v<22 — Conversation.systemPrompt added", () => {
+  test("backfills empty systemPrompt on conversations missing it", () => {
+    const out = runMigrations(
+      {
+        conversations: [
+          { id: "c1", title: "old" },
+          { id: "c2", title: "newer", systemPrompt: "already set" },
+        ],
+      },
+      21,
+    ) as { conversations: Array<Record<string, unknown>> }
+    expect(out.conversations[0].systemPrompt).toBe("")
+    expect(out.conversations[1].systemPrompt).toBe("already set")
+  })
+
+  test("survives missing or non-array conversations field", () => {
+    expect(() => runMigrations({}, 21)).not.toThrow()
+    expect(() => runMigrations({ conversations: null }, 21)).not.toThrow()
+  })
+})

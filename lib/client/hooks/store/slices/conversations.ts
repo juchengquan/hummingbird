@@ -36,6 +36,7 @@ export const getDefaultConversations = (): Conversation[] => {
       createdAt: new Date(baseTime - 120000),
       updatedAt: new Date(baseTime),
       pinned: true,
+      systemPrompt: "",
       selectedFileIds: [],
     },
   ]
@@ -65,6 +66,10 @@ export interface ConversationsSlice {
   forkConversation: (conversationId: string, untilMessageId: string) => Conversation | null
   deleteConversation: (conversationId: string) => void
   renameConversation: (conversationId: string, title: string) => void
+  /** Per-thread system-prompt tier — the slot between workspace voice
+   *  and per-turn persona documented in `lib/shared/agents/resolve.ts`.
+   *  See `docs/PLAN-conversation-system-prompt.md`. */
+  setConversationSystemPrompt: (conversationId: string, prompt: string) => void
   /** Set a conversation skill override. `null` clears the entry (falls back to workspace default). */
   setConversationSkillPref: (conversationId: string, skillId: string, value: boolean | null) => void
   /** Patch the per-conversation `webSearch` config override (same shape
@@ -115,6 +120,10 @@ export const createConversationsSlice: SliceCreator<ConversationsSlice> = (
       createdAt: new Date(),
       updatedAt: new Date(),
       pinned: false,
+      // Empty by default — no inheritance from workspace; the
+      // conversation prompt is opt-in additive. See
+      // `docs/PLAN-conversation-system-prompt.md` §UI surface.
+      systemPrompt: "",
       selectedFileIds: [],
     }
     set((state) => ({
@@ -144,6 +153,10 @@ export const createConversationsSlice: SliceCreator<ConversationsSlice> = (
       createdAt: new Date(),
       updatedAt: new Date(),
       pinned: false,
+      // Fork carries the thread instructions forward — branching
+      // is "continue this same chat from a different point," not
+      // "start over with the same files."
+      systemPrompt: source.systemPrompt,
       ...cloneAttachmentSelections(source),
       skillPrefs: source.skillPrefs ? { ...source.skillPrefs } : undefined,
       parentId: source.id,
@@ -251,6 +264,14 @@ export const createConversationsSlice: SliceCreator<ConversationsSlice> = (
     set((state) => ({
       conversations: state.conversations.map((c) =>
         c.id === conversationId ? { ...c, title, updatedAt: new Date() } : c
+      ),
+    })),
+  setConversationSystemPrompt: (conversationId, prompt) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === conversationId
+          ? { ...c, systemPrompt: prompt, updatedAt: new Date() }
+          : c
       ),
     })),
   setConversationSkillPref: (conversationId, skillId, value) =>

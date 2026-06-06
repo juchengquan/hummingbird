@@ -33,6 +33,7 @@ const baseConv = (overrides: Partial<CascadeStateView["conversations"][number]>)
   createdAt: new Date(),
   updatedAt: new Date(),
   pinned: false,
+  systemPrompt: "",
   selectedFileIds: [],
   ...overrides,
 })
@@ -278,6 +279,7 @@ function conv(
     createdAt: new Date(),
     updatedAt: new Date(),
     pinned: false,
+    systemPrompt: "",
     selectedFileIds: [],
     ...patch,
   } as Conversation

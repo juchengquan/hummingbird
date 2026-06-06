@@ -548,6 +548,12 @@ export interface Conversation {
   createdAt: Date
   updatedAt: Date
   pinned: boolean
+  /** Per-thread system-prompt tier in the chat cascade — the slot
+   *  documented in `lib/shared/agents/resolve.ts` between the
+   *  workspace voice and the per-turn persona override. Empty
+   *  string when unset (no inheritance from the workspace). See
+   *  `docs/PLAN-conversation-system-prompt.md`. */
+  systemPrompt: string
   /** Workspace file IDs attached as context for the next message in this conversation. */
   selectedFileIds: string[]
   /** Workspace MCP-resource IDs (`McpResource.id`, not URIs) ticked on

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import {
   ChevronDown,
+  FileText,
   Pencil,
   Pin,
   PinOff,
@@ -46,6 +47,7 @@ import {
   safeFilename,
 } from "@/client/export"
 import { ConversationSummaryDialog } from "@/components/conversation-summary-dialog"
+import { ThreadInstructionsDialog } from "@/components/chat/thread-instructions-dialog"
 import { ContextMeter } from "@/components/panels/context-meter"
 import { CompressButton } from "@/components/chat/compress-button"
 import { ResourcesMobileDrawer } from "@/components/sidebars/resources-mobile-drawer"
@@ -98,6 +100,7 @@ export function ChatHeader({
   const [renaming, setRenaming] = useState(false)
   const [draftTitle, setDraftTitle] = useState("")
   const [summaryOpen, setSummaryOpen] = useState(false)
+  const [threadInstructionsOpen, setThreadInstructionsOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
   const [branchesOpen, setBranchesOpen] = useState(false)
   const [mobileResourcesOpen, setMobileResourcesOpen] = useState(false)
@@ -135,6 +138,11 @@ export function ChatHeader({
   const handleSummarise = () => {
     setMenuOpen(false)
     setSummaryOpen(true)
+  }
+
+  const handleThreadInstructions = () => {
+    setMenuOpen(false)
+    setThreadInstructionsOpen(true)
   }
 
   const handleShare = () => {
@@ -245,7 +253,7 @@ export function ChatHeader({
                     <ChevronDown size={14} />
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent align="start" className="w-44 p-1">
+                <PopoverContent align="start" className="w-52 p-1">
                   <Button
                     variant="ghost"
                     onClick={handleSummarise}
@@ -253,6 +261,23 @@ export function ChatHeader({
                   >
                     <Sparkles size={14} />
                     Summarise
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={handleThreadInstructions}
+                    className={cn(
+                      "w-full justify-start gap-2 cursor-pointer",
+                      // Subtle dot when a non-empty conversation prompt is
+                      // set, so the user can see at a glance that this
+                      // thread has ad-hoc context attached.
+                      conversation.systemPrompt.trim().length > 0 &&
+                        "font-medium",
+                    )}
+                  >
+                    <FileText size={14} />
+                    {conversation.systemPrompt.trim().length > 0
+                      ? "Thread instructions •"
+                      : "Thread instructions"}
                   </Button>
                   <Button
                     variant="ghost"
@@ -404,6 +429,10 @@ export function ChatHeader({
       <ConversationSummaryDialog
         conversation={summaryOpen ? conversation : null}
         onClose={() => setSummaryOpen(false)}
+      />
+      <ThreadInstructionsDialog
+        conversation={threadInstructionsOpen ? conversation : null}
+        onClose={() => setThreadInstructionsOpen(false)}
       />
       <ShareDialog
         open={shareOpen}

@@ -280,6 +280,7 @@ export type Database = {
           selected_mcp_resource_ids: string[]
           selected_url_bookmark_ids: string[]
           skill_prefs: Json
+          system_prompt: string
           title: string
           updated_at: string
           user_id: string
@@ -295,6 +296,7 @@ export type Database = {
           selected_mcp_resource_ids?: string[]
           selected_url_bookmark_ids?: string[]
           skill_prefs?: Json
+          system_prompt?: string
           title: string
           updated_at?: string
           user_id: string
@@ -310,6 +312,7 @@ export type Database = {
           selected_mcp_resource_ids?: string[]
           selected_url_bookmark_ids?: string[]
           skill_prefs?: Json
+          system_prompt?: string
           title?: string
           updated_at?: string
           user_id?: string
