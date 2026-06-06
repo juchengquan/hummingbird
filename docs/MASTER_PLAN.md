@@ -103,26 +103,6 @@ existing AI command routes (`/api/ai/command`).
 > idea above is the *broader* per-document-change variant; the shipped
 > one is the per-AI-command-only variant.
 
-### Summarise-older-messages button (context-meter sequel)
-
-**Why distinctive.** The context-window meter
-(`components/panels/context-meter.tsx`) ships the chip + color zones.
-What's still open: a one-click "summarise the first N messages" action
-when the meter enters the danger zone, compressing the history into a
-single recap via a quick `generateText` call.
-
-**Sketch.** Surface a button in the danger zone of the meter. On
-click: snapshot the first N messages → ask the model for a recap →
-replace the snapshotted slice with one synthetic recap message
-(reversible). Heavy UX question: which messages get summarised? Does
-the recap edit history in place or insert as a synthetic message above
-the cutline?
-
-**Builds on.** `buildCompressedMessages` (already exists for the
-recap-of-recaps logic), context-meter chip, `generateText` route.
-
-**Effort.** Medium (~200–300 lines + the UX call).
-
 ### Accurate per-family token counting (heuristic replacement)
 
 **Why distinctive.** Current `lib/shared/tokens.ts` uses a chars/4
@@ -193,7 +173,15 @@ six of the fourteen menu items shipped this session:
   "Thread instructions" dialog).
 
 Plus the docs landings #170 (cross-product plan refresh) and #171
-(third-backend naming).
+(third-backend naming), and the smaller follow-ups that closed out
+inspirations item #3's residual scope: **OpenRouter per-route
+fallback list** — each non-`auto` OpenRouter entry in
+`config/models.json` declares a `fallbacks: [...]` array of upstream
+ids; the openai-compatible provider's `transformRequestBody` hook
+reads this at boot into a `Map<upstreamId, fallbacks[]>` and injects
+`body.models = [...]` on outbound requests. OpenRouter then retries
+each fallback in order when the primary is overloaded — visible
+reliability win without touching call sites.
 
 **Previous session:** Per-IP rate buckets + idle watchdog on `/v1/chat`
 closed the second-to-last open item in PLAN-agent-api; only the real
