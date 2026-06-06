@@ -9,7 +9,7 @@ and the Phase 4-2 frontend selector grew a third option
 cover the routes + agent loop + executor end-to-end. Plus all five
 follow-ups in [`PLAN-agent-ts-followups.md`](./PLAN-agent-ts-followups.md)
 closed. Companion to
-[`PLAN-agent-api.md`](./PLAN-agent-api.md), which shipped the
+[`PLAN-agent-api.md`](../PLAN-agent-api.md), which shipped the
 Python agent service (Option C in that doc's decision matrix).
 This plan describes what it would take to ship a **TypeScript
 twin** of `services/agent-py/` — same architecture, same wire

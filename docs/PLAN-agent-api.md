@@ -6,7 +6,7 @@ deferred — both Python and TS stacks stay live; the user picks
 backend via the Phase 4-2 selector.**
 
 Companion plans:
-- [`PLAN-agent-ts.md`](./PLAN-agent-ts.md) — phased plan for a TS
+- [`PLAN-agent-ts.md`](./_done/PLAN-agent-ts.md) — phased plan for a TS
   twin of `services/agent-py/` (`services/agent-ts/`). Same
   architecture, same selector mechanism, different runtime.
 
@@ -81,7 +81,7 @@ Option C (Python service) green-lit, end-to-end live in
 - **Frontend `useChat()` adoption** — `lib/client/hooks/use-chat-send.ts`
   translates AI SDK v5 frames into the consumer's internal envelope;
   every backend (Next.js inline route, agent-py, agent-ts) emits AI
-  SDK v5 natively. See `PLAN-useChat-adoption.md`.
+  SDK v5 natively. See `_done/PLAN-useChat-adoption.md`.
 - **`workspaceId` field on `POST /v1/chat`** — agent-py threads
   `workspace_id` into `ToolContext`, unlocking `searchFiles` + cloud-
   mode MCP for chat tools. agent-ts accepts the field but doesn't

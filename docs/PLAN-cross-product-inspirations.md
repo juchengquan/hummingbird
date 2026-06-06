@@ -11,7 +11,7 @@ when one lands.
 
 | # | Item | PR(s) | Notes |
 |---|---|---|---|
-| 1 | Layered system prompt (shipped as **conversation-level**) | [#165](https://github.com/juchengquan/hummingbird/pull/165) | `Conversation.systemPrompt`, persona-additive 3-tier composer, "Thread instructions" dialog. See [PLAN](PLAN-conversation-system-prompt.md) |
+| 1 | Layered system prompt (shipped as **conversation-level**) | [#165](https://github.com/juchengquan/hummingbird/pull/165) | `Conversation.systemPrompt`, persona-additive 3-tier composer, "Thread instructions" dialog. See [PLAN](_done/PLAN-conversation-system-prompt.md) |
 | 2 | Ollama provider | [#167](https://github.com/juchengquan/hummingbird/pull/167) | `ollama/*` via `createOpenAICompatible`; `allowInsecureBaseUrl` flag relaxes SSRF + apiKey for local endpoints |
 | 3 | OpenRouter provider | [#167](https://github.com/juchengquan/hummingbird/pull/167) | `openrouter/auto` + specific upstreams against the fixed hosted endpoint |
 | 4 | Vercel AI Gateway tagging (**Part 2 only**) | [#166](https://github.com/juchengquan/hummingbird/pull/166) | `providerOptions.gateway.tags = ['workspace:<id>', 'model:<id>']`. Part 1 (caching) deferred — no `caching: 'auto'` in the gateway SDK at any version. See [PLAN](PLAN-gateway-caching-and-workspace-tagging.md) |
@@ -83,7 +83,7 @@ Ten items selected for the highest expected value × tractability. Scope is S (d
 
 | # | What | Why | Scope | Fits with | Inspiration |
 |---|---|---|---|---|---|
-| 1 | **Workspace-level system prompt** that stacks under the agent persona | Smallest delta, fills a real gap; foundation for "workspace as project with personality" | S | workspaces slice, agents slice, chat route | Claude Projects, ChatGPT Projects. **Shipped** (as conversation-level system prompt) — see [PLAN](PLAN-conversation-system-prompt.md) |
+| 1 | **Workspace-level system prompt** that stacks under the agent persona | Smallest delta, fills a real gap; foundation for "workspace as project with personality" | S | workspaces slice, agents slice, chat route | Claude Projects, ChatGPT Projects. **Shipped** (as conversation-level system prompt) — see [PLAN](_done/PLAN-conversation-system-prompt.md) |
 | 2 | **Ollama provider** in `lib/server/model-provider.ts` (chat + embeddings) | Local-first chat + unlocks the embedding pipeline for hybrid search without a new vendor | S | model-provider.ts, future hybrid search | Ollama. **Shipped** — [#167](https://github.com/juchengquan/hummingbird/pull/167). (Embeddings half still open — only chat routes today; the embedding pipeline lands with item #12 hybrid search.) |
 | 3 | **OpenRouter provider** + `auto` + fallback lists | Free prompt caching, routing, fallback — no new infra; immediate cost + reliability win | S | model-provider.ts | OpenRouter. **Shipped** — [#167](https://github.com/juchengquan/hummingbird/pull/167). (`openrouter/auto` + specific upstreams; the per-request `models: [...]` fallback list is a small follow-up if needed.) |
 | 4 | **Vercel AI Gateway `caching: 'auto'`** + tag requests with `workspace_id` | One-flag change to cut Anthropic costs on repeat turns; per-workspace dashboard view for free | S | route.ts, chat skills | Vercel AI Gateway. **Part 2 (tagging) shipped** — `providerOptions.gateway.tags = ['workspace:<id>', 'model:<id>']` on `/api/chat`. Part 1 (caching) deferred — no `caching: 'auto'` exists in the gateway SDK at any version; verification ticket open. See [PLAN](PLAN-gateway-caching-and-workspace-tagging.md) |
