@@ -24,6 +24,7 @@ export type CanvasNodeKind =
   | "file"
   | "url-bookmark"
   | "sticky"
+  | "conversation"
 
 export interface CanvasNodePosition {
   x: number
@@ -78,6 +79,7 @@ const VALID_KINDS = new Set<string>([
   "file",
   "url-bookmark",
   "sticky",
+  "conversation",
 ])
 
 function isFiniteNumber(v: unknown): v is number {
