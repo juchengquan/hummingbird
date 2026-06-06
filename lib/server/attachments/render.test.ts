@@ -109,6 +109,58 @@ describe("renderAttachmentsPrompt", () => {
     expect(out).toContain("fetched 2026-05-21T00:00:00Z")
     expect(out).toContain("[truncated to fit overall budget]")
   })
+
+  test("retrievalMode 'rag' — body suppressed, stub note inserted", () => {
+    const out = renderAttachmentsPrompt(
+      [
+        {
+          kind: "file",
+          summary: {
+            name: "huge.pdf",
+            size: 5_000_000,
+            type: "application/pdf",
+            // Even with `text` present, rag mode should drop it.
+            text: "this should not appear in the prompt",
+            retrievalMode: "rag",
+          },
+        },
+      ],
+      10_000,
+    )
+    expect(out).toContain("huge.pdf")
+    expect(out).toContain("searchFiles")
+    expect(out).not.toContain("this should not appear in the prompt")
+  })
+
+  test("inline + rag files coexist — inline body still rendered alongside rag stub", () => {
+    const out = renderAttachmentsPrompt(
+      [
+        {
+          kind: "file",
+          summary: {
+            name: "small.md",
+            size: 1,
+            type: "text/markdown",
+            text: "hello inline",
+          },
+        },
+        {
+          kind: "file",
+          summary: {
+            name: "big.pdf",
+            size: 1,
+            type: "application/pdf",
+            text: "should not appear",
+            retrievalMode: "rag",
+          },
+        },
+      ],
+      10_000,
+    )
+    expect(out).toContain("hello inline")
+    expect(out).toContain("searchFiles")
+    expect(out).not.toContain("should not appear")
+  })
 })
 
 describe("renderMetaOnlyFilesPrompt", () => {
@@ -130,5 +182,24 @@ describe("renderMetaOnlyFilesPrompt", () => {
     ])
     expect(out).toContain("missing.bin")
     expect(out).not.toContain("ok.txt")
+  })
+
+  test("rag-mode files are NOT included (they're not meta-only — they're deliberately deferred to searchFiles)", () => {
+    const out = renderMetaOnlyFilesPrompt([
+      // `text: undefined` on a rag-mode file would otherwise look
+      // identical to a meta-only file. The retrievalMode field
+      // disambiguates so the footer doesn't double-list the file
+      // with contradictory guidance.
+      {
+        name: "huge.pdf",
+        size: 1_000_000,
+        type: "application/pdf",
+        retrievalMode: "rag",
+      },
+      // A real meta-only file should still surface.
+      { name: "missing.bin", size: 1, type: "application/octet-stream" },
+    ])
+    expect(out).toContain("missing.bin")
+    expect(out).not.toContain("huge.pdf")
   })
 })

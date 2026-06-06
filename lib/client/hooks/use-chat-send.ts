@@ -311,16 +311,29 @@ export function useChatSend(): UseChatSendResult {
       // de-duped per kind, tombstones filtered.
       const attachmentsForRequest: ChatRequestInput["attachments"] = []
 
+      const retrievalModes = conv?.fileRetrievalModes ?? {}
       for (const file of attachedFiles) {
+        const mode = retrievalModes[file.id] ?? "inline"
         attachmentsForRequest.push({
           kind: "file",
           summary: {
             name: file.name,
             size: file.size,
             type: file.type,
-            text: file.extractedText,
-            truncated: file.extractionTruncated,
+            // Suppress the inline body for RAG-mode attachments — the
+            // server renders a short "available via searchFiles" note
+            // instead of the full text. We still send `truncated` and
+            // `kind` so the meta block (filename / type / size) stays
+            // accurate. Setting `text` to undefined keeps the wire
+            // shape clean.
+            text: mode === "rag" ? undefined : file.extractedText,
+            truncated:
+              mode === "rag" ? undefined : file.extractionTruncated,
             kind: file.extractedKind,
+            // Only emit the field when non-default to keep cache-hit
+            // friendliness — an unchanged prefix matters for the
+            // Vercel Gateway's auto-cache story.
+            ...(mode === "rag" ? { retrievalMode: "rag" as const } : {}),
           },
         })
       }
