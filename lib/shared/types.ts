@@ -718,4 +718,14 @@ export interface Agent {
   deletedAt?: Date
 }
 
-export type MainView = 'workspaces' | 'chat' | 'resources' | 'editor' | 'canvas'
+export type MainView =
+  | 'workspaces'
+  | 'chat'
+  | 'resources'
+  | 'editor'
+  | 'canvas'
+  /** Cross-conversation index of every generated image + artifact in
+   *  the active workspace. Click → open the source conversation /
+   *  artifact. Read-only — produced by joining the existing
+   *  `Message.generatedImages` + `Artifact` rows; no new store state. */
+  | 'library'
