@@ -177,6 +177,21 @@ function sameSkillPrefs(
   return true
 }
 
+function sameFileRetrievalModes(
+  a: Record<string, "rag"> | undefined,
+  b: Record<string, "rag"> | undefined
+): boolean {
+  const ak = Object.keys(a ?? {})
+  const bk = Object.keys(b ?? {})
+  if (ak.length !== bk.length) return false
+  for (const k of ak) {
+    if ((a as Record<string, "rag">)[k] !== (b as Record<string, "rag"> | undefined)?.[k]) {
+      return false
+    }
+  }
+  return true
+}
+
 // ------------ conversations + their messages --------------------------------
 
 export function diffConversations(
@@ -209,6 +224,7 @@ export function diffConversations(
           selected_file_ids: c.selectedFileIds,
           selected_mcp_resource_ids: c.selectedMcpResourceIds ?? [],
           selected_url_bookmark_ids: c.selectedUrlBookmarkIds ?? [],
+          file_retrieval_modes: c.fileRetrievalModes ?? {},
           system_prompt: c.systemPrompt,
           // document_content / document_updated_at were promoted to the
           // workspaces row. Column still exists for one release for
@@ -259,6 +275,7 @@ function conversationHeaderEquals(a: Conversation, b: Conversation): boolean {
       b.selectedUrlBookmarkIds ?? []
     ) &&
     sameSkillPrefs(a.skillPrefs, b.skillPrefs) &&
+    sameFileRetrievalModes(a.fileRetrievalModes, b.fileRetrievalModes) &&
     a.systemPrompt === b.systemPrompt &&
     (a.parentId ?? null) === (b.parentId ?? null) &&
     (a.forkedFromMessageId ?? null) === (b.forkedFromMessageId ?? null) &&

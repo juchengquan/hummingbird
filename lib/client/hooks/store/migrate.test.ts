@@ -108,3 +108,39 @@ describe("v<22 — Conversation.systemPrompt added", () => {
     expect(() => runMigrations({ conversations: null }, 21)).not.toThrow()
   })
 })
+
+describe("v<23 — Conversation.fileRetrievalModes added", () => {
+  test("seeds empty fileRetrievalModes on conversations missing it", () => {
+    const out = runMigrations(
+      {
+        conversations: [
+          { id: "c1", title: "old" },
+          {
+            id: "c2",
+            title: "newer",
+            fileRetrievalModes: { "file-A": "rag" },
+          },
+        ],
+      },
+      22,
+    ) as { conversations: Array<Record<string, unknown>> }
+    expect(out.conversations[0].fileRetrievalModes).toEqual({})
+    expect(out.conversations[1].fileRetrievalModes).toEqual({
+      "file-A": "rag",
+    })
+  })
+
+  test("repairs malformed (non-object / array) fileRetrievalModes", () => {
+    const out = runMigrations(
+      {
+        conversations: [
+          { id: "c1", fileRetrievalModes: null },
+          { id: "c2", fileRetrievalModes: [1, 2, 3] },
+        ],
+      },
+      22,
+    ) as { conversations: Array<Record<string, unknown>> }
+    expect(out.conversations[0].fileRetrievalModes).toEqual({})
+    expect(out.conversations[1].fileRetrievalModes).toEqual({})
+  })
+})

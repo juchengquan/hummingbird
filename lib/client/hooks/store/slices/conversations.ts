@@ -38,6 +38,7 @@ export const getDefaultConversations = (): Conversation[] => {
       pinned: true,
       systemPrompt: "",
       selectedFileIds: [],
+      fileRetrievalModes: {},
     },
   ]
 }
@@ -70,6 +71,14 @@ export interface ConversationsSlice {
    *  and per-turn persona documented in `lib/shared/agents/resolve.ts`.
    *  See `docs/PLAN-conversation-system-prompt.md`. */
   setConversationSystemPrompt: (conversationId: string, prompt: string) => void
+  /** Set the per-attached-file retrieval mode. `mode === null` clears
+   *  the override (back to default inline). No-op when the
+   *  conversation isn't found. */
+  setConversationFileRetrievalMode: (
+    conversationId: string,
+    fileId: string,
+    mode: "rag" | null,
+  ) => void
   /** Set a conversation skill override. `null` clears the entry (falls back to workspace default). */
   setConversationSkillPref: (conversationId: string, skillId: string, value: boolean | null) => void
   /** Patch the per-conversation `webSearch` config override (same shape
@@ -125,6 +134,7 @@ export const createConversationsSlice: SliceCreator<ConversationsSlice> = (
       // `docs/PLAN-conversation-system-prompt.md` §UI surface.
       systemPrompt: "",
       selectedFileIds: [],
+      fileRetrievalModes: {},
     }
     set((state) => ({
       conversations: [newConversation, ...state.conversations],
@@ -273,6 +283,20 @@ export const createConversationsSlice: SliceCreator<ConversationsSlice> = (
           ? { ...c, systemPrompt: prompt, updatedAt: new Date() }
           : c
       ),
+    })),
+  setConversationFileRetrievalMode: (conversationId, fileId, mode) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) => {
+        if (c.id !== conversationId) return c
+        // Clone the modes map; `null` removes the entry, "rag" sets it.
+        // Setting to default ("inline") is equivalent to `null` —
+        // there's no value in persisting an explicit inline override
+        // since absence already means inline.
+        const next = { ...(c.fileRetrievalModes ?? {}) }
+        if (mode === null) delete next[fileId]
+        else next[fileId] = mode
+        return { ...c, fileRetrievalModes: next, updatedAt: new Date() }
+      }),
     })),
   setConversationSkillPref: (conversationId, skillId, value) =>
     set((state) => ({
