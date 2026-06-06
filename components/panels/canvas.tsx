@@ -17,6 +17,7 @@ import {
   useReactFlow,
   type Connection,
   type Edge,
+  type EdgeChange,
   type Node,
   type ReactFlowInstance,
 } from "@xyflow/react"
@@ -32,6 +33,10 @@ import {
   type CanvasNodeKind,
   type CanvasState,
 } from "@/shared/canvas/types"
+import {
+  buildDerivedForkEdges,
+  isForkEdgeId,
+} from "@/shared/canvas/fork-edges"
 import { canvasNodeTypes, type CanvasNodeData } from "@/components/canvas/canvas-nodes"
 import { EditableEdge, type EditableEdgeData } from "@/components/canvas/canvas-edge"
 import {
@@ -297,11 +302,53 @@ function CanvasInner({ workspaceId }: { workspaceId: string }) {
     []
   )
 
+  // Guard `onEdgesChange` so React Flow's bulk operations (select all
+  // → delete, "delete selected" keyboard shortcut, programmatic
+  // changes) can't touch synthetic fork edges. Each change carries an
+  // edge `id`; the `fork:` prefix marks the synthetics. Stored-edge
+  // changes flow through to the underlying setter unchanged.
+  const handleEdgesChange = useCallback(
+    (changes: EdgeChange<Edge>[]) => {
+      const filtered = changes.filter((c) => {
+        if ("id" in c && typeof c.id === "string" && isForkEdgeId(c.id)) {
+          return false
+        }
+        return true
+      })
+      if (filtered.length === 0) return
+      onEdgesChange(filtered)
+    },
+    [onEdgesChange],
+  )
+
+  // Flowchat — synthetic fork edges derived at render time from
+  // `parentId` + `forkedFromMessageId` on each conversation in this
+  // workspace, NOT persisted to `canvasState.edges`. Recomputed when
+  // the conversation list or the live node set changes. These render
+  // distinct from user-drawn edges and can't be deleted by the user
+  // (see `onEdgesChange` filter below).
+  const nodeIdsOnCanvas = useMemo(
+    () => new Set(nodes.map((n) => n.id)),
+    [nodes],
+  )
+  const wsConversations = useMemo(
+    () => conversations.filter((c) => c.workspaceId === workspaceId),
+    [conversations, workspaceId],
+  )
+  const derivedForkEdges = useMemo(
+    () => buildDerivedForkEdges(wsConversations, nodeIdsOnCanvas),
+    [wsConversations, nodeIdsOnCanvas],
+  )
+
   // Thread the editing id + callbacks into every edge's data, and force
   // the editable edge type. Mirrors the sticky-node handler injection.
+  // Synthetic fork edges ride on the same React Flow edge prop but
+  // skip the editor wiring — they're not user-editable and the
+  // `editable` renderer would otherwise let a double-click open a
+  // label editor for them.
   const edgesWithHandlers = useMemo<Edge[]>(
-    () =>
-      edges.map((e) => ({
+    () => [
+      ...edges.map((e) => ({
         ...e,
         type: "editable",
         data: {
@@ -311,7 +358,29 @@ function CanvasInner({ workspaceId }: { workspaceId: string }) {
           onCommitLabel: onCommitEdgeLabel,
         } satisfies EditableEdgeData,
       })),
-    [edges, editingEdgeId, onStartEditEdge, onCommitEdgeLabel]
+      ...derivedForkEdges.map((e) => ({
+        ...e,
+        // Use the default React Flow edge renderer (bezier with label).
+        // The id prefix `fork:` is what the panel's edge-change handler
+        // checks to refuse deletion / selection of synthetic edges.
+        selectable: false,
+        deletable: false,
+        animated: false,
+        style: {
+          stroke: "var(--primary)",
+          strokeDasharray: "4 3",
+          strokeWidth: 1.5,
+        },
+        labelStyle: {
+          fill: "var(--muted-foreground)",
+          fontSize: 10,
+        },
+        labelBgStyle: {
+          fill: "var(--background)",
+        },
+      })),
+    ],
+    [edges, editingEdgeId, onStartEditEdge, onCommitEdgeLabel, derivedForkEdges]
   )
 
   const centerPosition = useCallback(() => {
@@ -577,7 +646,7 @@ function CanvasInner({ workspaceId }: { workspaceId: string }) {
         nodes={nodesWithHandlers}
         edges={edgesWithHandlers}
         onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
+        onEdgesChange={handleEdgesChange}
         onConnect={onConnect}
         onNodeDragStop={persistDebounced}
         onNodesDelete={persistNow}
