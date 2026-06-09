@@ -20,11 +20,13 @@ deprioritised into [Parked / low priority](#parked--low-priority).
 
 ## Status snapshot
 
-- **17 active plans** in `docs/` (planning / phased) — including the
-  **10 new plans** from the 2026-06-09 market refresh: round 1 (MCP
+- **22 active plans** in `docs/` (planning / phased) — including the
+  **15 new plans** from the 2026-06-09 market refresh: round 1 (MCP
   Apps, code interpreter, generative UI parts, portable skills, subagent
   orchestration) + round 2 (A2A interop, `browse` skill, semantic
-  caching, prompt optimisation, collaborative editing). See
+  caching, prompt optimisation, collaborative editing) + round 3 (inline
+  autocomplete, reasoning-effort control, structured outputs, guardrails
+  + PII, ambient agents). See
   [Next — planned work](#next--planned-work-have-a-plan) for the row
   table.
 - **3 parked / low-priority** plans (Langfuse, Aider editor pair,
@@ -83,6 +85,11 @@ scheduling**) is shipped — its plans live in
 | 📐 [Semantic caching](PLAN-semantic-caching.md) | planning (new 2026-06-09 r2) | Cache the deterministic non-chat calls (summarize / suggestions / extract). Phase 1 = exact-key cache (no embeddings); Phase 2 = embedding-similarity once the pipeline lands. Distinct from the closed gateway-caching item; never caches the chat stream. M, phased |
 | 📐 [Prompt optimisation (GEPA/DSPy)](PLAN-prompt-optimization.md) | planning (new 2026-06-09 r2) | Offline/admin loop that evolves skill / persona / editor prompts from a labelled eval set + traces. First target: the `getChooseToolPrompt` classifier (measurable). Human-accepted, versioned, never auto-deployed. Gated on an eval set. M–L |
 | 📐 [Collaborative editing + AI peer](PLAN-collab-editing.md) | planning (new 2026-06-09 r2) | Yjs CRDT + presence in the Plate editor with the AI as a server-side Yjs peer (visible cursor + status). Phase A (AI-as-peer) has single-user value; Phase B (human multiplayer) gated on the document-sharing / multi-tenant story. L |
+| 📐 [Inline editor autocomplete](PLAN-inline-autocomplete.md) | planning (new 2026-06-09 r3) | Copilot-style ghost text in the Plate editor. Plate's `CopilotKit` is *already installed* — the work is a fast-model completion endpoint + tuning + a toggle. Off by default. S–M, 2 commits |
+| 📐 [Reasoning-effort control](PLAN-reasoning-effort-control.md) | planning (new 2026-06-09 r3) | A Fast/Balanced/Thorough dial beside the model picker mapping to the provider's reasoning budget (`providerOptions`). No-op + hidden for non-reasoning models. Mostly-existing plumbing. S–M, 2 commits |
+| 📐 [Structured outputs](PLAN-structured-outputs.md) | planning (new 2026-06-09 r3) | Replace best-effort `parseSuggestionsJson` with native constrained-decoding `generateObject` on the deterministic calls (suggestions / summarize / extract / comment / table), capability-gated, lenient parser as fallback. M, 3 commits |
+| 📐 [Guardrails + PII redaction](PLAN-guardrails-pii.md) | planning (new 2026-06-09 r3) | Optional, off-by-default pre/post hooks: PII redaction (Presidio-class) + content moderation, per-workspace policy, self-hostable behind an adapter. Mostly relevant once multi-user. M, PR series |
+| 📐 [Proactive / ambient agents](PLAN-ambient-agents.md) | planning (new 2026-06-09 r3) | Extend the existing `task_schedules` cron dispatch into an *event* dispatcher: "when X happens (file/bookmark/note added, task finished), run persona Y." Hard loop guards + HITL-by-default for side-effecting triggers. M–L, PR series |
 | 📐 [Local Supabase switch](PLAN-local-supabase-switch.md) | planning | Move local dev off the hosted Supabase project onto a `bun run supabase:start` stack on this machine. 5 steps, ~30 min wall-clock. 13 open questions to walk through before execution (cloud data handling, Path A vs Path B, auth-free local mode, etc.) |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
@@ -172,116 +179,124 @@ existing AI command routes (`/api/ai/command`).
 > strengthens the in-browser-PGlite option already weighed in
 > `PLAN-local-rag.md`.
 
-### Third research round (2026-06-09)
+> **The five ideas from the third research round (2026-06-09) now have
+> dedicated plans and have been promoted to
+> [Next — planned work](#next--planned-work-have-a-plan):**
+> [Inline editor autocomplete](PLAN-inline-autocomplete.md) ·
+> [Reasoning-effort control](PLAN-reasoning-effort-control.md) ·
+> [Structured outputs](PLAN-structured-outputs.md) ·
+> [Guardrails + PII redaction](PLAN-guardrails-pii.md) ·
+> [Proactive / ambient agents](PLAN-ambient-agents.md).
 
-A third sweep across angles the first two rounds didn't cover — writing
-ergonomics, reasoning control, output reliability, safety, and proactive
-execution. Idea-level for now; promote to a `PLAN-*.md` when one earns a
-slot.
+### Fourth research round (2026-06-09)
 
-#### Inline editor ghost-text autocomplete
+A fourth sweep across angles the first three rounds didn't cover — voice
+output, model economics, answer trust, visual composition, and richer
+document understanding. Idea-level for now; promote to a `PLAN-*.md`
+when one earns a slot.
 
-**Why distinctive.** The 2026 bar for writing tools is Copilot-style
-ghost text — inline grey completions you accept with Tab. Hummingbird's
-Plate `EditorKit` *already bundles `CopilotKit`* (and `CursorOverlayKit`),
-so this is largely "activate + tune the already-installed plugin for
-prose," not a new subsystem: a fast cheap model proposes the next
-phrase/sentence as you type in the editor.
+#### Read-aloud / TTS voice output
 
-**Sketch.** Wire the existing Plate Copilot plugin to a debounced
-completion endpoint backed by a fast model (`google/gemini-2.5-flash`
-class, the editor already uses it); ghost text on pause, Tab to accept,
-keystroke to dismiss. A per-document on/off toggle.
+**Why distinctive.** The voice bar in 2026 is streaming TTS —
+Chatterbox-Turbo (sub-200 ms), MeloTTS, Hume TADA (~11× realtime), all
+open-source / self-hostable. Hummingbird tracks "voice input (Whisper)"
+as a catch-up note, but voice *out* — read the assistant's reply aloud,
+hands-free — is a distinctive, low-risk add and the foundation for a
+full voice mode.
 
-**Builds on.** `EditorKit` `CopilotKit` (already installed),
-`model-provider.ts` fast model, the editor command route.
+**Sketch.** A read-aloud control on assistant messages backed by a
+streaming TTS adapter (Chatterbox / MeloTTS self-host behind a base-URL
+adapter — the Minimax/E2B pattern; or a hosted voice). Stream audio as
+the text streams; voice picker + per-workspace default.
 
-**Effort.** Small–medium (plugin is present; the work is the completion
-endpoint + tuning + the toggle).
-**Source.** [Ghost-text autocomplete for writing (2026)](https://gentext.ai/blog/en/ghost-text-autocomplete-academic-writing/) · [Copilot inline suggestions](https://code.visualstudio.com/docs/editing/ai-powered-suggestions)
+**Builds on.** Chat message renderer, the model-provider adapter
+pattern, the catch-up voice-input path it pairs with.
 
-#### Reasoning-effort control
+**Effort.** Medium.
+**Source.** [Open-source TTS 2026](https://www.bentoml.com/blog/exploring-the-world-of-open-source-text-to-speech-models) · [Chatterbox](https://www.resemble.ai/learn/models/chatterbox)
 
-**Why distinctive.** Reasoning models in 2026 expose a depth dial
-(`reasoning_effort` low/medium/high, or instant↔extended). Hummingbird
-already *renders* reasoning tokens in a collapsible block but gives the
-user no control over how much the model thinks — so users pay extended-
-thinking latency/cost on trivial turns and get shallow answers on hard
-ones.
+#### Smart model routing (RouteLLM-style)
 
-**Sketch.** A per-turn (and per-workspace default) effort control next
-to the model picker that maps onto the provider's reasoning-budget
-parameter (`providerOptions` thinking-budget for Anthropic, effort for
-others). No-op for non-reasoning models. Surfaces beside the existing
-reasoning block.
+**Why distinctive.** RouteLLM (ICLR 2025, open-source) reaches ~95% of
+strong-model quality at ~14–26% strong-model calls — a 75–85% cost cut —
+by routing each prompt to the cheapest *capable* model via a complexity
+classifier. Hummingbird already has `openrouter/auto` (routes *within*
+OpenRouter); this is a Hummingbird-level `model: "auto"` that routes
+across the *whole* provider set (Anthropic / gateway / Ollama /
+OpenRouter) by query complexity.
 
-**Builds on.** Model picker, the reasoning block, `providerOptions`
-plumbing on the chat route.
+**Sketch.** A complexity classifier (a small model, or RouteLLM's
+matrix-factorisation router) picks strong vs weak per turn from a
+configured pair/set; a new `auto` option in the model picker. A cascade
+mode (try weak, escalate on low confidence) comes later.
 
-**Effort.** Small–medium.
-**Source.** [ChatGPT thinking-duration controls](https://skywork.ai/blog/chatgpt-thinking-duration-controls/) · [reasoning models prompting 2026](https://sureprompts.com/blog/ai-reasoning-models-prompting-complete-guide-2026)
+**Builds on.** `model-provider.ts`, `config/models.json`, the model
+picker, `openrouter/auto` (precedent).
 
-#### Structured outputs / constrained decoding
+**Effort.** Medium.
+**Source.** [RouteLLM](https://routellm.dev/) · [LLM model routing guide 2026](https://www.burnwise.io/blog/llm-model-routing-guide)
 
-**Why distinctive.** Native structured output (constrained decoding
-against a JSON Schema) became GA across providers in early 2026 —
-schema-valid output *100% of the time*, vs Hummingbird's current
-best-effort `parseSuggestionsJson` (strip fences, try JSON, fall back to
-`[]`). The deterministic calls — suggestions, summarize, extraction,
-the editor `comment`/`table` tools, project-breakdown — would gain
-reliability + drop their defensive parsers.
+#### Citation & verifiability layer
 
-**Sketch.** Swap the affected calls to the AI SDK's `generateObject` /
-structured-output mode with a Zod schema per call site (schemas mostly
-already exist in `lib/shared/`); keep the lenient parser only as a
-fallback for providers/models without native support.
+**Why distinctive.** Citation-hallucination rates run 14–95% across
+vendors; the 2026 fix is a *verification* layer — ground each claim
+against retrieved sources + flag unsupported statements with a
+confidence signal. Hummingbird already renders inline citations from web
+search; extending to a claim-level verify pass (against web-search +
+`searchFiles` results) turns citations from decorative to *checked*.
 
-**Builds on.** The non-chat skill endpoints, `lib/shared/` Zod schemas,
-`suggestions-parser.ts` (becomes the fallback), `model-provider.ts`.
+**Sketch.** A post-turn verifier (chain-of-verification / retrieval-
+grounded check) that maps assistant claims to cited sources, flags
+unsupported ones inline, and surfaces a confidence affordance. Opt-in
+(adds a verification call); strongest in Deep Research mode.
 
-**Effort.** Medium. Pairs with semantic caching (deterministic calls)
-and prompt optimisation (schema-validity is a clean metric).
-**Source.** [LLM structured output 2026](https://dev.to/pockit_tools/llm-structured-output-in-2026-stop-parsing-json-with-regex-and-do-it-right-34pk) · [how constrained decoding works](https://letsdatascience.com/blog/structured-outputs-making-llms-return-reliable-json)
+**Builds on.** Web search + `searchFiles` retrieval, inline-citation
+rendering, Deep Research mode, the message renderer.
 
-#### Optional guardrails + PII redaction
+**Effort.** Medium–large.
+**Source.** [CiteCheck — retrieval-grounded citation verification](https://arxiv.org/html/2605.27700v1) · [preventing LLM hallucinations 2026](https://keymakr.com/blog/preventing-llm-hallucinations-techniques-best-practices-2026/)
 
-**Why distinctive.** A self-hostable input/output moderation + PII
-redaction layer (NeMo Guardrails / Presidio-class) that masks SSNs,
-cards, emails, health identifiers before they reach the model and
-screens outputs — table-stakes for any shared/enterprise deployment,
-and a natural fit for Hummingbird's self-host posture. Optional + off by
-default for the single-user case.
+#### Visual workflow / flow builder on the canvas
 
-**Sketch.** A pluggable pre/post hook on the chat + non-chat routes
-(`lib/server/guardrails/`) running a configurable redaction +
-moderation pass; per-workspace policy; off by default. Self-hostable
-engine behind an adapter.
+**Why distinctive.** Langflow / Flowise / OpenAI Agent Builder made
+drag-drop node graphs the standard way to compose agent workflows.
+Hummingbird already has a react-flow workspace canvas + skills +
+personas + the task executor (+ planned subagents) — so a flow builder
+is *composition* of surfaces it already owns: drag skills/personas onto
+the canvas, wire typed edges, save as a reusable workflow that runs on
+the executor.
 
-**Builds on.** The chat route, `model-provider.ts`, per-workspace config.
+**Sketch.** A "workflow" canvas mode with node kinds for skill /
+persona / input / branch; typed edges (output schema → next input); a
+compiler that lowers the graph onto the task executor (each node a step
+or subagent). Reuses the canvas + RunStore.
 
-**Effort.** Medium; mostly relevant once multi-user/shared deployments
-exist.
-**Source.** [NeMo Guardrails](https://github.com/NVIDIA-NeMo/Guardrails) · [AI guardrails platforms 2026](https://www.getmaxim.ai/articles/best-ai-guardrails-platforms-in-2026/)
+**Builds on.** Workspace canvas (react-flow), skills registry, personas,
+subagent orchestration (planned), task executor.
 
-#### Proactive / ambient event-triggered agents
+**Effort.** Large.
+**Source.** [Langflow](https://medium.com/@mridulv204/langflow-no-code-ai-workflow-builder-3b0fd8b0a977) · [no-code AI agent builders 2026](https://metaflow.life/blog/best-no-code-ai-agent-builders)
 
-**Why distinctive.** Hummingbird already has *scheduled* tasks
-(`task_schedules` + cron dispatch). The 2026 shift is from user-initiated
-to **event-driven**: an agent runs on a *signal* (a file uploaded, a
-bookmark added, a watched condition met), not just a clock or a prompt.
-A small extension of the existing schedule dispatcher into an event/
-trigger dispatcher turns the task queue into an ambient-agent substrate.
+#### Multimodal document understanding
 
-**Sketch.** A `task_triggers` table (event kind + filter + persona +
-action) beside `task_schedules`; the existing tick/dispatch loop gains
-an event source (store mutations → trigger evaluation) that enqueues a
-task on match. Reuses the whole executor + HITL + notification stack.
+**Why distinctive.** Hummingbird's extraction is text-only
+(`lib/server/extraction.ts` → pdf-parse / mammoth / xlsx), which drops
+tables, charts, figures, and layout — often where the answer lives. 2026
+VLMs (GLM-4.5V, Qwen2.5-VL, vision-guided chunking) parse documents
+*visually*, preserving structure. Vision-aware extraction would
+materially improve `searchFiles` retrieval quality + file Q&A.
 
-**Builds on.** Task queue + `task_schedules` dispatch, personas, the
-finish-while-away notification.
+**Sketch.** A vision-extraction path: render PDF pages to images, run a
+vision-capable model (Hummingbird already supports vision input) for
+layout-aware structured extraction (tables → markdown, figures →
+captions), feed the richer chunks into the existing FTS / `searchFiles`
+index. Gated to vision-capable models + larger files where it pays.
 
-**Effort.** Medium–large; needs a careful trigger model + loop guards.
-**Source.** [Ambient agents — proactive AI](https://earlybirdlabs.com/insights/what-are-ambient-agents) · [from events to actions](https://medium.com/@vondevelopment/from-events-to-actions-understanding-ambient-agents-86d0c5641f50)
+**Builds on.** `/api/extract` + `lib/server/extraction.ts`,
+vision-capable models, file full-text / `searchFiles`.
+
+**Effort.** Medium–large.
+**Source.** [Best multimodal models for document analysis 2026](https://www.siliconflow.com/articles/en/best-multimodal-models-for-document-analysis) · [vision-guided chunking for RAG](https://arxiv.org/pdf/2506.16035)
 
 ---
 
@@ -349,11 +364,17 @@ bundles CopilotKit + CursorOverlayKit but no Yjs, both reflected in the
 plans). Two findings (GraphRAG, fully-local in-browser inference) were
 folded into the existing retrieval plans rather than added standalone.
 
-A **third research round** added five more idea-level candidates to
-[Later](#later--distinctive-ideas-no-plan-yet) — inline editor ghost-text
+A **third research round** covered inline editor ghost-text
 autocomplete, reasoning-effort control, structured outputs / constrained
 decoding, optional guardrails + PII redaction, and proactive / ambient
-event-triggered agents.
+event-triggered agents — all five then **written up as dedicated plans
+and promoted to Next**.
+
+A **fourth research round** added five more idea-level candidates to
+[Later](#later--distinctive-ideas-no-plan-yet) — read-aloud / TTS voice
+output, smart model routing (RouteLLM-style), a citation & verifiability
+layer, a visual workflow / flow builder on the canvas, and multimodal
+(vision-aware) document understanding.
 
 **Previous session (2026-06-06):** Cross-product-inspirations drawdown —
 six of the fourteen menu items shipped this session:
