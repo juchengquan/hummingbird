@@ -8,22 +8,30 @@ parking-lot idea — plus the conventions for keeping this file honest.
 > still lives in `PLAN-*.md` — active plans in `docs/`, archived plans
 > in [`docs/_done/`](_done/).
 
-Last updated: **2026-06-06** — see [Recent activity](#recent-activity)
+Last updated: **2026-06-09** — see [Recent activity](#recent-activity)
 just below for the rolling pulse, and the
 [Shipped log](#shipped-log-newest-first) further down for the full
-chronological record.
+chronological record. The 2026-06-09 pass was a **market refresh**:
+five new distinctive ideas added below, and three previously-planned
+items (Langfuse, Aider editor pair, accurate token counting)
+deprioritised into [Parked / low priority](#parked--low-priority).
 
 ---
 
 ## Status snapshot
 
-- **10 active plans** in `docs/` (planning / phased / deferred). See
-  [Next — planned work](#next--planned-work-have-a-plan) for the row
-  table.
+- **27 active plans** in `docs/` (planning / phased) — including the
+  **20 new plans** from the 2026-06-09 market refresh (four research
+  rounds of five). They're ranked in
+  [Choosing what to build first](#choosing-what-to-build-first); the
+  full set is in [Next — planned work](#next--planned-work-have-a-plan).
+- **3 parked / low-priority** plans (Langfuse, Aider editor pair,
+  typed prompt variables) + accurate token counting. See
+  [Parked / low priority](#parked--low-priority).
 - **30 fully-shipped plans archived** under [`docs/_done/`](_done/).
 - **Nothing currently in flight** (no branch with active work that
   doesn't already have a PR).
-- **Latest ships** (this session, in chronological order): #165 → #166
+- **Latest ships** (last session, in chronological order): #165 → #166
   → #167 → #168 → #169, plus the docs landings #170 (cross-product
   plan refresh) and #171 (third-backend naming). Detail in
   [Recent activity](#recent-activity).
@@ -62,15 +70,112 @@ scheduling**) is shipped — its plans live in
 |---|---|---|
 | 🪜 [Cross-product inspirations menu](PLAN-cross-product-inspirations.md) | 7 of 14 shipped, 1 closed | A menu, not a single feature — 14 items synthesised from a five-cohort survey of OSS + commercial AI/chat/agent products. **Shipped:** #1 conversation system prompt (#165), #2 Ollama + #3 OpenRouter + #5 Library (#167), #4 Part 2 gateway tagging (#166), #6 `#`-mention + RAG toggle (#168, #169), #7 Flowchat canvas. **Closed:** #4 Part 1 (caching — won't do without a Vercel-gateway commitment). **Open:** #8 Beam, #9 Elicit tables, #10 Langfuse, #11 Aider editor pair, #12 hybrid search, #13 Letta memory, #14 LangGraph checkpointer. Per-item status + a Shipped tracker live in the plan |
 | 🪜 [Agent API as a separate service](PLAN-agent-api.md) | Phases 0 through 4-4b shipped; one follow-up open | All six phases of the original plan plus seven of the open follow-ups have shipped: `services/agent-py/` runs end-to-end (chat + tools + MCP + url-fetch + summarize + refresh-url + extract + whoami + health); per-IP rate buckets + idle watchdog (PR #161); `POST /v1/mcp/server` CRUD (#160); provider-categorised errors (#155); frontend selector for non-chat endpoints (#156); `workspace_id` + per-skill config on `/v1/chat` (#145); `useChat()` adoption (#148–#154). **One open item:** real DNS-rebinding test against actual DNS for the MCP-proxy SSRF guard (currently mocked). Phases 5 (default-on + decommission) and 6 (tidy + archive) explicitly deferred — per project policy both Python and TS stacks stay live and the user picks backend per-account via the Phase 4-2 selector |
-| 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 4 done, 1 moot, 3 open | Done: generatedImages sync (#45), recap-of-recaps (#63), roadmap sweep, signed-URL re-sign. Moot: local-mode MCP creds for tasks (rejected up front by #85). Open: accurate tokens, per-tool server-side approval flags, task-route integration tests |
-| 📐 [Langfuse self-hosted observability](PLAN-langfuse-observability.md) | planning | Wire `experimental_telemetry` from the AI SDK into a `@vercel/otel` instrumentation hook on the six Next.js chat-shaped routes; ship agent-py + agent-ts OTel via `opentelemetry-instrumentation-fastapi` / `@opentelemetry/instrumentation-http` in a follow-up commit. Reuses the existing `workspace:<id>` tag (PR #166) for per-workspace cost view. Item #10 from the inspirations menu; eval surface + prompt management deferred to a v2 |
-| 📐 [Aider architect/editor pair](PLAN-aider-architect-editor.md) | planning | Two-call Plate.js edit pipeline: a strong model emits a 3–6-bullet plan, a fast model emits structured `<<<EDIT block-id>>>` patches against the source. Patches stream into the already-shipped diff-review surface (#49). Only the `edit` intent gets the split; generate / comment / table stay single-call. Fallback to single-call when the patch parser rejects. Item #11 from the inspirations menu |
+| 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 4 done, 1 moot, 2 open | Done: generatedImages sync (#45), recap-of-recaps (#63), roadmap sweep, signed-URL re-sign. Moot: local-mode MCP creds for tasks (rejected up front by #85). Open: per-tool server-side approval flags, task-route integration tests. (Accurate token counting moved to [Parked / low priority](#parked--low-priority) in the 2026-06-09 refresh.) |
+| 📐 [MCP Apps — interactive UI in chat](PLAN-mcp-apps.md) | planning (new 2026-06-09) | Render an MCP tool's `ui://` resource in the existing live-artifact sandbox iframe + a `postMessage` tool-call bridge back to the same MCP server. Composes the sandbox renderer (#36) with the MCP integration. M, 3 commits |
+| 📐 [Sandboxed code interpreter](PLAN-code-interpreter.md) | planning (new 2026-06-09) | A `runCode` server skill backed by an E2B-style sandbox (self-hostable behind an adapter). Charts reuse the `generateImage` Storage + gallery path; stdout/tables ride a new `data-code-result` part. Budget-gated or HITL-gated. L, PR series |
+| 📐 [Generative UI parts](PLAN-generative-ui-parts.md) | planning (new 2026-06-09) | A `renderUI` tool emits typed, allow-listed `data-ui` parts (choice / confirm / info-table / mini-form) rendered as real React components. The chat-turn twin of `askUser`; the in-process twin of MCP Apps. M, 3 commits |
+| 📐 [Portable Agent Skills (SKILL.md)](PLAN-portable-skills.md) | planning (new 2026-06-09) | A third skill kind that's data, not code: `SKILL.md` front-matter + body, stored in a new `userSkills` slice, imported by URL (mirrors persona share #110), listed in the Library tab. Progressive disclosure via prompt injection. S–M, 3 commits |
+| 📐 [Subagent orchestration](PLAN-subagent-orchestration.md) | planning (new 2026-06-09) | One goal → N specialist subagents (each a persona-pinned child task) run in parallel via the existing executor + a durable join barrier; results aggregate back to the orchestrator. Depth cap 1, breadth cap 5. Distinct from Beam (#8). L, PR series |
+| 📐 [A2A interoperability](PLAN-a2a-interop.md) | planning (new 2026-06-09 r2) | Expose personas as A2A agent cards + delegate to remote A2A agents; complement to MCP. A2A task lifecycle maps 1:1 onto the existing RunStatus + HITL suspend. Outbound first (lower risk), inbound server second. Publishing gated on multi-tenant. L, PR series |
+| 📐 [Browser / `browse` skill](PLAN-browser-use.md) | planning (new 2026-06-09 r2) | A `runBrowserTask` server skill (browser-use, in agent-py) for navigate/extract/form-fill; screenshots reuse the `data-tool-image` gallery; mutating actions HITL-gated; auth flows last + heavily gated. Reuses the code-interpreter security model. L, PR series |
+| 📐 [Semantic caching](PLAN-semantic-caching.md) | planning (new 2026-06-09 r2) | Cache the deterministic non-chat calls (summarize / suggestions / extract). Phase 1 = exact-key cache (no embeddings); Phase 2 = embedding-similarity once the pipeline lands. Distinct from the closed gateway-caching item; never caches the chat stream. M, phased |
+| 📐 [Prompt optimisation (GEPA/DSPy)](PLAN-prompt-optimization.md) | planning (new 2026-06-09 r2) | Offline/admin loop that evolves skill / persona / editor prompts from a labelled eval set + traces. First target: the `getChooseToolPrompt` classifier (measurable). Human-accepted, versioned, never auto-deployed. Gated on an eval set. M–L |
+| 📐 [Collaborative editing + AI peer](PLAN-collab-editing.md) | planning (new 2026-06-09 r2) | Yjs CRDT + presence in the Plate editor with the AI as a server-side Yjs peer (visible cursor + status). Phase A (AI-as-peer) has single-user value; Phase B (human multiplayer) gated on the document-sharing / multi-tenant story. L |
+| 📐 [Inline editor autocomplete](PLAN-inline-autocomplete.md) | planning (new 2026-06-09 r3) | Copilot-style ghost text in the Plate editor. Plate's `CopilotKit` is *already installed* — the work is a fast-model completion endpoint + tuning + a toggle. Off by default. S–M, 2 commits |
+| 📐 [Reasoning-effort control](PLAN-reasoning-effort-control.md) | planning (new 2026-06-09 r3) | A Fast/Balanced/Thorough dial beside the model picker mapping to the provider's reasoning budget (`providerOptions`). No-op + hidden for non-reasoning models. Mostly-existing plumbing. S–M, 2 commits |
+| 📐 [Structured outputs](PLAN-structured-outputs.md) | planning (new 2026-06-09 r3) | Replace best-effort `parseSuggestionsJson` with native constrained-decoding `generateObject` on the deterministic calls (suggestions / summarize / extract / comment / table), capability-gated, lenient parser as fallback. M, 3 commits |
+| 📐 [Guardrails + PII redaction](PLAN-guardrails-pii.md) | planning (new 2026-06-09 r3) | Optional, off-by-default pre/post hooks: PII redaction (Presidio-class) + content moderation, per-workspace policy, self-hostable behind an adapter. Mostly relevant once multi-user. M, PR series |
+| 📐 [Proactive / ambient agents](PLAN-ambient-agents.md) | planning (new 2026-06-09 r3) | Extend the existing `task_schedules` cron dispatch into an *event* dispatcher: "when X happens (file/bookmark/note added, task finished), run persona Y." Hard loop guards + HITL-by-default for side-effecting triggers. M–L, PR series |
+| 📐 [Read-aloud / TTS voice output](PLAN-tts-voice-output.md) | planning (new 2026-06-09 r4) | Read assistant replies aloud via a streaming TTS adapter (Chatterbox/MeloTTS self-host, behind a base-URL adapter). Per-message control + auto-read setting; foundation for full voice mode. M, 2 commits |
+| 📐 [Smart model routing](PLAN-model-routing.md) | planning (new 2026-06-09 r4) | A Hummingbird-level `model: "auto"` that routes each turn to the cheapest *capable* model across the whole provider set (Anthropic / gateway / Ollama / OpenRouter) via a complexity classifier. Distinct from `openrouter/auto`. Transparent ("routed to X"). M, 3 commits |
+| 📐 [Citation & verifiability layer](PLAN-citation-verifiability.md) | planning (new 2026-06-09 r4) | Post-turn verifier grounds each claim against the turn's retrieved sources (web search / `searchFiles`), flags unsupported claims inline + a confidence summary. Opt-in; default-on in Deep Research. M–L, 3 commits |
+| 📐 [Visual workflow / flow builder](PLAN-workflow-builder.md) | planning (new 2026-06-09 r4) | A workflow canvas mode (skill / persona / input / branch nodes + typed edges) that compiles to the task executor. Composes the react-flow canvas + skills + personas + subagents. Run = a task. L, PR series (run-phase depends on subagents) |
+| 📐 [Multimodal document understanding](PLAN-multimodal-docs.md) | planning (new 2026-06-09 r4) | Vision-aware extraction (render PDF pages → VLM) that preserves tables/charts/layout the current text-only pipeline drops; richer chunks feed `searchFiles`. Vision-gated + capped. M–L, PR series |
 | 📐 [Local Supabase switch](PLAN-local-supabase-switch.md) | planning | Move local dev off the hosted Supabase project onto a `bun run supabase:start` stack on this machine. 5 steps, ~30 min wall-clock. 13 open questions to walk through before execution (cloud data handling, Path A vs Path B, auth-free local mode, etc.) |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
 | 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~2 weeks total. Separate from `PLAN-local-supabase-switch.md`, which keeps Supabase but moves it onto your machine |
 | 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 satisfied by agent-api | Phase 1 (contract-first frontend ⇄ API surface) shipped; Phase 2 (stand up a Python backend) satisfied by PLAN-agent-api `services/agent-py/`. The plan stays in `docs/` for the contract narrative but has no open work |
-| ⏸ [Typed prompt variables](PLAN-typed-prompt-variables.md) | deferred | Workspace-scoping migration shipped (`9b3c84f`); the typing UI itself remains deliberately deferred — "do not build unless users explicitly ask" |
+
+---
+
+## Choosing what to build first
+
+The 2026-06-09 refresh produced **20 new plans** — too many to action
+flat. This ranks them by a build-now lens (value × tractability ×
+dependencies). Tiers are guidance, not a strict order; within a tier,
+pick by appetite. The pre-existing plans above
+(inspirations / agent-api / small-followups / infra) are tracked
+separately and not re-ranked here.
+
+**Tier 1 — quick wins (start here).** Small–medium, high value, little
+or no new infra, mostly-existing plumbing.
+
+| Plan | Effort | Why first |
+|---|---|---|
+| [Reasoning-effort control](PLAN-reasoning-effort-control.md) | S–M | `providerOptions` plumbing already exists; immediate cost/latency lever |
+| [Inline editor autocomplete](PLAN-inline-autocomplete.md) | S–M | Plate `CopilotKit` is already installed — mostly wiring + a toggle |
+| [Structured outputs](PLAN-structured-outputs.md) | M | Reliability win now; also de-risks semantic caching + prompt-opt (clean metric) |
+| [Semantic caching](PLAN-semantic-caching.md) (Phase 1) | M | Exact-key cache needs **no** embeddings; immediate cost/latency win |
+
+**Tier 2 — high-value, self-contained (next).** Medium lift, compose
+with existing surfaces, no hard blocker.
+
+| Plan | Effort | Note |
+|---|---|---|
+| [MCP Apps](PLAN-mcp-apps.md) | M | Composes the sandbox renderer + MCP integration |
+| [Generative UI parts](PLAN-generative-ui-parts.md) | M | Builds on the AI SDK `data-*` plumbing |
+| [Portable skills (SKILL.md)](PLAN-portable-skills.md) | S–M | Mirrors persona share-by-URL |
+| [Smart model routing](PLAN-model-routing.md) | M | Cost lever; `openrouter/auto` is precedent |
+| [Read-aloud / TTS](PLAN-tts-voice-output.md) | M | Voice-out; foundation for voice mode |
+| [Multimodal document understanding](PLAN-multimodal-docs.md) | M–L | Lifts `searchFiles` quality |
+
+**Tier 3 — foundational / large (build deliberately; they unblock
+others).**
+
+| Plan | Effort | Unblocks / depends |
+|---|---|---|
+| [Code interpreter](PLAN-code-interpreter.md) | L | Establishes the sandbox security model the **browse skill** reuses |
+| [Subagent orchestration](PLAN-subagent-orchestration.md) | L | Unblocks the **workflow builder** run-phase; relates to **A2A** |
+| [Browser / browse skill](PLAN-browser-use.md) | L | Best after code-interpreter |
+| [Citation & verifiability](PLAN-citation-verifiability.md) | M–L | Self-contained; strongest in Deep Research |
+| [Prompt optimisation (GEPA)](PLAN-prompt-optimization.md) | M–L | Needs an eval set first |
+| [Visual workflow builder](PLAN-workflow-builder.md) | L | Run-phase depends on subagents |
+| [A2A interoperability](PLAN-a2a-interop.md) | L | Outbound first; **inbound publish gated on multi-tenant** |
+| [Ambient agents](PLAN-ambient-agents.md) | M–L | Buildable now, but invest in the loop guards up front |
+
+**Tier 4 — gated (wait for a prerequisite).**
+
+| Plan | Gate |
+|---|---|
+| [Collaborative editing + AI peer](PLAN-collab-editing.md) | Phase B (human multiplayer) needs the document-sharing / multi-tenant story; Phase A (AI-as-peer) can proceed |
+| [Guardrails + PII redaction](PLAN-guardrails-pii.md) | Mostly relevant once multi-user / shared deployments exist |
+
+**Two cross-cutting dependencies worth resolving early:**
+
+1. **An embedding pipeline** — there is none today (FTS only); it's
+   planned in [`PLAN-local-rag.md`](PLAN-local-rag.md) / hybrid search.
+   It gates semantic-caching **Phase 2** and strengthens
+   **citation** + **multimodal** retrieval.
+2. **A multi-tenant / document-sharing story** — gates collaborative
+   editing **Phase B**, **A2A** publishing, and most of the value of
+   **guardrails**.
+
+---
+
+## Parked / low priority
+
+Plans that exist (or are well-scoped) but are **deliberately not
+scheduled** right now. Each has a re-open trigger. These are not
+abandoned — the `PLAN-*.md` files stay in `docs/`; they're just below
+the line for the current work focus.
+
+| Plan | Status | Why parked / re-open trigger |
+|---|---|---|
+| ⏸ [Langfuse self-hosted observability](PLAN-langfuse-observability.md) | deferred (was 📐 planning) | Deprioritised in the 2026-06-09 refresh. A trace/cost dashboard only earns its keep once someone commits to writing + acting on evals (see open question #2 in the inspirations plan); until then the per-workspace cost cut from the shipped Gateway tagging (#166) covers the 80% case. **Re-open when:** a model swap or cost regression actually needs distributed-trace debugging, or eval-writing capacity is allocated. Inspirations item #10 |
+| ⏸ [Aider architect/editor pair](PLAN-aider-architect-editor.md) | deferred (was 📐 planning) | Deprioritised in the 2026-06-09 refresh. The single-call Plate edit path + the shipped diff-review surface (#49) work today; the two-call planner/editor split is a quality optimisation, not a gap. **Re-open when:** structured-patch edit quality becomes a measured pain point, or the new [code interpreter](PLAN-code-interpreter.md) work makes a fast-model patch loop cheap to reuse. Inspirations item #11 |
+| ⏸ Accurate per-family token counting | low priority (Item 2 of [small-followups](PLAN-small-followups.md)) | Deprioritised in the 2026-06-09 refresh. The chars/4 heuristic undercounts code/JSON chats 1.5–2×, but the context meter is a "you might be close" cue, not a billing surface; `js-tiktoken` is ~600 KB gzipped. **Re-open when:** the meter graduates into a hard budget/quota gate, or per-family pricing surfaces in the UI |
+| ⏸ [Typed prompt variables](PLAN-typed-prompt-variables.md) | deferred (long-standing) | Workspace-scoping migration shipped (`9b3c84f`); the typing UI itself remains deliberately deferred — "do not build unless users explicitly ask" |
 
 ---
 
@@ -104,26 +209,62 @@ existing AI command routes (`/api/ai/command`).
 > idea above is the *broader* per-document-change variant; the shipped
 > one is the per-AI-command-only variant.
 
-### Accurate per-family token counting (heuristic replacement)
+> **Accurate per-family token counting** moved to
+> [Parked / low priority](#parked--low-priority) in the 2026-06-09
+> refresh — see Item 2 of
+> [PLAN-small-followups.md](PLAN-small-followups.md) for the detail.
 
-**Why distinctive.** Current `lib/shared/tokens.ts` uses a chars/4
-heuristic, which undercounts code- and JSON-heavy chats by 1.5–2×. A
-real tokenizer (`js-tiktoken` for OpenAI, separate encoders for
-Claude/Gemini) would make the context meter usable as more than a "you
-might be close" cue.
+> **The five ideas surfaced in the 2026-06-09 market refresh now have
+> dedicated plans and have been promoted to
+> [Next — planned work](#next--planned-work-have-a-plan):**
+> [MCP Apps](PLAN-mcp-apps.md) · [Sandboxed code interpreter](PLAN-code-interpreter.md)
+> · [Generative UI parts](PLAN-generative-ui-parts.md) ·
+> [Portable Agent Skills](PLAN-portable-skills.md) ·
+> [Subagent orchestration](PLAN-subagent-orchestration.md). Each was
+> chosen for composing with surfaces Hummingbird already has, not
+> because a competitor shipped it.
 
-**Sketch.** Add a `tokenizer` field to each entry in
-`lib/shared/models.ts` (`'cl100k_base'`, `'claude'`, `'gemini'`, etc.);
-swap the chars/4 fall-back for a tokenizer dispatch keyed off the
-active model. Already tracked as Item 2 of
-[PLAN-small-followups.md](PLAN-small-followups.md); kept here too so
-this section's "what's worth doing" view is complete.
+> **The five ideas from the second research round (2026-06-09) now have
+> dedicated plans and have been promoted to
+> [Next — planned work](#next--planned-work-have-a-plan):**
+> [A2A interoperability](PLAN-a2a-interop.md) ·
+> [Browser / `browse` skill](PLAN-browser-use.md) ·
+> [Semantic caching](PLAN-semantic-caching.md) ·
+> [Prompt optimisation (GEPA/DSPy)](PLAN-prompt-optimization.md) ·
+> [Collaborative editing + AI peer](PLAN-collab-editing.md).
 
-**Builds on.** `lib/shared/tokens.ts`, `lib/shared/models.ts`, the
-context-meter chip.
+> **Two adjacent findings folded into existing plans rather than added
+> as standalone ideas:** **GraphRAG / hybrid graph+vector retrieval**
+> (2026 consensus is hybrid — vectors for breadth, graph for multi-hop
+> depth; LazyGraphRAG cuts the prohibitive indexing cost) strengthens
+> the *depth* layer of [PLAN-local-rag.md](PLAN-local-rag.md) +
+> [PLAN-cross-conversation-memory.md](PLAN-cross-conversation-memory.md)
+> rather than standing alone. **Fully-local in-browser inference**
+> (PGlite + transformers.js + WebGPU/WebLLM, viable to ~10k chunks)
+> strengthens the in-browser-PGlite option already weighed in
+> `PLAN-local-rag.md`.
 
-**Effort.** Small-to-medium (~150–250 lines including the per-family
-dispatch). `js-tiktoken` is ~600 KB gzipped — non-trivial bundle cost.
+> **The five ideas from the third research round (2026-06-09) now have
+> dedicated plans and have been promoted to
+> [Next — planned work](#next--planned-work-have-a-plan):**
+> [Inline editor autocomplete](PLAN-inline-autocomplete.md) ·
+> [Reasoning-effort control](PLAN-reasoning-effort-control.md) ·
+> [Structured outputs](PLAN-structured-outputs.md) ·
+> [Guardrails + PII redaction](PLAN-guardrails-pii.md) ·
+> [Proactive / ambient agents](PLAN-ambient-agents.md).
+
+> **The five ideas from the fourth research round (2026-06-09) now have
+> dedicated plans and have been promoted to
+> [Next — planned work](#next--planned-work-have-a-plan):**
+> [Read-aloud / TTS voice output](PLAN-tts-voice-output.md) ·
+> [Smart model routing](PLAN-model-routing.md) ·
+> [Citation & verifiability layer](PLAN-citation-verifiability.md) ·
+> [Visual workflow / flow builder](PLAN-workflow-builder.md) ·
+> [Multimodal document understanding](PLAN-multimodal-docs.md).
+
+> **All four research rounds are now written up as plans.** The 20
+> resulting plans are ranked in
+> [Choosing what to build first](#choosing-what-to-build-first) below.
 
 ---
 
@@ -133,7 +274,10 @@ Catch-up features that are table stakes for AI chat apps in 2026 —
 worth shipping eventually but not "distinctive." Tracked informally —
 pick them up if a user explicitly asks or a particular need arises.
 
-- Voice input (Whisper)
+- Voice — bar has moved from dictation (Whisper) to **realtime
+  speech-to-speech**; for a local-first build, streaming STT
+  (Parakeet/Voxtral/Whisper) into the existing chat path is the
+  pragmatic first step, full duplex later
 - Browser extension
 - Quick actions on selected text
 - Side-by-side model comparison
@@ -142,6 +286,12 @@ pick them up if a user explicitly asks or a particular need arises.
 - Cross-conversation lexical search beyond the existing `⌘K` palette
   (covered partially today; full version is gated on the
   cross-conversation-memory plan above)
+- **MCP spec 2026 readiness** — the 2026-07-28 spec RC lands a
+  stateless core, the Extensions framework, Tasks, full JSON-Schema
+  tool support, and auth hardening. Hummingbird carries a heavy MCP
+  integration (cloud + local creds, proxy, CRUD), so this is a
+  keep-current maintenance watch, not a feature.
+  [Source](https://blog.modelcontextprotocol.io/posts/2026-mcp-roadmap/)
 - Image generation — already shipped (#24, #26, #27, #29) — kept here
   as a reminder that "table-stakes" lines move; once shipped the row
   graduates to the Shipped log
@@ -153,7 +303,51 @@ pick them up if a user explicitly asks or a particular need arises.
 Rolling pulse — latest first. The full chronological record lives in
 the [Shipped log](#shipped-log-newest-first) further down.
 
-**This session (2026-06-06):** Cross-product-inspirations drawdown —
+**This session (2026-06-09) — market refresh + 5 new plans (docs
+only, no code):** A fresh sweep of the 2026 AI-chat / agent landscape
+(MCP spec evolution + MCP Apps, Anthropic Agent Skills, the self-host
+chat cohort, the multi-agent-orchestration wave). Wrote **five
+dedicated plans** and promoted them to
+[Next — planned work](#next--planned-work-have-a-plan), each grounded
+in a codebase survey of the surfaces it builds on:
+[MCP Apps](PLAN-mcp-apps.md) (interactive server-driven UI in chat),
+[Sandboxed code interpreter](PLAN-code-interpreter.md),
+[Generative UI parts](PLAN-generative-ui-parts.md),
+[Portable Agent Skills (SKILL.md)](PLAN-portable-skills.md), and
+[Subagent orchestration](PLAN-subagent-orchestration.md). Added an
+**MCP-spec-2026-readiness** watch item. **Deprioritised three**
+previously-planned items into the new
+[Parked / low priority](#parked--low-priority) section: Langfuse
+observability, the Aider editor pair, and accurate token counting —
+each with a documented re-open trigger. No source files changed.
+
+A **second research round** (same day) covered angles the first round
+didn't — A2A agent interoperability, browser/computer use as a `browse`
+skill, automatic prompt optimisation (GEPA/DSPy), semantic caching for
+deterministic calls, and real-time collaborative editing with the AI as
+a CRDT peer. All five were then **written up as dedicated plans and
+promoted to Next** (grounded in a third codebase survey — which
+confirmed there's no embedding pipeline yet, and that Plate already
+bundles CopilotKit + CursorOverlayKit but no Yjs, both reflected in the
+plans). Two findings (GraphRAG, fully-local in-browser inference) were
+folded into the existing retrieval plans rather than added standalone.
+
+A **third research round** covered inline editor ghost-text
+autocomplete, reasoning-effort control, structured outputs / constrained
+decoding, optional guardrails + PII redaction, and proactive / ambient
+event-triggered agents — all five then **written up as dedicated plans
+and promoted to Next**.
+
+A **fourth research round** covered read-aloud / TTS voice output, smart
+model routing (RouteLLM-style), a citation & verifiability layer, a
+visual workflow / flow builder on the canvas, and multimodal
+(vision-aware) document understanding — all five then **written up as
+dedicated plans and promoted to Next**. That closes the refresh at
+**20 new plans** (4 rounds × 5), each grounded in a codebase survey of
+the surfaces it builds on, and ranked in
+[Choosing what to build first](#choosing-what-to-build-first).
+
+**Previous session (2026-06-06):** Cross-product-inspirations drawdown —
 six of the fourteen menu items shipped this session:
 
 - **Per-attached-file inline ↔ RAG retrieval toggle** (#169 — item #6
@@ -194,7 +388,7 @@ for the four non-chat endpoints (#156), provider-categorised errors on
 (PRs #148–#154) which retired the legacy custom SSE format across all
 three backends; PLAN-agent-api Phases 2b–4-4b (PRs #142–#147).
 
-**Plan-state changes (this session):** Four plans archived into
+**Plan-state changes (2026-06-06):** Four plans archived into
 [`_done/`](_done/) after verification of full implementation:
 PLAN-agent-ts-followups, PLAN-conversation-system-prompt,
 PLAN-useChat-adoption, PLAN-agent-ts. A fifth plan,

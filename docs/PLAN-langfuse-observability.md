@@ -1,6 +1,13 @@
 # Plan: Langfuse self-hosted observability
 
-Status: **planning.** Item #10 from
+Status: **⏸ deferred / low priority** (deprioritised in the 2026-06-09
+market refresh — see [MASTER_PLAN § Parked / low priority](MASTER_PLAN.md#parked--low-priority)).
+A trace/cost dashboard only earns its keep once eval-writing capacity
+is committed (open question #2 in the inspirations plan); the shipped
+per-workspace Gateway tagging (#166) covers the cost-visibility 80% in
+the meantime. **Re-open when** a model swap / cost regression needs
+distributed-trace debugging, or eval capacity is allocated. The plan
+below is preserved as-is for when that happens. Item #10 from
 `docs/PLAN-cross-product-inspirations.md`. Scope: **M** (multi-day,
 one PR for infra + Next.js instrumentation; optional commit for
 agent-py / agent-ts; eval surface deferred to a follow-up).
