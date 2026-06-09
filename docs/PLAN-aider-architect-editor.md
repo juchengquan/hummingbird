@@ -1,8 +1,14 @@
 # Plan: Aider-style architect / editor pair for Plate.js AI edits
 
-Status: **planning.** Item #11 from
-`docs/PLAN-cross-product-inspirations.md`. Scope: **S–M** (one PR,
-plan-then-ship in one session).
+Status: **⏸ deferred / low priority** (deprioritised in the 2026-06-09
+market refresh — see [MASTER_PLAN § Parked / low priority](MASTER_PLAN.md#parked--low-priority)).
+The single-call Plate edit path + the shipped diff-review surface
+(#49) work today; the two-call planner/editor split is a quality
+optimisation, not a gap. **Re-open when** structured-patch edit quality
+becomes a measured pain point, or the code-interpreter work makes a
+fast-model patch loop cheap to reuse. The plan below is preserved as-is.
+Item #11 from `docs/PLAN-cross-product-inspirations.md`. Scope: **S–M**
+(one PR, plan-then-ship in one session).
 
 ## Why
 
