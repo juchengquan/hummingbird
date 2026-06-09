@@ -20,15 +20,11 @@ deprioritised into [Parked / low priority](#parked--low-priority).
 
 ## Status snapshot
 
-- **22 active plans** in `docs/` (planning / phased) — including the
-  **15 new plans** from the 2026-06-09 market refresh: round 1 (MCP
-  Apps, code interpreter, generative UI parts, portable skills, subagent
-  orchestration) + round 2 (A2A interop, `browse` skill, semantic
-  caching, prompt optimisation, collaborative editing) + round 3 (inline
-  autocomplete, reasoning-effort control, structured outputs, guardrails
-  + PII, ambient agents). See
-  [Next — planned work](#next--planned-work-have-a-plan) for the row
-  table.
+- **27 active plans** in `docs/` (planning / phased) — including the
+  **20 new plans** from the 2026-06-09 market refresh (four research
+  rounds of five). They're ranked in
+  [Choosing what to build first](#choosing-what-to-build-first); the
+  full set is in [Next — planned work](#next--planned-work-have-a-plan).
 - **3 parked / low-priority** plans (Langfuse, Aider editor pair,
   typed prompt variables) + accurate token counting. See
   [Parked / low priority](#parked--low-priority).
@@ -90,11 +86,80 @@ scheduling**) is shipped — its plans live in
 | 📐 [Structured outputs](PLAN-structured-outputs.md) | planning (new 2026-06-09 r3) | Replace best-effort `parseSuggestionsJson` with native constrained-decoding `generateObject` on the deterministic calls (suggestions / summarize / extract / comment / table), capability-gated, lenient parser as fallback. M, 3 commits |
 | 📐 [Guardrails + PII redaction](PLAN-guardrails-pii.md) | planning (new 2026-06-09 r3) | Optional, off-by-default pre/post hooks: PII redaction (Presidio-class) + content moderation, per-workspace policy, self-hostable behind an adapter. Mostly relevant once multi-user. M, PR series |
 | 📐 [Proactive / ambient agents](PLAN-ambient-agents.md) | planning (new 2026-06-09 r3) | Extend the existing `task_schedules` cron dispatch into an *event* dispatcher: "when X happens (file/bookmark/note added, task finished), run persona Y." Hard loop guards + HITL-by-default for side-effecting triggers. M–L, PR series |
+| 📐 [Read-aloud / TTS voice output](PLAN-tts-voice-output.md) | planning (new 2026-06-09 r4) | Read assistant replies aloud via a streaming TTS adapter (Chatterbox/MeloTTS self-host, behind a base-URL adapter). Per-message control + auto-read setting; foundation for full voice mode. M, 2 commits |
+| 📐 [Smart model routing](PLAN-model-routing.md) | planning (new 2026-06-09 r4) | A Hummingbird-level `model: "auto"` that routes each turn to the cheapest *capable* model across the whole provider set (Anthropic / gateway / Ollama / OpenRouter) via a complexity classifier. Distinct from `openrouter/auto`. Transparent ("routed to X"). M, 3 commits |
+| 📐 [Citation & verifiability layer](PLAN-citation-verifiability.md) | planning (new 2026-06-09 r4) | Post-turn verifier grounds each claim against the turn's retrieved sources (web search / `searchFiles`), flags unsupported claims inline + a confidence summary. Opt-in; default-on in Deep Research. M–L, 3 commits |
+| 📐 [Visual workflow / flow builder](PLAN-workflow-builder.md) | planning (new 2026-06-09 r4) | A workflow canvas mode (skill / persona / input / branch nodes + typed edges) that compiles to the task executor. Composes the react-flow canvas + skills + personas + subagents. Run = a task. L, PR series (run-phase depends on subagents) |
+| 📐 [Multimodal document understanding](PLAN-multimodal-docs.md) | planning (new 2026-06-09 r4) | Vision-aware extraction (render PDF pages → VLM) that preserves tables/charts/layout the current text-only pipeline drops; richer chunks feed `searchFiles`. Vision-gated + capped. M–L, PR series |
 | 📐 [Local Supabase switch](PLAN-local-supabase-switch.md) | planning | Move local dev off the hosted Supabase project onto a `bun run supabase:start` stack on this machine. 5 steps, ~30 min wall-clock. 13 open questions to walk through before execution (cloud data handling, Path A vs Path B, auth-free local mode, etc.) |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
 | 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~2 weeks total. Separate from `PLAN-local-supabase-switch.md`, which keeps Supabase but moves it onto your machine |
 | 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 satisfied by agent-api | Phase 1 (contract-first frontend ⇄ API surface) shipped; Phase 2 (stand up a Python backend) satisfied by PLAN-agent-api `services/agent-py/`. The plan stays in `docs/` for the contract narrative but has no open work |
+
+---
+
+## Choosing what to build first
+
+The 2026-06-09 refresh produced **20 new plans** — too many to action
+flat. This ranks them by a build-now lens (value × tractability ×
+dependencies). Tiers are guidance, not a strict order; within a tier,
+pick by appetite. The pre-existing plans above
+(inspirations / agent-api / small-followups / infra) are tracked
+separately and not re-ranked here.
+
+**Tier 1 — quick wins (start here).** Small–medium, high value, little
+or no new infra, mostly-existing plumbing.
+
+| Plan | Effort | Why first |
+|---|---|---|
+| [Reasoning-effort control](PLAN-reasoning-effort-control.md) | S–M | `providerOptions` plumbing already exists; immediate cost/latency lever |
+| [Inline editor autocomplete](PLAN-inline-autocomplete.md) | S–M | Plate `CopilotKit` is already installed — mostly wiring + a toggle |
+| [Structured outputs](PLAN-structured-outputs.md) | M | Reliability win now; also de-risks semantic caching + prompt-opt (clean metric) |
+| [Semantic caching](PLAN-semantic-caching.md) (Phase 1) | M | Exact-key cache needs **no** embeddings; immediate cost/latency win |
+
+**Tier 2 — high-value, self-contained (next).** Medium lift, compose
+with existing surfaces, no hard blocker.
+
+| Plan | Effort | Note |
+|---|---|---|
+| [MCP Apps](PLAN-mcp-apps.md) | M | Composes the sandbox renderer + MCP integration |
+| [Generative UI parts](PLAN-generative-ui-parts.md) | M | Builds on the AI SDK `data-*` plumbing |
+| [Portable skills (SKILL.md)](PLAN-portable-skills.md) | S–M | Mirrors persona share-by-URL |
+| [Smart model routing](PLAN-model-routing.md) | M | Cost lever; `openrouter/auto` is precedent |
+| [Read-aloud / TTS](PLAN-tts-voice-output.md) | M | Voice-out; foundation for voice mode |
+| [Multimodal document understanding](PLAN-multimodal-docs.md) | M–L | Lifts `searchFiles` quality |
+
+**Tier 3 — foundational / large (build deliberately; they unblock
+others).**
+
+| Plan | Effort | Unblocks / depends |
+|---|---|---|
+| [Code interpreter](PLAN-code-interpreter.md) | L | Establishes the sandbox security model the **browse skill** reuses |
+| [Subagent orchestration](PLAN-subagent-orchestration.md) | L | Unblocks the **workflow builder** run-phase; relates to **A2A** |
+| [Browser / browse skill](PLAN-browser-use.md) | L | Best after code-interpreter |
+| [Citation & verifiability](PLAN-citation-verifiability.md) | M–L | Self-contained; strongest in Deep Research |
+| [Prompt optimisation (GEPA)](PLAN-prompt-optimization.md) | M–L | Needs an eval set first |
+| [Visual workflow builder](PLAN-workflow-builder.md) | L | Run-phase depends on subagents |
+| [A2A interoperability](PLAN-a2a-interop.md) | L | Outbound first; **inbound publish gated on multi-tenant** |
+| [Ambient agents](PLAN-ambient-agents.md) | M–L | Buildable now, but invest in the loop guards up front |
+
+**Tier 4 — gated (wait for a prerequisite).**
+
+| Plan | Gate |
+|---|---|
+| [Collaborative editing + AI peer](PLAN-collab-editing.md) | Phase B (human multiplayer) needs the document-sharing / multi-tenant story; Phase A (AI-as-peer) can proceed |
+| [Guardrails + PII redaction](PLAN-guardrails-pii.md) | Mostly relevant once multi-user / shared deployments exist |
+
+**Two cross-cutting dependencies worth resolving early:**
+
+1. **An embedding pipeline** — there is none today (FTS only); it's
+   planned in [`PLAN-local-rag.md`](PLAN-local-rag.md) / hybrid search.
+   It gates semantic-caching **Phase 2** and strengthens
+   **citation** + **multimodal** retrieval.
+2. **A multi-tenant / document-sharing story** — gates collaborative
+   editing **Phase B**, **A2A** publishing, and most of the value of
+   **guardrails**.
 
 ---
 
@@ -188,115 +253,18 @@ existing AI command routes (`/api/ai/command`).
 > [Guardrails + PII redaction](PLAN-guardrails-pii.md) ·
 > [Proactive / ambient agents](PLAN-ambient-agents.md).
 
-### Fourth research round (2026-06-09)
+> **The five ideas from the fourth research round (2026-06-09) now have
+> dedicated plans and have been promoted to
+> [Next — planned work](#next--planned-work-have-a-plan):**
+> [Read-aloud / TTS voice output](PLAN-tts-voice-output.md) ·
+> [Smart model routing](PLAN-model-routing.md) ·
+> [Citation & verifiability layer](PLAN-citation-verifiability.md) ·
+> [Visual workflow / flow builder](PLAN-workflow-builder.md) ·
+> [Multimodal document understanding](PLAN-multimodal-docs.md).
 
-A fourth sweep across angles the first three rounds didn't cover — voice
-output, model economics, answer trust, visual composition, and richer
-document understanding. Idea-level for now; promote to a `PLAN-*.md`
-when one earns a slot.
-
-#### Read-aloud / TTS voice output
-
-**Why distinctive.** The voice bar in 2026 is streaming TTS —
-Chatterbox-Turbo (sub-200 ms), MeloTTS, Hume TADA (~11× realtime), all
-open-source / self-hostable. Hummingbird tracks "voice input (Whisper)"
-as a catch-up note, but voice *out* — read the assistant's reply aloud,
-hands-free — is a distinctive, low-risk add and the foundation for a
-full voice mode.
-
-**Sketch.** A read-aloud control on assistant messages backed by a
-streaming TTS adapter (Chatterbox / MeloTTS self-host behind a base-URL
-adapter — the Minimax/E2B pattern; or a hosted voice). Stream audio as
-the text streams; voice picker + per-workspace default.
-
-**Builds on.** Chat message renderer, the model-provider adapter
-pattern, the catch-up voice-input path it pairs with.
-
-**Effort.** Medium.
-**Source.** [Open-source TTS 2026](https://www.bentoml.com/blog/exploring-the-world-of-open-source-text-to-speech-models) · [Chatterbox](https://www.resemble.ai/learn/models/chatterbox)
-
-#### Smart model routing (RouteLLM-style)
-
-**Why distinctive.** RouteLLM (ICLR 2025, open-source) reaches ~95% of
-strong-model quality at ~14–26% strong-model calls — a 75–85% cost cut —
-by routing each prompt to the cheapest *capable* model via a complexity
-classifier. Hummingbird already has `openrouter/auto` (routes *within*
-OpenRouter); this is a Hummingbird-level `model: "auto"` that routes
-across the *whole* provider set (Anthropic / gateway / Ollama /
-OpenRouter) by query complexity.
-
-**Sketch.** A complexity classifier (a small model, or RouteLLM's
-matrix-factorisation router) picks strong vs weak per turn from a
-configured pair/set; a new `auto` option in the model picker. A cascade
-mode (try weak, escalate on low confidence) comes later.
-
-**Builds on.** `model-provider.ts`, `config/models.json`, the model
-picker, `openrouter/auto` (precedent).
-
-**Effort.** Medium.
-**Source.** [RouteLLM](https://routellm.dev/) · [LLM model routing guide 2026](https://www.burnwise.io/blog/llm-model-routing-guide)
-
-#### Citation & verifiability layer
-
-**Why distinctive.** Citation-hallucination rates run 14–95% across
-vendors; the 2026 fix is a *verification* layer — ground each claim
-against retrieved sources + flag unsupported statements with a
-confidence signal. Hummingbird already renders inline citations from web
-search; extending to a claim-level verify pass (against web-search +
-`searchFiles` results) turns citations from decorative to *checked*.
-
-**Sketch.** A post-turn verifier (chain-of-verification / retrieval-
-grounded check) that maps assistant claims to cited sources, flags
-unsupported ones inline, and surfaces a confidence affordance. Opt-in
-(adds a verification call); strongest in Deep Research mode.
-
-**Builds on.** Web search + `searchFiles` retrieval, inline-citation
-rendering, Deep Research mode, the message renderer.
-
-**Effort.** Medium–large.
-**Source.** [CiteCheck — retrieval-grounded citation verification](https://arxiv.org/html/2605.27700v1) · [preventing LLM hallucinations 2026](https://keymakr.com/blog/preventing-llm-hallucinations-techniques-best-practices-2026/)
-
-#### Visual workflow / flow builder on the canvas
-
-**Why distinctive.** Langflow / Flowise / OpenAI Agent Builder made
-drag-drop node graphs the standard way to compose agent workflows.
-Hummingbird already has a react-flow workspace canvas + skills +
-personas + the task executor (+ planned subagents) — so a flow builder
-is *composition* of surfaces it already owns: drag skills/personas onto
-the canvas, wire typed edges, save as a reusable workflow that runs on
-the executor.
-
-**Sketch.** A "workflow" canvas mode with node kinds for skill /
-persona / input / branch; typed edges (output schema → next input); a
-compiler that lowers the graph onto the task executor (each node a step
-or subagent). Reuses the canvas + RunStore.
-
-**Builds on.** Workspace canvas (react-flow), skills registry, personas,
-subagent orchestration (planned), task executor.
-
-**Effort.** Large.
-**Source.** [Langflow](https://medium.com/@mridulv204/langflow-no-code-ai-workflow-builder-3b0fd8b0a977) · [no-code AI agent builders 2026](https://metaflow.life/blog/best-no-code-ai-agent-builders)
-
-#### Multimodal document understanding
-
-**Why distinctive.** Hummingbird's extraction is text-only
-(`lib/server/extraction.ts` → pdf-parse / mammoth / xlsx), which drops
-tables, charts, figures, and layout — often where the answer lives. 2026
-VLMs (GLM-4.5V, Qwen2.5-VL, vision-guided chunking) parse documents
-*visually*, preserving structure. Vision-aware extraction would
-materially improve `searchFiles` retrieval quality + file Q&A.
-
-**Sketch.** A vision-extraction path: render PDF pages to images, run a
-vision-capable model (Hummingbird already supports vision input) for
-layout-aware structured extraction (tables → markdown, figures →
-captions), feed the richer chunks into the existing FTS / `searchFiles`
-index. Gated to vision-capable models + larger files where it pays.
-
-**Builds on.** `/api/extract` + `lib/server/extraction.ts`,
-vision-capable models, file full-text / `searchFiles`.
-
-**Effort.** Medium–large.
-**Source.** [Best multimodal models for document analysis 2026](https://www.siliconflow.com/articles/en/best-multimodal-models-for-document-analysis) · [vision-guided chunking for RAG](https://arxiv.org/pdf/2506.16035)
+> **All four research rounds are now written up as plans.** The 20
+> resulting plans are ranked in
+> [Choosing what to build first](#choosing-what-to-build-first) below.
 
 ---
 
@@ -370,11 +338,14 @@ decoding, optional guardrails + PII redaction, and proactive / ambient
 event-triggered agents — all five then **written up as dedicated plans
 and promoted to Next**.
 
-A **fourth research round** added five more idea-level candidates to
-[Later](#later--distinctive-ideas-no-plan-yet) — read-aloud / TTS voice
-output, smart model routing (RouteLLM-style), a citation & verifiability
-layer, a visual workflow / flow builder on the canvas, and multimodal
-(vision-aware) document understanding.
+A **fourth research round** covered read-aloud / TTS voice output, smart
+model routing (RouteLLM-style), a citation & verifiability layer, a
+visual workflow / flow builder on the canvas, and multimodal
+(vision-aware) document understanding — all five then **written up as
+dedicated plans and promoted to Next**. That closes the refresh at
+**20 new plans** (4 rounds × 5), each grounded in a codebase survey of
+the surfaces it builds on, and ranked in
+[Choosing what to build first](#choosing-what-to-build-first).
 
 **Previous session (2026-06-06):** Cross-product-inspirations drawdown —
 six of the fourteen menu items shipped this session:
