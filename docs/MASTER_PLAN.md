@@ -20,14 +20,15 @@ deprioritised into [Parked / low priority](#parked--low-priority).
 
 ## Status snapshot
 
-- **7 active plans** in `docs/` (planning / phased). See
+- **12 active plans** in `docs/` (planning / phased) — including the
+  **5 new plans** drafted in the 2026-06-09 market refresh (MCP Apps,
+  code interpreter, generative UI parts, portable skills, subagent
+  orchestration). See
   [Next — planned work](#next--planned-work-have-a-plan) for the row
   table.
 - **3 parked / low-priority** plans (Langfuse, Aider editor pair,
   typed prompt variables) + accurate token counting. See
   [Parked / low priority](#parked--low-priority).
-- **5 new distinctive ideas** added in the 2026-06-09 market refresh.
-  See [Later — distinctive ideas](#later--distinctive-ideas-no-plan-yet).
 - **30 fully-shipped plans archived** under [`docs/_done/`](_done/).
 - **Nothing currently in flight** (no branch with active work that
   doesn't already have a PR).
@@ -71,6 +72,11 @@ scheduling**) is shipped — its plans live in
 | 🪜 [Cross-product inspirations menu](PLAN-cross-product-inspirations.md) | 7 of 14 shipped, 1 closed | A menu, not a single feature — 14 items synthesised from a five-cohort survey of OSS + commercial AI/chat/agent products. **Shipped:** #1 conversation system prompt (#165), #2 Ollama + #3 OpenRouter + #5 Library (#167), #4 Part 2 gateway tagging (#166), #6 `#`-mention + RAG toggle (#168, #169), #7 Flowchat canvas. **Closed:** #4 Part 1 (caching — won't do without a Vercel-gateway commitment). **Open:** #8 Beam, #9 Elicit tables, #10 Langfuse, #11 Aider editor pair, #12 hybrid search, #13 Letta memory, #14 LangGraph checkpointer. Per-item status + a Shipped tracker live in the plan |
 | 🪜 [Agent API as a separate service](PLAN-agent-api.md) | Phases 0 through 4-4b shipped; one follow-up open | All six phases of the original plan plus seven of the open follow-ups have shipped: `services/agent-py/` runs end-to-end (chat + tools + MCP + url-fetch + summarize + refresh-url + extract + whoami + health); per-IP rate buckets + idle watchdog (PR #161); `POST /v1/mcp/server` CRUD (#160); provider-categorised errors (#155); frontend selector for non-chat endpoints (#156); `workspace_id` + per-skill config on `/v1/chat` (#145); `useChat()` adoption (#148–#154). **One open item:** real DNS-rebinding test against actual DNS for the MCP-proxy SSRF guard (currently mocked). Phases 5 (default-on + decommission) and 6 (tidy + archive) explicitly deferred — per project policy both Python and TS stacks stay live and the user picks backend per-account via the Phase 4-2 selector |
 | 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 4 done, 1 moot, 2 open | Done: generatedImages sync (#45), recap-of-recaps (#63), roadmap sweep, signed-URL re-sign. Moot: local-mode MCP creds for tasks (rejected up front by #85). Open: per-tool server-side approval flags, task-route integration tests. (Accurate token counting moved to [Parked / low priority](#parked--low-priority) in the 2026-06-09 refresh.) |
+| 📐 [MCP Apps — interactive UI in chat](PLAN-mcp-apps.md) | planning (new 2026-06-09) | Render an MCP tool's `ui://` resource in the existing live-artifact sandbox iframe + a `postMessage` tool-call bridge back to the same MCP server. Composes the sandbox renderer (#36) with the MCP integration. M, 3 commits |
+| 📐 [Sandboxed code interpreter](PLAN-code-interpreter.md) | planning (new 2026-06-09) | A `runCode` server skill backed by an E2B-style sandbox (self-hostable behind an adapter). Charts reuse the `generateImage` Storage + gallery path; stdout/tables ride a new `data-code-result` part. Budget-gated or HITL-gated. L, PR series |
+| 📐 [Generative UI parts](PLAN-generative-ui-parts.md) | planning (new 2026-06-09) | A `renderUI` tool emits typed, allow-listed `data-ui` parts (choice / confirm / info-table / mini-form) rendered as real React components. The chat-turn twin of `askUser`; the in-process twin of MCP Apps. M, 3 commits |
+| 📐 [Portable Agent Skills (SKILL.md)](PLAN-portable-skills.md) | planning (new 2026-06-09) | A third skill kind that's data, not code: `SKILL.md` front-matter + body, stored in a new `userSkills` slice, imported by URL (mirrors persona share #110), listed in the Library tab. Progressive disclosure via prompt injection. S–M, 3 commits |
+| 📐 [Subagent orchestration](PLAN-subagent-orchestration.md) | planning (new 2026-06-09) | One goal → N specialist subagents (each a persona-pinned child task) run in parallel via the existing executor + a durable join barrier; results aggregate back to the orchestrator. Depth cap 1, breadth cap 5. Distinct from Beam (#8). L, PR series |
 | 📐 [Local Supabase switch](PLAN-local-supabase-switch.md) | planning | Move local dev off the hosted Supabase project onto a `bun run supabase:start` stack on this machine. 5 steps, ~30 min wall-clock. 13 open questions to walk through before execution (cloud data handling, Path A vs Path B, auth-free local mode, etc.) |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
@@ -130,137 +136,15 @@ existing AI command routes (`/api/ai/command`).
 > refresh — see Item 2 of
 > [PLAN-small-followups.md](PLAN-small-followups.md) for the detail.
 
-### New in the 2026-06-09 market refresh
-
-Five candidates surfaced from a fresh sweep of the 2026 AI-chat /
-agent landscape (MCP spec evolution, Anthropic Agent Skills, the
-open-source self-host cohort, and the multi-agent-orchestration
-wave). Each is chosen because it composes with surfaces Hummingbird
-*already has*, not because a competitor shipped it.
-
-### MCP Apps — interactive server-driven UI inside chat
-
-**Why distinctive.** As of the 2026-01-26 MCP Apps extension (spec
-finalising 2026-07-28), an MCP tool can return a `ui://` resource —
-bundled HTML/JS the host renders in a **sandboxed iframe** right in the
-conversation: dashboards, forms, multi-step widgets. ChatGPT, Claude,
-Goose, and VS Code already ship support. Hummingbird is unusually
-well-positioned: it *already* has both the sandboxed-iframe live-artifact
-renderer **and** a full MCP integration — this is mostly wiring the two
-together, so an MCP server's tool result can paint a real interactive
-panel instead of a JSON blob.
-
-**Sketch.** Teach the MCP tool-result path to detect
-`_meta.ui.resourceUri` (`ui://…`), fetch the UI resource, and route it
-into the existing live-artifact sandbox iframe with the MCP Apps
-postMessage bridge (tool-call-from-iframe → host → MCP server). Reuse
-the artifact sandbox's CSP + permission posture.
-
-**Builds on.** Live-artifacts sandbox (`PLAN-live-artifacts`, #36), MCP
-integration (cloud + local), the `data-*` UI-part plumbing from the AI
-SDK adoption.
-
-**Effort.** Medium (~400–600 lines + a postMessage protocol shim).
-**Source.** [MCP Apps announcement](https://blog.modelcontextprotocol.io/posts/2026-01-26-mcp-apps/) · [MCP Apps overview](https://modelcontextprotocol.io/extensions/apps/overview) · [mcp-ui](https://mcpui.dev/)
-
-### Sandboxed code interpreter
-
-**Why distinctive.** Live artifacts *render* generated TSX/HTML/SVG/
-Mermaid but can't *execute* arbitrary Python/JS and return computed
-results (charts from a real pandas run, a parsed CSV, a solved
-optimisation). A sandboxed interpreter — E2B-style Firecracker microVMs,
-self-hostable, with a Jupyter kernel — turns "write me code" into "run
-it and show me the answer." Rising table-stakes for data-analysis chat,
-but distinctive when wired to Hummingbird's file attachments (run code
-*against* an uploaded CSV) and artifacts (persist the chart).
-
-**Sketch.** A `runCode` server skill backed by a sandbox provider
-(E2B hosted, or self-hosted behind the same OpenAI-compatible-style
-adapter pattern). Stream stdout/stderr + rich results (images, tables)
-as `data-*` parts into the existing message renderer; persist generated
-charts via the same Storage path as `generateImage`. Gate behind the
-per-IP budget + the HITL approval policy already built for tools.
-
-**Builds on.** Server skill registry, agent tool loop, file attachments,
-generated-image Storage persistence, HITL tool-approval policy.
-
-**Effort.** Large (sandbox provider integration + result marshalling +
-security posture). E2B self-host is GCP-first today.
-**Source.** [E2B](https://e2b.dev/) · [E2B code-interpreter SDK](https://github.com/e2b-dev/code-interpreter)
-
-### Subagent orchestration — spawn parallel specialists for one goal
-
-**Why distinctive.** Hummingbird has custom agents/personas and a
-durable task queue, but a turn runs as a single agent. The 2026
-orchestration wave (Claude subagents, supervisor/worker teams) decomposes
-a goal across specialised subagents, each with its *own* context window,
-run in parallel and gathered by an orchestrator — which sidesteps the
-"one context window depletes" failure mode. Distinct from Beam (item #8:
-same prompt → N models): here it's *one goal → N specialised subtasks*.
-Composes the personas slice with the task-queue executor.
-
-**Sketch.** A `spawnSubagent(persona, subgoal)` tool the orchestrator
-can call; each spawn enqueues a child task on the existing `task_jobs`
-queue with the picked persona's model/prompt/skills/MCP scope; results
-fan back into the parent run as `step_end` events. Add a depth/fan-out
-cap (the documented CrewAI ping-pong OOM is the cautionary tale).
-Render the tree on the workspace canvas (orchestrator node + child
-nodes) — reusing the Flowchat node work.
-
-**Builds on.** Agents/personas slice, task-queue executor + `RunStore`,
-HITL approvals, workspace canvas (Flowchat nodes).
-
-**Effort.** Large. Needs the depth-cap + budget guardrails up front.
-**Source.** [Anthropic multi-agent research](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills) · [Addy Osmani — code agent orchestra](https://addyosmani.com/blog/code-agent-orchestra/)
-
-### Portable Agent Skills (SKILL.md) + skill sharing
-
-**Why distinctive.** Hummingbird's skills are a server-side registry
-hard-wired in code. Anthropic's Agent Skills format (`SKILL.md`:
-instructions + metadata + optional scripts/resources, progressive
-disclosure) is now the portable, cross-platform standard (Claude.ai,
-Claude Code, Agent SDK, Messages API). Adopting it would let users
-*import* a skill folder the way they already import a persona
-by-URL (#110) — a community/marketplace surface with near-zero protocol
-risk, since it's just files.
-
-**Sketch.** A `SKILL.md` loader that maps the standard front-matter +
-body onto Hummingbird's existing `ServerSkill` shape; a share/import
-path mirroring the persona base64url `?import-agent=` URL trick; a
-"Skills" library tab listing built-in + imported skills. Keep the
-server registry as the execution layer; SKILL.md is just the portable
-authoring/exchange format on top.
-
-**Builds on.** Server-side skill registry, custom-agents share-by-URL
-(#110), the Library tab (#167).
-
-**Effort.** Small-to-medium (~250–400 lines; it's a format adapter +
-an import surface, not new runtime).
-**Source.** [Anthropic — Agent Skills](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills) · [anthropics/skills](https://github.com/anthropics/skills)
-
-### Generative UI parts — typed interactive components from the stream
-
-**Why distinctive.** The AI SDK v5 wire format Hummingbird adopted
-(B.1–B.3) already carries `data-*` parts; today the consumer maps them
-to fixed surfaces (reasoning, tool-image, suggestions). Generative UI
-is the next layer: the model emits a typed `data-ui` part (e.g. a
-choice card, a confirm dialog, a small form) and the client renders a
-real interactive React component instead of text. Pairs naturally with
-HITL approvals (`askUser` becomes a rich card) and MCP Apps (in-process
-twin of the iframe path).
-
-**Sketch.** A small registry of allow-listed component kinds keyed off a
-`data-ui.kind` discriminator in the stream; render in the message list;
-component callbacks post back through the existing `respond`/`askUser`
-channel. Strictly allow-listed kinds (no arbitrary code — that's what
-MCP Apps' iframe is for).
-
-**Builds on.** AI SDK v5 `data-*` part plumbing (B.1–B.3), HITL
-`askUser` multi-choice/input, message renderer.
-
-**Effort.** Medium (~300–450 lines for a starter kind set + the
-registry).
-**Source.** [Generative UI frameworks 2026 (overview)](https://medium.com/@akshaychame2/the-complete-guide-to-generative-ui-frameworks-in-2026-fde71c4fa8cc)
+> **The five ideas surfaced in the 2026-06-09 market refresh now have
+> dedicated plans and have been promoted to
+> [Next — planned work](#next--planned-work-have-a-plan):**
+> [MCP Apps](PLAN-mcp-apps.md) · [Sandboxed code interpreter](PLAN-code-interpreter.md)
+> · [Generative UI parts](PLAN-generative-ui-parts.md) ·
+> [Portable Agent Skills](PLAN-portable-skills.md) ·
+> [Subagent orchestration](PLAN-subagent-orchestration.md). Each was
+> chosen for composing with surfaces Hummingbird already has, not
+> because a competitor shipped it.
 
 ---
 
@@ -299,17 +183,21 @@ pick them up if a user explicitly asks or a particular need arises.
 Rolling pulse — latest first. The full chronological record lives in
 the [Shipped log](#shipped-log-newest-first) further down.
 
-**This session (2026-06-09) — market refresh (docs only, no code):**
-A fresh sweep of the 2026 AI-chat / agent landscape (MCP spec
-evolution + MCP Apps, Anthropic Agent Skills, the self-host chat
-cohort, the multi-agent-orchestration wave). Added **five new
-distinctive ideas** to [Later](#later--distinctive-ideas-no-plan-yet) —
-MCP Apps (interactive server-driven UI in chat), a sandboxed code
-interpreter, subagent orchestration, portable `SKILL.md` skills +
-sharing, and generative-UI stream parts — each chosen for composing
-with surfaces Hummingbird already has. Added an **MCP-spec-2026-readiness**
-watch item. **Deprioritised three** previously-planned items into the
-new [Parked / low priority](#parked--low-priority) section: Langfuse
+**This session (2026-06-09) — market refresh + 5 new plans (docs
+only, no code):** A fresh sweep of the 2026 AI-chat / agent landscape
+(MCP spec evolution + MCP Apps, Anthropic Agent Skills, the self-host
+chat cohort, the multi-agent-orchestration wave). Wrote **five
+dedicated plans** and promoted them to
+[Next — planned work](#next--planned-work-have-a-plan), each grounded
+in a codebase survey of the surfaces it builds on:
+[MCP Apps](PLAN-mcp-apps.md) (interactive server-driven UI in chat),
+[Sandboxed code interpreter](PLAN-code-interpreter.md),
+[Generative UI parts](PLAN-generative-ui-parts.md),
+[Portable Agent Skills (SKILL.md)](PLAN-portable-skills.md), and
+[Subagent orchestration](PLAN-subagent-orchestration.md). Added an
+**MCP-spec-2026-readiness** watch item. **Deprioritised three**
+previously-planned items into the new
+[Parked / low priority](#parked--low-priority) section: Langfuse
 observability, the Aider editor pair, and accurate token counting —
 each with a documented re-open trigger. No source files changed.
 
