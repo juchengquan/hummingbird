@@ -20,10 +20,11 @@ deprioritised into [Parked / low priority](#parked--low-priority).
 
 ## Status snapshot
 
-- **12 active plans** in `docs/` (planning / phased) — including the
-  **5 new plans** drafted in the 2026-06-09 market refresh (MCP Apps,
-  code interpreter, generative UI parts, portable skills, subagent
-  orchestration). See
+- **17 active plans** in `docs/` (planning / phased) — including the
+  **10 new plans** from the 2026-06-09 market refresh: round 1 (MCP
+  Apps, code interpreter, generative UI parts, portable skills, subagent
+  orchestration) + round 2 (A2A interop, `browse` skill, semantic
+  caching, prompt optimisation, collaborative editing). See
   [Next — planned work](#next--planned-work-have-a-plan) for the row
   table.
 - **3 parked / low-priority** plans (Langfuse, Aider editor pair,
@@ -77,6 +78,11 @@ scheduling**) is shipped — its plans live in
 | 📐 [Generative UI parts](PLAN-generative-ui-parts.md) | planning (new 2026-06-09) | A `renderUI` tool emits typed, allow-listed `data-ui` parts (choice / confirm / info-table / mini-form) rendered as real React components. The chat-turn twin of `askUser`; the in-process twin of MCP Apps. M, 3 commits |
 | 📐 [Portable Agent Skills (SKILL.md)](PLAN-portable-skills.md) | planning (new 2026-06-09) | A third skill kind that's data, not code: `SKILL.md` front-matter + body, stored in a new `userSkills` slice, imported by URL (mirrors persona share #110), listed in the Library tab. Progressive disclosure via prompt injection. S–M, 3 commits |
 | 📐 [Subagent orchestration](PLAN-subagent-orchestration.md) | planning (new 2026-06-09) | One goal → N specialist subagents (each a persona-pinned child task) run in parallel via the existing executor + a durable join barrier; results aggregate back to the orchestrator. Depth cap 1, breadth cap 5. Distinct from Beam (#8). L, PR series |
+| 📐 [A2A interoperability](PLAN-a2a-interop.md) | planning (new 2026-06-09 r2) | Expose personas as A2A agent cards + delegate to remote A2A agents; complement to MCP. A2A task lifecycle maps 1:1 onto the existing RunStatus + HITL suspend. Outbound first (lower risk), inbound server second. Publishing gated on multi-tenant. L, PR series |
+| 📐 [Browser / `browse` skill](PLAN-browser-use.md) | planning (new 2026-06-09 r2) | A `runBrowserTask` server skill (browser-use, in agent-py) for navigate/extract/form-fill; screenshots reuse the `data-tool-image` gallery; mutating actions HITL-gated; auth flows last + heavily gated. Reuses the code-interpreter security model. L, PR series |
+| 📐 [Semantic caching](PLAN-semantic-caching.md) | planning (new 2026-06-09 r2) | Cache the deterministic non-chat calls (summarize / suggestions / extract). Phase 1 = exact-key cache (no embeddings); Phase 2 = embedding-similarity once the pipeline lands. Distinct from the closed gateway-caching item; never caches the chat stream. M, phased |
+| 📐 [Prompt optimisation (GEPA/DSPy)](PLAN-prompt-optimization.md) | planning (new 2026-06-09 r2) | Offline/admin loop that evolves skill / persona / editor prompts from a labelled eval set + traces. First target: the `getChooseToolPrompt` classifier (measurable). Human-accepted, versioned, never auto-deployed. Gated on an eval set. M–L |
+| 📐 [Collaborative editing + AI peer](PLAN-collab-editing.md) | planning (new 2026-06-09 r2) | Yjs CRDT + presence in the Plate editor with the AI as a server-side Yjs peer (visible cursor + status). Phase A (AI-as-peer) has single-user value; Phase B (human multiplayer) gated on the document-sharing / multi-tenant story. L |
 | 📐 [Local Supabase switch](PLAN-local-supabase-switch.md) | planning | Move local dev off the hosted Supabase project onto a `bun run supabase:start` stack on this machine. 5 steps, ~30 min wall-clock. 13 open questions to walk through before execution (cloud data handling, Path A vs Path B, auth-free local mode, etc.) |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
@@ -95,7 +101,7 @@ the line for the current work focus.
 | Plan | Status | Why parked / re-open trigger |
 |---|---|---|
 | ⏸ [Langfuse self-hosted observability](PLAN-langfuse-observability.md) | deferred (was 📐 planning) | Deprioritised in the 2026-06-09 refresh. A trace/cost dashboard only earns its keep once someone commits to writing + acting on evals (see open question #2 in the inspirations plan); until then the per-workspace cost cut from the shipped Gateway tagging (#166) covers the 80% case. **Re-open when:** a model swap or cost regression actually needs distributed-trace debugging, or eval-writing capacity is allocated. Inspirations item #10 |
-| ⏸ [Aider architect/editor pair](PLAN-aider-architect-editor.md) | deferred (was 📐 planning) | Deprioritised in the 2026-06-09 refresh. The single-call Plate edit path + the shipped diff-review surface (#49) work today; the two-call planner/editor split is a quality optimisation, not a gap. **Re-open when:** structured-patch edit quality becomes a measured pain point, or the new [code interpreter](#sandboxed-code-interpreter) work makes a fast-model patch loop cheap to reuse. Inspirations item #11 |
+| ⏸ [Aider architect/editor pair](PLAN-aider-architect-editor.md) | deferred (was 📐 planning) | Deprioritised in the 2026-06-09 refresh. The single-call Plate edit path + the shipped diff-review surface (#49) work today; the two-call planner/editor split is a quality optimisation, not a gap. **Re-open when:** structured-patch edit quality becomes a measured pain point, or the new [code interpreter](PLAN-code-interpreter.md) work makes a fast-model patch loop cheap to reuse. Inspirations item #11 |
 | ⏸ Accurate per-family token counting | low priority (Item 2 of [small-followups](PLAN-small-followups.md)) | Deprioritised in the 2026-06-09 refresh. The chars/4 heuristic undercounts code/JSON chats 1.5–2×, but the context meter is a "you might be close" cue, not a billing surface; `js-tiktoken` is ~600 KB gzipped. **Re-open when:** the meter graduates into a hard budget/quota gate, or per-family pricing surfaces in the UI |
 | ⏸ [Typed prompt variables](PLAN-typed-prompt-variables.md) | deferred (long-standing) | Workspace-scoping migration shipped (`9b3c84f`); the typing UI itself remains deliberately deferred — "do not build unless users explicitly ask" |
 
@@ -146,130 +152,14 @@ existing AI command routes (`/api/ai/command`).
 > chosen for composing with surfaces Hummingbird already has, not
 > because a competitor shipped it.
 
-### Second research round (2026-06-09)
-
-A follow-up sweep across angles the first round and the existing
-inspirations menu didn't cover — agent-interop protocols, computer/
-browser use, prompt optimisation, caching, and real-time collaboration.
-Idea-level for now; promote to a `PLAN-*.md` when one earns a slot.
-
-#### A2A (Agent2Agent) interoperability
-
-**Why distinctive.** A2A hit v1.0 in early 2026 with 150+ orgs (AWS,
-Microsoft, Salesforce, SAP, IBM, ServiceNow) in production; it's the
-*complement* to MCP (MCP = agent→tool; A2A = agent↔agent). With
-Hummingbird's personas + the new [subagent-orchestration](PLAN-subagent-orchestration.md)
-plan, exposing each persona as an A2A "agent card" would let
-Hummingbird agents coordinate with *external* agents — and let external
-orchestrators call a Hummingbird persona — over a standard protocol
-instead of a bespoke bridge.
-
-**Sketch.** A `.well-known/agent.json` card per published persona; an
-A2A server endpoint mapping an inbound task onto the existing task
-executor; an A2A *client* tool so an orchestrator persona can delegate
-to a remote agent the way it delegates to a subagent. Reuses the
-task-queue / RunStore contract.
-
-**Builds on.** Personas slice, subagent orchestration (planned), task
-executor, MCP auth patterns.
-
-**Effort.** Large; partly gated on the multi-tenant/sharing story (an
-A2A card is a public surface).
-**Source.** [Agent protocol ecosystem 2026](https://www.digitalapplied.com/blog/ai-agent-protocol-ecosystem-map-2026-mcp-a2a-acp-ucp) · [interop convergence](https://zylos.ai/research/2026-03-26-agent-interoperability-protocols-mcp-a2a-acp-convergence/)
-
-#### Browser / computer use as a `browse` skill
-
-**Why distinctive.** Mature in 2026: browser-use (~95k stars,
-open-source, SOC2), Stagehand, Claude computer use. A `browse` skill
-lets an agent drive a real (headless) browser for "fill this form /
-extract from this gated page / complete this flow" — the class of task
-the existing `webFetch` (static GET) and `searchFiles` (local FTS)
-can't touch. Composes with the security posture the
-[code-interpreter](PLAN-code-interpreter.md) plan establishes
-(sandboxed, budget-gated, HITL-approvable).
-
-**Sketch.** A `runBrowserTask` server skill backed by browser-use (or a
-hosted Browserbase-style endpoint behind an adapter — the Minimax/E2B
-pattern). Steps stream as tool-output events; screenshots ride the
-existing `data-tool-image` → gallery path; destructive actions are
-HITL-gated via the approval card. Default read-only; opt-in for
-authenticated flows.
-
-**Builds on.** Skill registry, HITL approvals, generated-image gallery,
-the code-interpreter security model.
-
-**Effort.** Large (sandbox + auth + safety).
-**Source.** [browser-use](https://github.com/browser-use/browser-use) · [computer-use agents 2026](https://www.digitalapplied.com/blog/computer-use-agents-2026-claude-openai-gemini-matrix)
-
-#### Automatic prompt optimisation (GEPA / DSPy)
-
-**Why distinctive.** GEPA (ICLR 2026, in DSPy) is a reflective,
-gradient-free optimiser that evolves a prompt from *execution traces* —
-+20% over GRPO with 35× fewer rollouts. Hummingbird's skill
-`promptFragment`s, persona system prompts, and prompt library are all
-hand-tuned today; a "tune this prompt against a small labelled set" loop
-makes them self-improving instead of artisanal. Natural pair for the
-(parked) Langfuse eval surface — traces in, optimised prompt out.
-
-**Sketch.** An offline/admin GEPA loop (Python, beside
-`services/agent-py`) that takes a skill or persona prompt + a small
-eval set + recent traces, runs DSPy GEPA, and proposes a new prompt the
-user accepts into the library/registry. A deliberate "optimise" action,
-never the hot path.
-
-**Builds on.** Skill `promptFragment`s, personas, prompt library, the
-eval/trace story (parked Langfuse).
-
-**Effort.** Medium–large; only worth it once an eval set exists (same
-gate as Langfuse).
-**Source.** [GEPA (DSPy)](https://dspy.ai/tutorials/gepa_ai_program/) · [GEPA repo](https://github.com/gepa-ai/gepa)
-
-#### Semantic caching for deterministic calls
-
-**Why distinctive.** Distinct from the gateway *prompt* caching closed
-as won't-do (inspirations #4 Part 1): semantic caching matches a new
-request against prior ones by *embedding similarity* and serves the
-cached answer — ~31% of LLM queries are semantic near-duplicates;
-stacking it on provider caching reports 60-80% cost cuts. Self-hostable
-(GPTCache / Redis vector cache). Chat turns rarely repeat, but
-Hummingbird's *deterministic* server calls do: file auto-summaries,
-follow-up suggestions, TL;DRs, classification. Caching *those* is a
-clean win with no UX risk.
-
-**Sketch.** A thin cache around the non-chat skill calls (`summarize`,
-suggestions, extraction): embed the input, look up a similarity
-threshold in a Redis/pgvector cache, serve on hit. Reuses the embedding
-pipeline Ollama/hybrid-search would add. Scoped to deterministic calls
-only — never the conversational stream.
-
-**Builds on.** Non-chat skill endpoints, the embedding pipeline
-(Ollama / hybrid search), the summarise + suggestions paths.
-
-**Effort.** Medium.
-**Source.** [semantic caching 2026](https://www.buildmvpfast.com/blog/semantic-caching-ai-agents-cost-optimization) · [GPTCache / Redis setup](https://www.spheron.network/blog/semantic-cache-llm-inference-gpu-cloud/)
-
-#### Real-time collaborative editing + AI as a CRDT peer
-
-**Why distinctive.** Plate (Hummingbird's editor) supports Yjs; Yjs is
-the fastest CRDT lib in 2026, and the emerging pattern is "the AI agent
-is a server-side Yjs peer" — it joins the doc with a visible
-cursor/presence and edits live alongside humans rather than returning a
-blob. Turns the editor from single-user into a shared canvas where the
-agent is a teammate. The most differentiated of this batch — and the
-heaviest prerequisite.
-
-**Sketch.** A Yjs doc per workspace document + a sync server
-(Hocuspocus / Liveblocks or self-host) + presence; the editor AI
-commands become a Yjs peer applying awareness-tagged operations. The
-existing diff-review surface (#49) still gates AI hunks.
-
-**Builds on.** Plate editor (Yjs-ready), editor AI commands, the
-diff-review surface (#49).
-
-**Effort.** Large; **gated on the multi-tenant/sharing story** (the same
-prerequisite that parked Open WebUI Channels in the inspirations
-skip-list). Single-user value is limited; promote when sharing lands.
-**Source.** [AI agents as Yjs CRDT peers](https://electric.ax/blog/2026/04/08/ai-agents-as-crdt-peers-with-yjs) · [CRDTs 2026](https://zylos.ai/research/2026-01-29-crdt-real-time-collaboration/)
+> **The five ideas from the second research round (2026-06-09) now have
+> dedicated plans and have been promoted to
+> [Next — planned work](#next--planned-work-have-a-plan):**
+> [A2A interoperability](PLAN-a2a-interop.md) ·
+> [Browser / `browse` skill](PLAN-browser-use.md) ·
+> [Semantic caching](PLAN-semantic-caching.md) ·
+> [Prompt optimisation (GEPA/DSPy)](PLAN-prompt-optimization.md) ·
+> [Collaborative editing + AI peer](PLAN-collab-editing.md).
 
 > **Two adjacent findings folded into existing plans rather than added
 > as standalone ideas:** **GraphRAG / hybrid graph+vector retrieval**
@@ -281,6 +171,117 @@ skip-list). Single-user value is limited; promote when sharing lands.
 > (PGlite + transformers.js + WebGPU/WebLLM, viable to ~10k chunks)
 > strengthens the in-browser-PGlite option already weighed in
 > `PLAN-local-rag.md`.
+
+### Third research round (2026-06-09)
+
+A third sweep across angles the first two rounds didn't cover — writing
+ergonomics, reasoning control, output reliability, safety, and proactive
+execution. Idea-level for now; promote to a `PLAN-*.md` when one earns a
+slot.
+
+#### Inline editor ghost-text autocomplete
+
+**Why distinctive.** The 2026 bar for writing tools is Copilot-style
+ghost text — inline grey completions you accept with Tab. Hummingbird's
+Plate `EditorKit` *already bundles `CopilotKit`* (and `CursorOverlayKit`),
+so this is largely "activate + tune the already-installed plugin for
+prose," not a new subsystem: a fast cheap model proposes the next
+phrase/sentence as you type in the editor.
+
+**Sketch.** Wire the existing Plate Copilot plugin to a debounced
+completion endpoint backed by a fast model (`google/gemini-2.5-flash`
+class, the editor already uses it); ghost text on pause, Tab to accept,
+keystroke to dismiss. A per-document on/off toggle.
+
+**Builds on.** `EditorKit` `CopilotKit` (already installed),
+`model-provider.ts` fast model, the editor command route.
+
+**Effort.** Small–medium (plugin is present; the work is the completion
+endpoint + tuning + the toggle).
+**Source.** [Ghost-text autocomplete for writing (2026)](https://gentext.ai/blog/en/ghost-text-autocomplete-academic-writing/) · [Copilot inline suggestions](https://code.visualstudio.com/docs/editing/ai-powered-suggestions)
+
+#### Reasoning-effort control
+
+**Why distinctive.** Reasoning models in 2026 expose a depth dial
+(`reasoning_effort` low/medium/high, or instant↔extended). Hummingbird
+already *renders* reasoning tokens in a collapsible block but gives the
+user no control over how much the model thinks — so users pay extended-
+thinking latency/cost on trivial turns and get shallow answers on hard
+ones.
+
+**Sketch.** A per-turn (and per-workspace default) effort control next
+to the model picker that maps onto the provider's reasoning-budget
+parameter (`providerOptions` thinking-budget for Anthropic, effort for
+others). No-op for non-reasoning models. Surfaces beside the existing
+reasoning block.
+
+**Builds on.** Model picker, the reasoning block, `providerOptions`
+plumbing on the chat route.
+
+**Effort.** Small–medium.
+**Source.** [ChatGPT thinking-duration controls](https://skywork.ai/blog/chatgpt-thinking-duration-controls/) · [reasoning models prompting 2026](https://sureprompts.com/blog/ai-reasoning-models-prompting-complete-guide-2026)
+
+#### Structured outputs / constrained decoding
+
+**Why distinctive.** Native structured output (constrained decoding
+against a JSON Schema) became GA across providers in early 2026 —
+schema-valid output *100% of the time*, vs Hummingbird's current
+best-effort `parseSuggestionsJson` (strip fences, try JSON, fall back to
+`[]`). The deterministic calls — suggestions, summarize, extraction,
+the editor `comment`/`table` tools, project-breakdown — would gain
+reliability + drop their defensive parsers.
+
+**Sketch.** Swap the affected calls to the AI SDK's `generateObject` /
+structured-output mode with a Zod schema per call site (schemas mostly
+already exist in `lib/shared/`); keep the lenient parser only as a
+fallback for providers/models without native support.
+
+**Builds on.** The non-chat skill endpoints, `lib/shared/` Zod schemas,
+`suggestions-parser.ts` (becomes the fallback), `model-provider.ts`.
+
+**Effort.** Medium. Pairs with semantic caching (deterministic calls)
+and prompt optimisation (schema-validity is a clean metric).
+**Source.** [LLM structured output 2026](https://dev.to/pockit_tools/llm-structured-output-in-2026-stop-parsing-json-with-regex-and-do-it-right-34pk) · [how constrained decoding works](https://letsdatascience.com/blog/structured-outputs-making-llms-return-reliable-json)
+
+#### Optional guardrails + PII redaction
+
+**Why distinctive.** A self-hostable input/output moderation + PII
+redaction layer (NeMo Guardrails / Presidio-class) that masks SSNs,
+cards, emails, health identifiers before they reach the model and
+screens outputs — table-stakes for any shared/enterprise deployment,
+and a natural fit for Hummingbird's self-host posture. Optional + off by
+default for the single-user case.
+
+**Sketch.** A pluggable pre/post hook on the chat + non-chat routes
+(`lib/server/guardrails/`) running a configurable redaction +
+moderation pass; per-workspace policy; off by default. Self-hostable
+engine behind an adapter.
+
+**Builds on.** The chat route, `model-provider.ts`, per-workspace config.
+
+**Effort.** Medium; mostly relevant once multi-user/shared deployments
+exist.
+**Source.** [NeMo Guardrails](https://github.com/NVIDIA-NeMo/Guardrails) · [AI guardrails platforms 2026](https://www.getmaxim.ai/articles/best-ai-guardrails-platforms-in-2026/)
+
+#### Proactive / ambient event-triggered agents
+
+**Why distinctive.** Hummingbird already has *scheduled* tasks
+(`task_schedules` + cron dispatch). The 2026 shift is from user-initiated
+to **event-driven**: an agent runs on a *signal* (a file uploaded, a
+bookmark added, a watched condition met), not just a clock or a prompt.
+A small extension of the existing schedule dispatcher into an event/
+trigger dispatcher turns the task queue into an ambient-agent substrate.
+
+**Sketch.** A `task_triggers` table (event kind + filter + persona +
+action) beside `task_schedules`; the existing tick/dispatch loop gains
+an event source (store mutations → trigger evaluation) that enqueues a
+task on match. Reuses the whole executor + HITL + notification stack.
+
+**Builds on.** Task queue + `task_schedules` dispatch, personas, the
+finish-while-away notification.
+
+**Effort.** Medium–large; needs a careful trigger model + loop guards.
+**Source.** [Ambient agents — proactive AI](https://earlybirdlabs.com/insights/what-are-ambient-agents) · [from events to actions](https://medium.com/@vondevelopment/from-events-to-actions-understanding-ambient-agents-86d0c5641f50)
 
 ---
 
@@ -337,14 +338,22 @@ previously-planned items into the new
 observability, the Aider editor pair, and accurate token counting —
 each with a documented re-open trigger. No source files changed.
 
-A **second research round** (same day) added five more idea-level
-candidates to [Later](#later--distinctive-ideas-no-plan-yet) across
-angles the first round didn't cover — A2A agent interoperability,
-browser/computer use as a `browse` skill, automatic prompt optimisation
-(GEPA/DSPy), semantic caching for deterministic calls, and real-time
-collaborative editing with the AI as a CRDT peer — plus two findings
-(GraphRAG, fully-local in-browser inference) folded into the existing
-retrieval plans rather than added standalone.
+A **second research round** (same day) covered angles the first round
+didn't — A2A agent interoperability, browser/computer use as a `browse`
+skill, automatic prompt optimisation (GEPA/DSPy), semantic caching for
+deterministic calls, and real-time collaborative editing with the AI as
+a CRDT peer. All five were then **written up as dedicated plans and
+promoted to Next** (grounded in a third codebase survey — which
+confirmed there's no embedding pipeline yet, and that Plate already
+bundles CopilotKit + CursorOverlayKit but no Yjs, both reflected in the
+plans). Two findings (GraphRAG, fully-local in-browser inference) were
+folded into the existing retrieval plans rather than added standalone.
+
+A **third research round** added five more idea-level candidates to
+[Later](#later--distinctive-ideas-no-plan-yet) — inline editor ghost-text
+autocomplete, reasoning-effort control, structured outputs / constrained
+decoding, optional guardrails + PII redaction, and proactive / ambient
+event-triggered agents.
 
 **Previous session (2026-06-06):** Cross-product-inspirations drawdown —
 six of the fourteen menu items shipped this session:
