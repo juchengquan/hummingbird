@@ -146,6 +146,142 @@ existing AI command routes (`/api/ai/command`).
 > chosen for composing with surfaces Hummingbird already has, not
 > because a competitor shipped it.
 
+### Second research round (2026-06-09)
+
+A follow-up sweep across angles the first round and the existing
+inspirations menu didn't cover — agent-interop protocols, computer/
+browser use, prompt optimisation, caching, and real-time collaboration.
+Idea-level for now; promote to a `PLAN-*.md` when one earns a slot.
+
+#### A2A (Agent2Agent) interoperability
+
+**Why distinctive.** A2A hit v1.0 in early 2026 with 150+ orgs (AWS,
+Microsoft, Salesforce, SAP, IBM, ServiceNow) in production; it's the
+*complement* to MCP (MCP = agent→tool; A2A = agent↔agent). With
+Hummingbird's personas + the new [subagent-orchestration](PLAN-subagent-orchestration.md)
+plan, exposing each persona as an A2A "agent card" would let
+Hummingbird agents coordinate with *external* agents — and let external
+orchestrators call a Hummingbird persona — over a standard protocol
+instead of a bespoke bridge.
+
+**Sketch.** A `.well-known/agent.json` card per published persona; an
+A2A server endpoint mapping an inbound task onto the existing task
+executor; an A2A *client* tool so an orchestrator persona can delegate
+to a remote agent the way it delegates to a subagent. Reuses the
+task-queue / RunStore contract.
+
+**Builds on.** Personas slice, subagent orchestration (planned), task
+executor, MCP auth patterns.
+
+**Effort.** Large; partly gated on the multi-tenant/sharing story (an
+A2A card is a public surface).
+**Source.** [Agent protocol ecosystem 2026](https://www.digitalapplied.com/blog/ai-agent-protocol-ecosystem-map-2026-mcp-a2a-acp-ucp) · [interop convergence](https://zylos.ai/research/2026-03-26-agent-interoperability-protocols-mcp-a2a-acp-convergence/)
+
+#### Browser / computer use as a `browse` skill
+
+**Why distinctive.** Mature in 2026: browser-use (~95k stars,
+open-source, SOC2), Stagehand, Claude computer use. A `browse` skill
+lets an agent drive a real (headless) browser for "fill this form /
+extract from this gated page / complete this flow" — the class of task
+the existing `webFetch` (static GET) and `searchFiles` (local FTS)
+can't touch. Composes with the security posture the
+[code-interpreter](PLAN-code-interpreter.md) plan establishes
+(sandboxed, budget-gated, HITL-approvable).
+
+**Sketch.** A `runBrowserTask` server skill backed by browser-use (or a
+hosted Browserbase-style endpoint behind an adapter — the Minimax/E2B
+pattern). Steps stream as tool-output events; screenshots ride the
+existing `data-tool-image` → gallery path; destructive actions are
+HITL-gated via the approval card. Default read-only; opt-in for
+authenticated flows.
+
+**Builds on.** Skill registry, HITL approvals, generated-image gallery,
+the code-interpreter security model.
+
+**Effort.** Large (sandbox + auth + safety).
+**Source.** [browser-use](https://github.com/browser-use/browser-use) · [computer-use agents 2026](https://www.digitalapplied.com/blog/computer-use-agents-2026-claude-openai-gemini-matrix)
+
+#### Automatic prompt optimisation (GEPA / DSPy)
+
+**Why distinctive.** GEPA (ICLR 2026, in DSPy) is a reflective,
+gradient-free optimiser that evolves a prompt from *execution traces* —
++20% over GRPO with 35× fewer rollouts. Hummingbird's skill
+`promptFragment`s, persona system prompts, and prompt library are all
+hand-tuned today; a "tune this prompt against a small labelled set" loop
+makes them self-improving instead of artisanal. Natural pair for the
+(parked) Langfuse eval surface — traces in, optimised prompt out.
+
+**Sketch.** An offline/admin GEPA loop (Python, beside
+`services/agent-py`) that takes a skill or persona prompt + a small
+eval set + recent traces, runs DSPy GEPA, and proposes a new prompt the
+user accepts into the library/registry. A deliberate "optimise" action,
+never the hot path.
+
+**Builds on.** Skill `promptFragment`s, personas, prompt library, the
+eval/trace story (parked Langfuse).
+
+**Effort.** Medium–large; only worth it once an eval set exists (same
+gate as Langfuse).
+**Source.** [GEPA (DSPy)](https://dspy.ai/tutorials/gepa_ai_program/) · [GEPA repo](https://github.com/gepa-ai/gepa)
+
+#### Semantic caching for deterministic calls
+
+**Why distinctive.** Distinct from the gateway *prompt* caching closed
+as won't-do (inspirations #4 Part 1): semantic caching matches a new
+request against prior ones by *embedding similarity* and serves the
+cached answer — ~31% of LLM queries are semantic near-duplicates;
+stacking it on provider caching reports 60-80% cost cuts. Self-hostable
+(GPTCache / Redis vector cache). Chat turns rarely repeat, but
+Hummingbird's *deterministic* server calls do: file auto-summaries,
+follow-up suggestions, TL;DRs, classification. Caching *those* is a
+clean win with no UX risk.
+
+**Sketch.** A thin cache around the non-chat skill calls (`summarize`,
+suggestions, extraction): embed the input, look up a similarity
+threshold in a Redis/pgvector cache, serve on hit. Reuses the embedding
+pipeline Ollama/hybrid-search would add. Scoped to deterministic calls
+only — never the conversational stream.
+
+**Builds on.** Non-chat skill endpoints, the embedding pipeline
+(Ollama / hybrid search), the summarise + suggestions paths.
+
+**Effort.** Medium.
+**Source.** [semantic caching 2026](https://www.buildmvpfast.com/blog/semantic-caching-ai-agents-cost-optimization) · [GPTCache / Redis setup](https://www.spheron.network/blog/semantic-cache-llm-inference-gpu-cloud/)
+
+#### Real-time collaborative editing + AI as a CRDT peer
+
+**Why distinctive.** Plate (Hummingbird's editor) supports Yjs; Yjs is
+the fastest CRDT lib in 2026, and the emerging pattern is "the AI agent
+is a server-side Yjs peer" — it joins the doc with a visible
+cursor/presence and edits live alongside humans rather than returning a
+blob. Turns the editor from single-user into a shared canvas where the
+agent is a teammate. The most differentiated of this batch — and the
+heaviest prerequisite.
+
+**Sketch.** A Yjs doc per workspace document + a sync server
+(Hocuspocus / Liveblocks or self-host) + presence; the editor AI
+commands become a Yjs peer applying awareness-tagged operations. The
+existing diff-review surface (#49) still gates AI hunks.
+
+**Builds on.** Plate editor (Yjs-ready), editor AI commands, the
+diff-review surface (#49).
+
+**Effort.** Large; **gated on the multi-tenant/sharing story** (the same
+prerequisite that parked Open WebUI Channels in the inspirations
+skip-list). Single-user value is limited; promote when sharing lands.
+**Source.** [AI agents as Yjs CRDT peers](https://electric.ax/blog/2026/04/08/ai-agents-as-crdt-peers-with-yjs) · [CRDTs 2026](https://zylos.ai/research/2026-01-29-crdt-real-time-collaboration/)
+
+> **Two adjacent findings folded into existing plans rather than added
+> as standalone ideas:** **GraphRAG / hybrid graph+vector retrieval**
+> (2026 consensus is hybrid — vectors for breadth, graph for multi-hop
+> depth; LazyGraphRAG cuts the prohibitive indexing cost) strengthens
+> the *depth* layer of [PLAN-local-rag.md](PLAN-local-rag.md) +
+> [PLAN-cross-conversation-memory.md](PLAN-cross-conversation-memory.md)
+> rather than standing alone. **Fully-local in-browser inference**
+> (PGlite + transformers.js + WebGPU/WebLLM, viable to ~10k chunks)
+> strengthens the in-browser-PGlite option already weighed in
+> `PLAN-local-rag.md`.
+
 ---
 
 ## Catch-up watch
@@ -200,6 +336,15 @@ previously-planned items into the new
 [Parked / low priority](#parked--low-priority) section: Langfuse
 observability, the Aider editor pair, and accurate token counting —
 each with a documented re-open trigger. No source files changed.
+
+A **second research round** (same day) added five more idea-level
+candidates to [Later](#later--distinctive-ideas-no-plan-yet) across
+angles the first round didn't cover — A2A agent interoperability,
+browser/computer use as a `browse` skill, automatic prompt optimisation
+(GEPA/DSPy), semantic caching for deterministic calls, and real-time
+collaborative editing with the AI as a CRDT peer — plus two findings
+(GraphRAG, fully-local in-browser inference) folded into the existing
+retrieval plans rather than added standalone.
 
 **Previous session (2026-06-06):** Cross-product-inspirations drawdown —
 six of the fourteen menu items shipped this session:
