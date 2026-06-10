@@ -8,7 +8,7 @@ import { uuid } from "@/shared/uuid"
  * step in `runMigrations`. Wired into the `version` field of the persist
  * config in `use-store.ts`.
  */
-export const STORE_VERSION = 25
+export const STORE_VERSION = 26
 
 /**
  * Sequential schema migrations from older persisted shapes to the
@@ -443,6 +443,20 @@ export function runMigrations(
     // newer client. Defensive prune of malformed entries happens at
     // render via `parsePersistedUiPart`. See
     // `docs/PLAN-generative-ui-parts.md`.
+  }
+  if (fromVersion < 26) {
+    // `editorPrefs.inlineComplete` added (inline editor ghost-text
+    // autocomplete). Default OFF — ghost text is opinionated and adds
+    // per-keystroke cost, so v1 is opt-in. Backfill `false` on existing
+    // `editorPrefs` so the toggle starts at "off" rather than
+    // `undefined`. See `docs/PLAN-inline-autocomplete.md`.
+    const prefs = state.editorPrefs
+    if (prefs && typeof prefs === "object") {
+      const obj = prefs as Record<string, unknown>
+      if (typeof obj.inlineComplete !== "boolean") {
+        state.editorPrefs = { ...obj, inlineComplete: false }
+      }
+    }
   }
   return persistedState
 }
