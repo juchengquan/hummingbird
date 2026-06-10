@@ -1,9 +1,23 @@
 # Plan: Generative UI parts — typed interactive components from the stream
 
-Status: **planning.** Drafted in the 2026-06-09 market refresh; item
-from [MASTER_PLAN § Later](MASTER_PLAN.md) promoted to **Next**. Scope:
-**M** (~300–450 LOC for a starter kind-set + the registry, one PR).
-Origin: the 2026 Generative-UI wave — see [Sources](#sources).
+Status: **🪜 phased — commits 1 + 2 shipped, commit 3 remains.**
+- ✅ Commit 1 — `info-table` round-trip end-to-end
+  ([#179](https://github.com/juchengquan/hummingbird/pull/179),
+  2026-06-10). Shared schemas + `renderUI` server tool + SSE emit
+  + `Message.uiParts` store mutator + `data-ui` translator + client
+  registry + `InfoTable` renderer + chat-message render slot.
+- ✅ Commit 2 — interactive kinds + chat-turn resolution
+  ([#181](https://github.com/juchengquan/hummingbird/pull/181),
+  2026-06-10). `choice` / `confirm` / `mini-form` + `resolveMessage
+  UiPart` + `formatAnswerForChat` + `defaultResolutionFor` (auto-send
+  for choice/confirm; composer prefill for mini-form) +
+  `ChoiceCard` / `ConfirmCard` / `MiniFormCard`.
+- 📐 Commit 3 — task-mode resolution: when a part is emitted inside
+  a running task, submit routes through `POST /api/tasks/:id/respond`
+  (shared presentational core with `task-strip.tsx`).
+
+Scope: **M** (~300–450 LOC for a starter kind-set + the registry,
+one PR). Origin: the 2026 Generative-UI wave — see [Sources](#sources).
 
 ## Why
 
