@@ -8,7 +8,7 @@ import { uuid } from "@/shared/uuid"
  * step in `runMigrations`. Wired into the `version` field of the persist
  * config in `use-store.ts`.
  */
-export const STORE_VERSION = 24
+export const STORE_VERSION = 25
 
 /**
  * Sequential schema migrations from older persisted shapes to the
@@ -433,6 +433,16 @@ export function runMigrations(
     // rehydrate — no backfill needed. Marker bump only, so the pinned
     // persisted key set in `persist.test.ts` stays in lockstep with the
     // version. See `docs/PLAN-reasoning-effort-control.md`.
+  }
+  if (fromVersion < 25) {
+    // `Message.uiParts` added — generative-UI parts produced by the
+    // `renderUI` tool. The field is OPTIONAL in the type, so no
+    // backfill is strictly required — existing messages without
+    // `uiParts` render exactly as before. The version bump is a
+    // marker so a downgrade can't silently lose a part written by a
+    // newer client. Defensive prune of malformed entries happens at
+    // render via `parsePersistedUiPart`. See
+    // `docs/PLAN-generative-ui-parts.md`.
   }
   return persistedState
 }

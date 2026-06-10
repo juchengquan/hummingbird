@@ -33,6 +33,13 @@ export interface NormalisedFrame {
   results?: Array<{ title?: string; url?: string; snippet?: string }>
   mode?: string
   images?: unknown[]
+  /** Generative-UI part kind (info-table in v1). Carried on
+   *  `type: "ui_part"` frames. The render-side validates against the
+   *  shared `UiPartSchema` before render — invalid parts drop silently. */
+  kind?: string
+  /** Per-kind props for a `ui_part` frame, validated client-side
+   *  against the shared schema before render. */
+  props?: unknown
 }
 
 /** Decode one SSE payload (the JSON between `data: ` and `\n\n`) and
@@ -139,6 +146,24 @@ export function translateFrame(payload: string): NormalisedFrame | null {
     return {
       type: "suggestions",
       values: data.values.filter((v): v is string => typeof v === "string"),
+    }
+  }
+  if (t === "data-ui") {
+    // Generative UI part — emitted by the server-side `renderUI` tool
+    // after it validates `{ kind, props }` against the shared schema.
+    // The send-pipeline re-validates with `parsePersistedUiPart` before
+    // appending to `Message.uiParts`, so a malformed in-flight payload
+    // is still rejected safely. See `docs/PLAN-generative-ui-parts.md`.
+    const data = raw.data as
+      | { id?: unknown; kind?: unknown; props?: unknown }
+      | undefined
+    if (!data || typeof data !== "object") return null
+    if (typeof data.id !== "string" || typeof data.kind !== "string") return null
+    return {
+      type: "ui_part",
+      id: data.id,
+      kind: data.kind,
+      props: data.props,
     }
   }
   // Lifecycle frames the handler doesn't need to act on.

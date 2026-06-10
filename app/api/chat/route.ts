@@ -18,6 +18,12 @@ import {
 import type { SkillId } from '@/shared/skills/types'
 import { isSearchFilesToolName, isWebSearchToolName } from '@/shared/skills/types'
 import { buildMcpTool, mcpToolName } from '@/server/mcp/tools'
+import {
+  RENDER_UI_PROMPT_FRAGMENT,
+  RENDER_UI_TOOL_NAME,
+  buildRenderUITool,
+  type RenderUIToolResult,
+} from '@/server/generative-ui/tool'
 import { loadEffectiveMcpServers, type EffectiveMcpServer } from '@/server/mcp/load-servers'
 import { createSlidingWindow, rateLimitKey } from '@/server/rate-limit'
 import {
@@ -278,6 +284,12 @@ export async function POST(req: NextRequest) {
       mcpToolNames.push(name)
     }
   }
+  // Generative-UI `renderUI` — always-on system tool (no chip in the
+  // skills panel, no env requirement). The model decides when to
+  // emit a structured UI part; the `promptFragment` is appended to
+  // the system prompt unconditionally. See
+  // `docs/PLAN-generative-ui-parts.md`.
+  tools[RENDER_UI_TOOL_NAME] = buildRenderUITool()
   // Wire→resolved: files + bookmarks pass through verbatim, MCP
   // resources go through `resolveAttachedMcpResources` (concurrent
   // reads + per-call timeout + graceful error fallback inline in the
@@ -347,17 +359,23 @@ export async function POST(req: NextRequest) {
     const result = streamText({
       abortSignal: upstreamSignal,
       model: selectModel(modelId),
-      system: buildSystemPrompt({
-        workspaceSystemPrompt: body.workspaceSystemPrompt,
-        enabledSkillIds,
-        skillRequestEntries,
-        mcpServers: mcpServers.map((s) => ({
-          name: s.name,
-          toolCount: s.capabilities?.tools?.length ?? 0,
-        })),
-        attachments,
-        referenceImage: body.referenceImage,
-      }),
+      system: [
+        buildSystemPrompt({
+          workspaceSystemPrompt: body.workspaceSystemPrompt,
+          enabledSkillIds,
+          skillRequestEntries,
+          mcpServers: mcpServers.map((s) => ({
+            name: s.name,
+            toolCount: s.capabilities?.tools?.length ?? 0,
+          })),
+          attachments,
+          referenceImage: body.referenceImage,
+        }),
+        // Always-on system tool; the fragment teaches the model when
+        // to call `renderUI`. Trailing the existing prompt keeps the
+        // cache-stable prefix (workspace voice + skills) on top.
+        RENDER_UI_PROMPT_FRAGMENT,
+      ].join("\n\n"),
       // Cast back: Zod validates the outer shape (role + content union),
       // but the AI SDK's ModelMessage uses tighter inner-part discriminants
       // than the schema's structural fallback. Trust the schema validation.
@@ -546,6 +564,22 @@ export async function POST(req: NextRequest) {
                   req.signal,
                   body.localFilesOnly === true
                 )
+              }
+              // renderUI: the tool's `execute` already validated the
+              // `{ kind, props }` pair against the shared schema. Emit a
+              // `data-ui` frame the client appends to `Message.uiParts`.
+              // When validation failed the tool returns `{ error }` —
+              // the tool-result text above carries that to the model;
+              // we skip the UI emit so nothing renders client-side.
+              if (p.toolName === RENDER_UI_TOOL_NAME) {
+                const out = p.output as RenderUIToolResult | undefined
+                if (out && !out.error && typeof out.kind === 'string') {
+                  emitter.uiPart({
+                    id: p.toolCallId ?? '',
+                    kind: out.kind,
+                    props: out.props,
+                  })
+                }
               }
             } else if (part.type === 'tool-error') {
               // Tool execute() threw or args were malformed. The model never

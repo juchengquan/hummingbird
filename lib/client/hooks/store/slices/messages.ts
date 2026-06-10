@@ -60,6 +60,14 @@ export interface MessagesSlice {
   setMessageToolCalls: (messageId: string, toolCalls: ToolCallRecord[]) => void
   setMessageSuggestions: (messageId: string, suggestions: string[]) => void
   appendMessageGeneratedImages: (messageId: string, images: GeneratedImage[]) => void
+  /** Append one generative-UI part to the assistant message — emitted
+   *  by the `renderUI` tool, dispatched by `use-chat-send` on `ui_part`
+   *  SSE frames. Idempotent on `(messageId, part.id)`. See
+   *  `docs/PLAN-generative-ui-parts.md`. */
+  appendMessageUiPart: (
+    messageId: string,
+    part: import("@/shared/generative-ui/schemas").PersistedUiPart,
+  ) => void
   /** Replace the `url` on a single generated image. Used by the lazy
    *  signed-URL re-sign path (`apiClient.images.refreshUrl`) so the
    *  refreshed URL persists across re-renders without touching the
@@ -303,6 +311,24 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
             if (m.id !== messageId) return m
             const next = [...(m.generatedImages ?? []), ...images]
             return { ...m, generatedImages: next }
+          }),
+        }
+      }),
+    })),
+  appendMessageUiPart: (messageId, part) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) => {
+        if (!c.messages.some((m) => m.id === messageId)) return c
+        return {
+          ...c,
+          messages: c.messages.map((m) => {
+            if (m.id !== messageId) return m
+            const existing = m.uiParts ?? []
+            // Idempotent on (messageId, part.id) — a duplicate emit
+            // (rare; defensive) leaves the message unchanged so the
+            // identity-stable render path doesn't churn.
+            if (existing.some((p) => p.id === part.id)) return m
+            return { ...m, uiParts: [...existing, part] }
           }),
         }
       }),

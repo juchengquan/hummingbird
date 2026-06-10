@@ -443,6 +443,15 @@ export interface Message {
    */
   generatedImages?: GeneratedImage[]
   /**
+   * Generative-UI parts produced by the `renderUI` tool — an inline
+   * structured component (info-table in v1) rendered alongside the
+   * assistant text. Each entry is a `PersistedUiPart` (`id`, `kind`,
+   * validated `props`, optional `answeredAt`). Empty / undefined when
+   * the assistant didn't render any structured content this turn. See
+   * `docs/PLAN-generative-ui-parts.md`.
+   */
+  uiParts?: import("./generative-ui/schemas").PersistedUiPart[]
+  /**
    * Excluded from the chat API request when true. Set by the "Compress
    * older messages" action — the message stays on disk and renders
    * (muted, behind a "Show N compressed" disclosure on the recap card)
