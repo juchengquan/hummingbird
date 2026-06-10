@@ -140,6 +140,11 @@ export const ChatRequestSchema = z.object({
    *  the client's `persistFile()` honouring the same flag for uploads.
    *  Absent / false → cloud upload is allowed when a session exists. */
   localFilesOnly: z.boolean().optional(),
+  /** Reasoning-effort tier for models that expose a thinking-budget /
+   *  `reasoning_effort` knob. Absent → provider default. Mapped onto
+   *  provider options server-side; ignored for models/providers without
+   *  a mapping. See `@/shared/reasoning-effort`. */
+  reasoningEffort: z.enum(["low", "medium", "high"]).optional(),
   skills: z
     .array(
       z.object({

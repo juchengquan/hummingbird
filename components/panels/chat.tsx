@@ -64,6 +64,8 @@ export function ChatPanel() {
   )
   const chatModel = useStore((state) => state.chatModel)
   const setChatModel = useStore((state) => state.setChatModel)
+  const chatReasoningEffort = useStore((state) => state.chatReasoningEffort)
+  const setChatReasoningEffort = useStore((state) => state.setChatReasoningEffort)
   const files = useStore((state) => state.files)
   const activeConversationId = useStore((state) => state.activeConversationId)
   const conversations = useStore((state) => state.conversations)
@@ -750,6 +752,8 @@ export function ChatPanel() {
             // a retry on the next plain model change).
             if (!open) pendingRetryRef.current = null
           }}
+          chatReasoningEffort={chatReasoningEffort}
+          onReasoningEffortPick={setChatReasoningEffort}
           runAsTask={taskRun.runAsTask}
           onRunAsTaskChange={taskRun.setRunAsTask}
         />

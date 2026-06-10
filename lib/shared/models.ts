@@ -39,6 +39,12 @@ const ChatModelSchema = z.object({
    *  the env vars / inline credentials it needs). At least one route
    *  is required. */
   routes: z.array(RouteSchema).min(1),
+  /** When true, the model exposes a thinking-budget / reasoning-effort
+   *  knob, so the chat header shows the Fast/Balanced/Thorough control
+   *  and the route maps the chosen tier onto provider options. Absent /
+   *  false → no control, provider default behaviour. See
+   *  `@/shared/reasoning-effort`. */
+  supportsReasoningEffort: z.boolean().optional(),
 })
 
 const ModelsConfigSchema = z.object({
@@ -74,4 +80,11 @@ export const DEFAULT_CHAT_MODEL: string = config.default
  *  was removed). */
 export function getChatModel(id: string): ChatModel | null {
   return CHAT_MODELS.find((m) => m.id === id) ?? null
+}
+
+/** Whether a model exposes a reasoning-effort / thinking-budget knob.
+ *  Drives both the chat-header control's visibility and whether the
+ *  client sends `reasoningEffort` on the wire. Unknown id → false. */
+export function modelSupportsReasoningEffort(id: string): boolean {
+  return getChatModel(id)?.supportsReasoningEffort === true
 }

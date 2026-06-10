@@ -1,15 +1,16 @@
 import "client-only"
 
 import { DEFAULT_CHAT_MODEL } from "@/shared/models"
+import type { ReasoningEffort } from "@/shared/reasoning-effort"
 
 import type { SliceCreator } from "../types"
 
 /**
  * Chat runtime slice — the ephemeral compose/stream state for the chat
- * panel. None of these persist (see `partializeState`): `chatModel` is
- * the one exception and is persisted from the slice's own initial value
- * via the persist key list. Streaming + typing + the remix reference are
- * per-session.
+ * panel. Most of these don't persist (see `partializeState`): `chatModel`
+ * and `chatReasoningEffort` are the exceptions and are persisted from the
+ * slice's own initial values via the persist key list. Streaming + typing
+ * + the remix reference are per-session.
  *
  * Cross-slice note: `chatModel` / `sessionModelOverridden` are also
  * written by the workspace slice (`setActiveWorkspace`,
@@ -26,6 +27,11 @@ export interface ChatSlice {
   typingConversationIds: string[]
   streamingContent: string
   chatModel: string
+  /** Reasoning-effort tier for the next turn, for models that support a
+   *  thinking-budget / reasoning_effort knob. `null` = provider default
+   *  (nothing sent on the wire). Persisted like `chatModel`. Only sent
+   *  when the active model supports it (see `modelSupportsReasoningEffort`). */
+  chatReasoningEffort: ReasoningEffort | null
   /**
    * Pending image-to-image reference for the next user message. Set by
    * the "Remix" action on a `GeneratedImagesGallery` tile; cleared on
@@ -63,12 +69,16 @@ export interface ChatSlice {
   ) => void
   setStreamingContent: (content: string) => void
   setChatModel: (model: string) => void
+  /** Set the reasoning-effort tier for the next turn. `null` clears it
+   *  back to the provider default. */
+  setChatReasoningEffort: (effort: ReasoningEffort | null) => void
 }
 
 export const createChatSlice: SliceCreator<ChatSlice> = (set) => ({
   typingConversationIds: [],
   streamingContent: "",
   chatModel: DEFAULT_CHAT_MODEL,
+  chatReasoningEffort: null,
   sessionModelOverridden: false,
   pendingReferenceImage: null,
 
@@ -86,4 +96,5 @@ export const createChatSlice: SliceCreator<ChatSlice> = (set) => ({
   setPendingReferenceImage: (value) => set({ pendingReferenceImage: value }),
   setStreamingContent: (content) => set({ streamingContent: content }),
   setChatModel: (model) => set({ chatModel: model, sessionModelOverridden: true }),
+  setChatReasoningEffort: (effort) => set({ chatReasoningEffort: effort }),
 })

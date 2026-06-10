@@ -33,7 +33,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { CHAT_MODELS } from "@/shared/models"
+import { CHAT_MODELS, modelSupportsReasoningEffort } from "@/shared/models"
+import {
+  REASONING_EFFORTS,
+  type ReasoningEffort,
+} from "@/shared/reasoning-effort"
+
+/** User-facing labels for the reasoning-effort tiers. The wire values
+ *  stay `low`/`medium`/`high`; these are the friendlier surface. */
+const REASONING_EFFORT_LABEL: Record<ReasoningEffort, string> = {
+  low: "Fast",
+  medium: "Balanced",
+  high: "Thorough",
+}
+/** Radix Select can't use an empty-string value, so `null` (provider
+ *  default) is represented by this sentinel in the control. */
+const REASONING_EFFORT_DEFAULT = "default"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import {
   useStore,
@@ -75,6 +90,10 @@ interface ChatHeaderProps {
    *  programmatically when the user clicks `Change model` on an error). */
   modelPickerOpen: boolean
   onModelPickerOpenChange: (open: boolean) => void
+  /** Reasoning-effort tier for the next turn (`null` = provider default).
+   *  Only surfaced when the active model supports it. */
+  chatReasoningEffort: ReasoningEffort | null
+  onReasoningEffortPick: (effort: ReasoningEffort | null) => void
   /** "Run as task" mode — next send launches a long-running agent task
    *  in the Tasks panel instead of an inline chat turn. */
   runAsTask: boolean
@@ -86,6 +105,8 @@ export function ChatHeader({
   onModelPick,
   modelPickerOpen,
   onModelPickerOpenChange,
+  chatReasoningEffort,
+  onReasoningEffortPick,
   runAsTask,
   onRunAsTaskChange,
 }: ChatHeaderProps) {
@@ -387,6 +408,37 @@ export function ChatHeader({
                     </SelectItem>
                   ))}
                 </SelectGroup>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
+        {/* Reasoning-effort dial — only for models that expose a
+            thinking-budget / reasoning_effort knob. `Auto` (the sentinel)
+            sends nothing, leaving the provider default. See
+            docs/PLAN-reasoning-effort-control.md. */}
+        {!renaming && modelSupportsReasoningEffort(chatModel) && (
+          <Select
+            value={chatReasoningEffort ?? REASONING_EFFORT_DEFAULT}
+            onValueChange={(v) =>
+              onReasoningEffortPick(
+                v === REASONING_EFFORT_DEFAULT ? null : (v as ReasoningEffort)
+              )
+            }
+          >
+            <SelectTrigger
+              size="sm"
+              className="h-7 text-xs gap-1 border-none bg-transparent hover:bg-[var(--secondary)] shrink-0"
+              aria-label="Reasoning effort"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              <SelectItem value={REASONING_EFFORT_DEFAULT}>Auto effort</SelectItem>
+              {REASONING_EFFORTS.map((effort) => (
+                <SelectItem key={effort} value={effort}>
+                  {REASONING_EFFORT_LABEL[effort]}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
