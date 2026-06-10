@@ -15,9 +15,15 @@ import "server-only"
  */
 
 import { generateText, type ModelMessage } from "ai"
+import { z } from "zod"
 
+import { generateStructured } from "@/server/ai/structured"
 import { selectModel } from "@/server/model-provider"
-import { parseSuggestionsJson } from "@/shared/suggestions-parser"
+import { modelSupportsStructuredOutput } from "@/shared/models"
+import {
+  clampSuggestions,
+  parseSuggestionsJson,
+} from "@/shared/suggestions-parser"
 
 import { lastUserText } from "./prompt-builders"
 
@@ -25,6 +31,13 @@ import { lastUserText } from "./prompt-builders"
 export { parseSuggestionsJson }
 
 const SUGGESTION_MODEL = "google/gemini-2.5-flash"
+
+// Structured-output shape. The model returns an object (top-level arrays
+// aren't portable across providers); we clamp the array to the wire
+// contract afterwards. The prompt still asks for a flat array — harmless
+// for the structured path (the schema governs) and required by the
+// lenient fallback's `parseSuggestionsJson`.
+const SuggestionsSchema = z.object({ suggestions: z.array(z.string()).max(8) })
 
 /** Generate up to 3 follow-up chips for the current turn. Returns
  *  an empty array on any failure — chips are decoration; failures
@@ -49,6 +62,25 @@ ${assistantReply.slice(0, 4000)}
 """`
 
   try {
+    // Structured path for models that support it — guaranteed schema-valid
+    // output, no fishing JSON out of prose.
+    if (modelSupportsStructuredOutput(SUGGESTION_MODEL)) {
+      try {
+        const { suggestions } = await generateStructured({
+          modelId: SUGGESTION_MODEL,
+          schema: SuggestionsSchema,
+          prompt,
+          abortSignal: signal,
+          maxOutputTokens: 200,
+          temperature: 0.7,
+        })
+        return clampSuggestions(suggestions)
+      } catch {
+        // Fall through to the lenient text path (also covers a provider
+        // without a configured key — the retry below fails the same way
+        // and the outer catch returns []).
+      }
+    }
     const result = await generateText({
       abortSignal: signal,
       model: selectModel(SUGGESTION_MODEL),

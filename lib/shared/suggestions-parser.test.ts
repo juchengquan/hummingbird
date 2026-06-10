@@ -10,6 +10,7 @@ import { describe, expect, test } from "bun:test"
 import {
   SUGGESTION_MAX_CHARS,
   SUGGESTION_MAX_COUNT,
+  clampSuggestions,
   parseSuggestionsJson,
 } from "./suggestions-parser"
 
@@ -65,5 +66,20 @@ describe("parseSuggestionsJson", () => {
 
   test("trims surrounding whitespace before fence-stripping", () => {
     expect(parseSuggestionsJson('   \n```json\n["a"]\n```   ')).toEqual(["a"])
+  })
+})
+
+describe("clampSuggestions", () => {
+  test("applies the same caps as the JSON parser (used by the structured path)", () => {
+    expect(clampSuggestions(["one", "two", "three", "four"])).toEqual([
+      "one",
+      "two",
+      "three",
+    ])
+    expect(clampSuggestions([" trim ", "", "  ", "ok"])).toEqual(["trim", "ok"])
+    expect(clampSuggestions(["fine", "x".repeat(SUGGESTION_MAX_CHARS + 1)])).toEqual(
+      ["fine"]
+    )
+    expect(clampSuggestions([])).toEqual([])
   })
 })

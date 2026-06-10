@@ -7,6 +7,7 @@
       "provider": "Anthropic",
       "contextWindow": 1000000,
       "supportsReasoningEffort": true,
+      "supportsStructuredOutput": true,
       "routes": [{ "via": "gateway" }]
     },
     {
@@ -15,6 +16,7 @@
       "provider": "Anthropic",
       "contextWindow": 200000,
       "supportsReasoningEffort": true,
+      "supportsStructuredOutput": true,
       "routes": [{ "via": "gateway" }]
     },
     {
@@ -23,6 +25,7 @@
       "provider": "OpenAI",
       "contextWindow": 1000000,
       "supportsReasoningEffort": true,
+      "supportsStructuredOutput": true,
       "routes": [{ "via": "gateway" }]
     },
     {
@@ -30,6 +33,7 @@
       "label": "ChatGPT (latest)",
       "provider": "OpenAI",
       "contextWindow": 128000,
+      "supportsStructuredOutput": true,
       "routes": [{ "via": "gateway" }]
     },
     {
@@ -38,6 +42,7 @@
       "provider": "Google",
       "contextWindow": 1048576,
       "supportsReasoningEffort": true,
+      "supportsStructuredOutput": true,
       "routes": [{ "via": "gateway" }]
     },
     {
@@ -46,6 +51,7 @@
       "provider": "Google",
       "contextWindow": 1000000,
       "supportsReasoningEffort": true,
+      "supportsStructuredOutput": true,
       "routes": [{ "via": "gateway" }]
     },
     {
