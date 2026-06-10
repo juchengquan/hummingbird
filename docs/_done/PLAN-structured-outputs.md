@@ -1,9 +1,12 @@
 # Plan: Structured outputs / constrained decoding
 
-Status: **planning.** Promoted from [MASTER_PLAN § Later](MASTER_PLAN.md)
-(third research round, 2026-06-09) to **Next**. Scope: **M** (one PR,
-incremental per call site). Origin: native structured output went GA
-across providers in early 2026 — see [Sources](#sources).
+Status: **✅ shipped** — [#180](https://github.com/juchengquan/hummingbird/pull/180)
+on 2026-06-10. Per-model `supportsStructuredOutput` flag in
+`config/models.json`; deterministic non-chat calls (suggestions,
+summaries, etc.) route through `generateObject` on capable models and
+fall back to lenient text parsing on the others. Plan retained as a
+shipped reference. Scope: **M**. Origin: native structured output went
+GA across providers in early 2026 — see [Sources](#sources).
 
 ## Why
 

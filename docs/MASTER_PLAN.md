@@ -8,32 +8,36 @@ parking-lot idea — plus the conventions for keeping this file honest.
 > still lives in `PLAN-*.md` — active plans in `docs/`, archived plans
 > in [`docs/_done/`](_done/).
 
-Last updated: **2026-06-09** — see [Recent activity](#recent-activity)
+Last updated: **2026-06-10** — see [Recent activity](#recent-activity)
 just below for the rolling pulse, and the
 [Shipped log](#shipped-log-newest-first) further down for the full
-chronological record. The 2026-06-09 pass was a **market refresh**:
-five new distinctive ideas added below, and three previously-planned
-items (Langfuse, Aider editor pair, accurate token counting)
-deprioritised into [Parked / low priority](#parked--low-priority).
+chronological record. **2026-06-10 session:** four PRs shipped from the
+Tier 1 / Tier 2 queues — reasoning-effort control (#178), generative-UI
+commits 1 + 2 (#179, #181), and native structured outputs (#180). The
+prior 2026-06-09 pass was a **market refresh**: five new distinctive
+ideas added below, and three previously-planned items (Langfuse, Aider
+editor pair, accurate token counting) deprioritised into
+[Parked / low priority](#parked--low-priority).
 
 ---
 
 ## Status snapshot
 
-- **27 active plans** in `docs/` (planning / phased) — including the
-  **20 new plans** from the 2026-06-09 market refresh (four research
-  rounds of five). They're ranked in
+- **25 active plans** in `docs/` (planning / phased) — two Tier 1
+  quick wins archived this session (reasoning-effort control,
+  structured outputs) on top of the 20 from the 2026-06-09 refresh.
+  Active plans are ranked in
   [Choosing what to build first](#choosing-what-to-build-first); the
   full set is in [Next — planned work](#next--planned-work-have-a-plan).
 - **3 parked / low-priority** plans (Langfuse, Aider editor pair,
   typed prompt variables) + accurate token counting. See
   [Parked / low priority](#parked--low-priority).
-- **30 fully-shipped plans archived** under [`docs/_done/`](_done/).
+- **32 fully-shipped plans archived** under [`docs/_done/`](_done/).
 - **Nothing currently in flight** (no branch with active work that
   doesn't already have a PR).
-- **Latest ships** (last session, in chronological order): #165 → #166
-  → #167 → #168 → #169, plus the docs landings #170 (cross-product
-  plan refresh) and #171 (third-backend naming). Detail in
+- **Latest ships** (2026-06-10, in chronological order): #178
+  (reasoning-effort control) → #179 (generative-UI commit 1) → #180
+  (structured outputs) → #181 (generative-UI commit 2). Detail in
   [Recent activity](#recent-activity).
 
 ## Status legend
@@ -109,22 +113,24 @@ pick by appetite. The pre-existing plans above
 separately and not re-ranked here.
 
 **Tier 1 — quick wins (start here).** Small–medium, high value, little
-or no new infra, mostly-existing plumbing.
+or no new infra, mostly-existing plumbing. **Two shipped this session
+(2026-06-10), two remain.**
 
-| Plan | Effort | Why first |
+| Plan | Effort | Status / Why first |
 |---|---|---|
-| [Reasoning-effort control](PLAN-reasoning-effort-control.md) | S–M | `providerOptions` plumbing already exists; immediate cost/latency lever |
+| ✅ [Reasoning-effort control](_done/PLAN-reasoning-effort-control.md) | S–M | **Shipped #178** |
+| ✅ [Structured outputs](_done/PLAN-structured-outputs.md) | M | **Shipped #180** — `generateObject` for deterministic non-chat calls; capability-gated |
 | [Inline editor autocomplete](PLAN-inline-autocomplete.md) | S–M | Plate `CopilotKit` is already installed — mostly wiring + a toggle |
-| [Structured outputs](PLAN-structured-outputs.md) | M | Reliability win now; also de-risks semantic caching + prompt-opt (clean metric) |
 | [Semantic caching](PLAN-semantic-caching.md) (Phase 1) | M | Exact-key cache needs **no** embeddings; immediate cost/latency win |
 
 **Tier 2 — high-value, self-contained (next).** Medium lift, compose
-with existing surfaces, no hard blocker.
+with existing surfaces, no hard blocker. **Generative UI commits 1+2
+shipped this session; commit 3 (task-mode resolution) remains.**
 
 | Plan | Effort | Note |
 |---|---|---|
 | [MCP Apps](PLAN-mcp-apps.md) | M | Composes the sandbox renderer + MCP integration |
-| [Generative UI parts](PLAN-generative-ui-parts.md) | M | Builds on the AI SDK `data-*` plumbing |
+| 🪜 [Generative UI parts](PLAN-generative-ui-parts.md) | M | Commits 1 + 2 shipped (#179, #181); commit 3 = task-mode resolution remains |
 | [Portable skills (SKILL.md)](PLAN-portable-skills.md) | S–M | Mirrors persona share-by-URL |
 | [Smart model routing](PLAN-model-routing.md) | M | Cost lever; `openrouter/auto` is precedent |
 | [Read-aloud / TTS](PLAN-tts-voice-output.md) | M | Voice-out; foundation for voice mode |
@@ -303,7 +309,37 @@ pick them up if a user explicitly asks or a particular need arises.
 Rolling pulse — latest first. The full chronological record lives in
 the [Shipped log](#shipped-log-newest-first) further down.
 
-**This session (2026-06-09) — market refresh + 5 new plans (docs
+**This session (2026-06-10) — four PRs shipped from the Tier 1 / Tier
+2 queues:**
+
+- **Reasoning-effort control** ([#178](https://github.com/juchengquan/hummingbird/pull/178))
+  — Fast / Balanced / Thorough dial beside the model picker. Per-model
+  `supportsReasoningEffort` flag in `config/models.json` gates the
+  control; the chosen tier maps onto provider options via
+  `reasoningCallOptions`. Tier 1 closed; plan archived.
+- **Generative UI parts commit 1** ([#179](https://github.com/juchengquan/hummingbird/pull/179))
+  — `info-table` round-trip end-to-end. Shared schemas (`UiPart
+  Schema`), always-on `renderUI` server tool, `data-ui` SSE part,
+  `Message.uiParts` store + STORE_VERSION 23 → 24 marker, translator
+  branch, client registry, `InfoTable` component, chat-message render
+  slot.
+- **Native structured outputs** ([#180](https://github.com/juchengquan/hummingbird/pull/180))
+  — Per-model `supportsStructuredOutput` flag in `config/models.json`;
+  deterministic non-chat calls (suggestions, summaries) route through
+  `generateObject` on capable models and fall back to lenient text
+  parsing otherwise. Tier 1 closed; plan archived.
+- **Generative UI parts commit 2** ([#181](https://github.com/juchengquan/hummingbird/pull/181))
+  — Interactive kinds (`choice` / `confirm` / `mini-form`) +
+  chat-turn resolution. `resolveMessageUiPart` mutator, pure
+  `formatAnswerForChat` helper, `defaultResolutionFor` per-kind
+  dispatch (auto-send for choice/confirm, composer prefill for
+  mini-form). Plan remains in `docs/` for commit 3 (task-mode
+  resolution).
+
+STORE_VERSION 23 → 24 (#178 reasoning-effort marker) → 25 (#179
+`Message.uiParts` marker). Both rebased through the persist contract.
+
+**Previous session (2026-06-09) — market refresh + 5 new plans (docs
 only, no code):** A fresh sweep of the 2026 AI-chat / agent landscape
 (MCP spec evolution + MCP Apps, Anthropic Agent Skills, the self-host
 chat cohort, the multi-agent-orchestration wave). Wrote **five
@@ -388,6 +424,12 @@ for the four non-chat endpoints (#156), provider-categorised errors on
 (PRs #148–#154) which retired the legacy custom SSE format across all
 three backends; PLAN-agent-api Phases 2b–4-4b (PRs #142–#147).
 
+**Plan-state changes (2026-06-10):** Two plans archived into
+[`_done/`](_done/) after verification of full implementation:
+PLAN-reasoning-effort-control (#178) and PLAN-structured-outputs (#180).
+PLAN-generative-ui-parts moved to 🪜 phased — commits 1 + 2 of 3
+shipped (#179, #181); commit 3 (task-mode resolution) remains.
+
 **Plan-state changes (2026-06-06):** Four plans archived into
 [`_done/`](_done/) after verification of full implementation:
 PLAN-agent-ts-followups, PLAN-conversation-system-prompt,
@@ -408,6 +450,10 @@ still-open phased plans link in-place.
 
 | When | Feature | Where |
 |---|---|---|
+| 2026-06-10 | **Generative UI parts — interactive kinds + chat-turn resolution** (commit 2 of 3). Adds `choice` (2–8 labelled options, single or multi-select), `confirm` (yes/no), and `mini-form` (1–4 text/number/select fields) to the v1 read-only round-trip. Picking an answer dispatches a follow-up user turn through the existing chat-send pipeline; reload preserves the picked state via persisted `answeredAt` + `answer` on the part. Pure `formatAnswerForChat(part, answer)` helper + `defaultResolutionFor(kind)` per-kind dispatch (choice/confirm auto-send, mini-form prefills the composer). New `resolveMessageUiPart` mutator. STORE_VERSION 24 → 25 marker. Plan remains in `docs/` for commit 3 (task-mode resolution) | [PLAN](PLAN-generative-ui-parts.md) · [#181](https://github.com/juchengquan/hummingbird/pull/181) |
+| 2026-06-10 | **Native structured outputs for deterministic calls** — per-model `supportsStructuredOutput` flag in `config/models.json` gates whether the deterministic non-chat calls (suggestions, summaries, etc.) route through `generateObject` (constrained decoding against a Zod schema) or fall back to lenient text parsing. Reliability win across providers; de-risks downstream eval / prompt-opt / semantic-caching plans by clean metrics. Capable models flagged: Claude Sonnet 4.6, Claude Haiku 4.5, GPT-5.5, GPT-5.3-chat, Gemini 2.5 Pro / Flash | [PLAN](_done/PLAN-structured-outputs.md) · [#180](https://github.com/juchengquan/hummingbird/pull/180) |
+| 2026-06-10 | **Generative UI parts — info-table round-trip** (commit 1 of 3). The model emits a structured table inline in chat via a new always-on `renderUI` server tool. Shared `UiPartSchema` (Zod discriminated union) validated on emit AND on render; SSE `data-ui` part type; `Message.uiParts?: PersistedUiPart[]` on the message; client registry mapping `kind → { schema, Component }`. v1 ships read-only `info-table` (key/value or columnar layouts); interactive kinds land in commit 2. Migration is a marker (`STORE_VERSION 23 → 24`); field is optional, no backfill | [PLAN](PLAN-generative-ui-parts.md) · [#179](https://github.com/juchengquan/hummingbird/pull/179) |
+| 2026-06-10 | **Reasoning-effort control (Fast / Balanced / Thorough)** — depth dial beside the model picker for 2026 reasoning models. Per-model `supportsReasoningEffort` flag in `config/models.json` decides whether the control renders; the chosen tier maps onto provider options via `reasoningCallOptions` in `@/shared/reasoning-effort`. No-op + hidden for non-reasoning models. Lets the user trade latency + cost against answer depth per query. Flagged models: Claude Sonnet 4.6, Claude Haiku 4.5, GPT-5.5, Gemini 2.5 Pro / Flash | [PLAN](_done/PLAN-reasoning-effort-control.md) · [#178](https://github.com/juchengquan/hummingbird/pull/178) |
 | 2026-06-06 | **Per-attached-file inline ↔ RAG retrieval toggle** — second half of inspirations item #6. New `Conversation.fileRetrievalModes` (`Record<fileId, "rag">`, default absent = inline). When a file is flipped to rag the send path drops its `text` from the wire summary + stamps `retrievalMode: "rag"`; the server renderer suppresses the inlined body (rendering a "call `searchFiles`" stub instead) and excludes it from the meta-only footer; the chat route auto-enables `searchFiles` so the file stays reachable. UI: a `<Search>` toggle on each non-image attached-file row in the ContextPicker (highlighted on rag). Migration `0022_conversation_file_retrieval_modes` (+ jsonb-object CHECK), `STORE_VERSION 22→23`, full sync round-trip. Item #6 (RAG half) from PLAN-cross-product-inspirations | [PLAN](PLAN-cross-product-inspirations.md) · [#169](https://github.com/juchengquan/hummingbird/pull/169) |
 | 2026-06-06 | **`#`-mention for files + bookmarks** — first half of inspirations item #6. Third autocomplete sibling beside `/` (skills) and `@` (prompts): `useAttachmentMentionAutocomplete` + a pure `lib/shared/attachment-mentions/parser.ts` (leading-`#`-only trigger, name-prefix > name-substring ranking, bookmarks add a URL-substring fallback tier, fixed workspace-files → private-files → bookmarks kind ordering). Picking attaches the source to the conversation via the existing toggle mutators and strips the `#token`. Reuses the symbol-agnostic `SlashAutocomplete` menu with per-kind `groupLabel`. Notes punted (no conversation-attachment mechanism today). Item #6 (mention half) from PLAN-cross-product-inspirations | [PLAN](PLAN-cross-product-inspirations.md) · [#168](https://github.com/juchengquan/hummingbird/pull/168) |
 | 2026-06-06 | **Ollama + OpenRouter providers + Library tab** — three S-sized inspirations items in one PR. **#2 Ollama:** `ollama/*` model ids route through `createOpenAICompatible`; new `allowInsecureBaseUrl: true` provider flag relaxes the SSRF gate (allows `http://localhost`/loopback/private hosts) + makes the API key optional, with a split-out `isParseableHttpUrl` guard so malformed URLs still fail at boot. **#3 OpenRouter:** `openrouter/*` against the fixed `https://openrouter.ai/api/v1`, incl. `openrouter/auto`. **#5 Library tab:** new `library` MainView + sidebar/⌘K entry; cross-conversation index of generated images + artifacts via a pure `collectWorkspaceLibraryItems` join (read-only derived view, no migration). Items #2/#3/#5 from PLAN-cross-product-inspirations | [PLAN](PLAN-cross-product-inspirations.md) · [#167](https://github.com/juchengquan/hummingbird/pull/167) |

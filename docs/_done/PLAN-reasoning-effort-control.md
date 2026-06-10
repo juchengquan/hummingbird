@@ -1,8 +1,12 @@
 # Plan: Reasoning-effort control
 
-Status: **planning.** Promoted from [MASTER_PLAN § Later](MASTER_PLAN.md)
-(third research round, 2026-06-09) to **Next**. Scope: **S–M** (one PR).
-Origin: 2026 reasoning-model depth dials — see [Sources](#sources).
+Status: **✅ shipped** — [#178](https://github.com/juchengquan/hummingbird/pull/178)
+on 2026-06-10. Fast / Balanced / Thorough control beside the model
+picker; per-model `supportsReasoningEffort` flag in `config/models.json`
+gates visibility; chosen tier maps onto provider options via
+`reasoningCallOptions` (`@/shared/reasoning-effort`). Plan retained as a
+shipped reference. Scope: **S–M** (one PR). Origin: 2026 reasoning-model
+depth dials — see [Sources](#sources).
 
 ## Why
 
