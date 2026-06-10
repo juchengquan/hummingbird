@@ -63,8 +63,8 @@ describe("buildRenderUITool — execute (validation gate)", () => {
         }>
       }
     ).execute({
-      kind: "choice",
-      props: { prompt: "?", options: [] },
+      kind: "not-a-kind",
+      props: {},
     })
     expect(result.error).toBeDefined()
   })

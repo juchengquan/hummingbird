@@ -33,14 +33,34 @@ import {
 } from "@/shared/generative-ui/schemas"
 
 /** System-prompt fragment describing the `renderUI` tool to the
- *  model. Kept terse so it doesn't dominate the prefix budget. */
+ *  model. Kept terse so it doesn't dominate the prefix budget.
+ *
+ *  Available kinds (v2):
+ *  - `info-table` — read-only key/value or columnar table.
+ *  - `choice` — 2–8 labelled options, single or multi-select.
+ *  - `confirm` — yes/no inline confirm dialog.
+ *  - `mini-form` — 1–4 short labelled text/number/select fields.
+ *
+ *  Interactive kinds (`choice` / `confirm` / `mini-form`) resolve as a
+ *  follow-up user turn after the user submits, so prefer them when the
+ *  next step depends on a clean structured input. */
 export const RENDER_UI_PROMPT_FRAGMENT =
   "You can call the `renderUI` tool to render a structured component " +
-  "inline in your reply instead of plain text. Only do this when the " +
-  "structure genuinely helps the user (a clear table of related facts, " +
-  "a side-by-side comparison) — do NOT wrap every answer in a UI part. " +
-  "Available kinds (v1): `info-table` (read-only key/value or columnar " +
-  `table). Cap rows at 50. Keep cell text under 500 chars.`
+  "inline in your reply. Only do this when the structure genuinely helps " +
+  "the user (a clear table of related facts, a forced choice between " +
+  "discrete options, a short form to fill in) — do NOT wrap every answer " +
+  "in a UI part. Available kinds: " +
+  "`info-table` (read-only key/value or columnar table; cap 50 rows, " +
+  "500 chars per cell); " +
+  "`choice` (2–8 options the user picks one or more of; the user's pick " +
+  "becomes the next user message); " +
+  "`confirm` (yes/no with optional custom labels; the user's answer " +
+  "becomes the next user message); " +
+  "`mini-form` (1–4 short fields the user fills in; the submitted " +
+  "values become the next user message, after they confirm). " +
+  "For interactive kinds, your next assistant turn will see the user's " +
+  "answer as a normal user message — write your reply assuming that " +
+  "answer is the user's words."
 
 /** Shape returned by `renderUI`'s `execute`. The chat route reads
  *  this and emits the matching SSE `data-ui` part. */

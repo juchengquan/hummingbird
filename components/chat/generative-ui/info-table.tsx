@@ -20,7 +20,9 @@ import "client-only"
 import { type InfoTableProps } from "@/shared/generative-ui/schemas"
 import { cn } from "@/shared/utils"
 
-export function InfoTable({ props }: { props: unknown; inert: boolean }) {
+import type { UiPartHostProps } from "@/client/chat/generative-ui/registry"
+
+export function InfoTable({ props }: UiPartHostProps) {
   // The registry validated `props` against `InfoTablePropsSchema`
   // before invoking; this cast is the post-validation handle.
   const p = props as InfoTableProps
