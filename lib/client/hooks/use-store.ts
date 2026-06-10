@@ -53,6 +53,10 @@ import {
 } from "./store/slices/ui"
 import { createFilesSlice, type FilesSlice } from "./store/slices/files"
 import { createAgentsSlice, type AgentsSlice } from "./store/slices/agents"
+import {
+  createUserSkillsSlice,
+  type UserSkillsSlice,
+} from "./store/slices/user-skills"
 import { createMessagesSlice, type MessagesSlice } from "./store/slices/messages"
 import {
   createWorkspacesSlice,
@@ -157,6 +161,7 @@ export interface AppState
     ConversationFilesSlice,
     McpSlice,
     AgentsSlice,
+    UserSkillsSlice,
     MessagesSlice,
     WorkspacesSlice,
     ConversationsSlice {}
@@ -178,6 +183,7 @@ export const useStore = create<AppState>()(
       ...createConversationFilesSlice(set, get, api),
       ...createMcpSlice(set, get, api),
       ...createAgentsSlice(set, get, api),
+      ...createUserSkillsSlice(set, get, api),
       ...createMessagesSlice(set, get, api),
       ...createWorkspacesSlice(set, get, api),
       ...createConversationsSlice(set, get, api),

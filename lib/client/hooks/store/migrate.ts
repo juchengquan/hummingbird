@@ -8,7 +8,7 @@ import { uuid } from "@/shared/uuid"
  * step in `runMigrations`. Wired into the `version` field of the persist
  * config in `use-store.ts`.
  */
-export const STORE_VERSION = 26
+export const STORE_VERSION = 27
 
 /**
  * Sequential schema migrations from older persisted shapes to the
@@ -457,6 +457,14 @@ export function runMigrations(
         state.editorPrefs = { ...obj, inlineComplete: false }
       }
     }
+  }
+  if (fromVersion < 27) {
+    // `userSkills` slice added (portable Agent Skills / SKILL.md). New
+    // persisted array with an initial value of `[]`, so a store
+    // predating it falls back to that default on rehydrate — no backfill
+    // needed. Marker bump only, keeping the pinned persisted key set in
+    // `persist.test.ts` in lockstep with the version. Local-only in v1
+    // (no Supabase sync). See `docs/PLAN-portable-skills.md`.
   }
   return persistedState
 }

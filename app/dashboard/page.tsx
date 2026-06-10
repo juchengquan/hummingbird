@@ -25,6 +25,7 @@ import { useReconcile } from "@/client/hooks/use-reconcile"
 import { ReconcileDialog } from "@/components/auth/reconcile-dialog"
 import { TaskRunProvider } from "@/client/agent/task-run-context"
 import { AgentImportListener } from "@/components/agent-import-listener"
+import { SkillImportListener } from "@/components/skill-import-listener"
 
 // Plate.js + all its plugins are heavy (~200KB pre-minify). Defer the
 // editor chunk until the user actually switches to the editor view so
@@ -120,6 +121,7 @@ function DashboardShell() {
       <ReconcileMount />
       <AppSidebar />
       <AgentImportListener />
+      <SkillImportListener />
       <TaskRunProvider>
         <MainArea />
       </TaskRunProvider>

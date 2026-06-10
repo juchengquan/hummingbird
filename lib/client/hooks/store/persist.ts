@@ -53,6 +53,7 @@ export const partializeState = (state: AppState) => ({
   prompts: state.prompts,
   agents: state.agents,
   activeAgentId: state.activeAgentId,
+  userSkills: state.userSkills,
   projectTasks: state.projectTasks,
   // pendingChatInput is deliberately NOT persisted — it's a
   // one-shot event signal, not durable state. Surviving a reload
