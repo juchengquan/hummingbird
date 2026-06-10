@@ -21,10 +21,16 @@ import {
   ToolCallStrip,
   type LiveToolCall,
 } from "@/components/skills/tool-call-strip"
+import { getUiKindDef } from "@/client/chat/generative-ui/registry"
 import { isTerminalStatus, type RunStatus } from "@/shared/agent/events"
 import type { PlanItem } from "@/shared/agent/events"
 import type { PendingInput, TaskRunView } from "@/shared/agent/project"
 import type { RespondRequestInput } from "@/shared/api-schemas"
+import {
+  respondBodyForUiAnswer,
+  type UiAnswer,
+  type UiKind,
+} from "@/shared/generative-ui/schemas"
 import { cn } from "@/shared/utils"
 
 export interface RespondAnswer {
@@ -200,6 +206,11 @@ function InputRequestCard({
     }
   }
   const kind = input.kind ?? "approval"
+  if (kind === "ui-part") {
+    return (
+      <UiPartCard input={input} busy={busy} onRespond={onRespond} />
+    )
+  }
   if (kind === "choice") {
     return (
       <ChoiceCard input={input} busy={busy} onSubmit={submit} />
@@ -242,6 +253,63 @@ function InputRequestCard({
           Reject
         </Button>
       </div>
+    </div>
+  )
+}
+
+/** Task-mode `renderUI` HITL card — reuses the chat-mode components
+ *  from `lib/client/chat/generative-ui/registry.ts` so the
+ *  presentational core stays in one place. The user's answer routes
+ *  to `/api/tasks/:id/respond` via `respondBodyForUiAnswer`. */
+function UiPartCard({
+  input,
+  busy,
+  onRespond,
+}: {
+  input: PendingInput
+  busy: boolean
+  onRespond: (body: RespondRequestInput) => void | Promise<void>
+}) {
+  const def = input.uiKind ? getUiKindDef(input.uiKind) : null
+  // Defensive: server should have validated, but a stale client
+  // across a deploy window might see an unknown kind — render an
+  // explanatory placeholder rather than crash the strip.
+  if (!def) {
+    return (
+      <div className="rounded-md border border-[var(--primary)]/40 bg-[var(--primary)]/5 p-2 text-xs">
+        <p className="font-medium">Generative UI input</p>
+        <p className="text-[var(--muted-foreground)]">
+          (unknown kind <code>{input.uiKind ?? "—"}</code>; update the
+          client to render this.)
+        </p>
+      </div>
+    )
+  }
+  const parsed = def.schema.safeParse(input.uiProps)
+  if (!parsed.success) {
+    return (
+      <div className="rounded-md border border-[var(--primary)]/40 bg-[var(--primary)]/5 p-2 text-xs">
+        <p className="font-medium">Generative UI input</p>
+        <p className="text-[var(--muted-foreground)]">
+          (props validation failed; the agent runner may have emitted
+          a malformed payload.)
+        </p>
+      </div>
+    )
+  }
+  const Component = def.Component
+  const handleResolve = (answer: UiAnswer) => {
+    if (busy) return
+    const body = respondBodyForUiAnswer(
+      input.requestId,
+      { kind: input.uiKind as UiKind, props: parsed.data },
+      answer,
+    )
+    void onRespond(body)
+  }
+  return (
+    <div className="rounded-md border border-[var(--primary)]/40 bg-[var(--primary)]/5 p-2">
+      <Component props={parsed.data} inert={busy} onResolve={handleResolve} />
     </div>
   )
 }

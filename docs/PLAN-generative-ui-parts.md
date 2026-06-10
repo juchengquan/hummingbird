@@ -1,6 +1,7 @@
 # Plan: Generative UI parts — typed interactive components from the stream
 
-Status: **🪜 phased — commits 1 + 2 shipped, commit 3 remains.**
+Status: **🪜 phased — commits 1 + 2 + 3a shipped; 3b deferred to
+agent-py / agent-ts ports.**
 - ✅ Commit 1 — `info-table` round-trip end-to-end
   ([#179](https://github.com/juchengquan/hummingbird/pull/179),
   2026-06-10). Shared schemas + `renderUI` server tool + SSE emit
@@ -12,9 +13,27 @@ Status: **🪜 phased — commits 1 + 2 shipped, commit 3 remains.**
   UiPart` + `formatAnswerForChat` + `defaultResolutionFor` (auto-send
   for choice/confirm; composer prefill for mini-form) +
   `ChoiceCard` / `ConfirmCard` / `MiniFormCard`.
-- 📐 Commit 3 — task-mode resolution: when a part is emitted inside
-  a running task, submit routes through `POST /api/tasks/:id/respond`
-  (shared presentational core with `task-strip.tsx`).
+- ✅ Commit 3a — **task-mode wire contract** (this PR). Extends
+  `RequestKind` / `ApprovalEvent` / `PendingInput` /
+  `RespondRequestSchema` with the `"ui-part"` request kind +
+  `uiKind` / `uiProps` / `uiAnswer` payloads. New
+  `makeRenderUITaskTool()` (no `execute`) parallel to
+  `makeAskUserTool()`. `task-strip.tsx` renders the shared
+  `lib/client/chat/generative-ui/registry.ts` cards when
+  `pendingInput.kind === "ui-part"` — same components as chat mode.
+  Pure `respondBodyForUiAnswer(requestId, part, answer)` helper +
+  `requestKindFor("renderUI", ...) → "ui-part"`. Back-compat: the
+  helper also populates the existing `selection` / `value` fields
+  so a runner that hasn't learned `ui-part` natively can still
+  consume the response via the existing `askUser` path.
+- 📐 Commit 3b — **agent-py / agent-ts port** (follow-up; out of
+  this PR's scope). The task runners on the dedicated services
+  haven't ported `askUser` yet either; the renderUI task tool needs
+  to land alongside in the same port PR. Once it does, the runner
+  emits `requestKind: "ui-part"` on the `renderUI` tool call (no
+  client change) and injects `formatAnswerForChat(...)` as the
+  tool's result on continuation. This PR's contract is the target
+  the port writes to.
 
 Scope: **M** (~300–450 LOC for a starter kind-set + the registry,
 one PR). Origin: the 2026 Generative-UI wave — see [Sources](#sources).

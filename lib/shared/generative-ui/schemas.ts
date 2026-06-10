@@ -310,3 +310,42 @@ export function formatAnswerForChat(
 export function defaultResolutionFor(kind: UiKind): "auto-send" | "prefill" {
   return kind === "mini-form" ? "prefill" : "auto-send"
 }
+
+/** Build the `/api/tasks/:id/respond` body from a generative-UI
+ *  answer (task-mode resolution; commit 3 of
+ *  `PLAN-generative-ui-parts.md`).
+ *
+ *  Carries the structured `uiAnswer` AND populates one of the
+ *  back-compat HITL fields (`selection` for choice, `value` for the
+ *  formatted text on confirm/mini-form) so a runner that hasn't yet
+ *  learned `requestKind: "ui-part"` can still consume the response
+ *  via the existing askUser path. The runner's eventual native
+ *  handling reads `uiAnswer` directly.
+ *
+ *  `requestId` is the `approvalId` from the pause event; the caller
+ *  pulls it off `PendingInput.requestId`. */
+export function respondBodyForUiAnswer(
+  requestId: string,
+  part: { kind: UiKind; props: unknown },
+  answer: UiAnswer,
+): {
+  requestId: string
+  uiAnswer: UiAnswer
+  selection?: string[]
+  value?: string
+} {
+  const body: {
+    requestId: string
+    uiAnswer: UiAnswer
+    selection?: string[]
+    value?: string
+  } = { requestId, uiAnswer: answer }
+  if (answer.kind === "choice") {
+    body.selection = [...answer.selectedIds]
+  }
+  // For non-choice answers, fold the formatted text into `value` so an
+  // input-style runner can still see something readable.
+  const text = formatAnswerForChat(part, answer)
+  if (text) body.value = text
+  return body
+}

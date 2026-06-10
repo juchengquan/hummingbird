@@ -11,6 +11,7 @@ import {
   defaultResolutionFor,
   formatAnswerForChat,
   parsePersistedUiPart,
+  respondBodyForUiAnswer,
 } from "./schemas"
 
 describe("UiKindEnum", () => {
@@ -459,5 +460,80 @@ describe("defaultResolutionFor", () => {
   })
   test("info-table never resolves — auto-send is a moot default", () => {
     expect(defaultResolutionFor("info-table")).toBe("auto-send")
+  })
+})
+
+describe("respondBodyForUiAnswer", () => {
+  test("confirm — carries uiAnswer + folds the formatted text into `value`", () => {
+    const out = respondBodyForUiAnswer(
+      "req-1",
+      { kind: "confirm", props: { prompt: "Apply?", confirmLabel: "Apply" } },
+      { kind: "confirm", confirmed: true },
+    )
+    expect(out.requestId).toBe("req-1")
+    expect(out.uiAnswer).toEqual({ kind: "confirm", confirmed: true })
+    expect(out.value).toBe("Apply")
+    expect(out.selection).toBeUndefined()
+  })
+
+  test("choice — carries uiAnswer + populates `selection` (back-compat for ask-user)", () => {
+    const out = respondBodyForUiAnswer(
+      "req-2",
+      {
+        kind: "choice",
+        props: {
+          prompt: "?",
+          options: [
+            { id: "a", label: "A" },
+            { id: "b", label: "B" },
+          ],
+        },
+      },
+      { kind: "choice", selectedIds: ["b"] },
+    )
+    expect(out.selection).toEqual(["b"])
+    expect(out.uiAnswer).toEqual({ kind: "choice", selectedIds: ["b"] })
+    expect(out.value).toBe("B")
+  })
+
+  test("mini-form — carries uiAnswer + folds formatted text into `value`", () => {
+    const out = respondBodyForUiAnswer(
+      "req-3",
+      {
+        kind: "mini-form",
+        props: {
+          fields: [
+            { type: "text", id: "topic", label: "Topic" },
+            { type: "number", id: "min", label: "Minutes" },
+          ],
+        },
+      },
+      { kind: "mini-form", values: { topic: "Q4", min: "30" } },
+    )
+    expect(out.value).toBe("Topic: Q4, Minutes: 30")
+    expect(out.uiAnswer).toEqual({
+      kind: "mini-form",
+      values: { topic: "Q4", min: "30" },
+    })
+    expect(out.selection).toBeUndefined()
+  })
+
+  test("choice with empty selection — selection field present and empty, no value", () => {
+    const out = respondBodyForUiAnswer(
+      "req-4",
+      {
+        kind: "choice",
+        props: {
+          prompt: "?",
+          options: [
+            { id: "a", label: "A" },
+            { id: "b", label: "B" },
+          ],
+        },
+      },
+      { kind: "choice", selectedIds: [] },
+    )
+    expect(out.selection).toEqual([])
+    expect(out.value).toBeUndefined()
   })
 })
