@@ -170,7 +170,6 @@ export const apiUrls = {
     url(`/api/tasks/${encodeURIComponent(id)}/stream`),
   aiCommand: () => url("/api/ai/command"),
   aiComplete: () => url("/api/ai/complete"),
-  aiCopilot: () => url("/api/ai/copilot"),
   extract: () => url("/api/extract"),
   summarize: () => url("/api/summarize"),
   share: () => url("/api/share"),

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { LogIn, LogOut, Loader2, CloudOff, Cloud, HardDrive, Trash2, Sun, Moon, Monitor, Bot } from "lucide-react"
+import { LogIn, LogOut, Loader2, CloudOff, Cloud, HardDrive, Trash2, Sun, Moon, Monitor, Bot, Wand2 } from "lucide-react"
 import { toast } from "sonner"
 import {
   Popover,
@@ -40,6 +40,8 @@ export function AccountMenu() {
   const agentPyAvailable = isAgentPyConfigured()
   const agentTsAvailable = isAgentTsConfigured()
   const setLocalFilesOnly = useStore((s) => s.setLocalFilesOnly)
+  const inlineComplete = useStore((s) => s.editorPrefs.inlineComplete)
+  const setEditorPref = useStore((s) => s.setEditorPref)
   const theme = useStore((s) => s.theme)
   const setTheme = useStore((s) => s.setTheme)
   const colorScheme = useStore((s) => s.colorScheme)
@@ -205,6 +207,26 @@ export function AccountMenu() {
             localFilesOnly
               ? "Resume uploading raw files to cloud"
               : "Stop uploading raw files (keep them on this device)"
+          }
+        />
+        {/* Inline editor autocomplete (ghost text). Off by default per
+            `docs/PLAN-inline-autocomplete.md` — ghost text is
+            opinionated and adds per-keystroke cost. Plate's Copilot
+            plugin honours this synchronously via its `triggerQuery`. */}
+        <ToggleRow
+          icon={Wand2}
+          label="Inline autocomplete"
+          description={
+            inlineComplete
+              ? "Editor shows ghost-text suggestions · Tab to accept"
+              : "Editor stays quiet · enable for as-you-type suggestions"
+          }
+          checked={inlineComplete}
+          onCheckedChange={(v) => setEditorPref("inlineComplete", v)}
+          ariaLabel={
+            inlineComplete
+              ? "Disable editor inline autocomplete"
+              : "Enable editor inline autocomplete"
           }
         />
         {/* Chat backend selector. Phase 4-2 of PLAN-agent-api +

@@ -230,17 +230,6 @@ export const ChatRequestSchema = z.object({
     .optional(),
 })
 
-// --- /api/ai/copilot --------------------------------------------------------
-// Streaming response — plain text stream consumed by Plate's copilot
-// plugin. No JSON response schema.
-
-export const CopilotRequestSchema = z.object({
-  apiKey: z.string().optional(),
-  model: z.string().max(100).optional(),
-  prompt: z.string().max(50_000),
-  system: z.string().max(20_000).optional(),
-})
-
 // --- /api/ai/complete -------------------------------------------------------
 // Inline editor ghost-text autocomplete. Streaming plain-text response
 // (a short continuation of `blockText`, biased by the preceding `prefix`
@@ -587,7 +576,6 @@ export type ScheduleCreateInput = z.infer<typeof ScheduleCreateSchema>
 export type ScheduleUpdateInput = z.infer<typeof ScheduleUpdateSchema>
 export type ScheduleResponse = z.infer<typeof ScheduleResponseSchema>
 export type ScheduleListResponse = z.infer<typeof ScheduleListResponseSchema>
-export type CopilotRequestInput = z.infer<typeof CopilotRequestSchema>
 export type CompleteRequestInput = z.infer<typeof CompleteRequestSchema>
 export type ExtractionResponse = z.infer<typeof ExtractionResponseSchema>
 export type SummarizeRequestInput = z.infer<typeof SummarizeRequestSchema>

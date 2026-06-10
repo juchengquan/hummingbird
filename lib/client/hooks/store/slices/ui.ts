@@ -97,9 +97,15 @@ export interface UiSlice {
    *  - `aiReviewChanges`: when true (default), AI `edit`-mode output
    *    lands as Plate suggestion marks the user can accept/reject
    *    per chunk. When false, the AI's output replaces the selected
-   *    text directly (the pre-diff-mode behaviour). */
+   *    text directly (the pre-diff-mode behaviour).
+   *  - `inlineComplete`: when true, Plate's Copilot ghost-text plugin
+   *    calls `/api/ai/complete` on a typing pause and shows the
+   *    streamed continuation in grey; Tab accepts. Default OFF —
+   *    ghost text divides users and adds per-keystroke cost, so v1
+   *    is opt-in. See `docs/PLAN-inline-autocomplete.md`. */
   editorPrefs: {
     aiReviewChanges: boolean
+    inlineComplete: boolean
   }
 
   /** Session-only pinned explanations from the selection-driven Explain
@@ -206,7 +212,7 @@ export const createUiSlice: SliceCreator<UiSlice> = (set, get) => ({
   // Tasks panel — closed until the user launches a task.
   tasksPanelOpen: false,
   resourcesSidebarWidth: 272,
-  editorPrefs: { aiReviewChanges: true },
+  editorPrefs: { aiReviewChanges: true, inlineComplete: false },
   // Session-only selection-driven explain state (excluded from
   // partialize — pins vanish on reload by design).
   pinnedExplanations: [],

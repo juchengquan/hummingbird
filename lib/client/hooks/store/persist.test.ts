@@ -84,7 +84,7 @@ describe("partializeState — frozen persisted shape", () => {
       tasksPanelOpen: false,
       sidebarWidth: 256,
       resourcesSidebarWidth: 272,
-      editorPrefs: { aiReviewChanges: true },
+      editorPrefs: { aiReviewChanges: true, inlineComplete: false },
       localOnlyMode: false,
       localFilesOnly: false,
       chatBackend: "ts",
@@ -113,6 +113,6 @@ describe("partializeState — frozen persisted shape", () => {
   })
 
   test("STORE_VERSION is pinned (bump only with a migration step)", () => {
-    expect(STORE_VERSION).toBe(25)
+    expect(STORE_VERSION).toBe(26)
   })
 })

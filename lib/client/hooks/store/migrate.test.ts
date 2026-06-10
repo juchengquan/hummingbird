@@ -144,3 +144,35 @@ describe("v<23 — Conversation.fileRetrievalModes added", () => {
     expect(out.conversations[1].fileRetrievalModes).toEqual({})
   })
 })
+
+describe("v<26 — editorPrefs.inlineComplete added", () => {
+  test("backfills inlineComplete:false when missing", () => {
+    const out = runMigrations(
+      { editorPrefs: { aiReviewChanges: true } },
+      25,
+    ) as { editorPrefs: Record<string, unknown> }
+    expect(out.editorPrefs.aiReviewChanges).toBe(true)
+    expect(out.editorPrefs.inlineComplete).toBe(false)
+  })
+
+  test("preserves an existing inlineComplete value", () => {
+    const out = runMigrations(
+      { editorPrefs: { aiReviewChanges: false, inlineComplete: true } },
+      25,
+    ) as { editorPrefs: Record<string, unknown> }
+    expect(out.editorPrefs.inlineComplete).toBe(true)
+    expect(out.editorPrefs.aiReviewChanges).toBe(false)
+  })
+
+  test("no-op when editorPrefs is missing entirely", () => {
+    expect(() => runMigrations({}, 25)).not.toThrow()
+  })
+
+  test("repairs a non-object editorPrefs by leaving it alone (defensive)", () => {
+    // Defensive: a malformed prefs blob (e.g. null) shouldn't crash
+    // the migration step. The slice initial value covers the user.
+    expect(() =>
+      runMigrations({ editorPrefs: null }, 25)
+    ).not.toThrow()
+  })
+})
