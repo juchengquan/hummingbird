@@ -64,13 +64,18 @@ export interface TaskRunView {
 
 export interface PendingInput {
   requestId: string
-  kind: "approval" | "choice" | "input"
+  kind: "approval" | "choice" | "input" | "ui-part"
   tool?: string
   toolCallId?: string
   args?: unknown
   prompt?: string
   options?: { id: string; label: string }[]
   multi?: boolean
+  /** `kind: "ui-part"` — the generative-UI kind to render via the
+   *  shared registry (`UI_KINDS[uiKind]`). */
+  uiKind?: string
+  /** `kind: "ui-part"` — props for the kind, pre-validated server-side. */
+  uiProps?: unknown
 }
 
 export const EMPTY_RUN_VIEW: TaskRunView = {
@@ -153,6 +158,8 @@ export function reduceRun(view: TaskRunView, event: TaskEvent): TaskRunView {
           prompt: event.prompt,
           options: event.options,
           multi: event.multi,
+          uiKind: event.uiKind,
+          uiProps: event.uiProps,
         }
       } else if (event.phase === "response") {
         next.pendingInput = null

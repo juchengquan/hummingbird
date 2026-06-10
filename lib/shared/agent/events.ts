@@ -155,9 +155,11 @@ export interface ApprovalEvent extends TaskEventBase {
   approvalId: string
   phase: "request" | "response"
   /** Defaults to `"approval"` when omitted (back-compat for the binary
-   *  gate). */
-  requestKind?: "approval" | "choice" | "input"
-  /** Tool name (gated tool, or `askUser`). */
+   *  gate). `"ui-part"` raised by a `renderUI` tool call in task mode
+   *  (PLAN-generative-ui-parts.md commit 3) — the cards live in
+   *  `lib/client/chat/generative-ui/` and are reused by task-strip. */
+  requestKind?: "approval" | "choice" | "input" | "ui-part"
+  /** Tool name (gated tool, or `askUser`, or `renderUI`). */
   tool?: string
   /** Tool-call id from the AI SDK — needed on response to match the
    *  result back to the right pending call. */
@@ -171,6 +173,14 @@ export interface ApprovalEvent extends TaskEventBase {
   options?: InputRequestOption[]
   /** Allow multiple selections for `choice`. */
   multi?: boolean
+  /** `requestKind: "ui-part"` — the validated generative-UI kind the
+   *  `renderUI` tool emitted (one of `info-table` / `choice` / `confirm` /
+   *  `mini-form`). The cards in `lib/client/chat/generative-ui/` render
+   *  this. */
+  uiKind?: string
+  /** `requestKind: "ui-part"` — the per-kind props, already validated
+   *  by the server tool's `inputSchema` against `UiPartSchema`. */
+  uiProps?: unknown
   // -- response-only fields --
   /** `requestKind: "approval"` response. */
   approved?: boolean
@@ -178,6 +188,9 @@ export interface ApprovalEvent extends TaskEventBase {
   selection?: string[]
   /** `requestKind: "input"` response. */
   value?: string
+  /** `requestKind: "ui-part"` response — the user's structured answer,
+   *  shape varies by `uiKind`. Mirrors the chat-mode `UiAnswer`. */
+  uiAnswer?: unknown
 }
 
 /** History compaction mid-run (Claude compact boundary). */

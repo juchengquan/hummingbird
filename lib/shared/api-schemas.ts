@@ -450,6 +450,12 @@ export const RespondRequestSchema = z.object({
   selection: z.array(z.string()).optional(),
   /** `requestKind: "input"` — free-text value. */
   value: z.string().optional(),
+  /** `requestKind: "ui-part"` — the user's structured answer to a
+   *  `renderUI` HITL gate. Shape mirrors the chat-mode `UiAnswer`
+   *  discriminated union. The runner runs `formatAnswerForChat` on
+   *  the server side to inject the answer as the tool's result on
+   *  continuation. See `docs/PLAN-generative-ui-parts.md` commit 3. */
+  uiAnswer: z.unknown().optional(),
   /** Local-mode MCP creds re-supplied for the continuation. */
   mcpServers: ChatRequestSchema.shape.mcpServers,
 })

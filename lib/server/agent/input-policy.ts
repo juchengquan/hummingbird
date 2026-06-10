@@ -15,14 +15,21 @@ import "server-only"
 
 /** Stable name for the `askUser` no-execute tool. */
 export const ASK_USER_TOOL_NAME = "askUser"
+/** Stable name for the `renderUI` task-mode no-execute tool — same
+ *  name the chat-route version uses (see
+ *  `lib/server/generative-ui/tool.ts`). In task mode the runner
+ *  detects the unhandled tool call and suspends as a
+ *  `requestKind: "ui-part"` HITL gate. */
+export const RENDER_UI_TOOL_NAME = "renderUI"
 
-export type RequestKind = "approval" | "choice" | "input"
+export type RequestKind = "approval" | "choice" | "input" | "ui-part"
 
 /** Classify a pending input by tool name + args. */
 export function requestKindFor(
   toolName: string,
   args: unknown
 ): RequestKind {
+  if (toolName === RENDER_UI_TOOL_NAME) return "ui-part"
   if (toolName !== ASK_USER_TOOL_NAME) return "approval"
   const a = args && typeof args === "object" ? (args as Record<string, unknown>) : {}
   if (Array.isArray(a.options) && a.options.length > 0) return "choice"
