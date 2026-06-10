@@ -33,7 +33,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { CHAT_MODELS, modelSupportsReasoningEffort } from "@/shared/models"
+import {
+  AUTO_MODEL_ID,
+  CHAT_MODELS,
+  ROUTING_AVAILABLE,
+  modelSupportsReasoningEffort,
+} from "@/shared/models"
 import {
   REASONING_EFFORTS,
   type ReasoningEffort,
@@ -393,6 +398,14 @@ export function ChatHeader({
               <SelectValue />
             </SelectTrigger>
             <SelectContent align="end">
+              {/* Smart routing — picks the cheapest capable model per
+                  message. Shown only when a routing pair is configured.
+                  See docs/PLAN-model-routing.md. */}
+              {ROUTING_AVAILABLE && (
+                <SelectGroup>
+                  <SelectItem value={AUTO_MODEL_ID}>Auto</SelectItem>
+                </SelectGroup>
+              )}
               {Object.entries(
                 CHAT_MODELS.reduce<Record<string, typeof CHAT_MODELS>>((acc, m) => {
                   if (!acc[m.provider]) acc[m.provider] = []

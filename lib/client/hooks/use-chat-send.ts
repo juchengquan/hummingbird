@@ -101,6 +101,7 @@ export function useChatSend(): UseChatSendResult {
   )
   const setMessageToolCalls = useStore((s) => s.setMessageToolCalls)
   const setMessageSuggestions = useStore((s) => s.setMessageSuggestions)
+  const setMessageRoutedModel = useStore((s) => s.setMessageRoutedModel)
   const appendMessageGeneratedImages = useStore(
     (s) => s.appendMessageGeneratedImages
   )
@@ -630,6 +631,14 @@ export function useChatSend(): UseChatSendResult {
               if (ph) {
                 setMessageSuggestions(ph.id, parsed.values)
               }
+            } else if (
+              parsed.type === "routed_model" &&
+              typeof parsed.value === "string"
+            ) {
+              // Smart-routing transparency — stamp the resolved model so
+              // the bubble shows "Auto → <label>".
+              const ph = placeholder as Message | null
+              if (ph) setMessageRoutedModel(ph.id, parsed.value)
             } else if (parsed.type === "ui_part") {
               // Generative-UI part — server validated via the `renderUI`
               // tool's execute; we re-validate defensively via
@@ -785,6 +794,7 @@ export function useChatSend(): UseChatSendResult {
       setConversationTyping,
       setMessageError,
       setMessageReasoningDuration,
+      setMessageRoutedModel,
       setMessageSuggestions,
       setMessageToolCalls,
       workspaces,

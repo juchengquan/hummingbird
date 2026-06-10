@@ -2,6 +2,7 @@
 
 import { memo, useState, useRef, useEffect } from "react"
 import type { Message } from "@/shared/types"
+import { getChatModel } from "@/shared/models"
 import { isWebSearchToolName } from "@/shared/skills/types"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -374,6 +375,15 @@ function ChatMessageImpl({
               </div>
             ) : (
               <>
+                {!isUser && message.routedModel && (
+                  <div className="mb-1 text-[11px] text-[var(--muted-foreground)]/80">
+                    <span className="opacity-70">
+                      Auto →{" "}
+                      {getChatModel(message.routedModel)?.label ??
+                        message.routedModel}
+                    </span>
+                  </div>
+                )}
                 {message.reasoning && message.reasoning.trim().length > 0 && (
                   <ReasoningBlock
                     reasoning={message.reasoning}

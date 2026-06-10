@@ -1,5 +1,9 @@
 {
   "default": "deepseek/deepseek-v4-flash",
+  "routing": {
+    "strong": "anthropic/claude-sonnet-4.6",
+    "weak": "anthropic/claude-haiku-4.5"
+  },
   "models": [
     {
       "id": "anthropic/claude-sonnet-4.6",

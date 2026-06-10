@@ -140,6 +140,11 @@ export function translateFrame(payload: string): NormalisedFrame | null {
       images: Array.isArray(data.images) ? data.images : undefined,
     }
   }
+  if (t === "data-routed-model") {
+    const data = raw.data as { model?: unknown } | undefined
+    if (!data || typeof data.model !== "string") return null
+    return { type: "routed_model", value: data.model }
+  }
   if (t === "data-suggestions") {
     const data = raw.data as { values?: unknown } | undefined
     if (!data || !Array.isArray(data.values)) return null

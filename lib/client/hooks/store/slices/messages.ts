@@ -59,6 +59,10 @@ export interface MessagesSlice {
   setMessageReasoningDuration: (messageId: string, durationMs: number) => void
   setMessageToolCalls: (messageId: string, toolCalls: ToolCallRecord[]) => void
   setMessageSuggestions: (messageId: string, suggestions: string[]) => void
+  /** Stamp the concrete model the "Auto" smart router resolved to for
+   *  this turn. Dispatched by `use-chat-send` on `routed_model` SSE
+   *  frames. See `docs/PLAN-model-routing.md`. */
+  setMessageRoutedModel: (messageId: string, modelId: string) => void
   appendMessageGeneratedImages: (messageId: string, images: GeneratedImage[]) => void
   /** Append one generative-UI part to the assistant message — emitted
    *  by the `renderUI` tool, dispatched by `use-chat-send` on `ui_part`
@@ -304,6 +308,20 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
             ...c,
             messages: c.messages.map((m) =>
               m.id === messageId ? { ...m, suggestions } : m
+            ),
+          }
+        }
+        return c
+      }),
+    })),
+  setMessageRoutedModel: (messageId, modelId) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) => {
+        if (c.messages.some((m) => m.id === messageId)) {
+          return {
+            ...c,
+            messages: c.messages.map((m) =>
+              m.id === messageId ? { ...m, routedModel: modelId } : m
             ),
           }
         }

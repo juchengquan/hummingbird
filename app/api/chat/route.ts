@@ -3,8 +3,9 @@ import type { NextRequest } from 'next/server'
 import { stepCountIs, streamText, type ModelMessage } from 'ai'
 import { NextResponse } from 'next/server'
 
-import { DEFAULT_CHAT_MODEL } from '@/shared/models'
+import { DEFAULT_CHAT_MODEL, ROUTING_CONFIG, isAutoModel } from '@/shared/models'
 import { reasoningCallOptions } from '@/shared/reasoning-effort'
+import { routeModel } from '@/server/routing/router'
 import {
   ProviderUnavailableError,
   selectModel,
@@ -32,7 +33,7 @@ import {
   ChatSseEmitter,
   type ToolResultPayload,
 } from '@/server/chat/sse-emitter'
-import { buildSystemPrompt } from '@/server/chat/prompt-builders'
+import { buildSystemPrompt, lastUserText } from '@/server/chat/prompt-builders'
 import { generateSuggestions } from '@/server/chat/suggestions'
 import { persistGeneratedImages, type ImageToPersist } from '@/server/image-storage'
 import { resolveAttachedMcpResources } from '@/server/mcp/inject-resources'
@@ -213,7 +214,27 @@ export async function POST(req: NextRequest) {
     )
   }
   const body = parsed.data
-  const modelId = body.model || DEFAULT_CHAT_MODEL
+  // Smart routing: when the client picks "Auto", resolve it server-side to
+  // a concrete model per prompt (cheap turns → weak, hard turns → strong).
+  // Resolved before any model dispatch so reasoning / gateway options key
+  // off the concrete id. `autoRoutedTo` is non-null only when routing fired,
+  // so the stream can surface a "routed to X" caption. See
+  // docs/PLAN-model-routing.md.
+  const requestedModel = body.model || DEFAULT_CHAT_MODEL
+  let modelId = requestedModel
+  let autoRoutedTo: string | null = null
+  if (isAutoModel(requestedModel) && ROUTING_CONFIG) {
+    const decision = routeModel(
+      {
+        text: lastUserText(body.messages as ModelMessage[]),
+        hasAttachments: (body.attachments ?? []).length > 0,
+        messageCount: body.messages.length,
+      },
+      ROUTING_CONFIG
+    )
+    modelId = decision.modelId
+    autoRoutedTo = decision.modelId
+  }
   // Auto-enable `searchFiles` whenever any attachment is in RAG mode —
   // the file is no longer inlined, so the model needs the skill to
   // reach it. Force-on overrides a missing client toggle but stops
@@ -444,6 +465,9 @@ export async function POST(req: NextRequest) {
         }
         const emitter = new ChatSseEmitter(writeLine)
         emitter.start()
+        // Surface the resolved model when the turn was smart-routed, so the
+        // assistant bubble can show a "routed to X" caption.
+        if (autoRoutedTo) emitter.routedModel(autoRoutedTo)
         let assistantText = ''
         let sawError = false
         let sawReasoning = false

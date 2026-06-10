@@ -176,6 +176,19 @@ export class ChatSseEmitter {
     })
   }
 
+  /** Smart-routing transparency — emits a `data-routed-model` AI SDK v5
+   *  custom data part carrying the concrete model the `auto` option
+   *  resolved to for this turn. The client maps it to
+   *  `{ type: "routed_model", value }` and stamps it onto
+   *  `Message.routedModel` for the "routed to X" caption. See
+   *  `docs/PLAN-model-routing.md`. */
+  routedModel(modelId: string): void {
+    this.send({
+      type: "data-routed-model",
+      data: { model: modelId },
+    })
+  }
+
   error(code: string, message: string): void {
     this.closeAllChannels()
     // AI SDK error frames carry the human-readable text on

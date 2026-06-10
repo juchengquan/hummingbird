@@ -53,10 +53,22 @@ const ChatModelSchema = z.object({
   supportsStructuredOutput: z.boolean().optional(),
 })
 
+const RoutingConfigSchema = z.object({
+  /** Model the `auto` router escalates to for hard prompts. */
+  strong: z.string().min(1),
+  /** Model the `auto` router uses for easy prompts. */
+  weak: z.string().min(1),
+})
+
 const ModelsConfigSchema = z.object({
   default: z.string().min(1),
+  /** Strong/weak pair for the `auto` smart-routing option. Optional —
+   *  absent → `auto` is unavailable (the picker hides it). */
+  routing: RoutingConfigSchema.optional(),
   models: z.array(ChatModelSchema).min(1),
 })
+
+export type RoutingConfig = z.infer<typeof RoutingConfigSchema>
 
 export type ChatModelRoute = z.infer<typeof RouteSchema>
 export type ChatModel = z.infer<typeof ChatModelSchema>
@@ -80,6 +92,39 @@ if (!config.models.some((m) => m.id === config.default)) {
 
 export const CHAT_MODELS: ChatModel[] = config.models
 export const DEFAULT_CHAT_MODEL: string = config.default
+
+// Validate the routing pair references real models — same boot-time
+// guard as `default`, so a typo fails loudly instead of at request time.
+if (config.routing) {
+  for (const [slot, id] of [
+    ["strong", config.routing.strong],
+    ["weak", config.routing.weak],
+  ] as const) {
+    if (!config.models.some((m) => m.id === id)) {
+      throw new Error(
+        `config/models.json: routing.${slot} "${id}" is not in the models list`
+      )
+    }
+  }
+}
+
+/** Sentinel model id for the smart-routing ("Auto") option — resolved
+ *  server-side to a concrete model per prompt. Never sent to a provider
+ *  directly. See `@/server/routing/router`. */
+export const AUTO_MODEL_ID = "auto"
+
+/** The configured strong/weak routing pair, or null when unconfigured
+ *  (in which case `auto` is hidden + treated as the default model). */
+export const ROUTING_CONFIG: RoutingConfig | null = config.routing ?? null
+
+/** Whether the `auto` smart-routing option is available (a routing pair
+ *  is configured). Gates the picker entry + the server-side resolve. */
+export const ROUTING_AVAILABLE: boolean = ROUTING_CONFIG !== null
+
+/** Whether `id` is the smart-routing sentinel. */
+export function isAutoModel(id: string): boolean {
+  return id === AUTO_MODEL_ID
+}
 
 /** Look up a model definition by id. Returns null when the id is
  *  unknown (rare — typically only on legacy state from before a model

@@ -452,6 +452,14 @@ export interface Message {
    */
   uiParts?: import("./generative-ui/schemas").PersistedUiPart[]
   /**
+   * When this turn was sent with the "Auto" model option, the concrete
+   * model the smart router resolved to (e.g. `anthropic/claude-haiku-4.5`).
+   * Rendered as a small "Auto → <label>" caption on the assistant bubble
+   * so routing is transparent. Absent for explicit (non-Auto) model picks.
+   * See `docs/PLAN-model-routing.md`.
+   */
+  routedModel?: string
+  /**
    * Excluded from the chat API request when true. Set by the "Compress
    * older messages" action — the message stays on disk and renders
    * (muted, behind a "Show N compressed" disclosure on the recap card)
