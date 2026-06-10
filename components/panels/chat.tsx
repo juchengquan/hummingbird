@@ -595,6 +595,27 @@ export function ChatPanel() {
     ]
   )
 
+  /**
+   * Auto-send a synthetic user turn — used by generative-UI parts
+   * that resolve to a chat message (a picked `choice`, a confirmed
+   * `confirm`, etc.). Adds the user message + invokes the send
+   * pipeline using fresh state at click-time; intentionally skips
+   * the keyboard-only knobs (skill mutes, reference image, etc.) —
+   * those are tied to the composer's UI state.
+   */
+  const handleSendUserMessageFromUiPart = useCallback(
+    (text: string) => {
+      const trimmed = text.trim()
+      if (!trimmed) return
+      const conv = conversations.find((c) => c.id === activeConversationId)
+      if (!conv) return
+      const userMessage = addMessage({ role: "user", content: trimmed })
+      if (!userMessage) return
+      chatSendMessage([...conv.messages, userMessage])
+    },
+    [conversations, activeConversationId, addMessage, chatSendMessage],
+  )
+
   const handleRegenerateAssistantMessage = useCallback(
     (messageId: string) => {
       const conv = conversations.find((c) => c.id === activeConversationId)
@@ -784,6 +805,9 @@ export function ChatPanel() {
                       onChangeModel={handleChangeModel}
                       onTryFallback={handleTryFallback}
                       onPickSuggestion={pickSuggestion}
+                      onSendUserMessageFromUiPart={
+                        handleSendUserMessageFromUiPart
+                      }
                     />
                   ))
               )}

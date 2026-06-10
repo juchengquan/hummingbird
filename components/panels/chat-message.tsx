@@ -64,6 +64,9 @@ interface ChatMessageProps {
   /** Retry with a different model in one click. Wired by chat.tsx for invalid_model / provider errors. */
   onTryFallback?: (messageId: string, modelId: string) => void
   onPickSuggestion?: (text: string) => void
+  /** Generative-UI auto-send: invoked when an interactive UI part
+   *  resolves to a follow-up user turn (e.g. a picked `choice`). */
+  onSendUserMessageFromUiPart?: (text: string) => void
   /** Live tool-call pills rendered above the assistant text during a stream. Cleared on `done`. */
   liveToolCalls?: LiveToolCall[]
   /** Resolved by the parent: the PDF this assistant message is citing via `[p.N]` markers. */
@@ -82,6 +85,7 @@ function ChatMessageImpl({
   onChangeModel,
   onTryFallback,
   onPickSuggestion,
+  onSendUserMessageFromUiPart,
   liveToolCalls,
   pdfCitationFileId,
 }: ChatMessageProps) {
@@ -424,7 +428,10 @@ function ChatMessageImpl({
                     />
                   )}
                 {!isUser && message.uiParts && message.uiParts.length > 0 && (
-                  <MessageUiParts parts={message.uiParts} />
+                  <MessageUiParts
+                    parts={message.uiParts}
+                    onSendUserMessage={onSendUserMessageFromUiPart}
+                  />
                 )}
                 {isUser &&
                   message.attachedFileIds &&

@@ -68,6 +68,15 @@ export interface MessagesSlice {
     messageId: string,
     part: import("@/shared/generative-ui/schemas").PersistedUiPart,
   ) => void
+  /** Resolve a generative-UI part — stamp `answeredAt` + persist the
+   *  answer payload so the inert render survives reload. No-op when
+   *  the message / part can't be found, or when the part has already
+   *  been answered (idempotent on `answeredAt`). */
+  resolveMessageUiPart: (
+    messageId: string,
+    partId: string,
+    answer: import("@/shared/generative-ui/schemas").UiAnswer,
+  ) => void
   /** Replace the `url` on a single generated image. Used by the lazy
    *  signed-URL re-sign path (`apiClient.images.refreshUrl`) so the
    *  refreshed URL persists across re-renders without touching the
@@ -329,6 +338,34 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
             // identity-stable render path doesn't churn.
             if (existing.some((p) => p.id === part.id)) return m
             return { ...m, uiParts: [...existing, part] }
+          }),
+        }
+      }),
+    })),
+  resolveMessageUiPart: (messageId, partId, answer) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) => {
+        if (!c.messages.some((m) => m.id === messageId)) return c
+        return {
+          ...c,
+          messages: c.messages.map((m) => {
+            if (m.id !== messageId) return m
+            const existing = m.uiParts ?? []
+            if (existing.length === 0) return m
+            let touched = false
+            const next = existing.map((p) => {
+              if (p.id !== partId) return p
+              // Idempotent — already answered parts stay frozen.
+              if (p.answeredAt) return p
+              touched = true
+              return {
+                ...p,
+                answeredAt: new Date().toISOString(),
+                answer,
+              }
+            })
+            if (!touched) return m
+            return { ...m, uiParts: next }
           }),
         }
       }),

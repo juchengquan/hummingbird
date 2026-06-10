@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test"
 
 import {
+  ChoicePropsSchema,
+  ConfirmPropsSchema,
   InfoTablePropsSchema,
+  MiniFormPropsSchema,
   UI_KIND_VALUES,
   UiKindEnum,
   UiPartSchema,
+  defaultResolutionFor,
+  formatAnswerForChat,
   parsePersistedUiPart,
 } from "./schemas"
 
@@ -15,7 +20,7 @@ describe("UiKindEnum", () => {
     }
   })
   test("rejects unknown kinds", () => {
-    expect(UiKindEnum.safeParse("choice").success).toBe(false)
+    expect(UiKindEnum.safeParse("bogus-kind").success).toBe(false)
     expect(UiKindEnum.safeParse("").success).toBe(false)
   })
 })
@@ -92,8 +97,8 @@ describe("UiPartSchema (discriminated union)", () => {
 
   test("rejects unknown kind (allow-list IS the security boundary)", () => {
     const r = UiPartSchema.safeParse({
-      kind: "choice", // not in v1's allow-list
-      props: { prompt: "?", options: [] },
+      kind: "not-a-kind",
+      props: {},
     })
     expect(r.success).toBe(false)
   })
@@ -156,5 +161,303 @@ describe("parsePersistedUiPart", () => {
     expect(parsePersistedUiPart(null)).toBeNull()
     expect(parsePersistedUiPart("oops")).toBeNull()
     expect(parsePersistedUiPart([])).toBeNull()
+  })
+
+  test("round-trips a persisted answer alongside the part", () => {
+    const out = parsePersistedUiPart({
+      id: "p",
+      kind: "confirm",
+      props: { prompt: "Apply edits?" },
+      answeredAt: "2026-06-10T00:00:00Z",
+      answer: { kind: "confirm", confirmed: true },
+    })
+    expect(out?.answer).toEqual({ kind: "confirm", confirmed: true })
+  })
+
+  test("drops a malformed answer but keeps the part", () => {
+    const out = parsePersistedUiPart({
+      id: "p",
+      kind: "confirm",
+      props: { prompt: "?" },
+      answer: { kind: "confirm" /* missing `confirmed` */ },
+    })
+    expect(out).not.toBeNull()
+    expect(out!.answer).toBeUndefined()
+  })
+})
+
+// --- v2 (interactive kinds) -----------------------------------------------
+
+describe("ChoicePropsSchema", () => {
+  test("accepts a 2-option single-select", () => {
+    const r = ChoicePropsSchema.safeParse({
+      prompt: "Which?",
+      options: [
+        { id: "a", label: "A" },
+        { id: "b", label: "B" },
+      ],
+    })
+    expect(r.success).toBe(true)
+  })
+
+  test("rejects < 2 options (use confirm)", () => {
+    const r = ChoicePropsSchema.safeParse({
+      prompt: "?",
+      options: [{ id: "x", label: "X" }],
+    })
+    expect(r.success).toBe(false)
+  })
+
+  test("rejects > 8 options (reads better as prose)", () => {
+    const r = ChoicePropsSchema.safeParse({
+      prompt: "?",
+      options: Array.from({ length: 9 }, (_, i) => ({
+        id: `o${i}`,
+        label: `O${i}`,
+      })),
+    })
+    expect(r.success).toBe(false)
+  })
+
+  test("accepts multiSelect: true", () => {
+    const r = ChoicePropsSchema.safeParse({
+      prompt: "?",
+      options: [
+        { id: "a", label: "A" },
+        { id: "b", label: "B" },
+      ],
+      multiSelect: true,
+    })
+    expect(r.success).toBe(true)
+  })
+})
+
+describe("ConfirmPropsSchema", () => {
+  test("prompt-only is enough", () => {
+    expect(ConfirmPropsSchema.safeParse({ prompt: "Apply?" }).success).toBe(true)
+  })
+  test("accepts custom button labels", () => {
+    expect(
+      ConfirmPropsSchema.safeParse({
+        prompt: "?",
+        confirmLabel: "Apply",
+        cancelLabel: "Discard",
+      }).success,
+    ).toBe(true)
+  })
+})
+
+describe("MiniFormPropsSchema", () => {
+  test("accepts text + number + select fields", () => {
+    const r = MiniFormPropsSchema.safeParse({
+      prompt: "Schedule the meeting",
+      fields: [
+        { type: "text", id: "topic", label: "Topic" },
+        { type: "number", id: "minutes", label: "Length", min: 15, max: 120 },
+        {
+          type: "select",
+          id: "day",
+          label: "Day",
+          options: [
+            { id: "tue", label: "Tuesday" },
+            { id: "wed", label: "Wednesday" },
+          ],
+        },
+      ],
+    })
+    expect(r.success).toBe(true)
+  })
+
+  test("rejects 0 fields (no point) and > 4 (use a real form)", () => {
+    expect(MiniFormPropsSchema.safeParse({ fields: [] }).success).toBe(false)
+    const many = Array.from({ length: 5 }, (_, i) => ({
+      type: "text" as const,
+      id: `f${i}`,
+      label: `F${i}`,
+    }))
+    expect(MiniFormPropsSchema.safeParse({ fields: many }).success).toBe(false)
+  })
+
+  test("select field needs >= 2 options (otherwise it's a text field)", () => {
+    const r = MiniFormPropsSchema.safeParse({
+      fields: [
+        {
+          type: "select",
+          id: "x",
+          label: "X",
+          options: [{ id: "a", label: "A" }],
+        },
+      ],
+    })
+    expect(r.success).toBe(false)
+  })
+})
+
+describe("UiPartSchema with interactive kinds", () => {
+  test("choice round-trips", () => {
+    expect(
+      UiPartSchema.safeParse({
+        kind: "choice",
+        props: {
+          prompt: "?",
+          options: [
+            { id: "a", label: "A" },
+            { id: "b", label: "B" },
+          ],
+        },
+      }).success,
+    ).toBe(true)
+  })
+  test("confirm round-trips", () => {
+    expect(
+      UiPartSchema.safeParse({
+        kind: "confirm",
+        props: { prompt: "Apply?" },
+      }).success,
+    ).toBe(true)
+  })
+  test("mini-form round-trips", () => {
+    expect(
+      UiPartSchema.safeParse({
+        kind: "mini-form",
+        props: {
+          fields: [{ type: "text", id: "x", label: "X" }],
+        },
+      }).success,
+    ).toBe(true)
+  })
+})
+
+describe("formatAnswerForChat", () => {
+  test("confirm — confirmed → confirmLabel or 'Yes' default", () => {
+    expect(
+      formatAnswerForChat(
+        { kind: "confirm", props: { prompt: "?" } },
+        { kind: "confirm", confirmed: true },
+      ),
+    ).toBe("Yes")
+    expect(
+      formatAnswerForChat(
+        { kind: "confirm", props: { prompt: "?", confirmLabel: "Apply" } },
+        { kind: "confirm", confirmed: true },
+      ),
+    ).toBe("Apply")
+  })
+
+  test("confirm — cancelled → cancelLabel or 'Cancel' default", () => {
+    expect(
+      formatAnswerForChat(
+        { kind: "confirm", props: { prompt: "?" } },
+        { kind: "confirm", confirmed: false },
+      ),
+    ).toBe("Cancel")
+  })
+
+  test("choice — single pick returns the label", () => {
+    expect(
+      formatAnswerForChat(
+        {
+          kind: "choice",
+          props: {
+            prompt: "?",
+            options: [
+              { id: "a", label: "Option A" },
+              { id: "b", label: "Option B" },
+            ],
+          },
+        },
+        { kind: "choice", selectedIds: ["b"] },
+      ),
+    ).toBe("Option B")
+  })
+
+  test("choice — multi pick comma-joins labels in selection order", () => {
+    expect(
+      formatAnswerForChat(
+        {
+          kind: "choice",
+          props: {
+            prompt: "?",
+            options: [
+              { id: "a", label: "A" },
+              { id: "b", label: "B" },
+              { id: "c", label: "C" },
+            ],
+          },
+        },
+        { kind: "choice", selectedIds: ["c", "a"] },
+      ),
+    ).toBe("C, A")
+  })
+
+  test("choice — unknown option ids drop silently", () => {
+    expect(
+      formatAnswerForChat(
+        {
+          kind: "choice",
+          props: {
+            prompt: "?",
+            options: [{ id: "a", label: "A" }, { id: "b", label: "B" }],
+          },
+        },
+        { kind: "choice", selectedIds: ["ghost", "a"] },
+      ),
+    ).toBe("A")
+  })
+
+  test("mini-form — emits 'Label: value' pairs joined by commas", () => {
+    expect(
+      formatAnswerForChat(
+        {
+          kind: "mini-form",
+          props: {
+            fields: [
+              { type: "text", id: "topic", label: "Topic" },
+              { type: "number", id: "min", label: "Minutes" },
+            ],
+          },
+        },
+        { kind: "mini-form", values: { topic: "Q4 plan", min: "30" } },
+      ),
+    ).toBe("Topic: Q4 plan, Minutes: 30")
+  })
+
+  test("mini-form — empty values drop out", () => {
+    expect(
+      formatAnswerForChat(
+        {
+          kind: "mini-form",
+          props: {
+            fields: [
+              { type: "text", id: "a", label: "A" },
+              { type: "text", id: "b", label: "B" },
+            ],
+          },
+        },
+        { kind: "mini-form", values: { a: "x", b: "" } },
+      ),
+    ).toBe("A: x")
+  })
+
+  test("info-table never produces an answer string", () => {
+    expect(
+      formatAnswerForChat(
+        { kind: "info-table", props: { rows: [] } },
+        { kind: "info-table" },
+      ),
+    ).toBe("")
+  })
+})
+
+describe("defaultResolutionFor", () => {
+  test("mini-form prefills the composer (form usually wants review)", () => {
+    expect(defaultResolutionFor("mini-form")).toBe("prefill")
+  })
+  test("choice / confirm auto-send (one click resolves)", () => {
+    expect(defaultResolutionFor("choice")).toBe("auto-send")
+    expect(defaultResolutionFor("confirm")).toBe("auto-send")
+  })
+  test("info-table never resolves — auto-send is a moot default", () => {
+    expect(defaultResolutionFor("info-table")).toBe("auto-send")
   })
 })
