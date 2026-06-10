@@ -158,6 +158,24 @@ export class ChatSseEmitter {
     })
   }
 
+  /** Generative-UI part — emits a `data-ui` AI SDK v5 custom data
+   *  part carrying a validated `{ kind, props }` pair the model
+   *  produced via the `renderUI` tool. The client's translator maps
+   *  this to `{ type: "ui_part", ... }`; the send-pipeline appends
+   *  it to `Message.uiParts` on the in-flight assistant message.
+   *  See `docs/PLAN-generative-ui-parts.md`. */
+  uiPart(payload: { id: string; kind: string; props: unknown }): void {
+    this.send({
+      type: "data-ui",
+      id: payload.id,
+      data: {
+        id: payload.id,
+        kind: payload.kind,
+        props: payload.props,
+      },
+    })
+  }
+
   error(code: string, message: string): void {
     this.closeAllChannels()
     // AI SDK error frames carry the human-readable text on

@@ -43,6 +43,7 @@ import { getLocalCred } from "@/client/mcp/local-creds"
 import type { LiveToolCall } from "@/components/skills/tool-call-strip"
 import { composeSystemPrompts } from "@/shared/agents/resolve"
 import type { ChatRequestInput, TaskRequestInput } from "@/shared/api-schemas"
+import { parsePersistedUiPart } from "@/shared/generative-ui/schemas"
 import { modelSupportsReasoningEffort } from "@/shared/models"
 import { resolveEnabledSkills } from "@/shared/skills/resolve-enabled-skills"
 import type { SkillId } from "@/shared/skills/types"
@@ -103,6 +104,7 @@ export function useChatSend(): UseChatSendResult {
   const appendMessageGeneratedImages = useStore(
     (s) => s.appendMessageGeneratedImages
   )
+  const appendMessageUiPart = useStore((s) => s.appendMessageUiPart)
   const setConversationTyping = useStore((s) => s.setConversationTyping)
   const createArtifact = useStore((s) => s.createArtifact)
 
@@ -628,6 +630,22 @@ export function useChatSend(): UseChatSendResult {
               if (ph) {
                 setMessageSuggestions(ph.id, parsed.values)
               }
+            } else if (parsed.type === "ui_part") {
+              // Generative-UI part — server validated via the `renderUI`
+              // tool's execute; we re-validate defensively via
+              // `parsePersistedUiPart` so a malformed in-flight payload
+              // from a future server version can't crash the renderer.
+              const ph = placeholder as Message | null
+              if (ph && typeof parsed.id === "string" && parsed.kind) {
+                const persisted = parsePersistedUiPart({
+                  id: parsed.id,
+                  kind: parsed.kind,
+                  props: parsed.props,
+                })
+                if (persisted) {
+                  appendMessageUiPart(ph.id, persisted)
+                }
+              }
             } else if (parsed.type === "error") {
               streamError = { code: parsed.code, message: parsed.message }
               break outer
@@ -752,6 +770,7 @@ export function useChatSend(): UseChatSendResult {
       activeWorkspaceId,
       addMessage,
       appendMessageGeneratedImages,
+      appendMessageUiPart,
       appendToMessage,
       appendToMessageReasoning,
       autoArchiveCodeBlocks,

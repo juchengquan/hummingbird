@@ -14,6 +14,7 @@ import { MarkdownPreview } from "@/components/markdown-preview"
 import { MessageLiveArtifacts } from "@/components/live-artifact/message-live-artifacts"
 import { ToolCallStrip, type LiveToolCall } from "@/components/skills/tool-call-strip"
 import { GeneratedImagesGallery } from "@/components/skills/generated-images-gallery"
+import { MessageUiParts } from "@/components/chat/generative-ui/message-ui-parts"
 import { MessageAttachments } from "@/components/panels/message-attachments"
 import { ReasoningBlock } from "@/components/panels/reasoning-block"
 import { SourcesStrip } from "@/components/panels/sources-strip"
@@ -422,6 +423,9 @@ function ChatMessageImpl({
                       messageId={message.id}
                     />
                   )}
+                {!isUser && message.uiParts && message.uiParts.length > 0 && (
+                  <MessageUiParts parts={message.uiParts} />
+                )}
                 {isUser &&
                   message.attachedFileIds &&
                   message.attachedFileIds.length > 0 && (

@@ -171,4 +171,32 @@ describe("translateFrame — lifecycle + edge cases", () => {
   test("data-tool-image without data → null", () => {
     expect(translateFrame('{"type":"data-tool-image"}')).toBeNull()
   })
+
+  test("data-ui — emits ui_part with id/kind/props", () => {
+    const out = translateFrame(
+      JSON.stringify({
+        type: "data-ui",
+        id: "call-1",
+        data: {
+          id: "call-1",
+          kind: "info-table",
+          props: { rows: [{ k: "v" }] },
+        },
+      }),
+    )
+    expect(out?.type).toBe("ui_part")
+    expect(out?.id).toBe("call-1")
+    expect(out?.kind).toBe("info-table")
+    expect((out?.props as { rows: unknown[] }).rows).toEqual([{ k: "v" }])
+  })
+
+  test("data-ui without data → null", () => {
+    expect(translateFrame('{"type":"data-ui"}')).toBeNull()
+  })
+
+  test("data-ui without id/kind on data → null", () => {
+    expect(
+      translateFrame('{"type":"data-ui","data":{"props":{}}}'),
+    ).toBeNull()
+  })
 })
