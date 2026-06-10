@@ -45,6 +45,12 @@ const ChatModelSchema = z.object({
    *  false → no control, provider default behaviour. See
    *  `@/shared/reasoning-effort`. */
   supportsReasoningEffort: z.boolean().optional(),
+  /** When true, the model supports native structured output (constrained
+   *  decoding against a JSON schema) via the AI SDK's `generateObject`.
+   *  The deterministic non-chat calls (suggestions / summaries) use it
+   *  when set and fall back to lenient text parsing otherwise. See
+   *  `@/server/ai/structured`. */
+  supportsStructuredOutput: z.boolean().optional(),
 })
 
 const ModelsConfigSchema = z.object({
@@ -87,4 +93,12 @@ export function getChatModel(id: string): ChatModel | null {
  *  client sends `reasoningEffort` on the wire. Unknown id → false. */
 export function modelSupportsReasoningEffort(id: string): boolean {
   return getChatModel(id)?.supportsReasoningEffort === true
+}
+
+/** Whether a model supports native structured output (constrained
+ *  decoding). Drives whether the deterministic call sites use
+ *  `generateObject` or fall back to lenient text parsing. Unknown id →
+ *  false. */
+export function modelSupportsStructuredOutput(id: string): boolean {
+  return getChatModel(id)?.supportsStructuredOutput === true
 }

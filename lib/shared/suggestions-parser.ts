@@ -26,6 +26,18 @@ export const SUGGESTION_MAX_CHARS = 120
  *  compact and predictable. */
 export const SUGGESTION_MAX_COUNT = 3
 
+/** Normalise a list of candidate suggestions to the wire contract:
+ *  trimmed, non-empty, ≤ `SUGGESTION_MAX_CHARS` each, ≤
+ *  `SUGGESTION_MAX_COUNT` total. Shared by the lenient JSON parser
+ *  (below) and the structured-output path (`@/server/ai/structured`
+ *  callers) so both clamp identically. */
+export function clampSuggestions(list: string[]): string[] {
+  return list
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && s.length <= SUGGESTION_MAX_CHARS)
+    .slice(0, SUGGESTION_MAX_COUNT)
+}
+
 /** Strip optional markdown fences from a model-emitted JSON payload,
  *  then parse + validate as a flat string array. Returns at most
  *  `SUGGESTION_MAX_COUNT` short non-empty entries. Permissive — any
@@ -39,11 +51,9 @@ export function parseSuggestionsJson(raw: string): string[] {
   try {
     const parsed = JSON.parse(cleaned) as unknown
     if (!Array.isArray(parsed)) return []
-    return parsed
-      .filter((s): s is string => typeof s === "string")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0 && s.length <= SUGGESTION_MAX_CHARS)
-      .slice(0, SUGGESTION_MAX_COUNT)
+    return clampSuggestions(
+      parsed.filter((s): s is string => typeof s === "string")
+    )
   } catch {
     return []
   }

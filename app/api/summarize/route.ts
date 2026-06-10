@@ -5,10 +5,12 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
 import { categorizeError } from '@/shared/api-errors'
+import { generateStructured } from '@/server/ai/structured'
 import {
   ProviderUnavailableError,
   selectModel,
 } from '@/server/model-provider'
+import { modelSupportsStructuredOutput } from '@/shared/models'
 
 export const runtime = 'nodejs'
 
@@ -73,6 +75,25 @@ const BodySchema = z.discriminatedUnion('mode', [
   CompressSummaryBody,
   ProjectBreakdownBody,
 ])
+
+// Response shapes per JSON mode (compress returns plain markdown, not
+// JSON, so it has no schema). Used as the structured-output schema on
+// supporting models; the prompts above already describe the same shape
+// for the lenient text fallback.
+const SUMMARY_RESULT_SCHEMAS = {
+  file: z.object({
+    summary: z.string(),
+    keyTopics: z.array(z.string()),
+  }),
+  conversation: z.object({
+    summary: z.string(),
+    keyPoints: z.array(z.string()),
+    decisions: z.array(z.string()),
+  }),
+  'project-breakdown': z.object({
+    titles: z.array(z.string()),
+  }),
+} as const
 
 function buildFilePrompt(name: string | undefined, text: string) {
   return `Summarize the following document${name ? ` titled "${name}"` : ''} in 2-3 plain-text sentences. Then list 3-5 short topic phrases (noun phrases, lowercase, no punctuation).
@@ -195,19 +216,16 @@ export async function POST(req: NextRequest) {
           : buildProjectBreakdownPrompt(body.goal, body.existingTitles)
 
   try {
-    const result = await generateText({
-      abortSignal: req.signal,
-      model: selectModel(modelId),
-      prompt,
-      // Compress mode wants ~300 tokens worth of bullets but we leave
-      // headroom for verbose models. Other modes were sized at 600;
-      // keep that ceiling for them and bump compress to 800 for safety.
-      maxOutputTokens: body.mode === 'compress' ? 800 : 600,
-      temperature: 0.3,
-    })
-
-    // Compress mode returns plain markdown, not JSON.
+    // Compress mode returns plain markdown, not JSON — no structured
+    // output, no schema. Wants ~300 tokens of bullets; leave headroom.
     if (body.mode === 'compress') {
+      const result = await generateText({
+        abortSignal: req.signal,
+        model: selectModel(modelId),
+        prompt,
+        maxOutputTokens: 800,
+        temperature: 0.3,
+      })
       const recap = result.text.trim()
       if (!recap) {
         return NextResponse.json(
@@ -218,6 +236,40 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ recap })
     }
 
+    // Indexed access yields a union of the three per-mode schemas, which
+    // TS can't unify into a single inferred generic — cast to a single
+    // schema type (the result is only JSON-serialised, so the precise
+    // output type doesn't matter past this point).
+    const schema = SUMMARY_RESULT_SCHEMAS[body.mode] as z.ZodType<unknown>
+
+    // Structured path — guaranteed schema-valid output on supporting
+    // models. Let ProviderUnavailableError bubble to the auth handler;
+    // any other structured failure falls through to the lenient parse.
+    if (modelSupportsStructuredOutput(modelId)) {
+      try {
+        const object = await generateStructured({
+          modelId,
+          schema,
+          prompt,
+          abortSignal: req.signal,
+          maxOutputTokens: 600,
+          temperature: 0.3,
+        })
+        return NextResponse.json(object)
+      } catch (error) {
+        if (error instanceof ProviderUnavailableError) throw error
+        // fall through to the lenient text path
+      }
+    }
+
+    // Lenient fallback: ask for JSON, strip markdown fences, parse.
+    const result = await generateText({
+      abortSignal: req.signal,
+      model: selectModel(modelId),
+      prompt,
+      maxOutputTokens: 600,
+      temperature: 0.3,
+    })
     const cleaned = stripJsonFences(result.text)
     try {
       const parsedResponse = JSON.parse(cleaned)
