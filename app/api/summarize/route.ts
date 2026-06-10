@@ -7,6 +7,11 @@ import { z } from 'zod'
 import { categorizeError } from '@/shared/api-errors'
 import { generateStructured } from '@/server/ai/structured'
 import {
+  getCachedResponse,
+  responseCacheKey,
+  setCachedResponse,
+} from '@/server/cache/response-cache'
+import {
   ProviderUnavailableError,
   selectModel,
 } from '@/server/model-provider'
@@ -215,6 +220,24 @@ export async function POST(req: NextRequest) {
           ? buildCompressPrompt(body.messages)
           : buildProjectBreakdownPrompt(body.goal, body.existingTitles)
 
+  // Exact-key response cache (PLAN-semantic-caching Phase 1). The request
+  // body minus its `model` field is the input (the resolved `modelId` is a
+  // separate key part, so "model omitted" and "model = default" share a
+  // hit). Deterministic, low-temp calls only — never the chat stream.
+  const { model: _omitModel, ...cacheInput } = body
+  const cacheKey = responseCacheKey({
+    kind: 'summarize',
+    model: modelId,
+    input: cacheInput,
+  })
+  const cached = getCachedResponse(cacheKey)
+  if (cached !== undefined) return NextResponse.json(cached)
+  // Cache + respond on the success paths only (never error responses).
+  const respondCached = (payload: unknown) => {
+    setCachedResponse(cacheKey, payload)
+    return NextResponse.json(payload)
+  }
+
   try {
     // Compress mode returns plain markdown, not JSON — no structured
     // output, no schema. Wants ~300 tokens of bullets; leave headroom.
@@ -233,7 +256,7 @@ export async function POST(req: NextRequest) {
           { status: 502 }
         )
       }
-      return NextResponse.json({ recap })
+      return respondCached({ recap })
     }
 
     // Indexed access yields a union of the three per-mode schemas, which
@@ -255,7 +278,7 @@ export async function POST(req: NextRequest) {
           maxOutputTokens: 600,
           temperature: 0.3,
         })
-        return NextResponse.json(object)
+        return respondCached(object)
       } catch (error) {
         if (error instanceof ProviderUnavailableError) throw error
         // fall through to the lenient text path
@@ -273,7 +296,7 @@ export async function POST(req: NextRequest) {
     const cleaned = stripJsonFences(result.text)
     try {
       const parsedResponse = JSON.parse(cleaned)
-      return NextResponse.json(parsedResponse)
+      return respondCached(parsedResponse)
     } catch {
       return NextResponse.json(
         {

@@ -1,6 +1,13 @@
+import { createHash } from 'node:crypto'
+
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
+import {
+  getCachedResponse,
+  responseCacheKey,
+  setCachedResponse,
+} from '@/server/cache/response-cache'
 import { extractFile } from '@/server/extraction'
 import { FILE_SIZE_LIMIT } from '@/shared/upload-config'
 
@@ -42,7 +49,21 @@ export async function POST(req: NextRequest) {
 
   try {
     const data = Buffer.from(await file.arrayBuffer())
+    // Exact-key response cache (PLAN-semantic-caching Phase 1). Extraction
+    // is a deterministic function of the file bytes (+ name + mime), so a
+    // re-upload of the same file skips the work. Key on a content hash of
+    // the bytes rather than the bytes themselves.
+    const contentHash = createHash('sha256').update(data).digest('hex')
+    const cacheKey = responseCacheKey({
+      kind: 'extract',
+      model: '-',
+      input: { name, mimeType, contentHash },
+    })
+    const cached = getCachedResponse(cacheKey)
+    if (cached !== undefined) return NextResponse.json(cached)
+
     const result = await extractFile({ name, mimeType, data })
+    setCachedResponse(cacheKey, result)
     return NextResponse.json(result)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Extraction failed.'
