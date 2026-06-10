@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test"
 
-import { RefreshImageUrlRequestSchema } from "./api-schemas"
+import {
+  COMPLETE_BLOCK_MAX,
+  COMPLETE_PREFIX_MAX,
+  CompleteRequestSchema,
+  RefreshImageUrlRequestSchema,
+} from "./api-schemas"
 
 describe("RefreshImageUrlRequestSchema", () => {
   test("accepts a normal user-scoped storage path", () => {
@@ -33,5 +38,71 @@ describe("RefreshImageUrlRequestSchema", () => {
 
   test("rejects missing field", () => {
     expect(RefreshImageUrlRequestSchema.safeParse({}).success).toBe(false)
+  })
+})
+
+describe("CompleteRequestSchema", () => {
+  test("accepts a minimal request (blockText only)", () => {
+    const r = CompleteRequestSchema.safeParse({ blockText: "hello" })
+    expect(r.success).toBe(true)
+  })
+
+  test("accepts a full request (prefix + blockText + model)", () => {
+    const r = CompleteRequestSchema.safeParse({
+      blockText: "and then",
+      prefix: "earlier text",
+      model: "google/gemini-2.5-flash",
+    })
+    expect(r.success).toBe(true)
+  })
+
+  test("rejects missing blockText", () => {
+    expect(CompleteRequestSchema.safeParse({}).success).toBe(false)
+  })
+
+  test("rejects non-string blockText", () => {
+    expect(
+      CompleteRequestSchema.safeParse({ blockText: 42 }).success
+    ).toBe(false)
+  })
+
+  test("rejects blockText longer than COMPLETE_BLOCK_MAX", () => {
+    const over = "x".repeat(COMPLETE_BLOCK_MAX + 1)
+    expect(
+      CompleteRequestSchema.safeParse({ blockText: over }).success
+    ).toBe(false)
+  })
+
+  test("accepts blockText at the COMPLETE_BLOCK_MAX boundary", () => {
+    const max = "x".repeat(COMPLETE_BLOCK_MAX)
+    expect(
+      CompleteRequestSchema.safeParse({ blockText: max }).success
+    ).toBe(true)
+  })
+
+  test("accepts a long-but-bounded prefix (within 4× the truncation cap)", () => {
+    // The schema cap is 4× COMPLETE_PREFIX_MAX so legitimate clients
+    // can send slack; the builder truncates to the trailing window.
+    const long = "x".repeat(COMPLETE_PREFIX_MAX * 4)
+    expect(
+      CompleteRequestSchema.safeParse({ blockText: "a", prefix: long })
+        .success
+    ).toBe(true)
+  })
+
+  test("rejects a prefix past the schema's wire cap", () => {
+    const tooLong = "x".repeat(COMPLETE_PREFIX_MAX * 4 + 1)
+    expect(
+      CompleteRequestSchema.safeParse({ blockText: "a", prefix: tooLong })
+        .success
+    ).toBe(false)
+  })
+
+  test("rejects a model id longer than 100 chars", () => {
+    const long = "x".repeat(101)
+    expect(
+      CompleteRequestSchema.safeParse({ blockText: "a", model: long })
+        .success
+    ).toBe(false)
   })
 })

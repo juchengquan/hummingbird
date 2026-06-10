@@ -241,6 +241,32 @@ export const CopilotRequestSchema = z.object({
   system: z.string().max(20_000).optional(),
 })
 
+// --- /api/ai/complete -------------------------------------------------------
+// Inline editor ghost-text autocomplete. Streaming plain-text response
+// (a short continuation of `blockText`, biased by the preceding `prefix`
+// of the document). Plate's Copilot plugin consumes the stream.
+// See `docs/PLAN-inline-autocomplete.md`.
+
+/** Max bytes of preceding-document context. Prefix beyond this cap is
+ *  truncated server-side (keeping the trailing window — the bit closest
+ *  to the cursor). Roughly ~1–2k tokens, the plan's pinned cap. */
+export const COMPLETE_PREFIX_MAX = 8_000
+
+/** Max bytes of the current block's text. Plate sends one block via
+ *  `getPrompt`, so the cap is generous but bounded. */
+export const COMPLETE_BLOCK_MAX = 4_000
+
+export const CompleteRequestSchema = z.object({
+  /** Preceding-document context (markdown). Truncated to the trailing
+   *  `COMPLETE_PREFIX_MAX` chars before the prompt is built. */
+  prefix: z.string().max(COMPLETE_PREFIX_MAX * 4).optional(),
+  /** Current block's text (markdown). The completion continues this. */
+  blockText: z.string().max(COMPLETE_BLOCK_MAX),
+  /** Model id override. Defaults to the fast model the editor uses
+   *  elsewhere (`google/gemini-2.5-flash`). */
+  model: z.string().max(100).optional(),
+})
+
 // --- /api/extract -----------------------------------------------------------
 // Request: multipart/form-data with a `file` field. Not modeled as Zod
 // because Zod doesn't see FormData. Validated at the route by FormData
@@ -562,6 +588,7 @@ export type ScheduleUpdateInput = z.infer<typeof ScheduleUpdateSchema>
 export type ScheduleResponse = z.infer<typeof ScheduleResponseSchema>
 export type ScheduleListResponse = z.infer<typeof ScheduleListResponseSchema>
 export type CopilotRequestInput = z.infer<typeof CopilotRequestSchema>
+export type CompleteRequestInput = z.infer<typeof CompleteRequestSchema>
 export type ExtractionResponse = z.infer<typeof ExtractionResponseSchema>
 export type SummarizeRequestInput = z.infer<typeof SummarizeRequestSchema>
 export type FileSummarizeResponse = z.infer<typeof FileSummarizeResponseSchema>
