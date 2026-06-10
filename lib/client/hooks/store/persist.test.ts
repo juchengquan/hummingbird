@@ -32,6 +32,7 @@ const EXPECTED_PERSISTED_KEYS = [
   "activeConversationId",
   "files",
   "chatModel",
+  "chatReasoningEffort",
   "notes",
   "artifacts",
   "documents",
@@ -73,6 +74,7 @@ describe("partializeState — frozen persisted shape", () => {
       activeConversationId: null,
       files: [],
       chatModel: "x",
+      chatReasoningEffort: null,
       notes: [],
       artifacts: [],
       documents: [],
@@ -111,6 +113,6 @@ describe("partializeState — frozen persisted shape", () => {
   })
 
   test("STORE_VERSION is pinned (bump only with a migration step)", () => {
-    expect(STORE_VERSION).toBe(23)
+    expect(STORE_VERSION).toBe(24)
   })
 })

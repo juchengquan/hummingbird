@@ -8,7 +8,7 @@ import { uuid } from "@/shared/uuid"
  * step in `runMigrations`. Wired into the `version` field of the persist
  * config in `use-store.ts`.
  */
-export const STORE_VERSION = 23
+export const STORE_VERSION = 24
 
 /**
  * Sequential schema migrations from older persisted shapes to the
@@ -425,6 +425,14 @@ export function runMigrations(
         return { ...obj, fileRetrievalModes: {} }
       })
     }
+  }
+  if (fromVersion < 24) {
+    // `chatReasoningEffort` added to the chat slice (reasoning-effort
+    // control). It's a nullable scalar whose slice initial value is
+    // `null`, so a store predating it falls back to that default on
+    // rehydrate — no backfill needed. Marker bump only, so the pinned
+    // persisted key set in `persist.test.ts` stays in lockstep with the
+    // version. See `docs/PLAN-reasoning-effort-control.md`.
   }
   return persistedState
 }

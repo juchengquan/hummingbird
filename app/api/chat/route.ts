@@ -4,6 +4,7 @@ import { stepCountIs, streamText, type ModelMessage } from 'ai'
 import { NextResponse } from 'next/server'
 
 import { DEFAULT_CHAT_MODEL } from '@/shared/models'
+import { reasoningCallOptions } from '@/shared/reasoning-effort'
 import {
   ProviderUnavailableError,
   selectModel,
@@ -315,15 +316,32 @@ export async function POST(req: NextRequest) {
   // so signed-out turns don't pollute the dashboard with a phantom
   // `workspace:undefined` bucket. See
   // `docs/PLAN-gateway-caching-and-workspace-tagging.md`.
-  const gatewayProviderOptions = body.workspaceId
-    ? {
-        providerOptions: {
-          gateway: {
-            tags: [`workspace:${body.workspaceId}`, `model:${modelId}`],
-          },
-        },
-      }
-    : undefined
+  // Reasoning-effort tier → provider-specific thinking-budget /
+  // reasoning_effort options (+ a matching maxOutputTokens for Anthropic,
+  // whose max_tokens must exceed the thinking budget). Empty for models
+  // whose provider has no mapping, so it spreads cleanly. See
+  // `docs/PLAN-reasoning-effort-control.md`.
+  const reasoning = reasoningCallOptions(modelId, body.reasoningEffort)
+
+  // Merge the per-workspace gateway tags (a no-op on non-gateway routes —
+  // see PLAN-gateway-caching-and-workspace-tagging) with the reasoning
+  // provider options into one `providerOptions` object. Skip the
+  // `workspace:` tag when signed out so the dashboard isn't polluted with
+  // a phantom `workspace:undefined` bucket.
+  const providerOptions: Record<string, Record<string, unknown>> = {
+    ...(body.workspaceId
+      ? { gateway: { tags: [`workspace:${body.workspaceId}`, `model:${modelId}`] } }
+      : {}),
+    ...reasoning.providerOptions,
+  }
+  const callExtras = {
+    ...(Object.keys(providerOptions).length > 0
+      ? { providerOptions: providerOptions as Parameters<typeof streamText>[0]['providerOptions'] }
+      : {}),
+    ...(reasoning.maxOutputTokens
+      ? { maxOutputTokens: reasoning.maxOutputTokens }
+      : {}),
+  }
 
   try {
     const result = streamText({
@@ -344,7 +362,7 @@ export async function POST(req: NextRequest) {
       // but the AI SDK's ModelMessage uses tighter inner-part discriminants
       // than the schema's structural fallback. Trust the schema validation.
       messages: body.messages as ModelMessage[],
-      ...(gatewayProviderOptions ?? {}),
+      ...callExtras,
       // Only pass `tools` when non-empty — some providers reject the field
       // when present-but-empty. Default stop condition is `stepCountIs(1)`
       // which would prevent the model from continuing after a tool call;

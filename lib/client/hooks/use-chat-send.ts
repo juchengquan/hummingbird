@@ -43,6 +43,7 @@ import { getLocalCred } from "@/client/mcp/local-creds"
 import type { LiveToolCall } from "@/components/skills/tool-call-strip"
 import { composeSystemPrompts } from "@/shared/agents/resolve"
 import type { ChatRequestInput, TaskRequestInput } from "@/shared/api-schemas"
+import { modelSupportsReasoningEffort } from "@/shared/models"
 import { resolveEnabledSkills } from "@/shared/skills/resolve-enabled-skills"
 import type { SkillId } from "@/shared/skills/types"
 import type { Message, MessageError, MessageErrorCode } from "@/shared/types"
@@ -428,6 +429,12 @@ export function useChatSend(): UseChatSendResult {
                 : undefined,
             referenceImage: options?.referenceImage,
             localFilesOnly: localFilesOnly || undefined,
+            // Only send the reasoning tier when the active model exposes
+            // the knob; harmless otherwise (the route maps it to {} for
+            // unsupported providers), but keeps the wire clean.
+            reasoningEffort: modelSupportsReasoningEffort(modelForCall)
+              ? useStore.getState().chatReasoningEffort ?? undefined
+              : undefined,
           },
           {
             signal: controller.signal,
