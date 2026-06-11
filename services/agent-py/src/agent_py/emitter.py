@@ -209,11 +209,18 @@ class RunEmitter:
         prompt: str | None = None,
         options: list[InputRequestOption] | None = None,
         multi: bool | None = None,
+        ui_kind: str | None = None,
+        ui_props: dict[str, object] | None = None,
     ) -> None:
         """Emit `approval` with `phase='request'` — the run is
         suspending and the user needs to pick an answer. The executor
         pairs this with a `status: paused` emit so the projection
-        flips the run into the paused state."""
+        flips the run into the paused state.
+
+        `ui_kind` / `ui_props` are set when `request_kind == "ui-part"`
+        — the structured-UI HITL variant raised by `renderUI`. The
+        client uses them to render the right component without
+        re-parsing `args`."""
         if self._settled:
             return
         await self._emit(
@@ -231,6 +238,8 @@ class RunEmitter:
                 prompt=prompt,
                 options=options,
                 multi=multi,
+                ui_kind=ui_kind,
+                ui_props=ui_props,
             )
         )
 
@@ -241,11 +250,19 @@ class RunEmitter:
         approved: bool | None = None,
         selection: list[str] | None = None,
         value: str | None = None,
+        ui_answer: dict[str, object] | None = None,
     ) -> None:
         """Emit `approval` with `phase='response'` — the user answered.
         Clears `pending_input` on the client's projection. Emitted
         from the `respond` action before the loop resumes; the
-        approval-id pairs with the matching request emit."""
+        approval-id pairs with the matching request emit.
+
+        `ui_answer` is set when `request_kind == "ui-part"` — the
+        structured answer the client built via `respondBodyForUiAnswer`
+        for a `renderUI` resolution. The back-compat `value` /
+        `selection` are populated alongside by the wire shim so a
+        runner that hasn't learned `ui-part` natively still sees a
+        consumable answer."""
         if self._settled:
             return
         await self._emit(
@@ -259,6 +276,7 @@ class RunEmitter:
                 approved=approved,
                 selection=selection,
                 value=value,
+                ui_answer=ui_answer,
             )
         )
 

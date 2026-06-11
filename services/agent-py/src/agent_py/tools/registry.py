@@ -161,11 +161,20 @@ def default_tool_registry(
     """
     # Lazy imports keep registry construction cheap and avoid
     # circular imports if a tool ever needs to read the registry.
+    from .ask_user import build_ask_user_tool
+    from .render_ui import build_render_ui_tool
     from .web_fetch import build_web_fetch_tool
     from .web_search import build_web_search_tool, is_web_search_configured
 
     out: dict[str, ToolDescriptor] = {
         "webFetch": build_web_fetch_tool(),
+        # `askUser` + `renderUI` are no-execute HITL tools — they
+        # always register and are always gated (see
+        # `executor._gated_tools_from` + `input_policy.ALWAYS_GATED_
+        # TOOL_NAMES`). The model can call them any turn; the runner
+        # suspends instead of executing.
+        "askUser": build_ask_user_tool(),
+        "renderUI": build_render_ui_tool(),
     }
     if is_web_search_configured():
         out["webSearch"] = build_web_search_tool()

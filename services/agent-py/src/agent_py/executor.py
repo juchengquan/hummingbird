@@ -36,6 +36,10 @@ import structlog
 from . import jobs, store
 from .emitter import EventSink, RunEmitter
 from .events import TaskEvent
+from .input_policy import (
+    ALWAYS_GATED_TOOL_NAMES,
+    request_kind_for,
+)
 from .mcp_tools import extend_registry_with_mcp
 from .providers.anthropic_provider import (
     AnthropicStepConfig,
@@ -117,13 +121,21 @@ async def execute_start(
 class RespondActionPayload:
     """User's answer to a HITL pending input. Mirrors the TS shape
     written by `POST /api/tasks/:id/respond` (`requestId`, optional
-    `approved` / `selection` / `value`, optional `args` edit).
+    `approved` / `selection` / `value` / `uiAnswer`, optional `args`
+    edit).
 
-    One of `approved` / `selection` / `value` is set based on the
-    pending input's request kind (approval / choice / input). All
-    fields besides `request_id` are optional so a malformed job
-    payload doesn't crash the executor — `_build_tool_result_text`
-    falls back to a "no answer" message."""
+    One of `approved` / `selection` / `value` / `ui_answer` is set
+    based on the pending input's request kind (approval / choice /
+    input / ui-part). All fields besides `request_id` are optional so
+    a malformed job payload doesn't crash the executor —
+    `_build_tool_result_text` falls back to a "no answer" message.
+
+    `ui_answer` carries the structured answer from the generative-UI
+    resolver (commit 3b of PLAN-generative-ui-parts). The back-compat
+    `value` / `selection` are populated alongside by the wire shim
+    (`respondBodyForUiAnswer` on the client) so the runner can stay
+    `ui_answer`-agnostic for the actual tool result text — it just
+    reads the formatted text out of `value`."""
 
     run_id: str
     user_id: str
@@ -131,6 +143,7 @@ class RespondActionPayload:
     approved: bool | None = None
     selection: list[str] | None = None
     value: str | None = None
+    ui_answer: dict[str, Any] | None = None
     args: dict[str, Any] | None = None
 
 
@@ -316,13 +329,7 @@ async def _run_chunk(
                 user_id=payload.user_id,
                 checkpoint=next_checkpoint,
             )
-            await emitter.input_request(
-                approval_id=pending.tool_call_id,
-                request_kind="approval",
-                tool=pending.tool,
-                tool_call_id=pending.tool_call_id,
-                args=pending.args,
-            )
+            await _emit_pending_input_request(emitter, pending)
             await emitter.status("paused")
             await store.update_run(
                 pool,
@@ -545,19 +552,18 @@ def _default_make_step_fn(
 
 
 def _gated_tools_from(checkpoint: dict[str, Any]) -> set[str]:
-    """Pull `config.requireApprovalFor` from the checkpoint as a set
-    of tool names. Empty / missing → no gated tools (everything
-    executes inline). Matches the TS path's union of `askUser` +
-    explicit allow-list; the Python service hasn't ported `askUser`
-    yet (lands with the rest of HITL polish) so for now only the
-    explicit list applies."""
+    """Pull `config.requireApprovalFor` from the checkpoint and union
+    with `ALWAYS_GATED_TOOL_NAMES` (the no-execute HITL tools —
+    `askUser` + `renderUI`). Matches the TS path's union of the
+    explicit allow-list with the always-gated names — both runners
+    agree on which tools suspend instead of executing."""
+    explicit: set[str] = set()
     cfg = checkpoint.get("config")
-    if not isinstance(cfg, dict):
-        return set()
-    raw = cfg.get("requireApprovalFor")
-    if not isinstance(raw, list):
-        return set()
-    return {item for item in raw if isinstance(item, str) and item}
+    if isinstance(cfg, dict):
+        raw = cfg.get("requireApprovalFor")
+        if isinstance(raw, list):
+            explicit = {item for item in raw if isinstance(item, str) and item}
+    return explicit | ALWAYS_GATED_TOOL_NAMES
 
 
 async def _run_respond(
@@ -599,11 +605,13 @@ async def _run_respond(
             error=f"respond: pending tool call {payload.request_id} not found",
         )
 
-    # Determine the request kind from the pending tool. For Phase 3b
-    # the only kind we natively support is `approval` (binary
-    # gate); `choice` + `input` ride on the same wire shape and will
-    # land when the `askUser` tool ports.
-    request_kind = "approval"
+    # Classify the request kind from the pending tool name + args.
+    # `approval` is the binary gate (any other gated tool); `choice`
+    # / `input` come off `askUser`'s args shape; `ui-part` is
+    # `renderUI`. The classifier is the single source of truth — same
+    # one the suspend path uses — so the respond side never disagrees
+    # with what the user actually saw.
+    request_kind = request_kind_for(pending["tool_name"], pending["args"])
     final_args = payload.args if payload.args is not None else pending["args"]
     tool_result_text = await _build_tool_result_text(
         request_kind=request_kind,
@@ -662,6 +670,7 @@ async def _run_respond(
             approved=payload.approved,
             selection=payload.selection,
             value=payload.value,
+            ui_answer=payload.ui_answer,
         )
         await emitter.status("running")
 
@@ -706,13 +715,7 @@ async def _run_respond(
                 user_id=payload.user_id,
                 checkpoint=next_checkpoint,
             )
-            await emitter.input_request(
-                approval_id=re_pending.tool_call_id,
-                request_kind="approval",
-                tool=re_pending.tool,
-                tool_call_id=re_pending.tool_call_id,
-                args=re_pending.args,
-            )
+            await _emit_pending_input_request(emitter, re_pending)
             await emitter.status("paused")
             await store.update_run(
                 pool,
@@ -856,10 +859,90 @@ async def _build_tool_result_text(
         if not sel:
             return "(User submitted no selection.)"
         return f"User selected: {', '.join(sel)}"
+    if request_kind == "ui-part":
+        # The client's `respondBodyForUiAnswer` shim populates
+        # `value` with the formatted text (or `selection` for a
+        # `choice` answer) so the runner doesn't have to re-port
+        # `formatAnswerForChat`. Prefer the formatted text; fall back
+        # to the joined selection; finally a neutral marker so the
+        # model still gets a parseable tool_result.
+        if isinstance(value, str) and value:
+            return value
+        sel = selection or []
+        if sel:
+            return ", ".join(sel)
+        return "(User submitted no answer.)"
     # input
     if isinstance(value, str) and value:
         return value
     return "(User submitted no value.)"
+
+
+async def _emit_pending_input_request(
+    emitter: RunEmitter,
+    pending: Any,
+) -> None:
+    """Shared suspend emit. Classifies `request_kind` from the
+    pending tool name + args (single source of truth via
+    `request_kind_for`), and pulls out the kind-specific fields:
+
+    - `askUser` → `prompt` / `options` / `multi` come from args.
+    - `renderUI` → `ui_kind` + `ui_props` come from args.
+    - approval (anything else gated) → just tool + args.
+
+    Used by both the original suspend path in `_run_chunk` and the
+    re-suspend path in `_run_respond` so they emit identical shapes."""
+    args = pending.args if isinstance(pending.args, dict) else {}
+    kind = request_kind_for(pending.tool, args)
+
+    prompt: str | None = None
+    options: list[Any] | None = None
+    multi: bool | None = None
+    ui_kind: str | None = None
+    ui_props: dict[str, Any] | None = None
+
+    if kind in ("choice", "input"):
+        raw_prompt = args.get("prompt")
+        if isinstance(raw_prompt, str):
+            prompt = raw_prompt
+        raw_multi = args.get("multi")
+        if isinstance(raw_multi, bool):
+            multi = raw_multi
+        if kind == "choice":
+            from .events import InputRequestOption  # local import — avoid cycle
+
+            raw_options = args.get("options")
+            if isinstance(raw_options, list):
+                built: list[InputRequestOption] = []
+                for opt in raw_options:
+                    if not isinstance(opt, dict):
+                        continue
+                    opt_id = opt.get("id")
+                    opt_label = opt.get("label")
+                    if isinstance(opt_id, str) and isinstance(opt_label, str):
+                        built.append(InputRequestOption(id=opt_id, label=opt_label))
+                if built:
+                    options = built
+    elif kind == "ui-part":
+        raw_kind = args.get("kind")
+        raw_props = args.get("props")
+        if isinstance(raw_kind, str):
+            ui_kind = raw_kind
+        if isinstance(raw_props, dict):
+            ui_props = raw_props
+
+    await emitter.input_request(
+        approval_id=pending.tool_call_id,
+        request_kind=kind,
+        tool=pending.tool,
+        tool_call_id=pending.tool_call_id,
+        args=args,
+        prompt=prompt,
+        options=options,
+        multi=multi,
+        ui_kind=ui_kind,
+        ui_props=ui_props,
+    )
 
 
 async def _stub_step_fn(ctx: RunStepContext) -> RunStepOutcome:

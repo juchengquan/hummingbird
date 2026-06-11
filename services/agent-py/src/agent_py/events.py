@@ -168,8 +168,10 @@ class InputRequestOption:
 # Discriminator for what kind of human input the run is waiting on.
 # Defaults to `"approval"` (binary tool-approval, the original Phase 1
 # HITL mechanism); `"choice"` + `"input"` ride on the same machinery
-# with different payload shapes (askUser tool, Phase 5 of HITL).
-ApprovalRequestKind = Literal["approval", "choice", "input"]
+# with different payload shapes (askUser tool, Phase 5 of HITL);
+# `"ui-part"` is the structured-UI variant raised by the renderUI tool
+# (commit 3b of PLAN-generative-ui-parts).
+ApprovalRequestKind = Literal["approval", "choice", "input", "ui-part"]
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -182,8 +184,8 @@ class ApprovalEvent(TaskEventBase):
 
     On `request`: `request_kind` + `tool` + `tool_call_id` + `args`
     describe what's pending. On `response`: `approved` / `selection`
-    / `value` carry the user's answer (one of the three is set based
-    on `request_kind`)."""
+    / `value` / `ui_answer` carry the user's answer (one of them is
+    set based on `request_kind`)."""
 
     kind: Literal["approval"] = field(default="approval", init=False)
     approval_id: str
@@ -195,10 +197,20 @@ class ApprovalEvent(TaskEventBase):
     prompt: str | None = None
     options: list[InputRequestOption] | None = None
     multi: bool | None = None
+    # Generative-UI request fields (`request_kind == "ui-part"`).
+    # Mirror of `uiKind` / `uiProps` on the TS event. The client uses
+    # them to render the right component without having to re-parse
+    # `args`.
+    ui_kind: str | None = None
+    ui_props: dict[str, object] | None = None
     # Response-only fields:
     approved: bool | None = None
     selection: list[str] | None = None
     value: str | None = None
+    # Generative-UI response field. Mirror of `uiAnswer` on the TS
+    # event — the structured answer the client built via
+    # `respondBodyForUiAnswer`.
+    ui_answer: dict[str, object] | None = None
 
 
 # Discriminated union of the kinds the Python service emits today
@@ -276,12 +288,18 @@ def event_to_row_payload(event: TaskEvent) -> dict[str, object]:
             approval_payload["options"] = [{"id": o.id, "label": o.label} for o in event.options]
         if event.multi is not None:
             approval_payload["multi"] = event.multi
+        if event.ui_kind is not None:
+            approval_payload["uiKind"] = event.ui_kind
+        if event.ui_props is not None:
+            approval_payload["uiProps"] = event.ui_props
         if event.approved is not None:
             approval_payload["approved"] = event.approved
         if event.selection is not None:
             approval_payload["selection"] = event.selection
         if event.value is not None:
             approval_payload["value"] = event.value
+        if event.ui_answer is not None:
+            approval_payload["uiAnswer"] = event.ui_answer
         return approval_payload
     # step_start / step_end carry no payload-only fields.
     return {}

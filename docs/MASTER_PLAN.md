@@ -130,7 +130,7 @@ shipped this session; commit 3 (task-mode resolution) remains.**
 | Plan | Effort | Note |
 |---|---|---|
 | [MCP Apps](PLAN-mcp-apps.md) | M | Composes the sandbox renderer + MCP integration |
-| 🪜 [Generative UI parts](PLAN-generative-ui-parts.md) | M | Commits 1 + 2 shipped (#179, #181); commit 3 = task-mode resolution remains |
+| 🪜 [Generative UI parts](PLAN-generative-ui-parts.md) | M | Commits 1 + 2 + 3a + 3b (agent-py) shipped (#179, #181, #184, this PR); 3b (agent-ts) remains, gated on that service's HITL pipeline |
 | [Portable skills (SKILL.md)](PLAN-portable-skills.md) | S–M | Mirrors persona share-by-URL |
 | [Smart model routing](PLAN-model-routing.md) | M | Cost lever; `openrouter/auto` is precedent |
 | [Read-aloud / TTS](PLAN-tts-voice-output.md) | M | Voice-out; foundation for voice mode |

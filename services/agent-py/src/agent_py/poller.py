@@ -50,10 +50,10 @@ async def _default_sleep(seconds: float) -> None:
 def _respond_payload_from_job(job: ClaimedJob) -> executor.RespondActionPayload | None:
     """Parse a `respond` job's payload into a typed RespondActionPayload.
 
-    The TS route writes `{requestId, approved?, selection?, value?, args?}`
-    into `task_jobs.payload`. Missing `requestId` is fatal (no way to
-    find the pending tool call); the other fields are kind-specific
-    and any subset may be set or none."""
+    The TS route writes `{requestId, approved?, selection?, value?,
+    uiAnswer?, args?}` into `task_jobs.payload`. Missing `requestId`
+    is fatal (no way to find the pending tool call); the other fields
+    are kind-specific and any subset may be set or none."""
     payload_raw = job.payload or {}
     request_id = payload_raw.get("requestId")
     if not isinstance(request_id, str) or not request_id:
@@ -66,6 +66,7 @@ def _respond_payload_from_job(job: ClaimedJob) -> executor.RespondActionPayload 
     approved_raw = payload_raw.get("approved")
     selection_raw = payload_raw.get("selection")
     value_raw = payload_raw.get("value")
+    ui_answer_raw = payload_raw.get("uiAnswer")
     args_raw = payload_raw.get("args")
     # Frozen dataclass — clone with `dataclasses.replace` for each
     # optional field that's set. Explicit per-field replace keeps
@@ -79,6 +80,8 @@ def _respond_payload_from_job(job: ClaimedJob) -> executor.RespondActionPayload 
         )
     if isinstance(value_raw, str):
         out = dataclasses.replace(out, value=value_raw)
+    if isinstance(ui_answer_raw, dict):
+        out = dataclasses.replace(out, ui_answer=ui_answer_raw)
     if isinstance(args_raw, dict):
         out = dataclasses.replace(out, args=args_raw)
     return out
