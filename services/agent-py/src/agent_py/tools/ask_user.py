@@ -65,9 +65,7 @@ async def _ask_user_execute_fallback(_args: dict[str, Any]) -> ToolInvocationRes
     first. If this fires, gating is broken; raise a clear ToolError
     so the failure is visible in the event stream instead of
     silently emitting a placeholder result."""
-    raise ToolError(
-        "askUser was invoked instead of suspended — gating is misconfigured"
-    )
+    raise ToolError("askUser was invoked instead of suspended — gating is misconfigured")
 
 
 def build_ask_user_tool() -> ToolDescriptor:

@@ -74,9 +74,7 @@ async def _render_ui_execute_fallback(_args: dict[str, Any]) -> ToolInvocationRe
     first. If this fires, gating is broken; raise a clear ToolError
     so the failure is visible instead of silently emitting a
     placeholder result."""
-    raise ToolError(
-        "renderUI was invoked instead of suspended — gating is misconfigured"
-    )
+    raise ToolError("renderUI was invoked instead of suspended — gating is misconfigured")
 
 
 def build_render_ui_tool() -> ToolDescriptor:

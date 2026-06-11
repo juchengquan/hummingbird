@@ -106,9 +106,7 @@ def test_gated_tools_includes_always_gated_no_execute_tools() -> None:
     assert RENDER_UI_TOOL_NAME in executor._gated_tools_from({})
 
     # With an explicit allow-list, the union is preserved.
-    gated = executor._gated_tools_from(
-        {"config": {"requireApprovalFor": ["myMcp__write"]}}
-    )
+    gated = executor._gated_tools_from({"config": {"requireApprovalFor": ["myMcp__write"]}})
     assert "myMcp__write" in gated
     assert ASK_USER_TOOL_NAME in gated
     assert RENDER_UI_TOOL_NAME in gated
@@ -213,9 +211,7 @@ async def test_suspend_on_ask_user_choice_emits_request_kind_choice_with_options
         },
     )
 
-    requests = [
-        e for e in collected if isinstance(e, ApprovalEvent) and e.phase == "request"
-    ]
+    requests = [e for e in collected if isinstance(e, ApprovalEvent) and e.phase == "request"]
     assert len(requests) == 1
     req = requests[0]
     assert req.request_kind == "choice"
@@ -236,9 +232,7 @@ async def test_suspend_on_ask_user_input_emits_request_kind_input_no_options() -
         args={"prompt": "What's your name?"},
     )
 
-    requests = [
-        e for e in collected if isinstance(e, ApprovalEvent) and e.phase == "request"
-    ]
+    requests = [e for e in collected if isinstance(e, ApprovalEvent) and e.phase == "request"]
     assert len(requests) == 1
     req = requests[0]
     assert req.request_kind == "input"
@@ -263,9 +257,7 @@ async def test_suspend_on_render_ui_emits_request_kind_ui_part_with_ui_fields() 
         },
     )
 
-    requests = [
-        e for e in collected if isinstance(e, ApprovalEvent) and e.phase == "request"
-    ]
+    requests = [e for e in collected if isinstance(e, ApprovalEvent) and e.phase == "request"]
     assert len(requests) == 1
     req = requests[0]
     assert req.request_kind == "ui-part"
@@ -370,9 +362,7 @@ async def test_respond_to_ask_user_choice_injects_selection_as_tool_result() -> 
     assert tool_result["content"] == "User selected: prod"
 
     # input_response carries the selection back to the client.
-    responses = [
-        e for e in collected if isinstance(e, ApprovalEvent) and e.phase == "response"
-    ]
+    responses = [e for e in collected if isinstance(e, ApprovalEvent) and e.phase == "response"]
     assert len(responses) == 1
     assert responses[0].selection == ["prod"]
 
@@ -399,9 +389,7 @@ async def test_respond_to_ask_user_input_injects_raw_value_as_tool_result() -> N
     tool_result = [m for m in saved["messages"] if m.get("role") == "user"][-1]["content"][0]
     assert tool_result["content"] == "Alice"
 
-    responses = [
-        e for e in collected if isinstance(e, ApprovalEvent) and e.phase == "response"
-    ]
+    responses = [e for e in collected if isinstance(e, ApprovalEvent) and e.phase == "response"]
     assert responses[0].value == "Alice"
 
 
@@ -433,9 +421,7 @@ async def test_respond_to_render_ui_uses_back_compat_value_as_tool_result() -> N
     tool_result = [m for m in saved["messages"] if m.get("role") == "user"][-1]["content"][0]
     assert tool_result["content"] == "Ship"
 
-    responses = [
-        e for e in collected if isinstance(e, ApprovalEvent) and e.phase == "response"
-    ]
+    responses = [e for e in collected if isinstance(e, ApprovalEvent) and e.phase == "response"]
     assert len(responses) == 1
     # uiAnswer rides on the response event so the client can also
     # mark the part as resolved with the structured answer.

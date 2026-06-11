@@ -28,9 +28,7 @@ RequestKind = Literal["approval", "choice", "input", "ui-part"]
 # request's `requireApprovalFor` list. These are no-execute HITL
 # tools — they suspend the run instead of executing — so the gate
 # must apply on every run that registers them.
-ALWAYS_GATED_TOOL_NAMES: frozenset[str] = frozenset(
-    {ASK_USER_TOOL_NAME, RENDER_UI_TOOL_NAME}
-)
+ALWAYS_GATED_TOOL_NAMES: frozenset[str] = frozenset({ASK_USER_TOOL_NAME, RENDER_UI_TOOL_NAME})
 
 
 def request_kind_for(tool_name: str, args: Any) -> RequestKind:
