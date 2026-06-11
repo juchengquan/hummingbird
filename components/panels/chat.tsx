@@ -22,6 +22,7 @@ import { ContextPicker } from "@/components/chat/context-picker"
 import { SlashAutocomplete } from "@/components/panels/slash-autocomplete"
 import { SlashHelpDialog } from "@/components/panels/slash-help-dialog"
 import { AgentsDialog } from "@/components/panels/agents-dialog"
+import { SkillsDialog } from "@/components/panels/skills-dialog"
 import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { SKILLS } from "@/shared/skills/registry"
 import { resolveSkill, type SkillId } from "@/shared/skills/types"
@@ -1134,6 +1135,10 @@ export function ChatPanel() {
       <AgentsDialog
         open={slashCommands.personasOpen}
         onOpenChange={slashCommands.setPersonasOpen}
+      />
+      <SkillsDialog
+        open={slashCommands.skillsOpen}
+        onOpenChange={slashCommands.setSkillsOpen}
       />
     </div>
   )
