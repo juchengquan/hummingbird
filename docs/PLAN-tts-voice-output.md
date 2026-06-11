@@ -1,9 +1,16 @@
 # Plan: Read-aloud / TTS voice output
 
-Status: **planning.** Promoted from [MASTER_PLAN § Later](MASTER_PLAN.md)
-(fourth research round, 2026-06-09) to **Next**. Scope: **M** (one PR,
-phased commits). Origin: 2026 streaming open-source TTS — see
-[Sources](#sources).
+Status: **⏸ deferred** (parked 2026-06-11). Drafted in the
+2026-06-09 fourth research round; the rest of Tier 2 + half of
+Tier 1 drew down ahead of it without anyone hitting "I wish
+Hummingbird could read this aloud" as a real pain point. **Re-open
+when:** (a) a user actually requests voice-out, (b) full voice mode
+(STT-in + barge-in) goes on the roadmap and we need the output half
+as a foundation, or (c) a self-hostable open-source TTS adapter
+becomes a 1-day plug-in (the field is moving fast — Chatterbox-Turbo,
+MeloTTS, Hume TADA already qualify). Origin: 2026 streaming
+open-source TTS — see [Sources](#sources). Scope when reopened:
+**M** (one PR, phased commits).
 
 ## Why
 
