@@ -448,7 +448,7 @@ function ChatMessageImpl({
                   message.mcpApps &&
                   message.mcpApps.length > 0 &&
                   message.mcpApps.map((app) => (
-                    <McpAppFrame key={app.id} app={app} />
+                    <McpAppFrame key={app.id} app={app} messageId={message.id} />
                   ))}
                 {isUser &&
                   message.attachedFileIds &&

@@ -176,3 +176,39 @@ describe("v<26 — editorPrefs.inlineComplete added", () => {
     ).not.toThrow()
   })
 })
+
+describe("v<28 — MCP App polish (resourceUri + truncated on McpAppPart)", () => {
+  test("marker-only step: existing mcpApps entries pass through untouched", () => {
+    // The new fields are optional; existing parts (no resourceUri /
+    // truncated) keep rendering as they did, just without the
+    // refresh button. The migration is a marker bump to protect
+    // downgrades from silently losing a phase-3 write.
+    const before = {
+      conversations: [
+        {
+          id: "c1",
+          messages: [
+            {
+              id: "m1",
+              role: "assistant",
+              mcpApps: [
+                { id: "app1", serverId: "srv1", html: "<h1>old</h1>" },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+    const out = runMigrations(before, 27) as typeof before
+    expect(out.conversations[0].messages[0].mcpApps).toEqual([
+      { id: "app1", serverId: "srv1", html: "<h1>old</h1>" },
+    ])
+  })
+
+  test("no-op when there are no conversations / no mcpApps", () => {
+    expect(() => runMigrations({}, 27)).not.toThrow()
+    expect(() =>
+      runMigrations({ conversations: [{ id: "c1", messages: [] }] }, 27),
+    ).not.toThrow()
+  })
+})

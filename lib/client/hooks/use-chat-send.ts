@@ -662,6 +662,12 @@ export function useChatSend(): UseChatSendResult {
                   id: parsed.id,
                   serverId: parsed.serverId,
                   html: parsed.html,
+                  // Phase 3 — optional on the wire; included so the
+                  // refresh button + truncation stub work.
+                  ...(parsed.resourceUri
+                    ? { resourceUri: parsed.resourceUri }
+                    : {}),
+                  ...(parsed.truncated ? { truncated: true } : {}),
                 })
               }
             } else if (parsed.type === "ui_part") {

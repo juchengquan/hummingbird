@@ -192,17 +192,31 @@ export class ChatSseEmitter {
   /** MCP App — emits a `data-mcp-app` AI SDK v5 custom data part
    *  carrying bundled HTML read from an MCP tool's `ui://` resource. The
    *  client maps it to `{ type: "mcp_app", ... }` and appends it to
-   *  `Message.mcpApps`, rendering it in a sandboxed iframe. Read-only in
-   *  phase 1 (no tool-call bridge). See `docs/PLAN-mcp-apps.md`. */
-  mcpApp(payload: { id: string; serverId: string; html: string }): void {
+   *  `Message.mcpApps`, rendering it in a sandboxed iframe. Phase 1:
+   *  read-only render. Phase 2: postMessage tool-call bridge. Phase 3
+   *  (this PR): `resourceUri` (for the refresh affordance) +
+   *  `truncated` (for the "UI too large" stub when the read body
+   *  exceeded the size cap). See `docs/PLAN-mcp-apps.md`. */
+  mcpApp(payload: {
+    id: string
+    serverId: string
+    html: string
+    resourceUri?: string
+    truncated?: boolean
+  }): void {
+    // Only include optional fields when set so the wire payload stays
+    // minimal for the common (non-truncated, modern-client) case.
+    const data: Record<string, unknown> = {
+      id: payload.id,
+      serverId: payload.serverId,
+      html: payload.html,
+    }
+    if (payload.resourceUri) data.resourceUri = payload.resourceUri
+    if (payload.truncated) data.truncated = true
     this.send({
       type: "data-mcp-app",
       id: payload.id,
-      data: {
-        id: payload.id,
-        serverId: payload.serverId,
-        html: payload.html,
-      },
+      data,
     })
   }
 

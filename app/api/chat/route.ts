@@ -637,12 +637,34 @@ export async function POST(req: NextRequest) {
                     app.uiResourceUri
                   )
                   const html = res.text
-                  if (html && html.length <= MCP_APP_MAX_BYTES) {
-                    emitter.mcpApp({
-                      id: p.toolCallId ?? app.uiResourceUri,
-                      serverId: app.server.id,
-                      html,
-                    })
+                  if (html) {
+                    const partId = p.toolCallId ?? app.uiResourceUri
+                    if (html.length <= MCP_APP_MAX_BYTES) {
+                      emitter.mcpApp({
+                        id: partId,
+                        serverId: app.server.id,
+                        html,
+                        // Phase 3: round-trip the source uri so the
+                        // client refresh button can re-read it.
+                        resourceUri: app.uiResourceUri,
+                      })
+                    } else {
+                      // Phase 3: oversized read — emit a sentinel
+                      // panel so the client can render an explicit
+                      // "UI too large" stub instead of silently
+                      // dropping. The HTML body is a tiny static
+                      // placeholder (the renderer overrides it
+                      // anyway when `truncated` is set), but we keep
+                      // it non-empty in case an older client ignores
+                      // the flag.
+                      emitter.mcpApp({
+                        id: partId,
+                        serverId: app.server.id,
+                        html: "<!-- truncated -->",
+                        resourceUri: app.uiResourceUri,
+                        truncated: true,
+                      })
+                    }
                   }
                 } catch (err) {
                   console.warn(

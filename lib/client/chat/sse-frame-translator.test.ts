@@ -220,4 +220,57 @@ describe("translateFrame — lifecycle + edge cases", () => {
     ).toBeNull()
     expect(translateFrame('{"type":"data-mcp-app"}')).toBeNull()
   })
+
+  test("data-mcp-app — phase 3 fields (resourceUri + truncated) round-trip", () => {
+    const out = translateFrame(
+      JSON.stringify({
+        type: "data-mcp-app",
+        id: "call-9",
+        data: {
+          id: "call-9",
+          serverId: "srv1",
+          html: "<!-- truncated -->",
+          resourceUri: "ui://widget/main.html",
+          truncated: true,
+        },
+      }),
+    )
+    expect(out?.type).toBe("mcp_app")
+    expect(out?.resourceUri).toBe("ui://widget/main.html")
+    expect(out?.truncated).toBe(true)
+  })
+
+  test("data-mcp-app — phase 3 fields are optional (pre-phase-3 emit unchanged)", () => {
+    // A server that hasn't shipped phase 3 omits the new fields; the
+    // translator must still accept the frame and just leave the new
+    // fields undefined.
+    const out = translateFrame(
+      JSON.stringify({
+        type: "data-mcp-app",
+        id: "call-9",
+        data: { id: "call-9", serverId: "srv1", html: "<h1>hi</h1>" },
+      }),
+    )
+    expect(out?.type).toBe("mcp_app")
+    expect(out?.resourceUri).toBeUndefined()
+    expect(out?.truncated).toBeUndefined()
+  })
+
+  test("data-mcp-app — truncated:false on the wire is normalised to undefined (only `true` counts)", () => {
+    // Defensive — don't surface an explicit `false` as if it were a
+    // distinct state; the absence of the flag means "not truncated".
+    const out = translateFrame(
+      JSON.stringify({
+        type: "data-mcp-app",
+        id: "call-9",
+        data: {
+          id: "call-9",
+          serverId: "srv1",
+          html: "<h1>hi</h1>",
+          truncated: false,
+        },
+      }),
+    )
+    expect(out?.truncated).toBeUndefined()
+  })
 })
