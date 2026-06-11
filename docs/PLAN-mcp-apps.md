@@ -1,6 +1,10 @@
 # Plan: MCP Apps — interactive server-driven UI inside chat
 
-Status: **planning.** Drafted in the 2026-06-09 market refresh; item
+Status: **🪜 phased — phase 1 (read-only render) + phase 2 (tool-call
+bridge) shipped; persistence/refresh polish remains.** Phase 1: #188
+(2026-06-11). Phase 2 (this PR): the `mcp-app` postMessage bridge — a
+panel can call a tool back through `/api/mcp/:id/call` (same-server only,
+per-app call cap). Drafted in the 2026-06-09 market refresh; item
 from [MASTER_PLAN § Later](MASTER_PLAN.md) promoted to **Next**. Scope:
 **M** (~400–600 LOC + a postMessage protocol shim, one PR with three
 commits). Origin: the MCP Apps extension (announced 2026-01-26, spec
