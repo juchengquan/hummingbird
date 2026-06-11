@@ -20,6 +20,7 @@ import {
   Pencil,
   Plus,
   UserCircle,
+  Wand2,
 } from "lucide-react"
 
 export type CommandArgKind = "none" | "optional" | "required"
@@ -31,6 +32,7 @@ export type CommandId =
   | "model"
   | "help"
   | "personas"
+  | "skills"
 
 export interface CommandDescriptor {
   id: CommandId
@@ -103,6 +105,14 @@ export const COMMANDS: CommandDescriptor[] = [
     description: "Create, edit, and pin custom AI personas (`PLAN-custom-agents.md`)",
     argKind: "none",
     icon: UserCircle,
+  },
+  {
+    id: "skills",
+    trigger: "skills",
+    title: "Manage skills",
+    description: "Author, import, and toggle portable SKILL.md skills (`PLAN-portable-skills.md`)",
+    argKind: "none",
+    icon: Wand2,
   },
 ]
 

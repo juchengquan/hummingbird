@@ -40,6 +40,10 @@ export interface UseSlashCommandsResult {
    *  (`PLAN-custom-agents.md`). */
   personasOpen: boolean
   setPersonasOpen: (open: boolean) => void
+  /** `/skills` opens the manage-skills dialog
+   *  (`PLAN-portable-skills.md`). */
+  skillsOpen: boolean
+  setSkillsOpen: (open: boolean) => void
 }
 
 export function useSlashCommands({
@@ -55,6 +59,7 @@ export function useSlashCommands({
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
   const [personasOpen, setPersonasOpen] = useState(false)
+  const [skillsOpen, setSkillsOpen] = useState(false)
 
   const confirmClear = useCallback(() => {
     clearMessages()
@@ -116,6 +121,10 @@ export function useSlashCommands({
           setPersonasOpen(true)
           break
         }
+        case "skills": {
+          setSkillsOpen(true)
+          break
+        }
       }
     },
     [
@@ -137,5 +146,7 @@ export function useSlashCommands({
     setHelpOpen,
     personasOpen,
     setPersonasOpen,
+    skillsOpen,
+    setSkillsOpen,
   }
 }

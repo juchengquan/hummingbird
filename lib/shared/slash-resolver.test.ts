@@ -91,9 +91,11 @@ describe("matchSlashMenu", () => {
   })
 
   test("partial filters across all kinds", () => {
-    // "s" prefixes the `search`/`s` skill but no command/mode.
+    // "s" prefixes s-skills (search/…) AND the `skills` command — a
+    // genuine cross-kind partial.
     const s = matchSlashMenu("s")
-    expect(s.every((e) => e.kind === "skill")).toBe(true)
+    expect(s.some((e) => e.kind === "skill")).toBe(true)
+    expect(s.some((e) => e.kind === "command" && e.id === "skills")).toBe(true)
     // "cl" prefixes the clear command only.
     const cl = matchSlashMenu("cl")
     expect(cl).toHaveLength(1)
