@@ -72,6 +72,14 @@ export interface MessagesSlice {
     messageId: string,
     part: import("@/shared/generative-ui/schemas").PersistedUiPart,
   ) => void
+  /** Append one MCP App panel to the assistant message — emitted by an
+   *  MCP tool that declared a `ui://` resource, dispatched by
+   *  `use-chat-send` on `mcp_app` SSE frames. Idempotent on
+   *  `(messageId, part.id)`. See `docs/PLAN-mcp-apps.md`. */
+  appendMessageMcpApp: (
+    messageId: string,
+    part: import("@/shared/types").McpAppPart,
+  ) => void
   /** Resolve a generative-UI part — stamp `answeredAt` + persist the
    *  answer payload so the inert render survives reload. No-op when
    *  the message / part can't be found, or when the part has already
@@ -356,6 +364,21 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
             // identity-stable render path doesn't churn.
             if (existing.some((p) => p.id === part.id)) return m
             return { ...m, uiParts: [...existing, part] }
+          }),
+        }
+      }),
+    })),
+  appendMessageMcpApp: (messageId, part) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) => {
+        if (!c.messages.some((m) => m.id === messageId)) return c
+        return {
+          ...c,
+          messages: c.messages.map((m) => {
+            if (m.id !== messageId) return m
+            const existing = m.mcpApps ?? []
+            if (existing.some((p) => p.id === part.id)) return m
+            return { ...m, mcpApps: [...existing, part] }
           }),
         }
       }),

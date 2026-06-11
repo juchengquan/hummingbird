@@ -85,13 +85,19 @@ export async function discover(
 
     if (serverCaps.tools) {
       const res = await client.listTools()
-      out.tools = res.tools.map(
-        (t): McpToolDescriptor => ({
+      out.tools = res.tools.map((t): McpToolDescriptor => {
+        // MCP Apps (ext-apps): a tool may point at a `ui://` resource
+        // via `_meta.ui.resourceUri`. Captured defensively (the field is
+        // loosely typed + still RC); absent for ordinary tools.
+        const ui = (t as { _meta?: { ui?: { resourceUri?: unknown } } })._meta
+          ?.ui?.resourceUri
+        return {
           name: t.name,
           description: t.description,
           inputSchema: t.inputSchema,
-        })
-      )
+          ...(typeof ui === "string" && ui ? { uiResourceUri: ui } : {}),
+        }
+      })
     }
     if (serverCaps.resources) {
       const res = await client.listResources()

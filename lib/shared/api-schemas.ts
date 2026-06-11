@@ -112,6 +112,10 @@ const McpRequestServerSchema = z.object({
             description: z.string().max(2000).optional(),
             // JSON schema — kept loose; we forward verbatim to the AI SDK.
             inputSchema: z.unknown().optional(),
+            // MCP Apps: ui:// resource the tool renders (local-mode
+            // servers transmit it; absent for ordinary tools). See
+            // docs/PLAN-mcp-apps.md.
+            uiResourceUri: z.string().max(2000).optional(),
           })
         )
         .max(64)

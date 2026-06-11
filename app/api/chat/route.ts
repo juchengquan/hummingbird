@@ -19,6 +19,7 @@ import {
 import type { SkillId } from '@/shared/skills/types'
 import { isSearchFilesToolName, isWebSearchToolName } from '@/shared/skills/types'
 import { buildMcpTool, mcpToolName } from '@/server/mcp/tools'
+import { readResource } from '@/server/mcp/client'
 import {
   RENDER_UI_PROMPT_FRAGMENT,
   RENDER_UI_TOOL_NAME,
@@ -47,6 +48,10 @@ import type { AttachmentPayload } from '@/shared/attachments'
 // are budget hints to the model; this is the abuse gate that runs
 // across turns. See the call site for the rationale.
 const chatWebToolLimit = createSlidingWindow({ windowMs: 60_000, max: 20 })
+
+// Cap on an MCP App's `ui://` bundle (read-only render). Oversized
+// panels are skipped rather than streamed. See docs/PLAN-mcp-apps.md.
+const MCP_APP_MAX_BYTES = 512_000
 
 // Per-IP rate limit for image generation. Separate bucket because
 // image gen costs ~1–3¢ per call vs. fractions of a cent for the web
@@ -298,11 +303,22 @@ export async function POST(req: NextRequest) {
     body.mcpServers
   )
   const mcpToolNames: string[] = []
+  // MCP Apps: tool-name → the server + ui:// resource it renders. Only
+  // populated for tools that declared `_meta.ui` — empty (and a no-op)
+  // for every server that doesn't use the extension. See
+  // `docs/PLAN-mcp-apps.md`.
+  const mcpUiApps = new Map<
+    string,
+    { server: EffectiveMcpServer; uiResourceUri: string }
+  >()
   for (const server of mcpServers) {
     for (const descriptor of server.capabilities?.tools ?? []) {
       const name = mcpToolName(server.id, descriptor.name)
       tools[name] = buildMcpTool(server, descriptor, server.credentials)
       mcpToolNames.push(name)
+      if (descriptor.uiResourceUri) {
+        mcpUiApps.set(name, { server, uiResourceUri: descriptor.uiResourceUri })
+      }
     }
   }
   // Generative-UI `renderUI` — always-on system tool (no chip in the
@@ -603,6 +619,35 @@ export async function POST(req: NextRequest) {
                     kind: out.kind,
                     props: out.props,
                   })
+                }
+              }
+              // MCP Apps: when the tool that just ran declared a `ui://`
+              // resource, read it server-side and emit a `data-mcp-app`
+              // frame the client renders in a sandboxed iframe. No-op
+              // unless the tool used the extension. Read failures are
+              // swallowed — the text tool-result already reached the
+              // model, so a missing panel must not fail the turn. See
+              // `docs/PLAN-mcp-apps.md`.
+              if (p.toolName && mcpUiApps.has(p.toolName)) {
+                const app = mcpUiApps.get(p.toolName)!
+                try {
+                  const res = await readResource(
+                    app.server,
+                    app.server.credentials,
+                    app.uiResourceUri
+                  )
+                  const html = res.text
+                  if (html && html.length <= MCP_APP_MAX_BYTES) {
+                    emitter.mcpApp({
+                      id: p.toolCallId ?? app.uiResourceUri,
+                      serverId: app.server.id,
+                      html,
+                    })
+                  }
+                } catch (err) {
+                  console.warn(
+                    `[chat] mcp-app read failed (server=${app.server.id}, uri=${app.uiResourceUri}, msg=${err instanceof Error ? err.message : String(err)})`
+                  )
                 }
               }
             } else if (part.type === 'tool-error') {

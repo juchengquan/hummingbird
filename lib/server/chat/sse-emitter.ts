@@ -189,6 +189,23 @@ export class ChatSseEmitter {
     })
   }
 
+  /** MCP App — emits a `data-mcp-app` AI SDK v5 custom data part
+   *  carrying bundled HTML read from an MCP tool's `ui://` resource. The
+   *  client maps it to `{ type: "mcp_app", ... }` and appends it to
+   *  `Message.mcpApps`, rendering it in a sandboxed iframe. Read-only in
+   *  phase 1 (no tool-call bridge). See `docs/PLAN-mcp-apps.md`. */
+  mcpApp(payload: { id: string; serverId: string; html: string }): void {
+    this.send({
+      type: "data-mcp-app",
+      id: payload.id,
+      data: {
+        id: payload.id,
+        serverId: payload.serverId,
+        html: payload.html,
+      },
+    })
+  }
+
   error(code: string, message: string): void {
     this.closeAllChannels()
     // AI SDK error frames carry the human-readable text on
