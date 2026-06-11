@@ -1,9 +1,14 @@
 # Plan: Inline editor ghost-text autocomplete
 
-Status: **planning.** Promoted from [MASTER_PLAN § Later](MASTER_PLAN.md)
-(third research round, 2026-06-09) to **Next**. Scope: **S–M** — the
-Plate Copilot plugin is *already installed*, so most of the work is the
-completion endpoint + tuning, not a new subsystem. Origin: the 2026
+Status: **✅ shipped** — [#186](https://github.com/juchengquan/hummingbird/pull/186)
+on 2026-06-11. Plate's already-installed `CopilotKit` plugin wired to a
+new streamed `/api/ai/complete` route (`maxOutputTokens: 60`, `temp:
+0.2`, default `google/gemini-2.5-flash`), per-IP 60/min sliding window.
+Per-user **opt-in toggle** in the account menu (Wand2 icon →
+`editorPrefs.inlineComplete: boolean`, default off); `STORE_VERSION`
+25 → 26 with a backfill migration. The dead `/api/ai/copilot` template
+stub deleted. Two commits: route + prompt builder + schema + tests
+(commit 1), CopilotKit wire + toggle (commit 2). Origin: the 2026
 Copilot-for-prose bar — see [Sources](#sources).
 
 ## Why
