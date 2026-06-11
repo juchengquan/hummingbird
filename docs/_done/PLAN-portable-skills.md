@@ -1,9 +1,13 @@
 # Plan: Portable Agent Skills (SKILL.md) + skill sharing
 
-Status: **planning.** Drafted in the 2026-06-09 market refresh; item
-from [MASTER_PLAN § Later](MASTER_PLAN.md) promoted to **Next**. Scope:
-**S–M** (~250–400 LOC; a format adapter + an import surface + a library
-listing, one PR). Origin: Anthropic Agent Skills — see
+Status: **✅ shipped (v1)** — [#187](https://github.com/juchengquan/hummingbird/pull/187)
+on 2026-06-11. SKILL.md format + storage + library listing +
+prompt-builder injection (catalogue line per enabled skill, body
+only when engaged). `userSkills` slice + `STORE_VERSION` 26 → 27
+backfill. Bundled executable scripts are reopen / future work —
+gated on the [code interpreter](../PLAN-code-interpreter.md) so the
+sandbox security posture is in place first. Drafted in the
+2026-06-09 market refresh. Origin: Anthropic Agent Skills — see
 [Sources](#sources).
 
 ## Why

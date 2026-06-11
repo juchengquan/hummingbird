@@ -1,9 +1,18 @@
 # Plan: Semantic caching for deterministic calls
 
-Status: **planning.** Promoted from [MASTER_PLAN § Later](MASTER_PLAN.md)
-(second research round, 2026-06-09) to **Next**. Scope: **M** (phased —
-an exact-key cache first, semantic similarity once an embedding pipeline
-exists). Origin: 2026 semantic-caching practice — see [Sources](#sources).
+Status: **🪜 phased — Phase 1 (exact-key cache) shipped; Phase 2
+(embedding-similarity) gated on the embedding pipeline.** Phase 1:
+[#183](https://github.com/juchengquan/hummingbird/pull/183) on
+2026-06-10 — `lib/server/cache/response-cache.ts` (in-process
+bounded LRU + TTL, key = SHA-256 over `[CACHE_VERSION, kind, model,
+stableStringify(input)]`); `/api/summarize` all four modes +
+`/api/extract` cache success payloads only. Implementation note: used
+an in-process cache rather than the Supabase table the plan sketched
+because those routes have no Supabase session today (would mean
+wiring per-user auth in — scope creep). Promoted from
+[MASTER_PLAN § Later](MASTER_PLAN.md) (second research round,
+2026-06-09) to **Next**. Origin: 2026 semantic-caching practice — see
+[Sources](#sources).
 
 ## Why
 

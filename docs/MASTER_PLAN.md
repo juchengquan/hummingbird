@@ -8,36 +8,41 @@ parking-lot idea — plus the conventions for keeping this file honest.
 > still lives in `PLAN-*.md` — active plans in `docs/`, archived plans
 > in [`docs/_done/`](_done/).
 
-Last updated: **2026-06-10** — see [Recent activity](#recent-activity)
+Last updated: **2026-06-11** — see [Recent activity](#recent-activity)
 just below for the rolling pulse, and the
 [Shipped log](#shipped-log-newest-first) further down for the full
-chronological record. **2026-06-10 session:** four PRs shipped from the
-Tier 1 / Tier 2 queues — reasoning-effort control (#178), generative-UI
-commits 1 + 2 (#179, #181), and native structured outputs (#180). The
-prior 2026-06-09 pass was a **market refresh**: five new distinctive
-ideas added below, and three previously-planned items (Langfuse, Aider
-editor pair, accurate token counting) deprioritised into
+chronological record. **2026-06-10 → 2026-06-11 burst:** seven PRs
+shipped from the Tier 1 / Tier 2 queues — exact-key cache (#183),
+smart model routing (#185), inline editor autocomplete (#186),
+portable skills v1 (#187), MCP Apps phases 1 + 2 (#188, #189), and
+the agent-py side of generative-UI 3b (#190). That closes **all of
+Tier 1** and most of the originally-named Tier 2. The prior
+2026-06-09 pass was a **market refresh**: five new distinctive
+ideas added below, and three previously-planned items (Langfuse,
+Aider editor pair, accurate token counting) deprioritised into
 [Parked / low priority](#parked--low-priority).
 
 ---
 
 ## Status snapshot
 
-- **25 active plans** in `docs/` (planning / phased) — two Tier 1
-  quick wins archived this session (reasoning-effort control,
-  structured outputs) on top of the 20 from the 2026-06-09 refresh.
+- **26 active plans** in `docs/` (planning / phased) — three plans
+  archived this burst (inline autocomplete, smart model routing,
+  portable skills) on top of the four-PR session log already noted.
   Active plans are ranked in
   [Choosing what to build first](#choosing-what-to-build-first); the
   full set is in [Next — planned work](#next--planned-work-have-a-plan).
 - **3 parked / low-priority** plans (Langfuse, Aider editor pair,
   typed prompt variables) + accurate token counting. See
   [Parked / low priority](#parked--low-priority).
-- **32 fully-shipped plans archived** under [`docs/_done/`](_done/).
+- **39 fully-shipped plans archived** under [`docs/_done/`](_done/).
 - **Nothing currently in flight** (no branch with active work that
   doesn't already have a PR).
-- **Latest ships** (2026-06-10, in chronological order): #178
-  (reasoning-effort control) → #179 (generative-UI commit 1) → #180
-  (structured outputs) → #181 (generative-UI commit 2). Detail in
+- **Latest ships** (2026-06-10 → 2026-06-11, in chronological order):
+  #183 (exact-key cache) → #184 (generative-UI 3a) → #185 (smart
+  model routing) → #186 (inline editor autocomplete) → #187 (portable
+  skills v1) → #188 (MCP Apps phase 1) → #189 (MCP Apps phase 2) →
+  #190 (generative-UI 3b agent-py). Detail in
   [Recent activity](#recent-activity).
 
 ## Status legend
@@ -75,23 +80,18 @@ scheduling**) is shipped — its plans live in
 | 🪜 [Cross-product inspirations menu](PLAN-cross-product-inspirations.md) | 7 of 14 shipped, 1 closed | A menu, not a single feature — 14 items synthesised from a five-cohort survey of OSS + commercial AI/chat/agent products. **Shipped:** #1 conversation system prompt (#165), #2 Ollama + #3 OpenRouter + #5 Library (#167), #4 Part 2 gateway tagging (#166), #6 `#`-mention + RAG toggle (#168, #169), #7 Flowchat canvas. **Closed:** #4 Part 1 (caching — won't do without a Vercel-gateway commitment). **Open:** #8 Beam, #9 Elicit tables, #10 Langfuse, #11 Aider editor pair, #12 hybrid search, #13 Letta memory, #14 LangGraph checkpointer. Per-item status + a Shipped tracker live in the plan |
 | 🪜 [Agent API as a separate service](PLAN-agent-api.md) | Phases 0 through 4-4b shipped; one follow-up open | All six phases of the original plan plus seven of the open follow-ups have shipped: `services/agent-py/` runs end-to-end (chat + tools + MCP + url-fetch + summarize + refresh-url + extract + whoami + health); per-IP rate buckets + idle watchdog (PR #161); `POST /v1/mcp/server` CRUD (#160); provider-categorised errors (#155); frontend selector for non-chat endpoints (#156); `workspace_id` + per-skill config on `/v1/chat` (#145); `useChat()` adoption (#148–#154). **One open item:** real DNS-rebinding test against actual DNS for the MCP-proxy SSRF guard (currently mocked). Phases 5 (default-on + decommission) and 6 (tidy + archive) explicitly deferred — per project policy both Python and TS stacks stay live and the user picks backend per-account via the Phase 4-2 selector |
 | 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 4 done, 1 moot, 2 open | Done: generatedImages sync (#45), recap-of-recaps (#63), roadmap sweep, signed-URL re-sign. Moot: local-mode MCP creds for tasks (rejected up front by #85). Open: per-tool server-side approval flags, task-route integration tests. (Accurate token counting moved to [Parked / low priority](#parked--low-priority) in the 2026-06-09 refresh.) |
-| 📐 [MCP Apps — interactive UI in chat](PLAN-mcp-apps.md) | planning (new 2026-06-09) | Render an MCP tool's `ui://` resource in the existing live-artifact sandbox iframe + a `postMessage` tool-call bridge back to the same MCP server. Composes the sandbox renderer (#36) with the MCP integration. M, 3 commits |
+| 🪜 [MCP Apps — interactive UI in chat](PLAN-mcp-apps.md) | phases 1+2 shipped (#188, #189); polish open | Phase 1 — read-only render: an MCP tool's `ui://` resource rendered in the existing live-artifact sandbox iframe. Phase 2 — `postMessage` tool-call bridge back to the same MCP server. **Persistence + refresh polish remains** (covered in the plan's open-work section). M, three commits |
 | 📐 [Sandboxed code interpreter](PLAN-code-interpreter.md) | planning (new 2026-06-09) | A `runCode` server skill backed by an E2B-style sandbox (self-hostable behind an adapter). Charts reuse the `generateImage` Storage + gallery path; stdout/tables ride a new `data-code-result` part. Budget-gated or HITL-gated. L, PR series |
-| 📐 [Generative UI parts](PLAN-generative-ui-parts.md) | planning (new 2026-06-09) | A `renderUI` tool emits typed, allow-listed `data-ui` parts (choice / confirm / info-table / mini-form) rendered as real React components. The chat-turn twin of `askUser`; the in-process twin of MCP Apps. M, 3 commits |
-| 📐 [Portable Agent Skills (SKILL.md)](PLAN-portable-skills.md) | planning (new 2026-06-09) | A third skill kind that's data, not code: `SKILL.md` front-matter + body, stored in a new `userSkills` slice, imported by URL (mirrors persona share #110), listed in the Library tab. Progressive disclosure via prompt injection. S–M, 3 commits |
+| 🪜 [Generative UI parts](PLAN-generative-ui-parts.md) | commits 1 + 2 + 3a + 3b (agent-py) shipped (#179, #181, #184, #190) | A `renderUI` tool emits typed, allow-listed `data-ui` parts (choice / confirm / info-table / mini-form) rendered as real React components. **Only 3b (agent-ts) remains, gated on that service's HITL pipeline.** M, 3 commits |
 | 📐 [Subagent orchestration](PLAN-subagent-orchestration.md) | planning (new 2026-06-09) | One goal → N specialist subagents (each a persona-pinned child task) run in parallel via the existing executor + a durable join barrier; results aggregate back to the orchestrator. Depth cap 1, breadth cap 5. Distinct from Beam (#8). L, PR series |
 | 📐 [A2A interoperability](PLAN-a2a-interop.md) | planning (new 2026-06-09 r2) | Expose personas as A2A agent cards + delegate to remote A2A agents; complement to MCP. A2A task lifecycle maps 1:1 onto the existing RunStatus + HITL suspend. Outbound first (lower risk), inbound server second. Publishing gated on multi-tenant. L, PR series |
 | 📐 [Browser / `browse` skill](PLAN-browser-use.md) | planning (new 2026-06-09 r2) | A `runBrowserTask` server skill (browser-use, in agent-py) for navigate/extract/form-fill; screenshots reuse the `data-tool-image` gallery; mutating actions HITL-gated; auth flows last + heavily gated. Reuses the code-interpreter security model. L, PR series |
-| 📐 [Semantic caching](PLAN-semantic-caching.md) | planning (new 2026-06-09 r2) | Cache the deterministic non-chat calls (summarize / suggestions / extract). Phase 1 = exact-key cache (no embeddings); Phase 2 = embedding-similarity once the pipeline lands. Distinct from the closed gateway-caching item; never caches the chat stream. M, phased |
+| 🪜 [Semantic caching](PLAN-semantic-caching.md) | Phase 1 shipped (#183); Phase 2 gated on embeddings | Cache the deterministic non-chat calls (summarize / extract). Phase 1 = exact-key cache, in-process LRU+TTL keyed on SHA-256(`[CACHE_VERSION, kind, model, stableStringify(input)]`). Phase 2 = embedding-similarity once the pipeline lands. Never caches the chat stream. M, phased |
 | 📐 [Prompt optimisation (GEPA/DSPy)](PLAN-prompt-optimization.md) | planning (new 2026-06-09 r2) | Offline/admin loop that evolves skill / persona / editor prompts from a labelled eval set + traces. First target: the `getChooseToolPrompt` classifier (measurable). Human-accepted, versioned, never auto-deployed. Gated on an eval set. M–L |
 | 📐 [Collaborative editing + AI peer](PLAN-collab-editing.md) | planning (new 2026-06-09 r2) | Yjs CRDT + presence in the Plate editor with the AI as a server-side Yjs peer (visible cursor + status). Phase A (AI-as-peer) has single-user value; Phase B (human multiplayer) gated on the document-sharing / multi-tenant story. L |
-| 📐 [Inline editor autocomplete](PLAN-inline-autocomplete.md) | planning (new 2026-06-09 r3) | Copilot-style ghost text in the Plate editor. Plate's `CopilotKit` is *already installed* — the work is a fast-model completion endpoint + tuning + a toggle. Off by default. S–M, 2 commits |
-| 📐 [Reasoning-effort control](PLAN-reasoning-effort-control.md) | planning (new 2026-06-09 r3) | A Fast/Balanced/Thorough dial beside the model picker mapping to the provider's reasoning budget (`providerOptions`). No-op + hidden for non-reasoning models. Mostly-existing plumbing. S–M, 2 commits |
-| 📐 [Structured outputs](PLAN-structured-outputs.md) | planning (new 2026-06-09 r3) | Replace best-effort `parseSuggestionsJson` with native constrained-decoding `generateObject` on the deterministic calls (suggestions / summarize / extract / comment / table), capability-gated, lenient parser as fallback. M, 3 commits |
 | 📐 [Guardrails + PII redaction](PLAN-guardrails-pii.md) | planning (new 2026-06-09 r3) | Optional, off-by-default pre/post hooks: PII redaction (Presidio-class) + content moderation, per-workspace policy, self-hostable behind an adapter. Mostly relevant once multi-user. M, PR series |
 | 📐 [Proactive / ambient agents](PLAN-ambient-agents.md) | planning (new 2026-06-09 r3) | Extend the existing `task_schedules` cron dispatch into an *event* dispatcher: "when X happens (file/bookmark/note added, task finished), run persona Y." Hard loop guards + HITL-by-default for side-effecting triggers. M–L, PR series |
 | 📐 [Read-aloud / TTS voice output](PLAN-tts-voice-output.md) | planning (new 2026-06-09 r4) | Read assistant replies aloud via a streaming TTS adapter (Chatterbox/MeloTTS self-host, behind a base-URL adapter). Per-message control + auto-read setting; foundation for full voice mode. M, 2 commits |
-| 📐 [Smart model routing](PLAN-model-routing.md) | planning (new 2026-06-09 r4) | A Hummingbird-level `model: "auto"` that routes each turn to the cheapest *capable* model across the whole provider set (Anthropic / gateway / Ollama / OpenRouter) via a complexity classifier. Distinct from `openrouter/auto`. Transparent ("routed to X"). M, 3 commits |
 | 📐 [Citation & verifiability layer](PLAN-citation-verifiability.md) | planning (new 2026-06-09 r4) | Post-turn verifier grounds each claim against the turn's retrieved sources (web search / `searchFiles`), flags unsupported claims inline + a confidence summary. Opt-in; default-on in Deep Research. M–L, 3 commits |
 | 📐 [Visual workflow / flow builder](PLAN-workflow-builder.md) | planning (new 2026-06-09 r4) | A workflow canvas mode (skill / persona / input / branch nodes + typed edges) that compiles to the task executor. Composes the react-flow canvas + skills + personas + subagents. Run = a task. L, PR series (run-phase depends on subagents) |
 | 📐 [Multimodal document understanding](PLAN-multimodal-docs.md) | planning (new 2026-06-09 r4) | Vision-aware extraction (render PDF pages → VLM) that preserves tables/charts/layout the current text-only pipeline drops; richer chunks feed `searchFiles`. Vision-gated + capped. M–L, PR series |
@@ -113,26 +113,27 @@ pick by appetite. The pre-existing plans above
 separately and not re-ranked here.
 
 **Tier 1 — quick wins (start here).** Small–medium, high value, little
-or no new infra, mostly-existing plumbing. **Two shipped this session
-(2026-06-10), two remain.**
+or no new infra, mostly-existing plumbing. **All four shipped — Tier 1
+is closed.**
 
-| Plan | Effort | Status / Why first |
+| Plan | Effort | Status |
 |---|---|---|
 | ✅ [Reasoning-effort control](_done/PLAN-reasoning-effort-control.md) | S–M | **Shipped #178** |
-| ✅ [Structured outputs](_done/PLAN-structured-outputs.md) | M | **Shipped #180** — `generateObject` for deterministic non-chat calls; capability-gated |
-| [Inline editor autocomplete](PLAN-inline-autocomplete.md) | S–M | Plate `CopilotKit` is already installed — mostly wiring + a toggle |
-| [Semantic caching](PLAN-semantic-caching.md) (Phase 1) | M | Exact-key cache needs **no** embeddings; immediate cost/latency win |
+| ✅ [Structured outputs](_done/PLAN-structured-outputs.md) | M | **Shipped #180** |
+| ✅ [Inline editor autocomplete](_done/PLAN-inline-autocomplete.md) | S–M | **Shipped #186** |
+| ✅ [Semantic caching Phase 1](PLAN-semantic-caching.md) | M | **Shipped #183** (Phase 2 = embedding-similarity, gated on the embedding pipeline) |
 
 **Tier 2 — high-value, self-contained (next).** Medium lift, compose
-with existing surfaces, no hard blocker. **Generative UI commits 1+2
-shipped this session; commit 3 (task-mode resolution) remains.**
+with existing surfaces, no hard blocker. **Four of six shipped this
+burst (model routing, portable skills, MCP Apps phases 1+2, generative-UI
+3b agent-py); two never-touched plans remain.**
 
 | Plan | Effort | Note |
 |---|---|---|
-| [MCP Apps](PLAN-mcp-apps.md) | M | Composes the sandbox renderer + MCP integration |
-| 🪜 [Generative UI parts](PLAN-generative-ui-parts.md) | M | Commits 1 + 2 + 3a + 3b (agent-py) shipped (#179, #181, #184, this PR); 3b (agent-ts) remains, gated on that service's HITL pipeline |
-| [Portable skills (SKILL.md)](PLAN-portable-skills.md) | S–M | Mirrors persona share-by-URL |
-| [Smart model routing](PLAN-model-routing.md) | M | Cost lever; `openrouter/auto` is precedent |
+| ✅ [MCP Apps](PLAN-mcp-apps.md) | M | **Shipped phases 1+2 (#188, #189)**; persistence/refresh polish open |
+| 🪜 [Generative UI parts](PLAN-generative-ui-parts.md) | M | Commits 1 + 2 + 3a + 3b (agent-py) shipped (#179, #181, #184, #190); only 3b (agent-ts) remains, gated on that service's HITL pipeline |
+| ✅ [Portable skills (SKILL.md)](_done/PLAN-portable-skills.md) | S–M | **Shipped v1 #187**; executable scripts gated on code interpreter |
+| ✅ [Smart model routing](_done/PLAN-model-routing.md) | M | **Shipped #185** — `model: "auto"` across Anthropic / gateway / Ollama / OpenRouter |
 | [Read-aloud / TTS](PLAN-tts-voice-output.md) | M | Voice-out; foundation for voice mode |
 | [Multimodal document understanding](PLAN-multimodal-docs.md) | M–L | Lifts `searchFiles` quality |
 
@@ -225,7 +226,7 @@ existing AI command routes (`/api/ai/command`).
 > [Next — planned work](#next--planned-work-have-a-plan):**
 > [MCP Apps](PLAN-mcp-apps.md) · [Sandboxed code interpreter](PLAN-code-interpreter.md)
 > · [Generative UI parts](PLAN-generative-ui-parts.md) ·
-> [Portable Agent Skills](PLAN-portable-skills.md) ·
+> [Portable Agent Skills](_done/PLAN-portable-skills.md) ·
 > [Subagent orchestration](PLAN-subagent-orchestration.md). Each was
 > chosen for composing with surfaces Hummingbird already has, not
 > because a competitor shipped it.
@@ -253,9 +254,9 @@ existing AI command routes (`/api/ai/command`).
 > **The five ideas from the third research round (2026-06-09) now have
 > dedicated plans and have been promoted to
 > [Next — planned work](#next--planned-work-have-a-plan):**
-> [Inline editor autocomplete](PLAN-inline-autocomplete.md) ·
-> [Reasoning-effort control](PLAN-reasoning-effort-control.md) ·
-> [Structured outputs](PLAN-structured-outputs.md) ·
+> [Inline editor autocomplete](_done/PLAN-inline-autocomplete.md) ·
+> [Reasoning-effort control](_done/PLAN-reasoning-effort-control.md) ·
+> [Structured outputs](_done/PLAN-structured-outputs.md) ·
 > [Guardrails + PII redaction](PLAN-guardrails-pii.md) ·
 > [Proactive / ambient agents](PLAN-ambient-agents.md).
 
@@ -263,7 +264,7 @@ existing AI command routes (`/api/ai/command`).
 > dedicated plans and have been promoted to
 > [Next — planned work](#next--planned-work-have-a-plan):**
 > [Read-aloud / TTS voice output](PLAN-tts-voice-output.md) ·
-> [Smart model routing](PLAN-model-routing.md) ·
+> [Smart model routing](_done/PLAN-model-routing.md) ·
 > [Citation & verifiability layer](PLAN-citation-verifiability.md) ·
 > [Visual workflow / flow builder](PLAN-workflow-builder.md) ·
 > [Multimodal document understanding](PLAN-multimodal-docs.md).
@@ -309,7 +310,54 @@ pick them up if a user explicitly asks or a particular need arises.
 Rolling pulse — latest first. The full chronological record lives in
 the [Shipped log](#shipped-log-newest-first) further down.
 
-**This session (2026-06-10) — four PRs shipped from the Tier 1 / Tier
+**2026-06-11 burst — seven more PRs cleared the Tier 1 + Tier 2
+queues:**
+
+- **Exact-key response cache** ([#183](https://github.com/juchengquan/hummingbird/pull/183))
+  — Phase 1 of PLAN-semantic-caching. `lib/server/cache/response-cache.ts`
+  (in-process bounded LRU + TTL), keyed on SHA-256 over
+  `[CACHE_VERSION, kind, model, stableStringify(input)]`. Wired into
+  `/api/summarize` (all four modes) + `/api/extract`. Implementation
+  note: in-process rather than the Supabase table the plan sketched
+  (those routes have no Supabase session today; would mean wiring
+  per-user auth in). Phase 2 (embedding-similarity) stays open.
+- **Smart model routing — Auto** ([#185](https://github.com/juchengquan/hummingbird/pull/185))
+  — Hummingbird-level `model: "auto"` that routes each turn to the
+  cheapest *capable* model across Anthropic / gateway / Ollama /
+  OpenRouter via a complexity classifier. Transparent ("routed to
+  X") chip surfaces the decision. Plan archived.
+- **Inline editor autocomplete** ([#186](https://github.com/juchengquan/hummingbird/pull/186))
+  — Plate's already-installed `CopilotKit` wired to a new streamed
+  `/api/ai/complete` (default `google/gemini-2.5-flash`, `temp:
+  0.2`, `maxOutputTokens: 60`, 60/min per-IP gate). Per-user
+  opt-in toggle in the account menu. `STORE_VERSION` 25 → 26.
+  Tier 1 closed; plan archived.
+- **Portable skills (SKILL.md) v1** ([#187](https://github.com/juchengquan/hummingbird/pull/187))
+  — SKILL.md format + storage + library listing + prompt-builder
+  injection (catalogue line per enabled skill, body only when
+  engaged). `userSkills` slice + `STORE_VERSION` 26 → 27. Bundled
+  executable scripts deferred to the code-interpreter integration.
+  Plan archived.
+- **MCP Apps phases 1 + 2** ([#188](https://github.com/juchengquan/hummingbird/pull/188) +
+  [#189](https://github.com/juchengquan/hummingbird/pull/189))
+  — Render an MCP tool's `ui://` resource in the existing
+  live-artifact sandbox iframe (phase 1) + a `postMessage`
+  tool-call bridge back to the same MCP server (phase 2, same-server
+  only, per-app call cap). Plan stays in `docs/` for the
+  persistence/refresh polish that remains.
+- **Generative-UI 3b (agent-py side)** ([#190](https://github.com/juchengquan/hummingbird/pull/190))
+  — Ports `askUser` + `renderUI` no-execute HITL tools onto
+  `services/agent-py/`. New `agent_py/input_policy.py` mirrors the
+  TS `requestKindFor`; `ALWAYS_GATED_TOOL_NAMES = {askUser,
+  renderUI}` joins the checkpoint's `requireApprovalFor` in
+  `_gated_tools_from`. Suspend / respond paths classify via the
+  shared `request_kind_for(...)`. 21 new tests. The agent-ts side
+  stays deferred — that service's HITL pipeline isn't built yet.
+
+STORE_VERSION 25 → 26 (#186 `editorPrefs.inlineComplete`) → 27
+(#187 `userSkills`).
+
+**Previous session (2026-06-10) — four PRs shipped from the Tier 1 / Tier
 2 queues:**
 
 - **Reasoning-effort control** ([#178](https://github.com/juchengquan/hummingbird/pull/178))
@@ -349,7 +397,7 @@ in a codebase survey of the surfaces it builds on:
 [MCP Apps](PLAN-mcp-apps.md) (interactive server-driven UI in chat),
 [Sandboxed code interpreter](PLAN-code-interpreter.md),
 [Generative UI parts](PLAN-generative-ui-parts.md),
-[Portable Agent Skills (SKILL.md)](PLAN-portable-skills.md), and
+[Portable Agent Skills (SKILL.md)](_done/PLAN-portable-skills.md), and
 [Subagent orchestration](PLAN-subagent-orchestration.md). Added an
 **MCP-spec-2026-readiness** watch item. **Deprioritised three**
 previously-planned items into the new
@@ -450,6 +498,14 @@ still-open phased plans link in-place.
 
 | When | Feature | Where |
 |---|---|---|
+| 2026-06-11 | **Generative UI parts — agent-py port of `askUser` + `renderUI`** (commit 3b, partial). New `agent_py/input_policy.py` mirrors `lib/server/agent/input-policy.ts`: `request_kind_for(tool_name, args)` returns `"approval"|"choice"|"input"|"ui-part"`; `ALWAYS_GATED_TOOL_NAMES = {askUser, renderUI}` joins the checkpoint's `requireApprovalFor` in `_gated_tools_from`. Both no-execute tools register unconditionally in `default_tool_registry`; their `execute` raises a defensive `ToolError`. `ApprovalEvent` gains `ui_kind` / `ui_props` (request) + `ui_answer` (response). Shared `_emit_pending_input_request` helper used by both suspend paths; respond path classifies via `request_kind_for` and `_build_tool_result_text` gains a `ui-part` branch that reads the back-compat `value`. 21 new tests. agent-ts side deferred until that service's HITL pipeline lands | [PLAN](PLAN-generative-ui-parts.md) · [#190](https://github.com/juchengquan/hummingbird/pull/190) |
+| 2026-06-11 | **MCP Apps — `postMessage` tool-call bridge** (phase 2). The `ui://`-rendered MCP panel can call a tool back through `/api/mcp/:id/call`, same-server only, per-app call cap | [PLAN](PLAN-mcp-apps.md) · [#189](https://github.com/juchengquan/hummingbird/pull/189) |
+| 2026-06-11 | **MCP Apps — read-only render** (phase 1). An MCP tool returning a `ui://` resource gets rendered in the existing live-artifact sandbox iframe (`sandbox="allow-scripts"`, null origin, locked CSP), reusing the same renderer the live-artifacts feature shipped | [PLAN](PLAN-mcp-apps.md) · [#188](https://github.com/juchengquan/hummingbird/pull/188) |
+| 2026-06-11 | **Portable user skills (SKILL.md) v1** — third skill kind that's data, not code. SKILL.md format + storage + library listing + prompt-builder injection (catalogue line per enabled skill, body only when engaged). New `userSkills` slice + `STORE_VERSION 26 → 27`. Bundled executable scripts deferred to the code-interpreter integration | [PLAN](_done/PLAN-portable-skills.md) · [#187](https://github.com/juchengquan/hummingbird/pull/187) |
+| 2026-06-11 | **Inline editor ghost-text autocomplete (opt-in)** — Plate's already-installed `CopilotKit` plugin wired to a new streamed `/api/ai/complete` route (`streamText().toTextStreamResponse()`, default `google/gemini-2.5-flash`, `temp: 0.2`, `maxOutputTokens: 60`, per-IP 60/min sliding window). Per-user toggle in the account menu (Wand2 icon → `editorPrefs.inlineComplete: boolean`, default off). `getCompletePrompt` builder lives under `app/api/ai/command/prompt/`. `STORE_VERSION 25 → 26` with a backfill migration. The dead `/api/ai/copilot` Plate template stub deleted | [PLAN](_done/PLAN-inline-autocomplete.md) · [#186](https://github.com/juchengquan/hummingbird/pull/186) |
+| 2026-06-10 | **Smart model routing — Auto** — a Hummingbird-level `model: "auto"` that routes each turn to the cheapest *capable* model across Anthropic / gateway / Ollama / OpenRouter via a complexity classifier. Transparent ("routed to X") chip surfaces the decision. Distinct from `openrouter/auto` (which only routes within OpenRouter's catalogue) | [PLAN](_done/PLAN-model-routing.md) · [#185](https://github.com/juchengquan/hummingbird/pull/185) |
+| 2026-06-10 | **Generative UI parts — task-mode wire contract** (commit 3a of 3). Extends `RequestKind` / `ApprovalEvent` / `PendingInput` / `RespondRequestSchema` with the `"ui-part"` request kind + `uiKind` / `uiProps` / `uiAnswer` payloads. New `makeRenderUITaskTool()` (no `execute`) parallel to `makeAskUserTool()`. `task-strip.tsx` renders the shared chat-mode registry cards when `pendingInput.kind === "ui-part"`. Pure `respondBodyForUiAnswer(requestId, part, answer)` helper + `requestKindFor("renderUI", ...) → "ui-part"`. Back-compat: the helper also populates the existing `selection` / `value` fields | [PLAN](PLAN-generative-ui-parts.md) · [#184](https://github.com/juchengquan/hummingbird/pull/184) |
+| 2026-06-10 | **Exact-key response cache for summaries + extraction** (Phase 1 of PLAN-semantic-caching). `lib/server/cache/response-cache.ts` — in-process bounded LRU + TTL keyed on SHA-256 over `[CACHE_VERSION, kind, model, stableStringify(input)]`. Wired into `/api/summarize` (all four modes — file / conversation / compress / project-breakdown) + `/api/extract`. Object keys sorted for stable serialisation; array order preserved. In-process rather than the Supabase table the plan sketched (those routes have no Supabase session today). Phase 2 (embedding-similarity) gated on the embedding pipeline | [PLAN](PLAN-semantic-caching.md) · [#183](https://github.com/juchengquan/hummingbird/pull/183) |
 | 2026-06-10 | **Generative UI parts — interactive kinds + chat-turn resolution** (commit 2 of 3). Adds `choice` (2–8 labelled options, single or multi-select), `confirm` (yes/no), and `mini-form` (1–4 text/number/select fields) to the v1 read-only round-trip. Picking an answer dispatches a follow-up user turn through the existing chat-send pipeline; reload preserves the picked state via persisted `answeredAt` + `answer` on the part. Pure `formatAnswerForChat(part, answer)` helper + `defaultResolutionFor(kind)` per-kind dispatch (choice/confirm auto-send, mini-form prefills the composer). New `resolveMessageUiPart` mutator. STORE_VERSION 24 → 25 marker. Plan remains in `docs/` for commit 3 (task-mode resolution) | [PLAN](PLAN-generative-ui-parts.md) · [#181](https://github.com/juchengquan/hummingbird/pull/181) |
 | 2026-06-10 | **Native structured outputs for deterministic calls** — per-model `supportsStructuredOutput` flag in `config/models.json` gates whether the deterministic non-chat calls (suggestions, summaries, etc.) route through `generateObject` (constrained decoding against a Zod schema) or fall back to lenient text parsing. Reliability win across providers; de-risks downstream eval / prompt-opt / semantic-caching plans by clean metrics. Capable models flagged: Claude Sonnet 4.6, Claude Haiku 4.5, GPT-5.5, GPT-5.3-chat, Gemini 2.5 Pro / Flash | [PLAN](_done/PLAN-structured-outputs.md) · [#180](https://github.com/juchengquan/hummingbird/pull/180) |
 | 2026-06-10 | **Generative UI parts — info-table round-trip** (commit 1 of 3). The model emits a structured table inline in chat via a new always-on `renderUI` server tool. Shared `UiPartSchema` (Zod discriminated union) validated on emit AND on render; SSE `data-ui` part type; `Message.uiParts?: PersistedUiPart[]` on the message; client registry mapping `kind → { schema, Component }`. v1 ships read-only `info-table` (key/value or columnar layouts); interactive kinds land in commit 2. Migration is a marker (`STORE_VERSION 23 → 24`); field is optional, no backfill | [PLAN](PLAN-generative-ui-parts.md) · [#179](https://github.com/juchengquan/hummingbird/pull/179) |

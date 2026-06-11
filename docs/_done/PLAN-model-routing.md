@@ -1,7 +1,10 @@
 # Plan: Smart model routing (RouteLLM-style)
 
-Status: **planning.** Promoted from [MASTER_PLAN § Later](MASTER_PLAN.md)
-(fourth research round, 2026-06-09) to **Next**. Scope: **M** (one PR).
+Status: **✅ shipped** — [#185](https://github.com/juchengquan/hummingbird/pull/185)
+on 2026-06-10. A Hummingbird-level `model: "auto"` that routes each
+turn to the cheapest *capable* model across the whole provider set
+(Anthropic / gateway / Ollama / OpenRouter) via a complexity
+classifier. Transparent ("routed to X") chip surfaces the decision.
 Origin: RouteLLM (ICLR 2025, open-source) — see [Sources](#sources).
 
 ## Why
