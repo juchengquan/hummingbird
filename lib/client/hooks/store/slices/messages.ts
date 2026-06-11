@@ -80,6 +80,16 @@ export interface MessagesSlice {
     messageId: string,
     part: import("@/shared/types").McpAppPart,
   ) => void
+  /** Replace one MCP App panel's HTML (phase 3 refresh affordance) —
+   *  the user clicked refresh, the client re-read the `ui://` resource
+   *  via `/api/mcp/:id/read`, and now we swap the HTML. Also clears
+   *  `truncated` since the re-read could have come back small enough.
+   *  No-op when the part isn't found. */
+  replaceMessageMcpAppHtml: (
+    messageId: string,
+    partId: string,
+    html: string,
+  ) => void
   /** Resolve a generative-UI part — stamp `answeredAt` + persist the
    *  answer payload so the inert render survives reload. No-op when
    *  the message / part can't be found, or when the part has already
@@ -379,6 +389,28 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
             const existing = m.mcpApps ?? []
             if (existing.some((p) => p.id === part.id)) return m
             return { ...m, mcpApps: [...existing, part] }
+          }),
+        }
+      }),
+    })),
+  replaceMessageMcpAppHtml: (messageId, partId, html) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) => {
+        if (!c.messages.some((m) => m.id === messageId)) return c
+        return {
+          ...c,
+          messages: c.messages.map((m) => {
+            if (m.id !== messageId) return m
+            const existing = m.mcpApps ?? []
+            if (!existing.some((p) => p.id === partId)) return m
+            return {
+              ...m,
+              mcpApps: existing.map((p) =>
+                p.id === partId
+                  ? { ...p, html, truncated: undefined }
+                  : p,
+              ),
+            }
           }),
         }
       }),

@@ -1,11 +1,17 @@
 # Plan: MCP Apps — interactive server-driven UI inside chat
 
-Status: **🪜 phased — phase 1 (read-only render) + phase 2 (tool-call
-bridge) shipped; persistence/refresh polish remains.** Phase 1: #188
-(2026-06-11). Phase 2 (this PR): the `mcp-app` postMessage bridge — a
-panel can call a tool back through `/api/mcp/:id/call` (same-server only,
-per-app call cap). Drafted in the 2026-06-09 market refresh; item
-from [MASTER_PLAN § Later](MASTER_PLAN.md) promoted to **Next**. Scope:
+Status: **✅ shipped (all three phases)** — Phase 1: [#188](https://github.com/juchengquan/hummingbird/pull/188)
+on 2026-06-11 (read-only render). Phase 2: [#189](https://github.com/juchengquan/hummingbird/pull/189)
+on 2026-06-11 (the `mcp-app` postMessage bridge — a panel can call a
+tool back through `/api/mcp/:id/call`, same-server only, per-app call
+cap). Phase 3 (this PR): persistence + refresh polish — `resourceUri`
++ `truncated` round-trip on `McpAppPart`, refresh button in
+`McpAppFrame` that re-`read`s the resource and swaps the stored HTML
+via a new `replaceMessageMcpAppHtml` mutator, and an explicit "UI too
+large" stub in place of silent drops when the server's read body
+exceeds 512 KB. `STORE_VERSION` 27 → 28 (marker — both new fields are
+optional). Drafted in the 2026-06-09 market refresh; item from
+[MASTER_PLAN § Later](MASTER_PLAN.md) promoted to **Next**. Scope:
 **M** (~400–600 LOC + a postMessage protocol shim, one PR with three
 commits). Origin: the MCP Apps extension (announced 2026-01-26, spec
 finalising 2026-07-28) — see [Source](#sources).

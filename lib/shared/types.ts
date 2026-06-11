@@ -253,16 +253,28 @@ export interface McpCapabilities {
 
 /** A rendered MCP App — bundled HTML read from a tool's `ui://` resource,
  *  shown in a sandboxed iframe inline with the assistant message. Phase 1
- *  is read-only render; the tool-call bridge (interactive panels) is a
- *  follow-up. See `docs/PLAN-mcp-apps.md`. */
+ *  is read-only render; phase 2 added the tool-call bridge; phase 3 added
+ *  the refresh affordance + an explicit "too large" stub. See
+ *  `docs/PLAN-mcp-apps.md`. */
 export interface McpAppPart {
   /** Stable id (the producing tool call id when available). */
   id: string
-  /** The MCP server that produced the app. Pins the future tool-call
-   *  bridge to a single server. */
+  /** The MCP server that produced the app. Pins the tool-call bridge
+   *  to a single server. */
   serverId: string
   /** Bundled HTML/JS read from the tool's `ui://` resource. */
   html: string
+  /** The original `ui://` resource URI the HTML was read from. Set
+   *  on emits from phase 3 onward — enables the refresh button to
+   *  re-`read` the resource through `/api/mcp/:id/read` and replace
+   *  `html`. Absent on parts persisted from earlier phases; the
+   *  refresh button hides itself in that case. */
+  resourceUri?: string
+  /** `true` when the server truncated the HTML because it exceeded
+   *  the per-app size cap. The renderer shows an explicit "UI too
+   *  large" stub instead of trusting the (small placeholder) HTML.
+   *  Absent / `false` on normal-size apps. */
+  truncated?: boolean
 }
 
 export interface McpServer {

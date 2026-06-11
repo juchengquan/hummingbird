@@ -8,7 +8,7 @@ import { uuid } from "@/shared/uuid"
  * step in `runMigrations`. Wired into the `version` field of the persist
  * config in `use-store.ts`.
  */
-export const STORE_VERSION = 27
+export const STORE_VERSION = 28
 
 /**
  * Sequential schema migrations from older persisted shapes to the
@@ -465,6 +465,17 @@ export function runMigrations(
     // needed. Marker bump only, keeping the pinned persisted key set in
     // `persist.test.ts` in lockstep with the version. Local-only in v1
     // (no Supabase sync). See `docs/PLAN-portable-skills.md`.
+  }
+  if (fromVersion < 28) {
+    // MCP Apps polish (phase 3) — `McpAppPart.resourceUri` and
+    // `McpAppPart.truncated` added so the refresh button can re-read
+    // the `ui://` resource and the renderer can swap in the explicit
+    // "UI too large" stub. Both fields are OPTIONAL on the persisted
+    // type — existing `Message.mcpApps` entries simply have neither
+    // and render exactly as they did before, just without a refresh
+    // button. The version bump is a marker so a downgrade can't
+    // silently lose a part written by a newer client. See
+    // `docs/PLAN-mcp-apps.md`.
   }
   return persistedState
 }

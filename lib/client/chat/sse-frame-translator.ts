@@ -44,6 +44,11 @@ export interface NormalisedFrame {
    *  HTML read from its `ui://` resource. */
   serverId?: string
   html?: string
+  /** MCP App (`mcp_app` frame, phase 3): the source `ui://` resource
+   *  uri (so the refresh button can re-read it) + a truncation flag
+   *  the renderer reads to swap in the "UI too large" stub. */
+  resourceUri?: string
+  truncated?: boolean
 }
 
 /** Decode one SSE payload (the JSON between `data: ` and `\n\n`) and
@@ -146,7 +151,13 @@ export function translateFrame(payload: string): NormalisedFrame | null {
   }
   if (t === "data-mcp-app") {
     const data = raw.data as
-      | { id?: unknown; serverId?: unknown; html?: unknown }
+      | {
+          id?: unknown
+          serverId?: unknown
+          html?: unknown
+          resourceUri?: unknown
+          truncated?: unknown
+        }
       | undefined
     if (!data || typeof data !== "object") return null
     if (
@@ -161,6 +172,10 @@ export function translateFrame(payload: string): NormalisedFrame | null {
       id: data.id,
       serverId: data.serverId,
       html: data.html,
+      // Phase 3 — optional on the wire; absent on older-server emits.
+      resourceUri:
+        typeof data.resourceUri === "string" ? data.resourceUri : undefined,
+      truncated: data.truncated === true ? true : undefined,
     }
   }
   if (t === "data-routed-model") {
