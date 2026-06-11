@@ -49,6 +49,7 @@ const EXPECTED_PERSISTED_KEYS = [
   "prompts",
   "agents",
   "activeAgentId",
+  "userSkills",
   "projectTasks",
 ].sort()
 
@@ -91,6 +92,7 @@ describe("partializeState — frozen persisted shape", () => {
       prompts: [],
       agents: [],
       activeAgentId: null,
+      userSkills: [],
       projectTasks: [],
       // Runtime-only — must be excluded:
       pendingChatInput: "leaked?",
@@ -113,6 +115,6 @@ describe("partializeState — frozen persisted shape", () => {
   })
 
   test("STORE_VERSION is pinned (bump only with a migration step)", () => {
-    expect(STORE_VERSION).toBe(26)
+    expect(STORE_VERSION).toBe(27)
   })
 })

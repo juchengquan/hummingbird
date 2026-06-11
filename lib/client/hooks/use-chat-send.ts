@@ -42,6 +42,7 @@ import { useStore } from "@/client/hooks/use-store"
 import { getLocalCred } from "@/client/mcp/local-creds"
 import type { LiveToolCall } from "@/components/skills/tool-call-strip"
 import { composeSystemPrompts } from "@/shared/agents/resolve"
+import { withUserSkillInstructions } from "@/shared/skills/user-skill-prompt"
 import type { ChatRequestInput, TaskRequestInput } from "@/shared/api-schemas"
 import { parsePersistedUiPart } from "@/shared/generative-ui/schemas"
 import { modelSupportsReasoningEffort } from "@/shared/models"
@@ -119,6 +120,9 @@ export function useChatSend(): UseChatSendResult {
   const workspaces = useStore((s) => s.workspaces)
   const files = useStore((s) => s.files)
   const conversationFiles = useStore((s) => s.conversationFiles)
+  // Enabled portable user skills fold their bodies into the system
+  // prompt (client-side v1 activation). See PLAN-portable-skills.md.
+  const userSkills = useStore((s) => s.userSkills)
 
   // --- own state / refs (used to live on the chat panel) ---
   const [streamingConvIds, setStreamingConvIds] = useState<Set<string>>(
@@ -212,10 +216,14 @@ export function useChatSend(): UseChatSendResult {
       // The conversation prompt is **additive** — switching personas does
       // not drop the thread context. See
       // `docs/PLAN-conversation-system-prompt.md`.
-      const workspaceSystemPrompt = composeSystemPrompts(
-        activeWorkspace?.systemPrompt,
-        conv?.systemPrompt,
-        options?.agentSystemPrompt ?? ""
+      const workspaceSystemPrompt = withUserSkillInstructions(
+        composeSystemPrompts(
+          activeWorkspace?.systemPrompt,
+          conv?.systemPrompt,
+          options?.agentSystemPrompt ?? ""
+        ),
+        userSkills,
+        activeWorkspaceId
       )
 
       // Effective skills = (workspace/conversation cascade ∪ forced) − muted.
@@ -797,6 +805,7 @@ export function useChatSend(): UseChatSendResult {
       setMessageRoutedModel,
       setMessageSuggestions,
       setMessageToolCalls,
+      userSkills,
       workspaces,
     ]
   )
