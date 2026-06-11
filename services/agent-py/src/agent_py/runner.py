@@ -41,11 +41,19 @@ class RunStepContext:
 class PendingInputDescriptor:
     """A no-execute gated tool call the step fn captured — the run
     suspends here for human input. Mirror of TS
-    `PendingInputDescriptor` in `lib/server/agent/runner.ts`."""
+    `PendingInputDescriptor` in `lib/server/agent/runner.ts`.
+
+    `request_kind` is the classifier the executor pulls in from
+    `input_policy.request_kind_for(tool, args)` — kept on the
+    descriptor so the executor doesn't have to re-classify on the
+    suspend path (and so a future step fn can override the default
+    classification if needed). Optional / `None` → executor falls
+    back to its own classification."""
 
     tool_call_id: str
     tool: str
     args: dict[str, object] | None = None
+    request_kind: str | None = None
 
 
 @dataclass(frozen=True)

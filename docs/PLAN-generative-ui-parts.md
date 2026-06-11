@@ -1,7 +1,7 @@
 # Plan: Generative UI parts — typed interactive components from the stream
 
-Status: **🪜 phased — commits 1 + 2 + 3a shipped; 3b deferred to
-agent-py / agent-ts ports.**
+Status: **🪜 phased — commits 1 + 2 + 3a + 3b (agent-py) shipped;
+3b (agent-ts) deferred until that service's HITL pipeline lands.**
 - ✅ Commit 1 — `info-table` round-trip end-to-end
   ([#179](https://github.com/juchengquan/hummingbird/pull/179),
   2026-06-10). Shared schemas + `renderUI` server tool + SSE emit
@@ -26,14 +26,39 @@ agent-py / agent-ts ports.**
   helper also populates the existing `selection` / `value` fields
   so a runner that hasn't learned `ui-part` natively can still
   consume the response via the existing `askUser` path.
-- 📐 Commit 3b — **agent-py / agent-ts port** (follow-up; out of
-  this PR's scope). The task runners on the dedicated services
-  haven't ported `askUser` yet either; the renderUI task tool needs
-  to land alongside in the same port PR. Once it does, the runner
-  emits `requestKind: "ui-part"` on the `renderUI` tool call (no
-  client change) and injects `formatAnswerForChat(...)` as the
-  tool's result on continuation. This PR's contract is the target
-  the port writes to.
+- ✅ Commit 3b (agent-py) — **`askUser` + `renderUI` ports**
+  (this PR). New `services/agent-py/src/agent_py/input_policy.py`
+  mirrors `lib/server/agent/input-policy.ts`:
+  `request_kind_for(tool_name, args)` returns
+  `"approval" | "choice" | "input" | "ui-part"`;
+  `ALWAYS_GATED_TOOL_NAMES = {askUser, renderUI}` joins the
+  checkpoint's `requireApprovalFor` in `_gated_tools_from`. Both
+  tools register unconditionally in `default_tool_registry()` with
+  a defensive `execute` that raises `ToolError("gating is
+  misconfigured")` — the Anthropic provider's gating check should
+  always suspend first. `ApprovalEvent` gains `ui_kind` / `ui_props`
+  (request phase) + `ui_answer` (response phase), serialised as
+  camelCase via `event_to_row_payload` to stay byte-symmetric with
+  the TS event. `RespondActionPayload` and the poller's job-parse
+  surface `ui_answer`. The suspend path goes through a shared
+  `_emit_pending_input_request` helper that classifies via
+  `request_kind_for` and pulls `prompt` / `options` / `multi` from
+  `askUser`-args or `kind` / `props` from `renderUI`-args. The
+  respond path's `_build_tool_result_text` gains a `ui-part` branch
+  that reads the back-compat `value` (the formatted text the client
+  shim populates via `respondBodyForUiAnswer`) — no `formatAnswerForChat`
+  port needed Python-side. 21 new tests in
+  `test_input_policy.py` + `test_ask_user_render_ui.py` cover the
+  classifier, the registry, the gating union, both suspend kinds,
+  both respond kinds, and the poller's `uiAnswer` parse.
+- 📐 Commit 3b (agent-ts) — **deferred** until that service's HITL
+  pipeline lands. agent-ts currently has neither `ApprovalEvent`
+  nor a `/v1/tasks/:id/respond` route nor gated-tool dispatch in
+  its runner; the step fn is still the Phase 2a stub. Porting
+  `askUser` + `renderUI` there would require bootstrapping the
+  entire HITL infrastructure (events, route, poller handler,
+  runner gating, paused transitions). Track that work alongside
+  the broader `services/agent-ts/` Phase 3 milestone, not here.
 
 Scope: **M** (~300–450 LOC for a starter kind-set + the registry,
 one PR). Origin: the 2026 Generative-UI wave — see [Sources](#sources).
