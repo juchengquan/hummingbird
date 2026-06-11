@@ -199,4 +199,25 @@ describe("translateFrame — lifecycle + edge cases", () => {
       translateFrame('{"type":"data-ui","data":{"props":{}}}'),
     ).toBeNull()
   })
+
+  test("data-mcp-app — emits mcp_app with id/serverId/html", () => {
+    const out = translateFrame(
+      JSON.stringify({
+        type: "data-mcp-app",
+        id: "call-9",
+        data: { id: "call-9", serverId: "srv1", html: "<h1>hi</h1>" },
+      }),
+    )
+    expect(out?.type).toBe("mcp_app")
+    expect(out?.id).toBe("call-9")
+    expect(out?.serverId).toBe("srv1")
+    expect(out?.html).toBe("<h1>hi</h1>")
+  })
+
+  test("data-mcp-app missing html/serverId → null", () => {
+    expect(
+      translateFrame('{"type":"data-mcp-app","data":{"id":"x"}}'),
+    ).toBeNull()
+    expect(translateFrame('{"type":"data-mcp-app"}')).toBeNull()
+  })
 })

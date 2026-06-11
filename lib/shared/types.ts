@@ -225,6 +225,12 @@ export interface McpToolDescriptor {
   name: string
   description?: string
   inputSchema?: unknown
+  /** MCP Apps (ext-apps): the `ui://` resource this tool renders an
+   *  interactive panel from, captured from the tool's
+   *  `_meta.ui.resourceUri` at discovery. Absent for ordinary tools —
+   *  the whole MCP-Apps path is a no-op unless a tool declares this. See
+   *  `docs/PLAN-mcp-apps.md`. */
+  uiResourceUri?: string
 }
 
 export interface McpResourceDescriptor {
@@ -243,6 +249,20 @@ export interface McpCapabilities {
   tools?: McpToolDescriptor[]
   resources?: McpResourceDescriptor[]
   prompts?: McpPromptDescriptor[]
+}
+
+/** A rendered MCP App — bundled HTML read from a tool's `ui://` resource,
+ *  shown in a sandboxed iframe inline with the assistant message. Phase 1
+ *  is read-only render; the tool-call bridge (interactive panels) is a
+ *  follow-up. See `docs/PLAN-mcp-apps.md`. */
+export interface McpAppPart {
+  /** Stable id (the producing tool call id when available). */
+  id: string
+  /** The MCP server that produced the app. Pins the future tool-call
+   *  bridge to a single server. */
+  serverId: string
+  /** Bundled HTML/JS read from the tool's `ui://` resource. */
+  html: string
 }
 
 export interface McpServer {
@@ -459,6 +479,14 @@ export interface Message {
    * See `docs/PLAN-model-routing.md`.
    */
   routedModel?: string
+  /**
+   * Interactive panels produced by MCP Apps — an MCP tool that declares
+   * a `ui://` resource renders bundled HTML in a sandboxed iframe inline
+   * with the assistant text. Each entry carries the read HTML + the
+   * producing server id. Persisted so it survives reload. Absent unless a
+   * tool used the MCP-Apps extension. See `docs/PLAN-mcp-apps.md`.
+   */
+  mcpApps?: McpAppPart[]
   /**
    * Excluded from the chat API request when true. Set by the "Compress
    * older messages" action — the message stays on disk and renders

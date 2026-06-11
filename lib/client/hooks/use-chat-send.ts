@@ -107,6 +107,7 @@ export function useChatSend(): UseChatSendResult {
     (s) => s.appendMessageGeneratedImages
   )
   const appendMessageUiPart = useStore((s) => s.appendMessageUiPart)
+  const appendMessageMcpApp = useStore((s) => s.appendMessageMcpApp)
   const setConversationTyping = useStore((s) => s.setConversationTyping)
   const createArtifact = useStore((s) => s.createArtifact)
 
@@ -647,6 +648,22 @@ export function useChatSend(): UseChatSendResult {
               // the bubble shows "Auto → <label>".
               const ph = placeholder as Message | null
               if (ph) setMessageRoutedModel(ph.id, parsed.value)
+            } else if (
+              parsed.type === "mcp_app" &&
+              typeof parsed.id === "string" &&
+              typeof parsed.serverId === "string" &&
+              typeof parsed.html === "string"
+            ) {
+              // MCP App panel — append to the message for a sandboxed
+              // iframe render. See PLAN-mcp-apps.md.
+              const ph = placeholder as Message | null
+              if (ph) {
+                appendMessageMcpApp(ph.id, {
+                  id: parsed.id,
+                  serverId: parsed.serverId,
+                  html: parsed.html,
+                })
+              }
             } else if (parsed.type === "ui_part") {
               // Generative-UI part — server validated via the `renderUI`
               // tool's execute; we re-validate defensively via
@@ -789,6 +806,7 @@ export function useChatSend(): UseChatSendResult {
       appendMessageGeneratedImages,
       appendMessageUiPart,
       appendToMessage,
+      appendMessageMcpApp,
       appendToMessageReasoning,
       autoArchiveCodeBlocks,
       conversationFiles,

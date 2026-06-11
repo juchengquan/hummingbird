@@ -40,6 +40,10 @@ export interface NormalisedFrame {
   /** Per-kind props for a `ui_part` frame, validated client-side
    *  against the shared schema before render. */
   props?: unknown
+  /** MCP App (`mcp_app` frame): the producing server id + the bundled
+   *  HTML read from its `ui://` resource. */
+  serverId?: string
+  html?: string
 }
 
 /** Decode one SSE payload (the JSON between `data: ` and `\n\n`) and
@@ -138,6 +142,25 @@ export function translateFrame(payload: string): NormalisedFrame | null {
       id: typeof data.id === "string" ? data.id : undefined,
       mode: typeof data.mode === "string" ? data.mode : undefined,
       images: Array.isArray(data.images) ? data.images : undefined,
+    }
+  }
+  if (t === "data-mcp-app") {
+    const data = raw.data as
+      | { id?: unknown; serverId?: unknown; html?: unknown }
+      | undefined
+    if (!data || typeof data !== "object") return null
+    if (
+      typeof data.id !== "string" ||
+      typeof data.serverId !== "string" ||
+      typeof data.html !== "string"
+    ) {
+      return null
+    }
+    return {
+      type: "mcp_app",
+      id: data.id,
+      serverId: data.serverId,
+      html: data.html,
     }
   }
   if (t === "data-routed-model") {
