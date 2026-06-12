@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import type { Database } from "@/shared/supabase/types"
 
 import {
+  blendSearchFragments,
   buildSearchFilesTool,
   clampMaxSearchFiles,
   searchFilesSkill,
@@ -230,5 +231,164 @@ describe("buildSearchFilesTool", () => {
     expect(out.ok).toBe(true)
     if (!out.ok) throw new Error("expected success")
     expect(out.fragments).toEqual(["one", "two"])
+  })
+})
+
+// --- blendSearchFragments (pure) ------------------------------------------
+
+describe("blendSearchFragments", () => {
+  test("empty vector arm → FTS verbatim (capped)", () => {
+    expect(blendSearchFragments(["a", "b", "c"], [], 5)).toEqual(["a", "b", "c"])
+    expect(blendSearchFragments(["a", "b", "c"], [], 2)).toEqual(["a", "b"])
+  })
+
+  test("FTS first, then novel vector fragments fill remaining slots", () => {
+    const out = blendSearchFragments(["fts one", "fts two"], ["vec one"], 5)
+    expect(out).toEqual(["fts one", "fts two", "vec one"])
+  })
+
+  test("dedupes a vector chunk that repeats an FTS excerpt (markers ignored)", () => {
+    // Same span: FTS marks the matched term, vector returns it raw.
+    const out = blendSearchFragments(
+      ["The «invoice» total was $4,200 due in March."],
+      ["The invoice total was $4,200 due in March.", "A genuinely different chunk."],
+      5
+    )
+    expect(out).toEqual([
+      "The «invoice» total was $4,200 due in March.",
+      "A genuinely different chunk.",
+    ])
+  })
+
+  test("respects the cap across both arms", () => {
+    const out = blendSearchFragments(["a", "b", "c"], ["d", "e"], 4)
+    expect(out).toHaveLength(4)
+    expect(out).toEqual(["a", "b", "c", "d"])
+  })
+
+  test("drops blank fragments", () => {
+    expect(blendSearchFragments(["  ", "real"], ["", "  vec  "], 5)).toEqual([
+      "real",
+      "vec",
+    ])
+  })
+})
+
+// --- hybrid execute (FTS + vector) ----------------------------------------
+
+/**
+ * Routes `.rpc(name, …)` to a per-name handler so a hybrid call can
+ * return distinct FTS and vector payloads.
+ */
+function makeHybridClient(handlers: {
+  fts: () => { data: unknown; error: { message: string } | null }
+  vector: () => { data: unknown; error: { message: string } | null }
+}): SupabaseClient<Database> {
+  return {
+    rpc: async (name: string) => {
+      if (name === "match_file_sections") return handlers.vector()
+      return handlers.fts()
+    },
+  } as unknown as SupabaseClient<Database>
+}
+
+const fakeEmbedQuery = async (): Promise<number[]> => [0.1, 0.2, 0.3]
+
+describe("buildSearchFilesTool — hybrid (vector arm enabled)", () => {
+  test("fuses FTS excerpts with novel vector chunks", async () => {
+    const client = makeHybridClient({
+      fts: () => ({ data: [{ excerpt: "lexical hit", rank: 0.5 }], error: null }),
+      vector: () => ({
+        data: [
+          { content: "semantic chunk", similarity: 0.8 },
+          { content: "lexical hit", similarity: 0.6 }, // dupes the FTS one
+        ],
+        error: null,
+      }),
+    })
+    const log: SearchFilesLog = []
+    const t = buildSearchFilesTool(log, {
+      maxCalls: 3,
+      client,
+      embedQuery: fakeEmbedQuery,
+    })
+    const out = await execTool(t, "f1", "q")
+    expect(out.ok).toBe(true)
+    if (!out.ok) throw new Error("expected success")
+    expect(out.fragments).toEqual(["lexical hit", "semantic chunk"])
+  })
+
+  test("vector rescues an FTS miss (rank 0 → semantic match returned)", async () => {
+    const client = makeHybridClient({
+      // ts_headline fallback: opening words, rank 0 = no real match.
+      fts: () => ({ data: [{ excerpt: "opening words…", rank: 0 }], error: null }),
+      vector: () => ({
+        data: [{ content: "the semantically relevant passage", similarity: 0.7 }],
+        error: null,
+      }),
+    })
+    const t = buildSearchFilesTool([], {
+      maxCalls: 3,
+      client,
+      embedQuery: fakeEmbedQuery,
+    })
+    const out = await execTool(t, "f1", "q")
+    expect(out.ok).toBe(true)
+    if (!out.ok) throw new Error("expected success")
+    expect(out.fragments).toEqual(["the semantically relevant passage"])
+    expect(out.rank).toBe(0)
+  })
+
+  test("low-similarity vector chunks are filtered out", async () => {
+    const client = makeHybridClient({
+      fts: () => ({ data: [], error: null }),
+      vector: () => ({
+        data: [{ content: "barely related", similarity: 0.05 }],
+        error: null,
+      }),
+    })
+    const t = buildSearchFilesTool([], {
+      maxCalls: 3,
+      client,
+      embedQuery: fakeEmbedQuery,
+    })
+    const out = await execTool(t, "f1", "q")
+    expect(out.ok).toBe(false)
+    if (out.ok) throw new Error("expected failure")
+    expect(out.code).toBe("not_indexed")
+  })
+
+  test("vector RPC error degrades to FTS-only (still succeeds)", async () => {
+    const client = makeHybridClient({
+      fts: () => ({ data: [{ excerpt: "lexical hit", rank: 0.5 }], error: null }),
+      vector: () => ({ data: null, error: { message: "vector index missing" } }),
+    })
+    const t = buildSearchFilesTool([], {
+      maxCalls: 3,
+      client,
+      embedQuery: fakeEmbedQuery,
+    })
+    const out = await execTool(t, "f1", "q")
+    expect(out.ok).toBe(true)
+    if (!out.ok) throw new Error("expected success")
+    expect(out.fragments).toEqual(["lexical hit"])
+  })
+
+  test("embed failure degrades to FTS-only (still succeeds)", async () => {
+    const client = makeHybridClient({
+      fts: () => ({ data: [{ excerpt: "lexical hit", rank: 0.5 }], error: null }),
+      vector: () => ({ data: [{ content: "unused", similarity: 0.9 }], error: null }),
+    })
+    const t = buildSearchFilesTool([], {
+      maxCalls: 3,
+      client,
+      embedQuery: async () => {
+        throw new Error("embedder down")
+      },
+    })
+    const out = await execTool(t, "f1", "q")
+    expect(out.ok).toBe(true)
+    if (!out.ok) throw new Error("expected success")
+    expect(out.fragments).toEqual(["lexical hit"])
   })
 })

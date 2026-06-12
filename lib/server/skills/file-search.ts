@@ -37,6 +37,7 @@ import { z } from "zod"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import type { Database } from "@/shared/supabase/types"
+import { embedText, isEmbeddingConfigured } from "@/server/embeddings/provider"
 
 const DEFAULT_MAX_CALLS = 3
 const MIN_MAX_CALLS = 1
@@ -47,6 +48,24 @@ const MAX_WORDS_DEFAULT = 120
 const MIN_WORDS_DEFAULT = 30
 
 const FRAGMENT_DELIMITER = "‖"
+
+// --- Hybrid (FTS + vector) knobs -------------------------------------------
+// The vector arm (PLAN-local-rag.md PR 3) augments the lexical FTS arm
+// with cosine matches from `match_file_sections`. It only runs when an
+// embedder is configured AND the file has embedded chunks; otherwise this
+// stays pure FTS, byte-for-byte as before.
+
+/** Chunks pulled from the vector index per query. */
+const VECTOR_MATCH_COUNT = 5
+/** Minimum cosine similarity (1 - distance) for a vector chunk to count.
+ *  A coarse noise floor — `match_file_sections` already returns the
+ *  nearest K, so this just drops obviously-unrelated tails. Tuned for
+ *  `nomic-embed-text`; a different model may want a different floor. */
+const MIN_VECTOR_SIMILARITY = 0.3
+/** Cap on the fused fragment list returned to the model. Slightly above
+ *  the FTS-only default (3) so vector matches can add to — not just
+ *  replace — the lexical hits. */
+const MAX_BLENDED_FRAGMENTS = 5
 
 export function clampMaxSearchFiles(n: number): number {
   if (!Number.isFinite(n)) return DEFAULT_MAX_CALLS
@@ -103,6 +122,60 @@ interface BuildOpts {
    *  returns `code: 'not_signed_in'` for every call. */
   client: SupabaseClient<Database> | null
   consumeBudget?: () => { allowed: boolean; retryAfterSec: number }
+  /** Embeds the query for the vector arm. When set, the tool also runs
+   *  `match_file_sections` and fuses the results with FTS. When absent
+   *  (no embedder configured), the tool is pure FTS. Injected so tests
+   *  can exercise the hybrid path without a live embedder. */
+  embedQuery?: (query: string) => Promise<number[]>
+}
+
+/** Strip the « » match markers FTS adds, lowercase, and collapse
+ *  whitespace — a normalized key for cross-arm dedupe (FTS excerpts and
+ *  vector chunks overlap in source text but aren't byte-identical). */
+function normalizeFragment(s: string): string {
+  return s
+    .replace(/[«»]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+/**
+ * Fuse lexical (FTS) and semantic (vector) fragments into one ranked,
+ * de-duplicated list. FTS fragments come first — they carry the « »
+ * term highlighting the model uses to see what matched — then novel
+ * vector chunks fill the remaining slots up to `cap`. Dedupe is a
+ * heuristic prefix-containment check: two fragments collapse when one's
+ * normalized 80-char prefix is contained in the other (cheap, and the
+ * two arms quote overlapping spans of the same file).
+ *
+ * Pure (no I/O) so it's unit-tested in isolation. With an empty `vec`
+ * arm it returns FTS verbatim (capped), so FTS-only behaviour is
+ * unchanged when no embedder is configured.
+ */
+export function blendSearchFragments(
+  fts: string[],
+  vec: string[],
+  cap: number
+): string[] {
+  const out: string[] = []
+  const seen: string[] = []
+  const isDupe = (norm: string): boolean =>
+    seen.some(
+      (k) => k.includes(norm.slice(0, 80)) || norm.includes(k.slice(0, 80))
+    )
+  const add = (frag: string): void => {
+    if (out.length >= cap) return
+    const f = frag.trim()
+    if (!f) return
+    const norm = normalizeFragment(f)
+    if (!norm || isDupe(norm)) return
+    seen.push(norm)
+    out.push(f)
+  }
+  for (const f of fts) add(f)
+  for (const v of vec) add(v)
+  return out
 }
 
 export function buildSearchFilesTool(log: SearchFilesLog, opts: BuildOpts) {
@@ -112,8 +185,9 @@ export function buildSearchFilesTool(log: SearchFilesLog, opts: BuildOpts) {
       "Search the full text of an attached file for sections matching a query. " +
       "Use this when an attached file's inline view was truncated and the user's " +
       "question references content that might be in the omitted portion. The tool " +
-      "returns up to 3 paragraph-sized excerpts ranked by relevance, with matched " +
-      "terms wrapped in « » markers. " +
+      "returns paragraph-sized excerpts ranked by relevance — keyword full-text " +
+      "search, blended with semantic (vector) matching when the file is embedded — " +
+      "with matched terms wrapped in « » markers. " +
       `HARD LIMIT: ${cap} call${cap === 1 ? "" : "s"} per turn. ` +
       "Only works on files attached to the current chat; pick the most likely " +
       "file rather than searching every attachment.",
@@ -178,6 +252,7 @@ export function buildSearchFilesTool(log: SearchFilesLog, opts: BuildOpts) {
         }
       }
 
+      // --- Lexical arm (FTS) -------------------------------------------
       const { data, error } = await opts.client.rpc("search_file_sections", {
         p_file_id: fileId,
         p_query: query,
@@ -186,6 +261,64 @@ export function buildSearchFilesTool(log: SearchFilesLog, opts: BuildOpts) {
         p_min_words: MIN_WORDS_DEFAULT,
       })
 
+      const ftsRow = !error && data && data.length > 0 ? data[0] : null
+      // ts_headline returns the file's opening words even with no match;
+      // a zero ts_rank is the "no real match" signal, so only harvest
+      // fragments when the rank is positive.
+      const ftsRank = ftsRow?.rank ?? 0
+      const ftsFragments =
+        ftsRow && ftsRank > 0
+          ? (ftsRow.excerpt ?? "")
+              .split(FRAGMENT_DELIMITER)
+              .map((s) => s.trim())
+              .filter(Boolean)
+          : []
+
+      // --- Semantic arm (vector) — best-effort augmentation -----------
+      // Runs only when an embedder is wired (opts.embedQuery set). Any
+      // failure (embed error, RPC error, no embedded chunks) degrades to
+      // FTS-only — the vector arm never turns a working search into an
+      // error.
+      let vectorFragments: string[] = []
+      if (opts.embedQuery) {
+        try {
+          const queryVector = await opts.embedQuery(query)
+          if (queryVector.length > 0) {
+            const { data: vData, error: vError } = await opts.client.rpc(
+              "match_file_sections",
+              {
+                p_file_id: fileId,
+                // pgvector accepts its text representation.
+                p_query_embedding: JSON.stringify(queryVector),
+                p_match_count: VECTOR_MATCH_COUNT,
+              }
+            )
+            if (!vError && vData) {
+              vectorFragments = vData
+                .filter((r) => (r.similarity ?? 0) >= MIN_VECTOR_SIMILARITY)
+                .map((r) => r.content)
+                .filter((c): c is string => Boolean(c))
+            }
+          }
+        } catch {
+          // Swallow — semantic search is additive over the lexical arm.
+        }
+      }
+
+      // --- Fuse -------------------------------------------------------
+      const fragments = blendSearchFragments(
+        ftsFragments,
+        vectorFragments,
+        MAX_BLENDED_FRAGMENTS
+      )
+
+      if (fragments.length > 0) {
+        log.push({ fileId, query, ok: true, fragmentCount: fragments.length })
+        return { ok: true, fileId, query, fragments, rank: ftsRank }
+      }
+
+      // Nothing from either arm. Preserve the FTS-only failure taxonomy
+      // so the model gets the same actionable message as before.
       if (error) {
         log.push({ fileId, query, ok: false, fragmentCount: 0 })
         return {
@@ -197,12 +330,9 @@ export function buildSearchFilesTool(log: SearchFilesLog, opts: BuildOpts) {
         }
       }
 
-      // Zero rows = file doesn't exist for this user (RLS filtered),
-      // OR exists but has no full_text (not_indexed). The
-      // function's WHERE clause filters `full_text is not null`, so
-      // we can't distinguish from inside SQL without a second query.
-      // For the model, "not found" is a fine umbrella message either
-      // way — re-upload fixes both.
+      // Zero rows = file doesn't exist for this user (RLS filtered), OR
+      // exists but has no full_text (not_indexed) and no embedded chunks.
+      // "Not found" is a fine umbrella either way — re-upload fixes both.
       if (!data || data.length === 0) {
         log.push({ fileId, query, ok: false, fragmentCount: 0 })
         return {
@@ -217,35 +347,15 @@ export function buildSearchFilesTool(log: SearchFilesLog, opts: BuildOpts) {
         }
       }
 
-      const row = data[0]
-      const fragments = (row.excerpt ?? "")
-        .split(FRAGMENT_DELIMITER)
-        .map((s) => s.trim())
-        .filter(Boolean)
-
-      // ts_headline returns the file's opening words when no FTS match
-      // is found. Distinguish "real match" from "fallback excerpt" via
-      // ts_rank — zero rank means no match.
-      if (row.rank === 0 || fragments.length === 0) {
-        log.push({ fileId, query, ok: false, fragmentCount: 0 })
-        return {
-          ok: false,
-          fileId,
-          query,
-          code: "no_match",
-          error:
-            `No sections of this file match "${query}". Try a different query, ` +
-            "or use a broader phrasing.",
-        }
-      }
-
-      log.push({ fileId, query, ok: true, fragmentCount: fragments.length })
+      log.push({ fileId, query, ok: false, fragmentCount: 0 })
       return {
-        ok: true,
+        ok: false,
         fileId,
         query,
-        fragments,
-        rank: row.rank,
+        code: "no_match",
+        error:
+          `No sections of this file match "${query}". Try a different query, ` +
+          "or use a broader phrasing.",
       }
     },
   })
@@ -272,6 +382,10 @@ export const searchFilesSkill: ServerSkill = {
     // The plan documents a per-skill maxCalls knob (Phase 5 polish),
     // but we don't have a config schema for it yet. Default is fine.
     const log: SearchFilesLog = []
+    // Enable the semantic arm only when an embedder is wired. Constant
+    // across the request, so resolve once. When unset, the tool is pure
+    // FTS (PLAN-local-rag.md PR 3).
+    const embedQuery = isEmbeddingConfigured() ? embedText : undefined
     // ServerSkill.buildTool is synchronous but client resolution is
     // async. Resolve eagerly inside an IIFE — the AI SDK only calls
     // execute() once the model picks the tool, by which point the
@@ -290,6 +404,7 @@ export const searchFilesSkill: ServerSkill = {
       maxCalls: DEFAULT_MAX_CALLS,
       client: null, // overridden via the proxy below
       consumeBudget: ctx.consumeBudget,
+      embedQuery,
     })
     // The `tool()` helper returns an object whose `execute` we can
     // replace. Wrap to inject the resolved client.
@@ -305,6 +420,7 @@ export const searchFilesSkill: ServerSkill = {
         maxCalls: DEFAULT_MAX_CALLS,
         client,
         consumeBudget: ctx.consumeBudget,
+        embedQuery,
       })
       return (realTool.execute as ExecuteFn)(input, sdkOpts)
     }) as typeof lazyTool.execute
@@ -313,9 +429,10 @@ export const searchFilesSkill: ServerSkill = {
   promptFragment() {
     return (
       "You can call `searchFiles({ fileId, query })` to pull additional sections " +
-      "from an attached file when its inline view was truncated. Returns up to 3 " +
-      "paragraph-sized excerpts ranked by Postgres full-text search, with matched " +
-      "terms wrapped in « » markers. Use this when the user's question references " +
+      "from an attached file when its inline view was truncated. Returns " +
+      "paragraph-sized excerpts ranked by relevance — keyword full-text search, " +
+      "blended with semantic (vector) matching when the file has been embedded — " +
+      "with matched terms wrapped in « » markers. Use this when the user's question references " +
       "content that may be in the omitted portion of a file (look for `[truncated]` " +
       "or `[Additional files omitted]` markers in the attachment block). " +
       `HARD LIMIT: ${DEFAULT_MAX_CALLS} calls per turn. Requires sign-in — for ` +
