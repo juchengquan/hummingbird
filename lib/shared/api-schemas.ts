@@ -560,6 +560,32 @@ export const RefreshImageUrlResponseSchema = z.object({
   url: z.string().min(1),
 })
 
+// --- /api/embed -------------------------------------------------------------
+// Chunk + embed a file's extracted text into the `file_sections` vector
+// table (PLAN-local-rag.md PR 2). The client sends the text directly
+// (rather than relying on `files.full_text` being synced) — the only
+// cloud precondition is the `files` row existing for the FK. Requires
+// sign-in; anonymous callers get 401. Inert (`reason: 'not_configured'`)
+// when no server-side embedder is wired.
+
+export const EmbedRequestSchema = z.object({
+  fileId: z.string().min(1).max(64),
+  /** The file's extracted full text. Same `fullText`/`text` the client
+   *  stored after extraction. Capped at the full-extraction budget. */
+  text: z.string().max(1_200_000),
+  /** Re-index even if sections already exist (drops + rebuilds). */
+  force: z.boolean().optional(),
+})
+
+export const EmbedResponseSchema = z.object({
+  status: z.enum(['indexed', 'skipped']),
+  /** Number of chunks written (indexed) or already present (skipped). */
+  sections: z.number().int().nonnegative(),
+  reason: z
+    .enum(['not_configured', 'empty', 'already_indexed', 'file_not_found'])
+    .optional(),
+})
+
 // Non-streaming routes return `{ error, code?, message? }` with a non-2xx
 // status on failure. Frontend categorisation lives in lib/api-errors.ts.
 
@@ -591,4 +617,6 @@ export type CreateShareRequestInput = z.infer<typeof CreateShareRequestSchema>
 export type CreateShareResponse = z.infer<typeof CreateShareResponseSchema>
 export type RefreshImageUrlRequestInput = z.infer<typeof RefreshImageUrlRequestSchema>
 export type RefreshImageUrlResponse = z.infer<typeof RefreshImageUrlResponseSchema>
+export type EmbedRequestInput = z.infer<typeof EmbedRequestSchema>
+export type EmbedResponse = z.infer<typeof EmbedResponseSchema>
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>
