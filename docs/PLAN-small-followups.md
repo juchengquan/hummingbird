@@ -265,7 +265,33 @@ runs through.
 
 ---
 
-## 8. Route-handler integration tests for the task stack
+## ~~8. Route-handler integration tests for the task stack~~ ✅ shipped
+
+Co-located `*.handler.test.ts` files cover `app/api/tasks/route.ts`,
+`[id]/respond/route.ts`, `[id]/cancel/route.ts`, and `sweep/route.ts`
+— 52 tests across the four. Shared `_test/mock-agent-store.ts`
+helper registers the **union** of every store / jobs export every
+task route imports (so `mock.module`'s last-wins doesn't drop a
+symbol), plus stable mock fn handles each test file's
+`beforeEach` resets. Coverage: auth/Supabase gates, body validation,
+state preconditions (404/409), the order of persistence-chain
+writes, payload shapes for every `requestKind` (approval / choice /
+input / **ui-part**), and error-status mapping when the store
+throws.
+
+Surfaced a real bug along the way: `POST /api/tasks/:id/respond`
+silently dropped `body.uiAnswer` when building the job payload
+(the schema accepts it per #190's contract, the agent-py poller
+parses it). Fixed in the same PR — the field now rides through
+alongside the back-compat `selection` / `value` shim.
+
+The stream route's poll loop (`[id]/stream/route.ts`) was left
+uncovered — the SSE response shape + `createUIMessageStream`
+plumbing makes a unit-style integration test more brittle than
+the value it adds. The browser walkthrough in
+`docs/VERIFY-agent-tasks.md` still covers it end-to-end.
+
+Original notes kept below for reference.
 
 **Why.** Pure logic in the agent stack is unit-tested (`reduceRun`,
 `RunEmitter`, `makeStreamTextStep` control flow with a fake step,
