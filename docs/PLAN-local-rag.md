@@ -1,9 +1,32 @@
 # Plan: Local RAG vector store — where do the embeddings live?
 
-Status: **decision doc** — no code yet, no driver chosen. Captures
-the architecture options for a local/self-hostable vector store so
-the choice is made deliberately when a RAG feature
-(`PLAN-cross-conversation-memory.md`, future file-RAG) needs it.
+Status: **🪜 driver chosen (Supabase pgvector); substrate shipping.**
+Decision (2026-06-11): use **Supabase pgvector** — Supabase is already
+the store (no new dependency), it's the lowest-effort path, and it
+keeps RLS/own-rows for free. The alternatives (self-host Postgres /
+in-browser PGlite) stay documented below for if/when the
+deploy posture changes.
+
+**Substrate (PR 1, this slice):** an env-gated embedding provider
+(`lib/server/embeddings/provider.ts`, OpenAI-compatible / Ollama,
+`EMBEDDING_DIM = 768` / `nomic-embed-text`), a pure paragraph-aware
+`chunkText` (`lib/server/embeddings/chunk.ts`), and migration
+`0023_file_embeddings.sql` — a `file_sections` chunk table (own-rows
+RLS) + ivfflat cosine index + a `match_file_sections` nearest-neighbour
+RPC. **Inert until an embedding provider is configured** (no
+`EMBEDDINGS_BASE_URL` / `OLLAMA_BASE_URL` → nothing writes, FTS stays
+the only path).
+
+**Follow-ups (consumers):** PR 2 — chunk + embed file text on the
+extraction path (write `file_sections`). PR 3 — a **hybrid
+`searchFiles`** that blends FTS (`search_file_sections`) with vector
+(`match_file_sections`). Once the substrate lands it also unblocks
+semantic-caching Phase 2, citation grounding, multimodal retrieval,
+and cross-conversation memory.
+
+Captures the architecture options for a local/self-hostable vector
+store so the choice is made deliberately when a RAG feature
+(`PLAN-cross-conversation-memory.md`, file-RAG) needs it.
 
 This is **infrastructure**, not a feature. It answers **two**
 questions, in order:
