@@ -106,6 +106,13 @@ export async function POST(
         ...(body.approved !== undefined ? { approved: body.approved } : {}),
         ...(body.selection !== undefined ? { selection: body.selection } : {}),
         ...(body.value !== undefined ? { value: body.value } : {}),
+        // PLAN-generative-ui-parts.md commit 3a — `uiAnswer` carries the
+        // client's structured answer to a `renderUI` HITL gate so the
+        // runner can mark the part `inert` with the picked option. The
+        // back-compat `value` / `selection` ride alongside (the wire
+        // shim in `respondBodyForUiAnswer` populates them too), so an
+        // older runner still sees a consumable answer.
+        ...(body.uiAnswer !== undefined ? { uiAnswer: body.uiAnswer } : {}),
         ...(body.args !== undefined ? { args: body.args } : {}),
       },
     })

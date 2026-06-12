@@ -38,7 +38,10 @@ export async function enqueueStartJob(
 }
 
 /** Insert a `respond` job. The payload carries the human's answer; the
- *  service worker pairs it with the pending tool call in the checkpoint. */
+ *  service worker pairs it with the pending tool call in the checkpoint.
+ *  `uiAnswer` is the generative-UI structured answer (commit 3a of
+ *  PLAN-generative-ui-parts.md) — the agent-py poller parses it off the
+ *  jsonb payload and surfaces it on `RespondActionPayload.ui_answer`. */
 export async function enqueueRespondJob(
   db: DB,
   input: {
@@ -49,6 +52,7 @@ export async function enqueueRespondJob(
       approved?: boolean
       selection?: string[]
       value?: string
+      uiAnswer?: unknown
       args?: unknown
     }
   }
