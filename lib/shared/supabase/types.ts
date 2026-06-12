@@ -449,6 +449,44 @@ export type Database = {
         }
         Relationships: []
       }
+      file_sections: {
+        Row: {
+          content: string
+          created_at: string
+          embedding: string | null
+          file_id: string
+          id: string
+          section_index: number
+          user_id: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          embedding?: string | null
+          file_id: string
+          id?: string
+          section_index: number
+          user_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          embedding?: string | null
+          file_id?: string
+          id?: string
+          section_index?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "file_sections_file_id_fkey"
+            columns: ["file_id"]
+            isOneToOne: false
+            referencedRelation: "files"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       mcp_resource_bindings: {
         Row: {
           added_at: string
@@ -1257,6 +1295,17 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      match_file_sections: {
+        Args: {
+          p_file_id: string
+          p_query_embedding: string
+          p_match_count?: number
+        }
+        Returns: {
+          content: string
+          similarity: number
+        }[]
+      }
       mcp_get_decrypted_credentials: {
         Args: { p_key: string; p_server_id: string }
         Returns: Json
