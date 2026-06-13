@@ -646,11 +646,32 @@ git commit -m "feat(agent-py): cross-chunk verification (re-aggregate from task_
 
 ### Task 4: Add `VERIFY_PROVIDER` env var + `VerifierClient` protocol + Google wrapper
 
-**Files:**
-- Modify: `services/agent-py/src/agent_py/settings.py`
-- Modify: `services/agent-py/src/agent_py/providers/__init__.py` (or wherever `make_anthropic_step_fn` is exported; check first)
+**Files (as shipped):**
+- Modify: `services/agent-py/src/agent_py/settings.py` (`VERIFY_PROVIDER`)
+- Modify: `services/agent-py/src/agent_py/executor.py` (verifier clients + resolver)
+- Modify: `services/agent-py/src/agent_py/pyproject.toml` + `uv.lock` (`google-generativeai`)
 - Modify: `.env.example`
 - Test: `services/agent-py/tests/test_cross_family_verifier.py` (new)
+
+> **Corrections (discovered at execution time):**
+> 1. **All verifier code lives in `executor.py`**, not `providers/__init__.py`.
+> 2. **The shipped `_maybe_verify` keeps the existing `verify.verify_answer`
+>    flow** — it builds a `RunVerifier` closure over the resolved client's
+>    `messages_create` and passes it to `verify_answer` (which already does
+>    claim-extraction → prompt → parse → summarise). The plan's
+>    `_verification_from_raw` + `build_verify_prompt_text` +
+>    `_tuple_sources_to_dataclass` helpers were **NOT** added — they'd
+>    duplicate `verify_answer`. A small `_VerifierClient` Protocol
+>    (`messages_create`) is the seam both wrappers satisfy.
+> 3. **Logging is structlog**, so the warning tests use
+>    `structlog.testing.capture_logs()` and assert on the captured event
+>    dict's `event`/fields, NOT `caplog.records` / `rec.message` (same
+>    issue as Task 1). The `test_maybe_verify_uses_cross_family` test is
+>    `async def` (it `await`s `_maybe_verify`).
+> 4. `_VERIFY_MAX_TOKENS` already existed in `executor.py` — not re-added.
+> 5. `google-generativeai` added as a dependency (`uv add`); the SDK ships
+>    types but doesn't re-export `GenerativeModel`/`configure`, so those
+>    two call sites carry `# type: ignore[attr-defined]`.
 
 - [ ] **Step 1: Append the failing test for `_resolve_verifier_client`**
 
