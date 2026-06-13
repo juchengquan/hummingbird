@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test"
 
 import {
   __clearResponseCache,
+  cosine,
+  findSimilarCachedResponse,
   getCachedResponse,
   responseCacheKey,
   setCachedResponse,
@@ -74,5 +76,78 @@ describe("get / set", () => {
     setCachedResponse(key, "first")
     setCachedResponse(key, "second")
     expect(getCachedResponse<string>(key)).toBe("second")
+  })
+})
+
+describe("cosine", () => {
+  test("identical vectors → 1", () => {
+    expect(cosine([1, 0, 0], [1, 0, 0])).toBeCloseTo(1, 10)
+  })
+  test("orthogonal vectors → 0", () => {
+    expect(cosine([1, 0], [0, 1])).toBeCloseTo(0, 10)
+  })
+  test("length mismatch → -1 (no match)", () => {
+    expect(cosine([1, 0, 0], [1, 0])).toBe(-1)
+  })
+  test("zero vector → -1 (no match)", () => {
+    expect(cosine([0, 0], [1, 0])).toBe(-1)
+  })
+})
+
+describe("findSimilarCachedResponse", () => {
+  const SCOPE = "summarize|file|m"
+
+  test("returns the value of an entry above the threshold", () => {
+    setCachedResponse("k1", "summary-A", { embedding: [1, 0, 0], scope: SCOPE })
+    const hit = findSimilarCachedResponse<string>({
+      scope: SCOPE,
+      embedding: [1, 0, 0],
+    })
+    expect(hit).toBe("summary-A")
+  })
+
+  test("misses when cosine is below the threshold", () => {
+    setCachedResponse("k1", "summary-A", { embedding: [1, 0, 0], scope: SCOPE })
+    const hit = findSimilarCachedResponse<string>({
+      scope: SCOPE,
+      embedding: [0, 1, 0],
+    })
+    expect(hit).toBeUndefined()
+  })
+
+  test("respects an explicit threshold (boundary)", () => {
+    const near: number[] = [0.95, Math.sqrt(1 - 0.95 * 0.95), 0]
+    setCachedResponse("k1", "summary-A", { embedding: [1, 0, 0], scope: SCOPE })
+    expect(
+      findSimilarCachedResponse<string>({ scope: SCOPE, embedding: near, threshold: 0.9 }),
+    ).toBe("summary-A")
+    expect(
+      findSimilarCachedResponse<string>({ scope: SCOPE, embedding: near, threshold: 0.97 }),
+    ).toBeUndefined()
+  })
+
+  test("does not match across scope", () => {
+    setCachedResponse("k1", "summary-A", { embedding: [1, 0, 0], scope: SCOPE })
+    expect(
+      findSimilarCachedResponse<string>({
+        scope: "summarize|file|other-model",
+        embedding: [1, 0, 0],
+      }),
+    ).toBeUndefined()
+  })
+
+  test("ignores entries stored without an embedding (2-arg setCachedResponse)", () => {
+    setCachedResponse("k1", "plain")
+    expect(
+      findSimilarCachedResponse<string>({ scope: SCOPE, embedding: [1, 0, 0] }),
+    ).toBeUndefined()
+  })
+
+  test("picks the highest-scoring entry when several qualify", () => {
+    setCachedResponse("k1", "far", { embedding: [0.98, 0.199, 0], scope: SCOPE })
+    setCachedResponse("k2", "near", { embedding: [1, 0, 0], scope: SCOPE })
+    expect(
+      findSimilarCachedResponse<string>({ scope: SCOPE, embedding: [1, 0, 0] }),
+    ).toBe("near")
   })
 })
