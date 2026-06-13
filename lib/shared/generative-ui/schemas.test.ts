@@ -644,3 +644,30 @@ describe("date-picker — UiPartSchema + answer round-trips", () => {
     expect(out?.answer).toBeUndefined()
   })
 })
+
+describe("mini-form — date field", () => {
+  test("accepts a date field with bounds", () => {
+    const parsed = MiniFormPropsSchema.safeParse({
+      fields: [
+        { type: "date", id: "due", label: "Due date", min: "2026-01-01" },
+      ],
+    })
+    expect(parsed.success).toBe(true)
+  })
+  test("rejects a date field with a non-ISO bound", () => {
+    const parsed = MiniFormPropsSchema.safeParse({
+      fields: [{ type: "date", id: "due", label: "Due", max: "Dec 31" }],
+    })
+    expect(parsed.success).toBe(false)
+  })
+  test("formatAnswerForChat renders a date field value verbatim (ISO)", () => {
+    const text = formatAnswerForChat(
+      {
+        kind: "mini-form",
+        props: { fields: [{ type: "date", id: "due", label: "Due date" }] },
+      },
+      { kind: "mini-form", values: { due: "2026-06-20" } },
+    )
+    expect(text).toBe("Due date: 2026-06-20")
+  })
+})

@@ -149,6 +149,13 @@ export const MiniFormFieldSchema = z.discriminatedUnion("type", [
     label: z.string().min(1).max(120),
     options: z.array(ChoiceOptionSchema).min(2).max(8),
   }),
+  z.object({
+    type: z.literal("date"),
+    id: z.string().min(1).max(40),
+    label: z.string().min(1).max(120),
+    min: IsoDate.optional(),
+    max: IsoDate.optional(),
+  }),
 ])
 export type MiniFormField = z.infer<typeof MiniFormFieldSchema>
 
