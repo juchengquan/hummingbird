@@ -61,7 +61,13 @@ The bytes are durable; only the metadata row lags.
 
 ---
 
-## 2. Accurate per-family token counting
+## ~~2. Accurate per-family token counting~~ ✅ shipped ([#202](https://github.com/juchengquan/hummingbird/pull/202))
+
+`js-tiktoken` (lite core + explicit cl100k/o200k rank imports) behind a
+per-model `tokenizer` config field; OpenAI → o200k, Anthropic → cl100k
+proxy, everything else → the chars/4 heuristic. `estimateTokens` /
+`estimateConversationTokens` take an optional `modelId`; the meter +
+Compress button thread it through. Original notes below.
 
 **Why.** `lib/shared/tokens.ts:estimateTokens` uses a chars/4
 heuristic. Across English prose it's within ±20%, but code/JSON

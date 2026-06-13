@@ -54,7 +54,10 @@ export function CompressButton({
   // Below that the conversation comfortably fits and there's no real
   // gain from compressing.
   const zone = model
-    ? contextZone(estimateConversationTokens(messages), model.contextWindow)
+    ? contextZone(
+        estimateConversationTokens(messages, modelId),
+        model.contextWindow
+      )
     : "ok"
   if (!pick || zone === "ok") return null
 
