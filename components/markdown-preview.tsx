@@ -4,7 +4,12 @@ import { useCallback, useMemo, useRef } from "react"
 import { marked } from "marked"
 import { cn } from "@/shared/utils"
 import { openPdf } from "@/components/right-panel-slot"
+import {
+  decorateWebCitations,
+  escapeAttr,
+} from "@/components/panels/citation-marker"
 import { mark as perfMark, count as perfCount } from "@/client/perf-chat-stream"
+import type { CitationMarkerMark } from "@/shared/verify"
 import "./markdown-preview.css"
 
 /**
@@ -38,6 +43,13 @@ interface MarkdownPreviewProps {
   sourceCount?: number
   onSourceClick?: (index: number) => void
   /**
+   * Per-`[N]` verification marks from the post-run citation pass
+   * (`markerMarksFor(verification.checks)`). When a marker's claim was
+   * flagged, its rendered button gets a tone class + tooltip. Optional —
+   * messages without a verification render the plain clickable markers.
+   */
+  citationMarks?: Map<string, CitationMarkerMark>
+  /**
    * When true, all `<img>` tags emitted by the markdown renderer are
    * dropped. Used by the chat bubble when the message already renders
    * its own `GeneratedImagesGallery` so the model can't double-show
@@ -48,9 +60,6 @@ interface MarkdownPreviewProps {
 }
 
 const PDF_CITATION_RE = /\[p\.(\d+)\]/g
-// Web citations: `[N]` where N is 1-2 digits. Bounded by start-of-string
-// or a non-word char to avoid matching mid-token (e.g. `arr[1]` in code).
-const WEB_CITATION_RE = /(^|[^\w])\[(\d{1,2})\]/g
 
 function decoratePdfCitations(html: string, fileId: string): string {
   return html.replace(
@@ -58,22 +67,6 @@ function decoratePdfCitations(html: string, fileId: string): string {
     (_, page) =>
       `<button type="button" class="pdf-citation" data-citation-file="${escapeAttr(fileId)}" data-citation-page="${page}">[p.${page}]</button>`
   )
-}
-
-function decorateWebCitations(html: string, sourceCount: number): string {
-  return html.replace(WEB_CITATION_RE, (_, lead, indexStr) => {
-    const idx = Number(indexStr)
-    if (!Number.isFinite(idx) || idx < 1 || idx > sourceCount) {
-      // Out-of-range — leave as plain text so the user sees the marker
-      // but can't click into a non-existent source.
-      return `${lead}[${indexStr}]`
-    }
-    return `${lead}<button type="button" class="web-citation" data-citation-index="${idx}">[${idx}]</button>`
-  })
-}
-
-function escapeAttr(value: string): string {
-  return value.replace(/"/g, "&quot;")
 }
 
 /**
@@ -118,6 +111,7 @@ export function MarkdownPreview({
   pdfCitationFileId,
   sourceCount,
   onSourceClick,
+  citationMarks,
   suppressImages,
 }: MarkdownPreviewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -129,7 +123,8 @@ export function MarkdownPreview({
       const out = marked.parse(content, { async: false })
       let raw = typeof out === "string" ? out : ""
       if (pdfCitationFileId) raw = decoratePdfCitations(raw, pdfCitationFileId)
-      if (sourceCount && sourceCount > 0) raw = decorateWebCitations(raw, sourceCount)
+      if (sourceCount && sourceCount > 0)
+        raw = decorateWebCitations(raw, sourceCount, citationMarks)
       if (suppressImages) raw = stripImageTags(raw)
       return raw
     } catch {
@@ -137,7 +132,7 @@ export function MarkdownPreview({
     } finally {
       perfMark("humm/chat/markdown-parse:end")
     }
-  }, [content, pdfCitationFileId, sourceCount, suppressImages])
+  }, [content, pdfCitationFileId, sourceCount, citationMarks, suppressImages])
 
   // Event-delegated click handler for citation buttons. Lives on the
   // container so it stays attached across re-renders without React owning
