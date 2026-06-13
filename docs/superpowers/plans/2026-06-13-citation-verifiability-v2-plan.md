@@ -525,60 +525,79 @@ git commit -m "feat(agent-py): verify.aggregate_from_events re-derives (text, so
 
 **Files:**
 - Modify: `services/agent-py/src/agent_py/executor.py`
-- Test: `services/agent-py/tests/test_runner.py` (append a new test for the resumed-path verification)
+- Test: `services/agent-py/tests/test_phase_3a_continue.py` (append a new test for the resumed-path verification)
+
+> **Correction (discovered at execution time):** the cross-chunk path
+> is **yield → `continue`**, i.e. `execute_continue` → `_run_chunk(resume=True)`,
+> NOT the `respond` (HITL) path. `_run_respond` is a separate runner
+> that calls `run_agent_loop` **without** a `finalize` hook at all, so
+> it never runs citation verification (pre-existing; out of scope for
+> commit 4). The `finalize` closure that needs the fix lives only in
+> `_run_chunk`, and the right test harness is the `execute_continue`
+> one in `test_phase_3a_continue.py` (patches `store.*` + injects
+> `make_step_fn` + patches `executor._make_db_sink` to a collecting
+> sink) — NOT `test_runner.py` (which only tests the pure runner).
 
 - [ ] **Step 1: Append the failing test**
 
-Append to `services/agent-py/tests/test_runner.py` (the existing 2-chunk resume test file). Read the file first to find the right insertion point — the existing tests use a `FakeStepFn` factory pattern. **Add** a new test at the end:
+Append to `services/agent-py/tests/test_phase_3a_continue.py`, mirroring the
+existing `test_execute_continue_*` harness (`_make_step_fn`, `patch.object(store, ...)`,
+`patch("agent_py.executor._make_db_sink", return_value=sink)`). Stub
+`store.load_run_events` to return the full two-chunk log, let
+`verify.aggregate_from_events` run for real, and stub `executor._maybe_verify`
+to capture the `(text, sources)` it receives and return a canned payload:
 
 ```python
 @pytest.mark.asyncio
-async def test_executor_resume_path_carries_verification() -> None:
-    """A 2-chunk run that yields at chunk 1 and settles at chunk 2
-    still carries a non-None verification on the terminal
-    `result`. Pre-commit-4 behavior: verification was None on
-    the resumed run."""
-    # Build a 2-chunk script: chunk 1 yields after 1 step, chunk 2
-    # settles after 1 step. Both chunks write a webSearch result
-    # + a token, so the full event log has 4 substantive events.
-    # ... (concrete test body depends on the FakeStepFn +
-    # EventSink harness in test_runner.py; the implementer fills
-    # this in by following the existing 2-chunk test pattern and
-    # adding a `tool_output` + `token` emit on each chunk).
-```
-
-**Implementation note for the implementer:** the test body mirrors the existing 2-chunk `test_executor_resume_*` pattern in the file. Look at the file's existing helpers and follow them. The assertion that proves commit 4's fix is:
-
-```python
-# After the run settles:
-assert run.status == "done"
-# Pull the final ResultEvent from the sink:
-final_result = next(
-    e for e in sink.events
-    if isinstance(e, events.ResultEvent)
-)
-assert final_result.verification is not None
-assert final_result.verification["summary"]["total"] > 0
+async def test_execute_continue_reaggregates_verification_from_event_log() -> None:
+    pool = MagicMock()
+    payload = executor.StartActionPayload(run_id="...", user_id="...")
+    _, make_step = _make_step_fn(done_at=1)
+    collected: list[TaskEvent] = []
+    async def sink(event: TaskEvent) -> None:
+        collected.append(event)
+    full_log = [
+        events.TokenEvent(run_id="r", seq=2, step=0, created_at="t",
+                          text="Sky is blue [1].", channel="text"),
+        events.ToolOutputEvent(run_id="r", seq=3, step=0, created_at="t",
+                               tool_call_id="t1", tool_name="webSearch", summary="1 result",
+                               results=[events.ToolCallResult(title="A", url="https://a", snippet="s")]),
+    ]
+    verify_payload = {"checks": [], "summary": {"supported": 1, "partial": 0, "unsupported": 0, "total": 1}}
+    with (
+        patch.object(store, "load_checkpoint", new=AsyncMock(return_value={
+            "messages": [{"role": "user", "content": "hi"}], "step": 5, "seq": 12,
+            "config": {"model": "claude-sonnet-4-6", "mode": "research"}})),
+        patch.object(store, "set_task_handler", new=AsyncMock()),
+        patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=False)),
+        patch.object(store, "update_run", new=AsyncMock()),
+        patch.object(store, "load_run_events", new=AsyncMock(return_value=full_log)) as load_events,
+        patch.object(executor, "_maybe_verify", new=AsyncMock(return_value=verify_payload)) as maybe_verify,
+        patch("agent_py.executor._make_db_sink", return_value=sink),
+    ):
+        outcome = await executor.execute_continue(pool, payload, make_step_fn=make_step)
+    assert outcome.settled is True
+    load_events.assert_awaited_once()
+    kwargs = maybe_verify.await_args.kwargs
+    assert kwargs["mode"] == "research"
+    assert kwargs["text"] == "Sky is blue [1]."
+    assert kwargs["sources"] == [("A", "https://a", "s")]
+    final_result = next(e for e in collected if isinstance(e, ResultEvent))
+    assert final_result.verification == verify_payload
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd services/agent-py && uv run pytest tests/test_runner.py::test_executor_resume_path_carries_verification -v`
-Expected: FAIL with `AssertionError: verification is None` (or `summary.total == 0` — depends on the test body).
+Run: `cd services/agent-py && uv run pytest tests/test_phase_3a_continue.py::test_execute_continue_reaggregates_verification_from_event_log -v`
+Expected: FAIL with `AssertionError: Expected mock to have been awaited once. Awaited 0 times.` (the old `finalize` returns `None` on resume, so `load_run_events` is never called).
 
 - [ ] **Step 3: Update `finalize` to re-aggregate on resume**
 
-In `services/agent-py/src/agent_py/executor.py`, find the `finalize` closure inside `_run_chunk` (around `executor.py:341-348`). **Replace** it with:
+In `services/agent-py/src/agent_py/executor.py`, find the `finalize` closure inside `_run_chunk` (the `if resume: return None` form). **Replace** it with (note: the `mode != "research"` guard is NOT needed — `_maybe_verify` already enforces it; the local is `run_mode`, not `mode`):
 
 ```python
         async def finalize() -> dict[str, object] | None:
-            if mode != "research":
-                return None
             if resume:
-                # Re-aggregate from the DB. The per-chunk in-memory
-                # accumulator only holds THIS chunk's text + sources,
-                # so it's incomplete on a resume. The DB is the
-                # source of truth.
                 full_events = await store.load_run_events(
                     pool,
                     run_id=payload.run_id,
@@ -589,12 +608,11 @@ In `services/agent-py/src/agent_py/executor.py`, find the `finalize` closure ins
                     mode=run_mode,
                     text=inputs.text,
                     sources=[
-                        (s.title, s.url or "", s.snippet)
-                        for s in inputs.sources
+                        (s.title, s.url or "", s.snippet) for s in inputs.sources
                     ],
                 )
-            # Fast path: single-chunk run, the in-memory accumulator
-            # is complete.
+            # Fast path: single-chunk run, the in-memory accumulators are
+            # complete, so skip the DB round-trip.
             return await _maybe_verify(
                 mode=run_mode,
                 text="".join(verify_text_parts),
@@ -602,11 +620,13 @@ In `services/agent-py/src/agent_py/executor.py`, find the `finalize` closure ins
             )
 ```
 
+Also update the comment block above `finalize` (it previously said resume
+"simply gets no verification — graceful degradation"; that's no longer true).
 No other changes to the executor in this commit.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cd services/agent-py && uv run pytest tests/test_runner.py -v`
+Run: `cd services/agent-py && uv run pytest tests/test_phase_3a_continue.py -v`
 Expected: PASS (including the new resumed-path test).
 
 Also run the full suite to catch regressions:
@@ -616,7 +636,7 @@ Expected: all PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add services/agent-py/src/agent_py/executor.py services/agent-py/tests/test_runner.py
+git add services/agent-py/src/agent_py/executor.py services/agent-py/tests/test_phase_3a_continue.py
 git commit -m "feat(agent-py): cross-chunk verification (re-aggregate from task_events on resume)"
 ```
 
