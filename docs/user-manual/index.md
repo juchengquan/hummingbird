@@ -98,6 +98,7 @@
 | `EMBEDDINGS_BASE_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `EMBEDDINGS_MODEL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `EXA_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
+| `GOOGLE_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `MCP_ENCRYPTION_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `MINIMAX_CN_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `MINIMAX_CN_BASE_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
@@ -115,6 +116,7 @@
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `TAVILY_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `VERIFY_MODEL` | yes | [21-environment-variables.md](21-environment-variables.md) |
+| `VERIFY_PROVIDER` | no | [21-environment-variables.md](21-environment-variables.md) |
 
 ### Settings
 

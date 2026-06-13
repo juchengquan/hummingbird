@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-06-13T12:58:54Z",
+  "generatedAt": "2026-06-13T14:58:14Z",
   "panels": [
     {
       "id": "agents-dialog",
@@ -442,6 +442,12 @@
       "sourceFile": ".env.example"
     },
     {
+      "id": "GOOGLE_API_KEY",
+      "description": "Cross-family verifier key — used when VERIFY_PROVIDER=google. Either GOOGLE_API_KEY or GEMINI_API_KEY works (GOOGLE_API_KEY is checked first).",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
       "id": "MCP_ENCRYPTION_KEY",
       "description": "MCP encryption — required when any user picks Cloud-mode credentials for an MCP server. Generate with `openssl rand -base64 32`. The key lives only in the Next.js server env (AND the Python agent service env from Phase 3f-1+, which reads the same var to call the same SECURITY DEFINER decrypt RPC), never in Postgres; it's passed as an argument to the RPC at request time. Rotating invalidates existing cloud-mode creds — users have to re-add the server. Leaving unset disables cloud mode on both stacks (Local mode still works).",
       "required": true,
@@ -541,6 +547,12 @@
       "id": "VERIFY_MODEL",
       "description": "Citation verifier model — optional. When set, the Python agent service runs a post-run citation pass on Deep Research reports: each cited claim is checked against its sources and the result shows a confidence chip + flagged claims (see docs/PLAN-citation-verifiability.md). Empty = OFF. Use a CHEAP model id (ideally cheaper/weaker than the answerer — cross- checking your own output is weaker). Uses the same ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL client, so it's a no-op without a key regardless.",
       "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "VERIFY_PROVIDER",
+      "description": "Verifier provider family — optional. Default \"anthropic\" preserves the legacy same-family behaviour. Set to \"google\" to cross-check the answer with a different model family (a model is a weak judge of its own output). The Google path needs GOOGLE_API_KEY (or GEMINI_API_KEY) and the optional google-generativeai SDK; if either is missing it falls back to Anthropic with a one-shot log warning.",
+      "required": false,
       "sourceFile": ".env.example"
     }
   ],
