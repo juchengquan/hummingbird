@@ -1279,10 +1279,33 @@ git commit -m "feat(shared): markerMarksFor builds per-[N] CitationMarkerMarks f
 
 ### Task 6: Add `<CitationMarker>` component + the post-processor in `chat-message.tsx`
 
-**Files:**
-- Create: `components/panels/citation-marker.tsx`
-- Modify: `components/panels/chat-message.tsx`
-- Test: `components/panels/chat-message.test.tsx` (or a new `citation-marker.test.tsx`)
+**Files (as shipped):**
+- Create: `components/panels/citation-marker.ts` (pure helpers, not a `.tsx` component)
+- Modify: `components/markdown-preview.tsx` (the actual renderer)
+- Modify: `components/panels/chat-message.tsx` (threads the marks prop)
+- Test: `components/panels/citation-marker.test.ts` (new)
+
+> **Corrections (discovered at execution time):** the shipped chat
+> renderer is **`components/markdown-preview.tsx`** (used in ~12 places),
+> not a post-processor inside `chat-message.tsx`. It renders an **HTML
+> string** via `dangerouslySetInnerHTML` and already turns `[N]` into
+> `<button class="web-citation" data-citation-index="N">` via a private
+> `decorateWebCitations(html, sourceCount)` pass. So:
+> 1. **No `<CitationMarker>` React component** — it can't slot into an
+>    HTML-string pipeline. The decoration is a pure string transform.
+> 2. `decorateWebCitations` (+ `WEB_CITATION_RE` + `escapeAttr`) moved
+>    into a pure `components/panels/citation-marker.ts` and gained an
+>    optional `marks?: Map<string, CitationMarkerMark>` param; when a
+>    marker is flagged the existing `web-citation` button also gets the
+>    tone class + a `title` tooltip (click behavior unchanged).
+> 3. `MarkdownPreview` gained an optional `citationMarks` prop (the
+>    helper from Task 5), threaded into `decorateWebCitations`.
+>    `chat-message.tsx` passes `markerMarksFor(message.verification.checks)`.
+> 4. Test is `citation-marker.test.ts` against the **pure** module (no
+>    `renderAnnotatedMessage`, no CSS/`marked`/`openPdf` import — those
+>    would break `bun test`). The `CitationMarker` component / `TONE` /
+>    `TOOLTIP` code below is superseded by `citationMarkerAttrs` in that
+>    module.
 
 - [ ] **Step 1: Create the `<CitationMarker>` component**
 
