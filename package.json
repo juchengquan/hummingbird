@@ -17,6 +17,7 @@
     "docs:user-manual:roundtrip": "bun test scripts/__tests__/inventory-roundtrip.test.ts",
     "codegen:agent-types": "bash scripts/codegen-agent-types.sh",
     "codegen:agent-types:check": "bash scripts/codegen-agent-types.sh --check",
+    "check:agent-py": "cd services/agent-py && uv run ruff check . && uv run ruff format --check . && uv run mypy src && uv run pytest",
     "supabase:start": "supabase start",
     "supabase:stop": "supabase stop",
     "supabase:reset": "supabase db reset",
