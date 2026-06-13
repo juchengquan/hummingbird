@@ -21,7 +21,18 @@
  * tool can import without violating the boundary.
  */
 
+import { format, parseISO } from "date-fns"
 import { z } from "zod"
+
+/** Dates in generative UI are ISO `YYYY-MM-DD`, date-only (no time/zone). */
+export const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+const IsoDate = z.string().regex(ISO_DATE_RE, "expected YYYY-MM-DD")
+
+/** Human-readable form of an ISO date for the follow-up chat turn.
+ *  Falls back to the raw string if it isn't a clean ISO date. */
+function formatIsoHuman(iso: string): string {
+  return ISO_DATE_RE.test(iso) ? format(parseISO(iso), "MMMM d, yyyy") : iso
+}
 
 /** Allow-list of generative UI kinds. Adding a new kind: extend this
  *  enum + the discriminated union below + register a component in
@@ -31,6 +42,7 @@ export const UI_KIND_VALUES = [
   "choice",
   "confirm",
   "mini-form",
+  "date-picker",
 ] as const
 export type UiKind = (typeof UI_KIND_VALUES)[number]
 
@@ -141,6 +153,24 @@ export const MiniFormPropsSchema = z.object({
 })
 export type MiniFormProps = z.infer<typeof MiniFormPropsSchema>
 
+// --- date-picker ------------------------------------------------------------
+
+export const DatePickerPropsSchema = z
+  .object({
+    prompt: z.string().min(1).max(500),
+    /** "single" → one day, auto-resolves on pick; "range" → from/to
+     *  with a Submit button. */
+    mode: z.enum(["single", "range"]).default("single"),
+    /** Earliest / latest selectable day (ISO). Out-of-range days are
+     *  disabled in the calendar. */
+    min: IsoDate.optional(),
+    max: IsoDate.optional(),
+  })
+  .refine((p) => !p.min || !p.max || p.min <= p.max, {
+    message: "min must be <= max",
+  })
+export type DatePickerProps = z.infer<typeof DatePickerPropsSchema>
+
 // --- Discriminated union over all kinds -------------------------------------
 
 /** The wire shape of a generative UI part. `kind` discriminates the
@@ -151,6 +181,7 @@ export const UiPartSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("choice"), props: ChoicePropsSchema }),
   z.object({ kind: z.literal("confirm"), props: ConfirmPropsSchema }),
   z.object({ kind: z.literal("mini-form"), props: MiniFormPropsSchema }),
+  z.object({ kind: z.literal("date-picker"), props: DatePickerPropsSchema }),
 ])
 export type UiPart = z.infer<typeof UiPartSchema>
 
@@ -192,6 +223,8 @@ export type UiAnswer =
   /** `mini-form` — submitted values keyed by field id (string values
    *  for text/select; stringified number for `number` fields). */
   | { kind: "mini-form"; values: Record<string, string> }
+  | { kind: "date-picker"; date: string }
+  | { kind: "date-picker"; from: string; to: string }
 
 /** Pure parser for one `PersistedUiPart` — validates the kind /
  *  props shape and returns null when the part is malformed. Used by
@@ -243,6 +276,24 @@ function parseAnswerForKind(
       if (typeof val === "string") out[k] = val
     }
     return { kind: "mini-form", values: out }
+  }
+  if (kind === "date-picker") {
+    const date = v.date
+    if (typeof date === "string" && ISO_DATE_RE.test(date)) {
+      return { kind: "date-picker", date }
+    }
+    const from = v.from
+    const to = v.to
+    if (
+      typeof from === "string" &&
+      ISO_DATE_RE.test(from) &&
+      typeof to === "string" &&
+      ISO_DATE_RE.test(to) &&
+      from <= to
+    ) {
+      return { kind: "date-picker", from, to }
+    }
+    return null
   }
   return null
 }
@@ -298,6 +349,11 @@ export function formatAnswerForChat(
       fragments.push(`${label}: ${v}`)
     }
     return fragments.join(", ")
+  }
+
+  if (part.kind === "date-picker" && answer.kind === "date-picker") {
+    if ("date" in answer) return formatIsoHuman(answer.date)
+    return `${formatIsoHuman(answer.from)} – ${formatIsoHuman(answer.to)}`
   }
 
   return ""
