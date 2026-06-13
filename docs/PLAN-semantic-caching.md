@@ -10,17 +10,20 @@ stableStringify(input)]`); `/api/summarize` all four modes +
 an in-process cache rather than the Supabase table the plan sketched
 because those routes have no Supabase session today (would mean
 wiring per-user auth in — scope creep). **Phase 2 (2026-06-14):
-in-process embedding near-match on `file` summarize mode only —
-`cosine` + `findSimilarCachedResponse` in the same module (entries
-gain `{embedding, scope}`, scope = `kind|mode|model`, cosine ≥ 0.97),
-embedded via the shipped `lib/server/embeddings/provider.ts` on an
-exact-key miss. Deliberately stayed in-process (NOT the pgvector
-`response_cache` table sketched below) to keep Phase 1's no-auth,
-content-keyed grain; the tradeoff is no cross-restart / cross-instance
-cache — fine for the single-VM deploy target. `extract` and the other
-three summarize modes stay exact-key only. Open follow-ups: extend to
-`project-breakdown` mode; a persistent/cross-instance pgvector variant
-if the deploy model ever changes.** Promoted from
+in-process embedding near-match on the `file` summarize mode and the
+`project-breakdown` mode (the latter only when there are no
+`existingTitles` — a goal-only match must not re-propose tasks already
+on the board) — `cosine` + `findSimilarCachedResponse` in the same
+module (entries gain `{embedding, scope}`, scope = `kind|mode|model`,
+cosine ≥ 0.97), embedded via the shipped
+`lib/server/embeddings/provider.ts` on an exact-key miss; the per-mode
+eligibility decision lives in the pure `summarize-similarity.ts`.
+Deliberately stayed in-process (NOT the pgvector `response_cache`
+table sketched below) to keep Phase 1's no-auth, content-keyed grain;
+the tradeoff is no cross-restart / cross-instance cache — fine for the
+single-VM deploy target. `extract`, `conversation`, and `compress`
+stay exact-key only. Open follow-up: a persistent/cross-instance
+pgvector variant if the deploy model ever changes.** Promoted from
 [MASTER_PLAN § Later](MASTER_PLAN.md) (second research round,
 2026-06-09) to **Next**. Origin: 2026 semantic-caching practice — see
 [Sources](#sources).
