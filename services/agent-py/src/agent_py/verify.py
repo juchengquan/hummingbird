@@ -151,9 +151,7 @@ def parse_verification_json(raw: str) -> list[RawClaimCheck]:
         if not isinstance(claim, int) or isinstance(claim, bool) or status not in _STATUSES:
             continue
         raw_ids = item.get("sourceIds")
-        source_ids = (
-            [s for s in raw_ids if isinstance(s, str)] if isinstance(raw_ids, list) else []
-        )
+        source_ids = [s for s in raw_ids if isinstance(s, str)] if isinstance(raw_ids, list) else []
         out.append(RawClaimCheck(claim=claim, status=status, source_ids=source_ids))
     return out
 

@@ -34,8 +34,7 @@ _SOURCES = [
 ]
 
 _ANSWER = (
-    "Water boils at 100C at sea level [1]. Mars has three moons [2]. "
-    "The weather is nice today."
+    "Water boils at 100C at sea level [1]. Mars has three moons [2]. The weather is nice today."
 )
 
 

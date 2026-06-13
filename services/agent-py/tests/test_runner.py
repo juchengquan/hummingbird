@@ -107,7 +107,10 @@ async def test_finalize_hook_attaches_verification_to_result() -> None:
     return value rides on `ResultEvent.verification` (citation pass)."""
     sink = _Capture()
     em = RunEmitter(run_id="r", sink=sink)
-    payload = {"checks": [], "summary": {"supported": 1, "partial": 0, "unsupported": 0, "total": 1}}
+    payload = {
+        "checks": [],
+        "summary": {"supported": 1, "partial": 0, "unsupported": 0, "total": 1},
+    }
 
     async def step_fn(ctx: RunStepContext) -> RunStepOutcome:
         return RunStepOutcome(done=True)
@@ -136,9 +139,7 @@ async def test_no_finalize_hook_leaves_verification_none() -> None:
     async def step_fn(ctx: RunStepContext) -> RunStepOutcome:
         return RunStepOutcome(done=True)
 
-    await run_agent_loop(
-        emitter=em, max_steps=5, run_step=step_fn, is_cancelled=_never_cancelled
-    )
+    await run_agent_loop(emitter=em, max_steps=5, run_step=step_fn, is_cancelled=_never_cancelled)
     last = sink.events[-1]
     assert isinstance(last, ResultEvent)
     assert last.verification is None
