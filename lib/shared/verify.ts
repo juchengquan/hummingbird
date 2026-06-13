@@ -163,6 +163,33 @@ export function mapRawChecks(
   return out
 }
 
+/**
+ * Validate a `data-verification` wire payload into a `VerificationResult`,
+ * or `null` if malformed. Defensive at the client boundary — an older /
+ * buggy server emit is dropped rather than corrupting the message. The
+ * summary is recomputed from the checks so it can't drift from them.
+ */
+export function parseVerificationFrame(data: unknown): VerificationResult | null {
+  if (!data || typeof data !== "object") return null
+  const rawChecks = (data as { checks?: unknown }).checks
+  if (!Array.isArray(rawChecks)) return null
+  const checks: ClaimCheck[] = []
+  for (const item of rawChecks) {
+    if (!item || typeof item !== "object") continue
+    const { claim, status, sourceIds } = item as Record<string, unknown>
+    if (typeof claim !== "string" || !STATUSES.has(status as string)) continue
+    checks.push({
+      claim,
+      status: status as ClaimStatus,
+      sourceIds: Array.isArray(sourceIds)
+        ? sourceIds.filter((x): x is string => typeof x === "string")
+        : [],
+    })
+  }
+  if (checks.length === 0) return null
+  return { checks, summary: summarizeChecks(checks) }
+}
+
 /** Tally claim statuses for the per-message confidence summary
  *  ("8/9 grounded"). */
 export function summarizeChecks(checks: ClaimCheck[]): VerificationSummary {

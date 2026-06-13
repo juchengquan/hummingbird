@@ -102,6 +102,7 @@ export function useChatSend(): UseChatSendResult {
   )
   const setMessageToolCalls = useStore((s) => s.setMessageToolCalls)
   const setMessageSuggestions = useStore((s) => s.setMessageSuggestions)
+  const setMessageVerification = useStore((s) => s.setMessageVerification)
   const setMessageRoutedModel = useStore((s) => s.setMessageRoutedModel)
   const appendMessageGeneratedImages = useStore(
     (s) => s.appendMessageGeneratedImages
@@ -410,6 +411,10 @@ export function useChatSend(): UseChatSendResult {
       // the server routes generated images to Storage vs. data URLs
       // based on this.
       const localFilesOnly = useStore.getState().localFilesOnly
+      // Opt-in citation verification (account-menu toggle). Snapshotted
+      // at send-time; the server only acts on it for retrieval turns that
+      // produced cited claims. See PLAN-citation-verifiability.md.
+      const verifyCitations = useStore.getState().verifyCitations
       // Phase 4-2 backend selector + Phase 5 of PLAN-agent-ts. The
       // resolver reads `chatBackend` from the store + grabs the
       // Supabase JWT lazily; null means "in-Next route, no token
@@ -441,6 +446,7 @@ export function useChatSend(): UseChatSendResult {
                 : undefined,
             referenceImage: options?.referenceImage,
             localFilesOnly: localFilesOnly || undefined,
+            verifyCitations: verifyCitations || undefined,
             // Only send the reasoning tier when the active model exposes
             // the knob; harmless otherwise (the route maps it to {} for
             // unsupported providers), but keeps the wire clean.
@@ -641,6 +647,15 @@ export function useChatSend(): UseChatSendResult {
                 setMessageSuggestions(ph.id, parsed.values)
               }
             } else if (
+              parsed.type === "verification" &&
+              parsed.verification
+            ) {
+              // Citation verification — stamp the per-claim verdicts +
+              // confidence summary onto the message. See
+              // PLAN-citation-verifiability.md.
+              const ph = placeholder as Message | null
+              if (ph) setMessageVerification(ph.id, parsed.verification)
+            } else if (
               parsed.type === "routed_model" &&
               typeof parsed.value === "string"
             ) {
@@ -828,6 +843,7 @@ export function useChatSend(): UseChatSendResult {
       setMessageReasoningDuration,
       setMessageRoutedModel,
       setMessageSuggestions,
+      setMessageVerification,
       setMessageToolCalls,
       userSkills,
       workspaces,

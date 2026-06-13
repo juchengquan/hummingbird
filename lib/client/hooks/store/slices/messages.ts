@@ -59,6 +59,13 @@ export interface MessagesSlice {
   setMessageReasoningDuration: (messageId: string, durationMs: number) => void
   setMessageToolCalls: (messageId: string, toolCalls: ToolCallRecord[]) => void
   setMessageSuggestions: (messageId: string, suggestions: string[]) => void
+  /** Stamp the citation-verification result for this turn — dispatched
+   *  by `use-chat-send` on `verification` SSE frames. See
+   *  `docs/PLAN-citation-verifiability.md`. */
+  setMessageVerification: (
+    messageId: string,
+    verification: import("@/shared/verify").VerificationResult,
+  ) => void
   /** Stamp the concrete model the "Auto" smart router resolved to for
    *  this turn. Dispatched by `use-chat-send` on `routed_model` SSE
    *  frames. See `docs/PLAN-model-routing.md`. */
@@ -326,6 +333,20 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
             ...c,
             messages: c.messages.map((m) =>
               m.id === messageId ? { ...m, suggestions } : m
+            ),
+          }
+        }
+        return c
+      }),
+    })),
+  setMessageVerification: (messageId, verification) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) => {
+        if (c.messages.some((m) => m.id === messageId)) {
+          return {
+            ...c,
+            messages: c.messages.map((m) =>
+              m.id === messageId ? { ...m, verification } : m
             ),
           }
         }

@@ -24,6 +24,11 @@ import "server-only"
 
 import { randomUUID } from "node:crypto"
 
+import type {
+  ClaimCheck as VerificationClaimCheck,
+  VerificationSummary,
+} from "@/shared/verify"
+
 /** Header the AI SDK uses to advertise its UI-message-stream
  *  protocol version. Setting it on the response lets `useChat()`
  *  confirm the wire without sniffing the body. */
@@ -155,6 +160,20 @@ export class ChatSseEmitter {
     this.send({
       type: "data-suggestions",
       data: { values },
+    })
+  }
+
+  /** Citation-verification verdicts as a `data-verification` custom
+   *  data part (`docs/PLAN-citation-verifiability.md`). The client
+   *  translator maps this to `{ type: "verification", … }`; the
+   *  send-pipeline stores it on `Message.verification` for the inline
+   *  unsupported-claim markers + the confidence summary. No-op when
+   *  there are no checks. */
+  verification(payload: { checks: VerificationClaimCheck[]; summary: VerificationSummary }): void {
+    if (payload.checks.length === 0) return
+    this.send({
+      type: "data-verification",
+      data: { checks: payload.checks, summary: payload.summary },
     })
   }
 

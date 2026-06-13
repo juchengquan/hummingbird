@@ -20,6 +20,7 @@ import { MessageUiParts } from "@/components/chat/generative-ui/message-ui-parts
 import { MessageAttachments } from "@/components/panels/message-attachments"
 import { ReasoningBlock } from "@/components/panels/reasoning-block"
 import { SourcesStrip } from "@/components/panels/sources-strip"
+import { MessageVerification } from "@/components/panels/message-verification"
 import { ErrorBubble } from "@/components/panels/error-bubble"
 import { useStore, useMessageBookmark } from "@/client/hooks/use-store"
 import { mark as perfMark, count as perfCount } from "@/client/perf-chat-stream"
@@ -428,6 +429,9 @@ function ChatMessageImpl({
                     results={webSearchResults}
                     highlightedIndex={highlightedCitation}
                   />
+                )}
+                {!isUser && message.verification && (
+                  <MessageVerification verification={message.verification} />
                 )}
                 {!isUser && <MessageLiveArtifacts messageId={message.id} />}
                 {!isUser &&

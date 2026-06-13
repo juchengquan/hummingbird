@@ -149,6 +149,12 @@ export const ChatRequestSchema = z.object({
    *  provider options server-side; ignored for models/providers without
    *  a mapping. See `@/shared/reasoning-effort`. */
   reasoningEffort: z.enum(["low", "medium", "high"]).optional(),
+  /** Opt-in citation verification (`docs/PLAN-citation-verifiability.md`).
+   *  When true and the turn produced cited claims over retrieved sources,
+   *  the route runs a post-turn verifier pass and emits a
+   *  `data-verification` part. Absent / false → no verification.
+   *  Default-on in Deep Research mode is layered on separately. */
+  verifyCitations: z.boolean().optional(),
   skills: z
     .array(
       z.object({

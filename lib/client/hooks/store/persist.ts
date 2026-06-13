@@ -49,6 +49,7 @@ export const partializeState = (state: AppState) => ({
   editorPrefs: state.editorPrefs,
   localOnlyMode: state.localOnlyMode,
   localFilesOnly: state.localFilesOnly,
+  verifyCitations: state.verifyCitations,
   chatBackend: state.chatBackend,
   prompts: state.prompts,
   agents: state.agents,

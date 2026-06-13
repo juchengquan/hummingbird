@@ -8,7 +8,7 @@ import { uuid } from "@/shared/uuid"
  * step in `runMigrations`. Wired into the `version` field of the persist
  * config in `use-store.ts`.
  */
-export const STORE_VERSION = 28
+export const STORE_VERSION = 29
 
 /**
  * Sequential schema migrations from older persisted shapes to the
@@ -476,6 +476,13 @@ export function runMigrations(
     // button. The version bump is a marker so a downgrade can't
     // silently lose a part written by a newer client. See
     // `docs/PLAN-mcp-apps.md`.
+  }
+  if (fromVersion < 29) {
+    // Citation-verification opt-in toggle (`verifyCitations`). Default
+    // OFF so existing users see no behaviour change until they enable it
+    // in the account menu (Deep Research mode enables it independently).
+    // See `docs/PLAN-citation-verifiability.md`.
+    if (!("verifyCitations" in state)) state.verifyCitations = false
   }
   return persistedState
 }

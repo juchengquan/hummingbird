@@ -133,6 +133,15 @@ export interface UiSlice {
    */
   localFilesOnly: boolean
 
+  /**
+   * When true, retrieval chat turns (web search) run a post-turn citation
+   * verifier: each cited claim is checked against its sources, and the
+   * answer shows unsupported-claim markers + a confidence chip. Opt-in;
+   * Deep Research mode enables it regardless. See
+   * `docs/PLAN-citation-verifiability.md`.
+   */
+  verifyCitations: boolean
+
   /** One-shot signal from anywhere in the app to ChatPanel's local input
    *  state. Set by sidebar prompt click (after variable expansion) or
    *  any future surface that wants to seed the input. ChatPanel's
@@ -190,6 +199,7 @@ export interface UiSlice {
   clearSelectionAction: () => void
   setLocalOnlyMode: (value: boolean) => void
   setLocalFilesOnly: (value: boolean) => void
+  setVerifyCitations: (value: boolean) => void
   setPendingChatInput: (value: string | null) => void
   setChatBackend: (value: ChatBackend) => void
 
@@ -220,6 +230,7 @@ export const createUiSlice: SliceCreator<UiSlice> = (set, get) => ({
   // Local-only mode — off by default; users opt in via AccountMenu.
   localOnlyMode: false,
   localFilesOnly: false,
+  verifyCitations: false,
   pendingChatInput: null,
   chatBackend: "ts",
 
@@ -267,6 +278,7 @@ export const createUiSlice: SliceCreator<UiSlice> = (set, get) => ({
   clearSelectionAction: () => set({ pendingSelectionAction: null }),
   setLocalOnlyMode: (value) => set({ localOnlyMode: value }),
   setLocalFilesOnly: (value) => set({ localFilesOnly: value }),
+  setVerifyCitations: (value) => set({ verifyCitations: value }),
   setPendingChatInput: (value) => set({ pendingChatInput: value }),
   setChatBackend: (value) => set({ chatBackend: value }),
 
