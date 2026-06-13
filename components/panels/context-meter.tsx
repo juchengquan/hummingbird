@@ -33,9 +33,9 @@ const ZONE_CLASSES: Record<ReturnType<typeof contextZone>, string> = {
  * conversation fills the model's context window, so the user gets a
  * heads-up before the model starts silently dropping early messages.
  *
- * The token count is a chars/4 heuristic — see `lib/shared/tokens.ts`
- * for the trade-off (cheap and ±20% accurate across model families vs
- * bundling per-family tokenizers at significant size cost).
+ * The token count uses the model's real tokenizer where one is published
+ * (OpenAI / Anthropic, via `js-tiktoken`) and a chars/4 heuristic
+ * otherwise — see `lib/shared/tokens.ts` for the per-family trade-off.
  *
  * Hides itself when the model id is unknown or the conversation is
  * empty — no point taking up header real estate before there's
@@ -44,7 +44,10 @@ const ZONE_CLASSES: Record<ReturnType<typeof contextZone>, string> = {
 export function ContextMeter({ messages, modelId }: ContextMeterProps) {
   const model = getChatModel(modelId)
 
-  const used = useMemo(() => estimateConversationTokens(messages), [messages])
+  const used = useMemo(
+    () => estimateConversationTokens(messages, modelId),
+    [messages, modelId]
+  )
 
   if (!model || messages.length === 0) return null
 

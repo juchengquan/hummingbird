@@ -51,6 +51,12 @@ const ChatModelSchema = z.object({
    *  when set and fall back to lenient text parsing otherwise. See
    *  `@/server/ai/structured`. */
   supportsStructuredOutput: z.boolean().optional(),
+  /** Which tokenizer the context meter uses to estimate this model's
+   *  token count. `tiktoken-o200k` (modern OpenAI), `tiktoken-cl100k`
+   *  (older OpenAI; also a within-a-few-% proxy for Anthropic). Absent →
+   *  the chars/4 heuristic, which undercounts code/JSON by 30-50%. See
+   *  `@/shared/tokens`. */
+  tokenizer: z.enum(["tiktoken-cl100k", "tiktoken-o200k", "heuristic"]).optional(),
 })
 
 const RoutingConfigSchema = z.object({

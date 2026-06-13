@@ -91,6 +91,7 @@
     "docx-preview": "^0.3.7",
     "html-to-image": "^1",
     "html2canvas-pro": "^2.0.2",
+    "js-tiktoken": "^1.0.21",
     "lodash": "^4.17.23",
     "lowlight": "^3.3.0",
     "lucide-react": "^0.575.0",
