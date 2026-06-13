@@ -1,22 +1,38 @@
 # Citation Verifiability v2 — Handover
 
-**Status:** Plan + 1 partial commit. Pausing for handoff. The pickup agent should:
+**Status:** ✅ COMPLETE — all 7 tasks shipped and merged to `dev`.
 
-1. Read this doc top-to-bottom.
-2. Verify the working-tree state matches what's described.
-3. Resume from the bottom (the very next step is in §Resume).
+Landed via two squash-merged PRs:
+- **#205** — Citation verifiability v2 (commits 4–6): cross-chunk + cross-family verification + inline markers. On `dev` as `6b31d06`.
+- **#206** — `bun run check:agent-py` local gate mirroring the agent-py CI job (follow-up; the format-check step was missing locally). On `dev` as `2a49900`.
+
+Verification at merge: agent-py 505 tests pass · ruff check + `ruff format --check` clean · mypy clean (46 files) · TS typecheck + lint clean · user-manual inventory refreshed · all PR CI checks green.
+
+| Task | What | Result |
+|---|---|---|
+| 1 | `store.load_run_events` + `event_from_row_payload` | ✅ done |
+| 2 | `verify.aggregate_from_events` | ✅ done |
+| 3 | re-aggregate on resume (**commit 4**) | ✅ done (via the `continue` path, not `respond`) |
+| 4 | cross-family verifier + `VERIFY_PROVIDER` (**commit 5**) | ✅ done (Google Gemini, opt-in; `google-generativeai` optional dep) |
+| 5 | `markerMarksFor` in `lib/shared/verify.ts` | ✅ done |
+| 6 | inline `[N]` markers (**commit 6**) | ✅ done (HTML-string `MarkdownPreview` pipeline, not a React component) |
+| 7 | full check sweep + sign-off | ✅ done |
+
+The plan doc (`docs/superpowers/plans/2026-06-13-citation-verifiability-v2-plan.md`) carries inline **Corrections** banners for Tasks 1/3/4/6 where the as-built implementation diverged from the as-written plan (structlog vs stdlib logging; the `continue` path; reusing `verify_answer`; the HTML-string renderer). It remains the source of truth.
+
+Everything below this line is the **historical** in-progress handover from when only Task 1 was underway. Kept for provenance; no longer actionable.
 
 ---
 
 ## Context
 
-We're shipping the 3 remaining items from `docs/PLAN-citation-verifiability.md`:
+We were shipping the 3 remaining items from `docs/PLAN-citation-verifiability.md`:
 
 - **Commit 4** — Cross-chunk verification
 - **Commit 5** — Cross-family verifier
 - **Commit 6** — Inline span markers
 
-The design spec is at `docs/superpowers/specs/2026-06-13-citation-verifiability-v2-design.md`. The plan is at `docs/superpowers/plans/2026-06-13-citation-verifiability-v2-plan.md` (7 tasks). This handover covers **Task 1 only** — Task 1 was 3 subagent attempts deep when the session was paused; Tasks 2-7 haven't been started.
+The design spec is at `docs/superpowers/specs/2026-06-13-citation-verifiability-v2-design.md`. The plan is at `docs/superpowers/plans/2026-06-13-citation-verifiability-v2-plan.md` (7 tasks). This handover covered **Task 1 only** — Task 1 was 3 subagent attempts deep when the session was paused; Tasks 2-7 had not been started at the time of writing.
 
 ---
 
