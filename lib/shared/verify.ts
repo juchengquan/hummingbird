@@ -206,3 +206,22 @@ export function summarizeChecks(checks: ClaimCheck[]): VerificationSummary {
   }
   return summary
 }
+
+/**
+ * Per-source count of how many *supported* claims each source backs,
+ * keyed by source id. Drives the Sources-strip "supports N claims"
+ * badges. Only `supported` claims count — a `partial` is too weak a
+ * signal to advertise a source as backing a claim.
+ */
+export function countSupportPerSource(
+  checks: ClaimCheck[]
+): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const c of checks) {
+    if (c.status !== "supported") continue
+    for (const id of c.sourceIds) {
+      counts[id] = (counts[id] ?? 0) + 1
+    }
+  }
+  return counts
+}

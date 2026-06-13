@@ -21,6 +21,7 @@ import { MessageAttachments } from "@/components/panels/message-attachments"
 import { ReasoningBlock } from "@/components/panels/reasoning-block"
 import { SourcesStrip } from "@/components/panels/sources-strip"
 import { MessageVerification } from "@/components/panels/message-verification"
+import { countSupportPerSource } from "@/shared/verify"
 import { ErrorBubble } from "@/components/panels/error-bubble"
 import { useStore, useMessageBookmark } from "@/client/hooks/use-store"
 import { mark as perfMark, count as perfCount } from "@/client/perf-chat-stream"
@@ -118,6 +119,14 @@ function ChatMessageImpl({
     const merged = calls.flatMap((c) => c.results ?? [])
     return merged.length > 0 ? merged : null
   })()
+
+  // Per-source supported-claim counts for the Sources-strip badges,
+  // derived from this turn's verification (when it ran). Source ids line
+  // up with the cumulative `[N]` numbering above. See
+  // PLAN-citation-verifiability.md.
+  const sourceSupportCounts = message.verification
+    ? countSupportPerSource(message.verification.checks)
+    : undefined
 
   useEffect(() => {
     if (isEditing && textareaRef.current) {
@@ -428,6 +437,7 @@ function ChatMessageImpl({
                   <SourcesStrip
                     results={webSearchResults}
                     highlightedIndex={highlightedCitation}
+                    supportCounts={sourceSupportCounts}
                   />
                 )}
                 {!isUser && message.verification && (
