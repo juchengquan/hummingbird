@@ -33,9 +33,9 @@ from typing import Any
 import asyncpg
 import structlog
 
-from . import jobs, store
+from . import jobs, store, verify
 from .emitter import EventSink, RunEmitter
-from .events import TaskEvent
+from .events import TaskEvent, TokenEvent, ToolOutputEvent
 from .input_policy import (
     ALWAYS_GATED_TOOL_NAMES,
     request_kind_for,
@@ -235,7 +235,29 @@ async def _run_chunk(
     start_seq = _int_or(checkpoint.get("seq"), 0) if resume else 0
     start_step = _int_or(checkpoint.get("step"), 0) if resume else 0
 
-    sink = _make_db_sink(pool, user_id=payload.user_id)
+    # Tap the sink to accumulate the assembled report text + web-search
+    # sources as events flow, so the citation finalize hook (research
+    # runs) can verify before the terminal `result` latches the emitter.
+    # Only token(text) + tool_output(results) feed it; everything else
+    # passes through to the DB sink. Web-search results arrive in the
+    # cumulative order the model cites by (`[1]`, `[2]`, …).
+    #
+    # This accumulator is per-chunk, so it's only complete when the run
+    # settles in THIS chunk — which is why verification runs on the
+    # `execute_start` path only (a run that yields and finishes in a later
+    # `continue` chunk simply gets no verification). See verify_answer's
+    # no-op guards + `docs/PLAN-citation-verifiability.md`.
+    verify_text_parts: list[str] = []
+    verify_sources: list[tuple[str, str, str]] = []
+    db_sink = _make_db_sink(pool, user_id=payload.user_id)
+
+    async def sink(event: TaskEvent) -> None:
+        if isinstance(event, TokenEvent) and event.channel == "text":
+            verify_text_parts.append(event.text)
+        elif isinstance(event, ToolOutputEvent) and event.results:
+            verify_sources.extend((r.title, r.url, r.snippet) for r in event.results)
+        await db_sink(event)
+
     emitter = RunEmitter(
         run_id=payload.run_id,
         sink=sink,
@@ -304,12 +326,34 @@ async def _run_chunk(
         def should_yield() -> bool:
             return deadline_s is not None and asyncio.get_event_loop().time() > deadline_s
 
+        # Citation verification (research runs only). Runs at settle, just
+        # before the terminal `result`, over the accumulated report text +
+        # web-search sources. Advisory + non-blocking — `_maybe_verify`
+        # swallows its own failures and returns None.
+        #
+        # `resume` (a `continue` chunk after a yield) is skipped: the
+        # per-chunk accumulators only hold THIS chunk's text + sources, so
+        # they're complete only when the run settles in the first chunk. A
+        # research run that yields and finishes later simply gets no
+        # verification — graceful degradation, not a wrong answer.
+        run_mode = _str_or_none(cfg.get("mode")) if isinstance(cfg, dict) else None
+
+        async def finalize() -> dict[str, object] | None:
+            if resume:
+                return None
+            return await _maybe_verify(
+                mode=run_mode,
+                text="".join(verify_text_parts),
+                sources=verify_sources,
+            )
+
         result: AgentLoopResult = await run_agent_loop(
             emitter=emitter,
             max_steps=max_steps,
             run_step=step_fn,
             is_cancelled=is_cancelled,
             should_yield=should_yield,
+            finalize=finalize,
         )
 
         # Suspend path (Phase 3b): the step fn detected a gated tool
@@ -476,6 +520,60 @@ def _resolve_anthropic_client() -> AsyncAnthropicClient | None:
     else:
         _anthropic_client = AsyncAnthropic(api_key=api_key)  # type: ignore[assignment]
     return _anthropic_client
+
+
+# Citation-verification cap — the verifier returns a small JSON object, so
+# a tight budget is plenty.
+_VERIFY_MAX_TOKENS = 800
+
+
+def _make_anthropic_verifier(client: Any, model: str) -> verify.RunVerifier:
+    """A `RunVerifier` that runs one non-streaming Anthropic call and
+    returns the concatenated text. `client` is the same `AsyncAnthropic`
+    the run used (typed `Any` here because the provider Protocol only
+    declares `messages.stream`, while the verifier wants `messages.create`)."""
+
+    async def run(prompt: str) -> str:
+        resp = await client.messages.create(
+            model=model,
+            max_tokens=_VERIFY_MAX_TOKENS,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        parts: list[str] = []
+        for block in getattr(resp, "content", None) or []:
+            text = getattr(block, "text", None)
+            if isinstance(text, str):
+                parts.append(text)
+        return "".join(parts)
+
+    return run
+
+
+async def _maybe_verify(
+    *,
+    mode: str | None,
+    text: str,
+    sources: list[tuple[str, str, str]],
+) -> dict[str, object] | None:
+    """Run the citation verifier for a research run, returning the wire
+    payload for the `result` event (or None). Gated on research mode + a
+    configured `VERIFY_MODEL` + a live Anthropic client; `verify_answer`
+    handles the no-claims / no-sources / failure → None cases. A
+    cheaper model than the answerer is the intent (cross-checking your own
+    output is weaker); same-family is the agent-py limitation today."""
+    if mode != "research":
+        return None
+    settings = get_settings()
+    model = settings.VERIFY_MODEL.strip()
+    client = _resolve_anthropic_client()
+    if not model or client is None:
+        return None
+    result = await verify.verify_answer(
+        text,
+        verify.gather_sources(sources),
+        run_verifier=_make_anthropic_verifier(client, model),
+    )
+    return result.to_payload() if result is not None else None
 
 
 def _default_make_step_fn(

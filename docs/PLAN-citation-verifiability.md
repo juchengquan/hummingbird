@@ -80,17 +80,33 @@ confidence }`) — beside `data-suggestions` / `data-tool-image`.
   markers + the confidence summary, layered onto the existing citation
   rendering.
 
-## Sequencing — one PR, three commits
+## Sequencing — shipped across several PRs
 
-1. **Commit 1 — verifier (pure + call).** Claim-splitting + the
-   verification prompt + `verifyAnswer`; tested against fixture
-   answer+sources. No wire yet.
-2. **Commit 2 — emit + render.** The `data-verification` part,
-   translator, store, the inline markers + confidence summary; opt-in
-   toggle.
-3. **Commit 3 — Deep Research default-on + tuning.** Default-on in
-   research mode; threshold/severity tuning; the Sources strip shows
-   per-source support counts.
+1. **Commit 1 — verifier (pure + call).** ✅ [#199] Claim-splitting +
+   the verification prompt + `verifyAnswer` (`lib/shared/verify.ts` +
+   `lib/server/verify/`); tested against fixture answer+sources.
+2. **Commit 2 — emit + render.** ✅ [#200] The `data-verification`
+   part, translator, store, the confidence chip + flagged-claims
+   disclosure; account-menu opt-in toggle. (Inline span markers within
+   the rendered markdown deferred — the disclosure carries the same
+   info.)
+3. **Commit 3 — Sources-strip support counts.** ✅ [#201]
+   `countSupportPerSource` + per-source "supports N claims" badges.
+4. **Deep Research integration.** ✅ Verification on research reports,
+   which run through the **task/agent pipeline** (agent-py), not the
+   inline chat route. Shared event-IR carries `ResultEvent.verification`
+   (`events.ts` / `wire.ts` / `emitter.ts` / `project.ts`); a Python
+   verifier port (`services/agent-py/src/agent_py/verify.py`) runs at
+   settlement via a runner `finalize` hook, gated on research mode +
+   `VERIFY_MODEL`; the client folds `view.verification` onto the result
+   `Message` so the existing UI renders. **Limitations:** runs only when
+   a research run settles in its first chunk (the per-chunk accumulator
+   is complete then); the verifier is same-family (Anthropic) since
+   agent-py has no cross-family provider; agent-ts stays stubbed until
+   its real-step phase.
+
+   Remaining: cross-chunk verification (read the full event log at
+   settle), a cross-family verifier, and true inline span markers.
 
 ## Tests
 

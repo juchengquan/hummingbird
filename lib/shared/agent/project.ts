@@ -23,6 +23,7 @@ import type {
   ToolOutputEvent,
 } from "./events"
 import type { ToolCallResult } from "@/shared/types"
+import type { VerificationResult } from "@/shared/verify"
 
 export interface ToolCallView {
   toolCallId: string
@@ -55,6 +56,10 @@ export interface TaskRunView {
   fatalError: string | null
   /** Final text from the `result` event, else null. */
   resultText: string | null
+  /** Citation-verification verdicts from the `result` event (research
+   *  runs), else null. Surfaced onto the settled Message so
+   *  `MessageVerification` renders. */
+  verification: VerificationResult | null
   /** Highest `seq` folded — the resume cursor to reconnect from. */
   cursor: number
   /** Set while the run is paused waiting for a human (HITL). Null
@@ -90,6 +95,7 @@ export const EMPTY_RUN_VIEW: TaskRunView = {
   lastStepError: null,
   fatalError: null,
   resultText: null,
+  verification: null,
   cursor: 0,
   pendingInput: null,
 }
@@ -144,6 +150,7 @@ export function reduceRun(view: TaskRunView, event: TaskEvent): TaskRunView {
       next.status = event.status
       next.resultText = event.finalText ?? next.text
       next.fatalError = event.status === "failed" ? event.error ?? "Run failed" : null
+      if (event.verification) next.verification = event.verification
       return next
     case "approval":
       // Request opens a pending input; response clears it. Anything

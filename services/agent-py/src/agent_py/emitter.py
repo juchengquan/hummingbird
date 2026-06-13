@@ -303,6 +303,7 @@ class RunEmitter:
         *,
         final_text: str | None = None,
         error: str | None = None,
+        verification: dict[str, object] | None = None,
     ) -> None:
         """Emit the terminal `result` event. Latches the emitter so
         nothing further is sent — call exactly once at the end of a
@@ -318,6 +319,7 @@ class RunEmitter:
                 status=status,
                 final_text=final_text,
                 error=error,
+                verification=verification,
             )
         )
         self._settled = True

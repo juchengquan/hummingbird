@@ -100,6 +100,11 @@ class ResultEvent(TaskEventBase):
     status: Literal["done", "failed"]
     final_text: str | None = None
     error: str | None = None
+    # Citation-verification verdicts for a research run (camelCase wire
+    # payload from `VerificationResult.to_payload`), folded onto the
+    # settled Message by the TS projection. None when verification didn't
+    # run. See `agent_py.verify` + `docs/PLAN-citation-verifiability.md`.
+    verification: dict[str, object] | None = None
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -249,6 +254,8 @@ def event_to_row_payload(event: TaskEvent) -> dict[str, object]:
             result_payload["finalText"] = event.final_text
         if event.error is not None:
             result_payload["error"] = event.error
+        if event.verification is not None:
+            result_payload["verification"] = event.verification
         return result_payload
     if isinstance(event, ToolInputEvent):
         return {
