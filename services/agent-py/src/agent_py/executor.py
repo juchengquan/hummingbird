@@ -296,12 +296,14 @@ async def _run_chunk(
         # extra tools wouldn't reach them anyway.
         if make_step_fn is None:
             extra_tools: dict[str, ToolDescriptor] = {}
+            mcp_gated: set[str] = set()
             if workspace_id:
                 await extend_registry_with_mcp(
                     extra_tools,
                     pool=pool,
                     user_id=payload.user_id,
                     workspace_id=workspace_id,
+                    gated_out=mcp_gated,
                 )
             step_fn = _default_make_step_fn(
                 payload,
@@ -309,6 +311,7 @@ async def _run_chunk(
                 live_messages,
                 tool_context,
                 extra_tools=extra_tools or None,
+                extra_gated_tool_names=mcp_gated or None,
             )
         else:
             step_fn = make_step_fn(payload, checkpoint, live_messages, tool_context)
@@ -746,6 +749,7 @@ def _default_make_step_fn(
     context: ToolContext | None = None,
     *,
     extra_tools: dict[str, ToolDescriptor] | None = None,
+    extra_gated_tool_names: set[str] | None = None,
 ) -> RunStepFn:
     """Default step-fn picker.
 
@@ -799,6 +803,8 @@ def _default_make_step_fn(
     # `pending_input` instead of executing — the runner suspends and
     # the executor emits an approval request.
     gated = _gated_tools_from(checkpoint)
+    if extra_gated_tool_names:
+        gated = gated | extra_gated_tool_names
 
     return make_anthropic_step_fn(
         AnthropicStepConfig(

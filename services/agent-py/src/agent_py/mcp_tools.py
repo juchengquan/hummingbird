@@ -62,6 +62,7 @@ class CloudMcpServerRow:
     name: str
     url: str
     capabilities: dict[str, Any] | None = None
+    requires_approval: bool = False
 
 
 def mcp_tool_name(server_id: str, tool_name: str) -> str:
@@ -72,11 +73,26 @@ def mcp_tool_name(server_id: str, tool_name: str) -> str:
     return f"mcp__{server_id}__{tool_name}"
 
 
+def gated_tool_names_for(servers: list[CloudMcpServerRow]) -> set[str]:
+    """Tool names to HITL-gate by server policy: for every server with
+    `requires_approval`, the `mcp__<id>__<tool>` name of each tool in its
+    cached capabilities. Pure — derived from the server rows, independent
+    of whether the tool actually registered (gating a non-registered name
+    is a harmless no-op)."""
+    names: set[str] = set()
+    for server in servers:
+        if not server.requires_approval:
+            continue
+        for descriptor in _tools_from_capabilities(server.capabilities):
+            names.add(mcp_tool_name(server.id, descriptor.name))
+    return names
+
+
 # --- DB reader -------------------------------------------------------------
 
 
 _LOAD_SERVERS_SQL = """
-SELECT id::text, name, url, capabilities
+SELECT id::text, name, url, capabilities, requires_approval
 FROM public.mcp_servers
 WHERE workspace_id = $1::uuid
   AND credential_mode = 'cloud'
@@ -119,6 +135,7 @@ async def load_workspace_cloud_servers(
                 name=row["name"],
                 url=row["url"],
                 capabilities=_decode_jsonb(row["capabilities"]),
+                requires_approval=bool(row.get("requires_approval", False)),
             )
         )
     return out
@@ -270,6 +287,7 @@ async def discover_mcp_tools_for_workspace(
     user_id: str,
     workspace_id: str,
     encryption_key: str | None = None,
+    gated_out: set[str] | None = None,
 ) -> dict[str, ToolDescriptor]:
     """Load every cloud-mode server in the workspace + bridge every
     cached tool into a `ToolDescriptor`, ready to merge into the
@@ -279,8 +297,15 @@ async def discover_mcp_tools_for_workspace(
     Decryption + bridging run concurrently across servers via
     `asyncio.gather` so a slow Postgres response on one row doesn't
     stall the others.
+
+    `gated_out` (optional) is a mutable set the caller owns; when
+    provided, tool names for servers with `requires_approval=True` are
+    added to it so the executor can gate those tools without a second
+    pass over the server list.
     """
     servers = await load_workspace_cloud_servers(pool, user_id=user_id, workspace_id=workspace_id)
+    if gated_out is not None:
+        gated_out.update(gated_tool_names_for(servers))
     if not servers:
         return {}
 
@@ -314,15 +339,20 @@ async def extend_registry_with_mcp(
     user_id: str,
     workspace_id: str,
     encryption_key: str | None = None,
+    gated_out: set[str] | None = None,
 ) -> dict[str, ToolDescriptor]:
     """Mutate `registry` in place, adding `mcp__<server>__<tool>`
     entries for every cloud-mode MCP tool the workspace exposes.
-    Returns the same registry for chaining."""
+    Returns the same registry for chaining.
+
+    `gated_out` (optional) is forwarded to `discover_mcp_tools_for_workspace`
+    so the executor can collect server-policy gate names in one pass."""
     mcp_tools = await discover_mcp_tools_for_workspace(
         pool,
         user_id=user_id,
         workspace_id=workspace_id,
         encryption_key=encryption_key,
+        gated_out=gated_out,
     )
     registry.update(mcp_tools)
     return registry
@@ -333,6 +363,7 @@ __all__ = [
     "build_mcp_tool",
     "discover_mcp_tools_for_workspace",
     "extend_registry_with_mcp",
+    "gated_tool_names_for",
     "load_workspace_cloud_servers",
     "mcp_tool_name",
 ]

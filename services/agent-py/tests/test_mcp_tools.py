@@ -409,3 +409,52 @@ async def test_extend_registry_with_mcp_merges() -> None:
     assert out is registry
     assert "webFetch" in registry
     assert f"mcp__{SERVER_ID}__t" in registry
+
+
+# --- gated_tool_names_for --------------------------------------------
+
+
+from agent_py.mcp_tools import (  # noqa: E402
+    CloudMcpServerRow,
+    gated_tool_names_for,
+)
+
+
+def _server(id: str, *, requires_approval: bool, tools: list[str]) -> CloudMcpServerRow:
+    return CloudMcpServerRow(
+        id=id,
+        name=id,
+        url="https://x",
+        capabilities={"tools": [{"name": t} for t in tools]},
+        requires_approval=requires_approval,
+    )
+
+
+def test_gated_tool_names_for_flagged_server() -> None:
+    servers = [_server("s1", requires_approval=True, tools=["write", "read"])]
+    assert gated_tool_names_for(servers) == {
+        mcp_tool_name("s1", "write"),
+        mcp_tool_name("s1", "read"),
+    }
+
+
+def test_gated_tool_names_for_skips_unflagged() -> None:
+    servers = [_server("s1", requires_approval=False, tools=["write"])]
+    assert gated_tool_names_for(servers) == set()
+
+
+def test_gated_tool_names_for_flagged_no_tools() -> None:
+    servers = [
+        CloudMcpServerRow(
+            id="s1", name="s1", url="https://x", capabilities=None, requires_approval=True
+        ),
+    ]
+    assert gated_tool_names_for(servers) == set()
+
+
+def test_gated_tool_names_for_mixed() -> None:
+    servers = [
+        _server("s1", requires_approval=True, tools=["danger"]),
+        _server("s2", requires_approval=False, tools=["safe"]),
+    ]
+    assert gated_tool_names_for(servers) == {mcp_tool_name("s1", "danger")}
