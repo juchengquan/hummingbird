@@ -182,6 +182,41 @@ async def test_load_servers_dict_capabilities_passthrough() -> None:
 
 
 @pytest.mark.asyncio
+async def test_load_servers_requires_approval_round_trips() -> None:
+    """requires_approval=True (and False) must survive the row → dataclass path.
+
+    Mirrors test_load_servers_issues_rls_set_role_then_select but focuses on the
+    bool field that row.get("requires_approval", False) maps; the existing tests
+    only exercise the default-false path (field absent from the row dict).
+    """
+    rows = [
+        {
+            "id": "aaaa",
+            "name": "Gated",
+            "url": "https://gated.test/sse",
+            "capabilities": json.dumps({"tools": [{"name": "write"}]}),
+            "requires_approval": True,
+        },
+        {
+            "id": "bbbb",
+            "name": "Open",
+            "url": "https://open.test/sse",
+            "capabilities": json.dumps({"tools": [{"name": "read"}]}),
+            "requires_approval": False,
+        },
+    ]
+    conn = _FakeConnection(rows=rows)
+    out = await load_workspace_cloud_servers(
+        _fake_pool(conn), user_id=USER_ID, workspace_id=WORKSPACE_ID
+    )
+    assert len(out) == 2
+    gated = next(r for r in out if r.id == "aaaa")
+    open_ = next(r for r in out if r.id == "bbbb")
+    assert gated.requires_approval is True
+    assert open_.requires_approval is False
+
+
+@pytest.mark.asyncio
 async def test_load_servers_db_error_returns_empty() -> None:
     conn = _FakeConnection(raises=RuntimeError("conn lost"))
     out = await load_workspace_cloud_servers(
