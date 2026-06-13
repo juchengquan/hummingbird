@@ -123,5 +123,6 @@ confirm nothing server-only leaked into the client chunks.
 | See the roadmap + open ideas | [`docs/MASTER_PLAN.md`](docs/MASTER_PLAN.md) |
 | Read a plan doc (one per major feature) | `docs/PLAN-*.md` |
 | Pick up where the last agent left off | [`docs/HANDOFF.md`](docs/HANDOFF.md) |
+| Read the user manual | [`docs/user-manual/index.md`](docs/user-manual/index.md) |
 
 Project-level conventions and tech-stack details: [`CLAUDE.md`](CLAUDE.md).

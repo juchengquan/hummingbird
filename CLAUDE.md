@@ -271,3 +271,22 @@ if uptime is good). Reasoning in `PLAN-agent-api.md` §Host decision.
   PR-activity-event guidance in the system prompt.
 - If the user explicitly says not to watch a particular PR, skip the
   subscribe for that one — but the default is on.
+
+## User manual
+
+The user-facing manual lives under `docs/user-manual/`. The top-level
+`index.md` and the `.feature-inventory.json` are generated; the
+per-topic pages are hand-written. To keep the manual in sync with the
+codebase:
+
+```bash
+bun run docs:user-manual:build      # regenerate inventory + index.md
+bun run docs:user-manual:check      # exit 1 if either is out of date
+bun run docs:user-manual:roundtrip  # verify pages agree with inventory
+```
+
+When you add a new user-facing feature (a panel, a slash command, a
+new env var, etc.), run the build. The new id will appear under
+`## Unmapped (action needed)` in `index.md`. Write a page that
+documents it, add the `<!-- pages-for: <id> -->` front-matter, and add
+a `PAGE_MAP` entry in `scripts/build-user-manual-toc.ts`.
