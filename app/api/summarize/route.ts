@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { categorizeError } from '@/shared/api-errors'
 import { generateStructured } from '@/server/ai/structured'
 import {
+  findSimilarCachedResponse,
   getCachedResponse,
   responseCacheKey,
   setCachedResponse,
@@ -15,6 +16,7 @@ import {
   ProviderUnavailableError,
   selectModel,
 } from '@/server/model-provider'
+import { embedText, isEmbeddingConfigured } from '@/server/embeddings/provider'
 import { modelSupportsStructuredOutput } from '@/shared/models'
 
 export const runtime = 'nodejs'
@@ -232,9 +234,37 @@ export async function POST(req: NextRequest) {
   })
   const cached = getCachedResponse(cacheKey)
   if (cached !== undefined) return NextResponse.json(cached)
+
+  // Semantic near-match (PLAN-semantic-caching Phase 2) — file mode only.
+  // On an exact-key miss, embed the file text once and look for a recent
+  // summary of a near-identical document (same model). Advisory: any
+  // embedding failure just falls through to the model call. Inert unless
+  // an embeddings provider is configured.
+  const similarityScope = `summarize|file|${modelId}`
+  let fileEmbedding: number[] | undefined
+  if (body.mode === 'file' && isEmbeddingConfigured()) {
+    try {
+      fileEmbedding = await embedText(body.text)
+      const similar = findSimilarCachedResponse({
+        scope: similarityScope,
+        embedding: fileEmbedding,
+      })
+      if (similar !== undefined) return NextResponse.json(similar)
+    } catch {
+      // Embedding provider unavailable/errored — skip similarity, run the model.
+      fileEmbedding = undefined
+    }
+  }
+
   // Cache + respond on the success paths only (never error responses).
   const respondCached = (payload: unknown) => {
-    setCachedResponse(cacheKey, payload)
+    setCachedResponse(
+      cacheKey,
+      payload,
+      body.mode === 'file' && fileEmbedding
+        ? { embedding: fileEmbedding, scope: similarityScope }
+        : undefined,
+    )
     return NextResponse.json(payload)
   }
 
