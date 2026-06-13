@@ -1,0 +1,598 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-06-13T11:57:08Z",
+  "panels": [
+    {
+      "id": "agents-dialog",
+      "title": "Agents Dialog",
+      "sourceFile": "components/panels/agents-dialog.tsx"
+    },
+    {
+      "id": "artifacts-tab",
+      "title": "Artifacts Tab",
+      "sourceFile": "components/panels/artifacts-tab.tsx"
+    },
+    {
+      "id": "canvas",
+      "title": "Canvas Panel",
+      "sourceFile": "components/panels/canvas.tsx"
+    },
+    {
+      "id": "chat",
+      "title": "Chat Panel",
+      "sourceFile": "components/panels/chat.tsx"
+    },
+    {
+      "id": "chat-header",
+      "title": "Chat Header",
+      "sourceFile": "components/panels/chat-header.tsx"
+    },
+    {
+      "id": "chat-message",
+      "title": "Chat Message",
+      "sourceFile": "components/panels/chat-message.tsx"
+    },
+    {
+      "id": "chat-resources-panel",
+      "title": "Chat Resources Panel",
+      "sourceFile": "components/panels/chat-resources-panel.tsx"
+    },
+    {
+      "id": "context-meter",
+      "title": "Context Meter",
+      "sourceFile": "components/panels/context-meter.tsx"
+    },
+    {
+      "id": "conversation-files-section",
+      "title": "Conversation Files Section",
+      "sourceFile": "components/panels/conversation-files-section.tsx"
+    },
+    {
+      "id": "editor",
+      "title": "Editor Panel",
+      "sourceFile": "components/panels/editor.tsx"
+    },
+    {
+      "id": "empty-chat-welcome",
+      "title": "Empty Chat Welcome",
+      "sourceFile": "components/panels/empty-chat-welcome.tsx"
+    },
+    {
+      "id": "error-bubble",
+      "title": "Error Bubble",
+      "sourceFile": "components/panels/error-bubble.tsx"
+    },
+    {
+      "id": "extraction-status-badge",
+      "title": "Extraction Status Badge",
+      "sourceFile": "components/panels/extraction-status-badge.tsx"
+    },
+    {
+      "id": "file-availability-badge",
+      "title": "File Availability Badge",
+      "sourceFile": "components/panels/file-availability-badge.tsx"
+    },
+    {
+      "id": "file-row-meta",
+      "title": "File Row Meta",
+      "sourceFile": "components/panels/file-row-meta.tsx"
+    },
+    {
+      "id": "files-tab-body",
+      "title": "Files Tab Body",
+      "sourceFile": "components/panels/files-tab-body.tsx"
+    },
+    {
+      "id": "library",
+      "title": "Library Panel",
+      "sourceFile": "components/panels/library.tsx"
+    },
+    {
+      "id": "mcp-tab",
+      "title": "Mcp Tab",
+      "sourceFile": "components/panels/mcp-tab.tsx"
+    },
+    {
+      "id": "message-attachments",
+      "title": "Message Attachments",
+      "sourceFile": "components/panels/message-attachments.tsx"
+    },
+    {
+      "id": "notes-tab",
+      "title": "Notes Tab",
+      "sourceFile": "components/panels/notes-tab.tsx"
+    },
+    {
+      "id": "pins-tab",
+      "title": "Pins Tab",
+      "sourceFile": "components/panels/pins-tab.tsx"
+    },
+    {
+      "id": "project-tasks-panel",
+      "title": "Project Tasks Panel",
+      "sourceFile": "components/panels/project-tasks-panel.tsx"
+    },
+    {
+      "id": "prompt-dialog",
+      "title": "Prompt Dialog",
+      "sourceFile": "components/panels/prompt-dialog.tsx"
+    },
+    {
+      "id": "prompt-variable-fill",
+      "title": "Prompt Variable Fill",
+      "sourceFile": "components/panels/prompt-variable-fill.tsx"
+    },
+    {
+      "id": "reasoning-block",
+      "title": "Reasoning Block",
+      "sourceFile": "components/panels/reasoning-block.tsx"
+    },
+    {
+      "id": "save-artifact-dialog",
+      "title": "Save Artifact Dialog",
+      "sourceFile": "components/panels/save-artifact-dialog.tsx"
+    },
+    {
+      "id": "schedule-section",
+      "title": "Schedule Section",
+      "sourceFile": "components/panels/schedule-section.tsx"
+    },
+    {
+      "id": "skills-tab",
+      "title": "Skills Tab",
+      "sourceFile": "components/panels/skills-tab.tsx"
+    },
+    {
+      "id": "slash-autocomplete",
+      "title": "Slash Autocomplete",
+      "sourceFile": "components/panels/slash-autocomplete.tsx"
+    },
+    {
+      "id": "slash-help-dialog",
+      "title": "Slash Help Dialog",
+      "sourceFile": "components/panels/slash-help-dialog.tsx"
+    },
+    {
+      "id": "sources",
+      "title": "Resource Panel",
+      "sourceFile": "components/panels/sources.tsx"
+    },
+    {
+      "id": "sources-strip",
+      "title": "Sources Strip",
+      "sourceFile": "components/panels/sources-strip.tsx"
+    },
+    {
+      "id": "tab-empty-state",
+      "title": "Tab Empty State",
+      "sourceFile": "components/panels/tab-empty-state.tsx"
+    },
+    {
+      "id": "url-bookmarks-tab",
+      "title": "Url Bookmarks Tab",
+      "sourceFile": "components/panels/url-bookmarks-tab.tsx"
+    },
+    {
+      "id": "workspace-detail-sheet",
+      "title": "Workspace Detail Sheet",
+      "sourceFile": "components/panels/workspace-detail-sheet.tsx"
+    },
+    {
+      "id": "workspace-mcp-section",
+      "title": "Workspace Mcp Section",
+      "sourceFile": "components/panels/workspace-mcp-section.tsx"
+    },
+    {
+      "id": "workspace-row",
+      "title": "Workspace Row",
+      "sourceFile": "components/panels/workspace-row.tsx"
+    },
+    {
+      "id": "workspaces",
+      "title": "Workspaces Panel",
+      "sourceFile": "components/panels/workspaces.tsx"
+    }
+  ],
+  "sidebars": [
+    {
+      "id": "application",
+      "title": "App Sidebar",
+      "sourceFile": "components/sidebars/application.tsx"
+    },
+    {
+      "id": "conversation-item",
+      "title": "Conversation Item",
+      "sourceFile": "components/sidebars/conversation-item.tsx"
+    },
+    {
+      "id": "document-item",
+      "title": "Document Item",
+      "sourceFile": "components/sidebars/document-item.tsx"
+    },
+    {
+      "id": "prompt-item",
+      "title": "Prompt Item",
+      "sourceFile": "components/sidebars/prompt-item.tsx"
+    },
+    {
+      "id": "resources",
+      "title": "Resources Sidebar",
+      "sourceFile": "components/sidebars/resources.tsx"
+    },
+    {
+      "id": "resources-mobile-drawer",
+      "title": "Resources Mobile Drawer",
+      "sourceFile": "components/sidebars/resources-mobile-drawer.tsx"
+    },
+    {
+      "id": "tasks",
+      "title": "Tasks Sidebar",
+      "sourceFile": "components/sidebars/tasks.tsx"
+    }
+  ],
+  "slashCommands": [
+    {
+      "id": "clear",
+      "trigger": "clear",
+      "title": "Clear conversation",
+      "description": "Remove every message in this chat",
+      "argKind": "none",
+      "sourceFile": "lib/shared/commands/registry.ts"
+    },
+    {
+      "id": "help",
+      "trigger": "help",
+      "title": "Slash & mention help",
+      "description": "List every / command and @ prompt trigger",
+      "argKind": "none",
+      "sourceFile": "lib/shared/commands/registry.ts"
+    },
+    {
+      "id": "model",
+      "trigger": "model",
+      "title": "Switch model",
+      "description": "Pick a model, or open the picker",
+      "argKind": "optional",
+      "sourceFile": "lib/shared/commands/registry.ts",
+      "argHint": "<name?>"
+    },
+    {
+      "id": "new",
+      "trigger": "new",
+      "title": "New conversation",
+      "description": "Start a fresh chat in this workspace",
+      "argKind": "none",
+      "sourceFile": "lib/shared/commands/registry.ts"
+    },
+    {
+      "id": "personas",
+      "trigger": "personas",
+      "title": "Manage personas",
+      "description": "Create, edit, and pin custom AI personas (`PLAN-custom-agents.md`)",
+      "argKind": "none",
+      "sourceFile": "lib/shared/commands/registry.ts"
+    },
+    {
+      "id": "rename",
+      "trigger": "rename",
+      "title": "Rename conversation",
+      "description": "Set this chat's title",
+      "argKind": "required",
+      "sourceFile": "lib/shared/commands/registry.ts",
+      "argHint": "<title>"
+    }
+  ],
+  "skills": [
+    {
+      "id": "imageGen",
+      "name": "Image generation",
+      "description": "Let the model generate images via Minimax (text-to-image, or image-to-image when you provide a reference URL). Tight per-turn cap because each generation costs ~1–3¢.",
+      "slashTriggers": [
+        "image",
+        "img"
+      ],
+      "requiresEnv": true,
+      "sourceFile": "lib/shared/skills/registry.ts"
+    },
+    {
+      "id": "searchFiles",
+      "name": "File search",
+      "description": "Let the model pull additional sections from your attached files when their inline view was truncated. Uses Postgres full-text search over each file's full extracted text. Sign-in required — file full text is stored in Supabase.",
+      "slashTriggers": [
+        "files",
+        "file"
+      ],
+      "requiresEnv": true,
+      "sourceFile": "lib/shared/skills/registry.ts"
+    },
+    {
+      "id": "webFetch",
+      "name": "Web fetch",
+      "description": "Let the model fetch a specific URL and read its contents. Pairs naturally with Web search — search finds the page, fetch reads it in full. Per-turn cap keeps it from going wild.",
+      "slashTriggers": [
+        "fetch",
+        "f"
+      ],
+      "requiresEnv": false,
+      "sourceFile": "lib/shared/skills/registry.ts"
+    },
+    {
+      "id": "webSearch",
+      "name": "Web search",
+      "description": "Look up current information on the web. Picks from Tavily and Brave under the hood — toggle providers and tune their settings in this skill's panel.",
+      "slashTriggers": [
+        "search",
+        "s"
+      ],
+      "requiresEnv": true,
+      "sourceFile": "lib/shared/skills/registry.ts"
+    }
+  ],
+  "settings": [
+    {
+      "id": "theme",
+      "label": "Theme",
+      "sourceFile": "lib/client/hooks/store/slices/ui.ts",
+      "values": [
+        "system",
+        "dark",
+        "light"
+      ]
+    },
+    {
+      "id": "colorScheme",
+      "label": "Color scheme",
+      "sourceFile": "lib/client/hooks/store/slices/ui.ts",
+      "values": [
+        "default",
+        "anthropic"
+      ]
+    },
+    {
+      "id": "chatBackend",
+      "label": "Chat backend",
+      "sourceFile": "lib/client/hooks/store/slices/ui.ts",
+      "values": [
+        "ts",
+        "python",
+        "ts-service"
+      ]
+    },
+    {
+      "id": "localOnlyMode",
+      "label": "Local-only mode",
+      "sourceFile": "lib/client/hooks/store/slices/ui.ts"
+    },
+    {
+      "id": "localFilesOnly",
+      "label": "Local files only",
+      "sourceFile": "lib/client/hooks/store/slices/ui.ts"
+    },
+    {
+      "id": "editorPrefs.aiReviewChanges",
+      "label": "AI review changes (editor)",
+      "sourceFile": "lib/client/hooks/store/slices/ui.ts"
+    }
+  ],
+  "envVars": [
+    {
+      "id": "AI_GATEWAY_API_KEY",
+      "description": "AI Gateway (Vercel) — referenced by the `gateway` provider in config/providers.json. Required for real chat & editor AI on the default model set. When unset, the chat panel falls back to a clearly labeled mock response.",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "ANTHROPIC_API_KEY",
+      "description": "Anthropic API key — read by the Python agent service (Phase 2b-1+). When set, the executor uses the real `messages.stream` against Anthropic for any `start` job on a flagged user. Empty → the executor falls back to the Phase 2a stub step fn (two canned tokens), so the service stays runnable in dev without a live key. The Next.js side talks to Anthropic via the Vercel AI Gateway today and doesn't read this directly.",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "ANTHROPIC_BASE_URL",
+      "description": "Optional Anthropic base-URL override. Empty → SDK default (https://api.anthropic.com). Set to point the Python service's `AsyncAnthropic` client at any Anthropic-compatible endpoint: - a proxy or self-hosted gateway, - a region-specific upstream (Minimax's `/anthropic/v1` host, etc.), - a local model serving the Anthropic messages API. Mirrors the TS side's `MINIMAX_CN_BASE_URL` override pattern. Has no effect when `ANTHROPIC_API_KEY` is empty (the stub doesn't network).",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "BRAVE_SEARCH_API_KEY",
+      "description": "Brave Search — optional. Backs the \"Web search (Brave)\" skill. Same fallback behaviour as Tavily when unset. Independent web index — tends to surface fresher, less SEO-spammed results. Get a key from https://api-dashboard.search.brave.com (a \"Data for Search\" plan is enough for chat usage). Both providers can be enabled at the same time; the model picks whichever it prefers per query and the shared per-turn cap (configurable in the right rail) applies across both.",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "EXA_API_KEY",
+      "description": "Exa — optional. Backs the \"Web search (Exa)\" provider. Exa runs an embedding-based (\"neural\") web index that tends to surface higher- quality, link-target-style pages than keyword engines, plus an \"auto\" mode that picks neural vs keyword per query. Same fallback behaviour as Tavily/Brave when unset. Get a key from https://dashboard.exa.ai. All three providers can be enabled at once; results are deduped by URL and interleaved server-side, and one `webSearch` tool call counts as one cap unit regardless of how many providers it fans out to.",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "MCP_ENCRYPTION_KEY",
+      "description": "MCP encryption — required when any user picks Cloud-mode credentials for an MCP server. Generate with `openssl rand -base64 32`. The key lives only in the Next.js server env (AND the Python agent service env from Phase 3f-1+, which reads the same var to call the same SECURITY DEFINER decrypt RPC), never in Postgres; it's passed as an argument to the RPC at request time. Rotating invalidates existing cloud-mode creds — users have to re-add the server. Leaving unset disables cloud mode on both stacks (Local mode still works).",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "MINIMAX_CN_API_KEY",
+      "description": "(no description)",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "MINIMAX_CN_BASE_URL",
+      "description": "Minimax-CN — referenced by the `minimax-cn` provider in config/providers.json. Optional. When BOTH vars are set, the `minimax/*` model entries in config/models.json route via the native Anthropic provider (Minimax-CN's Anthropic-compatible API) instead of going through the Vercel AI Gateway. Either var unset → minimax/* falls back to the gateway as declared by the model's `routes` list. IMPORTANT: include the `/v1` suffix in the base URL. The Anthropic SDK appends `/messages` only — it doesn't add `/v1`. So set this to the endpoint that, when `/messages` is appended, matches Minimax-CN's Anthropic-compatible POST endpoint. Example: MINIMAX_CN_BASE_URL=https://api.minimax.chat/anthropic/v1 Both vars are ALSO read by the Python agent service (services/agent-py/) from Phase 3d-1+ to enable the `generateImage` tool (Minimax T2I / I2I via `/v1/image_generation`, derived from MINIMAX_CN_BASE_URL's origin). Empty MINIMAX_CN_API_KEY → the tool is omitted from the registry.",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "MINIMAX_IMAGE_RATE_LIMIT_PER_MINUTE",
+      "description": "Image generation — optional. When MINIMAX_CN_API_KEY above is set, the chat route exposes a `generateImage` tool that calls Minimax's documented `/v1/image_generation` endpoint. The endpoint host is derived from MINIMAX_CN_BASE_URL's origin (image and chat share a host on Minimax — chat lives at `/anthropic/v1/messages`, image at `/v1/image_generation`). When MINIMAX_CN_BASE_URL is unset, the client falls back to the default `https://api.minimaxi.com` endpoint. Supports text-to-image and image-to-image (when the model includes a `referenceImageUrl`). Each call costs ~1–3¢ depending on aspect ratio + count, so the per-IP rate limit below defaults tight. Raise for trusted deployments behind auth; lower if you're seeing abuse.",
+      "required": false,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "NEXT_PUBLIC_AGENT_PY_URL",
+      "description": "Optional. Base URL of the Python agent service (services/agent-py/). Phase 4-2 of PLAN-agent-api.md — when set, the account menu shows a \"Python agent backend\" toggle that routes chat turns at `${NEXT_PUBLIC_AGENT_PY_URL}/v1/chat`. Empty (default) → the toggle is hidden and chat always uses the Next.js route. Per project policy both stacks stay live indefinitely; this is the user-facing selector, not a cutover. Example: `http://localhost:8000` in dev.",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "NEXT_PUBLIC_AGENT_TS_URL",
+      "description": "Optional. Base URL of the TypeScript agent service (services/agent-ts/). Phase 5 of PLAN-agent-ts.md — same selector wire as the Python service. When NEXT_PUBLIC_AGENT_PY_URL is also set, the account menu surfaces a 3-way segmented picker (Next.js / TS service / Python); otherwise it falls back to a single Switch. Empty (default) → no toggle, chat uses the Next.js route. Example: `http://localhost:8001` in dev.",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "NEXT_PUBLIC_API_BASE_URL",
+      "description": "Optional. Base URL for the backend API surface. Empty (default) means same-origin: the Next.js routes under app/api/* serve everything. Setting this to e.g. \"https://api.example.com\" makes lib/api-client.ts point at that host instead — used when the backend is rewritten in another language (see docs/PLAN-backend-extraction.md). NEXT_PUBLIC_* because the value is read in the browser.",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+      "description": "(no description)",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "NEXT_PUBLIC_SUPABASE_URL",
+      "description": "Supabase — optional. When set, users can sign in (magic link) and sync workspaces, conversations, files, and conversation assets across devices. When unset, the app runs anonymously on localStorage only.",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "OLLAMA_API_KEY",
+      "description": "(no description)",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "OLLAMA_BASE_URL",
+      "description": "Ollama — optional. When OLLAMA_BASE_URL is set, the `ollama` provider in config/providers.json activates, and any model whose route uses `via: \"ollama\"` (e.g. `ollama/llama3.1:8b`, `ollama/qwen3:8b`) is dispatched against an OpenAI-compatible client pointed at this base URL. Typical local value: `http://localhost:11434/v1` (note the `/v1` suffix — Ollama's docs call this the \"OpenAI compatibility\" endpoint). OLLAMA_API_KEY is optional and usually empty — Ollama doesn't enforce auth on its OpenAI-compat endpoint. The `ollama` provider is declared with `allowInsecureBaseUrl: true` in providers.json, which (a) lets the SSRF gate accept loopback / `http://` URLs and (b) lets the route resolve without an API key. Only enable this for endpoints you fully control — by enabling it you accept that the URL is trusted not to exfiltrate any header the AI SDK may attach.",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "OPENROUTER_API_KEY",
+      "description": "OpenRouter — optional. When OPENROUTER_API_KEY is set, the `openrouter` provider in config/providers.json activates and any model whose route uses `via: \"openrouter\"` is dispatched against the `https://openrouter.ai/api/v1` OpenAI-compatible endpoint. Get a key from https://openrouter.ai/keys. Two notable model entries in the default `config/models.json`: - `openrouter/auto` — OpenRouter picks the model per request based on prompt length, latency budget, and price. Lets you keep one model id in the UI while OpenRouter does the routing. - `openrouter/anthropic/claude-sonnet-4.5` (and similar) — a specific upstream model via OpenRouter's catalogue. Per-route fallback list: each non-`auto` OpenRouter entry in `config/models.json` declares a `fallbacks: [...]` array of upstream model ids. The Next.js dispatcher injects this list as `body.models` on every OpenRouter request, so when the primary upstream is overloaded / errored, OpenRouter tries the fallbacks in order without re-sending. Defaults are sensible cross-vendor (Claude ↔ GPT) — edit the file to match what your account has access to. The base URL is fixed in config/providers.json (it's not env-overridable) because OpenRouter's endpoint is hosted; there's no self-host story.",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "SUPABASE_DB_URL",
+      "description": "Direct Postgres connection string — server-side only. Required by the Python agent service's Phase 1+ poll loop (services/agent-py/poller.py) which needs `FOR UPDATE SKIP LOCKED` semantics that the transaction pooler doesn't expose. Use the *direct* connection from Supabase's dashboard (the one ending in `db.<project>.supabase.co:5432`), NOT the pooler (`*.pooler.supabase.com:6543`). Empty in dev → poller no-ops every tick (the service still serves /healthz + /readyz).",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "SUPABASE_JWT_SECRET",
+      "description": "JWT secret — server-side only. Required by the Python agent service (services/agent-py/) for any auth-protected endpoint; without it those endpoints return 503. Find it under Project Settings → API → JWT Settings in the Supabase dashboard. The Next.js side doesn't use this directly (it reads the Supabase session cookie); only the Python service does.",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "SUPABASE_SERVICE_ROLE_KEY",
+      "description": "Service role key — server-side only. Required for share links so the public `/share/...` pages can read the shared conversation/document via the admin client (bypasses RLS, scoped to the token-matched row only). ALSO read by the Python agent service from Phase 3d-2+ for the `generateImage` Storage-persistence path: when SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY are both set, generated images get mirrored into `user-files/<user_id>/generated/...` and the model receives a long-lived signed URL instead of the short-lived Minimax URL. Without them the tool falls back to inline Minimax URLs (work for hours, then expire). Never expose to the browser.",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "TAVILY_API_KEY",
+      "description": "Tavily — optional. Backs the \"Web search (Tavily)\" skill on the Next.js chat route AND the Python agent service's `webSearch` tool (Phase 3c of PLAN-agent-api). When unset: - Next.js side: the skill toggle still appears in the UI but the chat route omits the tool and tells the model so it falls back to training data instead of inventing a search call. - Python service: the `webSearch` tool is omitted entirely from `default_tool_registry()`, so the model never sees it.",
+      "required": true,
+      "sourceFile": ".env.example"
+    }
+  ],
+  "shortcuts": [
+    {
+      "id": "shortcut-1",
+      "keys": [
+        "⌘",
+        "K"
+      ],
+      "label": "Command palette (or Ctrl+K)",
+      "sourceFile": "components/help-popover.tsx"
+    },
+    {
+      "id": "shortcut-2",
+      "keys": [
+        "⏎"
+      ],
+      "label": "Send message",
+      "sourceFile": "components/help-popover.tsx"
+    },
+    {
+      "id": "shortcut-3",
+      "keys": [
+        "⇧",
+        "⏎"
+      ],
+      "label": "New line in input",
+      "sourceFile": "components/help-popover.tsx"
+    },
+    {
+      "id": "shortcut-4",
+      "keys": [
+        "Esc"
+      ],
+      "label": "Close dialogs / cancel editing",
+      "sourceFile": "components/help-popover.tsx"
+    }
+  ],
+  "mcpServers": {
+    "sourceFile": "app/api/mcp"
+  },
+  "agentTaskKinds": [
+    {
+      "id": "approval",
+      "sourceFile": "lib/shared/agent/events.ts"
+    },
+    {
+      "id": "artifact_ref",
+      "sourceFile": "lib/shared/agent/events.ts"
+    },
+    {
+      "id": "compact",
+      "sourceFile": "lib/shared/agent/events.ts"
+    },
+    {
+      "id": "handoff",
+      "sourceFile": "lib/shared/agent/events.ts"
+    },
+    {
+      "id": "plan",
+      "sourceFile": "lib/shared/agent/events.ts"
+    },
+    {
+      "id": "result",
+      "sourceFile": "lib/shared/agent/events.ts"
+    },
+    {
+      "id": "status",
+      "sourceFile": "lib/shared/agent/events.ts"
+    },
+    {
+      "id": "step_end",
+      "sourceFile": "lib/shared/agent/events.ts"
+    },
+    {
+      "id": "step_error",
+      "sourceFile": "lib/shared/agent/events.ts"
+    },
+    {
+      "id": "step_start",
+      "sourceFile": "lib/shared/agent/events.ts"
+    },
+    {
+      "id": "token",
+      "sourceFile": "lib/shared/agent/events.ts"
+    },
+    {
+      "id": "tool_input",
+      "sourceFile": "lib/shared/agent/events.ts"
+    },
+    {
+      "id": "tool_output",
+      "sourceFile": "lib/shared/agent/events.ts"
+    }
+  ]
+}

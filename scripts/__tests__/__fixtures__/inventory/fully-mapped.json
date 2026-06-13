@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-06-13T12:00:00Z",
+  "panels": [
+    { "id": "chat", "title": "Chat", "sourceFile": "components/panels/chat.tsx" }
+  ],
+  "sidebars": [
+    {
+      "id": "application",
+      "title": "Application",
+      "sourceFile": "components/sidebars/application.tsx"
+    }
+  ],
+  "slashCommands": [
+    {
+      "id": "new",
+      "trigger": "new",
+      "title": "New",
+      "description": "New chat",
+      "argKind": "none",
+      "sourceFile": "lib/shared/commands/registry.ts"
+    }
+  ],
+  "skills": [],
+  "settings": [],
+  "envVars": [
+    {
+      "id": "AI_GATEWAY_API_KEY",
+      "description": "AI key",
+      "required": true,
+      "sourceFile": ".env.example"
+    }
+  ],
+  "shortcuts": [],
+  "mcpServers": { "sourceFile": "app/api/mcp" },
+  "agentTaskKinds": []
+}
