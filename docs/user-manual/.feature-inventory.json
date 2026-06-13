@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-06-13T11:57:08Z",
+  "generatedAt": "2026-06-13T12:58:54Z",
   "panels": [
     {
       "id": "agents-dialog",
@@ -98,6 +98,11 @@
       "sourceFile": "components/panels/message-attachments.tsx"
     },
     {
+      "id": "message-verification",
+      "title": "Message Verification",
+      "sourceFile": "components/panels/message-verification.tsx"
+    },
+    {
       "id": "notes-tab",
       "title": "Notes Tab",
       "sourceFile": "components/panels/notes-tab.tsx"
@@ -136,6 +141,11 @@
       "id": "schedule-section",
       "title": "Schedule Section",
       "sourceFile": "components/panels/schedule-section.tsx"
+    },
+    {
+      "id": "skills-dialog",
+      "title": "Skills Dialog",
+      "sourceFile": "components/panels/skills-dialog.tsx"
     },
     {
       "id": "skills-tab",
@@ -280,6 +290,14 @@
       "argKind": "required",
       "sourceFile": "lib/shared/commands/registry.ts",
       "argHint": "<title>"
+    },
+    {
+      "id": "skills",
+      "trigger": "skills",
+      "title": "Manage skills",
+      "description": "Author, import, and toggle portable SKILL.md skills (`PLAN-portable-skills.md`)",
+      "argKind": "none",
+      "sourceFile": "lib/shared/commands/registry.ts"
     }
   ],
   "skills": [
@@ -400,6 +418,24 @@
       "sourceFile": ".env.example"
     },
     {
+      "id": "EMBEDDINGS_API_KEY",
+      "description": "(no description)",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "EMBEDDINGS_BASE_URL",
+      "description": "Embeddings — optional. Enables the vector / hybrid-retrieval pipeline (chunk + embed file text → pgvector). Without it, retrieval stays full-text only (nothing changes). Points at an OpenAI-compatible `/v1/embeddings` endpoint; Ollama works (set EMBEDDINGS_BASE_URL to the same `/v1` URL, or leave blank to reuse OLLAMA_BASE_URL above). EMBEDDINGS_MODEL defaults to `nomic-embed-text` (768-dim — must match the vector(768) column in migration 0023). See lib/server/embeddings/.",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "EMBEDDINGS_MODEL",
+      "description": "(no description)",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
       "id": "EXA_API_KEY",
       "description": "Exa — optional. Backs the \"Web search (Exa)\" provider. Exa runs an embedding-based (\"neural\") web index that tends to surface higher- quality, link-target-style pages than keyword engines, plus an \"auto\" mode that picks neural vs keyword per query. Same fallback behaviour as Tavily/Brave when unset. Get a key from https://dashboard.exa.ai. All three providers can be enabled at once; results are deduped by URL and interleaved server-side, and one `webSearch` tool call counts as one cap unit regardless of how many providers it fans out to.",
       "required": true,
@@ -498,6 +534,12 @@
     {
       "id": "TAVILY_API_KEY",
       "description": "Tavily — optional. Backs the \"Web search (Tavily)\" skill on the Next.js chat route AND the Python agent service's `webSearch` tool (Phase 3c of PLAN-agent-api). When unset: - Next.js side: the skill toggle still appears in the UI but the chat route omits the tool and tells the model so it falls back to training data instead of inventing a search call. - Python service: the `webSearch` tool is omitted entirely from `default_tool_registry()`, so the model never sees it.",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "VERIFY_MODEL",
+      "description": "Citation verifier model — optional. When set, the Python agent service runs a post-run citation pass on Deep Research reports: each cited claim is checked against its sources and the result shows a confidence chip + flagged claims (see docs/PLAN-citation-verifiability.md). Empty = OFF. Use a CHEAP model id (ideally cheaper/weaker than the answerer — cross- checking your own output is weaker). Uses the same ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL client, so it's a no-op without a key regardless.",
       "required": true,
       "sourceFile": ".env.example"
     }

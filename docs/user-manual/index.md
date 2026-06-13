@@ -40,6 +40,7 @@
 | Library Panel | `components/panels/library.tsx` | [14-library.md](14-library.md) |
 | Mcp Tab | `components/panels/mcp-tab.tsx` | _unmapped_ |
 | Message Attachments | `components/panels/message-attachments.tsx` | _unmapped_ |
+| Message Verification | `components/panels/message-verification.tsx` | _unmapped_ |
 | Notes Tab | `components/panels/notes-tab.tsx` | [11-notes-and-bookmarks.md](11-notes-and-bookmarks.md) |
 | Pins Tab | `components/panels/pins-tab.tsx` | [11-notes-and-bookmarks.md](11-notes-and-bookmarks.md) |
 | Project Tasks Panel | `components/panels/project-tasks-panel.tsx` | _unmapped_ |
@@ -48,6 +49,7 @@
 | Reasoning Block | `components/panels/reasoning-block.tsx` | _unmapped_ |
 | Save Artifact Dialog | `components/panels/save-artifact-dialog.tsx` | _unmapped_ |
 | Schedule Section | `components/panels/schedule-section.tsx` | [15-schedules.md](15-schedules.md) |
+| Skills Dialog | `components/panels/skills-dialog.tsx` | _unmapped_ |
 | Skills Tab | `components/panels/skills-tab.tsx` | _unmapped_ |
 | Slash Autocomplete | `components/panels/slash-autocomplete.tsx` | _unmapped_ |
 | Slash Help Dialog | `components/panels/slash-help-dialog.tsx` | _unmapped_ |
@@ -82,6 +84,7 @@
 | `/new` | Start a fresh chat in this workspace | [06-slash-commands.md](06-slash-commands.md) |
 | `/personas` | Create, edit, and pin custom AI personas (`PLAN-custom-agents.md`) | [06-slash-commands.md](06-slash-commands.md) |
 | `/rename` | Set this chat's title | [06-slash-commands.md](06-slash-commands.md) |
+| `/skills` | Author, import, and toggle portable SKILL.md skills (`PLAN-portable-skills.md`) | _unmapped_ |
 
 ### Environment variables
 
@@ -91,6 +94,9 @@
 | `ANTHROPIC_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `ANTHROPIC_BASE_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `BRAVE_SEARCH_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
+| `EMBEDDINGS_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
+| `EMBEDDINGS_BASE_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
+| `EMBEDDINGS_MODEL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `EXA_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `MCP_ENCRYPTION_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `MINIMAX_CN_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
@@ -108,6 +114,7 @@
 | `SUPABASE_JWT_SECRET` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `TAVILY_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
+| `VERIFY_MODEL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 
 ### Settings
 
@@ -174,10 +181,12 @@
 - `panel:files-tab-body` (`components/panels/files-tab-body.tsx`) - Files Tab Body
 - `panel:mcp-tab` (`components/panels/mcp-tab.tsx`) - Mcp Tab
 - `panel:message-attachments` (`components/panels/message-attachments.tsx`) - Message Attachments
+- `panel:message-verification` (`components/panels/message-verification.tsx`) - Message Verification
 - `panel:project-tasks-panel` (`components/panels/project-tasks-panel.tsx`) - Project Tasks Panel
 - `panel:prompt-variable-fill` (`components/panels/prompt-variable-fill.tsx`) - Prompt Variable Fill
 - `panel:reasoning-block` (`components/panels/reasoning-block.tsx`) - Reasoning Block
 - `panel:save-artifact-dialog` (`components/panels/save-artifact-dialog.tsx`) - Save Artifact Dialog
+- `panel:skills-dialog` (`components/panels/skills-dialog.tsx`) - Skills Dialog
 - `panel:skills-tab` (`components/panels/skills-tab.tsx`) - Skills Tab
 - `panel:slash-autocomplete` (`components/panels/slash-autocomplete.tsx`) - Slash Autocomplete
 - `panel:slash-help-dialog` (`components/panels/slash-help-dialog.tsx`) - Slash Help Dialog
@@ -188,3 +197,4 @@
 - `panel:workspace-row` (`components/panels/workspace-row.tsx`) - Workspace Row
 - `sidebar:resources-mobile-drawer` (`components/sidebars/resources-mobile-drawer.tsx`) - Resources Mobile Drawer
 - `sidebar:tasks` (`components/sidebars/tasks.tsx`) - Tasks Sidebar
+- `slash:skills` (`lib/shared/commands/registry.ts`) - `/skills` Manage skills
