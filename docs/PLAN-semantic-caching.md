@@ -1,7 +1,7 @@
 # Plan: Semantic caching for deterministic calls
 
 Status: **🪜 phased — Phase 1 (exact-key cache) shipped; Phase 2
-(embedding-similarity) gated on the embedding pipeline.** Phase 1:
+(embedding-similarity) shipped for `file` summarize mode.** Phase 1:
 [#183](https://github.com/juchengquan/hummingbird/pull/183) on
 2026-06-10 — `lib/server/cache/response-cache.ts` (in-process
 bounded LRU + TTL, key = SHA-256 over `[CACHE_VERSION, kind, model,
@@ -9,7 +9,18 @@ stableStringify(input)]`); `/api/summarize` all four modes +
 `/api/extract` cache success payloads only. Implementation note: used
 an in-process cache rather than the Supabase table the plan sketched
 because those routes have no Supabase session today (would mean
-wiring per-user auth in — scope creep). Promoted from
+wiring per-user auth in — scope creep). **Phase 2 (2026-06-14):
+in-process embedding near-match on `file` summarize mode only —
+`cosine` + `findSimilarCachedResponse` in the same module (entries
+gain `{embedding, scope}`, scope = `kind|mode|model`, cosine ≥ 0.97),
+embedded via the shipped `lib/server/embeddings/provider.ts` on an
+exact-key miss. Deliberately stayed in-process (NOT the pgvector
+`response_cache` table sketched below) to keep Phase 1's no-auth,
+content-keyed grain; the tradeoff is no cross-restart / cross-instance
+cache — fine for the single-VM deploy target. `extract` and the other
+three summarize modes stay exact-key only. Open follow-ups: extend to
+`project-breakdown` mode; a persistent/cross-instance pgvector variant
+if the deploy model ever changes.** Promoted from
 [MASTER_PLAN § Later](MASTER_PLAN.md) (second research round,
 2026-06-09) to **Next**. Origin: 2026 semantic-caching practice — see
 [Sources](#sources).
@@ -110,6 +121,14 @@ planned (hybrid search + cross-conversation memory) but unbuilt. So
   in the service routers.
 
 ### Phase 2 — semantic similarity
+
+> **Shipped differently — see the Status block at the top.** Phase 2
+> landed **in-process** (`cosine` + `findSimilarCachedResponse` in
+> `response-cache.ts`, `file` summarize mode only, cosine ≥ 0.97,
+> embedded via `lib/server/embeddings/provider.ts`), NOT as the
+> migration/pgvector design sketched below. The bullets below are the
+> original sketch, kept for the persistent/cross-instance variant if
+> the deploy model ever changes.
 
 - Migration adds `embedding vector(384)` (or the chosen dim) +
   an ivfflat/hnsw index.
