@@ -56,8 +56,12 @@ export const RENDER_UI_PROMPT_FRAGMENT =
   "becomes the next user message); " +
   "`confirm` (yes/no with optional custom labels; the user's answer " +
   "becomes the next user message); " +
-  "`mini-form` (1–4 short fields the user fills in; the submitted " +
-  "values become the next user message, after they confirm). " +
+  "`mini-form` (1–4 short fields the user fills in — text, number, " +
+  "select, or `date`; the submitted values become the next user " +
+  "message, after they confirm); " +
+  "`date-picker` (a calendar for a single date or a date range; the " +
+  "picked date(s) become the next user message). " +
+  "Dates are ISO YYYY-MM-DD. " +
   "For interactive kinds, your next assistant turn will see the user's " +
   "answer as a normal user message — write your reply assuming that " +
   "answer is the user's words."

@@ -28,6 +28,7 @@ UI_KIND_VALUES: tuple[str, ...] = (
     "choice",
     "confirm",
     "mini-form",
+    "date-picker",
 )
 
 
