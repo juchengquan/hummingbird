@@ -871,6 +871,7 @@ async function mcpUpsertCloudServer(
     credentials: { type?: string; headers?: Record<string, string> }
     capabilities?: Record<string, unknown>
     enabled?: boolean
+    requires_approval?: boolean
   },
   options?: DispatchOption
 ): Promise<

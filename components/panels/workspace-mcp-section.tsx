@@ -244,6 +244,7 @@ function AddMcpServerDialog({
   const [credentialMode, setCredentialMode] = useState<McpCredentialMode>("local")
   const [authType, setAuthType] = useState<"bearer" | "none">("bearer")
   const [token, setToken] = useState("")
+  const [requiresApproval, setRequiresApproval] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -253,6 +254,7 @@ function AddMcpServerDialog({
     setCredentialMode("local")
     setAuthType("bearer")
     setToken("")
+    setRequiresApproval(false)
     setError(null)
   }
 
@@ -299,6 +301,7 @@ function AddMcpServerDialog({
           name: trimmedName,
           url: trimmedUrl,
           credentialMode: "cloud",
+          requiresApproval,
         })
         const upsert = await apiClient.mcp.upsertCloudServer({
           id: server.id,
@@ -306,6 +309,7 @@ function AddMcpServerDialog({
           name: trimmedName,
           url: trimmedUrl,
           credentials: cred,
+          requires_approval: requiresApproval,
         })
         if (!upsert.ok) {
           setError(
@@ -331,6 +335,7 @@ function AddMcpServerDialog({
         url: trimmedUrl,
         credentialMode,
         credentialFingerprint: fingerprint,
+        requiresApproval,
       })
       if (authType !== "none") setLocalCred(server.id, cred)
       // Run discovery once so the row shows tool/resource counts
@@ -441,6 +446,19 @@ function AddMcpServerDialog({
                 autoComplete="off"
               />
             )}
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-wide text-[var(--muted-foreground)] font-medium">
+              Approval
+            </label>
+            <div className="mt-1 flex items-center gap-2">
+              <Switch
+                checked={requiresApproval}
+                onCheckedChange={setRequiresApproval}
+                aria-label="Require approval for all tools from this server"
+              />
+              <span className="text-xs">Require approval for all tools from this server</span>
+            </div>
           </div>
           {error && (
             <div className="flex items-start gap-1.5 text-[11px] text-[var(--destructive)]">

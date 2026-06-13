@@ -1321,6 +1321,7 @@ export type Database = {
           p_id: string
           p_key: string
           p_name: string
+          p_requires_approval?: boolean
           p_url: string
           p_workspace_id: string
         }
