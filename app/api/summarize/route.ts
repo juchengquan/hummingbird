@@ -17,6 +17,7 @@ import {
   selectModel,
 } from '@/server/model-provider'
 import { embedText, isEmbeddingConfigured } from '@/server/embeddings/provider'
+import { similarityTargetFor } from '@/server/cache/summarize-similarity'
 import { modelSupportsStructuredOutput } from '@/shared/models'
 
 export const runtime = 'nodejs'
@@ -235,24 +236,25 @@ export async function POST(req: NextRequest) {
   const cached = getCachedResponse(cacheKey)
   if (cached !== undefined) return NextResponse.json(cached)
 
-  // Semantic near-match (PLAN-semantic-caching Phase 2) — file mode only.
-  // On an exact-key miss, embed the file text once and look for a recent
-  // summary of a near-identical document (same model). Advisory: any
-  // embedding failure just falls through to the model call. Inert unless
-  // an embeddings provider is configured.
-  const similarityScope = `summarize|file|${modelId}`
-  let fileEmbedding: number[] | undefined
-  if (body.mode === 'file' && isEmbeddingConfigured()) {
+  // Semantic near-match (PLAN-semantic-caching Phase 2). On an exact-key
+  // miss, for eligible modes (file; project-breakdown without existingTitles
+  // — see similarityTargetFor), embed the input once and look for a recent
+  // result for a near-identical input (same mode + model). Advisory: any
+  // embedding failure falls through to the model call. Inert unless an
+  // embeddings provider is configured.
+  const similarity = similarityTargetFor(body, modelId)
+  let simEmbedding: number[] | undefined
+  if (similarity && isEmbeddingConfigured()) {
     try {
-      fileEmbedding = await embedText(body.text)
-      const similar = findSimilarCachedResponse({
-        scope: similarityScope,
-        embedding: fileEmbedding,
+      simEmbedding = await embedText(similarity.text)
+      const hit = findSimilarCachedResponse({
+        scope: similarity.scope,
+        embedding: simEmbedding,
       })
-      if (similar !== undefined) return NextResponse.json(similar)
+      if (hit !== undefined) return NextResponse.json(hit)
     } catch {
       // Embedding provider unavailable/errored — skip similarity, run the model.
-      fileEmbedding = undefined
+      simEmbedding = undefined
     }
   }
 
@@ -261,8 +263,8 @@ export async function POST(req: NextRequest) {
     setCachedResponse(
       cacheKey,
       payload,
-      body.mode === 'file' && fileEmbedding
-        ? { embedding: fileEmbedding, scope: similarityScope }
+      similarity && simEmbedding
+        ? { embedding: simEmbedding, scope: similarity.scope }
         : undefined,
     )
     return NextResponse.json(payload)
