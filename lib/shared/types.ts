@@ -298,6 +298,10 @@ export interface McpServer {
   capabilitiesFetchedAt?: Date
   /** Soft-disable without removing the row. */
   enabled: boolean
+  /** Server-side policy: when true, every tool this server exposes is
+   *  HITL-gated in agent tasks regardless of the client's
+   *  requireApprovalFor. Cloud-mode only. Absent = false. */
+  requiresApproval?: boolean
   createdAt: Date
   updatedAt: Date
   /** Soft-delete marker (same pattern as UploadedFile.deletedAt). */

@@ -592,6 +592,7 @@ export type Database = {
           enabled: boolean
           id: string
           name: string
+          requires_approval: boolean
           transport: string
           updated_at: string
           url: string
@@ -609,6 +610,7 @@ export type Database = {
           enabled?: boolean
           id: string
           name: string
+          requires_approval?: boolean
           transport: string
           updated_at?: string
           url: string
@@ -626,6 +628,7 @@ export type Database = {
           enabled?: boolean
           id?: string
           name?: string
+          requires_approval?: boolean
           transport?: string
           updated_at?: string
           url?: string
