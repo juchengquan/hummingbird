@@ -123,6 +123,16 @@ class Settings(BaseSettings):
     it's a no-op without a key regardless. See
     `docs/PLAN-citation-verifiability.md`."""
 
+    VERIFY_PROVIDER: str = "anthropic"
+    """Verifier provider family: "anthropic" | "google". Default
+    "anthropic" preserves the shipped same-family behaviour. Set to
+    "google" to cross-check the answer with a different model family
+    (needs `GOOGLE_API_KEY`/`GEMINI_API_KEY` + the optional
+    `google-generativeai` SDK; falls back to Anthropic with a one-shot
+    warning if either is missing). Cross-family is stronger because a
+    model is a poor judge of its own output. See
+    `docs/PLAN-citation-verifiability.md` open question #2."""
+
     # --- Service identity -------------------------------------------------
     SERVICE_NAME: str = "agent-py"
     SERVICE_PORT: int = 8000

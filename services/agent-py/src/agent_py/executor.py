@@ -28,7 +28,7 @@ import asyncio
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 import asyncpg
 import structlog
@@ -337,6 +337,11 @@ async def _run_chunk(
         # so they're complete only when the run settles in the first
         # chunk. The DB is the source of truth for a multi-chunk run.
         run_mode = _str_or_none(cfg.get("mode")) if isinstance(cfg, dict) else None
+        # Answerer provider is "anthropic" for every agent-py run today
+        # (the only model family the executor wires). When agent-ts goes
+        # live, read this from `cfg.get("provider", "anthropic")` so the
+        # cross-family verifier picks a genuinely different family.
+        answerer_provider = "anthropic"
 
         async def finalize() -> dict[str, object] | None:
             if resume:
@@ -352,6 +357,7 @@ async def _run_chunk(
                     sources=[
                         (s.title, s.url or "", s.snippet) for s in inputs.sources
                     ],
+                    answerer_provider=answerer_provider,
                 )
             # Fast path: single-chunk run, the in-memory accumulators are
             # complete, so skip the DB round-trip.
@@ -359,6 +365,7 @@ async def _run_chunk(
                 mode=run_mode,
                 text="".join(verify_text_parts),
                 sources=verify_sources,
+                answerer_provider=answerer_provider,
             )
 
         result: AgentLoopResult = await run_agent_loop(
@@ -540,18 +547,46 @@ def _resolve_anthropic_client() -> AsyncAnthropicClient | None:
 # a tight budget is plenty.
 _VERIFY_MAX_TOKENS = 800
 
+# Process-local set of warning keys already fired by `_warn_once`.
+# Reset in the test fixture (`test_cross_family_verifier._reset_warn_once`).
+_warned_keys: set[str] = set()
 
-def _make_anthropic_verifier(client: Any, model: str) -> verify.RunVerifier:
-    """A `RunVerifier` that runs one non-streaming Anthropic call and
-    returns the concatenated text. `client` is the same `AsyncAnthropic`
-    the run used (typed `Any` here because the provider Protocol only
-    declares `messages.stream`, while the verifier wants `messages.create`)."""
 
-    async def run(prompt: str) -> str:
-        resp = await client.messages.create(
+def _warn_once(key: str, **fields: object) -> None:
+    """Log a structlog warning the first time `key` is seen in this
+    process. Keeps a startup-time misconfig (e.g. the cross-family
+    provider being unavailable) from spamming the log on every research
+    run."""
+    if key in _warned_keys:
+        return
+    _warned_keys.add(key)
+    logger.warning(key, **fields)
+
+
+class _VerifierClient(Protocol):
+    """The narrow surface `_maybe_verify` needs from a verifier: one
+    non-streaming completion call returning concatenated text. Both the
+    Anthropic and Google wrappers satisfy this structurally."""
+
+    async def messages_create(
+        self, *, model: str, max_tokens: int, messages: list[dict[str, object]]
+    ) -> str: ...
+
+
+class _AnthropicVerifierClient:
+    """The legacy same-family path. Wraps the same `AsyncAnthropic` the
+    run used, exposing the small `_VerifierClient` surface."""
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+
+    async def messages_create(
+        self, *, model: str, max_tokens: int, messages: list[dict[str, object]]
+    ) -> str:
+        resp = await self._client.messages.create(
             model=model,
-            max_tokens=_VERIFY_MAX_TOKENS,
-            messages=[{"role": "user", "content": prompt}],
+            max_tokens=max_tokens,
+            messages=messages,
         )
         parts: list[str] = []
         for block in getattr(resp, "content", None) or []:
@@ -560,7 +595,110 @@ def _make_anthropic_verifier(client: Any, model: str) -> verify.RunVerifier:
                 parts.append(text)
         return "".join(parts)
 
-    return run
+
+class _GoogleVerifierClient:
+    """Cross-family path via the google-generativeai SDK. Returns the
+    joined text parts of a `generate_content_async` call. The caller-side
+    prompt already requests strict JSON."""
+
+    def __init__(self, model: Any) -> None:
+        self._model = model
+
+    async def messages_create(
+        self, *, model: str, max_tokens: int, messages: list[dict[str, object]]
+    ) -> str:
+        target = self._model
+        if getattr(target, "model_name", model) != model:
+            # The factory built with VERIFY_MODEL; rebuild if the call
+            # site asks for a different model. Uncommon.
+            target = _build_google_model(model)
+        user_text = "\n\n".join(
+            str(m.get("content", "")) if isinstance(m, dict) else str(m)
+            for m in messages
+        )
+        resp = await target.generate_content_async(user_text)
+        parts: list[str] = []
+        for cand in getattr(resp, "candidates", None) or []:
+            content = getattr(cand, "content", None)
+            for part in getattr(content, "parts", None) or []:
+                text = getattr(part, "text", None)
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts)
+
+
+def _build_google_model(model: str) -> Any:
+    """Build a `google.generativeai.GenerativeModel`. Caller is expected
+    to have called `genai.configure(api_key=...)` first."""
+    import google.generativeai as genai  # local import; optional dep
+
+    # The SDK ships types but doesn't re-export these at the top level.
+    return genai.GenerativeModel(model)  # type: ignore[attr-defined]
+
+
+def _make_google_verifier_client() -> _GoogleVerifierClient | None:
+    """Build the Google cross-family verifier client. Returns None if
+    `GOOGLE_API_KEY` (or `GEMINI_API_KEY`) is unset OR the
+    `google-generativeai` SDK isn't installed — caller logs a one-shot
+    warning and falls back to the Anthropic path."""
+    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return None
+    try:
+        import google.generativeai as genai
+    except ImportError:
+        return None
+    genai.configure(api_key=api_key)  # type: ignore[attr-defined]
+    settings = get_settings()
+    model = _build_google_model(settings.VERIFY_MODEL.strip() or "gemini-2.0-flash")
+    return _GoogleVerifierClient(model)
+
+
+def _make_anthropic_verifier_client() -> _AnthropicVerifierClient | None:
+    """The legacy same-family Anthropic path. Returns None when no
+    Anthropic client is configured (same condition that gates the live
+    model call)."""
+    client = _resolve_anthropic_client()
+    if client is None:
+        return None
+    return _AnthropicVerifierClient(client)
+
+
+def _resolve_verifier_client(*, answerer_provider: str) -> _VerifierClient | None:
+    """Cross-family by default. Returns the configured provider's client,
+    or the Anthropic fallback when the cross-family provider is missing.
+    `_warn_once` keeps the same-family / unavailable warnings from
+    spamming the log on every research run."""
+    settings = get_settings()
+    verifier_provider = settings.VERIFY_PROVIDER.strip().lower()
+    if not verifier_provider:
+        return None
+    same_family = verifier_provider == answerer_provider
+    client: _VerifierClient | None
+    if verifier_provider == "google":
+        client = _make_google_verifier_client()
+        if client is None:
+            _warn_once(
+                "executor.verifier_google_unavailable",
+                recommendation=(
+                    "set GOOGLE_API_KEY to enable cross-family "
+                    "verification; falling back to Anthropic"
+                ),
+            )
+    elif verifier_provider == "anthropic":
+        client = _make_anthropic_verifier_client()
+    else:
+        return None
+    if same_family and client is not None:
+        _warn_once(
+            "executor.verifier_same_family",
+            answerer_provider=answerer_provider,
+            recommendation=(
+                "set VERIFY_PROVIDER to a different family for stronger "
+                "cross-checking"
+            ),
+        )
+    return client or _make_anthropic_verifier_client()  # safe fallback
 
 
 async def _maybe_verify(
@@ -568,24 +706,39 @@ async def _maybe_verify(
     mode: str | None,
     text: str,
     sources: list[tuple[str, str, str]],
+    answerer_provider: str = "anthropic",
 ) -> dict[str, object] | None:
     """Run the citation verifier for a research run, returning the wire
     payload for the `result` event (or None). Gated on research mode + a
-    configured `VERIFY_MODEL` + a live Anthropic client; `verify_answer`
-    handles the no-claims / no-sources / failure → None cases. A
-    cheaper model than the answerer is the intent (cross-checking your own
-    output is weaker); same-family is the agent-py limitation today."""
+    configured `VERIFY_MODEL` + a resolvable verifier client;
+    `verify_answer` handles the no-claims / no-sources / failure → None
+    cases.
+
+    Cross-family by default: `_resolve_verifier_client` picks a different
+    provider family than the answerer (a model is a weak judge of its own
+    output), falling back to the answerer's family with a one-shot
+    warning when the cross-family provider is unavailable."""
     if mode != "research":
         return None
     settings = get_settings()
     model = settings.VERIFY_MODEL.strip()
-    client = _resolve_anthropic_client()
-    if not model or client is None:
+    if not model:
         return None
+    client = _resolve_verifier_client(answerer_provider=answerer_provider)
+    if client is None:
+        return None
+
+    async def run(prompt: str) -> str:
+        return await client.messages_create(
+            model=model,
+            max_tokens=_VERIFY_MAX_TOKENS,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
     result = await verify.verify_answer(
         text,
         verify.gather_sources(sources),
-        run_verifier=_make_anthropic_verifier(client, model),
+        run_verifier=run,
     )
     return result.to_payload() if result is not None else None
 
