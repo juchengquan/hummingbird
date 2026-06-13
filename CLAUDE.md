@@ -26,10 +26,16 @@ bun run check:ci     # typecheck + lint + build + audit:bundle (full CI gate loc
 docker compose up agent-py            # run service in container
 bun run codegen:agent-types           # regen lib/shared/agent-py-types.generated.ts
 bun run codegen:agent-types:check     # CI mode — fail if drifted
+bun run check:agent-py                # ruff check + ruff format --check + mypy + pytest (mirrors the agent-py CI job)
 
 # Or to develop the agent service on the host:
 cd services/agent-py && uv sync && uv run uvicorn agent_py.main:app --reload
+# Auto-fix formatting before committing: cd services/agent-py && uv run ruff format . && uv run ruff check --fix .
 ```
+
+> The agent-py CI job runs `ruff format --check` as a **separate step**
+> from `ruff check` — `bun run check:agent-py` mirrors both, so run it
+> (not just `ruff check`) before pushing agent-py changes.
 
 ## Architecture
 
