@@ -97,15 +97,31 @@ async def append_event(
 
 _log = structlog.get_logger(__name__)
 
-_VALID_KINDS: frozenset[str] = frozenset({
-    "token", "tool_input", "tool_output", "step_start", "step_end",
-    "status", "plan", "step_error", "handoff", "approval",
-    "compact", "artifact_ref", "result",
-})
+_VALID_KINDS: frozenset[str] = frozenset(
+    {
+        "token",
+        "tool_input",
+        "tool_output",
+        "step_start",
+        "step_end",
+        "status",
+        "plan",
+        "step_error",
+        "handoff",
+        "approval",
+        "compact",
+        "artifact_ref",
+        "result",
+    }
+)
 
 
 def event_from_row_payload(
-    *, seq: int, step: int, kind: str, created_at: str,
+    *,
+    seq: int,
+    step: int,
+    kind: str,
+    created_at: str,
     payload: dict[str, object],
 ) -> events.TaskEvent | None:
     """Reverse of `events.event_to_row_payload` for one row.
@@ -139,9 +155,14 @@ def event_from_row_payload(
         )
     if kind == "status":
         return events.StatusEvent(
-            run_id="", seq=seq, step=step, created_at=created_at,
-            status=cast("Literal['queued','running','paused','cancelled','done','failed']",
-                       merged.get("status", "running")),
+            run_id="",
+            seq=seq,
+            step=step,
+            created_at=created_at,
+            status=cast(
+                "Literal['queued','running','paused','cancelled','done','failed']",
+                merged.get("status", "running"),
+            ),
         )
     if kind == "tool_output":
         results_raw = merged.get("results")
@@ -157,7 +178,10 @@ def event_from_row_payload(
                 if isinstance(r, dict)
             ]
         return events.ToolOutputEvent(
-            run_id="", seq=seq, step=step, created_at=created_at,
+            run_id="",
+            seq=seq,
+            step=step,
+            created_at=created_at,
             tool_call_id=str(merged.get("toolCallId", "")),
             tool_name=str(merged.get("toolName", "")),
             summary=str(merged.get("summary", "")),
@@ -165,14 +189,24 @@ def event_from_row_payload(
         )
     if kind == "result":
         return events.ResultEvent(
-            run_id="", seq=seq, step=step, created_at=created_at,
+            run_id="",
+            seq=seq,
+            step=step,
+            created_at=created_at,
             status=cast("Literal['done', 'failed']", merged.get("status", "done")),
-            final_text=cast("str | None",
-                            merged.get("finalText") if isinstance(merged.get("finalText"), str) else None),
-            error=cast("str | None",
-                       merged.get("error") if isinstance(merged.get("error"), str) else None),
-            verification=cast("dict[str, object] | None",
-                              merged.get("verification") if isinstance(merged.get("verification"), dict) else None),
+            final_text=cast(
+                "str | None",
+                merged.get("finalText") if isinstance(merged.get("finalText"), str) else None,
+            ),
+            error=cast(
+                "str | None", merged.get("error") if isinstance(merged.get("error"), str) else None
+            ),
+            verification=cast(
+                "dict[str, object] | None",
+                merged.get("verification")
+                if isinstance(merged.get("verification"), dict)
+                else None,
+            ),
         )
     if kind == "step_start":
         return events.StepStartEvent(run_id="", seq=seq, step=step, created_at=created_at)
@@ -181,48 +215,80 @@ def event_from_row_payload(
     if kind == "tool_input":
         args = merged.get("args")
         return events.ToolInputEvent(
-            run_id="", seq=seq, step=step, created_at=created_at,
+            run_id="",
+            seq=seq,
+            step=step,
+            created_at=created_at,
             tool_call_id=str(merged.get("toolCallId", "")),
             tool_name=str(merged.get("toolName", "")),
             args=args if isinstance(args, dict) else {},
         )
     if kind == "step_error":
         return events.StepErrorEvent(
-            run_id="", seq=seq, step=step, created_at=created_at,
+            run_id="",
+            seq=seq,
+            step=step,
+            created_at=created_at,
             message=str(merged.get("message", "")),
             will_retry=bool(merged.get("willRetry", True)),
         )
     if kind == "approval":
         return events.ApprovalEvent(
-            run_id="", seq=seq, step=step, created_at=created_at,
+            run_id="",
+            seq=seq,
+            step=step,
+            created_at=created_at,
             approval_id=str(merged.get("approvalId", "")),
             phase=cast("Literal['request', 'response']", merged.get("phase", "request")),
-            request_kind=cast("Literal['approval','choice','input','ui-part'] | None",
-                              merged.get("requestKind")),
-            tool=cast("str | None",
-                      merged.get("tool") if isinstance(merged.get("tool"), str) else None),
-            tool_call_id=cast("str | None",
-                              merged.get("toolCallId") if isinstance(merged.get("toolCallId"), str) else None),
-            args=cast("dict[str, object] | None",
-                      merged.get("args") if isinstance(merged.get("args"), dict) else None),
-            prompt=cast("str | None",
-                        merged.get("prompt") if isinstance(merged.get("prompt"), str) else None),
-            options=cast("list[events.InputRequestOption] | None",
-                         merged.get("options") if isinstance(merged.get("options"), list) else None),
-            multi=cast("bool | None",
-                       merged.get("multi") if isinstance(merged.get("multi"), bool) else None),
-            ui_kind=cast("str | None",
-                         merged.get("uiKind") if isinstance(merged.get("uiKind"), str) else None),
-            ui_props=cast("dict[str, object] | None",
-                          merged.get("uiProps") if isinstance(merged.get("uiProps"), dict) else None),
-            approved=cast("bool | None",
-                          merged.get("approved") if isinstance(merged.get("approved"), bool) else None),
-            selection=cast("list[str] | None",
-                           merged.get("selection") if isinstance(merged.get("selection"), list) else None),
-            value=cast("str | None",
-                       merged.get("value") if isinstance(merged.get("value"), str) else None),
-            ui_answer=cast("dict[str, object] | None",
-                           merged.get("uiAnswer") if isinstance(merged.get("uiAnswer"), dict) else None),
+            request_kind=cast(
+                "Literal['approval','choice','input','ui-part'] | None", merged.get("requestKind")
+            ),
+            tool=cast(
+                "str | None", merged.get("tool") if isinstance(merged.get("tool"), str) else None
+            ),
+            tool_call_id=cast(
+                "str | None",
+                merged.get("toolCallId") if isinstance(merged.get("toolCallId"), str) else None,
+            ),
+            args=cast(
+                "dict[str, object] | None",
+                merged.get("args") if isinstance(merged.get("args"), dict) else None,
+            ),
+            prompt=cast(
+                "str | None",
+                merged.get("prompt") if isinstance(merged.get("prompt"), str) else None,
+            ),
+            options=cast(
+                "list[events.InputRequestOption] | None",
+                merged.get("options") if isinstance(merged.get("options"), list) else None,
+            ),
+            multi=cast(
+                "bool | None",
+                merged.get("multi") if isinstance(merged.get("multi"), bool) else None,
+            ),
+            ui_kind=cast(
+                "str | None",
+                merged.get("uiKind") if isinstance(merged.get("uiKind"), str) else None,
+            ),
+            ui_props=cast(
+                "dict[str, object] | None",
+                merged.get("uiProps") if isinstance(merged.get("uiProps"), dict) else None,
+            ),
+            approved=cast(
+                "bool | None",
+                merged.get("approved") if isinstance(merged.get("approved"), bool) else None,
+            ),
+            selection=cast(
+                "list[str] | None",
+                merged.get("selection") if isinstance(merged.get("selection"), list) else None,
+            ),
+            value=cast(
+                "str | None", merged.get("value") if isinstance(merged.get("value"), str) else None
+            ),
+            ui_answer=cast(
+                "dict[str, object] | None",
+                merged.get("uiAnswer") if isinstance(merged.get("uiAnswer"), dict) else None,
+            ),
         )
     # Unhandled kinds in this build; the row was preserved but not
     # parsed. Caller should skip + warn.
@@ -265,8 +331,8 @@ async def load_run_events(
             step=row["step"],
             kind=row["kind"],
             created_at=row["created_at"].isoformat()
-                if hasattr(row["created_at"], "isoformat")
-                else str(row["created_at"]),
+            if hasattr(row["created_at"], "isoformat")
+            else str(row["created_at"]),
             payload=payload,
         )
         if ev is None:

@@ -354,9 +354,7 @@ async def _run_chunk(
                 return await _maybe_verify(
                     mode=run_mode,
                     text=inputs.text,
-                    sources=[
-                        (s.title, s.url or "", s.snippet) for s in inputs.sources
-                    ],
+                    sources=[(s.title, s.url or "", s.snippet) for s in inputs.sources],
                     answerer_provider=answerer_provider,
                 )
             # Fast path: single-chunk run, the in-memory accumulators are
@@ -613,8 +611,7 @@ class _GoogleVerifierClient:
             # site asks for a different model. Uncommon.
             target = _build_google_model(model)
         user_text = "\n\n".join(
-            str(m.get("content", "")) if isinstance(m, dict) else str(m)
-            for m in messages
+            str(m.get("content", "")) if isinstance(m, dict) else str(m) for m in messages
         )
         resp = await target.generate_content_async(user_text)
         parts: list[str] = []
@@ -694,8 +691,7 @@ def _resolve_verifier_client(*, answerer_provider: str) -> _VerifierClient | Non
             "executor.verifier_same_family",
             answerer_provider=answerer_provider,
             recommendation=(
-                "set VERIFY_PROVIDER to a different family for stronger "
-                "cross-checking"
+                "set VERIFY_PROVIDER to a different family for stronger cross-checking"
             ),
         )
     return client or _make_anthropic_verifier_client()  # safe fallback

@@ -110,6 +110,7 @@ class AggregatedInputs:
     """The (text, sources) the per-chunk in-memory accumulator
     produced, re-derived from the full event log. Consumed by
     `verify_answer` exactly like the per-chunk tuple."""
+
     text: str
     sources: list[RetrievedSource]
 

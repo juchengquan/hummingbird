@@ -101,9 +101,7 @@ async def test_maybe_verify_uses_cross_family(monkeypatch) -> None:
 
     client = _SentinelClient(family="google", calls=[])
 
-    async def fake_create(
-        *, model: str, max_tokens: int, messages: list[dict[str, object]]
-    ) -> str:
+    async def fake_create(*, model: str, max_tokens: int, messages: list[dict[str, object]]) -> str:
         client.calls.append((model, max_tokens, messages))
         return '{"checks":[]}'
 

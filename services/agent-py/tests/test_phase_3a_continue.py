@@ -414,12 +414,21 @@ async def test_execute_continue_reaggregates_verification_from_event_log() -> No
     # (text, sources) it receives and return a canned payload.
     full_log: list[TaskEvent] = [
         events.TokenEvent(
-            run_id="r", seq=2, step=0, created_at="t",
-            text="Sky is blue [1].", channel="text",
+            run_id="r",
+            seq=2,
+            step=0,
+            created_at="t",
+            text="Sky is blue [1].",
+            channel="text",
         ),
         events.ToolOutputEvent(
-            run_id="r", seq=3, step=0, created_at="t",
-            tool_call_id="t1", tool_name="webSearch", summary="1 result",
+            run_id="r",
+            seq=3,
+            step=0,
+            created_at="t",
+            tool_call_id="t1",
+            tool_name="webSearch",
+            summary="1 result",
             results=[events.ToolCallResult(title="A", url="https://a", snippet="s")],
         ),
     ]
