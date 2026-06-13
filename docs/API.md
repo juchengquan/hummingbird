@@ -46,6 +46,45 @@ extractor failures. Body shape: `{ error: string }`.
 
 ---
 
+### `POST /api/embed`
+
+Chunk + embed a file's extracted text into the `file_sections` vector
+table (`docs/PLAN-local-rag.md` PR 2). The body carries the text
+directly so indexing doesn't depend on `files.full_text` having synced;
+the only cloud precondition is the `files` row existing (the
+`file_sections.file_id` FK). Requires an authenticated Supabase session.
+
+**Request**: `EmbedRequest`
+
+```ts
+{
+  fileId: string,    // ≤ 64 chars; the owning files-row id
+  text: string,      // ≤ 1.2 MB; the extracted full text
+  force?: boolean,   // re-index even if sections already exist
+}
+```
+
+**Response 200**: `EmbedResponse`
+
+```ts
+{
+  status: "indexed" | "skipped",
+  sections: number,  // chunks written, or already-present count on skip
+  reason?: "not_configured" | "empty" | "already_indexed" | "file_not_found",
+}
+```
+
+Idempotent: a file already chunked returns `skipped/already_indexed`
+(no embed) unless `force`. `not_configured` (no server-side embedder)
+and `file_not_found` (the FK row hasn't synced yet — the client
+retries with backoff) are **200, not errors** — indexing is
+best-effort background decoration.
+
+**Errors**: `400` invalid body, `401` not signed in, `500` embed/insert
+failure. Body shape: `{ code?: string, error: string }`.
+
+---
+
 ### `POST /api/summarize`
 
 Generate a short summary. Two modes via discriminated union on

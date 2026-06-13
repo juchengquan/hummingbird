@@ -21,6 +21,7 @@ import "client-only"
 
 import {
   CreateShareResponseSchema,
+  EmbedResponseSchema,
   ExtractionResponseSchema,
   FileSummarizeResponseSchema,
   ConversationSummarizeResponseSchema,
@@ -44,6 +45,8 @@ import {
   type CompressSummarizeResponse,
   type ProjectBreakdownResponse,
   type SummarizeRequestInput,
+  type EmbedRequestInput,
+  type EmbedResponse,
 } from "@/shared/api-schemas"
 
 import { narrowToRemoteBody } from "@/client/api/chat-marshalling"
@@ -171,6 +174,7 @@ export const apiUrls = {
   aiCommand: () => url("/api/ai/command"),
   aiComplete: () => url("/api/ai/complete"),
   extract: () => url("/api/extract"),
+  embed: () => url("/api/embed"),
   summarize: () => url("/api/summarize"),
   share: () => url("/api/share"),
   shareToken: (token: string) =>
@@ -580,6 +584,33 @@ async function extract(
   }
 }
 
+// --- /api/embed -------------------------------------------------------------
+
+/**
+ * Chunk + embed a file's extracted text into the `file_sections` vector
+ * table (PLAN-local-rag.md PR 2). Best-effort: resolves to the parsed
+ * status on success, or `null` on any failure (anonymous → 401, network
+ * error, malformed response) — callers treat indexing as background
+ * decoration that quietly no-ops when it can't run.
+ */
+async function embedFile(
+  body: EmbedRequestInput,
+  options?: { signal?: AbortSignal }
+): Promise<EmbedResponse | null> {
+  try {
+    const res = await fetch(apiUrls.embed(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: options?.signal,
+    })
+    if (!res.ok) return null
+    return EmbedResponseSchema.parse(await res.json())
+  } catch {
+    return null
+  }
+}
+
 // --- /api/summarize ---------------------------------------------------------
 
 type SummarizeOptions = { signal?: AbortSignal } & DispatchOption
@@ -938,6 +969,7 @@ export const apiClient = {
     },
   },
   extract,
+  embed: { file: embedFile },
   summarize: {
     file: summarizeFile,
     conversation: summarizeConversation,

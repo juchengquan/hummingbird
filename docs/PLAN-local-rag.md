@@ -17,18 +17,31 @@ RPC. **Inert until an embedding provider is configured** (no
 `EMBEDDINGS_BASE_URL` / `OLLAMA_BASE_URL` → nothing writes, FTS stays
 the only path).
 
-**Follow-ups (consumers):** PR 2 — chunk + embed file text on the
-extraction path (write `file_sections`). PR 3 (shipped) — the in-Next
-`searchFiles` skill (`lib/server/skills/file-search.ts`) now runs a
-**hybrid** search: the existing lexical FTS arm (`search_file_sections`)
-plus a semantic arm (`embedText(query)` → `match_file_sections`), fused
-by `blendSearchFragments` (FTS excerpts first, then novel vector chunks,
+**Populate (PR 2, shipped):** `POST /api/embed` (`{ fileId, text }`)
+chunks + embeds a file's extracted text into `file_sections`, fired
+best-effort from `runExtraction` (`lib/client/extract.ts`) for
+signed-in users via `indexFileEmbeddings`
+(`lib/client/embeddings/index-file.ts`). The orchestration
+(`lib/server/embeddings/index-file.ts`) is idempotent — a file already
+chunked is left alone unless `force` — and the route owns the env gate
+(`not_configured` → 200 no-op). The client sends the text directly
+(not relying on `files.full_text` syncing), so the only cloud
+precondition is the `files` row existing for the FK; a short
+backoff covers the row-sync race. **Still inert until an embedder is
+configured.** Pre-existing files index on re-upload (consistent with
+FTS's re-upload-to-index semantics).
+
+**Consume (PR 3, shipped):** the in-Next `searchFiles` skill
+(`lib/server/skills/file-search.ts`) now runs a **hybrid** search: the
+existing lexical FTS arm (`search_file_sections`) plus a semantic arm
+(`embedText(query)` → `match_file_sections`), fused by
+`blendSearchFragments` (FTS excerpts first, then novel vector chunks,
 deduped, capped). The vector arm is gated on `isEmbeddingConfigured()`
 and is purely additive — any embed/RPC failure degrades to FTS-only, and
 with no embedder it's byte-for-byte the old FTS path. (The agent-ts
 backend's `search-files.ts` stays FTS-only for now — it has no embedder
 wired; a parallel change when that backend grows one.) Once the
-substrate lands it also unblocks semantic-caching Phase 2, citation
+substrate landed it also unblocked semantic-caching Phase 2, citation
 grounding, multimodal retrieval, and cross-conversation memory.
 
 Captures the architecture options for a local/self-hostable vector

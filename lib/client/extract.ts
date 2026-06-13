@@ -8,6 +8,7 @@ import "client-only"
 import { toast } from 'sonner'
 
 import { apiClient } from '@/client/api-client'
+import { indexFileEmbeddings } from '@/client/embeddings/index-file'
 import type { ExtractionResponse } from '@/shared/api-schemas'
 
 export const EXTRACTION_BUDGET = 100 * 1024 // 100 KB of extracted text per file
@@ -150,5 +151,15 @@ export async function runExtraction(
     result.text.length >= SUMMARY_MIN_TEXT_LENGTH
   ) {
     void summariseFileInBackground(fileId, blob.name, result.text, setFileExtraction)
+  }
+
+  // Best-effort semantic indexing into `file_sections` for signed-in
+  // users (PLAN-local-rag.md PR 2). Embed the full text when the inline
+  // view was truncated; otherwise the inline `text` IS the full
+  // extraction. No-op for anonymous / local-only users and when no
+  // server-side embedder is configured.
+  if (result.kind !== 'unsupported') {
+    const indexable = result.fullText ?? result.text
+    void indexFileEmbeddings(fileId, indexable)
   }
 }
