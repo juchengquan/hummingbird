@@ -85,9 +85,13 @@ def _row(seq: int, step: int, kind: str, payload: dict[str, object]) -> dict[str
 def _pool_with_rows(rows: list[dict[str, object]]) -> MagicMock:
     """Build a MagicMock pool whose `pool.acquire().__aenter__()`
     yields a conn with `fetch = AsyncMock(return_value=rows)`. Mirrors
-    the pattern in services/agent-py/tests/test_jobs.py:34-48."""
+    the pattern in services/agent-py/tests/test_jobs.py:34-48.
+    `conn.execute` is also stubbed because `load_run_events` calls
+    `_set_user_context(conn, ...)` first, which executes a
+    `SET LOCAL ROLE` statement before the SELECT."""
     conn = MagicMock()
     conn.fetch = AsyncMock(return_value=rows)
+    conn.execute = AsyncMock(return_value="SELECT 1")
     acquire_cm = MagicMock()
     acquire_cm.__aenter__ = AsyncMock(return_value=conn)
     acquire_cm.__aexit__ = AsyncMock(return_value=None)
