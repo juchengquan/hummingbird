@@ -21,9 +21,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agent_py import executor, jobs, store
+from agent_py import events, executor, jobs, store
 from agent_py.emitter import RunEmitter
-from agent_py.events import StatusEvent, TaskEvent
+from agent_py.events import ResultEvent, StatusEvent, TaskEvent
 from agent_py.runner import (
     AgentLoopResult,
     RunStepContext,
@@ -383,3 +383,94 @@ async def test_settled_chunk_marks_task_done_no_enqueue() -> None:
     update_run.assert_awaited()
     save_checkpoint.assert_not_called()
     enqueue.assert_not_called()
+
+
+# --- Commit 4: cross-chunk verification on the resumed (continue) path --
+
+
+@pytest.mark.asyncio
+async def test_execute_continue_reaggregates_verification_from_event_log() -> None:
+    """A research run that yielded at chunk 1 and settles on a
+    `continue` chunk re-aggregates report text + sources from the FULL
+    task_events log in `finalize`, so the terminal result still carries
+    a verification. Pre-commit-4 the resumed chunk returned None — the
+    per-chunk in-memory accumulators only held the resumed chunk's
+    slice."""
+    pool = MagicMock()
+    payload = executor.StartActionPayload(
+        run_id="22222222-2222-2222-2222-222222222222",
+        user_id="33333333-3333-3333-3333-333333333333",
+    )
+    _, make_step = _make_step_fn(done_at=1)
+
+    collected: list[TaskEvent] = []
+
+    async def sink(event: TaskEvent) -> None:
+        collected.append(event)
+
+    # The full event log the DB holds for the whole run (both chunks):
+    # a text token + a webSearch result. `aggregate_from_events` runs
+    # for real over this; `_maybe_verify` is stubbed to capture the
+    # (text, sources) it receives and return a canned payload.
+    full_log: list[TaskEvent] = [
+        events.TokenEvent(
+            run_id="r",
+            seq=2,
+            step=0,
+            created_at="t",
+            text="Sky is blue [1].",
+            channel="text",
+        ),
+        events.ToolOutputEvent(
+            run_id="r",
+            seq=3,
+            step=0,
+            created_at="t",
+            tool_call_id="t1",
+            tool_name="webSearch",
+            summary="1 result",
+            results=[events.ToolCallResult(title="A", url="https://a", snippet="s")],
+        ),
+    ]
+    verify_payload: dict[str, object] = {
+        "checks": [],
+        "summary": {"supported": 1, "partial": 0, "unsupported": 0, "total": 1},
+    }
+
+    with (
+        patch.object(
+            store,
+            "load_checkpoint",
+            new=AsyncMock(
+                return_value={
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "step": 5,
+                    "seq": 12,
+                    "config": {"model": "claude-sonnet-4-6", "mode": "research"},
+                }
+            ),
+        ),
+        patch.object(store, "set_task_handler", new=AsyncMock()),
+        patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=False)),
+        patch.object(store, "update_run", new=AsyncMock()),
+        patch.object(store, "load_run_events", new=AsyncMock(return_value=full_log)) as load_events,
+        patch.object(
+            executor, "_maybe_verify", new=AsyncMock(return_value=verify_payload)
+        ) as maybe_verify,
+        patch("agent_py.executor._make_db_sink", return_value=sink),
+    ):
+        outcome = await executor.execute_continue(pool, payload, make_step_fn=make_step)
+
+    assert outcome.settled is True
+    # finalize re-aggregated from the DB on the resumed chunk.
+    load_events.assert_awaited_once()
+    # `_maybe_verify` saw the text + sources re-derived from the FULL
+    # log, not this chunk's empty in-memory accumulators.
+    assert maybe_verify.await_count == 1
+    kwargs = maybe_verify.await_args.kwargs
+    assert kwargs["mode"] == "research"
+    assert kwargs["text"] == "Sky is blue [1]."
+    assert kwargs["sources"] == [("A", "https://a", "s")]
+    # The verification rides on the terminal result.
+    final_result = next(e for e in collected if isinstance(e, ResultEvent))
+    assert final_result.verification == verify_payload

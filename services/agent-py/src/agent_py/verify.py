@@ -27,6 +27,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from .events import TaskEvent, TokenEvent, ToolOutputEvent
+
 ClaimStatus = Literal["supported", "unsupported", "partial"]
 
 _STATUSES: frozenset[str] = frozenset({"supported", "unsupported", "partial"})
@@ -101,6 +103,47 @@ class VerificationResult:
                 "total": self.summary.total,
             },
         }
+
+
+@dataclass(frozen=True)
+class AggregatedInputs:
+    """The (text, sources) the per-chunk in-memory accumulator
+    produced, re-derived from the full event log. Consumed by
+    `verify_answer` exactly like the per-chunk tuple."""
+
+    text: str
+    sources: list[RetrievedSource]
+
+
+def aggregate_from_events(event_list: list[TaskEvent]) -> AggregatedInputs:
+    """Re-derive (text, sources) from a list of TaskEvents in seq
+    order. Pure: concatenate `TokenEvent(channel='text').text` and
+    collect `ToolOutputEvent.results` in cumulative citation
+    order. Skips `step_error` (the run continues, the event
+    isn't part of the answer), `approval` (HITL pause/response),
+    and metadata kinds (`status`, `step_start`, `step_end`).
+
+    `tool_output.results == None` or `[]` contribute no source
+    (a tool that returned text-only, e.g. `webFetch` summary).
+    """
+    text_parts: list[str] = []
+    sources: list[RetrievedSource] = []
+    source_counter = 0
+    for ev in event_list:
+        if isinstance(ev, TokenEvent) and ev.channel == "text":
+            text_parts.append(ev.text)
+        elif isinstance(ev, ToolOutputEvent) and ev.results:
+            for r in ev.results:
+                source_counter += 1
+                sources.append(
+                    RetrievedSource(
+                        id=str(source_counter),
+                        title=r.title,
+                        url=r.url,
+                        snippet=r.snippet,
+                    )
+                )
+    return AggregatedInputs(text="".join(text_parts), sources=sources)
 
 
 #: prompt in, raw verifier JSON text out. Injected so the orchestration
@@ -211,7 +254,13 @@ def build_verify_prompt(claims: list[CitedClaim], sources: list[RetrievedSource]
 def gather_sources(results: list[tuple[str, str, str]]) -> list[RetrievedSource]:
     """Build the cited-source list from accumulated web-search results, in
     the cumulative order the model cites by (`[1]`, `[2]`, …). Each tuple
-    is `(title, url, snippet)`."""
+    is `(title, url, snippet)`.
+
+    Note: `gather_sources(results)` is still used by the in-memory
+    accumulator. `aggregate_from_events(events)` is the new pure
+    re-derivation that reads the DB. Both produce the same shape
+    (a list of RetrievedSource in cumulative citation order) and
+    are interchangeable inputs to `verify_answer`."""
     return [
         RetrievedSource(id=str(i + 1), title=title, url=url or None, snippet=snippet)
         for i, (title, url, snippet) in enumerate(results)

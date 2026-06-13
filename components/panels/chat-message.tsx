@@ -21,7 +21,7 @@ import { MessageAttachments } from "@/components/panels/message-attachments"
 import { ReasoningBlock } from "@/components/panels/reasoning-block"
 import { SourcesStrip } from "@/components/panels/sources-strip"
 import { MessageVerification } from "@/components/panels/message-verification"
-import { countSupportPerSource } from "@/shared/verify"
+import { countSupportPerSource, markerMarksFor } from "@/shared/verify"
 import { ErrorBubble } from "@/components/panels/error-bubble"
 import { useStore, useMessageBookmark } from "@/client/hooks/use-store"
 import { mark as perfMark, count as perfCount } from "@/client/perf-chat-stream"
@@ -126,6 +126,12 @@ function ChatMessageImpl({
   // PLAN-citation-verifiability.md.
   const sourceSupportCounts = message.verification
     ? countSupportPerSource(message.verification.checks)
+    : undefined
+  // Per-`[N]` inline marks: flagged claims get a tone class + tooltip on
+  // their citation marker in the rendered prose. See
+  // PLAN-citation-verifiability.md commit 6.
+  const citationMarks = message.verification
+    ? markerMarksFor(message.verification.checks)
     : undefined
 
   useEffect(() => {
@@ -425,6 +431,7 @@ function ChatMessageImpl({
                     pdfCitationFileId={pdfCitationFileId}
                     sourceCount={webSearchResults?.length ?? 0}
                     onSourceClick={(idx) => setHighlightedCitation(idx)}
+                    citationMarks={citationMarks}
                     // Suppress markdown-embedded `<img>` tags when this
                     // message already shows a gallery — keeps the
                     // model's helpful `![](url)` from double-rendering.
