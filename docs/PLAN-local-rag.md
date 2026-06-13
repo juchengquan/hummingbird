@@ -31,11 +31,18 @@ backoff covers the row-sync race. **Still inert until an embedder is
 configured.** Pre-existing files index on re-upload (consistent with
 FTS's re-upload-to-index semantics).
 
-**Follow-ups (consumers):** PR 3 — a **hybrid `searchFiles`** that
-blends FTS (`search_file_sections`) with vector
-(`match_file_sections`). Once the substrate lands it also unblocks
-semantic-caching Phase 2, citation grounding, multimodal retrieval,
-and cross-conversation memory.
+**Consume (PR 3, shipped):** the in-Next `searchFiles` skill
+(`lib/server/skills/file-search.ts`) now runs a **hybrid** search: the
+existing lexical FTS arm (`search_file_sections`) plus a semantic arm
+(`embedText(query)` → `match_file_sections`), fused by
+`blendSearchFragments` (FTS excerpts first, then novel vector chunks,
+deduped, capped). The vector arm is gated on `isEmbeddingConfigured()`
+and is purely additive — any embed/RPC failure degrades to FTS-only, and
+with no embedder it's byte-for-byte the old FTS path. (The agent-ts
+backend's `search-files.ts` stays FTS-only for now — it has no embedder
+wired; a parallel change when that backend grows one.) Once the
+substrate landed it also unblocked semantic-caching Phase 2, citation
+grounding, multimodal retrieval, and cross-conversation memory.
 
 Captures the architecture options for a local/self-hostable vector
 store so the choice is made deliberately when a RAG feature
