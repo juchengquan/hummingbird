@@ -225,3 +225,44 @@ export function countSupportPerSource(
   }
   return counts
 }
+
+/** One inline mark for a single citation marker `[N]`. The
+ *  renderer uses this to wrap the rendered `[N]` token in a
+ *  styled span (see components/panels/citation-marker.tsx). */
+export type CitationMarkerMark = {
+  markerId: string
+  claimText: string
+  status: ClaimStatus
+}
+
+/**
+ * Build a `Map<markerId, CitationMarkerMark>` from the
+ * `VerificationResult.checks`. Used by the inline renderer to
+ * wrap each `[N]` token in the rendered assistant message.
+ *
+ * - Skips `supported` claims (no UI cost).
+ * - Skips claims with empty `sourceIds` (no marker to mark).
+ * - First claim wins per marker when two flagged claims share a
+ *   sourceId (rare; happens when the model's `[1]` and `[2]`
+ *   lists disagree with the verifier's sourceIds). The first
+ *   claim is the one closest to the citation in the assistant
+ *   message order.
+ */
+export function markerMarksFor(
+  checks: ClaimCheck[]
+): Map<string, CitationMarkerMark> {
+  const out = new Map<string, CitationMarkerMark>()
+  for (const c of checks) {
+    if (c.status === "supported") continue
+    if (c.sourceIds.length === 0) continue
+    for (const id of c.sourceIds) {
+      if (out.has(id)) continue
+      out.set(id, {
+        markerId: id,
+        claimText: c.claim,
+        status: c.status,
+      })
+    }
+  }
+  return out
+}
