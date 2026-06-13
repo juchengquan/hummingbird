@@ -625,4 +625,22 @@ describe("date-picker — UiPartSchema + answer round-trips", () => {
   test("defaultResolutionFor(date-picker) is auto-send", () => {
     expect(defaultResolutionFor("date-picker")).toBe("auto-send")
   })
+  test("drops a calendar-invalid date answer (regex-valid but Feb 30)", () => {
+    const out = parsePersistedUiPart({
+      id: "p4",
+      kind: "date-picker",
+      props: { prompt: "When?", mode: "single" },
+      answer: { kind: "date-picker", date: "2026-02-30" },
+    })
+    expect(out?.answer).toBeUndefined()
+  })
+  test("drops an empty date-picker answer (neither date nor from/to)", () => {
+    const out = parsePersistedUiPart({
+      id: "p5",
+      kind: "date-picker",
+      props: { prompt: "When?", mode: "single" },
+      answer: { kind: "date-picker" },
+    })
+    expect(out?.answer).toBeUndefined()
+  })
 })

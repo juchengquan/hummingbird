@@ -21,7 +21,7 @@
  * tool can import without violating the boundary.
  */
 
-import { format, parseISO } from "date-fns"
+import { format, isValid, parseISO } from "date-fns"
 import { z } from "zod"
 
 /** Dates in generative UI are ISO `YYYY-MM-DD`, date-only (no time/zone). */
@@ -31,7 +31,15 @@ const IsoDate = z.string().regex(ISO_DATE_RE, "expected YYYY-MM-DD")
 /** Human-readable form of an ISO date for the follow-up chat turn.
  *  Falls back to the raw string if it isn't a clean ISO date. */
 function formatIsoHuman(iso: string): string {
-  return ISO_DATE_RE.test(iso) ? format(parseISO(iso), "MMMM d, yyyy") : iso
+  if (!ISO_DATE_RE.test(iso)) return iso
+  const d = parseISO(iso)
+  return isValid(d) ? format(d, "MMMM d, yyyy") : iso
+}
+
+/** Returns true only when `s` is a string that is both regex-valid
+ *  (`YYYY-MM-DD`) AND represents a real calendar date. */
+function isIsoDate(s: unknown): s is string {
+  return typeof s === "string" && ISO_DATE_RE.test(s) && isValid(parseISO(s))
 }
 
 /** Allow-list of generative UI kinds. Adding a new kind: extend this
@@ -223,7 +231,9 @@ export type UiAnswer =
   /** `mini-form` — submitted values keyed by field id (string values
    *  for text/select; stringified number for `number` fields). */
   | { kind: "mini-form"; values: Record<string, string> }
+  /** `date-picker` single — the ISO `YYYY-MM-DD` day the user picked. */
   | { kind: "date-picker"; date: string }
+  /** `date-picker` range — inclusive start/end ISO days. */
   | { kind: "date-picker"; from: string; to: string }
 
 /** Pure parser for one `PersistedUiPart` — validates the kind /
@@ -278,20 +288,11 @@ function parseAnswerForKind(
     return { kind: "mini-form", values: out }
   }
   if (kind === "date-picker") {
-    const date = v.date
-    if (typeof date === "string" && ISO_DATE_RE.test(date)) {
-      return { kind: "date-picker", date }
+    if (isIsoDate(v.date)) {
+      return { kind: "date-picker", date: v.date }
     }
-    const from = v.from
-    const to = v.to
-    if (
-      typeof from === "string" &&
-      ISO_DATE_RE.test(from) &&
-      typeof to === "string" &&
-      ISO_DATE_RE.test(to) &&
-      from <= to
-    ) {
-      return { kind: "date-picker", from, to }
+    if (isIsoDate(v.from) && isIsoDate(v.to) && v.from <= v.to) {
+      return { kind: "date-picker", from: v.from, to: v.to }
     }
     return null
   }
@@ -312,6 +313,8 @@ function parseAnswerForKind(
  *    - `choice` single → the option label.
  *    - `choice` multi → "Option A, Option B" (comma-joined labels).
  *    - `mini-form` → "Field Label: value, Field Label: value".
+ *    - `date-picker` single → "June 20, 2026".
+ *    - `date-picker` range  → "June 20, 2026 – June 25, 2026".
  *
  *  Returns the empty string when the answer can't be formatted
  *  (e.g. selectedIds reference an unknown option) — caller decides
