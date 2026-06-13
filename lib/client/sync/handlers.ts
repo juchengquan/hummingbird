@@ -575,6 +575,7 @@ export function diffMcpServers(prev: McpServer[], next: McpServer[]): SyncOp[] {
             ? toISO(s.capabilitiesFetchedAt)
             : null,
           enabled: s.enabled,
+          requires_approval: s.requiresApproval ?? false,
           created_at: toISO(s.createdAt),
           updated_at: toISO(s.updatedAt),
           deleted_at: s.deletedAt ? toISO(s.deletedAt) : null,
@@ -606,6 +607,7 @@ function mcpServerEquals(a: McpServer, b: McpServer): boolean {
     JSON.stringify(a.capabilities ?? null) === JSON.stringify(b.capabilities ?? null) &&
     sameInstantOrNull(a.capabilitiesFetchedAt, b.capabilitiesFetchedAt) &&
     a.enabled === b.enabled &&
+    (a.requiresApproval ?? false) === (b.requiresApproval ?? false) &&
     sameInstant(a.createdAt, b.createdAt) &&
     sameInstant(a.updatedAt, b.updatedAt) &&
     sameInstantOrNull(a.deletedAt, b.deletedAt)

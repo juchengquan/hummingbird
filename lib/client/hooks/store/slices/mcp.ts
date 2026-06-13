@@ -53,6 +53,7 @@ export interface McpSlice {
     credentialMode: McpCredentialMode
     credentialFingerprint?: string
     enabled?: boolean
+    requiresApproval?: boolean
   }) => McpServer
   /** Patch arbitrary fields on a server. Bumps `updatedAt`. */
   updateMcpServer: (
@@ -104,7 +105,7 @@ export const createMcpSlice: SliceCreator<McpSlice> = (set, get) => ({
   mcpResourceBindings: [],
   conversationMcpResources: [],
 
-  addMcpServer: ({ workspaceId, name, url, credentialMode, credentialFingerprint, enabled = true }) => {
+  addMcpServer: ({ workspaceId, name, url, credentialMode, credentialFingerprint, enabled = true, requiresApproval }) => {
     const now = new Date()
     const newServer: McpServer = {
       id: uuid(),
@@ -115,6 +116,7 @@ export const createMcpSlice: SliceCreator<McpSlice> = (set, get) => ({
       credentialMode,
       credentialFingerprint,
       enabled,
+      requiresApproval,
       createdAt: now,
       updatedAt: now,
     }
