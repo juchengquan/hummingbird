@@ -63,10 +63,10 @@ Create `services/agent-py/tests/test_aggregator.py` with:
 from __future__ import annotations
 
 import json
-import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from structlog.testing import capture_logs
 
 from agent_py import events, store
 
@@ -132,21 +132,27 @@ async def test_load_run_events_round_trip() -> None:
 
 
 @pytest.mark.asyncio
-async def test_load_run_events_skips_unknown_kinds(caplog) -> None:
+async def test_load_run_events_skips_unknown_kinds() -> None:
     """Unknown kinds are skipped with a warning, not raised."""
     pool = _pool_with_rows([
         _row(1, 0, "status", {"status": "running"}),
         _row(2, 0, "unknown_kind", {"junk": True}),
         _row(3, 0, "token", {"text": "ok", "channel": "text"}),
     ])
-    with caplog.at_level(logging.WARNING, logger="agent_py.store"):
+    with capture_logs() as logs:
         out = await store.load_run_events(
             pool,  # type: ignore[arg-type]
             run_id="r1",
             user_id="u1",
         )
     assert [e.kind for e in out] == ["status", "token"]
-    assert any("unknown_kind" in rec.message for rec in caplog.records)
+    # store.py uses structlog (like the rest of agent-py), so assert on
+    # the captured event dict, not on a stdlib caplog record.
+    assert any(
+        log.get("event") == "store.unknown_event_kind"
+        and log.get("kind") == "unknown_kind"
+        for log in logs
+    )
 ```- [ ] **Step 2: Run the test to verify it fails**
 
 Run: `cd services/agent-py && uv run pytest tests/test_aggregator.py -v`
@@ -157,13 +163,14 @@ Expected: FAIL with `AttributeError: module 'agent_py.store' has no attribute 'l
 In `services/agent-py/src/agent_py/store.py`, **add** to the top (after the `RunStore` docstring / imports):
 
 ```python
-import logging
+import structlog
 from typing import Literal
 
 # ... existing imports ...
 
 # Module-level logger for the cross-chunk verification path.
-_log = logging.getLogger(__name__)
+# structlog, to match the rest of agent-py (db.py, poller.py, etc.).
+_log = structlog.get_logger(__name__)
 
 _VALID_KINDS: frozenset[str] = frozenset({
     "token", "tool_input", "tool_output", "step_start", "step_end",
@@ -173,14 +180,19 @@ _VALID_KINDS: frozenset[str] = frozenset({
 
 
 def event_from_row_payload(
-    *, seq: int, step: int, created_at: str, payload: dict[str, object]
+    *, seq: int, step: int, kind: str, created_at: str,
+    payload: dict[str, object],
 ) -> events.TaskEvent | None:
     """Reverse of `events.event_to_row_payload` for one row.
-    Returns `None` when `payload['kind']` is unknown (caller skips
-    with a warning). Mirrors the TS-side projection's
-    tolerance for newer event kinds."""
-    kind = payload.get("kind")
-    if not isinstance(kind, str) or kind not in _VALID_KINDS:
+    Returns `None` when `kind` is unknown (caller skips with a
+    warning). Mirrors the TS-side projection's tolerance for newer
+    event kinds.
+
+    `kind` is a separate `task_events.kind` column (NOT part of the
+    payload jsonb) per supabase/migrations/0012_tasks.sql.
+    `event_to_row_payload` writes the kind-specific fields only;
+    this function reads them back by switching on the column value."""
+    if kind not in _VALID_KINDS:
         _log.warning("store.unknown_event_kind", kind=str(kind))
         return None
     base: dict[str, object] = {
@@ -189,8 +201,7 @@ def event_from_row_payload(
         "step": step,
         "created_at": created_at,
     }
-    raw: dict[str, object] = {k: v for k, v in payload.items() if k != "kind"}
-    merged = {**base, **raw}
+    merged = {**base, **payload}
     if kind == "token":
         return events.TokenEvent(
             run_id="",
@@ -230,9 +241,12 @@ def event_from_row_payload(
         return events.ResultEvent(
             run_id="", seq=seq, step=step, created_at=created_at,
             status=cast("Literal['done', 'failed']", merged.get("status", "done")),
-            final_text=merged.get("finalText") if isinstance(merged.get("finalText"), str) else None,
-            error=merged.get("error") if isinstance(merged.get("error"), str) else None,
-            verification=merged.get("verification") if isinstance(merged.get("verification"), dict) else None,
+            final_text=cast("str | None",
+                            merged.get("finalText") if isinstance(merged.get("finalText"), str) else None),
+            error=cast("str | None",
+                       merged.get("error") if isinstance(merged.get("error"), str) else None),
+            verification=cast("dict[str, object] | None",
+                              merged.get("verification") if isinstance(merged.get("verification"), dict) else None),
         )
     if kind == "step_start":
         return events.StepStartEvent(run_id="", seq=seq, step=step, created_at=created_at)
@@ -259,18 +273,30 @@ def event_from_row_payload(
             phase=cast("Literal['request', 'response']", merged.get("phase", "request")),
             request_kind=cast("Literal['approval','choice','input','ui-part'] | None",
                               merged.get("requestKind")),
-            tool=merged.get("tool") if isinstance(merged.get("tool"), str) else None,
-            tool_call_id=merged.get("toolCallId") if isinstance(merged.get("toolCallId"), str) else None,
-            args=merged.get("args") if isinstance(merged.get("args"), dict) else None,
-            prompt=merged.get("prompt") if isinstance(merged.get("prompt"), str) else None,
-            options=merged.get("options") if isinstance(merged.get("options"), list) else None,
-            multi=merged.get("multi") if isinstance(merged.get("multi"), bool) else None,
-            ui_kind=merged.get("uiKind") if isinstance(merged.get("uiKind"), str) else None,
-            ui_props=merged.get("uiProps") if isinstance(merged.get("uiProps"), dict) else None,
-            approved=merged.get("approved") if isinstance(merged.get("approved"), bool) else None,
-            selection=merged.get("selection") if isinstance(merged.get("selection"), list) else None,
-            value=merged.get("value") if isinstance(merged.get("value"), str) else None,
-            ui_answer=merged.get("uiAnswer") if isinstance(merged.get("uiAnswer"), dict) else None,
+            tool=cast("str | None",
+                      merged.get("tool") if isinstance(merged.get("tool"), str) else None),
+            tool_call_id=cast("str | None",
+                              merged.get("toolCallId") if isinstance(merged.get("toolCallId"), str) else None),
+            args=cast("dict[str, object] | None",
+                      merged.get("args") if isinstance(merged.get("args"), dict) else None),
+            prompt=cast("str | None",
+                        merged.get("prompt") if isinstance(merged.get("prompt"), str) else None),
+            options=cast("list[events.InputRequestOption] | None",
+                         merged.get("options") if isinstance(merged.get("options"), list) else None),
+            multi=cast("bool | None",
+                       merged.get("multi") if isinstance(merged.get("multi"), bool) else None),
+            ui_kind=cast("str | None",
+                         merged.get("uiKind") if isinstance(merged.get("uiKind"), str) else None),
+            ui_props=cast("dict[str, object] | None",
+                          merged.get("uiProps") if isinstance(merged.get("uiProps"), dict) else None),
+            approved=cast("bool | None",
+                          merged.get("approved") if isinstance(merged.get("approved"), bool) else None),
+            selection=cast("list[str] | None",
+                           merged.get("selection") if isinstance(merged.get("selection"), list) else None),
+            value=cast("str | None",
+                       merged.get("value") if isinstance(merged.get("value"), str) else None),
+            ui_answer=cast("dict[str, object] | None",
+                           merged.get("uiAnswer") if isinstance(merged.get("uiAnswer"), dict) else None),
         )
     # Unhandled kinds in this build; the row was preserved but not
     # parsed. Caller should skip + warn.
@@ -314,6 +340,7 @@ async def load_run_events(
         ev = event_from_row_payload(
             seq=row["seq"],
             step=row["step"],
+            kind=row["kind"],
             created_at=row["created_at"].isoformat()
                 if hasattr(row["created_at"], "isoformat")
                 else str(row["created_at"]),
