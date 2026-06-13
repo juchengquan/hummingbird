@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from structlog.testing import capture_logs
 
-from agent_py import events, store
+from agent_py import events, store, verify
 
 
 def _row(seq: int, step: int, kind: str, payload: dict[str, object]) -> dict[str, object]:
@@ -92,3 +92,59 @@ async def test_load_run_events_skips_unknown_kinds() -> None:
         and log.get("kind") == "unknown_kind"
         for log in logs
     )
+
+
+def test_aggregate_from_events_pure() -> None:
+    """Build a hand-crafted event list and assert the aggregation
+    matches the shape the in-memory accumulator produced."""
+    events_list: list[events.TaskEvent] = [
+        events.StatusEvent(
+            run_id="r1", seq=1, step=0, created_at="t",
+            status="running",
+        ),
+        events.TokenEvent(
+            run_id="r1", seq=2, step=0, created_at="t",
+            text="The sky ", channel="text",
+        ),
+        events.StepEndEvent(run_id="r1", seq=3, step=0, created_at="t"),
+        events.TokenEvent(
+            run_id="r1", seq=4, step=1, created_at="t",
+            text="is blue [1].", channel="text",
+        ),
+        events.ToolOutputEvent(
+            run_id="r1", seq=5, step=1, created_at="t",
+            tool_call_id="t1", tool_name="webSearch", summary="1 result",
+            results=[events.ToolCallResult(title="A", url="https://a", snippet="snip A")],
+        ),
+        events.StepErrorEvent(
+            run_id="r1", seq=6, step=1, created_at="t",
+            message="transient", will_retry=True,
+        ),
+        events.ToolOutputEvent(
+            run_id="r1", seq=7, step=1, created_at="t",
+            tool_call_id="t2", tool_name="webSearch", summary="0 results",
+            results=None,  # empty web search -> no source
+        ),
+        events.ResultEvent(
+            run_id="r1", seq=8, step=1, created_at="t",
+            status="done", final_text="ignored",
+        ),
+    ]
+    inputs = verify.aggregate_from_events(events_list)
+    assert inputs.text == "The sky is blue [1]."
+    assert len(inputs.sources) == 1
+    assert inputs.sources[0].id == "1"
+    assert inputs.sources[0].title == "A"
+
+
+def test_aggregate_from_events_empty() -> None:
+    """No tokens + no tool outputs -> empty inputs (verifier no-ops)."""
+    events_list = [
+        events.StatusEvent(
+            run_id="r1", seq=1, step=0, created_at="t",
+            status="running",
+        ),
+    ]
+    inputs = verify.aggregate_from_events(events_list)
+    assert inputs.text == ""
+    assert inputs.sources == []
