@@ -43,6 +43,7 @@ rewrite:
 | `/api/ai/command` | POST | Plate-driven payload (editor) | streamed UI message stream |
 | `/api/ai/copilot` | POST | `{ prompt, model?, system?, apiKey? }` | streaming text |
 | `/api/extract` | POST | `multipart/form-data` with `file` | `{ kind, text, truncated, language? }` |
+| `/api/embed` | POST | `{ fileId, text, force? }` | `{ status, sections, reason? }` (needs the authed Supabase session + a server-side embedder; in-Next-only today) |
 | `/api/summarize` | POST | `{ mode, name, text }` | `{ summary, keyTopics }` |
 | `/api/share` | POST | `{ kind, conversationId }` | `{ token, kind }` |
 | `/api/share/[token]` | DELETE | (path param) | `{ ok }` or `{ error }` |

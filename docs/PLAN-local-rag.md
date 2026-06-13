@@ -17,9 +17,22 @@ RPC. **Inert until an embedding provider is configured** (no
 `EMBEDDINGS_BASE_URL` / `OLLAMA_BASE_URL` → nothing writes, FTS stays
 the only path).
 
-**Follow-ups (consumers):** PR 2 — chunk + embed file text on the
-extraction path (write `file_sections`). PR 3 — a **hybrid
-`searchFiles`** that blends FTS (`search_file_sections`) with vector
+**Populate (PR 2, shipped):** `POST /api/embed` (`{ fileId, text }`)
+chunks + embeds a file's extracted text into `file_sections`, fired
+best-effort from `runExtraction` (`lib/client/extract.ts`) for
+signed-in users via `indexFileEmbeddings`
+(`lib/client/embeddings/index-file.ts`). The orchestration
+(`lib/server/embeddings/index-file.ts`) is idempotent — a file already
+chunked is left alone unless `force` — and the route owns the env gate
+(`not_configured` → 200 no-op). The client sends the text directly
+(not relying on `files.full_text` syncing), so the only cloud
+precondition is the `files` row existing for the FK; a short
+backoff covers the row-sync race. **Still inert until an embedder is
+configured.** Pre-existing files index on re-upload (consistent with
+FTS's re-upload-to-index semantics).
+
+**Follow-ups (consumers):** PR 3 — a **hybrid `searchFiles`** that
+blends FTS (`search_file_sections`) with vector
 (`match_file_sections`). Once the substrate lands it also unblocks
 semantic-caching Phase 2, citation grounding, multimodal retrieval,
 and cross-conversation memory.
