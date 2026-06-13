@@ -331,16 +331,30 @@ async def _run_chunk(
         # web-search sources. Advisory + non-blocking — `_maybe_verify`
         # swallows its own failures and returns None.
         #
-        # `resume` (a `continue` chunk after a yield) is skipped: the
-        # per-chunk accumulators only hold THIS chunk's text + sources, so
-        # they're complete only when the run settles in the first chunk. A
-        # research run that yields and finishes later simply gets no
-        # verification — graceful degradation, not a wrong answer.
+        # `resume` (a `continue` chunk after a yield) re-aggregates the
+        # report text + sources from the full `task_events` log: the
+        # per-chunk in-memory accumulators only hold THIS chunk's slice,
+        # so they're complete only when the run settles in the first
+        # chunk. The DB is the source of truth for a multi-chunk run.
         run_mode = _str_or_none(cfg.get("mode")) if isinstance(cfg, dict) else None
 
         async def finalize() -> dict[str, object] | None:
             if resume:
-                return None
+                full_events = await store.load_run_events(
+                    pool,
+                    run_id=payload.run_id,
+                    user_id=payload.user_id,
+                )
+                inputs = verify.aggregate_from_events(full_events)
+                return await _maybe_verify(
+                    mode=run_mode,
+                    text=inputs.text,
+                    sources=[
+                        (s.title, s.url or "", s.snippet) for s in inputs.sources
+                    ],
+                )
+            # Fast path: single-chunk run, the in-memory accumulators are
+            # complete, so skip the DB round-trip.
             return await _maybe_verify(
                 mode=run_mode,
                 text="".join(verify_text_parts),
