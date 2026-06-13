@@ -447,19 +447,21 @@ function AddMcpServerDialog({
               />
             )}
           </div>
-          <div>
-            <label className="text-[10px] uppercase tracking-wide text-[var(--muted-foreground)] font-medium">
-              Approval
-            </label>
-            <div className="mt-1 flex items-center gap-2">
-              <Switch
-                checked={requiresApproval}
-                onCheckedChange={setRequiresApproval}
-                aria-label="Require approval for all tools from this server"
-              />
-              <span className="text-xs">Require approval for all tools from this server</span>
+          {credentialMode === "cloud" && (
+            <div>
+              <label className="text-[10px] uppercase tracking-wide text-[var(--muted-foreground)] font-medium">
+                Approval
+              </label>
+              <div className="mt-1 flex items-center gap-2">
+                <Switch
+                  checked={requiresApproval}
+                  onCheckedChange={setRequiresApproval}
+                  aria-label="Require approval for all tools from this server"
+                />
+                <span className="text-xs">Require approval for all tools from this server</span>
+              </div>
             </div>
-          </div>
+          )}
           {error && (
             <div className="flex items-start gap-1.5 text-[11px] text-[var(--destructive)]">
               <AlertCircle size={12} className="shrink-0 mt-0.5" />
