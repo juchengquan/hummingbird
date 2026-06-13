@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { ChevronLeft, ChevronRight, ExternalLink } from "lucide-react"
+import { ChevronLeft, ChevronRight, ExternalLink, Check } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { cn } from "@/shared/utils"
@@ -12,6 +12,11 @@ interface SourcesStripProps {
   /** Citation index the user just clicked (1-based). Triggers a
    *  scroll-into-view + transient highlight on the matching card. */
   highlightedIndex?: number | null
+  /** Per-source count of supported claims, keyed by source id
+   *  (`String(index)`). When present, cards show a "supports N claims"
+   *  badge. From `countSupportPerSource` on the message's verification.
+   *  See `docs/PLAN-citation-verifiability.md`. */
+  supportCounts?: Record<string, number>
   className?: string
 }
 
@@ -31,6 +36,7 @@ interface SourcesStripProps {
 export function SourcesStrip({
   results,
   highlightedIndex,
+  supportCounts,
   className,
 }: SourcesStripProps) {
   const scrollerRef = useRef<HTMLDivElement>(null)
@@ -125,6 +131,7 @@ export function SourcesStrip({
             result={result}
             scrollable={scrollable}
             flashed={flashIndex === idx}
+            supportCount={supportCounts?.[String(idx + 1)] ?? 0}
             ref={(el) => {
               cardRefs.current[idx] = el
             }}
@@ -140,10 +147,19 @@ interface SourceCardProps {
   result: ToolCallResult
   scrollable: boolean
   flashed: boolean
+  /** Supported-claim count for this source (0 = no badge). */
+  supportCount: number
   ref: (el: HTMLAnchorElement | null) => void
 }
 
-function SourceCard({ index, result, scrollable, flashed, ref }: SourceCardProps) {
+function SourceCard({
+  index,
+  result,
+  scrollable,
+  flashed,
+  supportCount,
+  ref,
+}: SourceCardProps) {
   let domain = ""
   try {
     domain = new URL(result.url).hostname.replace(/^www\./, "")
@@ -195,6 +211,12 @@ function SourceCard({ index, result, scrollable, flashed, ref }: SourceCardProps
       <div className="text-[var(--muted-foreground)] line-clamp-2 mt-1 leading-snug">
         {result.snippet}
       </div>
+      {supportCount > 0 && (
+        <div className="mt-1.5 inline-flex items-center gap-1 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+          <Check size={10} className="shrink-0" />
+          supports {supportCount} claim{supportCount === 1 ? "" : "s"}
+        </div>
+      )}
     </a>
   )
 }

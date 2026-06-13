@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import {
+  countSupportPerSource,
   extractCitedClaims,
   mapRawChecks,
   parseVerificationFrame,
@@ -132,6 +133,28 @@ describe("parseVerificationFrame", () => {
     expect(parseVerificationFrame(null)).toBeNull()
     expect(parseVerificationFrame({})).toBeNull()
     expect(parseVerificationFrame({ checks: "nope" })).toBeNull()
+  })
+})
+
+describe("countSupportPerSource", () => {
+  test("counts supported claims per source id; ignores partial/unsupported", () => {
+    expect(
+      countSupportPerSource([
+        { claim: "a", status: "supported", sourceIds: ["1", "2"] },
+        { claim: "b", status: "supported", sourceIds: ["1"] },
+        { claim: "c", status: "partial", sourceIds: ["2"] }, // ignored
+        { claim: "d", status: "unsupported", sourceIds: ["3"] }, // ignored
+      ])
+    ).toEqual({ "1": 2, "2": 1 })
+  })
+
+  test("empty / no supported → {}", () => {
+    expect(countSupportPerSource([])).toEqual({})
+    expect(
+      countSupportPerSource([
+        { claim: "x", status: "unsupported", sourceIds: ["1"] },
+      ])
+    ).toEqual({})
   })
 })
 
