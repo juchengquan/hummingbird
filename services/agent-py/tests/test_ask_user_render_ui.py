@@ -73,7 +73,13 @@ def test_render_ui_input_schema_has_kind_enum_and_props() -> None:
     assert kind_field["type"] == "string"
     # Pinned allow-list — adding a kind needs a deliberate update in
     # both languages.
-    assert set(kind_field["enum"]) == {"info-table", "choice", "confirm", "mini-form"}
+    assert set(kind_field["enum"]) == {
+        "info-table",
+        "choice",
+        "confirm",
+        "mini-form",
+        "date-picker",
+    }
     assert schema["required"] == ["kind", "props"]
 
 
@@ -503,3 +509,11 @@ def test_poller_tolerates_missing_ui_answer() -> None:
     parsed = poller._respond_payload_from_job(job)
     assert parsed is not None
     assert parsed.ui_answer is None
+
+
+def test_render_ui_kind_list_includes_date_picker() -> None:
+    """The Python renderUI kind tuple must stay in lockstep with the TS
+    UI_KIND_VALUES in lib/shared/generative-ui/schemas.ts."""
+    from agent_py.tools.render_ui import UI_KIND_VALUES
+
+    assert "date-picker" in UI_KIND_VALUES

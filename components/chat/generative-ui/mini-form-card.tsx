@@ -101,8 +101,8 @@ export function MiniFormCard({
               </label>
               <Input
                 id={id}
-                type={f.type === "number" ? "number" : "text"}
-                placeholder={f.placeholder}
+                type={f.type === "number" ? "number" : f.type === "date" ? "date" : "text"}
+                placeholder={f.type !== "date" ? f.placeholder : undefined}
                 value={allValues[f.id] ?? ""}
                 onChange={(e) => setValue(f.id, e.target.value)}
                 disabled={inert}
@@ -113,6 +113,12 @@ export function MiniFormCard({
                   ? { min: f.min }
                   : {})}
                 {...(f.type === "number" && f.max !== undefined
+                  ? { max: f.max }
+                  : {})}
+                {...(f.type === "date" && f.min !== undefined
+                  ? { min: f.min }
+                  : {})}
+                {...(f.type === "date" && f.max !== undefined
                   ? { max: f.max }
                   : {})}
                 className="h-8 text-sm"

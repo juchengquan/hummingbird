@@ -24,6 +24,7 @@ import { z } from "zod"
 import {
   ChoicePropsSchema,
   ConfirmPropsSchema,
+  DatePickerPropsSchema,
   InfoTablePropsSchema,
   MiniFormPropsSchema,
   type UiAnswer,
@@ -32,6 +33,7 @@ import {
 
 import { ChoiceCard } from "@/components/chat/generative-ui/choice-card"
 import { ConfirmCard } from "@/components/chat/generative-ui/confirm-card"
+import { DatePickerCard } from "@/components/chat/generative-ui/date-picker-card"
 import { InfoTable } from "@/components/chat/generative-ui/info-table"
 import { MiniFormCard } from "@/components/chat/generative-ui/mini-form-card"
 
@@ -68,6 +70,7 @@ export const UI_KINDS: Record<UiKind, UiKindDef> = {
   choice: { schema: ChoicePropsSchema, Component: ChoiceCard },
   confirm: { schema: ConfirmPropsSchema, Component: ConfirmCard },
   "mini-form": { schema: MiniFormPropsSchema, Component: MiniFormCard },
+  "date-picker": { schema: DatePickerPropsSchema, Component: DatePickerCard },
 }
 
 /** Lookup with a kind-string of arbitrary provenance (e.g. directly

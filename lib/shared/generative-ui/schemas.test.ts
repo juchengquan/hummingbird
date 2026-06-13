@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test"
 import {
   ChoicePropsSchema,
   ConfirmPropsSchema,
+  DatePickerPropsSchema,
   InfoTablePropsSchema,
   MiniFormPropsSchema,
   UI_KIND_VALUES,
@@ -535,5 +536,138 @@ describe("respondBodyForUiAnswer", () => {
     )
     expect(out.selection).toEqual([])
     expect(out.value).toBeUndefined()
+  })
+})
+
+describe("DatePickerPropsSchema", () => {
+  test("accepts a single-mode picker and defaults mode to single", () => {
+    const parsed = DatePickerPropsSchema.safeParse({ prompt: "Pick a day" })
+    expect(parsed.success).toBe(true)
+    if (parsed.success) expect(parsed.data.mode).toBe("single")
+  })
+  test("accepts a range with min/max bounds", () => {
+    const parsed = DatePickerPropsSchema.safeParse({
+      prompt: "Pick a span",
+      mode: "range",
+      min: "2026-01-01",
+      max: "2026-12-31",
+    })
+    expect(parsed.success).toBe(true)
+  })
+  test("rejects a non-ISO bound", () => {
+    expect(
+      DatePickerPropsSchema.safeParse({ prompt: "x", min: "06/20/2026" })
+        .success,
+    ).toBe(false)
+  })
+  test("rejects min > max", () => {
+    expect(
+      DatePickerPropsSchema.safeParse({
+        prompt: "x",
+        min: "2026-12-31",
+        max: "2026-01-01",
+      }).success,
+    ).toBe(false)
+  })
+})
+
+describe("date-picker — UiPartSchema + answer round-trips", () => {
+  test("UiPartSchema accepts a well-formed date-picker", () => {
+    const parsed = UiPartSchema.safeParse({
+      kind: "date-picker",
+      props: { prompt: "When?", mode: "single" },
+    })
+    expect(parsed.success).toBe(true)
+  })
+  test("parsePersistedUiPart round-trips a single answer", () => {
+    const out = parsePersistedUiPart({
+      id: "p1",
+      kind: "date-picker",
+      props: { prompt: "When?", mode: "single" },
+      answer: { kind: "date-picker", date: "2026-06-20" },
+    })
+    expect(out?.answer).toEqual({ kind: "date-picker", date: "2026-06-20" })
+  })
+  test("parsePersistedUiPart round-trips a range answer", () => {
+    const out = parsePersistedUiPart({
+      id: "p2",
+      kind: "date-picker",
+      props: { prompt: "Span?", mode: "range" },
+      answer: { kind: "date-picker", from: "2026-06-20", to: "2026-06-25" },
+    })
+    expect(out?.answer).toEqual({
+      kind: "date-picker",
+      from: "2026-06-20",
+      to: "2026-06-25",
+    })
+  })
+  test("drops a malformed range answer (from > to)", () => {
+    const out = parsePersistedUiPart({
+      id: "p3",
+      kind: "date-picker",
+      props: { prompt: "Span?", mode: "range" },
+      answer: { kind: "date-picker", from: "2026-06-25", to: "2026-06-20" },
+    })
+    expect(out?.answer).toBeUndefined()
+  })
+  test("formatAnswerForChat renders single + range human-readable", () => {
+    const single = formatAnswerForChat(
+      { kind: "date-picker", props: { prompt: "When?", mode: "single" } },
+      { kind: "date-picker", date: "2026-06-20" },
+    )
+    expect(single).toBe("June 20, 2026")
+    const range = formatAnswerForChat(
+      { kind: "date-picker", props: { prompt: "Span?", mode: "range" } },
+      { kind: "date-picker", from: "2026-06-20", to: "2026-06-25" },
+    )
+    expect(range).toBe("June 20, 2026 – June 25, 2026")
+  })
+  test("defaultResolutionFor(date-picker) is auto-send", () => {
+    expect(defaultResolutionFor("date-picker")).toBe("auto-send")
+  })
+  test("drops a calendar-invalid date answer (regex-valid but Feb 30)", () => {
+    const out = parsePersistedUiPart({
+      id: "p4",
+      kind: "date-picker",
+      props: { prompt: "When?", mode: "single" },
+      answer: { kind: "date-picker", date: "2026-02-30" },
+    })
+    expect(out?.answer).toBeUndefined()
+  })
+  test("drops an empty date-picker answer (neither date nor from/to)", () => {
+    const out = parsePersistedUiPart({
+      id: "p5",
+      kind: "date-picker",
+      props: { prompt: "When?", mode: "single" },
+      answer: { kind: "date-picker" },
+    })
+    expect(out?.answer).toBeUndefined()
+  })
+})
+
+describe("mini-form — date field", () => {
+  test("accepts a date field with bounds", () => {
+    const parsed = MiniFormPropsSchema.safeParse({
+      fields: [
+        { type: "date", id: "due", label: "Due date", min: "2026-01-01" },
+      ],
+    })
+    expect(parsed.success).toBe(true)
+  })
+  test("rejects a date field with a non-ISO bound", () => {
+    const parsed = MiniFormPropsSchema.safeParse({
+      fields: [{ type: "date", id: "due", label: "Due", max: "Dec 31" }],
+    })
+    expect(parsed.success).toBe(false)
+  })
+  test("formatAnswerForChat renders a date field value verbatim (ISO)", () => {
+    const text = formatAnswerForChat(
+      {
+        kind: "mini-form",
+        props: { fields: [{ type: "date", id: "due", label: "Due date" }] },
+      },
+      { kind: "mini-form", values: { due: "2026-06-20" } },
+    )
+    expect(text).toBe("Due date: 2026-06-20")
   })
 })
