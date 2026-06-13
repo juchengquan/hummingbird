@@ -20,7 +20,7 @@ from typing import Any
 from ..input_policy import RENDER_UI_TOOL_NAME
 from .registry import ToolDescriptor, ToolError, ToolInvocationResult
 
-# The four kinds the shared `UiPartSchema` allows. Keep in lockstep
+# The kinds the shared `UiPartSchema` allows. Keep in lockstep
 # with `UI_KIND_VALUES` in `lib/shared/generative-ui/schemas.ts` —
 # adding a kind there means adding it here too.
 UI_KIND_VALUES: tuple[str, ...] = (
