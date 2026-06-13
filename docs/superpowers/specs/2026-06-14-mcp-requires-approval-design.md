@@ -49,13 +49,15 @@ The **pure** `gated_tool_names_for` is where the correctness lives and where the
 - `bun run supabase:types` → regenerate `lib/shared/supabase/types.ts` (adds `requires_approval` to the Row/Insert/Update shapes).
 - `lib/shared/types.ts`: add `requiresApproval?: boolean` to the `McpServer` interface.
 
-### Write path (client → cloud)
-- `lib/client/api-client.ts`: `mcpUpsertCloudServer` body type gains `requires_approval?: boolean`.
-- `app/api/mcp/server/route.ts`: `BodySchema` gains `requires_approval: z.boolean().optional()`; pass it through.
-- `lib/server/mcp/credentials.ts`: `upsertServerWithCredential` passes `p_requires_approval` to the RPC call (default `false` when absent).
+### Write paths (client → cloud)
+There are **two** cloud writes for an MCP server; both must carry the flag:
+1. **Dialog credential upsert (RPC):** `components/.../workspace-mcp-section.tsx` → `apiClient.mcp.upsertCloudServer` → `app/api/mcp/server/route.ts` → `lib/server/mcp/credentials.ts` `upsertServerWithCredential` → the `mcp_upsert_server_with_credentials` RPC. Add the field to: the api-client body type, the route `BodySchema` + pass-through, and the credentials RPC call (`p_requires_approval`, default `false`).
+2. **Metadata sync push (direct upsert):** `lib/client/sync/handlers.ts` `diffMcpServers` builds an upsert `row` of metadata columns (creds excluded). Add `requires_approval: s.requiresApproval ?? false` to that `row`, and add `requiresApproval` to `mcpServerEquals` so a flag change is detected and pushed.
 
 ### Read path (cloud → store/UI)
-- `lib/server/mcp/load-servers.ts`: include `requires_approval` in the `mcp_servers` select; map to `requiresApproval` on the returned `McpServer` so the flag round-trips into the store and the dialog shows current state.
+- `lib/client/sync/reconcile.ts`: the `mcp_servers` `.select(...)` (the pull) gains `requires_approval`; the row→`McpServer` map sets `requiresApproval: s.requires_approval`. This is the store-hydration path the dialog reads, so the toggle shows current state.
+
+(Out of scope: `lib/server/mcp/load-servers.ts` / chat-mode tool gating — that builds `EffectiveMcpServer` for the chat route, a separate concern from task gating. Item 7 is about tasks.)
 
 ### Store
 - `lib/client/hooks/store/slices/mcp.ts`: `addMcpServer` input + new-server object carry `requiresApproval`; `updateMcpServer` patch already permissive — confirm it threads `requiresApproval`.
@@ -90,7 +92,8 @@ The **pure** `gated_tool_names_for` is where the correctness lives and where the
 | `lib/client/api-client.ts` | `mcpUpsertCloudServer` body field |
 | `app/api/mcp/server/route.ts` | `BodySchema` field + pass-through |
 | `lib/server/mcp/credentials.ts` | RPC call passes `p_requires_approval` |
-| `lib/server/mcp/load-servers.ts` | select + map `requiresApproval` |
+| `lib/client/sync/reconcile.ts` | pull select + row→`McpServer` map |
+| `lib/client/sync/handlers.ts` | `diffMcpServers` upsert row + `mcpServerEquals` |
 | `lib/client/hooks/store/slices/mcp.ts` | mutators carry `requiresApproval` |
 | `components/panels/workspace-mcp-section.tsx` | dialog `Switch` |
 | `services/agent-py/.../mcp_tools.py` | SQL + row field + pure `gated_tool_names_for` |
