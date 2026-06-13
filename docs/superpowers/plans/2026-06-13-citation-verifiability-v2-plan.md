@@ -63,10 +63,8 @@ Create `services/agent-py/tests/test_aggregator.py` with:
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
-from dataclasses import asdict
-from typing import cast
-from unittest.mock import MagicMock
+import logging
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -84,14 +82,17 @@ def _row(seq: int, step: int, kind: str, payload: dict[str, object]) -> dict[str
     }
 
 
-def _fake_pool(*rows: dict[str, object]) -> MagicMock:
-    """A pool whose `acquire().__aenter__().fetch(...)` returns the rows."""
-    pool = MagicMock()
+def _pool_with_rows(rows: list[dict[str, object]]) -> MagicMock:
+    """Build a MagicMock pool whose `pool.acquire().__aenter__()`
+    yields a conn with `fetch = AsyncMock(return_value=rows)`. Mirrors
+    the pattern in services/agent-py/tests/test_jobs.py:34-48."""
     conn = MagicMock()
-    conn.fetch = MagicMock(side_effect=[list(rows), []])
-    pool.acquire = MagicMock()
-    pool.acquire.return_value.__aenter__ = MagicMock(return_value=conn)
-    pool.acquire.return_value.__aenter__.return_value.__aexit__ = MagicMock(return_value=False)
+    conn.fetch = AsyncMock(return_value=rows)
+    acquire_cm = MagicMock()
+    acquire_cm.__aenter__ = AsyncMock(return_value=conn)
+    acquire_cm.__aexit__ = AsyncMock(return_value=None)
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=acquire_cm)
     return pool
 
 
@@ -99,36 +100,7 @@ def _fake_pool(*rows: dict[str, object]) -> MagicMock:
 async def test_load_run_events_round_trip() -> None:
     """5 events written via `append_event` round-trip through
     `load_run_events` in seq order with all fields preserved."""
-    pool = MagicMock()
-    captured: list[tuple[object, ...]] = []
-
-    async def fake_execute(query: str, *args: object) -> list[dict[str, object]]:
-        captured.append((query, *args))
-        if "INSERT" in query:
-            return []
-        # SELECT path: return the rows in seq order.
-        return [
-            _row(1, 0, "status", {"status": "running"}),
-            _row(2, 0, "token", {"text": "Hello ", "channel": "text"}),
-            _row(3, 0, "token", {"text": "world.", "channel": "text"}),
-            _row(4, 0, "tool_output", {
-                "toolCallId": "t1",
-                "toolName": "webSearch",
-                "summary": "5 results",
-                "results": [{"title": "X", "url": "https://x", "snippet": "snippet X"}],
-            }),
-            _row(5, 0, "result", {"status": "done", "finalText": "Hello world."}),
-        ]
-
-    conn = MagicMock()
-    conn.execute = fake_execute
-    pool.acquire = MagicMock()
-    pool.acquire.return_value.__aenter__ = MagicMock(return_value=conn)
-    pool.acquire.return_value.__aenter__.return_value.__aexit__ = MagicMock(return_value=False)
-
-    pool.fetch = fake_execute  # also called by load_run_events; route both
-    # load_run_events uses fetch(), not execute(). Patch accordingly.
-    pool.fetch = MagicMock(return_value=[
+    pool = _pool_with_rows([
         _row(1, 0, "status", {"status": "running"}),
         _row(2, 0, "token", {"text": "Hello ", "channel": "text"}),
         _row(3, 0, "token", {"text": "world.", "channel": "text"}),
@@ -140,7 +112,6 @@ async def test_load_run_events_round_trip() -> None:
         }),
         _row(5, 0, "result", {"status": "done", "finalText": "Hello world."}),
     ])
-
     out = await store.load_run_events(
         pool,  # type: ignore[arg-type]
         run_id="r1",
@@ -159,22 +130,20 @@ async def test_load_run_events_round_trip() -> None:
 @pytest.mark.asyncio
 async def test_load_run_events_skips_unknown_kinds(caplog) -> None:
     """Unknown kinds are skipped with a warning, not raised."""
-    pool = MagicMock()
-    pool.fetch = MagicMock(return_value=[
+    pool = _pool_with_rows([
         _row(1, 0, "status", {"status": "running"}),
         _row(2, 0, "unknown_kind", {"junk": True}),
         _row(3, 0, "token", {"text": "ok", "channel": "text"}),
     ])
-    out = await store.load_run_events(
-        pool,  # type: ignore[arg-type]
-        run_id="r1",
-        user_id="u1",
-    )
+    with caplog.at_level(logging.WARNING, logger="agent_py.store"):
+        out = await store.load_run_events(
+            pool,  # type: ignore[arg-type]
+            run_id="r1",
+            user_id="u1",
+        )
     assert [e.kind for e in out] == ["status", "token"]
     assert any("unknown_kind" in rec.message for rec in caplog.records)
-```
-
-- [ ] **Step 2: Run the test to verify it fails**
+```- [ ] **Step 2: Run the test to verify it fails**
 
 Run: `cd services/agent-py && uv run pytest tests/test_aggregator.py -v`
 Expected: FAIL with `AttributeError: module 'agent_py.store' has no attribute 'load_run_events'`
