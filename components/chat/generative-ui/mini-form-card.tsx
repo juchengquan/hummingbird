@@ -115,6 +115,12 @@ export function MiniFormCard({
                 {...(f.type === "number" && f.max !== undefined
                   ? { max: f.max }
                   : {})}
+                {...(f.type === "date" && f.min !== undefined
+                  ? { min: f.min }
+                  : {})}
+                {...(f.type === "date" && f.max !== undefined
+                  ? { max: f.max }
+                  : {})}
                 className="h-8 text-sm"
               />
             </div>
