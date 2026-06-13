@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 
 import {
   __clearResponseCache,
+  __expireEntry,
   cosine,
   findSimilarCachedResponse,
   getCachedResponse,
@@ -149,5 +150,15 @@ describe("findSimilarCachedResponse", () => {
     expect(
       findSimilarCachedResponse<string>({ scope: SCOPE, embedding: [1, 0, 0] }),
     ).toBe("near")
+  })
+
+  test("drops an expired entry during the scan and does not return it", () => {
+    setCachedResponse("k1", "stale", { embedding: [1, 0, 0], scope: SCOPE })
+    __expireEntry("k1")
+    expect(
+      findSimilarCachedResponse<string>({ scope: SCOPE, embedding: [1, 0, 0] }),
+    ).toBeUndefined()
+    // The expired entry was evicted by the scan, not merely skipped.
+    expect(getCachedResponse("k1")).toBeUndefined()
   })
 })

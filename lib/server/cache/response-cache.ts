@@ -189,3 +189,10 @@ export function findSimilarCachedResponse<T>(opts: {
 export function __clearResponseCache(): void {
   store.clear()
 }
+
+/** Test-only: force an entry's expiry into the past so expiry/eviction
+ *  paths can be exercised without waiting out TTL_MS. */
+export function __expireEntry(key: string): void {
+  const entry = store.get(key)
+  if (entry) entry.expires = 0
+}
