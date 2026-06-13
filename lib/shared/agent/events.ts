@@ -14,6 +14,7 @@
  */
 
 import type { ToolCallResult } from "@/shared/types"
+import type { VerificationResult } from "@/shared/verify"
 
 /** Lifecycle of a run. Mirrors the `tasks.status` column in
  *  `PLAN-long-running-tasks.md`. */
@@ -216,6 +217,13 @@ export interface ResultEvent extends TaskEventBase {
   finalText?: string
   /** Present on `status: "failed"`. */
   error?: string
+  /** Citation-verification verdicts for a research report, when the run
+   *  produced cited claims over retrieved sources. Computed at settlement
+   *  (a finalize pass before this event) and folded onto the result
+   *  Message so the existing `MessageVerification` UI renders. Absent when
+   *  verification didn't run or found nothing. See
+   *  `docs/PLAN-citation-verifiability.md`. */
+  verification?: VerificationResult
 }
 
 export type TaskEvent =

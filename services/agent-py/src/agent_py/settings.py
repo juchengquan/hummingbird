@@ -113,6 +113,16 @@ class Settings(BaseSettings):
     international endpoint `https://api.minimaxi.com/v1/image_generation`.
     Same env var the TS side reads."""
 
+    # --- Citation verification --------------------------------------------
+    VERIFY_MODEL: str = ""
+    """Anthropic model id for the post-run citation verifier on research
+    runs (`agent_py.verify`). Empty = verification is OFF (no extra model
+    call). Set to a CHEAP model — ideally cheaper than the answerer, since
+    cross-checking with a weaker/different model is the intent. Uses the
+    same `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` client as the run, so
+    it's a no-op without a key regardless. See
+    `docs/PLAN-citation-verifiability.md`."""
+
     # --- Service identity -------------------------------------------------
     SERVICE_NAME: str = "agent-py"
     SERVICE_PORT: int = 8000

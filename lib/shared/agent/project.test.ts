@@ -62,6 +62,24 @@ describe("projectRun — happy linear run", () => {
     expect(view.resultText).toBe("Hello world")
     expect(view.fatalError).toBeNull()
     expect(view.cursor).toBe(8)
+    expect(view.verification).toBeNull()
+  })
+
+  test("result verification folds onto the view (research citation pass)", () => {
+    SEQ = 0
+    const verification = {
+      checks: [
+        { claim: "A [1].", status: "supported" as const, sourceIds: ["1"] },
+        { claim: "B [2].", status: "unsupported" as const, sourceIds: [] },
+      ],
+      summary: { supported: 1, partial: 0, unsupported: 1, total: 2 },
+    }
+    const view = projectRun([
+      ev({ kind: "status", status: "running" }),
+      ev({ kind: "token", text: "A [1]. B [2]." }, 2, 1),
+      ev({ kind: "result", status: "done", verification }, 3, 1),
+    ])
+    expect(view.verification).toEqual(verification)
   })
 })
 

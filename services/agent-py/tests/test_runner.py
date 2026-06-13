@@ -102,6 +102,49 @@ async def test_loop_settles_at_max_steps_without_done() -> None:
 
 
 @pytest.mark.asyncio
+async def test_finalize_hook_attaches_verification_to_result() -> None:
+    """The finalize hook runs just before the terminal `result` and its
+    return value rides on `ResultEvent.verification` (citation pass)."""
+    sink = _Capture()
+    em = RunEmitter(run_id="r", sink=sink)
+    payload = {"checks": [], "summary": {"supported": 1, "partial": 0, "unsupported": 0, "total": 1}}
+
+    async def step_fn(ctx: RunStepContext) -> RunStepOutcome:
+        return RunStepOutcome(done=True)
+
+    async def finalize() -> dict[str, object] | None:
+        return payload
+
+    result = await run_agent_loop(
+        emitter=em,
+        max_steps=5,
+        run_step=step_fn,
+        is_cancelled=_never_cancelled,
+        finalize=finalize,
+    )
+    assert result.kind == "settled"
+    last = sink.events[-1]
+    assert isinstance(last, ResultEvent)
+    assert last.verification == payload
+
+
+@pytest.mark.asyncio
+async def test_no_finalize_hook_leaves_verification_none() -> None:
+    sink = _Capture()
+    em = RunEmitter(run_id="r", sink=sink)
+
+    async def step_fn(ctx: RunStepContext) -> RunStepOutcome:
+        return RunStepOutcome(done=True)
+
+    await run_agent_loop(
+        emitter=em, max_steps=5, run_step=step_fn, is_cancelled=_never_cancelled
+    )
+    last = sink.events[-1]
+    assert isinstance(last, ResultEvent)
+    assert last.verification is None
+
+
+@pytest.mark.asyncio
 async def test_cancellation_detected_between_steps() -> None:
     sink = _Capture()
     em = RunEmitter(run_id="r", sink=sink)

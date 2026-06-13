@@ -24,6 +24,7 @@ import {
   type TaskEvent,
 } from "./events"
 import type { ToolCallResult } from "@/shared/types"
+import type { VerificationResult } from "@/shared/verify"
 
 export type TaskEventSink = (event: TaskEvent) => void
 
@@ -190,13 +191,14 @@ export class RunEmitter {
    *  emitter is inert. */
   result(
     status: "done" | "failed",
-    opts?: { finalText?: string; error?: string }
+    opts?: { finalText?: string; error?: string; verification?: VerificationResult }
   ): void {
     this.emit({
       kind: "result",
       status,
       ...(opts?.finalText !== undefined ? { finalText: opts.finalText } : {}),
       ...(opts?.error !== undefined ? { error: opts.error } : {}),
+      ...(opts?.verification !== undefined ? { verification: opts.verification } : {}),
     })
     this.isSettled = true
   }

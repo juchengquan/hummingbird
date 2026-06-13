@@ -109,6 +109,12 @@ class AgentLoopResult:
 
 IsCancelledFn = Callable[[], Awaitable[bool]]
 ShouldYieldFn = Callable[[], bool]
+#: Optional pre-settle hook. Awaited just before the terminal `result`
+#: event on the settled path; returns a camelCase `verification` payload
+#: to attach to the result (or None). Lets the executor run a citation
+#: pass over the assembled report + sources before the emitter latches —
+#: nothing can be emitted after `result`. See `agent_py.verify`.
+FinalizeFn = Callable[[], Awaitable[dict[str, object] | None]]
 
 
 async def run_agent_loop(
@@ -118,6 +124,7 @@ async def run_agent_loop(
     run_step: RunStepFn,
     is_cancelled: IsCancelledFn,
     should_yield: ShouldYieldFn | None = None,
+    finalize: FinalizeFn | None = None,
 ) -> AgentLoopResult:
     """Drive a run to completion or a chunk-break point. Emits exactly
     one terminal event (`status: cancelled` or `result: done|failed`)
@@ -170,11 +177,19 @@ async def run_agent_loop(
             )
 
         if outcome.done:
-            await emitter.result("done")
+            await _settle(emitter, finalize)
             return AgentLoopResult(kind="settled")
 
     # Hit the step cap without a final answer. Settle anyway —
     # mirrors the TS path; the model's accumulated text is the
     # answer.
-    await emitter.result("done")
+    await _settle(emitter, finalize)
     return AgentLoopResult(kind="settled")
+
+
+async def _settle(emitter: RunEmitter, finalize: FinalizeFn | None) -> None:
+    """Run the optional finalize hook, then emit the terminal
+    `result: done`. The hook's failures are the hook's concern (it
+    returns None) — settling never blocks on it."""
+    verification = await finalize() if finalize is not None else None
+    await emitter.result("done", verification=verification)

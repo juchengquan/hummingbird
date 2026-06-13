@@ -48,6 +48,26 @@ const toolResultSchema = z.object({
   snippet: z.string(),
 })
 
+// Mirrors `VerificationResult` in `@/shared/verify`. Carried on the
+// terminal `result` event for research runs; this boundary validation is
+// what lets a Python-emitted (agent-py) verification row survive the
+// `rowToTaskEvent` re-parse. See `docs/PLAN-citation-verifiability.md`.
+const verificationSchema = z.object({
+  checks: z.array(
+    z.object({
+      claim: z.string(),
+      status: z.enum(["supported", "unsupported", "partial"]),
+      sourceIds: z.array(z.string()),
+    })
+  ),
+  summary: z.object({
+    supported: z.number(),
+    partial: z.number(),
+    unsupported: z.number(),
+    total: z.number(),
+  }),
+})
+
 const planItemSchema = z.object({
   id: z.string(),
   text: z.string(),
@@ -148,6 +168,7 @@ export const TaskEventSchema: z.ZodType<TaskEvent> = z.discriminatedUnion(
       status: z.enum(["done", "failed"]),
       finalText: z.string().optional(),
       error: z.string().optional(),
+      verification: verificationSchema.optional(),
     }),
   ]
 ) as z.ZodType<TaskEvent>

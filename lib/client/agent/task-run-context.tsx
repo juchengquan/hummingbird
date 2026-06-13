@@ -129,7 +129,15 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
       runModeRef.current === "research"
         ? formatResearchCitations(rawText)
         : rawText
-    const msg = addMessage({ role: "assistant", content: text }, convId)
+    // Carry citation-verification verdicts (research runs) onto the
+    // settled Message so the existing `MessageVerification` renders the
+    // confidence chip + flagged claims. Absent for non-research / when
+    // verification didn't run. See `docs/PLAN-citation-verifiability.md`.
+    const verification = run.view.verification ?? undefined
+    const msg = addMessage(
+      { role: "assistant", content: text, ...(verification ? { verification } : {}) },
+      convId
+    )
 
     if (runModeRef.current !== "research") return
     const workspaceId = activeWorkspaceIdRef.current
@@ -155,6 +163,7 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
     status,
     run.view.resultText,
     run.view.text,
+    run.view.verification,
     addMessage,
     createDocument,
     setDocumentContent,

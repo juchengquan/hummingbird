@@ -42,6 +42,15 @@ describe("toDataPart / fromDataPart — round-trip per kind", () => {
     event({ kind: "compact", summary: "folded 10 msgs" }),
     event({ kind: "artifact_ref", artifactId: "art1" }),
     event({ kind: "result", status: "done", finalText: "fin" }),
+    event({
+      kind: "result",
+      status: "done",
+      finalText: "report [1].",
+      verification: {
+        checks: [{ claim: "report [1].", status: "supported", sourceIds: ["1"] }],
+        summary: { supported: 1, partial: 0, unsupported: 0, total: 1 },
+      },
+    }),
   ]
 
   for (const s of samples) {
