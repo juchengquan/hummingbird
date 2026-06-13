@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { LogIn, LogOut, Loader2, CloudOff, Cloud, HardDrive, Trash2, Sun, Moon, Monitor, Bot, Wand2 } from "lucide-react"
+import { LogIn, LogOut, Loader2, CloudOff, Cloud, HardDrive, Trash2, Sun, Moon, Monitor, Bot, Wand2, ShieldCheck } from "lucide-react"
 import { toast } from "sonner"
 import {
   Popover,
@@ -42,6 +42,8 @@ export function AccountMenu() {
   const setLocalFilesOnly = useStore((s) => s.setLocalFilesOnly)
   const inlineComplete = useStore((s) => s.editorPrefs.inlineComplete)
   const setEditorPref = useStore((s) => s.setEditorPref)
+  const verifyCitations = useStore((s) => s.verifyCitations)
+  const setVerifyCitations = useStore((s) => s.setVerifyCitations)
   const theme = useStore((s) => s.theme)
   const setTheme = useStore((s) => s.setTheme)
   const colorScheme = useStore((s) => s.colorScheme)
@@ -227,6 +229,26 @@ export function AccountMenu() {
             inlineComplete
               ? "Disable editor inline autocomplete"
               : "Enable editor inline autocomplete"
+          }
+        />
+        {/* Citation verification. Off by default — adds a cheap verifier
+            model call on web-search turns. See
+            docs/PLAN-citation-verifiability.md. Deep Research enables it
+            regardless of this toggle. */}
+        <ToggleRow
+          icon={ShieldCheck}
+          label="Verify citations"
+          description={
+            verifyCitations
+              ? "Web-search answers are checked against their sources"
+              : "Off · enable to flag claims unsupported by their sources"
+          }
+          checked={verifyCitations}
+          onCheckedChange={(v) => setVerifyCitations(v)}
+          ariaLabel={
+            verifyCitations
+              ? "Disable citation verification"
+              : "Enable citation verification on web-search answers"
           }
         />
         {/* Chat backend selector. Phase 4-2 of PLAN-agent-api +

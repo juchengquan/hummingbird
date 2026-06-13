@@ -36,6 +36,8 @@ import {
 } from '@/server/chat/sse-emitter'
 import { buildSystemPrompt, lastUserText } from '@/server/chat/prompt-builders'
 import { generateSuggestions } from '@/server/chat/suggestions'
+import { verifyAnswer } from '@/server/verify/verify-answer'
+import type { RetrievedSource } from '@/shared/verify'
 import { persistGeneratedImages, type ImageToPersist } from '@/server/image-storage'
 import { resolveAttachedMcpResources } from '@/server/mcp/inject-resources'
 import {
@@ -485,6 +487,11 @@ export async function POST(req: NextRequest) {
         // assistant bubble can show a "routed to X" caption.
         if (autoRoutedTo) emitter.routedModel(autoRoutedTo)
         let assistantText = ''
+        // Web-search results accumulated across the turn, in the order
+        // they were returned — the same cumulative `[N]` numbering the
+        // model is told to cite by (web-search.ts promptFragment). Fed to
+        // the citation verifier post-turn when `verifyCitations` is on.
+        const gatheredSources: RetrievedSource[] = []
         let sawError = false
         let sawReasoning = false
         let sawToolResult = false
@@ -569,6 +576,17 @@ export async function POST(req: NextRequest) {
                       snippet: typeof r?.snippet === 'string' ? r.snippet : '',
                     }))
                     .filter((r) => r.url) // drop malformed entries
+                  // Accumulate for the citation verifier with cumulative
+                  // `[N]` ids (the order the model cites by). The Sources
+                  // strip uses the same cumulative order.
+                  for (const r of results) {
+                    gatheredSources.push({
+                      id: String(gatheredSources.length + 1),
+                      title: r.title,
+                      url: r.url,
+                      snippet: r.snippet,
+                    })
+                  }
                 }
               } else if (
                 p.toolName &&
@@ -828,6 +846,25 @@ export async function POST(req: NextRequest) {
           // a real answer (skip on error / aborted / empty). Runs after the
           // main stream so it doesn't add to time-to-first-token. Failures
           // are silent — suggestions are decoration, not blocking.
+          // Citation verification (PLAN-citation-verifiability.md). Opt-in
+          // via `verifyCitations`; runs only on retrieval turns that
+          // produced cited claims. Advisory + non-blocking — verifyAnswer
+          // swallows its own failures and returns an empty result, so a
+          // bad verifier pass never blocks the answer. Runs after the main
+          // stream so it doesn't add to time-to-first-token.
+          if (
+            body.verifyCitations === true &&
+            !sawError &&
+            !req.signal.aborted &&
+            assistantText.trim().length > 0 &&
+            gatheredSources.length > 0
+          ) {
+            const verification = await verifyAnswer(assistantText, gatheredSources, {
+              signal: req.signal,
+            })
+            emitter.verification(verification)
+          }
+
           if (
             !sawError &&
             !req.signal.aborted &&

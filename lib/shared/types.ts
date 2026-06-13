@@ -466,6 +466,14 @@ export interface Message {
    */
   suggestions?: string[]
   /**
+   * Citation-verification result for this turn — per-claim grounding
+   * verdicts (supported / partial / unsupported) + a confidence summary.
+   * Present only when verification ran (opt-in / Deep Research) and found
+   * cited claims. Drives the inline unsupported-claim markers + the
+   * per-message confidence chip. See `docs/PLAN-citation-verifiability.md`.
+   */
+  verification?: import("./verify").VerificationResult
+  /**
    * Images the model generated during this turn via the `imageGen`
    * skill. Each entry carries the rendered image URL (Supabase Storage
    * signed URL when available; data: URL fallback when storage isn't

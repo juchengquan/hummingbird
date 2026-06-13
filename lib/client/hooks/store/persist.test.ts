@@ -45,6 +45,7 @@ const EXPECTED_PERSISTED_KEYS = [
   "editorPrefs",
   "localOnlyMode",
   "localFilesOnly",
+  "verifyCitations",
   "chatBackend",
   "prompts",
   "agents",
@@ -88,6 +89,7 @@ describe("partializeState — frozen persisted shape", () => {
       editorPrefs: { aiReviewChanges: true, inlineComplete: false },
       localOnlyMode: false,
       localFilesOnly: false,
+      verifyCitations: false,
       chatBackend: "ts",
       prompts: [],
       agents: [],
@@ -115,6 +117,6 @@ describe("partializeState — frozen persisted shape", () => {
   })
 
   test("STORE_VERSION is pinned (bump only with a migration step)", () => {
-    expect(STORE_VERSION).toBe(28)
+    expect(STORE_VERSION).toBe(29)
   })
 })

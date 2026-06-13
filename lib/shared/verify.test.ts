@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test"
 import {
   extractCitedClaims,
   mapRawChecks,
+  parseVerificationFrame,
   parseVerificationJson,
   summarizeChecks,
   type CitedClaim,
@@ -94,6 +95,43 @@ describe("mapRawChecks", () => {
         { claim: 1, status: "unsupported", sourceIds: [] }, // dup → ignored
       ])
     ).toEqual([{ claim: "Claim A [1].", status: "supported", sourceIds: [] }])
+  })
+})
+
+describe("parseVerificationFrame", () => {
+  test("validates checks and recomputes the summary", () => {
+    const result = parseVerificationFrame({
+      checks: [
+        { claim: "A [1].", status: "supported", sourceIds: ["1"] },
+        { claim: "B [2].", status: "partial", sourceIds: ["2"] },
+      ],
+      // A stale/forged summary on the wire is ignored — recomputed.
+      summary: { supported: 99, partial: 0, unsupported: 0, total: 99 },
+    })
+    expect(result?.checks).toHaveLength(2)
+    expect(result?.summary).toEqual({
+      supported: 1,
+      partial: 1,
+      unsupported: 0,
+      total: 2,
+    })
+  })
+
+  test("drops malformed checks; all-invalid → null", () => {
+    expect(
+      parseVerificationFrame({
+        checks: [
+          { claim: 42, status: "supported" },
+          { claim: "ok", status: "bogus" },
+        ],
+      })
+    ).toBeNull()
+  })
+
+  test("non-object / missing checks → null", () => {
+    expect(parseVerificationFrame(null)).toBeNull()
+    expect(parseVerificationFrame({})).toBeNull()
+    expect(parseVerificationFrame({ checks: "nope" })).toBeNull()
   })
 })
 

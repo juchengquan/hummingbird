@@ -97,6 +97,29 @@ describe("translateFrame — AI SDK v5 → normalised shape", () => {
     expect(out?.values).toEqual(["a", "b"])
   })
 
+  test("data-verification → verification frame with recomputed summary", () => {
+    const out = translateFrame(
+      '{"type":"data-verification","data":{"checks":[{"claim":"X [1].","status":"supported","sourceIds":["1"]},{"claim":"Y [2].","status":"unsupported","sourceIds":[]}]}}',
+    )
+    expect(out?.type).toBe("verification")
+    expect(out?.verification?.checks).toHaveLength(2)
+    expect(out?.verification?.summary).toEqual({
+      supported: 1,
+      partial: 0,
+      unsupported: 1,
+      total: 2,
+    })
+  })
+
+  test("data-verification with no valid checks → null", () => {
+    expect(
+      translateFrame('{"type":"data-verification","data":{"checks":[]}}'),
+    ).toBeNull()
+    expect(
+      translateFrame('{"type":"data-verification","data":{}}'),
+    ).toBeNull()
+  })
+
   test("AI SDK error uses errorText", () => {
     expect(translateFrame('{"type":"error","errorText":"boom"}')).toEqual({
       type: "error",

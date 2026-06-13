@@ -1,6 +1,11 @@
 "use client"
 import "client-only"
 
+import {
+  parseVerificationFrame,
+  type VerificationResult,
+} from "@/shared/verify"
+
 /**
  * SSE frame translator — re-shapes AI SDK v5 UI message stream frames
  * (`text-delta`, `reasoning-delta`, `tool-input-available`,
@@ -49,6 +54,9 @@ export interface NormalisedFrame {
    *  the renderer reads to swap in the "UI too large" stub. */
   resourceUri?: string
   truncated?: boolean
+  /** Citation verification (`verification` frame): per-claim grounding
+   *  verdicts + the confidence summary. See PLAN-citation-verifiability.md. */
+  verification?: VerificationResult
 }
 
 /** Decode one SSE payload (the JSON between `data: ` and `\n\n`) and
@@ -190,6 +198,13 @@ export function translateFrame(payload: string): NormalisedFrame | null {
       type: "suggestions",
       values: data.values.filter((v): v is string => typeof v === "string"),
     }
+  }
+  if (t === "data-verification") {
+    const verification = parseVerificationFrame(
+      (raw as { data?: unknown }).data
+    )
+    if (!verification) return null
+    return { type: "verification", verification }
   }
   if (t === "data-ui") {
     // Generative UI part — emitted by the server-side `renderUI` tool
