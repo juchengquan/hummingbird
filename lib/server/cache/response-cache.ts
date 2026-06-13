@@ -34,10 +34,20 @@ const CACHE_VERSION = "v1"
 const TTL_MS = 60 * 60 * 1000
 /** LRU cap. Evicts least-recently-used beyond this. */
 const MAX_ENTRIES = 500
+/** Cosine-similarity floor for a Phase-2 near-match hit. Tight on purpose
+ *  (a near-match serves a *similar* input's answer, not a byte-identical
+ *  one). Tune by editing + bumping CACHE_VERSION. */
+const SIMILARITY_THRESHOLD = 0.97
 
 interface Entry {
   value: unknown
   expires: number
+  /** Phase 2: the input's embedding, present only for entries whose caller
+   *  opted into similarity matching. Absent → never matched by similarity. */
+  embedding?: number[]
+  /** Phase 2: `kind|mode|model` — similarity only matches within one scope,
+   *  so a file summary never matches another mode or another model. */
+  scope?: string
 }
 
 // Insertion order in a Map is the LRU order: `get` re-inserts a hit to the
@@ -101,9 +111,18 @@ export function getCachedResponse<T>(key: string): T | undefined {
 
 /** Store `value` under `key`, evicting the least-recently-used entries
  *  beyond the cap. */
-export function setCachedResponse(key: string, value: unknown): void {
+export function setCachedResponse(
+  key: string,
+  value: unknown,
+  opts?: { embedding?: number[]; scope?: string },
+): void {
   store.delete(key)
-  store.set(key, { value, expires: Date.now() + TTL_MS })
+  store.set(key, {
+    value,
+    expires: Date.now() + TTL_MS,
+    embedding: opts?.embedding,
+    scope: opts?.scope,
+  })
   while (store.size > MAX_ENTRIES) {
     const oldest = store.keys().next().value
     if (oldest === undefined) break
@@ -111,7 +130,69 @@ export function setCachedResponse(key: string, value: unknown): void {
   }
 }
 
+/** Cosine similarity of two equal-length vectors. Returns -1 ("no match")
+ *  on a length mismatch (e.g. EMBEDDING_DIM changed across a restart) or a
+ *  zero-norm vector, so a guard value can never clear a positive threshold. */
+export function cosine(a: number[], b: number[]): number {
+  if (a.length === 0 || a.length !== b.length) return -1
+  let dot = 0
+  let na = 0
+  let nb = 0
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i]
+    na += a[i] * a[i]
+    nb += b[i] * b[i]
+  }
+  if (na === 0 || nb === 0) return -1
+  return dot / (Math.sqrt(na) * Math.sqrt(nb))
+}
+
+/**
+ * Phase 2 near-match lookup. Scans entries within `scope` that carry an
+ * embedding, returns the value of the highest-cosine entry at or above
+ * `threshold` (default SIMILARITY_THRESHOLD), or undefined. Expired entries
+ * encountered are dropped. The winning entry is LRU-touched.
+ */
+export function findSimilarCachedResponse<T>(opts: {
+  scope: string
+  embedding: number[]
+  threshold?: number
+}): T | undefined {
+  const threshold = opts.threshold ?? SIMILARITY_THRESHOLD
+  const now = Date.now()
+  let bestKey: string | undefined
+  let bestScore = threshold
+  let bestValue: unknown
+  for (const [key, entry] of store) {
+    if (entry.expires <= now) {
+      store.delete(key)
+      continue
+    }
+    if (entry.scope !== opts.scope || !entry.embedding) continue
+    const score = cosine(opts.embedding, entry.embedding)
+    if (score >= threshold && score >= bestScore) {
+      bestScore = score
+      bestKey = key
+      bestValue = entry.value
+    }
+  }
+  if (bestKey === undefined) return undefined
+  const entry = store.get(bestKey)
+  if (entry) {
+    store.delete(bestKey)
+    store.set(bestKey, entry)
+  }
+  return bestValue as T
+}
+
 /** Test-only: drop all entries so cases don't bleed into each other. */
 export function __clearResponseCache(): void {
   store.clear()
+}
+
+/** Test-only: force an entry's expiry into the past so expiry/eviction
+ *  paths can be exercised without waiting out TTL_MS. */
+export function __expireEntry(key: string): void {
+  const entry = store.get(key)
+  if (entry) entry.expires = 0
 }
