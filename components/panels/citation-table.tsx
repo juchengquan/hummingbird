@@ -139,6 +139,9 @@ export function CitationTableView({
                 <th
                   key={col.id}
                   scope="col"
+                  aria-sort={
+                    active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"
+                  }
                   className="border border-[var(--border)] bg-[var(--muted)] p-0 text-left font-medium"
                 >
                   <button
