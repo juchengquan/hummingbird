@@ -30,8 +30,12 @@ import { PlateElement } from 'platejs/react';
 
 import {
   insertBlock,
+  insertCitationTable,
   insertInlineElement,
 } from '@/components/editor/transforms';
+
+import { useWorkspaceArtifacts } from '@/client/hooks/use-store';
+import { buildCitationTableSlashItems } from '@/shared/artifacts/citation-table-slash';
 
 import {
   InlineCombobox,
@@ -228,6 +232,11 @@ export function SlashInputElement(
 ) {
   const { editor, element } = props;
 
+  const workspaceArtifacts = useWorkspaceArtifacts();
+  const citationTableItems = buildCitationTableSlashItems([
+    ...workspaceArtifacts,
+  ]);
+
   return (
     <PlateElement {...props} as="span">
       <InlineCombobox element={element} trigger="/">
@@ -258,6 +267,30 @@ export function SlashInputElement(
               )}
             </InlineComboboxGroup>
           ))}
+
+          {citationTableItems.length > 0 && (
+            <InlineComboboxGroup>
+              <InlineComboboxGroupLabel>
+                Citation tables
+              </InlineComboboxGroupLabel>
+
+              {citationTableItems.map((item) => (
+                <InlineComboboxItem
+                  key={item.artifactId}
+                  value={item.artifactId}
+                  onClick={() => insertCitationTable(editor, item.artifactId)}
+                  label={item.label}
+                  group="Citation tables"
+                  keywords={[item.label]}
+                >
+                  <div className="mr-2 text-muted-foreground">
+                    <Table />
+                  </div>
+                  {item.label}
+                </InlineComboboxItem>
+              ))}
+            </InlineComboboxGroup>
+          )}
         </InlineComboboxContent>
       </InlineCombobox>
 
