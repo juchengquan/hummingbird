@@ -32,6 +32,7 @@ import {
   addColumn,
   addRow,
   removeColumn,
+  removeRow,
   setCellValue,
   sortRowOrder,
   sourceIndex,
@@ -238,7 +239,7 @@ export function CitationTableView({
           </tr>
         </thead>
         <tbody>
-          {order.map((rowIndex) => (
+          {order.map((rowIndex, displayIdx) => (
             <tr key={`row-${rowIndex}`}>
               {data.columns.map((col) => {
                 const cell = data.rows[rowIndex]?.[col.id]
@@ -278,6 +279,22 @@ export function CitationTableView({
                   </td>
                 )
               })}
+              {editable ? (
+                <td className="border border-[var(--border)] p-0 text-center align-top">
+                  <button
+                    type="button"
+                    aria-label={`Remove row ${displayIdx + 1}`}
+                    title="Remove row"
+                    onClick={() => {
+                      setEditing(null)
+                      if (onChange) onChange(removeRow(data, rowIndex))
+                    }}
+                    className="px-2 py-1 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                  >
+                    ×
+                  </button>
+                </td>
+              ) : null}
             </tr>
           ))}
         </tbody>
