@@ -8,7 +8,6 @@ import {
   ExtractionSchema,
   buildExtractTablePrompt,
   extractionToCitationTable,
-  type ExtractColumnHint,
   type Extraction,
 } from '@/shared/artifacts/extract-table'
 import { ExtractTableRequestSchema } from '@/shared/api-schemas'
