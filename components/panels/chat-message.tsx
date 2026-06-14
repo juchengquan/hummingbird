@@ -6,10 +6,11 @@ import { getChatModel } from "@/shared/models"
 import { isWebSearchToolName } from "@/shared/skills/types"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { Copy, Pencil, RotateCcw, Check, X, Bookmark, Archive, Send, GitBranch } from "lucide-react"
+import { Copy, Pencil, RotateCcw, Check, X, Bookmark, Archive, Send, GitBranch, Sheet } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/shared/utils"
 import { copyText } from "@/client/export"
+import { apiClient } from "@/client/api-client"
 import { extractCodeBlocks } from "@/shared/code-blocks"
 import { MarkdownPreview } from "@/components/markdown-preview"
 import { MessageLiveArtifacts } from "@/components/live-artifact/message-live-artifacts"
@@ -167,6 +168,7 @@ function ChatMessageImpl({
   }
 
   const [pickerBlocks, setPickerBlocks] = useState<DetectedBlock[] | null>(null)
+  const [extracting, setExtracting] = useState(false)
 
   // Shared sizing + hover-box treatment for every action button in the
   // toolbar. The inset ring on hover gives each button a visible boxed
@@ -200,6 +202,35 @@ function ChatMessageImpl({
       kind: "markdown",
       content: message.content,
     })
+  }
+
+  const handleExtractTable = async () => {
+    if (!activeConversationId || !webSearchResults || extracting) return
+    setExtracting(true)
+    try {
+      const table = await apiClient.artifacts.extractTable({
+        reportText: message.content,
+        sources: webSearchResults.map((r) => ({
+          title: r.title,
+          url: r.url,
+          snippet: r.snippet,
+        })),
+      })
+      if (!table) {
+        toast.error("Couldn't extract a table")
+        return
+      }
+      createArtifact({
+        conversationId: activeConversationId,
+        messageId: message.id,
+        kind: "table",
+        title: "Extracted table",
+        content: JSON.stringify(table),
+      })
+      toast.success("Saved table to Artifacts")
+    } finally {
+      setExtracting(false)
+    }
   }
 
   const handleSaveAsArtifact = () => {
@@ -615,6 +646,25 @@ function ChatMessageImpl({
                     </TooltipTrigger>
                     <TooltipContent side="bottom">Save as artifact</TooltipContent>
                   </Tooltip>
+                  {webSearchResults && webSearchResults.length > 0 && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={handleExtractTable}
+                          disabled={extracting}
+                          className={actionBtnClass}
+                          aria-label="Extract to table"
+                        >
+                          <Sheet size={14} />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">
+                        {extracting ? "Extracting…" : "Extract to table"}
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
                 </>
               )}
               </div>
