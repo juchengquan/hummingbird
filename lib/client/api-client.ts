@@ -940,7 +940,7 @@ type McpProxyOptions = {
 async function mcpProxyCall(
   action: "discover" | "call" | "read",
   body: Record<string, unknown>,
-  options?: McpProxyOptions
+  options?: McpProxyOptions,
 ): Promise<
   | { ok: true; status: number; data: Record<string, unknown> }
   | { ok: false; status: number; error: { code?: string; message?: string } }
@@ -953,41 +953,30 @@ async function mcpProxyCall(
       error: { code: "missing_server_id", message: "server.id is required" },
     }
   }
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  }
+  const extraHeaders: Record<string, string> = {}
   if (options?.credentialHeader) {
-    headers["X-MCP-Credentials"] = options.credentialHeader
+    extraHeaders["X-MCP-Credentials"] = options.credentialHeader
   }
-  const remote = await resolveDispatch(options)
-  // Path shape matches the in-Next route (`/api/mcp/:id/:action`) AND
-  // both services (`/v1/mcp/:server_id/:action`). Body + header
-  // formats are byte-identical, so the only branch is the base URL.
-  const url = remote
-    ? `${remote.baseUrl}/v1/mcp/${encodeURIComponent(serverId)}/${action}`
-    : apiUrls.mcp(serverId, action)
-  if (remote) {
-    headers.Authorization = `Bearer ${remote.authToken}`
-  }
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
+  const result = await dispatchedFetch<
+    Record<string, unknown>,
+    Record<string, unknown>,
+    Record<string, unknown>
+  >({
+    path: `/v1/mcp/${encodeURIComponent(serverId)}/${action}`,
+    localUrl: apiUrls.mcp(serverId, action),
+    bodyForLocal: body,
+    extraHeaders,
     signal: options?.signal,
+    dispatch: options,
   })
-  if (!res.ok) {
-    const errBody = await readErrorBody(res)
+  if (!result.ok) {
     return {
       ok: false,
-      status: res.status,
-      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+      status: result.status,
+      error: result.error,
     }
   }
-  return {
-    ok: true,
-    status: res.status,
-    data: (await res.json()) as Record<string, unknown>,
-  }
+  return { ok: true, status: result.status, data: result.data }
 }
 
 /**
