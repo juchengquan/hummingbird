@@ -1,6 +1,10 @@
 import { z } from "zod"
 
 import type { CitationTable } from "./citation-table"
+import type { ColumnType } from "./column-type"
+import { ColumnTypeSchema } from "./column-type"
+
+export type ExtractColumnHint = { label: string; type?: ColumnType }
 
 export const ExtractionCitationSchema = z.object({
   /** 1-based index into the sources list the prompt presented. */
@@ -18,6 +22,9 @@ export const ExtractionCellSchema = z.object({
 export const ExtractionColumnSchema = z.object({
   id: z.string().min(1).max(60),
   label: z.string().min(1).max(120),
+  /** Slice 1: "text" | "number". Absent = "text". The model does NOT
+   *  emit this — it's set by `extractionToCitationTable` on write. */
+  type: ColumnTypeSchema.optional(),
 })
 
 export const ExtractionRowSchema = z.object({
@@ -63,7 +70,14 @@ export function extractionToCitationTable(
     ...(s.url !== undefined ? { url: s.url } : {}),
     ...(s.snippet !== undefined ? { snippet: s.snippet.slice(0, 1000) } : {}),
   }))
-  return { columns: extraction.columns, rows, sources: safeSources }
+  return {
+    columns: extraction.columns.map((c) => ({
+      ...c,
+      type: c.type ?? "text",
+    })),
+    rows,
+    sources: safeSources,
+  }
 }
 
 /** Pure prompt: the report body + a numbered sources list + optional
@@ -72,26 +86,52 @@ export function extractionToCitationTable(
  *  column labels verbatim (and leaves cells empty rather than inventing
  *  a different column when the report doesn't support one). When
  *  `hints` is `undefined` or empty, the model is free to choose 3–6
- *  columns — identical to the pre-hints behavior (regression guard). */
+ *  columns — identical to the pre-hints behavior (regression guard).
+ *  `hints` accepts either `string[]` (back-compat: treated as Text) or
+ *  `ExtractColumnHint[]` (with optional `type`). When at least one hint
+ *  is typed as `number`, per-type value-format instructions are added. */
 export function buildExtractTablePrompt(
   reportText: string,
   sources: NumberedSource[],
-  hints?: string[],
+  hints?: ExtractColumnHint[] | string[],
 ): string {
+  // Back-compat: normalize string[] to typed hints (treated as Text).
+  const typedHints: ExtractColumnHint[] | undefined =
+    hints === undefined
+      ? undefined
+      : hints.map((h) => (typeof h === "string" ? { label: h } : h))
+
   const sourceLines = sources
     .map(
       (s, i) =>
         `[${i + 1}] ${s.title}${s.url ? ` — ${s.url}` : ""}${s.snippet ? `\n    ${s.snippet}` : ""}`,
     )
     .join("\n")
-  const hintBlock =
-    hints && hints.length > 0
+
+  // When typed hints are supplied AND at least one is Number, render
+  // per-type value-format instructions. Text-only hints don't need
+  // explicit instructions beyond "use these labels exactly".
+  const typeBlock =
+    typedHints && typedHints.length > 0 && typedHints.some((h) => h.type === "number")
       ? [
           "",
-          `Required columns (use these labels exactly): ${hints.map((h) => `\`${h}\``).join(", ")}.`,
+          "Per-type value format:",
+          "- For (Text) columns: emit prose.",
+          '- For (Number) columns: emit the bare numeric value only, no units or words (e.g. "200" not "two hundred", "3.14" not "approximately three").',
+        ].join("\n")
+      : ""
+
+  const hintBlock =
+    typedHints && typedHints.length > 0
+      ? [
+          "",
+          `Required columns (use these labels and value formats exactly): ${typedHints
+            .map((h) => `\`${h.label}\` (${(h.type ?? "text").replace(/^./, (c) => c.toUpperCase())})`)
+            .join(", ")}.`,
           "If the report doesn't support one of these, leave that cell empty (do NOT invent a different column).",
         ].join("\n")
       : ""
+
   return [
     "You extract a structured comparison table from a research report.",
     "",
@@ -101,15 +141,16 @@ export function buildExtractTablePrompt(
     "SOURCES (cite by number):",
     sourceLines,
     "",
-    hints && hints.length > 0
+    typedHints && typedHints.length > 0
       ? `Build a table with EXACTLY these columns (one per hint, in the order given):`
       : "Build a table capturing the key comparable attributes across the entities the report discusses:",
-    hints && hints.length > 0
+    typedHints && typedHints.length > 0
       ? ""
       : "- Choose 3–6 columns (the comparable attributes). Each column has a short slug `id` and a human `label`.",
     "- One row per entity/item the report compares. Each row is a list of `cells`; each cell has the column's `columnId`, the extracted `value`, and `citations`.",
     "- Back each value with `citations` referencing the SOURCE NUMBER above plus the exact supporting quote. Only cite what the report/sources actually state; leave `citations` empty when a value isn't directly supported.",
     "- Keep values concise.",
+    typeBlock,
     hintBlock,
   ]
     .filter((s) => s !== "")
