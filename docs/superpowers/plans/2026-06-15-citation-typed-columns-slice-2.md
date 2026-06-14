@@ -22,10 +22,12 @@
 - `lib/shared/api-schemas.ts` — swap the inline `z.enum(["text","number"])` on `columnHints[].type` for `ColumnTypeSchema`.
 - `lib/shared/artifacts/extract-table.ts` — broaden the prompt's per-type instruction block to cover Link + Date.
 - `lib/shared/artifacts/extract-table.test.ts` — new tests for the link/date prompt hints.
-- `components/panels/citation-table.tsx` — extend the type option lists (via the new display constants); `CellContent` gains a `type` prop with link/date render branches; body-cell editor uses `<input type="date">` for date columns.
+- `components/panels/citation-table-header.tsx` — extend the column type-pill + add-column-dialog option lists to all four types (via the new display constants). **(File created by #233's god-component split; the type pill + add-column Dialog moved here.)**
+- `components/panels/citation-table-row.tsx` — `CellContent` gains a `type` prop with link render branches; the body-cell editor uses `<input type="date">` for date columns. **(File created by #233's split; the row + `CellContent` moved here.)**
 - `components/panels/extract-table-popover.tsx` — extend the chip type-pill option list to all four types.
 
 **Untouched (explicit non-changes):**
+- `components/panels/citation-table.tsx` — the thin shell (post-#233). It already wires the header's `onSetColumnType` to the `setColumnType` mutator; no change needed.
 - `resolveColumnType` — no change needed (its `includes` check auto-accepts the new members).
 - `runMigrations`, `STORE_VERSION`, `store/persist.test.ts` — no persisted-shape change.
 - `citation-table-md.ts`, `CitationChips`, `CitationCellEditor` — no change.
@@ -532,14 +534,19 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ## Task 4: Renderer — Link + Date cells, type pills, date picker
 
 **Files:**
-- Modify: `components/panels/citation-table.tsx`
+- Modify: `components/panels/citation-table-header.tsx`
+- Modify: `components/panels/citation-table-row.tsx`
 - Modify: `components/panels/extract-table-popover.tsx`
 
-This is the substantive UI task. After committing, dispatch the combined spec+quality review subagent (Step 4.10) before Task 5.
+> **Structure note (post-#233):** the old monolithic `citation-table.tsx` was split by #233 ("split god component into Header + Row + thin shell"). The column type pill + add-column Dialog now live in `citation-table-header.tsx`; the body row + the private `CellContent` helper live in `citation-table-row.tsx`; `citation-table.tsx` is a thin shell that already wires the header's `onSetColumnType` callback to the `setColumnType` mutator. **No edits to the shell are needed.**
 
-- [ ] **Step 4.1: Update imports in `citation-table.tsx`**
+This is the substantive UI task. After committing, dispatch the combined spec+quality review subagent (Step 4.9) before Task 5.
 
-Find the existing import from `@/shared/artifacts/column-type` (currently imports `resolveColumnType, validateCell` + `type ColumnType`). Replace it with:
+### `citation-table-header.tsx`
+
+- [ ] **Step 4.1: Add display-constant imports**
+
+The file already imports `type ColumnType` and `resolveColumnType` from `@/shared/artifacts/column-type`. Replace that import with one that also pulls the display constants:
 
 ```ts
 import type { ColumnType } from "@/shared/artifacts/column-type"
@@ -547,58 +554,52 @@ import {
   COLUMN_TYPES,
   COLUMN_TYPE_GLYPHS,
   COLUMN_TYPE_LABELS,
-  isHttpUrl,
   resolveColumnType,
-  validateCell,
 } from "@/shared/artifacts/column-type"
 ```
 
 - [ ] **Step 4.2: Drive the header type pill glyph + options from the constants**
 
-In the header pill, replace the trigger glyph (currently `{colType === "number" ? "#" : "Aa"}`, around line 294):
+In the type-pill `PopoverTrigger`, replace the glyph (currently `{colType === "number" ? "#" : "Aa"}`):
 
 ```tsx
 {COLUMN_TYPE_GLYPHS[colType]}
 ```
 
-Replace the popover option loop (currently `(["text", "number"] as const).map((opt) => (...))` around lines 299-320). Change the iterator to `COLUMN_TYPES.map((opt) => (...))` and the label (currently `{opt === "text" ? "Text" : "Number"}`, line 318) to:
+In the pill's `PopoverContent`, change the option loop from `(["text", "number"] as const).map((opt) => (` to `COLUMN_TYPES.map((opt) => (`, and the label from `{opt === "text" ? "Text" : "Number"}` to:
 
 ```tsx
 {COLUMN_TYPE_LABELS[opt]}
 ```
 
-(Leave the existing `onClick` body that sets `col.type` and the `colType === opt` active-class logic intact.)
+Leave the existing `onClick={() => { onSetColumnType(col.id, opt); setTypePopoverColId(null) }}` and the `colType === opt` active-class logic intact. The `onSetColumnType` callback is already wired to the `setColumnType` mutator by the parent shell — no data-layer change here.
 
 - [ ] **Step 4.3: Drive the add-column dialog radios from the constants**
 
-In the add-column dialog radio row (currently `(["text", "number"] as const).map((opt) => (...))` around lines 521-533), change the iterator to `COLUMN_TYPES.map((opt) => (...))` and the label (line 530) to:
+In the add-column `Dialog`, change the radio loop from `(["text", "number"] as const).map((opt) => (` to `COLUMN_TYPES.map((opt) => (`, and the label from `{opt === "text" ? "Text" : "Number"}` to:
 
 ```tsx
 {COLUMN_TYPE_LABELS[opt]}
 ```
 
-- [ ] **Step 4.4: Give `CellContent` a `type` prop**
+### `citation-table-row.tsx`
 
-In the `CellContent` props type (currently lines 96-104), add `type`:
+- [ ] **Step 4.4: Add imports**
+
+The file already imports `resolveColumnType, validateCell` from `@/shared/artifacts/column-type`. Replace that import to also bring in `type ColumnType` and `isHttpUrl`:
 
 ```ts
-}: {
-  data: CitationTable
-  cell?: CitationTableCell
-  type: ColumnType
-  editable: boolean
-  onStartEdit: () => void
-  onAddCitation: (citation: Citation) => void
-  onUpdateCitation: (citIndex: number, patch: Partial<Citation>) => void
-  onRemoveCitation: (citIndex: number) => void
-}) {
+import type { ColumnType } from "@/shared/artifacts/column-type"
+import { isHttpUrl, resolveColumnType, validateCell } from "@/shared/artifacts/column-type"
 ```
 
-Add `type,` to the destructured params at the top of the function (currently lines 88-95).
+- [ ] **Step 4.5: Give `CellContent` a `type` prop**
 
-- [ ] **Step 4.5: Render link branches in `CellContent`**
+In `CellContent`'s props type object, add `type: ColumnType` (right after `cell?: CitationTableCell`), and add `type,` to the destructured parameter list at the top of the function.
 
-Replace the `valueEl` definition (currently lines 105-114) with:
+- [ ] **Step 4.6: Render link branches in `CellContent`**
+
+Replace the `value` + `valueEl` block (currently lines 94-103) with:
 
 ```tsx
   const value = cell?.value ?? ""
@@ -634,78 +635,62 @@ Replace the `valueEl` definition (currently lines 105-114) with:
   )
 ```
 
-- [ ] **Step 4.6: Pass `type` to `CellContent` at the call site**
+- [ ] **Step 4.7: Pass `type` to `CellContent` + use the native date picker**
 
-In the body-cell `cellInner` definition (currently around lines 379-393), add `type={cellType}` to the `<CellContent>` props:
+At the `cellInner` `<CellContent>` call site (currently around lines 157-171), add `type={cellType}` to the props (alongside `data={data}` / `cell={cell}`).
 
-```tsx
-                  <CellContent
-                    data={data}
-                    cell={cell}
-                    type={cellType}
-                    editable={editable}
-                    onStartEdit={() => startEdit(rowIndex, col.id, cell?.value ?? "")}
-                    onAddCitation={(c) => onChange?.(addCitation(data, rowIndex, col.id, c))}
-                    onUpdateCitation={(i, patch) =>
-                      onChange?.(updateCitation(data, rowIndex, col.id, i, patch))
-                    }
-                    onRemoveCitation={(i) =>
-                      onChange?.(removeCitation(data, rowIndex, col.id, i))
-                    }
-                  />
-```
-
-- [ ] **Step 4.7: Use the native date picker for Date cells**
-
-In the editable body-cell `<input>` (currently lines 417-418), replace the `type` and `inputMode` props:
+In the editable body-cell `<input>` (currently lines 195-196), replace the `type`/`inputMode` props:
 
 ```tsx
-                            type={
-                              cellType === "date"
-                                ? "date"
-                                : cellType === "number"
-                                  ? "number"
-                                  : "text"
-                            }
-                            inputMode={cellType === "number" ? "decimal" : undefined}
+                    type={
+                      cellType === "date"
+                        ? "date"
+                        : cellType === "number"
+                          ? "number"
+                          : "text"
+                    }
+                    inputMode={cellType === "number" ? "decimal" : undefined}
 ```
 
-(Leave `value={draft}`, `onChange`, `onBlur={commit}`, the Enter/Escape handler, `aria-label`, and `className` unchanged. A non-ISO date renders the picker empty — the accepted consequence from the spec.)
+Leave `value={draft}`, `onChange`, `onBlur={commit}`, the Enter/Escape handler, `aria-label`, and `className` unchanged. A non-ISO date renders the picker empty — the accepted consequence from the spec. The read-only `<td>` branch (the `if (!editable)` path) stays untouched.
 
-- [ ] **Step 4.8: Update `extract-table-popover.tsx`**
+### `extract-table-popover.tsx`
 
-In `components/panels/extract-table-popover.tsx`:
+- [ ] **Step 4.8: Update the popover chip pills**
 
-Add the constants to the existing `@/shared/artifacts/column-type` import (which currently imports `resolveColumnType`):
+This file was not touched by #233. Add the constants to its existing `@/shared/artifacts/column-type` import (currently imports `resolveColumnType`):
 
 ```ts
 import { COLUMN_TYPES, COLUMN_TYPE_GLYPHS, COLUMN_TYPE_LABELS, resolveColumnType } from "@/shared/artifacts/column-type"
 ```
 
-Replace the chip pill glyph (currently `{chipType === "number" ? "#" : "Aa"}`, around line 96):
+Replace the chip pill glyph (currently `{chipType === "number" ? "#" : "Aa"}`):
 
 ```tsx
 {COLUMN_TYPE_GLYPHS[chipType]}
 ```
 
-Replace the chip popover option loop (currently `(["text", "number"] as const).map((opt) => (...))` around lines 101-114): change the iterator to `COLUMN_TYPES.map((opt) => (...))` and the label (line 113) to:
+Change the chip popover option loop from `(["text", "number"] as const).map((opt) => (` to `COLUMN_TYPES.map((opt) => (`, and the label from `{opt === "text" ? "Text" : "Number"}` to:
 
 ```tsx
 {COLUMN_TYPE_LABELS[opt]}
 ```
 
-- [ ] **Step 4.9: Run check**
+### Verify + commit + review
+
+- [ ] **Step 4.9a: Run check**
 
 Run: `bun run typecheck && bun run lint`
 Expected: typecheck clean; lint 0 errors (pre-existing warnings only).
 
-- [ ] **Step 4.10: Commit the renderer changes**
+- [ ] **Step 4.9b: Commit the renderer changes**
 
 ```bash
-git add components/panels/citation-table.tsx components/panels/extract-table-popover.tsx
+git add components/panels/citation-table-header.tsx components/panels/citation-table-row.tsx components/panels/extract-table-popover.tsx
 git commit -m "feat(citation-table): Link + Date renderer + native date picker
 
-- Type pill / add-column radios / extraction chips now iterate
+Built on the post-#233 split (header / row / thin shell):
+- Header type pill + add-column radios + extraction chips now iterate
   COLUMN_TYPES and use COLUMN_TYPE_LABELS + COLUMN_TYPE_GLYPHS (all four
   types; DRY display metadata).
 - CellContent gains a type prop: Link cells render a clickable
@@ -722,11 +707,9 @@ Spec: docs/superpowers/specs/2026-06-15-citation-typed-columns-slice-2-design.md
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 4.11: Dispatch the combined spec+quality review subagent**
+- [ ] **Step 4.9c: Dispatch the combined spec+quality review subagent**
 
-Dispatch a fresh subagent with: the spec path, this plan's Task 4 section, the list of files changed in Task 4, and the instruction: "Verify the implementation matches the spec section by section, and run a quality review for accessibility (link `↗` reachable + labelled, nested-interactive validity, date input aria), edge cases (non-ISO date edit canonicalization, invalid link rendering, empty cells), and adherence to the established citation-table polish pattern. Report findings as (1) blockers, (2) suggestions, (3) nits. Do not change code." Block on any blockers before Task 5.
-
----
+Dispatch a fresh subagent with: the spec path, this plan's Task 4 section, the three files changed, and the instruction: "Verify the implementation matches the spec section by section, and run a quality review for accessibility (link ↗ reachable + labelled, nested-interactive validity, date input aria), edge cases (non-ISO date edit canonicalization, invalid link rendering, empty cells), and adherence to the established citation-table polish pattern. Report findings as (1) blockers, (2) suggestions, (3) nits. Do not change code." Block on any blockers before Task 5.
 
 ## Task 5: End-to-end verification + PR
 
