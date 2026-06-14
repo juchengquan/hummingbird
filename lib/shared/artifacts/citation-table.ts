@@ -34,6 +34,7 @@ export const CitationTableSchema = z.object({
 
 export type CitationTable = z.infer<typeof CitationTableSchema>
 export type CitationTableCell = z.infer<typeof CellSchema>
+export type Citation = z.infer<typeof CitationSchema>
 
 /** Parse an artifact's `content` string into a CitationTable, or null
  *  when it isn't valid citation-table JSON (bad JSON or shape). The
@@ -155,4 +156,69 @@ export function removeColumn(data: CitationTable, columnId: string): CitationTab
       return rest
     }),
   }
+}
+
+/** Return a NEW CitationTable with `citation` appended to
+ *  `rows[rowIndex][columnId].citations`. Creates the cell
+ *  (`{ value: "", citations: [citation] }`) when absent. Capped at 8
+ *  citations per cell (returns `data` unchanged at cap). Out-of-range
+ *  `rowIndex` returns `data` unchanged. Pure; never mutates the input. */
+export function addCitation(
+  data: CitationTable,
+  rowIndex: number,
+  columnId: string,
+  citation: Citation,
+): CitationTable {
+  if (rowIndex < 0 || rowIndex >= data.rows.length) return data
+  const existing = data.rows[rowIndex]?.[columnId]
+  const citations = existing?.citations ?? []
+  if (citations.length >= 8) return data
+  const rows = data.rows.map((row, i) =>
+    i === rowIndex
+      ? { ...row, [columnId]: { value: existing?.value ?? "", citations: [...citations, citation] } }
+      : row,
+  )
+  return { ...data, rows }
+}
+
+/** Return a NEW CitationTable with the citation at `citIndex` of
+ *  `rows[rowIndex][columnId]` patched (`sourceId` and/or `quote`).
+ *  Missing cell, empty citations, or out-of-range `citIndex` returns
+ *  `data` unchanged. Out-of-range `rowIndex` returns `data` unchanged.
+ *  Pure; never mutates the input. */
+export function updateCitation(
+  data: CitationTable,
+  rowIndex: number,
+  columnId: string,
+  citIndex: number,
+  patch: Partial<Citation>,
+): CitationTable {
+  if (rowIndex < 0 || rowIndex >= data.rows.length) return data
+  const cell = data.rows[rowIndex]?.[columnId]
+  if (!cell || citIndex < 0 || citIndex >= cell.citations.length) return data
+  const citations = cell.citations.map((c, i) => (i === citIndex ? { ...c, ...patch } : c))
+  const rows = data.rows.map((row, i) =>
+    i === rowIndex ? { ...row, [columnId]: { ...cell, citations } } : row,
+  )
+  return { ...data, rows }
+}
+
+/** Return a NEW CitationTable with the citation at `citIndex` of
+ *  `rows[rowIndex][columnId]` removed. Missing cell or out-of-range
+ *  `citIndex` returns `data` unchanged. Out-of-range `rowIndex` returns
+ *  `data` unchanged. Pure; never mutates the input. */
+export function removeCitation(
+  data: CitationTable,
+  rowIndex: number,
+  columnId: string,
+  citIndex: number,
+): CitationTable {
+  if (rowIndex < 0 || rowIndex >= data.rows.length) return data
+  const cell = data.rows[rowIndex]?.[columnId]
+  if (!cell || citIndex < 0 || citIndex >= cell.citations.length) return data
+  const citations = cell.citations.filter((_, i) => i !== citIndex)
+  const rows = data.rows.map((row, i) =>
+    i === rowIndex ? { ...row, [columnId]: { ...cell, citations } } : row,
+  )
+  return { ...data, rows }
 }

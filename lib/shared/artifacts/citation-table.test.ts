@@ -1,14 +1,17 @@
 import { describe, expect, test } from "bun:test"
 
 import {
+  addCitation,
   addColumn,
   addRow,
   parseCitationTable,
+  removeCitation,
   removeColumn,
   removeRow,
   setCellValue,
   sortRowOrder,
   sourceIndex,
+  updateCitation,
 } from "./citation-table"
 
 const validObj = {
@@ -217,5 +220,94 @@ describe("removeColumn", () => {
   test("returns the input unchanged for an unknown columnId", () => {
     const data = tbl([{ name: { value: "a" } }])
     expect(removeColumn(data as never, "ghost")).toBe(data)
+  })
+})
+
+describe("addCitation", () => {
+  test("appends a citation to an existing cell (no mutation)", () => {
+    const data = tbl([{ name: { value: "a", citations: [{ sourceId: "s1", quote: "q1" }] } }])
+    const before = JSON.stringify(data)
+    const out = addCitation(data as never, 0, "name", { sourceId: "s2", quote: "q2" })
+    expect(out).not.toBe(data)
+    expect(out.rows[0].name.citations).toEqual([
+      { sourceId: "s1", quote: "q1" },
+      { sourceId: "s2", quote: "q2" },
+    ])
+    expect(JSON.stringify(data)).toBe(before)
+  })
+  test("creates an absent cell with value '' and the citation", () => {
+    const data = tbl([{ name: { value: "a" } }])
+    const out = addCitation(data as never, 0, "n", { sourceId: "s1", quote: "q" })
+    expect(out.rows[0].n).toEqual({ value: "", citations: [{ sourceId: "s1", quote: "q" }] })
+  })
+  test("returns the input unchanged at the 8-citation cap", () => {
+    const eight = Array.from({ length: 8 }, (_, i) => ({ sourceId: `s${i}`, quote: `q${i}` }))
+    const data = tbl([{ name: { value: "a", citations: eight } }])
+    expect(addCitation(data as never, 0, "name", { sourceId: "s9", quote: "q9" })).toBe(data)
+  })
+  test("returns the input unchanged for an out-of-range rowIndex", () => {
+    const data = tbl([{ name: { value: "a" } }])
+    expect(addCitation(data as never, 9, "name", { sourceId: "s1", quote: "q" })).toBe(data)
+    expect(addCitation(data as never, -1, "name", { sourceId: "s1", quote: "q" })).toBe(data)
+  })
+})
+
+describe("updateCitation", () => {
+  test("patches the sourceId only", () => {
+    const data = tbl([{ name: { value: "a", citations: [{ sourceId: "s1", quote: "q1" }] } }])
+    const out = updateCitation(data as never, 0, "name", 0, { sourceId: "s2" })
+    expect(out.rows[0].name.citations[0]).toEqual({ sourceId: "s2", quote: "q1" })
+  })
+  test("patches the quote only", () => {
+    const data = tbl([{ name: { value: "a", citations: [{ sourceId: "s1", quote: "q1" }] } }])
+    const out = updateCitation(data as never, 0, "name", 0, { quote: "q2" })
+    expect(out.rows[0].name.citations[0]).toEqual({ sourceId: "s1", quote: "q2" })
+  })
+  test("patches both fields and returns a new object (no mutation)", () => {
+    const data = tbl([{ name: { value: "a", citations: [{ sourceId: "s1", quote: "q1" }] } }])
+    const before = JSON.stringify(data)
+    const out = updateCitation(data as never, 0, "name", 0, { sourceId: "s2", quote: "q2" })
+    expect(out).not.toBe(data)
+    expect(out.rows[0].name.citations[0]).toEqual({ sourceId: "s2", quote: "q2" })
+    expect(JSON.stringify(data)).toBe(before)
+  })
+  test("returns the input unchanged for a missing cell", () => {
+    const data = tbl([{ name: { value: "a" } }])
+    expect(updateCitation(data as never, 0, "n", 0, { quote: "x" })).toBe(data)
+  })
+  test("returns the input unchanged for an out-of-range citIndex or rowIndex", () => {
+    const data = tbl([{ name: { value: "a", citations: [{ sourceId: "s1", quote: "q1" }] } }])
+    expect(updateCitation(data as never, 0, "name", 5, { quote: "x" })).toBe(data)
+    expect(updateCitation(data as never, 9, "name", 0, { quote: "x" })).toBe(data)
+  })
+})
+
+describe("removeCitation", () => {
+  test("removes the citation at the index and returns a new object (no mutation)", () => {
+    const data = tbl([
+      {
+        name: {
+          value: "a",
+          citations: [
+            { sourceId: "s1", quote: "q1" },
+            { sourceId: "s2", quote: "q2" },
+          ],
+        },
+      },
+    ])
+    const before = JSON.stringify(data)
+    const out = removeCitation(data as never, 0, "name", 0)
+    expect(out).not.toBe(data)
+    expect(out.rows[0].name.citations).toEqual([{ sourceId: "s2", quote: "q2" }])
+    expect(JSON.stringify(data)).toBe(before)
+  })
+  test("returns the input unchanged for a missing cell", () => {
+    const data = tbl([{ name: { value: "a" } }])
+    expect(removeCitation(data as never, 0, "n", 0)).toBe(data)
+  })
+  test("returns the input unchanged for an out-of-range citIndex or rowIndex", () => {
+    const data = tbl([{ name: { value: "a", citations: [{ sourceId: "s1", quote: "q1" }] } }])
+    expect(removeCitation(data as never, 0, "name", 5)).toBe(data)
+    expect(removeCitation(data as never, 9, "name", 0)).toBe(data)
   })
 })
