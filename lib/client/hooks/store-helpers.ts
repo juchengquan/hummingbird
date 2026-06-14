@@ -17,7 +17,7 @@ import type { FileSearchConfig } from "@/shared/skills/file-search-config"
 import type { ImageGenConfig } from "@/shared/skills/image-gen-config"
 import type { WebFetchConfig } from "@/shared/skills/web-fetch-config"
 import type { WebSearchConfig } from "@/shared/skills/web-search-config"
-import type { Agent, McpServer, Prompt } from "@/shared/types"
+import type { Agent, Conversation, McpServer, Message, Prompt } from "@/shared/types"
 
 // --- sidebar widths --------------------------------------------------------
 
@@ -207,4 +207,64 @@ export function mergeWebSearchConfig(
   }
   if (Object.keys(next).length === 0) return undefined
   return next as WebSearchConfig
+}
+
+// --- messages reducer ------------------------------------------------------
+
+/**
+ * Apply `patch` to the message identified by `messageId` across every
+ * conversation in `state.conversations`. Returns a `Partial<S>` that
+ * can be returned from a Zustand `set` updater.
+ *
+ * INVARIANT: searches ALL conversations, not just the active one.
+ * Message ids are uuids and uniquely identify the owning conversation.
+ * Filtering on `activeConversationId` here would misfire whenever the
+ * user has switched tabs since the message was created — particularly
+ * during parallel streams.
+ *
+ * No-op when no message matches: returns `{}` so Zustand skips the
+ * re-render. Identity-preserving when the patch produces a value-equal
+ * message (the conversation reference is unchanged).
+ */
+export function updateMessage<S extends { conversations: Conversation[] }>(
+  state: S,
+  messageId: string,
+  patch: (m: Message) => Message
+): Partial<S> {
+  let touched = false
+  const conversations = state.conversations.map((c) => {
+    if (!c.messages.some((m) => m.id === messageId)) return c
+    const nextMessages = c.messages.map((m) =>
+      m.id === messageId ? patch(m) : m
+    )
+    if (nextMessages.every((m, i) => m === c.messages[i])) {
+      return c
+    }
+    touched = true
+    return { ...c, messages: nextMessages }
+  })
+  if (!touched) return {}
+  return { conversations } as Partial<S>
+}
+
+/**
+ * Remove the message identified by `messageId` from whichever
+ * conversation owns it. Returns a `Partial<S>` with `conversations`
+ * updated, or `{}` when no message matches.
+ *
+ * Mirrors `updateMessage`'s invariants: searches ALL conversations,
+ * identity-preserving no-op when the message is not found.
+ */
+export function removeMessage<S extends { conversations: Conversation[] }>(
+  state: S,
+  messageId: string
+): Partial<S> {
+  let touched = false
+  const conversations = state.conversations.map((c) => {
+    if (!c.messages.some((m) => m.id === messageId)) return c
+    touched = true
+    return { ...c, messages: c.messages.filter((m) => m.id !== messageId) }
+  })
+  if (!touched) return {}
+  return { conversations } as Partial<S>
 }

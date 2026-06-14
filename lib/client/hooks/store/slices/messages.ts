@@ -10,6 +10,7 @@ import { uuid } from "@/shared/uuid"
 import { buildCompressedMessages } from "@/shared/compression"
 import { mark as perfMark, count as perfCount } from "@/client/perf-chat-stream"
 
+import { removeMessage, updateMessage } from "../../store-helpers"
 import type { SliceCreator } from "../types"
 
 /**
@@ -146,24 +147,12 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
   },
   deleteMessage: (messageId) =>
     set((state) => ({
-      // Find by messageId across ALL conversations rather than only
-      // the active one. Message ids are uuids, so they uniquely
-      // identify the owning conversation; filtering on `activeId`
-      // here would misfire whenever the user has switched tabs since
-      // the message was created — particularly during parallel
-      // streams. (Same pattern applied to every other per-message
-      // mutator below.)
-      conversations: state.conversations.map((c) => {
-        if (c.messages.some((m) => m.id === messageId)) {
-          return {
-            ...c,
-            messages: c.messages.filter((m) => m.id !== messageId),
-          }
-        }
-        return c
-      }),
-      // Detach any bookmarks / artifacts anchored to this message
-      // (mirrors the `on delete set null` from the Supabase schema).
+      // The messages-side flows through `removeMessage` (searches ALL
+      // conversations by uuid — never `activeConversationId`). The
+      // notes/artifacts cascade stays inline: it's a cross-entity side
+      // effect that always runs (mirrors the `on delete set null` from
+      // the Supabase schema), so it spreads ALONGSIDE the helper result.
+      ...removeMessage(state, messageId),
       notes: state.notes.map((n) =>
         n.messageId === messageId ? { ...n, messageId: null } : n
       ),
@@ -172,19 +161,7 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
       ),
     })),
   updateMessage: (messageId, content) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.messages.some((m) => m.id === messageId)) {
-          return {
-            ...c,
-            messages: c.messages.map((m) =>
-              m.id === messageId ? { ...m, content } : m
-            ),
-          }
-        }
-        return c
-      }),
-    })),
+    set((state) => updateMessage(state, messageId, (m) => ({ ...m, content }))),
   truncateMessagesAfter: (messageId, inclusive = false) =>
     set((state) => ({
       conversations: state.conversations.map((c) => {
@@ -253,19 +230,10 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
     perfMark("humm/chat/append-message:start")
     perfCount("chat.append.message")
     set((state) => {
-      const next = {
-        conversations: state.conversations.map((c) => {
-          if (c.messages.some((m) => m.id === messageId)) {
-            return {
-              ...c,
-              messages: c.messages.map((m) =>
-                m.id === messageId ? { ...m, content: m.content + chunk } : m
-              ),
-            }
-          }
-          return c
-        }),
-      }
+      const next = updateMessage(state, messageId, (m) => ({
+        ...m,
+        content: m.content + chunk,
+      }))
       perfMark("humm/chat/append-message:end")
       return next
     })
@@ -274,246 +242,124 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
     perfMark("humm/chat/append-reasoning:start")
     perfCount("chat.append.reasoning")
     set((state) => {
-      const next = {
-        conversations: state.conversations.map((c) => {
-          if (c.messages.some((m) => m.id === messageId)) {
-            return {
-              ...c,
-              messages: c.messages.map((m) =>
-                m.id === messageId
-                  ? { ...m, reasoning: (m.reasoning ?? "") + chunk }
-                  : m
-              ),
-            }
-          }
-          return c
-        }),
-      }
+      const next = updateMessage(state, messageId, (m) => ({
+        ...m,
+        reasoning: (m.reasoning ?? "") + chunk,
+      }))
       perfMark("humm/chat/append-reasoning:end")
       return next
     })
   },
   setMessageReasoningDuration: (messageId, durationMs) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.messages.some((m) => m.id === messageId)) {
-          return {
-            ...c,
-            messages: c.messages.map((m) =>
-              m.id === messageId
-                ? { ...m, reasoningDurationMs: durationMs }
-                : m
-            ),
-          }
-        }
-        return c
-      }),
-    })),
+    set((state) =>
+      updateMessage(state, messageId, (m) => ({
+        ...m,
+        reasoningDurationMs: durationMs,
+      }))
+    ),
   setMessageToolCalls: (messageId, toolCalls) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.messages.some((m) => m.id === messageId)) {
-          return {
-            ...c,
-            messages: c.messages.map((m) =>
-              m.id === messageId
-                ? { ...m, toolCalls: toolCalls.length > 0 ? toolCalls : undefined }
-                : m
-            ),
-          }
-        }
-        return c
-      }),
-    })),
+    set((state) =>
+      updateMessage(state, messageId, (m) => ({
+        ...m,
+        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+      }))
+    ),
   setMessageSuggestions: (messageId, suggestions) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.messages.some((m) => m.id === messageId)) {
-          return {
-            ...c,
-            messages: c.messages.map((m) =>
-              m.id === messageId ? { ...m, suggestions } : m
-            ),
-          }
-        }
-        return c
-      }),
-    })),
+    set((state) =>
+      updateMessage(state, messageId, (m) => ({ ...m, suggestions }))
+    ),
   setMessageVerification: (messageId, verification) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.messages.some((m) => m.id === messageId)) {
-          return {
-            ...c,
-            messages: c.messages.map((m) =>
-              m.id === messageId ? { ...m, verification } : m
-            ),
-          }
-        }
-        return c
-      }),
-    })),
+    set((state) =>
+      updateMessage(state, messageId, (m) => ({ ...m, verification }))
+    ),
   setMessageRoutedModel: (messageId, modelId) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.messages.some((m) => m.id === messageId)) {
-          return {
-            ...c,
-            messages: c.messages.map((m) =>
-              m.id === messageId ? { ...m, routedModel: modelId } : m
-            ),
-          }
-        }
-        return c
-      }),
-    })),
+    set((state) =>
+      updateMessage(state, messageId, (m) => ({ ...m, routedModel: modelId }))
+    ),
   appendMessageGeneratedImages: (messageId, images) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (!c.messages.some((m) => m.id === messageId)) return c
-        return {
-          ...c,
-          messages: c.messages.map((m) => {
-            if (m.id !== messageId) return m
-            const next = [...(m.generatedImages ?? []), ...images]
-            return { ...m, generatedImages: next }
-          }),
-        }
-      }),
-    })),
+    set((state) =>
+      updateMessage(state, messageId, (m) => ({
+        ...m,
+        generatedImages: [...(m.generatedImages ?? []), ...images],
+      }))
+    ),
   appendMessageUiPart: (messageId, part) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (!c.messages.some((m) => m.id === messageId)) return c
-        return {
-          ...c,
-          messages: c.messages.map((m) => {
-            if (m.id !== messageId) return m
-            const existing = m.uiParts ?? []
-            // Idempotent on (messageId, part.id) — a duplicate emit
-            // (rare; defensive) leaves the message unchanged so the
-            // identity-stable render path doesn't churn.
-            if (existing.some((p) => p.id === part.id)) return m
-            return { ...m, uiParts: [...existing, part] }
-          }),
-        }
-      }),
-    })),
+    set((state) =>
+      updateMessage(state, messageId, (m) => {
+        const existing = m.uiParts ?? []
+        // Idempotent on (messageId, part.id) — a duplicate emit
+        // (rare; defensive) leaves the message unchanged so the
+        // identity-stable render path doesn't churn.
+        if (existing.some((p) => p.id === part.id)) return m
+        return { ...m, uiParts: [...existing, part] }
+      })
+    ),
   appendMessageMcpApp: (messageId, part) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (!c.messages.some((m) => m.id === messageId)) return c
-        return {
-          ...c,
-          messages: c.messages.map((m) => {
-            if (m.id !== messageId) return m
-            const existing = m.mcpApps ?? []
-            if (existing.some((p) => p.id === part.id)) return m
-            return { ...m, mcpApps: [...existing, part] }
-          }),
-        }
-      }),
-    })),
+    set((state) =>
+      updateMessage(state, messageId, (m) => {
+        const existing = m.mcpApps ?? []
+        if (existing.some((p) => p.id === part.id)) return m
+        return { ...m, mcpApps: [...existing, part] }
+      })
+    ),
   replaceMessageMcpAppHtml: (messageId, partId, html) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (!c.messages.some((m) => m.id === messageId)) return c
+    set((state) =>
+      updateMessage(state, messageId, (m) => {
+        const existing = m.mcpApps ?? []
+        if (!existing.some((p) => p.id === partId)) return m
         return {
-          ...c,
-          messages: c.messages.map((m) => {
-            if (m.id !== messageId) return m
-            const existing = m.mcpApps ?? []
-            if (!existing.some((p) => p.id === partId)) return m
-            return {
-              ...m,
-              mcpApps: existing.map((p) =>
-                p.id === partId
-                  ? { ...p, html, truncated: undefined }
-                  : p,
-              ),
-            }
-          }),
+          ...m,
+          mcpApps: existing.map((p) =>
+            p.id === partId ? { ...p, html, truncated: undefined } : p
+          ),
         }
-      }),
-    })),
+      })
+    ),
   resolveMessageUiPart: (messageId, partId, answer) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (!c.messages.some((m) => m.id === messageId)) return c
-        return {
-          ...c,
-          messages: c.messages.map((m) => {
-            if (m.id !== messageId) return m
-            const existing = m.uiParts ?? []
-            if (existing.length === 0) return m
-            let touched = false
-            const next = existing.map((p) => {
-              if (p.id !== partId) return p
-              // Idempotent — already answered parts stay frozen.
-              if (p.answeredAt) return p
-              touched = true
-              return {
-                ...p,
-                answeredAt: new Date().toISOString(),
-                answer,
-              }
-            })
-            if (!touched) return m
-            return { ...m, uiParts: next }
-          }),
-        }
-      }),
-    })),
+    set((state) =>
+      updateMessage(state, messageId, (m) => {
+        const existing = m.uiParts ?? []
+        if (existing.length === 0) return m
+        let touched = false
+        const next = existing.map((p) => {
+          if (p.id !== partId) return p
+          // Idempotent — already answered parts stay frozen.
+          if (p.answeredAt) return p
+          touched = true
+          return {
+            ...p,
+            answeredAt: new Date().toISOString(),
+            answer,
+          }
+        })
+        if (!touched) return m
+        return { ...m, uiParts: next }
+      })
+    ),
   updateMessageGeneratedImageUrl: (messageId, imageId, url) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (!c.messages.some((m) => m.id === messageId)) return c
-        return {
-          ...c,
-          messages: c.messages.map((m) => {
-            if (m.id !== messageId) return m
-            const images = m.generatedImages
-            if (!images) return m
-            let changed = false
-            const next = images.map((img) => {
-              if (img.id !== imageId || img.url === url) return img
-              changed = true
-              return { ...img, url }
-            })
-            return changed ? { ...m, generatedImages: next } : m
-          }),
-        }
-      }),
-    })),
+    set((state) =>
+      updateMessage(state, messageId, (m) => {
+        const images = m.generatedImages
+        if (!images) return m
+        let changed = false
+        const next = images.map((img) => {
+          if (img.id !== imageId || img.url === url) return img
+          changed = true
+          return { ...img, url }
+        })
+        return changed ? { ...m, generatedImages: next } : m
+      })
+    ),
   setMessageError: (messageId, error) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.messages.some((m) => m.id === messageId)) {
-          return {
-            ...c,
-            messages: c.messages.map((m) =>
-              m.id === messageId ? { ...m, error } : m
-            ),
-          }
-        }
-        return c
-      }),
-    })),
+    set((state) => updateMessage(state, messageId, (m) => ({ ...m, error }))),
   clearMessageError: (messageId) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.messages.some((m) => m.id === messageId)) {
-          return {
-            ...c,
-            messages: c.messages.map((m) => {
-              if (m.id !== messageId) return m
-              const { error: _ignored, ...rest } = m
-              void _ignored
-              return rest
-            }),
-          }
-        }
-        return c
+    set((state) =>
+      updateMessage(state, messageId, (m) => {
+        // Strip the `error` key entirely (not set-to-undefined). When no
+        // message matches, updateMessage returns {} — no extra guard needed.
+        const { error: _ignored, ...rest } = m
+        void _ignored
+        return rest
       }),
-    })),
+    ),
 })
