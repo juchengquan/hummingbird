@@ -999,31 +999,29 @@ async function mcpUpsertCloudServer(
     enabled?: boolean
     requires_approval?: boolean
   },
-  options?: DispatchOption
+  options?: DispatchOption,
 ): Promise<
   | { ok: true; status: number }
   | { ok: false; status: number; error: { code?: string; message?: string } }
 > {
-  const remote = await resolveDispatch(options)
-  const url = remote ? `${remote.baseUrl}/v1/mcp/server` : apiUrls.mcpServer()
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  }
-  if (remote) headers.Authorization = `Bearer ${remote.authToken}`
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
+  const result = await dispatchedFetch<
+    typeof body,
+    typeof body,
+    Record<string, never>
+  >({
+    path: "/v1/mcp/server",
+    localUrl: apiUrls.mcpServer(),
+    bodyForLocal: body,
+    dispatch: options,
   })
-  if (!res.ok) {
-    const errBody = await readErrorBody(res)
+  if (!result.ok) {
     return {
       ok: false,
-      status: res.status,
-      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+      status: result.status,
+      error: result.error,
     }
   }
-  return { ok: true, status: res.status }
+  return { ok: true, status: result.status }
 }
 
 // --- /api/url/fetch ---------------------------------------------------------
