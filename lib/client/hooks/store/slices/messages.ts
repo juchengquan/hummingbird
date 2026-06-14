@@ -10,6 +10,7 @@ import { uuid } from "@/shared/uuid"
 import { buildCompressedMessages } from "@/shared/compression"
 import { mark as perfMark, count as perfCount } from "@/client/perf-chat-stream"
 
+import { updateMessage } from "../../store-helpers"
 import type { SliceCreator } from "../types"
 
 /**
@@ -172,19 +173,7 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
       ),
     })),
   updateMessage: (messageId, content) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.messages.some((m) => m.id === messageId)) {
-          return {
-            ...c,
-            messages: c.messages.map((m) =>
-              m.id === messageId ? { ...m, content } : m
-            ),
-          }
-        }
-        return c
-      }),
-    })),
+    set((state) => updateMessage(state, messageId, (m) => ({ ...m, content }))),
   truncateMessagesAfter: (messageId, inclusive = false) =>
     set((state) => ({
       conversations: state.conversations.map((c) => {
@@ -294,79 +283,31 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
     })
   },
   setMessageReasoningDuration: (messageId, durationMs) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.messages.some((m) => m.id === messageId)) {
-          return {
-            ...c,
-            messages: c.messages.map((m) =>
-              m.id === messageId
-                ? { ...m, reasoningDurationMs: durationMs }
-                : m
-            ),
-          }
-        }
-        return c
-      }),
-    })),
+    set((state) =>
+      updateMessage(state, messageId, (m) => ({
+        ...m,
+        reasoningDurationMs: durationMs,
+      }))
+    ),
   setMessageToolCalls: (messageId, toolCalls) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.messages.some((m) => m.id === messageId)) {
-          return {
-            ...c,
-            messages: c.messages.map((m) =>
-              m.id === messageId
-                ? { ...m, toolCalls: toolCalls.length > 0 ? toolCalls : undefined }
-                : m
-            ),
-          }
-        }
-        return c
-      }),
-    })),
+    set((state) =>
+      updateMessage(state, messageId, (m) => ({
+        ...m,
+        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+      }))
+    ),
   setMessageSuggestions: (messageId, suggestions) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.messages.some((m) => m.id === messageId)) {
-          return {
-            ...c,
-            messages: c.messages.map((m) =>
-              m.id === messageId ? { ...m, suggestions } : m
-            ),
-          }
-        }
-        return c
-      }),
-    })),
+    set((state) =>
+      updateMessage(state, messageId, (m) => ({ ...m, suggestions }))
+    ),
   setMessageVerification: (messageId, verification) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.messages.some((m) => m.id === messageId)) {
-          return {
-            ...c,
-            messages: c.messages.map((m) =>
-              m.id === messageId ? { ...m, verification } : m
-            ),
-          }
-        }
-        return c
-      }),
-    })),
+    set((state) =>
+      updateMessage(state, messageId, (m) => ({ ...m, verification }))
+    ),
   setMessageRoutedModel: (messageId, modelId) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.messages.some((m) => m.id === messageId)) {
-          return {
-            ...c,
-            messages: c.messages.map((m) =>
-              m.id === messageId ? { ...m, routedModel: modelId } : m
-            ),
-          }
-        }
-        return c
-      }),
-    })),
+    set((state) =>
+      updateMessage(state, messageId, (m) => ({ ...m, routedModel: modelId }))
+    ),
   appendMessageGeneratedImages: (messageId, images) =>
     set((state) => ({
       conversations: state.conversations.map((c) => {
@@ -486,34 +427,17 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
       }),
     })),
   setMessageError: (messageId, error) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.messages.some((m) => m.id === messageId)) {
-          return {
-            ...c,
-            messages: c.messages.map((m) =>
-              m.id === messageId ? { ...m, error } : m
-            ),
-          }
-        }
-        return c
-      }),
-    })),
+    set((state) => updateMessage(state, messageId, (m) => ({ ...m, error }))),
   clearMessageError: (messageId) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.messages.some((m) => m.id === messageId)) {
-          return {
-            ...c,
-            messages: c.messages.map((m) => {
-              if (m.id !== messageId) return m
-              const { error: _ignored, ...rest } = m
-              void _ignored
-              return rest
-            }),
-          }
-        }
-        return c
-      }),
-    })),
+    set((state) => {
+      const updated = updateMessage(state, messageId, (m) => {
+        const { error: _ignored, ...rest } = m
+        void _ignored
+        return rest
+      })
+      // If no message matched, also clear nothing — the no-op sentinel
+      // is preserved by updateMessage returning {}.
+      if (Object.keys(updated).length === 0) return {}
+      return updated
+    }),
 })
