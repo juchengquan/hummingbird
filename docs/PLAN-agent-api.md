@@ -112,6 +112,19 @@ Option C (Python service) green-lit, end-to-end live in
   via `dispatch: 'remote'`. Refresh-url converts `storagePath` →
   `storage_path` on the remote path (the in-Next route keeps
   camelCase).
+- **AI-SDK → Anthropic wire translator (cross-stack resume fix)** —
+  `services/agent-py/src/agent_py/executor.py`'s `_messages_from`
+  now converts AI SDK v5 content blocks (`tool-call`, `tool-result`,
+  `image`, `file`, `reasoning`) and `role: 'tool'` messages into the
+  Anthropic shape the provider expects. Same-stack Python resumes
+  remain byte-identical (the dispatcher is the canonical path for
+  every message). Cross-stack resumes (TS-suspend → Python-resume)
+  now keep their tool context end-to-end. ~20 new unit tests in
+  `tests/test_executor_wire_translator.py`. Closes the gap
+  documented at `executor.py:1252-1259` in the prior state of this
+  file. Spec: `docs/superpowers/specs/2026-06-14-agent-py-ai-sdk-
+  translator-design.md`. Plan: `docs/superpowers/plans/2026-06-14-
+  agent-py-ai-sdk-translator.md`.
 
 > **Note on phase numbering.** The original plan called Phase 2 a
 > single 1-week slice (executor + 3 tools + provider port). It split
