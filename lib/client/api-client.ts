@@ -81,6 +81,34 @@ export type DispatchOption =
   | { dispatch: "in-next" }
   | { dispatch: "remote"; remote: RemoteDispatch }
 
+/** Result shape returned by `dispatchedFetch`. Mirrors the existing
+ *  tagged-result convention used by `mcpProxyCall`, `mcpUpsertCloudServer`,
+ *  and `urlFetchBookmark`. */
+export type DispatchedFetchResult<T> =
+  | { ok: true; status: number; data: T }
+  | { ok: false; status: number; error: { code?: string; message?: string } }
+
+/** Options for `dispatchedFetch`. The caller passes BOTH the remote
+ *  path (e.g. `/v1/summarize`) and the local URL string — keeps the
+ *  helper free of the `apiUrls` namespace import and keeps it testable
+ *  with literal URL strings. */
+export interface DispatchedFetchOptions<LocalBody, RemoteBody, T> {
+  path: string
+  localUrl: string
+  bodyForLocal: LocalBody
+  bodyForRemote?: (local: LocalBody) => RemoteBody
+  schema?: {
+    safeParse: (
+      raw: unknown,
+    ) => { success: true; data: T } | { success: false; error: unknown }
+  }
+  extraHeaders?: Record<string, string>
+  signal?: AbortSignal
+  inflight?: Map<string, Promise<DispatchedFetchResult<T>>>
+  dedupeKey?: string
+  dispatch?: DispatchOption
+}
+
 /** Internal: turn a `DispatchOption` (or undefined) into a concrete
  *  `RemoteDispatch | null`. Importing the resolver lazily keeps the
  *  Zustand store + Supabase client off any callgraph that doesn't
@@ -92,6 +120,113 @@ async function resolveDispatch(
   if (option?.dispatch === "remote") return option.remote
   const { resolveRemoteBackend } = await import("@/client/api/backend-resolver")
   return resolveRemoteBackend()
+}
+
+/** Resolve the `DispatchOption` and return a stable cache key that
+ *  includes the backend URL so a backend switch mid-session doesn't
+ *  return a stale signed URL from the wrong service. The in-Next
+ *  fast path returns just the suffix. Used by
+ *  `refreshGeneratedImageUrl`'s in-flight dedupe. */
+async function backendCacheKey(
+  option: DispatchOption | undefined,
+  suffix: string,
+): Promise<string> {
+  if (option?.dispatch === "in-next") return suffix
+  if (option?.dispatch === "remote") return `${option.remote.baseUrl}::${suffix}`
+  // Default 'auto' — resolve lazily.
+  const { resolveRemoteBackend } = await import("@/client/api/backend-resolver")
+  const remote = await resolveRemoteBackend()
+  return remote ? `${remote.baseUrl}::${suffix}` : suffix
+}
+
+/** Internal: one POST + optional Zod-parse for any dispatched
+ *  (auto / in-next / remote) non-chat endpoint. The exported
+ *  `apiClient.*` methods share dispatch + error handling; they
+ *  differ only in path, body, and (optionally) response schema +
+ *  wire-shape variant. This is the seam that absorbs all six.
+ *
+ *  Errors swallowed into the `{ ok: false, ... }` envelope:
+ *  network error, non-OK response, JSON parse error, schema
+ *  rejection. Callers convert back to their own contract (most
+ *  return `null`; the MCP + URL-fetch ones surface the envelope). */
+async function dispatchedFetch<LocalBody, RemoteBody, T>(
+  options: DispatchedFetchOptions<LocalBody, RemoteBody, T>,
+): Promise<DispatchedFetchResult<T>> {
+  const inflight = options.inflight
+  const dedupeKey = options.dedupeKey
+  if (inflight && dedupeKey) {
+    const cached = inflight.get(dedupeKey)
+    if (cached) return cached
+  }
+
+  const promise = (async (): Promise<DispatchedFetchResult<T>> => {
+    try {
+      const remote = await resolveDispatch(options.dispatch)
+      const target = remote
+        ? `${remote.baseUrl}${options.path}`
+        : options.localUrl
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      }
+      if (remote) headers.Authorization = `Bearer ${remote.authToken}`
+      if (options.extraHeaders) {
+        Object.assign(headers, options.extraHeaders)
+      }
+      const body =
+        remote && options.bodyForRemote
+          ? options.bodyForRemote(options.bodyForLocal)
+          : options.bodyForLocal
+      const res = await fetch(target, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal: options.signal,
+      })
+      if (!res.ok) {
+        const errBody = await readErrorBody(res)
+        return {
+          ok: false,
+          status: res.status,
+          error: {
+            code: errBody.code,
+            message: errBody.message ?? errBody.error,
+          },
+        }
+      }
+      const raw: unknown = await res.json()
+      if (options.schema) {
+        const parsed = options.schema.safeParse(raw)
+        if (!parsed.success) {
+          return {
+            ok: false,
+            status: res.status,
+            error: {
+              code: "invalid_response",
+              message: "Server response did not match schema.",
+            },
+          }
+        }
+        return { ok: true, status: res.status, data: parsed.data }
+      }
+      return { ok: true, status: res.status, data: raw as T }
+    } catch {
+      return {
+        ok: false,
+        status: 0,
+        error: { code: "network_error", message: "Request failed." },
+      }
+    }
+  })()
+
+  if (inflight && dedupeKey) {
+    inflight.set(dedupeKey, promise)
+    try {
+      return await promise
+    } finally {
+      inflight.delete(dedupeKey)
+    }
+  }
+  return promise
 }
 
 // Empty default = same origin (Next.js routes serving from /api/*).
@@ -599,20 +734,25 @@ async function extract(
  */
 async function embedFile(
   body: EmbedRequestInput,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal },
 ): Promise<EmbedResponse | null> {
-  try {
-    const res = await fetch(apiUrls.embed(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: options?.signal,
-    })
-    if (!res.ok) return null
-    return EmbedResponseSchema.parse(await res.json())
-  } catch {
-    return null
-  }
+  const result = await dispatchedFetch<
+    EmbedRequestInput,
+    EmbedRequestInput,
+    EmbedResponse
+  >({
+    path: "/v1/embed",
+    localUrl: apiUrls.embed(),
+    bodyForLocal: body,
+    schema: EmbedResponseSchema,
+    signal: options?.signal,
+    // Pin to in-next: embedding was never dispatch-aware (no remote
+    // `/v1/embed` handler exists). Without this, 'auto' resolution
+    // would route remote-backend users to a 404 and silently break
+    // file full-text indexing.
+    dispatch: { dispatch: "in-next" },
+  })
+  return result.ok ? result.data : null
 }
 
 // --- /api/summarize ---------------------------------------------------------
@@ -625,27 +765,26 @@ type SummarizeOptions = { signal?: AbortSignal } & DispatchOption
  *  `mode` discriminant and the response schema. */
 async function summarizePost<T>(
   body: SummarizeRequestInput,
-  schema: { parse: (raw: unknown) => T },
-  options?: SummarizeOptions
+  schema: {
+    safeParse: (
+      raw: unknown,
+    ) => { success: true; data: T } | { success: false; error: unknown }
+  },
+  options?: SummarizeOptions,
 ): Promise<T | null> {
-  try {
-    const remote = await resolveDispatch(options)
-    const url = remote ? `${remote.baseUrl}/v1/summarize` : apiUrls.summarize()
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    }
-    if (remote) headers.Authorization = `Bearer ${remote.authToken}`
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: options?.signal,
-    })
-    if (!res.ok) return null
-    return schema.parse(await res.json())
-  } catch {
-    return null
-  }
+  const result = await dispatchedFetch<
+    SummarizeRequestInput,
+    SummarizeRequestInput,
+    T
+  >({
+    path: "/v1/summarize",
+    localUrl: apiUrls.summarize(),
+    bodyForLocal: body,
+    schema,
+    signal: options?.signal,
+    dispatch: options,
+  })
+  return result.ok ? result.data : null
 }
 
 /** Summarises a single file's extracted text. Returns null on failure —
@@ -717,68 +856,36 @@ async function createShare(
   }
 }
 
-/**
- * Re-sign an expired generated-image URL from its `storagePath`. Returns
- * the fresh URL, or `null` if Supabase isn't configured / the caller
- * isn't signed in / the object went missing. The caller is responsible
- * for updating wherever the old URL was held (typically
- * `Message.generatedImages[i].url`).
- *
- * Concurrent calls for the same `storagePath` are deduped via an
- * in-flight cache so a 4-up grid with all four URLs expired only
- * fires one network round-trip per distinct path.
- */
-const refreshUrlInflight = new Map<string, Promise<string | null>>()
+/** In-flight dedupe cache for `refreshGeneratedImageUrl`. Keys on
+ *  `storagePath` (in-Next) or `${remote.baseUrl}::${storagePath}`
+ *  (remote) so a backend switch mid-session forces a fresh request.
+ *  Module-scoped because the dedupe contract is "same logical URL
+ *  re-sign in flight, share the promise." */
+const refreshUrlInflight = new Map<
+  string,
+  Promise<DispatchedFetchResult<{ url: string }>>
+>()
 
 async function refreshGeneratedImageUrl(
   storagePath: string,
-  options?: DispatchOption
+  options?: DispatchOption,
 ): Promise<string | null> {
-  const remote = await resolveDispatch(options)
-  // Cache key includes the backend URL so a backend switch mid-session
-  // doesn't return a stale signed URL from the wrong service. The hot
-  // path (no remote, in-Next) uses just the storage path.
-  const cacheKey = remote
-    ? `${remote.baseUrl}::${storagePath}`
-    : storagePath
-  const cached = refreshUrlInflight.get(cacheKey)
-  if (cached) return cached
-  const promise = (async () => {
-    try {
-      const url = remote
-        ? `${remote.baseUrl}/v1/images/refresh-url`
-        : apiUrls.imagesRefreshUrl()
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-      }
-      if (remote) {
-        headers.Authorization = `Bearer ${remote.authToken}`
-      }
-      // Wire shape: agent-py + agent-ts use snake_case
-      // (`storage_path`); the in-Next route uses camelCase
-      // (`storagePath`) per `RefreshImageUrlRequestSchema`. Pick the
-      // right one per target.
-      const body = remote
-        ? { storage_path: storagePath }
-        : { storagePath }
-      const res = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-      })
-      if (!res.ok) return null
-      const parsed = RefreshImageUrlResponseSchema.safeParse(await res.json())
-      return parsed.success ? parsed.data.url : null
-    } catch {
-      return null
-    }
-  })()
-  refreshUrlInflight.set(cacheKey, promise)
-  try {
-    return await promise
-  } finally {
-    refreshUrlInflight.delete(cacheKey)
-  }
+  const result = await dispatchedFetch<
+    { storagePath: string },
+    { storage_path: string },
+    { url: string }
+  >({
+    path: "/v1/images/refresh-url",
+    localUrl: apiUrls.imagesRefreshUrl(),
+    bodyForLocal: { storagePath },
+    bodyForRemote: (b) => ({ storage_path: b.storagePath }),
+    schema: RefreshImageUrlResponseSchema,
+    dispatch: options,
+    inflight: refreshUrlInflight,
+    dedupeKey: await backendCacheKey(options, storagePath),
+  })
+  if (!result.ok) return null
+  return result.data.url
 }
 
 async function revokeShare(token: string): Promise<{ ok: boolean; status: number; error?: string }> {
@@ -807,7 +914,7 @@ type McpProxyOptions = {
 async function mcpProxyCall(
   action: "discover" | "call" | "read",
   body: Record<string, unknown>,
-  options?: McpProxyOptions
+  options?: McpProxyOptions,
 ): Promise<
   | { ok: true; status: number; data: Record<string, unknown> }
   | { ok: false; status: number; error: { code?: string; message?: string } }
@@ -820,41 +927,30 @@ async function mcpProxyCall(
       error: { code: "missing_server_id", message: "server.id is required" },
     }
   }
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  }
+  const extraHeaders: Record<string, string> = {}
   if (options?.credentialHeader) {
-    headers["X-MCP-Credentials"] = options.credentialHeader
+    extraHeaders["X-MCP-Credentials"] = options.credentialHeader
   }
-  const remote = await resolveDispatch(options)
-  // Path shape matches the in-Next route (`/api/mcp/:id/:action`) AND
-  // both services (`/v1/mcp/:server_id/:action`). Body + header
-  // formats are byte-identical, so the only branch is the base URL.
-  const url = remote
-    ? `${remote.baseUrl}/v1/mcp/${encodeURIComponent(serverId)}/${action}`
-    : apiUrls.mcp(serverId, action)
-  if (remote) {
-    headers.Authorization = `Bearer ${remote.authToken}`
-  }
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
+  const result = await dispatchedFetch<
+    Record<string, unknown>,
+    Record<string, unknown>,
+    Record<string, unknown>
+  >({
+    path: `/v1/mcp/${encodeURIComponent(serverId)}/${action}`,
+    localUrl: apiUrls.mcp(serverId, action),
+    bodyForLocal: body,
+    extraHeaders,
     signal: options?.signal,
+    dispatch: options,
   })
-  if (!res.ok) {
-    const errBody = await readErrorBody(res)
+  if (!result.ok) {
     return {
       ok: false,
-      status: res.status,
-      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+      status: result.status,
+      error: result.error,
     }
   }
-  return {
-    ok: true,
-    status: res.status,
-    data: (await res.json()) as Record<string, unknown>,
-  }
+  return { ok: true, status: result.status, data: result.data }
 }
 
 /**
@@ -877,31 +973,29 @@ async function mcpUpsertCloudServer(
     enabled?: boolean
     requires_approval?: boolean
   },
-  options?: DispatchOption
+  options?: DispatchOption,
 ): Promise<
   | { ok: true; status: number }
   | { ok: false; status: number; error: { code?: string; message?: string } }
 > {
-  const remote = await resolveDispatch(options)
-  const url = remote ? `${remote.baseUrl}/v1/mcp/server` : apiUrls.mcpServer()
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  }
-  if (remote) headers.Authorization = `Bearer ${remote.authToken}`
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
+  const result = await dispatchedFetch<
+    typeof body,
+    typeof body,
+    Record<string, never>
+  >({
+    path: "/v1/mcp/server",
+    localUrl: apiUrls.mcpServer(),
+    bodyForLocal: body,
+    dispatch: options,
   })
-  if (!res.ok) {
-    const errBody = await readErrorBody(res)
+  if (!result.ok) {
     return {
       ok: false,
-      status: res.status,
-      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+      status: result.status,
+      error: result.error,
     }
   }
-  return { ok: true, status: res.status }
+  return { ok: true, status: result.status }
 }
 
 // --- /api/url/fetch ---------------------------------------------------------
@@ -923,36 +1017,29 @@ export interface UrlFetchSnapshot {
  */
 async function urlFetchBookmark(
   url: string,
-  options?: DispatchOption
+  options?: DispatchOption,
 ): Promise<
   | { ok: true; status: number; bookmark: UrlFetchSnapshot }
   | { ok: false; status: number; error: { code?: string; message?: string } }
 > {
-  const remote = await resolveDispatch(options)
-  const target = remote
-    ? `${remote.baseUrl}/v1/url/fetch`
-    : apiUrls.urlFetch()
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  }
-  if (remote) {
-    headers.Authorization = `Bearer ${remote.authToken}`
-  }
-  const res = await fetch(target, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ url }),
+  const result = await dispatchedFetch<
+    { url: string },
+    { url: string },
+    { ok: boolean; bookmark: UrlFetchSnapshot }
+  >({
+    path: "/v1/url/fetch",
+    localUrl: apiUrls.urlFetch(),
+    bodyForLocal: { url },
+    dispatch: options,
   })
-  if (!res.ok) {
-    const errBody = await readErrorBody(res)
+  if (!result.ok) {
     return {
       ok: false,
-      status: res.status,
-      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+      status: result.status,
+      error: result.error,
     }
   }
-  const data = (await res.json()) as { ok: boolean; bookmark: UrlFetchSnapshot }
-  return { ok: true, status: res.status, bookmark: data.bookmark }
+  return { ok: true, status: result.status, bookmark: result.data.bookmark }
 }
 
 // --- /api/extract-table -----------------------------------------------------
@@ -968,24 +1055,19 @@ async function extractTable(
   body: ExtractTableRequestInput,
   options?: { signal?: AbortSignal } & DispatchOption,
 ): Promise<CitationTable | null> {
-  try {
-    const remote = await resolveDispatch(options)
-    const target = remote
-      ? `${remote.baseUrl}/v1/extract-table`
-      : apiUrls.extractTable()
-    const headers: Record<string, string> = { "Content-Type": "application/json" }
-    if (remote) headers.Authorization = `Bearer ${remote.authToken}`
-    const res = await fetch(target, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: options?.signal,
-    })
-    if (!res.ok) return null
-    return CitationTableSchema.parse(await res.json())
-  } catch {
-    return null
-  }
+  const result = await dispatchedFetch<
+    ExtractTableRequestInput,
+    ExtractTableRequestInput,
+    CitationTable
+  >({
+    path: "/v1/extract-table",
+    localUrl: apiUrls.extractTable(),
+    bodyForLocal: body,
+    schema: CitationTableSchema,
+    signal: options?.signal,
+    dispatch: options,
+  })
+  return result.ok ? result.data : null
 }
 
 // --- Public surface ---------------------------------------------------------
