@@ -10,7 +10,7 @@ import { uuid } from "@/shared/uuid"
 import { buildCompressedMessages } from "@/shared/compression"
 import { mark as perfMark, count as perfCount } from "@/client/perf-chat-stream"
 
-import { updateMessage } from "../../store-helpers"
+import { removeMessage, updateMessage } from "../../store-helpers"
 import type { SliceCreator } from "../types"
 
 /**
@@ -147,24 +147,12 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
   },
   deleteMessage: (messageId) =>
     set((state) => ({
-      // Find by messageId across ALL conversations rather than only
-      // the active one. Message ids are uuids, so they uniquely
-      // identify the owning conversation; filtering on `activeId`
-      // here would misfire whenever the user has switched tabs since
-      // the message was created — particularly during parallel
-      // streams. (Same pattern applied to every other per-message
-      // mutator below.)
-      conversations: state.conversations.map((c) => {
-        if (c.messages.some((m) => m.id === messageId)) {
-          return {
-            ...c,
-            messages: c.messages.filter((m) => m.id !== messageId),
-          }
-        }
-        return c
-      }),
-      // Detach any bookmarks / artifacts anchored to this message
-      // (mirrors the `on delete set null` from the Supabase schema).
+      // The messages-side flows through `removeMessage` (searches ALL
+      // conversations by uuid — never `activeConversationId`). The
+      // notes/artifacts cascade stays inline: it's a cross-entity side
+      // effect that always runs (mirrors the `on delete set null` from
+      // the Supabase schema), so it spreads ALONGSIDE the helper result.
+      ...removeMessage(state, messageId),
       notes: state.notes.map((n) =>
         n.messageId === messageId ? { ...n, messageId: null } : n
       ),
