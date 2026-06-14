@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
+import type { ColumnType } from "./column-type"
+
 import {
   addCitation,
   addColumn,
@@ -353,6 +355,76 @@ describe("moveColumn", () => {
     const out = moveColumn(data as never, 0, 2)
     expect(out).not.toBe(data)
     expect(out.rows[0]).toEqual(data.rows[0])
+    expect(JSON.stringify(data)).toBe(before)
+  })
+})
+
+describe("parseCitationTable tolerates columns without type", () => {
+  test("returns a valid CitationTable when columns omit type", () => {
+    const obj = {
+      columns: [{ id: "c", label: "C" }],
+      rows: [{ c: { value: "x", citations: [] } }],
+      sources: [],
+    }
+    const out = parseCitationTable(JSON.stringify(obj))
+    expect(out).not.toBeNull()
+    expect(out?.columns[0].type).toBeUndefined()
+  })
+})
+
+describe("addColumn with type", () => {
+  test("defaults type to 'text' when omitted (back-compat)", () => {
+    const data = tbl([{ name: { value: "a" } }])
+    const out = addColumn(data as never, "Color", "color")
+    // tbl() produces 2 columns (name, n); the new column is at index 2.
+    expect(out.columns[2]).toEqual({ id: "color", label: "Color" })
+  })
+  test("sets type='number' when supplied", () => {
+    const data = tbl([{ name: { value: "a" } }])
+    const out = addColumn(data as never, "Score", "score", "number" as ColumnType)
+    // tbl() produces 2 columns (name, n); the new column is at index 2.
+    expect(out.columns[2]).toEqual({ id: "score", label: "Score", type: "number" })
+  })
+  test("returns input unchanged on duplicate columnId (type irrelevant)", () => {
+    const data = tbl([{ name: { value: "a" } }])
+    expect(addColumn(data as never, "Name 2", "name", "number" as ColumnType)).toBe(data)
+  })
+  test("returns input unchanged at the column cap (12)", () => {
+    const data = {
+      columns: Array.from({ length: 12 }, (_, i) => ({ id: `c${i}`, label: `C${i}` })),
+      rows: [],
+      sources: [],
+    }
+    expect(addColumn(data as never, "X", "x", "number" as ColumnType)).toBe(data)
+  })
+})
+
+describe("sortRowOrder with type", () => {
+  test("defaults to text behavior when type omitted (regression guard)", () => {
+    const data = tbl([{ name: { value: "Banana" } }, { name: { value: "apple" } }])
+    expect(sortRowOrder(data as never, "name", "asc")).toEqual([1, 0])
+  })
+  test("numeric ascending when type='number'", () => {
+    const data = tbl([{ n: { value: "200" } }, { n: { value: "1000" } }, { n: { value: "30" } }])
+    expect(sortRowOrder(data as never, "n", "asc", "number")).toEqual([2, 0, 1])
+  })
+  test("numeric descending when type='number'", () => {
+    const data = tbl([{ n: { value: "200" } }, { n: { value: "1000" } }, { n: { value: "30" } }])
+    expect(sortRowOrder(data as never, "n", "desc", "number")).toEqual([1, 0, 2])
+  })
+  test("NaN / empty sort last for type='number' (both directions)", () => {
+    const data = tbl([{ n: { value: "" } }, { n: { value: "5" } }, { n: { value: "abc" } }])
+    expect(sortRowOrder(data as never, "n", "asc", "number")[0]).toBe(1)
+    expect(sortRowOrder(data as never, "n", "desc", "number")[0]).toBe(1)
+  })
+  test("stable for equal keys with type='number'", () => {
+    const data = tbl([{ n: { value: "5" } }, { n: { value: "5" } }, { n: { value: "5" } }])
+    expect(sortRowOrder(data as never, "n", "asc", "number")).toEqual([0, 1, 2])
+  })
+  test("does not mutate data (regression guard for the new path)", () => {
+    const data = tbl([{ n: { value: "2" } }, { n: { value: "1" } }])
+    const before = JSON.stringify(data)
+    sortRowOrder(data as never, "n", "asc", "number")
     expect(JSON.stringify(data)).toBe(before)
   })
 })
