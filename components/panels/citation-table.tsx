@@ -12,6 +12,15 @@ import "client-only"
 
 import { useState } from "react"
 
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import {
   Popover,
   PopoverContent,
@@ -20,6 +29,9 @@ import {
 import {
   type CitationTable,
   type CitationTableCell,
+  addColumn,
+  addRow,
+  removeColumn,
   setCellValue,
   sortRowOrder,
   sourceIndex,
@@ -128,6 +140,36 @@ export function CitationTableView({
     setEditing(null)
   }
 
+  const [addColOpen, setAddColOpen] = useState(false)
+  const [newColLabel, setNewColLabel] = useState("")
+
+  const slugify = (s: string) =>
+    s
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60)
+
+  const dedupeColumnId = (base: string): string => {
+    if (!data.columns.some((c) => c.id === base)) return base
+    for (let i = 2; i < 1000; i++) {
+      const candidate = `${base}-${i}`
+      if (!data.columns.some((c) => c.id === candidate)) return candidate
+    }
+    return `${base}-${Date.now()}`
+  }
+
+  const submitAddColumn = () => {
+    const label = newColLabel.trim().slice(0, 120)
+    if (!label || !onChange) return
+    const base = slugify(label) || "column"
+    const columnId = dedupeColumnId(base)
+    onChange(addColumn(data, label, columnId))
+    setNewColLabel("")
+    setAddColOpen(false)
+  }
+
   return (
     <div className="overflow-x-auto p-3">
       <table className="w-full border-collapse text-xs">
@@ -151,10 +193,48 @@ export function CitationTableView({
                   >
                     {col.label}
                     {active ? <span aria-hidden>{sort.dir === "asc" ? "▲" : "▼"}</span> : null}
+                    {editable ? (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Remove column ${col.label}`}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (onChange) onChange(removeColumn(data, col.id))
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            if (onChange) onChange(removeColumn(data, col.id))
+                          }
+                        }}
+                        className="ml-auto cursor-pointer text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                      >
+                        ×
+                      </span>
+                    ) : null}
                   </button>
                 </th>
               )
             })}
+            {editable ? (
+              <th
+                scope="col"
+                aria-label="Add column"
+                className="border border-[var(--border)] bg-[var(--muted)] p-0 text-left font-medium"
+              >
+                <button
+                  type="button"
+                  onClick={() => setAddColOpen(true)}
+                  disabled={data.columns.length >= 12}
+                  className="flex w-full items-center justify-center px-2 py-1 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-40"
+                  title="Add column"
+                >
+                  +
+                </button>
+              </th>
+            ) : null}
           </tr>
         </thead>
         <tbody>
@@ -201,7 +281,62 @@ export function CitationTableView({
             </tr>
           ))}
         </tbody>
+        {editable ? (
+          <tfoot>
+            <tr>
+              <td
+                colSpan={data.columns.length + 1}
+                className="border border-[var(--border)] px-2 py-1 text-center"
+              >
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onChange && onChange(addRow(data))}
+                  disabled={data.rows.length >= 200}
+                  className="h-6 text-xs"
+                >
+                  + Add row
+                </Button>
+              </td>
+            </tr>
+          </tfoot>
+        ) : null}
       </table>
+      <Dialog
+        open={addColOpen}
+        onOpenChange={(open) => {
+          setAddColOpen(open)
+          if (!open) setNewColLabel("")
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Add column</DialogTitle>
+          </DialogHeader>
+          <Input
+            autoFocus
+            value={newColLabel}
+            onChange={(e) => setNewColLabel(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault()
+                submitAddColumn()
+              }
+            }}
+            placeholder="Column label (e.g. Price)"
+            maxLength={120}
+          />
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => setAddColOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={submitAddColumn} disabled={!newColLabel.trim()}>
+              Add
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
