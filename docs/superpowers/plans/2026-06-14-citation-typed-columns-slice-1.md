@@ -27,9 +27,11 @@
 - `lib/shared/artifacts/extract-table.ts` — `ExtractionColumnSchema` gains optional `type`; `buildExtractTablePrompt` accepts typed hints; `extractionToCitationTable` fills type on write.
 - `components/panels/citation-table.tsx` — header type pill (Popover), add-column dialog type picker, body cell `TypedCell` wrapper with tolerate+warn glyph.
 - `components/panels/extract-table-popover.tsx` — chips carry `{ label, type }`; small type pill on each chip with click-to-edit dropdown.
+- `components/panels/chat-message.tsx` — **(as-shipped; omitted from the original plan)** widen `handleExtractTable` + the `ExtractTablePopover` `onRun` prop from `string[]` to `ExtractColumnHint[]`.
 
-**API contract change (1):**
-- `app/api/extract-table/route.ts` — `body.hints` widens to accept `(string | { label: string; type?: ColumnType })[]`; old `string[]` shape continues to work.
+**API contract change (2):**
+- `lib/shared/api-schemas.ts` — `ExtractTableRequestSchema.columnHints` widens from `z.array(z.string())` to a `z.union([z.string(), z.object({ label, type? })])` array (cap 8). This is the wire field; the original plan mis-named it `body.hints`.
+- `app/api/extract-table/route.ts` — destructures `columnHints` from the parsed body and threads it to `buildExtractTablePrompt` (the route ignored it before). Old `string[]` clients continue to work via the union.
 
 **Untouched (explicit non-changes):**
 - `citation-table-md.ts` — JSON round-trip is shape-stable.
@@ -762,66 +764,111 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 4: API route widening (`/api/extract-table`)
+## Task 4: API route + request schema widening (`/api/extract-table`)
 
 **Files:**
-- Modify: `app/api/extract-table/route.ts`
+- Modify: `lib/shared/api-schemas.ts` (the wire schema for the request)
+- Modify: `app/api/extract-table/route.ts` (the route handler)
 
-- [ ] **Step 4.1: Read the route + identify the `hints` handling**
+**Important:** The plan originally described widening `body.hints` in the route. The actual field is `columnHints` in `ExtractTableRequestSchema`, and the route never passes it through to `buildExtractTablePrompt` today. So this task does **two things**: (a) widen the wire schema to accept the typed shape, (b) thread `columnHints` through the route to the prompt builder.
 
-Read `app/api/extract-table/route.ts` and find where `body.hints` is read and forwarded to `buildExtractTablePrompt`. The widening is a single block.
+- [ ] **Step 4.1: Widen the wire schema in `lib/shared/api-schemas.ts`**
 
-- [ ] **Step 4.2: Add normalization for the typed-hints wire shape**
+Find the `ExtractTableRequestSchema` (currently around lines 599-617). Replace the `columnHints` field:
 
-Find the spot where `hints` is destructured from the parsed body and replace it with:
-
+Current:
 ```ts
-const rawHints = (body as { hints?: unknown }).hints
-const hints: ExtractColumnHint[] | undefined =
-  rawHints === undefined
-    ? undefined
-    : Array.isArray(rawHints)
-      ? rawHints.map((h) => {
-          if (typeof h === "string") return { label: h }
-          if (
-            h !== null &&
-            typeof h === "object" &&
-            typeof (h as { label?: unknown }).label === "string"
-          ) {
-            const obj = h as { label: string; type?: unknown }
-            const type =
-              obj.type === "text" || obj.type === "number"
-                ? obj.type
-                : undefined
-            return { label: obj.label, ...(type ? { type } : {}) }
-          }
-          throw new Error("hints entries must be strings or { label, type? } objects")
-        })
-      : (() => {
-          throw new Error("hints must be an array or undefined")
-        })()
+/** Optional user-supplied column labels. ... */
+columnHints: z.array(z.string().min(1).max(60)).max(8).optional(),
 ```
 
-Then pass `hints` (typed) into the existing call to `buildExtractTablePrompt`. If the call site passes `hints` as `string[]` today, update it to accept the typed value.
+New:
+```ts
+/** Optional user-supplied column hints. Each entry is either a plain
+ *  string (legacy thin shape, treated as Text) or { label, type? }.
+ *  When non-empty, the prompt builder steers the model to use these
+ *  labels verbatim and (for typed hints) to emit values in the
+ *  declared format. Capped at 8 to match the popover's UX. */
+columnHints: z
+  .array(
+    z.union([
+      z.string().min(1).max(60),
+      z.object({
+        label: z.string().min(1).max(60),
+        type: z.enum(["text", "number"]).optional(),
+      }),
+    ]),
+  )
+  .max(8)
+  .optional(),
+```
+
+- [ ] **Step 4.2: Update the route handler**
+
+In `app/api/extract-table/route.ts`:
+
+**Edit A** — adjust the `@/shared/artifacts/extract-table` import only if needed. The route does **not** reference `ExtractColumnHint` directly (it threads `columnHints` straight to `buildExtractTablePrompt`, which does its own normalization), so do **not** add a `type ExtractColumnHint` import — it would be unused and trip `no-unused-vars`. The existing import block is sufficient:
+
+```ts
+import {
+  ExtractionSchema,
+  buildExtractTablePrompt,
+  extractionToCitationTable,
+  type Extraction,
+} from '@/shared/artifacts/extract-table'
+```
+
+> **As-shipped note:** Threading `columnHints` (the Zod-inferred type
+> `(string | { label; type? })[]`) into `buildExtractTablePrompt`
+> requires its `hints` param to be an **array-of-union**
+> `(ExtractColumnHint | string)[]`, not the union-of-arrays
+> `ExtractColumnHint[] | string[]` that Task 3 first wrote — TS won't
+> assign the former to the latter. Widen the Task 3 signature
+> accordingly (the `.map` normalization already handles a mixed array).
+
+**Edit B** — destructure `columnHints` from `parsed.data` and pass it to `buildExtractTablePrompt`. Replace:
+
+```ts
+const { reportText, sources, model } = parsed.data
+const modelId = model ?? DEFAULT_EXTRACT_TABLE_MODEL
+const numbered = sources.map((s, i) => ({ id: `s${i + 1}`, ...s }))
+const prompt = buildExtractTablePrompt(reportText, numbered)
+```
+
+with:
+
+```ts
+const { reportText, sources, model, columnHints } = parsed.data
+const modelId = model ?? DEFAULT_EXTRACT_TABLE_MODEL
+const numbered = sources.map((s, i) => ({ id: `s${i + 1}`, ...s }))
+// The wire schema accepts both string[] (legacy) and { label, type? }[].
+// buildExtractTablePrompt handles both shapes; passing it through.
+const prompt = buildExtractTablePrompt(reportText, numbered, columnHints)
+```
 
 - [ ] **Step 4.3: Run lint + typecheck**
 
 Run: `bun run check`
-Expected: PASS.
+Expected: PASS. The route gains type-safety for the typed shape; old `string[]` callers continue to work via the union.
 
 - [ ] **Step 4.4: Commit**
 
 ```bash
-git add app/api/extract-table/route.ts
-git commit -m "feat(api): widen /api/extract-table hints to accept typed shape
+git add lib/shared/api-schemas.ts app/api/extract-table/route.ts lib/shared/artifacts/extract-table.ts
+git commit -m "feat(api): widen /api/extract-table columnHints to accept typed shape
 
-The hints field now accepts:
+The columnHints field now accepts:
   - undefined (model decides) — unchanged
-  - string[] (legacy thin shape) — normalized to { label, type: undefined }
+  - string[] (legacy thin shape, treated as Text)
   - { label: string; type?: 'text' | 'number' }[] (new typed shape)
 
-Anything else (non-array, entries without label strings) throws and
-the route returns 400. Old clients posting string[] continue to work.
+The route handler now threads columnHints through to
+buildExtractTablePrompt (it didn't before — Task 3 widened the
+prompt signature but Task 4 is the call site that uses it).
+
+Old clients posting string[] continue to work unchanged via the
+Zod union. The wire schema change is the source of truth for
+both back-compat and new-shape clients.
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -833,8 +880,19 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 **Files:**
 - Modify: `components/panels/citation-table.tsx`
 - Modify: `components/panels/extract-table-popover.tsx`
+- Modify: `components/panels/chat-message.tsx` — **(as-shipped deviation; the original plan omitted this file.)** `ExtractTablePopover`'s `onRun` prop and `chat-message`'s `handleExtractTable` are both typed `(hints?: string[])` today. Once the popover emits typed chips, both widen to `ExtractColumnHint[]` (the build fails otherwise). `handleExtractTable`'s body already flows `columnHints` to `apiClient.artifacts.extractTable`, whose request type accepts the widened union, so no further call-site change is needed.
 
 This is the substantive UI task. After committing, dispatch the combined spec+quality review subagent (Task 5.6) before moving to Task 6.
+
+> **As-shipped deviation — read-only alignment.** Step 5.4's reference
+> snippet applied `text-right` to the `<td>` unconditionally, but the
+> spec's hard constraint is "do NOT touch the read-only path." The
+> shipped implementation honors the constraint literally: only the
+> **editable** cell branch right-aligns Number columns; the read-only
+> branch renders byte-identical to before. Consequence: read-only
+> Number columns are not right-aligned. Deferred to slice 2 (which
+> already touches the read-only renderer for Link/Date and can
+> right-align there).
 
 - [ ] **Step 5.1: Add imports to `citation-table.tsx`**
 
@@ -1137,7 +1195,7 @@ Manual browser pass checklist (record results in the PR description's Test Plan)
 - [ ] **Step 5.7: Commit the renderer changes**
 
 ```bash
-git add components/panels/citation-table.tsx components/panels/extract-table-popover.tsx
+git add components/panels/citation-table.tsx components/panels/extract-table-popover.tsx components/panels/chat-message.tsx
 git commit -m "feat(citation-table): renderer + edit affordances for typed columns
 
 Three UI additions (editable mode only; read-only unchanged):
