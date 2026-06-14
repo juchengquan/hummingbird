@@ -47,7 +47,10 @@ import {
   type SummarizeRequestInput,
   type EmbedRequestInput,
   type EmbedResponse,
+  type ExtractTableRequestInput,
 } from "@/shared/api-schemas"
+
+import { CitationTableSchema, type CitationTable } from "@/shared/artifacts/citation-table"
 
 import { narrowToRemoteBody } from "@/client/api/chat-marshalling"
 
@@ -184,6 +187,7 @@ export const apiUrls = {
   mcpServer: () => url("/api/mcp/server"),
   urlFetch: () => url("/api/url/fetch"),
   imagesRefreshUrl: () => url("/api/images/refresh-url"),
+  extractTable: () => url("/api/extract-table"),
 }
 
 /**
@@ -951,6 +955,39 @@ async function urlFetchBookmark(
   return { ok: true, status: res.status, bookmark: data.bookmark }
 }
 
+// --- /api/extract-table -----------------------------------------------------
+
+/**
+ * Extract a structured citation table from a research report and its
+ * source list. Mirrors the `summarizePost` dispatch pattern: tries the
+ * remote backend first (when configured), falls back to the in-Next
+ * route. Returns `null` on any failure — callers treat a missing table
+ * as a degraded-but-safe outcome.
+ */
+async function extractTable(
+  body: ExtractTableRequestInput,
+  options?: { signal?: AbortSignal } & DispatchOption,
+): Promise<CitationTable | null> {
+  try {
+    const remote = await resolveDispatch(options)
+    const target = remote
+      ? `${remote.baseUrl}/v1/extract-table`
+      : apiUrls.extractTable()
+    const headers: Record<string, string> = { "Content-Type": "application/json" }
+    if (remote) headers.Authorization = `Bearer ${remote.authToken}`
+    const res = await fetch(target, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: options?.signal,
+    })
+    if (!res.ok) return null
+    return CitationTableSchema.parse(await res.json())
+  } catch {
+    return null
+  }
+}
+
 // --- Public surface ---------------------------------------------------------
 
 export const apiClient = {
@@ -986,4 +1023,5 @@ export const apiClient = {
   },
   mcp: { proxy: mcpProxyCall, upsertCloudServer: mcpUpsertCloudServer },
   url: { fetch: urlFetchBookmark },
+  artifacts: { extractTable },
 }

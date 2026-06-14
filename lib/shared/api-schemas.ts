@@ -592,6 +592,26 @@ export const EmbedResponseSchema = z.object({
     .optional(),
 })
 
+// --- /api/extract-table -----------------------------------------------------
+// Synchronous JSON POST: given a research report and its source list,
+// returns a `CitationTable` artifact (see lib/shared/artifacts/citation-table.ts).
+
+export const ExtractTableRequestSchema = z.object({
+  reportText: z.string().min(1).max(100_000),
+  sources: z
+    .array(
+      z.object({
+        title: z.string().max(300),
+        url: z.string().max(2000),
+        snippet: z.string().max(2000),
+      }),
+    )
+    .min(1)
+    .max(100),
+  model: z.string().max(100).optional(),
+})
+export type ExtractTableRequestInput = z.infer<typeof ExtractTableRequestSchema>
+
 // Non-streaming routes return `{ error, code?, message? }` with a non-2xx
 // status on failure. Frontend categorisation lives in lib/api-errors.ts.
 
