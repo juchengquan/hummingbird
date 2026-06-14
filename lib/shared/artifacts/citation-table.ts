@@ -43,6 +43,11 @@ export type CitationTable = z.infer<typeof CitationTableSchema>
 export type CitationTableCell = z.infer<typeof CellSchema>
 export type Citation = z.infer<typeof CitationSchema>
 
+/** View-state for a sorted column: which column and which direction.
+ *  Lives here so the table View shell and its Header subcomponent share
+ *  one shape instead of re-spelling it inline. */
+export type CitationTableSort = { columnId: string; dir: "asc" | "desc" }
+
 /** Parse an artifact's `content` string into a CitationTable, or null
  *  when it isn't valid citation-table JSON (bad JSON or shape). The
  *  Artifacts-tab dispatch falls back to the plain `<pre>` view on null.
@@ -222,6 +227,22 @@ export function removeCitation(
   return { ...data, rows }
 }
 
+/** Return a copy of `data` with the given column's `type` set. Columns
+ *  whose id doesn't match are untouched. Mirrors the inline update the
+ *  View used to do for the header type pill. */
+export function setColumnType(
+  data: CitationTable,
+  columnId: string,
+  type: ColumnType,
+): CitationTable {
+  return {
+    ...data,
+    columns: data.columns.map((c) =>
+      c.id === columnId ? { ...c, type } : c,
+    ),
+  }
+}
+
 /** Return a NEW CitationTable with the column at `fromIndex` moved to
  *  `toIndex` (spliced out, then spliced back in at `toIndex`), shifting
  *  the others. Out-of-range `fromIndex`/`toIndex` or
@@ -240,4 +261,32 @@ export function moveColumn(
   const [moved] = cols.splice(fromIndex, 1)
   cols.splice(toIndex, 0, moved)
   return { ...data, columns: cols }
+}
+
+/** Slugify a column label into a column id. Lowercases, collapses
+ *  non-alphanumerics to single dashes, trims leading/trailing dashes,
+ *  truncates to 60 chars. Empty / all-punctuation input returns
+ *  "column" so the caller always gets a valid id. */
+export function slugifyColumnId(label: string): string {
+  return (
+    label
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || "column"
+  )
+}
+
+/** Given an existing `CitationTable` and a desired base column id,
+ *  return the base if unused, else append `-2`, `-3`, … until unused.
+ *  Pathological fallback (all 1000 numeric suffixes taken) appends a
+ *  timestamp so we never collide. */
+export function uniqueColumnId(data: CitationTable, base: string): string {
+  if (!data.columns.some((c) => c.id === base)) return base
+  for (let i = 2; i < 1000; i++) {
+    const candidate = `${base}-${i}`
+    if (!data.columns.some((c) => c.id === candidate)) return candidate
+  }
+  return `${base}-${Date.now()}`
 }
