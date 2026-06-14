@@ -27,6 +27,8 @@ import {
   PathApi,
 } from 'platejs';
 
+import { CITATION_TABLE_KEY } from '@/shared/artifacts/citation-table-md';
+
 const ACTION_THREE_COLUMNS = 'action_three_columns';
 
 const insertList = (editor: PlateEditor, type: string) => {
@@ -122,6 +124,28 @@ export const insertBlock = (
         editor.tf.removeNodes({ previousEmptyBlock: true });
       });
     }
+  });
+};
+
+export const insertCitationTable = (
+  editor: PlateEditor,
+  artifactId: string
+) => {
+  editor.tf.withoutNormalizing(() => {
+    const block = editor.api.block();
+
+    if (!block) return;
+
+    const [, path] = block;
+
+    editor.tf.insertNodes(
+      { type: CITATION_TABLE_KEY, artifactId, children: [{ text: '' }] },
+      { at: PathApi.next(path), select: true }
+    );
+
+    editor.getApi(SuggestionPlugin).suggestion.withoutSuggestions(() => {
+      editor.tf.removeNodes({ previousEmptyBlock: true });
+    });
   });
 };
 
