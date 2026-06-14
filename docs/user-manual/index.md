@@ -1,6 +1,6 @@
 # Hummingbird - User Manual
 
-> Generated TOC. Last inventory: 2026-06-13. Run `bun run docs:user-manual:build` to refresh.
+> Generated TOC. Last inventory: 2026-06-14. Run `bun run docs:user-manual:build` to refresh.
 
 ## Part 1 - Using Hummingbird
 
@@ -28,6 +28,7 @@
 | Chat Header | `components/panels/chat-header.tsx` | _unmapped_ |
 | Chat Message | `components/panels/chat-message.tsx` | _unmapped_ |
 | Chat Resources Panel | `components/panels/chat-resources-panel.tsx` | _unmapped_ |
+| Citation Table View | `components/panels/citation-table.tsx` | _unmapped_ |
 | Context Meter | `components/panels/context-meter.tsx` | _unmapped_ |
 | Conversation Files Section | `components/panels/conversation-files-section.tsx` | _unmapped_ |
 | Editor Panel | `components/panels/editor.tsx` | [03-editor.md](03-editor.md) |
@@ -173,6 +174,7 @@
 - `panel:chat-header` (`components/panels/chat-header.tsx`) - Chat Header
 - `panel:chat-message` (`components/panels/chat-message.tsx`) - Chat Message
 - `panel:chat-resources-panel` (`components/panels/chat-resources-panel.tsx`) - Chat Resources Panel
+- `panel:citation-table` (`components/panels/citation-table.tsx`) - Citation Table View
 - `panel:context-meter` (`components/panels/context-meter.tsx`) - Context Meter
 - `panel:conversation-files-section` (`components/panels/conversation-files-section.tsx`) - Conversation Files Section
 - `panel:empty-chat-welcome` (`components/panels/empty-chat-welcome.tsx`) - Empty Chat Welcome

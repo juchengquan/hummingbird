@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-06-13T14:58:14Z",
+  "generatedAt": "2026-06-14T01:14:57Z",
   "panels": [
     {
       "id": "agents-dialog",
@@ -36,6 +36,11 @@
       "id": "chat-resources-panel",
       "title": "Chat Resources Panel",
       "sourceFile": "components/panels/chat-resources-panel.tsx"
+    },
+    {
+      "id": "citation-table",
+      "title": "Citation Table View",
+      "sourceFile": "components/panels/citation-table.tsx"
     },
     {
       "id": "context-meter",
