@@ -66,11 +66,17 @@ export function extractionToCitationTable(
   return { columns: extraction.columns, rows, sources: safeSources }
 }
 
-/** Pure prompt: the report body + a numbered sources list + extraction
- *  instructions. The model cites cells by the source NUMBER shown here. */
+/** Pure prompt: the report body + a numbered sources list + optional
+ *  column hints. The model cites cells by the source NUMBER shown here.
+ *  When `hints` is non-empty, the prompt steers the model to use those
+ *  column labels verbatim (and leaves cells empty rather than inventing
+ *  a different column when the report doesn't support one). When
+ *  `hints` is `undefined` or empty, the model is free to choose 3–6
+ *  columns — identical to the pre-hints behavior (regression guard). */
 export function buildExtractTablePrompt(
   reportText: string,
   sources: NumberedSource[],
+  hints?: string[],
 ): string {
   const sourceLines = sources
     .map(
@@ -78,6 +84,14 @@ export function buildExtractTablePrompt(
         `[${i + 1}] ${s.title}${s.url ? ` — ${s.url}` : ""}${s.snippet ? `\n    ${s.snippet}` : ""}`,
     )
     .join("\n")
+  const hintBlock =
+    hints && hints.length > 0
+      ? [
+          "",
+          `Required columns (use these labels exactly): ${hints.map((h) => `\`${h}\``).join(", ")}.`,
+          "If the report doesn't support one of these, leave that cell empty (do NOT invent a different column).",
+        ].join("\n")
+      : ""
   return [
     "You extract a structured comparison table from a research report.",
     "",
@@ -87,10 +101,17 @@ export function buildExtractTablePrompt(
     "SOURCES (cite by number):",
     sourceLines,
     "",
-    "Build a table capturing the key comparable attributes across the entities the report discusses:",
-    "- Choose 3–6 columns (the comparable attributes). Each column has a short slug `id` and a human `label`.",
+    hints && hints.length > 0
+      ? `Build a table with EXACTLY these columns (one per hint, in the order given):`
+      : "Build a table capturing the key comparable attributes across the entities the report discusses:",
+    hints && hints.length > 0
+      ? ""
+      : "- Choose 3–6 columns (the comparable attributes). Each column has a short slug `id` and a human `label`.",
     "- One row per entity/item the report compares. Each row is a list of `cells`; each cell has the column's `columnId`, the extracted `value`, and `citations`.",
     "- Back each value with `citations` referencing the SOURCE NUMBER above plus the exact supporting quote. Only cite what the report/sources actually state; leave `citations` empty when a value isn't directly supported.",
     "- Keep values concise.",
-  ].join("\n")
+    hintBlock,
+  ]
+    .filter((s) => s !== "")
+    .join("\n")
 }
