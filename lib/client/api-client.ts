@@ -172,9 +172,10 @@ async function dispatchedFetch<LocalBody, RemoteBody, T>(
       if (options.extraHeaders) {
         Object.assign(headers, options.extraHeaders)
       }
-      const body = options.bodyForRemote
-        ? options.bodyForRemote(options.bodyForLocal)
-        : options.bodyForLocal
+      const body =
+        remote && options.bodyForRemote
+          ? options.bodyForRemote(options.bodyForLocal)
+          : options.bodyForLocal
       const res = await fetch(target, {
         method: "POST",
         headers,
@@ -850,68 +851,36 @@ async function createShare(
   }
 }
 
-/**
- * Re-sign an expired generated-image URL from its `storagePath`. Returns
- * the fresh URL, or `null` if Supabase isn't configured / the caller
- * isn't signed in / the object went missing. The caller is responsible
- * for updating wherever the old URL was held (typically
- * `Message.generatedImages[i].url`).
- *
- * Concurrent calls for the same `storagePath` are deduped via an
- * in-flight cache so a 4-up grid with all four URLs expired only
- * fires one network round-trip per distinct path.
- */
-const refreshUrlInflight = new Map<string, Promise<string | null>>()
+/** In-flight dedupe cache for `refreshGeneratedImageUrl`. Keys on
+ *  `storagePath` (in-Next) or `${remote.baseUrl}::${storagePath}`
+ *  (remote) so a backend switch mid-session forces a fresh request.
+ *  Module-scoped because the dedupe contract is "same logical URL
+ *  re-sign in flight, share the promise." */
+const refreshUrlInflight = new Map<
+  string,
+  Promise<DispatchedFetchResult<{ url: string }>>
+>()
 
 async function refreshGeneratedImageUrl(
   storagePath: string,
-  options?: DispatchOption
+  options?: DispatchOption,
 ): Promise<string | null> {
-  const remote = await resolveDispatch(options)
-  // Cache key includes the backend URL so a backend switch mid-session
-  // doesn't return a stale signed URL from the wrong service. The hot
-  // path (no remote, in-Next) uses just the storage path.
-  const cacheKey = remote
-    ? `${remote.baseUrl}::${storagePath}`
-    : storagePath
-  const cached = refreshUrlInflight.get(cacheKey)
-  if (cached) return cached
-  const promise = (async () => {
-    try {
-      const url = remote
-        ? `${remote.baseUrl}/v1/images/refresh-url`
-        : apiUrls.imagesRefreshUrl()
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-      }
-      if (remote) {
-        headers.Authorization = `Bearer ${remote.authToken}`
-      }
-      // Wire shape: agent-py + agent-ts use snake_case
-      // (`storage_path`); the in-Next route uses camelCase
-      // (`storagePath`) per `RefreshImageUrlRequestSchema`. Pick the
-      // right one per target.
-      const body = remote
-        ? { storage_path: storagePath }
-        : { storagePath }
-      const res = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-      })
-      if (!res.ok) return null
-      const parsed = RefreshImageUrlResponseSchema.safeParse(await res.json())
-      return parsed.success ? parsed.data.url : null
-    } catch {
-      return null
-    }
-  })()
-  refreshUrlInflight.set(cacheKey, promise)
-  try {
-    return await promise
-  } finally {
-    refreshUrlInflight.delete(cacheKey)
-  }
+  const result = await dispatchedFetch<
+    { storagePath: string },
+    { storage_path: string },
+    { url: string }
+  >({
+    path: "/v1/images/refresh-url",
+    localUrl: apiUrls.imagesRefreshUrl(),
+    bodyForLocal: { storagePath },
+    bodyForRemote: (b) => ({ storage_path: b.storagePath }),
+    schema: RefreshImageUrlResponseSchema,
+    dispatch: options,
+    inflight: refreshUrlInflight,
+    dedupeKey: await backendCacheKey(options, storagePath),
+  })
+  if (!result.ok) return null
+  return result.data.url
 }
 
 async function revokeShare(token: string): Promise<{ ok: boolean; status: number; error?: string }> {
