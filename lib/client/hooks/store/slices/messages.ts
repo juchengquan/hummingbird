@@ -328,54 +328,40 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
       })
     ),
   resolveMessageUiPart: (messageId, partId, answer) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (!c.messages.some((m) => m.id === messageId)) return c
-        return {
-          ...c,
-          messages: c.messages.map((m) => {
-            if (m.id !== messageId) return m
-            const existing = m.uiParts ?? []
-            if (existing.length === 0) return m
-            let touched = false
-            const next = existing.map((p) => {
-              if (p.id !== partId) return p
-              // Idempotent — already answered parts stay frozen.
-              if (p.answeredAt) return p
-              touched = true
-              return {
-                ...p,
-                answeredAt: new Date().toISOString(),
-                answer,
-              }
-            })
-            if (!touched) return m
-            return { ...m, uiParts: next }
-          }),
-        }
-      }),
-    })),
+    set((state) =>
+      updateMessage(state, messageId, (m) => {
+        const existing = m.uiParts ?? []
+        if (existing.length === 0) return m
+        let touched = false
+        const next = existing.map((p) => {
+          if (p.id !== partId) return p
+          // Idempotent — already answered parts stay frozen.
+          if (p.answeredAt) return p
+          touched = true
+          return {
+            ...p,
+            answeredAt: new Date().toISOString(),
+            answer,
+          }
+        })
+        if (!touched) return m
+        return { ...m, uiParts: next }
+      })
+    ),
   updateMessageGeneratedImageUrl: (messageId, imageId, url) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (!c.messages.some((m) => m.id === messageId)) return c
-        return {
-          ...c,
-          messages: c.messages.map((m) => {
-            if (m.id !== messageId) return m
-            const images = m.generatedImages
-            if (!images) return m
-            let changed = false
-            const next = images.map((img) => {
-              if (img.id !== imageId || img.url === url) return img
-              changed = true
-              return { ...img, url }
-            })
-            return changed ? { ...m, generatedImages: next } : m
-          }),
-        }
-      }),
-    })),
+    set((state) =>
+      updateMessage(state, messageId, (m) => {
+        const images = m.generatedImages
+        if (!images) return m
+        let changed = false
+        const next = images.map((img) => {
+          if (img.id !== imageId || img.url === url) return img
+          changed = true
+          return { ...img, url }
+        })
+        return changed ? { ...m, generatedImages: next } : m
+      })
+    ),
   setMessageError: (messageId, error) =>
     set((state) => updateMessage(state, messageId, (m) => ({ ...m, error }))),
   clearMessageError: (messageId) =>
