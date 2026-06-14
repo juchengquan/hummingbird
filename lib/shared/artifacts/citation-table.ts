@@ -1,7 +1,7 @@
 import { z } from "zod"
 
 import type { ColumnType } from "./column-type"
-import { compareForSort } from "./column-type"
+import { ColumnTypeSchema, compareForSort } from "./column-type"
 
 export const CitationSchema = z.object({
   sourceId: z.string().min(1),
@@ -28,7 +28,7 @@ export const CitationTableColumnSchema = z.object({
   /** Slice 1: "text" | "number". Absent = "text". Slice 2 extends
    *  the union with "link" | "date". Existing un-typed blobs
    *  validate unchanged. */
-  type: z.enum(["text", "number"]).optional(),
+  type: ColumnTypeSchema.optional(),
 })
 
 export const CitationTableSchema = z.object({
