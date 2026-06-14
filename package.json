@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
+    "test": "bash scripts/run-tests.sh",
     "check": "bun run typecheck && bun run lint && bun run test",
     "check:ci": "bun run typecheck && bun run lint && bun run test && bun run build && bun run audit:bundle",
     "audit:bundle": "bash scripts/audit-bundle.sh",
