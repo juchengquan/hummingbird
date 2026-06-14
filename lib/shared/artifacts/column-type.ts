@@ -47,7 +47,12 @@ export function validateCell(
 
 /** Type-aware comparator for sortRowOrder. NaN / empty sort last in
  *  BOTH directions (matches today's "empty cells sort last" rule).
- *  Stable for equal keys. "text" delegates to localeCompare. */
+ *  Stable for equal keys. "text" preserves the historical
+ *  numeric-sniff behavior (try numeric first, fall back to
+ *  localeCompare) — this is the behavior un-typed columns have
+ *  always had, so opting a column OUT of the sniff requires an
+ *  explicit `type: "number"`. "number" is strict numeric (NaN /
+ *  bad input sorts last). */
 export function compareForSort(
   a: CitationTableCell | undefined,
   b: CitationTableCell | undefined,
@@ -68,6 +73,14 @@ export function compareForSort(
     if (aBad && bBad) return 0
     if (aBad) return 1
     if (bBad) return -1
+    return na === nb ? 0 : (na < nb ? -1 : 1) * sign
+  }
+  // type === "text": preserve the historical numeric-sniff behavior.
+  // Both finite → numeric. Otherwise localeCompare. Stable for equal
+  // keys via the outer sort.
+  const na = Number.parseFloat(va)
+  const nb = Number.parseFloat(vb)
+  if (Number.isFinite(na) && Number.isFinite(nb)) {
     return na === nb ? 0 : (na < nb ? -1 : 1) * sign
   }
   return va.localeCompare(vb) * sign

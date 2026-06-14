@@ -102,9 +102,25 @@ describe("compareForSort", () => {
     expect(compareForSort(cell("5"), cell("5"), "number", "asc")).toBe(0)
     expect(compareForSort(cell("abc"), cell("xyz"), "number", "asc")).toBe(0)
   })
-  test("'text' delegates to localeCompare (matches today)", () => {
+  test("'text' uses localeCompare for non-numeric strings (Banana vs apple)", () => {
     expect(compareForSort(cell("Banana"), cell("apple"), "text", "asc")).toBeGreaterThan(0)
     expect(compareForSort(cell("Banana"), cell("apple"), "text", "desc")).toBeLessThan(0)
+  })
+  test("'text' preserves the historical numeric sniff (200 vs 1000 numerically)", () => {
+    // This is the deliberate behavior preservation: un-typed columns
+    // (default text) keep doing what they always did — try numeric
+    // first, fall back to localeCompare. Opting OUT requires
+    // explicit type='number', at which point the strict comparator
+    // takes over.
+    expect(compareForSort(cell("200"), cell("1000"), "text", "asc")).toBeLessThan(0)
+    expect(compareForSort(cell("200"), cell("1000"), "text", "desc")).toBeGreaterThan(0)
+  })
+  test("'text' numeric sniff ignores bad input (one side unparseable → localeCompare)", () => {
+    // When either side doesn't parse as a finite number, fall through
+    // to localeCompare. '200' < 'apple' lexically (digits sort before
+    // letters), so the asc case expects '200' first.
+    expect(compareForSort(cell("apple"), cell("200"), "text", "asc")).toBeGreaterThan(0)
+    expect(compareForSort(cell("apple"), cell("200"), "text", "desc")).toBeLessThan(0)
   })
   test("asc vs desc: empty cells sort last in both", () => {
     expect(compareForSort(cell(""), cell(""), "number", "asc")).toBe(0)
