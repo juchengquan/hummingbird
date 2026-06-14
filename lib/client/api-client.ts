@@ -733,20 +733,20 @@ async function extract(
  */
 async function embedFile(
   body: EmbedRequestInput,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal },
 ): Promise<EmbedResponse | null> {
-  try {
-    const res = await fetch(apiUrls.embed(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: options?.signal,
-    })
-    if (!res.ok) return null
-    return EmbedResponseSchema.parse(await res.json())
-  } catch {
-    return null
-  }
+  const result = await dispatchedFetch<
+    EmbedRequestInput,
+    EmbedRequestInput,
+    EmbedResponse
+  >({
+    path: "/v1/embed",
+    localUrl: apiUrls.embed(),
+    bodyForLocal: body,
+    schema: EmbedResponseSchema,
+    signal: options?.signal,
+  })
+  return result.ok ? result.data : null
 }
 
 // --- /api/summarize ---------------------------------------------------------
