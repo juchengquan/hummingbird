@@ -12,6 +12,7 @@ import "client-only"
 
 import { useState } from "react"
 
+import { CitationCellEditor } from "@/components/panels/citation-cell-editor"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -27,15 +28,19 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import {
+  type Citation,
   type CitationTable,
   type CitationTableCell,
+  addCitation,
   addColumn,
   addRow,
+  removeCitation,
   removeColumn,
   removeRow,
   setCellValue,
   sortRowOrder,
   sourceIndex,
+  updateCitation,
 } from "@/shared/artifacts/citation-table"
 
 function CitationChips({ data, cell }: { data: CitationTable; cell: CitationTableCell }) {
@@ -82,11 +87,17 @@ function CellContent({
   cell,
   editable,
   onStartEdit,
+  onAddCitation,
+  onUpdateCitation,
+  onRemoveCitation,
 }: {
   data: CitationTable
   cell?: CitationTableCell
   editable: boolean
   onStartEdit: () => void
+  onAddCitation: (citation: Citation) => void
+  onUpdateCitation: (citIndex: number, patch: Partial<Citation>) => void
+  onRemoveCitation: (citIndex: number) => void
 }) {
   const value = cell?.value ?? ""
   const valueEl = editable ? (
@@ -101,7 +112,17 @@ function CellContent({
   return (
     <span>
       {valueEl}
-      {cell ? <CitationChips data={data} cell={cell} /> : null}
+      {editable ? (
+        <CitationCellEditor
+          sources={data.sources}
+          citations={cell?.citations ?? []}
+          onAdd={onAddCitation}
+          onUpdate={onUpdateCitation}
+          onRemove={onRemoveCitation}
+        />
+      ) : cell ? (
+        <CitationChips data={data} cell={cell} />
+      ) : null}
     </span>
   )
 }
@@ -274,6 +295,11 @@ export function CitationTableView({
                         cell={cell}
                         editable={editable}
                         onStartEdit={() => startEdit(rowIndex, col.id, cell?.value ?? "")}
+                        onAddCitation={(c) => onChange?.(addCitation(data, rowIndex, col.id, c))}
+                        onUpdateCitation={(i, patch) =>
+                          onChange?.(updateCitation(data, rowIndex, col.id, i, patch))
+                        }
+                        onRemoveCitation={(i) => onChange?.(removeCitation(data, rowIndex, col.id, i))}
                       />
                     )}
                   </td>
