@@ -87,13 +87,15 @@ export function extractionToCitationTable(
  *  a different column when the report doesn't support one). When
  *  `hints` is `undefined` or empty, the model is free to choose 3–6
  *  columns — identical to the pre-hints behavior (regression guard).
- *  `hints` accepts either `string[]` (back-compat: treated as Text) or
- *  `ExtractColumnHint[]` (with optional `type`). When at least one hint
- *  is typed as `number`, per-type value-format instructions are added. */
+ *  `hints` accepts a mixed array of plain `string` entries (back-compat:
+ *  treated as Text) and `ExtractColumnHint` objects (with optional
+ *  `type`) — matching the Zod union in `ExtractTableRequestSchema`. When
+ *  at least one hint is typed as `number`, per-type value-format
+ *  instructions are added. */
 export function buildExtractTablePrompt(
   reportText: string,
   sources: NumberedSource[],
-  hints?: ExtractColumnHint[] | string[],
+  hints?: (ExtractColumnHint | string)[],
 ): string {
   // Back-compat: normalize string[] to typed hints (treated as Text).
   const typedHints: ExtractColumnHint[] | undefined =

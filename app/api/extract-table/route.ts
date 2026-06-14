@@ -8,6 +8,7 @@ import {
   ExtractionSchema,
   buildExtractTablePrompt,
   extractionToCitationTable,
+  type ExtractColumnHint,
   type Extraction,
 } from '@/shared/artifacts/extract-table'
 import { ExtractTableRequestSchema } from '@/shared/api-schemas'
@@ -51,10 +52,12 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const { reportText, sources, model } = parsed.data
+  const { reportText, sources, model, columnHints } = parsed.data
   const modelId = model ?? DEFAULT_EXTRACT_TABLE_MODEL
   const numbered = sources.map((s, i) => ({ id: `s${i + 1}`, ...s }))
-  const prompt = buildExtractTablePrompt(reportText, numbered)
+  // The wire schema accepts both string[] (legacy) and { label, type? }[].
+  // buildExtractTablePrompt handles both shapes; passing it through.
+  const prompt = buildExtractTablePrompt(reportText, numbered, columnHints)
 
   try {
     let extraction: Extraction | null = null
