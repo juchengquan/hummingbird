@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test"
 
-import { parseCitationTable, setCellValue, sortRowOrder, sourceIndex } from "./citation-table"
+import {
+  addColumn,
+  addRow,
+  parseCitationTable,
+  removeColumn,
+  removeRow,
+  setCellValue,
+  sortRowOrder,
+  sourceIndex,
+} from "./citation-table"
 
 const validObj = {
   columns: [
@@ -128,5 +137,85 @@ describe("setCellValue", () => {
   test("out-of-range rowIndex returns the input unchanged", () => {
     const data = tbl([{ name: { value: "a" } }])
     expect(setCellValue(data as never, 9, "name", "x")).toBe(data)
+  })
+})
+
+describe("addRow", () => {
+  test("appends a new empty row and returns a new object (no mutation)", () => {
+    const data = tbl([{ name: { value: "a" } }, { name: { value: "b" } }])
+    const before = JSON.stringify(data)
+    const out = addRow(data as never)
+    expect(out).not.toBe(data)
+    expect(out.rows.length).toBe(3)
+    expect(out.rows[2]).toEqual({})
+    expect(JSON.stringify(data)).toBe(before)
+  })
+  test("returns the input unchanged when at the row cap (200)", () => {
+    const data = {
+      columns: [{ id: "x", label: "X" }],
+      rows: Array.from({ length: 200 }, () => ({})),
+      sources: [],
+    }
+    expect(addRow(data as never)).toBe(data)
+  })
+})
+
+describe("addColumn", () => {
+  test("appends a new column with the given id and label, leaving existing cells untouched", () => {
+    const data = tbl([{ name: { value: "a", citations: [{ sourceId: "s1", quote: "q" }] } }])
+    const before = JSON.stringify(data)
+    const out = addColumn(data as never, "Color", "color")
+    expect(out).not.toBe(data)
+    expect(out.columns[2]).toEqual({ id: "color", label: "Color" })
+    expect(out.rows[0].name.value).toBe("a")
+    expect(out.rows[0].name.citations).toEqual([{ sourceId: "s1", quote: "q" }])
+    expect(out.rows[0].color).toBeUndefined()
+    expect(JSON.stringify(data)).toBe(before)
+  })
+  test("returns the input unchanged on duplicate columnId (collision)", () => {
+    const data = tbl([{ name: { value: "a" } }])
+    expect(addColumn(data as never, "Name 2", "name")).toBe(data)
+  })
+  test("returns the input unchanged when at the column cap (12)", () => {
+    const data = {
+      columns: Array.from({ length: 12 }, (_, i) => ({ id: `c${i}`, label: `C${i}` })),
+      rows: [],
+      sources: [],
+    }
+    expect(addColumn(data as never, "X", "x")).toBe(data)
+  })
+})
+
+describe("removeRow", () => {
+  test("removes the target row and returns a new object (no mutation)", () => {
+    const data = tbl([{ name: { value: "a" } }, { name: { value: "b" } }, { name: { value: "c" } }])
+    const before = JSON.stringify(data)
+    const out = removeRow(data as never, 1)
+    expect(out).not.toBe(data)
+    expect(out.rows.length).toBe(2)
+    expect(out.rows.map((r) => r.name.value)).toEqual(["a", "c"])
+    expect(JSON.stringify(data)).toBe(before)
+  })
+  test("returns the input unchanged for an out-of-range rowIndex", () => {
+    const data = tbl([{ name: { value: "a" } }])
+    expect(removeRow(data as never, 9)).toBe(data)
+    expect(removeRow(data as never, -1)).toBe(data)
+  })
+})
+
+describe("removeColumn", () => {
+  test("removes the target column and every cell tagged with that column id", () => {
+    const data = tbl([
+      { name: { value: "a" }, n: { value: "1" } },
+      { name: { value: "b" }, n: { value: "2" } },
+    ])
+    const out = removeColumn(data as never, "n")
+    expect(out.columns).toEqual([{ id: "name", label: "Name" }])
+    expect(out.rows[0].n).toBeUndefined()
+    expect(out.rows[0].name.value).toBe("a")
+  })
+  test("returns the input unchanged for an unknown columnId", () => {
+    const data = tbl([{ name: { value: "a" } }])
+    expect(removeColumn(data as never, "ghost")).toBe(data)
   })
 })

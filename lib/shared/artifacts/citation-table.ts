@@ -105,3 +105,54 @@ export function setCellValue(
   })
   return { ...data, rows }
 }
+
+/** Return a NEW CitationTable with one empty row appended. The new
+ *  row has no column entries at all — the renderer tolerates missing
+ *  columnIds by rendering an em-dash. Capped at 200 rows (matches
+ *  the schema); returns `data` unchanged when at cap. Pure; never
+ *  mutates the input. */
+export function addRow(data: CitationTable): CitationTable {
+  if (data.rows.length >= 200) return data
+  return { ...data, rows: [...data.rows, {}] }
+}
+
+/** Return a NEW CitationTable with one new column appended. `label` is
+ *  the human label (≤120 chars); `columnId` is the slug (≤60 chars).
+ *  The `columnId` must not collide with an existing column id —
+ *  returns `data` unchanged on collision. Capped at 12 columns
+ *  (matches the schema); returns `data` unchanged when at cap. Pure;
+ *  never mutates the input. */
+export function addColumn(
+  data: CitationTable,
+  label: string,
+  columnId: string,
+): CitationTable {
+  if (data.columns.length >= 12) return data
+  if (data.columns.some((c) => c.id === columnId)) return data
+  return { ...data, columns: [...data.columns, { id: columnId, label }] }
+}
+
+/** Return a NEW CitationTable with `rows[rowIndex]` removed. Out-of-range
+ *  `rowIndex` (negative or `>= data.rows.length`) returns `data`
+ *  unchanged. Pure; never mutates the input. */
+export function removeRow(data: CitationTable, rowIndex: number): CitationTable {
+  if (rowIndex < 0 || rowIndex >= data.rows.length) return data
+  return { ...data, rows: data.rows.filter((_, i) => i !== rowIndex) }
+}
+
+/** Return a NEW CitationTable with the column at `columnId` and every
+ *  cell tagged with that column id removed. Unknown `columnId`
+ *  returns `data` unchanged. Pure; never mutates the input. */
+export function removeColumn(data: CitationTable, columnId: string): CitationTable {
+  if (!data.columns.some((c) => c.id === columnId)) return data
+  return {
+    ...data,
+    columns: data.columns.filter((c) => c.id !== columnId),
+    rows: data.rows.map((row) => {
+      if (!(columnId in row)) return row
+      const { [columnId]: _removed, ...rest } = row
+      void _removed
+      return rest
+    }),
+  }
+}
