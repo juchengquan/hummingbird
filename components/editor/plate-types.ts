@@ -22,6 +22,8 @@ import type {
   TTextAlignProps,
 } from 'platejs';
 
+import { CITATION_TABLE_KEY } from '@/shared/artifacts/citation-table-md';
+
 export interface MyBlockElement extends TElement, TListProps {
   id?: string;
 }
@@ -81,6 +83,12 @@ export interface MyH6Element extends MyTextBlockElement {
 export interface MyHrElement extends MyBlockElement {
   children: [EmptyText];
   type: typeof KEYS.hr;
+}
+
+export interface MyCitationTableElement extends MyBlockElement {
+  artifactId: string;
+  children: [EmptyText];
+  type: typeof CITATION_TABLE_KEY;
 }
 
 export interface MyImageElement
@@ -147,6 +155,7 @@ export interface RichText extends TBasicMarks, TCommentText, TFontMarks, TText {
 
 export type MyValue = (
   | MyBlockquoteElement
+  | MyCitationTableElement
   | MyCodeBlockElement
   | MyH1Element
   | MyH2Element
