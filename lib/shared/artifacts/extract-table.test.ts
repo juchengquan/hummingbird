@@ -92,7 +92,7 @@ describe("extractionToCitationTable", () => {
   test("tolerates a column missing the type field", () => {
     const out = extractionToCitationTable(
       {
-        columns: [{ id: "drug", label: "Drug" } as never],
+        columns: [{ id: "drug", label: "Drug" }],
         rows: [],
       },
       sources,
