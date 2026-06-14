@@ -1101,24 +1101,19 @@ async function extractTable(
   body: ExtractTableRequestInput,
   options?: { signal?: AbortSignal } & DispatchOption,
 ): Promise<CitationTable | null> {
-  try {
-    const remote = await resolveDispatch(options)
-    const target = remote
-      ? `${remote.baseUrl}/v1/extract-table`
-      : apiUrls.extractTable()
-    const headers: Record<string, string> = { "Content-Type": "application/json" }
-    if (remote) headers.Authorization = `Bearer ${remote.authToken}`
-    const res = await fetch(target, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: options?.signal,
-    })
-    if (!res.ok) return null
-    return CitationTableSchema.parse(await res.json())
-  } catch {
-    return null
-  }
+  const result = await dispatchedFetch<
+    ExtractTableRequestInput,
+    ExtractTableRequestInput,
+    CitationTable
+  >({
+    path: "/v1/extract-table",
+    localUrl: apiUrls.extractTable(),
+    bodyForLocal: body,
+    schema: CitationTableSchema,
+    signal: options?.signal,
+    dispatch: options,
+  })
+  return result.ok ? result.data : null
 }
 
 // --- Public surface ---------------------------------------------------------
