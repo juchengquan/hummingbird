@@ -10,6 +10,9 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
+import type { ColumnType } from "@/shared/artifacts/column-type"
+import { resolveColumnType } from "@/shared/artifacts/column-type"
+import type { ExtractColumnHint } from "@/shared/artifacts/extract-table"
 
 /** Chip-list picker for the "Extract to table" action. Pre-seeds chips
  *  from the report's source titles (deduped, slugified, capped at 8).
@@ -27,34 +30,37 @@ export function ExtractTablePopover({
 }: {
   sourceTitles: string[]
   extracting: boolean
-  onRun: (hints: string[] | undefined) => void
+  onRun: (hints: ExtractColumnHint[] | undefined) => void
   trigger: React.ReactNode
 }) {
   const [open, setOpen] = useState(false)
-  const [chips, setChips] = useState<string[]>(() => {
+  const [chips, setChips] = useState<ExtractColumnHint[]>(() => {
     const seen = new Set<string>()
-    const out: string[] = []
+    const out: ExtractColumnHint[] = []
     for (const t of sourceTitles) {
       const slug = t.trim().slice(0, 60)
       const key = slug.toLowerCase()
       if (!slug || seen.has(key)) continue
       seen.add(key)
-      out.push(slug)
+      out.push({ label: slug })
       if (out.length >= 8) break
     }
     return out
   })
   const [draft, setDraft] = useState("")
+  const [typePopoverIdx, setTypePopoverIdx] = useState<number | null>(null)
 
   const addChip = (raw: string) => {
     const value = raw.trim().slice(0, 60)
     if (!value) return
     if (chips.length >= 8) return
-    if (chips.some((c) => c.toLowerCase() === value.toLowerCase())) return
-    setChips([...chips, value])
+    if (chips.some((c) => c.label.toLowerCase() === value.toLowerCase())) return
+    setChips([...chips, { label: value }])
     setDraft("")
   }
   const removeChip = (i: number) => setChips(chips.filter((_, idx) => idx !== i))
+  const setChipType = (i: number, type: ColumnType) =>
+    setChips(chips.map((c, idx) => (idx === i ? { ...c, type } : c)))
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -69,22 +75,58 @@ export function ExtractTablePopover({
             {chips.length === 0 ? (
               <span className="text-[var(--muted-foreground)]">No chips — model decides.</span>
             ) : (
-              chips.map((c, i) => (
-                <span
-                  key={`${c}-${i}`}
-                  className="inline-flex items-center gap-1 rounded bg-[var(--muted)] px-1.5 py-0.5"
-                >
-                  {c}
-                  <button
-                    type="button"
-                    aria-label={`Remove ${c}`}
-                    onClick={() => removeChip(i)}
-                    className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              chips.map((c, i) => {
+                const chipType = resolveColumnType(c)
+                return (
+                  <span
+                    key={`${c.label}-${i}`}
+                    className="inline-flex items-center gap-1 rounded bg-[var(--muted)] px-1.5 py-0.5"
                   >
-                    ×
-                  </button>
-                </span>
-              ))
+                    {c.label}
+                    <Popover
+                      open={typePopoverIdx === i}
+                      onOpenChange={(o) => setTypePopoverIdx(o ? i : null)}
+                    >
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          aria-label={`Change type of ${c.label}`}
+                          className="rounded bg-[var(--background)] px-1 text-[10px] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                        >
+                          {chipType === "number" ? "#" : "Aa"}
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-32 p-2 text-xs">
+                        <div className="space-y-1">
+                          {(["text", "number"] as const).map((opt) => (
+                            <button
+                              key={opt}
+                              type="button"
+                              onClick={() => {
+                                setChipType(i, opt)
+                                setTypePopoverIdx(null)
+                              }}
+                              className={`block w-full rounded px-2 py-1 text-left hover:bg-[var(--accent)] ${
+                                chipType === opt ? "bg-[var(--accent)] font-medium" : ""
+                              }`}
+                            >
+                              {opt === "text" ? "Text" : "Number"}
+                            </button>
+                          ))}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${c.label}`}
+                      onClick={() => removeChip(i)}
+                      className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                    >
+                      ×
+                    </button>
+                  </span>
+                )
+              })
             )}
           </div>
           <Input

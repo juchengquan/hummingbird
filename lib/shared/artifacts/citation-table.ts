@@ -1,5 +1,8 @@
 import { z } from "zod"
 
+import type { ColumnType } from "./column-type"
+import { ColumnTypeSchema, compareForSort } from "./column-type"
+
 export const CitationSchema = z.object({
   sourceId: z.string().min(1),
   quote: z.string().max(2000),
@@ -22,6 +25,10 @@ export const CitationTableSourceSchema = z.object({
 export const CitationTableColumnSchema = z.object({
   id: z.string().min(1).max(60),
   label: z.string().min(1).max(120),
+  /** Slice 1: "text" | "number". Absent = "text". Slice 2 extends
+   *  the union with "link" | "date". Existing un-typed blobs
+   *  validate unchanged. */
+  type: ColumnTypeSchema.optional(),
 })
 
 export const CitationTableSchema = z.object({
@@ -68,24 +75,13 @@ export function sortRowOrder(
   data: CitationTable,
   columnId: string,
   dir: "asc" | "desc",
+  type: ColumnType = "text",
 ): number[] {
-  const sign = dir === "asc" ? 1 : -1
-  const valueAt = (rowIndex: number): string => data.rows[rowIndex]?.[columnId]?.value ?? ""
   return data.rows
     .map((_, i) => i)
-    .sort((a, b) => {
-      const va = valueAt(a)
-      const vb = valueAt(b)
-      if (va === "" && vb === "") return 0
-      if (va === "") return 1
-      if (vb === "") return -1
-      const na = Number(va)
-      const nb = Number(vb)
-      if (Number.isFinite(na) && Number.isFinite(nb)) {
-        return na === nb ? 0 : (na < nb ? -1 : 1) * sign
-      }
-      return va.localeCompare(vb) * sign
-    })
+    .sort((a, b) =>
+      compareForSort(data.rows[a]?.[columnId], data.rows[b]?.[columnId], type, dir),
+    )
 }
 
 /** Return a NEW CitationTable with `rows[rowIndex][columnId].value`
@@ -127,10 +123,13 @@ export function addColumn(
   data: CitationTable,
   label: string,
   columnId: string,
+  type: ColumnType = "text",
 ): CitationTable {
   if (data.columns.length >= 12) return data
   if (data.columns.some((c) => c.id === columnId)) return data
-  return { ...data, columns: [...data.columns, { id: columnId, label }] }
+  const newColumn: CitationTable["columns"][number] = { id: columnId, label }
+  if (type !== "text") newColumn.type = type
+  return { ...data, columns: [...data.columns, newColumn] }
 }
 
 /** Return a NEW CitationTable with `rows[rowIndex]` removed. Out-of-range

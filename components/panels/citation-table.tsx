@@ -27,6 +27,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
+import type { ColumnType } from "@/shared/artifacts/column-type"
+import { resolveColumnType, validateCell } from "@/shared/artifacts/column-type"
 import {
   type Citation,
   type CitationTable,
@@ -141,9 +143,15 @@ export function CitationTableView({
   const [draft, setDraft] = useState("")
   const [dragFrom, setDragFrom] = useState<number | null>(null)
   const [dragOver, setDragOver] = useState<number | null>(null)
+  const [typePopoverColId, setTypePopoverColId] = useState<string | null>(null)
 
   const order = sort
-    ? sortRowOrder(data, sort.columnId, sort.dir)
+    ? sortRowOrder(
+        data,
+        sort.columnId,
+        sort.dir,
+        resolveColumnType(data.columns.find((c) => c.id === sort.columnId) ?? {}),
+      )
     : data.rows.map((_, i) => i)
 
   const toggleSort = (columnId: string) =>
@@ -167,6 +175,7 @@ export function CitationTableView({
 
   const [addColOpen, setAddColOpen] = useState(false)
   const [newColLabel, setNewColLabel] = useState("")
+  const [newColType, setNewColType] = useState<ColumnType>("text")
 
   const slugify = (s: string) =>
     s
@@ -190,8 +199,9 @@ export function CitationTableView({
     if (!label || !onChange) return
     const base = slugify(label) || "column"
     const columnId = dedupeColumnId(base)
-    onChange(addColumn(data, label, columnId))
+    onChange(addColumn(data, label, columnId, newColType))
     setNewColLabel("")
+    setNewColType("text")
     setAddColOpen(false)
   }
 
@@ -202,6 +212,7 @@ export function CitationTableView({
           <tr>
             {data.columns.map((col, colIndex) => {
               const active = sort?.columnId === col.id
+              const colType = resolveColumnType(col)
               return (
                 <th
                   key={col.id}
@@ -254,11 +265,62 @@ export function CitationTableView({
                     <button
                       type="button"
                       onClick={() => toggleSort(col.id)}
-                      className="flex w-full items-center gap-1 px-2 py-1 hover:bg-[var(--accent)]"
+                      className={`flex w-full items-center gap-1 px-2 py-1 hover:bg-[var(--accent)] ${
+                        colType === "number" ? "justify-end" : ""
+                      }`}
                     >
                       {col.label}
                       {active ? (
                         <span aria-hidden>{sort.dir === "asc" ? "▲" : "▼"}</span>
+                      ) : null}
+                      {editable ? (
+                        <Popover
+                          open={typePopoverColId === col.id}
+                          onOpenChange={(o) => setTypePopoverColId(o ? col.id : null)}
+                        >
+                          <PopoverTrigger asChild>
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              aria-label={`Change type of ${col.label}`}
+                              onClick={(e) => e.stopPropagation()}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.stopPropagation()
+                                }
+                              }}
+                              className="ml-1 cursor-pointer rounded bg-[var(--muted)] px-1 py-0.5 text-[10px] text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                            >
+                              {colType === "number" ? "#" : "Aa"}
+                            </span>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-32 p-2 text-xs">
+                            <div className="space-y-1">
+                              {(["text", "number"] as const).map((opt) => (
+                                <button
+                                  key={opt}
+                                  type="button"
+                                  onClick={() => {
+                                    if (onChange) {
+                                      onChange({
+                                        ...data,
+                                        columns: data.columns.map((c) =>
+                                          c.id === col.id ? { ...c, type: opt } : c,
+                                        ),
+                                      })
+                                    }
+                                    setTypePopoverColId(null)
+                                  }}
+                                  className={`block w-full rounded px-2 py-1 text-left hover:bg-[var(--accent)] ${
+                                    colType === opt ? "bg-[var(--accent)] font-medium" : ""
+                                  }`}
+                                >
+                                  {opt === "text" ? "Text" : "Number"}
+                                </button>
+                              ))}
+                            </div>
+                          </PopoverContent>
+                        </Popover>
                       ) : null}
                       {editable ? (
                         <span
@@ -312,42 +374,77 @@ export function CitationTableView({
                 const cell = data.rows[rowIndex]?.[col.id]
                 const isEditing =
                   editing?.rowIndex === rowIndex && editing?.columnId === col.id
+                const cellType = resolveColumnType(col)
+                const cellWarning = editable ? validateCell(cell, cellType) : null
+                const cellInner = (
+                  <CellContent
+                    data={data}
+                    cell={cell}
+                    editable={editable}
+                    onStartEdit={() => startEdit(rowIndex, col.id, cell?.value ?? "")}
+                    onAddCitation={(c) => onChange?.(addCitation(data, rowIndex, col.id, c))}
+                    onUpdateCitation={(i, patch) =>
+                      onChange?.(updateCitation(data, rowIndex, col.id, i, patch))
+                    }
+                    onRemoveCitation={(i) =>
+                      onChange?.(removeCitation(data, rowIndex, col.id, i))
+                    }
+                  />
+                )
+                if (!editable) {
+                  // Read-only path — unchanged from before typed columns.
+                  return (
+                    <td
+                      key={col.id}
+                      className="border border-[var(--border)] px-2 py-1 align-top"
+                    >
+                      {cellInner}
+                    </td>
+                  )
+                }
                 return (
                   <td
                     key={col.id}
-                    className="border border-[var(--border)] px-2 py-1 align-top"
+                    className={`border border-[var(--border)] px-2 py-1 align-top ${
+                      cellType === "number" ? "text-right" : ""
+                    }`}
                   >
-                    {isEditing ? (
-                      <input
-                        autoFocus
-                        value={draft}
-                        onChange={(e) => setDraft(e.target.value)}
-                        onBlur={commit}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault()
-                            commit()
-                          } else if (e.key === "Escape") {
-                            e.preventDefault()
-                            setEditing(null)
-                          }
-                        }}
-                        aria-label="Edit cell value"
-                        className="w-full bg-[var(--background)] px-1 text-xs outline-none ring-1 ring-[var(--ring)]"
-                      />
-                    ) : (
-                      <CellContent
-                        data={data}
-                        cell={cell}
-                        editable={editable}
-                        onStartEdit={() => startEdit(rowIndex, col.id, cell?.value ?? "")}
-                        onAddCitation={(c) => onChange?.(addCitation(data, rowIndex, col.id, c))}
-                        onUpdateCitation={(i, patch) =>
-                          onChange?.(updateCitation(data, rowIndex, col.id, i, patch))
-                        }
-                        onRemoveCitation={(i) => onChange?.(removeCitation(data, rowIndex, col.id, i))}
-                      />
-                    )}
+                    <span className="inline-flex items-start gap-0.5">
+                      <span className="flex-1">
+                        {isEditing ? (
+                          <input
+                            autoFocus
+                            type={cellType === "number" ? "number" : "text"}
+                            inputMode={cellType === "number" ? "decimal" : undefined}
+                            value={draft}
+                            onChange={(e) => setDraft(e.target.value)}
+                            onBlur={commit}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault()
+                                commit()
+                              } else if (e.key === "Escape") {
+                                e.preventDefault()
+                                setEditing(null)
+                              }
+                            }}
+                            aria-label="Edit cell value"
+                            className="w-full bg-[var(--background)] px-1 text-xs outline-none ring-1 ring-[var(--ring)]"
+                          />
+                        ) : (
+                          cellInner
+                        )}
+                      </span>
+                      {cellWarning ? (
+                        <span
+                          title={cellWarning}
+                          aria-label={cellWarning}
+                          className="select-none text-[var(--destructive)]"
+                        >
+                          ⚠
+                        </span>
+                      ) : null}
+                    </span>
                   </td>
                 )
               })}
@@ -396,7 +493,10 @@ export function CitationTableView({
         open={addColOpen}
         onOpenChange={(open) => {
           setAddColOpen(open)
-          if (!open) setNewColLabel("")
+          if (!open) {
+            setNewColLabel("")
+            setNewColType("text")
+          }
         }}
       >
         <DialogContent className="sm:max-w-sm">
@@ -416,6 +516,21 @@ export function CitationTableView({
             placeholder="Column label (e.g. Price)"
             maxLength={120}
           />
+          <div className="flex items-center gap-3 py-1 text-xs">
+            <span className="text-[var(--muted-foreground)]">Type</span>
+            {(["text", "number"] as const).map((opt) => (
+              <label key={opt} className="flex cursor-pointer items-center gap-1">
+                <input
+                  type="radio"
+                  name="column-type"
+                  value={opt}
+                  checked={newColType === opt}
+                  onChange={() => setNewColType(opt)}
+                />
+                {opt === "text" ? "Text" : "Number"}
+              </label>
+            ))}
+          </div>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => setAddColOpen(false)}>
               Cancel

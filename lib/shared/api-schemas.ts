@@ -609,11 +609,23 @@ export const ExtractTableRequestSchema = z.object({
     .min(1)
     .max(100),
   model: z.string().max(100).optional(),
-  /** Optional user-supplied column labels. When non-empty, the prompt
-   *  builder steers the model to use these labels verbatim and to leave
-   *  cells empty (not invent a different column) when the report
-   *  doesn't support one. Capped at 8 to match the popover's UX. */
-  columnHints: z.array(z.string().min(1).max(60)).max(8).optional(),
+  /** Optional user-supplied column hints. Each entry is either a plain
+   *  string (legacy thin shape, treated as Text) or { label, type? }.
+   *  When non-empty, the prompt builder steers the model to use these
+   *  labels verbatim and (for typed hints) to emit values in the
+   *  declared format. Capped at 8 to match the popover's UX. */
+  columnHints: z
+    .array(
+      z.union([
+        z.string().min(1).max(60),
+        z.object({
+          label: z.string().min(1).max(60),
+          type: z.enum(["text", "number"]).optional(),
+        }),
+      ]),
+    )
+    .max(8)
+    .optional(),
 })
 export type ExtractTableRequestInput = z.infer<typeof ExtractTableRequestSchema>
 
