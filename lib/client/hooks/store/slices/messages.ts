@@ -309,74 +309,44 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
       updateMessage(state, messageId, (m) => ({ ...m, routedModel: modelId }))
     ),
   appendMessageGeneratedImages: (messageId, images) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (!c.messages.some((m) => m.id === messageId)) return c
-        return {
-          ...c,
-          messages: c.messages.map((m) => {
-            if (m.id !== messageId) return m
-            const next = [...(m.generatedImages ?? []), ...images]
-            return { ...m, generatedImages: next }
-          }),
-        }
-      }),
-    })),
+    set((state) =>
+      updateMessage(state, messageId, (m) => ({
+        ...m,
+        generatedImages: [...(m.generatedImages ?? []), ...images],
+      }))
+    ),
   appendMessageUiPart: (messageId, part) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (!c.messages.some((m) => m.id === messageId)) return c
-        return {
-          ...c,
-          messages: c.messages.map((m) => {
-            if (m.id !== messageId) return m
-            const existing = m.uiParts ?? []
-            // Idempotent on (messageId, part.id) — a duplicate emit
-            // (rare; defensive) leaves the message unchanged so the
-            // identity-stable render path doesn't churn.
-            if (existing.some((p) => p.id === part.id)) return m
-            return { ...m, uiParts: [...existing, part] }
-          }),
-        }
-      }),
-    })),
+    set((state) =>
+      updateMessage(state, messageId, (m) => {
+        const existing = m.uiParts ?? []
+        // Idempotent on (messageId, part.id) — a duplicate emit
+        // (rare; defensive) leaves the message unchanged so the
+        // identity-stable render path doesn't churn.
+        if (existing.some((p) => p.id === part.id)) return m
+        return { ...m, uiParts: [...existing, part] }
+      })
+    ),
   appendMessageMcpApp: (messageId, part) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (!c.messages.some((m) => m.id === messageId)) return c
-        return {
-          ...c,
-          messages: c.messages.map((m) => {
-            if (m.id !== messageId) return m
-            const existing = m.mcpApps ?? []
-            if (existing.some((p) => p.id === part.id)) return m
-            return { ...m, mcpApps: [...existing, part] }
-          }),
-        }
-      }),
-    })),
+    set((state) =>
+      updateMessage(state, messageId, (m) => {
+        const existing = m.mcpApps ?? []
+        if (existing.some((p) => p.id === part.id)) return m
+        return { ...m, mcpApps: [...existing, part] }
+      })
+    ),
   replaceMessageMcpAppHtml: (messageId, partId, html) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (!c.messages.some((m) => m.id === messageId)) return c
+    set((state) =>
+      updateMessage(state, messageId, (m) => {
+        const existing = m.mcpApps ?? []
+        if (!existing.some((p) => p.id === partId)) return m
         return {
-          ...c,
-          messages: c.messages.map((m) => {
-            if (m.id !== messageId) return m
-            const existing = m.mcpApps ?? []
-            if (!existing.some((p) => p.id === partId)) return m
-            return {
-              ...m,
-              mcpApps: existing.map((p) =>
-                p.id === partId
-                  ? { ...p, html, truncated: undefined }
-                  : p,
-              ),
-            }
-          }),
+          ...m,
+          mcpApps: existing.map((p) =>
+            p.id === partId ? { ...p, html, truncated: undefined } : p
+          ),
         }
-      }),
-    })),
+      })
+    ),
   resolveMessageUiPart: (messageId, partId, answer) =>
     set((state) => ({
       conversations: state.conversations.map((c) => {
