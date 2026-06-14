@@ -171,6 +171,24 @@ describe("apiClient.summarize — dispatch", () => {
   })
 })
 
+describe("apiClient.embed.file — dispatch", () => {
+  // embedFile is pinned to in-next: there is no remote `/v1/embed`
+  // handler, so it must never route remote even for remote-backend
+  // users. This asserts the local-only contract (URL + no auth). The
+  // resolver's auto→remote path is not exercised here — it needs
+  // env vars captured at module load + a Supabase session, which the
+  // file's header deliberately keeps out of this suite.
+  test("always posts to /api/embed without auth", async () => {
+    const log = installFetchStub({
+      jsonBody: { status: "indexed", sections: 0 },
+    })
+    await apiClient.embed.file({ fileId: "f-1", text: "hello" })
+    expect(log[0].url).toBe("/api/embed")
+    expect(log[0].authorization).toBeUndefined()
+    expect(log[0].contentType).toBe("application/json")
+  })
+})
+
 describe("apiClient.mcp.proxy — dispatch", () => {
   test("remote dispatch posts to {baseUrl}/v1/mcp/{id}/{action} with bearer JWT", async () => {
     const log = installFetchStub({ jsonBody: { capabilities: {} } })

@@ -746,6 +746,11 @@ async function embedFile(
     bodyForLocal: body,
     schema: EmbedResponseSchema,
     signal: options?.signal,
+    // Pin to in-next: embedding was never dispatch-aware (no remote
+    // `/v1/embed` handler exists). Without this, 'auto' resolution
+    // would route remote-backend users to a 404 and silently break
+    // file full-text indexing.
+    dispatch: { dispatch: "in-next" },
   })
   return result.ok ? result.data : null
 }
