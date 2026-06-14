@@ -241,3 +241,31 @@ export function moveColumn(
   cols.splice(toIndex, 0, moved)
   return { ...data, columns: cols }
 }
+
+/** Slugify a column label into a column id. Lowercases, collapses
+ *  non-alphanumerics to single dashes, trims leading/trailing dashes,
+ *  truncates to 60 chars. Empty / all-punctuation input returns
+ *  "column" so the caller always gets a valid id. */
+export function slugifyColumnId(label: string): string {
+  return (
+    label
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || "column"
+  )
+}
+
+/** Given an existing `CitationTable` and a desired base column id,
+ *  return the base if unused, else append `-2`, `-3`, … until unused.
+ *  Pathological fallback (all 1000 numeric suffixes taken) appends a
+ *  timestamp so we never collide. */
+export function uniqueColumnId(data: CitationTable, base: string): string {
+  if (!data.columns.some((c) => c.id === base)) return base
+  for (let i = 2; i < 1000; i++) {
+    const candidate = `${base}-${i}`
+    if (!data.columns.some((c) => c.id === candidate)) return candidate
+  }
+  return `${base}-${Date.now()}`
+}

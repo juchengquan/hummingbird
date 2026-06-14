@@ -12,10 +12,13 @@ import {
   removeColumn,
   removeRow,
   setCellValue,
+  slugifyColumnId,
   sortRowOrder,
   sourceIndex,
+  uniqueColumnId,
   updateCitation,
 } from "./citation-table"
+import type { CitationTable } from "./citation-table"
 
 const validObj = {
   columns: [
@@ -426,5 +429,54 @@ describe("sortRowOrder with type", () => {
     const before = JSON.stringify(data)
     sortRowOrder(data as never, "n", "asc", "number")
     expect(JSON.stringify(data)).toBe(before)
+  })
+})
+
+describe("slugifyColumnId", () => {
+  test("lowercases and dashes non-alphanumerics", () => {
+    expect(slugifyColumnId("Column Label")).toBe("column-label")
+  })
+  test("trims leading and trailing dashes", () => {
+    expect(slugifyColumnId("  --Hello-- ")).toBe("hello")
+  })
+  test("falls back to 'column' for empty input", () => {
+    expect(slugifyColumnId("")).toBe("column")
+    expect(slugifyColumnId("   ")).toBe("column")
+    expect(slugifyColumnId("!!!")).toBe("column")
+  })
+  test("truncates to 60 chars", () => {
+    const long = "a".repeat(100)
+    expect(slugifyColumnId(long).length).toBe(60)
+  })
+})
+
+describe("uniqueColumnId", () => {
+  const emptyTable: CitationTable = {
+    columns: [],
+    rows: [],
+    sources: [],
+  }
+
+  test("returns base if unused", () => {
+    expect(uniqueColumnId(emptyTable, "price")).toBe("price")
+  })
+
+  test("appends -2 when base is taken", () => {
+    const t: CitationTable = {
+      ...emptyTable,
+      columns: [{ id: "price", label: "Price" }],
+    }
+    expect(uniqueColumnId(t, "price")).toBe("price-2")
+  })
+
+  test("appends -3 when base and -2 are taken", () => {
+    const t: CitationTable = {
+      ...emptyTable,
+      columns: [
+        { id: "price", label: "Price" },
+        { id: "price-2", label: "Price 2" },
+      ],
+    }
+    expect(uniqueColumnId(t, "price")).toBe("price-3")
   })
 })
