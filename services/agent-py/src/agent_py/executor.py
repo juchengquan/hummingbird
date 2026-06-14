@@ -25,6 +25,7 @@ Anthropic SDK or the checkpoint loader.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -1249,14 +1250,15 @@ def _messages_from(checkpoint: dict[str, Any]) -> list[dict[str, Any]]:
     block list verbatim when it's Anthropic-shaped so a suspended +
     resumed run keeps its tool_use ↔ tool_result chain intact.
 
-    A run started TS-side stores AI-SDK-shaped blocks (`type:
-    'text' | 'tool-call' | 'tool-result'` with `toolCallId` etc.)
-    which Phase 2b-1 flattened to text-only. The translator from
-    AI-SDK → Anthropic wire format is a Phase 3c+ port — until it
-    lands, runs that mix TS-suspend with Python-respond may lose
-    tool context. Same-worker Python flows (start → suspend →
-    respond, all Python) work today because Python writes
-    Anthropic-shaped blocks both ways."""
+    A run started TS-side stores AI-SDK-shaped content blocks
+    (`type: 'tool-call'`, `'tool-result'`, `'image'`, `'file'`,
+    `'reasoning'` and `role: 'tool'` messages). The
+    `_translate_block` / `_translate_ai_sdk_message` helpers below
+    convert those to Anthropic shapes before this function returns
+    its output. Runs that mix TS-suspend with Python-respond keep
+    their tool context as of this change. Same-worker Python flows
+    (start → suspend → respond, all Python) work today because
+    Python writes Anthropic-shaped blocks both ways."""
     raw = checkpoint.get("messages")
     if not isinstance(raw, list):
         return []
@@ -1264,11 +1266,17 @@ def _messages_from(checkpoint: dict[str, Any]) -> list[dict[str, Any]]:
     for entry in raw:
         if not isinstance(entry, dict):
             continue
+        if entry.get("role") == "tool":
+            # AI SDK v5 ToolModelMessage → Anthropic user + tool_result blocks.
+            # See _translate_ai_sdk_message for the role-remap + block translation.
+            translated = _translate_ai_sdk_message(entry)
+            if translated is not None:
+                out.append(translated)
+            continue
         role = entry.get("role")
         if role not in ("user", "assistant"):
             # `system` is hoisted out (Anthropic takes it as a separate
-            # `system=` arg); `tool` role is the AI-SDK shape that the
-            # Python provider doesn't emit.
+            # `system=` arg); `developer` is not used by AI SDK v5 by default.
             continue
         content = entry.get("content")
         if isinstance(content, str):
@@ -1283,18 +1291,234 @@ def _messages_from(checkpoint: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+# Sentinel for redacted_thinking blocks. Anthropic accepts the `data` field
+# as opaque — the actual reasoning text is intentionally lost in the
+# AI SDK → Anthropic translation.
+_REDACTED_THINKING_SENTINEL = "redacted-by-translator"
+
+# Process-local set tracking which unknown block kinds we've already
+# warned about. Mirrors the `_warn_once` pattern at verify.py (per-block-kind).
+_warned_unknown_block_kinds: set[str] = set()
+
+
+def _warn_unknown_block_kind(block_type: object) -> None:
+    key = str(block_type)
+    if key in _warned_unknown_block_kinds:
+        return
+    _warned_unknown_block_kinds.add(key)
+    structlog.get_logger().warning(
+        "executor.unknown_ai_sdk_block_kind",
+        block_type=key,
+    )
+
+
 def _normalise_content_blocks(content: list[Any]) -> list[dict[str, Any]]:
-    """Pass Anthropic-shape content blocks through, dropping anything
-    we don't recognise. Future work: translate AI-SDK shapes
-    (`type: 'tool-call'`, `'tool-result'`) into Anthropic ones."""
-    out: list[dict[str, Any]] = []
-    for block in content:
-        if not isinstance(block, dict):
-            continue
-        block_type = block.get("type")
-        if block_type in ("text", "tool_use", "tool_result", "image"):
-            out.append(dict(block))
-    return out
+    """Translate a content array (any source: Anthropic-shape or AI-SDK-shape)
+    into Anthropic-shape blocks. Pure; drops unknown block kinds. Replaces
+    the old pass-through filter — the AI SDK translator is the canonical
+    path. A pass-through-only path would silently drop tool-call/tool-result
+    blocks when a TS-suspended run is resumed by Python."""
+    return [b for b in (_translate_block(c) for c in content) if b is not None]
+
+
+def _translate_block(block: Any) -> dict[str, Any] | None:
+    """One content block (any source: AI-SDK v5 or Anthropic) → one
+    Anthropic content block (or None when the block is dropped). Pure;
+    no I/O. The single source of truth for the wire translation. Drops
+    unknown block kinds silently; a per-kind warn-once fires so a new
+    AI SDK release that adds a block type we don't translate becomes
+    visible without crashing the run.
+
+    Pass-through: blocks already in Anthropic shape (detected by their
+    field set, not the `type` string) are copied as-is. This is what
+    makes same-stack Python resumes (Anthropic in, Anthropic out)
+    byte-identical to the pre-translator behaviour, and what keeps
+    the response flow working while a TS-suspended run is being
+    resumed — Python writes Anthropic-shape blocks, and the
+    translator must not corrupt them on the way back to the model.
+    """
+    if not isinstance(block, dict):
+        return None
+    block_type = block.get("type")
+
+    if block_type == "text":
+        text = block.get("text")
+        return {"type": "text", "text": text} if isinstance(text, str) else None
+
+    if block_type == "image":
+        if "source" in block:
+            return dict(block)
+        return _translate_image_block(block)
+
+    if block_type == "file":
+        return _translate_file_block(block)
+
+    if block_type == "tool-call":
+        return _translate_tool_call_block(block)
+
+    if block_type == "tool-result":
+        return _translate_tool_result_block(block)
+
+    if block_type == "tool_use":
+        if "id" in block and "name" in block:
+            return dict(block)
+        _warn_unknown_block_kind("tool_use:missing-fields")
+        return None
+
+    if block_type == "tool_result":
+        if "tool_use_id" in block:
+            return dict(block)
+        _warn_unknown_block_kind("tool_result:missing-tool_use_id")
+        return None
+
+    if block_type == "reasoning":
+        return {"type": "redacted_thinking", "data": _REDACTED_THINKING_SENTINEL}
+
+    _warn_unknown_block_kind(block_type)
+    return None
+
+
+def _translate_image_block(block: dict[str, Any]) -> dict[str, Any] | None:
+    """AI SDK {type:'image', image:...} → Anthropic {type:'image', source:...}.
+    Supports URL strings and `data:<media>;base64,<data>` URIs. Other
+    shapes (binary buffers) drop with a warn-once."""
+    image = block.get("image")
+    if isinstance(image, str):
+        if image.startswith("data:"):
+            head, _, data = image.partition(",")
+            media_type = head.split(";", 1)[0].removeprefix("data:") or "application/octet-stream"
+            return {
+                "type": "image",
+                "source": {"type": "base64", "media_type": media_type, "data": data},
+            }
+        return {"type": "image", "source": {"type": "url", "url": image}}
+    _warn_unknown_block_kind("image:non-string")
+    return None
+
+
+def _translate_file_block(block: dict[str, Any]) -> dict[str, Any] | None:
+    """AI SDK {type:'file', ...} → Anthropic {type:'document', source:...}
+    for PDF mediaType only. Non-PDF mediaType drops with a warn-once."""
+    media_type = block.get("mediaType")
+    if media_type != "application/pdf":
+        _warn_unknown_block_kind(f"file:mediaType={media_type}")
+        return None
+    data = block.get("data")
+    if isinstance(data, str):
+        if data.startswith("data:"):
+            head, _, payload = data.partition(",")
+            mt = head.split(";", 1)[0].removeprefix("data:") or "application/pdf"
+            return {
+                "type": "document",
+                "source": {"type": "base64", "media_type": mt, "data": payload},
+            }
+        return {"type": "document", "source": {"type": "url", "url": data}}
+    _warn_unknown_block_kind("file:non-string-data")
+    return None
+
+
+def _translate_tool_call_block(block: dict[str, Any]) -> dict[str, Any]:
+    """AI SDK {type:'tool-call', toolCallId, toolName, input}
+    → Anthropic {type:'tool_use', id, name, input}."""
+    tool_call_id = block.get("toolCallId")
+    if not isinstance(tool_call_id, str) or not tool_call_id:
+        _warn_unknown_block_kind("tool-call:empty-id")
+        tool_call_id = "unknown"
+    return {
+        "type": "tool_use",
+        "id": tool_call_id,
+        "name": block.get("toolName", ""),
+        "input": block.get("input", {}),
+    }
+
+
+def _translate_tool_result_block(block: dict[str, Any]) -> dict[str, Any] | None:
+    """AI SDK {type:'tool-result', toolCallId, output:{type, value}}
+    → Anthropic {type:'tool_result', tool_use_id, content, is_error}.
+    Five `output.type` variants: 'text', 'json', 'error-text', 'error-json',
+    'content'. Anything else drops with a warn-once."""
+    tool_call_id = block.get("toolCallId")
+    if not isinstance(tool_call_id, str) or not tool_call_id:
+        tool_call_id = "unknown"
+    output = block.get("output")
+    if not isinstance(output, dict):
+        _warn_unknown_block_kind("tool-result:no-output")
+        return None
+    out_type = output.get("type")
+    if out_type == "text":
+        return {
+            "type": "tool_result",
+            "tool_use_id": tool_call_id,
+            "content": output.get("value", ""),
+            "is_error": False,
+        }
+    if out_type == "json":
+        return {
+            "type": "tool_result",
+            "tool_use_id": tool_call_id,
+            "content": json.dumps(output.get("value")),
+            "is_error": False,
+        }
+    if out_type == "error-text":
+        return {
+            "type": "tool_result",
+            "tool_use_id": tool_call_id,
+            "content": output.get("value", ""),
+            "is_error": True,
+        }
+    if out_type == "error-json":
+        return {
+            "type": "tool_result",
+            "tool_use_id": tool_call_id,
+            "content": json.dumps(output.get("value")),
+            "is_error": True,
+        }
+    if out_type == "content":
+        inner = output.get("value")
+        if not isinstance(inner, list):
+            return None
+        translated: list[dict[str, Any]] = []
+        for ib in inner:
+            if not isinstance(ib, dict) or ib.get("type") != "text":
+                _warn_unknown_block_kind("tool-result:content:non-text-inner")
+                continue
+            translated.append({"type": "text", "text": ib.get("text", "")})
+        if not translated:
+            return None
+        return {
+            "type": "tool_result",
+            "tool_use_id": tool_call_id,
+            "content": translated,
+            "is_error": False,
+        }
+    _warn_unknown_block_kind(f"tool-result:output-type={out_type}")
+    return None
+
+
+def _translate_ai_sdk_message(message: dict[str, Any]) -> dict[str, Any] | None:
+    """Convert one AI SDK v5 ModelMessage to an Anthropic-shaped
+    `{role, content}`. Returns None when the message carries no usable
+    content after translation. Handles the `role: 'tool'` →
+    `role: 'user'` remap (Anthropic has no 'tool' role) and delegates
+    block-level translation to _translate_block."""
+    role = message.get("role")
+    content = message.get("content")
+    if isinstance(content, str):
+        if not content:
+            return None
+        if role in ("user", "assistant"):
+            return {"role": role, "content": content}
+        return None
+    if not isinstance(content, list):
+        return None
+    blocks = [b for b in (_translate_block(b) for b in content) if b is not None]
+    if not blocks:
+        return None
+    if role == "tool":
+        return {"role": "user", "content": blocks}
+    if role in ("user", "assistant"):
+        return {"role": role, "content": blocks}
+    return None
 
 
 def _str_or_none(value: Any) -> str | None:
