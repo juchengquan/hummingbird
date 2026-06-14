@@ -1056,36 +1056,29 @@ export interface UrlFetchSnapshot {
  */
 async function urlFetchBookmark(
   url: string,
-  options?: DispatchOption
+  options?: DispatchOption,
 ): Promise<
   | { ok: true; status: number; bookmark: UrlFetchSnapshot }
   | { ok: false; status: number; error: { code?: string; message?: string } }
 > {
-  const remote = await resolveDispatch(options)
-  const target = remote
-    ? `${remote.baseUrl}/v1/url/fetch`
-    : apiUrls.urlFetch()
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  }
-  if (remote) {
-    headers.Authorization = `Bearer ${remote.authToken}`
-  }
-  const res = await fetch(target, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ url }),
+  const result = await dispatchedFetch<
+    { url: string },
+    { url: string },
+    { ok: boolean; bookmark: UrlFetchSnapshot }
+  >({
+    path: "/v1/url/fetch",
+    localUrl: apiUrls.urlFetch(),
+    bodyForLocal: { url },
+    dispatch: options,
   })
-  if (!res.ok) {
-    const errBody = await readErrorBody(res)
+  if (!result.ok) {
     return {
       ok: false,
-      status: res.status,
-      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+      status: result.status,
+      error: result.error,
     }
   }
-  const data = (await res.json()) as { ok: boolean; bookmark: UrlFetchSnapshot }
-  return { ok: true, status: res.status, bookmark: data.bookmark }
+  return { ok: true, status: result.status, bookmark: result.data.bookmark }
 }
 
 // --- /api/extract-table -----------------------------------------------------
