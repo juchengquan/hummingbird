@@ -242,19 +242,10 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
     perfMark("humm/chat/append-message:start")
     perfCount("chat.append.message")
     set((state) => {
-      const next = {
-        conversations: state.conversations.map((c) => {
-          if (c.messages.some((m) => m.id === messageId)) {
-            return {
-              ...c,
-              messages: c.messages.map((m) =>
-                m.id === messageId ? { ...m, content: m.content + chunk } : m
-              ),
-            }
-          }
-          return c
-        }),
-      }
+      const next = updateMessage(state, messageId, (m) => ({
+        ...m,
+        content: m.content + chunk,
+      }))
       perfMark("humm/chat/append-message:end")
       return next
     })
@@ -263,21 +254,10 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
     perfMark("humm/chat/append-reasoning:start")
     perfCount("chat.append.reasoning")
     set((state) => {
-      const next = {
-        conversations: state.conversations.map((c) => {
-          if (c.messages.some((m) => m.id === messageId)) {
-            return {
-              ...c,
-              messages: c.messages.map((m) =>
-                m.id === messageId
-                  ? { ...m, reasoning: (m.reasoning ?? "") + chunk }
-                  : m
-              ),
-            }
-          }
-          return c
-        }),
-      }
+      const next = updateMessage(state, messageId, (m) => ({
+        ...m,
+        reasoning: (m.reasoning ?? "") + chunk,
+      }))
       perfMark("humm/chat/append-reasoning:end")
       return next
     })
