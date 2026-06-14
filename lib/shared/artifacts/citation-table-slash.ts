@@ -11,7 +11,7 @@ export interface CitationTableSlashItem {
  *  (falling back to "Untitled table" for an empty title). Pure — no Plate,
  *  store, or React dependency. */
 export function buildCitationTableSlashItems(
-  artifacts: Artifact[],
+  artifacts: readonly Artifact[],
 ): CitationTableSlashItem[] {
   return artifacts
     .filter((a) => a.kind === "table")

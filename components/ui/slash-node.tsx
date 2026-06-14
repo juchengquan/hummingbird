@@ -233,9 +233,7 @@ export function SlashInputElement(
   const { editor, element } = props;
 
   const workspaceArtifacts = useWorkspaceArtifacts();
-  const citationTableItems = buildCitationTableSlashItems([
-    ...workspaceArtifacts,
-  ]);
+  const citationTableItems = buildCitationTableSlashItems(workspaceArtifacts);
 
   return (
     <PlateElement {...props} as="span">
