@@ -43,6 +43,7 @@ import { openLiveArtifact } from "@/components/right-panel-slot"
 import type { Artifact } from "@/shared/types"
 import { CitationTableView } from "@/components/panels/citation-table"
 import { parseCitationTable } from "@/shared/artifacts/citation-table"
+import { citationTableMarkerMarkdown } from "@/shared/artifacts/citation-table-md"
 
 function artifactKindIcon(artifact: Artifact) {
   if (artifact.kind === "code") return <Code2 size={12} />
@@ -70,6 +71,9 @@ function asMarkdownForEditor(artifact: Artifact): string {
     return artifact.content
       ? `![${artifact.content.slice(0, 60)}](${src})`
       : `![](${src})`
+  }
+  if (artifact.kind === "table") {
+    return citationTableMarkerMarkdown(artifact.id)
   }
   return artifact.content
 }
