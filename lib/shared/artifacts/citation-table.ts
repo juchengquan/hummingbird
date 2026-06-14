@@ -222,3 +222,23 @@ export function removeCitation(
   )
   return { ...data, rows }
 }
+
+/** Return a NEW CitationTable with the column at `fromIndex` moved to
+ *  `toIndex` (spliced out, then spliced back in at `toIndex`), shifting
+ *  the others. Out-of-range `fromIndex`/`toIndex` or
+ *  `fromIndex === toIndex` returns `data` unchanged. Rows are untouched
+ *  — cells are keyed by columnId, so they follow the new column order.
+ *  Pure; never mutates the input. */
+export function moveColumn(
+  data: CitationTable,
+  fromIndex: number,
+  toIndex: number,
+): CitationTable {
+  const n = data.columns.length
+  if (fromIndex < 0 || fromIndex >= n || toIndex < 0 || toIndex >= n) return data
+  if (fromIndex === toIndex) return data
+  const cols = [...data.columns]
+  const [moved] = cols.splice(fromIndex, 1)
+  cols.splice(toIndex, 0, moved)
+  return { ...data, columns: cols }
+}

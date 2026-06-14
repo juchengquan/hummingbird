@@ -4,6 +4,7 @@ import {
   addCitation,
   addColumn,
   addRow,
+  moveColumn,
   parseCitationTable,
   removeCitation,
   removeColumn,
@@ -309,5 +310,49 @@ describe("removeCitation", () => {
     const data = tbl([{ name: { value: "a", citations: [{ sourceId: "s1", quote: "q1" }] } }])
     expect(removeCitation(data as never, 0, "name", 5)).toBe(data)
     expect(removeCitation(data as never, 9, "name", 0)).toBe(data)
+  })
+})
+
+describe("moveColumn", () => {
+  const t = () => ({
+    columns: [
+      { id: "a", label: "A" },
+      { id: "b", label: "B" },
+      { id: "c", label: "C" },
+    ],
+    rows: [
+      {
+        a: { value: "1", citations: [] },
+        b: { value: "2", citations: [] },
+        c: { value: "3", citations: [] },
+      },
+    ],
+    sources: [],
+  })
+  test("moves a column to the right", () => {
+    const out = moveColumn(t() as never, 0, 2)
+    expect(out.columns.map((c) => c.id)).toEqual(["b", "c", "a"])
+  })
+  test("moves a column to the left", () => {
+    const out = moveColumn(t() as never, 2, 0)
+    expect(out.columns.map((c) => c.id)).toEqual(["c", "a", "b"])
+  })
+  test("returns the input unchanged when fromIndex === toIndex", () => {
+    const data = t()
+    expect(moveColumn(data as never, 1, 1)).toBe(data)
+  })
+  test("returns the input unchanged for an out-of-range index", () => {
+    const data = t()
+    expect(moveColumn(data as never, 5, 0)).toBe(data)
+    expect(moveColumn(data as never, 0, 5)).toBe(data)
+    expect(moveColumn(data as never, -1, 0)).toBe(data)
+  })
+  test("does not mutate the input and leaves row cell data untouched", () => {
+    const data = t()
+    const before = JSON.stringify(data)
+    const out = moveColumn(data as never, 0, 2)
+    expect(out).not.toBe(data)
+    expect(out.rows[0]).toEqual(data.rows[0])
+    expect(JSON.stringify(data)).toBe(before)
   })
 })

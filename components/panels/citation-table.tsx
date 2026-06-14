@@ -34,6 +34,7 @@ import {
   addCitation,
   addColumn,
   addRow,
+  moveColumn,
   removeCitation,
   removeColumn,
   removeRow,
@@ -138,6 +139,8 @@ export function CitationTableView({
   const [sort, setSort] = useState<{ columnId: string; dir: "asc" | "desc" } | null>(null)
   const [editing, setEditing] = useState<{ rowIndex: number; columnId: string } | null>(null)
   const [draft, setDraft] = useState("")
+  const [dragFrom, setDragFrom] = useState<number | null>(null)
+  const [dragOver, setDragOver] = useState<number | null>(null)
 
   const order = sort
     ? sortRowOrder(data, sort.columnId, sort.dir)
@@ -197,7 +200,7 @@ export function CitationTableView({
       <table className="w-full border-collapse text-xs">
         <thead>
           <tr>
-            {data.columns.map((col) => {
+            {data.columns.map((col, colIndex) => {
               const active = sort?.columnId === col.id
               return (
                 <th
@@ -206,37 +209,80 @@ export function CitationTableView({
                   aria-sort={
                     active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"
                   }
-                  className="border border-[var(--border)] bg-[var(--muted)] p-0 text-left font-medium"
+                  onDragOver={
+                    editable
+                      ? (e) => {
+                          e.preventDefault()
+                          setDragOver(colIndex)
+                        }
+                      : undefined
+                  }
+                  onDrop={
+                    editable
+                      ? (e) => {
+                          e.preventDefault()
+                          if (dragFrom !== null && onChange) {
+                            onChange(moveColumn(data, dragFrom, colIndex))
+                          }
+                          setDragFrom(null)
+                          setDragOver(null)
+                        }
+                      : undefined
+                  }
+                  className={`border border-[var(--border)] ${
+                    editable && dragOver === colIndex
+                      ? "bg-[var(--accent)]"
+                      : "bg-[var(--muted)]"
+                  } p-0 text-left font-medium`}
                 >
-                  <button
-                    type="button"
-                    onClick={() => toggleSort(col.id)}
-                    className="flex w-full items-center gap-1 px-2 py-1 hover:bg-[var(--accent)]"
-                  >
-                    {col.label}
-                    {active ? <span aria-hidden>{sort.dir === "asc" ? "▲" : "▼"}</span> : null}
+                  <div className="flex items-stretch">
                     {editable ? (
                       <span
-                        role="button"
-                        tabIndex={0}
-                        aria-label={`Remove column ${col.label}`}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          if (onChange) onChange(removeColumn(data, col.id))
+                        draggable
+                        onDragStart={() => setDragFrom(colIndex)}
+                        onDragEnd={() => {
+                          setDragFrom(null)
+                          setDragOver(null)
                         }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault()
-                            e.stopPropagation()
-                            if (onChange) onChange(removeColumn(data, col.id))
-                          }
-                        }}
-                        className="ml-auto cursor-pointer text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                        aria-label={`Reorder column ${col.label}`}
+                        title="Drag to reorder"
+                        className="flex cursor-grab items-center px-1 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                       >
-                        ×
+                        ⠿
                       </span>
                     ) : null}
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleSort(col.id)}
+                      className="flex w-full items-center gap-1 px-2 py-1 hover:bg-[var(--accent)]"
+                    >
+                      {col.label}
+                      {active ? (
+                        <span aria-hidden>{sort.dir === "asc" ? "▲" : "▼"}</span>
+                      ) : null}
+                      {editable ? (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Remove column ${col.label}`}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (onChange) onChange(removeColumn(data, col.id))
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              if (onChange) onChange(removeColumn(data, col.id))
+                            }
+                          }}
+                          className="ml-auto cursor-pointer text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                        >
+                          ×
+                        </span>
+                      ) : null}
+                    </button>
+                  </div>
                 </th>
               )
             })}
