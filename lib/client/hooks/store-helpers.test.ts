@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { Prompt } from "@/shared/types"
+import type { Conversation, Message, Prompt } from "@/shared/types"
 
 import {
   clampResourcesSidebarWidth,
@@ -10,6 +10,7 @@ import {
   mergeImageGenConfig,
   mergeWebFetchConfig,
   mergeWebSearchConfig,
+  removeMessage,
   RESOURCES_SIDEBAR_WIDTH_DEFAULT,
   RESOURCES_SIDEBAR_WIDTH_MAX,
   RESOURCES_SIDEBAR_WIDTH_MIN,
@@ -17,6 +18,7 @@ import {
   SIDEBAR_WIDTH_MAX,
   SIDEBAR_WIDTH_MIN,
   tombstoneMcpServer,
+  updateMessage,
 } from "./store-helpers"
 
 describe("clampSidebarWidth", () => {
@@ -167,5 +169,93 @@ describe("merge*Config", () => {
     )
     // tavily got reduced to {} and pruned; result has no leaves, so undefined.
     expect(out).toBeUndefined()
+  })
+})
+
+function makeMessage(overrides: Partial<Message> = {}): Message {
+  return {
+    id: "msg-1",
+    role: "user",
+    content: "hello",
+    timestamp: new Date(),
+    ...overrides,
+  }
+}
+
+type ConversationFixture = Pick<
+  Conversation,
+  "id" | "title" | "messages" | "createdAt" | "updatedAt" | "pinned"
+> &
+  Partial<Conversation>
+
+function makeState(conversations: ConversationFixture[]) {
+  const full: Conversation[] = conversations.map((c) => ({
+    workspaceId: "ws-1",
+    systemPrompt: "",
+    selectedFileIds: [],
+    ...c,
+  }))
+  return { conversations: full }
+}
+
+describe("updateMessage", () => {
+  test("patches the message across all conversations", () => {
+    const m = makeMessage({ id: "m1", content: "old" })
+    const state = makeState([
+      { id: "conv-1", title: "C1", messages: [m], createdAt: new Date(), updatedAt: new Date(), pinned: false },
+    ])
+    const result = updateMessage(state, "m1", (mm) => ({ ...mm, content: "new" }))
+    expect(result.conversations?.[0].messages[0].content).toBe("new")
+  })
+
+  test("no-op when no message matches → returns {}", () => {
+    const state = makeState([
+      { id: "conv-1", title: "C1", messages: [makeMessage({ id: "m1" })], createdAt: new Date(), updatedAt: new Date(), pinned: false },
+    ])
+    expect(updateMessage(state, "m2", (m) => ({ ...m, content: "x" }))).toEqual({})
+  })
+
+  test("identity-preserving no-op → returns {}", () => {
+    const m = makeMessage({ id: "m1", content: "same" })
+    const state = makeState([
+      { id: "conv-1", title: "C1", messages: [m], createdAt: new Date(), updatedAt: new Date(), pinned: false },
+    ])
+    expect(updateMessage(state, "m1", (mm) => mm)).toEqual({})
+  })
+
+  test("searches across ALL conversations, not just active", () => {
+    const state = makeState([
+      { id: "conv-1", title: "C1", messages: [makeMessage({ id: "m1", content: "old" })], createdAt: new Date(), updatedAt: new Date(), pinned: false },
+      { id: "conv-2", title: "C2", messages: [makeMessage({ id: "m2", content: "stays" })], createdAt: new Date(), updatedAt: new Date(), pinned: false },
+    ])
+    const result = updateMessage(state, "m1", (mm) => ({ ...mm, content: "new" }))
+    expect(result.conversations?.[0].messages[0].content).toBe("new")
+    expect(result.conversations?.[1].messages[0].content).toBe("stays")
+  })
+})
+
+describe("removeMessage", () => {
+  test("removes the message from the owning conversation", () => {
+    const state = makeState([
+      { id: "conv-1", title: "C1", messages: [makeMessage({ id: "m1" }), makeMessage({ id: "m2" })], createdAt: new Date(), updatedAt: new Date(), pinned: false },
+    ])
+    const result = removeMessage(state, "m1")
+    expect(result.conversations?.[0].messages).toHaveLength(1)
+    expect(result.conversations?.[0].messages[0].id).toBe("m2")
+  })
+
+  test("no-op when no message matches → returns {}", () => {
+    const state = makeState([
+      { id: "conv-1", title: "C1", messages: [makeMessage({ id: "m1" })], createdAt: new Date(), updatedAt: new Date(), pinned: false },
+    ])
+    expect(removeMessage(state, "m2")).toEqual({})
+  })
+
+  test("preserves conversation message order", () => {
+    const state = makeState([
+      { id: "conv-1", title: "C1", messages: [makeMessage({ id: "m1" }), makeMessage({ id: "m2" }), makeMessage({ id: "m3" })], createdAt: new Date(), updatedAt: new Date(), pinned: false },
+    ])
+    const result = removeMessage(state, "m2")
+    expect(result.conversations?.[0].messages.map((mm) => mm.id)).toEqual(["m1", "m3"])
   })
 })
