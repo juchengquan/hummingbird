@@ -81,6 +81,34 @@ export type DispatchOption =
   | { dispatch: "in-next" }
   | { dispatch: "remote"; remote: RemoteDispatch }
 
+/** Result shape returned by `dispatchedFetch`. Mirrors the existing
+ *  tagged-result convention used by `mcpProxyCall`, `mcpUpsertCloudServer`,
+ *  and `urlFetchBookmark`. */
+export type DispatchedFetchResult<T> =
+  | { ok: true; status: number; data: T }
+  | { ok: false; status: number; error: { code?: string; message?: string } }
+
+/** Options for `dispatchedFetch`. The caller passes BOTH the remote
+ *  path (e.g. `/v1/summarize`) and the local URL string — keeps the
+ *  helper free of the `apiUrls` namespace import and keeps it testable
+ *  with literal URL strings. */
+export interface DispatchedFetchOptions<LocalBody, RemoteBody, T> {
+  path: string
+  localUrl: string
+  bodyForLocal: LocalBody
+  bodyForRemote?: (local: LocalBody) => RemoteBody
+  schema?: {
+    safeParse: (
+      raw: unknown,
+    ) => { success: true; data: T } | { success: false; error: unknown }
+  }
+  extraHeaders?: Record<string, string>
+  signal?: AbortSignal
+  inflight?: Map<string, Promise<DispatchedFetchResult<T>>>
+  dedupeKey?: string
+  dispatch?: DispatchOption
+}
+
 /** Internal: turn a `DispatchOption` (or undefined) into a concrete
  *  `RemoteDispatch | null`. Importing the resolver lazily keeps the
  *  Zustand store + Supabase client off any callgraph that doesn't
@@ -92,6 +120,23 @@ async function resolveDispatch(
   if (option?.dispatch === "remote") return option.remote
   const { resolveRemoteBackend } = await import("@/client/api/backend-resolver")
   return resolveRemoteBackend()
+}
+
+/** Resolve the `DispatchOption` and return a stable cache key that
+ *  includes the backend URL so a backend switch mid-session doesn't
+ *  return a stale signed URL from the wrong service. The in-Next
+ *  fast path returns just the suffix. Used by
+ *  `refreshGeneratedImageUrl`'s in-flight dedupe. */
+async function backendCacheKey(
+  option: DispatchOption | undefined,
+  suffix: string,
+): Promise<string> {
+  if (option?.dispatch === "in-next") return suffix
+  if (option?.dispatch === "remote") return `${option.remote.baseUrl}::${suffix}`
+  // Default 'auto' — resolve lazily.
+  const { resolveRemoteBackend } = await import("@/client/api/backend-resolver")
+  const remote = await resolveRemoteBackend()
+  return remote ? `${remote.baseUrl}::${suffix}` : suffix
 }
 
 // Empty default = same origin (Next.js routes serving from /api/*).
