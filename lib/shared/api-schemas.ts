@@ -609,6 +609,11 @@ export const ExtractTableRequestSchema = z.object({
     .min(1)
     .max(100),
   model: z.string().max(100).optional(),
+  /** Optional user-supplied column labels. When non-empty, the prompt
+   *  builder steers the model to use these labels verbatim and to leave
+   *  cells empty (not invent a different column) when the report
+   *  doesn't support one. Capped at 8 to match the popover's UX. */
+  columnHints: z.array(z.string().min(1).max(60)).max(8).optional(),
 })
 export type ExtractTableRequestInput = z.infer<typeof ExtractTableRequestSchema>
 
