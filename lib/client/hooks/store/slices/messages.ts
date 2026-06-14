@@ -353,15 +353,13 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
   setMessageError: (messageId, error) =>
     set((state) => updateMessage(state, messageId, (m) => ({ ...m, error }))),
   clearMessageError: (messageId) =>
-    set((state) => {
-      const updated = updateMessage(state, messageId, (m) => {
+    set((state) =>
+      updateMessage(state, messageId, (m) => {
+        // Strip the `error` key entirely (not set-to-undefined). When no
+        // message matches, updateMessage returns {} — no extra guard needed.
         const { error: _ignored, ...rest } = m
         void _ignored
         return rest
-      })
-      // If no message matched, also clear nothing — the no-op sentinel
-      // is preserved by updateMessage returning {}.
-      if (Object.keys(updated).length === 0) return {}
-      return updated
-    }),
+      }),
+    ),
 })
