@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
+import { CitationTableSchema } from "./citation-table"
 import {
   ExtractionSchema,
   buildExtractTablePrompt,
@@ -51,7 +52,7 @@ describe("extractionToCitationTable", () => {
     expect(out.rows[0].drug.value).toBe("Aspirin")
     expect(out.rows[0].drug.citations).toEqual([{ sourceId: "s1", quote: "Aspirin used" }])
     expect(out.rows[0].n.citations).toEqual([])
-    expect(out.sources).toBe(sources)
+    expect(out.sources.map((s) => s.id)).toEqual(["s1", "s2"])
   })
   test("drops a citation whose source number is out of range", () => {
     const ex = ExtractionSchema.parse({
@@ -66,6 +67,29 @@ describe("extractionToCitationTable", () => {
       rows: [{ cells: [{ columnId: "ghost", value: "x", citations: [] }] }],
     })
     expect(extractionToCitationTable(ex, sources).rows[0]).toEqual({})
+  })
+  test("coerces an empty source title to a non-empty value", () => {
+    const out = extractionToCitationTable(
+      ExtractionSchema.parse({ columns: [{ id: "c", label: "C" }], rows: [] }),
+      [{ id: "s1", title: "", url: "https://x.test" }],
+    )
+    expect(out.sources[0].title.length).toBeGreaterThan(0)
+    expect(CitationTableSchema.safeParse(out).success).toBe(true)
+  })
+  test("clamps an over-long snippet to 1000 chars", () => {
+    const out = extractionToCitationTable(
+      ExtractionSchema.parse({ columns: [{ id: "c", label: "C" }], rows: [] }),
+      [{ id: "s1", title: "T", snippet: "x".repeat(2000) }],
+    )
+    expect(out.sources[0].snippet?.length).toBe(1000)
+  })
+  test("clamps an over-long title to 300 chars", () => {
+    const out = extractionToCitationTable(
+      ExtractionSchema.parse({ columns: [{ id: "c", label: "C" }], rows: [] }),
+      [{ id: "s1", title: "A".repeat(400) }],
+    )
+    expect(out.sources[0].title.length).toBe(300)
+    expect(CitationTableSchema.safeParse(out).success).toBe(true)
   })
 })
 

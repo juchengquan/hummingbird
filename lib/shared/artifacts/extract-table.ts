@@ -57,7 +57,13 @@ export function extractionToCitationTable(
     }
     return out
   })
-  return { columns: extraction.columns, rows, sources }
+  const safeSources = sources.map((s) => ({
+    id: s.id,
+    title: (s.title || s.url || "Source").slice(0, 300),
+    ...(s.url !== undefined ? { url: s.url } : {}),
+    ...(s.snippet !== undefined ? { snippet: s.snippet.slice(0, 1000) } : {}),
+  }))
+  return { columns: extraction.columns, rows, sources: safeSources }
 }
 
 /** Pure prompt: the report body + a numbered sources list + extraction
