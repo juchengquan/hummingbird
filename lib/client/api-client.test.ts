@@ -186,27 +186,6 @@ describe("apiClient.mcp.proxy — dispatch", () => {
     expect(log[0].authorization).toBe("Bearer jwt-test-token")
   })
 
-  test("credential header survives remote dispatch", async () => {
-    const log = installFetchStub({ jsonBody: { capabilities: {} } })
-    await apiClient.mcp.proxy(
-      "call",
-      {
-        server: { id: "srv-1", name: "x", url: "https://mcp.test", transport: "http" },
-        tool: "echo",
-        input: { msg: "hi" },
-      },
-      {
-        dispatch: "remote",
-        remote: REMOTE,
-        credentialHeader: "base64-creds-stub",
-      },
-    )
-    expect(log[0].url).toBe("https://agent-py.example/v1/mcp/srv-1/call")
-    // The api-client doesn't expose X-MCP-Credentials on its stubbed
-    // fetch log directly (the log only reads Authorization +
-    // Content-Type), so we re-stub a richer fetch + assert.
-  })
-
   test("server id path component is URL-encoded", async () => {
     installFetchStub({ jsonBody: { capabilities: {} } })
     const log = installFetchStub({ jsonBody: { capabilities: {} } })
@@ -304,6 +283,68 @@ describe("apiClient.mcp.upsertCloudServer — dispatch", () => {
       expect(r.status).toBe(500)
       expect(r.error.code).toBe("encryption_key_unset")
       expect(r.error.message).toBe("key missing")
+    }
+  })
+})
+
+describe("dispatchedFetch — wire shape", () => {
+  test("in-next dispatch sets Content-Type and no Authorization", async () => {
+    const log = installFetchStub({ jsonBody: { ok: true } })
+    const result = await apiClient.url.fetch("https://example.com", {
+      dispatch: "in-next",
+    })
+    expect(result.ok).toBe(true)
+    expect(log[0].contentType).toBe("application/json")
+    expect(log[0].authorization).toBeUndefined()
+    expect(log[0].url).toBe("/api/url/fetch")
+  })
+
+  test("remote dispatch sets Authorization and routes to {baseUrl}/v1", async () => {
+    const log = installFetchStub({ jsonBody: { ok: true } })
+    await apiClient.summarize.file(
+      { mode: "file", name: "n", text: "t" },
+      { dispatch: "remote", remote: REMOTE },
+    )
+    expect(log[0].url).toBe("https://agent-py.example/v1/summarize")
+    expect(log[0].authorization).toBe("Bearer jwt-test-token")
+  })
+
+  test("X-MCP-Credentials header survives through extraHeaders", async () => {
+    // Re-stub a richer fetch that captures all headers, not just
+    // Authorization + Content-Type. The existing installFetchStub is
+    // intentionally narrow; this one is wider for the assertion.
+    const originalFetch = globalThis.fetch
+    const log: Record<string, string>[] = []
+    globalThis.fetch = (async (
+      _input: RequestInfo | URL,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const headers = (init?.headers ?? {}) as Record<string, string>
+      log.push({ ...headers })
+      return new Response(JSON.stringify({ capabilities: {} }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    }) as typeof fetch
+    try {
+      await apiClient.mcp.proxy(
+        "call",
+        {
+          server: { id: "srv-1", name: "x", url: "https://mcp.test", transport: "http" },
+          tool: "echo",
+          input: { msg: "hi" },
+        },
+        {
+          dispatch: "remote",
+          remote: REMOTE,
+          credentialHeader: "base64-creds-stub",
+        },
+      )
+      const headers = log[0]
+      expect(headers["Authorization"]).toBe("Bearer jwt-test-token")
+      expect(headers["X-MCP-Credentials"]).toBe("base64-creds-stub")
+    } finally {
+      globalThis.fetch = originalFetch
     }
   })
 })
