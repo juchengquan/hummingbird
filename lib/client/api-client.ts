@@ -139,6 +139,95 @@ async function backendCacheKey(
   return remote ? `${remote.baseUrl}::${suffix}` : suffix
 }
 
+/** Internal: one POST + optional Zod-parse for any dispatched
+ *  (auto / in-next / remote) non-chat endpoint. The exported
+ *  `apiClient.*` methods share dispatch + error handling; they
+ *  differ only in path, body, and (optionally) response schema +
+ *  wire-shape variant. This is the seam that absorbs all six.
+ *
+ *  Errors swallowed into the `{ ok: false, ... }` envelope:
+ *  network error, non-OK response, JSON parse error, schema
+ *  rejection. Callers convert back to their own contract (most
+ *  return `null`; the MCP + URL-fetch ones surface the envelope). */
+async function dispatchedFetch<LocalBody, RemoteBody, T>(
+  options: DispatchedFetchOptions<LocalBody, RemoteBody, T>,
+): Promise<DispatchedFetchResult<T>> {
+  const inflight = options.inflight
+  const dedupeKey = options.dedupeKey
+  if (inflight && dedupeKey) {
+    const cached = inflight.get(dedupeKey)
+    if (cached) return cached
+  }
+
+  const promise = (async (): Promise<DispatchedFetchResult<T>> => {
+    try {
+      const remote = await resolveDispatch(options.dispatch)
+      const target = remote
+        ? `${remote.baseUrl}${options.path}`
+        : options.localUrl
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      }
+      if (remote) headers.Authorization = `Bearer ${remote.authToken}`
+      if (options.extraHeaders) {
+        Object.assign(headers, options.extraHeaders)
+      }
+      const body = options.bodyForRemote
+        ? options.bodyForRemote(options.bodyForLocal)
+        : options.bodyForLocal
+      const res = await fetch(target, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal: options.signal,
+      })
+      if (!res.ok) {
+        const errBody = await readErrorBody(res)
+        return {
+          ok: false,
+          status: res.status,
+          error: {
+            code: errBody.code,
+            message: errBody.message ?? errBody.error,
+          },
+        }
+      }
+      const raw: unknown = await res.json()
+      if (options.schema) {
+        const parsed = options.schema.safeParse(raw)
+        if (!parsed.success) {
+          return {
+            ok: false,
+            status: res.status,
+            error: {
+              code: "invalid_response",
+              message: "Server response did not match schema.",
+            },
+          }
+        }
+        return { ok: true, status: res.status, data: parsed.data }
+      }
+      return { ok: true, status: res.status, data: raw as T }
+    } catch {
+      return {
+        ok: false,
+        status: 0,
+        error: { code: "network_error", message: "Request failed." },
+      }
+    }
+  })()
+
+  if (inflight && dedupeKey) {
+    inflight.set(dedupeKey, promise)
+    try {
+      return await promise
+    } finally {
+      inflight.delete(dedupeKey)
+    }
+  }
+  return promise
+}
+
 // Empty default = same origin (Next.js routes serving from /api/*).
 // When the Python backend is ready, set NEXT_PUBLIC_API_BASE_URL to its
 // origin (e.g. "https://api.example.com"); the same-origin reverse-proxy
