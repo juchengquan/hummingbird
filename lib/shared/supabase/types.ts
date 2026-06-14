@@ -592,6 +592,7 @@ export type Database = {
           enabled: boolean
           id: string
           name: string
+          requires_approval: boolean
           transport: string
           updated_at: string
           url: string
@@ -609,6 +610,7 @@ export type Database = {
           enabled?: boolean
           id: string
           name: string
+          requires_approval?: boolean
           transport: string
           updated_at?: string
           url: string
@@ -626,6 +628,7 @@ export type Database = {
           enabled?: boolean
           id?: string
           name?: string
+          requires_approval?: boolean
           transport?: string
           updated_at?: string
           url?: string
@@ -1318,6 +1321,7 @@ export type Database = {
           p_id: string
           p_key: string
           p_name: string
+          p_requires_approval?: boolean
           p_url: string
           p_workspace_id: string
         }

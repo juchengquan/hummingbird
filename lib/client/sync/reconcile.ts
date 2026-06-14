@@ -240,7 +240,7 @@ export async function fetchCloudSnapshot(
       client
         .from("mcp_servers")
         .select(
-          "id, user_id, workspace_id, name, url, transport, credential_mode, credential_fingerprint, capabilities, capabilities_fetched_at, enabled, created_at, updated_at, deleted_at"
+          "id, user_id, workspace_id, name, url, transport, credential_mode, credential_fingerprint, capabilities, capabilities_fetched_at, enabled, requires_approval, created_at, updated_at, deleted_at"
         )
         .eq("user_id", userId),
       client.from("mcp_resources").select("*").eq("user_id", userId),
@@ -454,6 +454,7 @@ export async function fetchCloudSnapshot(
           ? new Date(s.capabilities_fetched_at)
           : undefined,
         enabled: s.enabled,
+        requiresApproval: s.requires_approval ?? undefined,
         createdAt: new Date(s.created_at),
         updatedAt: new Date(s.updated_at),
       }

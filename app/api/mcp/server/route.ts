@@ -33,6 +33,7 @@ const BodySchema = z.object({
     .passthrough()
     .optional(),
   enabled: z.boolean().optional(),
+  requires_approval: z.boolean().optional(),
 })
 
 export async function POST(req: NextRequest) {
@@ -73,6 +74,7 @@ export async function POST(req: NextRequest) {
         typeof upsertServerWithCredential
       >[1]["capabilities"],
     enabled: parsed.data.enabled,
+    requiresApproval: parsed.data.requires_approval,
   })
   if (!result.ok) {
     return NextResponse.json(

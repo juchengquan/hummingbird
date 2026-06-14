@@ -248,7 +248,25 @@ common case.
 
 ---
 
-## 7. Per-tool server-side approval flags
+## ~~7. Per-tool server-side approval flags~~ ✅ shipped
+
+Shipped as a **per-server** `requires_approval` flag (per-tool granularity
+stayed out of scope). `mcp_servers.requires_approval` column (migration
+`0024`) + the `mcp_upsert_server_with_credentials` RPC extended with
+`p_requires_approval`; the flag round-trips through the client store +
+sync (`reconcile` pull, `diffMcpServers`/`mcpServerEquals` push) and a
+cloud-only **Switch** in the MCP server dialog. Enforced server-side in
+**agent-py** (the only live task backend): `gated_tool_names_for` unions
+a flagged server's `mcp__<id>__*` tools into the run's gated set, so any
+of its tool calls suspend for HITL regardless of `requireApprovalFor`.
+
+Two documented limitations: (1) **agent-ts** has no task executor yet —
+when it lands it must apply the same union in its tool-registry build;
+(2) the agent-py **`respond` path doesn't register MCP tools at all**
+(pre-existing Phase 3f-2 gap), so a resumed run can't call MCP tools —
+there's nothing to gate there until that path wires MCP discovery.
+
+Original notes below.
 
 **Why.** Today the gated-tool list for a task is `body.requireApprovalFor`
 (an explicit list of prefixed names from the client). For a workspace

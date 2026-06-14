@@ -78,6 +78,7 @@ export async function upsertServerWithCredential(
     credentials: McpCredentials
     capabilities?: Database["public"]["Tables"]["mcp_servers"]["Row"]["capabilities"]
     enabled?: boolean
+    requiresApproval?: boolean
   }
 ): Promise<{ ok: boolean; error?: string }> {
   const key = getMcpEncryptionKey()
@@ -95,6 +96,7 @@ export async function upsertServerWithCredential(
     p_key: key,
     p_capabilities: params.capabilities ?? null,
     p_enabled: params.enabled ?? true,
+    p_requires_approval: params.requiresApproval ?? false,
   })
   if (error) {
     return { ok: false, error: error.message }
