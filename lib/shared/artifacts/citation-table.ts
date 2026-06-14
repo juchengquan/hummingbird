@@ -57,3 +57,51 @@ export function sourceIndex(data: CitationTable, sourceId: string): number | nul
   const i = data.sources.findIndex((s) => s.id === sourceId)
   return i === -1 ? null : i + 1
 }
+
+/** Display order (array of original row indices) when sorting by
+ *  `columnId`. Numeric-aware: when both cell values parse as finite
+ *  numbers, compare numerically; otherwise `localeCompare`. Empty /
+ *  missing cells sort last in BOTH directions. Stable for equal keys
+ *  (preserves original order). Does NOT mutate `data`. */
+export function sortRowOrder(
+  data: CitationTable,
+  columnId: string,
+  dir: "asc" | "desc",
+): number[] {
+  const sign = dir === "asc" ? 1 : -1
+  const valueAt = (rowIndex: number): string => data.rows[rowIndex]?.[columnId]?.value ?? ""
+  return data.rows
+    .map((_, i) => i)
+    .sort((a, b) => {
+      const va = valueAt(a)
+      const vb = valueAt(b)
+      if (va === "" && vb === "") return 0
+      if (va === "") return 1
+      if (vb === "") return -1
+      const na = Number(va)
+      const nb = Number(vb)
+      if (Number.isFinite(na) && Number.isFinite(nb)) {
+        return na === nb ? 0 : (na < nb ? -1 : 1) * sign
+      }
+      return va.localeCompare(vb) * sign
+    })
+}
+
+/** Return a NEW CitationTable with `rows[rowIndex][columnId].value`
+ *  replaced by `value` (the cell's citations are preserved; an absent
+ *  cell is created with empty citations). Out-of-range `rowIndex`
+ *  returns `data` unchanged. Pure — never mutates the input. */
+export function setCellValue(
+  data: CitationTable,
+  rowIndex: number,
+  columnId: string,
+  value: string,
+): CitationTable {
+  if (rowIndex < 0 || rowIndex >= data.rows.length) return data
+  const rows = data.rows.map((row, i) => {
+    if (i !== rowIndex) return row
+    const existing = row[columnId]
+    return { ...row, [columnId]: { value, citations: existing?.citations ?? [] } }
+  })
+  return { ...data, rows }
+}
