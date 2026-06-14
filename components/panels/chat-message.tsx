@@ -22,6 +22,7 @@ import { MessageAttachments } from "@/components/panels/message-attachments"
 import { ReasoningBlock } from "@/components/panels/reasoning-block"
 import { SourcesStrip } from "@/components/panels/sources-strip"
 import { ExtractTablePopover } from "@/components/panels/extract-table-popover"
+import type { ExtractColumnHint } from "@/shared/artifacts/extract-table"
 import { MessageVerification } from "@/components/panels/message-verification"
 import { countSupportPerSource, markerMarksFor } from "@/shared/verify"
 import { ErrorBubble } from "@/components/panels/error-bubble"
@@ -205,7 +206,7 @@ function ChatMessageImpl({
     })
   }
 
-  const handleExtractTable = async (hints?: string[]) => {
+  const handleExtractTable = async (hints?: ExtractColumnHint[]) => {
     if (!activeConversationId || !webSearchResults || extracting) return
     setExtracting(true)
     try {
