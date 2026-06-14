@@ -1,115 +1,216 @@
-# Session Status — Handover (2026-06-14, end of day)
+# Session Status — Handover (2026-06-14, post-#227)
 
-**Status:** 🟢 At a clean stopping point. Three arcs landed on `dev` today (citation-table polish Slice A + B, agent-py AI-SDK → Anthropic wire translator) plus the test-infra CI fix (app-tests job). All 4 PRs merged. Local gates green. No branches in flight.
+**Status:** 🟢 At a clean stopping point. Three citation-table **polish**
+slices landed on `dev` today (row-remove, in-place citation editing,
+column reordering), all PRs merged, all CI green. `dev` is clean and in
+sync with `origin/dev`; no branches in flight.
 
-This is a broad session handover (not one feature) so a later agent can pick up. It records what shipped, the test-infra context that's easy to trip over, and the menu of next steps.
+This refreshes the earlier same-day handover (which covered through
+#223 + the #224 doc refresh). The full pre-#225 history — the
+citation-table arc slices 1–4c (#212–#217), the test-infra split
+(#218/#219), the polish Slices A/B (#221/#222), and the agent-py AI-SDK
+translator (#223) — is in the git log and the earlier handoffs; this doc
+focuses on **what shipped after #224** and the live menu.
 
 ---
 
-## Shipped today (all squash-merged to `dev`)
+## Shipped this session (all squash-merged to `dev`)
 
-| PR | Arc | dev commit | Title |
+| PR | Slice | dev commit | Title |
 |---|---|---|---|
-| #218 | test infra | `d1f753c` | Split root `bun test` to fix pre-existing suite failures |
-| #219 | test infra | `2718c3c` | `ci: run the app test suite on every PR (app-tests job)` |
-| #221 | citation-table polish (Slice A) | `cd8ae94` | `feat(extract-table): chip-list picker for column hints` |
-| #222 | citation-table polish (Slice B) | `1d1dba0` | `feat(citation-table): inline add/remove row and column affordances` |
-| #223 | agent-py gap fix | `d2a707f` | `feat(agent-py): AI-SDK → Anthropic block translator` |
+| #225 | citation-table polish C | `c6d8408` | row-remove affordance (×Row) |
+| #226 | citation-table polish D | `743cdb8` | in-place citation editing |
+| #227 | citation-table polish E | `e066862` | drag-to-reorder columns |
 
-The earlier-PRs table (citation-table arc slices 1–4c, #212–#217) is in the archived handoffs if you need it; this doc covers **today** only.
+Each slice ran the full **superpowers** loop (brainstorm → spec → plan →
+subagent implement → review → PR). Specs in
+`docs/superpowers/specs/2026-06-14-citation-{row-remove,cell-editing,column-reorder}-design.md`;
+plans alongside in `docs/superpowers/plans/`.
 
-### What each PR did
+### What each slice did (detail is in the specs — summary only)
 
-- **#218 + #219** — the root test runner is now split (`bun run test` runs `scripts/run-tests.sh`, not a bare `bun test`), and a new parallel `app-tests` CI job runs the split suite on every PR. Both stacks (Next.js app + agent-py / agent-ts) are now gated on every PR.
-- **#221 (Slice A)** — optional `columnHints: string[]` on the extract request, threaded through the prompt builder. New `ExtractTablePopover` component (Radix Popover + chip-list picker pre-seeded from source titles) wraps the existing "Extract to table" button. "Let the model decide" preserves the prior "I just want to extract" path.
-- **#222 (Slice B)** — 4 new pure helpers (`addRow`, `addColumn`, `removeRow`, `removeColumn`) + 3 UI affordances on `CitationTableView` (`+ Row` footer, `+ Column` header, column `×`). The embedded Plate copy mirrors the Artifacts-tab table automatically because the node already wires `onChange` to `updateArtifactContent`.
-- **#223** — `executor.py` `_messages_from` now translates AI SDK v5 content blocks (`tool-call`, `tool-result`, `image`, `file`, `reasoning`) and `role: 'tool'` messages into Anthropic shape. Cross-stack resumes (TS-suspend → Python-resume) keep their tool context. Same-stack Python resumes remain byte-identical (regression-guarded by a dedicated test).
+- **#225 (C, ×Row):** trailing per-row `×` actions cell in editable
+  mode, wiring the already-tested `removeRow` helper. Sort-safe (uses
+  the original row index); clears any in-progress edit before removal.
+  One-file UI change.
+- **#226 (D, citation editing):** citation chips are now editable.
+  Added `Citation` type + pure `addCitation`/`updateCitation`/
+  `removeCitation` helpers; new `components/panels/citation-cell-editor.tsx`
+  turns each `[n]` chip into an edit-popover (native source `<select>` +
+  quote `<textarea>` + Remove) with a `+ cite` add affordance.
+  Existing-sources-only; commit-on-change/blur (no Save button);
+  index-based chip keys keep the popover open across a source change.
+- **#227 (E, column reorder):** pure `moveColumn(data, from, to)` helper
+  (permutes the `columns` array; cells follow via columnId keys; sort
+  state survives) + a per-header `⠿` drag grip (the sole draggable
+  element, a sibling of the sort button) with HTML5 drop on the `<th>`
+  and a drop-target highlight. Native DnD ⇒ **not keyboard-accessible**
+  (explicitly deferred).
 
-### Citation-table code map (for follow-ups)
+### Citation-table code map (updated; for follow-ups)
 
-- `lib/shared/artifacts/citation-table.ts` — data model + `parseCitationTable`, `sortRowOrder`, `setCellValue`, `sourceIndex` (pure, tested).
-- `lib/shared/artifacts/extract-table.ts` — `ExtractionSchema` + `extractionToCitationTable` + prompt builder (Slice 2). Now also accepts `columnHints` (Slice A).
-- `lib/shared/artifacts/citation-table-md.ts` — MDX round-trip helpers + `CITATION_TABLE_KEY` (Slice 4a). **Single source of truth** for the node type / plugin key / MDX tag.
-- `lib/shared/artifacts/citation-table-slash.ts` — `buildCitationTableSlashItems` (Slice 4c).
-- `components/panels/citation-table.tsx` — `CitationTableView` (read-only without `onChange`, editable with it). Slice B added `addRow` / `addColumn` / column `×` affordances.
-- `components/panels/extract-table-popover.tsx` (new in Slice A) — the chip-list picker.
-- `components/ui/citation-table-node.tsx` — the editable void Plate node (4a/4b).
-- `components/editor/plugins/citation-table-kit.tsx` — the plugin (registered in `editor-kit.tsx`).
-- `components/editor/plugins/markdown-kit.tsx` — the MDX serialize/deserialize rules (additive; no `code_block` override).
-- `components/editor/transforms.ts` — `insertCitationTable` (4c).
-- `app/api/extract-table/route.ts` — the extraction endpoint (Slice 2; now reads `columnHints`).
-
-### Agent-py translator code map (for follow-ups)
-
-- `services/agent-py/src/agent_py/executor.py` — `_messages_from` (the dispatcher), `_normalise_content_blocks` (now a 4-line wrapper), `_translate_block` + 4 sub-translators (`_translate_image_block`, `_translate_file_block`, `_translate_tool_call_block`, `_translate_tool_result_block`), `_translate_ai_sdk_message`, `_warn_unknown_block_kind`, `_REDACTED_THINKING_SENTINEL`, `_warned_unknown_block_kinds` (process-local set).
-- `services/agent-py/tests/test_executor_wire_translator.py` (new) — 20 unit tests covering every spec table row + 1 warn-once test.
-
-The translator is the canonical path for every message: same-stack Python resumes are byte-identical (Anthropic-shape blocks pass through), cross-stack resumes now keep their tool context.
+- `lib/shared/artifacts/citation-table.ts` — data model + **all pure
+  helpers** (now: `parseCitationTable`, `sortRowOrder`, `sourceIndex`,
+  `setCellValue`, `addRow`/`removeRow`, `addColumn`/`removeColumn`/
+  `moveColumn`, `addCitation`/`updateCitation`/`removeCitation`) and the
+  exported `Citation` type. All pure, never-mutate, return `data` by
+  reference on no-op — fully unit-tested in `citation-table.test.ts`.
+- `lib/shared/artifacts/extract-table.ts` — extraction schema + prompt
+  builder (accepts `columnHints`).
+- `lib/shared/artifacts/citation-table-md.ts` — MDX round-trip +
+  `CITATION_TABLE_KEY` (single source of truth for the node/plugin/MDX
+  tag).
+- `lib/shared/artifacts/citation-table-slash.ts` — slash-insert items.
+- `components/panels/citation-table.tsx` — `CitationTableView`
+  (read-only without `onChange`, editable with it). Owns the table
+  render, sort, value-editing, add/remove row+column, `×Row`/`×Column`,
+  and the **column drag-reorder** (header grip + `dragFrom`/`dragOver`
+  state).
+- `components/panels/citation-cell-editor.tsx` — editable-citation UI
+  (edit-popover per chip + `+ cite` add-popover). **New in #226.**
+- `components/panels/extract-table-popover.tsx` — column-hint chip
+  picker.
+- `components/ui/citation-table-node.tsx` — the editable void Plate node
+  (the embedded editor-doc copy; mirrors the Artifacts-tab table via
+  `onChange → updateArtifactContent`, so every polish slice appears in
+  both places for free).
+- `components/editor/plugins/citation-table-kit.tsx` /
+  `markdown-kit.tsx` — plugin registration + MDX serialize rules.
+- `components/editor/transforms.ts` — `insertCitationTable`.
+- `app/api/extract-table/route.ts` — the extraction endpoint.
 
 ---
 
 ## Test infrastructure — READ THIS before touching tests or CI
 
-**The root test run is split.** `bun run test` runs `scripts/run-tests.sh` (added in #218), **not** a bare `bun test`. Two reasons, both unavoidable:
+**The root test run is split.** `bun run test` runs
+`scripts/run-tests.sh` (added in #218), **not** a bare `bun test`. Two
+reasons, both unavoidable:
 
-1. **Process-global `mock.module` leak.** The 4 task-route tests under `app/api/tasks/` (via `app/api/tasks/_test/mock-agent-store.ts`) register process-global mocks for `@/server/supabase/server`, `@/server/model-provider`, `@/server/agent/store`, `@/server/agent/jobs`. **bun cannot restore module mocks** (`mock.restore()` does not undo `mock.module` — verified). So in a single process they leak into and break `lib/server/image-storage.test.ts` and `lib/server/model-provider.test.ts` (the latter can't self-pin — it tests the real module). The runner isolates `app/api/tasks/` in its own `bun test` process.
-2. **`services/` must not be swept in.** No workspaces → `services/agent-ts` deps (`postgres`) aren't installed at root; agent-ts/agent-py have their own CI jobs. The runner excludes `services/`.
+1. **Process-global `mock.module` leak.** The task-route tests under
+   `app/api/tasks/` register process-global mocks for several
+   `@/server/*` modules; bun **cannot restore module mocks**
+   (`mock.restore()` does not undo `mock.module` — verified), so in a
+   single process they leak into and break
+   `lib/server/image-storage.test.ts` and
+   `lib/server/model-provider.test.ts`. The runner isolates
+   `app/api/tasks/` in its own `bun test` process.
+2. **`services/` must not be swept in** (no workspaces → agent-ts deps
+   aren't installed at root; agent-ts/agent-py have their own CI jobs).
 
 **Gotchas:**
-- bun positional filters are **substring** matches, so paths must be `./`-anchored (a bare `tests` also matches `services/agent-ts/tests/`).
-- bun has **no exclude flag**, so the runner hand-enumerates roots (`ISOLATED="./app/api/tasks"`, `MAIN_ROOTS=(./app/api/ai ./components ./lib ./scripts ./tests)`) and a **coverage guard** fails if any `*.test.ts` outside `node_modules/`/`services/` sits outside those roots. **If you add tests under a new top-level dir, add that dir to `MAIN_ROOTS`** or the guard fails loudly (by design).
-- An `error: postgres unreachable` trace from `route.handler.test.ts:240` during `bun run test` is an **intentional throw inside a passing test** — not a failure. Counts stay `0 fail`.
-- Adding a new test file that does global `mock.module` of a shared `@/server/*` module risks the same leak. Either run it under `app/api/tasks/` (isolated) or give it its own isolated root.
+- bun positional filters are **substring** matches → paths must be
+  `./`-anchored.
+- bun has **no exclude flag** → the runner hand-enumerates roots
+  (`ISOLATED="./app/api/tasks"`,
+  `MAIN_ROOTS=(./app/api/ai ./components ./lib ./scripts ./tests)`) and a
+  **coverage guard** fails if any `*.test.ts` outside
+  `node_modules/`/`services/` sits outside those roots. **Add a new
+  top-level test dir to `MAIN_ROOTS`** or the guard fails by design.
+- An `error: postgres unreachable` trace from `route.handler.test.ts:240`
+  during `bun run test` is an **intentional throw inside a passing
+  test** — not a failure. Counts stay `0 fail`.
+- A new test that global-`mock.module`s a shared `@/server/*` module
+  risks the same leak — isolate it.
 
-Design/plan for the split: `docs/superpowers/specs/2026-06-14-root-test-runner-split-design.md`, `docs/superpowers/plans/2026-06-14-root-test-runner-split.md`.
+Design/plan: `docs/superpowers/specs/2026-06-14-root-test-runner-split-design.md`,
+`docs/superpowers/plans/2026-06-14-root-test-runner-split.md`.
 
 ---
 
-## How work was run today (the loop)
+## How work is run this session (the loop)
 
-Every feature followed the **superpowers** flow, and the user drove it:
-1. `brainstorming` skill → design → write spec to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`, commit. **HARD-GATE: design approved before any code.** Ask the user to review the spec.
-2. `writing-plans` skill → plan to `docs/superpowers/plans/YYYY-MM-DD-<topic>.md`, commit.
-3. Execution: usually `subagent-driven-development` (the user picks "1") — fresh implementer subagent per task, then spec-compliance + code-quality review subagents; for tiny tasks a single combined review is proportionate.
-4. `finishing-a-development-branch` → the user almost always picks **"2 (push + PR into `dev`)"**.
-5. After PR creation, the next agent polls `gh pr checks <N>` until all are non-pending (the GitHub MCP `subscribe_pr_activity` tool is **not** connected this session).
-6. User merges → cleanup: `git checkout dev && git pull --ff-only && git branch -d <branch>` (remote auto-deletes on merge; force-delete with `-D` if cherry-picked SHAs differ from the merge commits).
+The user drives a strict **superpowers** flow per feature:
+1. `brainstorming` → spec to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`, commit. **HARD-GATE: design approved before any code.**
+2. `writing-plans` → plan to `docs/superpowers/plans/YYYY-MM-DD-<topic>.md`, commit.
+3. `subagent-driven-development` (user picks "1"): fresh implementer
+   subagent per task → review. For **trivial pure-helper tasks** the
+   controller verifies inline and reserves a full **combined
+   spec+quality review subagent** for the substantive UI task — this is
+   the proportionate pattern used for C/D/E.
+4. `finishing-a-development-branch` → user picks **"2" (push + PR into
+   `dev`)**.
+5. After PR creation, a `Monitor` polls `gh pr checks <N>` until all
+   five jobs (`ci`, `agent-py`, `agent-ts`, `app-tests`,
+   `agent-py-types-drift`) are non-pending. (`ci` is the slow one —
+   build + bundle audit.) The GitHub MCP `subscribe_pr_activity` tool is
+   **not** connected this session.
+6. User merges → cleanup: `git checkout dev && git pull --ff-only &&
+   git branch -d <branch>` (remote auto-deletes; `-d` warns "not merged
+   to HEAD" because of the squash — expected, the branch IS merged via
+   the squash commit).
 
-Branch naming: `feat/...`, `fix/...`, `ci/...`, `docs/...`. Commit trailer: `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`.
+Branch naming: `feat/...`, `fix/...`, `ci/...`, `docs/...`. Commit
+trailer: `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`.
+Local gate before pushing: `bun run check`. For agent-py changes also
+`bun run check:agent-py` (its CI runs `ruff format --check` separately).
 
-Local gate before pushing: `bun run check` (typecheck + lint + the split test run). For agent-py changes also `bun run check:agent-py` (its CI runs `ruff format --check` as a separate step).
+> **Manual browser verification** of the citation-table UI was NOT run
+> by the agent for C/D/E (it needs a generated citation-table artifact
+> via the AI gateway). Each PR's Test Plan lists the manual pass as an
+> unchecked reviewer/user step; the logic is TDD-covered and the UI is
+> review- + gate-verified. If picking up more citation-table UI work,
+> a real browser pass over the accumulated affordances is worth doing.
 
 ---
 
 ## Next steps (menu the user has been choosing from)
 
-### Agent-py deferred gaps (from the translator spec's "Out of scope" section)
+### Remaining citation-table polish (the same arc)
+- **Persisted sort order** — sort is view-state only; persist into the
+  artifact content so it survives reload (touches the persisted-shape
+  contract — be careful).
+- **Undo/redo** — cross-cutting over the now-rich edit surface
+  (value/citations/rows/columns/order).
+- **Column types** — typed columns (text/numeric/link/date) so
+  `addColumn` enforces a value kind, sort respects type, and the extract
+  prompt can be steered. Largest remaining item (schema + prompt + sort
+  + UI).
+- **Row drag-reorder** — the row analogue of #227 (would need a
+  `moveRow` helper; rows are positional, so cells move with the row).
+- **Keyboard-accessible column reorder** — close the native-DnD a11y gap
+  left by #227 (arrow-key or move-left/right buttons reusing
+  `moveColumn`).
 
-- **Reverse Anthropic → AI SDK translator** (covers "Python-suspends, TS-resumes" on the same checkpoint). The chat route's streaming translator at `chat.py:563-610` covers the streaming wire path but not the message-array path.
-- **Cancellation propagation through the Anthropic SDK call** (`runner.py:30-37` — `RunStepContext.signal` is still a placeholder; the SDK now blocks long enough to need it).
-- **MCP stdio transport** (`mcp_client.py:9`).
-- **Real-DNS rebinding test** (`PLAN-agent-api.md:52-55`).
-- **Fixture round-trip suite** (recorded TS-runner events replayed through the Python runner; would have caught the AI-SDK → Anthropic gap earlier).
-
-### Citation-table polish follow-ups (deferred from the polish spec)
-
-- **Row-remove UI button** (the `removeRow` helper exists, the button is a 5-line follow-up).
-- **Editing citations in place** (citation chips are read-only today).
-- **Persisted sort order** (currently view-state only).
-- **Undo/redo**.
-- **Column reordering** (drag the headers).
-- **Column types** (numeric / link / date — would let `addColumn` enforce a value kind and feed the prompt).
-
-### Other
-
-- **Pre-existing lint warnings:** 9 `Unused eslint-disable directive` warnings in `services/agent-ts/*` (poller.ts/server.ts) — harmless, but a tidy-up if desired.
-- **More cross-product features** from `docs/PLAN-cross-product-inspirations.md` (beyond §9, which is now complete).
+### Other arcs
+- **agent-py deferred gaps** (from the translator spec's out-of-scope):
+  reverse Anthropic→AI-SDK translator, cancellation propagation through
+  the SDK call (`runner.py` `RunStepContext.signal` placeholder), MCP
+  stdio transport, real-DNS rebinding test, fixture round-trip suite.
+  See `docs/PLAN-agent-api.md`.
+- **More cross-product features** from
+  `docs/PLAN-cross-product-inspirations.md` (§9 citation-tables is
+  feature-complete; other sections remain).
+- **Pre-existing lint warnings:** 9 warnings — 8 `Unused eslint-disable
+  directive` in `services/agent-ts/*` (poller.ts/server.ts) + 1
+  `_omitModel` in `app/api/summarize/route.ts`. Harmless; a tidy-up if
+  desired.
 
 ---
 
 ## Known-good baseline at handover
 
-- `bun run check` is **green end-to-end** on `dev` (typecheck + lint 0 errors; split test run 52 + 1304 pass / 0 fail). PR #222 was the last to push test additions; #223 was agent-py only and the agent-py gate is `bun run check:agent-py` (531 tests, 0 fail).
-- `bun run check:agent-py` is **green end-to-end** (ruff check + **ruff format --check** + mypy + pytest, 531 tests, 0 fail). The 20 new translator tests live here.
-- Working tree on `dev` is clean; 0 commits ahead of `origin/dev`. No branches in flight.
-- All 4 CI jobs (`ci`, `agent-py`, `agent-ts`, `app-tests`) pass on the most recent merged PRs.
+- `bun run check` is **green end-to-end** on `dev` — typecheck 0 errors;
+  lint 0 errors (the 9 pre-existing warnings above are unrelated to the
+  changed files); split test run **52 + 1269 = 1321 pass / 0 fail**
+  (count grew with the new helper tests across C/D/E).
+- `bun run check:agent-py` was untouched this session (no agent-py
+  changes); last green at 531 tests / 0 fail (per the prior handover).
+- Working tree on `dev` is clean; 0 commits ahead of `origin/dev`; no
+  feature branches in flight.
+- All five CI jobs pass on the latest merged PR (#227).
+
+---
+
+## Suggested skills for the next agent
+
+- **`superpowers:using-superpowers`** first (it self-loads at session
+  start) — then for any new feature: **`superpowers:brainstorming`** →
+  **`superpowers:writing-plans`** → **`superpowers:subagent-driven-development`**
+  → **`superpowers:finishing-a-development-branch`**, mirroring the loop
+  above. The user reliably picks subagent-driven execution and
+  "push + PR into `dev`".
+- **`superpowers:test-driven-development`** for any new pure helper
+  (the citation-table helpers are the template: pure, never-mutate,
+  return `data` by reference on no-op, one `describe` per helper).
+- **`handoff`** at the next clean stopping point to refresh this doc.
