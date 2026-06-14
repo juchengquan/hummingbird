@@ -2,13 +2,15 @@
 import "client-only"
 
 /**
- * Read-only renderer for a citation-table artifact (Slice 1 of the
- * Elicit-style extraction tables). Draws a grid; each cell value is
- * followed by `[N]` chips (one per citation) that open a Popover with
- * the source title/url + the supporting quote. Self-contained from the
- * artifact's embedded `sources`. Editing / sorting / generation are
- * later slices.
+ * Renderer for a citation-table artifact. Read-only by default; when an
+ * `onChange` handler is supplied, columns sort on header click and cell
+ * VALUES are editable in place (citations stay read-only chips). Sorting
+ * is view-state only (never calls `onChange`); an edit calls
+ * `onChange(setCellValue(...))`. Self-contained from the embedded
+ * `sources`. (Slices 1–3 of the Elicit-style extraction tables.)
  */
+
+import { useState } from "react"
 
 import {
   Popover,
@@ -18,16 +20,14 @@ import {
 import {
   type CitationTable,
   type CitationTableCell,
+  setCellValue,
+  sortRowOrder,
   sourceIndex,
 } from "@/shared/artifacts/citation-table"
 
-function Cell({ data, cell }: { data: CitationTable; cell?: CitationTableCell }) {
-  if (!cell) {
-    return <span className="text-[var(--muted-foreground)]">—</span>
-  }
+function CitationChips({ data, cell }: { data: CitationTable; cell: CitationTableCell }) {
   return (
-    <span>
-      {cell.value}
+    <>
       {cell.citations.map((c, i) => {
         const idx = sourceIndex(data, c.sourceId)
         if (idx === null) return null
@@ -46,12 +46,7 @@ function Cell({ data, cell }: { data: CitationTable; cell?: CitationTableCell })
             <PopoverContent className="w-80 text-xs">
               <div className="font-medium">
                 {source?.url ? (
-                  <a
-                    href={source.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="hover:underline"
-                  >
+                  <a href={source.url} target="_blank" rel="noreferrer" className="hover:underline">
                     {source.title}
                   </a>
                 ) : (
@@ -65,38 +60,144 @@ function Cell({ data, cell }: { data: CitationTable; cell?: CitationTableCell })
           </Popover>
         )
       })}
+    </>
+  )
+}
+
+function CellContent({
+  data,
+  cell,
+  editable,
+  onStartEdit,
+}: {
+  data: CitationTable
+  cell?: CitationTableCell
+  editable: boolean
+  onStartEdit: () => void
+}) {
+  const value = cell?.value ?? ""
+  const valueEl = editable ? (
+    <button type="button" onClick={onStartEdit} className="text-left hover:underline">
+      {value || <span className="text-[var(--muted-foreground)]">—</span>}
+    </button>
+  ) : value ? (
+    <span>{value}</span>
+  ) : (
+    <span className="text-[var(--muted-foreground)]">—</span>
+  )
+  return (
+    <span>
+      {valueEl}
+      {cell ? <CitationChips data={data} cell={cell} /> : null}
     </span>
   )
 }
 
-export function CitationTableView({ data }: { data: CitationTable }) {
+export function CitationTableView({
+  data,
+  onChange,
+}: {
+  data: CitationTable
+  onChange?: (next: CitationTable) => void
+}) {
+  const editable = !!onChange
+  const [sort, setSort] = useState<{ columnId: string; dir: "asc" | "desc" } | null>(null)
+  const [editing, setEditing] = useState<{ rowIndex: number; columnId: string } | null>(null)
+  const [draft, setDraft] = useState("")
+
+  const order = sort
+    ? sortRowOrder(data, sort.columnId, sort.dir)
+    : data.rows.map((_, i) => i)
+
+  const toggleSort = (columnId: string) =>
+    setSort((s) =>
+      s && s.columnId === columnId
+        ? { columnId, dir: s.dir === "asc" ? "desc" : "asc" }
+        : { columnId, dir: "asc" },
+    )
+
+  const startEdit = (rowIndex: number, columnId: string, current: string) => {
+    if (!editable) return
+    setDraft(current)
+    setEditing({ rowIndex, columnId })
+  }
+  const commit = () => {
+    if (editing && onChange) {
+      onChange(setCellValue(data, editing.rowIndex, editing.columnId, draft))
+    }
+    setEditing(null)
+  }
+
   return (
     <div className="overflow-x-auto p-3">
       <table className="w-full border-collapse text-xs">
         <thead>
           <tr>
-            {data.columns.map((col) => (
-              <th
-                key={col.id}
-                scope="col"
-                className="border border-[var(--border)] bg-[var(--muted)] px-2 py-1 text-left font-medium"
-              >
-                {col.label}
-              </th>
-            ))}
+            {data.columns.map((col) => {
+              const active = sort?.columnId === col.id
+              return (
+                <th
+                  key={col.id}
+                  scope="col"
+                  aria-sort={
+                    active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"
+                  }
+                  className="border border-[var(--border)] bg-[var(--muted)] p-0 text-left font-medium"
+                >
+                  <button
+                    type="button"
+                    onClick={() => toggleSort(col.id)}
+                    className="flex w-full items-center gap-1 px-2 py-1 hover:bg-[var(--accent)]"
+                  >
+                    {col.label}
+                    {active ? <span aria-hidden>{sort.dir === "asc" ? "▲" : "▼"}</span> : null}
+                  </button>
+                </th>
+              )
+            })}
           </tr>
         </thead>
         <tbody>
-          {data.rows.map((row, i) => (
-            <tr key={`row-${i}`}>
-              {data.columns.map((col) => (
-                <td
-                  key={col.id}
-                  className="border border-[var(--border)] px-2 py-1 align-top"
-                >
-                  <Cell data={data} cell={row[col.id]} />
-                </td>
-              ))}
+          {order.map((rowIndex) => (
+            <tr key={`row-${rowIndex}`}>
+              {data.columns.map((col) => {
+                const cell = data.rows[rowIndex]?.[col.id]
+                const isEditing =
+                  editing?.rowIndex === rowIndex && editing?.columnId === col.id
+                return (
+                  <td
+                    key={col.id}
+                    className="border border-[var(--border)] px-2 py-1 align-top"
+                  >
+                    {isEditing ? (
+                      <input
+                        autoFocus
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        onBlur={commit}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault()
+                            commit()
+                          } else if (e.key === "Escape") {
+                            e.preventDefault()
+                            setEditing(null)
+                          }
+                        }}
+                        aria-label="Edit cell value"
+                        className="w-full bg-[var(--background)] px-1 text-xs outline-none ring-1 ring-[var(--ring)]"
+                      />
+                    ) : (
+                      <CellContent
+                        data={data}
+                        cell={cell}
+                        editable={editable}
+                        onStartEdit={() => startEdit(rowIndex, col.id, cell?.value ?? "")}
+                      />
+                    )}
+                  </td>
+                )
+              })}
             </tr>
           ))}
         </tbody>

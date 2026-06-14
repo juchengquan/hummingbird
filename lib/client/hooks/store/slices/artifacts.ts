@@ -35,6 +35,10 @@ export interface ArtifactsSlice {
   deleteArtifact: (artifactId: string) => void
   togglePinArtifact: (artifactId: string) => void
   updateArtifactTitle: (artifactId: string, title: string) => void
+  /** Replace an artifact's `content` (e.g. an in-place table edit). Like
+   *  updateArtifactTitle, this is a plain field set; `content` already
+   *  syncs via diffArtifacts. */
+  updateArtifactContent: (artifactId: string, content: string) => void
   requestEditorReload: () => void
   /** Toggle an artifact's selection for the active conversation
    *  (mirrors the file + URL-bookmark selection pattern). */
@@ -135,6 +139,12 @@ export const createArtifactsSlice: SliceCreator<ArtifactsSlice> = (set, get) => 
     set((state) => ({
       artifacts: state.artifacts.map((a) =>
         a.id === artifactId ? { ...a, title } : a
+      ),
+    })),
+  updateArtifactContent: (artifactId, content) =>
+    set((state) => ({
+      artifacts: state.artifacts.map((a) =>
+        a.id === artifactId ? { ...a, content } : a,
       ),
     })),
   requestEditorReload: () =>

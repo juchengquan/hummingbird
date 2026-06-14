@@ -80,6 +80,7 @@ export function ArtifactsTab() {
   const deleteArtifact = useStore((s) => s.deleteArtifact)
   const togglePinArtifact = useStore((s) => s.togglePinArtifact)
   const updateArtifactTitle = useStore((s) => s.updateArtifactTitle)
+  const updateArtifactContent = useStore((s) => s.updateArtifactContent)
   const appendToActiveDocumentOrCreate = useStore(
     (s) => s.appendToActiveDocumentOrCreate
   )
@@ -217,6 +218,7 @@ export function ArtifactsTab() {
         onTogglePin={(a) => togglePinArtifact(a.id)}
         onRename={(a, t) => updateArtifactTitle(a.id, t)}
         onDelete={handleDelete}
+        onChangeContent={(a, content) => updateArtifactContent(a.id, content)}
       />
     </>
   )
@@ -230,6 +232,7 @@ interface ArtifactPreviewDialogProps {
   onTogglePin: (a: Artifact) => void
   onRename: (a: Artifact, title: string) => void
   onDelete: (a: Artifact) => void
+  onChangeContent: (a: Artifact, content: string) => void
 }
 
 function ArtifactPreviewDialog({
@@ -240,6 +243,7 @@ function ArtifactPreviewDialog({
   onTogglePin,
   onRename,
   onDelete,
+  onChangeContent,
 }: ArtifactPreviewDialogProps) {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState("")
@@ -350,7 +354,12 @@ function ArtifactPreviewDialog({
             (() => {
               const table = parseCitationTable(artifact.content)
               return table ? (
-                <CitationTableView data={table} />
+                <CitationTableView
+                  data={table}
+                  onChange={(next) =>
+                    onChangeContent(artifact, JSON.stringify(next))
+                  }
+                />
               ) : (
                 <pre className="text-xs p-3 whitespace-pre-wrap break-words font-mono">
                   {artifact.content}
