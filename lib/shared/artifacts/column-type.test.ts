@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test"
 
 import {
+  COLUMN_TYPES,
+  COLUMN_TYPE_GLYPHS,
+  COLUMN_TYPE_LABELS,
   ColumnTypeSchema,
   compareForSort,
+  isHttpUrl,
   parseCellValue,
   resolveColumnType,
   validateCell,
@@ -17,12 +21,13 @@ describe("resolveColumnType", () => {
   })
   test("returns 'text' when col.type is '' or unknown", () => {
     expect(resolveColumnType({ type: "" })).toBe("text")
-    expect(resolveColumnType({ type: "link" })).toBe("text")
     expect(resolveColumnType({ type: "banana" })).toBe("text")
   })
-  test("returns the declared type when valid ('text' / 'number')", () => {
+  test("returns the declared type when valid ('text' / 'number' / 'link' / 'date')", () => {
     expect(resolveColumnType({ type: "text" })).toBe("text")
     expect(resolveColumnType({ type: "number" })).toBe("number")
+    expect(resolveColumnType({ type: "link" })).toBe("link")
+    expect(resolveColumnType({ type: "date" })).toBe("date")
   })
   test("never throws", () => {
     expect(() => resolveColumnType({ type: undefined as unknown as string })).not.toThrow()
@@ -137,10 +142,124 @@ describe("ColumnTypeSchema", () => {
     expect(ColumnTypeSchema.safeParse("text").success).toBe(true)
     expect(ColumnTypeSchema.safeParse("number").success).toBe(true)
   })
-  test("rejects 'date' / 'link' / '' / 123", () => {
-    expect(ColumnTypeSchema.safeParse("date").success).toBe(false)
-    expect(ColumnTypeSchema.safeParse("link").success).toBe(false)
+  test("rejects '' / 123", () => {
     expect(ColumnTypeSchema.safeParse("").success).toBe(false)
     expect(ColumnTypeSchema.safeParse(123).success).toBe(false)
+  })
+})
+
+describe("validateCell (date)", () => {
+  test("returns null for valid ISO dates", () => {
+    expect(validateCell(cell("2024-01-15"), "date")).toBeNull()
+    expect(validateCell(cell("1999-12-31"), "date")).toBeNull()
+  })
+  test("returns null for empty / missing", () => {
+    expect(validateCell(cell(""), "date")).toBeNull()
+    expect(validateCell(undefined, "date")).toBeNull()
+  })
+  test("warns for non-ISO formats", () => {
+    expect(validateCell(cell("15/01/2024"), "date")).toContain("Not a date")
+    expect(validateCell(cell("last tuesday"), "date")).toContain("Not a date")
+    expect(validateCell(cell("2024-1-5"), "date")).toContain("Not a date")
+  })
+  test("warns for impossible calendar dates", () => {
+    expect(validateCell(cell("2024-13-40"), "date")).toContain("Not a date")
+    expect(validateCell(cell("2024-02-30"), "date")).toContain("Not a date")
+  })
+  test("includes the offending value, truncated at 30 chars", () => {
+    const msg = validateCell(cell("x".repeat(50)), "date")
+    expect(msg).toContain("…")
+    expect(msg?.length).toBeLessThan(60)
+  })
+})
+
+describe("validateCell (link)", () => {
+  test("returns null for http(s) URLs", () => {
+    expect(validateCell(cell("https://example.com"), "link")).toBeNull()
+    expect(validateCell(cell("http://x.test/path?q=1"), "link")).toBeNull()
+  })
+  test("returns null for empty / missing", () => {
+    expect(validateCell(cell(""), "link")).toBeNull()
+    expect(validateCell(undefined, "link")).toBeNull()
+  })
+  test("warns for non-http(s) values", () => {
+    expect(validateCell(cell("ftp://x.test"), "link")).toContain("Not a URL")
+    expect(validateCell(cell("javascript:alert(1)"), "link")).toContain("Not a URL")
+    expect(validateCell(cell("example.com"), "link")).toContain("Not a URL")
+    expect(validateCell(cell("not a url"), "link")).toContain("Not a URL")
+  })
+})
+
+describe("compareForSort (date)", () => {
+  test("orders chronologically ascending", () => {
+    expect(compareForSort(cell("2024-01-15"), cell("2024-12-01"), "date", "asc")).toBeLessThan(0)
+  })
+  test("same-year dates do NOT tie (numeric-sniff regression)", () => {
+    expect(compareForSort(cell("2024-01-15"), cell("2024-12-01"), "date", "asc")).not.toBe(0)
+  })
+  test("descending flips", () => {
+    expect(compareForSort(cell("2024-01-15"), cell("2024-12-01"), "date", "desc")).toBeGreaterThan(0)
+  })
+  test("invalid / empty sort last in both directions", () => {
+    expect(compareForSort(cell("not a date"), cell("2024-01-01"), "date", "asc")).toBeGreaterThan(0)
+    expect(compareForSort(cell("not a date"), cell("2024-01-01"), "date", "desc")).toBeGreaterThan(0)
+    expect(compareForSort(cell(""), cell("2024-01-01"), "date", "asc")).toBeGreaterThan(0)
+  })
+  test("stable for equal dates", () => {
+    expect(compareForSort(cell("2024-01-01"), cell("2024-01-01"), "date", "asc")).toBe(0)
+  })
+})
+
+describe("compareForSort (link)", () => {
+  test("orders lexically, not numerically (no sniff)", () => {
+    expect(compareForSort(cell("http://10.0.0.1"), cell("http://9.0.0.1"), "link", "asc")).toBeLessThan(0)
+  })
+  test("descending flips", () => {
+    expect(compareForSort(cell("http://a.test"), cell("http://b.test"), "link", "desc")).toBeGreaterThan(0)
+  })
+})
+
+describe("parseCellValue (date + link)", () => {
+  test("date → UTC timestamp for valid ISO, NaN otherwise", () => {
+    expect(parseCellValue("2024-01-15", "date")).toBe(Date.UTC(2024, 0, 15))
+    expect(parseCellValue("nope", "date")).toBeNaN()
+  })
+  test("link → raw string passthrough", () => {
+    expect(parseCellValue("https://x.test", "link")).toBe("https://x.test")
+  })
+})
+
+describe("isHttpUrl", () => {
+  test("true for http(s)", () => {
+    expect(isHttpUrl("https://example.com")).toBe(true)
+    expect(isHttpUrl("http://x.test")).toBe(true)
+  })
+  test("false for everything else", () => {
+    expect(isHttpUrl("ftp://x")).toBe(false)
+    expect(isHttpUrl("javascript:alert(1)")).toBe(false)
+    expect(isHttpUrl("example.com")).toBe(false)
+    expect(isHttpUrl("")).toBe(false)
+  })
+})
+
+describe("ColumnTypeSchema accepts link + date", () => {
+  test("accepts the full slice-2 set", () => {
+    expect(ColumnTypeSchema.safeParse("link").success).toBe(true)
+    expect(ColumnTypeSchema.safeParse("date").success).toBe(true)
+  })
+  test("still rejects junk", () => {
+    expect(ColumnTypeSchema.safeParse("").success).toBe(false)
+    expect(ColumnTypeSchema.safeParse("banana").success).toBe(false)
+  })
+})
+
+describe("display metadata", () => {
+  test("labels + glyphs cover every column type", () => {
+    for (const t of COLUMN_TYPES) {
+      expect(typeof COLUMN_TYPE_LABELS[t]).toBe("string")
+      expect(COLUMN_TYPE_LABELS[t].length).toBeGreaterThan(0)
+      expect(typeof COLUMN_TYPE_GLYPHS[t]).toBe("string")
+      expect(COLUMN_TYPE_GLYPHS[t].length).toBeGreaterThan(0)
+    }
   })
 })

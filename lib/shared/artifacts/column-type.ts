@@ -2,11 +2,27 @@ import { z } from "zod"
 
 import type { CitationTableCell } from "./citation-table"
 
-/** The set of column types shipped in slice 1. Slice 2 adds "link"
- *  and "date". */
-export const COLUMN_TYPES = ["text", "number"] as const
+/** The full Core column-type set. Slice 1 shipped text + number;
+ *  slice 2 adds link + date. */
+export const COLUMN_TYPES = ["text", "number", "link", "date"] as const
 export const ColumnTypeSchema = z.enum(COLUMN_TYPES)
 export type ColumnType = (typeof COLUMN_TYPES)[number]
+
+/** Human labels for the type picker / radios / chips. */
+export const COLUMN_TYPE_LABELS: Record<ColumnType, string> = {
+  text: "Text",
+  number: "Number",
+  link: "Link",
+  date: "Date",
+}
+
+/** Short glyphs for the inline type pills. */
+export const COLUMN_TYPE_GLYPHS: Record<ColumnType, string> = {
+  text: "Aa",
+  number: "#",
+  link: "↗",
+  date: "🗓",
+}
 
 /** Resolve a column's effective type. Defaults to "text" when type
  *  is absent or unknown. Pure, never throws. */
@@ -14,6 +30,37 @@ export function resolveColumnType(col: { type?: string }): ColumnType {
   return (COLUMN_TYPES as readonly string[]).includes(col.type ?? "")
     ? (col.type as ColumnType)
     : "text"
+}
+
+/** Strict ISO date parser. Accepts only `YYYY-MM-DD` that is also a
+ *  real calendar date (rejects 2024-13-40, 2024-02-30). Returns a
+ *  UTC-midnight timestamp (ms) or null. Never throws. */
+function parseIsoDate(value: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!m) return null
+  const year = Number(m[1])
+  const month = Number(m[2])
+  const day = Number(m[3])
+  const ts = Date.UTC(year, month - 1, day)
+  const dt = new Date(ts)
+  if (
+    dt.getUTCFullYear() !== year ||
+    dt.getUTCMonth() !== month - 1 ||
+    dt.getUTCDate() !== day
+  ) {
+    return null
+  }
+  return ts
+}
+
+/** True only for `http://` / `https://` URLs. Never throws. */
+export function isHttpUrl(value: string): boolean {
+  try {
+    const u = new URL(value)
+    return u.protocol === "http:" || u.protocol === "https:"
+  } catch {
+    return false
+  }
 }
 
 /** Coerce a cell's string value to a sortable scalar for `type`.
@@ -24,6 +71,9 @@ export function parseCellValue(value: string, type: ColumnType): number | string
   if (type === "number") {
     const n = Number.parseFloat(value)
     return Number.isFinite(n) ? n : NaN
+  }
+  if (type === "date") {
+    return parseIsoDate(value) ?? NaN
   }
   return value
 }
@@ -41,6 +91,16 @@ export function validateCell(
     if (Number.isFinite(n)) return null
     const display = cell.value.length > 30 ? `${cell.value.slice(0, 30)}…` : cell.value
     return `Not a number: "${display}"`
+  }
+  if (type === "date") {
+    if (parseIsoDate(cell.value) !== null) return null
+    const display = cell.value.length > 30 ? `${cell.value.slice(0, 30)}…` : cell.value
+    return `Not a date: "${display}"`
+  }
+  if (type === "link") {
+    if (isHttpUrl(cell.value)) return null
+    const display = cell.value.length > 30 ? `${cell.value.slice(0, 30)}…` : cell.value
+    return `Not a URL: "${display}"`
   }
   return null
 }
@@ -74,6 +134,19 @@ export function compareForSort(
     if (aBad) return 1
     if (bBad) return -1
     return na === nb ? 0 : (na < nb ? -1 : 1) * sign
+  }
+  if (type === "date") {
+    const ta = parseIsoDate(va)
+    const tb = parseIsoDate(vb)
+    const aBad = ta === null
+    const bBad = tb === null
+    if (aBad && bBad) return 0
+    if (aBad) return 1
+    if (bBad) return -1
+    return ta === tb ? 0 : (ta < tb ? -1 : 1) * sign
+  }
+  if (type === "link") {
+    return va.localeCompare(vb) * sign
   }
   // type === "text": preserve the historical numeric-sniff behavior.
   // Both finite → numeric. Otherwise localeCompare. Stable for equal

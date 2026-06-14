@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { ColumnTypeSchema } from '@/shared/artifacts/column-type'
+
 /**
  * Shared request + response schemas for the app's API surface. These are
  * the contract every frontend → backend interaction must satisfy.
@@ -620,7 +622,7 @@ export const ExtractTableRequestSchema = z.object({
         z.string().min(1).max(60),
         z.object({
           label: z.string().min(1).max(60),
-          type: z.enum(["text", "number"]).optional(),
+          type: ColumnTypeSchema.optional(),
         }),
       ]),
     )
