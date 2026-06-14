@@ -31,6 +31,7 @@ import {
   addRow,
   moveColumn,
   removeColumn,
+  setColumnType,
   sortRowOrder,
 } from "@/shared/artifacts/citation-table"
 
@@ -66,12 +67,7 @@ export function CitationTableView({
             onSortChange={setSort}
             editable={editable}
             onSetColumnType={(columnId: string, type: ColumnType) =>
-              onChange?.({
-                ...data,
-                columns: data.columns.map((c) =>
-                  c.id === columnId ? { ...c, type } : c,
-                ),
-              })
+              onChange?.(setColumnType(data, columnId, type))
             }
             onRemoveColumn={(columnId: string) =>
               onChange?.(removeColumn(data, columnId))

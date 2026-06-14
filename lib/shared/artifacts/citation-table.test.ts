@@ -12,6 +12,7 @@ import {
   removeColumn,
   removeRow,
   setCellValue,
+  setColumnType,
   slugifyColumnId,
   sortRowOrder,
   sourceIndex,
@@ -478,5 +479,42 @@ describe("uniqueColumnId", () => {
       ],
     }
     expect(uniqueColumnId(t, "price")).toBe("price-3")
+  })
+})
+
+describe("setColumnType", () => {
+  const fixture: CitationTable = {
+    columns: [
+      { id: "name", label: "Name" },
+      { id: "score", label: "Score" },
+    ],
+    rows: [],
+    sources: [],
+  }
+
+  test("sets the type on the matching column", () => {
+    const out = setColumnType(fixture, "score", "number")
+    expect(out.columns.find((c) => c.id === "score")?.type).toBe("number")
+  })
+
+  test("leaves other columns untouched", () => {
+    const out = setColumnType(fixture, "score", "number")
+    expect(out.columns.find((c) => c.id === "name")?.type).toBeUndefined()
+    expect(out.columns.find((c) => c.id === "name")?.label).toBe("Name")
+  })
+
+  test("returns a new object and does not mutate the input", () => {
+    const before = JSON.stringify(fixture)
+    const out = setColumnType(fixture, "score", "number")
+    expect(out).not.toBe(fixture)
+    expect(out.columns).not.toBe(fixture.columns)
+    expect(JSON.stringify(fixture)).toBe(before)
+  })
+
+  test("no-op shape when columnId matches nothing (all columns unchanged, new top-level object)", () => {
+    const out = setColumnType(fixture, "ghost", "number")
+    expect(out).not.toBe(fixture)
+    expect(out.columns.every((c) => c.type === undefined)).toBe(true)
+    expect(out.columns.map((c) => c.id)).toEqual(["name", "score"])
   })
 })

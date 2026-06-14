@@ -222,6 +222,22 @@ export function removeCitation(
   return { ...data, rows }
 }
 
+/** Return a copy of `data` with the given column's `type` set. Columns
+ *  whose id doesn't match are untouched. Mirrors the inline update the
+ *  View used to do for the header type pill. */
+export function setColumnType(
+  data: CitationTable,
+  columnId: string,
+  type: ColumnType,
+): CitationTable {
+  return {
+    ...data,
+    columns: data.columns.map((c) =>
+      c.id === columnId ? { ...c, type } : c,
+    ),
+  }
+}
+
 /** Return a NEW CitationTable with the column at `fromIndex` moved to
  *  `toIndex` (spliced out, then spliced back in at `toIndex`), shifting
  *  the others. Out-of-range `fromIndex`/`toIndex` or
