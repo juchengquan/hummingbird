@@ -17,6 +17,7 @@ import {
   Check,
   X,
   Image as ImageIcon,
+  Table,
 } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/shared/utils"
@@ -40,11 +41,14 @@ import { MarkdownPreview } from "@/components/markdown-preview"
 import { detectArtifactShell } from "@/client/live-artifact/detect"
 import { openLiveArtifact } from "@/components/right-panel-slot"
 import type { Artifact } from "@/shared/types"
+import { CitationTableView } from "@/components/panels/citation-table"
+import { parseCitationTable } from "@/shared/artifacts/citation-table"
 
 function artifactKindIcon(artifact: Artifact) {
   if (artifact.kind === "code") return <Code2 size={12} />
   if (artifact.kind === "json") return <Braces size={12} />
   if (artifact.kind === "image") return <ImageIcon size={12} />
+  if (artifact.kind === "table") return <Table size={12} />
   return <FileText size={12} />
 }
 
@@ -342,6 +346,17 @@ function ArtifactPreviewDialog({
                 </p>
               )}
             </div>
+          ) : artifact?.kind === "table" ? (
+            (() => {
+              const table = parseCitationTable(artifact.content)
+              return table ? (
+                <CitationTableView data={table} />
+              ) : (
+                <pre className="text-xs p-3 whitespace-pre-wrap break-words font-mono">
+                  {artifact.content}
+                </pre>
+              )
+            })()
           ) : (
             <pre className="text-xs p-3 whitespace-pre-wrap break-words font-mono">
               {artifact?.content}
