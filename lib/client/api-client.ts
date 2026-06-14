@@ -759,27 +759,26 @@ type SummarizeOptions = { signal?: AbortSignal } & DispatchOption
  *  `mode` discriminant and the response schema. */
 async function summarizePost<T>(
   body: SummarizeRequestInput,
-  schema: { parse: (raw: unknown) => T },
-  options?: SummarizeOptions
+  schema: {
+    safeParse: (
+      raw: unknown,
+    ) => { success: true; data: T } | { success: false; error: unknown }
+  },
+  options?: SummarizeOptions,
 ): Promise<T | null> {
-  try {
-    const remote = await resolveDispatch(options)
-    const url = remote ? `${remote.baseUrl}/v1/summarize` : apiUrls.summarize()
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    }
-    if (remote) headers.Authorization = `Bearer ${remote.authToken}`
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: options?.signal,
-    })
-    if (!res.ok) return null
-    return schema.parse(await res.json())
-  } catch {
-    return null
-  }
+  const result = await dispatchedFetch<
+    SummarizeRequestInput,
+    SummarizeRequestInput,
+    T
+  >({
+    path: "/v1/summarize",
+    localUrl: apiUrls.summarize(),
+    bodyForLocal: body,
+    schema,
+    signal: options?.signal,
+    dispatch: options,
+  })
+  return result.ok ? result.data : null
 }
 
 /** Summarises a single file's extracted text. Returns null on failure —
