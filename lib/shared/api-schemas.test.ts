@@ -4,6 +4,7 @@ import {
   COMPLETE_BLOCK_MAX,
   COMPLETE_PREFIX_MAX,
   CompleteRequestSchema,
+  ExtractTableRequestSchema,
   RefreshImageUrlRequestSchema,
 } from "./api-schemas"
 
@@ -104,5 +105,33 @@ describe("CompleteRequestSchema", () => {
       CompleteRequestSchema.safeParse({ blockText: "a", model: long })
         .success
     ).toBe(false)
+  })
+})
+
+describe("ExtractTableRequestSchema.columnHints accepts the full type set", () => {
+  const base = {
+    reportText: "r",
+    sources: [{ title: "t", url: "https://s.test", snippet: "s" }],
+  }
+  test("accepts link + date typed hints", () => {
+    const r = ExtractTableRequestSchema.safeParse({
+      ...base,
+      columnHints: [
+        { label: "Home page", type: "link" },
+        { label: "Launched", type: "date" },
+      ],
+    })
+    expect(r.success).toBe(true)
+  })
+  test("still accepts legacy string hints", () => {
+    const r = ExtractTableRequestSchema.safeParse({ ...base, columnHints: ["Drug", "N"] })
+    expect(r.success).toBe(true)
+  })
+  test("rejects an unknown type", () => {
+    const r = ExtractTableRequestSchema.safeParse({
+      ...base,
+      columnHints: [{ label: "X", type: "banana" }],
+    })
+    expect(r.success).toBe(false)
   })
 })

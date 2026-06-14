@@ -11,7 +11,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import type { ColumnType } from "@/shared/artifacts/column-type"
-import { resolveColumnType } from "@/shared/artifacts/column-type"
+import { COLUMN_TYPES, COLUMN_TYPE_GLYPHS, COLUMN_TYPE_LABELS, resolveColumnType } from "@/shared/artifacts/column-type"
 import type { ExtractColumnHint } from "@/shared/artifacts/extract-table"
 
 /** Chip-list picker for the "Extract to table" action. Pre-seeds chips
@@ -93,12 +93,12 @@ export function ExtractTablePopover({
                           aria-label={`Change type of ${c.label}`}
                           className="rounded bg-[var(--background)] px-1 text-[10px] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                         >
-                          {chipType === "number" ? "#" : "Aa"}
+                          {COLUMN_TYPE_GLYPHS[chipType]}
                         </button>
                       </PopoverTrigger>
                       <PopoverContent className="w-32 p-2 text-xs">
                         <div className="space-y-1">
-                          {(["text", "number"] as const).map((opt) => (
+                          {COLUMN_TYPES.map((opt) => (
                             <button
                               key={opt}
                               type="button"
@@ -110,7 +110,7 @@ export function ExtractTablePopover({
                                 chipType === opt ? "bg-[var(--accent)] font-medium" : ""
                               }`}
                             >
-                              {opt === "text" ? "Text" : "Number"}
+                              {COLUMN_TYPE_LABELS[opt]}
                             </button>
                           ))}
                         </div>

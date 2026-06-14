@@ -110,17 +110,29 @@ export function buildExtractTablePrompt(
     )
     .join("\n")
 
-  // When typed hints are supplied AND at least one is Number, render
-  // per-type value-format instructions. Text-only hints don't need
-  // explicit instructions beyond "use these labels exactly".
+  // When typed hints are supplied, render per-type value-format
+  // instructions only for the types actually present. Text needs no
+  // explicit instruction beyond "use these labels exactly".
+  const presentTypes = new Set((typedHints ?? []).map((h) => h.type ?? "text"))
+  const typeLines: string[] = []
+  if (presentTypes.has("number")) {
+    typeLines.push(
+      '- For (Number) columns: emit the bare numeric value only, no units or words (e.g. "200" not "two hundred", "3.14" not "approximately three").',
+    )
+  }
+  if (presentTypes.has("link")) {
+    typeLines.push(
+      "- For (Link) columns: emit a full http(s):// URL only (no surrounding text).",
+    )
+  }
+  if (presentTypes.has("date")) {
+    typeLines.push(
+      '- For (Date) columns: emit the date as YYYY-MM-DD (ISO 8601), e.g. "2024-01-15".',
+    )
+  }
   const typeBlock =
-    typedHints && typedHints.length > 0 && typedHints.some((h) => h.type === "number")
-      ? [
-          "",
-          "Per-type value format:",
-          "- For (Text) columns: emit prose.",
-          '- For (Number) columns: emit the bare numeric value only, no units or words (e.g. "200" not "two hundred", "3.14" not "approximately three").',
-        ].join("\n")
+    typeLines.length > 0
+      ? ["", "Per-type value format:", "- For (Text) columns: emit prose.", ...typeLines].join("\n")
       : ""
 
   const hintBlock =

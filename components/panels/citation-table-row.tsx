@@ -22,7 +22,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
-import { resolveColumnType, validateCell } from "@/shared/artifacts/column-type"
+import type { ColumnType } from "@/shared/artifacts/column-type"
+import { isHttpUrl, resolveColumnType, validateCell } from "@/shared/artifacts/column-type"
 import {
   type Citation,
   type CitationTable,
@@ -77,6 +78,7 @@ function CitationChips({ data, cell }: { data: CitationTable; cell: CitationTabl
 function CellContent({
   data,
   cell,
+  type,
   editable,
   onStartEdit,
   onAddCitation,
@@ -85,6 +87,7 @@ function CellContent({
 }: {
   data: CitationTable
   cell?: CitationTableCell
+  type: ColumnType
   editable: boolean
   onStartEdit: () => void
   onAddCitation: (citation: Citation) => void
@@ -92,12 +95,33 @@ function CellContent({
   onRemoveCitation: (citIndex: number) => void
 }) {
   const value = cell?.value ?? ""
+  const isLink = type === "link" && isHttpUrl(value)
   const valueEl = editable ? (
-    <button type="button" onClick={onStartEdit} className="text-left hover:underline">
-      {value || <span className="text-[var(--muted-foreground)]">—</span>}
-    </button>
+    <span className="inline-flex items-center gap-1">
+      <button type="button" onClick={onStartEdit} className="text-left hover:underline">
+        {value || <span className="text-[var(--muted-foreground)]">—</span>}
+      </button>
+      {isLink ? (
+        <a
+          href={value}
+          target="_blank"
+          rel="noreferrer"
+          aria-label="Open link in new tab"
+          onClick={(e) => e.stopPropagation()}
+          className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+        >
+          ↗
+        </a>
+      ) : null}
+    </span>
   ) : value ? (
-    <span>{value}</span>
+    isLink ? (
+      <a href={value} target="_blank" rel="noreferrer" className="hover:underline">
+        {value}
+      </a>
+    ) : (
+      <span>{value}</span>
+    )
   ) : (
     <span className="text-[var(--muted-foreground)]">—</span>
   )
@@ -158,6 +182,7 @@ export function CitationTableRow({
           <CellContent
             data={data}
             cell={cell}
+            type={cellType}
             editable={editable}
             onStartEdit={() => startEdit(col.id, cell?.value ?? "")}
             onAddCitation={(c) => onChange?.(addCitation(data, rowIndex, col.id, c))}
@@ -192,7 +217,13 @@ export function CitationTableRow({
                 {isEditing ? (
                   <input
                     autoFocus
-                    type={cellType === "number" ? "number" : "text"}
+                    type={
+                      cellType === "date"
+                        ? "date"
+                        : cellType === "number"
+                          ? "number"
+                          : "text"
+                    }
                     inputMode={cellType === "number" ? "decimal" : undefined}
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}

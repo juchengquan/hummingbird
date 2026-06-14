@@ -31,7 +31,12 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import type { ColumnType } from "@/shared/artifacts/column-type"
-import { resolveColumnType } from "@/shared/artifacts/column-type"
+import {
+  COLUMN_TYPES,
+  COLUMN_TYPE_GLYPHS,
+  COLUMN_TYPE_LABELS,
+  resolveColumnType,
+} from "@/shared/artifacts/column-type"
 import {
   type CitationTable,
   type CitationTableSort,
@@ -166,12 +171,12 @@ export function CitationTableHeader({
                           }}
                           className="ml-1 cursor-pointer rounded bg-[var(--muted)] px-1 py-0.5 text-[10px] text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
                         >
-                          {colType === "number" ? "#" : "Aa"}
+                          {COLUMN_TYPE_GLYPHS[colType]}
                         </span>
                       </PopoverTrigger>
                       <PopoverContent className="w-32 p-2 text-xs">
                         <div className="space-y-1">
-                          {(["text", "number"] as const).map((opt) => (
+                          {COLUMN_TYPES.map((opt) => (
                             <button
                               key={opt}
                               type="button"
@@ -183,7 +188,7 @@ export function CitationTableHeader({
                                 colType === opt ? "bg-[var(--accent)] font-medium" : ""
                               }`}
                             >
-                              {opt === "text" ? "Text" : "Number"}
+                              {COLUMN_TYPE_LABELS[opt]}
                             </button>
                           ))}
                         </div>
@@ -263,7 +268,7 @@ export function CitationTableHeader({
           />
           <div className="flex items-center gap-3 py-1 text-xs">
             <span className="text-[var(--muted-foreground)]">Type</span>
-            {(["text", "number"] as const).map((opt) => (
+            {COLUMN_TYPES.map((opt) => (
               <label key={opt} className="flex cursor-pointer items-center gap-1">
                 <input
                   type="radio"
@@ -272,7 +277,7 @@ export function CitationTableHeader({
                   checked={newColType === opt}
                   onChange={() => setNewColType(opt)}
                 />
-                {opt === "text" ? "Text" : "Number"}
+                {COLUMN_TYPE_LABELS[opt]}
               </label>
             ))}
           </div>

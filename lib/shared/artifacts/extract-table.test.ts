@@ -66,6 +66,34 @@ describe("buildExtractTablePrompt", () => {
   })
 })
 
+describe("buildExtractTablePrompt (link + date hints)", () => {
+  test("renders the (Link) / (Date) label suffixes", () => {
+    const prompt = buildExtractTablePrompt("report", sources, [
+      { label: "Home page", type: "link" },
+      { label: "Launched", type: "date" },
+    ])
+    expect(prompt).toContain("`Home page` (Link)")
+    expect(prompt).toContain("`Launched` (Date)")
+  })
+  test("Link hints add the http(s) URL instruction", () => {
+    const prompt = buildExtractTablePrompt("report", sources, [{ label: "Site", type: "link" }])
+    expect(prompt).toContain("emit a full http(s):// URL")
+  })
+  test("Date hints add the YYYY-MM-DD instruction", () => {
+    const prompt = buildExtractTablePrompt("report", sources, [{ label: "When", type: "date" }])
+    expect(prompt).toContain("YYYY-MM-DD")
+  })
+  test("Text-only hints still add no per-type format block", () => {
+    const prompt = buildExtractTablePrompt("report", sources, [{ label: "Drug", type: "text" }])
+    expect(prompt).not.toContain("Per-type value format")
+  })
+  test("no-hints path stays unchanged (regression guard)", () => {
+    const prompt = buildExtractTablePrompt("report body", sources)
+    expect(prompt).not.toContain("Per-type value format")
+    expect(prompt).toContain("Build a table capturing the key comparable attributes")
+  })
+})
+
 describe("extractionToCitationTable", () => {
   test("fills type:'text' on write when extraction omits type", () => {
     const out = extractionToCitationTable(
