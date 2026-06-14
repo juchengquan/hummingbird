@@ -34,6 +34,7 @@ import type { ColumnType } from "@/shared/artifacts/column-type"
 import { resolveColumnType } from "@/shared/artifacts/column-type"
 import {
   type CitationTable,
+  type CitationTableSort,
   slugifyColumnId,
   uniqueColumnId,
 } from "@/shared/artifacts/citation-table"
@@ -49,8 +50,8 @@ export function CitationTableHeader({
   onColumnDrop,
 }: {
   data: CitationTable
-  sort: { columnId: string; dir: "asc" | "desc" } | null
-  onSortChange: (sort: { columnId: string; dir: "asc" | "desc" } | null) => void
+  sort: CitationTableSort | null
+  onSortChange: (sort: CitationTableSort | null) => void
   editable: boolean
   onSetColumnType: (columnId: string, type: ColumnType) => void
   onRemoveColumn: (columnId: string) => void

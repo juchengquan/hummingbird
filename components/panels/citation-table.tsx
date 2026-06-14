@@ -27,6 +27,7 @@ import type { ColumnType } from "@/shared/artifacts/column-type"
 import { resolveColumnType } from "@/shared/artifacts/column-type"
 import {
   type CitationTable,
+  type CitationTableSort,
   addColumn,
   addRow,
   moveColumn,
@@ -43,10 +44,7 @@ export function CitationTableView({
   onChange?: (next: CitationTable) => void
 }) {
   const editable = !!onChange
-  const [sort, setSort] = useState<{
-    columnId: string
-    dir: "asc" | "desc"
-  } | null>(null)
+  const [sort, setSort] = useState<CitationTableSort | null>(null)
 
   const order = sort
     ? sortRowOrder(

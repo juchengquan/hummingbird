@@ -43,6 +43,11 @@ export type CitationTable = z.infer<typeof CitationTableSchema>
 export type CitationTableCell = z.infer<typeof CellSchema>
 export type Citation = z.infer<typeof CitationSchema>
 
+/** View-state for a sorted column: which column and which direction.
+ *  Lives here so the table View shell and its Header subcomponent share
+ *  one shape instead of re-spelling it inline. */
+export type CitationTableSort = { columnId: string; dir: "asc" | "desc" }
+
 /** Parse an artifact's `content` string into a CitationTable, or null
  *  when it isn't valid citation-table JSON (bad JSON or shape). The
  *  Artifacts-tab dispatch falls back to the plain `<pre>` view on null.
