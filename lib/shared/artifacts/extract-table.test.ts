@@ -101,3 +101,26 @@ describe("buildExtractTablePrompt", () => {
     expect(p).toContain("[2] Trial B")
   })
 })
+
+describe("buildExtractTablePrompt with columnHints", () => {
+  test("omits the 'Choose 3–6 columns' line and appends a 'Required columns' block when hints are provided", () => {
+    const p = buildExtractTablePrompt("THE REPORT BODY", sources, ["Price", "Battery life", "Weight"])
+    expect(p).toContain("Required columns")
+    expect(p).toContain("`Price`")
+    expect(p).toContain("`Battery life`")
+    expect(p).toContain("`Weight`")
+    expect(p).not.toContain("Choose 3–6 columns")
+  })
+
+  test("empty hints array is treated as no hints (regression guard)", () => {
+    const withEmpty = buildExtractTablePrompt("THE REPORT BODY", sources, [])
+    const withUndef = buildExtractTablePrompt("THE REPORT BODY", sources)
+    expect(withEmpty).toBe(withUndef)
+  })
+
+  test("hints render verbatim — no escape injection", () => {
+    const p = buildExtractTablePrompt("THE REPORT BODY", sources, ["A`B", "C\\D"])
+    expect(p).toContain("`A`B`")
+    expect(p).toContain("`C\\D`")
+  })
+})

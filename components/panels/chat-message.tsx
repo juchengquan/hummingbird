@@ -21,6 +21,7 @@ import { MessageUiParts } from "@/components/chat/generative-ui/message-ui-parts
 import { MessageAttachments } from "@/components/panels/message-attachments"
 import { ReasoningBlock } from "@/components/panels/reasoning-block"
 import { SourcesStrip } from "@/components/panels/sources-strip"
+import { ExtractTablePopover } from "@/components/panels/extract-table-popover"
 import { MessageVerification } from "@/components/panels/message-verification"
 import { countSupportPerSource, markerMarksFor } from "@/shared/verify"
 import { ErrorBubble } from "@/components/panels/error-bubble"
@@ -204,7 +205,7 @@ function ChatMessageImpl({
     })
   }
 
-  const handleExtractTable = async () => {
+  const handleExtractTable = async (hints?: string[]) => {
     if (!activeConversationId || !webSearchResults || extracting) return
     setExtracting(true)
     try {
@@ -215,6 +216,7 @@ function ChatMessageImpl({
           url: r.url,
           snippet: r.snippet,
         })),
+        ...(hints ? { columnHints: hints } : {}),
       })
       if (!table) {
         toast.error("Couldn't extract a table")
@@ -647,23 +649,29 @@ function ChatMessageImpl({
                     <TooltipContent side="bottom">Save as artifact</TooltipContent>
                   </Tooltip>
                   {webSearchResults && webSearchResults.length > 0 && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={handleExtractTable}
-                          disabled={extracting}
-                          className={actionBtnClass}
-                          aria-label="Extract to table"
-                        >
-                          <Sheet size={14} />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom">
-                        {extracting ? "Extracting…" : "Extract to table"}
-                      </TooltipContent>
-                    </Tooltip>
+                    <ExtractTablePopover
+                      sourceTitles={(webSearchResults ?? []).map((r) => r.title)}
+                      extracting={extracting}
+                      onRun={handleExtractTable}
+                      trigger={
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              disabled={extracting}
+                              className={actionBtnClass}
+                              aria-label="Extract to table"
+                            >
+                              <Sheet size={14} />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom">
+                            {extracting ? "Extracting…" : "Extract to table"}
+                          </TooltipContent>
+                        </Tooltip>
+                      }
+                    />
                   )}
                 </>
               )}
