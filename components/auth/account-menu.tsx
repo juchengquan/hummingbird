@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { LogIn, LogOut, Loader2, CloudOff, Cloud, HardDrive, Trash2, Sun, Moon, Monitor, Bot, Wand2, ShieldCheck } from "lucide-react"
+import { LogIn, LogOut, Loader2, CloudOff, Cloud, HardDrive, Trash2, Sun, Moon, Monitor, Bot, Wand2, ShieldCheck, Sparkles } from "lucide-react"
 import { toast } from "sonner"
 import {
   Popover,
@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { AuthDialog } from "@/components/auth/auth-dialog"
+import { CustomInstructionsDialog } from "@/components/chat/custom-instructions-dialog"
 import { useAuth } from "@/client/hooks/use-auth"
 import { useStore } from "@/client/hooks/use-store"
 import type { ChatBackend } from "@/client/hooks/store/slices/ui"
@@ -51,6 +52,7 @@ export function AccountMenu() {
   const { state } = useSidebar()
   const collapsed = state === "collapsed"
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [ciOpen, setCiOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [usage, setUsage] = useState<number | null>(null)
 
@@ -94,17 +96,39 @@ export function AccountMenu() {
     )
   }
 
+  // Local-first entry point — custom instructions apply to every chat
+  // whether or not the user is signed in, so this row/trigger and its
+  // dialog appear in every account-menu state (including unconfigured /
+  // signed-out, where the data still lives in localStorage).
+  const customInstructionsButton = (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={() => setCiOpen(true)}
+      className="w-full justify-start gap-2 h-7 px-2 text-xs"
+      aria-label="Custom instructions"
+      title="Custom instructions applied to every chat"
+    >
+      <Sparkles size={14} />
+      {!collapsed && <span>Custom instructions</span>}
+    </Button>
+  )
+
   if (status === "unconfigured") {
     // No Supabase configured at runtime — show a static badge so users know
     // their data isn't being synced anywhere.
     return (
-      <div
-        className="w-full inline-flex items-center gap-1.5 h-7 px-2 text-xs text-[var(--muted-foreground)]"
-        title="Supabase isn't configured. All data stays in this browser."
-      >
-        <CloudOff size={14} />
-        {!collapsed && <span>Local only</span>}
-      </div>
+      <>
+        <div
+          className="w-full inline-flex items-center gap-1.5 h-7 px-2 text-xs text-[var(--muted-foreground)]"
+          title="Supabase isn't configured. All data stays in this browser."
+        >
+          <CloudOff size={14} />
+          {!collapsed && <span>Local only</span>}
+        </div>
+        {customInstructionsButton}
+        <CustomInstructionsDialog open={ciOpen} onClose={() => setCiOpen(false)} />
+      </>
     )
   }
 
@@ -121,7 +145,9 @@ export function AccountMenu() {
           <LogIn size={14} />
           {!collapsed && <span>Sign in</span>}
         </Button>
+        {customInstructionsButton}
         <AuthDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+        <CustomInstructionsDialog open={ciOpen} onClose={() => setCiOpen(false)} />
       </>
     )
   }
@@ -130,6 +156,7 @@ export function AccountMenu() {
   const initial = email.charAt(0).toUpperCase()
 
   return (
+    <>
     <Popover open={menuOpen} onOpenChange={setMenuOpen}>
       <PopoverTrigger asChild>
         <Button
@@ -361,6 +388,23 @@ export function AccountMenu() {
           </Button>
         </div>
         <div className="border-t my-1" />
+        {/* Account-level custom instructions. Local-first — available
+            signed-in or not. Close the popover first, then open the
+            dialog as a sibling outside PopoverContent to avoid the
+            focus/unmount conflict from opening a dialog inside the
+            popover that is unmounting. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            setMenuOpen(false)
+            setCiOpen(true)
+          }}
+          className="w-full justify-start gap-2"
+        >
+          <Sparkles size={14} />
+          <span>Custom instructions</span>
+        </Button>
         <Button
           variant="ghost"
           size="sm"
@@ -375,6 +419,8 @@ export function AccountMenu() {
         </Button>
       </PopoverContent>
     </Popover>
+    <CustomInstructionsDialog open={ciOpen} onClose={() => setCiOpen(false)} />
+    </>
   )
 }
 
