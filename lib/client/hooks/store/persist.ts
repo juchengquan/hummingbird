@@ -37,6 +37,8 @@ export const partializeState = (state: AppState) => ({
   files: state.files,
   chatModel: state.chatModel,
   chatReasoningEffort: state.chatReasoningEffort,
+  customInstructionsAbout: state.customInstructionsAbout,
+  customInstructionsStyle: state.customInstructionsStyle,
   notes: state.notes,
   artifacts: state.artifacts,
   documents: state.documents,
