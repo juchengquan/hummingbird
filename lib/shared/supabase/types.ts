@@ -771,16 +771,22 @@ export type Database = {
       profiles: {
         Row: {
           created_at: string
+          custom_instructions_about: string
+          custom_instructions_style: string
           email: string | null
           id: string
         }
         Insert: {
           created_at?: string
+          custom_instructions_about?: string
+          custom_instructions_style?: string
           email?: string | null
           id: string
         }
         Update: {
           created_at?: string
+          custom_instructions_about?: string
+          custom_instructions_style?: string
           email?: string | null
           id?: string
         }

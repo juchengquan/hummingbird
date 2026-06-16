@@ -19,6 +19,7 @@ import { useEffect, useRef } from "react"
 import { useStore } from "@/client/hooks/use-store"
 import { useSyncEnabled } from "@/client/hooks/use-sync-enabled"
 import { getSupabaseBrowserClient } from "@/client/supabase/client"
+import { fetchAccountInstructions } from "@/client/supabase/account-instructions"
 import { configureSync, enqueue } from "@/client/sync/sync-queue"
 import {
   diffArtifacts,
@@ -122,6 +123,35 @@ export function useSync(): void {
       lastSnapshot = null
     }
   }, [enabled])
+
+  // Load account custom instructions from the user's profile row once per
+  // sign-in (server wins on first load — prevents a stale-localStorage
+  // clobber). These are singleton settings, not entity-rows, so they live
+  // outside the diff/queue machinery. Best-effort: a failed read leaves
+  // local state alone. Anonymous / local-only users never run this
+  // (gated on `enabled && userId`), so they make zero Supabase calls.
+  const loadedInstructionsFor = useRef<string | null>(null)
+  useEffect(() => {
+    if (!enabled || !userId) {
+      loadedInstructionsFor.current = null
+      return
+    }
+    if (loadedInstructionsFor.current === userId) return
+    loadedInstructionsFor.current = userId
+
+    let cancelled = false
+    void (async () => {
+      const row = await fetchAccountInstructions(userId)
+      if (cancelled || !row) return
+      useStore.getState().setAccountInstructions({
+        about: row.about,
+        style: row.style,
+      })
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [enabled, userId])
 
   // Subscribe to store changes and produce SyncOps. The first change
   // after enabling seeds the snapshot if reconciliation hasn't already.

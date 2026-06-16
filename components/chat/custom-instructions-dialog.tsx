@@ -7,6 +7,8 @@ import {
   ACCOUNT_INSTRUCTIONS_MAX,
   useAccountInstructions,
 } from "@/client/hooks/store/slices/account-instructions"
+import { useSyncEnabled } from "@/client/hooks/use-sync-enabled"
+import { writeAccountInstructions } from "@/client/supabase/account-instructions"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -38,6 +40,10 @@ export function CustomInstructionsDialog({
 }) {
   const setAccountInstructions = useStore((s) => s.setAccountInstructions)
   const { about, style } = useAccountInstructions()
+  // `userId` is non-null only when signed in AND cloud sync is enabled
+  // (folds in the local-only opt-out). Anonymous / local-only users get
+  // `null` → the write-through is skipped → zero Supabase calls.
+  const { userId } = useSyncEnabled()
   const [aboutDraft, setAboutDraft] = useState("")
   const [styleDraft, setStyleDraft] = useState("")
 
@@ -52,6 +58,14 @@ export function CustomInstructionsDialog({
 
   const save = () => {
     setAccountInstructions({ about: aboutDraft, style: styleDraft })
+    // Best-effort write-through to the user's profile row when signed in.
+    // Not awaited — local state is already updated and authoritative.
+    if (userId) {
+      void writeAccountInstructions(userId, {
+        about: aboutDraft,
+        style: styleDraft,
+      })
+    }
     onClose()
   }
 
