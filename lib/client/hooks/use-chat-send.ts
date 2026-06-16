@@ -125,6 +125,11 @@ export function useChatSend(): UseChatSendResult {
   // Enabled portable user skills fold their bodies into the system
   // prompt (client-side v1 activation). See PLAN-portable-skills.md.
   const userSkills = useStore((s) => s.userSkills)
+  // Account-level custom instructions — the always-on base of the
+  // system-prompt cascade (account style → voice, account about →
+  // context). Subscribed so an edit takes effect on the next turn.
+  const customInstructionsStyle = useStore((s) => s.customInstructionsStyle)
+  const customInstructionsAbout = useStore((s) => s.customInstructionsAbout)
 
   // --- own state / refs (used to live on the chat panel) ---
   const [streamingConvIds, setStreamingConvIds] = useState<Set<string>>(
@@ -220,6 +225,8 @@ export function useChatSend(): UseChatSendResult {
       // `docs/PLAN-conversation-system-prompt.md`.
       const workspaceSystemPrompt = withUserSkillInstructions(
         composeSystemPrompts(
+          customInstructionsStyle,
+          customInstructionsAbout,
           activeWorkspace?.systemPrompt,
           conv?.systemPrompt,
           options?.agentSystemPrompt ?? ""
@@ -833,6 +840,8 @@ export function useChatSend(): UseChatSendResult {
       conversationFiles,
       conversations,
       createArtifact,
+      customInstructionsAbout,
+      customInstructionsStyle,
       deleteMessage,
       files,
       liveToolCalls,
