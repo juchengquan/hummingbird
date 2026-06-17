@@ -55,29 +55,49 @@ describe("resolveAgent", () => {
 
 describe("composeSystemPrompts — 3-tier (workspace, conversation, persona)", () => {
   test("all empty → undefined", () => {
-    expect(composeSystemPrompts(undefined, undefined, "")).toBeUndefined()
-    expect(composeSystemPrompts("  ", "  ", "  ")).toBeUndefined()
+    expect(
+      composeSystemPrompts(undefined, undefined, undefined, undefined, ""),
+    ).toBeUndefined()
+    expect(
+      composeSystemPrompts(undefined, undefined, "  ", "  ", "  "),
+    ).toBeUndefined()
   })
 
   test("workspace-only", () => {
-    expect(composeSystemPrompts("Be concise.", undefined, "")).toBe("Be concise.")
+    expect(
+      composeSystemPrompts(undefined, undefined, "Be concise.", undefined, ""),
+    ).toBe("Be concise.")
   })
 
   test("conversation-only — used as the voice when no other voice", () => {
     expect(
-      composeSystemPrompts(undefined, "We're planning Q4 OKRs.", ""),
+      composeSystemPrompts(
+        undefined,
+        undefined,
+        undefined,
+        "We're planning Q4 OKRs.",
+        "",
+      ),
     ).toBe("We're planning Q4 OKRs.")
   })
 
   test("persona-only", () => {
-    expect(composeSystemPrompts(undefined, undefined, "You are a critic.")).toBe(
-      "You are a critic.",
-    )
+    expect(
+      composeSystemPrompts(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "You are a critic.",
+      ),
+    ).toBe("You are a critic.")
   })
 
   test("workspace + conversation: voice + context, blank-line separated", () => {
     expect(
       composeSystemPrompts(
+        undefined,
+        undefined,
         "Be concise.",
         "We're planning Q4 OKRs.",
         "",
@@ -90,6 +110,8 @@ describe("composeSystemPrompts — 3-tier (workspace, conversation, persona)", (
     // doesn't blow away "what this thread is about."
     expect(
       composeSystemPrompts(
+        undefined,
+        undefined,
         "Be concise.",
         "We're planning Q4 OKRs.",
         "You are a critic.",
@@ -101,6 +123,8 @@ describe("composeSystemPrompts — 3-tier (workspace, conversation, persona)", (
     expect(
       composeSystemPrompts(
         undefined,
+        undefined,
+        undefined,
         "We're planning Q4 OKRs.",
         "You are a critic.",
       ),
@@ -109,16 +133,82 @@ describe("composeSystemPrompts — 3-tier (workspace, conversation, persona)", (
 
   test("all three inputs are trimmed before joining", () => {
     expect(
-      composeSystemPrompts("  Be concise.  ", "  Context.  ", "  "),
+      composeSystemPrompts(
+        undefined,
+        undefined,
+        "  Be concise.  ",
+        "  Context.  ",
+        "  ",
+      ),
     ).toBe("Be concise.\n\nContext.")
   })
 
   test("empty conversation prompt is a no-op (workspace + persona path unchanged)", () => {
     expect(
-      composeSystemPrompts("Be concise.", "", "You are a critic."),
+      composeSystemPrompts(
+        undefined,
+        undefined,
+        "Be concise.",
+        "",
+        "You are a critic.",
+      ),
     ).toBe("You are a critic.")
     expect(
-      composeSystemPrompts("Be concise.", undefined, "You are a critic."),
+      composeSystemPrompts(
+        undefined,
+        undefined,
+        "Be concise.",
+        undefined,
+        "You are a critic.",
+      ),
     ).toBe("You are a critic.")
+  })
+})
+
+describe("composeSystemPrompts — account base layer", () => {
+  test("account style leads the voice; account about leads the context", () => {
+    expect(
+      composeSystemPrompts(
+        "Be terse.",
+        "I'm a Postgres DBA.",
+        "You are the Acme bot.",
+        "We're debugging a deadlock.",
+        "",
+      ),
+    ).toBe(
+      "Be terse.\n\nYou are the Acme bot.\n\nI'm a Postgres DBA.\n\nWe're debugging a deadlock.",
+    )
+  })
+
+  test("account instructions survive an active persona (always-on base)", () => {
+    const out = composeSystemPrompts(
+      "Be terse.",
+      "I'm a Postgres DBA.",
+      "You are the Acme bot.",
+      "",
+      "You are a code critic.",
+    )
+    expect(out).toContain("Be terse.")
+    expect(out).toContain("I'm a Postgres DBA.")
+    expect(out).toContain("You are a code critic.")
+    expect(out).not.toContain("You are the Acme bot.")
+  })
+
+  test("only account fields set → both render (style then about)", () => {
+    expect(
+      composeSystemPrompts("Be terse.", "I'm a DBA.", undefined, undefined, ""),
+    ).toBe("Be terse.\n\nI'm a DBA.")
+  })
+
+  test("empty/whitespace account fields are trimmed out (regression)", () => {
+    expect(
+      composeSystemPrompts("  ", "  ", "Be concise.", undefined, ""),
+    ).toBe("Be concise.")
+  })
+
+  test("all five empty → undefined", () => {
+    expect(
+      composeSystemPrompts(undefined, undefined, undefined, undefined, ""),
+    ).toBeUndefined()
   })
 })

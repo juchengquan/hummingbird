@@ -8,7 +8,7 @@ import { uuid } from "@/shared/uuid"
  * step in `runMigrations`. Wired into the `version` field of the persist
  * config in `use-store.ts`.
  */
-export const STORE_VERSION = 29
+export const STORE_VERSION = 30
 
 /**
  * Sequential schema migrations from older persisted shapes to the
@@ -483,6 +483,13 @@ export function runMigrations(
     // in the account menu (Deep Research mode enables it independently).
     // See `docs/PLAN-citation-verifiability.md`.
     if (!("verifyCitations" in state)) state.verifyCitations = false
+  }
+  if (fromVersion < 30) {
+    // Account-level custom instructions added. New persisted keys
+    // (customInstructionsAbout / customInstructionsStyle) default to ""
+    // via the slice's initial state when absent from older blobs — no
+    // backfill needed; this block honors the
+    // version-bump-per-persist-change contract.
   }
   return persistedState
 }

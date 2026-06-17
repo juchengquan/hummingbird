@@ -51,6 +51,10 @@ import {
   type PendingSelectionAction,
   type UiSlice,
 } from "./store/slices/ui"
+import {
+  createAccountInstructionsSlice,
+  type AccountInstructionsSlice,
+} from "./store/slices/account-instructions"
 import { createFilesSlice, type FilesSlice } from "./store/slices/files"
 import { createAgentsSlice, type AgentsSlice } from "./store/slices/agents"
 import {
@@ -164,7 +168,8 @@ export interface AppState
     UserSkillsSlice,
     MessagesSlice,
     WorkspacesSlice,
-    ConversationsSlice {}
+    ConversationsSlice,
+    AccountInstructionsSlice {}
 
 export const useStore = create<AppState>()(
   persist(
@@ -187,6 +192,7 @@ export const useStore = create<AppState>()(
       ...createMessagesSlice(set, get, api),
       ...createWorkspacesSlice(set, get, api),
       ...createConversationsSlice(set, get, api),
+      ...createAccountInstructionsSlice(set, get, api),
     }),
     {
       name: 'hummingbird-storage',

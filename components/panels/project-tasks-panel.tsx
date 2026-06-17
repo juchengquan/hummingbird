@@ -226,8 +226,11 @@ export function ProjectTasksPanel() {
       conversationId,
       model: resolved.modelId ?? workspace.defaultModel,
       // "Run as task" launches a one-shot task with no conversation
-      // context — middle (conversation) tier is undefined.
+      // context — middle (conversation) tier is undefined. Account
+      // custom instructions are the always-on base of the cascade.
       workspaceSystemPrompt: composeSystemPrompts(
+        state.customInstructionsStyle,
+        state.customInstructionsAbout,
         workspace.systemPrompt,
         undefined,
         resolved.systemPrompt

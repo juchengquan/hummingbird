@@ -62,34 +62,53 @@ export function resolveAgent(agent: Agent | null | undefined): ResolvedAgent {
 }
 
 /**
- * Combine the three system-prompt tiers in the chat-send cascade —
- * workspace voice, conversation context, and active persona — per
- * `docs/PLAN-conversation-system-prompt.md`. Each input may be empty
- * or undefined; empties are trimmed out.
+ * Combine the four system-prompt tiers in the chat-send cascade —
+ * account custom instructions (the always-on base), workspace voice,
+ * conversation context, and active persona — per
+ * `docs/PLAN-conversation-system-prompt.md` and the account-level
+ * custom-instructions plan. Each input may be empty or undefined;
+ * empties are trimmed out.
+ *
+ * Tier order: account base → workspace/persona voice → conversation
+ * context. The composed string has two sections, blank-line separated:
+ *   - **Voice** (how to respond): account *style* first, then the
+ *     persona-or-workspace voice that can refine it.
+ *   - **Context** (who/what): account *about* first, then the
+ *     conversation's stable thread context.
  *
  * Composition rules:
+ *   - The account base (style + about) **always applies** — it is
+ *     never dropped, including when a persona is active.
  *   - When the persona is active (non-empty `agentSystemPrompt`),
- *     the workspace prompt drops out. The persona's voice replaces
- *     the workspace's; the conversation prompt stays.
+ *     the *workspace* prompt drops out. The persona's voice replaces
+ *     the workspace's; the account base and conversation context stay.
  *   - Conversation prompt is **additive** — it represents stable
  *     thread context (what this chat is about), orthogonal to the
- *     voice (workspace or persona). It survives persona switching.
+ *     voice. It survives persona switching.
  *   - Order in the joined string is voice → context, blank-line
- *     separated, so the model reads "you are <voice>" first, then
+ *     separated, so the model reads "respond like <voice>" first, then
  *     "we're working on <context>."
  */
 export function composeSystemPrompts(
+  customInstructionsStyle: string | undefined,
+  customInstructionsAbout: string | undefined,
   workspaceSystemPrompt: string | undefined,
   conversationSystemPrompt: string | undefined,
   agentSystemPrompt: string,
 ): string | undefined {
+  const cs = customInstructionsStyle?.trim() ?? ""
+  const ca = customInstructionsAbout?.trim() ?? ""
   const w = workspaceSystemPrompt?.trim() ?? ""
   const c = conversationSystemPrompt?.trim() ?? ""
   const a = agentSystemPrompt.trim()
-  // Persona replaces workspace voice when active; conversation
-  // context stays regardless.
-  const voice = a || w
-  const pieces = [voice, c].filter(Boolean)
+  // Account instructions are the always-on base. Voice = how-to-respond
+  // (account style first, then persona-or-workspace which can refine it).
+  // Context = who/what (account about first, then conversation context).
+  // Persona still replaces the *workspace* voice; the account base and
+  // conversation context are never dropped.
+  const voice = [cs, a || w].filter(Boolean).join("\n\n")
+  const context = [ca, c].filter(Boolean).join("\n\n")
+  const pieces = [voice, context].filter(Boolean)
   if (pieces.length === 0) return undefined
   return pieces.join("\n\n")
 }
