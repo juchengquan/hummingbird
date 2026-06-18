@@ -196,7 +196,10 @@ results })` (`data-code-result` part).
 1. **Hosted vs self-host default for the project.** E2B hosted is the
    fastest path but adds a vendor + per-run cost. **Default: support
    both from day one via the adapter; document E2B hosted as the
-   quickstart and self-host as the privacy/cost path.**
+   quickstart and self-host as the privacy/cost path.** The self-host
+   runtime choice (which open-source sandbox fills the `CODE_SANDBOX_BASE_URL`
+   slot, conditioned on the deploy host's KVM support) is worked out in
+   [`PLAN-execution-sandbox.md`](PLAN-execution-sandbox.md).
 2. **Wall-clock + output caps.** **Default: 30 s timeout, 256 KB stdout
    cap, 10 MB total result cap; all configurable via env.**
 3. **Network egress from the sandbox.** Allowing `pip install` / HTTP
