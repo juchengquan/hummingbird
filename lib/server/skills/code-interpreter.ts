@@ -15,6 +15,8 @@ const PROMPT = [
   "Print results you want shown (the sandbox is not a notebook — only stdout",
   "is captured). For charts, save figures to /tmp, e.g.",
   "`plt.savefig('/tmp/plot.png')` — saved PNG/SVG files are returned as images.",
+  "If you pass `files`, they are mounted at `/mnt/files/<name>` — read them",
+  "there (e.g. `pd.read_csv('/mnt/files/data.csv')`).",
 ].join(" ")
 
 export const codeInterpreterSkill: ServerSkill = {
@@ -25,8 +27,11 @@ export const codeInterpreterSkill: ServerSkill = {
     return tool({
       description:
         "Run Python in a sandboxed microVM and return stdout/stderr plus charts (matplotlib). No network.",
-      inputSchema: z.object({ code: z.string().min(1).max(50_000) }),
-      execute: async ({ code }, { abortSignal }) => {
+      inputSchema: z.object({
+        code: z.string().min(1).max(50_000),
+        files: z.array(z.string().max(500)).max(10).optional(),
+      }),
+      execute: async ({ code, files }, { abortSignal }) => {
         const gate = ctx.consumeBudget?.()
         if (gate && !gate.allowed) {
           return {
@@ -39,6 +44,17 @@ export const codeInterpreterSkill: ServerSkill = {
               message: `Rate limited. Retry in ${gate.retryAfterSec}s.`,
             },
           }
+        }
+        // Resolve any model-named files to sandbox mount specs. The
+        // resolver (provided by the chat route only for this skill) is
+        // best-effort: it never throws, and folds any per-file failures
+        // into `notes` we surface to the model via stderr.
+        let mountFiles: { path: string; bytes: Uint8Array }[] | undefined
+        const mountNotes: string[] = []
+        if (files?.length && ctx.resolveMountFiles) {
+          const resolved = await ctx.resolveMountFiles(files)
+          mountFiles = resolved.files
+          mountNotes.push(...resolved.notes)
         }
         const sandbox = selectSandbox()
         if (!sandbox) {
@@ -53,12 +69,21 @@ export const codeInterpreterSkill: ServerSkill = {
             },
           }
         }
-        return sandbox.run({
+        const result = await sandbox.run({
           code,
           language: "python",
           timeoutMs: RUN_TIMEOUT_MS,
           signal: abortSignal,
+          ...(mountFiles ? { files: mountFiles } : {}),
         })
+        // Surface mount notes so the model can adapt (prepend to stderr).
+        if (mountNotes.length) {
+          return {
+            ...result,
+            stderr: [...mountNotes, result.stderr].filter(Boolean).join("\n"),
+          }
+        }
+        return result
       },
     })
   },

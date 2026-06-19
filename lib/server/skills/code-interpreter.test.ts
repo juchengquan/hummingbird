@@ -27,4 +27,19 @@ describe("codeInterpreterSkill", () => {
     expect(p.toLowerCase()).toContain("savefig")
     expect(p.toLowerCase()).toContain("no network")
   })
+  test("tool input accepts a files array", () => {
+    process.env.CODE_SANDBOX_BASE_URL = "http://localhost:5555"
+    const t = codeInterpreterSkill.buildTool(undefined, {})
+    // zod schema should parse { code, files }
+    const parsed = (
+      t as { inputSchema: { safeParse: (v: unknown) => { success: boolean } } }
+    ).inputSchema.safeParse({ code: "print(1)", files: ["data.csv"] })
+    expect(parsed.success).toBe(true)
+    if (origUrl === undefined) delete process.env.CODE_SANDBOX_BASE_URL
+    else process.env.CODE_SANDBOX_BASE_URL = origUrl
+  })
+  test("promptFragment mentions the /mnt/files mount path", () => {
+    const p = codeInterpreterSkill.promptFragment(undefined) ?? ""
+    expect(p).toContain("/mnt/files")
+  })
 })

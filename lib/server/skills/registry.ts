@@ -34,6 +34,12 @@ export interface SkillRuntimeContext {
    *  invocation; on refusal the tool should return a soft error with
    *  the suggested retry-after. */
   consumeBudget?: () => { allowed: boolean; retryAfterSec: number }
+  /** Resolve model-named attachment filenames to sandbox mount specs.
+   *  Provided by the chat route for the codeInterpreter skill when the
+   *  request carries a sandboxFiles manifest; absent otherwise. */
+  resolveMountFiles?: (
+    names: string[]
+  ) => Promise<import("@/server/code-sandbox/mount-files").ResolvedMounts>
 }
 
 /** A single entry on `ChatRequestInput["skills"]` — the per-skill
