@@ -176,6 +176,17 @@ results })` (`data-code-result` part).
    sandbox session reused across turns so variables persist (the
    notebook experience). Adds session lifecycle + idle teardown; defer
    until single-shot proves valuable.
+   > **DEFERRED (2026-06-19).** PRs 1–3 (Python + files + tables) and the
+   > JavaScript follow-up shipped (#243/#244/#245/#246). Warm sessions was
+   > evaluated and **deferred**: microsandbox is **exec + filesystem, not a
+   > kernel**, so reusing a microVM persists only the **filesystem**, not
+   > **in-memory variables** — the "notebook experience" headline needs a
+   > long-lived in-guest REPL/kernel harness streaming cells (research-grade,
+   > feasibility-unvalidated). Sandbox-reuse-for-fs-persistence alone is
+   > moderate lifecycle complexity (registry + idle reaper +
+   > teardown-on-conversation-delete) for partial value, and single-shot
+   > demand isn't validated yet. Revisit only if users ask for cross-turn
+   > state. See `docs/PLAN-execution-sandbox.md` §Phase 4.
 
 ## Tests
 
@@ -210,7 +221,10 @@ results })` (`data-code-result` part).
 ## Reopen / future work
 
 - **Persistent kernel sessions** (PR 4) — the Jupyter-notebook
-  experience where state carries across turns.
+  experience where state carries across turns. **Deferred (2026-06-19)** —
+  not achievable cheaply on microsandbox (exec ≠ kernel; only the
+  filesystem persists across a reused microVM, not in-memory variables).
+  See the PR-4 note in §Sequencing.
 - **Agent-service parity** — the skill lives in the Next.js route
   first; port to `services/agent-py` + `services/agent-ts` once the
   contract settles (mirrors how every skill landed inline then ported).

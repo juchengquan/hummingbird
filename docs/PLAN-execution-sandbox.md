@@ -177,6 +177,12 @@ Apple-Silicon / KVM-capable hardware — microsandbox is the single answer.
 5. **Phase 4 (optional) — warm session reuse.** Persistent sandbox per
    conversation for notebook-style state. Mirrors `PLAN-code-interpreter.md`
    PR 4; defer until single-shot proves out.
+   > **DEFERRED (2026-06-19).** microsandbox runs each cell as a one-shot
+   > process (`python3 -c` / `node -e`), so a reused microVM persists the
+   > **filesystem** but **not in-memory variables** — true notebook-style
+   > state needs a long-lived in-guest REPL/kernel (research-grade,
+   > unvalidated). Deferred for partial-value-vs-lifecycle-complexity +
+   > unvalidated demand. Revisit if cross-turn state is requested.
 
 ## Tests
 
