@@ -1,5 +1,11 @@
 # Code Interpreter — Sandbox backend — Design
 
+> ⚠️ **SUPERSEDED (2026-06-19)** by
+> `docs/superpowers/specs/2026-06-19-code-interpreter-microsandbox-design.md`.
+> The nsjail/agent-py approach below is Linux-only; the runtime decision
+> changed to **microsandbox** (see `docs/PLAN-execution-sandbox.md`).
+> Kept for history; do not implement.
+
 Status: **approved design — ready for implementation plan.** Supersedes the
 un-built portion of `docs/PLAN-code-interpreter.md` (which named E2B as the
 default; E2B is closed-source and out of scope under the OSS-only

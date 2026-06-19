@@ -1,5 +1,12 @@
 # Code Interpreter (runCode) — Implementation Plan
 
+> ⚠️ **SUPERSEDED (2026-06-19)** — this nsjail/agent-py plan is replaced by
+> the microsandbox approach. See spec
+> `docs/superpowers/specs/2026-06-19-code-interpreter-microsandbox-design.md`
+> and the implementation plan `docs/superpowers/plans/2026-06-19-code-interpreter-microsandbox.md`.
+> nsjail is Linux-only; the runtime decision changed to microsandbox
+> (`docs/PLAN-execution-sandbox.md`). Kept for history; do not implement.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship the `runCode` agent-py tool: spawn a Python kernel inside an nsjail sandbox, drive it over the Jupyter protocol, return stdout/stderr/result. Session reuse across calls in a conversation. Per-user-per-session isolation. Network off (loopback ZMQ allowed). 30s wall/25s CPU, 512 MB, 256 pids.
