@@ -17,6 +17,9 @@ const PROMPT = [
   "`plt.savefig('/tmp/plot.png')` — saved PNG/SVG files are returned as images.",
   "If you pass `files`, they are mounted at `/mnt/files/<name>` — read them",
   "there (e.g. `pd.read_csv('/mnt/files/data.csv')`).",
+  "To return a table, write JSON to a /tmp/<name>.table.json file as",
+  '`{"columns": [...], "rows": [[...], ...]}` — or with pandas',
+  "`df.to_json('/tmp/out.table.json', orient='split')`. It renders as a grid.",
 ].join(" ")
 
 export const codeInterpreterSkill: ServerSkill = {
