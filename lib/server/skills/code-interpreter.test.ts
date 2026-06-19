@@ -46,4 +46,28 @@ describe("codeInterpreterSkill", () => {
     const p = codeInterpreterSkill.promptFragment(undefined) ?? ""
     expect(p).toContain(".table.json")
   })
+  test("tool input accepts language: javascript", () => {
+    process.env.CODE_SANDBOX_BASE_URL = "http://localhost:5555"
+    const t = codeInterpreterSkill.buildTool(undefined, {})
+    const parsed = (
+      t as { inputSchema: { safeParse: (v: unknown) => { success: boolean } } }
+    ).inputSchema.safeParse({ code: "console.log(1)", language: "javascript" })
+    expect(parsed.success).toBe(true)
+    if (origUrl === undefined) delete process.env.CODE_SANDBOX_BASE_URL
+    else process.env.CODE_SANDBOX_BASE_URL = origUrl
+  })
+  test("tool input rejects an unknown language", () => {
+    process.env.CODE_SANDBOX_BASE_URL = "http://localhost:5555"
+    const t = codeInterpreterSkill.buildTool(undefined, {})
+    const parsed = (
+      t as { inputSchema: { safeParse: (v: unknown) => { success: boolean } } }
+    ).inputSchema.safeParse({ code: "x", language: "ruby" })
+    expect(parsed.success).toBe(false)
+    if (origUrl === undefined) delete process.env.CODE_SANDBOX_BASE_URL
+    else process.env.CODE_SANDBOX_BASE_URL = origUrl
+  })
+  test("promptFragment mentions JavaScript / node", () => {
+    const p = codeInterpreterSkill.promptFragment(undefined) ?? ""
+    expect(p.toLowerCase()).toContain("javascript")
+  })
 })
