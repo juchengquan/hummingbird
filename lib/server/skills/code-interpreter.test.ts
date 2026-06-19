@@ -42,4 +42,8 @@ describe("codeInterpreterSkill", () => {
     const p = codeInterpreterSkill.promptFragment(undefined) ?? ""
     expect(p).toContain("/mnt/files")
   })
+  test("promptFragment documents the table file convention", () => {
+    const p = codeInterpreterSkill.promptFragment(undefined) ?? ""
+    expect(p).toContain(".table.json")
+  })
 })

@@ -14,6 +14,7 @@ const nextName = () => `runcode-${(seq = (seq + 1) % 1_000_000)}`
 
 const IMG_DIR = "/tmp"
 const IMG_RE = /\.(png|svg)$/i
+const TABLE_RE = /\.table\.json$/i
 
 /** Detect a timeout from the SDK regardless of error class identity
  *  (covers ExecTimeoutError plus any message-level "timeout" signal). */
@@ -82,15 +83,26 @@ export function createMicrosandboxClient(): CodeSandbox {
           }
         }
 
-        // Read back any chart files the run wrote to /tmp.
+        // Read back any chart + table files the run wrote to /tmp.
         const images: RawRun["images"] = []
+        const tables: unknown[] = []
         try {
           const entries = await sb.fs().list(IMG_DIR)
           for (const entry of entries) {
             // `entry.path` may be a basename or a full path depending on
             // the runtime; normalise to an absolute path under /tmp.
             const path = entry.path.startsWith("/") ? entry.path : `${IMG_DIR}/${entry.path}`
-            if (entry.kind !== "file" || !IMG_RE.test(path)) continue
+            if (entry.kind !== "file") continue
+            if (TABLE_RE.test(path)) {
+              const bytes = await sb.fs().read(path)
+              try {
+                tables.push(JSON.parse(Buffer.from(bytes).toString("utf8")))
+              } catch {
+                // skip a malformed table file
+              }
+              continue
+            }
+            if (!IMG_RE.test(path)) continue
             const bytes = await sb.fs().read(path)
             const data = Buffer.from(bytes).toString("base64")
             images.push({
@@ -99,10 +111,10 @@ export function createMicrosandboxClient(): CodeSandbox {
             })
           }
         } catch {
-          // fs listing best-effort; absence of charts is not an error.
+          // fs listing best-effort; absence of charts/tables is not an error.
         }
 
-        return toCodeRunResult({ stdout, stderr, exitCode, images, timedOut })
+        return toCodeRunResult({ stdout, stderr, exitCode, images, timedOut, tables })
       } catch (err) {
         return toCodeRunResult({
           stdout: "",

@@ -40,6 +40,45 @@ export function CodeResult({ part }: { part: CodeResultPart }) {
               </pre>
             ),
           )}
+          {part.results
+            .filter(
+              (r): r is { type: "table"; columns: string[]; rows: string[][] } =>
+                r.type === "table",
+            )
+            .map((t, ti) => (
+              <div key={`t-${ti}`} className="overflow-x-auto">
+                <table className="w-full border-collapse text-[11px]">
+                  <thead>
+                    <tr>
+                      {t.columns.map((c, ci) => (
+                        <th
+                          key={ci}
+                          className="border border-[var(--border)] bg-[var(--muted)] px-1.5 py-0.5 text-left font-medium"
+                          title={c}
+                        >
+                          {c}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {t.rows.map((row, ri) => (
+                      <tr key={ri}>
+                        {row.map((cell, ci) => (
+                          <td
+                            key={ci}
+                            className="max-w-[24ch] truncate border border-[var(--border)] px-1.5 py-0.5 align-top"
+                            title={cell}
+                          >
+                            {cell}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
           {hasStderr ? (
             <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-[var(--destructive)]">
               {part.stderr}
