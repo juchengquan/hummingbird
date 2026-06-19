@@ -43,6 +43,8 @@ import type { CodeRunResult } from '@/server/code-sandbox/types'
 import { resolveMountFiles } from '@/server/code-sandbox/mount-files'
 import { downloadUserFileBytes } from '@/server/code-sandbox/download-user-file'
 import { resolveAttachedMcpResources } from '@/server/mcp/inject-resources'
+import { loadActiveFacts } from '@/server/memory/load-facts'
+import { renderMemoryBlock } from '@/server/memory/render'
 import {
   type ResolvedAttachment,
 } from '@/server/attachments/render'
@@ -479,6 +481,10 @@ export async function POST(req: NextRequest) {
       : {}),
   }
 
+  // Cross-conversation memory: self-gates on sign-in + `memory_enabled`
+  // and never throws → empty block (no-op) for everyone else.
+  const memoryBlock = renderMemoryBlock(await loadActiveFacts()) ?? undefined
+
   try {
     const result = streamText({
       abortSignal: upstreamSignal,
@@ -486,6 +492,7 @@ export async function POST(req: NextRequest) {
       system: [
         buildSystemPrompt({
           workspaceSystemPrompt: body.workspaceSystemPrompt,
+          memoryBlock,
           enabledSkillIds,
           skillRequestEntries,
           mcpServers: mcpServers.map((s) => ({

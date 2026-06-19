@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { LogIn, LogOut, Loader2, CloudOff, Cloud, HardDrive, Trash2, Sun, Moon, Monitor, Bot, Wand2, ShieldCheck, Sparkles } from "lucide-react"
+import { LogIn, LogOut, Loader2, CloudOff, Cloud, HardDrive, Trash2, Sun, Moon, Monitor, Bot, Wand2, ShieldCheck, Sparkles, Brain } from "lucide-react"
 import { toast } from "sonner"
 import {
   Popover,
@@ -12,7 +12,10 @@ import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { AuthDialog } from "@/components/auth/auth-dialog"
 import { CustomInstructionsDialog } from "@/components/chat/custom-instructions-dialog"
+import { MemoryPanel } from "@/components/chat/memory-panel"
 import { useAuth } from "@/client/hooks/use-auth"
+import { useSyncEnabled } from "@/client/hooks/use-sync-enabled"
+import { writeMemoryEnabled } from "@/client/supabase/memory"
 import { useStore } from "@/client/hooks/use-store"
 import type { ChatBackend } from "@/client/hooks/store/slices/ui"
 import { useSidebar } from "@/components/ui/sidebar"
@@ -45,6 +48,11 @@ export function AccountMenu() {
   const setEditorPref = useStore((s) => s.setEditorPref)
   const verifyCitations = useStore((s) => s.verifyCitations)
   const setVerifyCitations = useStore((s) => s.setVerifyCitations)
+  const memoryEnabled = useStore((s) => s.memoryEnabled)
+  const setMemoryEnabled = useStore((s) => s.setMemoryEnabled)
+  // Non-null only when signed in AND cloud sync is on — drives the
+  // best-effort write-through of the toggle to the user's profile row.
+  const { userId } = useSyncEnabled()
   const theme = useStore((s) => s.theme)
   const setTheme = useStore((s) => s.setTheme)
   const colorScheme = useStore((s) => s.colorScheme)
@@ -53,6 +61,7 @@ export function AccountMenu() {
   const collapsed = state === "collapsed"
   const [dialogOpen, setDialogOpen] = useState(false)
   const [ciOpen, setCiOpen] = useState(false)
+  const [memoryOpen, setMemoryOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [usage, setUsage] = useState<number | null>(null)
 
@@ -81,6 +90,17 @@ export function AccountMenu() {
       })
     }
   }, [localFilesOnly, setLocalFilesOnly])
+
+  // Toggle cross-conversation memory: update local state immediately,
+  // then best-effort write-through to the user's profile row (mirrors the
+  // custom-instructions write). Not awaited — local state is authoritative.
+  const handleToggleMemory = useCallback(
+    (next: boolean) => {
+      setMemoryEnabled(next)
+      if (userId) void writeMemoryEnabled(userId, next)
+    },
+    [setMemoryEnabled, userId]
+  )
 
   const handleClearCache = useCallback(async () => {
     await clearAll()
@@ -278,6 +298,26 @@ export function AccountMenu() {
               : "Enable citation verification on web-search answers"
           }
         />
+        {/* Cross-conversation memory opt-in. Off by default; signed-in
+            only. When on, durable facts about the user are auto-distilled
+            after each turn and injected into every chat. Manage them via
+            the "Memory" entry below. See the memory Slice-1 plan. */}
+        <ToggleRow
+          icon={Brain}
+          label="Enable memory"
+          description={
+            memoryEnabled
+              ? "Durable facts are remembered across chats · manage below"
+              : "Off · enable to let the assistant remember facts about you"
+          }
+          checked={memoryEnabled}
+          onCheckedChange={(v) => handleToggleMemory(v)}
+          ariaLabel={
+            memoryEnabled
+              ? "Disable cross-conversation memory"
+              : "Enable cross-conversation memory"
+          }
+        />
         {/* Chat backend selector. Phase 4-2 of PLAN-agent-api +
             Phase 5 of PLAN-agent-ts — users can route their chat
             turns at the Python agent service OR the TypeScript
@@ -405,6 +445,22 @@ export function AccountMenu() {
           <Sparkles size={14} />
           <span>Custom instructions</span>
         </Button>
+        {/* Manage cross-conversation memory. Signed-in only (this entry
+            lives in the signed-in popover). Close the popover first, then
+            open the dialog as a sibling outside PopoverContent — same
+            focus/unmount dance as the custom-instructions entry. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            setMenuOpen(false)
+            setMemoryOpen(true)
+          }}
+          className="w-full justify-start gap-2"
+        >
+          <Brain size={14} />
+          <span>Memory</span>
+        </Button>
         <Button
           variant="ghost"
           size="sm"
@@ -420,6 +476,7 @@ export function AccountMenu() {
       </PopoverContent>
     </Popover>
     <CustomInstructionsDialog open={ciOpen} onClose={() => setCiOpen(false)} />
+    <MemoryPanel open={memoryOpen} onClose={() => setMemoryOpen(false)} />
     </>
   )
 }

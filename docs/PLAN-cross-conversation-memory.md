@@ -1,9 +1,23 @@
 # Plan: Cross-conversation memory
 
-Status: **planning** — no code yet. Revised 2026-06-15 after a
-prior-art study of ChatGPT / Claude / Copilot (see "Prior art" below):
-the design is now a **two-arm model** — episodic message recall
-(original plan, kept) **plus** an extracted-facts profile (new).
+> **DIRECTION CHANGE (2026-06-19) — summary-first, embedding-free.**
+> Decision: build the **extracted-facts profile ("Arm B") as the primary
+> and only v1 mechanism, with NO embeddings / no vector store**. The
+> raw-message **embedding recall ("Arm A") is DEFERRED** (revisit only if
+> always-on facts prove insufficient). Rationale: the prior-art study (below)
+> found the leaders use extracted facts / summaries — not raw-message RAG —
+> for the always-on layer, and facts are what enable a real "manage my
+> memories" UI; embedding-free is simpler + more controllable. The two-arm
+> framing below is kept for history; where it conflicts with this banner,
+> the banner wins. Arm B's schema drops its embedding column (dedup is
+> LLM-merge, not vector similarity). Slice-1 spec:
+> `docs/superpowers/specs/2026-06-19-memory-slice-1-facts-design.md`.
+
+Status: **planning** — no code yet. The 2026-06-15 prior-art study of
+ChatGPT / Claude / Copilot (see "Prior art" below) first produced a
+**two-arm model** — episodic message recall **plus** an extracted-facts
+profile — but per the 2026-06-19 direction change above, **Arm B (facts)
+is now primary + embedding-free and Arm A (embeddings) is deferred**.
 
 Cross-conversation memory so the assistant can carry facts, decisions,
 names, and preferences across chats. Two complementary arms:
@@ -252,8 +266,10 @@ small enough to inject every turn and to show in an editable list.
 
 ### Storage — `user_memories`
 
-A second table alongside `message_embeddings`, reusing the shipped
-768-d embedding substrate for fact-level dedup + optional retrieval:
+A standalone table of plain text facts. **(2026-06-19: embedding-free —
+the earlier `embedding vector(768)` column is dropped; dedup is an
+LLM-merge at extraction time, not vector similarity, and the small active
+set is injected whole rather than retrieved.)**
 
 ```sql
 create table user_memories (
@@ -261,7 +277,6 @@ create table user_memories (
   user_id uuid not null references auth.users(id) on delete cascade,
   fact text not null,                       -- "Runs Postgres 16 on Hetzner"
   category text,                            -- 'stack' | 'preference' | 'project' | 'profile' | …
-  embedding vector(768),                    -- for merge/dedup + optional semantic select
   source_message_id uuid references messages(id) on delete set null,
   source_conversation_id uuid references conversations(id) on delete set null,
   status text not null default 'active',    -- 'active' | 'paused' (user-hidden) ; hard-delete to remove
@@ -272,7 +287,9 @@ create table user_memories (
 alter table user_memories enable row level security;
 create policy "own memories" on user_memories
   for all using (user_id = auth.uid()) with check (user_id = auth.uid());
-create index on user_memories using ivfflat (embedding vector_cosine_ops) with (lists = 100);
+-- (2026-06-19: no embedding column → no ivfflat index. Active facts are a
+-- small set queried by user_id + status, injected whole; a plain
+-- (user_id, status) read is all that's needed.)
 ```
 
 Facts are small and few (target: a soft cap of ~50–100 active facts per
@@ -421,7 +438,8 @@ visible, table-stakes value (the manage screen). Can land before or in
 parallel with Phase 2.
 
 - **Migration** `supabase/migrations/00YY_user_memories.sql` — the
-  `user_memories` table + RLS + ivfflat index (see Arm B → Storage).
+  `user_memories` table + RLS (no embedding column / no ivfflat index;
+  see Arm B → Storage) + `profiles.memory_enabled`.
 - **Extractor** `lib/server/memory/extract-worker.ts` — async, gated on
   `memory_enabled`. Cheap-model extraction prompt → atomic durable
   facts; embed each; **cosine-merge** against existing rows
