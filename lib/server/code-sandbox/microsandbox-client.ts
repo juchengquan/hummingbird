@@ -4,6 +4,7 @@ import { ExecTimeoutError, MiB, Sandbox } from "microsandbox"
 
 import { CPUS, MEM_MIB, MOUNT_DIR, sandboxConfig } from "./config"
 import { toCodeRunResult, type RawRun } from "./marshal"
+import { runtimeFor } from "./runtime"
 import type { CodeRunInput, CodeRunResult, CodeSandbox } from "./types"
 
 /** A short, fs-safe sandbox name. Date.now/Math.random are fine in the
@@ -38,10 +39,12 @@ export function createMicrosandboxClient(): CodeSandbox {
         })
       }
 
+      const rt = runtimeFor(input.language)
+
       let sb: Sandbox | null = null
       try {
         sb = await Sandbox.builder(nextName())
-          .image("python")
+          .image(rt.image)
           .replace()
           .cpus(CPUS)
           .memory(MiB(MEM_MIB))
@@ -67,8 +70,8 @@ export function createMicrosandboxClient(): CodeSandbox {
         let stderr = ""
         let exitCode = 0
         try {
-          const out = await sb.execWith("python3", (e) =>
-            e.args(["-c", input.code]).timeout(input.timeoutMs),
+          const out = await sb.execWith(rt.cmd, (e) =>
+            e.args([rt.flag, input.code]).timeout(input.timeoutMs),
           )
           stdout = out.stdout()
           stderr = out.stderr()

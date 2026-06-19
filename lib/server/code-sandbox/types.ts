@@ -1,5 +1,7 @@
 import "server-only"
 
+import type { CodeSandboxLanguage } from "./runtime"
+
 /** A single rich cell output. v1 emits `image` + `text`; `table` is
  *  reserved for a later PR (microsandbox has no kernel MIME channel). */
 export type CodeResult =
@@ -20,7 +22,7 @@ export interface CodeRunResult {
 
 export interface CodeRunInput {
   code: string
-  language: "python"
+  language: CodeSandboxLanguage
   timeoutMs: number
   signal?: AbortSignal
   /** Files to write into the sandbox fs before running. `path` is an
