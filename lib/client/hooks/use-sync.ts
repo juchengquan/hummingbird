@@ -20,6 +20,7 @@ import { useStore } from "@/client/hooks/use-store"
 import { useSyncEnabled } from "@/client/hooks/use-sync-enabled"
 import { getSupabaseBrowserClient } from "@/client/supabase/client"
 import { fetchAccountInstructions } from "@/client/supabase/account-instructions"
+import { fetchMemoryEnabled } from "@/client/supabase/memory"
 import { configureSync, enqueue } from "@/client/sync/sync-queue"
 import {
   diffArtifacts,
@@ -147,6 +148,14 @@ export function useSync(): void {
         about: row.about,
         style: row.style,
       })
+    })()
+    // Cross-conversation memory opt-in — same singleton-profile-setting
+    // shape, same server-wins-on-load contract. Best-effort: a failed /
+    // null read leaves the local toggle alone.
+    void (async () => {
+      const memoryEnabled = await fetchMemoryEnabled(userId)
+      if (cancelled || memoryEnabled === null) return
+      useStore.getState().setMemoryEnabled(memoryEnabled)
     })()
     return () => {
       cancelled = true

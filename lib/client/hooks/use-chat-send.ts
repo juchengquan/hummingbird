@@ -42,6 +42,7 @@ import {
   type SandboxFileSource,
 } from "@/client/chat/build-sandbox-files"
 import { getBlob } from "@/client/files/local-store"
+import { extractAfterTurn } from "@/client/memory/extract-after-turn"
 import { translateFrame } from "@/client/chat/sse-frame-translator"
 import { useStore } from "@/client/hooks/use-store"
 import { getLocalCred } from "@/client/mcp/local-creds"
@@ -136,6 +137,11 @@ export function useChatSend(): UseChatSendResult {
   // context). Subscribed so an edit takes effect on the next turn.
   const customInstructionsStyle = useStore((s) => s.customInstructionsStyle)
   const customInstructionsAbout = useStore((s) => s.customInstructionsAbout)
+  // Cross-conversation memory opt-in. Subscribed so toggling it takes
+  // effect on the next turn; read at finalization time to decide whether
+  // to fire the best-effort extraction. The server self-gates again on
+  // `profiles.memory_enabled`, so this is purely a "don't even ask" guard.
+  const memoryEnabled = useStore((s) => s.memoryEnabled)
 
   // --- own state / refs (used to live on the chat panel) ---
   const [streamingConvIds, setStreamingConvIds] = useState<Set<string>>(
@@ -805,6 +811,33 @@ export function useChatSend(): UseChatSendResult {
           if (persisted.length > 0) {
             setMessageToolCalls(ph.id, persisted)
           }
+
+          // Cross-conversation memory: best-effort, fire-and-forget
+          // extraction over THIS turn (latest user message + the
+          // just-finalized assistant reply). Gated on the opt-in flag so
+          // opted-out / anonymous users make zero calls; the route +
+          // `extractFacts` self-gate again on sign-in + memory_enabled.
+          // Read the assistant content fresh from the store — the
+          // `placeholder` reference is stale (appendToMessage is immutable).
+          if (memoryEnabled) {
+            const finalConv = useStore
+              .getState()
+              .conversations.find((c) => c.id === targetConvId)
+            const assistantText =
+              finalConv?.messages.find((m) => m.id === ph.id)?.content ?? ""
+            const lastUserText =
+              [...history].reverse().find((m) => m.role === "user")?.content ??
+              ""
+            const turnText = [
+              lastUserText && `User: ${lastUserText}`,
+              assistantText && `Assistant: ${assistantText}`,
+            ]
+              .filter(Boolean)
+              .join("\n\n")
+            if (turnText.trim()) {
+              extractAfterTurn(turnText, targetConvId)
+            }
+          }
         }
       } catch (err) {
         const aborted =
@@ -892,6 +925,7 @@ export function useChatSend(): UseChatSendResult {
       files,
       liveToolCalls,
       markStreaming,
+      memoryEnabled,
       mockAIResponse,
       setConversationTyping,
       setMessageError,

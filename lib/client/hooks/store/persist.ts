@@ -39,6 +39,7 @@ export const partializeState = (state: AppState) => ({
   chatReasoningEffort: state.chatReasoningEffort,
   customInstructionsAbout: state.customInstructionsAbout,
   customInstructionsStyle: state.customInstructionsStyle,
+  memoryEnabled: state.memoryEnabled,
   notes: state.notes,
   artifacts: state.artifacts,
   documents: state.documents,

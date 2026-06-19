@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { LogIn, LogOut, Loader2, CloudOff, Cloud, HardDrive, Trash2, Sun, Moon, Monitor, Bot, Wand2, ShieldCheck, Sparkles } from "lucide-react"
+import { LogIn, LogOut, Loader2, CloudOff, Cloud, HardDrive, Trash2, Sun, Moon, Monitor, Bot, Wand2, ShieldCheck, Sparkles, Brain } from "lucide-react"
 import { toast } from "sonner"
 import {
   Popover,
@@ -13,6 +13,8 @@ import { Switch } from "@/components/ui/switch"
 import { AuthDialog } from "@/components/auth/auth-dialog"
 import { CustomInstructionsDialog } from "@/components/chat/custom-instructions-dialog"
 import { useAuth } from "@/client/hooks/use-auth"
+import { useSyncEnabled } from "@/client/hooks/use-sync-enabled"
+import { writeMemoryEnabled } from "@/client/supabase/memory"
 import { useStore } from "@/client/hooks/use-store"
 import type { ChatBackend } from "@/client/hooks/store/slices/ui"
 import { useSidebar } from "@/components/ui/sidebar"
@@ -45,6 +47,11 @@ export function AccountMenu() {
   const setEditorPref = useStore((s) => s.setEditorPref)
   const verifyCitations = useStore((s) => s.verifyCitations)
   const setVerifyCitations = useStore((s) => s.setVerifyCitations)
+  const memoryEnabled = useStore((s) => s.memoryEnabled)
+  const setMemoryEnabled = useStore((s) => s.setMemoryEnabled)
+  // Non-null only when signed in AND cloud sync is on — drives the
+  // best-effort write-through of the toggle to the user's profile row.
+  const { userId } = useSyncEnabled()
   const theme = useStore((s) => s.theme)
   const setTheme = useStore((s) => s.setTheme)
   const colorScheme = useStore((s) => s.colorScheme)
@@ -81,6 +88,17 @@ export function AccountMenu() {
       })
     }
   }, [localFilesOnly, setLocalFilesOnly])
+
+  // Toggle cross-conversation memory: update local state immediately,
+  // then best-effort write-through to the user's profile row (mirrors the
+  // custom-instructions write). Not awaited — local state is authoritative.
+  const handleToggleMemory = useCallback(
+    (next: boolean) => {
+      setMemoryEnabled(next)
+      if (userId) void writeMemoryEnabled(userId, next)
+    },
+    [setMemoryEnabled, userId]
+  )
 
   const handleClearCache = useCallback(async () => {
     await clearAll()
@@ -276,6 +294,26 @@ export function AccountMenu() {
             verifyCitations
               ? "Disable citation verification"
               : "Enable citation verification on web-search answers"
+          }
+        />
+        {/* Cross-conversation memory opt-in. Off by default; signed-in
+            only. When on, durable facts about the user are auto-distilled
+            after each turn and injected into every chat. Manage them via
+            the "Memory" entry below. See the memory Slice-1 plan. */}
+        <ToggleRow
+          icon={Brain}
+          label="Enable memory"
+          description={
+            memoryEnabled
+              ? "Durable facts are remembered across chats · manage below"
+              : "Off · enable to let the assistant remember facts about you"
+          }
+          checked={memoryEnabled}
+          onCheckedChange={(v) => handleToggleMemory(v)}
+          ariaLabel={
+            memoryEnabled
+              ? "Disable cross-conversation memory"
+              : "Enable cross-conversation memory"
           }
         />
         {/* Chat backend selector. Phase 4-2 of PLAN-agent-api +

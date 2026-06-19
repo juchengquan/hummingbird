@@ -8,7 +8,7 @@ import { uuid } from "@/shared/uuid"
  * step in `runMigrations`. Wired into the `version` field of the persist
  * config in `use-store.ts`.
  */
-export const STORE_VERSION = 30
+export const STORE_VERSION = 31
 
 /**
  * Sequential schema migrations from older persisted shapes to the
@@ -490,6 +490,15 @@ export function runMigrations(
     // via the slice's initial state when absent from older blobs — no
     // backfill needed; this block honors the
     // version-bump-per-persist-change contract.
+  }
+  if (fromVersion < 31) {
+    // Cross-conversation memory opt-in (`memoryEnabled`) added to the
+    // account-instructions slice. New persisted boolean key whose slice
+    // initial value is `false`, so a store predating it falls back to that
+    // default on rehydrate — no backfill needed. The server-side
+    // `profiles.memory_enabled` is authoritative on sign-in load. Marker
+    // bump only, keeping the pinned persisted key set in `persist.test.ts`
+    // in lockstep with the version. See the memory Slice-1 plan.
   }
   return persistedState
 }
