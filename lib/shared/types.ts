@@ -643,6 +643,10 @@ export interface Conversation {
    *  string when unset (no inheritance from the workspace). See
    *  `docs/PLAN-conversation-system-prompt.md`. */
   systemPrompt: string
+  /** Per-conversation memory bypass. When true, this chat neither injects
+   *  remembered facts nor extracts new ones (a "memory off" chat). Absent
+   *  / false = normal (memory applies for opted-in users). */
+  memoryOff?: boolean
   /** Workspace file IDs attached as context for the next message in this conversation. */
   selectedFileIds: string[]
   /** Per-attached-file retrieval mode override. Absence of an entry =

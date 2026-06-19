@@ -72,6 +72,9 @@ export interface ConversationsSlice {
    *  and per-turn persona documented in `lib/shared/agents/resolve.ts`.
    *  See `docs/PLAN-conversation-system-prompt.md`. */
   setConversationSystemPrompt: (conversationId: string, prompt: string) => void
+  /** Per-conversation memory bypass. When true, this chat neither injects
+   *  remembered facts nor extracts new ones. See Slice 2 (trust & lifecycle). */
+  setConversationMemoryOff: (conversationId: string, value: boolean) => void
   /** Set the per-attached-file retrieval mode. `mode === null` clears
    *  the override (back to default inline). No-op when the
    *  conversation isn't found. */
@@ -315,6 +318,14 @@ export const createConversationsSlice: SliceCreator<ConversationsSlice> = (
       conversations: state.conversations.map((c) =>
         c.id === conversationId
           ? { ...c, systemPrompt: prompt, updatedAt: new Date() }
+          : c
+      ),
+    })),
+  setConversationMemoryOff: (conversationId, value) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === conversationId
+          ? { ...c, memoryOff: value, updatedAt: new Date() }
           : c
       ),
     })),
