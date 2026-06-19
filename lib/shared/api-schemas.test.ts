@@ -170,3 +170,21 @@ describe("ExtractTableRequestSchema.columnHints accepts the full type set", () =
     expect(r.success).toBe(false)
   })
 })
+
+describe("ChatRequestSchema.memoryBypass", () => {
+  const base = { messages: [{ role: "user", content: "hi" }] }
+  test("accepts memoryBypass true/false/absent", () => {
+    expect(
+      ChatRequestSchema.safeParse({ ...base, memoryBypass: true }).success
+    ).toBe(true)
+    expect(
+      ChatRequestSchema.safeParse({ ...base, memoryBypass: false }).success
+    ).toBe(true)
+    expect(ChatRequestSchema.safeParse(base).success).toBe(true)
+  })
+  test("rejects a non-boolean memoryBypass", () => {
+    expect(
+      ChatRequestSchema.safeParse({ ...base, memoryBypass: "yes" }).success
+    ).toBe(false)
+  })
+})
