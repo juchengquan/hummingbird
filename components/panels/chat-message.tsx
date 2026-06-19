@@ -22,6 +22,7 @@ import { MessageAttachments } from "@/components/panels/message-attachments"
 import { ReasoningBlock } from "@/components/panels/reasoning-block"
 import { SourcesStrip } from "@/components/panels/sources-strip"
 import { ExtractTablePopover } from "@/components/panels/extract-table-popover"
+import { CodeResult } from "@/components/panels/code-result"
 import type { ExtractColumnHint } from "@/shared/artifacts/extract-table"
 import { MessageVerification } from "@/components/panels/message-verification"
 import { countSupportPerSource, markerMarksFor } from "@/shared/verify"
@@ -493,6 +494,10 @@ function ChatMessageImpl({
                       messageId={message.id}
                     />
                   )}
+                {!isUser &&
+                  message.codeResults?.map((part) => (
+                    <CodeResult key={part.id} part={part} />
+                  ))}
                 {!isUser && message.uiParts && message.uiParts.length > 0 && (
                   <MessageUiParts
                     parts={message.uiParts}

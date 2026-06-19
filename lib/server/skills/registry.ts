@@ -65,6 +65,7 @@ export interface ServerSkill {
 // Implementations are imported below from their per-skill modules so
 // the wiring stays in one place. Each module owns its own log type,
 // config resolution, and prompt copy.
+import { codeInterpreterSkill } from "@/server/skills/code-interpreter"
 import { imageGenSkill } from "@/server/skills/image-gen"
 import { searchFilesSkill } from "@/server/skills/file-search"
 import { webFetchSkill } from "@/server/skills/web-fetch"
@@ -78,4 +79,5 @@ export const SERVER_SKILLS: ServerSkill[] = [
   webFetchSkill,
   imageGenSkill,
   searchFilesSkill,
+  codeInterpreterSkill,
 ]

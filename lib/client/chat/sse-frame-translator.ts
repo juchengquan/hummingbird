@@ -1,6 +1,7 @@
 "use client"
 import "client-only"
 
+import type { CodeResultCell } from "@/shared/types"
 import {
   parseVerificationFrame,
   type VerificationResult,
@@ -57,6 +58,14 @@ export interface NormalisedFrame {
   /** Citation verification (`verification` frame): per-claim grounding
    *  verdicts + the confidence summary. See PLAN-citation-verifiability.md. */
   verification?: VerificationResult
+  /** Code-interpreter result cells (`code_result` frame): stdout/stderr
+   *  ride on `value`-less dedicated fields; the inline text/table cells
+   *  live here. Named `codeCells` (not `results`) because `results`
+   *  above already carries the search-tool result shape. See
+   *  `docs/superpowers/plans/2026-06-19-code-interpreter-microsandbox.md`. */
+  stdout?: string
+  stderr?: string
+  codeCells?: CodeResultCell[]
 }
 
 /** Decode one SSE payload (the JSON between `data: ` and `\n\n`) and
@@ -155,6 +164,21 @@ export function translateFrame(payload: string): NormalisedFrame | null {
       id: typeof data.id === "string" ? data.id : undefined,
       mode: typeof data.mode === "string" ? data.mode : undefined,
       images: Array.isArray(data.images) ? data.images : undefined,
+    }
+  }
+  if (t === "data-code-result") {
+    const data = raw.data as
+      | { id?: unknown; stdout?: unknown; stderr?: unknown; results?: unknown }
+      | undefined
+    if (!data || typeof data !== "object") return null
+    return {
+      type: "code_result",
+      id: typeof data.id === "string" ? data.id : undefined,
+      stdout: typeof data.stdout === "string" ? data.stdout : "",
+      stderr: typeof data.stderr === "string" ? data.stderr : "",
+      codeCells: Array.isArray(data.results)
+        ? (data.results as CodeResultCell[])
+        : [],
     }
   }
   if (t === "data-mcp-app") {

@@ -72,6 +72,14 @@ export interface MessagesSlice {
    *  frames. See `docs/PLAN-model-routing.md`. */
   setMessageRoutedModel: (messageId: string, modelId: string) => void
   appendMessageGeneratedImages: (messageId: string, images: GeneratedImage[]) => void
+  /** Append one code-interpreter result to the assistant message —
+   *  emitted by the `runCode` skill, dispatched by `use-chat-send` on
+   *  `code_result` SSE frames. See
+   *  `docs/superpowers/plans/2026-06-19-code-interpreter-microsandbox.md`. */
+  appendMessageCodeResult: (
+    messageId: string,
+    part: import("@/shared/types").CodeResultPart,
+  ) => void
   /** Append one generative-UI part to the assistant message — emitted
    *  by the `renderUI` tool, dispatched by `use-chat-send` on `ui_part`
    *  SSE frames. Idempotent on `(messageId, part.id)`. See
@@ -281,6 +289,13 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
       updateMessage(state, messageId, (m) => ({
         ...m,
         generatedImages: [...(m.generatedImages ?? []), ...images],
+      }))
+    ),
+  appendMessageCodeResult: (messageId, part) =>
+    set((state) =>
+      updateMessage(state, messageId, (m) => ({
+        ...m,
+        codeResults: [...(m.codeResults ?? []), part],
       }))
     ),
   appendMessageUiPart: (messageId, part) =>

@@ -107,6 +107,7 @@ export function useChatSend(): UseChatSendResult {
   const appendMessageGeneratedImages = useStore(
     (s) => s.appendMessageGeneratedImages
   )
+  const appendMessageCodeResult = useStore((s) => s.appendMessageCodeResult)
   const appendMessageUiPart = useStore((s) => s.appendMessageUiPart)
   const appendMessageMcpApp = useStore((s) => s.appendMessageMcpApp)
   const setConversationTyping = useStore((s) => s.setConversationTyping)
@@ -692,6 +693,20 @@ export function useChatSend(): UseChatSendResult {
                   ...(parsed.truncated ? { truncated: true } : {}),
                 })
               }
+            } else if (parsed.type === "code_result") {
+              // Code-interpreter result — append stdout/stderr + inline
+              // text/table cells to the message. Images produced by code
+              // arrive separately via `tool_image` (the gallery). See
+              // docs/superpowers/plans/2026-06-19-code-interpreter-microsandbox.md.
+              const ph = placeholder as Message | null
+              if (ph) {
+                appendMessageCodeResult(ph.id, {
+                  id: parsed.id ?? "",
+                  stdout: parsed.stdout ?? "",
+                  stderr: parsed.stderr ?? "",
+                  results: parsed.codeCells ?? [],
+                })
+              }
             } else if (parsed.type === "ui_part") {
               // Generative-UI part — server validated via the `renderUI`
               // tool's execute; we re-validate defensively via
@@ -832,6 +847,7 @@ export function useChatSend(): UseChatSendResult {
       activeWorkspaceId,
       addMessage,
       appendMessageGeneratedImages,
+      appendMessageCodeResult,
       appendMessageUiPart,
       appendToMessage,
       appendMessageMcpApp,

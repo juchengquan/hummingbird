@@ -39,6 +39,7 @@ import { generateSuggestions } from '@/server/chat/suggestions'
 import { verifyAnswer } from '@/server/verify/verify-answer'
 import type { RetrievedSource } from '@/shared/verify'
 import { persistGeneratedImages, type ImageToPersist } from '@/server/image-storage'
+import type { CodeRunResult } from '@/server/code-sandbox/types'
 import { resolveAttachedMcpResources } from '@/server/mcp/inject-resources'
 import {
   type ResolvedAttachment,
@@ -191,6 +192,76 @@ async function maybeEmitImageFrame(
       prompt,
       mode,
     })),
+  })
+}
+
+/**
+ * After the `runCode` tool returns, split its `CodeRunResult` across the
+ * two client surfaces:
+ *
+ *   - Chart results (`{ type: "image" }`, base64 from a `savefig`) reuse
+ *     the existing image-gallery path — we wrap each base64 blob as a
+ *     `data:` URL and feed it through `persistGeneratedImages` (which
+ *     fetches the data URL, uploads to Supabase Storage or falls back to
+ *     a data URL) before emitting a `data-tool-image` frame, exactly like
+ *     `maybeEmitImageFrame`.
+ *   - Everything else (stdout/stderr/text results) goes out as a single
+ *     `data-code-result` frame the client renders as a code-output block.
+ *
+ * Persistence failure is non-fatal: a missing chart still leaves the
+ * stdout/stderr block intact.
+ */
+async function maybeEmitCodeResultFrames(
+  emitter: ChatSseEmitter,
+  id: string,
+  result: CodeRunResult,
+  signal: AbortSignal,
+  localFilesOnly: boolean
+): Promise<void> {
+  const imgs = result.results.filter(
+    (r): r is Extract<CodeRunResult['results'][number], { type: 'image' }> =>
+      r.type === 'image'
+  )
+  if (imgs.length > 0) {
+    const inputs: ImageToPersist[] = imgs.map((r, i) => ({
+      // Stable per-image id — used as the React key AND the storage object
+      // name, mirroring `maybeEmitImageFrame`.
+      id: `${id}-${i}`,
+      // `persistGeneratedImages` fetches `url`; Node's fetch accepts a
+      // data: URL, so wrapping the base64 routes it through the exact same
+      // persistence path as the Minimax-hosted URLs.
+      url: `data:image/${r.format};base64,${r.data}`,
+      width: 0,
+      height: 0,
+      format: r.format,
+    }))
+    const persisted = await persistGeneratedImages(inputs, {
+      signal,
+      localFilesOnly,
+    })
+    if (persisted.ok) {
+      emitter.toolImage({
+        id,
+        mode: 'code',
+        images: persisted.images.map((img) => ({
+          id: img.id,
+          url: img.url,
+          ...(img.storagePath ? { storagePath: img.storagePath } : {}),
+          width: img.width,
+          height: img.height,
+          format: img.format,
+          prompt: '',
+          mode: 'code',
+        })),
+      })
+    }
+  }
+  // stdout/stderr + non-image results → the code-output block.
+  emitter.codeResult({
+    id,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    results: result.results.filter((r) => r.type !== 'image'),
   })
 }
 
@@ -619,6 +690,18 @@ export async function POST(req: NextRequest) {
                 await maybeEmitImageFrame(
                   p,
                   emitter,
+                  req.signal,
+                  body.localFilesOnly === true
+                )
+              }
+              // runCode: split the code-interpreter result — charts reuse
+              // the image-gallery path, stdout/stderr emit a separate
+              // `data-code-result` frame the client renders inline.
+              if (p.toolName === 'runCode') {
+                await maybeEmitCodeResultFrames(
+                  emitter,
+                  p.toolCallId ?? '',
+                  p.output as CodeRunResult,
                   req.signal,
                   body.localFilesOnly === true
                 )

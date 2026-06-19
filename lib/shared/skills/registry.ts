@@ -8,7 +8,7 @@
  * not implementation details.
  */
 
-import { FileSearch, Globe, ImagePlus, Link2 } from "lucide-react"
+import { FileSearch, Globe, ImagePlus, Link2, Terminal } from "lucide-react"
 
 import type { SkillDescriptor } from "./types"
 
@@ -57,5 +57,15 @@ export const SKILLS: SkillDescriptor[] = [
     // and the searchFiles tool RPC reads it via the user's RLS context.
     requiresEnv: true,
     slashTriggers: ["files", "file"],
+  },
+  {
+    id: "codeInterpreter",
+    name: "Code interpreter",
+    description:
+      "Let the model run Python in a sandboxed microVM and return stdout plus charts (matplotlib). Network is off; pandas/numpy/matplotlib are available. Requires a configured local sandbox.",
+    icon: Terminal,
+    default: false,
+    requiresEnv: true,
+    slashTriggers: ["code", "run"],
   },
 ]

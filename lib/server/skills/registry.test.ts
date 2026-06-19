@@ -37,6 +37,16 @@ describe("webSearch + webFetch are registered", () => {
   })
 })
 
+describe("codeInterpreter is registered", () => {
+  test("includes codeInterpreter after searchFiles", () => {
+    const ids = SERVER_SKILLS.map((s) => s.id)
+    expect(ids).toContain("codeInterpreter")
+    expect(ids.indexOf("codeInterpreter")).toBeGreaterThan(
+      ids.indexOf("searchFiles")
+    )
+  })
+})
+
 describe("promptFragment shape", () => {
   test("webFetch.promptFragment returns a non-empty note for any request entry", () => {
     const skill = SERVER_SKILLS.find((s) => s.id === "webFetch")!

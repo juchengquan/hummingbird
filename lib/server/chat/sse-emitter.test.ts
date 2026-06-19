@@ -195,6 +195,26 @@ describe("ChatSseEmitter — AI SDK format", () => {
     expect(frame.data.images).toHaveLength(1)
   })
 
+  test("codeResult → data-code-result", () => {
+    const { emitter, lines } = collect()
+    emitter.codeResult({
+      id: "c1",
+      stdout: "4\n",
+      stderr: "",
+      results: [{ type: "text", value: "4\n" }],
+    })
+    const frame = parseFrames(lines)[0] as {
+      type: string
+      id: string
+      data: { id: string; stdout: string; stderr: string; results: unknown[] }
+    }
+    expect(frame.type).toBe("data-code-result")
+    expect(frame.id).toBe("c1")
+    expect(frame.data.id).toBe("c1")
+    expect(frame.data.stdout).toBe("4\n")
+    expect(frame.data.results).toEqual([{ type: "text", value: "4\n" }])
+  })
+
   test("suggestions → data-suggestions", () => {
     const { emitter, lines } = collect()
     emitter.suggestions(["a", "b"])
