@@ -23,6 +23,9 @@ export interface CodeRunInput {
   language: "python"
   timeoutMs: number
   signal?: AbortSignal
+  /** Files to write into the sandbox fs before running. `path` is an
+   *  absolute guest path (already sanitized by the caller). */
+  files?: { path: string; bytes: Uint8Array }[]
 }
 
 export interface CodeSandbox {
