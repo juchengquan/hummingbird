@@ -100,6 +100,7 @@
     "lowlight": "^3.3.0",
     "lucide-react": "^0.575.0",
     "mammoth": "^1.12.0",
+    "microsandbox": "^0.5.7",
     "next": "16.1.6",
     "node-html-parser": "^7.1.0",
     "papaparse": "^5.5.3",
