@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { toCodeRunResult, type RawRun } from "./marshal"
+import { normalizeTable, toCodeRunResult, type RawRun } from "./marshal"
 
 const base: RawRun = { stdout: "", stderr: "", exitCode: 0, images: [], timedOut: false }
 
@@ -52,5 +52,56 @@ describe("toCodeRunResult", () => {
       ],
     })
     expect(r.results.filter((x) => x.type === "image").length).toBe(1)
+  })
+})
+
+describe("normalizeTable", () => {
+  test("{columns, rows} shape → stringified table", () => {
+    expect(normalizeTable({ columns: ["a", "b"], rows: [[1, 2], [3, 4]] })).toEqual({
+      columns: ["a", "b"],
+      rows: [["1", "2"], ["3", "4"]],
+    })
+  })
+  test("pandas orient=split {columns, data, index} → uses data, ignores index", () => {
+    expect(
+      normalizeTable({ columns: ["x"], data: [[true], [null]], index: [0, 1] }),
+    ).toEqual({ columns: ["x"], rows: [["true"], [""]] })
+  })
+  test("non-scalar cells are JSON-encoded (no [object Object])", () => {
+    expect(normalizeTable({ columns: ["c"], rows: [[{ k: 1 }]] })).toEqual({
+      columns: ["c"],
+      rows: [['{"k":1}']],
+    })
+  })
+  test("garbage → null", () => {
+    expect(normalizeTable(null)).toBeNull()
+    expect(normalizeTable({ columns: "nope" })).toBeNull()
+    expect(normalizeTable({ rows: [[1]] })).toBeNull() // no columns
+  })
+})
+
+describe("toCodeRunResult — tables", () => {
+  test("tables become table CodeResult cells", () => {
+    const r = toCodeRunResult({ ...base, tables: [{ columns: ["a"], rows: [["1"]] }] })
+    expect(r.results).toContainEqual({ type: "table", columns: ["a"], rows: [["1"]] })
+  })
+  test("ignores unparseable table entries", () => {
+    const r = toCodeRunResult({ ...base, tables: [42, { columns: ["a"], rows: [["1"]] }] })
+    expect(r.results.filter((x) => x.type === "table")).toHaveLength(1)
+  })
+  test("caps columns/rows and notes the truncation", () => {
+    const cols = Array.from({ length: 60 }, (_, i) => `c${i}`)
+    const rows = Array.from({ length: 1100 }, () => cols.map(() => "x"))
+    const r = toCodeRunResult({ ...base, tables: [{ columns: cols, rows }] })
+    const t = r.results.find((x) => x.type === "table") as { columns: string[]; rows: string[][] }
+    expect(t.columns.length).toBe(50)
+    expect(t.rows.length).toBe(1000)
+    expect(t.rows[0].length).toBe(50)
+    expect(r.results.some((x) => x.type === "text" && x.value.toLowerCase().includes("truncated"))).toBe(true)
+  })
+  test("caps long cell values", () => {
+    const r = toCodeRunResult({ ...base, tables: [{ columns: ["a"], rows: [["y".repeat(600)]] }] })
+    const t = r.results.find((x) => x.type === "table") as { rows: string[][] }
+    expect(t.rows[0][0].length).toBeLessThanOrEqual(500 + 1) // +1 for the … marker
   })
 })
