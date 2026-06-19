@@ -40,6 +40,8 @@ import { verifyAnswer } from '@/server/verify/verify-answer'
 import type { RetrievedSource } from '@/shared/verify'
 import { persistGeneratedImages, type ImageToPersist } from '@/server/image-storage'
 import type { CodeRunResult } from '@/server/code-sandbox/types'
+import { resolveMountFiles } from '@/server/code-sandbox/mount-files'
+import { downloadUserFileBytes } from '@/server/code-sandbox/download-user-file'
 import { resolveAttachedMcpResources } from '@/server/mcp/inject-resources'
 import {
   type ResolvedAttachment,
@@ -351,6 +353,15 @@ export async function POST(req: NextRequest) {
   const entryById = new Map<string, SkillRequestEntry>(
     skillRequestEntries.map((s) => [s.id, s])
   )
+  // runCode file-mounting resolver (PR-2). Maps a model-named filename
+  // to bytes via the request's `sandboxFiles` manifest: local entries
+  // decode their inline base64; cloud entries are downloaded by fileId
+  // through the user's RLS-scoped client (so a forged id for another
+  // user's file resolves to null). Provided only to the codeInterpreter
+  // skill below. Built once per request.
+  const sandboxManifest = body.sandboxFiles ?? []
+  const mountResolver = (names: string[]) =>
+    resolveMountFiles(names, sandboxManifest, downloadUserFileBytes)
   const tools: Record<string, unknown> = {}
   for (const skill of SERVER_SKILLS) {
     if (!enabledSet.has(skill.id)) continue
@@ -362,6 +373,9 @@ export async function POST(req: NextRequest) {
     const tool = skill.buildTool(entryById.get(skill.id), {
       signal: req.signal,
       consumeBudget,
+      ...(skill.id === 'codeInterpreter'
+        ? { resolveMountFiles: mountResolver }
+        : {}),
     })
     if (tool) tools[skill.toolName] = tool
   }
