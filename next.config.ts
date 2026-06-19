@@ -9,7 +9,12 @@ const nextConfig: NextConfig = {
   // directly, which lets the worker discovery succeed.
   //
   // `mammoth` also reaches for its own files at runtime; same fix.
-  serverExternalPackages: ["pdf-parse", "pdfjs-dist", "mammoth"],
+  //
+  // `microsandbox` ships a native NAPI binding (native/index.cjs) that
+  // Turbopack can't place in an ESM chunk ("asset is not placeable in
+  // ESM chunks"). Server-external makes Node require it from node_modules
+  // at runtime. It's only reached behind the env-gated runCode skill.
+  serverExternalPackages: ["pdf-parse", "pdfjs-dist", "mammoth", "microsandbox"],
   // Allow the dev server to be hit from LAN IPs (e.g. for testing on a
   // phone on the same Wi-Fi). Without this, Next.js 16+ warns about
   // cross-origin requests to `/_next/*` and will eventually block them.
