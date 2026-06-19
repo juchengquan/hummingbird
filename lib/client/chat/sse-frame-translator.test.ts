@@ -83,6 +83,23 @@ describe("translateFrame — AI SDK v5 → normalised shape", () => {
     expect(out?.images).toHaveLength(1)
   })
 
+  test("data-code-result → code_result", () => {
+    const out = translateFrame(
+      '{"type":"data-code-result","data":{"id":"c1","stdout":"4\\n","stderr":"","results":[{"type":"text","value":"4\\n"}]}}',
+    )
+    expect(out).toEqual({
+      type: "code_result",
+      id: "c1",
+      stdout: "4\n",
+      stderr: "",
+      codeCells: [{ type: "text", value: "4\n" }],
+    })
+  })
+
+  test("malformed data-code-result → null", () => {
+    expect(translateFrame('{"type":"data-code-result"}')).toBeNull()
+  })
+
   test("data-suggestions unwraps the data envelope", () => {
     const out = translateFrame(
       '{"type":"data-suggestions","data":{"values":["a","b"]}}',
