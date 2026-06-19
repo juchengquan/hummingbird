@@ -483,7 +483,11 @@ export async function POST(req: NextRequest) {
 
   // Cross-conversation memory: self-gates on sign-in + `memory_enabled`
   // and never throws → empty block (no-op) for everyone else.
-  const memoryBlock = renderMemoryBlock(await loadActiveFacts()) ?? undefined
+  // When the conversation is in "memory off" mode the client sends
+  // `memoryBypass` → skip the load + render entirely (no DB call).
+  const memoryBlock = body.memoryBypass
+    ? undefined
+    : (renderMemoryBlock(await loadActiveFacts()) ?? undefined)
 
   try {
     const result = streamText({

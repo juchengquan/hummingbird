@@ -136,6 +136,10 @@ export const ChatRequestSchema = z.object({
   messages: z.array(ModelMessageSchema).min(1),
   model: z.string().max(100).optional(),
   workspaceSystemPrompt: z.string().max(20_000).optional(),
+  /** When true, bypass cross-conversation memory for this turn: the route
+   *  injects no remembered facts. The client sets it from the
+   *  conversation's `memoryOff` and also skips post-turn extraction. */
+  memoryBypass: z.boolean().optional(),
   /** Active workspace id — required to look up cloud-mode MCP servers
    *  server-side. Local-mode servers are passed in `mcpServers` and
    *  don't need this. Optional so signed-out usage still works. */
