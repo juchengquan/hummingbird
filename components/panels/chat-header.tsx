@@ -16,6 +16,7 @@ import {
   Share2,
   GitBranch,
   Zap,
+  Brain,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -118,6 +119,7 @@ export function ChatHeader({
   const workspace = useActiveWorkspace()
   const conversation = useActiveConversation()
   const renameConversation = useStore((s) => s.renameConversation)
+  const setConversationMemoryOff = useStore((s) => s.setConversationMemoryOff)
   const togglePin = useStore((s) => s.togglePin)
   const setActiveView = useStore((s) => s.setActiveView)
   const activeDocumentId = useStore((s) => s.activeDocumentId)
@@ -169,6 +171,14 @@ export function ChatHeader({
   const handleThreadInstructions = () => {
     setMenuOpen(false)
     setThreadInstructionsOpen(true)
+  }
+
+  const handleToggleMemory = () => {
+    setMenuOpen(false)
+    // Checked = "use memory in this chat" (the default). Unchecking flips
+    // `memoryOff` true, which the route/client honour as a per-conversation
+    // bypass of fact injection + extraction.
+    setConversationMemoryOff(conversation.id, !conversation.memoryOff)
   }
 
   const handleShare = () => {
@@ -304,6 +314,24 @@ export function ChatHeader({
                     {conversation.systemPrompt.trim().length > 0
                       ? "Thread instructions •"
                       : "Thread instructions"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={handleToggleMemory}
+                    className={cn(
+                      "w-full justify-start gap-2 cursor-pointer",
+                      // Subtle marker when memory is off for this thread, so
+                      // the user can see at a glance that recall/extraction
+                      // is paused here.
+                      conversation.memoryOff && "font-medium",
+                    )}
+                    role="menuitemcheckbox"
+                    aria-checked={!conversation.memoryOff}
+                  >
+                    <Brain size={14} />
+                    {conversation.memoryOff
+                      ? "Use memory in this chat"
+                      : "Use memory in this chat ✓"}
                   </Button>
                   <Button
                     variant="ghost"
