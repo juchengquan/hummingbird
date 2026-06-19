@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { AuthDialog } from "@/components/auth/auth-dialog"
 import { CustomInstructionsDialog } from "@/components/chat/custom-instructions-dialog"
+import { MemoryPanel } from "@/components/chat/memory-panel"
 import { useAuth } from "@/client/hooks/use-auth"
 import { useSyncEnabled } from "@/client/hooks/use-sync-enabled"
 import { writeMemoryEnabled } from "@/client/supabase/memory"
@@ -60,6 +61,7 @@ export function AccountMenu() {
   const collapsed = state === "collapsed"
   const [dialogOpen, setDialogOpen] = useState(false)
   const [ciOpen, setCiOpen] = useState(false)
+  const [memoryOpen, setMemoryOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [usage, setUsage] = useState<number | null>(null)
 
@@ -443,6 +445,22 @@ export function AccountMenu() {
           <Sparkles size={14} />
           <span>Custom instructions</span>
         </Button>
+        {/* Manage cross-conversation memory. Signed-in only (this entry
+            lives in the signed-in popover). Close the popover first, then
+            open the dialog as a sibling outside PopoverContent — same
+            focus/unmount dance as the custom-instructions entry. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            setMenuOpen(false)
+            setMemoryOpen(true)
+          }}
+          className="w-full justify-start gap-2"
+        >
+          <Brain size={14} />
+          <span>Memory</span>
+        </Button>
         <Button
           variant="ghost"
           size="sm"
@@ -458,6 +476,7 @@ export function AccountMenu() {
       </PopoverContent>
     </Popover>
     <CustomInstructionsDialog open={ciOpen} onClose={() => setCiOpen(false)} />
+    <MemoryPanel open={memoryOpen} onClose={() => setMemoryOpen(false)} />
     </>
   )
 }
