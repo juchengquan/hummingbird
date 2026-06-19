@@ -50,6 +50,13 @@ export interface ToolImagePayload {
   }>
 }
 
+export interface CodeResultPayload {
+  id: string
+  stdout: string
+  stderr: string
+  results: import("@/server/code-sandbox/types").CodeResult[]
+}
+
 export interface ToolResultPayload {
   id: string
   name: string
@@ -149,6 +156,21 @@ export class ChatSseEmitter {
         id: payload.id,
         mode: payload.mode,
         images: payload.images,
+      },
+    })
+  }
+
+  /** Emit a code-interpreter result as a `data-code-result` custom part
+   *  (stdout/stderr/text; images go via toolImage). */
+  codeResult(payload: CodeResultPayload): void {
+    this.send({
+      type: "data-code-result",
+      id: payload.id,
+      data: {
+        id: payload.id,
+        stdout: payload.stdout,
+        stderr: payload.stderr,
+        results: payload.results,
       },
     })
   }
