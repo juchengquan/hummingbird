@@ -134,6 +134,28 @@ describe("buildSystemPrompt — composition", () => {
     expect(baseIdx).toBeGreaterThan(pirateIdx)
   })
 
+  test("memoryBlock is prepended first when set; absent → unchanged output", () => {
+    const withMemory = buildSystemPrompt({
+      memoryBlock: "What you know about this user:\n- Runs Postgres 16",
+      workspaceSystemPrompt: "You are a pirate.",
+      enabledSkillIds: [],
+      skillRequestEntries: [],
+      attachments: [],
+    })
+    const withoutMemory = buildSystemPrompt({
+      workspaceSystemPrompt: "You are a pirate.",
+      enabledSkillIds: [],
+      skillRequestEntries: [],
+      attachments: [],
+    })
+    expect(withMemory).toContain("Runs Postgres 16")
+    // memory block comes before the workspace prompt (first in `base`)
+    expect(withMemory.indexOf("Runs Postgres 16")).toBeLessThan(
+      withMemory.indexOf("pirate"),
+    )
+    expect(withoutMemory).not.toContain("Runs Postgres 16")
+  })
+
   test("MCP note appears when active servers are passed; skipped otherwise", () => {
     const withMcp = buildSystemPrompt({
       enabledSkillIds: [],

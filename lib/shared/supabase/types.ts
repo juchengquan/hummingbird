@@ -775,6 +775,7 @@ export type Database = {
           custom_instructions_style: string
           email: string | null
           id: string
+          memory_enabled: boolean
         }
         Insert: {
           created_at?: string
@@ -782,6 +783,7 @@ export type Database = {
           custom_instructions_style?: string
           email?: string | null
           id: string
+          memory_enabled?: boolean
         }
         Update: {
           created_at?: string
@@ -789,6 +791,7 @@ export type Database = {
           custom_instructions_style?: string
           email?: string | null
           id?: string
+          memory_enabled?: boolean
         }
         Relationships: []
       }
@@ -1208,6 +1211,57 @@ export type Database = {
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_memories: {
+        Row: {
+          category: string | null
+          created_at: string
+          fact: string
+          id: string
+          source_conversation_id: string | null
+          source_message_id: string | null
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          category?: string | null
+          created_at?: string
+          fact: string
+          id?: string
+          source_conversation_id?: string | null
+          source_message_id?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          category?: string | null
+          created_at?: string
+          fact?: string
+          id?: string
+          source_conversation_id?: string | null
+          source_message_id?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_memories_source_conversation_id_fkey"
+            columns: ["source_conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_memories_source_message_id_fkey"
+            columns: ["source_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
             referencedColumns: ["id"]
           },
         ]

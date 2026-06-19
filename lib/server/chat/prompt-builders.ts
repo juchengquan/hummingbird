@@ -35,6 +35,10 @@ export const TOTAL_ATTACHMENT_BUDGET = 300 * 1024
 
 export interface BuildSystemPromptOptions {
   workspaceSystemPrompt?: string
+  /** Cross-conversation memory block (active facts), prepended first so
+   *  the model reads "who the user is" before any other guidance. Empty/
+   *  undefined → omitted. Built by `renderMemoryBlock(loadActiveFacts())`. */
+  memoryBlock?: string
   /** Skill ids the user has effectively enabled for this turn. */
   enabledSkillIds: SkillId[]
   /** The per-skill `body.skills[*]` entries (request-time config the
@@ -69,6 +73,7 @@ export function buildSystemPrompt(opts: BuildSystemPromptOptions): string {
   // precedence over our generic guidance. The base instructions then nudge the
   // model toward Markdown formatting (which the chat bubble now renders).
   const base = [
+    opts.memoryBlock?.trim() || undefined,
     trimmedWorkspace,
     "You are a helpful chat assistant inside the Hummingbird app. " +
       "Answer concisely and use Markdown formatting when useful.",
