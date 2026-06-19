@@ -19,6 +19,11 @@ export const MOUNT_COUNT_MAX = Number(process.env.CODE_SANDBOX_MOUNT_COUNT_MAX) 
 /** Guest directory mounted files land in. */
 export const MOUNT_DIR = "/mnt/files"
 
+/** Rich-table caps (runCode PR-3). Over-cap → truncated + a note. */
+export const TABLE_MAX_COLS = Number(process.env.CODE_SANDBOX_TABLE_MAX_COLS) || 50
+export const TABLE_MAX_ROWS = Number(process.env.CODE_SANDBOX_TABLE_MAX_ROWS) || 1000
+export const TABLE_CELL_MAX = Number(process.env.CODE_SANDBOX_TABLE_CELL_MAX) || 500
+
 /** True when a local/remote sandbox runtime is configured. Mirrors the
  *  model-provider.ts custom-base-URL gating: absent → the skill is never
  *  registered (no mock — code execution has no meaningful mock). */
