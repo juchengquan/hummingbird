@@ -229,6 +229,24 @@ export const ChatRequestSchema = z.object({
    *  conversation-pinned, de-duped client-side, tombstones filtered.
    *  See `lib/shared/attachments.ts` for the union shape. */
   attachments: z.array(AttachmentPayloadSchema).max(40).optional(),
+  /** Files the client offers for `runCode` to mount (PR-2). Sent only
+   *  when the codeInterpreter skill is enabled. Each entry maps a
+   *  conversation attachment's `name` to its `fileId`; `dataBase64` is
+   *  present for LOCAL-only files (no storage_path) and absent for CLOUD
+   *  files (the server resolves those by fileId via the user's RLS and
+   *  downloads from user-files). Caps mirror the sandbox mount limits. */
+  sandboxFiles: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(500),
+        fileId: z.string().min(1).max(64),
+        // ~10 MB decoded ≈ 13.4M base64 chars; bound the string to keep
+        // the request sane. Finer decoded/total caps live server-side.
+        dataBase64: z.string().max(14_000_000).optional(),
+      })
+    )
+    .max(10)
+    .optional(),
   /** I2I reference image for the next turn. Set by the "Remix" action
    *  on a `GeneratedImagesGallery` tile. When present, the server
    *  appends a system note instructing the model to call

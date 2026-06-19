@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import {
+  ChatRequestSchema,
   COMPLETE_BLOCK_MAX,
   COMPLETE_PREFIX_MAX,
   CompleteRequestSchema,
@@ -105,6 +106,40 @@ describe("CompleteRequestSchema", () => {
       CompleteRequestSchema.safeParse({ blockText: "a", model: long })
         .success
     ).toBe(false)
+  })
+})
+
+describe("ChatRequestSchema.sandboxFiles", () => {
+  const base = { messages: [{ role: "user", content: "hi" }] }
+  test("accepts a manifest of local + cloud entries", () => {
+    const r = ChatRequestSchema.safeParse({
+      ...base,
+      sandboxFiles: [
+        { name: "data.csv", fileId: "f1", dataBase64: "YQ==" }, // local
+        { name: "big.parquet", fileId: "f2" }, // cloud (no bytes)
+      ],
+    })
+    expect(r.success).toBe(true)
+  })
+  test("absent is fine (back-compat)", () => {
+    expect(ChatRequestSchema.safeParse(base).success).toBe(true)
+  })
+  test("rejects more than 10 entries", () => {
+    const many = Array.from({ length: 11 }, (_, i) => ({
+      name: `f${i}`,
+      fileId: `id${i}`,
+    }))
+    expect(
+      ChatRequestSchema.safeParse({ ...base, sandboxFiles: many }).success
+    ).toBe(false)
+  })
+  test("rejects an over-cap dataBase64 blob", () => {
+    const huge = "A".repeat(15_000_000) // ~11MB decoded > 10MB cap
+    const r = ChatRequestSchema.safeParse({
+      ...base,
+      sandboxFiles: [{ name: "x", fileId: "f", dataBase64: huge }],
+    })
+    expect(r.success).toBe(false)
   })
 })
 

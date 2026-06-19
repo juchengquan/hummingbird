@@ -2,7 +2,7 @@ import "server-only"
 
 import { ExecTimeoutError, MiB, Sandbox } from "microsandbox"
 
-import { CPUS, MEM_MIB, sandboxConfig } from "./config"
+import { CPUS, MEM_MIB, MOUNT_DIR, sandboxConfig } from "./config"
 import { toCodeRunResult, type RawRun } from "./marshal"
 import type { CodeRunInput, CodeRunResult, CodeSandbox } from "./types"
 
@@ -46,6 +46,20 @@ export function createMicrosandboxClient(): CodeSandbox {
           .memory(MiB(MEM_MIB))
           .disableNetwork() // network OFF in v1 (airgapped microVM)
           .create()
+
+        // Mount any caller-provided files into the guest fs before exec.
+        // A write failure must NOT silently run without the files the user
+        // asked for — let it propagate to the outer catch (→ upstream error).
+        if (input.files?.length) {
+          try {
+            await sb.fs().mkdir(MOUNT_DIR)
+          } catch {
+            // The mount dir may already exist; mkdir is best-effort.
+          }
+          for (const f of input.files) {
+            await sb.fs().write(f.path, f.bytes)
+          }
+        }
 
         let timedOut = false
         let stdout = ""

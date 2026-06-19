@@ -37,6 +37,11 @@ import { autoArchiveCodeBlocks as autoArchiveCodeBlocksPure } from "@/client/cha
 import { shouldAutoRetry } from "@/client/chat/auto-retry-decision"
 import { buildAttachments } from "@/client/chat/build-attachments"
 import { buildTransmittedMessages } from "@/client/chat/build-messages"
+import {
+  buildSandboxFiles,
+  type SandboxFileSource,
+} from "@/client/chat/build-sandbox-files"
+import { getBlob } from "@/client/files/local-store"
 import { translateFrame } from "@/client/chat/sse-frame-translator"
 import { useStore } from "@/client/hooks/use-store"
 import { getLocalCred } from "@/client/mcp/local-creds"
@@ -436,6 +441,30 @@ export function useChatSend(): UseChatSendResult {
       const chatBackend = remoteCtx?.backend ?? "ts"
       const authToken = remoteCtx?.authToken ?? null
 
+      // Code-interpreter mount manifest (PR-2). Only when the
+      // codeInterpreter skill is enabled for THIS send: map the same
+      // attached files used above into sources. Cloud files (with a
+      // `storagePath`) ride as bytes-less entries — the server
+      // downloads them by fileId under the user's RLS. Local-only files
+      // read their bytes from the IndexedDB blob cache (`getBlob`, the
+      // same store attachments use). Skipped entirely otherwise so the
+      // field stays absent on the wire.
+      let sandboxFiles: ChatRequestInput["sandboxFiles"]
+      if (enabledSkills.some((s) => s.id === "codeInterpreter")) {
+        const sources: SandboxFileSource[] = attachedFiles.map((file) => ({
+          fileId: file.id,
+          name: file.name,
+          storagePath: file.storagePath ?? null,
+          readBytes: async () => {
+            const blob = await getBlob(file.id)
+            if (!blob) return new Uint8Array(0)
+            return new Uint8Array(await blob.arrayBuffer())
+          },
+        }))
+        const built = await buildSandboxFiles(sources)
+        if (built.length > 0) sandboxFiles = built
+      }
+
       try {
         const result = await apiClient.chat.stream(
           {
@@ -452,6 +481,7 @@ export function useChatSend(): UseChatSendResult {
               attachmentsForRequest.length > 0
                 ? attachmentsForRequest
                 : undefined,
+            sandboxFiles,
             referenceImage: options?.referenceImage,
             localFilesOnly: localFilesOnly || undefined,
             verifyCitations: verifyCitations || undefined,
