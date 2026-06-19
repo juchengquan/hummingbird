@@ -20,6 +20,10 @@ const PROMPT = [
   "To return a table, write JSON to a /tmp/<name>.table.json file as",
   '`{"columns": [...], "rows": [[...], ...]}` — or with pandas',
   "`df.to_json('/tmp/out.table.json', orient='split')`. It renders as a grid.",
+  "Set `language: 'javascript'` to run Node.js instead of Python (default).",
+  "For JavaScript use `console.log` for output; the file conventions are the",
+  "same (mounted files at /mnt/files/<name>, tables to /tmp/<name>.table.json).",
+  "Charts via matplotlib `savefig` are Python-only.",
 ].join(" ")
 
 export const codeInterpreterSkill: ServerSkill = {
@@ -29,12 +33,13 @@ export const codeInterpreterSkill: ServerSkill = {
     if (!hasSandboxConfig()) return null
     return tool({
       description:
-        "Run Python in a sandboxed microVM and return stdout/stderr plus charts (matplotlib). No network.",
+        "Run Python or JavaScript (Node.js) in a sandboxed microVM and return stdout/stderr plus charts/tables. No network.",
       inputSchema: z.object({
         code: z.string().min(1).max(50_000),
+        language: z.enum(["python", "javascript"]).optional(),
         files: z.array(z.string().max(500)).max(10).optional(),
       }),
-      execute: async ({ code, files }, { abortSignal }) => {
+      execute: async ({ code, files, language }, { abortSignal }) => {
         const gate = ctx.consumeBudget?.()
         if (gate && !gate.allowed) {
           return {
@@ -74,7 +79,7 @@ export const codeInterpreterSkill: ServerSkill = {
         }
         const result = await sandbox.run({
           code,
-          language: "python",
+          language: language ?? "python",
           timeoutMs: RUN_TIMEOUT_MS,
           signal: abortSignal,
           ...(mountFiles ? { files: mountFiles } : {}),
