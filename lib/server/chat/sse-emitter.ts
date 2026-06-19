@@ -35,9 +35,13 @@ import type {
 export const AI_SDK_STREAM_HEADER_NAME = "x-vercel-ai-ui-message-stream"
 export const AI_SDK_STREAM_HEADER_VALUE = "v1"
 
+/** Provenance of a tool-image group. `t2i`/`i2i` are the `generateImage`
+ *  modes; `code` is a chart produced by the `runCode` code interpreter. */
+export type ToolImageMode = "t2i" | "i2i" | "code"
+
 export interface ToolImagePayload {
   id: string
-  mode: "t2i" | "i2i"
+  mode: ToolImageMode
   images: Array<{
     id: string
     url: string
@@ -46,7 +50,7 @@ export interface ToolImagePayload {
     height: number
     format: string
     prompt: string
-    mode: "t2i" | "i2i"
+    mode: ToolImageMode
   }>
 }
 
