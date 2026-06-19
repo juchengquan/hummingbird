@@ -477,6 +477,7 @@ export function useChatSend(): UseChatSendResult {
             model: modelForCall,
             messages: buildMessages() as ChatRequestInput["messages"],
             workspaceSystemPrompt,
+            ...(conv?.memoryOff ? { memoryBypass: true } : {}),
             workspaceId: activeWorkspaceId || undefined,
             skills: enabledSkills,
             mcpServers:
@@ -819,10 +820,10 @@ export function useChatSend(): UseChatSendResult {
           // `extractFacts` self-gate again on sign-in + memory_enabled.
           // Read the assistant content fresh from the store — the
           // `placeholder` reference is stale (appendToMessage is immutable).
-          if (memoryEnabled) {
-            const finalConv = useStore
-              .getState()
-              .conversations.find((c) => c.id === targetConvId)
+          const finalConv = useStore
+            .getState()
+            .conversations.find((c) => c.id === targetConvId)
+          if (memoryEnabled && !finalConv?.memoryOff) {
             const assistantText =
               finalConv?.messages.find((m) => m.id === ph.id)?.content ?? ""
             const lastUserText =
