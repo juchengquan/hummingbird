@@ -65,6 +65,14 @@ export interface TaskRunView {
   /** Set while the run is paused waiting for a human (HITL). Null
    *  otherwise. */
   pendingInput: PendingInput | null
+  /** Subagents spawned this run (from `handoff` events). */
+  childRuns: ChildRunRef[]
+}
+
+export interface ChildRunRef {
+  childTaskId: string
+  agent: string
+  subgoal: string
 }
 
 export interface PendingInput {
@@ -98,6 +106,7 @@ export const EMPTY_RUN_VIEW: TaskRunView = {
   verification: null,
   cursor: 0,
   pendingInput: null,
+  childRuns: [],
 }
 
 /** Fold a single event into a view, returning a new view. Events with
@@ -172,12 +181,20 @@ export function reduceRun(view: TaskRunView, event: TaskEvent): TaskRunView {
         next.pendingInput = null
       }
       return next
+    case "handoff": {
+      if (event.phase !== "enter" || !event.childTaskId) return next
+      if (view.childRuns.some((c) => c.childTaskId === event.childTaskId)) return next
+      next.childRuns = [
+        ...view.childRuns,
+        { childTaskId: event.childTaskId, agent: event.agent, subgoal: event.subgoal ?? "" },
+      ]
+      return next
+    }
     // step_start / step_end already handled by the `step` bump above;
-    // handoff / compact carry no view state in v1 (the cursor + step
+    // compact carries no view state in v1 (the cursor + step
     // advance is enough). Reserved for later.
     case "step_start":
     case "step_end":
-    case "handoff":
     case "compact":
       return next
     default:

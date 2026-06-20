@@ -228,3 +228,29 @@ describe("isTerminalStatus", () => {
     expect(isTerminalStatus("paused")).toBe(false)
   })
 })
+
+function handoff(seq: number, childTaskId: string | undefined, agent: string, subgoal: string) {
+  return {
+    kind: "handoff" as const, runId: "r", seq, step: 1,
+    createdAt: "2026-06-20T00:00:00Z", agent, phase: "enter" as const,
+    childTaskId, subgoal,
+  }
+}
+
+describe("reduceRun — handoff → childRuns", () => {
+  test("folds a spawn handoff into childRuns", () => {
+    const v = reduceRun(EMPTY_RUN_VIEW, handoff(1, "c1", "researcher", "find sources"))
+    expect(v.childRuns).toEqual([
+      { childTaskId: "c1", agent: "researcher", subgoal: "find sources" },
+    ])
+  })
+  test("dedups by childTaskId", () => {
+    let v = reduceRun(EMPTY_RUN_VIEW, handoff(1, "c1", "r", "g"))
+    v = reduceRun(v, handoff(2, "c1", "r", "g"))
+    expect(v.childRuns).toHaveLength(1)
+  })
+  test("a handoff without childTaskId is a no-op for childRuns", () => {
+    const v = reduceRun(EMPTY_RUN_VIEW, handoff(1, undefined, "r", "g"))
+    expect(v.childRuns).toEqual([])
+  })
+})
