@@ -34,6 +34,8 @@ import {
 } from "@/shared/generative-ui/schemas"
 import { cn } from "@/shared/utils"
 
+import { subagentPillLabel } from "./subagent-pill-label"
+
 export interface RespondAnswer {
   approved?: boolean
   args?: unknown
@@ -86,8 +88,7 @@ export function TaskStrip({
 }: TaskStripProps) {
   const [childStatuses, setChildStatuses] = useState<Record<string, string>>({})
   useEffect(() => {
-    if (!isRunning || !runId || !view.childRuns || view.childRuns.length === 0)
-      return
+    if (!isRunning || !runId || view.childRuns.length === 0) return
     let active = true
     const load = async () => {
       const rows = await apiClient.tasks.listTaskChildren(runId)
@@ -100,7 +101,7 @@ export function TaskStrip({
       active = false
       clearInterval(timer)
     }
-  }, [isRunning, runId, view.childRuns])
+  }, [isRunning, runId, view.childRuns.length])
 
   const terminal = isTerminalStatus(view.status)
   const errMsg = error ?? view.fatalError
@@ -177,7 +178,7 @@ export function TaskStrip({
 
       {view.plan.length > 0 ? <PlanList items={view.plan} /> : null}
 
-      {view.childRuns && view.childRuns.length > 0 ? (
+      {view.childRuns.length > 0 ? (
         <SubagentGroup childRuns={view.childRuns} statuses={childStatuses} />
       ) : null}
 
@@ -457,7 +458,7 @@ function SubagentGroup({
       {childRuns.map((c) => (
         <li key={c.childTaskId} className="flex items-center gap-1.5">
           <span className="rounded-sm bg-[var(--muted)] px-1 py-0.5 text-[10px] leading-none text-[var(--muted-foreground)]">
-            {statuses[c.childTaskId] ?? "queued"}
+            {subagentPillLabel(c.childTaskId, statuses)}
           </span>
           <span className="font-medium">{c.agent}</span>
           <span className="text-[var(--muted-foreground)] truncate">{c.subgoal}</span>
