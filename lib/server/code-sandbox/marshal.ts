@@ -81,15 +81,32 @@ function capTable(t: { columns: string[]; rows: string[][] }): {
   return { table: { columns, rows }, truncated }
 }
 
+/** Approx serialized size of a table = sum of header + cell string lengths.
+ *  Used to charge tables against the shared RESULT_CAP budget. */
+function tableBytes(t: { columns: string[]; rows: string[][] }): number {
+  let n = 0
+  for (const c of t.columns) n += c.length
+  for (const row of t.rows) for (const cell of row) n += cell.length
+  return n
+}
+
 export function toCodeRunResult(raw: RawRun): CodeRunResult {
   const stdout = truncate(raw.stdout)
   const stderr = truncate(raw.stderr)
 
   const results: CodeResult[] = []
-  if (stdout) results.push({ type: "text", value: stdout })
-  // Add images while staying under the total byte cap; drop whole images
-  // that would exceed it (never emit a partial base64 blob).
+  // Bound the TOTAL result payload (text + images + tables) by RESULT_CAP —
+  // not just images — so a large table or stdout can't blow the response /
+  // persisted-store budget. Whole items that don't fit are dropped (never a
+  // partial blob); each drop is noted so the model knows output was elided.
   let used = 0
+
+  // Text (stdout) first: the primary output, already STDOUT_CAP-bounded.
+  if (stdout) {
+    used += stdout.length
+    results.push({ type: "text", value: stdout })
+  }
+
   for (const img of raw.images) {
     if (used + img.data.length > RESULT_CAP) continue
     used += img.data.length
@@ -97,15 +114,24 @@ export function toCodeRunResult(raw: RawRun): CodeRunResult {
   }
 
   let tablesTruncated = false
+  let tablesDropped = false
   for (const rawTable of raw.tables ?? []) {
     const norm = normalizeTable(rawTable)
     if (!norm) continue
     const { table, truncated } = capTable(norm)
     if (truncated) tablesTruncated = true
+    if (used + tableBytes(table) > RESULT_CAP) {
+      tablesDropped = true
+      continue
+    }
+    used += tableBytes(table)
     results.push({ type: "table", columns: table.columns, rows: table.rows })
   }
   if (tablesTruncated) {
     results.push({ type: "text", value: "⚠ A returned table was truncated to fit display limits." })
+  }
+  if (tablesDropped) {
+    results.push({ type: "text", value: "⚠ A returned table was dropped to stay within the result size limit." })
   }
 
   if (raw.upstreamError !== undefined) {

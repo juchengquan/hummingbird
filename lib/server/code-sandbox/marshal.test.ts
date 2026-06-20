@@ -105,3 +105,26 @@ describe("toCodeRunResult — tables", () => {
     expect(t.rows[0][0].length).toBeLessThanOrEqual(500 + 1) // +1 for the … marker
   })
 })
+
+describe("toCodeRunResult — RESULT_CAP spans text/images/tables", () => {
+  test("a small table within budget is still emitted", () => {
+    const r = toCodeRunResult({ ...base, stdout: "hi\n", tables: [{ columns: ["a"], rows: [["1"]] }] })
+    expect(r.results.filter((x) => x.type === "table")).toHaveLength(1)
+  })
+
+  test("an image consuming most of the budget drops a table that no longer fits", () => {
+    const img = "a".repeat(9_500_000) // ~9.5MB image
+    const cols = ["x", "y"]
+    const rows = Array.from({ length: 1000 }, () => ["z".repeat(500), "z".repeat(500)]) // ~1MB
+    const r = toCodeRunResult({
+      ...base,
+      images: [{ format: "png", data: img }],
+      tables: [{ columns: cols, rows }],
+    })
+    expect(r.results.filter((x) => x.type === "image")).toHaveLength(1) // image fit
+    expect(r.results.filter((x) => x.type === "table")).toHaveLength(0) // table dropped
+    expect(
+      r.results.some((x) => x.type === "text" && x.value.toLowerCase().includes("dropped")),
+    ).toBe(true)
+  })
+})

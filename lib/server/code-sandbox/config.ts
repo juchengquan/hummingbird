@@ -9,6 +9,10 @@ export const RESULT_CAP = Number(process.env.CODE_SANDBOX_RESULT_CAP) || 10_000_
 /** microVM resources. */
 export const MEM_MIB = Number(process.env.CODE_SANDBOX_MEM_MIB) || 512
 export const CPUS = Number(process.env.CODE_SANDBOX_CPUS) || 1
+/** Max microVMs booting/running at once across the process. Each holds
+ *  ~MEM_MIB of guest RAM, so this caps memory on a small self-host VM when
+ *  several runCode calls arrive together; excess runs queue for a slot. */
+export const MAX_CONCURRENT = Number(process.env.CODE_SANDBOX_MAX_CONCURRENT) || 2
 
 /** OCI image for the Python runtime. It MUST already contain the
  *  scientific stack (numpy/pandas/matplotlib): the sandbox runs airgapped
