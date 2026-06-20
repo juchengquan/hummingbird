@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
 import {
   Ban,
@@ -21,10 +21,11 @@ import {
   ToolCallStrip,
   type LiveToolCall,
 } from "@/components/skills/tool-call-strip"
+import { apiClient } from "@/client/api-client"
 import { getUiKindDef } from "@/client/chat/generative-ui/registry"
 import { isTerminalStatus, type RunStatus } from "@/shared/agent/events"
 import type { PlanItem } from "@/shared/agent/events"
-import type { PendingInput, TaskRunView } from "@/shared/agent/project"
+import type { ChildRunRef, PendingInput, TaskRunView } from "@/shared/agent/project"
 import type { RespondRequestInput } from "@/shared/api-schemas"
 import {
   respondBodyForUiAnswer,
@@ -44,6 +45,9 @@ interface TaskStripProps {
   view: TaskRunView
   /** True while the client stream is open. */
   isRunning: boolean
+  /** The id of the active run — used to poll child subagent statuses.
+   *  Passed from `TasksSidebar` (which holds it from `useTaskRunContext`). */
+  runId?: string | null
   /** Transport-level error (network / HTTP), shown alongside the run's
    *  own `view.fatalError`. */
   error?: string | null
@@ -72,6 +76,7 @@ interface TaskStripProps {
 export function TaskStrip({
   view,
   isRunning,
+  runId,
   error,
   onCancel,
   onRespond,
@@ -79,6 +84,24 @@ export function TaskStrip({
   openInEditorLabel = "Open in editor",
   className,
 }: TaskStripProps) {
+  const [childStatuses, setChildStatuses] = useState<Record<string, string>>({})
+  useEffect(() => {
+    if (!isRunning || !runId || !view.childRuns || view.childRuns.length === 0)
+      return
+    let active = true
+    const load = async () => {
+      const rows = await apiClient.tasks.listTaskChildren(runId)
+      if (!active) return
+      setChildStatuses(Object.fromEntries(rows.map((r) => [r.id, r.status])))
+    }
+    void load()
+    const timer = setInterval(load, 2000)
+    return () => {
+      active = false
+      clearInterval(timer)
+    }
+  }, [isRunning, runId, view.childRuns])
+
   const terminal = isTerminalStatus(view.status)
   const errMsg = error ?? view.fatalError
   const canOpenInEditor =
@@ -153,6 +176,10 @@ export function TaskStrip({
       ) : null}
 
       {view.plan.length > 0 ? <PlanList items={view.plan} /> : null}
+
+      {view.childRuns && view.childRuns.length > 0 ? (
+        <SubagentGroup childRuns={view.childRuns} statuses={childStatuses} />
+      ) : null}
 
       {calls.length > 0 ? <ToolCallStrip calls={calls} /> : null}
 
@@ -413,6 +440,31 @@ function formatArgs(args: unknown): string {
   } catch {
     return String(args)
   }
+}
+
+function SubagentGroup({
+  childRuns,
+  statuses,
+}: {
+  childRuns: ChildRunRef[]
+  statuses: Record<string, string>
+}) {
+  return (
+    <ul className="space-y-0.5 text-xs">
+      <li className="flex items-center gap-1.5 text-[var(--muted-foreground)] font-medium">
+        Spawned {childRuns.length} subagent{childRuns.length === 1 ? "" : "s"}
+      </li>
+      {childRuns.map((c) => (
+        <li key={c.childTaskId} className="flex items-center gap-1.5">
+          <span className="rounded-sm bg-[var(--muted)] px-1 py-0.5 text-[10px] leading-none text-[var(--muted-foreground)]">
+            {statuses[c.childTaskId] ?? "queued"}
+          </span>
+          <span className="font-medium">{c.agent}</span>
+          <span className="text-[var(--muted-foreground)] truncate">{c.subgoal}</span>
+        </li>
+      ))}
+    </ul>
+  )
 }
 
 function PlanList({ items }: { items: PlanItem[] }) {
