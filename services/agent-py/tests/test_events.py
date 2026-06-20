@@ -9,10 +9,12 @@ regressions; the tests pin the payload keys.
 from __future__ import annotations
 
 from agent_py.events import (
+    HandoffEvent,
     ResultEvent,
     StatusEvent,
     StepEndEvent,
     StepStartEvent,
+    TaskEvent,
     TokenEvent,
     event_to_row_payload,
     is_terminal_status,
@@ -70,3 +72,30 @@ def test_result_payload_minimal() -> None:
     match the TS wire shape (no nulls)."""
     e = ResultEvent(run_id="r", seq=9, step=2, created_at="t", status="done")
     assert event_to_row_payload(e) == {"status": "done"}
+
+
+def test_handoff_event_kind_and_fields() -> None:
+    """HandoffEvent has kind=='handoff', agent, and phase."""
+    e = HandoffEvent(run_id="r", seq=3, step=1, created_at="t", agent="researcher", phase="enter")
+    assert e.kind == "handoff"
+    assert e.agent == "researcher"
+    assert e.phase == "enter"
+
+
+def test_handoff_event_payload_includes_agent_and_phase() -> None:
+    """event_to_row_payload serialises agent + phase for the DB row."""
+    e = HandoffEvent(run_id="r", seq=3, step=1, created_at="t", agent="researcher", phase="enter")
+    assert event_to_row_payload(e) == {"agent": "researcher", "phase": "enter"}
+
+
+def test_handoff_event_exit_phase() -> None:
+    e = HandoffEvent(run_id="r", seq=4, step=1, created_at="t", agent="summariser", phase="exit")
+    assert event_to_row_payload(e) == {"agent": "summariser", "phase": "exit"}
+
+
+def test_handoff_event_is_task_event_union_member() -> None:
+    """HandoffEvent is a valid member of the TaskEvent union (runtime isinstance check)."""
+    e: TaskEvent = HandoffEvent(
+        run_id="r", seq=3, step=1, created_at="t", agent="researcher", phase="enter"
+    )
+    assert isinstance(e, HandoffEvent)

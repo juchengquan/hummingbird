@@ -158,6 +158,19 @@ class StepErrorEvent(TaskEventBase):
     will_retry: bool = True
 
 
+@dataclass(kw_only=True, frozen=True)
+class HandoffEvent(TaskEventBase):
+    """Marks a subagent spawn boundary. Mirrors `HandoffEvent` in
+    `lib/shared/agent/events.ts`: `phase='enter'` is emitted just
+    before control transfers to a child agent; `phase='exit'` is
+    emitted when the child completes and control returns to the
+    parent orchestrator."""
+
+    kind: Literal["handoff"] = field(default="handoff", init=False)
+    agent: str
+    phase: Literal["enter", "exit"]
+
+
 # --- Approval / HITL -------------------------------------------------------
 
 
@@ -231,6 +244,7 @@ TaskEvent = (
     | ToolInputEvent
     | ToolOutputEvent
     | StepErrorEvent
+    | HandoffEvent
     | ApprovalEvent
 )
 
@@ -276,6 +290,8 @@ def event_to_row_payload(event: TaskEvent) -> dict[str, object]:
         return tool_payload
     if isinstance(event, StepErrorEvent):
         return {"message": event.message, "willRetry": event.will_retry}
+    if isinstance(event, HandoffEvent):
+        return {"agent": event.agent, "phase": event.phase}
     if isinstance(event, ApprovalEvent):
         approval_payload: dict[str, object] = {
             "approvalId": event.approval_id,

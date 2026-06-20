@@ -28,6 +28,7 @@ from typing import Literal
 from .events import (
     ApprovalEvent,
     ApprovalRequestKind,
+    HandoffEvent,
     InputRequestOption,
     ResultEvent,
     RunStatus,
@@ -294,6 +295,23 @@ class RunEmitter:
                 created_at=_now_iso(),
                 message=message,
                 will_retry=will_retry,
+            )
+        )
+
+    async def handoff(self, *, agent: str, phase: str = "enter") -> None:
+        """Emit a `handoff` event marking a subagent spawn boundary.
+        `phase='enter'` is emitted just before control transfers to a
+        child agent; `phase='exit'` when it returns."""
+        if self._settled:
+            return
+        await self._emit(
+            HandoffEvent(
+                run_id=self._run_id,
+                seq=self._next_seq(),
+                step=self._step,
+                created_at=_now_iso(),
+                agent=agent,
+                phase=phase,  # type: ignore[arg-type]
             )
         )
 
