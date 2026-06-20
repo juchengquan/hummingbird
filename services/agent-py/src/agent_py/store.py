@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import dataclass
 from typing import Literal, cast
 
 import asyncpg
@@ -482,6 +483,132 @@ async def save_checkpoint(
 
 def _coerce_uuid(value: str) -> uuid.UUID:
     return uuid.UUID(value)
+
+
+# --- Child-task helpers -------------------------------------------------------
+
+
+def _as_dict(value: object) -> dict[str, object] | None:
+    """Coerce a jsonb column value to a plain dict.
+
+    asyncpg may return jsonb as a native dict (if a codec is registered)
+    or as a JSON string (the default). Handle both, plus None. Returns
+    None when the value is absent or not parseable as a dict — callers
+    treat None as "no data"."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+            return decoded if isinstance(decoded, dict) else None
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
+_CREATE_CHILD_TASK_SQL = """
+INSERT INTO public.tasks (id, user_id, conversation_id, goal, status, parent_task_id, checkpoint)
+VALUES (gen_random_uuid(), $1, $2, $3, 'queued', $4, $5::jsonb)
+RETURNING id;
+"""
+
+
+async def create_child_task(
+    pool: asyncpg.Pool,
+    *,
+    parent_task_id: str,
+    user_id: str,
+    conversation_id: str,
+    goal: str,
+    checkpoint: dict[str, object],
+) -> str:
+    """Insert a child task row and return its new id.
+
+    The checkpoint must include the subagent metadata under the
+    `subagent` key (e.g. `{"personaSlug": "researcher", "subgoal": "..."}`).
+    The child starts in 'queued' status; caller enqueues a `start` job
+    separately via `jobs.enqueue_start_job`."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            _CREATE_CHILD_TASK_SQL,
+            _coerce_uuid(user_id),
+            _coerce_uuid(conversation_id),
+            goal,
+            _coerce_uuid(parent_task_id),
+            json.dumps(checkpoint),
+        )
+    return str(row["id"])
+
+
+_SET_PENDING_CHILDREN_SQL = (
+    "UPDATE public.tasks SET pending_children = $2, updated_at = now() WHERE id = $1;"
+)
+
+
+async def set_pending_children(pool: asyncpg.Pool, *, task_id: str, user_id: str, n: int) -> None:
+    """Set the barrier counter on the parent task.
+
+    `pending_children` starts at `n` and each child decrements it on
+    completion. When it hits 0 the orchestrator fan-in step fires."""
+    async with pool.acquire() as conn:
+        await conn.execute(_SET_PENDING_CHILDREN_SQL, _coerce_uuid(task_id), n)
+
+
+@dataclass(frozen=True)
+class ChildResult:
+    """One child task's settled outcome for fan-in aggregation."""
+
+    persona_slug: str
+    subgoal: str
+    status: str
+    final_text: str
+
+
+_LOAD_CHILD_RESULTS_SQL = """
+SELECT t.id, t.status, t.checkpoint,
+  (SELECT e.payload FROM public.task_events e
+     WHERE e.task_id = t.id AND e.kind = 'result'
+     ORDER BY e.seq DESC LIMIT 1) AS result_payload
+FROM public.tasks t
+WHERE t.parent_task_id = $1
+ORDER BY t.created_at ASC;
+"""
+
+
+async def load_child_results(
+    pool: asyncpg.Pool, *, parent_task_id: str, user_id: str
+) -> list[ChildResult]:
+    """Read all child tasks for a parent and map them to ChildResult.
+
+    Reads the subagent metadata (personaSlug / subgoal) from each
+    child's `tasks.checkpoint.subagent` jsonb key, and the final text
+    from the child's terminal `result` event payload under the
+    `finalText` key (camelCase — mirrors the wire format written by
+    `events.event_to_row_payload` for ResultEvent.final_text).
+    Returns an empty list when the parent has no children yet.
+    """
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(_LOAD_CHILD_RESULTS_SQL, _coerce_uuid(parent_task_id))
+    out: list[ChildResult] = []
+    for row in rows:
+        cp = _as_dict(row["checkpoint"])
+        # subagent metadata is nested under checkpoint["subagent"]
+        meta = _as_dict(cp.get("subagent")) if cp else None
+        # result_payload is the jsonb from task_events for kind='result'
+        # Its shape is written by event_to_row_payload(ResultEvent):
+        #   {"status": ..., "finalText": <str>}  (camelCase wire key)
+        payload = _as_dict(row["result_payload"])
+        out.append(
+            ChildResult(
+                persona_slug=str(meta.get("personaSlug", "")) if meta else "",
+                subgoal=str(meta.get("subgoal", "")) if meta else "",
+                status=str(row["status"]),
+                final_text=str(payload.get("finalText", "")) if payload else "",
+            )
+        )
+    return out
 
 
 # --- RLS impersonation -----------------------------------------------------

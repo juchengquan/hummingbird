@@ -134,3 +134,33 @@ async def test_release_returns_false_on_unexpected_execute_output() -> None:
     we sent an UPDATE), don't claim success."""
     pool = _fake_pool(execute_result="SOMETHING ELSE")
     assert await release_job_to_queue(pool, str(uuid.uuid4())) is False
+
+
+# --- enqueue_start_job -------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_enqueue_start_job_inserts_start_action() -> None:
+    """enqueue_start_job calls conn.execute with the enqueue INSERT SQL
+    and action 'start', mirroring enqueue_continue_job but for child
+    tasks that are being kicked off for the first time."""
+    import json
+
+    from agent_py.jobs import ENQUEUE_CONTINUE_SQL, enqueue_start_job
+
+    task_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    user_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+
+    pool = _fake_pool(execute_result="INSERT 0 1")
+    await enqueue_start_job(pool, task_id=task_id, user_id=user_id)
+
+    conn = pool.acquire().__aenter__.return_value
+    conn.execute.assert_called_once()
+    call_args = conn.execute.call_args[0]
+    # Positional args: (sql, task_uuid, user_uuid, action, payload_json)
+    # First arg is the SQL — same constant used by enqueue_continue_job
+    assert call_args[0] == ENQUEUE_CONTINUE_SQL
+    # Third positional arg is the action (index 3 = after sql, task_uuid, user_uuid)
+    assert call_args[3] == "start"
+    # Fourth positional arg is the JSON payload (empty object)
+    assert json.loads(call_args[4]) == {}
