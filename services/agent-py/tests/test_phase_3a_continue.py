@@ -218,6 +218,7 @@ async def test_execute_continue_seeds_emitter_from_checkpoint() -> None:
         patch.object(store, "set_task_handler", new=AsyncMock()),
         patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=False)),
         patch.object(store, "update_run", new=AsyncMock()),
+        patch("agent_py.executor.settle_task_terminal", new=AsyncMock(return_value=MagicMock())),
         patch.object(RunEmitter, "__init__", patched_init),
     ):
         outcome = await executor.execute_continue(pool, payload, make_step_fn=make_step)
@@ -278,6 +279,7 @@ async def test_execute_start_seeds_at_zero_not_from_checkpoint() -> None:
         patch.object(store, "set_task_handler", new=AsyncMock()),
         patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=False)),
         patch.object(store, "update_run", new=AsyncMock()),
+        patch("agent_py.executor.settle_task_terminal", new=AsyncMock(return_value=MagicMock())),
         patch.object(RunEmitter, "__init__", patched_init),
     ):
         await executor.execute_start(pool, payload, make_step_fn=make_step)
@@ -376,10 +378,12 @@ async def test_settled_chunk_marks_task_done_no_enqueue() -> None:
         patch.object(store, "update_run", new=AsyncMock()) as update_run,
         patch.object(store, "save_checkpoint", new=AsyncMock()) as save_checkpoint,
         patch.object(jobs, "enqueue_continue_job", new=AsyncMock()) as enqueue,
+        patch("agent_py.executor.settle_task_terminal", new=AsyncMock(return_value=MagicMock())),
     ):
         outcome = await executor.execute_start(pool, payload, make_step_fn=make_step)
 
     assert outcome.settled is True
+    # update_run still called (step-only update before barrier settle).
     update_run.assert_awaited()
     save_checkpoint.assert_not_called()
     enqueue.assert_not_called()
@@ -458,6 +462,7 @@ async def test_execute_continue_reaggregates_verification_from_event_log() -> No
             executor, "_maybe_verify", new=AsyncMock(return_value=verify_payload)
         ) as maybe_verify,
         patch("agent_py.executor._make_db_sink", return_value=sink),
+        patch("agent_py.executor.settle_task_terminal", new=AsyncMock(return_value=MagicMock())),
     ):
         outcome = await executor.execute_continue(pool, payload, make_step_fn=make_step)
 

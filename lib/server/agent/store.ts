@@ -190,6 +190,21 @@ export async function appendSyntheticResult(
   await updateRun(db, runId, userId, { status: opts.status, finished: true })
 }
 
+/** Cancel all not-yet-settled children of a cancelled parent task. */
+export async function cancelChildTasks(
+  db: DB,
+  parentId: string,
+  userId: string
+): Promise<void> {
+  const { error } = await db
+    .from("tasks")
+    .update({ status: "cancelled", finished_at: new Date().toISOString() })
+    .eq("parent_task_id", parentId)
+    .eq("user_id", userId)
+    .not("status", "in", "(done,failed,cancelled)")
+  if (error) throw new Error(`cancelChildTasks: ${error.message}`)
+}
+
 /**
  * Fail this user's orphaned runs: any `queued`/`running` row whose most
  * recent activity (latest event, else `started_at`) is older than

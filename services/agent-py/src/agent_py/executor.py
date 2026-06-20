@@ -35,6 +35,8 @@ import asyncpg
 import structlog
 
 from . import jobs, store, verify
+from .aggregate import aggregate_child_results
+from .barrier import settle_task_terminal
 from .emitter import EventSink, RunEmitter
 from .events import TaskEvent, TokenEvent, ToolOutputEvent
 from .input_policy import (
@@ -52,11 +54,13 @@ from .runner import (
     RunStepContext,
     RunStepFn,
     RunStepOutcome,
+    SpawnSpec,
     run_agent_loop,
 )
 from .settings import get_settings
 from .tools import ToolContext, default_tool_registry
 from .tools.registry import ToolDescriptor
+from .tools.spawn_subagent import MAX_CHILDREN
 
 logger = structlog.get_logger(__name__)
 
@@ -274,6 +278,36 @@ async def _run_chunk(
     # don't have to plumb a getter through the step-fn factory.
     live_messages: list[dict[str, Any]] = _messages_from(checkpoint)
 
+    # Fan-in resume: when the checkpoint carries `awaiting_children`
+    # (written by the spawned path in Task 7), this is the parent's
+    # `continue` job fired by the barrier after all children settled.
+    # Load + aggregate the child results and inject them as a
+    # `tool_result` user turn for the original spawn `tool_call_id`,
+    # then strip the marker so it doesn't re-trigger on a later chunk.
+    # This is the only resume path that carries `awaiting_children`; a
+    # fresh `start` checkpoint never has it, so the guard is sufficient.
+    if resume:
+        awaiting = checkpoint.get("awaiting_children")
+        if isinstance(awaiting, dict):
+            tool_call_id = str(awaiting.get("tool_call_id") or "")
+            child_results = await store.load_child_results(
+                pool, parent_task_id=payload.run_id, user_id=payload.user_id
+            )
+            tool_result_text = aggregate_child_results(child_results)
+            live_messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_call_id,
+                            "content": tool_result_text,
+                        }
+                    ],
+                }
+            )
+            checkpoint = {k: v for k, v in checkpoint.items() if k != "awaiting_children"}
+
     try:
         await store.set_task_handler(
             pool,
@@ -412,6 +446,87 @@ async def _run_chunk(
             )
             return ExecutorOutcome(settled=True)
 
+        # Spawn path (PR-2 fan-out): the step fn captured a
+        # `spawnSubagent` call. Create child task rows, set the barrier
+        # counter, checkpoint the parent as awaiting, and yield —
+        # the parent resumes when the barrier fires (all children done).
+        if result.kind == "spawned":
+            assert result.spawn is not None
+            spawn = result.spawn
+
+            # Depth cap: only top-level tasks may spawn children.
+            # A child task (parent_task_id non-null) receives a
+            # rejection tool_result so the model can continue without
+            # subagents.
+            parent_of_self = await store.load_parent_task_id(
+                pool, run_id=payload.run_id, user_id=payload.user_id
+            )
+            if parent_of_self is not None:
+                live_messages.append(_spawn_rejection_tool_result(spawn.tool_call_id))
+                await store.save_checkpoint(
+                    pool,
+                    run_id=payload.run_id,
+                    user_id=payload.user_id,
+                    checkpoint=_build_checkpoint(checkpoint, live_messages, emitter),
+                )
+                await jobs.enqueue_continue_job(
+                    pool, task_id=payload.run_id, user_id=payload.user_id
+                )
+                return ExecutorOutcome(settled=True)
+
+            # Breadth clamp: never create more than MAX_CHILDREN.
+            specs = spawn.tasks[:MAX_CHILDREN]
+            conversation_id = await store.load_conversation_id(
+                pool, run_id=payload.run_id, user_id=payload.user_id
+            )
+            children_meta: list[dict[str, str]] = []
+            for spec in specs:
+                child_checkpoint = _child_checkpoint(checkpoint, spec)
+                child_id = await store.create_child_task(
+                    pool,
+                    parent_task_id=payload.run_id,
+                    user_id=payload.user_id,
+                    conversation_id=conversation_id,
+                    goal=spec.subgoal,
+                    checkpoint=child_checkpoint,
+                )
+                await jobs.enqueue_start_job(pool, task_id=child_id, user_id=payload.user_id)
+                await emitter.handoff(agent=spec.persona_slug, phase="enter")
+                children_meta.append(
+                    {
+                        "id": child_id,
+                        "personaSlug": spec.persona_slug,
+                        "subgoal": spec.subgoal,
+                    }
+                )
+
+            await store.set_pending_children(
+                pool, task_id=payload.run_id, user_id=payload.user_id, n=len(specs)
+            )
+            next_checkpoint = _build_checkpoint(checkpoint, live_messages, emitter)
+            next_checkpoint["awaiting_children"] = {
+                "tool_call_id": spawn.tool_call_id,
+                "children": children_meta,
+            }
+            await store.save_checkpoint(
+                pool,
+                run_id=payload.run_id,
+                user_id=payload.user_id,
+                checkpoint=next_checkpoint,
+            )
+            await store.update_run(
+                pool,
+                run_id=payload.run_id,
+                user_id=payload.user_id,
+                status="paused",
+            )
+            logger.info(
+                "executor.spawned",
+                run_id=payload.run_id,
+                children=len(specs),
+            )
+            return ExecutorOutcome(settled=True)
+
         # Yield path: persist the latest state + enqueue a continue
         # job so another chunk picks up. The task row stays `running`
         # (no terminal event emitted). The poller marks THIS job done
@@ -438,32 +553,40 @@ async def _run_chunk(
             )
             return ExecutorOutcome(settled=True)
 
-        # Reflect terminal status into the `tasks` row. The emitter
-        # already wrote the terminal event; this is just the table
-        # state the UI reads when it doesn't want to fold events.
+        # Reflect terminal status into the `tasks` row via the join
+        # barrier so a child settling decrements its parent's counter
+        # and re-enqueues the parent's `continue` when it reaches zero.
+        # The emitter already wrote the terminal event; this is just
+        # the table state the UI reads when it doesn't want to fold events.
         if result.kind == "cancelled":
-            await store.update_run(
+            await settle_task_terminal(
                 pool,
-                run_id=payload.run_id,
+                task_id=payload.run_id,
                 user_id=payload.user_id,
                 status="cancelled",
-                finished=True,
             )
         else:
+            # Persist the final step count before the terminal settle
+            # (settle_task_terminal does not write `step`).
             await store.update_run(
                 pool,
                 run_id=payload.run_id,
                 user_id=payload.user_id,
-                status="done",
                 step=emitter.step,
-                finished=True,
+            )
+            await settle_task_terminal(
+                pool,
+                task_id=payload.run_id,
+                user_id=payload.user_id,
+                status="done",
             )
         return ExecutorOutcome(settled=True)
 
     except Exception as exc:
         # Anything that escapes the loop is a fault in the executor
         # plumbing itself (the loop's own errors emit `result:
-        # failed` via the step fn). Mark the row failed + emit a
+        # failed` via the step fn). Settle the row failed via the
+        # barrier so a failed child decrements its parent, then emit a
         # synthetic terminal event so the UI doesn't show a stuck
         # `running`.
         logger.error(
@@ -475,12 +598,11 @@ async def _run_chunk(
         try:
             if not emitter.settled:
                 await emitter.result("failed", error=str(exc))
-            await store.update_run(
+            await settle_task_terminal(
                 pool,
-                run_id=payload.run_id,
+                task_id=payload.run_id,
                 user_id=payload.user_id,
                 status="failed",
-                finished=True,
             )
         except Exception:
             # If even the cleanup writes fail, the job-fail path in
@@ -1009,21 +1131,26 @@ async def _run_respond(
             return ExecutorOutcome(settled=True)
 
         if result.kind == "cancelled":
-            await store.update_run(
+            await settle_task_terminal(
                 pool,
-                run_id=payload.run_id,
+                task_id=payload.run_id,
                 user_id=payload.user_id,
                 status="cancelled",
-                finished=True,
             )
         else:
+            # Persist the final step count before the terminal settle
+            # (settle_task_terminal does not write `step`).
             await store.update_run(
                 pool,
                 run_id=payload.run_id,
                 user_id=payload.user_id,
-                status="done",
                 step=emitter.step,
-                finished=True,
+            )
+            await settle_task_terminal(
+                pool,
+                task_id=payload.run_id,
+                user_id=payload.user_id,
+                status="done",
             )
         return ExecutorOutcome(settled=True)
 
@@ -1037,12 +1164,11 @@ async def _run_respond(
         try:
             if not emitter.settled:
                 await emitter.result("failed", error=str(exc))
-            await store.update_run(
+            await settle_task_terminal(
                 pool,
-                run_id=payload.run_id,
+                task_id=payload.run_id,
                 user_id=payload.user_id,
                 status="failed",
-                finished=True,
             )
         except Exception:
             pass
@@ -1553,6 +1679,40 @@ def _build_checkpoint(
         "step": emitter.step,
         "seq": emitter.seq,
         "config": cfg if isinstance(cfg, dict) else {},
+    }
+
+
+def _spawn_rejection_tool_result(tool_call_id: str) -> dict[str, Any]:
+    """A synthetic user turn that tells the model spawning was rejected
+    (depth limit). The model continues the run without subagents."""
+    return {
+        "role": "user",
+        "content": [
+            {
+                "type": "tool_result",
+                "tool_use_id": tool_call_id,
+                "content": (
+                    "Subagent spawning is not available here (depth limit reached). "
+                    "Continue without subagents."
+                ),
+            }
+        ],
+    }
+
+
+def _child_checkpoint(parent_checkpoint: dict[str, Any], spec: SpawnSpec) -> dict[str, Any]:
+    """Build the initial checkpoint for a child task. Inherits the
+    parent's `config` (model, system prompt, etc.) and pins the
+    subagent metadata under the `subagent` key so the child can be
+    identified in the tasks table."""
+    parent_cfg = parent_checkpoint.get("config")
+    cfg = dict(parent_cfg) if isinstance(parent_cfg, dict) else {}
+    return {
+        "messages": [{"role": "user", "content": spec.subgoal}],
+        "step": 0,
+        "seq": 0,
+        "config": cfg,
+        "subagent": {"personaSlug": spec.persona_slug, "subgoal": spec.subgoal},
     }
 
 

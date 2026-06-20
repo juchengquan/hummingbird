@@ -192,6 +192,24 @@ async def enqueue_continue_job(
         )
 
 
+async def enqueue_start_job(
+    pool: asyncpg.Pool,
+    *,
+    task_id: str,
+    user_id: str,
+) -> None:
+    """Insert a `start` job for a (child) task. Payload empty — `start`
+    reads everything from `tasks.checkpoint`."""
+    async with pool.acquire() as conn:
+        await conn.execute(
+            ENQUEUE_CONTINUE_SQL,
+            _coerce_uuid(task_id),
+            _coerce_uuid(user_id),
+            "start",
+            json.dumps({}),
+        )
+
+
 def _row_to_claimed(row: asyncpg.Record) -> ClaimedJob:
     payload = row["payload"]
     # asyncpg returns jsonb as a string by default unless a codec is

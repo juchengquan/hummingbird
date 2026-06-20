@@ -113,6 +113,23 @@ describe("POST /api/tasks/:id/cancel — state behaviour", () => {
     expect(mocks.updateRun.mock.calls[0][1]).toBe(RUN_ID)
     expect(mocks.updateRun.mock.calls[0][2]).toBe(USER_ID)
   })
+
+  test("non-terminal parent → cancelChildTasks called with parentId + userId", async () => {
+    const { POST } = await import("./route")
+    const res = await POST(post(), { params })
+    expect(res.status).toBe(200)
+    expect(mocks.cancelChildTasks).toHaveBeenCalledTimes(1)
+    expect(mocks.cancelChildTasks.mock.calls[0][1]).toBe(RUN_ID)
+    expect(mocks.cancelChildTasks.mock.calls[0][2]).toBe(USER_ID)
+  })
+
+  test("already-terminal parent → cancelChildTasks NOT called", async () => {
+    mocks.getRun.mockImplementation(async () => ({ id: RUN_ID, status: "done" }))
+    const { POST } = await import("./route")
+    const res = await POST(post(), { params })
+    expect(res.status).toBe(200)
+    expect(mocks.cancelChildTasks).not.toHaveBeenCalled()
+  })
 })
 
 describe("POST /api/tasks/:id/cancel — store failures", () => {

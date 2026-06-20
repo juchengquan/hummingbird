@@ -356,3 +356,75 @@ async def test_unexpected_exception_wrapped_not_propagated() -> None:
     assert "ValueError" in step_errors[0].message
     tool_result = messages[2]["content"][0]
     assert tool_result.get("is_error") is True
+
+
+# --- Spawn branch: spawnSubagent tool_use captured as spawn outcome ----
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_captures_spawn_subagent_as_spawn_outcome() -> None:
+    """When the model emits a `spawnSubagent` tool_use block, the step fn
+    should return RunStepOutcome(done=False, spawn=SpawnDescriptor(...))
+    WITHOUT executing the tool — mirroring the gated-tool suspend branch."""
+    from agent_py.tools.spawn_subagent import SPAWN_SUBAGENT_TOOL_NAME
+
+    invocations: list[dict[str, Any]] = []
+
+    from agent_py.tools.registry import ToolDescriptor, ToolInvocationResult
+
+    async def execute(args: dict[str, Any]) -> ToolInvocationResult:
+        invocations.append(args)
+        return ToolInvocationResult(text="should not run", summary="x")
+
+    spawn_tool = ToolDescriptor(
+        name=SPAWN_SUBAGENT_TOOL_NAME,
+        description="(test spawn tool)",
+        input_schema={"type": "object", "properties": {}, "additionalProperties": True},
+        execute=execute,
+    )
+
+    client = _FakeClient(
+        deltas=[],
+        final_content_seq=[
+            [
+                {
+                    "type": "tool_use",
+                    "id": "tu_spawn_1",
+                    "name": SPAWN_SUBAGENT_TOOL_NAME,
+                    "input": {"tasks": [{"personaSlug": "r", "subgoal": "g"}]},
+                },
+            ],
+        ],
+    )
+    collected, emitter = _list_sink()
+    messages: list[dict[str, Any]] = [{"role": "user", "content": "spawn something"}]
+    step = make_anthropic_step_fn(
+        AnthropicStepConfig(
+            client=client,
+            model="claude-sonnet-4-6",
+            system=None,
+            messages=messages,
+            tools=[spawn_tool],
+        )
+    )
+
+    await emitter.start_step()
+    outcome = await step(RunStepContext(step=emitter.step, emitter=emitter))
+
+    assert outcome.done is False
+    assert outcome.spawn is not None
+    assert outcome.spawn.tool_call_id == "tu_spawn_1"
+    assert [(s.persona_slug, s.subgoal) for s in outcome.spawn.tasks] == [("r", "g")]
+
+    # Tool was NOT executed.
+    assert invocations == []
+
+    # Assistant turn appended so the eventual tool_result on resume
+    # has the matching tool_use to pair with.
+    assert len(messages) == 2
+    assert messages[1]["role"] == "assistant"
+
+    # A tool_input event was emitted for the UI.
+    tool_inputs = [e for e in collected if isinstance(e, ToolInputEvent)]
+    assert len(tool_inputs) == 1
+    assert tool_inputs[0].tool_name == SPAWN_SUBAGENT_TOOL_NAME
