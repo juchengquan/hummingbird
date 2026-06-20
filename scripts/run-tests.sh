@@ -15,7 +15,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 ISOLATED="./app/api/tasks"
-MAIN_ROOTS=(./app/api/ai ./components ./lib ./scripts ./tests)
+MAIN_ROOTS=(./app/api/ai ./app/api/extract ./components ./lib ./scripts ./tests)
 
 # Coverage guard: every *.test.ts (outside node_modules/ and services/) must
 # live under a configured root, so nothing is silently skipped when bun has no

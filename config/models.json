@@ -12,6 +12,7 @@
       "contextWindow": 1000000,
       "supportsReasoningEffort": true,
       "supportsStructuredOutput": true,
+      "supportsVision": true,
       "tokenizer": "tiktoken-cl100k",
       "routes": [{ "via": "gateway" }]
     },
@@ -22,6 +23,7 @@
       "contextWindow": 200000,
       "supportsReasoningEffort": true,
       "supportsStructuredOutput": true,
+      "supportsVision": true,
       "tokenizer": "tiktoken-cl100k",
       "routes": [{ "via": "gateway" }]
     },
@@ -32,6 +34,7 @@
       "contextWindow": 1000000,
       "supportsReasoningEffort": true,
       "supportsStructuredOutput": true,
+      "supportsVision": true,
       "tokenizer": "tiktoken-o200k",
       "routes": [{ "via": "gateway" }]
     },
@@ -41,6 +44,7 @@
       "provider": "OpenAI",
       "contextWindow": 128000,
       "supportsStructuredOutput": true,
+      "supportsVision": true,
       "tokenizer": "tiktoken-o200k",
       "routes": [{ "via": "gateway" }]
     },
@@ -51,6 +55,7 @@
       "contextWindow": 1048576,
       "supportsReasoningEffort": true,
       "supportsStructuredOutput": true,
+      "supportsVision": true,
       "routes": [{ "via": "gateway" }]
     },
     {
@@ -60,6 +65,7 @@
       "contextWindow": 1000000,
       "supportsReasoningEffort": true,
       "supportsStructuredOutput": true,
+      "supportsVision": true,
       "routes": [{ "via": "gateway" }]
     },
     {

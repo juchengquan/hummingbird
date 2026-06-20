@@ -51,6 +51,11 @@ const ChatModelSchema = z.object({
    *  when set and fall back to lenient text parsing otherwise. See
    *  `@/server/ai/structured`. */
   supportsStructuredOutput: z.boolean().optional(),
+  /** When true, the model accepts image input (vision). Gates the
+   *  vision document-extraction path (`@/server/extraction/vision`):
+   *  the extractor only renders + sends page images to models flagged
+   *  here. Absent / false → text-only extraction. */
+  supportsVision: z.boolean().optional(),
   /** Which tokenizer the context meter uses to estimate this model's
    *  token count. `tiktoken-o200k` (modern OpenAI), `tiktoken-cl100k`
    *  (older OpenAI; also a within-a-few-% proxy for Anthropic). Absent →
@@ -152,4 +157,10 @@ export function modelSupportsReasoningEffort(id: string): boolean {
  *  false. */
 export function modelSupportsStructuredOutput(id: string): boolean {
   return getChatModel(id)?.supportsStructuredOutput === true
+}
+
+/** Whether a model accepts image input (vision). Gates the vision
+ *  document-extraction path. Unknown id → false. */
+export function modelSupportsVision(id: string): boolean {
+  return getChatModel(id)?.supportsVision === true
 }
