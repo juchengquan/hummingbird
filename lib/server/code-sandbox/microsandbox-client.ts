@@ -2,7 +2,15 @@ import "server-only"
 
 import { ExecTimeoutError, MiB, Sandbox } from "microsandbox"
 
-import { CPUS, MAX_CONCURRENT, MEM_MIB, MOUNT_DIR, sandboxConfig } from "./config"
+import {
+  CPUS,
+  MAX_CONCURRENT,
+  MEM_MIB,
+  MOUNT_DIR,
+  RESULT_CAP,
+  RESULT_FILE_MAX,
+  sandboxConfig,
+} from "./config"
 import { toCodeRunResult, type RawRun } from "./marshal"
 import { ABORTED, raceAbort } from "./race-abort"
 import { runtimeFor } from "./runtime"
@@ -25,11 +33,14 @@ const TABLE_RE = /\.table\.json$/i
  *  fresh client per request, so a per-client limiter wouldn't bound anything. */
 const slots = createSemaphore(MAX_CONCURRENT)
 
-/** Detect a timeout from the SDK regardless of error class identity
- *  (covers ExecTimeoutError plus any message-level "timeout" signal). */
+/** Detect an exec timeout from the SDK. Uses the typed class plus a
+ *  cross-realm-safe name/code check — NOT a loose substring, which could
+ *  misread a user error that merely mentions "timeout" as a sandbox timeout. */
 function isTimeout(err: unknown): boolean {
   if (err instanceof ExecTimeoutError) return true
-  return String(err).toLowerCase().includes("timeout")
+  if (typeof err !== "object" || err === null) return false
+  const e = err as { name?: unknown; code?: unknown }
+  return e.name === "ExecTimeoutError" || e.code === "execTimeout"
 }
 
 /** Result for a run the caller cancelled (client disconnect / new turn). The
@@ -130,32 +141,42 @@ export function createMicrosandboxClient(): CodeSandbox {
           }
         }
 
-        // Read back any chart + table files the run wrote to /tmp.
+        // Read back chart + table files the run wrote to /tmp. Bound the work
+        // BEFORE reading: cap the file count and skip files whose listed size
+        // can't fit the remaining byte budget, so a run that spams /tmp can't
+        // force the server to read huge/many blobs into memory. The
+        // marshaller's RESULT_CAP is the final, precise payload gate.
         const images: RawRun["images"] = []
         const tables: unknown[] = []
         try {
           const entries = await sb.fs().list(IMG_DIR)
+          let readBytes = 0
+          let filesRead = 0
           for (const entry of entries) {
+            if (filesRead >= RESULT_FILE_MAX) break
+            if (entry.kind !== "file") continue
             // `entry.path` may be a basename or a full path depending on
             // the runtime; normalise to an absolute path under /tmp.
             const path = entry.path.startsWith("/") ? entry.path : `${IMG_DIR}/${entry.path}`
-            if (entry.kind !== "file") continue
-            if (TABLE_RE.test(path)) {
-              const bytes = await sb.fs().read(path)
+            const isTable = TABLE_RE.test(path)
+            if (!isTable && !IMG_RE.test(path)) continue
+            // Skip without reading when the listed size can't fit the budget.
+            if (readBytes + entry.size > RESULT_CAP) continue
+            const bytes = await sb.fs().read(path)
+            readBytes += bytes.length
+            filesRead++
+            if (isTable) {
               try {
                 tables.push(JSON.parse(Buffer.from(bytes).toString("utf8")))
               } catch {
                 // skip a malformed table file
               }
-              continue
+            } else {
+              images.push({
+                format: path.toLowerCase().endsWith(".svg") ? "svg" : "png",
+                data: Buffer.from(bytes).toString("base64"),
+              })
             }
-            if (!IMG_RE.test(path)) continue
-            const bytes = await sb.fs().read(path)
-            const data = Buffer.from(bytes).toString("base64")
-            images.push({
-              format: path.toLowerCase().endsWith(".svg") ? "svg" : "png",
-              data,
-            })
           }
         } catch {
           // fs listing best-effort; absence of charts/tables is not an error.
