@@ -166,7 +166,7 @@ async def mark_job_failed(
         await conn.execute(_MARK_FAILED_SQL, _coerce_uuid(job_id), error)
 
 
-_ENQUEUE_SQL = """
+ENQUEUE_CONTINUE_SQL = """
 INSERT INTO public.task_jobs (task_id, user_id, action, payload, status, scheduled_at)
 VALUES ($1, $2, $3, $4::jsonb, 'queued', now());
 """
@@ -184,7 +184,7 @@ async def enqueue_continue_job(
     empty: `continue` reads everything from `tasks.checkpoint`."""
     async with pool.acquire() as conn:
         await conn.execute(
-            _ENQUEUE_SQL,
+            ENQUEUE_CONTINUE_SQL,
             _coerce_uuid(task_id),
             _coerce_uuid(user_id),
             "continue",
