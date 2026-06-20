@@ -256,9 +256,12 @@ async def test_respond_with_approved_false_appends_decline_message() -> None:
         ),
         patch.object(store, "set_task_handler", new=AsyncMock()),
         patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=False)),
-        patch.object(store, "update_run", new=AsyncMock()) as update_run,
+        patch.object(store, "update_run", new=AsyncMock()),
         patch.object(store, "save_checkpoint", new=AsyncMock()) as save_checkpoint,
         patch("agent_py.executor._make_db_sink", return_value=sink),
+        patch(
+            "agent_py.executor.settle_task_terminal", new=AsyncMock(return_value=MagicMock())
+        ) as settle,
     ):
         outcome = await executor.execute_respond(pool, payload, make_step_fn=make)
 
@@ -275,8 +278,9 @@ async def test_respond_with_approved_false_appends_decline_message() -> None:
     assert tool_result["type"] == "tool_result"
     assert tool_result["tool_use_id"] == "tu_1"
     assert "declined" in tool_result["content"].lower()
-    # Run settled with status="done".
-    assert any(call.kwargs.get("status") == "done" for call in update_run.await_args_list)
+    # Run settled with status="done" via the barrier.
+    settle.assert_awaited()
+    assert settle.await_args.kwargs["status"] == "done"
 
     # input_response emitted before the loop resumed.
     responses = [e for e in collected if isinstance(e, ApprovalEvent) and e.phase == "response"]
@@ -319,6 +323,7 @@ async def test_respond_with_approved_unknown_tool_feeds_placeholder() -> None:
         patch.object(store, "update_run", new=AsyncMock()),
         patch.object(store, "save_checkpoint", new=AsyncMock()) as save_checkpoint,
         patch("agent_py.executor._make_db_sink", return_value=sink),
+        patch("agent_py.executor.settle_task_terminal", new=AsyncMock(return_value=MagicMock())),
     ):
         outcome = await executor.execute_respond(pool, payload, make_step_fn=make)
 

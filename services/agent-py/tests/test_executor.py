@@ -63,20 +63,22 @@ async def test_happy_path_settles_and_updates_task(
     with (
         patch.object(store, "set_task_handler", new=AsyncMock()) as set_handler,
         patch.object(store, "append_event", new=AsyncMock()) as append,
-        patch.object(store, "update_run", new=AsyncMock()) as update,
+        patch.object(store, "update_run", new=AsyncMock()),
         patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=False)),
         patch.object(store, "load_checkpoint", new=AsyncMock(return_value=None)),
+        patch(
+            "agent_py.executor.settle_task_terminal", new=AsyncMock(return_value=MagicMock())
+        ) as settle,
     ):
         outcome = await execute_start(pool, payload)
     assert outcome == ExecutorOutcome(settled=True)
     # handler stamped exactly once with 'python'.
     set_handler.assert_awaited_once()
     assert set_handler.await_args.kwargs["handler"] == "python"
-    # Terminal task update marks done + finished.
-    update.assert_awaited()
-    last_update = update.await_args
-    assert last_update.kwargs["status"] == "done"
-    assert last_update.kwargs["finished"] is True
+    # Terminal settlement routed through the barrier.
+    settle.assert_awaited_once()
+    assert settle.await_args.kwargs["task_id"] == RUN_ID
+    assert settle.await_args.kwargs["status"] == "done"
     # Events were persisted (at least: status, step_start, tokens,
     # step_end, result). Exact count depends on stub.
     assert append.await_count >= 4
@@ -87,21 +89,24 @@ async def test_cancellation_returns_cancelled_terminal(
     payload: StartActionPayload,
 ) -> None:
     """Out-of-band cancel between steps → executor emits `status:
-    cancelled` and updates the row terminal."""
+    cancelled` and settles via the barrier."""
     pool = MagicMock()
     with (
         patch.object(store, "set_task_handler", new=AsyncMock()),
         patch.object(store, "append_event", new=AsyncMock()),
-        patch.object(store, "update_run", new=AsyncMock()) as update,
+        patch.object(store, "update_run", new=AsyncMock()),
         patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=True)),
         patch.object(store, "load_checkpoint", new=AsyncMock(return_value=None)),
+        patch(
+            "agent_py.executor.settle_task_terminal", new=AsyncMock(return_value=MagicMock())
+        ) as settle,
     ):
         outcome = await execute_start(pool, payload)
     # `settled=True` because the cancel landed cleanly (not a fault).
     assert outcome.settled is True
-    update.assert_awaited()
-    assert update.await_args.kwargs["status"] == "cancelled"
-    assert update.await_args.kwargs["finished"] is True
+    settle.assert_awaited_once()
+    assert settle.await_args.kwargs["task_id"] == RUN_ID
+    assert settle.await_args.kwargs["status"] == "cancelled"
 
 
 @pytest.mark.asyncio
@@ -109,8 +114,8 @@ async def test_step_fn_raising_marks_failed(
     payload: StartActionPayload,
 ) -> None:
     """A model/tool error inside the loop bubbles out as an
-    ExecutorOutcome(settled=False) and gets reflected into the task
-    row as `status: failed`."""
+    ExecutorOutcome(settled=False) and gets settled via the barrier
+    as status='failed'."""
     pool = MagicMock()
 
     async def broken_step(ctx: RunStepContext) -> RunStepOutcome:
@@ -122,18 +127,21 @@ async def test_step_fn_raising_marks_failed(
     with (
         patch.object(store, "set_task_handler", new=AsyncMock()),
         patch.object(store, "append_event", new=AsyncMock()),
-        patch.object(store, "update_run", new=AsyncMock()) as update,
+        patch.object(store, "update_run", new=AsyncMock()),
         patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=False)),
         patch.object(store, "load_checkpoint", new=AsyncMock(return_value=None)),
+        patch(
+            "agent_py.executor.settle_task_terminal", new=AsyncMock(return_value=MagicMock())
+        ) as settle,
     ):
         outcome = await execute_start(pool, payload, make_step_fn=make_broken)
     assert outcome.settled is False
     assert outcome.error is not None
     assert "model timeout" in outcome.error
-    # Task row updated to failed.
-    update.assert_awaited()
-    assert update.await_args.kwargs["status"] == "failed"
-    assert update.await_args.kwargs["finished"] is True
+    # Task failure settled via the barrier.
+    settle.assert_awaited()
+    assert settle.await_args.kwargs["task_id"] == RUN_ID
+    assert settle.await_args.kwargs["status"] == "failed"
 
 
 @pytest.mark.asyncio
@@ -160,6 +168,7 @@ async def test_step_fn_returning_done_settles_after_one_step(
         patch.object(store, "update_run", new=AsyncMock()),
         patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=False)),
         patch.object(store, "load_checkpoint", new=AsyncMock(return_value=None)),
+        patch("agent_py.executor.settle_task_terminal", new=AsyncMock(return_value=MagicMock())),
     ):
         outcome = await execute_start(pool, payload, make_step_fn=make_immediate)
     assert outcome.settled is True
@@ -198,6 +207,7 @@ async def test_checkpoint_max_steps_overrides_payload_default(
         patch.object(store, "update_run", new=AsyncMock()),
         patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=False)),
         patch.object(store, "load_checkpoint", new=AsyncMock(return_value=checkpoint)),
+        patch("agent_py.executor.settle_task_terminal", new=AsyncMock(return_value=MagicMock())),
     ):
         outcome = await execute_start(pool, payload, make_step_fn=make)
     assert outcome.settled is True

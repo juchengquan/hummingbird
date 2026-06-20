@@ -35,6 +35,7 @@ import asyncpg
 import structlog
 
 from . import jobs, store, verify
+from .barrier import settle_task_terminal
 from .emitter import EventSink, RunEmitter
 from .events import TaskEvent, TokenEvent, ToolOutputEvent
 from .input_policy import (
@@ -521,32 +522,40 @@ async def _run_chunk(
             )
             return ExecutorOutcome(settled=True)
 
-        # Reflect terminal status into the `tasks` row. The emitter
-        # already wrote the terminal event; this is just the table
-        # state the UI reads when it doesn't want to fold events.
+        # Reflect terminal status into the `tasks` row via the join
+        # barrier so a child settling decrements its parent's counter
+        # and re-enqueues the parent's `continue` when it reaches zero.
+        # The emitter already wrote the terminal event; this is just
+        # the table state the UI reads when it doesn't want to fold events.
         if result.kind == "cancelled":
-            await store.update_run(
+            await settle_task_terminal(
                 pool,
-                run_id=payload.run_id,
+                task_id=payload.run_id,
                 user_id=payload.user_id,
                 status="cancelled",
-                finished=True,
             )
         else:
+            # Persist the final step count before the terminal settle
+            # (settle_task_terminal does not write `step`).
             await store.update_run(
                 pool,
                 run_id=payload.run_id,
                 user_id=payload.user_id,
-                status="done",
                 step=emitter.step,
-                finished=True,
+            )
+            await settle_task_terminal(
+                pool,
+                task_id=payload.run_id,
+                user_id=payload.user_id,
+                status="done",
             )
         return ExecutorOutcome(settled=True)
 
     except Exception as exc:
         # Anything that escapes the loop is a fault in the executor
         # plumbing itself (the loop's own errors emit `result:
-        # failed` via the step fn). Mark the row failed + emit a
+        # failed` via the step fn). Settle the row failed via the
+        # barrier so a failed child decrements its parent, then emit a
         # synthetic terminal event so the UI doesn't show a stuck
         # `running`.
         logger.error(
@@ -558,12 +567,11 @@ async def _run_chunk(
         try:
             if not emitter.settled:
                 await emitter.result("failed", error=str(exc))
-            await store.update_run(
+            await settle_task_terminal(
                 pool,
-                run_id=payload.run_id,
+                task_id=payload.run_id,
                 user_id=payload.user_id,
                 status="failed",
-                finished=True,
             )
         except Exception:
             # If even the cleanup writes fail, the job-fail path in
@@ -1092,21 +1100,26 @@ async def _run_respond(
             return ExecutorOutcome(settled=True)
 
         if result.kind == "cancelled":
-            await store.update_run(
+            await settle_task_terminal(
                 pool,
-                run_id=payload.run_id,
+                task_id=payload.run_id,
                 user_id=payload.user_id,
                 status="cancelled",
-                finished=True,
             )
         else:
+            # Persist the final step count before the terminal settle
+            # (settle_task_terminal does not write `step`).
             await store.update_run(
                 pool,
                 run_id=payload.run_id,
                 user_id=payload.user_id,
-                status="done",
                 step=emitter.step,
-                finished=True,
+            )
+            await settle_task_terminal(
+                pool,
+                task_id=payload.run_id,
+                user_id=payload.user_id,
+                status="done",
             )
         return ExecutorOutcome(settled=True)
 
@@ -1120,12 +1133,11 @@ async def _run_respond(
         try:
             if not emitter.settled:
                 await emitter.result("failed", error=str(exc))
-            await store.update_run(
+            await settle_task_terminal(
                 pool,
-                run_id=payload.run_id,
+                task_id=payload.run_id,
                 user_id=payload.user_id,
                 status="failed",
-                finished=True,
             )
         except Exception:
             pass
