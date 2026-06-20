@@ -80,6 +80,18 @@ export function useTaskRun(options?: UseTaskRunOptions): UseTaskRunResult {
   useEffect(() => {
     optsRef.current = options
   })
+  // Abort the in-flight stream on unmount. The `consume()` loop checks
+  // the aborted signal and runs its realtime-unsubscribe `finally`, and
+  // the auto-reconnect loop short-circuits — so a standalone consumer
+  // that unmounts mid-run (e.g. the child-run drill-in Sheet) doesn't
+  // leak the SSE fetch + reconnect loop. The root TaskRunProvider never
+  // unmounts during a session, so this is a no-op there.
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort()
+    }
+  }, [])
+
   // Last (status, step) we wrote to the resume pointer, so token-only
   // updates don't hammer localStorage.
   const persistedRef = useRef<{ status: string; step: number } | null>(null)

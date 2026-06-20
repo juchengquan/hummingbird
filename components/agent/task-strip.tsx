@@ -34,6 +34,8 @@ import {
 } from "@/shared/generative-ui/schemas"
 import { cn } from "@/shared/utils"
 
+import { openChildRunViewer } from "@/client/agent/child-run-viewer/types"
+
 import { subagentPillLabel } from "./subagent-pill-label"
 
 export interface RespondAnswer {
@@ -456,12 +458,18 @@ function SubagentGroup({
         Spawned {childRuns.length} subagent{childRuns.length === 1 ? "" : "s"}
       </li>
       {childRuns.map((c) => (
-        <li key={c.childTaskId} className="flex items-center gap-1.5">
-          <span className="rounded-sm bg-[var(--muted)] px-1 py-0.5 text-[10px] leading-none text-[var(--muted-foreground)]">
-            {subagentPillLabel(c.childTaskId, statuses)}
-          </span>
-          <span className="font-medium">{c.agent}</span>
-          <span className="text-[var(--muted-foreground)] truncate">{c.subgoal}</span>
+        <li key={c.childTaskId}>
+          <button
+            type="button"
+            onClick={() => openChildRunViewer({ childTaskId: c.childTaskId })}
+            className="flex w-full items-center gap-1.5 rounded-sm px-1 py-0.5 text-left hover:bg-[var(--muted)]"
+          >
+            <span className="rounded-sm bg-[var(--muted)] px-1 py-0.5 text-[10px] leading-none text-[var(--muted-foreground)]">
+              {subagentPillLabel(c.childTaskId, statuses)}
+            </span>
+            <span className="font-medium">{c.agent}</span>
+            <span className="text-[var(--muted-foreground)] truncate">{c.subgoal}</span>
+          </button>
         </li>
       ))}
     </ul>

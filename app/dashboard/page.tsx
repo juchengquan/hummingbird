@@ -15,6 +15,7 @@ import { ImageViewerHost } from "@/components/image-viewer/image-viewer"
 import { DocxViewerHost } from "@/components/docx-viewer/docx-viewer"
 import { TextViewerHost } from "@/components/text-viewer/text-viewer"
 import { CsvViewerHost } from "@/components/csv-viewer/csv-viewer"
+import { ChildRunModalHost } from "@/components/agent/child-run-modal"
 import {
   SidebarInset,
   SidebarProvider,
@@ -126,6 +127,7 @@ function DashboardShell() {
         <MainArea />
       </TaskRunProvider>
       <CommandPalette />
+      <ChildRunModalHost />
       <PdfViewerHost />
       <UrlPreviewHost />
       <LiveArtifactHost />
