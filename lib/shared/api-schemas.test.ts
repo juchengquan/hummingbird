@@ -7,6 +7,7 @@ import {
   CompleteRequestSchema,
   ExtractTableRequestSchema,
   RefreshImageUrlRequestSchema,
+  TaskChildrenResponseSchema,
 } from "./api-schemas"
 
 describe("RefreshImageUrlRequestSchema", () => {
@@ -166,6 +167,22 @@ describe("ExtractTableRequestSchema.columnHints accepts the full type set", () =
     const r = ExtractTableRequestSchema.safeParse({
       ...base,
       columnHints: [{ label: "X", type: "banana" }],
+    })
+    expect(r.success).toBe(false)
+  })
+})
+
+describe("TaskChildrenResponseSchema", () => {
+  test("parses a valid children response", () => {
+    const r = TaskChildrenResponseSchema.safeParse({
+      children: [{ id: "x", status: "running", goal: "g" }],
+    })
+    expect(r.success).toBe(true)
+  })
+
+  test("rejects a child missing the status field", () => {
+    const r = TaskChildrenResponseSchema.safeParse({
+      children: [{ id: "x" }],
     })
     expect(r.success).toBe(false)
   })

@@ -653,6 +653,22 @@ export const ExtractTableRequestSchema = z.object({
 })
 export type ExtractTableRequestInput = z.infer<typeof ExtractTableRequestSchema>
 
+// --- /api/tasks/[id]/children -----------------------------------------------
+// List child subagent tasks spawned by a parent run. Returns status + goal
+// for each child so the task strip can render per-child status pills.
+
+export const TaskChildSchema = z.object({
+  id: z.string(),
+  status: z.string(),
+  goal: z.string(),
+})
+
+export const TaskChildrenResponseSchema = z.object({
+  children: z.array(TaskChildSchema),
+})
+
+export type TaskChildrenResponse = z.infer<typeof TaskChildrenResponseSchema>
+
 // Non-streaming routes return `{ error, code?, message? }` with a non-2xx
 // status on failure. Frontend categorisation lives in lib/api-errors.ts.
 

@@ -29,9 +29,11 @@ import {
   ProjectBreakdownResponseSchema,
   RefreshImageUrlResponseSchema,
   RevokeShareResponseSchema,
+  TaskChildrenResponseSchema,
   type ChatRequestInput,
   type TaskRequestInput,
   type RespondRequestInput,
+  type TaskChildrenResponse,
   ScheduleListResponseSchema,
   ScheduleResponseSchema,
   type ScheduleCreateInput,
@@ -305,6 +307,8 @@ export const apiUrls = {
     url(`/api/tasks/schedules/${encodeURIComponent(id)}`),
   taskCancel: (id: string) =>
     url(`/api/tasks/${encodeURIComponent(id)}/cancel`),
+  taskChildren: (id: string) =>
+    url(`/api/tasks/${encodeURIComponent(id)}/children`),
   taskRespond: (id: string) =>
     url(`/api/tasks/${encodeURIComponent(id)}/respond`),
   taskStream: (id: string) =>
@@ -1042,6 +1046,25 @@ async function urlFetchBookmark(
   return { ok: true, status: result.status, bookmark: result.data.bookmark }
 }
 
+// --- /api/tasks/[id]/children -----------------------------------------------
+
+/**
+ * Fetch the child subagent tasks for a parent run. Returns the children
+ * array (id, status, goal) on success; resolves to `[]` on any failure
+ * so the task strip degrades gracefully when the endpoint is unavailable.
+ */
+async function taskChildren(
+  id: string
+): Promise<TaskChildrenResponse["children"]> {
+  try {
+    const res = await fetch(apiUrls.taskChildren(id))
+    if (!res.ok) return []
+    return TaskChildrenResponseSchema.parse(await res.json()).children
+  } catch {
+    return []
+  }
+}
+
 // --- /api/extract-table -----------------------------------------------------
 
 /**
@@ -1081,6 +1104,7 @@ export const apiClient = {
     cancel: tasksCancel,
     respond: tasksRespond,
     sweep: tasksSweep,
+    listTaskChildren: taskChildren,
     schedules: {
       list: schedulesList,
       create: schedulesCreate,
