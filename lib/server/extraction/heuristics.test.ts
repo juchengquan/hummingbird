@@ -18,6 +18,13 @@ describe("shouldUseVision", () => {
     expect(shouldUseVision(pdfResult(lines), 4 * 1024)).toBe(true)
   })
 
+  test("table-dense PDF with minimal 2-space column gaps → true", () => {
+    // Adjacent gaps share a boundary char; a consuming regex would
+    // undercount "A  B  C" as 1 gap, missing the table signal.
+    const lines = Array.from({ length: 40 }, () => "A  B  C").join("\n")
+    expect(shouldUseVision(pdfResult(lines), 4 * 1024)).toBe(true)
+  })
+
   test("clean prose PDF → false", () => {
     const prose = "This is a normal paragraph of prose. ".repeat(200)
     expect(shouldUseVision(pdfResult(prose), 8 * 1024)).toBe(false)

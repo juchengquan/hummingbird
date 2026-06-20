@@ -25,7 +25,9 @@ const FULL_EXTRACTION_BUDGET = 1024 * 1024
 function isColumnarLine(line: string): boolean {
   const trimmed = line.trim()
   if (trimmed.length === 0) return false
-  const gaps = trimmed.match(/\S {2,}\S/g)
+  // Lookbehind/lookahead so adjacent gaps aren't merged by consuming the
+  // shared boundary char: "A  B  C" has two gaps, not one.
+  const gaps = trimmed.match(/(?<=\S) {2,}(?=\S)/g)
   return (gaps?.length ?? 0) >= 2
 }
 
