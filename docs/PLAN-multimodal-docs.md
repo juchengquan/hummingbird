@@ -1,9 +1,22 @@
 # Plan: Multimodal document understanding
 
-Status: **planning.** Promoted from [MASTER_PLAN § Later](MASTER_PLAN.md)
-(fourth research round, 2026-06-09) to **Next**. Scope: **M–L** (one PR
-series; vision-gated). Origin: 2026 vision-language document models —
-see [Sources](#sources).
+Status: **shipped (2026-06-20).** PR-1 (vision extraction path, #252) and
+PR-2 (re-scoped to table-aware chunking, #253) merged to `dev`. PR-3
+(agent-service `extract` twins) remains **deferred / optional**. Promoted
+from [MASTER_PLAN § Later](MASTER_PLAN.md) (fourth research round,
+2026-06-09) to **Next**. Scope: **M–L** (one PR series; vision-gated).
+Origin: 2026 vision-language document models — see [Sources](#sources).
+
+> **PR-2 re-scope (2026-06-20).** The originally-planned PR-2 (structured
+> `blocks[]` + a `block_kind` column + table rendering in the file
+> preview) was dropped after investigation: **no UI surface displays
+> extraction output** (PDFs preview as the real document; the text viewer
+> shows the raw blob), and **retrieval already indexes the vision
+> markdown** PR-1 merges into `text`/`fullText`. That left only one
+> genuine, non-redundant win — how an oversized markdown table is chunked
+> for the index — which shipped as #253 (`splitTableByRows`: split at row
+> boundaries, repeat the header, so index fragments stay self-describing).
+> This effectively completes the series; PR-3 stays optional.
 
 ## Why
 
@@ -81,15 +94,21 @@ model vendor.
 
 ## Sequencing — PR series
 
-1. **PR 1 — vision extraction path (auto-gated).** `extractWithVision`
-   + the PDF→image render + the `shouldUseVision` heuristic + merge into
-   the result; budget + page caps; vision-capable-model gate. Falls back
-   cleanly to text-only when unavailable.
-2. **PR 2 — structured index + retrieval.** Feed structured sections
-   into `file_sections`; `searchFiles` returns layout-aware chunks;
-   table rendering in the file preview.
-3. **PR 3 — agent-service parity + caching.** Python/TS `extract` twins;
-   cache vision results on the file hash (pairs with semantic caching).
+1. **PR 1 — vision extraction path (auto-gated).** ✅ [#252]
+   `extractWithVision` + the PDF→image render (worker-thread isolated, to
+   avoid a pdfjs-version collision with `pdf-parse`) + the
+   `shouldUseVision` heuristic + merge into the result; budget + page
+   caps; vision-capable-model gate (`resolveVisionModel` / `VISION_MODEL`).
+   Falls back cleanly to text-only when unavailable.
+2. **PR 2 — table-aware chunking (re-scoped).** ✅ [#253] Oversized
+   markdown tables are split at row boundaries with the header repeated
+   (`splitTableByRows`) so index fragments stay self-describing. The
+   original "structured `blocks[]` + index + preview rendering" scope was
+   dropped as redundant — see the PR-2 re-scope note at the top.
+3. **PR 3 — agent-service parity + caching.** ⏸ Deferred / optional.
+   Python/TS `extract` twins; cache vision results on the file hash
+   (pairs with semantic caching). Build only if the agent-service
+   backends need vision extraction parity.
 
 ## Tests
 
