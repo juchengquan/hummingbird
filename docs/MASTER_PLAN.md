@@ -91,7 +91,7 @@ scheduling**) is shipped — its plans live in
 | 📐 [Collaborative editing + AI peer](PLAN-collab-editing.md) | planning (new 2026-06-09 r2) | Yjs CRDT + presence in the Plate editor with the AI as a server-side Yjs peer (visible cursor + status). Phase A (AI-as-peer) has single-user value; Phase B (human multiplayer) gated on the document-sharing / multi-tenant story. L |
 | 📐 [Guardrails + PII redaction](PLAN-guardrails-pii.md) | planning (new 2026-06-09 r3) | Optional, off-by-default pre/post hooks: PII redaction (Presidio-class) + content moderation, per-workspace policy, self-hostable behind an adapter. Mostly relevant once multi-user. M, PR series |
 | 📐 [Proactive / ambient agents](PLAN-ambient-agents.md) | planning (new 2026-06-09 r3) | Extend the existing `task_schedules` cron dispatch into an *event* dispatcher: "when X happens (file/bookmark/note added, task finished), run persona Y." Hard loop guards + HITL-by-default for side-effecting triggers. M–L, PR series |
-| 📐 [Citation & verifiability layer](PLAN-citation-verifiability.md) | planning (new 2026-06-09 r4) | Post-turn verifier grounds each claim against the turn's retrieved sources (web search / `searchFiles`), flags unsupported claims inline + a confidence summary. Opt-in; default-on in Deep Research. M–L, 3 commits |
+| ✅ [Citation & verifiability layer](_done/PLAN-citation-verifiability.md) | shipped (#199–#201, #203, #205, #207) | Post-turn verifier grounds each claim against the turn's retrieved sources (web search / `searchFiles`), flags unsupported claims inline + a confidence summary. Opt-in; default-on in Deep Research. v1 + Deep Research port + v2 (cross-chunk / cross-family / inline markers) all merged; archived to `_done/` |
 | 📐 [Visual workflow / flow builder](PLAN-workflow-builder.md) | planning (new 2026-06-09 r4) | A workflow canvas mode (skill / persona / input / branch nodes + typed edges) that compiles to the task executor. Composes the react-flow canvas + skills + personas + subagents. Run = a task. L, PR series (run-phase depends on subagents) |
 | 📐 [Multimodal document understanding](PLAN-multimodal-docs.md) | planning (new 2026-06-09 r4) | Vision-aware extraction (render PDF pages → VLM) that preserves tables/charts/layout the current text-only pipeline drops; richer chunks feed `searchFiles`. Vision-gated + capped. M–L, PR series |
 | 📐 [Local Supabase switch](PLAN-local-supabase-switch.md) | planning | Move local dev off the hosted Supabase project onto a `bun run supabase:start` stack on this machine. 5 steps, ~30 min wall-clock. 13 open questions to walk through before execution (cloud data handling, Path A vs Path B, auth-free local mode, etc.) |
@@ -144,7 +144,7 @@ others).**
 | [Code interpreter](PLAN-code-interpreter.md) | L | Establishes the sandbox security model the **browse skill** reuses |
 | [Subagent orchestration](PLAN-subagent-orchestration.md) | L | Unblocks the **workflow builder** run-phase; relates to **A2A** |
 | [Browser / browse skill](PLAN-browser-use.md) | L | Best after code-interpreter |
-| [Citation & verifiability](PLAN-citation-verifiability.md) | M–L | Self-contained; strongest in Deep Research |
+| ✅ [Citation & verifiability](_done/PLAN-citation-verifiability.md) | M–L | **Shipped** (#199–#201, #203, #205, #207) — self-contained; strongest in Deep Research |
 | [Prompt optimisation (GEPA)](PLAN-prompt-optimization.md) | M–L | Needs an eval set first |
 | [Visual workflow builder](PLAN-workflow-builder.md) | L | Run-phase depends on subagents |
 | [A2A interoperability](PLAN-a2a-interop.md) | L | Outbound first; **inbound publish gated on multi-tenant** |
@@ -265,7 +265,7 @@ existing AI command routes (`/api/ai/command`).
 > [Next — planned work](#next--planned-work-have-a-plan):**
 > [Read-aloud / TTS voice output](PLAN-tts-voice-output.md) ·
 > [Smart model routing](_done/PLAN-model-routing.md) ·
-> [Citation & verifiability layer](PLAN-citation-verifiability.md) ·
+> [Citation & verifiability layer](_done/PLAN-citation-verifiability.md) ·
 > [Visual workflow / flow builder](PLAN-workflow-builder.md) ·
 > [Multimodal document understanding](PLAN-multimodal-docs.md).
 

@@ -1,9 +1,14 @@
 # Plan: Citation & verifiability layer
 
-Status: **planning.** Promoted from [MASTER_PLAN § Later](MASTER_PLAN.md)
+Status: **shipped (2026-06-20).** v1 commits 1–3 (#199, #200, #201),
+Deep Research agent-py port (#203), and v2 (#205 — cross-chunk +
+cross-family verification + inline markers; completion marked in #207)
+all merged to `dev`. Promoted from [MASTER_PLAN § Later](MASTER_PLAN.md)
 (fourth research round, 2026-06-09) to **Next**. Scope: **M–L** (opt-in;
 strongest in research mode). Origin: 2026 citation-hallucination
-research — see [Sources](#sources).
+research — see [Sources](#sources). Archived to `_done/`; the
+[Reopen / future work](#reopen--future-work) items below are the only
+remaining ideas and none is scheduled.
 
 ## Why
 
@@ -99,14 +104,15 @@ confidence }`) — beside `data-suggestions` / `data-tool-image`.
    verifier port (`services/agent-py/src/agent_py/verify.py`) runs at
    settlement via a runner `finalize` hook, gated on research mode +
    `VERIFY_MODEL`; the client folds `view.verification` onto the result
-   `Message` so the existing UI renders. **Limitations:** runs only when
-   a research run settles in its first chunk (the per-chunk accumulator
-   is complete then); the verifier is same-family (Anthropic) since
-   agent-py has no cross-family provider; agent-ts stays stubbed until
-   its real-step phase.
+   `Message` so the existing UI renders.
 
-   Remaining: cross-chunk verification (read the full event log at
-   settle), a cross-family verifier, and true inline span markers.
+5. **v2 (commits 4–6) — cross-chunk + cross-family + inline markers.**
+   ✅ [#205] (completion marked in [#207]) Lifted the first-chunk-only
+   limitation by reading the full event log at settle (cross-chunk
+   verification), added a cross-family verifier path, and shipped true
+   inline span markers (`InlineMark` in `lib/shared/verify.ts`) layered
+   onto the rendered markdown. agent-ts stays stubbed until its
+   real-step phase (tracked in the agent-api plan, not here).
 
 ## Tests
 
