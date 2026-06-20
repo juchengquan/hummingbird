@@ -52,11 +52,13 @@ from .runner import (
     RunStepContext,
     RunStepFn,
     RunStepOutcome,
+    SpawnSpec,
     run_agent_loop,
 )
 from .settings import get_settings
 from .tools import ToolContext, default_tool_registry
 from .tools.registry import ToolDescriptor
+from .tools.spawn_subagent import MAX_CHILDREN
 
 logger = structlog.get_logger(__name__)
 
@@ -409,6 +411,87 @@ async def _run_chunk(
                 run_id=payload.run_id,
                 tool=pending.tool,
                 tool_call_id=pending.tool_call_id,
+            )
+            return ExecutorOutcome(settled=True)
+
+        # Spawn path (PR-2 fan-out): the step fn captured a
+        # `spawnSubagent` call. Create child task rows, set the barrier
+        # counter, checkpoint the parent as awaiting, and yield —
+        # the parent resumes when the barrier fires (all children done).
+        if result.kind == "spawned":
+            assert result.spawn is not None
+            spawn = result.spawn
+
+            # Depth cap: only top-level tasks may spawn children.
+            # A child task (parent_task_id non-null) receives a
+            # rejection tool_result so the model can continue without
+            # subagents.
+            parent_of_self = await store.load_parent_task_id(
+                pool, run_id=payload.run_id, user_id=payload.user_id
+            )
+            if parent_of_self is not None:
+                live_messages.append(_spawn_rejection_tool_result(spawn.tool_call_id))
+                await store.save_checkpoint(
+                    pool,
+                    run_id=payload.run_id,
+                    user_id=payload.user_id,
+                    checkpoint=_build_checkpoint(checkpoint, live_messages, emitter),
+                )
+                await jobs.enqueue_continue_job(
+                    pool, task_id=payload.run_id, user_id=payload.user_id
+                )
+                return ExecutorOutcome(settled=True)
+
+            # Breadth clamp: never create more than MAX_CHILDREN.
+            specs = spawn.tasks[:MAX_CHILDREN]
+            conversation_id = await store.load_conversation_id(
+                pool, run_id=payload.run_id, user_id=payload.user_id
+            )
+            children_meta: list[dict[str, str]] = []
+            for spec in specs:
+                child_checkpoint = _child_checkpoint(checkpoint, spec)
+                child_id = await store.create_child_task(
+                    pool,
+                    parent_task_id=payload.run_id,
+                    user_id=payload.user_id,
+                    conversation_id=conversation_id,
+                    goal=spec.subgoal,
+                    checkpoint=child_checkpoint,
+                )
+                await jobs.enqueue_start_job(pool, task_id=child_id, user_id=payload.user_id)
+                await emitter.handoff(agent=spec.persona_slug, phase="enter")
+                children_meta.append(
+                    {
+                        "id": child_id,
+                        "personaSlug": spec.persona_slug,
+                        "subgoal": spec.subgoal,
+                    }
+                )
+
+            await store.set_pending_children(
+                pool, task_id=payload.run_id, user_id=payload.user_id, n=len(specs)
+            )
+            next_checkpoint = _build_checkpoint(checkpoint, live_messages, emitter)
+            next_checkpoint["awaiting_children"] = {
+                "tool_call_id": spawn.tool_call_id,
+                "children": children_meta,
+            }
+            await store.save_checkpoint(
+                pool,
+                run_id=payload.run_id,
+                user_id=payload.user_id,
+                checkpoint=next_checkpoint,
+            )
+            await store.update_run(
+                pool,
+                run_id=payload.run_id,
+                user_id=payload.user_id,
+                status="paused",
+            )
+            logger.info(
+                "executor.spawned",
+                run_id=payload.run_id,
+                children=len(specs),
             )
             return ExecutorOutcome(settled=True)
 
@@ -1553,6 +1636,40 @@ def _build_checkpoint(
         "step": emitter.step,
         "seq": emitter.seq,
         "config": cfg if isinstance(cfg, dict) else {},
+    }
+
+
+def _spawn_rejection_tool_result(tool_call_id: str) -> dict[str, Any]:
+    """A synthetic user turn that tells the model spawning was rejected
+    (depth limit). The model continues the run without subagents."""
+    return {
+        "role": "user",
+        "content": [
+            {
+                "type": "tool_result",
+                "tool_use_id": tool_call_id,
+                "content": (
+                    "Subagent spawning is not available here (depth limit reached). "
+                    "Continue without subagents."
+                ),
+            }
+        ],
+    }
+
+
+def _child_checkpoint(parent_checkpoint: dict[str, Any], spec: SpawnSpec) -> dict[str, Any]:
+    """Build the initial checkpoint for a child task. Inherits the
+    parent's `config` (model, system prompt, etc.) and pins the
+    subagent metadata under the `subagent` key so the child can be
+    identified in the tasks table."""
+    parent_cfg = parent_checkpoint.get("config")
+    cfg = dict(parent_cfg) if isinstance(parent_cfg, dict) else {}
+    return {
+        "messages": [{"role": "user", "content": spec.subgoal}],
+        "step": 0,
+        "seq": 0,
+        "config": cfg,
+        "subagent": {"personaSlug": spec.persona_slug, "subgoal": spec.subgoal},
     }
 
 

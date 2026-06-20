@@ -485,6 +485,48 @@ def _coerce_uuid(value: str) -> uuid.UUID:
     return uuid.UUID(value)
 
 
+async def load_parent_task_id(
+    pool: asyncpg.Pool,
+    *,
+    run_id: str,
+    user_id: str,
+) -> str | None:
+    """Read `parent_task_id` from the tasks row. Returns None when the
+    row has no parent (top-level task) or when the row isn't found.
+
+    `user_id`-scoped like the other store helpers (defence in depth on
+    top of RLS) — the depth cap is a safety guard, but keeping the
+    filter consistent avoids a cross-user row leaking into the check."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT parent_task_id FROM public.tasks WHERE id = $1 AND user_id = $2;",
+            _coerce_uuid(run_id),
+            _coerce_uuid(user_id),
+        )
+    parent = row["parent_task_id"] if row else None
+    return str(parent) if parent is not None else None
+
+
+async def load_conversation_id(
+    pool: asyncpg.Pool,
+    *,
+    run_id: str,
+    user_id: str,
+) -> str:
+    """Read `conversation_id` from the tasks row. Returns the id as a
+    string. Raises when the row isn't found — callers must ensure the
+    task exists before calling."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT conversation_id FROM public.tasks WHERE id = $1 AND user_id = $2;",
+            _coerce_uuid(run_id),
+            _coerce_uuid(user_id),
+        )
+    if not row or row["conversation_id"] is None:
+        raise ValueError(f"load_conversation_id: no conversation_id for task {run_id}")
+    return str(row["conversation_id"])
+
+
 # --- Child-task helpers -------------------------------------------------------
 
 
