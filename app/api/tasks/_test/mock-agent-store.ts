@@ -123,6 +123,9 @@ export const mocks = {
       _sinceSeq: number,
     ): Promise<unknown[]> => [],
   ),
+  cancelChildTasks: mock(
+    async (_db: unknown, _parentId: string, _userId: string) => {},
+  ),
   reconcileStaleRuns: mock(
     async (_db: unknown, _userId: string): Promise<number> => 0,
   ),
@@ -143,6 +146,7 @@ export const mocks = {
 }
 
 mock.module("@/server/agent/store", () => ({
+  cancelChildTasks: mocks.cancelChildTasks,
   createRun: mocks.createRun,
   getRun: mocks.getRun,
   updateRun: mocks.updateRun,
@@ -172,6 +176,8 @@ export function resetAgentMocks(): void {
   mocks.appendEvent.mockImplementation(async () => {})
   mocks.listEventsSince.mockClear()
   mocks.listEventsSince.mockImplementation(async () => [])
+  mocks.cancelChildTasks.mockClear()
+  mocks.cancelChildTasks.mockImplementation(async () => {})
   mocks.reconcileStaleRuns.mockClear()
   mocks.reconcileStaleRuns.mockImplementation(async () => 0)
   mocks.enqueueStartJob.mockClear()

@@ -5,7 +5,7 @@ import { NextResponse } from "next/server"
 
 import { categorizeError } from "@/shared/api-errors"
 import { getSupabaseServerClient } from "@/server/supabase/server"
-import { getRun, updateRun } from "@/server/agent/store"
+import { cancelChildTasks, getRun, updateRun } from "@/server/agent/store"
 import { isTerminalStatus, type RunStatus } from "@/shared/agent/events"
 
 /**
@@ -46,6 +46,7 @@ export async function POST(
     }
     if (!isTerminalStatus(run.status as RunStatus)) {
       await updateRun(db, id, userId, { status: "cancelled", finished: true })
+      await cancelChildTasks(db, id, userId)
     }
     return NextResponse.json({ ok: true })
   } catch (error) {
