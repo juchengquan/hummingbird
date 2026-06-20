@@ -491,7 +491,12 @@ async def _run_chunk(
                     checkpoint=child_checkpoint,
                 )
                 await jobs.enqueue_start_job(pool, task_id=child_id, user_id=payload.user_id)
-                await emitter.handoff(agent=spec.persona_slug, phase="enter")
+                await emitter.handoff(
+                    agent=spec.persona_slug,
+                    phase="enter",
+                    child_task_id=child_id,
+                    subgoal=spec.subgoal,
+                )
                 children_meta.append(
                     {
                         "id": child_id,

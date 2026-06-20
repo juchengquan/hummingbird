@@ -137,6 +137,10 @@ export interface HandoffEvent extends TaskEventBase {
   kind: "handoff"
   agent: string
   phase: "enter" | "exit"
+  /** The spawned child task's id (spawn handoffs only). */
+  childTaskId?: string
+  /** The child's subgoal (spawn handoffs only). */
+  subgoal?: string
 }
 
 /** A choice option for `requestKind: 'choice'` input requests. */

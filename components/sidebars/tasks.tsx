@@ -81,6 +81,7 @@ export function TasksSidebar() {
               <TaskStrip
                 view={view}
                 isRunning={isRunning}
+                runId={runId}
                 error={error}
                 onCancel={cancel}
                 onRespond={respond}

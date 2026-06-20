@@ -133,6 +133,8 @@ export const TaskEventSchema: z.ZodType<TaskEvent> = z.discriminatedUnion(
       kind: z.literal("handoff"),
       agent: z.string(),
       phase: z.enum(["enter", "exit"]),
+      childTaskId: z.string().optional(),
+      subgoal: z.string().optional(),
     }),
     z.object({
       ...base,

@@ -190,6 +190,22 @@ export async function appendSyntheticResult(
   await updateRun(db, runId, userId, { status: opts.status, finished: true })
 }
 
+/** List a task's child subagent tasks (status + goal), RLS-scoped. */
+export async function listTaskChildren(
+  db: DB,
+  parentId: string,
+  userId: string
+): Promise<{ id: string; status: string; goal: string }[]> {
+  const { data, error } = await db
+    .from("tasks")
+    .select("id, status, goal")
+    .eq("parent_task_id", parentId)
+    .eq("user_id", userId)
+    .order("created_at", { ascending: true })
+  if (error) throw new Error(`listTaskChildren: ${error.message}`)
+  return data ?? []
+}
+
 /** Cancel all not-yet-settled children of a cancelled parent task. */
 export async function cancelChildTasks(
   db: DB,

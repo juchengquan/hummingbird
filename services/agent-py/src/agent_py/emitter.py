@@ -298,7 +298,14 @@ class RunEmitter:
             )
         )
 
-    async def handoff(self, *, agent: str, phase: str = "enter") -> None:
+    async def handoff(
+        self,
+        *,
+        agent: str,
+        phase: str = "enter",
+        child_task_id: str | None = None,
+        subgoal: str | None = None,
+    ) -> None:
         """Emit a `handoff` event marking a subagent spawn boundary.
         `phase='enter'` is emitted just before control transfers to a
         child agent; `phase='exit'` when it returns."""
@@ -312,6 +319,8 @@ class RunEmitter:
                 created_at=_now_iso(),
                 agent=agent,
                 phase=phase,  # type: ignore[arg-type]
+                child_task_id=child_task_id,
+                subgoal=subgoal,
             )
         )
 
