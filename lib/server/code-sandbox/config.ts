@@ -10,6 +10,16 @@ export const RESULT_CAP = Number(process.env.CODE_SANDBOX_RESULT_CAP) || 10_000_
 export const MEM_MIB = Number(process.env.CODE_SANDBOX_MEM_MIB) || 512
 export const CPUS = Number(process.env.CODE_SANDBOX_CPUS) || 1
 
+/** OCI image for the Python runtime. It MUST already contain the
+ *  scientific stack (numpy/pandas/matplotlib): the sandbox runs airgapped
+ *  (`.disableNetwork()`), so there is no `pip install` at run time. Default
+ *  is the Jupyter scipy image — verified to boot under microsandbox with the
+ *  stack importable and `matplotlib.savefig` working. It is large (~GBs);
+ *  point CODE_SANDBOX_PYTHON_IMAGE at a slimmer self-hosted image to trim it. */
+export const PYTHON_IMAGE = process.env.CODE_SANDBOX_PYTHON_IMAGE || "jupyter/scipy-notebook"
+/** OCI image for the JavaScript runtime. Stock Node — JS promises no libs. */
+export const JS_IMAGE = process.env.CODE_SANDBOX_JS_IMAGE || "node"
+
 /** Per-mounted-file decoded byte cap. */
 export const MOUNT_FILE_MAX = Number(process.env.CODE_SANDBOX_MOUNT_FILE_MAX) || 10_000_000
 /** Total decoded bytes across all mounted files in one run. */
