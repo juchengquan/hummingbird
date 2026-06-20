@@ -1,10 +1,29 @@
 # Plan: Subagent orchestration — parallel specialists for one goal
 
-Status: **planning.** Drafted in the 2026-06-09 market refresh; item
-from [MASTER_PLAN § Later](MASTER_PLAN.md) promoted to **Next**. Scope:
-**L** (a phased PR series; needs the join barrier + guardrails up
-front). Origin: the 2026 multi-agent-orchestration wave — see
-[Sources](#sources).
+Status: **shipped (2026-06-20), agent-py.** PR-1 join barrier (#255),
+PR-2 spawn loop / fan-out+fan-in (#257), PR-3a task-strip child group
+(#259), PR-3b child-run drill-in (#262) all merged to `dev`. **PR-3c
+(canvas node tree) is deferred** — see the deferral note in
+[Sequencing](#sequencing--pr-series). The orchestration loop + UI
+(strip group + drill-in) are functionally complete; the canvas tree is
+an optional visualization. Drafted in the 2026-06-09 market refresh;
+promoted from [MASTER_PLAN § Later](MASTER_PLAN.md) to **Next**. Scope:
+**L** (a phased PR series). Origin: the 2026 multi-agent-orchestration
+wave — see [Sources](#sources).
+
+> **Build deviations from the original plan (2026-06-20), recorded:**
+> - **agent-py only, not "both services."** `services/agent-ts/jobs.ts`
+>   is drifted from the DB schema (targets `claimed_by`/`last_error`/
+>   `attempt` columns that don't exist in `0014`) and is dry-run; the
+>   agent-ts mirror waits for its real-step phase. The drift is a
+>   separate, un-fixed finding.
+> - **Migration is `0028`, not `0024`** (`0024` was taken).
+> - **Children run the parent's config (v1), not a distinct persona.**
+>   `personaSlug` is recorded for labelling/aggregation but doesn't
+>   resolve to a child model/prompt — agent personas aren't confirmed
+>   reachable as a server-side table. True persona-pinning is a follow-up.
+> - **PR-3 was split** into 3a (task-strip group), 3b (drill-in), 3c
+>   (canvas — deferred).
 
 ## Why
 
@@ -158,19 +177,40 @@ client resolves child runs by id.
 
 ## Sequencing — PR series
 
-1. **PR 1 — schema + barrier (no model wiring).** `0024` migration,
-   `parent_task_id` + `pending_children`, the settlement decrement +
-   parent re-enqueue, cancellation cascade. Tested with *synthetic*
-   children (no real model) so the barrier logic is provable in
-   isolation. Both services.
-2. **PR 2 — the spawn tool + runner yield/resume.** `makeSpawnSubagent
-   Tool`, the `spawn` step outcome, the yield + aggregated-results
-   resume. Depth cap = 1, breadth cap enforced. Both services.
-3. **PR 3 — client surfacing.** Canvas node tree on spawn + the
-   task-strip child group + child-run drill-in.
+1. **PR 1 — schema + barrier (no model wiring).** ✅ [#255] `0028`
+   migration (`parent_task_id` + `pending_children` + index),
+   `settle_task_terminal` (race-free, idempotent decrement + parent
+   re-enqueue). Synthetic-child tests. **agent-py only.**
+2. **PR 2 — spawn tool + runner yield/resume + fan-in.** ✅ [#257]
+   `spawnSubagent` gated tool, the `spawn` step outcome, executor
+   fan-out (child rows + `pending_children` + yield), settlement via the
+   barrier, fan-in (aggregate child results → inject as the spawn
+   tool_result on resume). Depth cap 1, breadth cap `MAX_CHILDREN`.
+   Cancel cascade. **agent-py only.**
+3. **PR 3 — client surfacing (split into a/b/c).**
+   - **3a** ✅ [#259] `childTaskId`/`subgoal` on `HandoffEvent` →
+     `TaskRunView.childRuns` → "Spawned N subagents" group in the task
+     strip with status pills (`GET /api/tasks/[id]/children`).
+   - **3b** ✅ [#262] child-run drill-in — clicking a pill opens a Sheet
+     tailing the child via a standalone `useTaskRun`. (Also fixed a
+     `useTaskRun` unmount stream-leak.)
+   - **3c** ⏸ **DEFERRED — canvas node tree.** The canvas's model is
+     "node id → live *persisted store* object" (conversations, artifacts,
+     etc.); a task / `TaskRunView` is **ephemeral / event-sourced**, not
+     a persisted store entity, so a `task` node can't project from the
+     store the way every other node kind does. Building it needs either
+     a **persisted tasks store slice** (touches the frozen persist
+     contract + `STORE_VERSION`) or a **snapshot node** that carries its
+     own data (sticky-like) and diverges from the projection model — plus
+     making orchestrator tasks placeable + a parent-id-aware spawn
+     trigger. Out of proportion to the payoff (a visualization) while the
+     strip group + drill-in already surface spawns. **Re-open when:** the
+     workflow builder needs task nodes on the canvas, or a persisted task
+     store lands for another reason.
 4. **PR 4 (optional) — orchestration polish.** A "decompose this goal"
-   affordance in the Tasks UI that seeds an orchestrator run; per-child
-   model/persona override before launch.
+   affordance in the Tasks UI; per-child model/persona override
+   (depends on server-side persona resolution — see the deviations
+   note above).
 
 ## Tests
 
