@@ -10,8 +10,10 @@ import "server-only"
  * to `maxChars`; carry an `overlapChars` tail from the previous window so
  * a match that straddles a boundary still surfaces. A single paragraph
  * longer than `maxChars` is hard-split into overlapping character
- * windows. Char-based (not token-based) on purpose: zero deps, and the
- * window size is a soft target, not a hard model limit.
+ * windows — except a markdown table, which is split at row boundaries
+ * with its header repeated on each piece so every fragment stays a
+ * valid, self-describing table. Char-based (not token-based) on purpose:
+ * zero deps, and the window size is a soft target, not a hard model limit.
  */
 
 export interface ChunkOptions {
@@ -33,6 +35,49 @@ function splitLong(text: string, maxChars: number, overlap: number): string[] {
     if (i + maxChars >= text.length) break
   }
   return out
+}
+
+/** True when `block` is a GFM pipe table: ≥2 lines, line 1 has a pipe,
+ *  line 2 is a separator (only `|`, `-`, `:`, spaces; ≥1 `-` and a `|`),
+ *  and at least half the lines contain a pipe. Strict enough that prose
+ *  containing pipes is not misdetected. */
+function isMarkdownTable(block: string): boolean {
+  const lines = block.split("\n")
+  if (lines.length < 2) return false
+  const header = lines[0]
+  const separator = lines[1].trim()
+  if (!header.includes("|")) return false
+  if (!separator.includes("|") || !separator.includes("-")) return false
+  if (!/^[|\s:-]+$/.test(separator)) return false
+  const rowish = lines.filter((l) => l.includes("|")).length
+  return rowish >= Math.ceil(lines.length / 2)
+}
+
+/** Split an oversized markdown table into pieces that each fit `maxChars`,
+ *  every piece = header + separator + as many body rows as fit. If even
+ *  header+separator+the first row won't fit, fall back to `splitLong` on
+ *  the whole block. Always keeps ≥1 row per piece (so a single huge row
+ *  still makes progress — `maxChars` is a soft target, per this module). */
+function splitTableByRows(table: string, maxChars: number, overlap: number): string[] {
+  const lines = table.split("\n")
+  const prefix = `${lines[0]}\n${lines[1]}`
+  const body = lines.slice(2)
+  if (body.length === 0 || prefix.length + 1 + body[0].length > maxChars) {
+    return splitLong(table, maxChars, overlap)
+  }
+  const pieces: string[] = []
+  let rows: string[] = []
+  const pieceLength = () =>
+    prefix.length + rows.reduce((n, r) => n + 1 + r.length, 0)
+  for (const row of body) {
+    if (rows.length > 0 && pieceLength() + 1 + row.length > maxChars) {
+      pieces.push(`${prefix}\n${rows.join("\n")}`)
+      rows = []
+    }
+    rows.push(row)
+  }
+  if (rows.length > 0) pieces.push(`${prefix}\n${rows.join("\n")}`)
+  return pieces
 }
 
 /**
@@ -68,12 +113,14 @@ export function chunkText(text: string, opts: ChunkOptions = {}): string[] {
 
   for (const para of paras) {
     if (para.length > maxChars) {
-      // Oversized paragraph: emit any real accumulated buffer, then
-      // hard-split the paragraph.
+      // Oversized paragraph: emit any real accumulated buffer, then split.
       if (buf && !seededOnly) chunks.push(buf)
       buf = ""
       seededOnly = false
-      for (const piece of splitLong(para, maxChars, overlap)) chunks.push(piece)
+      const pieces = isMarkdownTable(para)
+        ? splitTableByRows(para, maxChars, overlap)
+        : splitLong(para, maxChars, overlap)
+      for (const piece of pieces) chunks.push(piece)
       continue
     }
     const candidate = buf ? `${buf}\n\n${para}` : para
