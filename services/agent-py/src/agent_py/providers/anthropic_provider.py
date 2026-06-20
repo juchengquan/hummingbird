@@ -34,12 +34,14 @@ from ..runner import (
     RunStepContext,
     RunStepFn,
     RunStepOutcome,
+    SpawnDescriptor,
 )
 from ..tools import (
     ToolDescriptor,
     ToolError,
     tool_to_anthropic_param,
 )
+from ..tools.spawn_subagent import SPAWN_SUBAGENT_TOOL_NAME, parse_spawn_specs
 
 logger = structlog.get_logger(__name__)
 
@@ -190,12 +192,38 @@ def make_anthropic_step_fn(config: AnthropicStepConfig) -> RunStepFn:
             config.messages.append({"role": "assistant", "content": content_blocks})
             return RunStepOutcome(done=True)
 
-        # Tools requested. Check for any gated tool first — if the
-        # model called one, we suspend the run for human approval
-        # rather than executing anything in this step. The assistant
-        # turn still gets appended (Anthropic requires it to precede
-        # the eventual tool_result on resume), but no tool_result is
-        # written until the `respond` action appends one.
+        # Tools requested. Check for a spawnSubagent call first — if
+        # the model called it, we capture the spawn descriptor and
+        # return without executing (the executor fans out children).
+        # The assistant turn is appended so the eventual tool_result
+        # on resume (aggregated child results) pairs correctly.
+        for block in tool_use_blocks:
+            tool_name = _block_field(block, "name") or ""
+            if tool_name == SPAWN_SUBAGENT_TOOL_NAME:
+                tool_call_id = _block_field(block, "id") or ""
+                args = _block_field(block, "input") or {}
+                if not isinstance(args, dict):
+                    args = {}
+                await ctx.emitter.tool_input(
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                    args=dict(args),
+                )
+                config.messages.append({"role": "assistant", "content": content_blocks})
+                return RunStepOutcome(
+                    done=False,
+                    spawn=SpawnDescriptor(
+                        tool_call_id=tool_call_id,
+                        tasks=parse_spawn_specs(args),
+                    ),
+                )
+
+        # Check for any gated tool — if the model called one, we
+        # suspend the run for human approval rather than executing
+        # anything in this step. The assistant turn still gets
+        # appended (Anthropic requires it to precede the eventual
+        # tool_result on resume), but no tool_result is written
+        # until the `respond` action appends one.
         for block in tool_use_blocks:
             tool_name = _block_field(block, "name") or ""
             if tool_name in config.gated_tool_names:
