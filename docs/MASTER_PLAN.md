@@ -93,7 +93,7 @@ scheduling**) is shipped — its plans live in
 | 📐 [Proactive / ambient agents](PLAN-ambient-agents.md) | planning (new 2026-06-09 r3) | Extend the existing `task_schedules` cron dispatch into an *event* dispatcher: "when X happens (file/bookmark/note added, task finished), run persona Y." Hard loop guards + HITL-by-default for side-effecting triggers. M–L, PR series |
 | ✅ [Citation & verifiability layer](_done/PLAN-citation-verifiability.md) | shipped (#199–#201, #203, #205, #207) | Post-turn verifier grounds each claim against the turn's retrieved sources (web search / `searchFiles`), flags unsupported claims inline + a confidence summary. Opt-in; default-on in Deep Research. v1 + Deep Research port + v2 (cross-chunk / cross-family / inline markers) all merged; archived to `_done/` |
 | 📐 [Visual workflow / flow builder](PLAN-workflow-builder.md) | planning (new 2026-06-09 r4) | A workflow canvas mode (skill / persona / input / branch nodes + typed edges) that compiles to the task executor. Composes the react-flow canvas + skills + personas + subagents. Run = a task. L, PR series (run-phase depends on subagents) |
-| 📐 [Multimodal document understanding](PLAN-multimodal-docs.md) | planning (new 2026-06-09 r4) | Vision-aware extraction (render PDF pages → VLM) that preserves tables/charts/layout the current text-only pipeline drops; richer chunks feed `searchFiles`. Vision-gated + capped. M–L, PR series |
+| 🪜 [Multimodal document understanding](PLAN-multimodal-docs.md) | PR-1 + PR-2 shipped (#252, #253); PR-3 deferred | Vision-aware extraction (render PDF pages → VLM) that preserves tables/charts/layout the current text-only pipeline drops; richer chunks feed `searchFiles`. Vision-gated + capped. PR-1 (vision path) + PR-2 (table-aware chunking) shipped; PR-3 (agent-service `extract` twins) optional/deferred |
 | 📐 [Local Supabase switch](PLAN-local-supabase-switch.md) | planning | Move local dev off the hosted Supabase project onto a `bun run supabase:start` stack on this machine. 5 steps, ~30 min wall-clock. 13 open questions to walk through before execution (cloud data handling, Path A vs Path B, auth-free local mode, etc.) |
 | 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
 | 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
@@ -134,7 +134,7 @@ agent-py); TTS parked; only Multimodal docs remains untouched.**
 | ✅ [Portable skills (SKILL.md)](_done/PLAN-portable-skills.md) | S–M | **Shipped v1 #187**; executable scripts gated on code interpreter |
 | ✅ [Smart model routing](_done/PLAN-model-routing.md) | M | **Shipped #185** — `model: "auto"` across Anthropic / gateway / Ollama / OpenRouter |
 | ⏸ [Read-aloud / TTS](PLAN-tts-voice-output.md) | M | **Parked 2026-06-11** — no real "I wish it could read this" pain point surfaced. See [Parked / low priority](#parked--low-priority) |
-| [Multimodal document understanding](PLAN-multimodal-docs.md) | M–L | Lifts `searchFiles` quality — only never-touched plan left in Tier 2 |
+| 🪜 [Multimodal document understanding](PLAN-multimodal-docs.md) | M–L | **PR-1 + PR-2 shipped** (#252, #253) — vision extraction + table-aware chunking lift `searchFiles` quality; PR-3 (agent-service twins) deferred |
 
 **Tier 3 — foundational / large (build deliberately; they unblock
 others).**
