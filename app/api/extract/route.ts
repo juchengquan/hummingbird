@@ -9,6 +9,7 @@ import {
   setCachedResponse,
 } from '@/server/cache/response-cache'
 import { extractFile } from '@/server/extraction'
+import { createSlidingWindow, rateLimitKey } from '@/server/rate-limit'
 import { FILE_SIZE_LIMIT } from '@/shared/upload-config'
 
 /**
@@ -20,6 +21,33 @@ import { FILE_SIZE_LIMIT } from '@/shared/upload-config'
  * library; this file parses the form, enforces the file-size cap,
  * and translates the `ExtractionResult` to a `NextResponse`.
  */
+
+// Vision extraction runs N model calls per doc — rate-limit per IP so a
+// burst of layout-rich PDFs can't run the gateway bill up. Text-only
+// extraction is unaffected (the gate is only consulted inside the vision
+// branch).
+const extractVisionLimit = createSlidingWindow({ windowMs: 60_000, max: 10 })
+
+/** Exact-key cache key for an extraction. The `vision` flag is part of
+ *  the key so a forced-vision result and a text-only result don't
+ *  collide. Exported for unit testing. */
+export function extractCacheKey(parts: {
+  name: string
+  mimeType: string
+  contentHash: string
+  vision: boolean
+}): string {
+  return responseCacheKey({
+    kind: 'extract',
+    model: '-',
+    input: {
+      name: parts.name,
+      mimeType: parts.mimeType,
+      contentHash: parts.contentHash,
+      vision: parts.vision,
+    },
+  })
+}
 
 export const runtime = 'nodejs'
 // Bigger uploads come through here than for JSON routes.
@@ -47,22 +75,33 @@ export async function POST(req: NextRequest) {
   const name = file instanceof File ? file.name : 'unnamed'
   const mimeType = file.type || ''
 
+  // Optional `vision` form field: "true"/"false" forces the vision pass
+  // on/off; absent → auto-decide via the extractor's heuristic.
+  const visionField = form.get('vision')
+  const visionFlag =
+    visionField === 'true' ? true : visionField === 'false' ? false : undefined
+
   try {
     const data = Buffer.from(await file.arrayBuffer())
-    // Exact-key response cache (PLAN-semantic-caching Phase 1). Extraction
-    // is a deterministic function of the file bytes (+ name + mime), so a
-    // re-upload of the same file skips the work. Key on a content hash of
-    // the bytes rather than the bytes themselves.
     const contentHash = createHash('sha256').update(data).digest('hex')
-    const cacheKey = responseCacheKey({
-      kind: 'extract',
-      model: '-',
-      input: { name, mimeType, contentHash },
+    // Cache key folds in the vision intent so a forced-vision result and
+    // a text-only result are stored distinctly.
+    const cacheKey = extractCacheKey({
+      name,
+      mimeType,
+      contentHash,
+      vision: visionFlag ?? false,
     })
     const cached = getCachedResponse(cacheKey)
     if (cached !== undefined) return NextResponse.json(cached)
 
-    const result = await extractFile({ name, mimeType, data })
+    const result = await extractFile(
+      { name, mimeType, data },
+      {
+        vision: visionFlag,
+        consumeVisionBudget: () => extractVisionLimit.consume(rateLimitKey(req)),
+      }
+    )
     setCachedResponse(cacheKey, result)
     return NextResponse.json(result)
   } catch (error) {
