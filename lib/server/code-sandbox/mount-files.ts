@@ -22,6 +22,25 @@ export function safeMountPath(name: string): string {
   return `${MOUNT_DIR}/${cleaned}`
 }
 
+/** Make `path` unique against `used` by inserting -1, -2, … before the
+ *  extension. Assumes `path` itself is already taken. Prevents two distinct
+ *  attachments that sanitize to the same name from silently overwriting. */
+export function dedupePath(path: string, used: Set<string>): string {
+  const slash = path.lastIndexOf("/")
+  const dir = path.slice(0, slash + 1)
+  const base = path.slice(slash + 1)
+  const dot = base.lastIndexOf(".")
+  const stem = dot > 0 ? base.slice(0, dot) : base
+  const ext = dot > 0 ? base.slice(dot) : ""
+  let i = 1
+  let candidate = `${dir}${stem}-${i}${ext}`
+  while (used.has(candidate)) {
+    i++
+    candidate = `${dir}${stem}-${i}${ext}`
+  }
+  return candidate
+}
+
 /** Resolve model-named files to bytes. `download(fileId)` fetches a cloud
  *  file's bytes (RLS-scoped by the caller) or returns null when
  *  unavailable. Pure except for the injected download — caps + selection
@@ -34,6 +53,7 @@ export async function resolveMountFiles(
   const byName = new Map(manifest.map((m) => [m.name, m]))
   const files: { path: string; bytes: Uint8Array }[] = []
   const notes: string[] = []
+  const usedPaths = new Set<string>()
   let total = 0
 
   for (const name of names) {
@@ -65,7 +85,13 @@ export async function resolveMountFiles(
       continue
     }
     total += bytes.length
-    files.push({ path: safeMountPath(name), bytes })
+    const wanted = safeMountPath(name)
+    const path = usedPaths.has(wanted) ? dedupePath(wanted, usedPaths) : wanted
+    usedPaths.add(path)
+    if (path !== wanted) {
+      notes.push(`"${name}" mounted at ${path} (renamed to avoid a name collision).`)
+    }
+    files.push({ path, bytes })
   }
   return { files, notes }
 }

@@ -53,4 +53,19 @@ describe("resolveMountFiles", () => {
     for (const f of r.files) expect(f.path.startsWith("/mnt/files/")).toBe(true)
     for (const f of r.files) expect(f.path.includes("..")).toBe(false)
   })
+  test("two names that sanitize to the same path get distinct paths (no overwrite)", async () => {
+    const m: MountManifestEntry[] = [
+      { name: "a b.csv", fileId: "x1", dataBase64: enc("one") },
+      { name: "a+b.csv", fileId: "x2", dataBase64: enc("two") },
+    ]
+    const r = await resolveMountFiles(["a b.csv", "a+b.csv"], m, download)
+    expect(r.files).toHaveLength(2)
+    const paths = r.files.map((f) => f.path)
+    expect(new Set(paths).size).toBe(2) // distinct — no silent collision
+    expect(paths[0]).toBe("/mnt/files/a_b.csv")
+    expect(paths[1]).toBe("/mnt/files/a_b-1.csv")
+    expect(new TextDecoder().decode(r.files[0].bytes)).toBe("one")
+    expect(new TextDecoder().decode(r.files[1].bytes)).toBe("two")
+    expect(r.notes.join(" ").toLowerCase()).toContain("collision")
+  })
 })
