@@ -40,8 +40,9 @@ counting (#202), per-MCP approval gating (#211), task-route tests
   prompt variables, Read-aloud / TTS, **MCP-proxy SSRF guard**).
   Accurate token counting **shipped** (#202). See
   [Parked / low priority](#parked--low-priority).
-- **In flight:** **subagent orchestration** — PR-1/2/3a shipped
-  (#255/#257/#259), PR-3b+ remaining. See
+- **Subagent orchestration — core arc shipped** (agent-py): PR-1/2/3a/3b
+  (#255/#257/#259/#262). PR-3c (canvas node tree) deferred; agent-ts
+  mirror pending its real-step phase. See
   [Now](#now--actively-in-progress).
 - **Both cross-cutting dependencies have moved:** the **embedding
   pipeline** is now **shipped** (#196–#198) and gates nothing;
@@ -70,7 +71,7 @@ counting (#202), per-MCP approval gating (#211), task-route tests
 
 | Plan | Branch | Notes |
 |---|---|---|
-| 🚧 [Subagent orchestration](PLAN-subagent-orchestration.md) | (per-PR) | One goal → N specialist subagents via the executor + a durable join barrier. **Shipped:** PR-1 join barrier + schema (#255), PR-2 spawn loop / fan-out+fan-in (#257), PR-3a spawned children in the task strip (#259). **Remaining:** PR-3b+ (UI + aggregation polish). Unblocks the workflow-builder run-phase |
+| 🪜 [Subagent orchestration](PLAN-subagent-orchestration.md) | core arc shipped; PR-3c deferred | One goal → N specialist subagents via the executor + a durable join barrier. **Shipped (agent-py):** PR-1 join barrier + schema (#255), PR-2 spawn loop / fan-out+fan-in (#257), PR-3a task-strip child group (#259), PR-3b child-run drill-in (#262). **Deferred:** PR-3c canvas node tree (collides with the canvas's persisted-store projection model — tasks are ephemeral; see the plan). agent-ts mirror waits for its real-step phase. Unblocks the workflow-builder run-phase |
 
 ---
 
