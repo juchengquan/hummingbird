@@ -43,8 +43,10 @@ import type { CodeRunResult } from '@/server/code-sandbox/types'
 import { resolveMountFiles } from '@/server/code-sandbox/mount-files'
 import { downloadUserFileBytes } from '@/server/code-sandbox/download-user-file'
 import { resolveAttachedMcpResources } from '@/server/mcp/inject-resources'
-import { loadActiveFacts } from '@/server/memory/load-facts'
+import { shouldOfferMemoryTools } from '@/server/memory/forget-match'
+import { loadMemoryState } from '@/server/memory/load-facts'
 import { renderMemoryBlock } from '@/server/memory/render'
+import { buildMemoryTools, MEMORY_TOOLS_NOTE } from '@/server/memory/tools'
 import {
   type ResolvedAttachment,
 } from '@/server/attachments/render'
@@ -482,12 +484,37 @@ export async function POST(req: NextRequest) {
   }
 
   // Cross-conversation memory: self-gates on sign-in + `memory_enabled`
-  // and never throws → empty block (no-op) for everyone else.
+  // and never throws → empty state (no-op) for everyone else.
   // When the conversation is in "memory off" mode the client sends
-  // `memoryBypass` → skip the load + render entirely (no DB call).
-  const memoryBlock = body.memoryBypass
-    ? undefined
-    : (renderMemoryBlock(await loadActiveFacts()) ?? undefined)
+  // `memoryBypass` → skip the load entirely (no DB call). One read drives
+  // both the injected block and the remember/forget tool gate.
+  const memState = body.memoryBypass
+    ? { enabled: false, facts: [] as { fact: string; category: string | null }[] }
+    : await loadMemoryState()
+
+  // Offer the remember/forget tools only when memory is on for this turn.
+  // `tools` is the same mutable record the render-UI tool was added to
+  // above, still in scope before it's handed to the model below.
+  // The chat route's request body carries no conversation id
+  // (`ChatRequestSchema` has none), so remembered facts are not
+  // conversation-scoped — `source_conversation_id` is null.
+  const offerMemoryTools = shouldOfferMemoryTools({
+    enabled: memState.enabled,
+    memoryBypass: body.memoryBypass,
+  })
+  if (offerMemoryTools) {
+    const memTools = buildMemoryTools({ conversationId: null })
+    tools.rememberFact = memTools.rememberFact
+    tools.forgetFact = memTools.forgetFact
+  }
+
+  // Memory block: facts (if any) + the tools note (when offered, so
+  // "remember" works even with zero facts).
+  const memoryBlock = memState.enabled
+    ? ([renderMemoryBlock(memState.facts), offerMemoryTools ? MEMORY_TOOLS_NOTE : null]
+        .filter(Boolean)
+        .join("\n\n") || undefined)
+    : undefined
 
   try {
     const result = streamText({
