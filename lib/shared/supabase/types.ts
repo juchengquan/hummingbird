@@ -1102,6 +1102,8 @@ export type Database = {
           goal: string
           id: string
           max_steps: number
+          parent_task_id: string | null
+          pending_children: number
           result_message_id: string | null
           started_at: string | null
           status: string
@@ -1117,6 +1119,8 @@ export type Database = {
           goal: string
           id: string
           max_steps?: number
+          parent_task_id?: string | null
+          pending_children?: number
           result_message_id?: string | null
           started_at?: string | null
           status: string
@@ -1132,6 +1136,8 @@ export type Database = {
           goal?: string
           id?: string
           max_steps?: number
+          parent_task_id?: string | null
+          pending_children?: number
           result_message_id?: string | null
           started_at?: string | null
           status?: string
@@ -1152,6 +1158,13 @@ export type Database = {
             columns: ["result_message_id"]
             isOneToOne: false
             referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_parent_task_id_fkey"
+            columns: ["parent_task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
             referencedColumns: ["id"]
           },
         ]
