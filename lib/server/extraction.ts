@@ -1,5 +1,11 @@
 import "server-only"
 
+import type { RateLimitVerdict } from "@/server/rate-limit"
+
+import { shouldUseVision, mergeVisionText } from "./extraction/heuristics"
+import { resolveVisionModel } from "./extraction/vision-model"
+import { extractWithVision as defaultExtractWithVision } from "./extraction/vision"
+
 /**
  * File extraction — pure server-side library, lifted from
  * `app/api/extract/route.ts`'s original body. Same NPM packages
@@ -111,8 +117,63 @@ export interface ExtractInput {
   data: Buffer
 }
 
+export interface ExtractFileOptions {
+  /** Force the vision pass on (`true`) / off (`false`); `undefined` →
+   *  auto-decide via `shouldUseVision`. */
+  vision?: boolean
+  /** Per-call budget gate; called once right before the vision pass. When
+   *  it denies, vision is skipped (text-only). Omitted → no gate. */
+  consumeVisionBudget?: () => RateLimitVerdict
+  signal?: AbortSignal
+  // --- test seams (default to the real implementations) ---
+  resolveVisionModel?: () => string | null
+  extractWithVision?: (input: {
+    data: Uint8Array
+    model: string
+    signal?: AbortSignal
+  }) => Promise<{ text: string; pageCount: number }>
+}
+
+/** Best-effort vision enhancement of a PDF text result. Never throws —
+ *  any failure returns the text-only result. */
+async function maybeAddVision(
+  textResult: ExtractionResult,
+  data: Buffer,
+  opts: ExtractFileOptions
+): Promise<ExtractionResult> {
+  const resolve = opts.resolveVisionModel ?? resolveVisionModel
+  const runVision = opts.extractWithVision ?? defaultExtractWithVision
+
+  const model = resolve()
+  if (!model) return textResult
+
+  const wanted =
+    opts.vision === true
+      ? true
+      : opts.vision === false
+        ? false
+        : shouldUseVision(textResult, data.length)
+  if (!wanted) return textResult
+
+  if (opts.consumeVisionBudget && !opts.consumeVisionBudget().allowed) {
+    return textResult
+  }
+
+  try {
+    const vision = await runVision({ data, model, signal: opts.signal })
+    if (!vision.text.trim()) return textResult
+    return mergeVisionText(textResult, vision.text)
+  } catch (err) {
+    console.warn("[extraction] vision pass failed, using text-only:", err)
+    return textResult
+  }
+}
+
 /** Identify + extract a single uploaded file. */
-export async function extractFile(input: ExtractInput): Promise<ExtractionResult> {
+export async function extractFile(
+  input: ExtractInput,
+  opts: ExtractFileOptions = {}
+): Promise<ExtractionResult> {
   const { name, mimeType: type, data } = input
 
   // Plain-text formats
@@ -139,9 +200,10 @@ export async function extractFile(input: ExtractInput): Promise<ExtractionResult
   if (type === "application/pdf" || hasName(name, ".pdf")) {
     const { PDFParse } = await import("pdf-parse")
     const parser = new PDFParse({ data })
-    const result = await parser.getText()
-    const { text, truncated, fullText } = truncate(result.text ?? "")
-    return { kind: "pdf", text, truncated, fullText }
+    const parsed = await parser.getText()
+    const { text, truncated, fullText } = truncate(parsed.text ?? "")
+    const textResult: ExtractionResult = { kind: "pdf", text, truncated, fullText }
+    return await maybeAddVision(textResult, data, opts)
   }
 
   if (
