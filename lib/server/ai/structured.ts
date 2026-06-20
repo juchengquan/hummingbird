@@ -20,7 +20,7 @@ import "server-only"
  * See `docs/PLAN-structured-outputs.md`.
  */
 
-import { generateObject } from "ai"
+import { generateObject, type ModelMessage } from "ai"
 import type { z } from "zod"
 
 import { selectModel } from "@/server/model-provider"
@@ -28,16 +28,21 @@ import { selectModel } from "@/server/model-provider"
 export interface GenerateStructuredOptions<T> {
   modelId: string
   schema: z.ZodType<T>
-  prompt: string
+  /** Plain-text prompt. Provide this OR `messages`, not both. */
+  prompt?: string
+  /** Message list (e.g. a user message with text + image parts) for
+   *  multimodal calls. Provide this OR `prompt`. */
+  messages?: ModelMessage[]
   abortSignal?: AbortSignal
   maxOutputTokens?: number
   temperature?: number
 }
 
 /**
- * Generate a schema-conformant object. Throws on provider/decoding
- * failure (including `ProviderUnavailableError` from `selectModel`) — the
- * caller is expected to catch and fall back to its lenient path.
+ * Generate a schema-conformant object. Accepts either a `prompt` or a
+ * `messages` list (the latter for multimodal/image input). Throws on
+ * provider/decoding failure (including `ProviderUnavailableError` from
+ * `selectModel`) — the caller is expected to catch and fall back.
  */
 export async function generateStructured<T>(
   opts: GenerateStructuredOptions<T>
@@ -45,7 +50,7 @@ export async function generateStructured<T>(
   const { object } = await generateObject({
     model: selectModel(opts.modelId),
     schema: opts.schema,
-    prompt: opts.prompt,
+    ...(opts.messages ? { messages: opts.messages } : { prompt: opts.prompt ?? "" }),
     abortSignal: opts.abortSignal,
     maxOutputTokens: opts.maxOutputTokens,
     temperature: opts.temperature,
