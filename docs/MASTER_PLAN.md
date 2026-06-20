@@ -8,42 +8,50 @@ parking-lot idea — plus the conventions for keeping this file honest.
 > still lives in `PLAN-*.md` — active plans in `docs/`, archived plans
 > in [`docs/_done/`](_done/).
 
-Last updated: **2026-06-11** — see [Recent activity](#recent-activity)
+Last updated: **2026-06-20** — see [Recent activity](#recent-activity)
 just below for the rolling pulse, and the
 [Shipped log](#shipped-log-newest-first) further down for the full
-chronological record. **2026-06-10 → 2026-06-11 burst:** seven PRs
-shipped from the Tier 1 / Tier 2 queues — exact-key cache (#183),
-smart model routing (#185), inline editor autocomplete (#186),
-portable skills v1 (#187), MCP Apps phases 1 + 2 (#188, #189), and
-the agent-py side of generative-UI 3b (#190). That closes **all of
-Tier 1** and most of the originally-named Tier 2. The prior
-2026-06-09 pass was a **market refresh**: five new distinctive
-ideas added below, and three previously-planned items (Langfuse,
-Aider editor pair, accurate token counting) deprioritised into
-[Parked / low priority](#parked--low-priority).
+chronological record. **2026-06-12 → 2026-06-20 burst (~70 PRs,
+#191–#261):** the **embedding pipeline** landed (pgvector substrate +
+hybrid `searchFiles`, #196–#198), unblocking semantic-caching Phase 2
+(#209–#210); the **code interpreter** (`runCode` microVM sandbox)
+shipped end-to-end (#243–#246) and was hardened (#256, #258);
+**citation tables** (Elicit-style, inspirations #9) shipped across
+slices 1–4 + polish (#212–#236); **multimodal document understanding**
+PR-1+PR-2 (#252–#253); **cross-conversation memory** slices 1–2 +
+remember/forget tools (#248–#250); **citation verifiability v2**
+(#199–#207); and **subagent orchestration** began (#255/#257/#259,
+in flight). Parked / small-followup items also shipped — accurate token
+counting (#202), per-MCP approval gating (#211), task-route tests
+(#195).
 
 ---
 
 ## Status snapshot
 
-- **24 active plans** in `docs/` (planning / phased) — MCP Apps
-  archived (#192 closed all three phases) and TTS parked since the
-  last snapshot, dropping from 26.
-  Active plans are ranked in
+- **Active plans** in `docs/` (planning / phased) are ranked in
   [Choosing what to build first](#choosing-what-to-build-first); the
   full set is in [Next — planned work](#next--planned-work-have-a-plan).
-- **4 parked / low-priority** plans (Langfuse, Aider editor pair,
-  typed prompt variables, **Read-aloud / TTS**) + accurate token
-  counting. See [Parked / low priority](#parked--low-priority).
-- **40 fully-shipped plans archived** under [`docs/_done/`](_done/).
-- **Nothing currently in flight** (no branch with active work that
-  doesn't already have a PR).
-- **Latest ships** (2026-06-10 → 2026-06-11, in chronological order):
-  #183 (exact-key cache) → #184 (generative-UI 3a) → #185 (smart
-  model routing) → #186 (inline editor autocomplete) → #187 (portable
-  skills v1) → #188 (MCP Apps phase 1) → #189 (MCP Apps phase 2) →
-  #190 (generative-UI 3b agent-py). Detail in
-  [Recent activity](#recent-activity).
+  Since the last snapshot the **code interpreter, citation tables,
+  semantic caching, the embedding pipeline, and citation verifiability**
+  all shipped; **multimodal docs + cross-conversation memory** are
+  partially shipped (🪜).
+- **5 parked / low-priority** plans (Langfuse, Aider editor pair, typed
+  prompt variables, Read-aloud / TTS, **MCP-proxy SSRF guard**).
+  Accurate token counting **shipped** (#202). See
+  [Parked / low priority](#parked--low-priority).
+- **In flight:** **subagent orchestration** — PR-1/2/3a shipped
+  (#255/#257/#259), PR-3b+ remaining. See
+  [Now](#now--actively-in-progress).
+- **Both cross-cutting dependencies have moved:** the **embedding
+  pipeline** is now **shipped** (#196–#198) and gates nothing;
+  **multi-tenant** is the one open gate (A2A publish, collab Phase B,
+  guardrails, MCP-proxy SSRF).
+- **Latest ships** (newest first): #261 (MCP-SSRF note) → #260 (SSRF
+  real-DNS test) → #259 (orchestration 3a) → #258 (slim sandbox image)
+  → #257 (orchestration 2) → #256 (sandbox hardening) → #255
+  (orchestration 1) → #252/#253 (multimodal) → #248–#250 (memory).
+  Full burst in [Recent activity](#recent-activity).
 
 ## Status legend
 
@@ -62,7 +70,7 @@ Aider editor pair, accurate token counting) deprioritised into
 
 | Plan | Branch | Notes |
 |---|---|---|
-| _(nothing actively in flight)_ | | |
+| 🚧 [Subagent orchestration](PLAN-subagent-orchestration.md) | (per-PR) | One goal → N specialist subagents via the executor + a durable join barrier. **Shipped:** PR-1 join barrier + schema (#255), PR-2 spawn loop / fan-out+fan-in (#257), PR-3a spawned children in the task strip (#259). **Remaining:** PR-3b+ (UI + aggregation polish). Unblocks the workflow-builder run-phase |
 
 ---
 
@@ -77,16 +85,16 @@ scheduling**) is shipped — its plans live in
 
 | Plan | Status | Sketch |
 |---|---|---|
-| 🪜 [Cross-product inspirations menu](PLAN-cross-product-inspirations.md) | 7 of 14 shipped, 1 closed | A menu, not a single feature — 14 items synthesised from a five-cohort survey of OSS + commercial AI/chat/agent products. **Shipped:** #1 conversation system prompt (#165), #2 Ollama + #3 OpenRouter + #5 Library (#167), #4 Part 2 gateway tagging (#166), #6 `#`-mention + RAG toggle (#168, #169), #7 Flowchat canvas. **Closed:** #4 Part 1 (caching — won't do without a Vercel-gateway commitment). **Open:** #8 Beam, #9 Elicit tables, #10 Langfuse, #11 Aider editor pair, #12 hybrid search, #13 Letta memory, #14 LangGraph checkpointer. Per-item status + a Shipped tracker live in the plan |
-| 🪜 [Agent API as a separate service](PLAN-agent-api.md) | Phases 0 through 4-4b shipped; one follow-up open | All six phases of the original plan plus seven of the open follow-ups have shipped: `services/agent-py/` runs end-to-end (chat + tools + MCP + url-fetch + summarize + refresh-url + extract + whoami + health); per-IP rate buckets + idle watchdog (PR #161); `POST /v1/mcp/server` CRUD (#160); provider-categorised errors (#155); frontend selector for non-chat endpoints (#156); `workspace_id` + per-skill config on `/v1/chat` (#145); `useChat()` adoption (#148–#154). **One open item:** real DNS-rebinding test against actual DNS for the MCP-proxy SSRF guard (currently mocked). Phases 5 (default-on + decommission) and 6 (tidy + archive) explicitly deferred — per project policy both Python and TS stacks stay live and the user picks backend per-account via the Phase 4-2 selector |
-| 🪜 [Small follow-ups batch](PLAN-small-followups.md) | 4 done, 1 moot, 2 open | Done: generatedImages sync (#45), recap-of-recaps (#63), roadmap sweep, signed-URL re-sign. Moot: local-mode MCP creds for tasks (rejected up front by #85). Open: per-tool server-side approval flags, task-route integration tests. (Accurate token counting moved to [Parked / low priority](#parked--low-priority) in the 2026-06-09 refresh.) |
+| 🪜 [Cross-product inspirations menu](PLAN-cross-product-inspirations.md) | 9 of 14 shipped, 1 closed | A menu, not a single feature — 14 items synthesised from a five-cohort survey of OSS + commercial AI/chat/agent products. **Shipped:** #1 conversation system prompt (#165), #2 Ollama + #3 OpenRouter + #5 Library (#167), #4 Part 2 gateway tagging (#166), #6 `#`-mention + RAG toggle (#168, #169), #7 Flowchat canvas, #9 Elicit tables (citation-table, #212–#236), #12 hybrid search (#198). **Closed:** #4 Part 1 (caching — won't do without a Vercel-gateway commitment). **Open:** #8 Beam, #10 Langfuse, #11 Aider editor pair, #13 Letta memory (partly via cross-conversation memory), #14 LangGraph checkpointer. Per-item status + a Shipped tracker live in the plan |
+| 🪜 [Agent API as a separate service](PLAN-agent-api.md) | Phases 0 through 4-4b shipped; one follow-up open | All six phases of the original plan plus seven of the open follow-ups have shipped: `services/agent-py/` runs end-to-end (chat + tools + MCP + url-fetch + summarize + refresh-url + extract + whoami + health); per-IP rate buckets + idle watchdog (PR #161); `POST /v1/mcp/server` CRUD (#160); provider-categorised errors (#155); frontend selector for non-chat endpoints (#156); `workspace_id` + per-skill config on `/v1/chat` (#145); `useChat()` adoption (#148–#154). **Follow-ups closed:** the real DNS-rebinding test landed (#260). (A separate MCP-proxy SSRF gap is tracked for multi-tenant in [PLAN-mcp-proxy-ssrf.md](PLAN-mcp-proxy-ssrf.md), #261.) Phases 5 (default-on + decommission) and 6 (tidy + archive) explicitly deferred — per project policy both Python and TS stacks stay live and the user picks backend per-account via the Phase 4-2 selector |
+| 🪜 [Small follow-ups batch](PLAN-small-followups.md) | open items closed | Done: generatedImages sync (#45), recap-of-recaps (#63), signed-URL re-sign, **per-MCP-server approval gating (#211)**, **task-route integration tests (#195)**, **accurate per-family token counting (#202)**. Moot: local-mode MCP creds for tasks (#85) |
 | ✅ [MCP Apps — interactive UI in chat](_done/PLAN-mcp-apps.md) | all phases shipped (#188, #189, #192) | Phase 1 — read-only render: an MCP tool's `ui://` resource rendered in the existing live-artifact sandbox iframe. Phase 2 — `postMessage` tool-call bridge. Phase 3 — refresh affordance + truncation stub + `STORE_VERSION` marker. M, three commits |
-| 📐 [Sandboxed code interpreter](PLAN-code-interpreter.md) | planning (new 2026-06-09) | A `runCode` server skill backed by an E2B-style sandbox (self-hostable behind an adapter). Charts reuse the `generateImage` Storage + gallery path; stdout/tables ride a new `data-code-result` part. Budget-gated or HITL-gated. L, PR series |
+| 🪜 [Sandboxed code interpreter](PLAN-code-interpreter.md) | **shipped (#243–#246, #256, #258); warm sessions deferred** | A `runCode` server skill backed by a self-hosted **microsandbox** microVM (not E2B — see [PLAN-execution-sandbox](PLAN-execution-sandbox.md), #242). Core (#243) + file mounting (#244) + rich tables (#245) + JavaScript (#246); hardened — scientific image / abort / caps / concurrency (#256) + slim image (#258). Warm/persistent sessions (PR-4/Phase-4) deferred (#247) |
 | 🪜 [Generative UI parts](PLAN-generative-ui-parts.md) | commits 1 + 2 + 3a + 3b (agent-py) shipped (#179, #181, #184, #190) | A `renderUI` tool emits typed, allow-listed `data-ui` parts (choice / confirm / info-table / mini-form) rendered as real React components. **Only 3b (agent-ts) remains, gated on that service's HITL pipeline.** M, 3 commits |
 | 📐 [Subagent orchestration](PLAN-subagent-orchestration.md) | planning (new 2026-06-09) | One goal → N specialist subagents (each a persona-pinned child task) run in parallel via the existing executor + a durable join barrier; results aggregate back to the orchestrator. Depth cap 1, breadth cap 5. Distinct from Beam (#8). L, PR series |
 | 📐 [A2A interoperability](PLAN-a2a-interop.md) | planning (new 2026-06-09 r2) | Expose personas as A2A agent cards + delegate to remote A2A agents; complement to MCP. A2A task lifecycle maps 1:1 onto the existing RunStatus + HITL suspend. Outbound first (lower risk), inbound server second. Publishing gated on multi-tenant. L, PR series |
 | 📐 [Browser / `browse` skill](PLAN-browser-use.md) | planning (new 2026-06-09 r2) | A `runBrowserTask` server skill (browser-use, in agent-py) for navigate/extract/form-fill; screenshots reuse the `data-tool-image` gallery; mutating actions HITL-gated; auth flows last + heavily gated. Reuses the code-interpreter security model. L, PR series |
-| 🪜 [Semantic caching](PLAN-semantic-caching.md) | Phase 1 shipped (#183); Phase 2 gated on embeddings | Cache the deterministic non-chat calls (summarize / extract). Phase 1 = exact-key cache, in-process LRU+TTL keyed on SHA-256(`[CACHE_VERSION, kind, model, stableStringify(input)]`). Phase 2 = embedding-similarity once the pipeline lands. Never caches the chat stream. M, phased |
+| ✅ [Semantic caching](PLAN-semantic-caching.md) | **both phases shipped (#183, #209–#210)** | Cache the deterministic non-chat calls (summarize / extract). Phase 1 = exact-key cache (#183); Phase 2 = embedding near-match (file mode #209, project-breakdown #210), now that the embedding pipeline landed (#196–#198). Never caches the chat stream |
 | 📐 [Prompt optimisation (GEPA/DSPy)](PLAN-prompt-optimization.md) | planning (new 2026-06-09 r2) | Offline/admin loop that evolves skill / persona / editor prompts from a labelled eval set + traces. First target: the `getChooseToolPrompt` classifier (measurable). Human-accepted, versioned, never auto-deployed. Gated on an eval set. M–L |
 | 📐 [Collaborative editing + AI peer](PLAN-collab-editing.md) | planning (new 2026-06-09 r2) | Yjs CRDT + presence in the Plate editor with the AI as a server-side Yjs peer (visible cursor + status). Phase A (AI-as-peer) has single-user value; Phase B (human multiplayer) gated on the document-sharing / multi-tenant story. L |
 | 📐 [Guardrails + PII redaction](PLAN-guardrails-pii.md) | planning (new 2026-06-09 r3) | Optional, off-by-default pre/post hooks: PII redaction (Presidio-class) + content moderation, per-workspace policy, self-hostable behind an adapter. Mostly relevant once multi-user. M, PR series |
@@ -95,8 +103,8 @@ scheduling**) is shipped — its plans live in
 | 📐 [Visual workflow / flow builder](PLAN-workflow-builder.md) | planning (new 2026-06-09 r4) | A workflow canvas mode (skill / persona / input / branch nodes + typed edges) that compiles to the task executor. Composes the react-flow canvas + skills + personas + subagents. Run = a task. L, PR series (run-phase depends on subagents) |
 | 🪜 [Multimodal document understanding](PLAN-multimodal-docs.md) | PR-1 + PR-2 shipped (#252, #253); PR-3 deferred | Vision-aware extraction (render PDF pages → VLM) that preserves tables/charts/layout the current text-only pipeline drops; richer chunks feed `searchFiles`. Vision-gated + capped. PR-1 (vision path) + PR-2 (table-aware chunking) shipped; PR-3 (agent-service `extract` twins) optional/deferred |
 | 📐 [Local Supabase switch](PLAN-local-supabase-switch.md) | planning | Move local dev off the hosted Supabase project onto a `bun run supabase:start` stack on this machine. 5 steps, ~30 min wall-clock. 13 open questions to walk through before execution (cloud data handling, Path A vs Path B, auth-free local mode, etc.) |
-| 📐 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | planning | pgvector + `memoryRecall` skill |
-| 📐 [Local RAG vector store](PLAN-local-rag.md) | decision doc | Where embeddings live — Supabase pgvector / self-host Postgres / in-browser PGlite. No driver chosen |
+| 🪜 [Cross-conversation memory with retrieval](PLAN-cross-conversation-memory.md) | **slices 1–2 + tools shipped (#248–#250)** | pgvector-backed. Slice 1 summary/facts (#248), slice 2 trust & lifecycle (#249), chat-driven remember/forget tools (#250). Recall/retrieval polish remaining |
+| ✅ [Local RAG vector store](PLAN-local-rag.md) | **driver chosen + substrate shipped (#196–#198)** | Supabase pgvector: chunking + provider + migration (#196), `file_sections` populated on extraction (#197), hybrid `searchFiles` = FTS + vector (#198). The embedding pipeline is live |
 | 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~2 weeks total. Separate from `PLAN-local-supabase-switch.md`, which keeps Supabase but moves it onto your machine |
 | 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 satisfied by agent-api | Phase 1 (contract-first frontend ⇄ API surface) shipped; Phase 2 (stand up a Python backend) satisfied by PLAN-agent-api `services/agent-py/`. The plan stays in `docs/` for the contract narrative but has no open work |
 
@@ -120,12 +128,12 @@ is closed.**
 | ✅ [Reasoning-effort control](_done/PLAN-reasoning-effort-control.md) | S–M | **Shipped #178** |
 | ✅ [Structured outputs](_done/PLAN-structured-outputs.md) | M | **Shipped #180** |
 | ✅ [Inline editor autocomplete](_done/PLAN-inline-autocomplete.md) | S–M | **Shipped #186** |
-| ✅ [Semantic caching Phase 1](PLAN-semantic-caching.md) | M | **Shipped #183** (Phase 2 = embedding-similarity, gated on the embedding pipeline) |
+| ✅ [Semantic caching Phase 1](PLAN-semantic-caching.md) | M | **Shipped #183** — Phase 2 embedding near-match also shipped (#209–#210) |
 
 **Tier 2 — high-value, self-contained (next).** Medium lift, compose
-with existing surfaces, no hard blocker. **Five of six shipped (model
-routing, portable skills, MCP Apps all phases, generative-UI 3b
-agent-py); TTS parked; only Multimodal docs remains untouched.**
+with existing surfaces, no hard blocker. **All six addressed — model
+routing, portable skills, MCP Apps (all phases), generative-UI parts,
+and Multimodal docs (PR-1+PR-2, #252–#253) shipped; TTS parked.**
 
 | Plan | Effort | Note |
 |---|---|---|
@@ -141,7 +149,7 @@ others).**
 
 | Plan | Effort | Unblocks / depends |
 |---|---|---|
-| [Code interpreter](PLAN-code-interpreter.md) | L | Establishes the sandbox security model the **browse skill** reuses |
+| ✅ [Code interpreter](PLAN-code-interpreter.md) | L | **Shipped #243–#246 + #256/#258** — self-hosted microsandbox microVM. Establishes the sandbox security model the **browse skill** reuses (now unblocked) |
 | [Subagent orchestration](PLAN-subagent-orchestration.md) | L | Unblocks the **workflow builder** run-phase; relates to **A2A** |
 | [Browser / browse skill](PLAN-browser-use.md) | L | Best after code-interpreter |
 | ✅ [Citation & verifiability](_done/PLAN-citation-verifiability.md) | M–L | **Shipped** (#199–#201, #203, #205, #207) — self-contained; strongest in Deep Research |
@@ -157,15 +165,16 @@ others).**
 | [Collaborative editing + AI peer](PLAN-collab-editing.md) | Phase B (human multiplayer) needs the document-sharing / multi-tenant story; Phase A (AI-as-peer) can proceed |
 | [Guardrails + PII redaction](PLAN-guardrails-pii.md) | Mostly relevant once multi-user / shared deployments exist |
 
-**Two cross-cutting dependencies worth resolving early:**
+**Cross-cutting dependencies:**
 
-1. **An embedding pipeline** — there is none today (FTS only); it's
-   planned in [`PLAN-local-rag.md`](PLAN-local-rag.md) / hybrid search.
-   It gates semantic-caching **Phase 2** and strengthens
-   **citation** + **multimodal** retrieval.
-2. **A multi-tenant / document-sharing story** — gates collaborative
-   editing **Phase B**, **A2A** publishing, and most of the value of
-   **guardrails**.
+1. ~~**An embedding pipeline**~~ — **SHIPPED** (#196–#198): pgvector
+   substrate + `file_sections` populated on extraction + hybrid
+   `searchFiles` (FTS + vector). It unblocked semantic-caching
+   **Phase 2** (#209–#210) and strengthens citation + multimodal
+   retrieval. No longer a gate.
+2. **A multi-tenant / document-sharing story** — still open; gates
+   collaborative editing **Phase B**, **A2A** publishing, **guardrails**,
+   and the [MCP-proxy SSRF guard](PLAN-mcp-proxy-ssrf.md).
 
 ---
 
@@ -310,6 +319,38 @@ pick them up if a user explicitly asks or a particular need arises.
 
 Rolling pulse — latest first. The full chronological record lives in
 the [Shipped log](#shipped-log-newest-first) further down.
+
+**2026-06-12 → 2026-06-20 burst (~70 PRs, #191–#261).** Grouped by arc:
+
+- **Embedding pipeline (the #1 cross-cutting dependency — now shipped):**
+  pgvector substrate + chunking + provider (#196), `file_sections`
+  populated on extraction (#197), hybrid `searchFiles` = FTS + vector
+  (#198).
+- **Semantic caching Phase 2:** embedding near-match for summaries (#209)
+  + project-breakdown (#210), now that embeddings exist.
+- **Code interpreter (`runCode`):** self-hosted **microsandbox** microVM —
+  core (#243), file mounting (#244), rich tables (#245), JavaScript
+  (#246); hardened — scientific image / abort / caps / concurrency (#256)
+  + slim image (#258); warm sessions deferred (#247). Runtime decision in
+  PLAN-execution-sandbox (#242).
+- **Citation tables (Elicit-style, inspirations #9):** renderer +
+  extract-to-table + sortable/editable + embed-in-editor (slices 1–4,
+  #212–#217), polish C/D/E + drag-reorder (#225–#227), typed columns
+  (#230, #236).
+- **Multimodal document understanding:** vision extraction (#252) +
+  table-aware chunking (#253); PR-3 (agent-service twins) deferred.
+- **Cross-conversation memory:** slice 1 (#248), slice 2 (#249),
+  remember/forget tools (#250).
+- **Citation verifiability v2:** verifier core + emit/render + Deep
+  Research port + cross-chunk/family + inline markers (#199–#205, #207).
+- **Subagent orchestration (in flight):** join barrier (#255), spawn loop
+  (#257), spawned-children task strip (#259).
+- **Parked / small-followups that shipped:** accurate token counting
+  (#202), per-MCP approval gating (#211), task-route tests (#195),
+  generative-UI date input (#208), portable-skills authoring dialog
+  (#193), MCP Apps phase 3 (#192), user manual (#204). Infra: app-tests
+  CI job (#219), api-client dispatchedFetch seam (#231), SSRF real-DNS
+  test (#260) + MCP-proxy SSRF tracking note (#261).
 
 **2026-06-11 burst — seven more PRs cleared the Tier 1 + Tier 2
 queues:**
@@ -496,6 +537,14 @@ has a clean starting point.
 Each row links to the plan if there is one, or to a representative PR
 otherwise. Plans archived into [`_done/`](_done/) link there;
 still-open phased plans link in-place.
+
+> **#191–#261 (2026-06-12 → 2026-06-20)** are not itemised as rows here —
+> see the grouped burst in [Recent activity](#recent-activity). Key arcs:
+> embedding pipeline (#196–#198), semantic caching Phase 2 (#209–#210),
+> code interpreter (#243–#246, #256, #258), citation tables (#212–#236),
+> multimodal docs (#252–#253), cross-conversation memory (#248–#250),
+> citation verifiability v2 (#199–#207), subagent orchestration
+> (#255/#257/#259), MCP Apps phase 3 (#192).
 
 | When | Feature | Where |
 |---|---|---|
