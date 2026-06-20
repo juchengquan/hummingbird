@@ -185,3 +185,27 @@ async def test_loop_emits_step_boundaries_for_each_iteration() -> None:
     assert len(ends) == 1
     assert starts[0].step == 1
     assert ends[0].step == 1
+
+
+@pytest.mark.asyncio
+async def test_spawn_outcome_returns_spawned_kind() -> None:
+    from agent_py.runner import SpawnDescriptor, SpawnSpec
+
+    sink = _Capture()
+    em = RunEmitter(run_id="r", sink=sink)
+    spawn = SpawnDescriptor(
+        tool_call_id="call-1",
+        tasks=[SpawnSpec(persona_slug="researcher", subgoal="find sources")],
+    )
+
+    async def step(ctx: RunStepContext) -> RunStepOutcome:
+        return RunStepOutcome(done=False, spawn=spawn)
+
+    async def never_cancelled() -> bool:
+        return False
+
+    result = await run_agent_loop(
+        emitter=em, max_steps=5, run_step=step, is_cancelled=never_cancelled
+    )
+    assert result.kind == "spawned"
+    assert result.spawn is spawn

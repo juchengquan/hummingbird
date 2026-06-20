@@ -57,6 +57,27 @@ class PendingInputDescriptor:
 
 
 @dataclass(frozen=True)
+class SpawnSpec:
+    """One child to spawn: a persona slug (recorded for labelling; v1
+    children run the parent config — see the PR-2 spec) + the subgoal it
+    is pinned to."""
+
+    persona_slug: str
+    subgoal: str
+
+
+@dataclass(frozen=True)
+class SpawnDescriptor:
+    """A no-execute `spawnSubagent` call the step fn captured. The
+    executor fans out children + yields; the parent resumes when the
+    barrier re-enqueues it, with aggregated results injected as the
+    `tool_result` for `tool_call_id`."""
+
+    tool_call_id: str
+    tasks: list[SpawnSpec]
+
+
+@dataclass(frozen=True)
 class RunStepOutcome:
     """Result of running one step.
 
@@ -70,6 +91,7 @@ class RunStepOutcome:
 
     done: bool
     pending_input: PendingInputDescriptor | None = None
+    spawn: SpawnDescriptor | None = None
 
 
 class RunStepFn(Protocol):
@@ -79,12 +101,12 @@ class RunStepFn(Protocol):
     async def __call__(self, ctx: RunStepContext) -> RunStepOutcome: ...
 
 
-AgentLoopResultKind = Literal["settled", "cancelled", "yielded", "suspended"]
+AgentLoopResultKind = Literal["settled", "cancelled", "yielded", "suspended", "spawned"]
 
 
 @dataclass(frozen=True)
 class AgentLoopResult:
-    """Loop outcome. Four non-terminal possibilities — the executor
+    """Loop outcome. Five non-terminal possibilities — the executor
     decides what to do next:
 
     - `settled`: terminal event emitted (`result: done|failed`),
@@ -101,10 +123,16 @@ class AgentLoopResult:
       called a gated tool). No terminal event emitted; the executor
       saves the checkpoint, emits `approval: request` + `status:
       paused`, and waits for a `respond` job. `pending_input` is
-      the descriptor for the gated call awaiting an answer."""
+      the descriptor for the gated call awaiting an answer.
+    - `spawned`: a step fn returned `spawn` (the model called
+      `spawnSubagent`). No terminal event emitted; the executor
+      creates child task rows, saves the checkpoint, and yields —
+      the parent resumes when the barrier re-enqueues it. `spawn`
+      is the descriptor for the fan-out (children + their subgoals)."""
 
     kind: AgentLoopResultKind
     pending_input: PendingInputDescriptor | None = None
+    spawn: SpawnDescriptor | None = None
 
 
 IsCancelledFn = Callable[[], Awaitable[bool]]
@@ -175,6 +203,12 @@ async def run_agent_loop(
                 kind="suspended",
                 pending_input=outcome.pending_input,
             )
+
+        if outcome.spawn is not None:
+            # Fan-out point — the step fn captured a `spawnSubagent`
+            # call but didn't execute it. The executor creates child
+            # task rows + yields; no terminal event here.
+            return AgentLoopResult(kind="spawned", spawn=outcome.spawn)
 
         if outcome.done:
             await _settle(emitter, finalize)
