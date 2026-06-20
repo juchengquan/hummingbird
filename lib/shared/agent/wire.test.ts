@@ -153,3 +153,30 @@ describe("wire codec ↔ full pipeline — emit → encode → decode → projec
 })
 
 type AgentEventPartLike = ReturnType<typeof toDataPart>
+
+import type { HandoffEvent } from "./events"
+
+describe("HandoffEvent wire round-trip with child fields", () => {
+  test("childTaskId + subgoal survive toDataPart → fromDataPart", () => {
+    const ev: HandoffEvent = {
+      kind: "handoff", runId: "r1", seq: 3, step: 1,
+      createdAt: "2026-06-20T00:00:00Z", agent: "researcher", phase: "enter",
+      childTaskId: "child-1", subgoal: "find sources",
+    }
+    const round = fromDataPart(toDataPart(ev))
+    expect(round).not.toBeNull()
+    expect(round?.kind).toBe("handoff")
+    if (round?.kind === "handoff") {
+      expect(round.childTaskId).toBe("child-1")
+      expect(round.subgoal).toBe("find sources")
+    }
+  })
+
+  test("a handoff without child fields still validates", () => {
+    const ev: HandoffEvent = {
+      kind: "handoff", runId: "r1", seq: 4, step: 1,
+      createdAt: "2026-06-20T00:00:00Z", agent: "x", phase: "exit",
+    }
+    expect(fromDataPart(toDataPart(ev))).not.toBeNull()
+  })
+})
