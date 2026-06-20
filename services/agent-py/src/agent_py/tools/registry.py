@@ -163,6 +163,7 @@ def default_tool_registry(
     # circular imports if a tool ever needs to read the registry.
     from .ask_user import build_ask_user_tool
     from .render_ui import build_render_ui_tool
+    from .spawn_subagent import build_spawn_subagent_tool
     from .web_fetch import build_web_fetch_tool
     from .web_search import build_web_search_tool, is_web_search_configured
 
@@ -175,6 +176,9 @@ def default_tool_registry(
         # suspends instead of executing.
         "askUser": build_ask_user_tool(),
         "renderUI": build_render_ui_tool(),
+        # `spawnSubagent` is a no-execute gated-shape tool — the executor
+        # captures it as a SpawnDescriptor and fans out child tasks.
+        "spawnSubagent": build_spawn_subagent_tool(),
     }
     if is_web_search_configured():
         out["webSearch"] = build_web_search_tool()
