@@ -106,6 +106,7 @@
     "papaparse": "^5.5.3",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",
+    "pdf-to-img": "^6.2.0",
     "pdfjs-dist": "^5.7.284",
     "platejs": "^52.3.2",
     "radix-ui": "^1.4.3",

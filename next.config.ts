@@ -14,7 +14,14 @@ const nextConfig: NextConfig = {
   // Turbopack can't place in an ESM chunk ("asset is not placeable in
   // ESM chunks"). Server-external makes Node require it from node_modules
   // at runtime. It's only reached behind the env-gated runCode skill.
-  serverExternalPackages: ["pdf-parse", "pdfjs-dist", "mammoth", "microsandbox"],
+  //
+  // `pdf-to-img` renders PDF pages to PNG for the vision extraction path
+  // (`@/server/extraction/vision`). It depends on `@napi-rs/canvas`, a
+  // native NAPI binding Turbopack can't place in an ESM chunk — same
+  // class of issue as `microsandbox`. Server-external makes Node require
+  // it from node_modules at runtime. Only reached behind the
+  // vision-capable-model gate.
+  serverExternalPackages: ["pdf-parse", "pdfjs-dist", "mammoth", "microsandbox", "pdf-to-img"],
   // Allow the dev server to be hit from LAN IPs (e.g. for testing on a
   // phone on the same Wi-Fi). Without this, Next.js 16+ warns about
   // cross-origin requests to `/_next/*` and will eventually block them.
