@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { CHAT_MODELS, DEFAULT_CHAT_MODEL, getChatModel } from "./models"
+import { CHAT_MODELS, DEFAULT_CHAT_MODEL, getChatModel, modelSupportsVision } from "./models"
 
 describe("CHAT_MODELS — loaded from config/models.json", () => {
   test("contains at least the bundled default models", () => {
@@ -50,5 +50,17 @@ describe("getChatModel", () => {
 
   test("returns null for an unknown id", () => {
     expect(getChatModel("does/not-exist")).toBeNull()
+  })
+})
+
+describe("modelSupportsVision", () => {
+  test("flagged model → true", () => {
+    expect(modelSupportsVision("anthropic/claude-sonnet-4.6")).toBe(true)
+  })
+  test("unflagged model → false", () => {
+    expect(modelSupportsVision("deepseek/deepseek-v4-flash")).toBe(false)
+  })
+  test("unknown id → false", () => {
+    expect(modelSupportsVision("does/not-exist")).toBe(false)
   })
 })
