@@ -8,8 +8,11 @@ Covers:
     IPv6 reject; DNS rebinding (private IP returned by
     `getaddrinfo` → reject); DNS lookup failure → distinct code.
 
-DNS resolution is patched at the boundary so tests stay hermetic
-and the IPv6 / CGNAT / benchmark ranges are deterministic.
+Most DNS tests patch resolution at the boundary so they stay hermetic
+and the IPv6 / CGNAT / benchmark ranges are deterministic. The
+`test_real_*` tests at the end exercise the UN-mocked resolver
+(`localhost` offline; a public resolves-to-loopback name, skipped when
+DNS is unavailable), covering the actual `socket.getaddrinfo` path.
 """
 
 from __future__ import annotations
@@ -193,5 +196,53 @@ async def test_validate_dns_unparseable_returned_address_rejects() -> None:
 
     with patch("agent_py.url_validate._async_getaddrinfo", new=fake_dns):
         out = await validate_outbound_url("https://example.com/p")
+    assert isinstance(out, ValidationError)
+    assert out.code == "private_address"
+
+
+# --- validate_outbound_url — REAL (un-mocked) DNS resolution ----------
+# The DNS tests above patch `_async_getaddrinfo`, so they verify the
+# private-IP LOGIC but never the real resolver. These exercise the actual
+# `socket.getaddrinfo` path — catching a regression where real resolver
+# output (sockaddr shape / IPv6 form) wouldn't flow into the private-IP
+# check. This guard backs the url-fetch + image-gen routes.
+
+
+@pytest.mark.asyncio
+async def test_real_resolver_localhost_classified_private() -> None:
+    """Un-mocked: the real resolver returns loopback for `localhost`, and
+    every address it returns is flagged private. Proves the rebinding
+    defence's resolver + classifier work end-to-end against
+    `socket.getaddrinfo`, not just a mock. `localhost` resolves via the
+    system files, so this stays hermetic (no network)."""
+    from agent_py.url_validate import _async_getaddrinfo, _is_private_ip
+
+    addrs = await _async_getaddrinfo("localhost")
+    assert addrs, "localhost should resolve to >=1 address offline"
+    assert all(_is_private_ip(a) for a in addrs), addrs
+
+
+@pytest.mark.asyncio
+async def test_real_dns_rebinding_public_name_rejected() -> None:
+    """End-to-end with ACTUAL DNS: a public hostname that resolves to a
+    loopback IP is rejected by the full `validate_outbound_url` path (real
+    resolver, not a mock) as `private_address` — the literal DNS rebinding
+    scenario. Skipped when DNS is unavailable (offline CI) or the public
+    helper stops resolving privately, so it never flakes."""
+    import ipaddress
+    import socket
+
+    host = "127.0.0.1.nip.io"  # public DNS record → 127.0.0.1
+    try:
+        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except OSError:
+        pytest.skip("DNS unavailable (offline)")
+    resolved = {str(sa[0]) for *_, sa in infos}
+    if not any(
+        ipaddress.ip_address(a).is_loopback or ipaddress.ip_address(a).is_private for a in resolved
+    ):
+        pytest.skip(f"{host} no longer resolves to a private IP: {sorted(resolved)}")
+
+    out = await validate_outbound_url(f"https://{host}/p")
     assert isinstance(out, ValidationError)
     assert out.code == "private_address"
