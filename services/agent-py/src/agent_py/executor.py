@@ -35,6 +35,7 @@ import asyncpg
 import structlog
 
 from . import jobs, store, verify
+from .aggregate import aggregate_child_results
 from .barrier import settle_task_terminal
 from .emitter import EventSink, RunEmitter
 from .events import TaskEvent, TokenEvent, ToolOutputEvent
@@ -276,6 +277,36 @@ async def _run_chunk(
     # the current state to persist; the closure captures it here so we
     # don't have to plumb a getter through the step-fn factory.
     live_messages: list[dict[str, Any]] = _messages_from(checkpoint)
+
+    # Fan-in resume: when the checkpoint carries `awaiting_children`
+    # (written by the spawned path in Task 7), this is the parent's
+    # `continue` job fired by the barrier after all children settled.
+    # Load + aggregate the child results and inject them as a
+    # `tool_result` user turn for the original spawn `tool_call_id`,
+    # then strip the marker so it doesn't re-trigger on a later chunk.
+    # This is the only resume path that carries `awaiting_children`; a
+    # fresh `start` checkpoint never has it, so the guard is sufficient.
+    if resume:
+        awaiting = checkpoint.get("awaiting_children")
+        if isinstance(awaiting, dict):
+            tool_call_id = str(awaiting.get("tool_call_id") or "")
+            child_results = await store.load_child_results(
+                pool, parent_task_id=payload.run_id, user_id=payload.user_id
+            )
+            tool_result_text = aggregate_child_results(child_results)
+            live_messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_call_id,
+                            "content": tool_result_text,
+                        }
+                    ],
+                }
+            )
+            checkpoint = {k: v for k, v in checkpoint.items() if k != "awaiting_children"}
 
     try:
         await store.set_task_handler(
