@@ -23,8 +23,9 @@ export interface RenderPdfOptions {
  *
  * The worker body is an inline string (`eval: true`) rather than a
  * separate file so there's nothing for Next/Turbopack to bundle or fail
- * to trace — it just `import()`s `pdf-to-img`, which is marked
- * `serverExternalPackages` and so resolves from node_modules at runtime.
+ * to trace — the `import("pdf-to-img")` lives inside the string, so the
+ * bundler never sees it and the package just resolves from node_modules
+ * at runtime (no `serverExternalPackages` entry needed).
  */
 const WORKER_CODE = `
 const { parentPort, workerData } = require("node:worker_threads")
