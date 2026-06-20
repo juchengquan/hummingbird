@@ -169,6 +169,8 @@ class HandoffEvent(TaskEventBase):
     kind: Literal["handoff"] = field(default="handoff", init=False)
     agent: str
     phase: Literal["enter", "exit"]
+    child_task_id: str | None = None
+    subgoal: str | None = None
 
 
 # --- Approval / HITL -------------------------------------------------------
@@ -291,7 +293,12 @@ def event_to_row_payload(event: TaskEvent) -> dict[str, object]:
     if isinstance(event, StepErrorEvent):
         return {"message": event.message, "willRetry": event.will_retry}
     if isinstance(event, HandoffEvent):
-        return {"agent": event.agent, "phase": event.phase}
+        handoff_payload: dict[str, object] = {"agent": event.agent, "phase": event.phase}
+        if event.child_task_id is not None:
+            handoff_payload["childTaskId"] = event.child_task_id
+        if event.subgoal is not None:
+            handoff_payload["subgoal"] = event.subgoal
+        return handoff_payload
     if isinstance(event, ApprovalEvent):
         approval_payload: dict[str, object] = {
             "approvalId": event.approval_id,

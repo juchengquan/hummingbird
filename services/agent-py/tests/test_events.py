@@ -99,3 +99,38 @@ def test_handoff_event_is_task_event_union_member() -> None:
         run_id="r", seq=3, step=1, created_at="t", agent="researcher", phase="enter"
     )
     assert isinstance(e, HandoffEvent)
+
+
+def test_handoff_event_with_child_task_id_and_subgoal() -> None:
+    """Spawn handoff carries child_task_id + subgoal in the row payload."""
+    e = HandoffEvent(
+        run_id="r",
+        seq=1,
+        step=1,
+        created_at="t",
+        agent="r",
+        phase="enter",
+        child_task_id="c1",
+        subgoal="g",
+    )
+    assert event_to_row_payload(e) == {
+        "agent": "r",
+        "phase": "enter",
+        "childTaskId": "c1",
+        "subgoal": "g",
+    }
+
+
+def test_handoff_event_without_child_task_id_omits_optional_keys() -> None:
+    """A plain handoff (no child_task_id/subgoal) → payload has no optional keys."""
+    e = HandoffEvent(
+        run_id="r",
+        seq=1,
+        step=1,
+        created_at="t",
+        agent="researcher",
+        phase="enter",
+        child_task_id=None,
+        subgoal=None,
+    )
+    assert event_to_row_payload(e) == {"agent": "researcher", "phase": "enter"}
