@@ -589,7 +589,12 @@ export function ChatPanel() {
         ...fork.messages.slice(0, fork.messages.length - 1),
         { ...last, content: newContent },
       ]
-      chatSendMessage(newHistory)
+      // Route the reply onto the fork explicitly: `forkConversation`
+      // already set `activeConversationId = fork.id` in the store, but
+      // the send pipeline's React-subscribed `activeConversationId` /
+      // `conversations` haven't re-rendered yet, so without this the
+      // streamed reply would land on the SOURCE conversation.
+      chatSendMessage(newHistory, { targetConversationId: fork.id })
       toast.success("Edited — original kept as a branch")
     },
     [activeConversationId, messages, forkConversation, updateMessage, chatSendMessage]
@@ -625,7 +630,10 @@ export function ChatPanel() {
       // reply preserved on the source) and resend for a fresh reply.
       const fork = forkConversation(activeConversationId, target, "retry")
       if (!fork) return
-      chatSendMessage(fork.messages)
+      // Explicit target — see the note in `handleEditUserMessage`: the
+      // store points at the fork, but the send pipeline's subscribed
+      // active id is still the source until the next render.
+      chatSendMessage(fork.messages, { targetConversationId: fork.id })
       toast.success("Regenerated — previous kept as a branch")
     },
     [activeConversationId, messages, forkConversation, chatSendMessage]
