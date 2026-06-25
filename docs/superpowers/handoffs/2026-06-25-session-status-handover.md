@@ -111,10 +111,9 @@ the same vigilance if you extend this work):
    implemented in the in-Next backend. Remote-backend users need it added
    to agent-ts / agent-py (mirror however `/v1/images/refresh-url` is
    handled there).
-3. **Pre-existing doc gap (minor):** `docs/API.md`'s Frame protocol
-   documents the new `tool_file` frame but the older `tool_image` /
-   `code_result` translated frames remain undocumented. Out of scope
-   this session; fix if you touch that doc.
+
+(The `docs/API.md` Frame-protocol gap — `tool_image` / `code_result`
+were undocumented — was closed this session in #274.)
 
 ## Repo orientation (only what wasn't obvious)
 
