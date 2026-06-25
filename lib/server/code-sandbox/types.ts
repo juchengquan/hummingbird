@@ -9,11 +9,25 @@ export type CodeResult =
   | { type: "table"; columns: string[]; rows: string[][] }
   | { type: "text"; value: string }
 
+/** A whole file the run wrote to the designated output dir
+ *  (`/tmp/outputs/`). Distinct from `CodeResult` cells, which render
+ *  inline in the code-output block; files are downloadable artifacts. */
+export interface CodeFile {
+  name: string
+  mimeType: string
+  sizeBytes: number
+  /** Base64 of the file bytes. */
+  data: string
+}
+
 export interface CodeRunResult {
   ok: boolean
   stdout: string
   stderr: string
   results: CodeResult[]
+  /** Files the run wrote to `/tmp/outputs/`. Surfaced as download
+   *  chips + `file` artifacts, separate from the inline `results`. */
+  files?: CodeFile[]
   error?: {
     code: "timeout" | "runtime" | "upstream" | "budget"
     message: string
