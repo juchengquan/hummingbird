@@ -32,6 +32,10 @@ Non-goals (deliberately deferred):
   general "export this artifact/message to a file" action).
 - Storing/reorganizing existing artifacts or uploaded files.
 - A size/count cap on captured files (see Caps below).
+- **File-URL refresh on expiry.** Unlike generated images (which self-heal
+  via `/api/images/refresh-url`), generated files have no re-sign path yet.
+  In Supabase/cloud mode a download URL is valid for its 1-year signed-URL
+  TTL, then breaks until refresh is wired; local/data-URL mode is unaffected.
 
 ## Decisions (from brainstorming)
 

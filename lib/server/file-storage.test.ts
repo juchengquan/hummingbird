@@ -43,5 +43,6 @@ describe("persistGeneratedFiles — data-URL fallback", () => {
     expect(res.ok).toBe(true)
     if (!res.ok) return
     expect(res.files[0].storagePath).toBeNull()
+    expect(res.files[0].url).toMatch(/^data:/)
   })
 })

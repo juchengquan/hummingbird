@@ -7,7 +7,9 @@ import "server-only"
  *
  *   1. **Supabase Storage** — when a session is present, upload to
  *      `user-files/{user_id}/generated/{id}-{name}` and mint a 1-year
- *      signed URL; `storagePath` travels back so the client can re-sign.
+ *      signed URL; `storagePath` is returned for a future re-sign path
+ *      (not yet wired for files — see the spec's deferred follow-ups);
+ *      until then a cloud-mode signed URL is valid for its 1-year TTL.
  *   2. **Data URL fallback** — anonymous / unconfigured Supabase, or any
  *      upload failure. Returns `data:{mime};base64,{...}`.
  *
@@ -43,6 +45,7 @@ export interface PersistedFile {
 }
 
 export interface PersistFilesOpts {
+  /** Reserved for interface parity; not yet threaded into the Supabase calls (no long download to abort — bytes are already in hand). */
   signal?: AbortSignal
   /** Mirror of the client's "Store files locally" preference. */
   localFilesOnly?: boolean
@@ -126,19 +129,4 @@ export async function persistGeneratedFiles(
   const cloud = opts.localFilesOnly ? null : await resolveCloudContext()
   const files = await Promise.all(inputs.map((f) => persistOne(f, cloud)))
   return { ok: true, files }
-}
-
-/** Re-sign a generated file's storage path (parallel to
- *  `signGeneratedImageUrl`). Caller does the auth check. */
-export async function signGeneratedFileUrl(
-  storagePath: string,
-  client?: SupabaseClient<Database>,
-): Promise<string | null> {
-  const supabase = client ?? (await getSupabaseServerClient())
-  if (!supabase) return null
-  const { data, error } = await supabase.storage
-    .from("user-files")
-    .createSignedUrl(storagePath, SIGNED_URL_TTL_SECONDS)
-  if (error || !data?.signedUrl) return null
-  return data.signedUrl
 }

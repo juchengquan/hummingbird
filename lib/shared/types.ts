@@ -580,8 +580,8 @@ export interface GeneratedImage {
 /** A file the code interpreter wrote to `/tmp/outputs/`, persisted and
  *  surfaced as a download chip + `file` artifact. Mirrors the persistence
  *  posture of `GeneratedImage`: `url` is a Supabase signed URL or a `data:`
- *  fallback; `storagePath` is set only when the bytes went to Storage so
- *  the client can re-sign on expiry. */
+ *  fallback; `storagePath` is set only when the bytes went to Storage.
+ *  Re-signing on expiry is a deferred follow-up (not yet implemented for files). */
 export interface GeneratedFile {
   id: string
   name: string
