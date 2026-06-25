@@ -33,7 +33,9 @@ function triggerDownload(url: string, name: string): void {
   a.download = name
   document.body.appendChild(a)
   a.click()
-  a.remove()
+  // Detach on the next tick — some browsers (older WebKit/Safari) cancel a
+  // download whose initiating anchor is removed in the same tick as click().
+  setTimeout(() => a.remove(), 0)
 }
 
 function FileChip({
