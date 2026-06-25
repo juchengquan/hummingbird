@@ -128,3 +128,36 @@ describe("toCodeRunResult — RESULT_CAP spans text/images/tables", () => {
     ).toBe(true)
   })
 })
+
+describe("toCodeRunResult — files", () => {
+  test("passes output files through with computed sizeBytes", () => {
+    const data = Buffer.from("col1,col2\n1,2\n").toString("base64")
+    const out = toCodeRunResult({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      images: [],
+      timedOut: false,
+      files: [{ name: "report.csv", mime: "text/csv", data }],
+    })
+    expect(out.files).toEqual([
+      {
+        name: "report.csv",
+        mimeType: "text/csv",
+        sizeBytes: Buffer.from(data, "base64").length,
+        data,
+      },
+    ])
+  })
+
+  test("defaults files to an empty array when none were written", () => {
+    const out = toCodeRunResult({
+      stdout: "hi",
+      stderr: "",
+      exitCode: 0,
+      images: [],
+      timedOut: false,
+    })
+    expect(out.files).toEqual([])
+  })
+})
