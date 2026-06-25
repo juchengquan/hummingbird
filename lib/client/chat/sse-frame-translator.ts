@@ -66,6 +66,9 @@ export interface NormalisedFrame {
   stdout?: string
   stderr?: string
   codeCells?: CodeResultCell[]
+  /** Tool-file frame (`data-tool-file`): the producing call id + the
+   *  bundled files returned by the tool. Carries id and files array. */
+  files?: unknown[]
 }
 
 /** Decode one SSE payload (the JSON between `data: ` and `\n\n`) and
@@ -164,6 +167,17 @@ export function translateFrame(payload: string): NormalisedFrame | null {
       id: typeof data.id === "string" ? data.id : undefined,
       mode: typeof data.mode === "string" ? data.mode : undefined,
       images: Array.isArray(data.images) ? data.images : undefined,
+    }
+  }
+  if (t === "data-tool-file") {
+    const data = raw.data as
+      | { id?: unknown; files?: unknown }
+      | undefined
+    if (!data || typeof data !== "object") return null
+    return {
+      type: "tool_file",
+      id: typeof data.id === "string" ? data.id : undefined,
+      files: Array.isArray(data.files) ? data.files : undefined,
     }
   }
   if (t === "data-code-result") {

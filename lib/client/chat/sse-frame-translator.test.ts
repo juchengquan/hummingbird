@@ -212,6 +212,31 @@ describe("translateFrame — lifecycle + edge cases", () => {
     expect(translateFrame('{"type":"data-tool-image"}')).toBeNull()
   })
 
+  test("data-tool-file — translates a tool-file frame", () => {
+    const out = translateFrame(
+      JSON.stringify({
+        type: "data-tool-file",
+        data: {
+          id: "call-0",
+          files: [
+            { id: "call-0-0", name: "report.csv", sizeBytes: 12, mimeType: "text/csv", url: "data:..." },
+          ],
+        },
+      }),
+    )
+    expect(out).toEqual({
+      type: "tool_file",
+      id: "call-0",
+      files: [
+        { id: "call-0-0", name: "report.csv", sizeBytes: 12, mimeType: "text/csv", url: "data:..." },
+      ],
+    })
+  })
+
+  test("data-tool-file without data → null", () => {
+    expect(translateFrame(JSON.stringify({ type: "data-tool-file" }))).toBeNull()
+  })
+
   test("data-ui — emits ui_part with id/kind/props", () => {
     const out = translateFrame(
       JSON.stringify({
