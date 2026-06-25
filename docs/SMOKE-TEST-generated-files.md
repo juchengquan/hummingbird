@@ -134,6 +134,17 @@ first.
 
    Then sign out and repeat the first call → **401**.
 
+5. [ ] **Artifact download/preview self-heals (file + image).** Open the
+   Artifacts tab, pick a generated **file** artifact, break its stored
+   `storagePath` in the persisted store (append junk to the signed
+   URL's token; keep the `/object/sign/user-files/<path>` part intact),
+   reload, then click its download row → you see `POST
+   /api/files/refresh-url → 200` and the file downloads. Repeat for an
+   **image** artifact: break its `storagePath`, reload → the preview
+   `<img>` errors then re-fetches via `POST /api/images/refresh-url →
+   200` and renders. A `data:`/local artifact (no signed URL) shows no
+   refresh request — it just downloads/renders as-is.
+
 ---
 
 ## Result

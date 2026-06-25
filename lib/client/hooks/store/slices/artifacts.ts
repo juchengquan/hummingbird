@@ -39,6 +39,10 @@ export interface ArtifactsSlice {
    *  updateArtifactTitle, this is a plain field set; `content` already
    *  syncs via diffArtifacts. */
   updateArtifactContent: (artifactId: string, content: string) => void
+  /** Replace a single artifact's `storagePath` — used by the lazy
+   *  signed-URL re-sign path so the fresh URL persists + syncs. No-op if
+   *  the id is missing or the value is unchanged. */
+  updateArtifactStoragePath: (artifactId: string, storagePath: string) => void
   requestEditorReload: () => void
   /** Toggle an artifact's selection for the active conversation
    *  (mirrors the file + URL-bookmark selection pattern). */
@@ -145,6 +149,14 @@ export const createArtifactsSlice: SliceCreator<ArtifactsSlice> = (set, get) => 
     set((state) => ({
       artifacts: state.artifacts.map((a) =>
         a.id === artifactId ? { ...a, content } : a,
+      ),
+    })),
+  updateArtifactStoragePath: (artifactId, storagePath) =>
+    set((state) => ({
+      artifacts: state.artifacts.map((a) =>
+        a.id === artifactId && a.storagePath !== storagePath
+          ? { ...a, storagePath }
+          : a,
       ),
     })),
   requestEditorReload: () =>

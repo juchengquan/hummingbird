@@ -4,6 +4,7 @@ import { useRef } from "react"
 import { Download, FileText } from "lucide-react"
 
 import { apiClient } from "@/client/api-client"
+import { triggerDownload } from "@/client/download"
 import { useStore } from "@/client/hooks/use-store"
 import type { GeneratedFile } from "@/shared/types"
 
@@ -23,19 +24,6 @@ export function shouldRefreshFile(
   messageId: string | undefined,
 ): boolean {
   return !!file.storagePath && !!messageId
-}
-
-/** Programmatic download via a transient anchor — used after an async
- *  re-sign, since the original click was prevented. */
-function triggerDownload(url: string, name: string): void {
-  const a = document.createElement("a")
-  a.href = url
-  a.download = name
-  document.body.appendChild(a)
-  a.click()
-  // Detach on the next tick — some browsers (older WebKit/Safari) cancel a
-  // download whose initiating anchor is removed in the same tick as click().
-  setTimeout(() => a.remove(), 0)
 }
 
 function FileChip({
