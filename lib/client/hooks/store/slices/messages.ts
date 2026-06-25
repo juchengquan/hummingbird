@@ -5,6 +5,7 @@ import type {
   MessageError,
   ToolCallRecord,
   GeneratedImage,
+  GeneratedFile,
 } from "@/shared/types"
 import { uuid } from "@/shared/uuid"
 import { buildCompressedMessages } from "@/shared/compression"
@@ -72,6 +73,7 @@ export interface MessagesSlice {
    *  frames. See `docs/PLAN-model-routing.md`. */
   setMessageRoutedModel: (messageId: string, modelId: string) => void
   appendMessageGeneratedImages: (messageId: string, images: GeneratedImage[]) => void
+  appendMessageGeneratedFiles: (messageId: string, files: GeneratedFile[]) => void
   /** Append one code-interpreter result to the assistant message —
    *  emitted by the `runCode` skill, dispatched by `use-chat-send` on
    *  `code_result` SSE frames. See
@@ -289,6 +291,13 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
       updateMessage(state, messageId, (m) => ({
         ...m,
         generatedImages: [...(m.generatedImages ?? []), ...images],
+      }))
+    ),
+  appendMessageGeneratedFiles: (messageId, files) =>
+    set((state) =>
+      updateMessage(state, messageId, (m) => ({
+        ...m,
+        generatedFiles: [...(m.generatedFiles ?? []), ...files],
       }))
     ),
   appendMessageCodeResult: (messageId, part) =>
