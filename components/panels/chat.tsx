@@ -49,12 +49,12 @@ import { usePromptMentionAutocomplete } from "@/client/hooks/use-prompt-mention-
 import { useAttachmentMentionAutocomplete } from "@/client/hooks/use-attachment-mention-autocomplete"
 import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/shared/upload-config"
 import type { Agent } from "@/shared/types"
+import { forkTargetForEdit, forkTargetForRegenerate } from "@/shared/branches/fork-target"
 
 export function ChatPanel() {
   const addMessage = useStore((state) => state.addMessage)
   const deleteMessage = useStore((state) => state.deleteMessage)
   const updateMessage = useStore((state) => state.updateMessage)
-  const truncateMessagesAfter = useStore((state) => state.truncateMessagesAfter)
   // Per-conversation typing flag is sourced from `useChatSend` /
   // `useIsConversationTyping` below.
   const pendingReferenceImage = useStore(
@@ -571,29 +571,28 @@ export function ChatPanel() {
     }
   }
 
+  const forkConversation = useStore((s) => s.forkConversation)
+
   const handleEditUserMessage = useCallback(
     (messageId: string, newContent: string) => {
-      const conv = conversations.find((c) => c.id === activeConversationId)
-      if (!conv) return
-      const idx = conv.messages.findIndex((m) => m.id === messageId)
-      if (idx === -1) return
-
-      updateMessage(messageId, newContent)
-      truncateMessagesAfter(messageId)
-
+      if (!activeConversationId) return
+      const target = forkTargetForEdit(messages, messageId)
+      if (!target) return
+      // Non-destructive: fork the thread (original preserved), then apply
+      // the edit on the fork's copy of this turn and resend.
+      const fork = forkConversation(activeConversationId, target, "edit")
+      if (!fork) return
+      const last = fork.messages[fork.messages.length - 1]
+      if (!last) return
+      updateMessage(last.id, newContent)
       const newHistory = [
-        ...conv.messages.slice(0, idx),
-        { ...conv.messages[idx], content: newContent },
+        ...fork.messages.slice(0, fork.messages.length - 1),
+        { ...last, content: newContent },
       ]
       chatSendMessage(newHistory)
+      toast.success("Edited — original kept as a branch")
     },
-    [
-      conversations,
-      activeConversationId,
-      updateMessage,
-      truncateMessagesAfter,
-      chatSendMessage,
-    ]
+    [activeConversationId, messages, forkConversation, updateMessage, chatSendMessage]
   )
 
   /**
@@ -619,23 +618,19 @@ export function ChatPanel() {
 
   const handleRegenerateAssistantMessage = useCallback(
     (messageId: string) => {
-      const conv = conversations.find((c) => c.id === activeConversationId)
-      if (!conv) return
-      const idx = conv.messages.findIndex((m) => m.id === messageId)
-      if (idx <= 0) return
-      truncateMessagesAfter(messageId, true)
-      const newHistory = conv.messages.slice(0, idx)
-      chatSendMessage(newHistory)
+      if (!activeConversationId) return
+      const target = forkTargetForRegenerate(messages, messageId)
+      if (!target) return
+      // Non-destructive: fork at the prompting user message (original
+      // reply preserved on the source) and resend for a fresh reply.
+      const fork = forkConversation(activeConversationId, target, "retry")
+      if (!fork) return
+      chatSendMessage(fork.messages)
+      toast.success("Regenerated — previous kept as a branch")
     },
-    [
-      conversations,
-      activeConversationId,
-      truncateMessagesAfter,
-      chatSendMessage,
-    ]
+    [activeConversationId, messages, forkConversation, chatSendMessage]
   )
 
-  const forkConversation = useStore((s) => s.forkConversation)
   const handleForkFromMessage = useCallback(
     (messageId: string) => {
       if (!activeConversationId) return
