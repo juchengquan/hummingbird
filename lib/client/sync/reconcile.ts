@@ -21,6 +21,7 @@ import type {
   ConversationUrlBookmark,
   Document,
   FileExtractionStatus,
+  GeneratedFile,
   GeneratedImage,
   McpCapabilities,
   McpResource,
@@ -153,6 +154,42 @@ function parseGeneratedImages(value: Json | null | undefined): GeneratedImage[] 
     }
     if (typeof e.storagePath === "string") img.storagePath = e.storagePath
     out.push(img)
+  }
+  return out
+}
+
+/**
+ * Boundary parser for `messages.generated_files`. Returns the typed
+ * array on a valid payload, null otherwise. We're defensive about each
+ * entry's shape (rather than `as unknown as GeneratedFile[]`) because
+ * a corrupted / hand-edited row shouldn't crash the rehydration —
+ * dropping a bad entry is better than blanking the whole conversation.
+ * `storagePath` is nullable (a file may not have been uploaded yet).
+ */
+function parseGeneratedFiles(value: Json | null | undefined): GeneratedFile[] | null {
+  if (!Array.isArray(value)) return null
+  const out: GeneratedFile[] = []
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue
+    const e = entry as Record<string, unknown>
+    if (
+      typeof e.id !== "string" ||
+      typeof e.name !== "string" ||
+      typeof e.sizeBytes !== "number" ||
+      typeof e.mimeType !== "string" ||
+      typeof e.url !== "string"
+    ) {
+      continue
+    }
+    const file: GeneratedFile = {
+      id: e.id,
+      name: e.name,
+      sizeBytes: e.sizeBytes,
+      mimeType: e.mimeType,
+      url: e.url,
+      storagePath: typeof e.storagePath === "string" ? e.storagePath : null,
+    }
+    out.push(file)
   }
   return out
 }
@@ -322,6 +359,10 @@ export async function fetchCloudSnapshot(
       const persistedImages = parseGeneratedImages(m.generated_images)
       if (persistedImages && persistedImages.length > 0) {
         msg.generatedImages = persistedImages
+      }
+      const persistedFiles = parseGeneratedFiles(m.generated_files)
+      if (persistedFiles && persistedFiles.length > 0) {
+        msg.generatedFiles = persistedFiles
       }
       list.push(msg)
       messagesByConv.set(m.conversation_id, list)
@@ -720,6 +761,7 @@ export async function bulkUploadLocalState(
     kind: string | null
     recap_message_ids: string[]
     generated_images: Json
+    generated_files: Json
     created_at: string
   }> = []
   for (const c of snapshot.conversations) {
@@ -743,6 +785,10 @@ export async function bulkUploadLocalState(
         generated_images:
           m.generatedImages && m.generatedImages.length > 0
             ? (m.generatedImages as unknown as Json)
+            : null,
+        generated_files:
+          m.generatedFiles && m.generatedFiles.length > 0
+            ? (m.generatedFiles as unknown as Json)
             : null,
         created_at: new Date(m.timestamp).toISOString(),
       })

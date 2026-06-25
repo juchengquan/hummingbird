@@ -16,7 +16,8 @@ import "client-only"
  *   suggestions on messages; extraction state / image data URLs / summary /
  *   keyTopics on files; systemPrompt on workspaces. These stay local.
  *   (`generatedImages` IS synced now via the `messages.generated_images`
- *   JSONB column added in migration 0010 — see the upsert payload below.)
+ *   JSONB column added in migration 0010; `generatedFiles` IS synced via
+ *   `messages.generated_files` added in migration 0018 — see the upsert payload below.)
  * - Deletes for child entities (messages of a deleted conversation, etc.)
  *   are NOT emitted — Postgres ON DELETE CASCADE handles them via the
  *   foreign keys defined in migration 0001/0002.
@@ -325,6 +326,12 @@ function diffMessages(
           generated_images:
             m.generatedImages && m.generatedImages.length > 0
               ? (m.generatedImages as unknown as Json)
+              : null,
+          // JSONB: array of {id, name, sizeBytes, mimeType, url, storagePath}.
+          // Null when no files on this message.
+          generated_files:
+            m.generatedFiles && m.generatedFiles.length > 0
+              ? (m.generatedFiles as unknown as Json)
               : null,
           created_at: toISO(m.timestamp),
         },
