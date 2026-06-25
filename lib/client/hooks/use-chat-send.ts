@@ -35,6 +35,7 @@ import { apiClient } from "@/client/api-client"
 import { useTaskRunContext } from "@/client/agent/task-run-context"
 import { autoArchiveCodeBlocks as autoArchiveCodeBlocksPure } from "@/client/chat/auto-archive-code-blocks"
 import { shouldAutoRetry } from "@/client/chat/auto-retry-decision"
+import { resolveSendTargetConversationId } from "@/client/chat/resolve-send-target"
 import { buildAttachments } from "@/client/chat/build-attachments"
 import { buildTransmittedMessages } from "@/client/chat/build-messages"
 import {
@@ -86,6 +87,17 @@ export interface SendOptions {
    *  Passed through to task mode; the inline chat stream relies on the
    *  server-side filter in `loadEffectiveMcpServers`. */
   allowedMcpServerIds?: string[]
+  /** Route this turn's reply onto a specific conversation rather than
+   *  the React-subscribed `activeConversationId`. Needed when the caller
+   *  has *just* created a conversation (e.g. a non-destructive edit/
+   *  regenerate fork) in the same event tick: the store's
+   *  `activeConversationId` is already the fork, but the subscribed
+   *  closure values inside `send` still see the source. When set, the
+   *  conversation (and everything derived from it at send-time) is
+   *  resolved from `useStore.getState()` for this id. When absent, the
+   *  pipeline keeps reading the subscribed `activeConversationId` /
+   *  `conversations` — preserving the tab-switch-mid-stream protection. */
+  targetConversationId?: string
 }
 
 export interface UseChatSendResult {
@@ -228,10 +240,22 @@ export function useChatSend(): UseChatSendResult {
         options?.modelOverride ?? useStore.getState().chatModel
       const isRetry = options?.isRetry ?? false
       // Capture the conv id at send time so a tab switch mid-stream
-      // doesn't move the UI state onto the wrong chat.
-      const targetConvId = activeConversationId
+      // doesn't move the UI state onto the wrong chat. When the caller
+      // explicitly targets a conversation (a just-created fork that the
+      // subscribed closure hasn't seen yet), that id wins and the conv
+      // is resolved from `getState()` — see `resolveSendTargetConversationId`.
+      const targetConvId = resolveSendTargetConversationId(
+        options,
+        activeConversationId
+      )
       if (!targetConvId) return
-      const conv = conversations.find((c) => c.id === targetConvId)
+      // For an explicit target, `conversations` (the subscribed closure)
+      // may not yet contain the just-created fork — read it fresh.
+      // Without a target, keep using the subscribed array so the
+      // tab-switch-mid-stream protection is unchanged.
+      const conv = options?.targetConversationId
+        ? useStore.getState().conversations.find((c) => c.id === targetConvId)
+        : conversations.find((c) => c.id === targetConvId)
       const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
       // Compose the three system-prompt tiers in the cascade: workspace
       // voice → conversation thread context → per-turn persona override.

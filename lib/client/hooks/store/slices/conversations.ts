@@ -65,7 +65,11 @@ export interface ConversationsSlice {
    * skill prefs, and is set as active. Messages get fresh ids so the two
    * threads can diverge independently.
    */
-  forkConversation: (conversationId: string, untilMessageId: string) => Conversation | null
+  forkConversation: (
+    conversationId: string,
+    untilMessageId: string,
+    titleSuffix?: string,
+  ) => Conversation | null
   deleteConversation: (conversationId: string) => void
   renameConversation: (conversationId: string, title: string) => void
   /** Per-thread system-prompt tier — the slot between workspace voice
@@ -146,7 +150,7 @@ export const createConversationsSlice: SliceCreator<ConversationsSlice> = (
     }))
     return newConversation
   },
-  forkConversation: (conversationId, untilMessageId) => {
+  forkConversation: (conversationId, untilMessageId, titleSuffix = "branch") => {
     const source = get().conversations.find((c) => c.id === conversationId)
     if (!source) return null
     const idx = source.messages.findIndex((m) => m.id === untilMessageId)
@@ -162,7 +166,7 @@ export const createConversationsSlice: SliceCreator<ConversationsSlice> = (
     const fork: Conversation = {
       id: uuid(),
       workspaceId: source.workspaceId,
-      title: `${source.title} (branch)`,
+      title: `${source.title} (${titleSuffix})`,
       messages: copiedMessages,
       createdAt: new Date(),
       updatedAt: new Date(),
