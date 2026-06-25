@@ -590,6 +590,25 @@ export const RefreshImageUrlResponseSchema = z.object({
   url: z.string().min(1),
 })
 
+// --- POST /api/files/refresh-url --------------------------------------------
+//
+// Re-sign an expired generated-FILE URL. The bytes live in Supabase
+// Storage at `storagePath`; the route mints a fresh long-lived URL.
+// Mirrors the image refresh-url contract.
+
+export const RefreshFileUrlRequestSchema = z.object({
+  storagePath: z
+    .string()
+    .min(1)
+    .max(512)
+    .refine((p) => !p.includes(".."), "storagePath must not contain ..")
+    .refine((p) => !p.startsWith("/"), "storagePath must not start with /"),
+})
+
+export const RefreshFileUrlResponseSchema = z.object({
+  url: z.string().min(1),
+})
+
 // --- /api/embed -------------------------------------------------------------
 // Chunk + embed a file's extracted text into the `file_sections` vector
 // table (PLAN-local-rag.md PR 2). The client sends the text directly
@@ -700,6 +719,8 @@ export type CreateShareRequestInput = z.infer<typeof CreateShareRequestSchema>
 export type CreateShareResponse = z.infer<typeof CreateShareResponseSchema>
 export type RefreshImageUrlRequestInput = z.infer<typeof RefreshImageUrlRequestSchema>
 export type RefreshImageUrlResponse = z.infer<typeof RefreshImageUrlResponseSchema>
+export type RefreshFileUrlRequestInput = z.infer<typeof RefreshFileUrlRequestSchema>
+export type RefreshFileUrlResponse = z.infer<typeof RefreshFileUrlResponseSchema>
 export type EmbedRequestInput = z.infer<typeof EmbedRequestSchema>
 export type EmbedResponse = z.infer<typeof EmbedResponseSchema>
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>

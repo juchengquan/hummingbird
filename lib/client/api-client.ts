@@ -28,6 +28,7 @@ import {
   CompressSummarizeResponseSchema,
   ProjectBreakdownResponseSchema,
   RefreshImageUrlResponseSchema,
+  RefreshFileUrlResponseSchema,
   RevokeShareResponseSchema,
   TaskChildrenResponseSchema,
   type ChatRequestInput,
@@ -326,6 +327,7 @@ export const apiUrls = {
   mcpServer: () => url("/api/mcp/server"),
   urlFetch: () => url("/api/url/fetch"),
   imagesRefreshUrl: () => url("/api/images/refresh-url"),
+  filesRefreshUrl: () => url("/api/files/refresh-url"),
   extractTable: () => url("/api/extract-table"),
 }
 
@@ -892,6 +894,35 @@ async function refreshGeneratedImageUrl(
   return result.data.url
 }
 
+/** In-flight dedupe cache for `refreshGeneratedFileUrl`. Separate map
+ *  from the image one so the two never collide on a shared key. */
+const refreshFileUrlInflight = new Map<
+  string,
+  Promise<DispatchedFetchResult<{ url: string }>>
+>()
+
+async function refreshGeneratedFileUrl(
+  storagePath: string,
+  options?: DispatchOption,
+): Promise<string | null> {
+  const result = await dispatchedFetch<
+    { storagePath: string },
+    { storage_path: string },
+    { url: string }
+  >({
+    path: "/v1/files/refresh-url",
+    localUrl: apiUrls.filesRefreshUrl(),
+    bodyForLocal: { storagePath },
+    bodyForRemote: (b) => ({ storage_path: b.storagePath }),
+    schema: RefreshFileUrlResponseSchema,
+    dispatch: options,
+    inflight: refreshFileUrlInflight,
+    dedupeKey: await backendCacheKey(options, storagePath),
+  })
+  if (!result.ok) return null
+  return result.data.url
+}
+
 async function revokeShare(token: string): Promise<{ ok: boolean; status: number; error?: string }> {
   const res = await fetch(apiUrls.shareToken(token), { method: "DELETE" })
   if (!res.ok) {
@@ -1126,6 +1157,9 @@ export const apiClient = {
   },
   images: {
     refreshUrl: refreshGeneratedImageUrl,
+  },
+  files: {
+    refreshUrl: refreshGeneratedFileUrl,
   },
   mcp: { proxy: mcpProxyCall, upsertCloudServer: mcpUpsertCloudServer },
   url: { fetch: urlFetchBookmark },

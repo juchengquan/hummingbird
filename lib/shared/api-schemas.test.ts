@@ -6,6 +6,7 @@ import {
   COMPLETE_PREFIX_MAX,
   CompleteRequestSchema,
   ExtractTableRequestSchema,
+  RefreshFileUrlRequestSchema,
   RefreshImageUrlRequestSchema,
   TaskChildrenResponseSchema,
 } from "./api-schemas"
@@ -41,6 +42,31 @@ describe("RefreshImageUrlRequestSchema", () => {
 
   test("rejects missing field", () => {
     expect(RefreshImageUrlRequestSchema.safeParse({}).success).toBe(false)
+  })
+})
+
+describe("RefreshFileUrlRequestSchema", () => {
+  test("accepts a valid storage path", () => {
+    const r = RefreshFileUrlRequestSchema.safeParse({
+      storagePath: "user-123/generated/abc-report.csv",
+    })
+    expect(r.success).toBe(true)
+  })
+  test("rejects an empty path", () => {
+    expect(RefreshFileUrlRequestSchema.safeParse({ storagePath: "" }).success).toBe(false)
+  })
+  test("rejects a path containing ..", () => {
+    expect(
+      RefreshFileUrlRequestSchema.safeParse({ storagePath: "user-123/../secret" }).success,
+    ).toBe(false)
+  })
+  test("rejects a path starting with /", () => {
+    expect(
+      RefreshFileUrlRequestSchema.safeParse({ storagePath: "/abc/x.csv" }).success,
+    ).toBe(false)
+  })
+  test("rejects a missing path", () => {
+    expect(RefreshFileUrlRequestSchema.safeParse({}).success).toBe(false)
   })
 })
 
