@@ -130,3 +130,24 @@ export async function persistGeneratedFiles(
   const files = await Promise.all(inputs.map((f) => persistOne(f, cloud)))
   return { ok: true, files }
 }
+
+/**
+ * Re-sign a generated file's storage path. Used by
+ * `POST /api/files/refresh-url` when an old conversation hits an expired
+ * signed URL — the bytes are still in the bucket at `storagePath`, we
+ * just need a fresh signature. The caller does the auth check; this
+ * helper only mints the URL. Returns null if Supabase isn't configured
+ * or the sign call fails (e.g. the object was deleted out-of-band).
+ */
+export async function signGeneratedFileUrl(
+  storagePath: string,
+  client?: SupabaseClient<Database>,
+): Promise<string | null> {
+  const supabase = client ?? (await getSupabaseServerClient())
+  if (!supabase) return null
+  const { data, error } = await supabase.storage
+    .from("user-files")
+    .createSignedUrl(storagePath, SIGNED_URL_TTL_SECONDS)
+  if (error || !data?.signedUrl) return null
+  return data.signedUrl
+}
