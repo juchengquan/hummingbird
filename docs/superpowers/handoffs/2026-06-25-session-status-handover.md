@@ -1,10 +1,12 @@
 # Session handover — 2026-06-25
 
-**Status:** Clean stopping point. Generated-files feature shipped and merged to `dev`. No branches in flight, no work mid-stream.
+**Status:** Clean stopping point. Two features shipped and merged to `dev`
+this session (generated files, then file-URL refresh). No branches in
+flight, no work mid-stream.
 
 ## What shipped this session
 
-**Feature: generated files from the code interpreter.** The `runCode`
+**1. Generated files from the code interpreter.** The `runCode`
 sandbox now captures arbitrary files the model writes to `/tmp/outputs/`,
 surfaces them as download chips in the assistant message, and persists
 them as workspace-scoped `file` artifacts (Artifacts tab). Design mirrors
@@ -16,9 +18,25 @@ the existing generated-**images** pipeline end to end.
 - **Plan:** `docs/superpowers/plans/2026-06-25-generated-files-capture.md`
   (15 tasks across 3 slices; full code + tests per task).
 
-Don't re-derive the design or task list — they're in the spec/plan. The
-git history on `dev` (commits `dd85e79`..`d129059`, now in `96621dd`)
-carries the per-task detail.
+**2. File-URL refresh on click.** Generated-file download chips now
+transparently re-sign an expired Supabase signed URL when clicked
+(anchors have no `onError`, so it re-signs on click instead). Mirrors the
+image refresh path. This closes follow-up #2 from the earlier version of
+this handoff.
+
+- **PR:** https://github.com/juchengquan/hummingbird/pull/267 — **merged**
+  to `dev` (merge commit `ff45d3d`). All 5 CI checks were green.
+- **Spec:** `docs/superpowers/specs/2026-06-25-file-url-refresh-design.md`
+- **Plan:** `docs/superpowers/plans/2026-06-25-file-url-refresh.md`
+  (5 tasks). Re-added `signGeneratedFileUrl`; added `POST /api/files/refresh-url`
+  (with a 403 owner-check), `RefreshFileUrl*` schemas,
+  `apiClient.files.refreshUrl`, `updateMessageGeneratedFileUrl`, and the
+  chip click-intercept. **Scope was chips-only** — the Artifacts-tab file
+  download still doesn't self-refresh (it stores the URL, not the storage
+  path; same gap image artifacts have).
+
+Don't re-derive either design or task list — they're in the specs/plans.
+The git history on `dev` carries the per-task detail.
 
 ## How it was built (process notes worth knowing)
 
@@ -49,22 +67,28 @@ the same vigilance if you extend this work):
 
 ## Open follow-ups (not started — pick up if asked)
 
-1. **Manual smoke test (highest value).** Never run against a live
-   microsandbox. Needs `CODE_SANDBOX_ENABLED=1` on a microsandbox-capable
-   host. Steps: in a chat with the code interpreter, ask it to write a
-   CSV to a downloadable file → verify (a) a download chip appears in the
-   message and downloads, (b) the Artifacts tab shows a `file` artifact
-   with a working download, (c) in Supabase mode, a reload preserves both
-   (sync round-trip).
-2. **File-URL refresh on expiry (deferred, documented in the spec's
-   non-goals).** Generated images self-heal an expired signed URL via
-   `<img onError>` → `/api/images/refresh-url` → `signGeneratedImageUrl`.
-   Files have **no** such path — `signGeneratedFileUrl` was deleted as
-   dead code. In cloud mode a file URL works for its 1-year TTL then
-   breaks. To close: add `/api/files/refresh-url` + `apiClient.files.refreshUrl`
-   + an `updateMessageGeneratedFileUrl` store mutation + re-sign the
-   chip/artifact on click. Mirror the image refresh wiring.
-3. **Pre-existing doc gap (minor):** `docs/API.md`'s Frame protocol
+1. **Manual smoke tests (highest value — neither feature was manually
+   verified).** Needs `CODE_SANDBOX_ENABLED=1` + Supabase on a
+   microsandbox-capable host.
+   - *Generated files:* ask the code interpreter to write a CSV to a
+     downloadable file → verify (a) a download chip appears + downloads,
+     (b) the Artifacts tab shows a `file` artifact with a working
+     download, (c) in Supabase mode a reload preserves both (sync).
+   - *File-URL refresh:* hand-expire (or shorten the TTL of) a generated
+     file's signed URL, click the chip, confirm a `POST /api/files/refresh-url`
+     fires and the file downloads with the fresh URL; confirm a data-URL
+     (local-mode) file still downloads with no network call.
+2. **Artifacts-tab file refresh (deferred).** The file *artifact*
+   download (not the chip) still can't self-refresh — its `storagePath`
+   field holds the signed URL, not the durable Supabase path. Same
+   limitation image artifacts have. To close: store the real storage path
+   on the artifact (a data-model change) + wire the refresh there too.
+3. **Remote `services/` refresh route (deferred).** `apiClient.files.refreshUrl`
+   declares the remote path `/v1/files/refresh-url`, but it's only
+   implemented in the in-Next backend. Remote-backend users need it added
+   to agent-ts / agent-py (mirror however `/v1/images/refresh-url` is
+   handled there).
+4. **Pre-existing doc gap (minor):** `docs/API.md`'s Frame protocol
    documents the new `tool_file` frame but the older `tool_image` /
    `code_result` translated frames remain undocumented. Out of scope
    this session; fix if you touch that doc.
@@ -86,8 +110,8 @@ the same vigilance if you extend this work):
 - **superpowers:brainstorming** — before any new feature/behavior work
   (hard gate: design approved before code).
 - **superpowers:writing-plans** → **superpowers:subagent-driven-development**
-  — the loop used this session; reuse it for follow-up #2 (the refresh
-  path is a clean ~3-4 task plan).
+  — the loop used for both features this session; reuse it for the
+  deferred follow-ups (#2 / #3 are each a small, well-scoped plan).
 - **verify** / **run** — for follow-up #1, driving the real app to smoke
-  test the sandbox path.
+  test the sandbox + refresh paths.
 - **superpowers:finishing-a-development-branch** — to land any branch.
