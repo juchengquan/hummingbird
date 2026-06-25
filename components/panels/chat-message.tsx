@@ -498,7 +498,7 @@ function ChatMessageImpl({
                 {!isUser &&
                   message.generatedFiles &&
                   message.generatedFiles.length > 0 && (
-                    <GeneratedFilesList files={message.generatedFiles} />
+                    <GeneratedFilesList files={message.generatedFiles} messageId={message.id} />
                   )}
                 {!isUser &&
                   message.codeResults?.map((part) => (

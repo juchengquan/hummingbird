@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { humanSize } from "./generated-files-list"
+import { humanSize, shouldRefreshFile } from "./generated-files-list"
 
 describe("humanSize", () => {
   test("bytes under 1KB", () => {
@@ -20,5 +20,22 @@ describe("humanSize", () => {
 
   test("megabytes without decimal when >= 10", () => {
     expect(humanSize(50 * 1024 * 1024)).toBe("50 MB")
+  })
+})
+
+const f = (storagePath: string | null) => ({
+  id: "x", name: "x", sizeBytes: 1, mimeType: "text/plain",
+  url: "u", storagePath,
+})
+
+describe("shouldRefreshFile", () => {
+  test("true for a cloud file with a messageId", () => {
+    expect(shouldRefreshFile(f("u/generated/x"), "m1")).toBe(true)
+  })
+  test("false without a storagePath (data-URL / local file)", () => {
+    expect(shouldRefreshFile(f(null), "m1")).toBe(false)
+  })
+  test("false without a messageId", () => {
+    expect(shouldRefreshFile(f("u/generated/x"), undefined)).toBe(false)
   })
 })
