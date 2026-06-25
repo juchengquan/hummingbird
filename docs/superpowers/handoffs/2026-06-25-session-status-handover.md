@@ -1,10 +1,10 @@
 # Session handover — 2026-06-25
 
-**Status:** Clean stopping point. Three features shipped and merged to
-`dev` this session (generated files → file-URL refresh on chips →
-artifact-tab URL refresh). The whole generated-asset URL-expiry story is
-now closed (chips + artifacts, files + images). No branches in flight, no
-work mid-stream.
+**Status:** Clean stopping point. Four features shipped and merged to
+`dev` this session: generated files → file-URL refresh (chips) →
+artifact-tab URL refresh → non-destructive edit/regenerate. The whole
+generated-asset URL-expiry story is closed (chips + artifacts, files +
+images). No branches in flight, no work mid-stream.
 
 ## What shipped this session
 
@@ -50,6 +50,26 @@ just new ones. Also extracted `triggerDownload` to `lib/client/download.ts`
 - **Spec:** `docs/superpowers/specs/2026-06-25-artifact-url-refresh-design.md`
 - **Plan:** `docs/superpowers/plans/2026-06-25-artifact-url-refresh.md` (6 tasks).
 
+**4. Non-destructive edit/regenerate (conversation branching).** Editing a
+user message / regenerating an assistant reply used to truncate the thread
+in place (destructive). Now both **fork** the conversation (original
+preserved) and continue on the fork, reusing the existing `forkConversation`.
+Discovery: branching was *mostly already built* — the fork action, lineage
+fields (`parentId`/`forkedFromMessageId`), sync, AND the viewer dialog
+(`components/branches-dialog.tsx` + `lib/shared/branches/tree.ts`) all
+pre-existed; the real gap was the destructive edit/regenerate. Added a
+`forkConversation` `titleSuffix` (`(edit)`/`(retry)`), pure
+`forkTargetFor{Edit,Regenerate}` helpers, and an opt-in
+`SendOptions.targetConversationId` (see lesson below). No data-model change.
+
+- **PR:** https://github.com/juchengquan/hummingbird/pull/276 — **merged**
+  to `dev` (merge commit `51bbfc6`). All 5 CI checks were green.
+- **Spec:** `docs/superpowers/specs/2026-06-25-conversation-branching-design.md`
+- **Plan:** `docs/superpowers/plans/2026-06-25-conversation-branching.md` (5 tasks).
+
+**Docs:** also documented the `tool_image` / `code_result` SSE frames in
+`docs/API.md` (#274).
+
 Don't re-derive any design or task list — they're in the specs/plans.
 The git history on `dev` carries the per-task detail.
 
@@ -84,15 +104,29 @@ the same vigilance if you extend this work):
   finish — confirm `git branch --show-current` is non-empty and
   `git log` topology is intact. A truncated/detached tree can still pass
   `bun run check`, so green is not enough.
+- **The whole-branch review earns its keep — don't skip it.** On #276,
+  every per-task review + typecheck + 1597 unit tests were green, but the
+  final review (strong model) found the feature was **broken at runtime**:
+  `forkConversation` flips `activeConversationId` in-store, but
+  `useChatSend.send` read it from a React-subscribed closure, so the
+  fork's reply was routed to the *wrong* conversation. Unit tests can't
+  see this (handlers aren't render-tested). Fixed with an opt-in
+  `SendOptions.targetConversationId` (resolve via `getState()` only when
+  passed; default path unchanged). **Lesson:** integration seams between
+  store mutations and subscribed-closure consumers are invisible to unit
+  tests — the final review + the (still-unrun) manual smoke test are the
+  only nets.
 
 ## Open follow-ups (not started — pick up if asked)
 
-1. **Run the manual smoke tests (highest value — none of the three
-   features has been manually verified).** A full checkbox runbook exists:
-   **`docs/SMOKE-TEST-generated-files.md`** (prerequisites, Test A =
-   generated files, Test B = file-URL refresh + the 401/403/400 security
-   probes + the artifact file/image self-heal step). It needs
-   `CODE_SANDBOX_ENABLED=1` + an installed
+1. **Run the manual smoke tests (highest value — none of the four
+   features has been manually verified).** Two checkbox runbooks exist:
+   **`docs/SMOKE-TEST-generated-files.md`** (generated files + file-URL
+   refresh + the 401/403/400 security probes + the artifact self-heal
+   step) and **`docs/SMOKE-TEST-conversation-branching.md`** (non-
+   destructive edit/regenerate + the branches viewer; steps 1/2/5 are
+   exactly what would have caught the #276 fork-reply-routing bug). The
+   first needs `CODE_SANDBOX_ENABLED=1` + an installed
    microsandbox runtime + Supabase + a signed-in session on a
    microsandbox-capable host — none of which this dev box had, which is
    why it's still un-run.
@@ -111,6 +145,11 @@ the same vigilance if you extend this work):
    implemented in the in-Next backend. Remote-backend users need it added
    to agent-ts / agent-py (mirror however `/v1/images/refresh-url` is
    handled there).
+3. **Dead code: `truncateMessagesAfter` (minor).** After #276 made
+   edit/regenerate fork instead of truncate, `truncateMessagesAfter`
+   (`lib/client/hooks/store/slices/messages.ts`) has **zero** non-test
+   callers. Safe to remove the action + its interface entry in a small
+   follow-up.
 
 (The `docs/API.md` Frame-protocol gap — `tool_image` / `code_result`
 were undocumented — was closed this session in #274.)
