@@ -116,6 +116,32 @@ function ArtifactFileDownload({ artifact }: { artifact: Artifact }) {
   )
 }
 
+function ArtifactImage({ artifact }: { artifact: Artifact }) {
+  const updateStoragePath = useStore((s) => s.updateArtifactStoragePath)
+  // One attempt per mount — a path that refuses to re-sign must not loop.
+  const refreshed = useRef(false)
+  const src = artifact.storagePath ?? artifact.content
+
+  const onError = async () => {
+    if (refreshed.current) return
+    refreshed.current = true
+    const path = parseStorageObjectPath(src)
+    if (!path) return
+    const fresh = await apiClient.images.refreshUrl(path)
+    if (fresh) updateStoragePath(artifact.id, fresh)
+  }
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- data: URLs + signed Supabase URLs with unknown dimensions; next/image doesn't fit.
+    <img
+      src={src}
+      alt={artifact.title}
+      onError={onError}
+      className="max-w-full max-h-[50vh] rounded-md object-contain"
+    />
+  )
+}
+
 export function ArtifactsTab() {
   const artifacts = useWorkspaceArtifacts()
   const selectedIds = useConversationSelectedArtifactIds()
@@ -380,12 +406,7 @@ function ArtifactPreviewDialog({
             <MarkdownPreview content={artifact.content} />
           ) : artifact?.kind === "image" ? (
             <div className="flex flex-col items-center p-4">
-              {/* eslint-disable-next-line @next/next/no-img-element -- data: URLs + signed Supabase URLs with unknown dimensions; next/image doesn't fit. */}
-              <img
-                src={artifact.storagePath ?? artifact.content}
-                alt={artifact.title}
-                className="max-w-full max-h-[50vh] rounded-md object-contain"
-              />
+              <ArtifactImage artifact={artifact} />
               {artifact.content && (
                 <p className="mt-3 text-xs text-[var(--muted-foreground)] text-center max-w-md">
                   {artifact.content}
