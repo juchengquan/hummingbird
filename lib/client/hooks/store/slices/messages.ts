@@ -127,6 +127,15 @@ export interface MessagesSlice {
     imageId: string,
     url: string
   ) => void
+  /** Replace the `url` on a single generated file. Used by the lazy
+   *  signed-URL re-sign path (`apiClient.files.refreshUrl`) so the
+   *  refreshed URL persists across re-renders. No-op if the message or
+   *  file id doesn't exist. */
+  updateMessageGeneratedFileUrl: (
+    messageId: string,
+    fileId: string,
+    url: string,
+  ) => void
   setMessageError: (messageId: string, error: MessageError) => void
   clearMessageError: (messageId: string) => void
 }
@@ -373,6 +382,20 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
         })
         return changed ? { ...m, generatedImages: next } : m
       })
+    ),
+  updateMessageGeneratedFileUrl: (messageId, fileId, url) =>
+    set((state) =>
+      updateMessage(state, messageId, (m) => {
+        const files = m.generatedFiles
+        if (!files) return m
+        let changed = false
+        const next = files.map((f) => {
+          if (f.id !== fileId || f.url === url) return f
+          changed = true
+          return { ...f, url }
+        })
+        return changed ? { ...m, generatedFiles: next } : m
+      }),
     ),
   setMessageError: (messageId, error) =>
     set((state) => updateMessage(state, messageId, (m) => ({ ...m, error }))),
