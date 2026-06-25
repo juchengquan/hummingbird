@@ -45,57 +45,26 @@ helpers:
 No migration, no `Database`-type change, no `STORE_VERSION` bump — the
 lineage fields already exist end to end.
 
-## Part A — Branch viewer
+## Part A — Branch viewer — ALREADY SHIPPED (correction after exploration)
 
-### A1. `buildBranchTree` (pure helper)
+**The viewer already exists end to end.** Exploration during planning found
+that what this section originally proposed building is already in the
+codebase (the first exploration pass missed it — it looked at the sidebar,
+not the chat header):
 
-New `lib/shared/branching.ts`:
+- `lib/shared/branches/tree.ts` — pure helpers `findRoot`, `buildTree`,
+  `countNodes`, `describeBranchPoint`, and the `BranchNode` type. (These
+  are the real equivalents of the originally-proposed `buildBranchTree`.)
+- `components/branches-dialog.tsx` — a complete indented fork-tree dialog
+  with branch-point captions, click-to-switch (`setActiveConversation`),
+  and a friendly empty state when the tree has < 2 nodes.
+- `components/panels/chat-header.tsx` — a "Branches" item in the header
+  actions menu that opens `<BranchesDialog anchorConversationId={conversation.id} />`.
 
-```ts
-export interface BranchNode {
-  conversationId: string
-  title: string
-  isActive: boolean
-  /** The parent message this node was forked from — its (truncated)
-   *  content, for display. null for a family root. */
-  branchPointSnippet: string | null
-  createdAt: Date
-  children: BranchNode[]
-}
-
-/** Build the fork-family tree that the active conversation belongs to.
- *  Walks `parentId` up to the family root, then recursively nests
- *  descendants via `parentId`. A node whose `parentId` points at a
- *  conversation not in the list (deleted ancestor) is treated as a root.
- *  Pure over the conversations array. */
-export function buildBranchTree(
-  conversations: Conversation[],
-  activeId: string,
-): BranchNode | null
-```
-
-- Returns `null` when the active conversation isn't found.
-- `branchPointSnippet` is resolved by looking up the parent conversation's
-  message whose id equals this node's `forkedFromMessageId` and truncating
-  its `content` (e.g. 80 chars). Missing/deleted message → `null`.
-- Pure + deterministic → unit-tested.
-
-### A2. Header button
-
-In the chat header (where the conversation title/actions live), add a
-`⑃ Branches (N)` button, shown **only** when the active conversation has a
-parent **or** any child (`activeConv.parentId != null ||
-conversations.some(c => c.parentId === activeConv.id)`). `N` = total
-nodes in the family tree. Opens `BranchesDialog`.
-
-### A3. `BranchesDialog`
-
-`components/panels/branches-dialog.tsx` — renders `buildBranchTree(...)`
-as an indented tree:
-- Each node: title, a "branched from: *snippet*" line (non-root), relative
-  created time; the active node is visually highlighted.
-- Clicking a node calls `setActiveConversation(id)` and closes the dialog.
-- Read-only navigation (no create/delete in v1).
+**So Part A needs no new build.** The only gap on the viewer side is that
+`lib/shared/branches/tree.ts` has **no unit tests** — this plan backfills
+them (it's code Part B leans on). No new component, helper, or header
+button is created.
 
 ## Part B — Non-destructive edit / regenerate (fork-based)
 
@@ -195,9 +164,11 @@ view branches
 
 ## Testing
 
-- **`buildBranchTree`** — root-finding up a chain, descendant nesting,
-  active-node marking, branch-point snippet resolution, dangling-parent →
-  root. Unit (pure).
+- **`lib/shared/branches/tree.ts`** (backfill — code already shipped) —
+  `findRoot` (walk up a chain, broken-lineage fallback, cycle guard),
+  `buildTree` (descendant nesting, children sorted by createdAt, missing
+  root → null), `countNodes`, `describeBranchPoint` (first-line snippet,
+  truncation, missing/absent message → null). Unit (pure).
 - **`forkTargetForEdit` / `forkTargetForRegenerate`** — normal case, first
   message, missing id, assistant-with-no-preceding-user. Unit (pure).
 - **`forkConversation` suffix** — title uses the suffix; default stays
