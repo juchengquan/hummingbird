@@ -67,17 +67,24 @@ the same vigilance if you extend this work):
 
 ## Open follow-ups (not started — pick up if asked)
 
-1. **Manual smoke tests (highest value — neither feature was manually
-   verified).** Needs `CODE_SANDBOX_ENABLED=1` + Supabase on a
-   microsandbox-capable host.
-   - *Generated files:* ask the code interpreter to write a CSV to a
-     downloadable file → verify (a) a download chip appears + downloads,
-     (b) the Artifacts tab shows a `file` artifact with a working
-     download, (c) in Supabase mode a reload preserves both (sync).
-   - *File-URL refresh:* hand-expire (or shorten the TTL of) a generated
-     file's signed URL, click the chip, confirm a `POST /api/files/refresh-url`
-     fires and the file downloads with the fresh URL; confirm a data-URL
-     (local-mode) file still downloads with no network call.
+1. **Run the manual smoke tests (highest value — neither feature has been
+   manually verified).** A full checkbox runbook now exists:
+   **`docs/SMOKE-TEST-generated-files.md`** (covers prerequisites, Test A
+   = generated files, Test B = file-URL refresh, incl. the 401/403/400
+   security probes). It needs `CODE_SANDBOX_ENABLED=1` + an installed
+   microsandbox runtime + Supabase + a signed-in session on a
+   microsandbox-capable host — none of which this dev box had, which is
+   why it's still un-run.
+   - Already verified at runtime (the one slice reachable without
+     Supabase): `POST /api/files/refresh-url` mounts and returns `503`
+     when Supabase is unconfigured (config-guard before body-parse),
+     `405` on `GET`, and is byte-for-byte identical to the image route.
+     The runbook covers only what that probe could **not** reach.
+   - Note for Test B: refresh is **re-sign-on-click** — the chip re-signs
+     on *every* click for a cloud file (one with a `storagePath`), not
+     only after expiry. The runbook's expiry assertion is "break the
+     stored `url` but keep `storagePath`, click, confirm it still
+     downloads."
 2. **Artifacts-tab file refresh (deferred).** The file *artifact*
    download (not the chip) still can't self-refresh — its `storagePath`
    field holds the signed URL, not the durable Supabase path. Same
