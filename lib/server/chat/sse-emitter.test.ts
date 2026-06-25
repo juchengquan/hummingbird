@@ -259,4 +259,38 @@ describe("ChatSseEmitter — AI SDK format", () => {
     )
     expect(types).toEqual(["start", "start-step", "error", "[DONE]"])
   })
+
+  test("toolFile → data-tool-file", () => {
+    const { emitter, lines } = collect()
+    emitter.toolFile({
+      id: "call-0",
+      files: [
+        {
+          id: "call-0-0",
+          name: "report.csv",
+          sizeBytes: 12,
+          mimeType: "text/csv",
+          url: "data:text/csv;base64,AAAA",
+          storagePath: "u/generated/call-0-0-report.csv",
+        },
+      ],
+    })
+    const frame = parseFrames(lines)[0] as {
+      type: string
+      id: string
+      data: { id: string; files: unknown[] }
+    }
+    expect(frame.type).toBe("data-tool-file")
+    expect(frame.id).toBe("call-0")
+    expect(frame.data.id).toBe("call-0")
+    expect(frame.data.files).toHaveLength(1)
+    expect(frame.data.files[0]).toEqual({
+      id: "call-0-0",
+      name: "report.csv",
+      sizeBytes: 12,
+      mimeType: "text/csv",
+      url: "data:text/csv;base64,AAAA",
+      storagePath: "u/generated/call-0-0-report.csv",
+    })
+  })
 })

@@ -14,6 +14,7 @@ import {
 import { toCodeRunResult, type RawRun } from "./marshal"
 import { ABORTED, raceAbort } from "./race-abort"
 import { runtimeFor } from "./runtime"
+import { mimeForName } from "./mime"
 import { createSemaphore } from "./semaphore"
 import type { CodeRunInput, CodeRunResult, CodeSandbox } from "./types"
 
@@ -26,6 +27,11 @@ const nextName = () => `runcode-${(seq = (seq + 1) % 1_000_000)}`
 const IMG_DIR = "/tmp"
 const IMG_RE = /\.(png|svg)$/i
 const TABLE_RE = /\.table\.json$/i
+
+/** Files the model writes here are captured whole as `file` artifacts.
+ *  Separate from the /tmp chart/table read-back so intermediate temp
+ *  files in /tmp aren't swept up. */
+const OUTPUT_DIR = "/tmp/outputs"
 
 /** Bounds how many microVMs boot/run at once across the whole process. Each
  *  holds ~MEM_MIB of guest RAM, so without this a burst of runCode calls could
@@ -182,7 +188,38 @@ export function createMicrosandboxClient(): CodeSandbox {
           // fs listing best-effort; absence of charts/tables is not an error.
         }
 
-        return toCodeRunResult({ stdout, stderr, exitCode, images, timedOut, tables })
+        // Read back whole files the run wrote to the designated output
+        // dir. Reuses the same count + byte budget that bounds the chart
+        // read-back, so this adds no new cap (deliberate). A missing
+        // /tmp/outputs is the normal case — the model only writes there
+        // when it produces a deliverable file.
+        const files: RawRun["files"] = []
+        try {
+          const entries = await sb.fs().list(OUTPUT_DIR)
+          let readBytes = 0
+          let filesRead = 0
+          for (const entry of entries) {
+            if (filesRead >= RESULT_FILE_MAX) break
+            if (entry.kind !== "file") continue
+            const path = entry.path.startsWith("/")
+              ? entry.path
+              : `${OUTPUT_DIR}/${entry.path}`
+            if (readBytes + entry.size > RESULT_CAP) continue
+            const bytes = await sb.fs().read(path)
+            readBytes += bytes.length
+            filesRead++
+            const name = path.split("/").pop() ?? path
+            files.push({
+              name,
+              mime: mimeForName(name),
+              data: Buffer.from(bytes).toString("base64"),
+            })
+          }
+        } catch {
+          // No output dir is the common case; not an error.
+        }
+
+        return toCodeRunResult({ stdout, stderr, exitCode, images, timedOut, tables, files })
       } catch (err) {
         return toCodeRunResult({
           stdout: "",

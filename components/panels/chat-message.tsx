@@ -17,6 +17,7 @@ import { MessageLiveArtifacts } from "@/components/live-artifact/message-live-ar
 import { McpAppFrame } from "@/components/live-artifact/mcp-app-frame"
 import { ToolCallStrip, type LiveToolCall } from "@/components/skills/tool-call-strip"
 import { GeneratedImagesGallery } from "@/components/skills/generated-images-gallery"
+import { GeneratedFilesList } from "@/components/skills/generated-files-list"
 import { MessageUiParts } from "@/components/chat/generative-ui/message-ui-parts"
 import { MessageAttachments } from "@/components/panels/message-attachments"
 import { ReasoningBlock } from "@/components/panels/reasoning-block"
@@ -493,6 +494,11 @@ function ChatMessageImpl({
                       images={message.generatedImages}
                       messageId={message.id}
                     />
+                  )}
+                {!isUser &&
+                  message.generatedFiles &&
+                  message.generatedFiles.length > 0 && (
+                    <GeneratedFilesList files={message.generatedFiles} />
                   )}
                 {!isUser &&
                   message.codeResults?.map((part) => (

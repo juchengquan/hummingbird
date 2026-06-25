@@ -54,6 +54,18 @@ export interface ToolImagePayload {
   }>
 }
 
+export interface ToolFilePayload {
+  id: string
+  files: Array<{
+    id: string
+    name: string
+    sizeBytes: number
+    mimeType: string
+    url: string
+    storagePath?: string
+  }>
+}
+
 export interface CodeResultPayload {
   id: string
   stdout: string
@@ -160,6 +172,19 @@ export class ChatSseEmitter {
         id: payload.id,
         mode: payload.mode,
         images: payload.images,
+      },
+    })
+  }
+
+  /** Emit a generated-file frame as a `data-tool-file` AI SDK v5
+   *  custom data part. */
+  toolFile(payload: ToolFilePayload): void {
+    this.send({
+      type: "data-tool-file",
+      id: payload.id,
+      data: {
+        id: payload.id,
+        files: payload.files,
       },
     })
   }

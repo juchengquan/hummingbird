@@ -1,7 +1,7 @@
 import "server-only"
 
 import { RESULT_CAP, STDOUT_CAP, TABLE_CELL_MAX, TABLE_MAX_COLS, TABLE_MAX_ROWS } from "./config"
-import type { CodeResult, CodeRunResult } from "./types"
+import type { CodeFile, CodeResult, CodeRunResult } from "./types"
 
 /** The shape the microsandbox client hands the pure mapper. */
 export interface RawRun {
@@ -15,6 +15,9 @@ export interface RawRun {
   /** Raw JSON values parsed from /tmp/*.table.json (PR-3). Interpreted
    *  + capped here so the client stays parse-only. */
   tables?: unknown[]
+  /** Whole files the run wrote to the output dir. Passed through to
+   *  `CodeRunResult.files` with `sizeBytes` computed here. */
+  files?: { name: string; mime: string; data: string }[]
 }
 
 function truncate(s: string): string {
@@ -134,14 +137,21 @@ export function toCodeRunResult(raw: RawRun): CodeRunResult {
     results.push({ type: "text", value: "⚠ A returned table was dropped to stay within the result size limit." })
   }
 
+  const files: CodeFile[] = (raw.files ?? []).map((f) => ({
+    name: f.name,
+    mimeType: f.mime,
+    sizeBytes: Buffer.from(f.data, "base64").length,
+    data: f.data,
+  }))
+
   if (raw.upstreamError !== undefined) {
-    return { ok: false, stdout, stderr, results, error: { code: "upstream", message: raw.upstreamError } }
+    return { ok: false, stdout, stderr, results, files, error: { code: "upstream", message: raw.upstreamError } }
   }
   if (raw.timedOut) {
-    return { ok: false, stdout, stderr, results, error: { code: "timeout", message: "Execution exceeded the time limit." } }
+    return { ok: false, stdout, stderr, results, files, error: { code: "timeout", message: "Execution exceeded the time limit." } }
   }
   if (raw.exitCode !== 0) {
-    return { ok: false, stdout, stderr, results, error: { code: "runtime", message: stderr || `Exited with code ${raw.exitCode}.` } }
+    return { ok: false, stdout, stderr, results, files, error: { code: "runtime", message: stderr || `Exited with code ${raw.exitCode}.` } }
   }
-  return { ok: true, stdout, stderr, results }
+  return { ok: true, stdout, stderr, results, files }
 }

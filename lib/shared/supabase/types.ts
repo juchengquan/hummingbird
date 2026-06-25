@@ -653,6 +653,7 @@ export type Database = {
           conversation_id: string
           created_at: string
           error: Json | null
+          generated_files: Json | null
           generated_images: Json | null
           id: string
           kind: string | null
@@ -672,6 +673,7 @@ export type Database = {
           conversation_id: string
           created_at?: string
           error?: Json | null
+          generated_files?: Json | null
           generated_images?: Json | null
           id: string
           kind?: string | null
@@ -691,6 +693,7 @@ export type Database = {
           conversation_id?: string
           created_at?: string
           error?: Json | null
+          generated_files?: Json | null
           generated_images?: Json | null
           id?: string
           kind?: string | null

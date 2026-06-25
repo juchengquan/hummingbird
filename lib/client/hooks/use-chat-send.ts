@@ -113,6 +113,9 @@ export function useChatSend(): UseChatSendResult {
   const appendMessageGeneratedImages = useStore(
     (s) => s.appendMessageGeneratedImages
   )
+  const appendMessageGeneratedFiles = useStore(
+    (s) => s.appendMessageGeneratedFiles
+  )
   const appendMessageCodeResult = useStore((s) => s.appendMessageCodeResult)
   const appendMessageUiPart = useStore((s) => s.appendMessageUiPart)
   const appendMessageMcpApp = useStore((s) => s.appendMessageMcpApp)
@@ -684,6 +687,54 @@ export function useChatSend(): UseChatSendResult {
                 }
               }
             } else if (
+              parsed.type === "tool_file" &&
+              Array.isArray(parsed.files)
+            ) {
+              const ph = placeholder as Message | null
+              if (ph) {
+                const files = (parsed.files as Array<Record<string, unknown>>)
+                  .filter(
+                    (f): f is {
+                      id: string
+                      name: string
+                      sizeBytes: number
+                      mimeType: string
+                      url: string
+                      storagePath?: string
+                    } =>
+                      typeof f?.id === "string" &&
+                      typeof f?.name === "string" &&
+                      typeof f?.sizeBytes === "number" &&
+                      typeof f?.mimeType === "string" &&
+                      typeof f?.url === "string" &&
+                      (f.storagePath === undefined ||
+                        typeof f.storagePath === "string")
+                  )
+                  .map((f) => ({
+                    id: f.id,
+                    name: f.name,
+                    sizeBytes: f.sizeBytes,
+                    mimeType: f.mimeType,
+                    url: f.url,
+                    storagePath: f.storagePath ?? null,
+                  }))
+                if (files.length > 0) {
+                  appendMessageGeneratedFiles(ph.id, files)
+                  files.forEach((f) => {
+                    createArtifact({
+                      conversationId: targetConvId,
+                      messageId: ph.id,
+                      kind: "file",
+                      title: f.name,
+                      content: "",
+                      // Mirrors the image path: the artifact's storagePath
+                      // field carries the loadable URL (signed or data:).
+                      storagePath: f.url,
+                    })
+                  })
+                }
+              }
+            } else if (
               parsed.type === "suggestions" &&
               Array.isArray(parsed.values)
             ) {
@@ -911,6 +962,7 @@ export function useChatSend(): UseChatSendResult {
       activeWorkspaceId,
       addMessage,
       appendMessageGeneratedImages,
+      appendMessageGeneratedFiles,
       appendMessageCodeResult,
       appendMessageUiPart,
       appendToMessage,

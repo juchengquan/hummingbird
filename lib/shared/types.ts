@@ -486,6 +486,9 @@ export interface Message {
    * Empty / undefined when no images were generated.
    */
   generatedImages?: GeneratedImage[]
+  /** Files the `runCode` interpreter produced. Surfaced as download
+   *  chips; each also becomes a workspace `file` artifact. */
+  generatedFiles?: GeneratedFile[]
   /**
    * Code-interpreter results produced by the `runCode` skill during
    * this turn — stdout/stderr plus inline text/table cells. Images
@@ -572,6 +575,20 @@ export interface GeneratedImage {
   /** Which mode produced the image. `"i2i"` ones may want different
    *  affordances (e.g. "use the reference again" rather than "regenerate"). */
   mode: 't2i' | 'i2i'
+}
+
+/** A file the code interpreter wrote to `/tmp/outputs/`, persisted and
+ *  surfaced as a download chip + `file` artifact. Mirrors the persistence
+ *  posture of `GeneratedImage`: `url` is a Supabase signed URL or a `data:`
+ *  fallback; `storagePath` is set only when the bytes went to Storage.
+ *  Re-signing on expiry is a deferred follow-up (not yet implemented for files). */
+export interface GeneratedFile {
+  id: string
+  name: string
+  sizeBytes: number
+  mimeType: string
+  url: string
+  storagePath: string | null
 }
 
 /** A persisted code-interpreter result on a message. Images are stored
@@ -722,7 +739,7 @@ export interface Note {
   updatedAt: Date
 }
 
-export type ArtifactKind = 'code' | 'markdown' | 'json' | 'table' | 'image' | 'other'
+export type ArtifactKind = 'code' | 'markdown' | 'json' | 'table' | 'image' | 'file' | 'other'
 
 export interface Artifact {
   id: string

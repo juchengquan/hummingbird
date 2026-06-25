@@ -39,6 +39,7 @@ import { generateSuggestions } from '@/server/chat/suggestions'
 import { verifyAnswer } from '@/server/verify/verify-answer'
 import type { RetrievedSource } from '@/shared/verify'
 import { persistGeneratedImages, type ImageToPersist } from '@/server/image-storage'
+import { persistGeneratedFiles, type FileToPersist } from '@/server/file-storage'
 import type { CodeRunResult } from '@/server/code-sandbox/types'
 import { resolveMountFiles } from '@/server/code-sandbox/mount-files'
 import { downloadUserFileBytes } from '@/server/code-sandbox/download-user-file'
@@ -258,6 +259,37 @@ async function maybeEmitCodeResultFrames(
           format: img.format,
           prompt: '',
           mode: 'code',
+        })),
+      })
+    }
+  }
+  // Whole files the run wrote to /tmp/outputs → persist + emit a
+  // `data-tool-file` frame the client renders as download chips and
+  // auto-saves as `file` artifacts. Non-fatal: a failed persist just
+  // drops the chips, leaving stdout intact.
+  const outFiles = result.files ?? []
+  if (outFiles.length > 0) {
+    const inputs: FileToPersist[] = outFiles.map((f, i) => ({
+      id: `${id}-file-${i}`,
+      name: f.name,
+      mimeType: f.mimeType,
+      sizeBytes: f.sizeBytes,
+      bytes: Buffer.from(f.data, 'base64'),
+    }))
+    const persisted = await persistGeneratedFiles(inputs, {
+      signal,
+      localFilesOnly,
+    })
+    if (persisted.ok && persisted.files.length > 0) {
+      emitter.toolFile({
+        id,
+        files: persisted.files.map((f) => ({
+          id: f.id,
+          name: f.name,
+          sizeBytes: f.sizeBytes,
+          mimeType: f.mimeType,
+          url: f.url,
+          ...(f.storagePath ? { storagePath: f.storagePath } : {}),
         })),
       })
     }
