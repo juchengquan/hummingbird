@@ -207,6 +207,18 @@ shapes below are normative.
   ]
 }
 
+// Generated files — download chips for files the code interpreter wrote
+// to /tmp/outputs. Each also becomes a `file` artifact. Interleaves with
+// text like tool_result.
+{
+  "type": "tool_file",
+  "id": "string",        // matches the runCode tool_call.id
+  "files": [
+    { "id": "string", "name": "string", "sizeBytes": 0,
+      "mimeType": "string", "url": "string", "storagePath": "string|null" }
+  ]
+}
+
 // Suggestion chips — follow-up question prompts. Sent at most once,
 // after the main answer streams in.
 { "type": "suggestions", "values": ["...", "..."] }
