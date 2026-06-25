@@ -207,6 +207,21 @@ shapes below are normative.
   ]
 }
 
+// Generated images — inline image gallery from the `generateImage` skill
+// or `runCode` charts (matplotlib savefig). `mode` distinguishes the
+// source. Each also becomes an `image` artifact. Interleaves with text
+// like tool_result.
+{
+  "type": "tool_image",
+  "id": "string",        // matches the originating tool_call.id
+  "mode": "t2i" | "i2i" | "code",
+  "images": [
+    { "id": "string", "url": "string", "storagePath": "string?",
+      "width": 0, "height": 0, "format": "string",
+      "prompt": "string", "mode": "t2i" | "i2i" | "code" }
+  ]
+}
+
 // Generated files — download chips for files the code interpreter wrote
 // to /tmp/outputs. Each also becomes a `file` artifact. Interleaves with
 // text like tool_result.
@@ -216,6 +231,20 @@ shapes below are normative.
   "files": [
     { "id": "string", "name": "string", "sizeBytes": 0,
       "mimeType": "string", "url": "string", "storagePath": "string|null" }
+  ]
+}
+
+// Code-interpreter output — stdout/stderr + non-image result cells from
+// the `runCode` skill. (Chart images arrive separately as `tool_image`
+// with mode "code".) Rendered as a collapsible code-output block.
+{
+  "type": "code_result",
+  "id": "string",        // matches the runCode tool_call.id
+  "stdout": "string",
+  "stderr": "string",
+  "codeCells": [
+    { "type": "table", "columns": ["string"], "rows": [["string"]] },
+    { "type": "text", "value": "string" }
   ]
 }
 
