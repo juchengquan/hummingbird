@@ -5,8 +5,8 @@ today is a **citation table** (table-kind), so use one.
 
 1. [ ] **Versions accrue on edit.** Open/create a chat that produces a
    citation-table artifact. Open it in the Artifacts tab, edit a cell
-   (changes `content`). Edit a second cell. A **History** button (clock
-   icon) appears in the dialog header.
+   (changes `content`). Edit a second cell. A **History** button (the
+   lucide `History` icon) appears in the dialog header.
 2. [ ] **History + diff.** Click History → the panel lists prior versions
    (newest first) + "Current". Select a prior version → the diff shows the
    pretty-printed JSON line diff (red = removed, green = added) between that

@@ -985,6 +985,9 @@ export function diffArtifacts(prev: Artifact[], next: Artifact[]): SyncOp[] {
   return ops
 }
 
+/** Compares id + content only (not `createdAt`): each captured version
+ *  gets a fresh uuid, so id-identity already distinguishes any real
+ *  change, and `createdAt` never mutates for an existing id. */
 function versionsEqual(
   a: ArtifactVersion[] | undefined,
   b: ArtifactVersion[] | undefined,
