@@ -96,6 +96,7 @@ export type Database = {
           message_id: string | null
           pinned: boolean
           storage_path: string | null
+          versions: Json | null
           title: string | null
           user_id: string
           workspace_id: string
@@ -110,6 +111,7 @@ export type Database = {
           message_id?: string | null
           pinned?: boolean
           storage_path?: string | null
+          versions?: Json | null
           title?: string | null
           user_id: string
           workspace_id: string
@@ -124,6 +126,7 @@ export type Database = {
           message_id?: string | null
           pinned?: boolean
           storage_path?: string | null
+          versions?: Json | null
           title?: string | null
           user_id?: string
           workspace_id?: string

@@ -25,6 +25,7 @@ import "client-only"
 
 import type {
   Artifact,
+  ArtifactVersion,
   Conversation,
   ConversationFile,
   ConversationMcpResource,
@@ -961,6 +962,10 @@ export function diffArtifacts(prev: Artifact[], next: Artifact[]): SyncOp[] {
           title: a.title,
           content: a.content,
           storage_path: a.storagePath,
+          versions:
+            a.versions && a.versions.length > 0
+              ? (a.versions as unknown as Json)
+              : null,
           pinned: a.pinned,
           created_at: toISO(a.createdAt),
         },
@@ -980,6 +985,19 @@ export function diffArtifacts(prev: Artifact[], next: Artifact[]): SyncOp[] {
   return ops
 }
 
+function versionsEqual(
+  a: ArtifactVersion[] | undefined,
+  b: ArtifactVersion[] | undefined,
+): boolean {
+  const x = a ?? []
+  const y = b ?? []
+  if (x.length !== y.length) return false
+  for (let i = 0; i < x.length; i++) {
+    if (x[i].id !== y[i].id || x[i].content !== y[i].content) return false
+  }
+  return true
+}
+
 function artifactEquals(a: Artifact, b: Artifact): boolean {
   return (
     a.workspaceId === b.workspaceId &&
@@ -990,6 +1008,7 @@ function artifactEquals(a: Artifact, b: Artifact): boolean {
     a.title === b.title &&
     a.content === b.content &&
     a.storagePath === b.storagePath &&
+    versionsEqual(a.versions, b.versions) &&
     a.pinned === b.pinned &&
     sameInstant(a.createdAt, b.createdAt)
   )
