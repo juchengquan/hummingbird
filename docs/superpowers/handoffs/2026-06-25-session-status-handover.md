@@ -1,10 +1,11 @@
 # Session handover — 2026-06-25
 
-**Status:** Clean stopping point. Four features shipped and merged to
+**Status:** Clean stopping point. Five features shipped and merged to
 `dev` this session: generated files → file-URL refresh (chips) →
-artifact-tab URL refresh → non-destructive edit/regenerate. The whole
-generated-asset URL-expiry story is closed (chips + artifacts, files +
-images). No branches in flight, no work mid-stream.
+artifact-tab URL refresh → non-destructive edit/regenerate → artifact
+version history + diffs. The generated-asset URL-expiry story is closed
+(chips + artifacts, files + images). No branches in flight, no work
+mid-stream.
 
 ## What shipped this session
 
@@ -67,8 +68,24 @@ pre-existed; the real gap was the destructive edit/regenerate. Added a
 - **Spec:** `docs/superpowers/specs/2026-06-25-conversation-branching-design.md`
 - **Plan:** `docs/superpowers/plans/2026-06-25-conversation-branching.md` (5 tasks).
 
-**Docs:** also documented the `tool_image` / `code_result` SSE frames in
-`docs/API.md` (#274).
+**5. Artifact version history + diffs.** Editing an artifact's content was
+destructive (`updateArtifactContent` replaced in place). Now each edit
+snapshots the prior content into a capped `Artifact.versions` array
+(`MAX_ARTIFACT_VERSIONS = 10`); the artifact dialog has a History panel
+(version list → line diff → non-destructive Restore via
+`restoreArtifactVersion`). Pure LCS diff (`lib/shared/artifacts/diff.ts`,
+no new dep — `diff-match-patch-ts` is transitive-only). Migration `0029`
++ sync; **no `STORE_VERSION` bump** (the field rides inside the persisted
+`artifacts` key). The live editable artifact today is the citation table.
+
+- **PR:** https://github.com/juchengquan/hummingbird/pull/280 — **merged**
+  to `dev` (merge commit `ce3a716`). All 5 CI checks were green.
+- **Spec:** `docs/superpowers/specs/2026-06-26-artifact-versioning-design.md`
+- **Plan:** `docs/superpowers/plans/2026-06-26-artifact-versioning.md` (6 tasks).
+
+**Docs/cleanup:** also documented the `tool_image` / `code_result` SSE
+frames in `docs/API.md` (#274) and removed the now-dead
+`truncateMessagesAfter` action (#278).
 
 Don't re-derive any design or task list — they're in the specs/plans.
 The git history on `dev` carries the per-task detail.
@@ -119,14 +136,16 @@ the same vigilance if you extend this work):
 
 ## Open follow-ups (not started — pick up if asked)
 
-1. **Run the manual smoke tests (highest value — none of the four
-   features has been manually verified).** Two checkbox runbooks exist:
+1. **Run the manual smoke tests (highest value — none of the five
+   features has been manually verified).** Three checkbox runbooks exist:
    **`docs/SMOKE-TEST-generated-files.md`** (generated files + file-URL
    refresh + the 401/403/400 security probes + the artifact self-heal
-   step) and **`docs/SMOKE-TEST-conversation-branching.md`** (non-
-   destructive edit/regenerate + the branches viewer; steps 1/2/5 are
-   exactly what would have caught the #276 fork-reply-routing bug). The
-   first needs `CODE_SANDBOX_ENABLED=1` + an installed
+   step), **`docs/SMOKE-TEST-conversation-branching.md`** (non-destructive
+   edit/regenerate + the branches viewer; steps 1/2/5 are exactly what
+   would have caught the #276 fork-reply-routing bug), and
+   **`docs/SMOKE-TEST-artifact-versioning.md`** (edit a citation table →
+   History → diff → restore → cap). The generated-files one needs
+   `CODE_SANDBOX_ENABLED=1` + an installed
    microsandbox runtime + Supabase + a signed-in session on a
    microsandbox-capable host — none of which this dev box had, which is
    why it's still un-run.
@@ -145,6 +164,13 @@ the same vigilance if you extend this work):
    implemented in the in-Next backend. Remote-backend users need it added
    to agent-ts / agent-py (mirror however `/v1/images/refresh-url` is
    handled there).
+3. **Artifact-versioning cosmetic tidy-ups (trivial, from #280's review).**
+   Optional, non-blocking: add a one-line comment in `versionsEqual`
+   (`lib/client/sync/handlers.ts`) noting `id`-identity subsumes
+   `createdAt`; re-run Prettier on the wrapped kind-ternary in
+   `components/panels/artifacts-tab.tsx` (indentation drift); the
+   versioning runbook calls the History icon a "clock icon" (it's lucide
+   `History`).
 (Closed this session: the `docs/API.md` Frame-protocol gap —
 `tool_image` / `code_result` were undocumented — in #274; and the dead
 `truncateMessagesAfter` action was removed in #278.)
