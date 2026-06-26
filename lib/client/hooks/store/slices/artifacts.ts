@@ -2,9 +2,10 @@ import "client-only"
 
 import { useShallow } from "zustand/react/shallow"
 
-import type { Artifact, ArtifactKind } from "@/shared/types"
+import type { Artifact, ArtifactKind, ArtifactVersion } from "@/shared/types"
 import { uuid } from "@/shared/uuid"
 import { placeRelatedNode } from "@/shared/canvas/placement"
+import { pushArtifactVersion } from "@/shared/artifacts/versioning"
 
 import { useStore, useActiveConversation } from "../../use-store"
 import type { SliceCreator } from "../types"
@@ -37,8 +38,13 @@ export interface ArtifactsSlice {
   updateArtifactTitle: (artifactId: string, title: string) => void
   /** Replace an artifact's `content` (e.g. an in-place table edit). Like
    *  updateArtifactTitle, this is a plain field set; `content` already
-   *  syncs via diffArtifacts. */
+   *  syncs via diffArtifacts. Captures the prior content as a version if
+   *  the new content differs. */
   updateArtifactContent: (artifactId: string, content: string) => void
+  /** Restore an artifact to a prior version. Routes through updateArtifactContent
+   *  so the current content is itself captured as a version (restore is non-destructive).
+   *  No-op if the artifact or version is not found. */
+  restoreArtifactVersion: (artifactId: string, versionId: string) => void
   /** Replace a single artifact's `storagePath` — used by the lazy
    *  signed-URL re-sign path so the fresh URL persists + syncs. No-op if
    *  the id is missing or the value is unchanged. */
@@ -147,10 +153,24 @@ export const createArtifactsSlice: SliceCreator<ArtifactsSlice> = (set, get) => 
     })),
   updateArtifactContent: (artifactId, content) =>
     set((state) => ({
-      artifacts: state.artifacts.map((a) =>
-        a.id === artifactId ? { ...a, content } : a,
-      ),
+      artifacts: state.artifacts.map((a) => {
+        if (a.id !== artifactId || a.content === content) return a
+        const version: ArtifactVersion = {
+          id: uuid(),
+          content: a.content, // the PRIOR content
+          createdAt: new Date(),
+        }
+        return { ...a, content, versions: pushArtifactVersion(a.versions, version) }
+      }),
     })),
+  restoreArtifactVersion: (artifactId, versionId) => {
+    const a = get().artifacts.find((x) => x.id === artifactId)
+    const v = a?.versions?.find((x) => x.id === versionId)
+    if (!a || !v) return
+    // Route through updateArtifactContent so the current content is itself
+    // captured as a version — restore is non-destructive.
+    get().updateArtifactContent(artifactId, v.content)
+  },
   updateArtifactStoragePath: (artifactId, storagePath) =>
     set((state) => ({
       artifacts: state.artifacts.map((a) =>

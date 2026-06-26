@@ -741,6 +741,13 @@ export interface Note {
 
 export type ArtifactKind = 'code' | 'markdown' | 'json' | 'table' | 'image' | 'file' | 'other'
 
+export interface ArtifactVersion {
+  id: string
+  /** A PRIOR snapshot of the artifact's content. */
+  content: string
+  createdAt: Date
+}
+
 export interface Artifact {
   id: string
   /** Artifacts are scoped to the workspace — they outlive the conversation
@@ -761,6 +768,10 @@ export interface Artifact {
   storagePath: string | null
   pinned: boolean
   createdAt: Date
+  /** Prior content snapshots, oldest→newest, capped at
+   *  MAX_ARTIFACT_VERSIONS. `content` is always current; `versions` holds
+   *  what it was before each edit. Absent = no history yet. */
+  versions?: ArtifactVersion[]
 }
 
 /**

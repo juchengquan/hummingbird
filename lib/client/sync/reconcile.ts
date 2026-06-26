@@ -15,6 +15,7 @@ import "client-only"
 
 import type {
   Artifact,
+  ArtifactVersion,
   Conversation,
   ConversationFile,
   ConversationMcpResource,
@@ -190,6 +191,29 @@ function parseGeneratedFiles(value: Json | null | undefined): GeneratedFile[] | 
       storagePath: typeof e.storagePath === "string" ? e.storagePath : null,
     }
     out.push(file)
+  }
+  return out
+}
+
+/**
+ * Boundary parser for `artifacts.versions`. Returns the typed array on a
+ * valid payload, empty array otherwise. We're defensive about each entry's
+ * shape (rather than `as unknown as ArtifactVersion[]`) because a corrupted
+ * / hand-edited row shouldn't crash the rehydration — dropping a bad entry
+ * is better than blanking the whole artifact.
+ */
+function parseArtifactVersions(value: Json | null | undefined): ArtifactVersion[] {
+  if (!Array.isArray(value)) return []
+  const out: ArtifactVersion[] = []
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") continue
+    const v = raw as Record<string, unknown>
+    if (typeof v.id !== "string" || typeof v.content !== "string") continue
+    const createdAt =
+      typeof v.createdAt === "string" || typeof v.createdAt === "number"
+        ? new Date(v.createdAt)
+        : new Date()
+    out.push({ id: v.id, content: v.content, createdAt })
   }
   return out
 }
@@ -601,6 +625,7 @@ export async function fetchCloudSnapshot(
       title: a.title ?? "",
       content: a.content ?? "",
       storagePath: a.storage_path,
+      versions: parseArtifactVersions(a.versions),
       pinned: a.pinned,
       createdAt: new Date(a.created_at),
     }))
@@ -1033,6 +1058,10 @@ export async function bulkUploadLocalState(
           title: a.title,
           content: a.content,
           storage_path: a.storagePath,
+          versions:
+            a.versions && a.versions.length > 0
+              ? (a.versions as unknown as Json)
+              : null,
           pinned: a.pinned,
           created_at: a.createdAt.toISOString(),
         }))

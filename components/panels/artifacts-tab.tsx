@@ -9,6 +9,7 @@ import {
   Eye,
   FileText,
   Braces,
+  History,
   Pin,
   PinOff,
   Trash2,
@@ -48,6 +49,7 @@ import type { Artifact } from "@/shared/types"
 import { CitationTableView } from "@/components/panels/citation-table"
 import { parseCitationTable } from "@/shared/artifacts/citation-table"
 import { citationTableMarkerMarkdown } from "@/shared/artifacts/citation-table-md"
+import { ArtifactHistoryPanel } from "@/components/panels/artifact-history-panel"
 
 function artifactKindIcon(artifact: Artifact) {
   if (artifact.kind === "code") return <Code2 size={12} />
@@ -315,6 +317,13 @@ function ArtifactPreviewDialog({
 }: ArtifactPreviewDialogProps) {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState("")
+  const [historyOpen, setHistoryOpen] = useState(false)
+
+  const canShowHistory =
+    !!artifact &&
+    (artifact.versions?.length ?? 0) > 0 &&
+    artifact.kind !== "image" &&
+    artifact.kind !== "file"
 
   const startEditTitle = () => {
     if (!artifact) return
@@ -387,6 +396,18 @@ function ArtifactPreviewDialog({
                 >
                   <Pencil size={12} />
                 </Button>
+                {canShowHistory && (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-6 w-6 text-[var(--muted-foreground)]"
+                    onClick={() => setHistoryOpen((v) => !v)}
+                    aria-label="Version history"
+                    title="Version history"
+                  >
+                    <History size={12} />
+                  </Button>
+                )}
               </>
             )}
             {artifact?.kind === "code" && artifact.language && (
@@ -398,7 +419,10 @@ function ArtifactPreviewDialog({
         </DialogHeader>
 
         <div className="flex-1 min-h-0 overflow-auto rounded-md border border-[var(--border)] bg-[var(--background)]">
-          {artifact?.kind === "code" ? (
+          {historyOpen && canShowHistory ? (
+            <ArtifactHistoryPanel artifact={artifact} onClose={() => setHistoryOpen(false)} />
+          ) : (
+            artifact?.kind === "code" ? (
             <CodeHighlight code={artifact.content} language={artifact.language} />
           ) : artifact?.kind === "json" ? (
             <JsonHighlight content={artifact.content} />
@@ -440,6 +464,7 @@ function ArtifactPreviewDialog({
             <pre className="text-xs p-3 whitespace-pre-wrap break-words font-mono">
               {artifact?.content}
             </pre>
+          )
           )}
         </div>
 
