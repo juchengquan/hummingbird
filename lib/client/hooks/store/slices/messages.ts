@@ -39,7 +39,6 @@ export interface MessagesSlice {
   ) => Message
   deleteMessage: (messageId: string) => void
   updateMessage: (messageId: string, content: string) => void
-  truncateMessagesAfter: (messageId: string, inclusive?: boolean) => void
   /** Replace a slice of messages with a synthetic `kind: 'recap'`
    *  assistant message that summarises them. The originals stay on
    *  disk + visible, but are flagged `compressed: true` so the chat
@@ -181,15 +180,6 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
     })),
   updateMessage: (messageId, content) =>
     set((state) => updateMessage(state, messageId, (m) => ({ ...m, content }))),
-  truncateMessagesAfter: (messageId, inclusive = false) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        const idx = c.messages.findIndex((m) => m.id === messageId)
-        if (idx === -1) return c
-        const endExclusive = inclusive ? idx : idx + 1
-        return { ...c, messages: c.messages.slice(0, endExclusive) }
-      }),
-    })),
   compressMessages: (conversationId, messageIds, recapContent) => {
     // The array surgery (insert recap, flag the slice, fold any
     // prior recap so a single Undo restores both spans) lives in
