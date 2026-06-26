@@ -145,14 +145,9 @@ the same vigilance if you extend this work):
    implemented in the in-Next backend. Remote-backend users need it added
    to agent-ts / agent-py (mirror however `/v1/images/refresh-url` is
    handled there).
-3. **Dead code: `truncateMessagesAfter` (minor).** After #276 made
-   edit/regenerate fork instead of truncate, `truncateMessagesAfter`
-   (`lib/client/hooks/store/slices/messages.ts`) has **zero** non-test
-   callers. Safe to remove the action + its interface entry in a small
-   follow-up.
-
-(The `docs/API.md` Frame-protocol gap — `tool_image` / `code_result`
-were undocumented — was closed this session in #274.)
+(Closed this session: the `docs/API.md` Frame-protocol gap —
+`tool_image` / `code_result` were undocumented — in #274; and the dead
+`truncateMessagesAfter` action was removed in #278.)
 
 ## Repo orientation (only what wasn't obvious)
 
