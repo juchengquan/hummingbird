@@ -164,16 +164,16 @@ the same vigilance if you extend this work):
    implemented in the in-Next backend. Remote-backend users need it added
    to agent-ts / agent-py (mirror however `/v1/images/refresh-url` is
    handled there).
-3. **Artifact-versioning cosmetic tidy-ups (trivial, from #280's review).**
-   Optional, non-blocking: add a one-line comment in `versionsEqual`
-   (`lib/client/sync/handlers.ts`) noting `id`-identity subsumes
-   `createdAt`; re-run Prettier on the wrapped kind-ternary in
-   `components/panels/artifacts-tab.tsx` (indentation drift); the
-   versioning runbook calls the History icon a "clock icon" (it's lucide
-   `History`).
-(Closed this session: the `docs/API.md` Frame-protocol gap —
-`tool_image` / `code_result` were undocumented — in #274; and the dead
-`truncateMessagesAfter` action was removed in #278.)
+3. **JSX indentation drift (cosmetic, deferred).** The wrapped kind-ternary
+   in `components/panels/artifacts-tab.tsx` has indentation drift after
+   #280's history-panel wrap. Left as-is (lint-clean; a Prettier sweep
+   would add noise) — re-indent only if you're already touching that file.
+
+(Closed this session: the `docs/API.md` Frame-protocol gap — `tool_image`
+/ `code_result` were undocumented — in #274; the dead
+`truncateMessagesAfter` action removed in #278; and two of #280's three
+review nits — the `versionsEqual` comment + the runbook icon name — in
+#282.)
 
 ## Repo orientation (only what wasn't obvious)
 
