@@ -20,7 +20,7 @@ Pick one path. Both produce the same URLs and accept the same env vars.
 ```bash
 # One-time install (one of):
 brew install supabase/tap/supabase       # macOS / Linuxbrew
-npx -y supabase --version                # any platform via npx
+bunx supabase --version                  # any platform via bunx
 
 # From repo root:
 bun run supabase:start                   # boots stack + applies migrations
@@ -125,7 +125,7 @@ Inbucket, `:54322` Postgres) and the same deterministic dev keys, so
 - *(Path A only)* **Supabase CLI** — installation options:
   ```bash
   brew install supabase/tap/supabase   # macOS / Linuxbrew
-  npx -y supabase --version            # any platform via npx (slower)
+  bunx supabase --version              # any platform via bunx (slower)
   scoop install supabase                # Windows
   ```
   See https://supabase.com/docs/guides/cli/getting-started for other

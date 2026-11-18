@@ -51,3 +51,8 @@ next-env.d.ts
 supabase/.branches/
 supabase/.temp/
 supabase/seed.sql
+
+# Bun is the package manager — keep other lockfiles out
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
