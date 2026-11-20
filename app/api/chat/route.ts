@@ -53,6 +53,7 @@ import { buildMemoryTools, MEMORY_TOOLS_NOTE } from '@/server/memory/tools'
 import {
   applyMemoryWritePolicy,
   createTurnTaint,
+  requestTaint,
 } from '@/server/memory/untrusted-content-policy'
 import {
   type ResolvedAttachment,
@@ -562,12 +563,20 @@ export async function POST(req: NextRequest) {
     const memTools = buildMemoryTools({ conversationId: null })
     tools.rememberFact = memTools.rememberFact
     tools.forgetFact = memTools.forgetFact
-    // Prompt-injection guard: once a web/MCP/file/sandbox tool has run
-    // this turn, `rememberFact` refuses (with a tool result telling the
-    // model to have the user ask explicitly) so fetched content can't
-    // plant persistent memories. Fresh taint per request = per turn.
-    Object.assign(tools, applyMemoryWritePolicy(tools, createTurnTaint()))
   }
+  // Prompt-injection guard. The turn starts tainted when the request
+  // already carries third-party content (attachments, uploaded images /
+  // files, replayed tool results), and becomes tainted once a web / MCP /
+  // file / sandbox tool runs. On a tainted turn `rememberFact` and
+  // `forgetFact` refuse (with a tool result telling the model to have the
+  // user ask in a fresh message). Applied even when the memory tools
+  // aren't offered, so the taint is tracked for the `finish` frame's
+  // `memoryTainted` flag, which tells the client to skip post-turn
+  // auto-extraction. Fresh taint per request = per turn.
+  const memoryTaint = createTurnTaint(
+    requestTaint({ attachments: body.attachments, messages: body.messages })
+  )
+  Object.assign(tools, applyMemoryWritePolicy(tools, memoryTaint))
 
   // Memory block: facts (if any) + the tools note (when offered, so
   // "remember" works even with zero facts).
@@ -1084,7 +1093,7 @@ export async function POST(req: NextRequest) {
             // can still distinguish completion from failure.
             emitter.endAfterError()
           } else {
-            emitter.done()
+            emitter.done({ memoryTainted: memoryTaint.taintedBy !== null })
           }
           controller.close()
         } catch (error) {

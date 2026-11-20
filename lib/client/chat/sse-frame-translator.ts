@@ -262,6 +262,14 @@ export function translateFrame(payload: string): NormalisedFrame | null {
       props: data.props,
     }
   }
+  // `finish` of a turn that read third-party content: the server flags
+  // it so post-turn memory auto-extraction skips the turn.
+  if (
+    t === "finish" &&
+    (raw.messageMetadata as { memoryTainted?: unknown } | undefined)?.memoryTainted === true
+  ) {
+    return { type: "memory_tainted" }
+  }
   // Lifecycle frames the handler doesn't need to act on.
   if (
     t === "start" ||

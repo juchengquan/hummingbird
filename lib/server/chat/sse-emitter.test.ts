@@ -38,6 +38,19 @@ describe("ChatSseEmitter — AI SDK format", () => {
     ])
   })
 
+  test("a tainted turn's finish frame carries messageMetadata.memoryTainted", () => {
+    const { emitter, lines } = collect()
+    emitter.start()
+    emitter.done({ memoryTainted: true })
+    expect(parseFrames(lines).at(-2)).toEqual({
+      type: "finish",
+      messageMetadata: { memoryTainted: true },
+    })
+    const plain = collect()
+    plain.emitter.done({ memoryTainted: false })
+    expect(parseFrames(plain.lines).at(-2)).toEqual({ type: "finish" })
+  })
+
   test("text → text-start (lazy) → text-delta → text-end on done", () => {
     const { emitter, lines } = collect()
     emitter.start()

@@ -13,9 +13,17 @@ import { apiClient } from "@/client/api-client"
  *
  * Gating lives at the call site (signed-in + `memoryEnabled`) and again
  * server-side in `extractFacts` (sign-in + `profiles.memory_enabled`),
- * so this helper itself stays dumb.
+ * so this helper itself stays dumb — except for `tainted`: a turn the
+ * server flagged as having read third-party content (attachments, web /
+ * MCP / file tools) is skipped outright, so injected text can't become
+ * a durable memory through extraction.
  */
-export function extractAfterTurn(turnText: string, conversationId: string): void {
+export function extractAfterTurn(
+  turnText: string,
+  conversationId: string,
+  opts?: { tainted?: boolean },
+): void {
+  if (opts?.tainted) return
   // `apiClient.memory.extract` never rejects (failures resolve `false`).
   void apiClient.memory.extract({ turnText, conversationId })
 }

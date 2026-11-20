@@ -221,10 +221,13 @@ is a no-op that still answers `200`.
 {
   turnText: string,          // 1..50_000 chars — "User: …\n\nAssistant: …"
   conversationId?: string,   // max 64 chars
+  tainted?: boolean,         // the chat stream flagged the turn (memoryTainted)
 }
 ```
 
-**Response 200**: `{ ok: true }`
+**Response 200**: `{ ok: true }`. With `tainted: true` nothing is
+extracted (still `200 { ok: true }`); the first-party client doesn't
+send tainted turns at all.
 
 **Errors**: `400` invalid body, `401 auth_required` (sign-in gate on,
 anonymous caller).
@@ -355,6 +358,22 @@ shapes below are normative.
 // Stream end — last frame of a successful stream.
 { "type": "done" }
 ```
+
+**Memory taint.** On the wire (AI SDK v5 UI message stream) a
+successful stream ends `finish-step`, `finish`, `[DONE]`. When the turn
+read third-party content — the request carried attachments (files, URL
+bookmarks, MCP resources), uploaded image / file parts, or replayed
+tool results, or a web / MCP / file / sandbox tool ran — the `finish`
+frame carries per-message metadata:
+
+```jsonc
+{ "type": "finish", "messageMetadata": { "memoryTainted": true } }
+```
+
+Absent metadata means untainted. On a tainted turn the server refuses
+`rememberFact` / `forgetFact`, and the client must not run post-turn
+memory extraction (`POST /api/memory/extract`) for it. The client's
+translator surfaces it as `{ type: "memory_tainted" }`.
 
 ### Ordering rules
 

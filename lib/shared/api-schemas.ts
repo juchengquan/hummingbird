@@ -514,6 +514,10 @@ export const RevokeShareResponseSchema = z.object({
 export const MemoryExtractRequestSchema = z.object({
   turnText: z.string().min(1).max(50_000),
   conversationId: z.string().max(64).optional(),
+  /** The chat stream flagged this turn as having read third-party content
+   *  (`finish.messageMetadata.memoryTainted`). The route then extracts
+   *  nothing. The first-party client doesn't send tainted turns at all. */
+  tainted: z.boolean().optional(),
 })
 
 export const MemoryExtractResponseSchema = z.object({
