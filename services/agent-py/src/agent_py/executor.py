@@ -197,12 +197,185 @@ async def execute_continue(
     )
 
 
+@dataclass
+class _RunGuard:
+    """Mutable breadcrumbs the `_run_*_inner` bodies leave for their
+    outer guard: the emitter once it exists (so a failure event follows
+    the run's seq) and whether the run's task row has been taken over
+    by this job (so an escaped error settles it failed instead of
+    stranding it)."""
+
+    emitter: RunEmitter | None = None
+    owns_task: bool = True
+
+
 async def _run_chunk(
     pool: asyncpg.Pool,
     *,
     payload: StartActionPayload,
     make_step_fn: MakeStepFn | None,
     resume: bool,
+) -> ExecutorOutcome:
+    """Outer guard for `_run_chunk_inner`: anything raised before (or
+    outside) the inner body's own `try` — checkpoint load, seq probe,
+    fan-in child-result load — still settles the run failed with a
+    terminal event instead of leaving the task `running` behind a
+    failed job. `CancelledError` is deliberately not caught: the poller
+    hands a cancelled job back to the queue and the task stays live."""
+    guard = _RunGuard()
+    try:
+        return await _run_chunk_inner(
+            pool,
+            payload=payload,
+            make_step_fn=make_step_fn,
+            resume=resume,
+            guard=guard,
+        )
+    except Exception as exc:
+        logger.error(
+            "executor.failed_outside_loop",
+            run_id=payload.run_id,
+            user_id=payload.user_id,
+            error=str(exc),
+        )
+        await _fail_run(
+            pool,
+            run_id=payload.run_id,
+            user_id=payload.user_id,
+            emitter=guard.emitter,
+            error=str(exc),
+        )
+        return ExecutorOutcome(settled=False, error=str(exc))
+
+
+async def _fail_run(
+    pool: asyncpg.Pool,
+    *,
+    run_id: str,
+    user_id: str,
+    emitter: RunEmitter | None,
+    error: str,
+) -> None:
+    """Best-effort: emit `result: failed` (if the run hasn't settled)
+    and settle the task failed via the barrier. With no emitter yet,
+    build one seeded past the run's highest seq so the event can't
+    collide with (and be dropped as) an existing one."""
+    try:
+        if emitter is None:
+            start_seq = await store.max_event_seq(pool, run_id=run_id, user_id=user_id)
+            emitter = RunEmitter(
+                run_id=run_id,
+                sink=_make_db_sink(pool, user_id=user_id),
+                start_seq=start_seq,
+            )
+        if not emitter.settled:
+            await emitter.result("failed", error=error)
+    except Exception as exc:
+        logger.warning("executor.fail_event_failed", run_id=run_id, error=str(exc))
+    try:
+        await settle_task_terminal(pool, task_id=run_id, user_id=user_id, status="failed")
+    except Exception as exc:
+        # The job is still marked failed by the poller; the TS stale-run
+        # reconciler fails a task with no live job as a last resort.
+        logger.warning("executor.fail_settle_failed", run_id=run_id, error=str(exc))
+
+
+_SETTLEABLE_STRANDED = ("queued", "running")
+
+
+async def settle_stranded_task(
+    pool: asyncpg.Pool,
+    *,
+    task_id: str,
+    user_id: str,
+    job_id: str | None,
+    error: str,
+) -> bool:
+    """Fail a task whose job died for good (reaped after its lease ran
+    out on the last attempt, or failed by the poller after an error
+    escaped the executor) — but only when nothing else will drive it:
+
+      - the task is still `queued` / `running` (a `paused` run is
+        legitimately waiting on the user / its children; a terminal one
+        is already settled), and
+      - no OTHER job for the task is queued or holds a live lease.
+
+    Settles via the join barrier first (so a child decrements its
+    parent), then appends the terminal `result: failed` at the run's
+    next seq — only when the transition actually happened, so a run
+    that settled concurrently never gets a stray second result.
+    Returns True iff the task was settled here."""
+    state = await jobs.load_job_task_state(pool, task_id=task_id, user_id=user_id, job_id=job_id)
+    if state is None or state.task_status not in _SETTLEABLE_STRANDED:
+        return False
+    if state.has_other_live_job:
+        return False
+    settled = await settle_task_terminal(pool, task_id=task_id, user_id=user_id, status="failed")
+    if not settled.transitioned:
+        return False
+    start_seq = await store.max_event_seq(pool, run_id=task_id, user_id=user_id)
+    emitter = RunEmitter(
+        run_id=task_id,
+        sink=_make_db_sink(pool, user_id=user_id),
+        start_seq=start_seq,
+        start_step=state.step,
+    )
+    await emitter.result("failed", error=error)
+    return True
+
+
+@dataclass(frozen=True)
+class _RunTools:
+    """The per-run tool set, built identically for every action so an
+    approved tool on the respond path resolves against the same
+    registry the model saw when it called it."""
+
+    context: ToolContext
+    extra_tools: dict[str, ToolDescriptor]
+    mcp_gated: set[str]
+
+    def registry(self) -> dict[str, ToolDescriptor]:
+        out = default_tool_registry(context=self.context)
+        out.update(self.extra_tools)
+        return out
+
+
+async def _build_run_tools(
+    pool: asyncpg.Pool,
+    *,
+    user_id: str,
+    checkpoint: dict[str, Any],
+    discover_mcp: bool,
+) -> _RunTools:
+    """Phase 3f-2: pull `workspaceId` off the checkpoint config so
+    `ToolContext` carries it (workspace-scoped tools such as
+    `searchFiles`) and cloud-mode MCP discovery (`extend_registry_with_mcp`)
+    knows which workspace to enumerate. Absent → `workspace_id` stays
+    None and MCP tools are skipped entirely. The TS checkpoint always
+    writes `workspaceId`; a missing field is the test/dev path."""
+    cfg = checkpoint.get("config")
+    workspace_id = _str_or_none(cfg.get("workspaceId")) if isinstance(cfg, dict) else None
+    context = ToolContext(pool=pool, user_id=user_id, workspace_id=workspace_id)
+    extra_tools: dict[str, ToolDescriptor] = {}
+    mcp_gated: set[str] = set()
+    if discover_mcp and workspace_id:
+        await extend_registry_with_mcp(
+            extra_tools,
+            pool=pool,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            gated_out=mcp_gated,
+        )
+    return _RunTools(context=context, extra_tools=extra_tools, mcp_gated=mcp_gated)
+
+
+async def _run_chunk_inner(
+    pool: asyncpg.Pool,
+    *,
+    payload: StartActionPayload,
+    make_step_fn: MakeStepFn | None,
+    resume: bool,
+    guard: _RunGuard,
 ) -> ExecutorOutcome:
     """Shared body for `execute_start` + `execute_continue`.
 
@@ -275,6 +448,7 @@ async def _run_chunk(
         start_seq=start_seq,
         start_step=start_step,
     )
+    guard.emitter = emitter
 
     # Track the mutable message history the step fn appends to —
     # `_default_make_step_fn` builds it from the checkpoint and hands
@@ -317,40 +491,27 @@ async def _run_chunk(
     try:
         await _stamp_handler(pool, run_id=payload.run_id, user_id=payload.user_id)
 
-        # Phase 3f-2: pull `workspaceId` off the checkpoint config so
-        # cloud-mode MCP discovery (`extend_registry_with_mcp`) knows
-        # which workspace to enumerate. Absent → context.workspace_id
-        # stays None and MCP tools are skipped entirely (Phase 2b-2
-        # behaviour). The TS checkpoint always writes `workspaceId`;
-        # missing field is the test/dev path.
         cfg = checkpoint.get("config")
-        workspace_id = _str_or_none(cfg.get("workspaceId")) if isinstance(cfg, dict) else None
-        tool_context = ToolContext(pool=pool, user_id=payload.user_id, workspace_id=workspace_id)
-        # Phase 3f-2: discover cloud-mode MCP tools when we have a
-        # workspace. Custom `make_step_fn` overrides (tests) skip this
-        # — they don't go through `_default_make_step_fn`, so injecting
+        # Custom `make_step_fn` overrides (tests) skip MCP discovery —
+        # they don't go through `_default_make_step_fn`, so injecting
         # extra tools wouldn't reach them anyway.
+        run_tools = await _build_run_tools(
+            pool,
+            user_id=payload.user_id,
+            checkpoint=checkpoint,
+            discover_mcp=make_step_fn is None,
+        )
         if make_step_fn is None:
-            extra_tools: dict[str, ToolDescriptor] = {}
-            mcp_gated: set[str] = set()
-            if workspace_id:
-                await extend_registry_with_mcp(
-                    extra_tools,
-                    pool=pool,
-                    user_id=payload.user_id,
-                    workspace_id=workspace_id,
-                    gated_out=mcp_gated,
-                )
             step_fn = _default_make_step_fn(
                 payload,
                 checkpoint,
                 live_messages,
-                tool_context,
-                extra_tools=extra_tools or None,
-                extra_gated_tool_names=mcp_gated or None,
+                run_tools.context,
+                extra_tools=run_tools.extra_tools or None,
+                extra_gated_tool_names=run_tools.mcp_gated or None,
             )
         else:
-            step_fn = make_step_fn(payload, checkpoint, live_messages, tool_context)
+            step_fn = make_step_fn(payload, checkpoint, live_messages, run_tools.context)
         max_steps = _max_steps_from(checkpoint, payload.max_steps)
 
         async def is_cancelled() -> bool:
@@ -630,19 +791,13 @@ async def _run_chunk(
             user_id=payload.user_id,
             error=str(exc),
         )
-        try:
-            if not emitter.settled:
-                await emitter.result("failed", error=str(exc))
-            await settle_task_terminal(
-                pool,
-                task_id=payload.run_id,
-                user_id=payload.user_id,
-                status="failed",
-            )
-        except Exception:
-            # If even the cleanup writes fail, the job-fail path in
-            # the poller will still leave the row recoverable.
-            pass
+        await _fail_run(
+            pool,
+            run_id=payload.run_id,
+            user_id=payload.user_id,
+            emitter=emitter,
+            error=str(exc),
+        )
         return ExecutorOutcome(settled=False, error=str(exc))
 
 
@@ -1026,6 +1181,38 @@ async def _run_respond(
     payload: RespondActionPayload,
     make_step_fn: MakeStepFn | None,
 ) -> ExecutorOutcome:
+    """Outer guard for `_run_respond_inner` — same contract as
+    `_run_chunk`'s, except that a failure BEFORE the atomic
+    paused → running claim leaves the task alone: it is still paused
+    on the user, who can respond again."""
+    guard = _RunGuard(owns_task=False)
+    try:
+        return await _run_respond_inner(pool, payload, make_step_fn, guard)
+    except Exception as exc:
+        logger.error(
+            "executor.respond.failed_outside_loop",
+            run_id=payload.run_id,
+            user_id=payload.user_id,
+            claimed=guard.owns_task,
+            error=str(exc),
+        )
+        if guard.owns_task:
+            await _fail_run(
+                pool,
+                run_id=payload.run_id,
+                user_id=payload.user_id,
+                emitter=guard.emitter,
+                error=str(exc),
+            )
+        return ExecutorOutcome(settled=False, error=str(exc))
+
+
+async def _run_respond_inner(
+    pool: asyncpg.Pool,
+    payload: RespondActionPayload,
+    make_step_fn: MakeStepFn | None,
+    guard: _RunGuard,
+) -> ExecutorOutcome:
     """Implementation of `execute_respond`. Kept separate from
     `_run_chunk` because the pre-loop setup is different — we have
     to find the pending tool call and append its result before the
@@ -1046,6 +1233,22 @@ async def _run_respond(
             user_id=payload.user_id,
         )
         return ExecutorOutcome(settled=False, error="respond: no checkpoint for run")
+
+    # A parent paused on its subagents is `paused` too, and its pending
+    # `spawnSubagent` tool_use has no tool_result until the fan-in — so
+    # without this a user could "respond" to it with that call's id,
+    # flip the parent to running and break the join barrier. Only the
+    # barrier's `continue` may resume it.
+    if isinstance(checkpoint.get("awaiting_children"), dict):
+        logger.error(
+            "executor.respond.awaiting_children",
+            run_id=payload.run_id,
+            request_id=payload.request_id,
+        )
+        return ExecutorOutcome(
+            settled=False,
+            error="respond: run is waiting on its subagents, not on user input",
+        )
 
     live_messages = _messages_from(checkpoint)
     if _tool_call_answered(live_messages, payload.request_id):
@@ -1071,6 +1274,38 @@ async def _run_respond(
             error=f"respond: pending tool call {payload.request_id} not found",
         )
 
+    # Same tool set (workspace-scoped context + cloud-mode MCP tools) the
+    # start/continue path gave the model, so an approved MCP tool or
+    # `searchFiles` actually executes instead of reporting "not
+    # registered", and so we know which MCP tools the server gates.
+    run_tools = await _build_run_tools(
+        pool,
+        user_id=payload.user_id,
+        checkpoint=checkpoint,
+        discover_mcp=True,
+    )
+
+    # Only a call the run actually suspended on may be answered. An
+    # unanswered tool_use for a tool that isn't approval-gated (e.g.
+    # `spawnSubagent`, or a sibling call in the same assistant turn) is
+    # not awaiting the user — "approving" it would execute a tool the
+    # run never asked permission for.
+    gated = _gated_tools_from(checkpoint) | run_tools.mcp_gated
+    if pending["tool_name"] not in gated:
+        logger.error(
+            "executor.respond.not_gated",
+            run_id=payload.run_id,
+            request_id=payload.request_id,
+            tool=pending["tool_name"],
+        )
+        return ExecutorOutcome(
+            settled=False,
+            error=(
+                f"respond: tool call {payload.request_id} ({pending['tool_name']}) "
+                "is not awaiting user input"
+            ),
+        )
+
     # Atomic paused → running gate. Only one respond per pause gets past
     # this; a duplicate racing us (or a run cancelled while paused) sees
     # no row and settles as a no-op — before any tool executes.
@@ -1084,6 +1319,9 @@ async def _run_respond(
             request_id=payload.request_id,
         )
         return ExecutorOutcome(settled=True)
+    # From here the task is `running` on our account — any escaped error
+    # must settle it (see `_run_respond`).
+    guard.owns_task = True
 
     # Classify the request kind from the pending tool name + args.
     # `approval` is the binary gate (any other gated tool); `choice`
@@ -1100,6 +1338,7 @@ async def _run_respond(
         selection=payload.selection,
         value=payload.value,
         final_args=final_args,
+        registry=run_tools.registry(),
     )
 
     # Append the user turn carrying the tool_result.
@@ -1127,6 +1366,7 @@ async def _run_respond(
         start_seq=start_seq,
         start_step=start_step,
     )
+    guard.emitter = emitter
 
     try:
         # Persist BEFORE emitting so a crash between emit + save can't
@@ -1152,12 +1392,17 @@ async def _run_respond(
         )
         await emitter.status("running")
 
-        step_fn = (make_step_fn or _default_make_step_fn)(
-            start_payload,
-            checkpoint,
-            live_messages,
-            ToolContext(pool=pool, user_id=payload.user_id),
-        )
+        if make_step_fn is None:
+            step_fn = _default_make_step_fn(
+                start_payload,
+                checkpoint,
+                live_messages,
+                run_tools.context,
+                extra_tools=run_tools.extra_tools or None,
+                extra_gated_tool_names=run_tools.mcp_gated or None,
+            )
+        else:
+            step_fn = make_step_fn(start_payload, checkpoint, live_messages, run_tools.context)
         max_steps = _max_steps_from(checkpoint, start_payload.max_steps)
 
         async def is_cancelled() -> bool:
@@ -1264,17 +1509,13 @@ async def _run_respond(
             user_id=payload.user_id,
             error=str(exc),
         )
-        try:
-            if not emitter.settled:
-                await emitter.result("failed", error=str(exc))
-            await settle_task_terminal(
-                pool,
-                task_id=payload.run_id,
-                user_id=payload.user_id,
-                status="failed",
-            )
-        except Exception:
-            pass
+        await _fail_run(
+            pool,
+            run_id=payload.run_id,
+            user_id=payload.user_id,
+            emitter=emitter,
+            error=str(exc),
+        )
         return ExecutorOutcome(settled=False, error=str(exc))
 
 
@@ -1349,13 +1590,15 @@ async def _build_tool_result_text(
     selection: list[str] | None,
     value: str | None,
     final_args: Any,
+    registry: dict[str, ToolDescriptor],
 ) -> str:
     """Build the text fed back to the model as the `tool_result.content`.
 
     Mirrors `buildToolResult` in `lib/server/agent/worker.ts` shape:
       - approval rejected → "User declined ..."
-      - approval approved → execute the matching tool when we have
-        a descriptor; placeholder otherwise (MCP tools land in Phase 3f)
+      - approval approved → execute the matching tool from `registry`
+        (the run's full tool set — see `_RunTools.registry`);
+        placeholder when it isn't there
       - choice → "User selected: <ids>" or "(no selection)"
       - input → the raw value or "(no value)" """
     if request_kind == "approval":
@@ -1364,12 +1607,11 @@ async def _build_tool_result_text(
                 "User declined to run this action. "
                 "Consider an alternative or ask the user how to proceed."
             )
-        descriptor = default_tool_registry().get(tool_name)
+        descriptor = registry.get(tool_name)
         if descriptor is None:
             return (
                 f'(Approved, but the tool "{tool_name}" is not registered '
-                "in the Python service yet. MCP tools land in Phase 3f of "
-                "PLAN-agent-api.)"
+                "for this run — it may have been removed since the run paused.)"
             )
         try:
             args = final_args if isinstance(final_args, dict) else {}
@@ -1889,4 +2131,5 @@ __all__ = [
     "execute_continue",
     "execute_respond",
     "execute_start",
+    "settle_stranded_task",
 ]
