@@ -22,6 +22,8 @@ from dataclasses import dataclass
 
 from fastapi import Request
 
+from .settings import get_settings
+
 __all__ = [
     "RateLimitVerdict",
     "SlidingWindow",
@@ -71,22 +73,56 @@ class SlidingWindow:
         self._buckets.clear()
 
 
-def rate_limit_key(request: Request) -> str:
-    """Standard key derivation. Prefers `X-Forwarded-For` (the deploy
-    proxy fills it in); falls back to the socket peer when present;
-    falls back to ``"default"`` so an unconfigured deploy still limits
-    abuse to one global rate rather than going unbounded.
+def rate_limit_key(
+    request: Request,
+    *,
+    trusted_proxy_hops: int | None = None,
+    client_ip_header: str | None = None,
+) -> str:
+    """Derive the per-client rate-limit key.
 
-    Mirrors `rateLimitKey` in `lib/server/rate-limit.ts`.
+    Precedence:
+      1. ``CLIENT_IP_HEADER`` (e.g. ``cf-connecting-ip``) when configured
+         and present — a platform header the edge overwrites, so it
+         can't be spoofed by the client.
+      2. ``X-Forwarded-For``, taking the entry ``TRUSTED_PROXY_HOPS``
+         places from the right. Each trusted proxy *appends* the address
+         it saw, so the right-hand entries are trustworthy and the
+         left-hand ones are whatever the client sent. Taking the
+         leftmost entry (the old behaviour) let any caller pick their
+         own bucket by sending ``X-Forwarded-For: <random>``.
+      3. The socket peer.
+      4. ``"default"`` so an unconfigured deploy still limits abuse to
+         one global rate rather than going unbounded.
+
+    Keyword args are test seams; production reads them from settings.
     """
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        # Take the leftmost entry — that's the original client per the
-        # XFF convention. Anything to the right is proxy chain.
-        first, _, _ = forwarded.partition(",")
-        first = first.strip()
-        if first:
-            return first
+    if trusted_proxy_hops is None or client_ip_header is None:
+        settings = get_settings()
+        if trusted_proxy_hops is None:
+            trusted_proxy_hops = settings.TRUSTED_PROXY_HOPS
+        if client_ip_header is None:
+            client_ip_header = settings.CLIENT_IP_HEADER
+
+    if client_ip_header:
+        platform_ip = (request.headers.get(client_ip_header) or "").strip()
+        if platform_ip:
+            return platform_ip
+
+    if trusted_proxy_hops > 0:
+        # Starlette joins repeated headers with ", " so splitting on
+        # commas covers both a single list header and repeats.
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            entries = [e.strip() for e in forwarded.split(",") if e.strip()]
+            if entries:
+                # Fewer entries than trusted hops means the chain is
+                # shorter than configured; every entry present was
+                # still appended by a trusted proxy, so the leftmost
+                # one is the best (and non-spoofable) answer.
+                index = max(0, len(entries) - trusted_proxy_hops)
+                return entries[index]
+
     client = request.client
     if client is not None and client.host:
         return client.host

@@ -43,7 +43,12 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 def _token() -> str:
     return jwt.encode(
-        {"sub": "u", "role": "authenticated", "exp": int(time.time()) + 3600},
+        {
+            "sub": "00000000-0000-4000-8000-0000000000aa",
+            "role": "authenticated",
+            "aud": "authenticated",
+            "exp": int(time.time()) + 3600,
+        },
         SECRET,
         algorithm="HS256",
     )

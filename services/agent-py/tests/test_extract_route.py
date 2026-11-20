@@ -23,6 +23,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent_py.main import create_app
+from agent_py.routers import extract as extract_router
 
 SECRET = "test-secret-do-not-use-in-prod-32-bytes!"
 
@@ -35,7 +36,12 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 def _token() -> str:
     return jwt.encode(
-        {"sub": "u", "role": "authenticated", "exp": int(time.time()) + 3600},
+        {
+            "sub": "00000000-0000-4000-8000-0000000000aa",
+            "role": "authenticated",
+            "aud": "authenticated",
+            "exp": int(time.time()) + 3600,
+        },
         SECRET,
         algorithm="HS256",
     )
@@ -134,3 +140,64 @@ def test_extract_extension_only_dispatch(client: TestClient) -> None:
     r = client.post("/v1/extract", files=files, headers=_auth())
     assert r.status_code == 200
     assert r.json()["kind"] == "json"
+
+
+def test_extract_default_cap_matches_next_route() -> None:
+    """Default cap = Next.js `FILE_SIZE_LIMIT` (5 MB)."""
+    from agent_py.settings import Settings
+
+    assert Settings().EXTRACT_MAX_BYTES == 5 * 1024 * 1024
+
+
+def test_extract_oversize_upload_returns_413(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", SECRET)
+    monkeypatch.setenv("EXTRACT_MAX_BYTES", "1024")
+    c = TestClient(create_app(enable_poller=False))
+    called = {"n": 0}
+
+    def boom(**_: object) -> None:
+        called["n"] += 1
+        raise AssertionError("extractor must not run on oversize input")
+
+    monkeypatch.setattr(extract_router, "extract_file", boom)
+    files = {"file": ("big.txt", io.BytesIO(b"x" * 1025), "text/plain")}
+    r = c.post("/v1/extract", files=files, headers=_auth())
+    assert r.status_code == 413
+    assert called["n"] == 0
+
+
+def test_extract_at_cap_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", SECRET)
+    monkeypatch.setenv("EXTRACT_MAX_BYTES", "1024")
+    c = TestClient(create_app(enable_poller=False))
+    files = {"file": ("ok.txt", io.BytesIO(b"x" * 1024), "text/plain")}
+    r = c.post("/v1/extract", files=files, headers=_auth())
+    assert r.status_code == 200
+
+
+def test_extract_runs_off_the_event_loop(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Extraction is CPU-bound; it must run in a worker thread, not on
+    the event-loop thread."""
+    import threading
+
+    seen: dict[str, object] = {}
+    real = extract_router.extract_file
+
+    def spy(**kwargs: object):  # type: ignore[no-untyped-def]
+        seen["thread"] = threading.current_thread()
+        try:
+            import asyncio
+
+            asyncio.get_running_loop()
+            seen["in_loop"] = True
+        except RuntimeError:
+            seen["in_loop"] = False
+        return real(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(extract_router, "extract_file", spy)
+    files = {"file": ("a.txt", b"hi", "text/plain")}
+    r = client.post("/v1/extract", files=files, headers=_auth())
+    assert r.status_code == 200
+    assert seen["in_loop"] is False

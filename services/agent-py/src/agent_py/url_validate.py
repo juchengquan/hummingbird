@@ -170,6 +170,24 @@ async def validate_outbound_url(raw_url: str) -> ValidationResult:
                 message=f"Hostnames ending in {suffix!r} are blocked",
             )
 
+    resolved = await resolve_public_addresses(host_lower)
+    if isinstance(resolved, ValidationError):
+        return resolved
+    return ValidationOk(url=raw_url)
+
+
+async def resolve_public_addresses(host: str) -> list[str] | ValidationError:
+    """Resolve `host` (hostname or IP literal) and return its addresses
+    iff EVERY one is public. Any private / loopback / link-local / ...
+    address → `ValidationError` (DNS rebinding defence — `evil.com`
+    could resolve to 127.0.0.1).
+
+    Used twice per outbound request: by `validate_outbound_url` before
+    the request, and by `outbound_http`'s network backend at socket
+    connect time, so the address actually dialled is the one checked
+    (closes the TOCTOU window between validation and connect)."""
+    host_lower = host.lower()
+
     # If the hostname is already a literal IP, check it directly.
     ip_literal = _try_ip(host_lower)
     if ip_literal is not None:
@@ -178,12 +196,10 @@ async def validate_outbound_url(raw_url: str) -> ValidationResult:
                 code="private_address",
                 message=f"Address {ip_literal} is in a private range",
             )
-        return ValidationOk(url=raw_url)
+        return [ip_literal]
 
     # DNS lookup. Resolve both A and AAAA via getaddrinfo's
-    # `family=AF_UNSPEC` (the default). Reject if any address is
-    # private (DNS rebinding defence — `evil.com` could resolve to
-    # 127.0.0.1).
+    # `family=AF_UNSPEC` (the default).
     try:
         infos = await _async_getaddrinfo(host_lower)
     except OSError as exc:
@@ -191,7 +207,13 @@ async def validate_outbound_url(raw_url: str) -> ValidationResult:
             code="dns_lookup_failed",
             message=str(exc) or f"DNS lookup failed for {host_lower!r}",
         )
+    if not infos:
+        return ValidationError(
+            code="dns_lookup_failed",
+            message=f"DNS lookup returned no addresses for {host_lower!r}",
+        )
 
+    out: list[str] = []
     for addr in infos:
         ip = _try_ip(addr)
         if ip is None:
@@ -204,8 +226,9 @@ async def validate_outbound_url(raw_url: str) -> ValidationResult:
                 code="private_address",
                 message=(f"Hostname {host_lower!r} resolves to private address {addr}"),
             )
-
-    return ValidationOk(url=raw_url)
+        if ip not in out:
+            out.append(ip)
+    return out
 
 
 def _try_ip(value: str) -> str | None:
@@ -282,5 +305,6 @@ __all__ = [
     "ValidationOk",
     "ValidationResult",
     "normalize_url",
+    "resolve_public_addresses",
     "validate_outbound_url",
 ]

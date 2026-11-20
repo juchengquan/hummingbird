@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     """Required for auth-protected endpoints. When empty, JWT middleware
     refuses every request with 503."""
 
+    SUPABASE_JWT_AUDIENCE: str = "authenticated"
+    """Required `aud` claim on incoming user JWTs. Supabase stamps
+    `authenticated` on every signed-in user's access token; override only
+    if the project customised its JWT template."""
+
     SUPABASE_DB_URL: str = ""
     """Direct Postgres connection string (`postgresql://...`). Required for
     the Phase 1+ poll loop — when empty the poller still starts but no-ops
@@ -132,6 +137,25 @@ class Settings(BaseSettings):
     warning if either is missing). Cross-family is stronger because a
     model is a poor judge of its own output. See
     `docs/PLAN-citation-verifiability.md` open question #2."""
+
+    # --- Request hardening ------------------------------------------------
+    TRUSTED_PROXY_HOPS: int = 1
+    """How many reverse proxies in front of the service append to
+    `X-Forwarded-For`. The rate-limit key is the XFF entry this many
+    places from the right (1 = the rightmost entry, i.e. the address
+    our own proxy saw). Entries further left are client-supplied and
+    spoofable. 0 = ignore XFF entirely and key on the socket peer."""
+
+    CLIENT_IP_HEADER: str = ""
+    """Optional single-value header a trusted platform sets to the real
+    client IP (e.g. `cf-connecting-ip`, `x-real-ip`, `fly-client-ip`).
+    When set and present it wins over `X-Forwarded-For`. Only set this
+    if the edge proxy overwrites the header — otherwise it's spoofable."""
+
+    EXTRACT_MAX_BYTES: int = 5 * 1024 * 1024
+    """Upload cap for `/v1/extract`. Matches the Next.js route's
+    `FILE_SIZE_LIMIT` (`lib/shared/upload-config.ts`, 5 MB). Larger
+    uploads get 413 before extraction runs."""
 
     # --- Service identity -------------------------------------------------
     SERVICE_NAME: str = "agent-py"

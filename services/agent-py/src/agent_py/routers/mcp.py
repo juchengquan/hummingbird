@@ -17,9 +17,10 @@ from ..mcp_client import call_tool as mcp_call_tool
 from ..mcp_client import discover as mcp_discover
 from ..mcp_client import read_resource as mcp_read_resource
 from ..mcp_credentials import (
-    fetch_decrypted_credentials,
+    fetch_cloud_server,
     upsert_server_with_credentials,
 )
+from ..url_validate import ValidationOk, validate_outbound_url
 
 logger = structlog.get_logger(__name__)
 
@@ -211,16 +212,35 @@ async def mcp_proxy(
         )
 
     credentials = _decode_mcp_credential_header(x_mcp_credentials)
+    server_name = body.server.name
+    server_url = body.server.url
     # Cloud lookup only when the header didn't supply a cred AND
-    # we can resolve a user id from the JWT.
+    # we can resolve a user id from the JWT. When the caller owns a
+    # cloud-mode row for this id, the row's url/name REPLACE the body's:
+    # decrypted cloud credentials must only ever go to the URL the user
+    # stored, never to an arbitrary URL in the request body (otherwise
+    # any caller could exfiltrate the stored secret to a server they
+    # control).
     if credentials is None and has_pool():
         user_id = claims.get("sub")
         if isinstance(user_id, str) and user_id:
-            credentials = await fetch_decrypted_credentials(
-                get_pool(), user_id=user_id, server_id=server_id
-            )
+            cloud = await fetch_cloud_server(get_pool(), user_id=user_id, server_id=server_id)
+            if cloud is not None:
+                server_name = cloud.name
+                server_url = cloud.url
+                credentials = cloud.credentials
 
-    endpoint = McpEndpoint(id=server_id, name=body.server.name, url=body.server.url)
+    # SSRF gate on whichever URL we're about to call. The proxy runs
+    # server-side, so a body URL like http://169.254.169.254/ would
+    # otherwise reach the service's own network.
+    validation = await validate_outbound_url(server_url)
+    if not isinstance(validation, ValidationOk):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "invalid_server_url", "message": validation.message},
+        )
+
+    endpoint = McpEndpoint(id=server_id, name=server_name, url=validation.url)
 
     try:
         if action == "discover":

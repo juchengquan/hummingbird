@@ -46,7 +46,7 @@ USER_ID = str(uuid.uuid4())
 
 @pytest.mark.asyncio
 async def test_flagged_when_field_is_python() -> None:
-    pool = _fake_pool({"raw_user_meta_data": {"agent_backend": "python"}})
+    pool = _fake_pool({"raw_app_meta_data": {"agent_backend": "python"}})
     assert await is_user_flagged_to_python(pool, USER_ID) is True
 
 
@@ -54,7 +54,7 @@ async def test_flagged_when_field_is_python() -> None:
 async def test_flagged_when_metadata_is_json_string() -> None:
     """asyncpg's jsonb codec may or may not be registered; tolerate
     both decoded dicts and the raw JSON string."""
-    pool = _fake_pool({"raw_user_meta_data": '{"agent_backend":"python"}'})
+    pool = _fake_pool({"raw_app_meta_data": '{"agent_backend":"python"}'})
     assert await is_user_flagged_to_python(pool, USER_ID) is True
 
 
@@ -66,25 +66,25 @@ async def test_not_flagged_when_row_missing() -> None:
 
 @pytest.mark.asyncio
 async def test_not_flagged_when_metadata_null() -> None:
-    pool = _fake_pool({"raw_user_meta_data": None})
+    pool = _fake_pool({"raw_app_meta_data": None})
     assert await is_user_flagged_to_python(pool, USER_ID) is False
 
 
 @pytest.mark.asyncio
 async def test_not_flagged_when_field_absent() -> None:
-    pool = _fake_pool({"raw_user_meta_data": {"other": "value"}})
+    pool = _fake_pool({"raw_app_meta_data": {"other": "value"}})
     assert await is_user_flagged_to_python(pool, USER_ID) is False
 
 
 @pytest.mark.asyncio
 async def test_not_flagged_when_field_is_other_value() -> None:
-    pool = _fake_pool({"raw_user_meta_data": {"agent_backend": "ts"}})
+    pool = _fake_pool({"raw_app_meta_data": {"agent_backend": "ts"}})
     assert await is_user_flagged_to_python(pool, USER_ID) is False
 
 
 @pytest.mark.asyncio
 async def test_not_flagged_when_metadata_is_garbage_string() -> None:
-    pool = _fake_pool({"raw_user_meta_data": "not json"})
+    pool = _fake_pool({"raw_app_meta_data": "not json"})
     assert await is_user_flagged_to_python(pool, USER_ID) is False
 
 
@@ -94,3 +94,16 @@ async def test_not_flagged_when_db_raises() -> None:
     let a DB blip silently switch a user TO Python."""
     pool = _fake_pool(raises=RuntimeError("connection refused"))
     assert await is_user_flagged_to_python(pool, USER_ID) is False
+
+
+@pytest.mark.asyncio
+async def test_reads_app_metadata_not_user_metadata() -> None:
+    """The flag must come from `raw_app_meta_data` (service-role only).
+    `raw_user_meta_data` is user-writable via `auth.updateUser({data})`,
+    so a user setting `agent_backend` there must NOT be flagged."""
+    pool = _fake_pool({"raw_app_meta_data": None})
+    assert await is_user_flagged_to_python(pool, USER_ID) is False
+    conn = pool.acquire.return_value.__aenter__.return_value
+    sql = conn.fetchrow.await_args.args[0]
+    assert "raw_app_meta_data" in sql
+    assert "raw_user_meta_data" not in sql

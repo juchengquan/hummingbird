@@ -28,6 +28,7 @@ skips that server but lets other capabilities still work.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any
 
 import asyncpg
@@ -89,6 +90,69 @@ async def fetch_decrypted_credentials(
     if isinstance(row, dict):
         return row
     return None
+
+
+_CLOUD_SERVER_SQL = """
+SELECT id::text, name, url
+FROM public.mcp_servers
+WHERE id = $1::uuid
+  AND credential_mode = 'cloud'
+  AND deleted_at IS NULL;
+"""
+
+
+@dataclass(frozen=True)
+class CloudMcpServer:
+    """A cloud-mode server row as stored in the DB. `url` is the ONLY
+    URL cloud-mode credentials may be sent to — never a URL from the
+    request body."""
+
+    id: str
+    name: str
+    url: str
+    credentials: dict[str, Any] | None
+    """Decrypted credential, or None if decryption isn't possible
+    (key unset / rotated)."""
+
+
+async def fetch_cloud_server(
+    pool: asyncpg.Pool,
+    *,
+    user_id: str,
+    server_id: str,
+    encryption_key: str | None = None,
+) -> CloudMcpServer | None:
+    """Load the caller's cloud-mode server row (RLS-scoped) plus its
+    decrypted credential. Returns None when there's no such cloud-mode
+    row for this user (missing, soft-deleted, local-mode, someone
+    else's, or a DB error) — the caller then treats the request as
+    credential-less. Mirrors the `cloudServerOverride` lookup in
+    `app/api/mcp/[serverId]/[action]/route.ts`."""
+    try:
+        async with pool.acquire() as conn, conn.transaction():
+            await store._set_user_context(conn, user_id=user_id)
+            row = await conn.fetchrow(_CLOUD_SERVER_SQL, server_id)
+    except Exception as exc:
+        logger.warning(
+            "mcp_credentials.cloud_server_lookup_failed",
+            server_id=server_id,
+            error=str(exc),
+        )
+        return None
+    if row is None:
+        return None
+    credentials = await fetch_decrypted_credentials(
+        pool,
+        user_id=user_id,
+        server_id=server_id,
+        encryption_key=encryption_key,
+    )
+    return CloudMcpServer(
+        id=row["id"],
+        name=row["name"],
+        url=row["url"],
+        credentials=credentials,
+    )
 
 
 class UpsertResult:
@@ -163,7 +227,9 @@ async def upsert_server_with_credentials(
 
 
 __all__ = [
+    "CloudMcpServer",
     "UpsertResult",
+    "fetch_cloud_server",
     "fetch_decrypted_credentials",
     "upsert_server_with_credentials",
 ]

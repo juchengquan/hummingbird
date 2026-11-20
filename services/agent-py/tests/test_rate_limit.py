@@ -6,7 +6,78 @@ from __future__ import annotations
 import time
 from unittest.mock import patch
 
-from agent_py.rate_limit import SlidingWindow
+import pytest
+from starlette.requests import Request
+
+from agent_py.rate_limit import SlidingWindow, rate_limit_key
+
+
+def _request(headers: dict[str, str], peer: str | None = "203.0.113.9") -> Request:
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/v1/chat",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+        "client": (peer, 1234) if peer else None,
+    }
+    return Request(scope)
+
+
+def test_key_ignores_spoofed_left_xff_entries() -> None:
+    """A client can prepend anything to X-Forwarded-For; the trusted
+    proxy appends the real peer on the right. With one trusted hop the
+    key must be the rightmost entry, no matter what's on the left."""
+    real = "198.51.100.7"
+    keys = {
+        rate_limit_key(
+            _request({"x-forwarded-for": f"{spoof}, {real}"}),
+            trusted_proxy_hops=1,
+            client_ip_header="",
+        )
+        for spoof in ("1.1.1.1", "2.2.2.2", "10.0.0.1, 3.3.3.3")
+    }
+    assert keys == {real}
+
+
+def test_key_honours_multiple_trusted_hops() -> None:
+    req = _request({"x-forwarded-for": "6.6.6.6, 198.51.100.7, 172.16.0.2"})
+    assert rate_limit_key(req, trusted_proxy_hops=2, client_ip_header="") == "198.51.100.7"
+
+
+def test_key_short_chain_uses_leftmost_available() -> None:
+    req = _request({"x-forwarded-for": "198.51.100.7"})
+    assert rate_limit_key(req, trusted_proxy_hops=3, client_ip_header="") == "198.51.100.7"
+
+
+def test_key_zero_hops_ignores_xff() -> None:
+    req = _request({"x-forwarded-for": "6.6.6.6"}, peer="203.0.113.9")
+    assert rate_limit_key(req, trusted_proxy_hops=0, client_ip_header="") == "203.0.113.9"
+
+
+def test_key_platform_header_wins_when_configured() -> None:
+    req = _request({"cf-connecting-ip": "198.51.100.7", "x-forwarded-for": "6.6.6.6, 7.7.7.7"})
+    assert (
+        rate_limit_key(req, trusted_proxy_hops=1, client_ip_header="cf-connecting-ip")
+        == "198.51.100.7"
+    )
+
+
+def test_key_platform_header_ignored_when_not_configured() -> None:
+    req = _request({"cf-connecting-ip": "6.6.6.6"}, peer="203.0.113.9")
+    assert rate_limit_key(req, trusted_proxy_hops=1, client_ip_header="") == "203.0.113.9"
+
+
+def test_key_reads_settings_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRUSTED_PROXY_HOPS", "1")
+    monkeypatch.setenv("CLIENT_IP_HEADER", "")
+    req = _request({"x-forwarded-for": "6.6.6.6, 198.51.100.7"})
+    assert rate_limit_key(req) == "198.51.100.7"
+
+
+def test_key_falls_back_to_default_without_peer() -> None:
+    assert rate_limit_key(_request({}, peer=None), trusted_proxy_hops=1, client_ip_header="") == (
+        "default"
+    )
 
 
 def test_first_request_is_allowed() -> None:
@@ -94,16 +165,17 @@ def test_retry_after_sec_is_at_least_one() -> None:
 
 
 def test_rate_limit_key_prefers_forwarded_for() -> None:
-    """`X-Forwarded-For` is the cdn/proxy convention; first entry is
-    the original client."""
+    """`X-Forwarded-For` beats the socket peer, but with the default
+    single trusted hop it's the RIGHTMOST entry (the one our proxy
+    appended) — the leftmost is client-controlled."""
     from unittest.mock import MagicMock
 
     from agent_py.rate_limit import rate_limit_key
 
     req = MagicMock()
-    req.headers = {"x-forwarded-for": "203.0.113.42, 10.0.0.1"}
+    req.headers = {"x-forwarded-for": "203.0.113.42, 198.51.100.1"}
     req.client = MagicMock(host="127.0.0.1")
-    assert rate_limit_key(req) == "203.0.113.42"
+    assert rate_limit_key(req) == "198.51.100.1"
 
 
 def test_rate_limit_key_falls_back_to_client_host() -> None:
