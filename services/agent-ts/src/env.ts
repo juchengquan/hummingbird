@@ -72,8 +72,14 @@ const EnvSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().default(""),
 
   // --- Worker --------------------------------------------------------
+  /** Opt-in for this service's `task_jobs` poll loop. Off by default:
+   *  agent-ts has no executor wired, so its poller only ever claims a
+   *  job and releases it again — and every such release pushes the
+   *  job's `scheduled_at` back (~x1.5), delaying agent-py, which runs
+   *  every task. Enable only to observe the queue (dry-run logging). */
+  AGENT_TS_POLLER_ENABLED: envBoolean(false),
   /** Phase 1 default: claim jobs, log them, release back to the queue.
-   *  Flip to false in Phase 2+ when the executor branch lands. */
+   *  Only read when `AGENT_TS_POLLER_ENABLED` is on. */
   WORKER_DRY_RUN: envBoolean(true),
   POLL_INTERVAL_SECONDS: z.coerce.number().positive().default(5),
   /** Lease a claim holds on a `task_jobs` row (migration 0032). Same
