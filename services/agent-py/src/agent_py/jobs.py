@@ -396,12 +396,12 @@ SELECT t.status,
        ) AS has_other_live_job,
        EXISTS (
            SELECT 1
-           FROM public.task_jobs self
+           FROM public.task_jobs this_job
            JOIN public.task_jobs later
-             ON later.task_id = self.task_id
-            AND later.id <> self.id
-            AND later.created_at > self.created_at
-           WHERE self.id = $3::uuid
+             ON later.task_id = this_job.task_id
+            AND later.id <> this_job.id
+            AND later.created_at > this_job.created_at
+           WHERE this_job.id = $3::uuid
        ) AS superseded
 FROM public.tasks t
 WHERE t.id = $1 AND t.user_id = $2;
