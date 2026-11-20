@@ -1,19 +1,14 @@
-"""Tests for the per-user Python-executor feature flag.
+"""Tests for the per-user opt-out from the Python executor.
 
-The contract is sharp because misreading it would either (a) silently
-let Python execute for unflagged users (a Phase 2 invariant
-violation) or (b) silently keep flagged users on the TS path (the
-flag is useless).
+Python executes everyone's tasks by default; `agent_backend` in
+`raw_app_meta_data` is an opt-out. The contract is sharp because
+misreading it would either (a) strand a default user's task (nothing
+else executes it) or (b) run an opted-out user's task anyway.
 
-Every shape of the metadata column gets a test:
-  - row missing → not flagged
-  - metadata NULL → not flagged
-  - metadata is JSON string → parsed, then checked
-  - metadata is dict → checked directly
-  - metadata is dict but field absent → not flagged
-  - metadata is dict, field is the wrong value → not flagged
-  - metadata is dict, field is exactly 'python' → FLAGGED
-  - DB error → not flagged (safe fallback to TS path)
+  - row missing / metadata NULL / not an object / unparseable → executes
+  - field absent / NULL / exactly 'python' → executes
+  - field any other value ('off', 'none', 'ts', …) → opted out
+  - DB error → unknown (None): the poller releases and retries
 """
 
 from __future__ import annotations
@@ -24,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agent_py.feature_flag import is_user_flagged_to_python
+from agent_py.feature_flag import python_executes_for_user
 
 
 def _fake_pool(fetchrow_result: Any = None, raises: BaseException | None = None) -> MagicMock:
@@ -45,64 +40,61 @@ USER_ID = str(uuid.uuid4())
 
 
 @pytest.mark.asyncio
-async def test_flagged_when_field_is_python() -> None:
-    pool = _fake_pool({"raw_app_meta_data": {"agent_backend": "python"}})
-    assert await is_user_flagged_to_python(pool, USER_ID) is True
+@pytest.mark.parametrize(
+    "meta",
+    [
+        None,
+        {},
+        {"other": "value"},
+        {"agent_backend": None},
+        {"agent_backend": "python"},
+        '{"agent_backend":"python"}',
+        "not json",
+        ["not", "a", "dict"],
+    ],
+)
+async def test_executes_by_default(meta: Any) -> None:
+    pool = _fake_pool({"raw_app_meta_data": meta})
+    assert await python_executes_for_user(pool, USER_ID) is True
 
 
 @pytest.mark.asyncio
-async def test_flagged_when_metadata_is_json_string() -> None:
-    """asyncpg's jsonb codec may or may not be registered; tolerate
-    both decoded dicts and the raw JSON string."""
-    pool = _fake_pool({"raw_app_meta_data": '{"agent_backend":"python"}'})
-    assert await is_user_flagged_to_python(pool, USER_ID) is True
-
-
-@pytest.mark.asyncio
-async def test_not_flagged_when_row_missing() -> None:
+async def test_executes_when_user_row_missing() -> None:
     pool = _fake_pool(None)
-    assert await is_user_flagged_to_python(pool, USER_ID) is False
+    assert await python_executes_for_user(pool, USER_ID) is True
 
 
 @pytest.mark.asyncio
-async def test_not_flagged_when_metadata_null() -> None:
-    pool = _fake_pool({"raw_app_meta_data": None})
-    assert await is_user_flagged_to_python(pool, USER_ID) is False
+@pytest.mark.parametrize(
+    "meta",
+    [
+        {"agent_backend": "off"},
+        {"agent_backend": "none"},
+        {"agent_backend": "ts"},
+        {"agent_backend": False},
+        '{"agent_backend":"off"}',
+    ],
+)
+async def test_opted_out_when_field_is_any_other_value(meta: Any) -> None:
+    pool = _fake_pool({"raw_app_meta_data": meta})
+    assert await python_executes_for_user(pool, USER_ID) is False
 
 
 @pytest.mark.asyncio
-async def test_not_flagged_when_field_absent() -> None:
-    pool = _fake_pool({"raw_app_meta_data": {"other": "value"}})
-    assert await is_user_flagged_to_python(pool, USER_ID) is False
-
-
-@pytest.mark.asyncio
-async def test_not_flagged_when_field_is_other_value() -> None:
-    pool = _fake_pool({"raw_app_meta_data": {"agent_backend": "ts"}})
-    assert await is_user_flagged_to_python(pool, USER_ID) is False
-
-
-@pytest.mark.asyncio
-async def test_not_flagged_when_metadata_is_garbage_string() -> None:
-    pool = _fake_pool({"raw_app_meta_data": "not json"})
-    assert await is_user_flagged_to_python(pool, USER_ID) is False
-
-
-@pytest.mark.asyncio
-async def test_not_flagged_when_db_raises() -> None:
-    """A flag-lookup failure must fall back to the TS worker; never
-    let a DB blip silently switch a user TO Python."""
+async def test_unknown_when_db_raises() -> None:
+    """A lookup failure is neither answer: executing would override an
+    opt-out, so the poller releases and retries instead."""
     pool = _fake_pool(raises=RuntimeError("connection refused"))
-    assert await is_user_flagged_to_python(pool, USER_ID) is False
+    assert await python_executes_for_user(pool, USER_ID) is None
 
 
 @pytest.mark.asyncio
 async def test_reads_app_metadata_not_user_metadata() -> None:
     """The flag must come from `raw_app_meta_data` (service-role only).
     `raw_user_meta_data` is user-writable via `auth.updateUser({data})`,
-    so a user setting `agent_backend` there must NOT be flagged."""
+    so a user can't opt themselves in or out."""
     pool = _fake_pool({"raw_app_meta_data": None})
-    assert await is_user_flagged_to_python(pool, USER_ID) is False
+    await python_executes_for_user(pool, USER_ID)
     conn = pool.acquire.return_value.__aenter__.return_value
     sql = conn.fetchrow.await_args.args[0]
     assert "raw_app_meta_data" in sql

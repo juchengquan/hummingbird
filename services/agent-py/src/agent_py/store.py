@@ -452,30 +452,33 @@ async def claim_paused_for_respond(
     return row is not None
 
 
-_TASK_OWNED_BY_SQL = """
-SELECT 1 FROM public.tasks WHERE id = $1 AND user_id = $2;
+_OWNED_TASK_STATUS_SQL = """
+SELECT status FROM public.tasks WHERE id = $1 AND user_id = $2;
 """
 
 
-async def is_task_owned_by(
+async def load_owned_task_status(
     pool: asyncpg.Pool,
     *,
     task_id: str,
     user_id: str,
-) -> bool:
-    """True iff `tasks.id = task_id` belongs to `user_id`.
+) -> str | None:
+    """`tasks.status` of `task_id` when it belongs to `user_id`, else
+    None.
 
     `task_jobs` RLS lets a user insert any row with their own
     `user_id`, including one pointing at someone else's `task_id`. The
     poller checks this before executing so a forged job can't drive
-    (or settle) another user's run."""
+    (or settle) another user's run — and skips a job whose task is
+    already terminal (e.g. failed by the stale-run reconciler while the
+    job sat unclaimed), instead of running a settled task again."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            _TASK_OWNED_BY_SQL,
+            _OWNED_TASK_STATUS_SQL,
             _coerce_uuid(task_id),
             _coerce_uuid(user_id),
         )
-    return row is not None
+    return str(row["status"]) if row is not None else None
 
 
 _IS_CANCELLED_SQL = """

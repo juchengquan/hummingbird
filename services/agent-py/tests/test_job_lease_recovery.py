@@ -318,7 +318,7 @@ async def test_poller_abandons_a_job_whose_lease_was_taken_over() -> None:
         return ExecutorOutcome(settled=True)
 
     with (
-        patch.object(store, "is_task_owned_by", new=AsyncMock(return_value=True)),
+        patch.object(store, "load_owned_task_status", new=AsyncMock(return_value="queued")),
         patch.object(executor, "execute_start", new=cooperative_run),
         patch.object(jobs, "extend_lease", new=AsyncMock(return_value=False)),
         patch.object(jobs, "mark_job_done", new=AsyncMock()) as done,
@@ -347,7 +347,7 @@ async def test_poller_keeps_running_through_transient_heartbeat_errors() -> None
 
     pool = MagicMock()
     with (
-        patch.object(store, "is_task_owned_by", new=AsyncMock(return_value=True)),
+        patch.object(store, "load_owned_task_status", new=AsyncMock(return_value="queued")),
         patch.object(executor, "execute_start", new=cooperative_run),
         patch.object(
             jobs, "extend_lease", new=AsyncMock(side_effect=OSError("conn reset"))
@@ -539,7 +539,7 @@ async def test_normal_continue_emits_no_resume_marker() -> None:
 @pytest.mark.asyncio
 async def test_poller_reruns_a_reclaimed_continue_as_reclaimed() -> None:
     with (
-        patch.object(store, "is_task_owned_by", new=AsyncMock(return_value=True)),
+        patch.object(store, "load_owned_task_status", new=AsyncMock(return_value="queued")),
         patch.object(jobs, "load_job_task_state", new=AsyncMock(return_value=_state())),
         patch.object(
             executor,
@@ -557,7 +557,7 @@ async def test_poller_reruns_a_reclaimed_continue_as_reclaimed() -> None:
 @pytest.mark.asyncio
 async def test_poller_runs_a_fresh_continue_without_a_marker() -> None:
     with (
-        patch.object(store, "is_task_owned_by", new=AsyncMock(return_value=True)),
+        patch.object(store, "load_owned_task_status", new=AsyncMock(return_value="queued")),
         patch.object(
             executor,
             "execute_continue",
@@ -572,7 +572,7 @@ async def test_poller_runs_a_fresh_continue_without_a_marker() -> None:
 @pytest.mark.asyncio
 async def test_poller_reruns_a_reclaimed_start_as_reclaimed() -> None:
     with (
-        patch.object(store, "is_task_owned_by", new=AsyncMock(return_value=True)),
+        patch.object(store, "load_owned_task_status", new=AsyncMock(return_value="queued")),
         patch.object(jobs, "load_job_task_state", new=AsyncMock(return_value=_state())),
         patch.object(
             executor,

@@ -10,11 +10,12 @@ On each tick:
   4. If a job's claimed, decide what to do with it:
      - `WORKER_DRY_RUN=True` (default) → log + release. The TS worker
        picks it up. This was the Phase 1 happy path.
-     - `WORKER_DRY_RUN=False` + user flagged (Phase 2+) → execute via
-       the executor while heartbeating the job's lease; settle the job
+     - `WORKER_DRY_RUN=False` (the default user) → execute via the
+       executor while heartbeating the job's lease; settle the job
        done / failed when it returns (`_execute_claimed`).
-     - `WORKER_DRY_RUN=False` + user not flagged → release. The TS
-       worker stays canonical for unflagged users until Phase 5.
+     - `WORKER_DRY_RUN=False` + user opted out (`feature_flag.py`) →
+       release. Nothing else executes it; the stale-run reconciler
+       fails the task once it has waited too long.
 
 Lease + settlement (migration 0032): a claim holds a lease that a
 heartbeat task extends every `JOB_HEARTBEAT_SECONDS` while the executor
@@ -239,19 +240,22 @@ async def _tick(settings: Settings) -> None:
         )
         return
 
-    # Live mode. Per-user feature flag gates whether Python executes
-    # this user's runs vs. releases for the TS worker. The flag is
-    # `auth.users.raw_app_meta_data->>'agent_backend' == 'python'`
-    # (app metadata — only the service role can write it); see
-    # `feature_flag.py` for the contract.
-    flagged = await feature_flag.is_user_flagged_to_python(pool, job.user_id)
-    if not flagged:
+    # Live mode. Python executes every user's jobs unless the user is
+    # opted out (`auth.users.raw_app_meta_data->>'agent_backend'` set to
+    # anything but 'python' — app metadata, only the service role can
+    # write it); see `feature_flag.py`. An opted-out user's job is
+    # released: nothing else executes it, so the stale-run reconciler
+    # fails its task ("no task worker available") once it has waited
+    # long enough. A failed lookup releases too (retried after backoff)
+    # rather than risk overriding an opt-out.
+    executes = await feature_flag.python_executes_for_user(pool, job.user_id)
+    if not executes:
         released = await jobs.release_job_to_queue(pool, job.id)
         logger.info(
             "poller.released",
             job_id=job.id,
             released=released,
-            reason="user_not_flagged",
+            reason="user_opted_out" if executes is False else "flag_lookup_failed",
         )
         return
 
@@ -369,7 +373,8 @@ async def _dispatch(pool: asyncpg.Pool, job: ClaimedJob) -> _Settlement:
     # `user_id` but SOMEONE ELSE's `task_id`. Every executor write is
     # scoped by `job.user_id`, but refuse up front rather than run a
     # forged job against a task the job's user doesn't own.
-    if not await store.is_task_owned_by(pool, task_id=job.task_id, user_id=job.user_id):
+    task_status = await store.load_owned_task_status(pool, task_id=job.task_id, user_id=job.user_id)
+    if task_status is None:
         logger.error(
             "poller.job_owner_mismatch",
             job_id=job.id,
@@ -378,6 +383,18 @@ async def _dispatch(pool: asyncpg.Pool, job: ClaimedJob) -> _Settlement:
             action=job.action,
         )
         return _Settlement(ok=False, error="task not owned by job user")
+    if task_status in _TERMINAL_TASK_STATUSES:
+        # Settled while the job waited (cancelled, or failed by the
+        # stale-run reconciler because no worker took it in time) — a
+        # run must never resume after its terminal event.
+        logger.warning(
+            "poller.job_for_settled_task",
+            job_id=job.id,
+            task_id=job.task_id,
+            action=job.action,
+            task_status=task_status,
+        )
+        return _Settlement(ok=True)
 
     action = job.action
     # Reclaimed-attempt flavours, see `reclaim_decision`.

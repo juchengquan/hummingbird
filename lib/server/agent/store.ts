@@ -271,15 +271,71 @@ export async function cancelChildTasks(
 }
 
 /**
- * Fail this user's orphaned runs: a `queued`/`running` row that
+ * Whether a worker holds this run's job right now (`running` under an
+ * unexpired lease). Unlike `hasLiveJob`, a `queued` job doesn't count —
+ * used for runs no worker ever started, where a queued job that nobody
+ * claimed is exactly the problem. A read error counts as held.
+ */
+async function hasLeasedJob(
+  db: DB,
+  runId: string,
+  userId: string,
+  nowMs: number
+): Promise<boolean> {
+  const { data, error } = await db
+    .from("task_jobs")
+    .select("status,lease_expires_at,attempts,max_attempts")
+    .eq("task_id", runId)
+    .eq("user_id", userId)
+    .in("status", ["running"])
+  if (error) return true
+  return (data ?? []).some((job) => {
+    const lease = job.lease_expires_at ? Date.parse(job.lease_expires_at) : NaN
+    return Number.isFinite(lease) && lease > nowMs
+  })
+}
+
+/** Default for how long a never-started run may wait for a worker. */
+export const DEFAULT_NO_WORKER_TIMEOUT_MS = 10 * 60_000
+
+/** `TASK_NO_WORKER_TIMEOUT_MINUTES` (positive number) → ms, else the default. */
+export function noWorkerTimeoutMs(
+  raw: string | undefined = process.env.TASK_NO_WORKER_TIMEOUT_MINUTES
+): number {
+  const minutes = raw === undefined || raw.trim() === "" ? NaN : Number(raw)
+  return Number.isFinite(minutes) && minutes > 0
+    ? minutes * 60_000
+    : DEFAULT_NO_WORKER_TIMEOUT_MS
+}
+
+export const NO_WORKER_ERROR =
+  "No task worker available: this task was never picked up. Try again later, or contact the administrator if it keeps happening."
+
+/** The route's `status: queued` marker is seq 1; a worker's first event
+ *  (its `status: running`) is seq 2. */
+const LAST_PRE_START_SEQ = 1
+
+/**
+ * Fail this user's orphaned runs. Two cases:
+ *
+ * - **Never started** — `queued`, nothing past the route's `status:
+ *   queued` marker, created more than `noWorkerMs` ago, and no worker
+ *   holding a lease on its job: no worker took it (the user is opted
+ *   out of agent-py, or agent-py is down / in dry-run). A queued job
+ *   doesn't keep it alive — agent-py's release of an opted-out user's
+ *   job refunds the claim, so the job would look claimable forever.
+ *   Failed with `NO_WORKER_ERROR`.
+ * - **Stalled** — a started `queued`/`running` row that
  *   1. has had no activity (latest event, else `started_at`) for
  *      `olderThanMs`, AND
  *   2. has no live job — nothing queued for it and no worker holding an
  *      unexpired lease on it.
- * Event recency alone isn't proof of death: one long step (extended
- * reasoning, a sandbox run) can go minutes without an event while its
- * worker heartbeats the job lease. The lease is the liveness signal; the
- * inactivity window just keeps this cheap and covers runs with no job.
+ *   Event recency alone isn't proof of death: one long step (extended
+ *   reasoning, a sandbox run) can go minutes without an event while its
+ *   worker heartbeats the job lease. The lease is the liveness signal;
+ *   the inactivity window just keeps this cheap and covers runs with no
+ *   job.
+ *
  * Settling is conditional on the run still being queued/running, so it
  * never overwrites a terminal status. RLS-scoped to `userId`; returns
  * how many were reconciled.
@@ -288,23 +344,33 @@ export async function reconcileStaleRuns(
   db: DB,
   userId: string,
   olderThanMs = 180_000,
-  nowMs: number = Date.now()
+  nowMs: number = Date.now(),
+  noWorkerMs: number = noWorkerTimeoutMs()
 ): Promise<number> {
   const { data, error } = await db
     .from("tasks")
-    .select("id,started_at")
+    .select("id,status,started_at,created_at")
     .eq("user_id", userId)
     .in("status", [...SETTLEABLE_STATUSES])
   if (error) throw new Error(`reconcileStaleRuns: ${error.message}`)
   let failed = 0
   for (const row of data ?? []) {
     const last = await latestEvent(db, row.id, userId)
-    const ref = last?.createdAt ?? row.started_at
-    if (!ref || nowMs - new Date(ref).getTime() <= olderThanMs) continue
-    if (await hasLiveJob(db, row.id, userId, nowMs)) continue
+    let settleError: string
+    if (row.status === "queued" && (last?.seq ?? 0) <= LAST_PRE_START_SEQ) {
+      const queuedAt = row.created_at ?? row.started_at
+      if (!queuedAt || nowMs - new Date(queuedAt).getTime() <= noWorkerMs) continue
+      if (await hasLeasedJob(db, row.id, userId, nowMs)) continue
+      settleError = NO_WORKER_ERROR
+    } else {
+      const ref = last?.createdAt ?? row.started_at
+      if (!ref || nowMs - new Date(ref).getTime() <= olderThanMs) continue
+      if (await hasLiveJob(db, row.id, userId, nowMs)) continue
+      settleError = "Task stopped unexpectedly (no recent activity)."
+    }
     const settled = await appendSyntheticResult(db, row.id, userId, {
       status: "failed",
-      error: "Task stopped unexpectedly (no recent activity).",
+      error: settleError,
     })
     if (settled) failed += 1
   }
