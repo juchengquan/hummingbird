@@ -593,6 +593,9 @@ export function useChatSend(): UseChatSendResult {
         const decoder = new TextDecoder()
         let buffer = ""
         let streamError: { code?: string; message?: string } | null = null
+        // Server-flagged: this turn read third-party content, so memory
+        // auto-extraction must skip it (see `memory_tainted` below).
+        let memoryTainted = false
 
         // SSE frames: `data: <json>\n\n`. Placeholder created on the
         // first event of any kind so reasoning-first models still show
@@ -846,6 +849,8 @@ export function useChatSend(): UseChatSendResult {
             } else if (parsed.type === "error") {
               streamError = { code: parsed.code, message: parsed.message }
               break outer
+            } else if (parsed.type === "memory_tainted") {
+              memoryTainted = true
             } else if (parsed.type === "done") {
               break outer
             }
@@ -910,7 +915,7 @@ export function useChatSend(): UseChatSendResult {
               .filter(Boolean)
               .join("\n\n")
             if (turnText.trim()) {
-              extractAfterTurn(turnText, targetConvId)
+              extractAfterTurn(turnText, targetConvId, { tainted: memoryTainted })
             }
           }
         }

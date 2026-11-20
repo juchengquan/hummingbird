@@ -19,6 +19,7 @@ import {
   rejectUnknownModel,
   selectModel,
 } from '@/server/model-provider'
+import { jsonBodyError, readJsonCapped } from '@/server/read-body-capped'
 
 export const runtime = 'nodejs'
 
@@ -32,20 +33,18 @@ function stripJsonFences(text: string): string {
     .trim()
 }
 
+/** Body cap: `reportText` ≤ 100k chars + ≤ 100 sources (~4.3k chars
+ *  each) at ≤ 3 UTF-8 bytes per char, plus headroom. */
+const EXTRACT_TABLE_BODY_MAX = 2 * 1024 * 1024
+
 export async function POST(req: NextRequest) {
   // REQUIRE_AUTH_FOR_AI gate — before the body is read or any model
   // work starts. No-op when the flag is off / Supabase is unset.
   const aiAuth = await requireAiAuth()
   if (!aiAuth.ok) return aiAuth.response
-  let raw: unknown
-  try {
-    raw = await req.json()
-  } catch {
-    return NextResponse.json(
-      { code: 'invalid_request', message: 'Body must be JSON.' },
-      { status: 400 },
-    )
-  }
+  const read = await readJsonCapped(req, EXTRACT_TABLE_BODY_MAX)
+  if (!read.ok) return jsonBodyError(read)
+  const raw = read.value
   const parsed = ExtractTableRequestSchema.safeParse(raw)
   if (!parsed.success) {
     return NextResponse.json(

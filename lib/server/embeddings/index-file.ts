@@ -74,6 +74,21 @@ export async function indexFileSections(
     return { status: "skipped", sections: 0, reason: "empty" }
   }
 
+  // Ownership/existence first: the caller's RLS-scoped client only sees
+  // its own live `files` rows. Checking before the embed means a forged
+  // or not-yet-synced `fileId` costs one SELECT, not a paid embedding
+  // round-trip that the FK would then reject.
+  const { data: fileRow, error: fileError } = await client
+    .from("files")
+    .select("id")
+    .eq("id", fileId)
+    .is("deleted_at", null)
+    .maybeSingle()
+  if (fileError) throw new Error(`files lookup failed: ${fileError.message}`)
+  if (!fileRow) {
+    return { status: "skipped", sections: 0, reason: "file_not_found" }
+  }
+
   if (force) {
     // Rebuild: clear existing sections so re-index doesn't collide with
     // the (file_id, section_index) unique constraint.

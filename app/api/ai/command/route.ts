@@ -36,6 +36,11 @@ import {
   getEditPrompt,
   getGeneratePrompt,
 } from './prompt';
+import { jsonBodyError, readJsonCapped } from '@/server/read-body-capped';
+
+/** Body cap: ≤ 1000 UI messages + an editor of ≤ 50,000 blocks. Generous
+ *  — a very large document — but bounded. */
+const AI_COMMAND_BODY_MAX = 32 * 1024 * 1024;
 
 export async function POST(req: NextRequest) {
   // REQUIRE_AUTH_FOR_AI gate — before the body is read or any model
@@ -43,15 +48,9 @@ export async function POST(req: NextRequest) {
   // does the work). No-op when the flag is off / Supabase is unset.
   const aiAuth = await requireAiAuth();
   if (!aiAuth.ok) return aiAuth.response;
-  let raw: unknown;
-  try {
-    raw = await req.json();
-  } catch {
-    return NextResponse.json(
-      { code: 'invalid_request', message: 'Body must be JSON.' },
-      { status: 400 }
-    );
-  }
+  const read = await readJsonCapped(req, AI_COMMAND_BODY_MAX);
+  if (!read.ok) return jsonBodyError(read);
+  const raw = read.value;
   const parsed = AiCommandRequestSchema.safeParse(raw);
   if (!parsed.success) {
     return NextResponse.json(

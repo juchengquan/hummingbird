@@ -26,6 +26,15 @@ const MAX_REDIRECTS = 5
 const MAX_BODY_BYTES = 5 * 1024 * 1024
 const EXTRACTED_TEXT_BUDGET = 200 * 1024
 
+/** Test seam (mutable, restored by tests): URL validation, the fetch
+ *  implementation and the overall timeout. Production values are the
+ *  SSRF validator, the global fetch and 10 s. */
+export const fetchUrlDeps = {
+  validate: validateOutboundUrl,
+  fetch: (input: string, init: RequestInit): Promise<Response> => fetch(input, init),
+  timeoutMs: FETCH_TIMEOUT_MS,
+}
+
 export interface BookmarkSnapshot {
   url: string
   title: string
@@ -65,7 +74,7 @@ export async function fetchUrlBookmark(
   let redirectsRemaining = MAX_REDIRECTS
 
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  const timeout = setTimeout(() => controller.abort(), fetchUrlDeps.timeoutMs)
   // Combined signal: caller's upstream signal (e.g. tab closed) OR
   // our internal 10s timeout — whichever fires first cancels the
   // outbound fetch. Stops zombie work after a client disconnect.
@@ -75,7 +84,7 @@ export async function fetchUrlBookmark(
 
   try {
     while (true) {
-      const validation = await validateOutboundUrl(currentUrl)
+      const validation = await fetchUrlDeps.validate(currentUrl)
       if (!validation.ok) {
         return {
           ok: false,
@@ -92,7 +101,7 @@ export async function fetchUrlBookmark(
         // The guarded dispatcher re-checks the address at connect time,
         // so a TTL-0 DNS answer that flips to a private IP after the
         // `validateOutboundUrl` pre-flight is refused (DNS rebinding).
-        res = await fetch(
+        res = await fetchUrlDeps.fetch(
           validation.url.toString(),
           withGuardedDispatcher({
             method: "GET",
@@ -108,7 +117,7 @@ export async function fetchUrlBookmark(
           })
         )
       } catch (err) {
-        if (err instanceof Error && err.name === "AbortError") {
+        if (isAbortError(err)) {
           return {
             ok: false,
             error: {
@@ -192,22 +201,45 @@ export async function fetchUrlBookmark(
       }
       const chunks: Uint8Array[] = []
       let totalBytes = 0
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        if (value) {
-          totalBytes += value.byteLength
-          if (totalBytes > MAX_BODY_BYTES) {
-            await reader.cancel().catch(() => undefined)
-            return {
-              ok: false,
-              error: {
-                code: "body_too_large",
-                message: `Response body exceeded ${MAX_BODY_BYTES / (1024 * 1024)} MB`,
-              },
+      // The timeout (or a caller abort) can fire mid-body: `read()` then
+      // rejects with an AbortError, which must map to `timeout`, not
+      // escape as an unstructured 500.
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          if (value) {
+            totalBytes += value.byteLength
+            if (totalBytes > MAX_BODY_BYTES) {
+              await reader.cancel().catch(() => undefined)
+              return {
+                ok: false,
+                error: {
+                  code: "body_too_large",
+                  message: `Response body exceeded ${MAX_BODY_BYTES / (1024 * 1024)} MB`,
+                },
+              }
             }
+            chunks.push(value)
           }
-          chunks.push(value)
+        }
+      } catch (err) {
+        await reader.cancel().catch(() => undefined)
+        if (isAbortError(err) || requestSignal.aborted) {
+          return {
+            ok: false,
+            error: {
+              code: "timeout",
+              message: `Fetch timed out after ${FETCH_TIMEOUT_MS}ms`,
+            },
+          }
+        }
+        return {
+          ok: false,
+          error: {
+            code: "network",
+            message: "Connection failed while reading the response body",
+          },
         }
       }
       const buffer = Buffer.concat(chunks.map((c) => Buffer.from(c)))
@@ -240,6 +272,13 @@ export async function fetchUrlBookmark(
   } finally {
     clearTimeout(timeout)
   }
+}
+
+/** Abort from our timer or the caller's signal. `DOMException` isn't an
+ *  `Error` subclass in every runtime, so match on `name`. */
+function isAbortError(err: unknown): boolean {
+  const name = (err as { name?: unknown } | null)?.name
+  return name === "AbortError" || name === "TimeoutError"
 }
 
 interface ExtractedPage {

@@ -170,6 +170,28 @@ filters.
   unaffected. It has no `includeSubDomains` / `preload`, because sibling
   subdomains may not be https. Raise it once the domain is settled.
 
+## Per-IP rate limits need a reverse proxy
+
+Anonymous callers are rate-limited per client IP (`rateLimitKey` in
+`lib/server/rate-limit.ts`: `/api/extract`, `/api/url/fetch`,
+`/api/ai/complete`, the MCP proxy without Supabase, chat web tools,
+CSP reports). Route handlers never see the socket peer, so the IP comes
+from `X-Forwarded-For`, read `TRUSTED_PROXY_HOPS` entries from the right.
+
+That only works with a reverse proxy (Caddy, Nginx, a platform edge)
+that appends the real peer to `X-Forwarded-For`. `next start` itself
+sets the header only when the request has none, so with Next.js exposed
+directly a client that sends `X-Forwarded-For: <anything>` chooses its
+own key and gets a fresh bucket per value. `TRUSTED_PROXY_HOPS=0` closes
+that, but then every anonymous caller shares one bucket.
+
+At boot (`instrumentation.ts` → `warnOnProxyConfig`) a production server
+outside a known platform (Vercel, Render, Fly, Railway, Cloud Run,
+Netlify) logs a warning when `TRUSTED_PROXY_HOPS` is unset or `0`.
+Setting it explicitly to the number of proxies confirms the setup and
+silences the warning. Signed-in limits (MCP proxy, `/api/embed`) key on
+the user id and don't depend on any of this.
+
 ## Reading reports
 
 Each violation is logged as one line through `console.warn`:

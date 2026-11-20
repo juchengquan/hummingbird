@@ -5,6 +5,7 @@ import { z } from "zod"
 import { fetchUrlBookmark, type FetchError } from "@/server/url/fetch"
 import { normalizeUrl } from "@/server/url/validate"
 import { createSlidingWindow, rateLimitKey } from "@/server/rate-limit"
+import { PAYLOAD_TOO_LARGE_CODE, readJsonCapped } from "@/server/read-body-capped"
 
 /**
  * Fetch + extract a URL as a bookmark snapshot. Used by the "Add
@@ -29,6 +30,9 @@ const BodySchema = z.object({
   url: z.string().min(1).max(2000),
 })
 
+/** Body cap: one ≤ 2000-char URL. */
+const URL_FETCH_BODY_MAX = 16 * 1024
+
 const bookmarkRateLimit = createSlidingWindow({ windowMs: 60_000, max: 30 })
 
 export async function POST(req: NextRequest) {
@@ -49,15 +53,22 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  let body: unknown
-  try {
-    body = await req.json()
-  } catch {
-    return NextResponse.json(
-      { ok: false, error: { code: "invalid_json", message: "Invalid JSON body" } },
-      { status: 400 }
-    )
+  const read = await readJsonCapped(req, URL_FETCH_BODY_MAX)
+  if (!read.ok) {
+    return read.reason === "too_large"
+      ? NextResponse.json(
+          {
+            ok: false,
+            error: { code: PAYLOAD_TOO_LARGE_CODE, message: "Request body too large" },
+          },
+          { status: 413 }
+        )
+      : NextResponse.json(
+          { ok: false, error: { code: "invalid_json", message: "Invalid JSON body" } },
+          { status: 400 }
+        )
   }
+  const body = read.value
   const parsed = BodySchema.safeParse(body)
   if (!parsed.success) {
     return NextResponse.json(

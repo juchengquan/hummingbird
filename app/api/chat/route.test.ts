@@ -6,6 +6,8 @@ import {
   type AiAuthScenario,
 } from "@/server/auth/_test/ai-auth-scenario"
 
+import { CHAT_BODY_MAX } from "@/shared/api-schemas"
+
 import { POST } from "./route"
 
 /**
@@ -58,5 +60,33 @@ describe("POST /api/chat — REQUIRE_AUTH_FOR_AI", () => {
     scenario("supabase-unconfigured")
     const res = await POST(post("{not json"))
     expect(res.status).toBe(400)
+  })
+})
+
+describe("POST /api/chat — body cap", () => {
+  test("Content-Length over CHAT_BODY_MAX → 413 payload_too_large, body never read", async () => {
+    scenario("flag-off")
+    let pulled = false
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull() {
+          pulled = true
+        },
+      },
+      { highWaterMark: 0 }
+    )
+    const req = new NextRequest("http://localhost/api/chat", {
+      method: "POST",
+      body,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": String(CHAT_BODY_MAX + 1),
+      },
+      duplex: "half",
+    } as ConstructorParameters<typeof NextRequest>[1])
+    const res = await POST(req)
+    expect(res.status).toBe(413)
+    expect((await res.json()).code).toBe("payload_too_large")
+    expect(pulled).toBe(false)
   })
 })

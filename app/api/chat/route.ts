@@ -13,7 +13,7 @@ import {
 } from '@/server/model-provider'
 import { categorizeError } from '@/shared/api-errors'
 import { requireAiAuth } from '@/server/auth/require-ai-auth'
-import { ChatRequestSchema } from '@/shared/api-schemas'
+import { CHAT_BODY_MAX, ChatRequestSchema } from '@/shared/api-schemas'
 import {
   SERVER_SKILLS,
   type SkillRequestEntry,
@@ -30,6 +30,7 @@ import {
 } from '@/server/generative-ui/tool'
 import { loadEffectiveMcpServers, type EffectiveMcpServer } from '@/server/mcp/load-servers'
 import { createSlidingWindow, rateLimitKey } from '@/server/rate-limit'
+import { jsonBodyError, readJsonCapped } from '@/server/read-body-capped'
 import {
   AI_SDK_STREAM_HEADER_NAME,
   AI_SDK_STREAM_HEADER_VALUE,
@@ -53,6 +54,7 @@ import { buildMemoryTools, MEMORY_TOOLS_NOTE } from '@/server/memory/tools'
 import {
   applyMemoryWritePolicy,
   createTurnTaint,
+  requestTaint,
 } from '@/server/memory/untrusted-content-policy'
 import {
   type ResolvedAttachment,
@@ -92,7 +94,8 @@ const chatImageGenLimit = createSlidingWindow({
  */
 async function resolveAttachments(
   payloads: AttachmentPayload[] | undefined,
-  mcpServers: EffectiveMcpServer[]
+  mcpServers: EffectiveMcpServer[],
+  callerKey: string
 ): Promise<ResolvedAttachment[]> {
   if (!payloads || payloads.length === 0) return []
 
@@ -122,7 +125,7 @@ async function resolveAttachments(
     }
   }
 
-  const mcpResolved = await resolveAttachedMcpResources(mcpRequests, mcpServers)
+  const mcpResolved = await resolveAttachedMcpResources(mcpRequests, mcpServers, callerKey)
   resolved.push(...mcpResolved)
   return resolved
 }
@@ -320,16 +323,9 @@ export async function POST(req: NextRequest) {
   // tool work starts. No-op when the flag is off / Supabase is unset.
   const aiAuth = await requireAiAuth()
   if (!aiAuth.ok) return aiAuth.response
-  let raw: unknown
-  try {
-    raw = await req.json()
-  } catch {
-    return NextResponse.json(
-      { code: 'invalid_request', message: 'Body must be JSON.' },
-      { status: 400 }
-    )
-  }
-  const parsed = ChatRequestSchema.safeParse(raw)
+  const read = await readJsonCapped(req, CHAT_BODY_MAX)
+  if (!read.ok) return jsonBodyError(read)
+  const parsed = ChatRequestSchema.safeParse(read.value)
   if (!parsed.success) {
     return NextResponse.json(
       {
@@ -474,7 +470,11 @@ export async function POST(req: NextRequest) {
   // reads + per-call timeout + graceful error fallback inline in the
   // prompt). Failures render as "[unavailable]" markers rather than
   // blocking the turn.
-  const attachments = await resolveAttachments(body.attachments, mcpServers)
+  const attachments = await resolveAttachments(
+    body.attachments,
+    mcpServers,
+    aiAuth.user ? `user:${aiAuth.user.id}` : `ip:${ipKey}`
+  )
 
   // Idle watchdog: cancel the upstream call if the stream goes silent
   // mid-response. Declared here so the AbortSignal can be combined with
@@ -557,12 +557,20 @@ export async function POST(req: NextRequest) {
     const memTools = buildMemoryTools({ conversationId: null })
     tools.rememberFact = memTools.rememberFact
     tools.forgetFact = memTools.forgetFact
-    // Prompt-injection guard: once a web/MCP/file/sandbox tool has run
-    // this turn, `rememberFact` refuses (with a tool result telling the
-    // model to have the user ask explicitly) so fetched content can't
-    // plant persistent memories. Fresh taint per request = per turn.
-    Object.assign(tools, applyMemoryWritePolicy(tools, createTurnTaint()))
   }
+  // Prompt-injection guard. The turn starts tainted when the request
+  // already carries third-party content (attachments, uploaded images /
+  // files, replayed tool results), and becomes tainted once a web / MCP /
+  // file / sandbox tool runs. On a tainted turn `rememberFact` and
+  // `forgetFact` refuse (with a tool result telling the model to have the
+  // user ask in a fresh message). Applied even when the memory tools
+  // aren't offered, so the taint is tracked for the `finish` frame's
+  // `memoryTainted` flag, which tells the client to skip post-turn
+  // auto-extraction. Fresh taint per request = per turn.
+  const memoryTaint = createTurnTaint(
+    requestTaint({ attachments: body.attachments, messages: body.messages })
+  )
+  Object.assign(tools, applyMemoryWritePolicy(tools, memoryTaint))
 
   // Memory block: facts (if any) + the tools note (when offered, so
   // "remember" works even with zero facts).
@@ -1079,7 +1087,7 @@ export async function POST(req: NextRequest) {
             // can still distinguish completion from failure.
             emitter.endAfterError()
           } else {
-            emitter.done()
+            emitter.done({ memoryTainted: memoryTaint.taintedBy !== null })
           }
           controller.close()
         } catch (error) {

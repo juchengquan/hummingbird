@@ -35,6 +35,13 @@ const CACHE_VERSION = "v1"
 const TTL_MS = 60 * 60 * 1000
 /** LRU cap. Evicts least-recently-used beyond this. */
 const MAX_ENTRIES = 500
+/** Approximate memory budget across all entries (values + embeddings).
+ *  An extraction result carries up to ~1 MB of `fullText` plus a 100 KB
+ *  `text`, so the entry cap alone allowed ~1 GB. LRU-evicted beyond. */
+const MAX_TOTAL_BYTES = 64 * 1024 * 1024
+/** A single value bigger than this isn't cached at all (it would evict
+ *  a large share of the cache for one hit). */
+const MAX_ENTRY_BYTES = 8 * 1024 * 1024
 /** Cosine-similarity floor for a Phase-2 near-match hit. Tight on purpose
  *  (a near-match serves a *similar* input's answer, not a byte-identical
  *  one). Tune by editing + bumping CACHE_VERSION. */
@@ -43,6 +50,8 @@ const SIMILARITY_THRESHOLD = 0.97
 interface Entry {
   value: unknown
   expires: number
+  /** Approximate in-memory size (see `approxBytes`). */
+  bytes: number
   /** Phase 2: the input's embedding, present only for entries whose caller
    *  opted into similarity matching. Absent → never matched by similarity. */
   embedding?: number[]
@@ -54,6 +63,27 @@ interface Entry {
 // Insertion order in a Map is the LRU order: `get` re-inserts a hit to the
 // end (most-recent), eviction drops from the front (least-recent).
 const store = new Map<string, Entry>()
+let totalBytes = 0
+
+function drop(key: string): void {
+  const entry = store.get(key)
+  if (!entry) return
+  totalBytes -= entry.bytes
+  store.delete(key)
+}
+
+/** Approximate heap size of a cached value: its JSON length x 2 (JS
+ *  strings are UTF-16) plus 8 bytes per embedding dimension. A value
+ *  that doesn't serialise counts as infinite (never cached). */
+function approxBytes(value: unknown, embedding?: number[]): number {
+  let json: string | undefined
+  try {
+    json = JSON.stringify(value)
+  } catch {
+    return Number.POSITIVE_INFINITY
+  }
+  return (json?.length ?? 0) * 2 + (embedding?.length ?? 0) * 8
+}
 
 /**
  * Deterministic JSON: object keys sorted recursively so the same logical
@@ -105,7 +135,7 @@ export function getCachedResponse<T>(key: string): T | undefined {
   const entry = store.get(key)
   if (!entry) return undefined
   if (entry.expires <= Date.now()) {
-    store.delete(key)
+    drop(key)
     return undefined
   }
   // LRU touch: re-insert so it becomes most-recently-used.
@@ -115,23 +145,29 @@ export function getCachedResponse<T>(key: string): T | undefined {
 }
 
 /** Store `value` under `key`, evicting the least-recently-used entries
- *  beyond the cap. */
+ *  beyond the entry cap or the byte budget. A value over
+ *  `MAX_ENTRY_BYTES` isn't stored (an older entry under the same key is
+ *  still dropped, so a stale value can't outlive it). */
 export function setCachedResponse(
   key: string,
   value: unknown,
   opts?: { embedding?: number[]; scope?: string },
 ): void {
-  store.delete(key)
+  drop(key)
+  const bytes = approxBytes(value, opts?.embedding)
+  if (bytes > MAX_ENTRY_BYTES) return
   store.set(key, {
     value,
     expires: Date.now() + TTL_MS,
+    bytes,
     embedding: opts?.embedding,
     scope: opts?.scope,
   })
-  while (store.size > MAX_ENTRIES) {
+  totalBytes += bytes
+  while (store.size > MAX_ENTRIES || totalBytes > MAX_TOTAL_BYTES) {
     const oldest = store.keys().next().value
     if (oldest === undefined) break
-    store.delete(oldest)
+    drop(oldest)
   }
 }
 
@@ -170,7 +206,7 @@ export function findSimilarCachedResponse<T>(opts: {
   let bestValue: unknown
   for (const [key, entry] of store) {
     if (entry.expires <= now) {
-      store.delete(key)
+      drop(key)
       continue
     }
     if (entry.scope !== opts.scope || !entry.embedding) continue
@@ -193,7 +229,19 @@ export function findSimilarCachedResponse<T>(opts: {
 /** Test-only: drop all entries so cases don't bleed into each other. */
 export function __clearResponseCache(): void {
   store.clear()
+  totalBytes = 0
 }
+
+/** Test-only: entry count + approximate bytes held. */
+export function __responseCacheStats(): { entries: number; bytes: number } {
+  return { entries: store.size, bytes: totalBytes }
+}
+
+/** Test-only: the configured byte limits. */
+export const __RESPONSE_CACHE_LIMITS = {
+  maxTotalBytes: MAX_TOTAL_BYTES,
+  maxEntryBytes: MAX_ENTRY_BYTES,
+} as const
 
 /** Test-only: force an entry's expiry into the past so expiry/eviction
  *  paths can be exercised without waiting out TTL_MS. */

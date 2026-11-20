@@ -4,6 +4,7 @@ import {
   applyMemoryWritePolicy,
   createTurnTaint,
   isUntrustedContentTool,
+  requestTaint,
 } from "./untrusted-content-policy"
 
 function makeTools() {
@@ -85,6 +86,29 @@ describe("applyMemoryWritePolicy", () => {
     expect(saved).toHaveBeenCalledTimes(1)
   })
 
+  test("forgetFact is refused on a tainted turn too", async () => {
+    const { tools } = makeTools()
+    const guarded = applyMemoryWritePolicy(tools, createTurnTaint())
+    await guarded.webFetch.execute()
+    const res = (await guarded.forgetFact.execute()) as unknown as {
+      ok: boolean
+      refused: boolean
+      removed: number
+    }
+    expect(res).toMatchObject({ ok: false, refused: true, removed: 0 })
+    expect(tools.forgetFact.execute).not.toHaveBeenCalled()
+  })
+
+  test("a request-seeded taint refuses memory writes before any tool runs", async () => {
+    const { tools, saved } = makeTools()
+    const guarded = applyMemoryWritePolicy(tools, createTurnTaint("an attached file"))
+    const res = (await guarded.rememberFact.execute({ fact: "x" })) as unknown as {
+      error: string
+    }
+    expect(res.error).toContain("an attached file")
+    expect(saved).not.toHaveBeenCalled()
+  })
+
   test("preserves tool metadata, passes through tools without execute, keeps `this`", async () => {
     const { tools } = makeTools()
     const guarded = applyMemoryWritePolicy(tools, createTurnTaint())
@@ -100,5 +124,58 @@ describe("applyMemoryWritePolicy", () => {
     }
     const g = applyMemoryWritePolicy(withThis, createTurnTaint())
     expect(g.webFetch.execute.call(undefined as never)).toBe(7)
+  })
+})
+
+describe("requestTaint", () => {
+  const user = (content: unknown) => ({ role: "user", content })
+
+  test("plain user / assistant text → untainted", () => {
+    expect(
+      requestTaint({
+        messages: [user("hi"), { role: "assistant", content: "hello" }, user("remember I like tea")],
+      })
+    ).toBeNull()
+    expect(requestTaint({ attachments: [], messages: [user("x")] })).toBeNull()
+  })
+
+  test("every attachment kind is third-party content", () => {
+    for (const kind of ["file", "url_bookmark", "mcp_resource"]) {
+      expect(requestTaint({ attachments: [{ kind }], messages: [user("x")] })).not.toBeNull()
+    }
+  })
+
+  test("uploaded image / file parts taint", () => {
+    expect(
+      requestTaint({ messages: [user([{ type: "text", text: "see" }, { type: "image", image: "u" }])] })
+    ).not.toBeNull()
+    expect(
+      requestTaint({ messages: [user([{ type: "file", data: "x", mediaType: "application/pdf" }])] })
+    ).not.toBeNull()
+  })
+
+  test("tool results after the latest user message taint; earlier ones don't", () => {
+    expect(
+      requestTaint({ messages: [user("q"), { role: "tool", content: "page text" }] })
+    ).not.toBeNull()
+    expect(
+      requestTaint({
+        messages: [
+          user("q"),
+          { role: "assistant", content: [{ type: "tool-result", toolName: "webFetch" }] },
+        ],
+      })
+    ).not.toBeNull()
+    expect(
+      requestTaint({
+        messages: [
+          user("q"),
+          { role: "assistant", content: [{ type: "tool-result", toolName: "renderUI" }] },
+        ],
+      })
+    ).toBeNull()
+    expect(
+      requestTaint({ messages: [{ role: "tool", content: "old" }, user("new question")] })
+    ).toBeNull()
   })
 })

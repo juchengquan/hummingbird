@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import * as XLSX from "xlsx"
 
 import { extractFile } from "./extraction"
 
@@ -71,5 +72,107 @@ describe("extractFile — vision gating", () => {
       }
     )
     expect(visionCalled).toBe(false)
+  })
+
+  test("onVisionOutcome reports what happened to the vision pass", async () => {
+    const run = async (opts: Parameters<typeof extractFile>[1]) => {
+      const seen: string[] = []
+      await extractFile(
+        { name: "doc.pdf", mimeType: "application/pdf", data: FAKE_PDF },
+        { ...opts, onVisionOutcome: (o) => seen.push(o) }
+      )
+      return seen
+    }
+    const ok = async () => ({ text: "v", pageCount: 1 })
+    expect(await run({ vision: true, resolveVisionModel: () => null })).toEqual(["skipped"])
+    expect(await run({ vision: false, resolveVisionModel: () => "m" })).toEqual(["skipped"])
+    expect(
+      await run({
+        vision: true,
+        resolveVisionModel: () => "m",
+        consumeVisionBudget: () => ({ allowed: false, retryAfterSec: 1 }),
+        extractWithVision: ok,
+      })
+    ).toEqual(["budget_denied"])
+    expect(
+      await run({ vision: true, resolveVisionModel: () => "m", extractWithVision: ok })
+    ).toEqual(["applied"])
+    expect(
+      await run({
+        vision: true,
+        resolveVisionModel: () => "m",
+        extractWithVision: async () => {
+          throw new Error("x")
+        },
+      })
+    ).toEqual(["failed"])
+  })
+})
+
+describe("extractFile — spreadsheet bounds", () => {
+  const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+  /** A real 2x2 xlsx whose sheet XML is then rewritten by `patch`.
+   *  (Setting a huge `!ref` and letting SheetJS write it would walk the
+   *  whole declared range at write time, so the XML is patched instead.) */
+  function craftXlsx(patch: (sheetXml: string) => string): Buffer {
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.aoa_to_sheet([
+        ["a", "b"],
+        ["1", "2"],
+      ]),
+      "S"
+    )
+    const zip = XLSX.CFB.read(XLSX.write(wb, { type: "buffer", bookType: "xlsx" }), {
+      type: "buffer",
+    })
+    const entry = XLSX.CFB.find(zip, "/xl/worksheets/sheet1.xml")
+    if (!entry) throw new Error("fixture: sheet1.xml missing")
+    const xml = Buffer.from(entry.content as Uint8Array).toString("utf8")
+    entry.content = Buffer.from(patch(xml))
+    return XLSX.CFB.write(zip, { fileType: "zip", type: "buffer" }) as Buffer
+  }
+
+  test("tiny file declaring a huge range extracts only its real cells, fast", async () => {
+    // 100 cols x 1M rows declared, 4 real cells.
+    const data = craftXlsx((xml) => xml.replace('ref="A1:B2"', 'ref="A1:CV1000000"'))
+    expect(data.length).toBeLessThan(64 * 1024)
+    // Sanity: the declared range survives a plain read (this is the bomb).
+    expect(XLSX.read(data, { type: "buffer" }).Sheets.S?.["!ref"]).toBe("A1:CV1000000")
+
+    const start = performance.now()
+    const result = await extractFile({ name: "bomb.xlsx", mimeType: XLSX_MIME, data })
+    const elapsed = performance.now() - start
+
+    expect(result.kind).toBe("spreadsheet")
+    expect(result.text).toBe("# Sheet: S\na,b\n1,2")
+    expect(result.truncated).toBe(false)
+    expect(elapsed).toBeLessThan(2_000)
+  })
+
+  test("real cells spanning a huge sheet stop at the text budget", async () => {
+    // A far-corner cell makes the *real* bounds 16,384 cols x 4,000 rows
+    // (inside `sheetRows`): ~65M mostly-empty cells if rendered in full.
+    const data = craftXlsx((xml) =>
+      xml
+        .replace('ref="A1:B2"', 'ref="A1:XFD4000"')
+        .replace(
+          "</sheetData>",
+          '<row r="4000"><c r="XFD4000" t="str"><v>far</v></c></row></sheetData>'
+        )
+    )
+    expect(data.length).toBeLessThan(64 * 1024)
+
+    const start = performance.now()
+    const result = await extractFile({ name: "wide.xlsx", mimeType: XLSX_MIME, data })
+    const elapsed = performance.now() - start
+
+    expect(result.kind).toBe("spreadsheet")
+    expect(result.text.startsWith("# Sheet: S\na,b")).toBe(true)
+    expect(result.truncated).toBe(true)
+    expect((result.fullText ?? "").length).toBeLessThanOrEqual(1024 * 1024)
+    expect(elapsed).toBeLessThan(3_000)
   })
 })

@@ -182,6 +182,15 @@ describe("translateFrame — lifecycle + edge cases", () => {
     }
   })
 
+  test("finish with messageMetadata.memoryTainted → memory_tainted", () => {
+    expect(
+      translateFrame('{"type":"finish","messageMetadata":{"memoryTainted":true}}')
+    ).toEqual({ type: "memory_tainted" })
+    expect(
+      translateFrame('{"type":"finish","messageMetadata":{"memoryTainted":false}}')
+    ).toBeNull()
+  })
+
   test("invalid JSON → null", () => {
     expect(translateFrame("not json")).toBeNull()
     expect(translateFrame("")).toBeNull()
