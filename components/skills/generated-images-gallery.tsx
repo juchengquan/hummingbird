@@ -7,6 +7,7 @@ import { Copy, Download, ExternalLink, Maximize2, Repeat2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { apiClient } from "@/client/api-client"
+import { downloadImage, openImageInNewTab } from "@/client/image-open"
 import type { GeneratedImage } from "@/shared/types"
 import { useStore } from "@/client/hooks/use-store"
 import { cn } from "@/shared/utils"
@@ -275,10 +276,9 @@ function TileActionButton(
     onClick = async () => {
       if (kind === "download") {
         try {
-          const a = document.createElement("a")
-          a.href = image.url
-          a.download = `image-${image.id}.${image.format}`
-          a.click()
+          if (!downloadImage(image.url, `image-${image.id}.${image.format}`)) {
+            toast.error("Download blocked — unsafe image URL")
+          }
         } catch {
           toast.error("Download failed")
         }
@@ -292,14 +292,8 @@ function TileActionButton(
       } else if (kind === "remix") {
         stageRemix(image, setPendingReferenceImage)
       } else {
-        if (image.url.startsWith("data:")) {
-          toast.info("Open-in-tab isn't supported for data: URLs — downloading instead")
-          const a = document.createElement("a")
-          a.href = image.url
-          a.download = `image-${image.id}.${image.format}`
-          a.click()
-        } else {
-          window.open(image.url, "_blank", "noopener,noreferrer")
+        if (!openImageInNewTab(image.url)) {
+          toast.error("Can't open this image — unsafe or malformed URL")
         }
       }
     }

@@ -7,6 +7,7 @@ import type {
   PinnedExplanation,
   ToolCallResult,
 } from "@/shared/types"
+import { extractPersistedTheme } from "@/shared/persisted-theme"
 import { uuid } from "@/shared/uuid"
 
 import { useStore } from "../../use-store"
@@ -56,11 +57,9 @@ export type PendingSelectionAction =
 function getInitialTheme(): Theme {
   if (typeof window === "undefined") return "dark"
   try {
-    const stored = localStorage.getItem("hummingbird-storage")
-    if (stored) {
-      const parsed = JSON.parse(stored)
-      return parsed.state?.theme || "dark"
-    }
+    // Regex, not JSON.parse — the blob can be megabytes and persist
+    // hydration parses it again right after (see `persisted-theme.ts`).
+    return extractPersistedTheme(localStorage.getItem("hummingbird-storage")) ?? "dark"
   } catch {}
   return "dark"
 }

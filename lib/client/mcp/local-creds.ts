@@ -1,6 +1,8 @@
 import "client-only"
 
+import { canonicalJson } from "@/shared/canonical-json"
 import { encodeCredentialHeader, type McpCredentials } from "@/shared/mcp/credentials"
+import type { McpServer } from "@/shared/types"
 
 export type { McpCredentials } from "@/shared/mcp/credentials"
 
@@ -61,24 +63,65 @@ export function removeLocalCred(serverId: string): void {
  * Stable fingerprint of a credential, suitable for storing on the
  * `McpServer.credentialFingerprint` field so two devices can tell
  * whether they share the same cred without actually sharing it.
- * SubtleCrypto-based — async by necessity.
+ * SHA-256 (truncated to 64 bits) over the canonical JSON — keys sorted
+ * at every depth, so `headers` contributes to the hash. SubtleCrypto-
+ * based — async by necessity.
  */
 export async function credentialFingerprint(
   cred: McpCredentials
 ): Promise<string> {
+  const canonical = canonicalJson(cred)
   if (typeof crypto === "undefined" || !crypto.subtle) {
-    // No SubtleCrypto (very old browser) — fall back to a short prefix
-    // of the stringified cred. Not cryptographically meaningful, but
-    // good enough to detect "definitely the same vs probably different".
-    return JSON.stringify(cred).slice(0, 16)
+    // No SubtleCrypto (insecure context / very old browser): a non-
+    // cryptographic hash of the full canonical form. Still tells
+    // different creds apart; never echoes any part of the secret.
+    return `fnv1a-${fnv1a32(canonical)}`
   }
-  const canonical = JSON.stringify(cred, Object.keys(cred).sort())
   const bytes = new TextEncoder().encode(canonical)
   const digest = await crypto.subtle.digest("SHA-256", bytes)
   return Array.from(new Uint8Array(digest))
     .slice(0, 8)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("")
+}
+
+function fnv1a32(input: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return (h >>> 0).toString(16).padStart(8, "0")
+}
+
+/**
+ * Self-heal for fingerprints written before the canonical-JSON fix:
+ * the old code's key whitelist serialised `headers` as `{}`, so every
+ * bearer credential got the same fingerprint. Nothing compares
+ * fingerprints yet (they are written + synced only), but a future
+ * reader must not trust those collisions. For each live local-mode
+ * server whose credential is on THIS device, recompute and return the
+ * ones that differ from what is stored; servers whose cred lives on
+ * another device are left for that device to heal. The caller writes
+ * results back via `updateMcpServer`, which syncs like any other edit.
+ */
+export async function staleCredentialFingerprints(
+  servers: ReadonlyArray<
+    Pick<McpServer, "id" | "credentialMode" | "credentialFingerprint" | "deletedAt">
+  >,
+  getCred: (serverId: string) => McpCredentials | undefined = getLocalCred
+): Promise<Array<{ id: string; fingerprint: string }>> {
+  const out: Array<{ id: string; fingerprint: string }> = []
+  for (const s of servers) {
+    if (s.deletedAt || s.credentialMode !== "local") continue
+    const cred = getCred(s.id)
+    if (!cred) continue
+    const fingerprint = await credentialFingerprint(cred)
+    if (fingerprint !== s.credentialFingerprint) {
+      out.push({ id: s.id, fingerprint })
+    }
+  }
+  return out
 }
 
 /**

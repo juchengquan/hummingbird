@@ -77,6 +77,12 @@ export function CommandPalette() {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Something closer to the target already claimed this keystroke —
+      // notably Plate's link plugin, whose `mod+k` hotkey (listening on
+      // `document`, so it runs before this `window` listener) opens the
+      // floating link editor inside the rich-text editor and calls
+      // preventDefault. Opening the palette too would steal its focus.
+      if (e.defaultPrevented) return
       if ((e.metaKey || e.ctrlKey) && e.key?.toLowerCase() === "k") {
         e.preventDefault()
         // Snapshot the selection FIRST (synchronously, while it still

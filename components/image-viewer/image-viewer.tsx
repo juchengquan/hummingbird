@@ -34,6 +34,7 @@ import {
 import { PreviewHeader } from "@/components/preview/preview-header"
 import { cn } from "@/shared/utils"
 import { useStore } from "@/client/hooks/use-store"
+import { downloadImage, openImageInNewTab } from "@/client/image-open"
 
 import { useImageViewer, type ImageViewerItem } from "./types"
 
@@ -81,22 +82,20 @@ export function ImageViewerHost() {
   const handleDownload = () => {
     if (!image) return
     try {
-      const a = document.createElement("a")
-      a.href = image.url
-      a.download = downloadName(image)
-      a.click()
+      if (!downloadImage(image.url, downloadName(image))) {
+        toast.error("Download blocked — unsafe image URL")
+      }
     } catch {
       toast.error("Download failed")
     }
   }
   const handleOpen = () => {
     if (!image) return
-    if (image.url.startsWith("data:")) {
-      toast.info("Open-in-tab isn't supported for data: URLs — downloading instead")
-      handleDownload()
-      return
+    // Gated through `isSafeImageUrl`; raster data: URLs open via a blob
+    // URL (browsers block top-level data: navigation).
+    if (!openImageInNewTab(image.url)) {
+      toast.error("Can't open this image — unsafe or malformed URL")
     }
-    window.open(image.url, "_blank", "noopener,noreferrer")
   }
 
   return (

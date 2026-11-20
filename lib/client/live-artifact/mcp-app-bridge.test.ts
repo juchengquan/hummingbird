@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 
 import {
   MCP_APP_NS,
+  mcpAppToolCallDenial,
   mcpAppToolResult,
   parseMcpAppToolCall,
 } from "./mcp-app-bridge"
@@ -73,5 +74,29 @@ describe("mcpAppToolResult", () => {
       ok: false,
       error: "nope",
     })
+  })
+})
+
+describe("mcpAppToolCallDenial", () => {
+  test("allows an enabled server without approval policy", () => {
+    expect(mcpAppToolCallDenial({ enabled: true })).toBeNull()
+    expect(mcpAppToolCallDenial({ enabled: true, requiresApproval: false })).toBeNull()
+  })
+
+  test("refuses missing / deleted servers", () => {
+    expect(mcpAppToolCallDenial(undefined)).toMatch(/not available/)
+    expect(mcpAppToolCallDenial({ enabled: true, deletedAt: new Date() })).toMatch(
+      /not available/
+    )
+  })
+
+  test("refuses a disabled server", () => {
+    expect(mcpAppToolCallDenial({ enabled: false })).toMatch(/disabled/)
+  })
+
+  test("refuses an approval-gated server (no approval path for panels)", () => {
+    expect(mcpAppToolCallDenial({ enabled: true, requiresApproval: true })).toMatch(
+      /requires approval/
+    )
   })
 })
