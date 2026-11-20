@@ -158,6 +158,14 @@ errors:
       first workspace, then sets the column `not null`. Idempotent.
       (Renamed from a `0012` that collided with `0012_tasks`; see #80.)
 
+Later migrations (`0018_*` onward) apply the same way, in filename
+order. Of note for the Python agent service:
+
+- `supabase/migrations/0030_task_metadata.sql`
+  - Adds `tasks.metadata jsonb not null default '{}'` — the audit
+    column `services/agent-py` stamps `{"handler": "python"}` into.
+    Idempotent.
+
 After running all seventeen, sanity-check from the **Table Editor**:
 twenty-one tables should be listed (`profiles`, `workspaces`,
 `conversations`, `messages`, `files`, `resources`, `conversation_files`,
