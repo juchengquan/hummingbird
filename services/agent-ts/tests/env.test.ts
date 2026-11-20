@@ -43,3 +43,24 @@ describe("WORKER_DRY_RUN parsing", () => {
     expect(() => dryRunFor("nope")).toThrow(/WORKER_DRY_RUN/)
   })
 })
+
+describe("AGENT_TS_POLLER_ENABLED", () => {
+  const ORIGINAL_POLLER = process.env.AGENT_TS_POLLER_ENABLED
+  afterEach(() => {
+    if (ORIGINAL_POLLER === undefined) delete process.env.AGENT_TS_POLLER_ENABLED
+    else process.env.AGENT_TS_POLLER_ENABLED = ORIGINAL_POLLER
+    resetEnvCacheForTest()
+  })
+
+  test("defaults to off", () => {
+    delete process.env.AGENT_TS_POLLER_ENABLED
+    resetEnvCacheForTest()
+    expect(getEnv().AGENT_TS_POLLER_ENABLED).toBe(false)
+  })
+
+  test("opt-in with true", () => {
+    process.env.AGENT_TS_POLLER_ENABLED = "true"
+    resetEnvCacheForTest()
+    expect(getEnv().AGENT_TS_POLLER_ENABLED).toBe(true)
+  })
+})

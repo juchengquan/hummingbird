@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from ..auth import get_current_user
 from ..db import get_pool, has_pool
-from ..mcp_client import McpEndpoint
+from ..mcp_client import McpEndpoint, McpUrlBlockedError
 from ..mcp_client import call_tool as mcp_call_tool
 from ..mcp_client import discover as mcp_discover
 from ..mcp_client import read_resource as mcp_read_resource
@@ -134,6 +134,21 @@ async def mcp_server_upsert(
             detail={"code": "auth", "message": "Token has no subject."},
         )
 
+    # Anti-SSRF: reject unsafe endpoints at save time so a blocked URL
+    # never lands in `mcp_servers` (same check as the Next.js / agent-ts
+    # upsert routes). Rows stay editable under RLS, so every use site —
+    # proxy, `/v1/chat`, the task executor — re-validates as well.
+    url_check = await validate_outbound_url(body.url)
+    if not isinstance(url_check, ValidationOk):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "mcp_url_blocked",
+                "message": "MCP server URL is not allowed.",
+                "reason": url_check.code,
+            },
+        )
+
     # `model_dump(exclude_none=True)` drops the `type`/`headers` keys
     # the caller didn't supply, so the encrypted credential matches
     # what the in-Next route writes for the same input shape.
@@ -235,9 +250,16 @@ async def mcp_proxy(
     # otherwise reach the service's own network.
     validation = await validate_outbound_url(server_url)
     if not isinstance(validation, ValidationOk):
+        # Only the reason code goes back: `validation.message` can name
+        # the private address a hostname resolved to (internal DNS
+        # oracle).
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "invalid_server_url", "message": validation.message},
+            detail={
+                "code": "invalid_server_url",
+                "message": "MCP server URL is not allowed.",
+                "reason": validation.code,
+            },
         )
 
     endpoint = McpEndpoint(id=server_id, name=server_name, url=validation.url)
@@ -304,6 +326,19 @@ async def mcp_proxy(
         }
     except HTTPException:
         raise
+    except McpUrlBlockedError as exc:
+        # The session's own re-check (DNS changed since the gate above).
+        logger.warning(
+            "mcp.proxy_url_blocked", server=server_id, action=action, reason=exc.validation.code
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "invalid_server_url",
+                "message": "MCP server URL is not allowed.",
+                "reason": exc.validation.code,
+            },
+        ) from exc
     except Exception as exc:
         # Never include credentials in error responses.
         logger.warning(

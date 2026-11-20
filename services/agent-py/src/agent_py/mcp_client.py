@@ -22,13 +22,59 @@ the agent's tool registry.
 
 from __future__ import annotations
 
+import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
 import structlog
 
+from .outbound_http import build_guarded_client
+from .url_validate import ValidationError, ValidationOk, validate_outbound_url
+
 logger = structlog.get_logger(__name__)
+
+
+class McpUrlBlockedError(Exception):
+    """The MCP endpoint URL failed the SSRF gate (`validate_outbound_url`).
+
+    Raised before any network I/O. `validation` carries the structured
+    reason for logs; callers must not echo `validation.message` to an
+    untrusted caller (it can describe internal DNS)."""
+
+    code = "mcp_url_blocked"
+
+    def __init__(self, validation: ValidationError) -> None:
+        super().__init__(f"MCP server URL blocked: {validation.code}")
+        self.validation = validation
+
+
+async def validate_mcp_url(url: str) -> str:
+    """Return the validated URL, or raise `McpUrlBlockedError`.
+
+    Every MCP URL is untrusted — a request body (local mode), a
+    `mcp_servers` row (cloud mode: user-editable under RLS) or an
+    upsert — so it is checked at every use, not only at save time."""
+    validation = await validate_outbound_url(url)
+    if not isinstance(validation, ValidationOk):
+        raise McpUrlBlockedError(validation)
+    return validation.url
+
+
+def mcp_http_client_factory(
+    headers: dict[str, str] | None = None,
+    timeout: httpx.Timeout | None = None,
+    auth: httpx.Auth | None = None,
+) -> httpx.AsyncClient:
+    """`McpHttpClientFactory` for the MCP SDK's streamable-HTTP transport.
+
+    The SDK's default (`create_mcp_http_client`) follows redirects and
+    honours proxy env vars, and nothing checks the address it dials. This
+    one routes every request through `outbound_http`'s guarded transport:
+    connect-time IP pinning to a validated public address, no redirects,
+    `trust_env=False`."""
+    return build_guarded_client(headers=headers, timeout=timeout, auth=auth)
 
 
 @dataclass(frozen=True)
@@ -114,25 +160,77 @@ async def _open_session(
     yields a stub session, side-stepping the SDK's network layer
     entirely.
 
+    The URL is re-validated here (SSRF gate) and the SDK's HTTP client
+    is the guarded one (`mcp_http_client_factory`), whichever caller —
+    proxy, `/v1/chat`, the task executor — opened the session.
+
     Headers from `credentials["headers"]` are forwarded to the upstream
-    MCP server verbatim — Authorization, X-API-Key, etc. The MCP SDK
-    handles the streaming-HTTP transport handshake.
+    MCP server after `_headers_from` drops hop-by-hop / framing / proxy
+    headers — Authorization, X-API-Key, etc. pass. The MCP SDK handles
+    the streaming-HTTP transport handshake.
     """
     # Lazy imports keep the heavy MCP SDK out of the import graph for
     # callers that only need the dataclasses.
     from mcp import ClientSession
     from mcp.client.streamable_http import streamablehttp_client
 
+    url = await validate_mcp_url(endpoint.url)
     headers = _headers_from(credentials)
     async with (
-        streamablehttp_client(endpoint.url, headers=headers) as (read, write, _),
+        streamablehttp_client(
+            url,
+            headers=headers,
+            httpx_client_factory=mcp_http_client_factory,
+        ) as (read, write, _),
         ClientSession(read, write) as session,
     ):
         await session.initialize()
         yield session
 
 
+# Header names a credential may not set — mirrors
+# `DENIED_CREDENTIAL_HEADERS` in `lib/server/mcp/outbound.ts`: hop-by-hop /
+# framing headers (request smuggling), `Host` (virtual-host routing to an
+# unintended backend), proxy + forwarding headers, and the headers the
+# MCP transport owns itself.
+_DENIED_CREDENTIAL_HEADERS = frozenset(
+    {
+        "host",
+        "connection",
+        "keep-alive",
+        "proxy-connection",
+        "transfer-encoding",
+        "te",
+        "trailer",
+        "upgrade",
+        "content-length",
+        "expect",
+        "proxy-authorization",
+        "proxy-authenticate",
+        "forwarded",
+        "x-forwarded-for",
+        "x-forwarded-host",
+        "x-forwarded-proto",
+        "x-forwarded-port",
+        "x-real-ip",
+        "content-type",
+        "accept",
+        "mcp-session-id",
+        "mcp-protocol-version",
+        "last-event-id",
+    }
+)
+_HEADER_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+_BAD_HEADER_VALUE_RE = re.compile(r"[\r\n\0]")
+_MAX_HEADERS = 32
+_MAX_HEADER_NAME = 256
+_MAX_HEADER_VALUE = 8192
+
+
 def _headers_from(credentials: dict[str, Any] | None) -> dict[str, str] | None:
+    """Credential headers safe to put on the outbound request. Drops
+    (rather than rejects) bad entries, like the TS
+    `sanitizeCredentialHeaders`. Never logs values."""
     if not credentials:
         return None
     raw = credentials.get("headers")
@@ -140,8 +238,20 @@ def _headers_from(credentials: dict[str, Any] | None) -> dict[str, str] | None:
         return None
     out: dict[str, str] = {}
     for k, v in raw.items():
-        if isinstance(k, str) and isinstance(v, str):
-            out[k] = v
+        if len(out) >= _MAX_HEADERS:
+            break
+        if not isinstance(k, str) or not isinstance(v, str):
+            continue
+        if not k or len(k) > _MAX_HEADER_NAME or not _HEADER_NAME_RE.match(k):
+            continue
+        lower = k.lower()
+        if lower in _DENIED_CREDENTIAL_HEADERS:
+            continue
+        if lower.startswith(("proxy-", "sec-")):
+            continue
+        if len(v) > _MAX_HEADER_VALUE or _BAD_HEADER_VALUE_RE.search(v):
+            continue
+        out[k] = v
     return out or None
 
 
@@ -308,9 +418,12 @@ __all__ = [
     "McpResourceDescriptor",
     "McpToolDescriptor",
     "McpToolResult",
+    "McpUrlBlockedError",
     "call_tool",
     "discover",
+    "mcp_http_client_factory",
     "read_resource",
+    "validate_mcp_url",
 ]
 
 # Test seam — overridden by `unittest.mock.patch` in tests so we don't

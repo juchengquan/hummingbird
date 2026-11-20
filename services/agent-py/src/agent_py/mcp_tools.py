@@ -12,8 +12,8 @@ Pipeline:
      the server claims before any network call.
   2. `discover_mcp_tools_for_workspace` walks the rows in parallel
      and turns each cached tool descriptor into a `ToolDescriptor`
-     via `build_mcp_tool`. Per-server failures (decrypt, network)
-     drop that server and let the rest still register.
+     via `build_mcp_tool`. Per-server failures (SSRF-blocked URL,
+     decrypt, network) drop that server and let the rest still register.
   3. `extend_registry_with_mcp` mutates a registry dict in place,
      adding `mcp__<server_id>__<tool>` entries. Called by the
      executor after `default_tool_registry()` so the model sees the
@@ -38,6 +38,8 @@ import structlog
 from . import store
 from .mcp_client import (
     McpEndpoint,
+    McpUrlBlockedError,
+    validate_mcp_url,
 )
 from .mcp_client import (
     McpToolDescriptor as McpToolDescriptorIR,
@@ -159,6 +161,10 @@ def _decode_jsonb(raw: Any) -> dict[str, Any] | None:
 
 # --- Tool bridge -----------------------------------------------------------
 
+# Tool-result text for a call that failed before the server answered
+# (blocked URL, connect / TLS / HTTP error). Deliberately detail-free.
+_GENERIC_CALL_ERROR = 'MCP tool "{tool}" failed: the MCP server request did not succeed.'
+
 
 def build_mcp_tool(
     *,
@@ -190,13 +196,17 @@ def build_mcp_tool(
         try:
             result = await mcp_call_tool(endpoint, credentials, descriptor.name, args)
         except Exception as exc:
+            # Log the detail, never hand it to the model: the SDK embeds
+            # upstream response bodies / connect errors in its messages,
+            # which would turn the tool into an internal-network oracle.
             logger.warning(
                 "mcp_tools.call_failed",
                 server=endpoint.id,
                 tool=descriptor.name,
+                error_type=type(exc).__name__,
                 error=str(exc),
             )
-            raise ToolError(f'MCP "{descriptor.name}" upstream error: {exc}') from exc
+            raise ToolError(_GENERIC_CALL_ERROR.format(tool=descriptor.name)) from exc
 
         if result.is_error:
             raise ToolError(result.text or f'MCP tool "{descriptor.name}" returned an error')
@@ -210,6 +220,8 @@ def build_mcp_tool(
         description=description,
         input_schema=schema,
         execute=execute,
+        # An arbitrary third-party action — assume it has side effects.
+        side_effecting=True,
     )
 
 
@@ -254,10 +266,27 @@ async def _discover_one_server(
     user_id: str,
     encryption_key: str | None,
 ) -> list[ToolDescriptor]:
-    """Decrypt the server's credentials, then turn each cached tool
-    descriptor into a registry-ready `ToolDescriptor`. Per-server
-    failure (no cred, no cached tools) returns [] so the workspace
-    keeps its other servers' tools."""
+    """Check the server's URL, decrypt its credentials, then turn each
+    cached tool descriptor into a registry-ready `ToolDescriptor`.
+    Per-server failure (blocked URL, no cred, no cached tools) returns
+    [] so the workspace keeps its other servers' tools."""
+    descriptors = _tools_from_capabilities(server.capabilities)
+    if not descriptors:
+        return []
+    # SSRF gate at load: `mcp_servers.url` is user-editable under RLS, so
+    # the upsert-time check proves nothing about the row we just read. A
+    # blocked URL drops the server's tools before its credential is even
+    # decrypted (the session re-checks on every call too — DNS can change
+    # between load and call).
+    try:
+        url = await validate_mcp_url(server.url)
+    except McpUrlBlockedError as exc:
+        logger.warning(
+            "mcp_tools.server_url_blocked",
+            server_id=server.id,
+            reason=exc.validation.code,
+        )
+        return []
     credentials = await fetch_decrypted_credentials(
         pool,
         user_id=user_id,
@@ -271,10 +300,7 @@ async def _discover_one_server(
             workspace="cloud",
         )
         return []
-    descriptors = _tools_from_capabilities(server.capabilities)
-    if not descriptors:
-        return []
-    endpoint = McpEndpoint(id=server.id, name=server.name, url=server.url)
+    endpoint = McpEndpoint(id=server.id, name=server.name, url=url)
     return [
         build_mcp_tool(endpoint=endpoint, credentials=credentials, descriptor=d)
         for d in descriptors
@@ -291,8 +317,8 @@ async def discover_mcp_tools_for_workspace(
 ) -> dict[str, ToolDescriptor]:
     """Load every cloud-mode server in the workspace + bridge every
     cached tool into a `ToolDescriptor`, ready to merge into the
-    registry. Per-server failures (decrypt, missing cache) drop just
-    that server.
+    registry. Per-server failures (blocked URL, decrypt, missing cache)
+    drop just that server.
 
     Decryption + bridging run concurrently across servers via
     `asyncio.gather` so a slow Postgres response on one row doesn't

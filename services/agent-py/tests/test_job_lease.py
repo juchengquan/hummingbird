@@ -312,7 +312,7 @@ async def test_heartbeat_extends_the_lease_while_the_job_runs() -> None:
 
     pool = MagicMock()
     with (
-        patch.object(store, "is_task_owned_by", new=AsyncMock(return_value=True)),
+        patch.object(store, "load_owned_task_status", new=AsyncMock(return_value="queued")),
         patch.object(executor, "execute_start", new=slow_start),
         patch.object(jobs, "extend_lease", new=AsyncMock(return_value=True)) as extend,
         patch.object(jobs, "mark_job_done", new=AsyncMock(return_value=True)) as done,
@@ -339,7 +339,7 @@ async def test_cancelled_job_is_handed_back_not_settled() -> None:
 
     pool = MagicMock()
     with (
-        patch.object(store, "is_task_owned_by", new=AsyncMock(return_value=True)),
+        patch.object(store, "load_owned_task_status", new=AsyncMock(return_value="queued")),
         patch.object(executor, "execute_start", new=hang),
         patch.object(jobs, "hand_back_job", new=AsyncMock(return_value=True)) as hand_back,
         patch.object(jobs, "mark_job_done", new=AsyncMock()) as done,
@@ -368,7 +368,7 @@ async def test_settle_write_survives_a_cancel_landing_mid_write() -> None:
         return True
 
     with (
-        patch.object(store, "is_task_owned_by", new=AsyncMock(return_value=True)),
+        patch.object(store, "load_owned_task_status", new=AsyncMock(return_value="queued")),
         patch.object(
             executor, "execute_start", new=AsyncMock(return_value=ExecutorOutcome(settled=True))
         ),
@@ -389,7 +389,7 @@ async def test_settle_write_survives_a_cancel_landing_mid_write() -> None:
 async def test_error_escaping_the_executor_fails_job_and_settles_task() -> None:
     pool = MagicMock()
     with (
-        patch.object(store, "is_task_owned_by", new=AsyncMock(return_value=True)),
+        patch.object(store, "load_owned_task_status", new=AsyncMock(return_value="queued")),
         patch.object(executor, "execute_start", new=AsyncMock(side_effect=RuntimeError("db gone"))),
         patch.object(jobs, "mark_job_failed", new=AsyncMock(return_value=True)) as failed,
         patch.object(executor, "settle_stranded_task", new=AsyncMock(return_value=True)) as st,
@@ -407,7 +407,7 @@ async def test_failing_settle_write_does_not_crash_the_tick() -> None:
     """A failed `mark_job_done` leaves the job `running`; its lease lapses
     and the reclaim path re-examines it — the tick must not raise."""
     with (
-        patch.object(store, "is_task_owned_by", new=AsyncMock(return_value=True)),
+        patch.object(store, "load_owned_task_status", new=AsyncMock(return_value="queued")),
         patch.object(
             executor, "execute_start", new=AsyncMock(return_value=ExecutorOutcome(settled=True))
         ),
@@ -423,8 +423,8 @@ async def test_reclaimed_job_for_a_settled_task_is_skipped() -> None:
     with (
         patch.object(jobs, "reap_expired_jobs", new=AsyncMock(return_value=[])),
         patch.object(jobs, "claim_next_job", new=AsyncMock(return_value=job)),
-        patch.object(feature_flag, "is_user_flagged_to_python", new=AsyncMock(return_value=True)),
-        patch.object(store, "is_task_owned_by", new=AsyncMock(return_value=True)),
+        patch.object(feature_flag, "python_executes_for_user", new=AsyncMock(return_value=True)),
+        patch.object(store, "load_owned_task_status", new=AsyncMock(return_value="queued")),
         patch.object(
             jobs, "load_job_task_state", new=AsyncMock(return_value=_state(task_status="done"))
         ),
@@ -444,7 +444,7 @@ async def test_reclaimed_respond_on_a_running_task_resumes_the_interrupted_respo
     db._pool = MagicMock()
     job = _job(action="respond", payload={"requestId": "tu_1"}, reclaimed=True)
     with (
-        patch.object(store, "is_task_owned_by", new=AsyncMock(return_value=True)),
+        patch.object(store, "load_owned_task_status", new=AsyncMock(return_value="queued")),
         patch.object(jobs, "load_job_task_state", new=AsyncMock(return_value=_state())),
         patch.object(
             executor,
@@ -472,7 +472,9 @@ async def test_reclaimed_respond_on_a_running_task_resumes_the_interrupted_respo
         ("start", _state(superseded=True), "skip"),
         ("continue", _state(superseded=True), "skip"),
         ("start", _state(task_status="paused"), "skip"),
-        ("continue", _state(task_status="paused"), "skip"),
+        # Paused with nothing pending: checked against the checkpoint.
+        ("continue", _state(task_status="paused"), "recover"),
+        ("continue", _state(task_status="paused", pending_children=1), "skip"),
         ("continue", _state(task_status="paused", awaiting_children=True), "run"),
         (
             "continue",
@@ -691,8 +693,8 @@ async def test_shutdown_lets_an_in_flight_job_finish_within_the_grace() -> None:
     with (
         patch.object(jobs, "reap_expired_jobs", new=AsyncMock(return_value=[])),
         patch.object(jobs, "claim_next_job", new=AsyncMock(side_effect=claims)) as claim,
-        patch.object(feature_flag, "is_user_flagged_to_python", new=AsyncMock(return_value=True)),
-        patch.object(store, "is_task_owned_by", new=AsyncMock(return_value=True)),
+        patch.object(feature_flag, "python_executes_for_user", new=AsyncMock(return_value=True)),
+        patch.object(store, "load_owned_task_status", new=AsyncMock(return_value="queued")),
         patch.object(executor, "execute_start", new=short_job),
         patch.object(jobs, "mark_job_done", new=AsyncMock(return_value=True)) as done,
         patch.object(jobs, "hand_back_job", new=AsyncMock()) as hand_back,
@@ -722,8 +724,8 @@ async def test_shutdown_hands_back_a_job_that_outlives_the_grace() -> None:
     with (
         patch.object(jobs, "reap_expired_jobs", new=AsyncMock(return_value=[])),
         patch.object(jobs, "claim_next_job", new=AsyncMock(return_value=_job())),
-        patch.object(feature_flag, "is_user_flagged_to_python", new=AsyncMock(return_value=True)),
-        patch.object(store, "is_task_owned_by", new=AsyncMock(return_value=True)),
+        patch.object(feature_flag, "python_executes_for_user", new=AsyncMock(return_value=True)),
+        patch.object(store, "load_owned_task_status", new=AsyncMock(return_value="queued")),
         patch.object(executor, "execute_start", new=long_job),
         patch.object(jobs, "mark_job_done", new=AsyncMock()) as done,
         patch.object(jobs, "hand_back_job", new=AsyncMock(return_value=True)) as hand_back,
@@ -875,6 +877,11 @@ async def test_respond_executes_an_approved_mcp_tool_with_the_workspace_context(
 
     assert outcome.settled is True
     assert calls == [{"id": 7}]
-    saved = save_checkpoint.await_args_list[0].kwargs["checkpoint"]
+    # First save: the execution record, before the approved tool ran.
+    record = save_checkpoint.await_args_list[0].kwargs["checkpoint"]
+    assert record["inflight_tools"] == {"started": ["tu_1"], "results": []}
+    assert record["messages"] == checkpoint["messages"]
+    saved = save_checkpoint.await_args_list[1].kwargs["checkpoint"]
     assert saved["messages"][-1]["content"][0]["content"] == "crm updated"
+    assert "inflight_tools" not in saved
     assert seen_contexts[0].workspace_id == "ws_1"

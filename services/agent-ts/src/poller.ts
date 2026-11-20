@@ -2,11 +2,13 @@
  * Background poll loop — Phase 1 of PLAN-agent-ts.
  *
  * Mirrors `services/agent-py/src/agent_py/poller.py` in dry-run mode:
- * claim a job, structured-log it, release it back. The Python or TS
- * Next.js worker actually executes; the TS service only observes
- * until Phase 2 flips `WORKER_DRY_RUN=false`.
+ * claim a job, structured-log it, release it back. agent-py executes
+ * every task; this service has no executor wired, so the loop is OFF
+ * unless `AGENT_TS_POLLER_ENABLED` is set (`pollerStartDecision`) —
+ * each claim + release it makes pushes the job's `scheduled_at` back
+ * and delays the real execution.
  *
- * Behaviour:
+ * Behaviour (when enabled):
  *   - With no pool open (`SUPABASE_DB_URL` empty) → no-op every tick.
  *   - With `WORKER_DRY_RUN=true` (default) → claim + log + release.
  *   - With `WORKER_DRY_RUN=false` → claim + dispatch to executor
@@ -45,6 +47,39 @@ const defaultDeps: PollerDeps = {
   getPool: defaultGetPool,
   claimNextJob: defaultClaimNextJob,
   releaseJobToQueue: defaultReleaseJobToQueue,
+}
+
+/** Whether `server.ts` should start the loop, and why not. */
+export function pollerStartDecision(
+  env: Pick<Env, "AGENT_TS_POLLER_ENABLED">,
+  poolOpen: boolean,
+): { start: true } | { start: false; reason: string } {
+  if (!env.AGENT_TS_POLLER_ENABLED) {
+    return {
+      start: false,
+      reason: "AGENT_TS_POLLER_ENABLED is off (agent-py executes tasks)",
+    }
+  }
+  if (!poolOpen) return { start: false, reason: "SUPABASE_DB_URL not set" }
+  return { start: true }
+}
+
+/** How long shutdown waits for the loop's in-flight tick. */
+export const POLLER_SHUTDOWN_GRACE_MS = 5_000
+
+/** Wait for `promise` to settle, but no longer than `ms`. Never rejects. */
+export async function settleWithin(promise: Promise<unknown>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  await Promise.race([
+    promise.then(
+      () => undefined,
+      () => undefined,
+    ),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, ms)
+    }),
+  ])
+  if (timer !== undefined) clearTimeout(timer)
 }
 
 /** Stats returned at the end of the loop (or after an abort) so

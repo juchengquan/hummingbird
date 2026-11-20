@@ -253,10 +253,11 @@ shipped the scaffolding (FastAPI + JWT auth + OpenAPI codegen).
 **Phase 1** added a background `task_jobs` poll loop in dry-run
 mode — claims a job, structured-logs it, releases it back. **Phase 2a**
 added the executor pattern end-to-end: TaskEvent IR, RunEmitter,
-RunStore writes, the agent loop, per-user feature flag, and the
-executor that runs `start` actions for flagged users. Step fn is a
-stub emitting a canned event stream — real model + tools land in
-Phase 2b.
+RunStore writes, the agent loop, a per-user opt-out, and the
+executor. Later phases added the real model + tools, `continue` /
+`respond`, subagents and lease-based crash recovery. **agent-py is the
+task executor for every user** (agent-ts has no executor; its poller is
+off unless `AGENT_TS_POLLER_ENABLED`).
 
 Stack: Python 3.12 · FastAPI · uv (package manager) · PyJWT ·
 asyncpg · structlog · pytest · ruff · mypy.
@@ -273,9 +274,9 @@ asyncpg · structlog · pytest · ruff · mypy.
 | `services/agent-py/src/agent_py/emitter.py` | RunEmitter — monotonic seq, settle-once. |
 | `services/agent-py/src/agent_py/store.py` | RunStore — `append_event` (idempotent on `(task_id, seq)`), `update_run`, `set_task_handler` (`metadata.handler = 'python'`), `is_run_cancelled`. |
 | `services/agent-py/src/agent_py/runner.py` | `run_agent_loop` — pure orchestration with injected RunStepFn. |
-| `services/agent-py/src/agent_py/feature_flag.py` | Per-user flag check — `auth.users.raw_app_meta_data->>'agent_backend' == 'python'`. Defensive on every shape; DB error → fall back to "not flagged". |
+| `services/agent-py/src/agent_py/feature_flag.py` | Per-user **opt-out** — `auth.users.raw_app_meta_data->>'agent_backend'` absent / `'python'` → Python executes; any other value → opted out (job released). DB error → unknown → release + retry. |
 | `services/agent-py/src/agent_py/executor.py` | `execute_start` — stamps handler, runs loop, updates task row terminal. Step fn is a Phase 2a stub; Phase 2b swaps in the real model call. |
-| `services/agent-py/src/agent_py/poller.py` | Async tick loop. Dispatch tree: dry-run → release; live + unflagged → release; live + flagged + non-`start` → release; live + flagged + `start` → execute then mark_done/failed. |
+| `services/agent-py/src/agent_py/poller.py` | Async tick loop. Dispatch tree: dry-run → release; live + opted-out user → release; live + task already terminal → job done, no run; live otherwise → execute `start` / `continue` / `respond` under a heartbeated lease, then mark_done/failed. |
 | `services/agent-py/tests/` | 62 tests covering health + auth (Phase 0) + db / jobs / poller dry-run (Phase 1) + events / emitter / runner / feature_flag / executor / poller live-mode dispatch (Phase 2a). |
 | `services/agent-py/Dockerfile` | Multi-stage uv build, slim runtime, non-root user. Build context is the **repo root** (`docker build -f services/agent-py/Dockerfile .`) so the image ships `config/models.json`. |
 | `docker-compose.yml` (repo root) | Spins up the agent service alongside `bun dev`. |
@@ -289,14 +290,20 @@ distinct signal from 401 so monitoring can alert on misconfig).
 the transaction pooler (`*.pooler.supabase.com:6543`), because
 `FOR UPDATE SKIP LOCKED` needs an open transaction. With it empty,
 the poller no-ops every tick (`/healthz` + `/readyz` still respond).
-`WORKER_DRY_RUN` defaults to `true` (Phase 1 contract); flip to
-`false` to enable the Phase 2a executor. With it `false`, the
-per-user feature flag (`auth.users.raw_app_meta_data->>'agent_backend'`)
-gates whether Python executes a given user's runs vs releases for the
-TS worker. To opt a user in: `UPDATE auth.users SET raw_app_meta_data
-= COALESCE(raw_app_meta_data, '{}'::jsonb) ||
-'{"agent_backend":"python"}'::jsonb WHERE id = '<uuid>';`. The service
-reads the same top-level `.env` as Next.js.
+`WORKER_DRY_RUN` defaults to `true` (Phase 1 contract); set it
+`false` in any deployment that should run tasks — nothing else executes
+them. With it `false`, Python runs **every** user's tasks unless the
+user is opted out via `auth.users.raw_app_meta_data->>'agent_backend'`
+(app metadata — service-role only; `raw_user_meta_data` is
+user-writable and ignored). Absent or `'python'` → executed; any other
+value (e.g. `'off'`) → released, never run. To opt a user out:
+`UPDATE auth.users SET raw_app_meta_data = COALESCE(raw_app_meta_data,
+'{}'::jsonb) || '{"agent_backend":"off"}'::jsonb WHERE id = '<uuid>';`
+(undo: `raw_app_meta_data - 'agent_backend'`). Safety net: the Next.js
+stale-run reconciler (`lib/server/agent/store.ts`) fails a task still
+`queued` and never started after `TASK_NO_WORKER_TIMEOUT_MINUTES`
+(default 10) with "No task worker available". The service reads the
+same top-level `.env` as Next.js.
 
 **Model allowlist (agent-py + agent-ts):** both services accept only the
 `anthropic/*` entries of `config/models.json` and send each entry's

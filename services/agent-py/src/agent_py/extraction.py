@@ -43,10 +43,22 @@ import io
 from dataclasses import dataclass
 from typing import Literal
 
+from .zip_guard import assert_zip_within_limits, looks_like_zip
+
 # Budgets — match the TS constants in `app/api/extract/route.ts`.
 EXTRACTION_BUDGET = 100 * 1024
 CODE_BUDGET = 128 * 1024
 FULL_EXTRACTION_BUDGET = 1024 * 1024
+
+# Spreadsheet bounds. openpyxl's read-only mode streams rows, but a
+# sheet's declared dimension (attacker-controlled) can still make it
+# yield a million rows padded to 16k columns of `None`. Output past
+# FULL_EXTRACTION_BUDGET is truncated away anyway, so stop walking
+# rows/columns well before that work becomes the DoS.
+XLSX_MAX_ROWS = 50_000
+"""Rows read across the whole workbook."""
+XLSX_MAX_COLS = 500
+"""Columns read per row."""
 
 
 ExtractionKind = Literal[
@@ -263,6 +275,9 @@ def _extract_docx(data: bytes) -> str:
     newlines, table cells flattened to space-separated rows."""
     from docx import Document
 
+    # OOXML is a zip; cap entry count + real inflated size before
+    # python-docx inflates parts into memory (zip bombs).
+    assert_zip_within_limits(data)
     doc = Document(io.BytesIO(data))
     parts: list[str] = []
     for paragraph in doc.paragraphs:
@@ -311,23 +326,47 @@ def _extract_xlsx(data: bytes) -> str:
     through xlsx's default)."""
     from openpyxl import load_workbook
 
+    # .xlsx is a zip (guard it, as for docx); a legacy .xls is an OLE
+    # container openpyxl can't read anyway, so the guard is skipped and
+    # the load below fails as before.
+    if looks_like_zip(data):
+        assert_zip_within_limits(data)
     workbook = load_workbook(io.BytesIO(data), data_only=True, read_only=True)
     chunks: list[str] = []
-    for sheet_name in workbook.sheetnames:
-        sheet = workbook[sheet_name]
-        # `read_only=True` returns a generator of rows; serialise each
-        # row through csv.writer to get RFC-style quoting on values
-        # containing commas / newlines.
-        out = io.StringIO()
-        writer = csv.writer(out)
-        wrote_any = False
-        for row in sheet.iter_rows(values_only=True):
-            wrote_any = True
-            writer.writerow(["" if cell is None else str(cell) for cell in row])
-        csv_text = out.getvalue().strip()
-        if wrote_any and csv_text:
-            chunks.append(f"# Sheet: {sheet_name}\n{csv_text}")
-    workbook.close()
+    rows_left = XLSX_MAX_ROWS
+    chars = 0
+    try:
+        for sheet_name in workbook.sheetnames:
+            if rows_left <= 0 or chars > FULL_EXTRACTION_BUDGET:
+                break
+            sheet = workbook[sheet_name]
+            # `read_only=True` returns a generator of rows; serialise
+            # each row through csv.writer to get RFC-style quoting on
+            # values containing commas / newlines. Rows and columns are
+            # bounded (see XLSX_MAX_ROWS / XLSX_MAX_COLS) and the walk
+            # stops once the output passes the full-text budget.
+            out = io.StringIO()
+            writer = csv.writer(out)
+            wrote_any = False
+            # openpyxl pads every row to `max_col`, so pass the declared
+            # width (clamped), not the cap itself; with no declared
+            # dimension, clamp each row by slicing instead.
+            declared_cols = sheet.max_column
+            max_col = min(declared_cols, XLSX_MAX_COLS) if declared_cols else None
+            for row in sheet.iter_rows(values_only=True, max_row=rows_left, max_col=max_col):
+                rows_left -= 1
+                wrote_any = True
+                writer.writerow(["" if cell is None else str(cell) for cell in row[:XLSX_MAX_COLS]])
+                if chars + out.tell() > FULL_EXTRACTION_BUDGET:
+                    break
+                if rows_left <= 0:
+                    break
+            csv_text = out.getvalue().strip()
+            if wrote_any and csv_text:
+                chunks.append(f"# Sheet: {sheet_name}\n{csv_text}")
+                chars += len(csv_text)
+    finally:
+        workbook.close()
     return "\n\n".join(chunks)
 
 
@@ -336,6 +375,8 @@ __all__ = [
     "CODE_EXTENSIONS",
     "EXTRACTION_BUDGET",
     "FULL_EXTRACTION_BUDGET",
+    "XLSX_MAX_COLS",
+    "XLSX_MAX_ROWS",
     "ExtractionKind",
     "ExtractionResult",
     "code_language_for",

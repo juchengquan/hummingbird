@@ -11,7 +11,7 @@ import { describe, test, expect } from "bun:test"
 
 import type { Env } from "../src/env"
 import type { PollerDeps } from "../src/poller"
-import { runPollLoop } from "../src/poller"
+import { pollerStartDecision, runPollLoop, settleWithin } from "../src/poller"
 
 const baseEnv: Env = {
   SERVICE_NAME: "agent-ts",
@@ -21,6 +21,7 @@ const baseEnv: Env = {
   SUPABASE_JWT_AUDIENCE: "authenticated",
   SUPABASE_DB_URL: "",
   SUPABASE_SERVICE_ROLE_KEY: "",
+  AGENT_TS_POLLER_ENABLED: true,
   WORKER_DRY_RUN: true,
   POLL_INTERVAL_SECONDS: 0, // fire as fast as possible in tests
   JOB_LEASE_SECONDS: 120,
@@ -158,5 +159,43 @@ describe("runPollLoop — claim options", () => {
     // agent-ts only releases what it claims, so it must never take over
     // a dead worker's expired-lease job — agent-py reclaims those.
     expect(seen).toEqual([{ leaseSeconds: 45, reclaimExpired: false }])
+  })
+})
+
+describe("pollerStartDecision", () => {
+  test("off by default: agent-ts has no executor, its claims only delay agent-py", () => {
+    expect(pollerStartDecision({ AGENT_TS_POLLER_ENABLED: false }, true).start).toBe(false)
+  })
+
+  test("opt-in without a pool still skips", () => {
+    expect(pollerStartDecision({ AGENT_TS_POLLER_ENABLED: true }, false).start).toBe(false)
+  })
+
+  test("opt-in with a pool starts", () => {
+    expect(pollerStartDecision({ AGENT_TS_POLLER_ENABLED: true }, true).start).toBe(true)
+  })
+})
+
+describe("settleWithin (shutdown waits for the in-flight tick)", () => {
+  test("resolves once the loop settles", async () => {
+    let done = false
+    const loop = new Promise<void>((resolve) =>
+      setTimeout(() => {
+        done = true
+        resolve()
+      }, 10),
+    )
+    await settleWithin(loop, 1_000)
+    expect(done).toBe(true)
+  })
+
+  test("gives up after the grace period", async () => {
+    const started = Date.now()
+    await settleWithin(new Promise(() => {}), 20)
+    expect(Date.now() - started).toBeLessThan(1_000)
+  })
+
+  test("never rejects", async () => {
+    await settleWithin(Promise.reject(new Error("boom")), 1_000)
   })
 })

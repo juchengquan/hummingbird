@@ -29,6 +29,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agent_py import mcp_tools as mcp_tools_mod
+from agent_py import url_validate
 from agent_py.mcp_client import (
     McpEndpoint,
     McpToolResult,
@@ -49,6 +50,18 @@ from agent_py.tools.registry import ToolDescriptor, ToolError
 USER_ID = "11111111-1111-1111-1111-111111111111"
 WORKSPACE_ID = "22222222-2222-2222-2222-222222222222"
 SERVER_ID = "33333333-3333-3333-3333-333333333333"
+
+
+@pytest.fixture(autouse=True)
+def _public_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hostnames resolve to a public address so the load-time SSRF gate
+    passes without real DNS. Tests needing a private answer use IP
+    literals or override this."""
+
+    async def fake_getaddrinfo(host: str) -> list[str]:
+        return ["93.184.215.14"]
+
+    monkeypatch.setattr(url_validate, "_async_getaddrinfo", fake_getaddrinfo)
 
 
 # --- DB fakes ----------------------------------------------------------
@@ -308,11 +321,104 @@ async def test_build_mcp_tool_upstream_exception_wrapped() -> None:
         patch.object(
             mcp_tools_mod,
             "mcp_call_tool",
-            new=AsyncMock(side_effect=RuntimeError("conn refused")),
+            new=AsyncMock(side_effect=RuntimeError("conn refused to 10.0.0.5:8080")),
         ),
-        pytest.raises(ToolError, match="upstream error"),
+        pytest.raises(ToolError) as excinfo,
     ):
         await tool.execute({})
+    # Generic text only — the upstream detail (an internal address here)
+    # must not reach the model (SSRF oracle); it's logged instead.
+    message = str(excinfo.value)
+    assert "net" in message
+    assert "10.0.0.5" not in message
+    assert "conn refused" not in message
+
+
+@pytest.mark.asyncio
+async def test_build_mcp_tool_blocked_url_is_generic_too() -> None:
+    """A URL the session's own SSRF re-check refuses surfaces with the
+    same generic text — no DNS/address detail."""
+    desc = McpToolDescriptorIR(name="net")
+    endpoint = McpEndpoint(id=SERVER_ID, name="Demo", url="http://169.254.169.254/latest")
+    tool = build_mcp_tool(endpoint=endpoint, credentials=None, descriptor=desc)
+    with pytest.raises(ToolError) as excinfo:
+        await tool.execute({})
+    message = str(excinfo.value)
+    assert "169.254" not in message
+    assert "private" not in message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        "http://127.0.0.1:8000/mcp",
+        "http://169.254.169.254/latest/meta-data",
+        "http://10.0.0.7/mcp",
+        "http://localhost/mcp",
+        "ftp://mcp.test/sse",
+    ],
+)
+async def test_discover_skips_server_with_blocked_url(bad_url: str) -> None:
+    """`mcp_servers.url` is user-editable under RLS, so the stored URL is
+    re-validated at load: a private / loopback / metadata URL drops the
+    server (and its credential is never decrypted); others still load."""
+    rows = [
+        {
+            "id": "bad",
+            "name": "Bad",
+            "url": bad_url,
+            "capabilities": json.dumps({"tools": [{"name": "evil"}]}),
+        },
+        {
+            "id": "good",
+            "name": "Good",
+            "url": "https://mcp.test/sse",
+            "capabilities": json.dumps({"tools": [{"name": "ok"}]}),
+        },
+    ]
+    conn = _FakeConnection(rows=rows)
+    fetch_mock = AsyncMock(return_value={"headers": {}})
+    with patch.object(mcp_tools_mod, "fetch_decrypted_credentials", new=fetch_mock):
+        out = await discover_mcp_tools_for_workspace(
+            _fake_pool(conn),
+            user_id=USER_ID,
+            workspace_id=WORKSPACE_ID,
+            encryption_key="k" * 32,
+        )
+    assert set(out.keys()) == {"mcp__good__ok"}
+    assert [c.kwargs["server_id"] for c in fetch_mock.await_args_list] == ["good"]
+
+
+@pytest.mark.asyncio
+async def test_discover_skips_server_resolving_to_private_address(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DNS-rebinding shape: a public-looking hostname whose answer is
+    private is dropped at load."""
+
+    async def private_dns(host: str) -> list[str]:
+        return ["10.1.2.3"]
+
+    monkeypatch.setattr(url_validate, "_async_getaddrinfo", private_dns)
+    row = {
+        "id": SERVER_ID,
+        "name": "Demo",
+        "url": "https://rebind.example/sse",
+        "capabilities": json.dumps({"tools": [{"name": "alpha"}]}),
+    }
+    with patch.object(
+        mcp_tools_mod,
+        "fetch_decrypted_credentials",
+        new=AsyncMock(return_value={"headers": {}}),
+    ):
+        out = await discover_mcp_tools_for_workspace(
+            _fake_pool(_FakeConnection(rows=[row])),
+            user_id=USER_ID,
+            workspace_id=WORKSPACE_ID,
+            encryption_key="k" * 32,
+        )
+    assert out == {}
 
 
 # --- discover_mcp_tools_for_workspace --------------------------------

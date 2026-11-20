@@ -10,7 +10,11 @@ import {
 } from "@/client/agent/active-task"
 import { notifyTaskFinished } from "@/client/agent/notify"
 import { subscribeTaskEvents } from "@/client/agent/realtime"
-import { isTerminalStatus, type TaskEvent } from "@/shared/agent/events"
+import {
+  isTerminalEvent,
+  isTerminalStatus,
+  type TaskEvent,
+} from "@/shared/agent/events"
 import {
   EMPTY_RUN_VIEW,
   reduceRun,
@@ -158,9 +162,21 @@ export function useTaskRun(options?: UseTaskRunOptions): UseTaskRunResult {
       // 1s poll. Idempotent against the poll-tail (reduceRun drops
       // events with `seq <= cursor`), so running both is safe and
       // serves as resilience if Realtime hiccups.
+      //
+      // Realtime pushes rows the moment they're inserted, unchecked — so
+      // a terminal event is NOT folded from it: a dead worker's `result`
+      // (written before it could settle the task, then superseded by its
+      // reclaimed re-run's resume marker) would otherwise settle the view
+      // early. Terminal events arrive via the resume stream instead,
+      // which only sends one once the task row confirms it
+      // (`gateLiveTailBatch`).
       const id = runIdRef.current
       const unsubscribeRealtime = id
-        ? subscribeTaskEvents(id, { onEvent: foldEvent })
+        ? subscribeTaskEvents(id, {
+            onEvent: (event) => {
+              if (!isTerminalEvent(event)) foldEvent(event)
+            },
+          })
         : null
 
       try {

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from ..auth import get_current_user
 from ..extraction import ExtractionKind, extract_file
 from ..settings import get_settings
+from ..zip_guard import ZipLimitError
 
 logger = structlog.get_logger(__name__)
 
@@ -103,6 +104,14 @@ async def extract(
             mime_type=file.content_type or "",
             data=data,
         )
+    except ZipLimitError as exc:
+        # Office zip whose entry count / real inflated size exceeds the
+        # zip-bomb guard (`zip_guard.py`). 413, like the TS route.
+        logger.warning("extract.zip_limit", error=str(exc), filename=file.filename)
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=str(exc),
+        ) from exc
     except Exception as exc:  # broad on purpose — see comment
         # Any extractor crash is unexpected — the extractors swallow
         # known per-format failures. Mirrors the TS route's 500 on
