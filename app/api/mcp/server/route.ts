@@ -4,7 +4,12 @@ import { z } from "zod"
 
 import { upsertServerWithCredential } from "@/server/mcp/credentials"
 import { validateMcpServerUrl } from "@/server/mcp/outbound"
+import { PAYLOAD_TOO_LARGE_CODE, readJsonCapped } from "@/server/read-body-capped"
 import { getSupabaseServerClient } from "@/server/supabase/server"
+
+/** Body cap: server config + credential headers + the cached
+ *  capabilities lists (tool schemas can be verbose). */
+const MCP_SERVER_BODY_MAX = 2 * 1024 * 1024
 
 /**
  * Create or update a cloud-mode MCP server config. The browser can't
@@ -50,12 +55,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "no_session" }, { status: 401 })
   }
 
-  let body: unknown
-  try {
-    body = await req.json()
-  } catch {
-    return NextResponse.json({ error: "invalid_json" }, { status: 400 })
+  const read = await readJsonCapped(req, MCP_SERVER_BODY_MAX)
+  if (!read.ok) {
+    return read.reason === "too_large"
+      ? NextResponse.json({ error: PAYLOAD_TOO_LARGE_CODE }, { status: 413 })
+      : NextResponse.json({ error: "invalid_json" }, { status: 400 })
   }
+  const body = read.value
   const parsed = BodySchema.safeParse(body)
   if (!parsed.success) {
     return NextResponse.json(

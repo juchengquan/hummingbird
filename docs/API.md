@@ -45,6 +45,31 @@ gated routes fail with a 500 until fixed.
 AI key): clients must not apply the `auth` mock-response fallback to
 it; they show a sign-in prompt instead.
 
+### Request body caps — `413 payload_too_large`
+
+App Router route handlers have no default body limit, so every JSON
+route reads its body through `readJsonCapped`
+(`lib/server/read-body-capped.ts`): a `Content-Length` over the cap is
+rejected before anything is read, and a chunked body is cut off once the
+streamed count passes it. Routes with the `{ code, message }` envelope
+answer `413 { code: "payload_too_large", message }`; older `{ error }`
+routes answer `413` in their own envelope.
+
+| Route | Cap | Derived from |
+|---|---|---|
+| `/api/chat` | `CHAT_BODY_MAX` ≈ 125 MB | inline `sandboxFiles` total + 40 attachments × 220k chars × 3 bytes + 32 MB for history / images |
+| `/api/ai/command` | 32 MB | ≤ 1000 messages + ≤ 50,000 editor blocks |
+| `/api/summarize` | 8 MB | ≤ 200 messages |
+| `/api/embed` | 4 MB | `text` ≤ 1.2M chars |
+| `/api/extract-table` | 2 MB | `reportText` ≤ 100k chars + ≤ 100 sources |
+| `/api/mcp/server` | 2 MB | config + cached capabilities |
+| `/api/mcp/{id}/{action}` | 1 MB | server config + tool input |
+| `/api/ai/complete`, `/api/memory/extract` | 256 KB | ≤ 36k / 50k chars |
+| `/api/url/fetch`, `/api/share`, `/api/images/refresh-url`, `/api/files/refresh-url` | 16 KB | one URL / id / path |
+
+`/api/extract` (multipart) and `/api/csp-report` cap their raw bodies the
+same way. The `/api/tasks/**` routes still use a bare `req.json()`.
+
 ---
 
 ## JSON routes
@@ -203,7 +228,7 @@ are limited to 120 per minute per user (signed in) or per client IP
 (`429 { error: "rate_limited", code, message }` + `Retry-After`).
 
 **Errors**: `400` invalid body / `mcp_url_blocked` (SSRF guard), `401`,
-`404` unknown action, `429`, `502`
+`404` unknown action, `413` body over 1 MB, `429`, `502`
 `mcp_upstream_error` (the upstream error text is never echoed).
 
 ### `POST /api/memory/extract`

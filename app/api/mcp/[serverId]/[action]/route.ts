@@ -7,6 +7,7 @@ import { callTool, discover, readResource } from "@/server/mcp/client"
 import { fetchDecryptedCredential } from "@/server/mcp/credentials"
 import { McpUrlBlockedError, validateMcpServerUrl } from "@/server/mcp/outbound"
 import { createSlidingWindow, rateLimitKey } from "@/server/rate-limit"
+import { PAYLOAD_TOO_LARGE_CODE, readJsonCapped } from "@/server/read-body-capped"
 import { getSupabaseServerClient } from "@/server/supabase/server"
 import {
   MCP_CRED_HEADER,
@@ -65,6 +66,10 @@ const VALID_ACTIONS = new Set(["discover", "call", "read"])
  *  discovery, resource reads and MCP-app tool calls from the browser.
  *  Exported for tests. */
 export const mcpProxyLimit = createSlidingWindow({ windowMs: 60_000, max: 120 })
+
+/** Body cap: a server config + a tool's input / a resource URI. Tool
+ *  inputs are model- or app-written JSON; 1 MB is far past real use. */
+const MCP_PROXY_BODY_MAX = 1024 * 1024
 
 export async function POST(
   req: NextRequest,
@@ -140,12 +145,13 @@ export async function POST(
     }
   }
 
-  let body: unknown
-  try {
-    body = await req.json()
-  } catch {
-    return NextResponse.json({ error: "invalid_json" }, { status: 400 })
+  const read = await readJsonCapped(req, MCP_PROXY_BODY_MAX)
+  if (!read.ok) {
+    return read.reason === "too_large"
+      ? NextResponse.json({ error: PAYLOAD_TOO_LARGE_CODE }, { status: 413 })
+      : NextResponse.json({ error: "invalid_json" }, { status: 400 })
   }
+  const body = read.value
 
   const schema =
     action === "discover" ? DiscoverSchema : action === "call" ? CallSchema : ReadSchema

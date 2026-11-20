@@ -5,6 +5,15 @@ import { EmbedRequestSchema } from "@/shared/api-schemas"
 import { getSupabaseServerClient } from "@/server/supabase/server"
 import { isEmbeddingConfigured } from "@/server/embeddings/provider"
 import { indexFileSections } from "@/server/embeddings/index-file"
+import {
+  formatBodyLimit,
+  PAYLOAD_TOO_LARGE_CODE,
+  readJsonCapped,
+} from "@/server/read-body-capped"
+
+/** Body cap: `text` ≤ 1.2M chars at ≤ 3 UTF-8 bytes per char, plus the
+ *  tiny `fileId` / `force` fields. */
+const EMBED_BODY_MAX = 4 * 1024 * 1024
 
 /**
  * `POST /api/embed` — chunk + embed a file's extracted text into the
@@ -24,15 +33,22 @@ export const runtime = "nodejs"
 export const maxDuration = 60
 
 export async function POST(req: NextRequest) {
-  let body: unknown
-  try {
-    body = await req.json()
-  } catch {
-    return NextResponse.json(
-      { code: "bad_request", error: "Expected a JSON body." },
-      { status: 400 }
-    )
+  const read = await readJsonCapped(req, EMBED_BODY_MAX)
+  if (!read.ok) {
+    return read.reason === "too_large"
+      ? NextResponse.json(
+          {
+            code: PAYLOAD_TOO_LARGE_CODE,
+            error: `Request body exceeds ${formatBodyLimit(EMBED_BODY_MAX)}.`,
+          },
+          { status: 413 }
+        )
+      : NextResponse.json(
+          { code: "bad_request", error: "Expected a JSON body." },
+          { status: 400 }
+        )
   }
+  const body = read.value
 
   const parsed = EmbedRequestSchema.safeParse(body)
   if (!parsed.success) {

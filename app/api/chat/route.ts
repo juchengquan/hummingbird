@@ -13,7 +13,7 @@ import {
 } from '@/server/model-provider'
 import { categorizeError } from '@/shared/api-errors'
 import { requireAiAuth } from '@/server/auth/require-ai-auth'
-import { ChatRequestSchema } from '@/shared/api-schemas'
+import { CHAT_BODY_MAX, ChatRequestSchema } from '@/shared/api-schemas'
 import {
   SERVER_SKILLS,
   type SkillRequestEntry,
@@ -30,6 +30,7 @@ import {
 } from '@/server/generative-ui/tool'
 import { loadEffectiveMcpServers, type EffectiveMcpServer } from '@/server/mcp/load-servers'
 import { createSlidingWindow, rateLimitKey } from '@/server/rate-limit'
+import { jsonBodyError, readJsonCapped } from '@/server/read-body-capped'
 import {
   AI_SDK_STREAM_HEADER_NAME,
   AI_SDK_STREAM_HEADER_VALUE,
@@ -322,16 +323,9 @@ export async function POST(req: NextRequest) {
   // tool work starts. No-op when the flag is off / Supabase is unset.
   const aiAuth = await requireAiAuth()
   if (!aiAuth.ok) return aiAuth.response
-  let raw: unknown
-  try {
-    raw = await req.json()
-  } catch {
-    return NextResponse.json(
-      { code: 'invalid_request', message: 'Body must be JSON.' },
-      { status: 400 }
-    )
-  }
-  const parsed = ChatRequestSchema.safeParse(raw)
+  const read = await readJsonCapped(req, CHAT_BODY_MAX)
+  if (!read.ok) return jsonBodyError(read)
+  const parsed = ChatRequestSchema.safeParse(read.value)
   if (!parsed.success) {
     return NextResponse.json(
       {

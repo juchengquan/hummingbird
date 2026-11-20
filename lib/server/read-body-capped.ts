@@ -1,5 +1,7 @@
 import "server-only"
 
+import { NextResponse } from "next/server"
+
 /**
  * Read a request body into memory with a hard byte cap.
  *
@@ -16,6 +18,62 @@ export class BodyTooLargeError extends Error {
     super(`Request body exceeds ${maxBytes} bytes.`)
     this.name = "BodyTooLargeError"
   }
+}
+
+export type JsonBodyResult =
+  | { ok: true; value: unknown }
+  | { ok: false; reason: "too_large" | "invalid_json"; maxBytes: number }
+
+/**
+ * `req.json()` with a byte cap. App Router route handlers have no default
+ * body limit (and `proxy.ts` doesn't cover `/api`), so a bare `req.json()`
+ * buffers whatever the client sends. Same two-step guard as
+ * `readBodyCapped` (Content-Length first, then the streamed count), then
+ * a UTF-8 decode + `JSON.parse`. Never throws: callers map `too_large` to
+ * a 413 and `invalid_json` to their usual 400, in their own envelope.
+ */
+export async function readJsonCapped(req: Request, maxBytes: number): Promise<JsonBodyResult> {
+  let bytes: Uint8Array
+  try {
+    bytes = await readBodyCapped(req, maxBytes)
+  } catch (err) {
+    if (err instanceof BodyTooLargeError) return { ok: false, reason: "too_large", maxBytes }
+    return { ok: false, reason: "invalid_json", maxBytes }
+  }
+  try {
+    return { ok: true, value: JSON.parse(new TextDecoder().decode(bytes)) as unknown }
+  } catch {
+    return { ok: false, reason: "invalid_json", maxBytes }
+  }
+}
+
+/** Human-readable size for 413 messages (`"256 KB"`, `"4 MB"`). */
+export function formatBodyLimit(maxBytes: number): string {
+  return maxBytes >= 1024 * 1024
+    ? `${Math.round(maxBytes / (1024 * 1024))} MB`
+    : `${Math.round(maxBytes / 1024)} KB`
+}
+
+export const PAYLOAD_TOO_LARGE_CODE = "payload_too_large"
+
+/** Failure → response in the standard `{ code, message }` envelope:
+ *  `413 payload_too_large` or `400 invalid_request`. Routes with an
+ *  older `{ error }` envelope build their own from the same result. */
+export function jsonBodyError(
+  failure: Extract<JsonBodyResult, { ok: false }>
+): NextResponse {
+  return failure.reason === "too_large"
+    ? NextResponse.json(
+        {
+          code: PAYLOAD_TOO_LARGE_CODE,
+          message: `Request body exceeds ${formatBodyLimit(failure.maxBytes)}.`,
+        },
+        { status: 413 }
+      )
+    : NextResponse.json(
+        { code: "invalid_request", message: "Body must be JSON." },
+        { status: 400 }
+      )
 }
 
 export async function readBodyCapped(req: Request, maxBytes: number): Promise<Uint8Array> {

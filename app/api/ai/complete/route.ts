@@ -14,6 +14,7 @@ import {
 import { createSlidingWindow, rateLimitKey } from '@/server/rate-limit';
 
 import { getCompletePrompt } from '../command/prompt';
+import { jsonBodyError, readJsonCapped } from '@/server/read-body-capped';
 
 /**
  * Inline editor ghost-text autocomplete.
@@ -40,6 +41,10 @@ import { getCompletePrompt } from '../command/prompt';
  *  a minute hits ~30 suggestions. Anything past 60 is hammering. */
 const completeRateLimit = createSlidingWindow({ windowMs: 60_000, max: 60 });
 
+/** Body cap: `prefix` ≤ 32k chars + `blockText` ≤ 4k chars at ≤ 3 UTF-8
+ *  bytes per char, plus headroom. */
+const AI_COMPLETE_BODY_MAX = 256 * 1024;
+
 export async function POST(req: NextRequest) {
   // REQUIRE_AUTH_FOR_AI gate — before the rate-limit bucket, the body
   // and the model call. No-op when the flag is off / Supabase is unset.
@@ -59,15 +64,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let raw: unknown;
-  try {
-    raw = await req.json();
-  } catch {
-    return NextResponse.json(
-      { code: 'invalid_request', message: 'Body must be JSON.' },
-      { status: 400 }
-    );
-  }
+  const read = await readJsonCapped(req, AI_COMPLETE_BODY_MAX);
+  if (!read.ok) return jsonBodyError(read);
+  const raw = read.value;
   const parsed = CompleteRequestSchema.safeParse(raw);
   if (!parsed.success) {
     return NextResponse.json(

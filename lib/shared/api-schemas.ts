@@ -63,11 +63,15 @@ export const McpResourceRefSchema = z.object({
   mimeType: z.string().max(100).optional(),
 })
 
+/** Largest text field an attachment can carry (a bookmark's `content`;
+ *  a file summary's `text` is capped lower). Feeds `CHAT_BODY_MAX`. */
+export const ATTACHMENT_TEXT_MAX = 220_000
+
 export const UrlBookmarkRefSchema = z.object({
   id: z.string().min(1).max(64),
   url: z.string().min(1).max(2000),
   title: z.string().min(1).max(500),
-  content: z.string().max(220_000),
+  content: z.string().max(ATTACHMENT_TEXT_MAX),
   contentTruncated: z.boolean(),
   fetchedAt: z.string(),
 })
@@ -155,6 +159,22 @@ const McpRequestServerSchema = z.object({
     })
     .optional(),
 })
+
+/** Max attachments (files + MCP resources + URL bookmarks) per turn. */
+export const CHAT_ATTACHMENTS_MAX = 40
+
+/**
+ * Byte cap on the raw `/api/chat` JSON body, checked before parsing
+ * (route handlers have no default limit). Derived from the schema
+ * bounds, generously: the inline sandbox files (base64, 1 byte/char) +
+ * every attachment at the largest text field (up to 3 UTF-8 bytes per
+ * char) + 32 MB for the message history (inline images included), MCP
+ * server configs and the rest. ≈ 125 MB.
+ */
+export const CHAT_BODY_MAX =
+  SANDBOX_FILES_TOTAL_BASE64_MAX +
+  CHAT_ATTACHMENTS_MAX * 3 * ATTACHMENT_TEXT_MAX +
+  32 * 1024 * 1024
 
 export const ChatRequestSchema = z.object({
   messages: z.array(ModelMessageSchema).min(1).max(CHAT_MESSAGES_MAX),
@@ -256,7 +276,7 @@ export const ChatRequestSchema = z.object({
    *  bookmarks — in one discriminated array. Workspace-ticked +
    *  conversation-pinned, de-duped client-side, tombstones filtered.
    *  See `lib/shared/attachments.ts` for the union shape. */
-  attachments: z.array(AttachmentPayloadSchema).max(40).optional(),
+  attachments: z.array(AttachmentPayloadSchema).max(CHAT_ATTACHMENTS_MAX).optional(),
   /** Files the client offers for `runCode` to mount (PR-2). Sent only
    *  when the codeInterpreter skill is enabled. Each entry maps a
    *  conversation attachment's `name` to its `fileId`; `dataBase64` is
