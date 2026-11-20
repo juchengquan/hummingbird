@@ -38,25 +38,54 @@ class RateLimitVerdict:
     retry_after_sec: int
 
 
+_DEFAULT_MAX_BUCKETS = 10_000
+
+
 class SlidingWindow:
     """In-process sliding-window limiter. Construct once at module
     scope (so the buckets survive across requests on the same worker);
     call ``.consume(key)`` at the start of every request you want to
-    rate-limit."""
+    rate-limit.
 
-    __slots__ = ("_buckets", "max", "window_ms")
+    Memory is bounded two ways (mirrors the TS limiter): a sweep (at
+    most once per ``window_ms``, run lazily from ``consume``) drops
+    buckets whose newest entry has aged out of the window, and a hard
+    ``max_buckets`` cap evicts the least-recently-used buckets when a
+    new key would exceed it. Dict insertion order doubles as LRU order:
+    every touch re-inserts the key."""
 
-    def __init__(self, *, window_ms: int, max: int) -> None:
+    __slots__ = ("_buckets", "_last_sweep", "max", "max_buckets", "window_ms")
+
+    def __init__(
+        self, *, window_ms: int, max: int, max_buckets: int = _DEFAULT_MAX_BUCKETS
+    ) -> None:
         self.window_ms = window_ms
         self.max = max
+        self.max_buckets = max_buckets if max_buckets > 0 else 1
         self._buckets: dict[str, list[float]] = {}
+        self._last_sweep = _now_ms()
+
+    def _sweep(self, now: float) -> None:
+        """Drop every bucket with no entry inside the window. Buckets
+        are sorted ascending, so the last entry is the newest."""
+        self._last_sweep = now
+        stale = [
+            key
+            for key, bucket in self._buckets.items()
+            if not bucket or now - bucket[-1] >= self.window_ms
+        ]
+        for key in stale:
+            del self._buckets[key]
 
     def consume(self, key: str) -> RateLimitVerdict:
-        now = time.monotonic() * 1000.0
-        bucket = self._buckets.get(key, [])
+        now = _now_ms()
+        if now - self._last_sweep >= self.window_ms:
+            self._sweep(now)
+        bucket = self._buckets.pop(key, [])
         # Drop entries outside the window.
         fresh = [t for t in bucket if now - t < self.window_ms]
         if len(fresh) >= self.max:
+            self._buckets[key] = fresh
             oldest = fresh[0]
             retry_after_ms = self.window_ms - (now - oldest)
             return RateLimitVerdict(
@@ -64,6 +93,11 @@ class SlidingWindow:
                 retry_after_sec=max(1, math.ceil(retry_after_ms / 1000)),
             )
         fresh.append(now)
+        if len(self._buckets) >= self.max_buckets:
+            self._sweep(now)
+            while len(self._buckets) >= self.max_buckets:
+                # Oldest insertion = least recently used.
+                del self._buckets[next(iter(self._buckets))]
         self._buckets[key] = fresh
         return RateLimitVerdict(allowed=True, retry_after_sec=0)
 
@@ -71,6 +105,15 @@ class SlidingWindow:
         """Test seam — drop all buckets. Production callers never need
         this; tests use it between cases to keep state from bleeding."""
         self._buckets.clear()
+        self._last_sweep = _now_ms()
+
+    def size(self) -> int:
+        """Test seam — number of tracked buckets."""
+        return len(self._buckets)
+
+
+def _now_ms() -> float:
+    return time.monotonic() * 1000.0
 
 
 def rate_limit_key(
@@ -110,9 +153,11 @@ def rate_limit_key(
             return platform_ip
 
     if trusted_proxy_hops > 0:
-        # Starlette joins repeated headers with ", " so splitting on
-        # commas covers both a single list header and repeats.
-        forwarded = request.headers.get("x-forwarded-for")
+        # `headers.get` returns only the FIRST `X-Forwarded-For` line;
+        # a proxy that adds its own line instead of appending to the
+        # client's would leave the client-controlled line as the key.
+        # Join every line in order, then split on commas.
+        forwarded = ",".join(request.headers.getlist("x-forwarded-for"))
         if forwarded:
             entries = [e.strip() for e in forwarded.split(",") if e.strip()]
             if entries:
