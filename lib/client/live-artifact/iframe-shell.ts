@@ -19,7 +19,7 @@
  * iframe and surfaces the message in its toolbar.
  */
 
-import { CDN_HOSTS, CDN_URLS } from "@/shared/live-artifact/cdn-urls"
+import { CDN_HOSTS, CDN_SCRIPTS, type CdnScriptName } from "@/shared/live-artifact/cdn-urls"
 import type { ShellKind } from "./detect"
 
 /** Marker on every postMessage from the iframe so the parent can
@@ -63,6 +63,17 @@ function cspMeta(): string {
     `form-action 'none';`,
     `">`,
   ].join(" ")
+}
+
+/** `<script>` tag for a pinned CDN script, with its SRI hash when the
+ *  host supports one. `crossorigin="anonymous"` makes the fetch a CORS
+ *  request, which an `integrity` check requires; it's left off for
+ *  hosts without CORS headers, where it would make the load fail. */
+export function cdnScriptTag(name: CdnScriptName): string {
+  const { src, integrity } = CDN_SCRIPTS[name]
+  return integrity
+    ? `<script src="${src}" integrity="${integrity}" crossorigin="anonymous"></script>`
+    : `<script src="${src}"></script>`
 }
 
 function errorBridge(): string {
@@ -125,7 +136,7 @@ function buildHtmlShell(content: string): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 ${cspMeta()}
-<script src="${CDN_URLS.tailwind}"></script>
+${cdnScriptTag("tailwind")}
 ${errorBridge()}
 <style>html,body{margin:0;padding:0;}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}</style>
 </head>
@@ -136,88 +147,48 @@ ${content}
 }
 
 // --------------------------------------------------------------------
-// TSX shell — React + ReactDOM + Babel standalone, with import lines
-// stripped and a mount call appended for the detected component.
+// TSX shell — React 18 + ReactDOM (UMD globals) + Babel standalone.
+// The artifact is compiled in the frame as a CommonJS module, so every
+// import / export form works without regex surgery on the source.
 // --------------------------------------------------------------------
 
-/** Strip ES module syntax that breaks in non-module Babel scripts:
+/** Babel options the frame compiles the artifact with: strip TS types
+ *  (TSX syntax for every artifact, even when the fence said `jsx`),
+ *  classic JSX runtime (`React.createElement`, so no
+ *  `react/jsx-runtime` module is needed), and ES modules → CommonJS so
+ *  imports resolve through the frame's `require` shim and the default
+ *  export lands on `module.exports.default`. */
+export const TSX_BABEL_OPTIONS = {
+  filename: "artifact.tsx",
+  presets: [["typescript", { isTSX: true, allExtensions: true }], "react"],
+  plugins: ["transform-modules-commonjs"],
+} as const
+
+/** Modules a TSX artifact can import, mapped to the UMD globals. Any
+ *  other bare import fails with a message naming the module (rather
+ *  than a later "X is not defined"); relative paths and stylesheets
+ *  are no-ops. */
+export const TSX_MODULES = {
+  react: "React",
+  "react-dom": "ReactDOM",
+  "react-dom/client": "ReactDOM",
+} as const
+
+/** Code that calls `createRoot` / `ReactDOM.render` itself gets no
+ *  second root mounted on the same container. */
+const SELF_MOUNT_RE = /\b(?:createRoot|hydrateRoot)\s*\(|\bReactDOM\s*\.\s*render\s*\(/
+
+/** Fallback component name for when there's no default export (the
+ *  default export always wins, at runtime). Order of preference:
  *
- *  - `import …` lines (React/ReactDOM are globals from the UMD bundles)
- *  - `export default <Name>` → keeps the identifier so we can mount it
- *  - `export default function/class/const …` → drops the `export
- *    default` keyword
- *  - `export {…}` / `export const/function/class` → drops `export`
+ *  1. A declaration named `App`
+ *  2. A declaration named `Demo`
+ *  3. The LAST PascalCase function/class/const declaration in the file
+ *
+ *  Null when nothing looks mountable — the frame then renders an
+ *  in-iframe error rather than mounting `const x = 1` as a component.
  */
-function stripModuleSyntax(code: string): { code: string; defaultExportName: string | null } {
-  let out = code
-  // Strip `import … from "..."` lines (single & multi-line variants).
-  out = out.replace(/^\s*import\s+[^;]+?;?\s*$/gm, "")
-  // Strip side-effect imports `import "..."` or `import '...'`.
-  out = out.replace(/^\s*import\s+["'][^"']+["'];?\s*$/gm, "")
-
-  // `export default function Name` / `export default class Name` /
-  // `export default const Name` — drop the `export default` and
-  // remember the name.
-  let defaultExportName: string | null = null
-  out = out.replace(
-    /export\s+default\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/,
-    (_m, name) => {
-      defaultExportName = name
-      return `function ${name}`
-    }
-  )
-  // `export default function() {…}` / `export default function () {…}`
-  out = out.replace(
-    /export\s+default\s+(?:async\s+)?function\s*\(/,
-    () => {
-      defaultExportName = "__defaultExport"
-      return "function __defaultExport("
-    }
-  )
-  // `export default class Name`
-  out = out.replace(
-    /export\s+default\s+class\s+([A-Za-z_$][\w$]*)/,
-    (_m, name) => {
-      defaultExportName = name
-      return `class ${name}`
-    }
-  )
-  // `export default <identifier>;` — keep the identifier, just drop the keywords.
-  out = out.replace(
-    /export\s+default\s+([A-Za-z_$][\w$]*)\s*;?/,
-    (_m, name) => {
-      defaultExportName = name
-      return ""
-    }
-  )
-  // `export default <arrow expression>` — assign to a temp var.
-  out = out.replace(
-    /export\s+default\s+(?=[(\[{])/,
-    () => {
-      defaultExportName = "__defaultExport"
-      return "const __defaultExport = "
-    }
-  )
-  // Bare `export ` keywords on non-default declarations.
-  out = out.replace(/^\s*export\s+(?=function|class|const|let|var)/gm, "")
-  // `export { Name, Other }` — drop entirely.
-  out = out.replace(/^\s*export\s*\{[^}]*\}\s*;?\s*$/gm, "")
-  return { code: out, defaultExportName }
-}
-
-/** Find the identifier we should mount. Order of preference:
- *
- *  1. The default export (captured by `stripModuleSyntax`)
- *  2. A declaration named `App`
- *  3. A declaration named `Demo`
- *  4. The LAST function/class/const declaration in the file
- *
- *  Falls back to null when nothing looks mountable — the shell then
- *  renders an in-iframe error rather than running broken code.
- */
-function findMountName(code: string, defaultExportName: string | null): string | null {
-  if (defaultExportName) return defaultExportName
-
+export function findMountName(code: string): string | null {
   const namedDeclRe = /(?:function|class|const|let|var)\s+([A-Za-z_$][\w$]*)/g
   const names: string[] = []
   let m: RegExpExecArray | null
@@ -225,42 +196,115 @@ function findMountName(code: string, defaultExportName: string | null): string |
 
   if (names.includes("App")) return "App"
   if (names.includes("Demo")) return "Demo"
-  // Restrict the last-decl fallback to PascalCase identifiers. React
-  // convention: components are PascalCase, hooks are camelCase
-  // starting with `use`, regular vars are camelCase. Mounting a
-  // `const x = 1` as a component would crash; skipping it lets the
-  // "nothing mountable" error message take over instead.
+  // React convention: components are PascalCase, hooks are camelCase
+  // starting with `use`, regular vars are camelCase.
   const pascalCase = names.filter((n) => /^[A-Z]/.test(n))
   if (pascalCase.length > 0) return pascalCase[pascalCase.length - 1]
   return null
 }
 
+/** JSON-encode a value for an inline `<script>`. `<` is escaped so the
+ *  artifact source can't close the element (`</script>`) or open an
+ *  HTML comment (`<!--`) that changes how the tag is parsed. */
+function inlineJson(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029")
+}
+
+/** The inline script that compiles, runs and mounts the artifact. It
+ *  runs as-is in the frame (no Babel pass of its own), so plain ES5. */
+export function tsxRuntimeScript(source: string): string {
+  const modules = Object.entries(TSX_MODULES)
+    .map(([name, global]) => `${JSON.stringify(name)}: ${global}`)
+    .join(", ")
+  return `(function () {
+  var root = document.getElementById("root");
+  function showError(title, err) {
+    var box = document.createElement("div");
+    box.setAttribute("style", "padding:1rem;font-family:sans-serif;color:#b91c1c;");
+    var strong = document.createElement("strong");
+    strong.textContent = title;
+    box.appendChild(strong);
+    if (err) {
+      var pre = document.createElement("pre");
+      pre.setAttribute("style", "white-space:pre-wrap;font-size:12px;");
+      pre.textContent = String((err && err.message) || err);
+      box.appendChild(pre);
+    }
+    root.replaceChildren(box);
+  }
+  if (typeof React === "undefined" || typeof ReactDOM === "undefined" || typeof Babel === "undefined") {
+    showError("Couldn't load React / Babel from the CDN.");
+    throw new Error("Live preview runtime (React / ReactDOM / Babel) failed to load");
+  }
+
+  var SOURCE = ${inlineJson(source)};
+  var BABEL_OPTIONS = ${inlineJson(TSX_BABEL_OPTIONS)};
+  var FALLBACK_NAME = ${inlineJson(findMountName(source))};
+  var SELF_MOUNTS = ${SELF_MOUNT_RE.test(source) ? "true" : "false"};
+  var MODULES = { ${modules} };
+
+  function require(name) {
+    if (Object.prototype.hasOwnProperty.call(MODULES, name)) return MODULES[name];
+    if (/^\\.{0,2}\\//.test(name) || /\\.css$/.test(name)) return {};
+    throw new Error('Cannot import "' + name + '" in a live preview: only react and react-dom are available.');
+  }
+
+  var code;
+  try {
+    code = Babel.transform(SOURCE, BABEL_OPTIONS).code;
+  } catch (err) {
+    showError("Couldn't compile this component.", err);
+    throw err;
+  }
+
+  var module = { exports: {} };
+  var named;
+  try {
+    var tail = FALLBACK_NAME
+      ? "\\n;return typeof " + FALLBACK_NAME + ' !== "undefined" ? ' + FALLBACK_NAME + " : undefined;"
+      : "";
+    named = new Function("require", "module", "exports", "React", "ReactDOM", code + tail)(
+      require, module, module.exports, React, ReactDOM
+    );
+  } catch (err) {
+    showError("This component threw while loading.", err);
+    throw err;
+  }
+  if (SELF_MOUNTS) return;
+
+  var exp = module.exports;
+  var Component = exp && exp["default"] != null ? exp["default"] : named;
+  var mountable = typeof Component === "function" ||
+    (Component !== null && typeof Component === "object" && Component.$$typeof != null);
+  if (!mountable) {
+    showError("No mountable component found. Expected an App, Demo, or a default-exported component.");
+    return;
+  }
+  ReactDOM.createRoot(root).render(React.createElement(Component));
+})();`
+}
+
 function buildTsxShell(content: string): string {
-  const { code, defaultExportName } = stripModuleSyntax(content)
-  const mountName = findMountName(code, defaultExportName)
-
-  const tail = mountName
-    ? `\n;ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(${mountName}));`
-    : `\n;document.getElementById("root").innerHTML = '<div style="padding:1rem;font-family:sans-serif;color:#b91c1c;">No mountable component found. Expected an <code>App</code>, <code>Demo</code>, or a default-exported component.</div>';`
-
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 ${cspMeta()}
-<script src="${CDN_URLS.tailwind}"></script>
-<script crossorigin src="${CDN_URLS.react}"></script>
-<script crossorigin src="${CDN_URLS.reactDom}"></script>
-<script src="${CDN_URLS.babel}"></script>
 ${errorBridge()}
+${cdnScriptTag("tailwind")}
+${cdnScriptTag("react")}
+${cdnScriptTag("reactDom")}
+${cdnScriptTag("babel")}
 <style>html,body{margin:0;padding:0;}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}#root{padding:1rem;}</style>
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react,typescript">
-${code}
-${tail}
+<script>
+${tsxRuntimeScript(content)}
 </script>
 </body>
 </html>`
@@ -315,7 +359,7 @@ body{display:flex;align-items:center;justify-content:center;padding:1rem;font-fa
 </head>
 <body>
 <pre class="mermaid">${escapeHtml(content)}</pre>
-<script src="${CDN_URLS.mermaid}"></script>
+${cdnScriptTag("mermaid")}
 <script>
   mermaid.initialize({ startOnLoad: true, securityLevel: 'strict' });
 </script>
