@@ -247,9 +247,10 @@ def test_mcp_proxy_502_on_upstream_exception(client: TestClient) -> None:
         )
     assert r.status_code == 502
     detail = r.json()["detail"]
-    assert detail["code"] == "mcp_call_failed"
-    # Never leak the credential.
+    assert detail["code"] == "mcp_upstream_error"
+    # Never leak the credential or the upstream error text.
     assert "shh" not in json.dumps(r.json())
+    assert "upstream down" not in json.dumps(r.json())
 
 
 # --- cloud-mode URL binding + SSRF ------------------------------------

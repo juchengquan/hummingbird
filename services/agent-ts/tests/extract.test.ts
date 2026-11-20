@@ -174,6 +174,26 @@ describe("POST /v1/extract — route", () => {
     expect(body.truncated).toBe(false)
   })
 
+  test("office file failing the zip guard → 413 (parity with Next)", async () => {
+    const app = createApp()
+    const token = await makeJwt()
+    const form = new FormData()
+    // Not a zip at all — the zip guard rejects it before mammoth runs.
+    form.append(
+      "file",
+      new Blob(["not a zip"], {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      }),
+      "bomb.docx",
+    )
+    const res = await app.request("/v1/extract", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    })
+    expect(res.status).toBe(413)
+  })
+
   test("oversized body → 413 before the multipart parser runs", async () => {
     const app = createApp()
     const token = await makeJwt()

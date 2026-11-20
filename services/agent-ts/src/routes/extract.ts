@@ -14,6 +14,7 @@ import { Hono } from "hono"
 import { bodyLimit } from "hono/body-limit"
 
 import { extractFile } from "@/server/extraction"
+import { ZipLimitError } from "@/server/extraction/zip-guard"
 import { FILE_SIZE_LIMIT } from "@/shared/upload-config"
 
 import type { AuthVars } from "../middleware/auth"
@@ -85,6 +86,11 @@ extractRoutes.post(
             },
       )
     } catch (error) {
+      // Zip bomb guard (lib/server/extraction/zip-guard.ts) — same 413 as
+      // the Next.js /api/extract route.
+      if (error instanceof ZipLimitError) {
+        return c.json({ error: error.message }, 413)
+      }
       const message = error instanceof Error ? error.message : "Extraction failed."
       return c.json({ error: message }, 500)
     }

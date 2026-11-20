@@ -314,5 +314,7 @@ async def mcp_proxy(
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={"code": "mcp_call_failed", "message": str(exc)},
+            # Generic body (parity with the Next.js proxy): upstream
+            # error text can reflect internal responses (SSRF oracle).
+            detail={"code": "mcp_upstream_error", "message": "MCP upstream request failed."},
         ) from exc
