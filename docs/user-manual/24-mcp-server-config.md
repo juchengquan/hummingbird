@@ -33,6 +33,11 @@ encrypted with `MCP_ENCRYPTION_KEY` and stored in Postgres.
 | Visible to all workspaces | No - per-user, per-device | Yes - synced across devices |
 
 ## Tips & gotchas
+- When the server has Supabase configured, discovering servers and
+  reading resources / calling tools from the MCP panel requires being
+  signed in (the server proxies those calls). A local-only install
+  (no Supabase) keeps working anonymously. Either way the proxy allows
+  120 calls per minute per user or per IP.
 - Rotating `MCP_ENCRYPTION_KEY` invalidates every existing
   cloud-mode credential. Users have to re-add their servers.
 - If a tool call returns a "permission denied" error from a
