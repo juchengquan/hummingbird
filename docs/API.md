@@ -19,6 +19,32 @@ backend fails loudly at the boundary instead of corrupting the UI.
 Base URL: `NEXT_PUBLIC_API_BASE_URL` (default empty = same origin).
 Setting it points every call at another host without code changes.
 
+### Sign-in gate — `REQUIRE_AUTH_FOR_AI` / `auth_required`
+
+When the server sets `REQUIRE_AUTH_FOR_AI=true` (or `1`) **and**
+Supabase is configured, the routes that spend model budget refuse
+anonymous callers before reading the body or doing any model work:
+
+```jsonc
+// 401
+{ "code": "auth_required", "message": "Sign in to use AI features on this server." }
+```
+
+Gated: `POST /api/chat`, `/api/summarize`, `/api/ai/command`,
+`/api/ai/complete`, `/api/extract-table`, `/api/memory/extract`.
+`POST /api/extract` is **not** 401'd — text extraction spends no model
+budget — but an anonymous caller never gets the vision pass (the
+`vision` field is treated as `false`). The session is verified with
+Supabase `auth.getUser()`; any failure to verify (no cookie, expired,
+auth-server error) is `auth_required` (fail closed). Flag off / unset,
+or Supabase unconfigured → no gate, anonymous calls behave as before.
+An invalid flag value (anything but `true`/`false`/`1`/`0`) makes the
+gated routes fail with a 500 until fixed.
+
+`auth_required` is distinct from `auth` (missing / rejected **server**
+AI key): clients must not apply the `auth` mock-response fallback to
+it; they show a sign-in prompt instead.
+
 ---
 
 ## JSON routes
@@ -42,7 +68,9 @@ Extract text from an uploaded file.
 ```
 
 **Errors**: `400` malformed FormData, `413` file too large, `500` for
-extractor failures. Body shape: `{ error: string }`.
+extractor failures. Body shape: `{ error: string }`. Never
+`auth_required` — with the sign-in gate on, an anonymous caller just
+gets text-only extraction (no vision pass).
 
 `413` fires in three places: the request's `Content-Length` (or the
 streamed byte count, for chunked uploads) exceeds `FILE_SIZE_LIMIT`
@@ -118,8 +146,9 @@ Response: `{ summary: string, keyTopics?: string[] }`
 
 Response: `{ summary: string, keyPoints?: string[], decisions?: string[] }`
 
-**Errors**: `400` invalid body, `401` missing AI key, `500` model
-failure.
+**Errors**: `400` invalid body, `401` missing AI key (`auth`) or
+caller not signed in under the sign-in gate (`auth_required`), `500`
+model failure.
 
 ---
 
@@ -172,7 +201,8 @@ is a no-op that still answers `200`.
 
 **Response 200**: `{ ok: true }`
 
-**Errors**: `400` invalid body.
+**Errors**: `400` invalid body, `401 auth_required` (sign-in gate on,
+anonymous caller).
 
 ---
 
@@ -199,9 +229,10 @@ Sends a chat request and streams the assistant response.
 frames. Each frame is `data: <json>\n\n`. `<json>` is one of the
 shapes below, discriminated by `type`.
 
-**Errors**: `401` missing AI gateway key (frontend falls back to a
-mock response), `400` invalid body, other 4xx/5xx with
-`{ code, message }` envelope.
+**Errors**: `401 auth` missing AI gateway key (frontend falls back to a
+mock response), `401 auth_required` caller not signed in under the
+sign-in gate (frontend shows a "Sign in required" bubble — no mock),
+`400` invalid body, other 4xx/5xx with `{ code, message }` envelope.
 
 ### Frame protocol
 
@@ -346,6 +377,10 @@ Plate's context and the editor settings:
   // other transport fields (id, trigger, messageId, …) are ignored
 }
 ```
+
+Both routes return `401 { code: "auth_required", message }` (JSON, not a
+stream) to anonymous callers when the sign-in gate is on — before the
+body is validated, and even with a BYO `apiKey`.
 
 **Implication for a Python rewrite**: porting these two routes
 requires emitting the AI SDK's stream format, which is a separate
