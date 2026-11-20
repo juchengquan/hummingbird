@@ -118,7 +118,8 @@ JWT signer in production).
 ## Run via Docker
 
 ```bash
-docker build -t agent-py services/agent-py
+# Context is the repo root: the image ships config/models.json (the model allowlist).
+docker build -f services/agent-py/Dockerfile -t agent-py .
 docker run -p 8000:8000 \
   -e SUPABASE_URL=https://your.supabase.co \
   -e SUPABASE_JWT_SECRET=your-jwt-secret \
