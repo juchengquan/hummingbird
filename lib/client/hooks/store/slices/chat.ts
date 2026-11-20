@@ -84,6 +84,25 @@ export interface ChatSlice {
   setChatReasoningEffort: (effort: ReasoningEffort | null) => void
 }
 
+/**
+ * Conversations whose messages are "held" — still showing the typing
+ * dots, or with an in-flight stream (the typing flag clears on the first
+ * chunk, the streaming flag only when the stream settles). Every place
+ * that must not disturb an in-flight assistant placeholder (the sync
+ * diff hold, the cloud-snapshot merge, the cross-tab merge) uses THIS
+ * union so the call sites can't drift: typing alone misses everything
+ * after the first chunk, and a pull then deletes the placeholder.
+ */
+export function heldConversationIds(state: {
+  typingConversationIds: readonly string[]
+  streamingConversationIds: readonly string[]
+}): Set<string> {
+  return new Set([
+    ...state.typingConversationIds,
+    ...state.streamingConversationIds,
+  ])
+}
+
 export const createChatSlice: SliceCreator<ChatSlice> = (set) => ({
   typingConversationIds: [],
   streamingConversationIds: [],

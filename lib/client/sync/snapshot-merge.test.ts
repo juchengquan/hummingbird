@@ -437,3 +437,30 @@ describe("applyCloudSnapshot", () => {
     expect(s.workspaces[0].webSearchConfig).toEqual(fullWorkspace().webSearchConfig)
   })
 })
+
+describe("mid-stream pulls keep the in-flight turn", () => {
+  test("a streaming conversation (typing flag already cleared) keeps its placeholder", () => {
+    // The typing flag clears on the first chunk; only the streaming flag
+    // remains for the rest of the stream. A pull must still treat the
+    // conversation as held.
+    useStore.setState({
+      workspaces: [fullWorkspace("ws-1")],
+      conversations: [
+        conv("c1", { messages: [msg("u1"), msg("ph", { role: "assistant", content: "tok" })] }),
+      ],
+      typingConversationIds: [],
+      streamingConversationIds: ["c1"],
+      artifacts: [],
+      notes: [],
+    })
+    applyCloudSnapshot(
+      emptySnapshot({
+        workspaces: [{ ...fullWorkspace("ws-1"), webSearchConfig: undefined, webFetchConfig: undefined, imageGenConfig: undefined, fileSearchConfig: undefined }],
+        conversations: [conv("c1", { messages: [msg("u1")] })],
+      })
+    )
+    const [c] = useStore.getState().conversations
+    expect(c.messages.map((m) => m.id)).toEqual(["u1", "ph"])
+    useStore.setState({ streamingConversationIds: [] })
+  })
+})

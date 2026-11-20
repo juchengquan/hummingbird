@@ -25,6 +25,7 @@ import "client-only"
 
 import { useEffect, useRef } from "react"
 import { useStore } from "@/client/hooks/use-store"
+import { heldConversationIds } from "@/client/hooks/store/slices/chat"
 import { useSyncEnabled } from "@/client/hooks/use-sync-enabled"
 import { getSupabaseBrowserClient } from "@/client/supabase/client"
 import { fetchAccountInstructions } from "@/client/supabase/account-instructions"
@@ -84,19 +85,6 @@ export function withSyncDiffSuppressed(fn: () => void): void {
  * when the id leaves the held set.
  */
 const heldMessageBaselines = new Map<string, Message[]>()
-
-/** Conversations whose message diffs are deferred: still showing the
- *  typing dots, or with an in-flight stream (the typing flag clears on
- *  the first chunk, the streaming flag only when the stream settles). */
-function heldConversationIds(state: {
-  typingConversationIds: string[]
-  streamingConversationIds: string[]
-}): Set<string> {
-  return new Set([
-    ...state.typingConversationIds,
-    ...state.streamingConversationIds,
-  ])
-}
 
 function snapshotOf(s: Snapshot): Snapshot {
   return {

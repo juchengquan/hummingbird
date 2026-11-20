@@ -50,6 +50,7 @@ import {
 } from "@/client/messages/message-blobs"
 import { canonicalGeneratedItemsJson } from "@/client/sync/handlers"
 import { useStore } from "@/client/hooks/use-store"
+import { heldConversationIds } from "@/client/hooks/store/slices/chat"
 import { setSyncSnapshot } from "@/client/hooks/use-sync"
 import { mergeCloudSnapshot, type MergeOptions } from "@/client/sync/snapshot-merge"
 
@@ -1215,7 +1216,9 @@ export function applyCloudSnapshot(
     // cloud's `data:` URL is kept (same bytes, no churn back to inline).
     isSameBlob: (ref, value) => peekMessageBlobUrl(ref) === value,
     ...opts,
-    streamingConversationIds: new Set(s.typingConversationIds),
+    // typing ∪ streaming: typing clears on the first chunk, so typing
+    // alone let a mid-stream pull delete the in-flight placeholder.
+    streamingConversationIds: heldConversationIds(s),
   })
   const sortedWorkspaces = [...snapshot.workspaces].sort(
     (a, b) =>

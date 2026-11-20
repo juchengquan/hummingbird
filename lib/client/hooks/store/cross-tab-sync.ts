@@ -56,6 +56,7 @@ import {
 } from "@/client/hooks/use-store"
 
 import { mergeCrossTabState } from "./cross-tab-merge"
+import { heldConversationIds } from "./slices/chat"
 import { STORE_VERSION } from "./migrate"
 import { partializeState, reviveAndPruneState } from "./persist"
 
@@ -139,10 +140,7 @@ export function installCrossTabSync(): () => void {
       base,
       ours: partializeState(current) as Plain,
       theirs: decision.theirs,
-      heldConversationIds: new Set([
-        ...current.typingConversationIds,
-        ...current.streamingConversationIds,
-      ]),
+      heldConversationIds: heldConversationIds(current),
     })
     const next = { ...current, ...merged } as AppState
     reviveAndPruneState(next)
