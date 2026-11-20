@@ -4,6 +4,10 @@ import "client-only"
 import { useCallback, useEffect, useState } from "react"
 import type { User } from "@supabase/supabase-js"
 import { getSupabaseBrowserClient } from "@/client/supabase/client"
+import { resetSyncQueue, whenDrained } from "@/client/sync/sync-queue"
+
+/** Upper bound on how long sign-out waits for pending sync writes. */
+const SIGN_OUT_DRAIN_MS = 3_000
 
 export type AuthStatus = "unconfigured" | "loading" | "signed-out" | "signed-in"
 
@@ -52,7 +56,18 @@ export function useAuth(): AuthState {
 
   const signOut = useCallback(async () => {
     if (!client) return
-    await client.auth.signOut()
+    // Give this user's queued writes a brief chance to reach the cloud,
+    // then drop whatever is left so it can't be replayed under the next
+    // account on a shared machine (the queue also filters by owner, this
+    // just keeps stale ops from lingering in localStorage). Local store
+    // data is deliberately NOT wiped — that would be silent data loss; a
+    // different account signing in next gets the reconcile prompt.
+    await whenDrained(SIGN_OUT_DRAIN_MS)
+    try {
+      await client.auth.signOut()
+    } finally {
+      resetSyncQueue()
+    }
   }, [client])
 
   return { status, user, signIn, signOut }
