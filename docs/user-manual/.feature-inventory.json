@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-20T15:16:56Z",
+  "generatedAt": "2026-11-20T15:24:40Z",
   "panels": [
     {
       "id": "agents-dialog",
@@ -483,6 +483,12 @@
     {
       "id": "CODE_SANDBOX_ENABLED",
       "description": "Code interpreter sandbox (optional). Set CODE_SANDBOX_ENABLED=1 to register the `runCode` skill and execute model-written Python/JS in a local microsandbox microVM (libkrun; HVF on Apple Silicon). Network is OFF inside the sandbox; pandas/numpy/matplotlib available (see image note below). Absent → the skill is simply not registered (no mock). CODE_SANDBOX_BASE_URL also enables it and is reserved for a future remote backend (the local microVM runtime ignores the URL). See docs/PLAN-execution-sandbox.md + docs/PLAN-code-interpreter.md.",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "CSP_MODE",
+      "description": "Content-Security-Policy mode (optional). `proxy.ts` mints a per-request nonce and emits a strict nonce + 'strict-dynamic' policy (built by lib/server/security/csp.ts); violations are POSTed to /api/csp-report and logged as `{\"evt\":\"csp_violation\",…}` lines. report-only (default) → Content-Security-Policy-Report-Only: nothing is blocked, violations are only reported enforce               → Content-Security-Policy: violations are blocked off                   → no CSP header at all (other security headers stay) Unset or unrecognised → report-only. Read docs/SECURITY.md before flipping to `enforce` (live-artifact / MCP-app frames inherit the policy).",
       "required": true,
       "sourceFile": ".env.example"
     },

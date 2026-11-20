@@ -105,6 +105,7 @@
 | `CODE_SANDBOX_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `CODE_SANDBOX_BASE_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `CODE_SANDBOX_ENABLED` | yes | [21-environment-variables.md](21-environment-variables.md) |
+| `CSP_MODE` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `EMBEDDINGS_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `EMBEDDINGS_BASE_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `EMBEDDINGS_MODEL` | yes | [21-environment-variables.md](21-environment-variables.md) |
