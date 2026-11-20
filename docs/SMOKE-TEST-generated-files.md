@@ -38,7 +38,7 @@ Apple Silicon, KVM on Linux) and a configured `.env`.
   (it's multi-GB; the sandbox is airgapped, so the image must already
   contain pandas/numpy/matplotlib). See `docs/PLAN-execution-sandbox.md`.
 - [ ] **Supabase schema applied** (`supabase/migrations/`, through
-  `0018_message_generated_files.sql`) — see `docs/SUPABASE_SETUP.md` or
+  `0033_message_generated_files.sql`) — see `docs/SUPABASE_SETUP.md` or
   `docs/SUPABASE_LOCAL.md`.
 - [ ] **Start the app** and **sign in** (email magic-link). A signed-in
   session is required: generated files are stored under

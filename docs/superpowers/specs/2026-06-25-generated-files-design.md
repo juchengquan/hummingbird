@@ -81,7 +81,7 @@ export interface GeneratedFile {
 
 ### Migrations
 
-One new file `supabase/migrations/0018_message_generated_files.sql`
+One new file `supabase/migrations/0033_message_generated_files.sql`
 (next number after the current `0017_*`), containing two changes:
 
 1. `alter table messages add column generated_files jsonb` — mirror
