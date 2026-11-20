@@ -260,6 +260,18 @@ describe("POST /api/tasks/:id/respond — store / queue failures", () => {
     expect(res.status).toBeGreaterThanOrEqual(400)
     expect(res.status).not.toBe(202)
   })
+
+  test("enqueue_task_job's locked re-check (55000: no longer paused) → 409", async () => {
+    // The run settled between `getRun` and the RPC's `for update` read.
+    const { TaskWriteError } = await import("@/server/agent/task-writes")
+    mocks.enqueueRespondJob.mockImplementation(async () => {
+      throw new TaskWriteError("enqueue respond: task is not paused (status done)", "55000")
+    })
+    const { POST } = await import("./route")
+    const res = await POST(jsonPost(validBody({ approved: true })), { params })
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { code: string }).code).toBe("invalid_state")
+  })
 })
 
 void signedIn // imported for symmetry with other route handler tests

@@ -163,7 +163,11 @@ SQL lives under `supabase/migrations/` as numbered files applied in order (`0001
 `0012_tasks.sql`, `0013_task_checkpoint.sql`,
 `0014_task_jobs.sql`, `0015_workspace_canvas.sql`,
 `0016_project_mode.sql`, `0017_prompts_workspace.sql`, … `0031_rls_fk_ownership.sql`,
-`0032_task_job_lease.sql`) — see `docs/SUPABASE_SETUP.md`
+`0032_task_job_lease.sql`, `0033_message_generated_files.sql`,
+`0034_task_write_hardening.sql`, `0035_task_schedule_limits.sql`,
+`0036_task_job_stale_lease_backfill.sql`,
+`0037_validate_artifacts_kind_check.sql`, `0038_mcp_pgcrypto_schema.sql`,
+`0039_mcp_upsert_foreign_id.sql`) — see `docs/SUPABASE_SETUP.md`
 for the hosted-cloud run order, or `docs/SUPABASE_LOCAL.md` for the
 local Supabase CLI path (Docker-based, no cloud account needed). For
 verifying the file full-text retrieval pipeline end-to-end after
@@ -176,6 +180,19 @@ FK to a user-owned table to point at a row with `user_id = auth.uid()`.
 A new table (or new FK column) referencing user-owned rows needs the same
 restrictive pair, otherwise a user can hang rows off another user's data
 via PostgREST.
+
+**Worker tables are not user-writable (0034/0035).** `anon` /
+`authenticated` cannot INSERT `tasks` or write `task_jobs`; API code
+creates runs with the `create_task_run` RPC and enqueues with
+`enqueue_task_job` (`lib/server/agent/task-writes.ts`, used by
+`jobs.ts`). `tasks` UPDATE is column-granted to `status` / `finished_at`
+/ `updated_at`, and a trigger only allows a live run → `cancelled` /
+`failed`. `task_schedules` is column-granted (no `last_run_at` /
+`last_run_task_id`), with a trigger enforcing a coarse cron floor and
+20 enabled schedules per user; routes validate the exact ≥ 5 min gap
+(`validateScheduleCron`). Workers (agent-py / agent-ts, DSN role) and the
+service-role client are unaffected. A new column a route must write
+needs a matching column GRANT.
 
 ## Frontend module conventions
 

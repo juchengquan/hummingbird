@@ -2,7 +2,10 @@ import type { NextRequest } from "next/server"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 
-import { upsertServerWithCredential } from "@/server/mcp/credentials"
+import {
+  upsertFailureStatus,
+  upsertServerWithCredential,
+} from "@/server/mcp/credentials"
 import { validateMcpServerUrl } from "@/server/mcp/outbound"
 import { getSupabaseServerClient } from "@/server/supabase/server"
 
@@ -91,7 +94,9 @@ export async function POST(req: NextRequest) {
   if (!result.ok) {
     return NextResponse.json(
       { error: "upsert_failed", message: result.error },
-      { status: result.error === "encryption_key_unset" ? 500 : 502 }
+      // 409 foreign server id / 404 foreign workspace (0039), 500 key
+      // unset, 502 other RPC failure.
+      { status: upsertFailureStatus(result) }
     )
   }
   return NextResponse.json({ ok: true })

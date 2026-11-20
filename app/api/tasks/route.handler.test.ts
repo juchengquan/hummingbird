@@ -5,7 +5,7 @@
  * `makeStreamTextStep` control flow, the SSE decoder) is unit-tested
  * upstream. THIS file exercises the HTTP handler itself: auth,
  * body validation, conditional rejections, the order of operations
- * across `createRun` → `saveCheckpoint` → synthetic queued event →
+ * across `createTaskRun` → synthetic queued event →
  * `enqueueStartJob`, and error-status mapping. The Supabase client +
  * store + jobs are mocked via the shared `_test/mock-agent-store.ts`
  * helper so each test runs in <50 ms without touching a real database.
@@ -68,7 +68,7 @@ describe("POST /api/tasks — auth + supabase gate", () => {
     expect(res.status).toBe(503)
     const body = (await res.json()) as { code: string }
     expect(body.code).toBe("unavailable")
-    expect(mocks.createRun).not.toHaveBeenCalled()
+    expect(mocks.createTaskRun).not.toHaveBeenCalled()
   })
 
   test("401 when the user isn't signed in", async () => {
@@ -78,7 +78,7 @@ describe("POST /api/tasks — auth + supabase gate", () => {
     expect(res.status).toBe(401)
     const body = (await res.json()) as { code: string }
     expect(body.code).toBe("auth")
-    expect(mocks.createRun).not.toHaveBeenCalled()
+    expect(mocks.createTaskRun).not.toHaveBeenCalled()
   })
 })
 
@@ -117,7 +117,7 @@ describe("POST /api/tasks — body validation", () => {
     const body = (await res.json()) as { code: string; message: string }
     expect(body.code).toBe("invalid_request")
     expect(body.message).toMatch(/Local-mode MCP/)
-    expect(mocks.createRun).not.toHaveBeenCalled()
+    expect(mocks.createTaskRun).not.toHaveBeenCalled()
   })
 })
 
@@ -131,23 +131,23 @@ describe("POST /api/tasks — happy path", () => {
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     )
 
-    // The chain is: createRun → saveCheckpoint → appendEvent
-    // (queued) → enqueueStartJob. Order matters because saveCheckpoint
-    // depends on the row existing, and the queued event is the
-    // client's first signal.
-    expect(mocks.createRun).toHaveBeenCalledTimes(1)
-    expect(mocks.saveCheckpoint).toHaveBeenCalledTimes(1)
+    // The chain is: createTaskRun (run row + checkpoint, one RPC) →
+    // appendEvent (queued) → enqueueStartJob. The queued event is the
+    // client's first signal; the job must come last.
+    expect(mocks.createTaskRun).toHaveBeenCalledTimes(1)
+    expect(mocks.saveCheckpoint).not.toHaveBeenCalled()
     expect(mocks.appendEvent).toHaveBeenCalledTimes(1)
     expect(mocks.enqueueStartJob).toHaveBeenCalledTimes(1)
 
     // All four writes share the same runId we returned.
-    const createInput = mocks.createRun.mock.calls[0][1] as {
+    const createInput = mocks.createTaskRun.mock.calls[0][1] as {
       id: string
-      userId: string
+      conversationId: string
+      maxSteps: number
     }
     expect(createInput.id).toBe(body.runId)
-    const checkpointArgs = mocks.saveCheckpoint.mock.calls[0]
-    expect(checkpointArgs[1]).toBe(body.runId)
+    expect(createInput.conversationId).toBe("conv-1")
+    expect(createInput.maxSteps).toBe(25)
     const queuedEvent = mocks.appendEvent.mock.calls[0][1] as {
       runId: string
       kind: string
@@ -176,7 +176,7 @@ describe("POST /api/tasks — happy path", () => {
     })
     await POST(jsonPost(reqBody))
 
-    const checkpoint = mocks.saveCheckpoint.mock.calls[0][3] as {
+    const checkpoint = (mocks.createTaskRun.mock.calls[0][1] as { checkpoint: unknown }).checkpoint as {
       messages: unknown[]
       step: number
       seq: number
@@ -205,20 +205,20 @@ describe("POST /api/tasks — happy path", () => {
   test("schema caps maxSteps at 50; over → 400 with no persistence", async () => {
     const { POST } = await import("./route")
     await POST(jsonPost(validBody({ maxSteps: 50 })))
-    const checkpoint = mocks.saveCheckpoint.mock.calls[0][3] as {
+    const checkpoint = (mocks.createTaskRun.mock.calls[0][1] as { checkpoint: unknown }).checkpoint as {
       config: { maxSteps: number }
     }
     expect(checkpoint.config.maxSteps).toBe(50)
-    mocks.saveCheckpoint.mockClear()
+    mocks.createTaskRun.mockClear()
     const res = await POST(jsonPost(validBody({ maxSteps: 999 })))
     expect(res.status).toBe(400)
-    expect(mocks.saveCheckpoint).not.toHaveBeenCalled()
+    expect(mocks.createTaskRun).not.toHaveBeenCalled()
   })
 
   test("research mode bumps the default maxSteps (35 > 25)", async () => {
     const { POST } = await import("./route")
     await POST(jsonPost(validBody({ mode: "research" })))
-    const checkpoint = mocks.saveCheckpoint.mock.calls[0][3] as {
+    const checkpoint = (mocks.createTaskRun.mock.calls[0][1] as { checkpoint: unknown }).checkpoint as {
       config: { maxSteps: number }
     }
     expect(checkpoint.config.maxSteps).toBe(35)
@@ -247,8 +247,8 @@ describe("POST /api/tasks — happy path", () => {
 })
 
 describe("POST /api/tasks — store failures map to typed responses", () => {
-  test("createRun throw → typed error response; no job enqueued", async () => {
-    mocks.createRun.mockImplementation(async () => {
+  test("createTaskRun throw → typed error response; no job enqueued", async () => {
+    mocks.createTaskRun.mockImplementation(async () => {
       throw new Error("unique constraint violation")
     })
     const { POST } = await import("./route")
@@ -257,14 +257,34 @@ describe("POST /api/tasks — store failures map to typed responses", () => {
     expect(mocks.enqueueStartJob).not.toHaveBeenCalled()
   })
 
-  test("saveCheckpoint throw → no job enqueued", async () => {
-    mocks.saveCheckpoint.mockImplementation(async () => {
-      throw new Error("checkpoint write failed")
+  test("create_task_run SQLSTATEs map to typed statuses; no job enqueued", async () => {
+    const { TaskWriteError } = await import("@/server/agent/task-writes")
+    const { POST } = await import("./route")
+    const cases: Array<[string, number, string]> = [
+      ["P0002", 404, "not_found"], // conversation isn't the caller's
+      ["22023", 400, "invalid_request"], // bad maxSteps / checkpoint
+      ["42501", 403, "forbidden"],
+    ]
+    for (const [sqlState, status, code] of cases) {
+      mocks.createTaskRun.mockImplementation(async () => {
+        throw new TaskWriteError("createTaskRun: rejected", sqlState)
+      })
+      const res = await POST(jsonPost(validBody()))
+      expect(res.status).toBe(status)
+      expect(((await res.json()) as { code: string }).code).toBe(code)
+    }
+    expect(mocks.enqueueStartJob).not.toHaveBeenCalled()
+  })
+
+  test("enqueue_task_job queue cap (54000) → 409 limit_reached", async () => {
+    const { TaskWriteError } = await import("@/server/agent/task-writes")
+    mocks.enqueueStartJob.mockImplementation(async () => {
+      throw new TaskWriteError("enqueue start: too many queued jobs", "54000")
     })
     const { POST } = await import("./route")
     const res = await POST(jsonPost(validBody()))
-    expect(res.status).toBeGreaterThanOrEqual(400)
-    expect(mocks.enqueueStartJob).not.toHaveBeenCalled()
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { code: string }).code).toBe("limit_reached")
   })
 
   test("enqueueStartJob throw surfaces an error response", async () => {

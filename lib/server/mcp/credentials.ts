@@ -80,7 +80,7 @@ export async function upsertServerWithCredential(
     enabled?: boolean
     requiresApproval?: boolean
   }
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; code?: string }> {
   const key = getMcpEncryptionKey()
   if (!key) {
     return { ok: false, error: "encryption_key_unset" }
@@ -99,7 +99,23 @@ export async function upsertServerWithCredential(
     p_requires_approval: params.requiresApproval ?? false,
   })
   if (error) {
-    return { ok: false, error: error.message }
+    // `code` is the SQLSTATE — see `upsertFailureStatus`.
+    return { ok: false, error: error.message, code: error.code }
   }
   return { ok: true }
+}
+
+/**
+ * HTTP status for a failed `upsertServerWithCredential`. The RPC raises
+ * (migration 0039) instead of silently no-oping:
+ *   - 23505 `mcp_server_id_conflict` — the id belongs to another user → 409
+ *   - P0002 `workspace not found` — not the caller's workspace → 404
+ * `encryption_key_unset` is a server misconfig → 500; anything else is
+ * an RPC failure → 502.
+ */
+export function upsertFailureStatus(result: { error?: string; code?: string }): number {
+  if (result.error === "encryption_key_unset") return 500
+  if (result.code === "23505") return 409
+  if (result.code === "P0002") return 404
+  return 502
 }

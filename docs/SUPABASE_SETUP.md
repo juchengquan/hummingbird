@@ -182,7 +182,52 @@ order. Every migration has a unique numeric prefix (CI enforces this via
     heartbeats it forward, settle/release clear it; an expired lease
     makes a stranded `running` job reclaimable (or reaped as failed
     once `max_attempts` is spent). Backfills rows already stranded
-    `running`. Idempotent.
+    `running`: only rows touched within the last hour are resumed; older
+    ones are marked attempt-exhausted so the reaper fails them instead
+    of re-running them. Idempotent.
+- `supabase/migrations/0033_message_generated_files.sql`
+  - `messages.generated_files` + the `file` artifact kind. Adds
+    `artifacts_kind_check` `NOT VALID` (no table scan under the
+    exclusive lock); `0037` validates it.
+- `supabase/migrations/0034_task_write_hardening.sql`
+  - Takes `tasks` / `task_jobs` writes away from PostgREST. `anon` /
+    `authenticated` lose INSERT on `tasks` and INSERT/UPDATE/DELETE on
+    `task_jobs`; `tasks` UPDATE is column-granted to `status`,
+    `finished_at`, `updated_at`, and a trigger lets API callers only
+    settle a live run as `cancelled` / `failed`. Adds two SECURITY
+    DEFINER RPCs: `create_task_run` (queued run + initial checkpoint,
+    conversation ownership, `max_steps` 1..50) and `enqueue_task_job`
+    (pins status / attempts / `max_attempts`, clamps `scheduled_at`,
+    validates action + payload, checks ownership, task state and a
+    20-queued-jobs-per-user cap; the service role may enqueue for any
+    task). Workers connect as the DSN role and are unaffected.
+    Idempotent.
+- `supabase/migrations/0035_task_schedule_limits.sql`
+  - `task_schedules` column grants (`last_run_at` / `last_run_task_id`
+    become dispatcher-only), plus a trigger for API callers: a coarse
+    cron floor (five fields; minute field fires at most 12×/hour) and at
+    most 20 enabled schedules per user. Idempotent.
+- `supabase/migrations/0036_task_job_stale_lease_backfill.sql`
+  - For databases that ran the original `0032` backfill: jobs still
+    `running` on that backfill's exact lease and started more than a
+    day ago are marked attempt-exhausted, so the reaper fails them
+    rather than a worker re-running them. Idempotent.
+- `supabase/migrations/0037_validate_artifacts_kind_check.sql`
+  - `VALIDATE CONSTRAINT artifacts_kind_check` (doesn't block reads or
+    writes). A no-op where `0033` already added it validated.
+- `supabase/migrations/0038_mcp_pgcrypto_schema.sql`
+  - The MCP credential RPCs called pgcrypto unqualified under a pinned
+    `search_path = pg_catalog, public`; on Supabase pgcrypto lives in
+    `extensions`, so cloud-mode credentials could not be saved or read.
+    Adds `private.mcp_encrypt` / `private.mcp_decrypt`, whose bodies
+    name pgcrypto's schema as looked up in `pg_extension` at migration
+    time, and points both RPCs at them. Re-run it if pgcrypto is ever
+    moved to another schema. Idempotent.
+- `supabase/migrations/0039_mcp_upsert_foreign_id.sql`
+  - `mcp_upsert_server_with_credentials` raises `23505`
+    (`mcp_server_id_conflict`) when the server id belongs to another
+    user instead of silently writing nothing, and `P0002` for a foreign
+    workspace; `/api/mcp/server` answers 409 / 404. Idempotent.
 
 ### Migration 0018 collision (renamed to `0033_message_generated_files.sql`)
 
