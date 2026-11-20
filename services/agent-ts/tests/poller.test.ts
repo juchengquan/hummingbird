@@ -26,6 +26,7 @@ const baseEnv: Env = {
   JOB_LEASE_SECONDS: 120,
   ANTHROPIC_API_KEY: "",
   ANTHROPIC_BASE_URL: "",
+  AGENT_DEFAULT_MODEL: "anthropic/claude-haiku-4.5",
   TAVILY_API_KEY: "",
   MINIMAX_CN_API_KEY: "",
   MINIMAX_CN_BASE_URL: "",

@@ -22,6 +22,7 @@ import structlog
 from fastapi import FastAPI
 
 from . import __version__, db, poller
+from .model_allowlist import get_model_allowlist
 from .routers import chat, extract, health, images, mcp, summarize, url, whoami
 
 # Re-exports for symbols that tests + other callers still import
@@ -62,6 +63,13 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
     task interfering with assertions; production callers leave it on.
     """
     settings = get_settings()
+
+    # Fail fast: load `config/models.json` + check `AGENT_DEFAULT_MODEL`
+    # is on the anthropic/* allowlist now, not on the first request.
+    # Raises `ModelConfigError`, which aborts `uvicorn agent_py.main:app`.
+    # (No log line here: structlog writes to stdout, and the OpenAPI
+    # codegen script reads this module's stdout as the schema.)
+    get_model_allowlist()
 
     # FastAPI's lifespan takes a callable that returns a context
     # manager. The closure captures `settings` so tests can swap env

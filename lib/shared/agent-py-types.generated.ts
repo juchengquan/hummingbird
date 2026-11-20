@@ -243,12 +243,10 @@ export interface paths {
          *     JSON; compress returns `{recap: str}` markdown.
          *
          *     Notable difference from TS: this endpoint only talks to
-         *     Anthropic (no Vercel-gateway routing). When the caller's
-         *     `model` doesn't look like an Anthropic id (e.g. the TS
-         *     default `google/gemini-2.5-flash`), we fall back to
-         *     `claude-3-5-haiku-20241022`. Caller behaviour is unaffected
-         *     because the field is still accepted; the TS-shape body comes
-         *     through unchanged.
+         *     Anthropic (no Vercel-gateway routing). `model` is optional; when
+         *     sent it must be an allowed `anthropic/*` catalog id from
+         *     `config/models.json` (else `400 unknown_model`, as on the Next.js
+         *     route). Absent → `AGENT_DEFAULT_MODEL`.
          */
         post: operations["summarize_v1_summarize_post"];
         delete?: never;

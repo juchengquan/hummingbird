@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test"
 
-import { CHAT_MODELS, DEFAULT_CHAT_MODEL, getChatModel, modelSupportsVision } from "./models"
+import {
+  ANTHROPIC_SERVICE_MODELS,
+  CHAT_MODELS,
+  DEFAULT_CHAT_MODEL,
+  getAnthropicApiModelId,
+  getChatModel,
+  modelSupportsVision,
+} from "./models"
 
 describe("CHAT_MODELS — loaded from config/models.json", () => {
   test("contains at least the bundled default models", () => {
@@ -62,5 +69,29 @@ describe("modelSupportsVision", () => {
   })
   test("unknown id → false", () => {
     expect(modelSupportsVision("does/not-exist")).toBe(false)
+  })
+})
+
+describe("agent-service allowlist (anthropic/* entries)", () => {
+  test("maps catalog ids to Anthropic API ids (dash, not dot)", () => {
+    expect(getAnthropicApiModelId("anthropic/claude-sonnet-4.6")).toBe("claude-sonnet-4-6")
+    expect(getAnthropicApiModelId("anthropic/claude-haiku-4.5")).toBe("claude-haiku-4-5")
+  })
+
+  test("non-anthropic catalog ids and unknown ids are not allowed", () => {
+    expect(getAnthropicApiModelId("deepseek/deepseek-v4-flash")).toBeNull()
+    expect(getAnthropicApiModelId("openrouter/anthropic/claude-sonnet-4.5")).toBeNull()
+    expect(getAnthropicApiModelId("claude-sonnet-4-6")).toBeNull()
+    expect(getAnthropicApiModelId("anthropic/claude-opus-9")).toBeNull()
+  })
+
+  test("every anthropic/* entry carries an explicit API id", () => {
+    // The stripped catalog id (`claude-sonnet-4.6`) is NOT a valid
+    // Anthropic API id, so each entry must set `anthropicModelId`.
+    const entries = CHAT_MODELS.filter((m) => m.id.startsWith("anthropic/"))
+    expect(entries.length).toBe(ANTHROPIC_SERVICE_MODELS.size)
+    for (const m of entries) {
+      expect(m.anthropicModelId).toMatch(/^claude-[a-z0-9-]+$/)
+    }
   })
 })

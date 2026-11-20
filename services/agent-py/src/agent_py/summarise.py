@@ -20,11 +20,11 @@ tokens depending on mode.
 Notable difference from the TS path: the TS route uses `generateText`
 + Vercel AI Gateway routing so the request's `model` field can be
 any provider's id (`google/gemini-2.5-flash`, `openai/gpt-4o-mini`,
-etc.). The Python service only talks to Anthropic, so we default to
-a cheap Anthropic model and ignore the request's `model` if it
-doesn't look like an Anthropic id. Caller behaviour is unaffected
-because the schema still accepts the field; the TS-shape body sent
-by today's apiClient comes through unchanged.
+etc.). The Python service only talks to Anthropic: the request's
+optional `model` must be an allowed `anthropic/*` catalog id
+(`model_allowlist`) — anything else is `400 unknown_model` — and an
+absent `model` uses `AGENT_DEFAULT_MODEL`. The router resolves it to
+the Anthropic API id before calling in here.
 """
 
 from __future__ import annotations
@@ -41,13 +41,6 @@ from .providers.anthropic_provider import AsyncAnthropicClient
 
 logger = structlog.get_logger(__name__)
 
-#: Default summarisation model. Haiku is the cheapest / fastest
-#: Anthropic option — summaries don't need a reasoning-class model.
-#: The TS path defaults to `google/gemini-2.5-flash` via the Vercel
-#: gateway; the Python service only talks to Anthropic, so we pick
-#: the analogous tier.
-DEFAULT_SUMMARY_MODEL = "claude-3-5-haiku-20241022"
-
 SummariseMode = Literal["file", "conversation", "compress", "project-breakdown"]
 
 
@@ -63,22 +56,6 @@ class SummariseOk:
 
 
 SummariseResult = SummariseOk | SummariseError
-
-
-def is_anthropic_model_id(model: str) -> bool:
-    """Quick heuristic for whether a model id targets Anthropic.
-    `claude-*` and `claude_*` both pass; gateway-style ids like
-    `google/gemini-2.5-flash` or `openai/gpt-4o-mini` don't."""
-    return model.lower().startswith("claude")
-
-
-def resolve_model(requested: str | None) -> str:
-    """Choose the Anthropic model to actually call. If the caller
-    sent an Anthropic id, honour it. Otherwise (including the TS-side
-    Gemini default), fall back to our Haiku default."""
-    if requested and is_anthropic_model_id(requested):
-        return requested
-    return DEFAULT_SUMMARY_MODEL
 
 
 def _build_file_prompt(name: str | None, text: str) -> str:
@@ -306,12 +283,9 @@ async def _summarise_json(
 
 
 __all__ = [
-    "DEFAULT_SUMMARY_MODEL",
     "SummariseError",
     "SummariseOk",
     "SummariseResult",
-    "is_anthropic_model_id",
-    "resolve_model",
     "strip_json_fences",
     "summarise_compress",
     "summarise_conversation",

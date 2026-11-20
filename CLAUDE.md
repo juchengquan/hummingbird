@@ -249,6 +249,7 @@ asyncpg · structlog · pytest · ruff · mypy.
 | `services/agent-py/src/agent_py/main.py` | FastAPI app + endpoints. Lifespan owns the DB pool + the poller task. |
 | `services/agent-py/src/agent_py/auth.py` | Supabase JWT verification middleware (HS256 against `SUPABASE_JWT_SECRET`). |
 | `services/agent-py/src/agent_py/settings.py` | `pydantic-settings` config. Reads the repo-level `.env`. |
+| `services/agent-py/src/agent_py/model_allowlist.py` | Model allowlist — the `anthropic/*` entries of `config/models.json`, each mapped to its `anthropicModelId`. Loaded + validated at `create_app`. agent-ts twin: `services/agent-ts/src/models.ts`. |
 | `services/agent-py/src/agent_py/db.py` | asyncpg pool lifecycle. Open on startup if `SUPABASE_DB_URL` is set; close on shutdown. |
 | `services/agent-py/src/agent_py/jobs.py` | `claim_next_job` (Phase 1) + `release_job_to_queue` (Phase 1 dry-run) + `mark_job_done` / `mark_job_failed` (Phase 2a settlement). |
 | `services/agent-py/src/agent_py/events.py` | TaskEvent IR — status / step_start / step_end / token / result. Shape mirrors `lib/shared/agent/events.ts`. |
@@ -259,7 +260,7 @@ asyncpg · structlog · pytest · ruff · mypy.
 | `services/agent-py/src/agent_py/executor.py` | `execute_start` — stamps handler, runs loop, updates task row terminal. Step fn is a Phase 2a stub; Phase 2b swaps in the real model call. |
 | `services/agent-py/src/agent_py/poller.py` | Async tick loop. Dispatch tree: dry-run → release; live + unflagged → release; live + flagged + non-`start` → release; live + flagged + `start` → execute then mark_done/failed. |
 | `services/agent-py/tests/` | 62 tests covering health + auth (Phase 0) + db / jobs / poller dry-run (Phase 1) + events / emitter / runner / feature_flag / executor / poller live-mode dispatch (Phase 2a). |
-| `services/agent-py/Dockerfile` | Multi-stage uv build, slim runtime, non-root user. |
+| `services/agent-py/Dockerfile` | Multi-stage uv build, slim runtime, non-root user. Build context is the **repo root** (`docker build -f services/agent-py/Dockerfile .`) so the image ships `config/models.json`. |
 | `docker-compose.yml` (repo root) | Spins up the agent service alongside `bun dev`. |
 | `lib/shared/agent-py-types.generated.ts` | TS types generated from FastAPI's OpenAPI doc — the **source of truth** for the Python ⇄ TS contract. Regen with `bun run codegen:agent-types`. CI fails on drift via `codegen:agent-types:check`. |
 
@@ -279,6 +280,18 @@ TS worker. To opt a user in: `UPDATE auth.users SET raw_app_meta_data
 = COALESCE(raw_app_meta_data, '{}'::jsonb) ||
 '{"agent_backend":"python"}'::jsonb WHERE id = '<uuid>';`. The service
 reads the same top-level `.env` as Next.js.
+
+**Model allowlist (agent-py + agent-ts):** both services accept only the
+`anthropic/*` entries of `config/models.json` and send each entry's
+`anthropicModelId` (e.g. `claude-sonnet-4-6`) to Anthropic; any other
+id is 400 `unknown_model` on `/v1/chat` + `/v1/summarize`, and a run
+whose checkpoint `config.model` isn't allowed fails before calling
+Anthropic. `AGENT_DEFAULT_MODEL` (default `anthropic/claude-haiku-4.5`)
+covers a model-less summarize + the suggestion chips, and must be on
+the allowlist or the service won't boot. agent-py finds the catalog by
+walking up from the package, or via `MODELS_CONFIG_PATH`. Adding an
+`anthropic/*` model to `config/models.json` means setting its
+`anthropicModelId` too. Details: `services/README.md` § Model allowlist.
 
 **Deploy target decided** — self-host on a small VM (Hetzner CX22 as
 the named example, ~€4.5/mo; home server / NAS as a parallel option

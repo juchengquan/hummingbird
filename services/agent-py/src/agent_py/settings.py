@@ -15,6 +15,9 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_AGENT_MODEL = "anthropic/claude-haiku-4.5"
+"""Service default model (catalog id) when `AGENT_DEFAULT_MODEL` is unset."""
+
 
 class Settings(BaseSettings):
     """Service configuration.
@@ -104,6 +107,20 @@ class Settings(BaseSettings):
     upstream (e.g. Minimax's `/anthropic/v1` host). Mirrors the TS side's
     `MINIMAX_CN_BASE_URL` override pattern. Has no effect when
     `ANTHROPIC_API_KEY` is empty (the stub step fn doesn't reach a network)."""
+
+    # --- Model allowlist --------------------------------------------------
+    MODELS_CONFIG_PATH: str = ""
+    """Path to the shared model catalog (`config/models.json`). Its
+    `anthropic/*` entries are the only model ids the service accepts
+    (`agent_py.model_allowlist`). Empty = search upward from the package
+    for `config/models.json` (the repo root in a checkout, `/app` in the
+    Docker image). A missing / invalid file fails boot."""
+
+    AGENT_DEFAULT_MODEL: str = DEFAULT_AGENT_MODEL
+    """Catalog id of the model used when a request doesn't name one
+    (`/v1/summarize`) and for the follow-up-suggestion chips. Must be an
+    `anthropic/*` entry of `config/models.json` — checked at boot. Same
+    name + default as agent-ts; empty → the default."""
 
     # --- Web search -------------------------------------------------------
     TAVILY_API_KEY: str = ""

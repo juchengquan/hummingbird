@@ -17,8 +17,10 @@
 services:
   agent-py:
     build:
-      context: ./services/agent-py
-      dockerfile: Dockerfile
+      # Repo root, so the image can ship config/models.json (the model
+      # allowlist). The root .dockerignore filters the context.
+      context: .
+      dockerfile: services/agent-py/Dockerfile
     image: hummingbird/agent-py:dev
     ports:
       - "8000:8000"

@@ -10,12 +10,8 @@ import { SignJWT } from "jose"
 
 import { createApp } from "../src/app"
 import { resetEnvCacheForTest } from "../src/env"
-import {
-  isAnthropicModelId,
-  resolveModel,
-  stripJsonFences,
-  DEFAULT_SUMMARY_MODEL,
-} from "../src/summarise"
+import { UnknownModelError, resolveRequestedModel } from "../src/models"
+import { stripJsonFences } from "../src/summarise"
 
 const SECRET = "test-secret-do-not-use-in-prod-32-bytes!"
 
@@ -39,18 +35,15 @@ async function makeJwt(): Promise<string> {
 }
 
 describe("summarise helpers", () => {
-  test("isAnthropicModelId matches claude*", () => {
-    expect(isAnthropicModelId("claude-3-5-haiku-20241022")).toBe(true)
-    expect(isAnthropicModelId("claude-opus-4")).toBe(true)
-    expect(isAnthropicModelId("google/gemini-2.5-flash")).toBe(false)
-    expect(isAnthropicModelId("gpt-4o")).toBe(false)
+  test("resolveRequestedModel: absent → AGENT_DEFAULT_MODEL's API id", () => {
+    expect(resolveRequestedModel(undefined)).toBe("claude-haiku-4-5")
+    expect(resolveRequestedModel(null)).toBe("claude-haiku-4-5")
   })
 
-  test("resolveModel falls back to default for non-Anthropic", () => {
-    expect(resolveModel("google/gemini-2.5-flash")).toBe(DEFAULT_SUMMARY_MODEL)
-    expect(resolveModel(undefined)).toBe(DEFAULT_SUMMARY_MODEL)
-    expect(resolveModel(null)).toBe(DEFAULT_SUMMARY_MODEL)
-    expect(resolveModel("claude-3-5-sonnet")).toBe("claude-3-5-sonnet")
+  test("resolveRequestedModel: allowed catalog id → API id; others throw", () => {
+    expect(resolveRequestedModel("anthropic/claude-sonnet-4.6")).toBe("claude-sonnet-4-6")
+    expect(() => resolveRequestedModel("google/gemini-2.5-flash")).toThrow(UnknownModelError)
+    expect(() => resolveRequestedModel("claude-3-5-sonnet")).toThrow(UnknownModelError)
   })
 
   test("stripJsonFences removes ```json wrapping", () => {

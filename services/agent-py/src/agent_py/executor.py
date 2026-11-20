@@ -44,6 +44,7 @@ from .input_policy import (
     request_kind_for,
 )
 from .mcp_tools import extend_registry_with_mcp
+from .model_allowlist import resolve_api_model_id
 from .providers.anthropic_provider import (
     AnthropicStepConfig,
     AsyncAnthropicClient,
@@ -1183,6 +1184,11 @@ def _default_make_step_fn(
     """
     client = _resolve_anthropic_client()
     model = _str_or_none(checkpoint.get("config", {}).get("model"))
+    if model:
+        # Allowlist re-check: `tasks.checkpoint` is owner-writable under
+        # RLS. Catalog id → Anthropic API id; unknown → UnknownModelError,
+        # which fails the run (both call sites are inside the run guard).
+        model = resolve_api_model_id(model)
     system = _str_or_none(checkpoint.get("config", {}).get("workspaceSystemPrompt"))
 
     if client is None or not model or not messages:

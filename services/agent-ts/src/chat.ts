@@ -28,6 +28,7 @@ import type { LanguageModel } from "ai"
 import { APICallError, generateText, stepCountIs, streamText } from "ai"
 
 import { getEnv } from "./env"
+import { defaultAnthropicApiModelId } from "./models"
 
 /** Stable provider-error categories surfaced on the wire in the
  *  AI SDK error frame's `code` field. The consumer renders a typed
@@ -411,10 +412,9 @@ export function stringifyToolOutput(output: unknown): string {
 // emits these via the SSE emitter (`{type: "suggestions"}` on the
 // custom format, `data-suggestions` on AI SDK).
 
-/** Cheap model for the suggestion call. Same as the summariser path
- *  in `summarise.ts` — Anthropic Haiku is fast + cheap and the
- *  suggestion task is small (200 tokens of JSON). */
-const SUGGESTION_MODEL = "claude-3-5-haiku-20241022"
+// The suggestion call uses `AGENT_DEFAULT_MODEL` (default Haiku —
+// fast + cheap; the task is ~200 tokens of JSON), the same allowlisted
+// default the summariser falls back to. See `./models`.
 
 // `parseSuggestionsJson` moved to `@/shared/suggestions-parser` so
 // the Next.js inline route + agent-ts service share one
@@ -458,15 +458,16 @@ export async function generateChatSuggestions(
     `User asked:\n"""\n${userText.slice(0, 4000)}\n"""\n\n` +
     `Assistant answered:\n"""\n${assistantReply.slice(0, 4000)}\n"""`
 
+  const suggestionModel = defaultAnthropicApiModelId()
   let model: LanguageModel
   if (env.ANTHROPIC_BASE_URL) {
     const custom = createAnthropic({
       apiKey: env.ANTHROPIC_API_KEY,
       baseURL: env.ANTHROPIC_BASE_URL,
     })
-    model = custom(SUGGESTION_MODEL)
+    model = custom(suggestionModel)
   } else {
-    model = anthropic(SUGGESTION_MODEL)
+    model = anthropic(suggestionModel)
   }
 
   try {

@@ -252,7 +252,7 @@ describe("POST /v1/chat — route surface", () => {
       const res = await app.request("/v1/chat", {
         method: "POST",
         body: JSON.stringify({
-          model: "claude-3-5-haiku-20241022",
+          model: "anthropic/claude-haiku-4.5",
           messages: [{ role: "user", content: "hi" }],
         }),
         headers: {

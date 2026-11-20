@@ -6,6 +6,13 @@
 #
 # Built on Python 3.12 to match the version pinned in pyproject.toml. The
 # `uv` install on stage 1 keeps the runtime image free of build tools.
+#
+# Build context is the REPO ROOT (the service reads the shared model
+# catalog `config/models.json` — its `anthropic/*` entries are the model
+# allowlist), e.g.:
+#   docker build -f services/agent-py/Dockerfile -t hummingbird/agent-py .
+# The root `.dockerignore` keeps `.env*`, `.venv`, caches, `.git` and
+# `.claude` out of that context.
 
 # --- Stage 1: build ---------------------------------------------------------
 FROM python:3.12-slim AS builder
@@ -21,7 +28,7 @@ WORKDIR /app
 
 # Copy the dependency manifests first to maximise Docker-layer caching —
 # changes to source code shouldn't bust the deps layer.
-COPY pyproject.toml uv.lock* ./
+COPY services/agent-py/pyproject.toml services/agent-py/uv.lock* ./
 
 # Resolve + install into /app/.venv. `--no-install-project` keeps the project
 # itself out so the layer doesn't bust on every source change.
@@ -30,7 +37,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # Now copy the project source and install it. This second layer is the only
 # one that busts on a source change.
-COPY src ./src
+COPY services/agent-py/src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
@@ -46,10 +53,14 @@ WORKDIR /app
 # Pull in the resolved venv + source from the builder.
 COPY --from=builder --chown=agent:agent /app/.venv /app/.venv
 COPY --from=builder --chown=agent:agent /app/src /app/src
+# Model allowlist — read (and validated) at boot; a missing file fails
+# startup. `MODELS_CONFIG_PATH` pins the location explicitly.
+COPY --chown=agent:agent config/models.json /app/config/models.json
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    MODELS_CONFIG_PATH=/app/config/models.json
 
 USER agent
 EXPOSE 8000
