@@ -91,6 +91,28 @@ const failed = new Map<string, string>()
 /** Keys IndexedDB was asked for and didn't have (or couldn't answer).
  *  Lets readers show "unavailable" instead of loading forever. */
 const missing = new Set<string>()
+/** Keys marked `missing` because IndexedDB was UNUSABLE (not because it
+ *  had no record) → retries already scheduled. Such a key is un-marked
+ *  after a backoff so readers ask again (`useMessageBlobUrl` re-resolves
+ *  when `missing` flips) — the connection may have been reopened
+ *  (`files/idb.ts` drops a closed handle). Bounded: IndexedDB that is
+ *  unusable for good (private mode, quota 0) stops being asked. */
+const unusableRetries = new Map<string, number>()
+const MAX_UNUSABLE_RETRIES = 3
+const UNUSABLE_RETRY_BASE_MS = 1_000
+
+function scheduleUnusableRetry(key: string, gen: number): void {
+  const attempt = unusableRetries.get(key) ?? 0
+  if (attempt >= MAX_UNUSABLE_RETRIES) return
+  unusableRetries.set(key, attempt + 1)
+  setTimeout(() => {
+    // Deleted / rewritten meanwhile → nothing to retry.
+    if (genOf(key) !== gen || !missing.has(key) || cache.has(key)) return
+    missing.delete(key)
+    emit()
+  }, UNUSABLE_RETRY_BASE_MS * 2 ** attempt)
+}
+
 /** Per-key generation, bumped by every delete (see header). */
 const generation = new Map<string, number>()
 /** Pending IndexedDB reads, de-duplicated per key. */
@@ -490,8 +512,12 @@ export async function resolveMessageBlobUrl(url: string): Promise<string | undef
         cache.set(key, stored)
         fromIdb.set(key, stored)
         missing.delete(key)
+        unusableRetries.delete(key)
       } else {
         missing.add(key)
+        // `undefined` = IndexedDB couldn't answer (connection lost,
+        // blocked open), not "no record": let the key be asked again.
+        if (stored === undefined) scheduleUnusableRetry(key, g)
       }
       emit()
       return stored ?? undefined
@@ -905,6 +931,7 @@ export function __resetMessageBlobsForTests(): void {
   inflight.clear()
   failed.clear()
   missing.clear()
+  unusableRetries.clear()
   generation.clear()
   loading.clear()
   queues.clear()

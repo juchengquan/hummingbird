@@ -151,6 +151,28 @@ describe("read side", () => {
     const ref = messageBlobRef("nope/x")
     expect(await resolveMessageBlobUrl(ref)).toBeUndefined()
     expect(isMessageBlobMissing("nope/x")).toBe(true)
+    // "No record" is final: not un-marked for a retry.
+    await new Promise((r) => setTimeout(r, 1_100))
+    expect(isMessageBlobMissing("nope/x")).toBe(true)
+  })
+
+  test("a key missing because IndexedDB was unusable is retried once it recovers", async () => {
+    const factory = new IDBFactory()
+    __setIndexedDBFactoryForTests(factory)
+    await offloadMessageBlobs([conv("c1", [msg("m1", { generatedImages: [image("i1", IMG)] })])])
+    await __flushMessageBlobOpsForTests()
+    reload()
+    const ref = messageBlobRef("m1/i1")
+    // Connection unusable (e.g. Safari dropped it) → reads as missing…
+    __setIndexedDBFactoryForTests(null)
+    expect(await resolveMessageBlobUrl(ref)).toBeUndefined()
+    expect(isMessageBlobMissing("m1/i1")).toBe(true)
+    // …IndexedDB comes back; after the backoff the key is un-marked so
+    // readers ask again, and the read succeeds.
+    __setIndexedDBFactoryForTests(factory)
+    await new Promise((r) => setTimeout(r, 1_100))
+    expect(isMessageBlobMissing("m1/i1")).toBe(false)
+    expect(await resolveMessageBlobUrl(ref)).toBe(IMG)
   })
 
   test("primeMessageBlobCache makes inline values resolvable without IndexedDB", async () => {

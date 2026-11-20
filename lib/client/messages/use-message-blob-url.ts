@@ -41,10 +41,13 @@ export function useMessageBlobUrl(url: string | undefined): MessageBlobUrlState 
     () => false
   )
 
+  // `gone` is a dep so a key un-marked missing (IndexedDB was unusable,
+  // see `scheduleUnusableRetry`) is asked again; while it IS missing
+  // there's nothing to do.
   useEffect(() => {
-    if (!key || !url || cached) return
+    if (!key || !url || cached || gone) return
     void resolveMessageBlobUrl(url)
-  }, [key, url, cached])
+  }, [key, url, cached, gone])
 
   if (!url) return MISSING
   if (!key) return { status: "ready", url }
