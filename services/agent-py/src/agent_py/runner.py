@@ -19,6 +19,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
+from . import lease
 from .emitter import RunEmitter
 
 
@@ -162,6 +163,7 @@ async def run_agent_loop(
     should_yield: ShouldYieldFn | None = None,
     finalize: FinalizeFn | None = None,
     final_text: FinalTextFn | None = None,
+    restarted: bool = False,
 ) -> AgentLoopResult:
     """Drive a run to completion or a chunk-break point. Emits exactly
     one terminal event (`status: cancelled` or `result: done|failed`)
@@ -182,15 +184,25 @@ async def run_agent_loop(
     step mid-flight; budget calibration assumes a step can run to
     completion within the headroom the executor leaves below the
     function cap.
+
+    `restarted` (reclaimed `start` re-running from scratch) flags the
+    initial `status: running` as a restart marker — see
+    `StatusEvent.restarted`.
+
+    Before every step the bound job lease is checked
+    (`lease.check_current()`): a worker whose claim was taken over stops
+    before its next model call, with `LeaseLostError` propagating to
+    the poller. No-op when no lease is bound.
     """
     # Only emit `status: running` on a fresh start. A continuation
     # (Phase 3 HITL resume, or a `continue` chunk after a yield) seeds
     # the emitter at the current step counter; the status event was
     # already emitted on the original `start` action.
     if emitter.step == 0:
-        await emitter.status("running")
+        await emitter.status("running", restarted=restarted)
 
     while emitter.step < max_steps:
+        lease.check_current()
         if await is_cancelled():
             await emitter.status("cancelled")
             return AgentLoopResult(kind="cancelled")

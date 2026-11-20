@@ -73,6 +73,14 @@ class TaskEventBase:
 class StatusEvent(TaskEventBase):
     kind: Literal["status"] = field(default="status", init=False)
     status: RunStatus
+    # Restart marker: set on the `status: running` a reclaimed `start`
+    # emits when it re-runs from scratch because the previous attempt's
+    # worker died mid-run (no checkpoint to resume from). Everything the
+    # run produced before this event belongs to the dead attempt —
+    # consumers (the TS projection, `verify.aggregate_from_events`) drop
+    # it. Serialised only when true. Mirror of `StatusEvent.restarted`
+    # in `lib/shared/agent/events.ts`.
+    restarted: bool = False
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -261,7 +269,10 @@ def event_to_row_payload(event: TaskEvent) -> dict[str, object]:
     so the projection reducer accepts rows from either producer.
     """
     if isinstance(event, StatusEvent):
-        return {"status": event.status}
+        status_payload: dict[str, object] = {"status": event.status}
+        if event.restarted:
+            status_payload["restarted"] = True
+        return status_payload
     if isinstance(event, TokenEvent):
         return {"text": event.text, "channel": event.channel}
     if isinstance(event, ResultEvent):

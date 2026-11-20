@@ -72,6 +72,8 @@ describe("round-trip — every kind survives event → row → event", () => {
     event({ kind: "step_start" }),
     event({ kind: "step_end" }),
     event({ kind: "status", status: "running", maxSteps: 9 }),
+    // Restart marker (reclaimed run) — the flag must survive the schema.
+    event({ kind: "status", status: "running", restarted: true }),
     event({ kind: "plan", items: [{ id: "1", text: "do", status: "in_progress" }] }),
     event({ kind: "step_error", message: "flaky", willRetry: false }),
     event({ kind: "handoff", agent: "sub", phase: "enter" }),

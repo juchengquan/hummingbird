@@ -27,7 +27,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from .events import TaskEvent, TokenEvent, ToolOutputEvent
+from .events import StatusEvent, TaskEvent, TokenEvent, ToolOutputEvent
 
 ClaimStatus = Literal["supported", "unsupported", "partial"]
 
@@ -125,19 +125,25 @@ def aggregate_from_events(event_list: list[TaskEvent]) -> AggregatedInputs:
 
     `tool_output.results == None` or `[]` contribute no source
     (a tool that returned text-only, e.g. `webFetch` summary).
+
+    A restart marker (`status` with `restarted=True`, emitted when a
+    reclaimed run starts over) discards everything folded so far — it
+    was the dead attempt's partial output.
     """
     text_parts: list[str] = []
     sources: list[RetrievedSource] = []
-    source_counter = 0
     for ev in event_list:
-        if isinstance(ev, TokenEvent) and ev.channel == "text":
+        if isinstance(ev, StatusEvent) and ev.restarted:
+            text_parts = []
+            sources = []
+        elif isinstance(ev, TokenEvent) and ev.channel == "text":
             text_parts.append(ev.text)
         elif isinstance(ev, ToolOutputEvent) and ev.results:
             for r in ev.results:
-                source_counter += 1
                 sources.append(
                     RetrievedSource(
-                        id=str(source_counter),
+                        # 1-based, cumulative — the `[N]` the model cites.
+                        id=str(len(sources) + 1),
                         title=r.title,
                         url=r.url,
                         snippet=r.snippet,

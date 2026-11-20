@@ -113,6 +113,12 @@ export interface StatusEvent extends TaskEventBase {
   status: RunStatus
   /** Step ceiling, when known — drives an "N / M" progress display. */
   maxSteps?: number
+  /** Restart marker. Set on the `status: running` a reclaimed run emits
+   *  when its previous worker died mid-run and it starts over from
+   *  scratch: everything the log holds before this event is that dead
+   *  attempt's partial output, which consumers discard (`reduceRun`
+   *  resets the run-derived view). Absent on ordinary transitions. */
+  restarted?: boolean
 }
 
 /** Full todo list — carried in full each time (not deltas) per the
