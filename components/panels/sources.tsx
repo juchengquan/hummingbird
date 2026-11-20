@@ -1,5 +1,6 @@
 "use client"
 
+import { useShallow } from "zustand/react/shallow"
 import { useState, useRef, useCallback } from "react"
 import { useStore, useSessionStore } from "@/client/hooks/use-store"
 import { Item, ItemContent, ItemTitle, ItemDescription } from "@/components/ui/item"
@@ -47,7 +48,21 @@ export function ResourcePanel() {
     removeResource,
     setFileExtraction,
     setFileStorage,
-  } = useStore()
+  } = useStore(
+    // Per-field (shallow-compared) so unrelated store writes, e.g. a
+    // streamed token appending to a message, don't re-render this.
+    useShallow((s) => ({
+      files: s.files,
+      addFile: s.addFile,
+      removeFile: s.removeFile,
+      activeWorkspaceId: s.activeWorkspaceId,
+      resources: s.resources,
+      addResource: s.addResource,
+      removeResource: s.removeResource,
+      setFileExtraction: s.setFileExtraction,
+      setFileStorage: s.setFileStorage,
+    }))
+  )
   const { selectedFileIds, toggleFileSelection, clearSelectedFiles } = useSessionStore()
   const [searchQuery, setSearchQuery] = useState("")
   const [isDragOver, setIsDragOver] = useState(false)
