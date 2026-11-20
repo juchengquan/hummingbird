@@ -108,7 +108,7 @@ function DocxViewer({ fileId, onClose }: DocxViewerProps) {
     let cancelled = false
     // Clear any previous render synchronously — docx-preview appends
     // into the container, so a stale render would stack visually.
-    container.innerHTML = ""
+    container.replaceChildren()
     setLoading(true)
     setError(null)
 

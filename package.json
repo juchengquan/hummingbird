@@ -159,8 +159,5 @@
   "trustedDependencies": [
     "sharp",
     "unrs-resolver"
-  ],
-  "overrides": {
-    "eslint-plugin-react-hooks": "7.0.1"
-  }
+  ]
 }

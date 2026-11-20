@@ -231,6 +231,14 @@ export function useChatSend(): UseChatSendResult {
     [createArtifact]
   )
 
+  // Latest-version ref so the hook can call back into itself (auto-
+  // retry-once) without becoming a stale closure across renders.
+  // Declared before `callChatAPI` (which reads it) and synced in an
+  // effect below, per react-hooks/immutability.
+  const callChatAPIRef = useRef<
+    ((history: Message[], options?: SendOptions) => Promise<void>) | null
+  >(null)
+
   // --- the pipeline (the body that used to be `callChatAPI`) ---
   const callChatAPI = useCallback(
     async (history: Message[], options?: SendOptions) => {
@@ -912,7 +920,7 @@ export function useChatSend(): UseChatSendResult {
             setConversationTyping(targetConvId, false)
             setConversationStreaming(targetConvId, false)
             setTimeout(() => {
-              callChatAPIRef.current(history, {
+              void callChatAPIRef.current?.(history, {
                 modelOverride: options?.modelOverride,
                 isRetry: true,
               })
@@ -993,9 +1001,6 @@ export function useChatSend(): UseChatSendResult {
     ]
   )
 
-  // Latest-version ref so the hook can call back into itself (auto-
-  // retry-once) without becoming a stale closure across renders.
-  const callChatAPIRef = useRef(callChatAPI)
   useEffect(() => {
     callChatAPIRef.current = callChatAPI
   }, [callChatAPI])
@@ -1003,7 +1008,7 @@ export function useChatSend(): UseChatSendResult {
   // Stable wrapper — consumers don't manage their own ref.
   const send = useCallback(
     (history: Message[], options?: SendOptions): Promise<void> =>
-      callChatAPIRef.current(history, options),
+      callChatAPIRef.current?.(history, options) ?? Promise.resolve(),
     []
   )
 
