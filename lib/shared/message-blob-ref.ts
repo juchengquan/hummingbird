@@ -99,3 +99,28 @@ export function hasMessageBlobRef(items: unknown): boolean {
 
 /** Message columns that may carry blob-bearing items. */
 export const MESSAGE_BLOB_COLUMNS = ["generated_images", "generated_files"] as const
+
+// ---------------------------------------------------------------------------
+// Artifacts (store v34)
+// ---------------------------------------------------------------------------
+//
+// `Artifact.storagePath` of an image / file artifact created from a
+// generated item used to be a copy of the item's URL — so an inline
+// `data:` payload was stored twice (message + artifact). From v34 such an
+// artifact carries a reference into the SAME IndexedDB store instead:
+//
+//   - created from a generated item → the item's own key
+//     (`hb-blob:<messageId>/<itemId>`), so both share one record;
+//   - an inline value with no matching item (pre-v34 data, a pull, an
+//     orphaned artifact) → its own key, `hb-blob:artifact/<artifactId>`.
+//
+// A Supabase Storage path / signed URL in `storagePath` is untouched.
+
+/** IndexedDB key for an artifact's own (unshared) bytes. Never collides
+ *  with a `<messageId>/<itemId>` key: message ids are uuids. */
+export function artifactBlobKey(artifactId: string): string {
+  return `artifact/${artifactId}`
+}
+
+/** The artifact column that may carry a reference. */
+export const ARTIFACT_BLOB_COLUMN = "storage_path"

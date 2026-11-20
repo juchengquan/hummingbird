@@ -46,6 +46,7 @@ import type {
 import type { SyncOp } from "@/client/sync/sync-queue"
 import type { Json } from "@/shared/supabase/types"
 import { canonicalBlobItems, type BlobBearingItem } from "@/shared/message-blob-ref"
+import { sameArtifactStoragePath } from "@/client/messages/message-blobs"
 import { toISO } from "@/shared/utils"
 
 // ------------ workspaces ----------------------------------------------------
@@ -1065,7 +1066,9 @@ function artifactEquals(a: Artifact, b: Artifact): boolean {
     a.language === b.language &&
     a.title === b.title &&
     a.content === b.content &&
-    a.storagePath === b.storagePath &&
+    // v34: an inline data: URL and the `hb-blob:` reference the offload
+    // rewrote it to are the same value, not an edit.
+    sameArtifactStoragePath(a.storagePath, b.storagePath) &&
     versionsEqual(a.versions, b.versions) &&
     a.pinned === b.pinned &&
     sameInstant(a.createdAt, b.createdAt)

@@ -89,8 +89,8 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe("v33 migration — message blobs to IndexedDB", () => {
-  test("STORE_VERSION is 33", () => {
-    expect(STORE_VERSION).toBe(33)
+  test("STORE_VERSION is at least 33", () => {
+    expect(STORE_VERSION).toBeGreaterThanOrEqual(33)
   })
 
   test("the step keeps inline payloads (they are the pending stash) and drops only junk", () => {

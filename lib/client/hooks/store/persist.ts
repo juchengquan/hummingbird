@@ -1,7 +1,7 @@
 import "client-only"
 
 import { stripDurableBlobFieldsAll } from "@/client/files/blob-fields"
-import { stripDurableMessageBlobs } from "@/client/messages/message-blobs"
+import { persistableArtifacts, stripDurableMessageBlobs } from "@/client/messages/message-blobs"
 import { reviveDates } from "@/client/store/revive-dates"
 
 import type { AppState } from "../use-store"
@@ -52,7 +52,12 @@ export const partializeState = (state: AppState) => ({
   customInstructionsStyle: state.customInstructionsStyle,
   memoryEnabled: state.memoryEnabled,
   notes: state.notes,
-  artifacts: state.artifacts,
+  // v34: an image / file artifact's `storagePath` may be an `hb-blob:`
+  // reference into the message-blob IndexedDB store (shared with its
+  // source generated item). A reference whose bytes IndexedDB hasn't
+  // confirmed yet is persisted as the inline `data:` URL instead, so a
+  // failed / missing IndexedDB never loses the only copy.
+  artifacts: persistableArtifacts(state.artifacts),
   documents: state.documents,
   activeDocumentId: state.activeDocumentId,
   resourcesSidebarOpen: state.resourcesSidebarOpen,
