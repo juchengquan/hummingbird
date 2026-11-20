@@ -28,7 +28,7 @@ afterAll(() => {
 
 async function makeJwt(): Promise<string> {
   const encoder = new TextEncoder()
-  return new SignJWT({ sub: "user-uuid-123", role: "authenticated" })
+  return new SignJWT({ sub: "00000000-0000-4000-8000-000000000123", role: "authenticated", aud: "authenticated" })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("1h")

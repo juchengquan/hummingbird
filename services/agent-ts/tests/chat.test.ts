@@ -36,7 +36,7 @@ afterAll(() => {
 })
 
 async function makeJwt(claims: Record<string, unknown> = {}): Promise<string> {
-  return new SignJWT({ role: "authenticated", sub: "u", ...claims })
+  return new SignJWT({ role: "authenticated", aud: "authenticated", sub: "00000000-0000-4000-8000-0000000000aa", ...claims })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("1h")

@@ -25,6 +25,9 @@ const EnvSchema = z.object({
    *  empty those endpoints return 503 (a distinct signal from 401 so
    *  monitoring can alert on misconfig). */
   SUPABASE_JWT_SECRET: z.string().default(""),
+  /** Required `aud` claim on incoming user JWTs. Supabase stamps
+   *  `authenticated` on every signed-in user's access token. */
+  SUPABASE_JWT_AUDIENCE: z.string().min(1).default("authenticated"),
   /** Direct Postgres connection string (`postgresql://...`). Required
    *  for the Phase 1+ poll loop — when empty the poller still starts
    *  but no-ops on every tick. Use the *direct* connection, NOT the

@@ -18,6 +18,7 @@ const baseEnv: Env = {
   SERVICE_PORT: 8001,
   SUPABASE_URL: "",
   SUPABASE_JWT_SECRET: "",
+  SUPABASE_JWT_AUDIENCE: "authenticated",
   SUPABASE_DB_URL: "",
   SUPABASE_SERVICE_ROLE_KEY: "",
   WORKER_DRY_RUN: true,
