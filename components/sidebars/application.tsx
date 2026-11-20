@@ -1,4 +1,5 @@
 import * as React from "react"
+import { useShallow } from "zustand/react/shallow"
 import { BookOpen, LayoutDashboard, LayoutGrid, Package, Plus, ChevronRight, Pin, MessageSquare, MessagesSquare, FileText, Search, X } from "lucide-react"
 import {
   Sidebar,
@@ -52,7 +53,26 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     createDocument,
     renameDocument,
     deleteDocument,
-  } = useStore()
+  } = useStore(
+    // Per-field (shallow-compared) so unrelated store writes, e.g. a
+    // streamed token appending to a message, don't re-render this.
+    useShallow((s) => ({
+      createConversation: s.createConversation,
+      activeConversationId: s.activeConversationId,
+      setActiveConversation: s.setActiveConversation,
+      deleteConversation: s.deleteConversation,
+      renameConversation: s.renameConversation,
+      togglePin: s.togglePin,
+      activeView: s.activeView,
+      setActiveView: s.setActiveView,
+      activeWorkspaceId: s.activeWorkspaceId,
+      activeDocumentId: s.activeDocumentId,
+      setActiveDocument: s.setActiveDocument,
+      createDocument: s.createDocument,
+      renameDocument: s.renameDocument,
+      deleteDocument: s.deleteDocument,
+    }))
+  )
   const sidebarWidth = useStore((s) => s.sidebarWidth)
   const setSidebarWidth = useStore((s) => s.setSidebarWidth)
 

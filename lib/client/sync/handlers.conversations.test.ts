@@ -142,4 +142,64 @@ describe("diffConversations", () => {
     // on equality — assert only the message-suppression invariant.
     expect(ops.filter((o) => o.target === "messages")).toHaveLength(0)
   })
+
+  test("unchanged conversation (same reference) is skipped without inspecting it", () => {
+    // Per-token store updates replace only the streaming conversation;
+    // every other conversation keeps its identity and must cost nothing.
+    let reads = 0
+    const untouched = conv("a", { messages: [msg("m1"), msg("m2")] })
+    const spied = new Proxy(untouched, {
+      get(target, prop, receiver) {
+        if (prop !== "id") reads += 1
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+    const changedBefore = conv("b", { messages: [msg("x1")] })
+    const changedAfter = conv("b", {
+      messages: [msg("x1"), msg("x2", { role: "assistant" })],
+    })
+    const ops = diffConversations([spied, changedBefore], [spied, changedAfter])
+    expect(reads).toBe(0)
+    const messageOps = ops.filter((o) => o.target === "messages")
+    expect(messageOps).toHaveLength(1)
+    if (messageOps[0].kind === "upsert") {
+      expect(messageOps[0].row.id).toBe("x2")
+      expect(messageOps[0].row.conversation_id).toBe("b")
+    }
+  })
+
+  test("generatedFiles change on a message emits an upsert carrying them", () => {
+    const file = {
+      id: "f1",
+      name: "report.csv",
+      sizeBytes: 12,
+      mimeType: "text/csv",
+      url: "https://example.test/report.csv",
+      storagePath: null,
+    }
+    const before = conv("a", { messages: [msg("m1", { role: "assistant" })] })
+    const after = conv("a", {
+      messages: [msg("m1", { role: "assistant", generatedFiles: [file] })],
+    })
+    const ops = diffConversations([before], [after])
+    const messageOps = ops.filter((o) => o.target === "messages")
+    expect(messageOps).toHaveLength(1)
+    if (messageOps[0].kind === "upsert") {
+      expect(messageOps[0].row.id).toBe("m1")
+      expect(messageOps[0].row.generated_files).toEqual([file])
+    }
+  })
+
+  test("reordered messages are re-upserted with their new positions", () => {
+    const before = conv("a", { messages: [msg("m1"), msg("m2"), msg("m3")] })
+    const after = conv("a", { messages: [msg("m2"), msg("m1"), msg("m3")] })
+    const ops = diffConversations([before], [after])
+    const positions = ops
+      .filter((o) => o.target === "messages" && o.kind === "upsert")
+      .map((o) => (o.kind === "upsert" ? [o.row.id, o.row.position] : null))
+    expect(positions).toEqual([
+      ["m2", 0],
+      ["m1", 1],
+    ])
+  })
 })

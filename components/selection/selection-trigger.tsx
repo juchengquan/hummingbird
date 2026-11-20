@@ -110,7 +110,9 @@ export function SelectionTrigger({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey
-      if (!mod || e.key.toLowerCase() !== "e") return
+      // `key` is typed `string` but is undefined on some synthetic
+      // keydowns (e.g. Chrome autofill) — guard before lowercasing.
+      if (!mod || e.key?.toLowerCase() !== "e") return
       if (!active) return
       // Don't hijack if the user is typing in an input/textarea — they
       // may have system-level ⌘E bindings.

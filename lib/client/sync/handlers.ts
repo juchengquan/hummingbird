@@ -213,6 +213,11 @@ export function diffConversations(
 
   for (const c of next) {
     const before = prevById.get(c.id)
+    // The store updates immutably, so an untouched conversation keeps
+    // its object identity. Skipping it by reference keeps a per-token
+    // store change O(conversations) instead of re-diffing every message
+    // of every conversation.
+    if (before === c) continue
     if (!before || !conversationHeaderEquals(before, c)) {
       ops.push({
         kind: "upsert",
@@ -243,8 +248,10 @@ export function diffConversations(
     // Diff messages on this conversation, skipping ones that are
     // currently streaming.
     const skipMessages = options.streamingConversationIds?.has(c.id) ?? false
-    if (!skipMessages) {
-      ops.push(...diffMessages(c.id, before?.messages ?? [], c.messages))
+    if (!skipMessages && before?.messages !== c.messages) {
+      ops.push(
+        ...diffConversationMessages(c.id, before?.messages ?? [], c.messages)
+      )
     }
   }
 
@@ -288,18 +295,31 @@ function conversationHeaderEquals(a: Conversation, b: Conversation): boolean {
 
 // ------------ messages (called from diffConversations) ----------------------
 
-function diffMessages(
+/**
+ * Diff one conversation's message list. Exported so `useSync` can run
+ * the deferred diff for a conversation whose messages were held while
+ * it streamed (baseline = the pre-stream messages).
+ */
+export function diffConversationMessages(
   conversationId: string,
   prev: Message[],
   next: Message[]
 ): SyncOp[] {
   const ops: SyncOp[] = []
-  const prevById = byId(prev)
+  // id → position in `prev`, for both existence and reorder detection
+  // (a findIndex per message would make this O(m²)).
+  const prevIndexById = new Map<string, number>()
+  prev.forEach((m, i) => prevIndexById.set(m.id, i))
   const nextById = byId(next)
 
   next.forEach((m, idx) => {
-    const before = prevById.get(m.id)
-    if (!before || !messageEquals(before, m) || idx !== prev.findIndex((p) => p.id === m.id)) {
+    const prevIdx = prevIndexById.get(m.id)
+    const before = prevIdx === undefined ? undefined : prev[prevIdx]
+    if (
+      !before ||
+      prevIdx !== idx ||
+      (before !== m && !messageEquals(before, m))
+    ) {
       ops.push({
         kind: "upsert",
         target: "messages",
@@ -372,6 +392,10 @@ function messageEquals(a: Message, b: Message): boolean {
     // messages, so this is cheaper than a deep recursive walk.
     JSON.stringify(a.generatedImages ?? null) ===
       JSON.stringify(b.generatedImages ?? null) &&
+    // `generated_files` is part of the upserted row too — a `tool_file`
+    // frame arriving last must still produce an upsert.
+    JSON.stringify(a.generatedFiles ?? null) ===
+      JSON.stringify(b.generatedFiles ?? null) &&
     sameInstant(a.timestamp, b.timestamp)
   )
 }
