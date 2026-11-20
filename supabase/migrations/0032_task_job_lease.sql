@@ -34,12 +34,34 @@ create index if not exists task_jobs_lease_idx
   on public.task_jobs (lease_expires_at)
   where status = 'running';
 
--- Backfill rows stranded `running` by a pre-lease worker so they become
--- reclaimable. Ten minutes past their last touch is far beyond any
--- chunk (45 s budget), so a job still being driven by an old worker
--- during a rolling deploy is not stolen. Only rows without a lease are
--- touched, so re-running the migration is a no-op.
+-- Backfill rows stranded `running` by a pre-lease worker.
+--
+-- Only RECENT rows (touched within the last hour) are made reclaimable:
+-- ten minutes past their last touch is far beyond any chunk (45 s
+-- budget), so a job still being driven by an old worker during a
+-- rolling deploy is not stolen, and a job that died minutes before the
+-- deploy is resumed as the user would expect.
+--
+-- OLDER rows are not resumed. An earlier version of this backfill gave
+-- every stranded row a lease, so jobs dead for weeks became reclaimable
+-- right after deploy and re-ran (model + tool spend on the operator's
+-- budget) for results nobody was waiting on. They are now marked
+-- attempt-exhausted with an already-expired lease, which is exactly
+-- what the workers' reaper (`reap_expired_jobs`: running, lease <
+-- now(), attempts >= max_attempts) fails — settling job and task as
+-- failed instead of re-running them. 0036 applies the same rule to
+-- databases that already ran the old backfill.
+--
+-- Only rows without a lease are touched, so re-running is a no-op.
 update public.task_jobs
 set lease_expires_at = coalesce(started_at, updated_at) + interval '10 minutes'
 where status = 'running'
-  and lease_expires_at is null;
+  and lease_expires_at is null
+  and coalesce(started_at, updated_at) >= now() - interval '1 hour';
+
+update public.task_jobs
+set lease_expires_at = coalesce(started_at, updated_at),
+    attempts = greatest(attempts, max_attempts)
+where status = 'running'
+  and lease_expires_at is null
+  and coalesce(started_at, updated_at) < now() - interval '1 hour';
