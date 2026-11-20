@@ -56,6 +56,12 @@ groups them by purpose and explains when each is needed.
 | `NEXT_PUBLIC_AGENT_PY_URL` | Base URL of the Python agent service. When set, the account menu shows a "Python agent backend" toggle. |
 | `NEXT_PUBLIC_AGENT_TS_URL` | Base URL of the TypeScript agent service. When set + Python also set, surfaces a 3-way picker. |
 
+## Optional - security headers
+
+| Variable | Effect |
+|---|---|
+| `CSP_MODE` | Content-Security-Policy mode: `report-only` (default — violations are reported, nothing blocked), `enforce` (violations blocked), or `off` (no CSP header). See `docs/SECURITY.md` before switching to `enforce`. |
+
 ## Optional - Anthropic direct
 
 | Variable | Effect |
