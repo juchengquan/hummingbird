@@ -6,7 +6,9 @@ import { CopilotPlugin } from '@platejs/ai/react';
 import { serializeMd, stripMarkdown } from '@platejs/markdown';
 
 import { apiUrls } from '@/client/api-client';
+import { notifyAuthRequired } from '@/client/auth/auth-required';
 import { useStore } from '@/client/hooks/use-store';
+import { isAuthRequiredError } from '@/shared/api-errors';
 import { GhostText } from '@/components/ui/ghost-text';
 import {
   COMPLETE_PREFIX_MAX,
@@ -66,6 +68,24 @@ function buildPrefixMarkdown(
   return md.slice(md.length - COMPLETE_PREFIX_MAX);
 }
 
+/**
+ * Ghost-text errors are swallowed (see `onError`), except one: a
+ * `401 auth_required` (REQUIRE_AUTH_FOR_AI) means no suggestion will
+ * ever arrive until the user signs in, so raise the (background,
+ * rate-limited) "Sign in" toast. Passes the response through untouched.
+ */
+async function noticeAuthRequired(res: Response): Promise<Response> {
+  if (res.status === 401) {
+    try {
+      const body = (await res.clone().json()) as { code?: string };
+      if (isAuthRequiredError(body)) notifyAuthRequired({ background: true });
+    } catch {
+      /* non-JSON 401 — nothing to say */
+    }
+  }
+  return res;
+}
+
 export const CopilotKit = [
   ...MarkdownKit,
   CopilotPlugin.configure(({ api }) => ({
@@ -90,7 +110,7 @@ export const CopilotKit = [
               return fetch(input, {
                 ...init,
                 body: JSON.stringify(payload),
-              });
+              }).then(noticeAuthRequired);
             }
           } catch {
             // Fall through to the unmodified POST — the route will
@@ -98,7 +118,7 @@ export const CopilotKit = [
             // suppresses it. Never crash the editor on a transform
             // failure.
           }
-          return fetch(input, init);
+          return fetch(input, init).then(noticeAuthRequired);
         }) as typeof fetch,
         onError: () => {
           // Swallow — the user is typing; a transient route failure

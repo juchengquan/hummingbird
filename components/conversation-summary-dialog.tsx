@@ -15,7 +15,8 @@ import {
 import { Button } from "@/components/ui/button"
 import { copyText } from "@/client/export"
 import type { Conversation } from "@/shared/types"
-import { apiClient } from "@/client/api-client"
+import { apiClient, isAuthRequiredResult } from "@/client/api-client"
+import { AUTH_REQUIRED_MESSAGE } from "@/shared/api-errors"
 import type { ConversationSummarizeResponse } from "@/shared/api-schemas"
 
 type ConversationSummaryResult = ConversationSummarizeResponse
@@ -84,6 +85,12 @@ export function ConversationSummaryDialog({
           messages,
         })
         if (cancelled) return
+        if (isAuthRequiredResult(data)) {
+          // apiClient already raised the "Sign in" toast.
+          setStatus("error")
+          setErrorMsg(AUTH_REQUIRED_MESSAGE)
+          return
+        }
         if (!data) {
           setStatus("error")
           setErrorMsg("Summarisation failed.")

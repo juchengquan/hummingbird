@@ -56,8 +56,10 @@ import {
 } from "@/shared/api-schemas"
 
 import { CitationTableSchema, type CitationTable } from "@/shared/artifacts/citation-table"
+import { isAuthRequiredError } from "@/shared/api-errors"
 
 import { narrowToRemoteBody } from "@/client/api/chat-marshalling"
+import { notifyAuthRequired } from "@/client/auth/auth-required"
 
 /** Optional remote-backend dispatch context — used by non-chat
  *  endpoints that mirror `/v1/...` on agent-py / agent-ts. When
@@ -764,6 +766,37 @@ async function embedFile(
   return result.ok ? result.data : null
 }
 
+// --- REQUIRE_AUTH_FOR_AI ----------------------------------------------------
+
+/**
+ * Returned (instead of `null`) by the best-effort AI methods below
+ * (summarize.*, artifacts.extractTable) when the server answered
+ * `401 { code: "auth_required" }`. The "Sign in" toast has already been
+ * raised via `notifyAuthRequired()`; callers only need to skip their own
+ * generic failure message. A distinct value (not `null`) so the type
+ * system makes every caller handle it.
+ */
+export const AUTH_REQUIRED_RESULT: { readonly authRequired: true } =
+  Object.freeze({ authRequired: true as const })
+export type AuthRequiredResult = typeof AUTH_REQUIRED_RESULT
+
+export function isAuthRequiredResult(value: unknown): value is AuthRequiredResult {
+  return value === AUTH_REQUIRED_RESULT
+}
+
+/** Map a failed dispatch to `AUTH_REQUIRED_RESULT` (and raise the
+ *  sign-in toast) or `null`. `background` = not user-initiated. */
+function failureResult(
+  result: Extract<DispatchedFetchResult<unknown>, { ok: false }>,
+  background = false,
+): AuthRequiredResult | null {
+  if (isAuthRequiredError(result.error)) {
+    notifyAuthRequired({ background })
+    return AUTH_REQUIRED_RESULT
+  }
+  return null
+}
+
 // --- /api/summarize ---------------------------------------------------------
 
 type SummarizeOptions = { signal?: AbortSignal } & DispatchOption
@@ -771,7 +804,8 @@ type SummarizeOptions = { signal?: AbortSignal } & DispatchOption
 /** Internal: one POST + Zod-parse for any summarize mode. The four
  *  exported methods (file / conversation / compress / projectBreakdown)
  *  share dispatch + error handling; they differ only in the body's
- *  `mode` discriminant and the response schema. */
+ *  `mode` discriminant and the response schema. Every mode resolves to
+ *  `AUTH_REQUIRED_RESULT` (not `null`) on `401 auth_required`. */
 async function summarizePost<T>(
   body: SummarizeRequestInput,
   schema: {
@@ -780,7 +814,7 @@ async function summarizePost<T>(
     ) => { success: true; data: T } | { success: false; error: unknown }
   },
   options?: SummarizeOptions,
-): Promise<T | null> {
+): Promise<T | AuthRequiredResult | null> {
   const result = await dispatchedFetch<
     SummarizeRequestInput,
     SummarizeRequestInput,
@@ -793,7 +827,9 @@ async function summarizePost<T>(
     signal: options?.signal,
     dispatch: options,
   })
-  return result.ok ? result.data : null
+  // File summaries run in the background on upload; the rest are
+  // user-initiated actions.
+  return result.ok ? result.data : failureResult(result, body.mode === "file")
 }
 
 /** Summarises a single file's extracted text. Returns null on failure —
@@ -801,7 +837,7 @@ async function summarizePost<T>(
 function summarizeFile(
   body: Extract<SummarizeRequestInput, { mode: "file" }>,
   options?: SummarizeOptions
-): Promise<FileSummarizeResponse | null> {
+): Promise<FileSummarizeResponse | AuthRequiredResult | null> {
   return summarizePost(body, FileSummarizeResponseSchema, options)
 }
 
@@ -811,7 +847,7 @@ function summarizeFile(
 function summarizeConversation(
   body: Extract<SummarizeRequestInput, { mode: "conversation" }>,
   options?: SummarizeOptions
-): Promise<ConversationSummarizeResponse | null> {
+): Promise<ConversationSummarizeResponse | AuthRequiredResult | null> {
   return summarizePost(body, ConversationSummarizeResponseSchema, options)
 }
 
@@ -823,7 +859,7 @@ function summarizeConversation(
 function summarizeCompress(
   body: Extract<SummarizeRequestInput, { mode: "compress" }>,
   options?: SummarizeOptions
-): Promise<CompressSummarizeResponse | null> {
+): Promise<CompressSummarizeResponse | AuthRequiredResult | null> {
   return summarizePost(body, CompressSummarizeResponseSchema, options)
 }
 
@@ -833,7 +869,7 @@ function summarizeCompress(
 function summarizeProjectBreakdown(
   body: Extract<SummarizeRequestInput, { mode: "project-breakdown" }>,
   options?: SummarizeOptions
-): Promise<ProjectBreakdownResponse | null> {
+): Promise<ProjectBreakdownResponse | AuthRequiredResult | null> {
   return summarizePost(body, ProjectBreakdownResponseSchema, options)
 }
 
@@ -1135,7 +1171,7 @@ async function taskChildren(
 async function extractTable(
   body: ExtractTableRequestInput,
   options?: { signal?: AbortSignal } & DispatchOption,
-): Promise<CitationTable | null> {
+): Promise<CitationTable | AuthRequiredResult | null> {
   const result = await dispatchedFetch<
     ExtractTableRequestInput,
     ExtractTableRequestInput,
@@ -1148,7 +1184,7 @@ async function extractTable(
     signal: options?.signal,
     dispatch: options,
   })
-  return result.ok ? result.data : null
+  return result.ok ? result.data : failureResult(result)
 }
 
 // --- Public surface ---------------------------------------------------------
