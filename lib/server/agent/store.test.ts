@@ -52,6 +52,8 @@ interface Scenario {
   jobsError?: boolean
   /** Rows the conditional update reports as changed. */
   updatedRows?: number
+  /** `task_worker_active_within` result (default false); "error" → RPC error. */
+  workerActive?: boolean | "error"
 }
 
 function fakeDb(s: Scenario) {
@@ -125,14 +127,22 @@ function fakeDb(s: Scenario) {
     return b
   }
 
+  const rpcCalls: Array<{ fn: string; args: unknown }> = []
   const db = {
+    rpc: async (fn: string, args: unknown) => {
+      rpcCalls.push({ fn, args })
+      if (fn !== "task_worker_active_within") throw new Error(`unexpected rpc ${fn}`)
+      return s.workerActive === "error"
+        ? { data: null, error: { message: "boom" } }
+        : { data: s.workerActive ?? false, error: null }
+    },
     from: (table: string) => ({
       select: () => builder({ table, op: "select", filters: [] }),
       update: (payload: unknown) => builder({ table, op: "update", payload, filters: [] }),
       upsert: (payload: unknown) => builder({ table, op: "upsert", payload, filters: [] }),
     }),
   }
-  return { db: db as never, queries }
+  return { db: db as never, queries, rpcCalls }
 }
 
 const iso = (ms: number) => new Date(ms).toISOString()
@@ -230,9 +240,10 @@ describe("reconcileStaleRuns — never-started runs (no task worker)", () => {
   })
 
   test("is failed with the no-worker error despite a claimable queued job", async () => {
-    // agent-py released the job (opted-out user); the release refunds
-    // the claim, so the job is `queued` with attempts left forever.
-    const { db, queries } = fakeDb(
+    // No worker executed anything in the window (agent-py down or in
+    // dry-run, which releases + refunds the claim), so the job sits
+    // `queued` with attempts left forever.
+    const { db, queries, rpcCalls } = fakeDb(
       neverStarted({
         jobs: [{ status: "queued", lease_expires_at: null, attempts: 0, max_attempts: 3 }],
       })
@@ -242,6 +253,25 @@ describe("reconcileStaleRuns — never-started runs (no task worker)", () => {
     expect(JSON.stringify(upsert.payload)).toContain(NO_WORKER_ERROR)
     const update = queries.find((q) => q.table === "tasks" && q.op === "update")!
     expect(update.filters).toContainEqual(["in", "status", ["queued", "running"]])
+    expect(rpcCalls).toEqual([
+      { fn: "task_worker_active_within", args: { p_seconds: 600 } },
+    ])
+  })
+
+  test("a busy worker elsewhere (backlog) keeps a long-queued run waiting", async () => {
+    const { db, queries } = fakeDb(
+      neverStarted({
+        workerActive: true,
+        jobs: [{ status: "queued", lease_expires_at: null, attempts: 0, max_attempts: 3 }],
+      })
+    )
+    expect(await reconcileStaleRuns(db, USER, 3 * MIN, NOW, 10 * MIN)).toBe(0)
+    expect(queries.some((q) => q.op === "update")).toBe(false)
+  })
+
+  test("a liveness probe error never fails the run", async () => {
+    const { db } = fakeDb(neverStarted({ workerActive: "error", jobs: [] }))
+    expect(await reconcileStaleRuns(db, USER, 3 * MIN, NOW, 10 * MIN)).toBe(0)
   })
 
   test("a run with no events at all (child task) counts as never started", async () => {

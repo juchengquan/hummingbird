@@ -308,6 +308,22 @@ export function noWorkerTimeoutMs(
     : DEFAULT_NO_WORKER_TIMEOUT_MS
 }
 
+/**
+ * Whether ANY task worker has executed something within `withinMs`
+ * (a live lease, or a job it finished) — `task_worker_active_within`,
+ * migration 0040. A never-started run is only "orphaned" when this is
+ * false: with one busy worker a backlog can wait past the timeout while
+ * the worker is healthy. A read error counts as active (never fail a
+ * run on a probe error).
+ */
+async function taskWorkerActiveWithin(db: DB, withinMs: number): Promise<boolean> {
+  const { data, error } = await db.rpc("task_worker_active_within", {
+    p_seconds: Math.max(0, Math.ceil(withinMs / 1000)),
+  })
+  if (error) return true
+  return data === true
+}
+
 export const NO_WORKER_ERROR =
   "No task worker available: this task was never picked up. Try again later, or contact the administrator if it keeps happening."
 
@@ -320,11 +336,12 @@ const LAST_PRE_START_SEQ = 1
  *
  * - **Never started** — `queued`, nothing past the route's `status:
  *   queued` marker, created more than `noWorkerMs` ago, and no worker
- *   holding a lease on its job: no worker took it (the user is opted
- *   out of agent-py, or agent-py is down / in dry-run). A queued job
- *   doesn't keep it alive — agent-py's release of an opted-out user's
- *   job refunds the claim, so the job would look claimable forever.
- *   Failed with `NO_WORKER_ERROR`.
+ *   holding a lease on its job, AND no worker has executed anything in
+ *   that window (`task_worker_active_within`, migration 0040): agent-py
+ *   is down or left in dry-run. A busy worker with a backlog keeps the
+ *   run waiting rather than failing it. (Opted-out users never get
+ *   here: agent-py fails their jobs up front.) Failed with
+ *   `NO_WORKER_ERROR`.
  * - **Stalled** — a started `queued`/`running` row that
  *   1. has had no activity (latest event, else `started_at`) for
  *      `olderThanMs`, AND
@@ -354,6 +371,7 @@ export async function reconcileStaleRuns(
     .in("status", [...SETTLEABLE_STATUSES])
   if (error) throw new Error(`reconcileStaleRuns: ${error.message}`)
   let failed = 0
+  let workerActive: boolean | undefined
   for (const row of data ?? []) {
     const last = await latestEvent(db, row.id, userId)
     let settleError: string
@@ -361,6 +379,9 @@ export async function reconcileStaleRuns(
       const queuedAt = row.created_at ?? row.started_at
       if (!queuedAt || nowMs - new Date(queuedAt).getTime() <= noWorkerMs) continue
       if (await hasLeasedJob(db, row.id, userId, nowMs)) continue
+      // Probed once per reconcile pass, lazily — most passes never get here.
+      workerActive ??= await taskWorkerActiveWithin(db, noWorkerMs)
+      if (workerActive) continue
       settleError = NO_WORKER_ERROR
     } else {
       const ref = last?.createdAt ?? row.started_at

@@ -167,7 +167,7 @@ SQL lives under `supabase/migrations/` as numbered files applied in order (`0001
 `0034_task_write_hardening.sql`, `0035_task_schedule_limits.sql`,
 `0036_task_job_stale_lease_backfill.sql`,
 `0037_validate_artifacts_kind_check.sql`, `0038_mcp_pgcrypto_schema.sql`,
-`0039_mcp_upsert_foreign_id.sql`) — see `docs/SUPABASE_SETUP.md`
+`0039_mcp_upsert_foreign_id.sql`, `0040_task_worker_liveness.sql`) — see `docs/SUPABASE_SETUP.md`
 for the hosted-cloud run order, or `docs/SUPABASE_LOCAL.md` for the
 local Supabase CLI path (Docker-based, no cloud account needed). For
 verifying the file full-text retrieval pipeline end-to-end after
@@ -274,9 +274,9 @@ asyncpg · structlog · pytest · ruff · mypy.
 | `services/agent-py/src/agent_py/emitter.py` | RunEmitter — monotonic seq, settle-once. |
 | `services/agent-py/src/agent_py/store.py` | RunStore — `append_event` (idempotent on `(task_id, seq)`), `update_run`, `set_task_handler` (`metadata.handler = 'python'`), `is_run_cancelled`. |
 | `services/agent-py/src/agent_py/runner.py` | `run_agent_loop` — pure orchestration with injected RunStepFn. |
-| `services/agent-py/src/agent_py/feature_flag.py` | Per-user **opt-out** — `auth.users.raw_app_meta_data->>'agent_backend'` absent / `'python'` → Python executes; any other value → opted out (job released). DB error → unknown → release + retry. |
+| `services/agent-py/src/agent_py/feature_flag.py` | Per-user **opt-out** — `auth.users.raw_app_meta_data->>'agent_backend'` absent / `'python'` → Python executes; any other value → opted out (job + task failed up front). DB error → unknown → release + retry. |
 | `services/agent-py/src/agent_py/executor.py` | `execute_start` — stamps handler, runs loop, updates task row terminal. Step fn is a Phase 2a stub; Phase 2b swaps in the real model call. |
-| `services/agent-py/src/agent_py/poller.py` | Async tick loop. Dispatch tree: dry-run → release; live + opted-out user → release; live + task already terminal → job done, no run; live otherwise → execute `start` / `continue` / `respond` under a heartbeated lease, then mark_done/failed. |
+| `services/agent-py/src/agent_py/poller.py` | Async tick loop. Dispatch tree: dry-run → release; live + opted-out user → fail job + task; live + task already terminal → job done, no run; live otherwise → execute `start` / `continue` / `respond` under a heartbeated lease, then mark_done/failed. |
 | `services/agent-py/tests/` | 62 tests covering health + auth (Phase 0) + db / jobs / poller dry-run (Phase 1) + events / emitter / runner / feature_flag / executor / poller live-mode dispatch (Phase 2a). |
 | `services/agent-py/Dockerfile` | Multi-stage uv build, slim runtime, non-root user. Build context is the **repo root** (`docker build -f services/agent-py/Dockerfile .`) so the image ships `config/models.json`. |
 | `docker-compose.yml` (repo root) | Spins up the agent service alongside `bun dev`. |
@@ -296,13 +296,16 @@ them. With it `false`, Python runs **every** user's tasks unless the
 user is opted out via `auth.users.raw_app_meta_data->>'agent_backend'`
 (app metadata — service-role only; `raw_user_meta_data` is
 user-writable and ignored). Absent or `'python'` → executed; any other
-value (e.g. `'off'`) → released, never run. To opt a user out:
+value (e.g. `'off'`) → the job and task are failed up front ("Background
+tasks are disabled for this account"). To opt a user out:
 `UPDATE auth.users SET raw_app_meta_data = COALESCE(raw_app_meta_data,
 '{}'::jsonb) || '{"agent_backend":"off"}'::jsonb WHERE id = '<uuid>';`
 (undo: `raw_app_meta_data - 'agent_backend'`). Safety net: the Next.js
 stale-run reconciler (`lib/server/agent/store.ts`) fails a task still
 `queued` and never started after `TASK_NO_WORKER_TIMEOUT_MINUTES`
-(default 10) with "No task worker available". The service reads the
+(default 10) with "No task worker available" — but only when no worker
+has executed anything in that window (`task_worker_active_within`,
+migration 0040), so a busy worker's backlog waits instead. The service reads the
 same top-level `.env` as Next.js.
 
 **Model allowlist (agent-py + agent-ts):** both services accept only the

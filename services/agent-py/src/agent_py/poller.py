@@ -14,8 +14,9 @@ On each tick:
        executor while heartbeating the job's lease; settle the job
        done / failed when it returns (`_execute_claimed`).
      - `WORKER_DRY_RUN=False` + user opted out (`feature_flag.py`) →
-       release. Nothing else executes it; the stale-run reconciler
-       fails the task once it has waited too long.
+       fail the job and its task right away with `OPTED_OUT_ERROR`.
+       Nothing else executes it, and releasing it would only re-claim
+       it forever. (A failed flag lookup still releases + retries.)
 
 Lease + settlement (migration 0032): a claim holds a lease that a
 heartbeat task extends every `JOB_HEARTBEAT_SECONDS` while the executor
@@ -68,6 +69,14 @@ from .jobs import ClaimedJob, JobTaskState
 from .settings import Settings
 
 logger = structlog.get_logger(__name__)
+
+# Shown to the user when their account is opted out of the Python task
+# runner (`raw_app_meta_data->>'agent_backend'` set to anything but
+# 'python'). No other executor exists, so the run fails up front.
+OPTED_OUT_ERROR = (
+    "Background tasks are disabled for this account. "
+    "Contact the administrator if you think this is a mistake."
+)
 
 # Sleep is parameterised so tests can inject a fake clock without
 # touching asyncio internals.
@@ -290,12 +299,35 @@ async def _tick(settings: Settings) -> None:
     # Live mode. Python executes every user's jobs unless the user is
     # opted out (`auth.users.raw_app_meta_data->>'agent_backend'` set to
     # anything but 'python' — app metadata, only the service role can
-    # write it); see `feature_flag.py`. An opted-out user's job is
-    # released: nothing else executes it, so the stale-run reconciler
-    # fails its task ("no task worker available") once it has waited
-    # long enough. A failed lookup releases too (retried after backoff)
-    # rather than risk overriding an opt-out.
+    # write it); see `feature_flag.py`. Nothing else executes an
+    # opted-out user's job, so it is failed now with a clear error
+    # rather than released (a release would be re-claimed forever, and
+    # an executing worker elsewhere keeps the TS no-worker safety net
+    # from firing). A failed lookup (`None`) releases instead (retried
+    # after backoff) rather than risk overriding an opt-out — or
+    # failing a run over a transient DB error.
     executes = await feature_flag.python_executes_for_user(pool, job.user_id)
+    if executes is False:
+        failed = await jobs.mark_job_failed(
+            pool, job.id, error="user_opted_out", attempts=job.attempts
+        )
+        settled = False
+        if failed:
+            settled = await executor.settle_stranded_task(
+                pool,
+                task_id=job.task_id,
+                user_id=job.user_id,
+                job_id=job.id,
+                error=OPTED_OUT_ERROR,
+            )
+        logger.info(
+            "poller.opted_out_failed",
+            job_id=job.id,
+            task_id=job.task_id,
+            job_failed=failed,
+            task_settled=settled,
+        )
+        return
     if not executes:
         released = await jobs.release_job_to_queue(pool, job.id)
         logger.info(

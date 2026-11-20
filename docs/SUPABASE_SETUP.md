@@ -228,6 +228,13 @@ order. Every migration has a unique numeric prefix (CI enforces this via
     (`mcp_server_id_conflict`) when the server id belongs to another
     user instead of silently writing nothing, and `P0002` for a foreign
     workspace; `/api/mcp/server` answers 409 / 404. Idempotent.
+- `supabase/migrations/0040_task_worker_liveness.sql`
+  - `task_worker_active_within(p_seconds)` (SECURITY DEFINER, returns a
+    boolean only): true when any task worker holds a live lease or
+    finished a job in the window. The stale-run reconciler checks it
+    before failing a never-started run as "No task worker available",
+    so a busy worker's backlog isn't failed. Adds an index on
+    `task_jobs(updated_at)`. Idempotent.
 
 ### Migration 0018 collision (renamed to `0033_message_generated_files.sql`)
 

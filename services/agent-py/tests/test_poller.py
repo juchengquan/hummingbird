@@ -6,7 +6,8 @@ supported-action filter.
 
 The dispatch decision tree on each `_tick` (with pool + job):
   1. dry-run mode → release
-  2. live mode + user opted out (or flag lookup failed) → release
+  2. live mode + user opted out → fail job + task (OPTED_OUT_ERROR);
+     flag lookup failed → release
   3. live mode + action not start/continue/respond → release
   4. live mode + task already terminal → settle the job done, no run
   5. live mode otherwise → execute, mark_done/failed
@@ -98,10 +99,45 @@ async def test_dry_run_always_releases(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("executes", "reason"), [(False, "user_opted_out"), (None, "flag_lookup_failed")]
-)
-async def test_live_mode_opted_out_or_unknown_user_releases(
+async def test_live_mode_opted_out_user_fails_job_and_task(live_settings: Settings) -> None:
+    """Nothing else executes an opted-out user's job: it's failed (fenced
+    on the claim's attempts) and its task settled with OPTED_OUT_ERROR —
+    never released, which would re-claim it forever."""
+    job = _make_job()
+    db._pool = MagicMock()
+    try:
+        with (
+            patch.object(jobs, "claim_next_job", new=AsyncMock(return_value=job)),
+            patch.object(jobs, "release_job_to_queue", new=AsyncMock()) as release,
+            patch.object(jobs, "mark_job_failed", new=AsyncMock(return_value=True)) as mark_failed,
+            patch.object(
+                feature_flag, "python_executes_for_user", new=AsyncMock(return_value=False)
+            ),
+            patch.object(
+                executor, "settle_stranded_task", new=AsyncMock(return_value=True)
+            ) as settle,
+            patch.object(executor, "execute_start", new=AsyncMock()) as execute,
+        ):
+            await poller._tick(live_settings)
+            release.assert_not_called()
+            execute.assert_not_called()
+            mark_failed.assert_awaited_once_with(
+                db._pool, job.id, error="user_opted_out", attempts=job.attempts
+            )
+            settle.assert_awaited_once_with(
+                db._pool,
+                task_id=job.task_id,
+                user_id=job.user_id,
+                job_id=job.id,
+                error=poller.OPTED_OUT_ERROR,
+            )
+    finally:
+        db._pool = None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("executes", "reason"), [(None, "flag_lookup_failed")])
+async def test_live_mode_unknown_user_releases(
     live_settings: Settings, executes: bool | None, reason: str
 ) -> None:
     job = _make_job()

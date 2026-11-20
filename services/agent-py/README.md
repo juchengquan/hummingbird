@@ -39,7 +39,8 @@ full phased plan.
   terminal, returns `ExecutorOutcome(settled, error)`.
 - **Poller** extended: live mode (`WORKER_DRY_RUN=false`) → dispatch
   to the executor and `mark_job_done` / `mark_job_failed`, unless the
-  user opted out (see "Who executes tasks" below) → release.
+  user opted out (see "Who executes tasks" below) → the job and task
+  are failed up front with a clear error.
 - **Tests**: 62 total (+35 vs Phase 1) covering event IR / emitter
   invariants / runner control flow / feature-flag shapes / executor
   happy/cancel/error paths / poller dispatch decision tree.
@@ -228,16 +229,23 @@ WHERE id = '<user-uuid>';
 
 The poller reads the flag on every claim; no restart needed.
 
-**Safety net.** A task no worker ever starts (opted-out user, agent-py
-down or still in dry-run) would otherwise sit `queued` forever: a
-release refunds the claim's attempt, so its job always looks claimable.
-The Next.js stale-run reconciler (`reconcileStaleRuns` in
+**Opted-out users.** Nothing else executes their jobs, so the poller
+fails the job (fenced on the claim's attempts) and settles the task
+failed with "Background tasks are disabled for this account…" instead
+of releasing it — a release would be re-claimed forever.
+
+**Safety net.** A task no worker ever starts (agent-py down or still in
+dry-run) would otherwise sit `queued` forever: a dry-run release refunds
+the claim's attempt, so its job always looks claimable. The Next.js
+stale-run reconciler (`reconcileStaleRuns` in
 `lib/server/agent/store.ts`, run by `/api/tasks/sweep` and the task
 stream) fails a task that is still `queued`, has no event past the
 route's `status: queued` marker, is older than
-`TASK_NO_WORKER_TIMEOUT_MINUTES` (default 10) and has no job under a
-live lease, with "No task worker available…". A job claimed later for
-a task that is already terminal is settled done without running.
+`TASK_NO_WORKER_TIMEOUT_MINUTES` (default 10), has no job under a live
+lease, AND no worker has executed anything in that window
+(`task_worker_active_within`, migration 0040) — with "No task worker
+available…". A busy worker's backlog keeps waiting. A job claimed later
+for a task that is already terminal is settled done without running.
 
 ## What ships next (Phase 2b)
 

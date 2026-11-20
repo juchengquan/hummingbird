@@ -1444,6 +1444,12 @@ export type Database = {
           rank: number
         }[]
       }
+      task_worker_active_within: {
+        Args: {
+          p_seconds: number
+        }
+        Returns: boolean
+      }
     }
     Enums: {
       [_ in never]: never
