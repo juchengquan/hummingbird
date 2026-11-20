@@ -159,13 +159,17 @@ class UpsertResult:
     """Discriminated return for `upsert_server_with_credentials`.
     `ok=True` on success; `error` carries a short reason on failure
     so the route can pick the right HTTP status (`encryption_key_unset`
-    → 500, anything else → 502)."""
+    → 500, anything else → 502). `code` is the Postgres SQLSTATE when
+    the RPC raised one — 0039 raises `23505` for a server id owned by
+    another user (→ 409) and `P0002` for a workspace that isn't the
+    caller's (→ 404), matching `upsertFailureStatus` in Next."""
 
-    __slots__ = ("error", "ok")
+    __slots__ = ("code", "error", "ok")
 
-    def __init__(self, ok: bool, error: str | None = None) -> None:
+    def __init__(self, ok: bool, error: str | None = None, code: str | None = None) -> None:
         self.ok = ok
         self.error = error
+        self.code = code
 
 
 async def upsert_server_with_credentials(
@@ -222,7 +226,12 @@ async def upsert_server_with_credentials(
             server_id=server_id,
             error=str(exc),
         )
-        return UpsertResult(ok=False, error=str(exc) or "upsert_failed")
+        sqlstate = getattr(exc, "sqlstate", None)
+        return UpsertResult(
+            ok=False,
+            error=str(exc) or "upsert_failed",
+            code=sqlstate if isinstance(sqlstate, str) else None,
+        )
     return UpsertResult(ok=True)
 
 

@@ -523,6 +523,26 @@ def test_mcp_server_upsert_502_on_other_rpc_failure(client: TestClient) -> None:
     assert "security" in r.json()["detail"]["message"]
 
 
+def test_mcp_server_upsert_maps_foreign_id_and_workspace(client: TestClient) -> None:
+    """0039 SQLSTATEs map like the Next route: 23505 → 409, P0002 → 404."""
+    for code, expected_status, expected_code in (
+        ("23505", 409, "mcp_server_id_conflict"),
+        ("P0002", 404, "workspace_not_found"),
+    ):
+        with (
+            patch.object(mcp_router, "has_pool", return_value=True),
+            patch.object(mcp_router, "get_pool", return_value=AsyncMock()),
+            patch.object(
+                mcp_router,
+                "upsert_server_with_credentials",
+                new=AsyncMock(return_value=UpsertResult(ok=False, error="x", code=code)),
+            ),
+        ):
+            r = client.post("/v1/mcp/server", json=_upsert_body(), headers=_auth())
+        assert r.status_code == expected_status
+        assert r.json()["detail"]["code"] == expected_code
+
+
 def test_mcp_server_upsert_happy_path_calls_rpc_with_decoded_credential(
     client: TestClient,
 ) -> None:

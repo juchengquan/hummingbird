@@ -167,6 +167,10 @@ export interface UpsertResult {
    *  (clear misconfig signal). Any other string → 502 (RPC failure
    *  — usually an RLS violation or constraint check). */
   error?: string
+  /** Postgres SQLSTATE when the RPC raised one. 0039 raises `23505`
+   *  for a server id owned by another user (→ 409) and `P0002` for a
+   *  workspace that isn't the caller's (→ 404). */
+  code?: string
 }
 
 /** Insert or update a cloud-mode MCP server row + its encrypted
@@ -208,6 +212,14 @@ export async function upsertServerWithCredentials(
   } catch (err) {
     // Surface the error message for triage but never the key / row.
     // The transaction rolled back automatically — no partial write.
-    return { ok: false, error: err instanceof Error ? err.message : "upsert_failed" }
+    const code =
+      err && typeof err === "object" && typeof (err as { code?: unknown }).code === "string"
+        ? (err as { code: string }).code
+        : undefined
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "upsert_failed",
+      ...(code ? { code } : {}),
+    }
   }
 }

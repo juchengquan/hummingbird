@@ -175,6 +175,22 @@ async def mcp_server_upsert(
                     "message": "MCP_ENCRYPTION_KEY is not configured.",
                 },
             )
+        # 0039: a foreign server id / foreign workspace raise distinct
+        # SQLSTATEs — same 409 / 404 mapping as the Next route
+        # (`upsertFailureStatus`), with generic messages.
+        if result.code == "23505":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "mcp_server_id_conflict",
+                    "message": "That server id is already in use.",
+                },
+            )
+        if result.code == "P0002":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "workspace_not_found", "message": "Workspace not found."},
+            )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={
