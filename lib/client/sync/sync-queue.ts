@@ -16,10 +16,15 @@ import "client-only"
  * - Ops are tagged with `clientOpId` (a UUID assigned at enqueue) for
  *   logging. The DB row PK is whatever the handler picks (typically the
  *   entity id from the Zustand store).
+ * - Ops are stamped with `ownerUserId` (the signed-in user at enqueue).
+ *   The flush only replays ops owned by the CURRENT user and drops the
+ *   rest, so on a shared machine user A's unflushed edits can never be
+ *   written into user B's account. See `pruneForeignOps`.
  */
 
 import type { AppSupabaseClient } from "@/client/supabase/client"
 import { uuid } from "@/shared/uuid"
+import { getLocalDataOwner } from "@/client/sync/sync-owner"
 
 const STORAGE_KEY = "hummingbird-sync-queue"
 const MAX_BACKOFF_MS = 60_000
@@ -34,6 +39,9 @@ export type SyncOp =
       /** Row to send to .upsert(). user_id MUST be present. */
       row: Record<string, unknown>
       attempts?: number
+      /** User id that produced this op (see header). Absent only on ops
+       *  persisted by builds that predate owner stamping. */
+      ownerUserId?: string
     }
   | {
       kind: "delete"
@@ -42,6 +50,9 @@ export type SyncOp =
       /** Row identifier. Most tables key on `id`. */
       where: { column: string; value: string }
       attempts?: number
+      /** User id that produced this op (see header). Absent only on ops
+       *  persisted by builds that predate owner stamping. */
+      ownerUserId?: string
     }
   | {
       kind: "deleteMany"
@@ -50,6 +61,9 @@ export type SyncOp =
       /** Used for cascades where Postgres's ON DELETE doesn't quite match. */
       filters: Array<{ column: string; value: string | string[] }>
       attempts?: number
+      /** User id that produced this op (see header). Absent only on ops
+       *  persisted by builds that predate owner stamping. */
+      ownerUserId?: string
     }
 
 export type SyncTarget =
@@ -71,6 +85,13 @@ export type SyncTarget =
   | "prompts"
   | "project_tasks"
 
+/** A SyncOp before the queue assigns its `clientOpId` (distributes over
+ *  the union so each variant keeps its own fields). */
+type WithoutClientOpId<T> = T extends unknown
+  ? Omit<T, "clientOpId"> & { clientOpId?: string }
+  : never
+export type NewSyncOp = WithoutClientOpId<SyncOp>
+
 interface QueueState {
   ops: SyncOp[]
   /** Wall-clock ms timestamp at which the next attempt is allowed. */
@@ -79,12 +100,24 @@ interface QueueState {
 
 // In-memory state. Persists to localStorage on every change.
 let state: QueueState = { ops: [], notBefore: 0 }
+
+/**
+ * Ops that flushed successfully, newest last, tagged with a monotonic
+ * sequence number. In-memory only (bounded). Lets a cloud pull that was
+ * fetched BEFORE an op flushed still treat that op as "local is ahead"
+ * — otherwise a delete that lands while the snapshot request is in
+ * flight would be resurrected by the (now stale) snapshot.
+ */
+const FLUSHED_JOURNAL_CAP = 500
+let flushSeq = 0
+let flushedJournal: Array<{ seq: number; op: SyncOp }> = []
 let flushing = false
 let scheduled: ReturnType<typeof setTimeout> | null = null
 
 let client: AppSupabaseClient | null = null
 let userId: string | null = null
-let online = typeof navigator !== "undefined" ? navigator.onLine : true
+// `!== false`: runtimes without `navigator.onLine` (bun test) count as online.
+let online = typeof navigator !== "undefined" ? navigator.onLine !== false : true
 let initialized = false
 
 // -- persistence -------------------------------------------------------------
@@ -95,12 +128,54 @@ function load(): void {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return
     const parsed = JSON.parse(raw) as Partial<QueueState>
-    if (Array.isArray(parsed.ops)) state.ops = parsed.ops as SyncOp[]
+    if (Array.isArray(parsed.ops)) {
+      state.ops = attributeLegacyOps(parsed.ops as SyncOp[], getLocalDataOwner())
+    }
     if (typeof parsed.notBefore === "number") state.notBefore = parsed.notBefore
   } catch {
     // Corrupt queue — discard rather than blocking forever.
     state = { ops: [], notBefore: 0 }
   }
+}
+
+/**
+ * Ops persisted before owner stamping carry no `ownerUserId`. Attribute
+ * them to the device's known local-data owner when that is unambiguous
+ * (an explicit owner record, or exactly one account ever reconciled
+ * here — ops are only produced while signed in, so they can only be
+ * that account's). Otherwise leave them unowned: `pruneForeignOps`
+ * drops unowned ops, because replaying a write under the wrong account
+ * (a cross-account data leak) is worse than losing an unflushed edit
+ * that is still present in the local store.
+ *
+ * Exported for tests.
+ */
+export function attributeLegacyOps(
+  ops: SyncOp[],
+  legacyOwner: string | null
+): SyncOp[] {
+  if (!legacyOwner) return ops
+  return ops.map((op) =>
+    op.ownerUserId ? op : ({ ...op, ownerUserId: legacyOwner } as SyncOp)
+  )
+}
+
+/**
+ * Drops every queued op that doesn't belong to the current user
+ * (including unowned legacy ops). No-op while signed out — ops wait for
+ * their owner (or get cleared by sign-out).
+ */
+function pruneForeignOps(): void {
+  if (!userId) return
+  const before = state.ops.length
+  const kept = state.ops.filter((op) => op.ownerUserId === userId)
+  if (kept.length === before) return
+  console.warn(
+    `[sync] dropping ${before - kept.length} queued op(s) that belong to another account`
+  )
+  state.ops = kept
+  state.notBefore = 0
+  persist()
 }
 
 function persist(): void {
@@ -140,11 +215,18 @@ async function flush(): Promise<void> {
   flushing = true
   try {
     while (state.ops.length > 0 && gateOpen()) {
+      pruneForeignOps()
+      if (state.ops.length === 0) break
       const op = state.ops[0]
       const result = await runOp(op)
+      // The queue may have been reset (sign-out) or pruned (user switch)
+      // while the request was in flight. Only settle the op we ran, and
+      // only if it's still at the head; otherwise re-evaluate.
+      if (state.ops[0] !== op) continue
       if (result === "ok") {
         state.ops.shift()
         state.notBefore = 0
+        recordFlushed(op)
         persist()
         continue
       }
@@ -178,8 +260,18 @@ async function flush(): Promise<void> {
 
 type OpResult = "ok" | "retry" | "drop"
 
+function recordFlushed(op: SyncOp): void {
+  flushSeq += 1
+  flushedJournal.push({ seq: flushSeq, op })
+  if (flushedJournal.length > FLUSHED_JOURNAL_CAP) {
+    flushedJournal = flushedJournal.slice(-FLUSHED_JOURNAL_CAP)
+  }
+}
+
 async function runOp(op: SyncOp): Promise<OpResult> {
   if (!client || !userId) return "retry"
+  // Belt-and-braces: never write another account's op under this session.
+  if (op.ownerUserId !== userId) return "drop"
   try {
     if (op.kind === "upsert") {
       const row = { ...op.row, user_id: userId }
@@ -255,19 +347,51 @@ export function configureSync(opts: {
   ensureInit()
   client = opts.client
   userId = opts.userId
+  pruneForeignOps()
   if (gateOpen()) scheduleFlush()
 }
 
-export function enqueue(op: Omit<SyncOp, "clientOpId"> & { clientOpId?: string }): void {
+/**
+ * Appends an op. `ownerUserId` defaults to the user the queue is
+ * currently configured for (producers only enqueue while signed in).
+ */
+export function enqueue(op: NewSyncOp): void {
   ensureInit()
   const clientOpId = op.clientOpId ?? cryptoRandomId()
-  state.ops.push({ ...op, clientOpId } as SyncOp)
+  const ownerUserId = op.ownerUserId ?? userId ?? undefined
+  state.ops.push({ ...op, clientOpId, ownerUserId } as SyncOp)
   persist()
   scheduleFlush()
 }
 
 export function pendingOpCount(): number {
   return state.ops.length
+}
+
+/**
+ * Opaque marker for `pendingOpsFor(..., { since })`. Take it right
+ * before fetching a cloud snapshot.
+ */
+export function syncQueueMark(): number {
+  return flushSeq
+}
+
+/**
+ * Ops owned by `ownerUserId` whose effect the cloud may not reflect yet:
+ * everything still queued, plus (when `since` is given) ops that flushed
+ * after that mark — a snapshot fetched before them is stale for those
+ * rows. Queue order is preserved (flushed ops first, they're older).
+ */
+export function pendingOpsFor(
+  ownerUserId: string,
+  opts: { since?: number } = {}
+): SyncOp[] {
+  ensureInit()
+  const flushed =
+    opts.since === undefined
+      ? []
+      : flushedJournal.filter((e) => e.seq > opts.since!).map((e) => e.op)
+  return [...flushed, ...state.ops].filter((op) => op.ownerUserId === ownerUserId)
 }
 
 /**
@@ -293,9 +417,14 @@ export function whenDrained(timeoutMs = 30_000): Promise<void> {
   })
 }
 
-/** For tests / hard resets. Drops every pending op. */
+/** Sign-out / tests / hard resets. Drops every pending op. */
 export function resetSyncQueue(): void {
+  if (scheduled !== null) {
+    clearTimeout(scheduled)
+    scheduled = null
+  }
   state = { ops: [], notBefore: 0 }
+  flushedJournal = []
   persist()
 }
 
