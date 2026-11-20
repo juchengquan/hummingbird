@@ -11,11 +11,15 @@
  *   1. `X-MCP-Credentials` header (local-mode — base64-JSON).
  *   2. Cloud-mode fallback when no header — looks up the server row by
  *      id under per-user RLS impersonation, decrypts the cred via the
- *      SECURITY DEFINER RPC.
+ *      SECURITY DEFINER RPC. The row's URL then replaces the body's —
+ *      a stored credential is only ever sent to the stored URL.
  *
- * If neither produces a credential and the upstream MCP server
- * actually requires auth, the call fails upstream and the proxy
- * surfaces it as 502 — same as agent-py / Next.js.
+ * Every effective URL clears the MCP anti-SSRF policy
+ * (`@/server/mcp/outbound`; 400 `mcp_url_blocked`). If neither path
+ * produces a credential and the upstream MCP server actually requires
+ * auth, the call fails upstream and the proxy surfaces a generic
+ * 502 `mcp_upstream_error` (details are logged, never echoed) — same
+ * as Next.js.
  *
  * The MCP client itself (`@/server/mcp/client`) is reused directly;
  * `bunfig` / CLI `--conditions=react-server` makes the `server-only`
@@ -26,12 +30,14 @@ import { Hono } from "hono"
 import { z } from "zod"
 
 import { callTool, discover, readResource } from "@/server/mcp/client"
+import { McpUrlBlockedError, validateMcpServerUrl } from "@/server/mcp/outbound"
 import type { McpServer } from "@/shared/types"
 
 import { hasPool, getPool } from "../db"
 import {
-  fetchDecryptedCredentials,
+  fetchCloudServer,
   upsertServerWithCredentials,
+  type CloudMcpServer,
   type McpCredentials,
 } from "../mcp"
 import type { AuthVars } from "../middleware/auth"
@@ -78,6 +84,23 @@ const ServerUpsertSchema = z.object({
 
 const VALID_ACTIONS = new Set(["discover", "call", "read"] as const)
 
+type CloudServerLookup = (args: {
+  userId: string
+  serverId: string
+}) => Promise<CloudMcpServer | null>
+
+const defaultCloudServerLookup: CloudServerLookup = async (args) =>
+  hasPool() ? fetchCloudServer(getPool(), args) : null
+
+let cloudServerLookup: CloudServerLookup = defaultCloudServerLookup
+
+/** Test seam — swap the cloud-mode row lookup (normally an RLS-scoped
+ *  Postgres query) so tests can exercise the DB-URL enforcement
+ *  without a database. Pass null to restore the default. */
+export function _setCloudServerLookupForTest(fn: CloudServerLookup | null): void {
+  cloudServerLookup = fn ?? defaultCloudServerLookup
+}
+
 export const mcpProxyRoutes = new Hono<{ Variables: AuthVars }>()
 
 /** `POST /v1/mcp/server` — write/update a cloud-mode MCP server +
@@ -105,6 +128,23 @@ mcpProxyRoutes.post("/v1/mcp/server", requireAuth, async (c) => {
         message: parsed.error.issues[0]?.message ?? "Invalid request body.",
       },
       422,
+    )
+  }
+
+  // Anti-SSRF: reject unsafe endpoints at save time so a blocked URL
+  // never lands in `mcp_servers`. (Rows can still be edited directly
+  // under RLS, so the proxy re-validates on every use too.) Same
+  // policy as `app/api/mcp/server/route.ts` — private hosts only with
+  // `MCP_ALLOW_PRIVATE_HOSTS=true`.
+  const urlCheck = await validateMcpServerUrl(parsed.data.url)
+  if (!urlCheck.ok) {
+    return c.json(
+      {
+        code: "mcp_url_blocked",
+        message: "MCP server URL is not allowed.",
+        detail: urlCheck.error.code,
+      },
+      400,
     )
   }
 
@@ -185,25 +225,58 @@ mcpProxyRoutes.post(
       )
     }
 
+    // Per-action required fields — checked before any DB lookup or
+    // DNS-resolving URL validation.
+    const tool = parsed.data.tool ?? ""
+    const uri = parsed.data.uri ?? ""
+    if (action === "call" && !tool) {
+      return c.json({ error: "invalid_body", detail: "`tool` required." }, 400)
+    }
+    if (action === "read" && !uri) {
+      return c.json({ error: "invalid_body", detail: "`uri` required." }, 400)
+    }
+
     let credentials: McpCredentials | undefined =
       decodeCredentialHeader(c.req.header("x-mcp-credentials")) ?? undefined
+    let serverName = parsed.data.server.name
+    let serverUrl = parsed.data.server.url
 
-    if (!credentials && hasPool()) {
+    // Cloud-mode fallback when the header didn't supply a credential.
+    // When the caller owns a cloud-mode row for this id, the row's
+    // url/name REPLACE the body's: decrypted cloud credentials must
+    // only ever go to the URL the user stored, never to an arbitrary
+    // URL in the request body (otherwise any caller could exfiltrate
+    // the stored secret to a server they control). Mirrors agent-py's
+    // `fetch_cloud_server` path and the in-Next `cloudServerOverride`.
+    if (!credentials) {
       const claims = c.get("claims")
       const userId = typeof claims.sub === "string" ? claims.sub : ""
       if (userId) {
-        const cloud = await fetchDecryptedCredentials(getPool(), {
-          userId,
-          serverId,
-        })
-        if (cloud) credentials = cloud
+        const cloud = await cloudServerLookup({ userId, serverId })
+        if (cloud) {
+          serverName = cloud.name
+          serverUrl = cloud.url
+          credentials = cloud.credentials ?? undefined
+        }
       }
+    }
+
+    // Anti-SSRF: validate the effective URL (body for local mode, the
+    // user-editable DB row for cloud mode) before any outbound
+    // request. The MCP client wrapper re-checks, but rejecting here
+    // gives a clean 400 instead of an upstream error.
+    const urlCheck = await validateMcpServerUrl(serverUrl)
+    if (!urlCheck.ok) {
+      return c.json(
+        { error: "mcp_url_blocked", detail: urlCheck.error.code },
+        400,
+      )
     }
 
     const endpoint: Pick<McpServer, "id" | "name" | "url" | "transport"> = {
       id: serverId,
-      name: parsed.data.server.name,
-      url: parsed.data.server.url,
+      name: serverName,
+      url: serverUrl,
       transport: "http",
     }
 
@@ -213,34 +286,38 @@ mcpProxyRoutes.post(
         return c.json({ capabilities })
       }
       if (action === "call") {
-        if (!parsed.data.tool) {
-          return c.json(
-            { error: "invalid_body", detail: "`tool` required." },
-            400,
-          )
-        }
         const result = await callTool(
           endpoint as McpServer,
           credentials,
-          parsed.data.tool,
+          tool,
           parsed.data.input,
         )
         return c.json({ result })
       }
       // action === "read"
-      if (!parsed.data.uri) {
-        return c.json({ error: "invalid_body", detail: "`uri` required." }, 400)
-      }
       const result = await readResource(
         endpoint as McpServer,
         credentials,
-        parsed.data.uri,
+        uri,
       )
       return c.json({ result })
     } catch (err) {
-      // Never include credentials in the error response.
-      const message = err instanceof Error ? err.message : String(err)
-      return c.json({ error: "mcp_call_failed", message }, 502)
+      if (err instanceof McpUrlBlockedError) {
+        return c.json(
+          { error: "mcp_url_blocked", detail: err.validation.code },
+          400,
+        )
+      }
+      // Never echo the upstream error: the MCP SDK embeds non-2xx
+      // response bodies in its error messages, which would turn this
+      // proxy into a response-reflecting fetcher. Log server-side only
+      // (never the credential object). Mirrors the in-Next route.
+      console.error("[mcp-proxy] upstream call failed", {
+        serverId,
+        action,
+        message: err instanceof Error ? err.message : String(err),
+      })
+      return c.json({ error: "mcp_upstream_error" }, 502)
     }
   },
 )

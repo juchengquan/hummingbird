@@ -1,0 +1,36 @@
+# Applies to every image built with the REPO ROOT as context
+# (services/agent-ts/Dockerfile, docker/runcode-python.Dockerfile).
+# agent-py builds with services/agent-py/ as its context and is
+# unaffected.
+
+# Secrets — never send env files or local credentials to the daemon.
+**/.env
+**/.env.*
+*.pem
+.vercel
+
+# Dependencies — images install their own from the lockfiles.
+**/node_modules
+
+# Build output / caches.
+.next
+out
+build
+coverage
+*.tsbuildinfo
+next-env.d.ts
+**/__pycache__
+**/.venv
+**/.mypy_cache
+**/.pytest_cache
+**/.ruff_cache
+
+# VCS, agent + editor state, local Supabase CLI state.
+.git
+.github
+.claude
+.docker
+.documents
+supabase/.branches
+supabase/.temp
+.DS_Store
