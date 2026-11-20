@@ -157,8 +157,16 @@ errors:
       documents. Best-effort backfills existing rows to the user's
       first workspace, then sets the column `not null`. Idempotent.
       (Renamed from a `0012` that collided with `0012_tasks`; see #80.)
+18. Every later file (`0018_…` onward), in numerical order. Of note:
+    - `supabase/migrations/0031_rls_fk_ownership.sql` — adds a
+      RESTRICTIVE `<table>: fk ownership (insert|update)` RLS policy
+      per user-data table so every foreign key (conversation, document,
+      workspace, file, task, …) must point at a row the caller owns;
+      also hardens `mcp_upsert_server_with_credentials` (workspace
+      ownership check + correct local→cloud promotion). Creates a
+      non-exposed `private` schema for one helper. Idempotent.
 
-After running all seventeen, sanity-check from the **Table Editor**:
+After running all of them, sanity-check from the **Table Editor**:
 twenty-one tables should be listed (`profiles`, `workspaces`,
 `conversations`, `messages`, `files`, `resources`, `conversation_files`,
 `artifacts`, `notes`, `prompts`, `shares`, `mcp_servers`,
