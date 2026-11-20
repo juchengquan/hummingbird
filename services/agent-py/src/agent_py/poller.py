@@ -39,10 +39,15 @@ task first (already settled? superseded by a later job? paused on the
 user?) — see there.
 
 Stopping:
-  - `main.py`'s lifespan sets the `stop` event: the loop finishes the
+  - On SIGTERM / SIGINT (`main.py` chains the server's signal handlers,
+    so this starts at once — not after the HTTP server has drained its
+    open SSE streams) the `stop` event is set: the loop finishes the
     in-flight job (if any) and exits without claiming another.
-  - If that takes longer than `SHUTDOWN_GRACE_SECONDS`, the lifespan
-    cancels the task; the in-flight job is handed back (above).
+  - If that takes longer than `SHUTDOWN_GRACE_SECONDS`, the task is
+    cancelled; the in-flight job is handed back (above).
+  - Only a real cancellation of the loop's task stops it: a stray
+    `CancelledError` leaked by a library is logged and the loop goes on
+    (`_cancel_requested`); inside a job it fails the job like any error.
 """
 
 from __future__ import annotations
@@ -151,13 +156,18 @@ async def run_poll_loop(
     while stop is None or not stop.is_set():
         try:
             await _tick(settings)
-        except asyncio.CancelledError:
-            logger.info("poller.cancelled", iterations=iterations)
-            raise
+        except asyncio.CancelledError as exc:
+            if _cancel_requested():
+                logger.info("poller.cancelled", iterations=iterations)
+                raise
+            # A library leaked a CancelledError nobody asked for — not a
+            # shutdown. Dying here would silently stop all task execution.
+            logger.error("poller.stray_cancelled_error", error=str(exc))
         except Exception as exc:
             # Loop must survive transient errors. Log with the
             # exception payload so monitoring catches it; sleep, retry.
             logger.error("poller.tick.failed", error=str(exc))
+        _liveness.last_tick_at = time.monotonic()
 
         iterations += 1
         if stop_after_iterations is not None and iterations >= stop_after_iterations:
@@ -166,11 +176,48 @@ async def run_poll_loop(
         try:
             await _sleep_unless_stopped(sleep, interval, stop)
         except asyncio.CancelledError:
-            logger.info("poller.cancelled", iterations=iterations)
-            raise
+            if _cancel_requested():
+                logger.info("poller.cancelled", iterations=iterations)
+                raise
+            logger.error("poller.stray_cancelled_error", where="sleep")
 
     logger.info("poller.stopped", iterations=iterations)
     return iterations
+
+
+def _cancel_requested() -> bool:
+    """True when the current task was actually cancelled (`task.cancel()`
+    — shutdown), as opposed to a `CancelledError` some library raised
+    on its own: only the former may stop the loop or hand a job back."""
+    task = asyncio.current_task()
+    return task is None or task.cancelling() > 0
+
+
+@dataclasses.dataclass
+class _Liveness:
+    task: asyncio.Task[int] | None = None
+    last_tick_at: float | None = None
+
+
+_liveness = _Liveness()
+
+
+def register_loop_task(task: asyncio.Task[int] | None) -> None:
+    """Record the running poll-loop task (`main.py`'s lifespan) so
+    `/readyz` can report whether it is still alive."""
+    _liveness.task = task
+    _liveness.last_tick_at = None
+
+
+def liveness() -> tuple[bool | None, float | None]:
+    """`(alive, seconds since the last completed tick)`. `alive` is None
+    when no loop was started (no `SUPABASE_DB_URL`, or tests); the age
+    is None before the first tick. A tick running a job lasts as long as
+    the job's chunk, so a large age alone isn't a failure."""
+    task = _liveness.task
+    alive = None if task is None else not task.done()
+    last = _liveness.last_tick_at
+    return alive, (None if last is None else max(0.0, time.monotonic() - last))
 
 
 async def _sleep_unless_stopped(
@@ -331,20 +378,34 @@ async def _execute_claimed(
             reason=exc.reason,
         )
         return
-    except asyncio.CancelledError:
-        # Shutdown grace ran out mid-run. Don't guess at an outcome —
-        # hand the job back so the next worker reclaims it right away
-        # and resumes from the task's persisted state. The task row is
-        # left as-is (still live).
-        heartbeat.cancel()
-        logger.warning(
-            "poller.job_interrupted",
-            job_id=job.id,
-            task_id=job.task_id,
-            action=job.action,
-        )
-        await _shielded(_hand_back(pool, job))
-        raise
+    except asyncio.CancelledError as exc:
+        if not _cancel_requested():
+            # Not a shutdown: a library leaked a CancelledError out of the
+            # run. Treat it like any error escaping the executor (handing
+            # the job back would refund the attempt and retry forever).
+            logger.error(
+                "poller.dispatch_stray_cancelled_error",
+                job_id=job.id,
+                task_id=job.task_id,
+                action=job.action,
+            )
+            settlement = _Settlement(
+                ok=False, error=f"CancelledError: {exc or 'stray cancellation'}", settle_task=True
+            )
+        else:
+            # Shutdown grace ran out mid-run. Don't guess at an outcome —
+            # hand the job back so the next worker reclaims it right away
+            # and resumes from the task's persisted state. The task row is
+            # left as-is (still live).
+            heartbeat.cancel()
+            logger.warning(
+                "poller.job_interrupted",
+                job_id=job.id,
+                task_id=job.task_id,
+                action=job.action,
+            )
+            await _shielded(_hand_back(pool, job))
+            raise
     except Exception as exc:
         logger.error(
             "poller.dispatch_raised",

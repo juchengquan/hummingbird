@@ -47,6 +47,10 @@ export interface paths {
          *     reports whether the Postgres pool is open (which is the closest
          *     we get to "Postgres reachable" without a per-request `SELECT 1`).
          *     Phase 2+ may add a `SELECT 1` if we see false-positive ready.
+         *
+         *     Also reports the task poller's liveness: `status` is `degraded` when
+         *     the poll loop was started and has since died (the HTTP API still
+         *     works, but no background task will run).
          */
         get: operations["readyz_readyz_get"];
         put?: never;
@@ -623,6 +627,10 @@ export interface components {
             jwt_secret_configured: boolean;
             /** Db Pool Open */
             db_pool_open: boolean;
+            /** Poller Alive */
+            poller_alive?: boolean | null;
+            /** Poller Last Tick Age Seconds */
+            poller_last_tick_age_seconds?: number | null;
         };
         /** ReadinessResponse */
         ReadinessResponse: {

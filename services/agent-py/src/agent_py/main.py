@@ -16,7 +16,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator
+import os
+import signal
+from collections.abc import AsyncIterator, Callable
+from types import FrameType
 
 import structlog
 from fastapi import FastAPI
@@ -53,6 +56,51 @@ async def stop_poller(task: asyncio.Task[int], stop: asyncio.Event, *, grace_s: 
         await task
 
 
+_SignalHandler = Callable[[int, FrameType | None], object] | int | signal.Handlers | None
+
+
+def install_shutdown_signal_hook(begin_shutdown: Callable[[], None]) -> Callable[[], None]:
+    """Start the poller's graceful stop the moment SIGTERM / SIGINT
+    arrives, then let the server's own handler run.
+
+    Without this the stop waits for the lifespan's shutdown half, which
+    uvicorn only runs after every open connection closed — a long-lived
+    SSE stream (/v1/chat) holds it past the container's stop timeout, so
+    the in-flight job was never handed back and its attempt burned on a
+    lapsed lease. The hook chains the handlers installed before it (the
+    server's), runs `begin_shutdown` on the event loop, and returns a
+    function that restores them. A no-op off the main thread (signal
+    handlers can only be set there — e.g. tests' in-thread lifespans)."""
+    loop = asyncio.get_running_loop()
+    previous: dict[int, _SignalHandler] = {}
+
+    def handler(signum: int, frame: FrameType | None) -> None:
+        loop.call_soon_threadsafe(begin_shutdown)
+        prev = previous.get(signum)
+        if callable(prev):
+            prev(signum, frame)
+        elif prev == signal.SIG_DFL:
+            # Nothing chained (no server handler): keep the default
+            # behaviour — terminate.
+            signal.signal(signum, signal.SIG_DFL)
+            os.kill(os.getpid(), signum)
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            previous[sig] = signal.getsignal(sig)
+            signal.signal(sig, handler)
+        except (ValueError, OSError):
+            previous.pop(sig, None)
+
+    def restore() -> None:
+        for sig, prev in previous.items():
+            with contextlib.suppress(ValueError, OSError, TypeError):
+                if signal.getsignal(sig) is handler:
+                    signal.signal(sig, prev)
+
+    return restore
+
+
 def create_app(*, enable_poller: bool = True) -> FastAPI:
     """Application factory.
 
@@ -83,11 +131,26 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
         await db.init_pool(settings.SUPABASE_DB_URL)
         task: asyncio.Task[int] | None = None
         stop = asyncio.Event()
+        stopping: asyncio.Task[None] | None = None
+        restore_signals: Callable[[], None] | None = None
+
+        def begin_shutdown() -> None:
+            # Idempotent: the signal hook and the lifespan both call it.
+            nonlocal stopping
+            if task is not None and stopping is None:
+                logger.info("lifespan.poller.stopping")
+                stopping = asyncio.create_task(
+                    stop_poller(task, stop, grace_s=settings.SHUTDOWN_GRACE_SECONDS),
+                    name="agent-py.poller.stop",
+                )
+
         if settings.SUPABASE_DB_URL:
             task = asyncio.create_task(
                 poller.run_poll_loop(settings, stop=stop),
                 name="agent-py.poller",
             )
+            poller.register_loop_task(task)
+            restore_signals = install_shutdown_signal_hook(begin_shutdown)
             logger.info(
                 "lifespan.poller.started",
                 interval=settings.POLL_INTERVAL_SECONDS,
@@ -98,8 +161,14 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
         try:
             yield
         finally:
-            if task is not None:
-                await stop_poller(task, stop, grace_s=settings.SHUTDOWN_GRACE_SECONDS)
+            if restore_signals is not None:
+                restore_signals()
+            begin_shutdown()
+            if stopping is not None:
+                # The pool must stay open until the in-flight job is
+                # settled or handed back.
+                await stopping
+            poller.register_loop_task(None)
             await db.close_pool()
             logger.info("lifespan.shutdown.complete")
 
