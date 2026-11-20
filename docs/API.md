@@ -44,6 +44,14 @@ Extract text from an uploaded file.
 **Errors**: `400` malformed FormData, `413` file too large, `500` for
 extractor failures. Body shape: `{ error: string }`.
 
+`413` fires in three places: the request's `Content-Length` (or the
+streamed byte count, for chunked uploads) exceeds `FILE_SIZE_LIMIT`
++ 64 KB of multipart headroom — checked before the form is parsed;
+the `file` part exceeds `FILE_SIZE_LIMIT` (5 MB); or a docx/xlsx zip
+would decompress past 100 MB / 5,000 entries (zip-bomb guard,
+`lib/server/extraction/zip-guard.ts`, which measures the real inflated
+size, not the headers' claims).
+
 ---
 
 ### `POST /api/embed`

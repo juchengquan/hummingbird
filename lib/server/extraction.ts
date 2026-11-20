@@ -5,6 +5,7 @@ import type { RateLimitVerdict } from "@/server/rate-limit"
 import { shouldUseVision, mergeVisionText } from "./extraction/heuristics"
 import { resolveVisionModel } from "./extraction/vision-model"
 import { extractWithVision as defaultExtractWithVision } from "./extraction/vision"
+import { assertZipWithinLimits, looksLikeZip } from "./extraction/zip-guard"
 
 /**
  * File extraction — pure server-side library, lifted from
@@ -213,6 +214,9 @@ export async function extractFile(
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
     hasName(name, ".docx")
   ) {
+    // OOXML is a zip; cap entry count + real inflated size before
+    // mammoth/JSZip inflates everything into memory (zip bombs).
+    assertZipWithinLimits(data)
     const mammoth = await import("mammoth")
     const result = await mammoth.extractRawText({ buffer: data })
     const { text, truncated, fullText } = truncate(result.value ?? "")
@@ -245,6 +249,9 @@ export async function extractFile(
     type === "application/vnd.ms-excel" ||
     hasName(name, ".xlsx", ".xls")
   ) {
+    // .xlsx is a zip (guard it, as for docx); legacy .xls is an OLE/CFB
+    // container that SheetJS reads without inflating, so it's skipped.
+    if (looksLikeZip(data)) assertZipWithinLimits(data)
     const XLSX = await import("xlsx")
     const workbook = XLSX.read(data, { type: "buffer" })
     const chunks: string[] = []
