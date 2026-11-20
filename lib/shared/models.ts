@@ -62,6 +62,14 @@ const ChatModelSchema = z.object({
    *  the chars/4 heuristic, which undercounts code/JSON by 30-50%. See
    *  `@/shared/tokens`. */
   tokenizer: z.enum(["tiktoken-cl100k", "tiktoken-o200k", "heuristic"]).optional(),
+  /** Anthropic Messages API model id for an `anthropic/*` entry (e.g.
+   *  `claude-sonnet-4-6` for `anthropic/claude-sonnet-4.6` — the catalog
+   *  id uses a dot, the API id a dash). Read only by the agent services
+   *  (agent-py + agent-ts), which call Anthropic directly and accept
+   *  only `anthropic/*` entries; see `getAnthropicApiModelId`. Absent →
+   *  the id with its `anthropic/` prefix stripped. The Next.js routes
+   *  ignore it (they dispatch the catalog id through `routes`). */
+  anthropicModelId: z.string().min(1).optional(),
 })
 
 const RoutingConfigSchema = z.object({
@@ -117,6 +125,38 @@ if (config.routing) {
       )
     }
   }
+}
+
+/** Catalog-id prefix of the models the agent services may call. */
+export const ANTHROPIC_MODEL_PREFIX = "anthropic/"
+
+// `anthropicModelId` is only meaningful on an `anthropic/*` entry — on
+// any other entry it would be a silent no-op, so fail loudly at boot.
+for (const m of config.models) {
+  if (m.anthropicModelId !== undefined && !m.id.startsWith(ANTHROPIC_MODEL_PREFIX)) {
+    throw new Error(
+      `config/models.json: "${m.id}" sets anthropicModelId but is not an ${ANTHROPIC_MODEL_PREFIX}* entry`
+    )
+  }
+}
+
+/**
+ * The owner-approved allowlist for the agent services (agent-py +
+ * agent-ts): every `anthropic/*` entry of `config/models.json`, mapped
+ * to the Anthropic Messages API id the service sends upstream. Any id
+ * not in this map is rejected with 400 `unknown_model`. agent-py reads
+ * the same file with the same rule (`agent_py/model_allowlist.py`).
+ */
+export const ANTHROPIC_SERVICE_MODELS: ReadonlyMap<string, string> = new Map(
+  config.models
+    .filter((m) => m.id.startsWith(ANTHROPIC_MODEL_PREFIX))
+    .map((m) => [m.id, m.anthropicModelId ?? m.id.slice(ANTHROPIC_MODEL_PREFIX.length)])
+)
+
+/** Anthropic API model id for an allowed `anthropic/*` catalog id, or
+ *  null when the id isn't on the agent-service allowlist. */
+export function getAnthropicApiModelId(id: string): string | null {
+  return ANTHROPIC_SERVICE_MODELS.get(id) ?? null
 }
 
 /** Sentinel model id for the smart-routing ("Auto") option — resolved

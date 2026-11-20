@@ -29,6 +29,7 @@ from ..chat import (
 )
 from ..db import get_pool, has_pool
 from ..mcp_tools import extend_registry_with_mcp
+from ..model_allowlist import UnknownModelError, resolve_api_model_id
 from ..rate_limit import SlidingWindow, rate_limit_key
 from ..tools import (
     SkillConfigs,
@@ -184,6 +185,16 @@ async def chat(
             headers={"Retry-After": str(verdict.retry_after_sec)},
         )
 
+    # Allowlist gate (config/models.json `anthropic/*` entries) — before
+    # the provider check, same order as the Next.js route, so a bad id is
+    # a 400 regardless of how the deploy is configured.
+    try:
+        api_model_id = resolve_api_model_id(body.model)
+    except UnknownModelError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=exc.to_detail()
+        ) from exc
+
     client = resolve_anthropic_client()
     if client is None:
         raise HTTPException(
@@ -237,7 +248,7 @@ async def chat(
     tools: tuple[ToolDescriptor, ...] = tuple(tools_dict.values())
 
     config = ChatConfig(
-        model=body.model,
+        model=api_model_id,
         messages=[ChatMessage(role=m.role, content=m.content) for m in body.messages],
         system=body.system,
         max_tokens=body.max_tokens or DEFAULT_MAX_TOKENS,

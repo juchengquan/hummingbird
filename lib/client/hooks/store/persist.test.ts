@@ -129,6 +129,48 @@ describe("partializeState — frozen persisted shape", () => {
   })
 
   test("STORE_VERSION is pinned (bump only with a migration step)", () => {
-    expect(STORE_VERSION).toBe(32)
+    // v32: file blob fields → IndexedDB. v33: inline `data:` URLs on
+    // message generated images / files → IndexedDB (`hb-blob:` refs in
+    // the persisted copy). v34: an image / file artifact's inline
+    // `storagePath` → the same IndexedDB store (shared with its source
+    // item). None of them changed the persisted KEY set.
+    expect(STORE_VERSION).toBe(34)
+  })
+
+  test("v34: artifact references persist only once IndexedDB confirms; inline values verbatim", () => {
+    const img = "data:image/png;base64,AAAA"
+    const artifacts = [
+      { id: "a1", kind: "image", storagePath: img },
+      { id: "a2", kind: "file", storagePath: "https://x.test/a.csv" },
+      { id: "a3", kind: "code", storagePath: null },
+      // A reference whose bytes this process doesn't hold: kept as-is.
+      { id: "a4", kind: "image", storagePath: "hb-blob:m/i" },
+    ]
+    const persisted = partializeState({
+      conversations: [],
+      files: [],
+      artifacts,
+    } as unknown as AppState)
+    // Nothing to inflate → the array passes through untouched.
+    expect(persisted.artifacts).toBe(artifacts as unknown as AppState["artifacts"])
+  })
+
+  test("v33: message generated data: URLs persist verbatim until IndexedDB confirms them", () => {
+    const img = "data:image/png;base64,AAAA"
+    const conversations = [
+      {
+        id: "c",
+        messages: [
+          {
+            id: "m",
+            generatedImages: [{ id: "i", url: img }],
+            generatedFiles: [{ id: "f", url: "https://x.test/a.csv" }],
+          },
+        ],
+      },
+    ]
+    const persisted = partializeState({ conversations, files: [], artifacts: [] } as unknown as AppState)
+    // Nothing is durable in this process → the array passes through untouched.
+    expect(persisted.conversations).toBe(conversations as unknown as AppState["conversations"])
   })
 })

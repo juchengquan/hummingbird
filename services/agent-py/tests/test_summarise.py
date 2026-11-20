@@ -20,11 +20,8 @@ from agent_py.chat import ChatMessage
 from agent_py.main import create_app
 from agent_py.routers import summarize as summarize_router
 from agent_py.summarise import (
-    DEFAULT_SUMMARY_MODEL,
     SummariseError,
     SummariseOk,
-    is_anthropic_model_id,
-    resolve_model,
     strip_json_fences,
     summarise_compress,
     summarise_conversation,
@@ -100,28 +97,6 @@ class _FakeMessages:
 class _FakeClient:
     def __init__(self, text: str = "", raises: Exception | None = None) -> None:
         self.messages = _FakeMessages(text, raises)
-
-
-# --- resolve_model / is_anthropic_model_id --------------------------
-
-
-def test_is_anthropic_model_id_matches_claude_ids() -> None:
-    assert is_anthropic_model_id("claude-3-5-haiku-20241022")
-    assert is_anthropic_model_id("Claude-3-5-Sonnet")
-    assert not is_anthropic_model_id("google/gemini-2.5-flash")
-    assert not is_anthropic_model_id("openai/gpt-4o-mini")
-    assert not is_anthropic_model_id("")
-
-
-def test_resolve_model_passes_anthropic_through() -> None:
-    assert resolve_model("claude-3-7-sonnet") == "claude-3-7-sonnet"
-
-
-def test_resolve_model_falls_back_to_default_for_non_anthropic() -> None:
-    # The TS default `google/gemini-2.5-flash` is the canary — it
-    # comes in unchanged from the apiClient body.
-    assert resolve_model("google/gemini-2.5-flash") == DEFAULT_SUMMARY_MODEL
-    assert resolve_model(None) == DEFAULT_SUMMARY_MODEL
 
 
 # --- strip_json_fences ----------------------------------------------
@@ -382,25 +357,21 @@ def test_summarize_invalid_json_response_returns_502(client: TestClient) -> None
     assert detail["code"] == "invalid_json"
 
 
-def test_summarize_falls_back_to_default_model(client: TestClient) -> None:
-    """Body sends a non-Anthropic id; route resolves to Haiku."""
+def test_summarize_without_model_uses_default(client: TestClient) -> None:
+    """No `model` in the body → `AGENT_DEFAULT_MODEL` (Haiku 4.5)."""
     fake = _FakeClient('{"summary":"s","keyTopics":[]}')
     with patch.object(summarize_router, "resolve_anthropic_client", return_value=fake):
         r = client.post(
             "/v1/summarize",
-            json={
-                "mode": "file",
-                "text": "x",
-                "model": "google/gemini-2.5-flash",
-            },
+            json={"mode": "file", "text": "x"},
             headers=_auth(),
         )
     assert r.status_code == 200
     # The fake captured the model arg the route passed to Anthropic.
-    assert fake.messages.calls[0]["model"] == DEFAULT_SUMMARY_MODEL
+    assert fake.messages.calls[0]["model"] == "claude-haiku-4-5"
 
 
-def test_summarize_anthropic_model_passes_through(client: TestClient) -> None:
+def test_summarize_allowed_model_maps_to_api_id(client: TestClient) -> None:
     fake = _FakeClient('{"summary":"s","keyTopics":[]}')
     with patch.object(summarize_router, "resolve_anthropic_client", return_value=fake):
         r = client.post(
@@ -408,12 +379,30 @@ def test_summarize_anthropic_model_passes_through(client: TestClient) -> None:
             json={
                 "mode": "file",
                 "text": "x",
-                "model": "claude-3-5-sonnet-20241022",
+                "model": "anthropic/claude-sonnet-4.6",
             },
             headers=_auth(),
         )
     assert r.status_code == 200
-    assert fake.messages.calls[0]["model"] == "claude-3-5-sonnet-20241022"
+    assert fake.messages.calls[0]["model"] == "claude-sonnet-4-6"
+
+
+@pytest.mark.parametrize(
+    "model", ["google/gemini-2.5-flash", "claude-3-5-sonnet-20241022", "anthropic/nope"]
+)
+def test_summarize_rejects_unlisted_model(client: TestClient, model: str) -> None:
+    """Non-anthropic catalog ids, raw API ids and typos → 400
+    `unknown_model` before any upstream call."""
+    fake = _FakeClient('{"summary":"s","keyTopics":[]}')
+    with patch.object(summarize_router, "resolve_anthropic_client", return_value=fake):
+        r = client.post(
+            "/v1/summarize",
+            json={"mode": "file", "text": "x", "model": model},
+            headers=_auth(),
+        )
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "unknown_model"
+    assert fake.messages.calls == []
 
 
 def test_summarize_rejects_too_long_text(client: TestClient) -> None:

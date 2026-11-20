@@ -18,6 +18,7 @@ the `payload` jsonb column.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -73,6 +74,22 @@ class TaskEventBase:
 class StatusEvent(TaskEventBase):
     kind: Literal["status"] = field(default="status", init=False)
     status: RunStatus
+    # Resume marker: set on the `status: running` a reclaimed job emits
+    # when it re-runs a run whose previous worker died mid-chunk. The
+    # value is the `seq` of the checkpoint the run resumes from; every
+    # event with `resumed_from_seq < seq < marker.seq` is the dead
+    # attempt's partial output and consumers drop it (see
+    # `drop_superseded_events`). A from-scratch restart is the same
+    # thing resumed from the run's initial checkpoint. Serialised as
+    # `resumedFromSeq` only when set. Mirror of
+    # `StatusEvent.resumedFromSeq` in `lib/shared/agent/events.ts`.
+    resumed_from_seq: int | None = None
+    # Legacy restart marker: a reclaimed `start` that re-ran from scratch
+    # set only this before `resumed_from_seq` existed. Still set on a
+    # restart (older readers only understand this flag); a marker that
+    # carries it without `resumed_from_seq` is read as resumed from
+    # `LEGACY_RESTART_RESUMED_FROM_SEQ`. Serialised only when true.
+    restarted: bool = False
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -261,7 +278,12 @@ def event_to_row_payload(event: TaskEvent) -> dict[str, object]:
     so the projection reducer accepts rows from either producer.
     """
     if isinstance(event, StatusEvent):
-        return {"status": event.status}
+        status_payload: dict[str, object] = {"status": event.status}
+        if event.resumed_from_seq is not None:
+            status_payload["resumedFromSeq"] = event.resumed_from_seq
+        if event.restarted:
+            status_payload["restarted"] = True
+        return status_payload
     if isinstance(event, TokenEvent):
         return {"text": event.text, "channel": event.channel}
     if isinstance(event, ResultEvent):
@@ -333,3 +355,46 @@ def event_to_row_payload(event: TaskEvent) -> dict[str, object]:
         return approval_payload
     # step_start / step_end carry no payload-only fields.
     return {}
+
+
+# --- Resume markers ----------------------------------------------------------
+
+#: What a legacy `restarted: true` marker (no `resumedFromSeq`) resumed
+#: from. Those were only ever emitted by a reclaimed `start` restarting
+#: from its initial checkpoint, whose `seq` is 1 for a run the TS route
+#: created (seq 1 is its `status: queued`, which carries `maxSteps`) and
+#: 0 for a subagent child (seq 1 is then the dead attempt's initial
+#: `status: running`, which carries nothing a consumer folds). Keeping
+#: seq 1 is therefore exact for the former and harmless for the latter.
+#: Mirror of `LEGACY_RESTART_RESUMED_FROM_SEQ` in
+#: `lib/shared/agent/events.ts`.
+LEGACY_RESTART_RESUMED_FROM_SEQ = 1
+
+
+def resume_discard_range(event: TaskEventBase) -> tuple[int, int] | None:
+    """`(after, before)` when `event` is a resume marker: the events
+    with `after < seq < before` were written by a dead attempt past the
+    checkpoint the run resumed from, and are discarded. `None` for any
+    other event. Mirror of `resumeDiscardRange` in
+    `lib/shared/agent/events.ts`."""
+    if not isinstance(event, StatusEvent):
+        return None
+    if event.resumed_from_seq is not None:
+        return event.resumed_from_seq, event.seq
+    if event.restarted:
+        return LEGACY_RESTART_RESUMED_FROM_SEQ, event.seq
+    return None
+
+
+def drop_superseded_events[E: TaskEventBase](event_list: Iterable[E]) -> list[E]:
+    """The event log with every resume marker's discard range removed
+    (see `resume_discard_range`) — what the run actually produced,
+    without a dead attempt's partial output. The markers themselves are
+    kept. Order-preserving; the one place Python consumers of a full
+    log (final text, citation inputs, the fan-in) apply the rule.
+    Mirror of `dropSupersededEvents` in `lib/shared/agent/events.ts`."""
+    events_in = list(event_list)
+    ranges = [r for e in events_in if (r := resume_discard_range(e)) is not None]
+    if not ranges:
+        return events_in
+    return [e for e in events_in if not any(lo < e.seq < hi for lo, hi in ranges)]

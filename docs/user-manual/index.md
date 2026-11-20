@@ -98,6 +98,7 @@
 
 | Variable | Required | Page |
 |---|---|---|
+| `AGENT_DEFAULT_MODEL` | no | [21-environment-variables.md](21-environment-variables.md) |
 | `AI_GATEWAY_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `ANTHROPIC_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `ANTHROPIC_BASE_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
@@ -116,6 +117,7 @@
 | `MINIMAX_CN_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `MINIMAX_CN_BASE_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `MINIMAX_IMAGE_RATE_LIMIT_PER_MINUTE` | no | [21-environment-variables.md](21-environment-variables.md) |
+| `MODELS_CONFIG_PATH` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `NEXT_PUBLIC_AGENT_PY_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `NEXT_PUBLIC_AGENT_TS_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `NEXT_PUBLIC_API_BASE_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |

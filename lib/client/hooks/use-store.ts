@@ -4,6 +4,16 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 
 import { offloadFileBlobs } from "@/client/files/blob-fields"
+import {
+  deleteMessageBlobs,
+  isBlobKeyReferenced,
+  offloadArtifactBlobs,
+  offloadMessageBlobs,
+  primeMessageBlobCache,
+  removedBlobKeys,
+  type ArtifactRefRewrite,
+} from "@/client/messages/message-blobs"
+import { parseMessageBlobRef } from "@/shared/message-blob-ref"
 
 import { debouncedStorage } from "./store/debounced-storage"
 import { runMigrations, STORE_VERSION } from "./store/migrate"
@@ -210,12 +220,21 @@ export const useStore = create<AppState>()(
       migrate: runMigrations,
       onRehydrateStorage: () => (state) => {
         if (state) reviveAndPruneState(state)
+        // Make inline message `data:` URLs (pre-v33 data, or an offload
+        // that never committed) resolvable right away — the sync queue
+        // may flush a persisted op carrying their references before the
+        // deferred offload below runs.
+        if (state) primeMessageBlobCache(state.conversations)
         notifyHydrated()
         // Move any blob fields still carried by the rehydrated rows
-        // (pre-v32 data, or a previous offload that never committed)
-        // into IndexedDB. Deferred: hydration can run inside `create()`,
-        // before `useStore` is assigned.
+        // (pre-v32 / pre-v33 data, or a previous offload that never
+        // committed) into IndexedDB. Deferred: hydration can run inside
+        // `create()`, before `useStore` is assigned.
         setTimeout(scheduleFileBlobOffload, 0)
+        setTimeout(scheduleMessageBlobOffload, 0)
+        // After the message offload, so an inline artifact can find (and
+        // share) its source item's record instead of storing a copy.
+        setTimeout(scheduleArtifactBlobOffload, 0)
       },
       partialize: partializeState,
       // Coalesce localStorage writes — the default storage writes the
@@ -234,18 +253,74 @@ export const useStore = create<AppState>()(
 // IndexedDB; once committed, `partializeState` strips them — so poke the
 // persist middleware (`setState({})`) to rewrite localStorage without them.
 let offloadRepersistQueued = false
-function scheduleFileBlobOffload(): void {
-  void offloadFileBlobs(useStore.getState().files).then((becameDurable) => {
-    if (!becameDurable || offloadRepersistQueued) return
-    offloadRepersistQueued = true
-    queueMicrotask(() => {
-      offloadRepersistQueued = false
-      useStore.setState({})
-    })
+function repersistAfterOffload(becameDurable: boolean): void {
+  if (!becameDurable || offloadRepersistQueued) return
+  offloadRepersistQueued = true
+  queueMicrotask(() => {
+    offloadRepersistQueued = false
+    useStore.setState({})
   })
 }
+function scheduleFileBlobOffload(): void {
+  void offloadFileBlobs(useStore.getState().files).then(repersistAfterOffload)
+}
+
+// --- Message blob offload (v33, `client/messages/message-blobs.ts`) -------
+// Same pattern for the inline `data:` URLs on message generated images /
+// files: write them to IndexedDB; once committed `partializeState` swaps
+// them for `hb-blob:` references. Only conversation objects the offload
+// hasn't walked yet are visited, so per-token stream updates stay cheap.
+function scheduleMessageBlobOffload(): void {
+  void offloadMessageBlobs(useStore.getState().conversations).then(
+    repersistAfterOffload
+  )
+}
+
+// --- Artifact blob offload (v34) -------------------------------------------
+// An artifact whose `storagePath` is still an inline `data:` URL (pre-v34
+// data, a cloud pull, an IndexedDB write that failed last session) is
+// moved into the message-blob store — sharing its source item's record
+// when the bytes match — and, once IndexedDB confirms, the live artifact
+// is rewritten to the `hb-blob:` reference.
+const rewriteArtifactRef: ArtifactRefRewrite = (artifactId, value, ref) => {
+  const s = useStore.getState()
+  const target = s.artifacts.find((a) => a.id === artifactId)
+  if (target && target.storagePath === value) {
+    useStore.setState({
+      artifacts: s.artifacts.map((a) =>
+        a === target ? { ...a, storagePath: ref } : a
+      ),
+    })
+    return true
+  }
+  // Deleted / changed while the write was in flight: drop the record
+  // unless something else references it by now.
+  const key = parseMessageBlobRef(ref)
+  if (key && !isBlobKeyReferenced(key, s)) void deleteMessageBlobs([key])
+  return false
+}
+function scheduleArtifactBlobOffload(): void {
+  const s = useStore.getState()
+  void offloadArtifactBlobs(s.artifacts, s.conversations, rewriteArtifactRef)
+}
+
 useStore.subscribe((state, prev) => {
   if (state.files !== prev.files) scheduleFileBlobOffload()
+  if (
+    state.conversations !== prev.conversations ||
+    state.artifacts !== prev.artifacts
+  ) {
+    // Cascade first (so a re-store of the same key queues after the
+    // delete): IndexedDB records nothing references any more — a message
+    // / conversation / workspace / artifact deleted, a thread truncated,
+    // a pull that dropped the row. A key still referenced by ANY message
+    // item or artifact (a fork's copied reference, an artifact whose
+    // source message was deleted, …) is kept.
+    const orphaned = removedBlobKeys(prev, state)
+    if (orphaned.length > 0) void deleteMessageBlobs(orphaned)
+  }
+  if (state.conversations !== prev.conversations) scheduleMessageBlobOffload()
+  if (state.artifacts !== prev.artifacts) scheduleArtifactBlobOffload()
 })
 
 // Separate store for session-based state (cleared when browser tab is closed)

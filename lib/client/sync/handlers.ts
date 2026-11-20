@@ -45,6 +45,8 @@ import type {
 } from "@/shared/types"
 import type { SyncOp } from "@/client/sync/sync-queue"
 import type { Json } from "@/shared/supabase/types"
+import { canonicalBlobItems, type BlobBearingItem } from "@/shared/message-blob-ref"
+import { sameArtifactStoragePath } from "@/client/messages/message-blobs"
 import { toISO } from "@/shared/utils"
 
 // ------------ workspaces ----------------------------------------------------
@@ -344,16 +346,19 @@ export function diffConversationMessages(
           // JSONB: array of {id, url, storagePath?, width, height, format,
           // prompt, mode}. Null when no images on this message — keeps the
           // common case at zero JSON bytes on the wire.
-          generated_images:
-            m.generatedImages && m.generatedImages.length > 0
-              ? (m.generatedImages as unknown as Json)
-              : null,
+          //
+          // Store v33: inline `data:` URLs appear here in CANONICAL form —
+          // the `hb-blob:<messageId>/<itemId>` reference they are (or will
+          // be) stored under in IndexedDB — so the queued op stays small
+          // and a strip can never read as an edit (same row / same hash
+          // either way). The queue resolves every reference back to the
+          // real `data:` URL at flush time, or omits the column, so a
+          // reference never reaches Supabase
+          // (`prepareMessageRowForUpload`).
+          generated_images: canonicalGeneratedItemsJson(m.id, m.generatedImages),
           // JSONB: array of {id, name, sizeBytes, mimeType, url, storagePath}.
           // Null when no files on this message.
-          generated_files:
-            m.generatedFiles && m.generatedFiles.length > 0
-              ? (m.generatedFiles as unknown as Json)
-              : null,
+          generated_files: canonicalGeneratedItemsJson(m.id, m.generatedFiles),
           created_at: toISO(m.timestamp),
         },
       })
@@ -386,17 +391,39 @@ function messageEquals(a: Message, b: Message): boolean {
     (a.compressed ?? false) === (b.compressed ?? false) &&
     (a.kind ?? null) === (b.kind ?? null) &&
     sameStringArray(a.recapMessageIds ?? [], b.recapMessageIds ?? []) &&
-    // Same JSON.stringify trick as `error` / `toolCalls`. Generated
-    // images are small (tens of bytes per entry on the wire — the URL
-    // is the heaviest field) and only present on a fraction of
-    // messages, so this is cheaper than a deep recursive walk.
-    JSON.stringify(a.generatedImages ?? null) ===
-      JSON.stringify(b.generatedImages ?? null) &&
+    // Same JSON.stringify trick as `error` / `toolCalls`, over the
+    // CANONICAL item lists (inline `data:` URL → its `hb-blob:`
+    // reference): an item stripped to its reference after the IndexedDB
+    // write (or re-inflated by a pull) is the same item, not an edit —
+    // and the multi-MB payload is never stringified here.
+    sameGeneratedItems(a.id, a.generatedImages, b.id, b.generatedImages) &&
     // `generated_files` is part of the upserted row too — a `tool_file`
     // frame arriving last must still produce an upsert.
-    JSON.stringify(a.generatedFiles ?? null) ===
-      JSON.stringify(b.generatedFiles ?? null) &&
+    sameGeneratedItems(a.id, a.generatedFiles, b.id, b.generatedFiles) &&
     sameInstant(a.timestamp, b.timestamp)
+  )
+}
+
+/** `generated_images` / `generated_files` column value: the canonical
+ *  item list (see `canonicalBlobItems`), or null when empty. */
+export function canonicalGeneratedItemsJson(
+  messageId: string,
+  items: readonly BlobBearingItem[] | undefined
+): Json {
+  if (!items || items.length === 0) return null
+  return canonicalBlobItems(messageId, items) as unknown as Json
+}
+
+function sameGeneratedItems(
+  aId: string,
+  a: readonly BlobBearingItem[] | undefined,
+  bId: string,
+  b: readonly BlobBearingItem[] | undefined
+): boolean {
+  if (a === b) return true
+  return (
+    JSON.stringify(canonicalGeneratedItemsJson(aId, a)) ===
+    JSON.stringify(canonicalGeneratedItemsJson(bId, b))
   )
 }
 
@@ -1039,7 +1066,9 @@ function artifactEquals(a: Artifact, b: Artifact): boolean {
     a.language === b.language &&
     a.title === b.title &&
     a.content === b.content &&
-    a.storagePath === b.storagePath &&
+    // v34: an inline data: URL and the `hb-blob:` reference the offload
+    // rewrote it to are the same value, not an edit.
+    sameArtifactStoragePath(a.storagePath, b.storagePath) &&
     versionsEqual(a.versions, b.versions) &&
     a.pinned === b.pinned &&
     sameInstant(a.createdAt, b.createdAt)

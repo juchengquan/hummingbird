@@ -35,6 +35,7 @@ import { getPool, hasPool } from "../db"
 import { buildToolImageInterceptor } from "../image-persistence"
 import type { AuthVars } from "../middleware/auth"
 import { requireAuth } from "../middleware/auth"
+import { UnknownModelError, resolveAnthropicApiModelId, unknownModelBody } from "../models"
 import { createSlidingWindow, rateLimitKey } from "../rate-limit"
 import { buildSkillNotes, buildToolSet } from "../skills"
 
@@ -129,7 +130,18 @@ chatRoutes.post("/v1/chat", requireAuth, async (c) => {
     )
   }
 
-  const model = resolveAnthropicModel(parsed.data.model)
+  // Allowlist gate (config/models.json `anthropic/*` entries) — before
+  // the provider check, same order as the Next.js route, so a bad id is
+  // a 400 regardless of how the deploy is configured.
+  let apiModelId: string
+  try {
+    apiModelId = resolveAnthropicApiModelId(parsed.data.model)
+  } catch (err) {
+    if (err instanceof UnknownModelError) return c.json(unknownModelBody(err), 400)
+    throw err
+  }
+
+  const model = resolveAnthropicModel(apiModelId)
   if (model === null) {
     return c.json(
       { code: "auth", message: "ANTHROPIC_API_KEY is not configured." },
@@ -163,7 +175,7 @@ chatRoutes.post("/v1/chat", requireAuth, async (c) => {
   const composedSystem = composeSystemPrompt(parsed.data.system, skillNotes)
 
   const config: ChatConfig = {
-    model: parsed.data.model,
+    model: apiModelId,
     messages: parsed.data.messages,
     system: composedSystem,
     maxTokens: parsed.data.max_tokens ?? DEFAULT_MAX_TOKENS,

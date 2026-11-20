@@ -12,6 +12,7 @@ from collections.abc import Iterator
 import pytest
 
 from agent_py import db as db_module
+from agent_py import model_allowlist as model_allowlist_module
 from agent_py import settings as settings_module
 
 
@@ -24,7 +25,9 @@ def reset_module_state() -> Iterator[None]:
     process-wide and downstream tests would see stale config.
     """
     settings_module.get_settings.cache_clear()
+    model_allowlist_module.get_model_allowlist.cache_clear()
     db_module._pool = None  # type: ignore[attr-defined]  # test-only reset
     yield
     settings_module.get_settings.cache_clear()
+    model_allowlist_module.get_model_allowlist.cache_clear()
     db_module._pool = None  # type: ignore[attr-defined]  # test-only reset

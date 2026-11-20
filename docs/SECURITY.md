@@ -8,6 +8,8 @@ Operational notes for the browser-facing security headers. Code:
 | Per-request nonce + CSP header | `proxy.ts` (Next 16's name for `middleware.ts`) |
 | Nonce on the inline theme script | `app/layout.tsx` (`x-nonce` request header) |
 | Report intake | `app/api/csp-report/route.ts` → `lib/server/security/csp-report.ts` |
+| Artifact / MCP-app frame shell + its own CSP | `app/sandbox/frame/route.ts` → `lib/server/security/sandbox-frame.ts` |
+| Frame handshake (protocol, iframe) | `lib/shared/sandbox-frame.ts`, `components/live-artifact/sandboxed-frame.tsx` |
 | Static headers | `next.config.ts` → `headers()` |
 | Zod JIT opt-out (keeps eval out of reports) | `instrumentation-client.ts` |
 
@@ -36,7 +38,7 @@ media-src 'self' data: blob: https:;
 font-src 'self' data:;
 connect-src 'self' https://<project>.supabase.co wss://<project>.supabase.co https://react-tweet.vercel.app data: blob:;
 worker-src 'self' blob:;
-frame-src https://www.youtube-nocookie.com https://www.youtube.com https://player.vimeo.com https://www.dailymotion.com https://coub.com https://player.youku.com;
+frame-src 'self' https://www.youtube-nocookie.com https://www.youtube.com https://player.vimeo.com https://www.dailymotion.com https://coub.com https://player.youku.com;
 object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';
 report-uri /api/csp-report; report-to csp-endpoint
 ```
@@ -72,9 +74,9 @@ Why each non-obvious source is there:
   directly from the browser.
 - **`worker-src 'self' blob:`.** The pdfjs worker is a same-origin module
   script under `/_next/static/media/`.
-- **`frame-src`.** The media-embed players (`components/ui/media-embed-node.tsx`).
-  Live-artifact and MCP-app frames use `srcdoc`, which `frame-src` does
-  not govern. See the next section.
+- **`frame-src`.** `'self'` for the sandbox frame shell (`/sandbox/frame`,
+  next section), plus the media-embed players
+  (`components/ui/media-embed-node.tsx`).
 - **`frame-ancestors 'none'`.** No page is meant to be embedded, share
   links included. Browsers ignore this directive in a Report-Only
   policy, so `X-Frame-Options: DENY` enforces it in every mode.
@@ -82,27 +84,80 @@ Why each non-obvious source is there:
 Adding a new third-party origin that the browser fetches, frames or
 connects to means updating the builder and its test.
 
-## Prerequisite before `enforce`: sandboxed `srcdoc` frames
+## Live-artifact and MCP-app frames: `/sandbox/frame`
 
-`components/live-artifact/live-artifact-frame.tsx` and `mcp-app-frame.tsx`
-render untrusted HTML in `<iframe sandbox="allow-scripts" srcdoc=…>`.
-Per the HTML spec, a `srcdoc` document **inherits the parent's policy
-container**, so this app policy applies inside the frame on top of the
-frame's own `<meta>` CSP. The browser check confirmed it: an inline
-script in a sandboxed `srcdoc` frame raised a `script-src-elem`
-violation for the parent's policy. In report-only mode the frame still
-works and reports arrive with `"srcdoc":true` and `"document":"about:srcdoc"`.
-In `enforce` mode, every artifact and MCP-app script would be blocked:
-inline scripts, the unpkg / jsdelivr / tailwind CDN scripts, and Babel's
-eval. A policy tweak can't fix this, because `'unsafe-inline'` is ignored
-whenever a nonce is present.
+Live artifacts (`components/live-artifact/live-artifact-frame.tsx`) and
+MCP-app panels (`mcp-app-frame.tsx`) run untrusted HTML. Both render
+through `SandboxedFrame` (`components/live-artifact/sandboxed-frame.tsx`):
 
-Before flipping to `enforce`, move those frames off `srcdoc`. For
-example, load them from a dedicated route (`src="/sandbox/…"`,
-`sandbox="allow-scripts"`, excluded from the proxy matcher) that sends
-the shell's own CSP as a response header, and post the HTML in. Or host
-them on a separate origin. Then drop the srcdoc lines from the
-checklist below.
+```html
+<iframe src="/sandbox/frame" sandbox="allow-scripts" referrerpolicy="no-referrer">
+```
+
+**Why not `srcdoc`.** A `srcdoc` document inherits the parent's policy
+container, so the app policy applied inside those frames on top of
+their `<meta>` CSP. Under `enforce` that blocked every artifact script:
+inline scripts, the unpkg / jsdelivr / tailwind CDN scripts and Babel's
+eval. `'unsafe-inline'` can't be added to the app policy because a nonce
+makes browsers ignore it. The frames used to be the only blocker for
+`enforce`; they no longer are.
+
+**The shell.** `GET /sandbox/frame` returns a tiny static document whose
+response CSP (`lib/server/security/sandbox-frame.ts`) is written for
+untrusted code and is **always enforced**, whatever `CSP_MODE` says — it
+is the frame's security boundary, as the `<meta>` CSP always was:
+
+```
+default-src 'none';
+script-src 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net;
+style-src 'unsafe-inline' https://unpkg.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net;
+img-src data: blob: https:; font-src data: https:;
+connect-src 'none'; base-uri 'none'; form-action 'none';
+frame-ancestors 'self'; sandbox allow-scripts
+```
+
+- The CDN hosts are `CDN_HOSTS` in `lib/shared/live-artifact/cdn-urls.ts`,
+  shared with the `<meta>` CSP that `iframe-shell.ts` still writes into
+  each document (defense in depth; the two stack).
+- `connect-src 'none'`: generated code can't fetch anywhere. MCP-app
+  tool calls go through the parent's postMessage bridge, which keeps its
+  same-server, `enabled` and `requiresApproval` checks.
+- `sandbox allow-scripts` repeats the iframe attribute, so the shell is
+  an opaque origin even when opened top-level or framed without the
+  attribute. `frame-ancestors 'self'` stops other sites from framing it.
+- No `report-uri`: violations in here are untrusted code hitting the
+  fence (blocked fetches), not app regressions.
+- `proxy.ts` excludes the route from its matcher and also skips it in
+  code, so the app policy never overwrites the shell's. `next.config.ts`
+  sends `X-Frame-Options: SAMEORIGIN` for it instead of `DENY`.
+- `Cache-Control: no-cache` + ETag: every load revalidates (304), so a
+  deploy that changes the policy takes effect at once.
+
+**Never add `allow-same-origin`** to these iframes. The shell is served
+from the app's origin, so with that flag the artifact would run
+same-origin with full access to cookies, storage and the API.
+`components/live-artifact/sandbox-guard.test.ts` pins the attribute.
+
+**Handshake** (`lib/shared/sandbox-frame.ts`). The frame is an opaque
+origin, so both sides post with target `"*"` and check the sender
+instead:
+
+1. The shell posts `{ ns: "sandbox-frame", type: "shell-ready" }` to its
+   parent.
+2. The parent checks `event.source === iframe.contentWindow`, then posts
+   `{ ns: "sandbox-frame", type: "render", html }` — once per navigation.
+3. The shell accepts it only if `event.source === window.parent` and
+   `event.origin === location.origin` (the app page that framed it),
+   removes its listener and replaces itself with the HTML
+   (`document.open/write/close`). The policy container survives
+   `document.open`, so the shell's CSP keeps applying.
+
+New HTML (artifact edit, MCP-app refresh, theme change) or the panel's
+Refresh button re-navigates the frame and runs the handshake again —
+the same full reload a `srcdoc` change caused. After the swap, the frame
+speaks only the content's own protocols (`live-artifact` ready/error,
+`mcp-app` tool calls), whose parent listeners keep their `event.source`
+filters.
 
 ## Other headers (`next.config.ts`, every response)
 
@@ -153,18 +208,48 @@ Triage:
 | Pattern | Meaning |
 |---|---|
 | `blocked` = `chrome-extension:` / `moz-extension:` / `safari-web-extension:` | Browser extension noise. Ignore |
-| `"srcdoc":true` | Live-artifact / MCP-app frame (see above). Expected until those frames move off `srcdoc` |
+| `"srcdoc":true` | A `srcdoc` frame inheriting the app policy. Live-artifact and MCP-app frames no longer use `srcdoc`, so find the new one and move it to `/sandbox/frame` |
 | `script-src` `eval` from a `_next/static` chunk | A library probing or using `eval`. Known benign case: the `is-generator-function` probe in the Node `util` polyfill, about once per `/editor` load. It's a `try/catch` probe, so `enforce` won't break anything |
 | `connect-src` / `img-src` / `frame-src` with a real host | A feature talks to a host the builder doesn't list. Add the host if legitimate |
 | `script-src-elem` `inline` on an app page | An inline script without the nonce. Fix the code (pass the `x-nonce` value) rather than loosening the policy |
 
 ## When to flip to `enforce`
 
-1. Move the srcdoc frames as described above.
+1. ~~Move the srcdoc frames off `srcdoc`.~~ Done: they load
+   `/sandbox/frame` (above). Checked with `bun run build && CSP_MODE=enforce
+   bun run start` in headless Chromium and WebKit: inline artifact
+   scripts, the Tailwind and Mermaid CDN scripts, Babel's eval, the error
+   bridge, the MCP-app tool-call bridge (including the disabled-server
+   refusal) and the panel's Refresh all work; the app page logged no
+   violations; the frames' only violations were the expected
+   `connect-src 'none'` blocks.
 2. Run report-only in production long enough to cover real use: chat
    with artifacts, the editor (equations, embeds, export), file viewers
    (PDF / DOCX / CSV), signed-in sync and task runs.
 3. Confirm that the remaining reports are only extension noise and the
    known benign probes listed above.
-4. Set `CSP_MODE=enforce` and restart. Keep watching the reports.
+4. Confirm Chrome's Reporting-API delivery from the https deployment
+   (see "Unverified" above), or drop `report-to`, so a quiet log really
+   means no violations.
+5. Set `CSP_MODE=enforce` and restart. Keep watching the reports.
    `CSP_MODE=report-only` is the one-line rollback.
+
+Found during that check and since fixed: TSX artifacts didn't render
+(enforce or not), because the React 19 UMD URLs were a 404 (React 19
+publishes no UMD build). The TSX shell now loads React / ReactDOM
+18.3.1 UMD. `iframe-shell.ts` compiles the artifact with Babel standalone
+(TypeScript + React presets, ES modules → CommonJS) and runs it through
+`new Function` with a `require` shim mapping `react` / `react-dom` /
+`react-dom/client` to the globals, so `import React, { useState } from
+"react"`, multi-line imports and every `export default` form work. Every
+`CDN_SCRIPTS` entry is pinned to an exact version. All of them carry an
+SRI hash (`integrity` + `crossorigin="anonymous"`) except Tailwind:
+`cdn.tailwindcss.com` sends no CORS headers, so an integrity check there
+would always fail. `CDN_HOSTS` is unchanged, and a test checks that it
+lists exactly the pinned scripts' origins. Checked with
+`bun run build && bun run start` under both `CSP_MODE=report-only` and
+`enforce` in headless Chromium. A TSX counter (`useState` + `onClick` +
+Tailwind classes) rendered and counted clicks in all three import
+styles, with no violations in the frame or on the app page. As negative
+controls, a tampered hash was blocked and a `fetch()` hit
+`connect-src 'none'`.

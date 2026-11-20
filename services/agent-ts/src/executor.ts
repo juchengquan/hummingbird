@@ -20,6 +20,7 @@
 import type { Sql } from "./db"
 import { RunEmitter } from "./emitter"
 import type { TaskEvent } from "./events"
+import { resolveCheckpointModel } from "./models"
 import type { RunStepContext, RunStepFn } from "./runner"
 import { runAgentLoop } from "./runner"
 import {
@@ -68,6 +69,11 @@ export async function executeStart(
 
   try {
     await setTaskHandler(sql, payload.runId, payload.userId, HANDLER_NAME)
+
+    // Allowlist re-check (the checkpoint row is owner-writable): an id
+    // outside config/models.json's anthropic/* entries throws
+    // UnknownModelError and the run fails below — never reaches a model.
+    resolveCheckpointModel(checkpoint)
 
     const makeStep = options.makeStepFn ?? defaultMakeStepFn
     const stepFn = makeStep(payload, checkpoint)

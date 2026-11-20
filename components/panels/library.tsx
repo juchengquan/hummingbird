@@ -6,6 +6,7 @@ import * as React from "react"
 import { ArrowUpRight, Image as ImageIcon, MessageSquare, Package } from "lucide-react"
 
 import { useStore } from "@/client/hooks/use-store"
+import { useMessageBlobUrl } from "@/client/messages/use-message-blob-url"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import { openImageViewer } from "@/components/right-panel-slot"
@@ -204,6 +205,10 @@ function ImageTile({
   onOpenImage: () => void
   onOpenConversation: () => void
 }) {
+  // Store v33: `data:` images may be IndexedDB-backed `hb-blob:`
+  // references — resolve before rendering (skeleton meanwhile). The viewer
+  // opened from here resolves its own current image the same way.
+  const resolved = useMessageBlobUrl(item.image.url)
   return (
     <div className="group relative flex flex-col rounded-md border border-[var(--border)] bg-[var(--card)] overflow-hidden">
       <button
@@ -215,13 +220,25 @@ function ImageTile({
         )}
         aria-label={`Open image — ${item.image.prompt || "generated"}`}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={item.image.url}
-          alt={item.image.prompt || "Generated image"}
-          className="h-full w-full object-cover"
-          loading="lazy"
-        />
+        {resolved.status === "ready" ? (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img
+            src={resolved.url}
+            alt={item.image.prompt || "Generated image"}
+            className="h-full w-full object-cover"
+            loading="lazy"
+          />
+        ) : (
+          <span
+            aria-busy={resolved.status === "loading"}
+            className={cn(
+              "flex h-full w-full items-center justify-center text-[10px] text-[var(--muted-foreground)]",
+              resolved.status === "loading" && "animate-pulse",
+            )}
+          >
+            {resolved.status === "missing" ? "Image unavailable" : null}
+          </span>
+        )}
       </button>
       <div className="p-2 space-y-1.5">
         <p

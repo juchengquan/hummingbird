@@ -2,13 +2,14 @@ import "client-only"
 
 import type { Document } from "@/shared/types"
 import { uuid } from "@/shared/uuid"
+import { isInlineDataUrl, messageBlobKey, messageBlobRef } from "@/shared/message-blob-ref"
 
 /**
  * Current persisted-state schema version. Bump when adding a migration
  * step in `runMigrations`. Wired into the `version` field of the persist
  * config in `use-store.ts`.
  */
-export const STORE_VERSION = 32
+export const STORE_VERSION = 34
 
 /**
  * Sequential schema migrations from older persisted shapes to the
@@ -531,6 +532,124 @@ export function runMigrations(
           delete next[key]
         }
         return next ?? obj
+      })
+    }
+  }
+  if (fromVersion < 33) {
+    // Inline `data:` URLs on `message.generatedImages[].url` /
+    // `message.generatedFiles[].url` move from localStorage to IndexedDB
+    // (`client/messages/message-blobs.ts`); from v33 on, a persisted
+    // item normally carries an `hb-blob:<messageId>/<itemId>` reference
+    // in their place (`shared/message-blob-ref.ts`). http(s) / signed
+    // URLs are untouched.
+    //
+    // Same data-safety design as the v32 step: nothing is stripped here
+    // (migrations are synchronous; an IndexedDB write can't be awaited).
+    // The rehydrated items ARE the pending stash — `use-store.ts` primes
+    // the session cache and runs `offloadMessageBlobs` right after
+    // hydration, and `partializeState` swaps a URL for its reference only
+    // once IndexedDB has committed that exact value. No IndexedDB → the
+    // `data:` URLs stay in localStorage, exactly as before v33.
+    //
+    // All this step does is normalise the two lists so the offload never
+    // sees junk: a non-array value is removed, and so is an entry that
+    // isn't an object with a string `id` + `url` (it could never have
+    // been rendered or keyed).
+    const conversations = state.conversations
+    if (Array.isArray(conversations)) {
+      state.conversations = conversations.map((c) => {
+        if (!c || typeof c !== "object") return c
+        const conv = c as Record<string, unknown>
+        if (!Array.isArray(conv.messages)) return conv
+        let messagesChanged = false
+        const messages = conv.messages.map((m) => {
+          if (!m || typeof m !== "object") return m
+          const msg = m as Record<string, unknown>
+          let next: Record<string, unknown> | null = null
+          for (const key of ["generatedImages", "generatedFiles"]) {
+            if (!(key in msg)) continue
+            const list = msg[key]
+            if (list === undefined) continue
+            if (!Array.isArray(list)) {
+              next ??= { ...msg }
+              delete next[key]
+              continue
+            }
+            const kept = list.filter((it) => {
+              if (!it || typeof it !== "object") return false
+              const item = it as Record<string, unknown>
+              return typeof item.id === "string" && typeof item.url === "string"
+            })
+            if (kept.length === list.length) continue
+            next ??= { ...msg }
+            if (kept.length > 0) next[key] = kept
+            else delete next[key]
+          }
+          if (!next) return msg
+          messagesChanged = true
+          return next
+        })
+        return messagesChanged ? { ...conv, messages } : conv
+      })
+    }
+  }
+  if (fromVersion < 34) {
+    // Image / file artifacts created from a generated item copied the
+    // item's URL into `storagePath`, so an inline `data:` payload was
+    // stored twice. From v34 such an artifact references the item's
+    // IndexedDB record (`hb-blob:<messageId>/<itemId>`, shared with the
+    // message) or, failing that, its own (`hb-blob:artifact/<id>`) — see
+    // the artifact section of `client/messages/message-blobs.ts`.
+    //
+    // Same data-safety design as v32 / v33: nothing is lost here. The one
+    // move this synchronous step makes is the exact-duplicate case: an
+    // artifact whose `storagePath` is byte-identical to an inline item of
+    // its source message is pointed at that item's key. The message still
+    // carries the bytes (primed into the session cache at hydration, then
+    // offloaded), and `persistableArtifacts` keeps persisting the inline
+    // value until IndexedDB confirms the record — with no IndexedDB the
+    // persisted shape stays exactly as before. Every other inline value is
+    // left for the post-hydration `offloadArtifactBlobs`, which also
+    // dedupes against items already stripped to references (that needs
+    // an async IndexedDB read). A non-string `storagePath` is normalised
+    // to null (it could never have been rendered).
+    const artifacts = state.artifacts
+    if (Array.isArray(artifacts)) {
+      const items = new Map<string, Array<{ id: string; url: string }>>()
+      if (Array.isArray(state.conversations)) {
+        for (const c of state.conversations) {
+          const msgs = (c as { messages?: unknown } | null)?.messages
+          if (!Array.isArray(msgs)) continue
+          for (const m of msgs) {
+            if (!m || typeof m !== "object") continue
+            const msg = m as Record<string, unknown>
+            if (typeof msg.id !== "string") continue
+            const list: Array<{ id: string; url: string }> = []
+            for (const key of ["generatedImages", "generatedFiles"]) {
+              const arr = msg[key]
+              if (!Array.isArray(arr)) continue
+              for (const it of arr as Array<Record<string, unknown> | null>) {
+                if (it && typeof it.id === "string" && typeof it.url === "string") {
+                  list.push({ id: it.id, url: it.url })
+                }
+              }
+            }
+            if (list.length > 0) items.set(msg.id, list)
+          }
+        }
+      }
+      state.artifacts = artifacts.map((a) => {
+        if (!a || typeof a !== "object") return a
+        const art = a as Record<string, unknown>
+        const sp = art.storagePath
+        if (sp !== undefined && sp !== null && typeof sp !== "string") {
+          return { ...art, storagePath: null }
+        }
+        if (!isInlineDataUrl(sp)) return art
+        if (typeof art.messageId !== "string") return art
+        const match = items.get(art.messageId)?.find((it) => it.url === sp)
+        if (!match) return art
+        return { ...art, storagePath: messageBlobRef(messageBlobKey(art.messageId, match.id)) }
       })
     }
   }

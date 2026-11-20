@@ -12,6 +12,8 @@
 
 import { z } from "zod"
 
+import { getAnthropicApiModelId } from "@/shared/models"
+
 /** Boolean env flag. `z.coerce.boolean()` is `Boolean(value)`, so the
  *  string "false" (any non-empty string) coerced to `true` — setting
  *  `WORKER_DRY_RUN=false` silently kept dry-run on. Accept the usual
@@ -38,6 +40,9 @@ export function envBoolean(defaultValue: boolean) {
       return z.NEVER
     })
 }
+
+/** Service default model (catalog id) when `AGENT_DEFAULT_MODEL` is unset. */
+export const DEFAULT_AGENT_MODEL = "anthropic/claude-haiku-4.5"
 
 const EnvSchema = z.object({
   // --- Service identity ----------------------------------------------
@@ -81,6 +86,18 @@ const EnvSchema = z.object({
   ANTHROPIC_API_KEY: z.string().default(""),
   /** Optional Anthropic base-URL override. Same plumbing as agent-py. */
   ANTHROPIC_BASE_URL: z.string().default(""),
+  /** Catalog id (`config/models.json`) of the model used when a request
+   *  doesn't name one (summarize) and for the follow-up-suggestion
+   *  chips. Must be an `anthropic/*` entry — the allowlist check runs
+   *  here, so a bad value fails boot. Same name + default as agent-py;
+   *  unset or empty (`AGENT_DEFAULT_MODEL=` in `.env`) → the default. */
+  AGENT_DEFAULT_MODEL: z
+    .string()
+    .optional()
+    .transform((raw) => raw?.trim() || DEFAULT_AGENT_MODEL)
+    .refine((id) => getAnthropicApiModelId(id) !== null, {
+      message: "must be an anthropic/* model listed in config/models.json",
+    }),
 
   // --- Web search ----------------------------------------------------
   /** Tavily key — registers `webSearch` in the default tool registry. */

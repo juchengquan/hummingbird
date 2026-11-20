@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from ..auth import get_current_user
 from ..chat import ChatMessage, resolve_anthropic_client
+from ..model_allowlist import UnknownModelError, resolve_optional_model
 from ..summarise import (
     SummariseError,
     summarise_compress,
@@ -18,7 +19,6 @@ from ..summarise import (
     summarise_file,
     summarise_project_breakdown,
 )
-from ..summarise import resolve_model as summarise_resolve_model
 
 router = APIRouter(tags=["summarize"])
 
@@ -74,13 +74,18 @@ async def summarize(
     JSON; compress returns `{recap: str}` markdown.
 
     Notable difference from TS: this endpoint only talks to
-    Anthropic (no Vercel-gateway routing). When the caller's
-    `model` doesn't look like an Anthropic id (e.g. the TS
-    default `google/gemini-2.5-flash`), we fall back to
-    `claude-3-5-haiku-20241022`. Caller behaviour is unaffected
-    because the field is still accepted; the TS-shape body comes
-    through unchanged.
+    Anthropic (no Vercel-gateway routing). `model` is optional; when
+    sent it must be an allowed `anthropic/*` catalog id from
+    `config/models.json` (else `400 unknown_model`, as on the Next.js
+    route). Absent → `AGENT_DEFAULT_MODEL`.
     """
+    try:
+        model = resolve_optional_model(body.model)
+    except UnknownModelError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=exc.to_detail()
+        ) from exc
+
     client = resolve_anthropic_client()
     if client is None:
         raise HTTPException(
@@ -90,8 +95,6 @@ async def summarize(
                 "message": "ANTHROPIC_API_KEY is not configured.",
             },
         )
-
-    model = summarise_resolve_model(body.model)
 
     if isinstance(body, FileSummariseBody):
         result = await summarise_file(client=client, model=model, name=body.name, text=body.text)

@@ -6,15 +6,16 @@ import { buildShell, IFRAME_MESSAGE_NS } from "@/client/live-artifact/iframe-she
 import type { ShellKind } from "@/client/live-artifact/detect"
 import { cn } from "@/shared/utils"
 
+import { SandboxedFrame } from "./sandboxed-frame"
+
 /**
- * Renders an artifact inside a sandboxed iframe.
- *
- * Sandbox flags: `allow-scripts` ONLY. Crucially no `allow-same-origin`
- * — the iframe runs at a null origin so it can't read our cookies,
+ * Renders an artifact inside a sandboxed iframe (`SandboxedFrame`):
+ * the `/sandbox/frame` shell, `sandbox="allow-scripts"` only, so the
+ * artifact runs at an opaque origin and can't read our cookies,
  * localStorage, or make same-origin fetches against our API routes.
- * The iframe's own CSP meta tag (injected by `iframe-shell.ts`)
- * additionally blocks `connect-src` to keep generated `fetch()` calls
- * from talking to attacker-controlled hosts.
+ * The shell's response CSP (and the `<meta>` CSP `iframe-shell.ts`
+ * injects) blocks `connect-src` so generated `fetch()` calls can't
+ * talk to attacker-controlled hosts.
  *
  * Errors thrown inside the iframe (synchronous + unhandled-rejection)
  * post a `{ type: 'error', message }` message up via the bridge in
@@ -22,8 +23,8 @@ import { cn } from "@/shared/utils"
  * iframe's contentWindow so cross-frame chatter from unrelated frames
  * doesn't leak in.
  *
- * `key`-based remount on `refreshKey` change is the cheapest reload —
- * cleaner than reaching into the iframe and assigning srcdoc.
+ * A new `content` / `shell` or a bumped `refreshKey` reloads the frame
+ * from scratch (see `SandboxedFrame`).
  */
 
 export interface LiveArtifactFrameProps {
@@ -52,7 +53,7 @@ export function LiveArtifactFrame({
 }: LiveArtifactFrameProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
-  const srcDoc = useMemo(() => buildShell(shell, content), [shell, content])
+  const html = useMemo(() => buildShell(shell, content), [shell, content])
 
   useEffect(() => {
     function handle(e: MessageEvent) {
@@ -71,22 +72,11 @@ export function LiveArtifactFrame({
   }, [onReady, onError])
 
   return (
-    <iframe
-      ref={iframeRef}
-      // Refresh by remounting — `key` is the smallest change that
-      // gets the browser to re-evaluate `srcDoc`.
-      key={refreshKey}
+    <SandboxedFrame
+      frameRef={iframeRef}
+      html={html}
+      reloadKey={refreshKey}
       title="Live artifact"
-      // CRITICAL: do NOT add `allow-same-origin`. The null origin is
-      // what protects parent cookies / storage from the generated
-      // script. See PLAN-live-artifacts.md → Sandbox security model.
-      sandbox="allow-scripts"
-      referrerPolicy="no-referrer"
-      // `loading="lazy"` so inline previews scrolled out of view
-      // don't keep their iframes hot. Side-panel use cases are
-      // always visible so the attr is a no-op there.
-      loading="lazy"
-      srcDoc={srcDoc}
       className={cn("w-full h-full border-0 bg-white", className)}
     />
   )

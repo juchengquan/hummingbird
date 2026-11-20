@@ -35,6 +35,10 @@ import type { AppSupabaseClient } from "@/client/supabase/client"
 import { uuid } from "@/shared/uuid"
 import { getLocalDataOwner } from "@/client/sync/sync-owner"
 import { markPauseBaselineDirty } from "@/client/sync/pause-baseline"
+import {
+  prepareArtifactRowForUpload,
+  prepareMessageRowForUpload,
+} from "@/client/messages/message-blobs"
 
 const STORAGE_KEY = "hummingbird-sync-queue"
 const MAX_BACKOFF_MS = 60_000
@@ -285,7 +289,20 @@ async function runOp(op: SyncOp): Promise<OpResult> {
   if (op.ownerUserId !== userId) return "drop"
   try {
     if (op.kind === "upsert") {
-      const row = { ...op.row, user_id: userId }
+      // Store v33: message rows carry `hb-blob:` references in place of
+      // inline `data:` URLs (see `diffConversationMessages`). Resolve them
+      // to the real bytes now — or drop the column so the upsert leaves
+      // the cloud value alone. A reference never goes over the wire.
+      // Store v34: same for an artifact's `storage_path`.
+      const prepared =
+        op.target === "messages"
+          ? await prepareMessageRowForUpload(op.row)
+          : op.target === "artifacts"
+            ? await prepareArtifactRowForUpload(op.row)
+            : op.row
+      // The resolve awaited: re-check the session (sign-out / user switch).
+      if (!client || !userId || op.ownerUserId !== userId) return "retry"
+      const row = { ...prepared, user_id: userId }
       const { error } = await client
         .from(op.target)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

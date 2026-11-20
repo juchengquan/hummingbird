@@ -14,13 +14,22 @@
  *    advances) so an adapter emitting a richer event set than this
  *    consumer understands degrades gracefully — see the multi-SDK
  *    adapter section of the plan.
+ *  - A resume marker (`status` with `resumedFromSeq`, or the legacy
+ *    `restarted` flag — see `resumeDiscardRange`) un-folds the events a
+ *    dead worker wrote past the checkpoint its reclaimed re-run resumed
+ *    from: the view is rebuilt from the events up to that checkpoint,
+ *    then the marker folds on top. Incremental tailing can do this
+ *    because every view `reduceRun` returns remembers the events folded
+ *    into it (a module-private side table, invisible to equality checks
+ *    and serialisation).
  */
 
-import type {
-  PlanItem,
-  RunStatus,
-  TaskEvent,
-  ToolOutputEvent,
+import {
+  resumeDiscardRange,
+  type PlanItem,
+  type RunStatus,
+  type TaskEvent,
+  type ToolOutputEvent,
 } from "./events"
 import type { ToolCallResult } from "@/shared/types"
 import type { VerificationResult } from "@/shared/verify"
@@ -109,20 +118,55 @@ export const EMPTY_RUN_VIEW: TaskRunView = {
   childRuns: [],
 }
 
+/** The events folded into a view, newest first — a persistent list, so
+ *  appending is O(1) and every view shares its predecessor's tail. */
+interface FoldedLog {
+  event: TaskEvent
+  prev: FoldedLog | null
+}
+
+/** View → the events folded into it. Keyed weakly so a dropped view
+ *  frees its log; kept off the view object itself so `TaskRunView`
+ *  stays plain data. Retains the events, not intermediate views (those
+ *  would pin a copy of the accumulated text per event). */
+const FOLDED = new WeakMap<TaskRunView, FoldedLog>()
+
+/** The view as it stood once every event with `seq <= after` was folded
+ *  — i.e. with a resume marker's discard range un-folded. Rebuilt by
+ *  re-folding the kept events (linear in the log, but markers are rare).
+ *  A view that didn't come out of `reduceRun` has no history to rebuild
+ *  from: fall back to a reset that keeps the step ceiling. */
+function rollBackTo(view: TaskRunView, after: number): TaskRunView {
+  if (view.cursor <= after) return view
+  const log = FOLDED.get(view)
+  if (!log) return { ...EMPTY_RUN_VIEW, maxSteps: view.maxSteps }
+  const kept: TaskEvent[] = []
+  for (let n: FoldedLog | null = log; n; n = n.prev) {
+    if (n.event.seq <= after) kept.push(n.event)
+  }
+  let rebuilt = EMPTY_RUN_VIEW
+  for (let i = kept.length - 1; i >= 0; i--) rebuilt = reduceRun(rebuilt, kept[i])
+  return rebuilt
+}
+
 /** Fold a single event into a view, returning a new view. Events with
  *  `seq <= view.cursor` are treated as already-applied and returned
  *  unchanged (idempotent — safe to replay an overlapping window on
- *  reconnect). */
+ *  reconnect). A resume marker first rolls the view back to its
+ *  checkpoint (see the module doc). */
 export function reduceRun(view: TaskRunView, event: TaskEvent): TaskRunView {
   if (event.seq <= view.cursor && view.cursor !== 0) return view
+  const discard = resumeDiscardRange(event)
+  const base = discard ? rollBackTo(view, discard.after) : view
   // The cursor advances for *every* event we accept, including kinds
   // this consumer doesn't model — so an unknown future kind still
   // moves the resume point forward.
   const next: TaskRunView = {
-    ...view,
+    ...base,
     cursor: Math.max(view.cursor, event.seq),
-    step: Math.max(view.step, event.step),
+    step: Math.max(base.step, event.step),
   }
+  FOLDED.set(next, { event, prev: FOLDED.get(base) ?? null })
 
   switch (event.kind) {
     case "token":
@@ -143,6 +187,10 @@ export function reduceRun(view: TaskRunView, event: TaskEvent): TaskRunView {
     case "status":
       next.status = event.status
       if (typeof event.maxSteps === "number") next.maxSteps = event.maxSteps
+      // A resumed run is executing again: whatever input the rolled-back
+      // view was waiting on (a respond resumed from its paused
+      // checkpoint) has been answered.
+      if (discard) next.pendingInput = null
       return next
     case "plan":
       next.plan = event.items

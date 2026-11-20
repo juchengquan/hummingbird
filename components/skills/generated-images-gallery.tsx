@@ -8,6 +8,7 @@ import { toast } from "sonner"
 
 import { apiClient } from "@/client/api-client"
 import { downloadImage, openImageInNewTab } from "@/client/image-open"
+import { useMessageBlobUrl } from "@/client/messages/use-message-blob-url"
 import type { GeneratedImage } from "@/shared/types"
 import { useStore } from "@/client/hooks/use-store"
 import { cn } from "@/shared/utils"
@@ -139,7 +140,13 @@ function ImageTile({
   single: boolean
   messageId?: string
 }) {
-  const remixable = canRemix(image.url)
+  // Store v33: a `data:` image may be stored in IndexedDB and carried
+  // here as an `hb-blob:` reference — resolve it before rendering, and
+  // never hand the placeholder itself to `<img>` / the action buttons.
+  const resolved = useMessageBlobUrl(image.url)
+  const shown: GeneratedImage | null =
+    resolved.status === "ready" ? { ...image, url: resolved.url } : null
+  const remixable = !!shown && canRemix(shown.url)
   const updateMessageGeneratedImageUrl = useStore(
     (s) => s.updateMessageGeneratedImageUrl
   )
@@ -164,12 +171,19 @@ function ImageTile({
           : "max-w-[360px] max-h-[280px]"
       )}
     >
-      {/* eslint-disable-next-line @next/next/no-img-element -- data: URLs
+      {!shown ? (
+        <BlobPlaceholderTile
+          missing={resolved.status === "missing"}
+          single={single}
+          label={image.prompt}
+        />
+      ) : (
+      /* eslint-disable-next-line @next/next/no-img-element -- data: URLs
           and possibly cross-origin signed URLs don't play with next/image's
           loader; the unoptimized fallback would be more complexity than
-          this needs. */}
+          this needs. */
       <img
-        src={image.url}
+        src={shown.url}
         alt={image.prompt}
         loading="lazy"
         className="block w-full h-auto object-cover"
@@ -188,6 +202,7 @@ function ImageTile({
             : undefined
         }
       />
+      )}
       {image.mode === "i2i" && (
         <span className="pointer-events-none absolute top-1.5 left-1.5 text-[10px] font-medium uppercase tracking-wide bg-black/55 text-white px-1.5 py-0.5 rounded-sm">
           remix
@@ -211,11 +226,42 @@ function ImageTile({
           label="Expand"
           onClick={onOpen}
         />
-        <TileActionButton image={image} kind="download" />
-        <TileActionButton image={image} kind="copy" />
-        <TileActionButton image={image} kind="open" />
-        {remixable && <TileActionButton image={image} kind="remix" />}
+        {shown && (
+          <>
+            <TileActionButton image={shown} kind="download" />
+            <TileActionButton image={shown} kind="copy" />
+            <TileActionButton image={shown} kind="open" />
+            {remixable && <TileActionButton image={shown} kind="remix" />}
+          </>
+        )}
       </div>
+    </div>
+  )
+}
+
+/** Stand-in while an IndexedDB-backed image loads (or when its bytes are
+ *  gone) — a sized skeleton, never a broken `<img>`. */
+export function BlobPlaceholderTile({
+  missing,
+  single,
+  label,
+}: {
+  missing: boolean
+  single?: boolean
+  label?: string
+}) {
+  return (
+    <div
+      role="img"
+      aria-label={missing ? "Image unavailable" : `Loading image${label ? `: ${label}` : ""}`}
+      aria-busy={!missing}
+      className={cn(
+        "flex items-center justify-center text-[11px] text-[var(--muted-foreground)]",
+        single ? "h-[240px] w-[320px] max-w-full" : "h-[160px] w-[200px] max-w-full",
+        !missing && "animate-pulse bg-[var(--muted)]"
+      )}
+    >
+      {missing ? "Image unavailable on this device" : null}
     </div>
   )
 }

@@ -43,6 +43,12 @@ import type { AppSupabaseClient } from "@/client/supabase/client"
 import type { Json } from "@/shared/supabase/types"
 import { parseCanvasState } from "@/shared/canvas/types"
 import { loadFileBlobFieldsMap } from "@/client/files/blob-fields"
+import {
+  peekMessageBlobUrl,
+  prepareArtifactRowForUpload,
+  prepareMessageRowForUpload,
+} from "@/client/messages/message-blobs"
+import { canonicalGeneratedItemsJson } from "@/client/sync/handlers"
 import { useStore } from "@/client/hooks/use-store"
 import { setSyncSnapshot } from "@/client/hooks/use-sync"
 import { mergeCloudSnapshot, type MergeOptions } from "@/client/sync/snapshot-merge"
@@ -68,6 +74,36 @@ async function uploadRows<R>(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { error } = await client.from(table as any).upsert(rows as never)
   if (error) return { ok: false, error: `${table}: ${error.message}` }
+  return { ok: true }
+}
+
+/**
+ * `uploadRows` for rows that may carry `hb-blob:` references (store v33
+ * messages, v34 artifacts). `prepare` resolves every reference to its
+ * `data:` URL; a row whose reference can't be resolved comes back WITHOUT
+ * that column. Such rows go up in their own request(s), grouped by
+ * column set, because a bulk upsert fills a column missing from one row
+ * with NULL — which would overwrite the cloud copy we are trying to
+ * preserve.
+ */
+async function uploadResolvedRows(
+  client: AppSupabaseClient,
+  table: string,
+  rows: Record<string, unknown>[],
+  prepare: (row: Record<string, unknown>) => Promise<Record<string, unknown>>
+): Promise<{ ok: boolean; error?: string }> {
+  const prepared = await Promise.all(rows.map((row) => prepare(row)))
+  const groups = new Map<string, Record<string, unknown>[]>()
+  for (const row of prepared) {
+    const sig = Object.keys(row).sort().join(",")
+    const list = groups.get(sig)
+    if (list) list.push(row)
+    else groups.set(sig, [row])
+  }
+  for (const group of groups.values()) {
+    const r = await uploadRows(client, table, group)
+    if (!r.ok) return r
+  }
   return { ok: true }
 }
 
@@ -813,20 +849,22 @@ export async function bulkUploadLocalState(
         compressed: m.compressed ?? false,
         kind: m.kind ?? null,
         recap_message_ids: m.recapMessageIds ?? [],
-        generated_images:
-          m.generatedImages && m.generatedImages.length > 0
-            ? (m.generatedImages as unknown as Json)
-            : null,
-        generated_files:
-          m.generatedFiles && m.generatedFiles.length > 0
-            ? (m.generatedFiles as unknown as Json)
-            : null,
+        // Canonical form (inline `data:` URL → `hb-blob:` reference),
+        // resolved back to the real bytes just below — same path as the
+        // queue's flush (store v33, `client/messages/message-blobs.ts`).
+        generated_images: canonicalGeneratedItemsJson(m.id, m.generatedImages),
+        generated_files: canonicalGeneratedItemsJson(m.id, m.generatedFiles),
         created_at: new Date(m.timestamp).toISOString(),
       })
     })
   }
   {
-    const r = await uploadRows(client, "messages", messageRows)
+    const r = await uploadResolvedRows(
+      client,
+      "messages",
+      messageRows,
+      prepareMessageRowForUpload
+    )
     if (!r.ok) return r
   }
 
@@ -1050,7 +1088,9 @@ export async function bulkUploadLocalState(
 
   // artifacts — same workspace-scoped story as notes.
   {
-    const r = await uploadRows(
+    // Store v34: `storage_path` may be an `hb-blob:` reference — resolved
+    // to the real bytes (or the column omitted) like the message rows.
+    const r = await uploadResolvedRows(
       client,
       "artifacts",
       snapshot.artifacts
@@ -1072,7 +1112,8 @@ export async function bulkUploadLocalState(
               : null,
           pinned: a.pinned,
           created_at: a.createdAt.toISOString(),
-        }))
+        })),
+      prepareArtifactRowForUpload
     )
     if (!r.ok) return r
   }
@@ -1170,6 +1211,9 @@ export function applyCloudSnapshot(
 ): void {
   const s = useStore.getState()
   const snapshot = mergeCloudSnapshot(localSnapshotFromStore(), cloudSnapshot, {
+    // v34: a local artifact reference whose session-cached bytes equal the
+    // cloud's `data:` URL is kept (same bytes, no churn back to inline).
+    isSameBlob: (ref, value) => peekMessageBlobUrl(ref) === value,
     ...opts,
     streamingConversationIds: new Set(s.typingConversationIds),
   })

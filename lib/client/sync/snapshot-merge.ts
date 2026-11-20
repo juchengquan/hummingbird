@@ -21,9 +21,10 @@ import "client-only"
  * Messages are merged with the same rules inside each conversation.
  */
 
-import type { Conversation, Message, Workspace } from "@/shared/types"
+import type { Artifact, Conversation, Message, Workspace } from "@/shared/types"
 import type { CloudSnapshot } from "@/client/sync/reconcile"
 import type { SyncOp, SyncTarget } from "@/client/sync/sync-queue"
+import { isMessageBlobRef, type BlobBearingItem } from "@/shared/message-blob-ref"
 
 // ---------------------------------------------------------------------------
 // Field classification.
@@ -158,6 +159,90 @@ function withLocalOnly<T extends object>(
 }
 
 // ---------------------------------------------------------------------------
+// Generated images / files (store v33 blob references)
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-item merge of one generated-item list when the cloud message wins.
+ *
+ *  - The cloud value is the source of truth for every item it carries: a
+ *    real `data:` / signed URL from the cloud replaces a local
+ *    `hb-blob:` reference (the offload re-stores it; nothing is lost if
+ *    the local IndexedDB copy had gone missing).
+ *  - A cloud item that is itself a reference (never written by this
+ *    client — the queue resolves or omits — but defended against) keeps
+ *    the LOCAL item's URL when the local side has one, so a placeholder
+ *    from elsewhere can't overwrite real local bytes.
+ *  - Items only the local side has are appended. Generated items are
+ *    append-only (no UI removes one), so a cloud list lacking a local
+ *    item is behind — e.g. its upsert omitted the column because a
+ *    reference couldn't be resolved — never a deliberate removal.
+ */
+function mergeBlobItems<T extends BlobBearingItem>(
+  cloud: T[] | undefined,
+  local: T[] | undefined
+): T[] | undefined {
+  if (!local || local.length === 0) return cloud
+  if (!cloud || cloud.length === 0) return local
+  const localById = new Map(local.map((it) => [it.id, it]))
+  let out: T[] | null = null
+  cloud.forEach((item, i) => {
+    if (!isMessageBlobRef(item.url)) return
+    const mine = localById.get(item.id)
+    if (!mine || mine.url === item.url) return
+    out ??= cloud.slice()
+    out[i] = { ...item, url: mine.url }
+  })
+  const cloudIds = new Set(cloud.map((it) => it.id))
+  const extra = local.filter((it) => !cloudIds.has(it.id))
+  if (extra.length > 0) out = [...(out ?? cloud), ...extra]
+  return out ?? cloud
+}
+
+/**
+ * Store v34: `storagePath` of an artifact when the cloud row wins.
+ *
+ *  - Cloud real bytes (`data:` / signed URL / Storage path) replace a
+ *    local `hb-blob:` reference — unless `isSameBlob` vouches that the
+ *    reference already holds exactly those bytes (then keeping it avoids
+ *    churning the artifact back to inline).
+ *  - A cloud value that is a reference (never written by this client —
+ *    the queue resolves or omits — but defended against) or NULL (an
+ *    insert whose `storage_path` was omitted because the reference
+ *    couldn't be resolved at flush time) never replaces a local value:
+ *    nothing in the UI clears `storagePath`, so a cloud null next to a
+ *    local value means the cloud is behind, not a deliberate removal.
+ */
+function withLocalArtifactBlob(
+  c: Artifact,
+  l: Artifact | undefined,
+  isSameBlob: MergeOptions["isSameBlob"]
+): Artifact {
+  const local = l?.storagePath
+  if (!local || local === c.storagePath) return c
+  const cloud = c.storagePath
+  if (cloud === null || cloud === undefined || isMessageBlobRef(cloud)) {
+    return { ...c, storagePath: local }
+  }
+  if (isMessageBlobRef(local) && isSameBlob?.(local, cloud)) {
+    return { ...c, storagePath: local }
+  }
+  return c
+}
+
+function withLocalBlobItems(c: Message, l: Message | undefined): Message {
+  if (!l) return c
+  const images = mergeBlobItems(c.generatedImages, l.generatedImages)
+  const files = mergeBlobItems(c.generatedFiles, l.generatedFiles)
+  if (images === c.generatedImages && files === c.generatedFiles) return c
+  return {
+    ...c,
+    ...(images !== undefined ? { generatedImages: images } : {}),
+    ...(files !== undefined ? { generatedFiles: files } : {}),
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Pending-op index
 // ---------------------------------------------------------------------------
 
@@ -260,6 +345,10 @@ export interface MergeOptions {
    *  are deferred until the stream ends, so they have no pending ops
    *  yet). Their local messages are kept as-is. */
   streamingConversationIds?: ReadonlySet<string>
+  /** True when `ref` (an `hb-blob:` reference) is known to hold exactly
+   *  `value` (a `data:` URL). Lets a local artifact keep its reference
+   *  when the cloud sends the same bytes inline. Omitted → never. */
+  isSameBlob?: (ref: string, value: string) => boolean
 }
 
 export function mergeCloudSnapshot(
@@ -282,7 +371,11 @@ export function mergeCloudSnapshot(
   }
 
   const mergeMessage: MergeOne<Message> = (c, l, ahead) =>
-    ahead && l ? l : keepLocal ? withLocalOnly(c, l, MESSAGE_LOCAL_ONLY_KEYS) : c
+    ahead && l
+      ? l
+      : keepLocal
+        ? withLocalBlobItems(withLocalOnly(c, l, MESSAGE_LOCAL_ONLY_KEYS), l)
+        : c
 
   // Header and messages are merged independently: a pending header
   // upsert keeps the local header, but the messages still follow their
@@ -316,7 +409,9 @@ export function mergeCloudSnapshot(
       cloud.conversationFiles
     ),
     notes: list("notes", local.notes, cloud.notes),
-    artifacts: list("artifacts", local.artifacts, cloud.artifacts),
+    artifacts: list("artifacts", local.artifacts, cloud.artifacts, (c, l, ahead) =>
+      ahead && l ? l : keepLocal ? withLocalArtifactBlob(c, l, opts.isSameBlob) : c
+    ),
     prompts: list("prompts", local.prompts, cloud.prompts),
     projectTasks: list("project_tasks", local.projectTasks, cloud.projectTasks),
     mcpServers: list("mcp_servers", local.mcpServers, cloud.mcpServers),

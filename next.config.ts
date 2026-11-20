@@ -62,6 +62,14 @@ const nextConfig: NextConfig = {
         source: "/:path*",
         headers: SECURITY_HEADERS,
       },
+      // The sandbox frame shell is framed by app pages (live artifacts,
+      // MCP apps), so it can't be DENY; a later entry overrides the
+      // same key. Its CSP `frame-ancestors 'self'` is the real guard —
+      // see `app/sandbox/frame/route.ts`.
+      {
+        source: "/sandbox/frame",
+        headers: [{ key: "X-Frame-Options", value: "SAMEORIGIN" }],
+      },
     ];
   },
 };

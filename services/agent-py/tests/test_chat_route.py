@@ -54,7 +54,7 @@ def _auth() -> dict[str, str]:
 
 def _valid_body(**overrides: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
-        "model": "claude-3-5-sonnet-20241022",
+        "model": "anthropic/claude-sonnet-4.6",
         "messages": [{"role": "user", "content": "hi"}],
     }
     base.update(overrides)
@@ -500,7 +500,7 @@ def test_chat_429_when_per_ip_limit_exhausted(client: TestClient) -> None:
             assert v.allowed is True
 
         body = {
-            "model": "claude-3-5-sonnet-20241022",
+            "model": "anthropic/claude-sonnet-4.6",
             "messages": [{"role": "user", "content": "hi"}],
         }
         r = client.post(
@@ -590,7 +590,7 @@ def test_chat_idle_watchdog_emits_error_then_done(
         r = client.post(
             "/v1/chat",
             json={
-                "model": "claude-3-5-sonnet-20241022",
+                "model": "anthropic/claude-sonnet-4.6",
                 "messages": [{"role": "user", "content": "hi"}],
             },
             headers={"Authorization": f"Bearer {_token()}"},

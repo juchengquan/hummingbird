@@ -164,6 +164,8 @@ def event_from_row_payload(
                 "Literal['queued','running','paused','cancelled','done','failed']",
                 merged.get("status", "running"),
             ),
+            resumed_from_seq=_resumed_from_seq(merged.get("resumedFromSeq")),
+            restarted=merged.get("restarted") is True,
         )
     if kind == "tool_output":
         results_raw = merged.get("results")
@@ -295,6 +297,14 @@ def event_from_row_payload(
     # parsed. Caller should skip + warn.
     _log.warning("store.unhandled_event_kind", kind=kind)
     return None
+
+
+def _resumed_from_seq(raw: object) -> int | None:
+    """A status row's `resumedFromSeq`, or None when absent / not a
+    non-negative int (a malformed marker degrades to a plain status)."""
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        return None
+    return raw
 
 
 async def load_run_events(
@@ -706,15 +716,62 @@ class ChildResult:
     final_text: str
 
 
+# Per child: its `result` rows plus its resume markers (a `status` row
+# carrying `resumedFromSeq`, or the legacy `restarted` flag), so a
+# `result` a dead attempt wrote past the checkpoint its reclaimed re-run
+# resumed from is discarded by the same rule as every other consumer
+# (`events.drop_superseded_events`) instead of being read as the child's
+# answer.
 _LOAD_CHILD_RESULTS_SQL = """
 SELECT t.id, t.status, t.checkpoint,
-  (SELECT e.payload FROM public.task_events e
-     WHERE e.task_id = t.id AND e.user_id = t.user_id AND e.kind = 'result'
-     ORDER BY e.seq DESC LIMIT 1) AS result_payload
+  (SELECT jsonb_agg(
+            jsonb_build_object('seq', e.seq, 'step', e.step, 'kind', e.kind, 'payload', e.payload)
+            ORDER BY e.seq)
+     FROM public.task_events e
+     WHERE e.task_id = t.id AND e.user_id = t.user_id
+       AND (e.kind = 'result'
+            OR (e.kind = 'status'
+                AND (e.payload ? 'resumedFromSeq' OR e.payload->>'restarted' = 'true')))
+  ) AS result_events
 FROM public.tasks t
 WHERE t.parent_task_id = $1 AND t.user_id = $2
 ORDER BY t.created_at ASC;
 """
+
+
+def _final_text_from_result_rows(raw: object) -> str:
+    """The `finalText` of a child's last `result` event that no resume
+    marker supersedes, from the `result_events` jsonb array (rows of
+    `{seq, step, kind, payload}`), else ""."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return ""
+    if not isinstance(raw, list):
+        return ""
+    decoded: list[events.TaskEvent] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        seq, step, payload = row.get("seq"), row.get("step"), row.get("payload")
+        if not isinstance(seq, int) or not isinstance(payload, dict):
+            continue
+        ev = event_from_row_payload(
+            seq=seq,
+            step=step if isinstance(step, int) else 0,
+            kind=str(row.get("kind", "")),
+            created_at="",
+            payload=payload,
+        )
+        if ev is not None:
+            decoded.append(ev)
+    results = [
+        e for e in events.drop_superseded_events(decoded) if isinstance(e, events.ResultEvent)
+    ]
+    if not results:
+        return ""
+    return results[-1].final_text or ""
 
 
 async def load_child_results(
@@ -724,9 +781,11 @@ async def load_child_results(
 
     Reads the subagent metadata (personaSlug / subgoal) from each
     child's `tasks.checkpoint.subagent` jsonb key, and the final text
-    from the child's terminal `result` event payload under the
+    from the child's last surviving `result` event payload under the
     `finalText` key (camelCase — mirrors the wire format written by
-    `events.event_to_row_payload` for ResultEvent.final_text).
+    `events.event_to_row_payload` for ResultEvent.final_text). A
+    `result` superseded by a resume marker (a dead attempt's) is
+    skipped.
     Returns an empty list when the parent has no children yet.
     """
     async with pool.acquire() as conn:
@@ -738,16 +797,12 @@ async def load_child_results(
         cp = _as_dict(row["checkpoint"])
         # subagent metadata is nested under checkpoint["subagent"]
         meta = _as_dict(cp.get("subagent")) if cp else None
-        # result_payload is the jsonb from task_events for kind='result'
-        # Its shape is written by event_to_row_payload(ResultEvent):
-        #   {"status": ..., "finalText": <str>}  (camelCase wire key)
-        payload = _as_dict(row["result_payload"])
         out.append(
             ChildResult(
                 persona_slug=str(meta.get("personaSlug", "")) if meta else "",
                 subgoal=str(meta.get("subgoal", "")) if meta else "",
                 status=str(row["status"]),
-                final_text=str(payload.get("finalText", "")) if payload else "",
+                final_text=_final_text_from_result_rows(row["result_events"]),
             )
         )
     return out

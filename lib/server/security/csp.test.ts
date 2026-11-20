@@ -100,7 +100,7 @@ describe("buildCsp", () => {
     expect(d.get("base-uri")).toEqual(["'self'"])
     expect(d.get("form-action")).toEqual(["'self'"])
     expect(d.get("frame-ancestors")).toEqual(["'none'"])
-    expect(d.get("frame-src")).toEqual([...EMBED_FRAME_ORIGINS])
+    expect(d.get("frame-src")).toEqual(["'self'", ...EMBED_FRAME_ORIGINS])
     expect(d.get("report-uri")).toEqual([CSP_REPORT_PATH])
     expect(d.get("report-to")).toEqual([CSP_REPORT_GROUP])
   })

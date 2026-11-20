@@ -92,8 +92,17 @@ class RunEmitter:
     def settled(self) -> bool:
         return self._settled
 
-    async def status(self, status: RunStatus) -> None:
-        """Emit a status transition. The terminal kinds latch."""
+    async def status(
+        self,
+        status: RunStatus,
+        *,
+        resumed_from_seq: int | None = None,
+        restarted: bool = False,
+    ) -> None:
+        """Emit a status transition. The terminal kinds latch.
+        `resumed_from_seq` makes it a reclaimed run's resume marker, and
+        `restarted` additionally flags a from-scratch restart for legacy
+        readers (see `StatusEvent.resumed_from_seq`)."""
         if self._settled:
             return
         await self._emit(
@@ -103,6 +112,8 @@ class RunEmitter:
                 step=self._step,
                 created_at=_now_iso(),
                 status=status,
+                resumed_from_seq=resumed_from_seq,
+                restarted=restarted,
             )
         )
         if is_terminal_status(status):

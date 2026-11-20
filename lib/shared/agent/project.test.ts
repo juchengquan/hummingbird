@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test"
 
 import type { TaskEvent } from "./events"
-import { isTerminalStatus } from "./events"
+import {
+  dropSupersededEvents,
+  isTerminalStatus,
+  LEGACY_RESTART_RESUMED_FROM_SEQ,
+  resumeDiscardRange,
+} from "./events"
 import { EMPTY_RUN_VIEW, projectRun, reduceRun } from "./project"
 
 // Terse event builders — every event needs runId/seq/step/createdAt.
@@ -252,5 +257,155 @@ describe("reduceRun — handoff → childRuns", () => {
   test("a handoff without childTaskId is a no-op for childRuns", () => {
     const v = reduceRun(EMPTY_RUN_VIEW, handoff(1, undefined, "r", "g"))
     expect(v.childRuns).toEqual([])
+  })
+})
+
+describe("reduceRun — restart marker (reclaimed run started over)", () => {
+  test("drops the dead attempt's partial output, keeps cursor + step ceiling", () => {
+    const log: TaskEvent[] = [
+      ev({ kind: "status", status: "queued", maxSteps: 7 }, 1, 0),
+      ev({ kind: "status", status: "running" }, 2, 0),
+      ev({ kind: "step_start" }, 3, 1),
+      ev({ kind: "token", text: "half an ans" }, 4, 1),
+      ev({ kind: "tool_input", toolCallId: "t1", toolName: "webSearch", args: {} }, 5, 1),
+      ev({ kind: "status", status: "running", restarted: true }, 6, 0),
+      ev({ kind: "step_start" }, 7, 1),
+      ev({ kind: "token", text: "the answer" }, 8, 1),
+    ]
+    const view = projectRun(log)
+    expect(view.text).toBe("the answer")
+    expect(view.toolCalls).toEqual([])
+    expect(view.status).toBe("running")
+    expect(view.maxSteps).toBe(7)
+    expect(view.cursor).toBe(8)
+    expect(view.step).toBe(1)
+  })
+
+  test("an ordinary status transition keeps the accumulated view", () => {
+    let v = reduceRun(EMPTY_RUN_VIEW, ev({ kind: "token", text: "kept" }, 1, 1))
+    v = reduceRun(v, ev({ kind: "status", status: "running" }, 2, 1))
+    expect(v.text).toBe("kept")
+  })
+
+  test("a legacy marker on a view with no fold history still resets", () => {
+    // Built by hand, not by `reduceRun` — nothing to rebuild from.
+    const handMade = { ...EMPTY_RUN_VIEW, text: "stale", cursor: 4, maxSteps: 3 }
+    const v = reduceRun(handMade, ev({ kind: "status", status: "running", restarted: true }, 5, 0))
+    expect(v.text).toBe("")
+    expect(v.maxSteps).toBe(3)
+    expect(v.cursor).toBe(5)
+  })
+})
+
+describe("reduceRun — resume marker (reclaimed continue / respond)", () => {
+  // First chunk up to the checkpoint (seq 5), a dead chunk past it
+  // (6..9), then the reclaimed re-run behind its marker (10..).
+  const log: TaskEvent[] = [
+    ev({ kind: "status", status: "queued", maxSteps: 9 }, 1, 0),
+    ev({ kind: "status", status: "running" }, 2, 0),
+    ev({ kind: "step_start" }, 3, 1),
+    ev({ kind: "token", text: "Part one. " }, 4, 1),
+    ev({ kind: "plan", items: [{ id: "a", text: "first", status: "completed" }] }, 5, 1),
+    ev({ kind: "step_start" }, 6, 2),
+    ev({ kind: "token", text: "Part tw" }, 7, 2),
+    ev({ kind: "tool_input", toolCallId: "dead", toolName: "webSearch", args: {} }, 8, 2),
+    ev({ kind: "plan", items: [{ id: "b", text: "dead", status: "pending" }] }, 9, 2),
+    ev({ kind: "status", status: "running", resumedFromSeq: 5 }, 10, 1),
+    ev({ kind: "step_start" }, 11, 2),
+    ev({ kind: "token", text: "Part two." }, 12, 2),
+  ]
+
+  test("drops exactly the events between the checkpoint and the marker", () => {
+    const view = projectRun(log)
+    expect(view.text).toBe("Part one. Part two.")
+    expect(view.toolCalls).toEqual([])
+    expect(view.plan).toEqual([{ id: "a", text: "first", status: "completed" }])
+    expect(view.maxSteps).toBe(9)
+    expect(view.status).toBe("running")
+    expect(view.cursor).toBe(12)
+    expect(view.step).toBe(2)
+  })
+
+  test("incremental tailing matches the cold projection", () => {
+    let warm = EMPTY_RUN_VIEW
+    for (const e of log) warm = reduceRun(warm, e)
+    expect(warm).toEqual(projectRun(log))
+    // Same as projecting the log with the discard range removed.
+    expect(warm.text).toBe(projectRun(dropSupersededEvents(log)).text)
+  })
+
+  test("a later marker resuming from before an earlier one", () => {
+    const later: TaskEvent[] = [
+      ...log,
+      ev({ kind: "token", text: " Dead again." }, 13, 2),
+      ev({ kind: "status", status: "running", resumedFromSeq: 12 }, 14, 2),
+      ev({ kind: "token", text: " Three." }, 15, 3),
+    ]
+    let warm = EMPTY_RUN_VIEW
+    for (const e of later) warm = reduceRun(warm, e)
+    expect(warm.text).toBe("Part one. Part two. Three.")
+    expect(projectRun(later).text).toBe("Part one. Part two. Three.")
+  })
+
+  test("a marker resuming a respond clears the input the checkpoint paused on", () => {
+    const paused: TaskEvent[] = [
+      ev({ kind: "status", status: "running" }, 1, 0),
+      ev(
+        {
+          kind: "approval",
+          phase: "request",
+          approvalId: "tu_1",
+          tool: "danger",
+          toolCallId: "tu_1",
+        } as Partial<TaskEvent> & { kind: "approval" },
+        2,
+        1
+      ),
+      ev({ kind: "status", status: "paused" }, 3, 1),
+      ev(
+        { kind: "approval", phase: "response", approvalId: "tu_1", approved: true } as Partial<TaskEvent> & {
+          kind: "approval"
+        },
+        4,
+        1
+      ),
+      ev({ kind: "status", status: "running" }, 5, 1),
+      ev({ kind: "token", text: "dead" }, 6, 2),
+      ev({ kind: "status", status: "running", resumedFromSeq: 3 }, 7, 1),
+    ]
+    const view = projectRun(paused)
+    expect(view.pendingInput).toBeNull()
+    expect(view.status).toBe("running")
+    expect(view.text).toBe("")
+  })
+})
+
+describe("dropSupersededEvents / resumeDiscardRange", () => {
+  test("ranges come from resumedFromSeq, else the legacy restarted flag", () => {
+    expect(
+      resumeDiscardRange(ev({ kind: "status", status: "running", resumedFromSeq: 4 }, 9, 1))
+    ).toEqual({ after: 4, before: 9 })
+    expect(
+      resumeDiscardRange(ev({ kind: "status", status: "running", restarted: true }, 6, 0))
+    ).toEqual({ after: LEGACY_RESTART_RESUMED_FROM_SEQ, before: 6 })
+    // resumedFromSeq wins over the flag a restart also carries.
+    expect(
+      resumeDiscardRange(
+        ev({ kind: "status", status: "running", resumedFromSeq: 0, restarted: true }, 6, 0)
+      )
+    ).toEqual({ after: 0, before: 6 })
+    expect(resumeDiscardRange(ev({ kind: "status", status: "running" }, 6, 0))).toBeNull()
+    expect(resumeDiscardRange(ev({ kind: "token", text: "x" }, 6, 0))).toBeNull()
+  })
+
+  test("drops the range, keeps the marker and everything outside it", () => {
+    const log: TaskEvent[] = [
+      ev({ kind: "status", status: "queued" }, 1, 0),
+      ev({ kind: "token", text: "a" }, 2, 1),
+      ev({ kind: "result", status: "done", finalText: "dead" }, 3, 1),
+      ev({ kind: "status", status: "running", resumedFromSeq: 2 }, 4, 1),
+      ev({ kind: "token", text: "b" }, 5, 1),
+    ]
+    expect(dropSupersededEvents(log).map((e) => e.seq)).toEqual([1, 2, 4, 5])
   })
 })

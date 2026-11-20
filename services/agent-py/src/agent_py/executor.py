@@ -34,7 +34,7 @@ from typing import Any, Protocol
 import asyncpg
 import structlog
 
-from . import jobs, store, verify
+from . import jobs, lease, store, verify
 from .aggregate import aggregate_child_results
 from .barrier import settle_task_terminal
 from .emitter import EventSink, RunEmitter
@@ -44,6 +44,7 @@ from .input_policy import (
     request_kind_for,
 )
 from .mcp_tools import extend_registry_with_mcp
+from .model_allowlist import resolve_api_model_id
 from .providers.anthropic_provider import (
     AnthropicStepConfig,
     AsyncAnthropicClient,
@@ -109,16 +110,29 @@ async def execute_start(
     payload: StartActionPayload,
     *,
     make_step_fn: MakeStepFn | None = None,
+    reclaimed: bool = False,
 ) -> ExecutorOutcome:
     """Run a `start` action end-to-end. See `_run_chunk` for the
     settle / cancel / yield contract — `start` is just the chunk-run
     path with `start_seq=0` / `start_step=0` (the runner auto-emits
-    `status: running` at step==0)."""
+    `status: running` at step==0).
+
+    `reclaimed=True` re-runs a `start` whose previous worker died
+    mid-run. The event log already holds that attempt's partial output,
+    so a blind re-run would append a second copy after it. Instead:
+      - the attempt saved a checkpoint past the initial one (`step > 0`:
+        it got as far as a chunk yield but died before enqueueing the
+        `continue`) → resume from it, like a reclaimed `continue`;
+      - otherwise → start over from the initial checkpoint.
+    Either way the run first emits a resume marker (`status: running`
+    with `resumedFromSeq` = the checkpoint's seq) so consumers drop the
+    dead attempt's events written past that checkpoint."""
     return await _run_chunk(
         pool,
         payload=payload,
         make_step_fn=make_step_fn,
         resume=False,
+        reclaimed=reclaimed,
     )
 
 
@@ -157,6 +171,7 @@ async def execute_respond(
     payload: RespondActionPayload,
     *,
     make_step_fn: MakeStepFn | None = None,
+    resume_interrupted: bool = False,
 ) -> ExecutorOutcome:
     """Run a `respond` action — resume a suspended run with the user's
     answer to a HITL approval / choice / input request.
@@ -168,8 +183,22 @@ async def execute_respond(
     settle / re-suspend semantics as `continue`).
 
     Settle / cancel / yield / re-suspend semantics are identical to
-    `continue` after the result message is appended."""
-    return await _run_respond(pool, payload, make_step_fn)
+    `continue` after the result message is appended.
+
+    `resume_interrupted=True` re-runs a respond job reclaimed from a
+    worker that died AFTER the atomic paused → running flip. The answer
+    lives on the job payload, but the dead attempt may or may not have
+    persisted it (the tool_result append + checkpoint save follow the
+    flip, and an approved tool executes in between):
+      - the checkpoint already carries the tool_result → plain
+        `continue` from it (re-applying would run the tool twice);
+      - it doesn't → re-apply the answer from the payload, skipping the
+        paused gate (the task is already `running` on this job's
+        account; `poller.reclaim_decision` checked nothing else drives
+        it). An approved tool may then run a second time if the dead
+        attempt got as far as executing it — at-least-once, the same
+        guarantee any reclaimed tool step has."""
+    return await _run_respond(pool, payload, make_step_fn, resume_interrupted)
 
 
 async def execute_continue(
@@ -177,6 +206,7 @@ async def execute_continue(
     payload: StartActionPayload,
     *,
     make_step_fn: MakeStepFn | None = None,
+    reclaimed: bool = False,
 ) -> ExecutorOutcome:
     """Run a `continue` action — pick up after a chunk-break yield.
 
@@ -188,12 +218,20 @@ async def execute_continue(
 
     Settle / cancel / failure semantics are identical to `start`. A
     yielded chunk re-saves the checkpoint with the latest messages +
-    step + seq and enqueues yet another `continue` job."""
+    step + seq and enqueues yet another `continue` job.
+
+    `reclaimed=True` re-runs a `continue` whose previous worker died
+    mid-chunk: whatever that attempt wrote past the checkpoint is still
+    in the event log, so the run first emits a resume marker
+    (`status: running` with `resumedFromSeq` = the checkpoint's seq)
+    telling consumers to drop it. A normal `continue` (chunk boundary)
+    emits no marker."""
     return await _run_chunk(
         pool,
         payload=payload,
         make_step_fn=make_step_fn,
         resume=True,
+        reclaimed=reclaimed,
     )
 
 
@@ -215,6 +253,7 @@ async def _run_chunk(
     payload: StartActionPayload,
     make_step_fn: MakeStepFn | None,
     resume: bool,
+    reclaimed: bool = False,
 ) -> ExecutorOutcome:
     """Outer guard for `_run_chunk_inner`: anything raised before (or
     outside) the inner body's own `try` — checkpoint load, seq probe,
@@ -229,6 +268,7 @@ async def _run_chunk(
             payload=payload,
             make_step_fn=make_step_fn,
             resume=resume,
+            reclaimed=reclaimed,
             guard=guard,
         )
     except Exception as exc:
@@ -259,7 +299,9 @@ async def _fail_run(
     """Best-effort: emit `result: failed` (if the run hasn't settled)
     and settle the task failed via the barrier. With no emitter yet,
     build one seeded past the run's highest seq so the event can't
-    collide with (and be dropped as) an existing one."""
+    collide with (and be dropped as) an existing one. A worker whose
+    job lease is gone settles nothing (`LeaseLostError` propagates)."""
+    lease.check_current()
     try:
         if emitter is None:
             start_seq = await store.max_event_seq(pool, run_id=run_id, user_id=user_id)
@@ -376,6 +418,7 @@ async def _run_chunk_inner(
     make_step_fn: MakeStepFn | None,
     resume: bool,
     guard: _RunGuard,
+    reclaimed: bool = False,
 ) -> ExecutorOutcome:
     """Shared body for `execute_start` + `execute_continue`.
 
@@ -410,6 +453,23 @@ async def _run_chunk_inner(
         )
         checkpoint = {}
 
+    # Reclaimed run (see `execute_start` / `execute_continue`): a
+    # `start` resumes from a checkpoint the dead attempt saved, else
+    # restarts from the initial one; either way the run opens with a
+    # resume marker covering the dead attempt's post-checkpoint events.
+    resumed_from_seq: int | None = None
+    if reclaimed:
+        if not resume:
+            resume = _int_or(checkpoint.get("step"), 0) > 0
+        resumed_from_seq = _int_or(checkpoint.get("seq"), 0)
+        logger.warning(
+            "executor.reclaimed_run",
+            run_id=payload.run_id,
+            mode="resume_checkpoint" if resume else "restart",
+            checkpoint_step=_int_or(checkpoint.get("step"), 0),
+            resumed_from_seq=resumed_from_seq,
+        )
+
     # Seed past every seq already written for this run — the TS route's
     # `status: queued` (seq=1) on a fresh start, and anything emitted
     # after the last checkpoint save on a resume. `append_event` is
@@ -436,6 +496,8 @@ async def _run_chunk_inner(
     db_sink = _make_db_sink(pool, user_id=payload.user_id)
 
     async def sink(event: TaskEvent) -> None:
+        # No event may be written once this worker's job lease is gone.
+        lease.check_current()
         if isinstance(event, TokenEvent) and event.channel == "text":
             verify_text_parts.append(event.text)
         elif isinstance(event, ToolOutputEvent) and event.results:
@@ -597,7 +659,11 @@ async def _run_chunk_inner(
             should_yield=should_yield,
             finalize=finalize,
             final_text=final_text,
+            resumed_from_seq=resumed_from_seq,
         )
+        # Every branch below writes run state (checkpoint, task status,
+        # follow-up jobs) — none of it may happen without the lease.
+        lease.check_current()
 
         # Suspend path (Phase 3b): the step fn detected a gated tool
         # call and stopped before running it. Persist the latest state
@@ -1118,6 +1184,11 @@ def _default_make_step_fn(
     """
     client = _resolve_anthropic_client()
     model = _str_or_none(checkpoint.get("config", {}).get("model"))
+    if model:
+        # Allowlist re-check: `tasks.checkpoint` is owner-writable under
+        # RLS. Catalog id → Anthropic API id; unknown → UnknownModelError,
+        # which fails the run (both call sites are inside the run guard).
+        model = resolve_api_model_id(model)
     system = _str_or_none(checkpoint.get("config", {}).get("workspaceSystemPrompt"))
 
     if client is None or not model or not messages:
@@ -1180,14 +1251,16 @@ async def _run_respond(
     pool: asyncpg.Pool,
     payload: RespondActionPayload,
     make_step_fn: MakeStepFn | None,
+    resume_interrupted: bool = False,
 ) -> ExecutorOutcome:
     """Outer guard for `_run_respond_inner` — same contract as
     `_run_chunk`'s, except that a failure BEFORE the atomic
     paused → running claim leaves the task alone: it is still paused
-    on the user, who can respond again."""
-    guard = _RunGuard(owns_task=False)
+    on the user, who can respond again. A resumed interrupted respond
+    owns the (already `running`) task from the start."""
+    guard = _RunGuard(owns_task=resume_interrupted)
     try:
-        return await _run_respond_inner(pool, payload, make_step_fn, guard)
+        return await _run_respond_inner(pool, payload, make_step_fn, guard, resume_interrupted)
     except Exception as exc:
         logger.error(
             "executor.respond.failed_outside_loop",
@@ -1212,11 +1285,27 @@ async def _run_respond_inner(
     payload: RespondActionPayload,
     make_step_fn: MakeStepFn | None,
     guard: _RunGuard,
+    resume_interrupted: bool = False,
 ) -> ExecutorOutcome:
     """Implementation of `execute_respond`. Kept separate from
     `_run_chunk` because the pre-loop setup is different — we have
     to find the pending tool call and append its result before the
     loop resumes."""
+
+    async def reject(error: str) -> ExecutorOutcome:
+        # Before the paused claim the task is still waiting on the user
+        # and stays untouched; a resumed interrupted respond already owns
+        # the `running` task, which would strand without a settle.
+        if guard.owns_task:
+            await _fail_run(
+                pool,
+                run_id=payload.run_id,
+                user_id=payload.user_id,
+                emitter=guard.emitter,
+                error=error,
+            )
+        return ExecutorOutcome(settled=False, error=error)
+
     start_payload = StartActionPayload(
         run_id=payload.run_id,
         user_id=payload.user_id,
@@ -1232,7 +1321,7 @@ async def _run_respond_inner(
             run_id=payload.run_id,
             user_id=payload.user_id,
         )
-        return ExecutorOutcome(settled=False, error="respond: no checkpoint for run")
+        return await reject("respond: no checkpoint for run")
 
     # A parent paused on its subagents is `paused` too, and its pending
     # `spawnSubagent` tool_use has no tool_result until the fan-in — so
@@ -1245,12 +1334,24 @@ async def _run_respond_inner(
             run_id=payload.run_id,
             request_id=payload.request_id,
         )
-        return ExecutorOutcome(
-            settled=False,
-            error="respond: run is waiting on its subagents, not on user input",
-        )
+        return await reject("respond: run is waiting on its subagents, not on user input")
 
     live_messages = _messages_from(checkpoint)
+    if resume_interrupted and _tool_call_answered(live_messages, payload.request_id):
+        # The dead attempt persisted the answer before dying — the run
+        # just needs to carry on from its checkpoint.
+        logger.warning(
+            "executor.respond.resume_from_checkpoint",
+            run_id=payload.run_id,
+            request_id=payload.request_id,
+        )
+        return await _run_chunk(
+            pool,
+            payload=StartActionPayload(run_id=payload.run_id, user_id=payload.user_id),
+            make_step_fn=make_step_fn,
+            resume=True,
+            reclaimed=True,
+        )
     if _tool_call_answered(live_messages, payload.request_id):
         # Duplicate respond for a call that already has its tool_result
         # (double-click, retried POST, or a run that has since
@@ -1269,10 +1370,7 @@ async def _run_respond_inner(
             run_id=payload.run_id,
             request_id=payload.request_id,
         )
-        return ExecutorOutcome(
-            settled=False,
-            error=f"respond: pending tool call {payload.request_id} not found",
-        )
+        return await reject(f"respond: pending tool call {payload.request_id} not found")
 
     # Same tool set (workspace-scoped context + cloud-mode MCP tools) the
     # start/continue path gave the model, so an approved MCP tool or
@@ -1298,27 +1396,33 @@ async def _run_respond_inner(
             request_id=payload.request_id,
             tool=pending["tool_name"],
         )
-        return ExecutorOutcome(
-            settled=False,
-            error=(
-                f"respond: tool call {payload.request_id} ({pending['tool_name']}) "
-                "is not awaiting user input"
-            ),
+        return await reject(
+            f"respond: tool call {payload.request_id} ({pending['tool_name']}) "
+            "is not awaiting user input"
         )
 
     # Atomic paused → running gate. Only one respond per pause gets past
     # this; a duplicate racing us (or a run cancelled while paused) sees
-    # no row and settles as a no-op — before any tool executes.
-    claimed = await store.claim_paused_for_respond(
-        pool, run_id=payload.run_id, user_id=payload.user_id
-    )
-    if not claimed:
+    # no row and settles as a no-op — before any tool executes. A resumed
+    # interrupted respond already went through it on the dead attempt.
+    lease.check_current()
+    if resume_interrupted:
         logger.warning(
-            "executor.respond.not_paused",
+            "executor.respond.reapply_answer",
             run_id=payload.run_id,
             request_id=payload.request_id,
         )
-        return ExecutorOutcome(settled=True)
+    else:
+        claimed = await store.claim_paused_for_respond(
+            pool, run_id=payload.run_id, user_id=payload.user_id
+        )
+        if not claimed:
+            logger.warning(
+                "executor.respond.not_paused",
+                run_id=payload.run_id,
+                request_id=payload.request_id,
+            )
+            return ExecutorOutcome(settled=True)
     # From here the task is `running` on our account — any escaped error
     # must settle it (see `_run_respond`).
     guard.owns_task = True
@@ -1359,7 +1463,13 @@ async def _run_respond_inner(
         pool, run_id=payload.run_id, user_id=payload.user_id, checkpoint=checkpoint
     )
     start_step = _int_or(checkpoint.get("step"), 0)
-    sink = _make_db_sink(pool, user_id=payload.user_id)
+    db_sink = _make_db_sink(pool, user_id=payload.user_id)
+
+    async def sink(event: TaskEvent) -> None:
+        # No event may be written once this worker's job lease is gone.
+        lease.check_current()
+        await db_sink(event)
+
     emitter = RunEmitter(
         run_id=payload.run_id,
         sink=sink,
@@ -1381,6 +1491,10 @@ async def _run_respond_inner(
             checkpoint=interim_checkpoint,
         )
         await _stamp_handler(pool, run_id=payload.run_id, user_id=payload.user_id)
+        if resume_interrupted:
+            # Reclaimed: open with a resume marker so consumers drop
+            # anything the dead attempt wrote past the paused checkpoint.
+            await emitter.status("running", resumed_from_seq=_int_or(checkpoint.get("seq"), 0))
         # Emit input_response (clears pending_input on the projection)
         # then status:running before stepping again.
         await emitter.input_response(
@@ -1437,6 +1551,8 @@ async def _run_respond_inner(
             should_yield=should_yield,
             final_text=final_text,
         )
+        # As in `_run_chunk_inner`: no run-state writes without the lease.
+        lease.check_current()
 
         if result.kind == "suspended":
             # Re-suspended (the user's answer unblocked the model and
@@ -1613,6 +1729,8 @@ async def _build_tool_result_text(
                 f'(Approved, but the tool "{tool_name}" is not registered '
                 "for this run — it may have been removed since the run paused.)"
             )
+        # Last gate before the approved tool's side effect.
+        lease.check_current()
         try:
             args = final_args if isinstance(final_args, dict) else {}
             result = await descriptor.execute(args)
