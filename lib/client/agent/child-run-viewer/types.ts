@@ -1,3 +1,5 @@
+import "client-only"
+
 /**
  * Open-state for the child-run drill-in Sheet (subagent orchestration
  * PR-3b). Mirrors the text/pdf/csv viewer stores: one target at a time,

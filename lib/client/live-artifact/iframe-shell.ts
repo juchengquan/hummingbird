@@ -1,3 +1,5 @@
+import "client-only"
+
 /**
  * Build the HTML document the live-artifact iframe renders — posted
  * into the `/sandbox/frame` shell by `SandboxedFrame`, which writes it

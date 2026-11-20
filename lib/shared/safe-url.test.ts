@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test"
 import {
   httpOriginOf,
   isExternalHttpUrl,
+  isSafeDownloadUrl,
   isSafeImageUrl,
   isSafeLinkUrl,
   markdownImagePolicy,
@@ -200,6 +201,29 @@ describe("planImageOpen", () => {
     })
     expect(planImageOpen("file:///etc/passwd")).toEqual({ kind: "blocked" })
     expect(planImageOpen(undefined)).toEqual({ kind: "blocked" })
+  })
+})
+
+describe("isSafeDownloadUrl", () => {
+  test.each([
+    "https://proj.supabase.co/storage/v1/object/sign/a.csv?token=t",
+    "http://example.com/a.zip",
+    "blob:https://app.example.com/uuid",
+    "data:text/csv;base64,QQ==",
+    "data:application/pdf;base64,JVBERi0=",
+    "/api/files/a.csv",
+  ])("allows %p", (url) => {
+    expect(isSafeDownloadUrl(url)).toBe(true)
+  })
+
+  test.each([
+    ...SCRIPT_URLS.filter((u) => !/^(blob|data):/i.test(u)),
+    "",
+    "   ",
+    undefined,
+    null,
+  ])("refuses %p", (url) => {
+    expect(isSafeDownloadUrl(url as string)).toBe(false)
   })
 })
 

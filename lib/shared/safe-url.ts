@@ -106,6 +106,21 @@ export function isSafeImageUrl(url: string | null | undefined): boolean {
   return scheme === "data" && SAFE_DATA_IMAGE_RE.test(normalized)
 }
 
+const DOWNLOAD_SCHEMES = new Set(["http", "https", "blob", "data"])
+
+/**
+ * True when `url` is safe to assign to a download anchor's `href` and
+ * click programmatically: http(s), `blob:`, `data:` (any type — the
+ * `download` attribute saves it rather than rendering it, and browsers
+ * refuse top-level `data:` navigation anyway) and scheme-less URLs.
+ * Never `javascript:` (a click would run it) or any other scheme.
+ */
+export function isSafeDownloadUrl(url: string | null | undefined): boolean {
+  if (typeof url !== "string" || !url.trim()) return false
+  const scheme = schemeOf(normalizeUrlForSchemeCheck(url))
+  return scheme === null || DOWNLOAD_SCHEMES.has(scheme)
+}
+
 /**
  * How the markdown renderer treats an image URL:
  *   - `auto`    → loads immediately: raster `data:` images, `blob:` URLs
