@@ -508,6 +508,11 @@ def reclaim_decision(action: str, state: JobTaskState) -> tuple[ReclaimAction, s
             `status: running` marker carrying `resumedFromSeq` — the
             checkpoint's seq — so consumers drop the dead attempt's
             partial output written past it.
+      Either way a side-effecting tool the dead attempt had started is
+      never run again (its checkpointed execution record turns it into
+      an "interrupted, outcome unknown" result — `tool_ledger`), and a
+      checkpoint suspended on an unanswered gated call pauses the run
+      again rather than resuming past it (`executor._run_chunk_inner`).
     """
     status = state.task_status
     if status in _TERMINAL_TASK_STATUSES:

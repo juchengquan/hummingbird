@@ -161,6 +161,24 @@ A repo-level `.env` works — `pydantic-settings` looks for `.env` in the
 current working directory. The service shares the same `.env` as the
 Next.js app (same Supabase project, same vars).
 
+## Crash recovery and side-effecting tools
+
+A reclaimed job resumes from the task's checkpoint behind a
+`status: running` marker carrying `resumedFromSeq` (see `poller.
+reclaim_decision`). Two guards keep a resume from repeating or skipping
+work (`tool_ledger.py`):
+
+- **Side-effecting tools never run twice.** Every MCP tool
+  (`ToolDescriptor.side_effecting`) and every approval-gated tool is
+  bracketed by an execution record in the checkpoint
+  (`inflight_tools`), saved before it runs and again once its result is
+  in. A reclaim that finds a tool started but unfinished does not re-run
+  it: the model gets an "interrupted, outcome unknown" tool result and
+  can verify or ask. Built-in tools are read-only and simply re-run.
+- **Unanswered gated calls pause again.** A checkpoint saved on a
+  suspend whose task never reached `paused` re-emits the approval /
+  input request + `status: paused` and pauses the task.
+
 ## Phase 1 verification (production observation)
 
 After Phase 1 deploys:

@@ -731,8 +731,13 @@ async def test_interrupted_respond_reapplies_an_unpersisted_answer() -> None:
 
     assert outcome.settled is True
     claim.assert_not_called()
+    # The dead attempt never recorded starting the tool, so it runs —
+    # behind a fresh execution record (first save), then its result is
+    # persisted (second save).
     assert calls == ["danger"]
-    saved = save.await_args_list[0].kwargs["checkpoint"]["messages"][-1]["content"][0]
+    record = save.await_args_list[0].kwargs["checkpoint"]["inflight_tools"]
+    assert record == {"started": ["tu_1"], "results": []}
+    saved = save.await_args_list[1].kwargs["checkpoint"]["messages"][-1]["content"][0]
     assert (saved["tool_use_id"], saved["content"]) == ("tu_1", "danger ran")
     # Opens with a resume marker from the paused checkpoint (seq 8), then
     # re-emits the answer.

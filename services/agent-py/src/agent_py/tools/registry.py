@@ -75,6 +75,12 @@ class ToolDescriptor:
     description: str
     input_schema: dict[str, Any]
     execute: ToolExecuteFn
+    # True when running the tool acts on the outside world (sends,
+    # writes, deletes …) so running it twice is not harmless. A reclaimed
+    # run never silently re-runs such a tool whose execution was
+    # interrupted — see `agent_py.tool_ledger`. Every MCP tool sets it;
+    # the built-in tools are read-only.
+    side_effecting: bool = False
 
 
 def tool_to_anthropic_param(tool: ToolDescriptor) -> dict[str, Any]:
