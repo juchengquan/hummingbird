@@ -52,8 +52,8 @@ afterEach(async () => {
 })
 
 describe("v32 migration — blobs to IndexedDB", () => {
-  test("STORE_VERSION is 32", () => {
-    expect(STORE_VERSION).toBe(32)
+  test("STORE_VERSION includes the v32 step", () => {
+    expect(STORE_VERSION).toBeGreaterThanOrEqual(32)
   })
 
   test("the step keeps legacy blob values on the rows (they are the pending stash) and drops junk", () => {

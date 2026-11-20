@@ -1,6 +1,7 @@
 import "client-only"
 
 import { stripDurableBlobFieldsAll } from "@/client/files/blob-fields"
+import { stripDurableMessageBlobs } from "@/client/messages/message-blobs"
 import { reviveDates } from "@/client/store/revive-dates"
 
 import type { AppState } from "../use-store"
@@ -33,7 +34,12 @@ export const partializeState = (state: AppState) => ({
   conversationMcpResources: state.conversationMcpResources,
   urlBookmarks: state.urlBookmarks,
   conversationUrlBookmarks: state.conversationUrlBookmarks,
-  conversations: state.conversations,
+  // Inline `data:` URLs on message generated images / files are
+  // swapped for `hb-blob:<messageId>/<itemId>` references once they are
+  // committed to IndexedDB (`client/messages/message-blobs.ts`, v33).
+  // Until then they keep persisting here, so a failed / missing
+  // IndexedDB never loses them.
+  conversations: stripDurableMessageBlobs(state.conversations),
   activeConversationId: state.activeConversationId,
   // `imageDataUrl` / `extractedFullText` are stripped from each row
   // once they are committed to IndexedDB (`client/files/blob-fields.ts`,

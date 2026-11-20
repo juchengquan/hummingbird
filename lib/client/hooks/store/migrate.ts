@@ -8,7 +8,7 @@ import { uuid } from "@/shared/uuid"
  * step in `runMigrations`. Wired into the `version` field of the persist
  * config in `use-store.ts`.
  */
-export const STORE_VERSION = 32
+export const STORE_VERSION = 33
 
 /**
  * Sequential schema migrations from older persisted shapes to the
@@ -531,6 +531,64 @@ export function runMigrations(
           delete next[key]
         }
         return next ?? obj
+      })
+    }
+  }
+  if (fromVersion < 33) {
+    // Inline `data:` URLs on `message.generatedImages[].url` /
+    // `message.generatedFiles[].url` move from localStorage to IndexedDB
+    // (`client/messages/message-blobs.ts`); from v33 on, a persisted
+    // item normally carries an `hb-blob:<messageId>/<itemId>` reference
+    // in their place (`shared/message-blob-ref.ts`). http(s) / signed
+    // URLs are untouched.
+    //
+    // Same data-safety design as the v32 step: nothing is stripped here
+    // (migrations are synchronous; an IndexedDB write can't be awaited).
+    // The rehydrated items ARE the pending stash — `use-store.ts` primes
+    // the session cache and runs `offloadMessageBlobs` right after
+    // hydration, and `partializeState` swaps a URL for its reference only
+    // once IndexedDB has committed that exact value. No IndexedDB → the
+    // `data:` URLs stay in localStorage, exactly as before v33.
+    //
+    // All this step does is normalise the two lists so the offload never
+    // sees junk: a non-array value is removed, and so is an entry that
+    // isn't an object with a string `id` + `url` (it could never have
+    // been rendered or keyed).
+    const conversations = state.conversations
+    if (Array.isArray(conversations)) {
+      state.conversations = conversations.map((c) => {
+        if (!c || typeof c !== "object") return c
+        const conv = c as Record<string, unknown>
+        if (!Array.isArray(conv.messages)) return conv
+        let messagesChanged = false
+        const messages = conv.messages.map((m) => {
+          if (!m || typeof m !== "object") return m
+          const msg = m as Record<string, unknown>
+          let next: Record<string, unknown> | null = null
+          for (const key of ["generatedImages", "generatedFiles"]) {
+            if (!(key in msg)) continue
+            const list = msg[key]
+            if (list === undefined) continue
+            if (!Array.isArray(list)) {
+              next ??= { ...msg }
+              delete next[key]
+              continue
+            }
+            const kept = list.filter((it) => {
+              if (!it || typeof it !== "object") return false
+              const item = it as Record<string, unknown>
+              return typeof item.id === "string" && typeof item.url === "string"
+            })
+            if (kept.length === list.length) continue
+            next ??= { ...msg }
+            if (kept.length > 0) next[key] = kept
+            else delete next[key]
+          }
+          if (!next) return msg
+          messagesChanged = true
+          return next
+        })
+        return messagesChanged ? { ...conv, messages } : conv
       })
     }
   }

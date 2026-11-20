@@ -43,6 +43,8 @@ import type { AppSupabaseClient } from "@/client/supabase/client"
 import type { Json } from "@/shared/supabase/types"
 import { parseCanvasState } from "@/shared/canvas/types"
 import { loadFileBlobFieldsMap } from "@/client/files/blob-fields"
+import { prepareMessageRowForUpload } from "@/client/messages/message-blobs"
+import { canonicalGeneratedItemsJson } from "@/client/sync/handlers"
 import { useStore } from "@/client/hooks/use-store"
 import { setSyncSnapshot } from "@/client/hooks/use-sync"
 import { mergeCloudSnapshot, type MergeOptions } from "@/client/sync/snapshot-merge"
@@ -813,21 +815,35 @@ export async function bulkUploadLocalState(
         compressed: m.compressed ?? false,
         kind: m.kind ?? null,
         recap_message_ids: m.recapMessageIds ?? [],
-        generated_images:
-          m.generatedImages && m.generatedImages.length > 0
-            ? (m.generatedImages as unknown as Json)
-            : null,
-        generated_files:
-          m.generatedFiles && m.generatedFiles.length > 0
-            ? (m.generatedFiles as unknown as Json)
-            : null,
+        // Canonical form (inline `data:` URL → `hb-blob:` reference),
+        // resolved back to the real bytes just below — same path as the
+        // queue's flush (store v33, `client/messages/message-blobs.ts`).
+        generated_images: canonicalGeneratedItemsJson(m.id, m.generatedImages),
+        generated_files: canonicalGeneratedItemsJson(m.id, m.generatedFiles),
         created_at: new Date(m.timestamp).toISOString(),
       })
     })
   }
   {
-    const r = await uploadRows(client, "messages", messageRows)
-    if (!r.ok) return r
+    // Resolve every placeholder reference to its `data:` URL. A row whose
+    // reference can't be resolved comes back WITHOUT that column; such
+    // rows go up in their own request(s), grouped by column set, because
+    // a bulk upsert fills a column missing from one row with NULL — which
+    // would overwrite the cloud copy we are trying to preserve.
+    const prepared = await Promise.all(
+      messageRows.map((row) => prepareMessageRowForUpload(row))
+    )
+    const groups = new Map<string, Record<string, unknown>[]>()
+    for (const row of prepared) {
+      const sig = Object.keys(row).sort().join(",")
+      const list = groups.get(sig)
+      if (list) list.push(row)
+      else groups.set(sig, [row])
+    }
+    for (const rows of groups.values()) {
+      const r = await uploadRows(client, "messages", rows)
+      if (!r.ok) return r
+    }
   }
 
   // files (storage_path / external_url stay null at this stage; the

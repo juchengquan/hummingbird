@@ -129,6 +129,28 @@ describe("partializeState — frozen persisted shape", () => {
   })
 
   test("STORE_VERSION is pinned (bump only with a migration step)", () => {
-    expect(STORE_VERSION).toBe(32)
+    // v32: file blob fields → IndexedDB. v33: inline `data:` URLs on
+    // message generated images / files → IndexedDB (`hb-blob:` refs in
+    // the persisted copy). Neither changed the persisted KEY set.
+    expect(STORE_VERSION).toBe(33)
+  })
+
+  test("v33: message generated data: URLs persist verbatim until IndexedDB confirms them", () => {
+    const img = "data:image/png;base64,AAAA"
+    const conversations = [
+      {
+        id: "c",
+        messages: [
+          {
+            id: "m",
+            generatedImages: [{ id: "i", url: img }],
+            generatedFiles: [{ id: "f", url: "https://x.test/a.csv" }],
+          },
+        ],
+      },
+    ]
+    const persisted = partializeState({ conversations, files: [] } as unknown as AppState)
+    // Nothing is durable in this process → the array passes through untouched.
+    expect(persisted.conversations).toBe(conversations as unknown as AppState["conversations"])
   })
 })
