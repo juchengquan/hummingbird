@@ -26,6 +26,8 @@ import "client-only"
 import type { StateStorage } from "zustand/middleware"
 import { mark as perfMark, count as perfCount } from "@/client/perf-chat-stream"
 
+import { isQuotaExceededError, notifyStorageQuotaExceeded } from "./quota-toast"
+
 export interface DebouncedStorageOptions {
   /** Underlying storage to persist to. Defaults to `localStorage`. */
   target?: Storage
@@ -33,6 +35,9 @@ export interface DebouncedStorageOptions {
    *  between cutting bursts and not losing too much state on a hard
    *  crash. The `pagehide` flush covers the planned-exit case. */
   delayMs?: number
+  /** Called when a flush fails with a quota error. Defaults to a
+   *  once-per-session toast (`quota-toast.ts`). */
+  onQuotaExceeded?: (err: unknown) => void
 }
 
 /** `StateStorage` plus the hooks the cross-tab merge
@@ -57,6 +62,8 @@ export function debouncedStorage(
   const resolvedTarget =
     opts.target ?? (typeof window !== "undefined" ? window.localStorage : undefined)
   const delayMs = opts.delayMs ?? 100
+  const onQuotaExceeded =
+    opts.onQuotaExceeded ?? (() => void notifyStorageQuotaExceeded())
 
   if (!resolvedTarget) {
     // SSR / Node — no-op storage. Mirrors Zustand's own
@@ -101,11 +108,13 @@ export function debouncedStorage(
     try {
       target.setItem(name, value)
       wrote = true
-    } catch {
-      // Quota exceeded or storage unavailable — surface the error on
-      // the next read (callers see stale data, same as if the write
-      // never happened). We don't throw because Zustand's persist
-      // middleware swallows storage errors too.
+    } catch (err) {
+      // Quota exceeded or storage unavailable — callers see stale data
+      // on the next read, same as if the write never happened. We don't
+      // throw because Zustand's persist middleware swallows storage
+      // errors too. A quota error is the one the user can act on, so
+      // it gets a (once-per-session) toast.
+      if (isQuotaExceededError(err)) onQuotaExceeded(err)
     }
     perfMark("humm/chat/persist-debounce-flush:end")
     if (wrote) for (const cb of flushListeners) cb(name)
