@@ -49,6 +49,7 @@ import {
 } from "@/client/chat/build-sandbox-files"
 import { getFileImageDataUrls } from "@/client/files/blob-fields"
 import { getBlob } from "@/client/files/local-store"
+import { artifactStoragePathFor } from "@/client/messages/message-blobs"
 import { extractAfterTurn } from "@/client/memory/extract-after-turn"
 import { translateFrame } from "@/client/chat/sse-frame-translator"
 import { useStore } from "@/client/hooks/use-store"
@@ -706,11 +707,13 @@ export function useChatSend(): UseChatSendResult {
                       title: img.prompt
                         ? img.prompt.slice(0, 80).trim()
                         : `Generated image`,
-                      // Prompt as text content (small). The image
-                      // reference lives in storagePath so we don't
-                      // bloat the artifact with base64 data URLs.
+                      // Prompt as text content (small). The image lives
+                      // in storagePath: a signed URL as-is, or — for an
+                      // inline data: URL — an `hb-blob:` reference to the
+                      // message item's IndexedDB record, so the bytes are
+                      // stored once, not copied onto the artifact (v34).
                       content: img.prompt ?? "",
-                      storagePath: img.url,
+                      storagePath: artifactStoragePathFor(ph.id, img),
                     })
                   })
                 }
@@ -756,9 +759,9 @@ export function useChatSend(): UseChatSendResult {
                       kind: "file",
                       title: f.name,
                       content: "",
-                      // Mirrors the image path: the artifact's storagePath
-                      // field carries the loadable URL (signed or data:).
-                      storagePath: f.url,
+                      // Mirrors the image path: a signed URL as-is, or a
+                      // reference to the message item's bytes.
+                      storagePath: artifactStoragePathFor(ph.id, f),
                     })
                   })
                 }

@@ -48,7 +48,10 @@ import { openLiveArtifact } from "@/components/right-panel-slot"
 import type { Artifact } from "@/shared/types"
 import { CitationTableView } from "@/components/panels/citation-table"
 import { parseCitationTable } from "@/shared/artifacts/citation-table"
-import { citationTableMarkerMarkdown } from "@/shared/artifacts/citation-table-md"
+import {
+  artifactMarkdownForEditor,
+  useArtifactAssetUrl,
+} from "@/client/artifacts/artifact-asset"
 import { ArtifactHistoryPanel } from "@/components/panels/artifact-history-panel"
 
 function artifactKindIcon(artifact: Artifact) {
@@ -59,36 +62,32 @@ function artifactKindIcon(artifact: Artifact) {
   return <FileText size={12} />
 }
 
-function asMarkdownForEditor(artifact: Artifact): string {
-  if (artifact.kind === "code") {
-    return `\`\`\`${artifact.language ?? ""}\n${artifact.content}\n\`\`\``
-  }
-  if (artifact.kind === "json") {
-    let pretty = artifact.content
-    try {
-      pretty = JSON.stringify(JSON.parse(artifact.content), null, 2)
-    } catch {
-      /* leave raw */
-    }
-    return `\`\`\`json\n${pretty}\n\`\`\``
-  }
-  if (artifact.kind === "image") {
-    const src = artifact.storagePath ?? artifact.content
-    return artifact.content
-      ? `![${artifact.content.slice(0, 60)}](${src})`
-      : `![](${src})`
-  }
-  if (artifact.kind === "table") {
-    return citationTableMarkerMarkdown(artifact.id)
-  }
-  return artifact.content
-}
-
 function ArtifactFileDownload({ artifact }: { artifact: Artifact }) {
   const updateStoragePath = useStore((s) => s.updateArtifactStoragePath)
   // Guard a concurrent in-flight click; resets after each attempt.
   const inFlight = useRef(false)
-  const href = artifact.storagePath ?? artifact.content
+  // Store v34: `storagePath` may be an `hb-blob:` reference into
+  // IndexedDB — resolve it; until then the link is inert.
+  const resolved = useArtifactAssetUrl(artifact)
+
+  if (resolved.status !== "ready") {
+    const missing = resolved.status === "missing"
+    return (
+      <span
+        aria-busy={!missing}
+        title={missing ? "File unavailable on this device" : "Loading…"}
+        className={cn(
+          "flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--muted)] px-3 py-2 text-sm text-[var(--muted-foreground)]",
+          !missing && "animate-pulse"
+        )}
+      >
+        <Download className="size-4" />
+        <span className="font-medium">{artifact.title}</span>
+        {missing && <span className="text-xs">unavailable</span>}
+      </span>
+    )
+  }
+  const href = resolved.url
 
   const onClick = async (e: React.MouseEvent<HTMLAnchorElement>) => {
     const path = parseStorageObjectPath(href)
@@ -122,7 +121,25 @@ function ArtifactImage({ artifact }: { artifact: Artifact }) {
   const updateStoragePath = useStore((s) => s.updateArtifactStoragePath)
   // One attempt per mount — a path that refuses to re-sign must not loop.
   const refreshed = useRef(false)
-  const src = artifact.storagePath ?? artifact.content
+  // Store v34: resolve an `hb-blob:` reference before it can reach `src`.
+  const resolved = useArtifactAssetUrl(artifact)
+
+  if (resolved.status !== "ready") {
+    const missing = resolved.status === "missing"
+    return (
+      <div
+        aria-busy={!missing}
+        className={cn(
+          "flex h-48 w-72 max-w-full flex-col items-center justify-center gap-2 rounded-md bg-[var(--muted)] text-xs text-[var(--muted-foreground)]",
+          !missing && "animate-pulse"
+        )}
+      >
+        <ImageIcon className="size-5" />
+        {missing ? "Image unavailable on this device" : null}
+      </div>
+    )
+  }
+  const src = resolved.url
 
   const onError = async () => {
     if (refreshed.current) return
@@ -166,8 +183,15 @@ export function ArtifactsTab() {
 
   const open = openId ? artifacts.find((a) => a.id === openId) ?? null : null
 
-  const handleSendToEditor = (a: Artifact) => {
-    appendToActiveDocumentOrCreate(asMarkdownForEditor(a))
+  const handleSendToEditor = async (a: Artifact) => {
+    // Image artifacts embed their resolved URL — never an `hb-blob:`
+    // reference (store v34).
+    const markdown = await artifactMarkdownForEditor(a)
+    if (markdown === null) {
+      toast.error("This image isn't available on this device")
+      return
+    }
+    appendToActiveDocumentOrCreate(markdown)
     requestEditorReload()
     setActiveView("editor")
     setOpenId(null)

@@ -42,8 +42,10 @@ import "client-only"
  * can neither land after it nor mark the key durable afterwards.
  */
 
-import type { Conversation, GeneratedFile, GeneratedImage, Message } from "@/shared/types"
+import type { Artifact, Conversation, GeneratedFile, GeneratedImage, Message } from "@/shared/types"
 import {
+  ARTIFACT_BLOB_COLUMN,
+  artifactBlobKey,
   blobKeyForItem,
   isInlineDataUrl,
   isMessageBlobRef,
@@ -75,6 +77,13 @@ const cache = new Map<string, string>()
 const durable = new Map<string, string>()
 /** Bumped whenever `durable` changes — invalidates the strip memos. */
 let durableEpoch = 0
+/** Values read back from IndexedDB this session — proof those bytes are
+ *  stored, without touching the `durable` strip ledger (see
+ *  `resolveMessageBlobUrl`). Consulted by the artifact persist guard. */
+const fromIdb = new Map<string, string>()
+/** Bumped whenever `cache` / `durable` / `fromIdb` change — invalidates
+ *  the artifact persist memo (`persistableArtifacts`). */
+let blobEpoch = 0
 /** Values queued for writing (dedup across rapid store changes). */
 const inflight = new Map<string, string>()
 /** Values whose write failed this session (retried next session). */
@@ -94,6 +103,7 @@ const listeners = new Set<() => void>()
 let scanned = new WeakSet<Conversation>()
 
 function emit(): void {
+  blobEpoch++
   for (const cb of listeners) cb()
 }
 
@@ -116,6 +126,7 @@ function setDurable(key: string, value: string): void {
   if (durable.get(key) === value) return
   durable.set(key, value)
   durableEpoch++
+  blobEpoch++
 }
 
 // ---------------------------------------------------------------------------
@@ -417,12 +428,14 @@ export function deleteMessageBlobs(keys: Iterable<string>): Promise<void> {
     generation.set(key, genOf(key) + 1)
     if (cache.delete(key)) changed = true
     if (durable.delete(key)) durableEpoch++
+    fromIdb.delete(key)
     inflight.delete(key)
     failed.delete(key)
     loading.delete(key)
     missing.add(key)
     ops.push(enqueue(key, () => idbDelete(key)))
   }
+  blobEpoch++
   if (changed) emit()
   return Promise.all(ops).then(() => undefined)
 }
@@ -475,6 +488,7 @@ export async function resolveMessageBlobUrl(url: string): Promise<string | undef
         // copy that shows up later — e.g. via a pull — is simply
         // re-written once, then stripped.)
         cache.set(key, stored)
+        fromIdb.set(key, stored)
         missing.delete(key)
       } else {
         missing.add(key)
@@ -537,6 +551,338 @@ export async function prepareMessageRowForUpload(
   return out
 }
 
+// ---------------------------------------------------------------------------
+// Artifacts (store v34)
+// ---------------------------------------------------------------------------
+//
+// An image / file artifact created from a generated item references the
+// item's bytes instead of copying them: its `storagePath` is the item's
+// `hb-blob:<messageId>/<itemId>` reference (see `artifactStoragePathFor`),
+// so message and artifact share ONE IndexedDB record. An artifact whose
+// `storagePath` is still an inline `data:` URL (pre-v34 data, a cloud
+// pull, a value that couldn't be shared) is moved by
+// `offloadArtifactBlobs`: to the record of a generated item holding the
+// same bytes when there is one (dedupe), else to its own
+// `artifact/<artifactId>` record — and only once IndexedDB has confirmed
+// that record is the live artifact rewritten to the reference.
+//
+// Guarantees (same as v33):
+//   - persisted copy: `persistableArtifacts` re-inflates a reference whose
+//     bytes this session holds but IndexedDB hasn't confirmed, so a
+//     failed / slow / impossible write never loses the only copy;
+//   - sync: `prepareArtifactRowForUpload` resolves a reference to the real
+//     `data:` URL at flush time, or omits `storage_path` — a reference or a
+//     null-overwrite never reaches the cloud;
+//   - cascade: `removedBlobKeys` counts message items AND artifacts, so
+//     deleting either side never deletes bytes the other still uses.
+
+/**
+ * `storagePath` for an artifact created from generated item `item` of
+ * message `messageId`. An inline `data:` URL becomes the item's reference
+ * — but only when the session cache already holds exactly those bytes
+ * under that key (i.e. the item really is on the message and the message
+ * offload has picked it up). Anything else is returned as-is (http(s) /
+ * signed URL, or an inline value `offloadArtifactBlobs` moves later).
+ */
+export function artifactStoragePathFor(messageId: string, item: BlobBearingItem): string {
+  if (!isInlineDataUrl(item.url)) return item.url
+  const key = messageBlobKey(messageId, item.id)
+  return cache.get(key) === item.url ? messageBlobRef(key) : item.url
+}
+
+/** True when `value` at `key` is known to be in IndexedDB. */
+function isConfirmed(key: string, value: string): boolean {
+  return durable.get(key) === value || fromIdb.get(key) === value
+}
+
+// --- persisted copy --------------------------------------------------------
+
+const artifactMemo = new WeakMap<Artifact, { epoch: number; out: Artifact }>()
+
+function persistableArtifact(a: Artifact): Artifact {
+  const key = parseMessageBlobRef(a.storagePath)
+  if (!key) return a
+  const hit = artifactMemo.get(a)
+  if (hit && hit.epoch === blobEpoch) return hit.out
+  const value = cache.get(key)
+  const desired = value && !isConfirmed(key, value) ? value : a.storagePath
+  // Keep the previous output object when its value didn't change, so the
+  // cross-tab merge's reference checks stay stable across epoch bumps.
+  const out =
+    desired === a.storagePath
+      ? a
+      : hit && hit.out.storagePath === desired
+        ? hit.out
+        : { ...a, storagePath: desired }
+  artifactMemo.set(a, { epoch: blobEpoch, out })
+  return out
+}
+
+let lastPersistable: {
+  input: readonly Artifact[]
+  epoch: number
+  output: Artifact[]
+} | null = null
+
+/**
+ * `partializeState` hook for `artifacts`. A reference is persisted only
+ * when its bytes are confirmed in IndexedDB (or this session doesn't hold
+ * them at all — then the reference is all there is). A reference whose
+ * bytes this session holds but IndexedDB hasn't confirmed (write still in
+ * flight, failed, or no IndexedDB) is persisted as the inline `data:` URL
+ * instead — the pre-v34 behaviour. Returns the input array when nothing
+ * needs inflating.
+ */
+export function persistableArtifacts(artifacts: Artifact[]): Artifact[] {
+  if (
+    lastPersistable &&
+    lastPersistable.input === artifacts &&
+    lastPersistable.epoch === blobEpoch
+  ) {
+    return lastPersistable.output
+  }
+  let output: Artifact[] = artifacts
+  for (let i = 0; i < artifacts.length; i++) {
+    const next = persistableArtifact(artifacts[i])
+    if (next === artifacts[i]) continue
+    if (output === artifacts) output = artifacts.slice()
+    output[i] = next
+  }
+  lastPersistable = { input: artifacts, epoch: blobEpoch, output }
+  return output
+}
+
+// --- offload ---------------------------------------------------------------
+
+/**
+ * Store callback: point artifact `artifactId` at `ref` IF its
+ * `storagePath` is still exactly `value`. Returns whether it did. When it
+ * didn't, the callee drops the record if nothing references it (see
+ * `use-store.ts`).
+ */
+export type ArtifactRefRewrite = (artifactId: string, value: string, ref: string) => boolean
+
+let scannedArtifacts = new WeakSet<Artifact>()
+/** artifactId → inline value being moved (dedup across store changes). */
+const artifactPending = new Map<string, string>()
+
+function indexMessages(conversations: readonly Conversation[]): Map<string, Message> {
+  const out = new Map<string, Message>()
+  for (const c of conversations) for (const m of c.messages ?? []) out.set(m.id, m)
+  return out
+}
+
+/** Settle any queued op on `key`, then report whether `value` is stored. */
+async function confirmAfterQueue(key: string, value: string): Promise<boolean> {
+  if (isConfirmed(key, value)) return true
+  if (!queues.has(key)) return false
+  await enqueue(key, async () => undefined)
+  return isConfirmed(key, value)
+}
+
+/**
+ * A key whose CONFIRMED record holds exactly `value`: first the generated
+ * items of the artifact's source message (inline, or by reference — read
+ * back from IndexedDB when needed), then anything else this session has
+ * confirmed. `null` when there is none.
+ */
+async function findSharedKey(value: string, source: Message | undefined): Promise<string | null> {
+  if (source) {
+    const candidates: Array<{ key: string; url: string }> = []
+    forEachBlobItem(source, (key, item) => candidates.push({ key, url: item.url }))
+    for (const { key, url } of candidates) {
+      let bytes: string | undefined
+      if (url === value) bytes = value
+      else if (isMessageBlobRef(url)) bytes = cache.get(key) ?? (await resolveMessageBlobUrl(url))
+      if (bytes !== value) continue
+      if (await confirmAfterQueue(key, value)) return key
+    }
+  }
+  for (const [key, v] of cache) {
+    if (v === value && isConfirmed(key, value)) return key
+  }
+  return null
+}
+
+async function moveArtifactBlob(
+  artifactId: string,
+  value: string,
+  source: Message | undefined,
+  rewrite: ArtifactRefRewrite
+): Promise<boolean> {
+  // 1. The same bytes are already stored for a generated item → share.
+  const shared = await findSharedKey(value, source)
+  // Re-checked synchronously with the rewrite: a cascade may have run
+  // during the awaits above.
+  if (shared && isConfirmed(shared, value)) {
+    return rewrite(artifactId, value, messageBlobRef(shared))
+  }
+  // 2. Its own record.
+  const key = artifactBlobKey(artifactId)
+  if (cache.get(key) !== value) {
+    cache.set(key, value)
+    missing.delete(key)
+    emit()
+  }
+  if (failed.get(key) === value) return false
+  if (!isConfirmed(key, value) && inflight.get(key) !== value) {
+    await scheduleWrite(key, value)
+  } else {
+    await confirmAfterQueue(key, value)
+  }
+  if (!isConfirmed(key, value)) return false
+  return rewrite(artifactId, value, messageBlobRef(key))
+}
+
+/**
+ * Move every inline `data:` `storagePath` in `artifacts` into IndexedDB
+ * (sharing a generated item's record when the bytes match) and, once
+ * confirmed, rewrite the live artifact to the reference through
+ * `rewrite`. Only artifact objects not seen before are visited. Resolves
+ * to the number of artifacts rewritten. Never rejects.
+ */
+export async function offloadArtifactBlobs(
+  artifacts: readonly Artifact[],
+  conversations: readonly Conversation[],
+  rewrite: ArtifactRefRewrite
+): Promise<number> {
+  const jobs: Promise<boolean>[] = []
+  let messages: Map<string, Message> | null = null
+  for (const a of artifacts) {
+    if (scannedArtifacts.has(a)) continue
+    scannedArtifacts.add(a)
+    const value = a.storagePath
+    if (!isInlineDataUrl(value)) continue
+    if (artifactPending.get(a.id) === value) continue
+    let source: Message | undefined
+    if (a.messageId) {
+      messages ??= indexMessages(conversations)
+      source = messages.get(a.messageId)
+    }
+    artifactPending.set(a.id, value)
+    jobs.push(
+      moveArtifactBlob(a.id, value, source, rewrite)
+        .catch(() => false)
+        .finally(() => {
+          if (artifactPending.get(a.id) === value) artifactPending.delete(a.id)
+        })
+    )
+  }
+  if (jobs.length === 0) return 0
+  const results = await Promise.all(jobs)
+  return results.filter(Boolean).length
+}
+
+// --- reference counting ----------------------------------------------------
+
+const artifactKeysMemo = new WeakMap<readonly Artifact[], ReadonlySet<string>>()
+
+/** Every IndexedDB key referenced by an artifact's `storagePath`. */
+export function collectArtifactBlobKeys(artifacts: readonly Artifact[]): ReadonlySet<string> {
+  const hit = artifactKeysMemo.get(artifacts)
+  if (hit) return hit
+  let keys: Set<string> | null = null
+  for (const a of artifacts) {
+    const key = parseMessageBlobRef(a.storagePath)
+    if (!key) continue
+    keys ??= new Set()
+    keys.add(key)
+  }
+  const out = keys ?? EMPTY_KEYS
+  artifactKeysMemo.set(artifacts, out)
+  return out
+}
+
+/** The two collections that own IndexedDB blob references. */
+export interface BlobOwners {
+  conversations: readonly Conversation[]
+  artifacts: readonly Artifact[]
+}
+
+/**
+ * Keys referenced by `prev` (message items or artifacts) and by nothing
+ * in `next` — the records a store change orphaned. A key still
+ * referenced by ANY message item or artifact in `next` is kept: deleting
+ * the source message keeps bytes an artifact still uses, and vice versa.
+ */
+export function removedBlobKeys(prev: BlobOwners, next: BlobOwners): string[] {
+  // Message-side candidates, already checked against every message.
+  const candidates = new Set(removedMessageBlobKeys(prev.conversations, next.conversations))
+  let artifactOnly = false
+  if (prev.artifacts !== next.artifacts) {
+    const after = collectArtifactBlobKeys(next.artifacts)
+    for (const k of collectArtifactBlobKeys(prev.artifacts)) {
+      if (after.has(k) || candidates.has(k)) continue
+      candidates.add(k)
+      artifactOnly = true
+    }
+  }
+  if (candidates.size === 0) return []
+  for (const k of collectArtifactBlobKeys(next.artifacts)) candidates.delete(k)
+  if (candidates.size === 0) return []
+  if (artifactOnly) {
+    // Artifact-side candidates haven't been checked against messages.
+    for (const c of next.conversations) {
+      for (const k of collectMessageBlobKeys(c)) candidates.delete(k)
+      if (candidates.size === 0) return []
+    }
+  }
+  return [...candidates]
+}
+
+/** True when anything in `owners` references `key`. */
+export function isBlobKeyReferenced(key: string, owners: BlobOwners): boolean {
+  if (collectArtifactBlobKeys(owners.artifacts).has(key)) return true
+  return owners.conversations.some((c) => collectMessageBlobKeys(c).has(key))
+}
+
+// --- sync ------------------------------------------------------------------
+
+/**
+ * Sync-diff equality for an artifact `storagePath`: identical strings, or
+ * an inline `data:` URL and a reference whose session-cache bytes are
+ * exactly that URL (the offload's rewrite is not an edit). Anything the
+ * cache can't vouch for compares unequal — at worst a redundant upsert,
+ * which the flush resolves to the same bytes.
+ */
+export function sameArtifactStoragePath(
+  a: string | null | undefined,
+  b: string | null | undefined
+): boolean {
+  if ((a ?? null) === (b ?? null)) return true
+  const ka = parseMessageBlobRef(a)
+  const kb = parseMessageBlobRef(b)
+  if (!ka && !kb) return false
+  const va = ka ? cache.get(ka) : a
+  const vb = kb ? cache.get(kb) : b
+  return isInlineDataUrl(va) && va === vb
+}
+
+/**
+ * Flush-time preparation of an `artifacts` upsert row (`sync-queue.ts`,
+ * `reconcile.ts`). A reference in `storage_path` is resolved back to its
+ * real `data:` URL; if it can't be, the column is OMITTED so the upsert
+ * leaves the cloud value alone (never a placeholder, never a null
+ * overwrite). The returned row never contains a reference. Never
+ * rejects.
+ */
+export async function prepareArtifactRowForUpload(
+  row: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const value = row[ARTIFACT_BLOB_COLUMN]
+  if (!isMessageBlobRef(value)) return row
+  let resolved: string | undefined
+  try {
+    resolved = await resolveMessageBlobUrl(value)
+  } catch {
+    resolved = undefined
+  }
+  const out = { ...row }
+  if (resolved && !isMessageBlobRef(resolved)) out[ARTIFACT_BLOB_COLUMN] = resolved
+  else delete out[ARTIFACT_BLOB_COLUMN]
+  return out
+}
+
 /** Subscribe to session-cache changes (for `useSyncExternalStore`). */
 export function subscribeMessageBlobs(cb: () => void): () => void {
   listeners.add(cb)
@@ -551,6 +897,11 @@ export function __resetMessageBlobsForTests(): void {
   durable.clear()
   durableEpoch++
   lastStripped = null
+  fromIdb.clear()
+  blobEpoch++
+  lastPersistable = null
+  artifactPending.clear()
+  scannedArtifacts = new WeakSet()
   inflight.clear()
   failed.clear()
   missing.clear()
