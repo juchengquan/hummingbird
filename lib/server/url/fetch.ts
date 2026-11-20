@@ -2,6 +2,7 @@ import "server-only"
 
 import { createHash } from "node:crypto"
 
+import { withGuardedDispatcher } from "@/server/url/guarded-fetch"
 import { validateOutboundUrl, type ValidationError } from "@/server/url/validate"
 
 /**
@@ -88,18 +89,24 @@ export async function fetchUrlBookmark(
 
       let res: Response
       try {
-        res = await fetch(validation.url.toString(), {
-          method: "GET",
-          // We handle redirects manually so we can re-validate each hop.
-          redirect: "manual",
-          signal: requestSignal,
-          headers: {
-            "User-Agent":
-              "Hummingbird-Bookmark/1.0 (+https://github.com/juchengquan/hummingbird)",
-            Accept:
-              "text/html, application/json, text/plain;q=0.9, text/markdown;q=0.9, */*;q=0.5",
-          },
-        })
+        // The guarded dispatcher re-checks the address at connect time,
+        // so a TTL-0 DNS answer that flips to a private IP after the
+        // `validateOutboundUrl` pre-flight is refused (DNS rebinding).
+        res = await fetch(
+          validation.url.toString(),
+          withGuardedDispatcher({
+            method: "GET",
+            // We handle redirects manually so we can re-validate each hop.
+            redirect: "manual",
+            signal: requestSignal,
+            headers: {
+              "User-Agent":
+                "Hummingbird-Bookmark/1.0 (+https://github.com/juchengquan/hummingbird)",
+              Accept:
+                "text/html, application/json, text/plain;q=0.9, text/markdown;q=0.9, */*;q=0.5",
+            },
+          })
+        )
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
           return {

@@ -10,6 +10,13 @@ import type {
   McpResourceDescriptor,
 } from "@/shared/types"
 import type { McpCredentials } from "@/shared/mcp/credentials"
+import {
+  McpUrlBlockedError,
+  mcpOutboundPolicy,
+  sanitizeCredentialHeaders,
+  validateMcpServerUrl,
+} from "@/server/mcp/outbound"
+import { createGuardedFetch } from "@/server/url/guarded-fetch"
 
 /** The subset of `McpServer` the wrapper actually uses. Decouples
  *  callers (chat route, proxy, inject-resources) from the full store
@@ -33,18 +40,19 @@ function buildClient() {
   })
 }
 
-function buildTransport(server: McpEndpoint, credentials?: McpCredentials) {
-  const url = new URL(server.url)
-  const headers: Record<string, string> = {}
-  for (const [k, v] of Object.entries(credentials?.headers ?? {})) {
-    // MCP server expects raw header names — preserve case the caller
-    // supplied, fall back to lowercase canonical form for `authorization`.
-    headers[k] = v
-  }
+function buildTransport(url: URL, credentials?: McpCredentials) {
+  // Credential headers are caller-controlled (X-MCP-Credentials header
+  // or a user-editable cloud row) — strip hop-by-hop / Host / proxy /
+  // transport-owned headers and anything malformed.
+  const headers = sanitizeCredentialHeaders(credentials?.headers)
   return new StreamableHTTPClientTransport(url, {
     requestInit: {
       headers,
     },
+    // Every request (POST, SSE GET, DELETE) goes through the guarded
+    // fetch: connect-time IP re-check (DNS rebinding) + manual,
+    // re-validated redirects.
+    fetch: createGuardedFetch(mcpOutboundPolicy()),
   })
 }
 
@@ -53,8 +61,16 @@ async function withSession<T>(
   credentials: McpCredentials | undefined,
   fn: (client: Client) => Promise<T>
 ): Promise<T> {
+  // Anti-SSRF: the endpoint URL is untrusted on every path (request
+  // body, user-editable cloud row). Validate here so every caller —
+  // the in-Next proxy, the chat route, inject-resources, and
+  // services/agent-ts — is covered.
+  const validation = await validateMcpServerUrl(server.url)
+  if (!validation.ok) {
+    throw new McpUrlBlockedError(validation.error)
+  }
   const client = buildClient()
-  const transport = buildTransport(server, credentials)
+  const transport = buildTransport(validation.url, credentials)
   try {
     await client.connect(transport)
     return await fn(client)
