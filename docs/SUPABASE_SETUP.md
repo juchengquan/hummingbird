@@ -173,6 +173,13 @@ order. Of note for the Python agent service:
   - Adds `tasks.metadata jsonb not null default '{}'` — the audit
     column `services/agent-py` stamps `{"handler": "python"}` into.
     Idempotent.
+- `supabase/migrations/0032_task_job_lease.sql`
+  - Adds `task_jobs.lease_expires_at` (+ a partial index on running
+    rows) — the worker lease. The claim sets it, the executing worker
+    heartbeats it forward, settle/release clear it; an expired lease
+    makes a stranded `running` job reclaimable (or reaped as failed
+    once `max_attempts` is spent). Backfills rows already stranded
+    `running`. Idempotent.
 
 After running all of them, sanity-check from the **Table Editor**:
 twenty-one tables should be listed (`profiles`, `workspaces`,
