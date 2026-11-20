@@ -6,6 +6,7 @@ import { openPdf } from "@/components/right-panel-slot"
 import {
   decorateWebCitations,
   escapeAttr,
+  replaceInHtmlText,
 } from "@/components/panels/citation-marker"
 import { mark as perfMark, count as perfCount } from "@/client/perf-chat-stream"
 import type { CitationMarkerMark } from "@/shared/verify"
@@ -64,7 +65,10 @@ interface MarkdownPreviewProps {
 const PDF_CITATION_RE = /\[p\.(\d+)\]/g
 
 function decoratePdfCitations(html: string, fileId: string): string {
-  return html.replace(
+  // Text runs only: a `[p.N]` inside an attribute (a link href, an
+  // image alt / URL) must not be rewritten into markup.
+  return replaceInHtmlText(
+    html,
     PDF_CITATION_RE,
     (_, page) =>
       `<button type="button" class="pdf-citation" data-citation-file="${escapeAttr(fileId)}" data-citation-page="${page}">[p.${page}]</button>`
