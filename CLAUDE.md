@@ -104,6 +104,14 @@ persisted localStorage shape + `STORE_VERSION` are a frozen contract** —
 removing a persisted key needs a matching `runMigrations` step + version
 bump.
 
+**Large blobs stay out of localStorage** (v32). `UploadedFile.imageDataUrl`
+and `extractedFullText` live in IndexedDB (`lib/client/files/blob-fields.ts`);
+`partializeState` strips them only once IndexedDB has committed them, and
+they're usually absent from the in-memory row after a reload — read them via
+`getFileBlobFields` / `getFileImageDataUrl(s)` / `useFileBlobFields`, never
+`file.imageDataUrl` directly. A localStorage quota failure shows a
+once-per-session toast (`store/quota-toast.ts`).
+
 ### Panel System
 
 Uses Shadcn UI's `SidebarProvider` for a multi-panel layout:

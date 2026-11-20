@@ -2,10 +2,17 @@ import "client-only"
 
 import type { UploadedFile } from "@/shared/types"
 import {
-  deleteBlob as deleteLocalBlob,
-  clearAll as clearLocalBlobs,
-} from "@/client/files/local-store"
-import { stripSelectionId, tombstoneFile } from "@/client/store/cascade"
+  clearAllFileBlobFields,
+  clearFileBlobFields,
+  FILE_BLOB_FIELDS,
+  type FileBlobField,
+} from "@/client/files/blob-fields"
+import { clearAll as clearLocalBlobs } from "@/client/files/local-store"
+import {
+  deleteFileLocalData,
+  stripSelectionId,
+  tombstoneFile,
+} from "@/client/store/cascade"
 
 import type { SliceCreator } from "../types"
 
@@ -31,6 +38,7 @@ export interface FilesSlice {
         | "extractionStatus"
         | "extractedText"
         | "extractionTruncated"
+        | "extractedFullText"
         | "extractedKind"
         | "imageDataUrl"
         | "summary"
@@ -50,7 +58,7 @@ export const createFilesSlice: SliceCreator<FilesSlice> = (set) => ({
     // the UI update. The metadata row stays (tombstoned) so future
     // references — message `attachedFileIds`, notes, citations —
     // resolve to a "removed" label instead of dangling.
-    void deleteLocalBlob(fileId)
+    deleteFileLocalData(fileId)
     set((state) => ({
       files: state.files.map((f) =>
         f.id === fileId && !f.deletedAt ? tombstoneFile(f) : f
@@ -67,6 +75,7 @@ export const createFilesSlice: SliceCreator<FilesSlice> = (set) => ({
   },
   clearFiles: () => {
     void clearLocalBlobs()
+    void clearAllFileBlobFields()
     set((state) => ({
       files: state.files.map((f) => (f.deletedAt ? f : tombstoneFile(f))),
       resources: [],
@@ -76,12 +85,21 @@ export const createFilesSlice: SliceCreator<FilesSlice> = (set) => ({
       ),
     }))
   },
-  setFileExtraction: (fileId, patch) =>
+  setFileExtraction: (fileId, patch) => {
+    // A patch that explicitly clears a blob field (e.g. a re-extraction
+    // with no distinct full text) must also clear the IndexedDB copy, or
+    // the stale value would be served by the async accessors. New values
+    // reach IndexedDB via the `files` subscriber in `use-store.ts`.
+    const cleared: FileBlobField[] = FILE_BLOB_FIELDS.filter(
+      (k) => k in patch && !patch[k]
+    )
+    if (cleared.length > 0) void clearFileBlobFields(fileId, cleared)
     set((state) => ({
       files: state.files.map((f) =>
         f.id === fileId ? { ...f, ...patch } : f
       ),
-    })),
+    }))
+  },
   setFileStorage: (fileId, patch) =>
     set((state) => ({
       files: state.files.map((f) =>

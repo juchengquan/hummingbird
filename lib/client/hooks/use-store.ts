@@ -3,6 +3,8 @@ import { useSyncExternalStore } from 'react'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 
+import { offloadFileBlobs } from "@/client/files/blob-fields"
+
 import { debouncedStorage } from "./store/debounced-storage"
 import { runMigrations, STORE_VERSION } from "./store/migrate"
 import { partializeState, reviveAndPruneState } from "./store/persist"
@@ -209,6 +211,11 @@ export const useStore = create<AppState>()(
       onRehydrateStorage: () => (state) => {
         if (state) reviveAndPruneState(state)
         notifyHydrated()
+        // Move any blob fields still carried by the rehydrated rows
+        // (pre-v32 data, or a previous offload that never committed)
+        // into IndexedDB. Deferred: hydration can run inside `create()`,
+        // before `useStore` is assigned.
+        setTimeout(scheduleFileBlobOffload, 0)
       },
       partialize: partializeState,
       // Coalesce localStorage writes — the default storage writes the
@@ -220,6 +227,26 @@ export const useStore = create<AppState>()(
     }
   )
 )
+
+// --- Blob-field offload (v32, `client/files/blob-fields.ts`) -------------
+// Every `files` change may carry a new `imageDataUrl` / `extractedFullText`
+// (upload, re-extraction, cloud pull, cross-tab merge). Write those to
+// IndexedDB; once committed, `partializeState` strips them — so poke the
+// persist middleware (`setState({})`) to rewrite localStorage without them.
+let offloadRepersistQueued = false
+function scheduleFileBlobOffload(): void {
+  void offloadFileBlobs(useStore.getState().files).then((becameDurable) => {
+    if (!becameDurable || offloadRepersistQueued) return
+    offloadRepersistQueued = true
+    queueMicrotask(() => {
+      offloadRepersistQueued = false
+      useStore.setState({})
+    })
+  })
+}
+useStore.subscribe((state, prev) => {
+  if (state.files !== prev.files) scheduleFileBlobOffload()
+})
 
 // Separate store for session-based state (cleared when browser tab is closed)
 interface SessionState {

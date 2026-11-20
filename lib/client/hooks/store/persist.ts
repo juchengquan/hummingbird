@@ -1,5 +1,6 @@
 import "client-only"
 
+import { stripDurableBlobFieldsAll } from "@/client/files/blob-fields"
 import { reviveDates } from "@/client/store/revive-dates"
 
 import type { AppState } from "../use-store"
@@ -34,7 +35,11 @@ export const partializeState = (state: AppState) => ({
   conversationUrlBookmarks: state.conversationUrlBookmarks,
   conversations: state.conversations,
   activeConversationId: state.activeConversationId,
-  files: state.files,
+  // `imageDataUrl` / `extractedFullText` are stripped from each row
+  // once they are committed to IndexedDB (`client/files/blob-fields.ts`,
+  // v32). Until then they keep persisting here, so a failed / missing
+  // IndexedDB never loses them.
+  files: stripDurableBlobFieldsAll(state.files),
   chatModel: state.chatModel,
   chatReasoningEffort: state.chatReasoningEffort,
   customInstructionsAbout: state.customInstructionsAbout,

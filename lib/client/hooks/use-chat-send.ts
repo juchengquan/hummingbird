@@ -47,6 +47,7 @@ import {
   buildSandboxFiles,
   type SandboxFileSource,
 } from "@/client/chat/build-sandbox-files"
+import { getFileImageDataUrls } from "@/client/files/blob-fields"
 import { getBlob } from "@/client/files/local-store"
 import { extractAfterTurn } from "@/client/memory/extract-after-turn"
 import { translateFrame } from "@/client/chat/sse-frame-translator"
@@ -292,11 +293,13 @@ export function useChatSend(): UseChatSendResult {
       })
 
       // Attachments + API-shaped message list via the pure helpers.
-      const { attachedFiles, attachedImageUrls } = buildAttachments({
+      const { attachedFiles, attachedImageFiles } = buildAttachments({
         conversation: conv,
         files,
         conversationFiles,
       })
+      // Image data URLs live in IndexedDB since store v32.
+      const attachedImageUrls = await getFileImageDataUrls(attachedImageFiles)
       const buildMessages = () =>
         buildTransmittedMessages(history, attachedImageUrls)
 

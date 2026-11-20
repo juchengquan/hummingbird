@@ -18,6 +18,7 @@ import "client-only"
 
 import { toast } from "sonner"
 
+import { getFileImageDataUrl } from "@/client/files/blob-fields"
 import { useStore } from "@/client/hooks/use-store"
 import { useLiveArtifact } from "@/components/live-artifact/store"
 import { useUrlPreview } from "@/components/url-viewer/types"
@@ -101,22 +102,24 @@ export function focusCanvasNode(kind: CanvasNodeKind, refId: string): void {
       const name = file.name ?? ""
       if (type.startsWith("image/")) {
         // The image viewer takes loadable items, not a fileId. Uploaded
-        // images carry their bytes in `imageDataUrl`; without it there's
-        // nothing to render.
-        if (!file.imageDataUrl) {
-          toast.error("Image preview not available on this device")
-          return
-        }
-        useImageViewer.getState().open({
-          images: [
-            {
-              id: file.id,
-              url: file.imageDataUrl,
-              alt: file.name,
-              filename: file.name,
-              sizeBytes: file.size,
-            },
-          ],
+        // images carry their bytes in `imageDataUrl`, which lives in
+        // IndexedDB since store v32; without it there's nothing to render.
+        void getFileImageDataUrl(file).then((url) => {
+          if (!url) {
+            toast.error("Image preview not available on this device")
+            return
+          }
+          useImageViewer.getState().open({
+            images: [
+              {
+                id: file.id,
+                url,
+                alt: file.name,
+                filename: file.name,
+                sizeBytes: file.size,
+              },
+            ],
+          })
         })
       } else if (type.includes("wordprocessingml") || name.endsWith(".docx")) {
         useDocxViewer.getState().open({ fileId: refId })

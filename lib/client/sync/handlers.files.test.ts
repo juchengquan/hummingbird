@@ -79,4 +79,21 @@ describe("diffFiles", () => {
       expect(ops[0].row.storage_path).toBe("user/abc/file-a.txt")
     }
   })
+
+  // Store v32: imageDataUrl lives in IndexedDB, so after a reload the
+  // in-memory row lacks it. An unrelated edit must not null the cloud copy.
+  test("image_data_url is sent when present, omitted when absent, nulled on tombstone", () => {
+    const withImg = diffFiles([], [make("a", { imageDataUrl: "data:image/png;base64,x" })])
+    if (withImg[0].kind === "upsert") {
+      expect(withImg[0].row.image_data_url).toBe("data:image/png;base64,x")
+    }
+    const without = diffFiles([make("a")], [make("a", { summary: "s" })])
+    if (without[0].kind === "upsert") {
+      expect("image_data_url" in without[0].row).toBe(false)
+    }
+    const tomb = diffFiles([make("a")], [make("a", { deletedAt: new Date() })])
+    if (tomb[0].kind === "upsert") {
+      expect(tomb[0].row.image_data_url).toBeNull()
+    }
+  })
 })

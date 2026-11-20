@@ -8,7 +8,7 @@ import { uuid } from "@/shared/uuid"
  * step in `runMigrations`. Wired into the `version` field of the persist
  * config in `use-store.ts`.
  */
-export const STORE_VERSION = 31
+export const STORE_VERSION = 32
 
 /**
  * Sequential schema migrations from older persisted shapes to the
@@ -499,6 +499,40 @@ export function runMigrations(
     // `profiles.memory_enabled` is authoritative on sign-in load. Marker
     // bump only, keeping the pinned persisted key set in `persist.test.ts`
     // in lockstep with the version. See the memory Slice-1 plan.
+  }
+  if (fromVersion < 32) {
+    // `UploadedFile.imageDataUrl` / `extractedFullText` move from
+    // localStorage to IndexedDB (`client/files/blob-fields.ts`); from
+    // v32 on, persisted `files[]` rows normally omit them.
+    //
+    // Data-safety design: this step deliberately does NOT strip the
+    // legacy values, because migrations run synchronously and an
+    // IndexedDB write can't be awaited here. The rehydrated rows ARE
+    // the pending stash: `use-store.ts` runs `offloadFileBlobs` right
+    // after hydration, and `partializeState` drops a field from the
+    // persisted row only once IndexedDB has committed that exact value.
+    // If IndexedDB is unavailable (private mode, quota 0) the values
+    // simply stay in localStorage, exactly as before v32.
+    //
+    // All this step does is normalise the two fields so the offload
+    // never sees junk: anything that isn't a non-empty string is
+    // removed (it could never have been rendered or sent anyway).
+    const files = state.files
+    if (Array.isArray(files)) {
+      state.files = files.map((f) => {
+        if (!f || typeof f !== "object") return f
+        const obj = f as Record<string, unknown>
+        let next: Record<string, unknown> | null = null
+        for (const key of ["imageDataUrl", "extractedFullText"]) {
+          if (!(key in obj)) continue
+          const v = obj[key]
+          if (typeof v === "string" && v.length > 0) continue
+          next ??= { ...obj }
+          delete next[key]
+        }
+        return next ?? obj
+      })
+    }
   }
   return persistedState
 }

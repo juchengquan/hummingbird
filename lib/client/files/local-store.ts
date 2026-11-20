@@ -17,54 +17,25 @@ import "client-only"
  * never need to wrap in try/catch.
  */
 
+import { openDatabase, runTransaction } from './idb'
+
 const DB_NAME = 'hummingbird-files'
 const STORE = 'blobs'
 const VERSION = 1
-
-let dbPromise: Promise<IDBDatabase | null> | null = null
 
 function isBrowser(): boolean {
   return typeof window !== 'undefined' && typeof window.indexedDB !== 'undefined'
 }
 
 function openDB(): Promise<IDBDatabase | null> {
-  if (!isBrowser()) return Promise.resolve(null)
-  if (dbPromise) return dbPromise
-  dbPromise = new Promise((resolve) => {
-    const req = window.indexedDB.open(DB_NAME, VERSION)
-    req.onupgradeneeded = () => {
-      const db = req.result
-      if (!db.objectStoreNames.contains(STORE)) {
-        db.createObjectStore(STORE)
-      }
-    }
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => resolve(null)
-    req.onblocked = () => resolve(null)
-  })
-  return dbPromise
-}
-
-function tx(
-  db: IDBDatabase,
-  mode: IDBTransactionMode
-): { store: IDBObjectStore; done: Promise<void> } {
-  const transaction = db.transaction(STORE, mode)
-  const done = new Promise<void>((resolve, reject) => {
-    transaction.oncomplete = () => resolve()
-    transaction.onerror = () => reject(transaction.error)
-    transaction.onabort = () => reject(transaction.error)
-  })
-  return { store: transaction.objectStore(STORE), done }
+  return openDatabase(DB_NAME, VERSION, [STORE])
 }
 
 export async function storeBlob(fileId: string, blob: Blob): Promise<boolean> {
   const db = await openDB()
   if (!db) return false
   try {
-    const { store, done } = tx(db, 'readwrite')
-    store.put(blob, fileId)
-    await done
+    await runTransaction(db, STORE, 'readwrite', (store) => store.put(blob, fileId))
     return true
   } catch {
     return false
@@ -75,9 +46,9 @@ export async function getBlob(fileId: string): Promise<Blob | null> {
   const db = await openDB()
   if (!db) return null
   try {
-    const { store, done } = tx(db, 'readonly')
-    const req = store.get(fileId)
-    await done
+    const req = await runTransaction(db, STORE, 'readonly', (store) =>
+      store.get(fileId)
+    )
     const value = req.result
     return value instanceof Blob ? value : null
   } catch {
@@ -89,9 +60,7 @@ export async function deleteBlob(fileId: string): Promise<void> {
   const db = await openDB()
   if (!db) return
   try {
-    const { store, done } = tx(db, 'readwrite')
-    store.delete(fileId)
-    await done
+    await runTransaction(db, STORE, 'readwrite', (store) => store.delete(fileId))
   } catch {
     /* swallow — IDB errors are best-effort here */
   }
@@ -101,9 +70,7 @@ export async function clearAll(): Promise<void> {
   const db = await openDB()
   if (!db) return
   try {
-    const { store, done } = tx(db, 'readwrite')
-    store.clear()
-    await done
+    await runTransaction(db, STORE, 'readwrite', (store) => store.clear())
   } catch {
     /* swallow */
   }

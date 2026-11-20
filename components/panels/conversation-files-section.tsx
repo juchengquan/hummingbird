@@ -89,8 +89,9 @@ export function ConversationFilesSection({
             const lowerName = file.name.toLowerCase()
             const isPdf =
               file.type === "application/pdf" || lowerName.endsWith(".pdf")
-            const isImage =
-              file.extractedKind === "image" && !!file.imageDataUrl
+            // The data URL lives in IndexedDB (store v32) and is
+            // resolved on click; `onOpenImage` toasts when it's missing.
+            const isImage = file.extractedKind === "image"
             const isDocx =
               file.type ===
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||

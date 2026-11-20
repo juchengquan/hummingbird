@@ -46,7 +46,7 @@ describe("buildAttachments", () => {
     })
     expect(out.attachedFileIds).toEqual([])
     expect(out.attachedFiles).toEqual([])
-    expect(out.attachedImageUrls).toEqual([])
+    expect(out.attachedImageFiles).toEqual([])
   })
 
   test("workspace-ticked files only", () => {
@@ -105,33 +105,17 @@ describe("buildAttachments", () => {
     expect(out.attachedFileIds).toEqual([])
   })
 
-  test("images: data-URL files with extractedKind='image' become attachedImageUrls", () => {
+  test("images: files with extractedKind='image' become attachedImageFiles", () => {
     const files = [
       file({ id: "doc" }),
-      file({
-        id: "pic",
-        extractedKind: "image",
-        imageDataUrl: "data:image/png;base64,abc",
-      }),
+      file({ id: "pic", extractedKind: "image" }),
     ]
     const out = buildAttachments({
       conversation: conv({ selectedFileIds: ["doc", "pic"] }),
       files,
       conversationFiles: [],
     })
-    expect(out.attachedImageUrls).toEqual(["data:image/png;base64,abc"])
-  })
-
-  test("image file without an imageDataUrl is skipped from image URLs", () => {
-    const files = [
-      file({ id: "pic", extractedKind: "image" }), // no imageDataUrl
-    ]
-    const out = buildAttachments({
-      conversation: conv({ selectedFileIds: ["pic"] }),
-      files,
-      conversationFiles: [],
-    })
-    expect(out.attachedImageUrls).toEqual([])
+    expect(out.attachedImageFiles.map((f) => f.id)).toEqual(["pic"])
   })
 
   test("missing file ids (sync lag) are skipped from attachedFiles", () => {

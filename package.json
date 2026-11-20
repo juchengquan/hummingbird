@@ -148,6 +148,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
+    "fake-indexeddb": "^6.2.8",
     "openapi-typescript": "^7.9.1",
     "shadcn": "^3.8.4",
     "tailwindcss": "^4",

@@ -16,15 +16,18 @@ export interface UploadedFile {
    *  set when distinct from `extractedText` — i.e. when the file's
    *  raw text exceeded the inline budget. Used by the Phase 3
    *  `readFileSection` tool; persists to `files.full_text` via the
-   *  sync reconcile path. See `docs/PLAN-file-full-text-retrieval.md`. */
+   *  sync reconcile path. See `docs/PLAN-file-full-text-retrieval.md`.
+   *  Like `imageDataUrl`, kept in IndexedDB (not localStorage) since
+   *  store v32 — read via `lib/client/files/blob-fields.ts`. */
   extractedFullText?: string
   /** Detected/resolved content kind (e.g. 'pdf', 'docx', 'markdown', 'image'). */
   extractedKind?: string
   /**
    * For image uploads, the base64 data URL read client-side at upload time.
-   * Sent to vision-capable models as a multimodal content part. Lives in
-   * localStorage today; will migrate to Supabase Storage when the sync
-   * layer lands.
+   * Sent to vision-capable models as a multimodal content part. Since
+   * store v32 it is kept out of localStorage: persisted in IndexedDB and
+   * usually ABSENT from the in-memory row after a reload — read it via
+   * the async accessors in `lib/client/files/blob-fields.ts`.
    */
   imageDataUrl?: string
   /**
