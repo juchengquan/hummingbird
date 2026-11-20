@@ -25,6 +25,14 @@ export interface ChatSlice {
    *  `useIsConversationTyping(id)` for the derived per-conversation
    *  flag. Not persisted: streaming state is ephemeral. */
   typingConversationIds: string[]
+  /** Conversation ids with an in-flight chat stream — set by
+   *  `useChatSend` for the whole stream lifetime (send → finally).
+   *  Distinct from `typingConversationIds`, which drives the loading
+   *  dots and clears on the *first* streamed chunk. `useSync` holds
+   *  message diffs for these ids so per-token updates don't enqueue a
+   *  messages upsert each, then diffs the final message state once
+   *  when the id leaves the set. Not persisted. */
+  streamingConversationIds: string[]
   streamingContent: string
   chatModel: string
   /** Reasoning-effort tier for the next turn, for models that support a
@@ -62,6 +70,8 @@ export interface ChatSlice {
    *  message list). Idempotent — passing `true` twice for the same
    *  id is a no-op. */
   setConversationTyping: (conversationId: string, typing: boolean) => void
+  /** Mark a conversation as having an in-flight stream. Idempotent. */
+  setConversationStreaming: (conversationId: string, streaming: boolean) => void
   /** Set the pending I2I reference for the next user message. Pass
    *  `null` to clear. */
   setPendingReferenceImage: (
@@ -76,6 +86,7 @@ export interface ChatSlice {
 
 export const createChatSlice: SliceCreator<ChatSlice> = (set) => ({
   typingConversationIds: [],
+  streamingConversationIds: [],
   streamingContent: "",
   chatModel: DEFAULT_CHAT_MODEL,
   chatReasoningEffort: null,
@@ -91,6 +102,18 @@ export const createChatSlice: SliceCreator<ChatSlice> = (set) => ({
         typingConversationIds: typing
           ? [...state.typingConversationIds, conversationId]
           : state.typingConversationIds.filter((id) => id !== conversationId),
+      }
+    }),
+  setConversationStreaming: (conversationId, streaming) =>
+    set((state) => {
+      const has = state.streamingConversationIds.includes(conversationId)
+      if (streaming === has) return {}
+      return {
+        streamingConversationIds: streaming
+          ? [...state.streamingConversationIds, conversationId]
+          : state.streamingConversationIds.filter(
+              (id) => id !== conversationId
+            ),
       }
     }),
   setPendingReferenceImage: (value) => set({ pendingReferenceImage: value }),

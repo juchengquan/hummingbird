@@ -106,6 +106,7 @@ describe("partializeState — frozen persisted shape", () => {
       pendingChatInput: "leaked?",
       streamingContent: "leaked?",
       typingConversationIds: ["leaked?"],
+      streamingConversationIds: ["leaked?"],
       pinnedExplanations: [{ id: "leaked?" }],
       pendingSelectionAction: { type: "quote", text: "leaked?" },
       editorReloadToken: 7,
@@ -119,6 +120,7 @@ describe("partializeState — frozen persisted shape", () => {
     expect("pendingChatInput" in persisted).toBe(false)
     expect("pinnedExplanations" in persisted).toBe(false)
     expect("streamingContent" in persisted).toBe(false)
+    expect("streamingConversationIds" in persisted).toBe(false)
     expect("editorReloadToken" in persisted).toBe(false)
   })
 
