@@ -237,7 +237,13 @@ async def _run_chunk(
         )
         checkpoint = {}
 
-    start_seq = _int_or(checkpoint.get("seq"), 0) if resume else 0
+    # Seed past every seq already written for this run — the TS route's
+    # `status: queued` (seq=1) on a fresh start, and anything emitted
+    # after the last checkpoint save on a resume. `append_event` is
+    # `ON CONFLICT DO NOTHING`, so a reused seq silently drops an event.
+    start_seq = await _seed_seq(
+        pool, run_id=payload.run_id, user_id=payload.user_id, checkpoint=checkpoint
+    )
     start_step = _int_or(checkpoint.get("step"), 0) if resume else 0
 
     # Tap the sink to accumulate the assembled report text + web-search
@@ -309,12 +315,7 @@ async def _run_chunk(
             checkpoint = {k: v for k, v in checkpoint.items() if k != "awaiting_children"}
 
     try:
-        await store.set_task_handler(
-            pool,
-            run_id=payload.run_id,
-            user_id=payload.user_id,
-            handler="python",
-        )
+        await _stamp_handler(pool, run_id=payload.run_id, user_id=payload.user_id)
 
         # Phase 3f-2: pull `workspaceId` off the checkpoint config so
         # cloud-mode MCP discovery (`extend_registry_with_mcp`) knows
@@ -381,28 +382,51 @@ async def _run_chunk(
         # cross-family verifier picks a genuinely different family.
         answerer_provider = "anthropic"
 
-        async def finalize() -> dict[str, object] | None:
-            if resume:
-                full_events = await store.load_run_events(
+        # One DB read of the full event log per settle, shared by the
+        # verifier and the final-text hook.
+        full_events_cache: list[TaskEvent] | None = None
+
+        async def run_text_and_sources() -> tuple[str, list[tuple[str, str, str]]]:
+            nonlocal full_events_cache
+            if not resume:
+                # Fast path: single-chunk run, the in-memory accumulators
+                # are complete, so skip the DB round-trip.
+                return "".join(verify_text_parts), list(verify_sources)
+            if full_events_cache is None:
+                full_events_cache = await store.load_run_events(
                     pool,
                     run_id=payload.run_id,
                     user_id=payload.user_id,
                 )
-                inputs = verify.aggregate_from_events(full_events)
-                return await _maybe_verify(
-                    mode=run_mode,
-                    text=inputs.text,
-                    sources=[(s.title, s.url or "", s.snippet) for s in inputs.sources],
-                    answerer_provider=answerer_provider,
+            inputs = verify.aggregate_from_events(full_events_cache)
+            return inputs.text, [(s.title, s.url or "", s.snippet) for s in inputs.sources]
+
+        async def finalize() -> dict[str, object] | None:
+            # Verification is advisory — an event-log read failure skips
+            # it rather than failing an otherwise-finished run.
+            try:
+                text, sources = await run_text_and_sources()
+            except Exception as exc:
+                logger.warning(
+                    "executor.verify_inputs_failed", run_id=payload.run_id, error=str(exc)
                 )
-            # Fast path: single-chunk run, the in-memory accumulators are
-            # complete, so skip the DB round-trip.
+                return None
             return await _maybe_verify(
                 mode=run_mode,
-                text="".join(verify_text_parts),
-                sources=verify_sources,
+                text=text,
+                sources=sources,
                 answerer_provider=answerer_provider,
             )
+
+        async def final_text() -> str | None:
+            # The run's accumulated assistant text → `result.finalText`,
+            # which the subagent fan-in reads off each child's result row.
+            try:
+                text, _ = await run_text_and_sources()
+            except Exception as exc:
+                logger.warning("executor.final_text_failed", run_id=payload.run_id, error=str(exc))
+                return None
+            return text or None
 
         result: AgentLoopResult = await run_agent_loop(
             emitter=emitter,
@@ -411,6 +435,7 @@ async def _run_chunk(
             is_cancelled=is_cancelled,
             should_yield=should_yield,
             finalize=finalize,
+            final_text=final_text,
         )
 
         # Suspend path (Phase 3b): the step fn detected a gated tool
@@ -423,6 +448,13 @@ async def _run_chunk(
         if result.kind == "suspended":
             assert result.pending_input is not None
             pending = result.pending_input
+            # Emit BEFORE saving the checkpoint so the saved `seq` covers
+            # the approval request + `status: paused`; otherwise the
+            # respond resumes from a stale seq and its first events
+            # collide (and are dropped). The row only flips to `paused`
+            # (which gates the respond route) after the save.
+            await _emit_pending_input_request(emitter, pending)
+            await emitter.status("paused")
             next_checkpoint = _build_checkpoint(checkpoint, live_messages, emitter)
             await store.save_checkpoint(
                 pool,
@@ -430,8 +462,6 @@ async def _run_chunk(
                 user_id=payload.user_id,
                 checkpoint=next_checkpoint,
             )
-            await _emit_pending_input_request(emitter, pending)
-            await emitter.status("paused")
             await store.update_run(
                 pool,
                 run_id=payload.run_id,
@@ -617,6 +647,36 @@ async def _run_chunk(
 
 
 # --- internals -------------------------------------------------------------
+
+
+async def _seed_seq(
+    pool: asyncpg.Pool,
+    *,
+    run_id: str,
+    user_id: str,
+    checkpoint: dict[str, Any],
+) -> int:
+    """Seq to seed the emitter at: the larger of the checkpoint's saved
+    `seq` and the highest seq already in `task_events` for this run.
+    A failed probe falls back to the checkpoint value (the run proceeds;
+    the worst case is the pre-fix behaviour)."""
+    from_checkpoint = _int_or(checkpoint.get("seq"), 0)
+    try:
+        from_log = await store.max_event_seq(pool, run_id=run_id, user_id=user_id)
+    except Exception as exc:
+        logger.warning("executor.max_seq_probe_failed", run_id=run_id, error=str(exc))
+        return from_checkpoint
+    return max(from_checkpoint, from_log)
+
+
+async def _stamp_handler(pool: asyncpg.Pool, *, run_id: str, user_id: str) -> None:
+    """Best-effort `tasks.metadata.handler = 'python'` audit stamp. Never
+    fails the run — it's for postmortems, not run state (and a DB
+    without migration 0030 would otherwise fail every run)."""
+    try:
+        await store.set_task_handler(pool, run_id=run_id, user_id=user_id, handler="python")
+    except Exception as exc:
+        logger.warning("executor.set_task_handler_failed", run_id=run_id, error=str(exc))
 
 
 def _make_db_sink(pool: asyncpg.Pool, *, user_id: str) -> EventSink:
@@ -988,6 +1048,17 @@ async def _run_respond(
         return ExecutorOutcome(settled=False, error="respond: no checkpoint for run")
 
     live_messages = _messages_from(checkpoint)
+    if _tool_call_answered(live_messages, payload.request_id):
+        # Duplicate respond for a call that already has its tool_result
+        # (double-click, retried POST, or a run that has since
+        # re-suspended on a different call). Re-running it would
+        # re-execute an approved tool — settle the job as a no-op.
+        logger.warning(
+            "executor.respond.already_answered",
+            run_id=payload.run_id,
+            request_id=payload.request_id,
+        )
+        return ExecutorOutcome(settled=True)
     pending = _find_pending_tool_call(live_messages, payload.request_id)
     if pending is None:
         logger.error(
@@ -999,6 +1070,20 @@ async def _run_respond(
             settled=False,
             error=f"respond: pending tool call {payload.request_id} not found",
         )
+
+    # Atomic paused → running gate. Only one respond per pause gets past
+    # this; a duplicate racing us (or a run cancelled while paused) sees
+    # no row and settles as a no-op — before any tool executes.
+    claimed = await store.claim_paused_for_respond(
+        pool, run_id=payload.run_id, user_id=payload.user_id
+    )
+    if not claimed:
+        logger.warning(
+            "executor.respond.not_paused",
+            run_id=payload.run_id,
+            request_id=payload.request_id,
+        )
+        return ExecutorOutcome(settled=True)
 
     # Classify the request kind from the pending tool name + args.
     # `approval` is the binary gate (any other gated tool); `choice`
@@ -1031,7 +1116,9 @@ async def _run_respond(
         }
     )
 
-    start_seq = _int_or(checkpoint.get("seq"), 0)
+    start_seq = await _seed_seq(
+        pool, run_id=payload.run_id, user_id=payload.user_id, checkpoint=checkpoint
+    )
     start_step = _int_or(checkpoint.get("step"), 0)
     sink = _make_db_sink(pool, user_id=payload.user_id)
     emitter = RunEmitter(
@@ -1041,23 +1128,19 @@ async def _run_respond(
         start_step=start_step,
     )
 
-    # Persist BEFORE emitting so a crash between emit + save can't
-    # lose the appended tool_result. Mirrors the TS path.
-    interim_checkpoint = _build_checkpoint(checkpoint, live_messages, emitter)
-    await store.save_checkpoint(
-        pool,
-        run_id=payload.run_id,
-        user_id=payload.user_id,
-        checkpoint=interim_checkpoint,
-    )
-
     try:
-        await store.set_task_handler(
+        # Persist BEFORE emitting so a crash between emit + save can't
+        # lose the appended tool_result. Mirrors the TS path. Inside the
+        # `try` so a failed save settles the (already-claimed, now
+        # `running`) task failed instead of stranding it.
+        interim_checkpoint = _build_checkpoint(checkpoint, live_messages, emitter)
+        await store.save_checkpoint(
             pool,
             run_id=payload.run_id,
             user_id=payload.user_id,
-            handler="python",
+            checkpoint=interim_checkpoint,
         )
+        await _stamp_handler(pool, run_id=payload.run_id, user_id=payload.user_id)
         # Emit input_response (clears pending_input on the projection)
         # then status:running before stepping again.
         await emitter.input_response(
@@ -1089,12 +1172,25 @@ async def _run_respond(
         def should_yield() -> bool:
             return deadline_s is not None and asyncio.get_event_loop().time() > deadline_s
 
+        async def final_text() -> str | None:
+            # A respond is always a resume — the full run text lives in
+            # the event log (every event is persisted before this runs).
+            try:
+                events_log = await store.load_run_events(
+                    pool, run_id=payload.run_id, user_id=payload.user_id
+                )
+            except Exception as exc:
+                logger.warning("executor.final_text_failed", run_id=payload.run_id, error=str(exc))
+                return None
+            return verify.aggregate_from_events(events_log).text or None
+
         result: AgentLoopResult = await run_agent_loop(
             emitter=emitter,
             max_steps=max_steps,
             run_step=step_fn,
             is_cancelled=is_cancelled,
             should_yield=should_yield,
+            final_text=final_text,
         )
 
         if result.kind == "suspended":
@@ -1103,6 +1199,10 @@ async def _run_respond(
             # original suspend path in `_run_chunk`.
             assert result.pending_input is not None
             re_pending = result.pending_input
+            # Emit first so the saved checkpoint's `seq` covers them —
+            # see the matching comment in `_run_chunk`.
+            await _emit_pending_input_request(emitter, re_pending)
+            await emitter.status("paused")
             next_checkpoint = _build_checkpoint(checkpoint, live_messages, emitter)
             await store.save_checkpoint(
                 pool,
@@ -1110,8 +1210,6 @@ async def _run_respond(
                 user_id=payload.user_id,
                 checkpoint=next_checkpoint,
             )
-            await _emit_pending_input_request(emitter, re_pending)
-            await emitter.status("paused")
             await store.update_run(
                 pool,
                 run_id=payload.run_id,
@@ -1192,7 +1290,13 @@ def _find_pending_tool_call(
     Back-to-front so we find the most recent unmatched call first;
     a tool_use only "matches" until a tool_result with the same id
     is appended, so by the time `respond` runs there should be
-    exactly one unmatched call (the one the user is responding to)."""
+    exactly one unmatched call (the one the user is responding to).
+
+    A call that already has a matching `tool_result` is NOT pending —
+    returning it would let a duplicate respond re-execute an approved
+    tool."""
+    if _tool_call_answered(messages, request_id):
+        return None
     for entry in reversed(messages):
         if entry.get("role") != "assistant":
             continue
@@ -1215,6 +1319,26 @@ def _find_pending_tool_call(
                 "args": dict(args),
             }
     return None
+
+
+def _tool_call_answered(messages: list[dict[str, Any]], tool_call_id: str) -> bool:
+    """True when some user turn already carries a `tool_result` for
+    `tool_call_id` (Anthropic-shaped — `_messages_from` has already
+    translated any AI-SDK `role: tool` turns)."""
+    for entry in messages:
+        if entry.get("role") != "user":
+            continue
+        content = entry.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if (
+                isinstance(block, dict)
+                and block.get("type") == "tool_result"
+                and block.get("tool_use_id") == tool_call_id
+            ):
+                return True
+    return False
 
 
 async def _build_tool_result_text(
@@ -1358,17 +1482,22 @@ async def _stub_step_fn(ctx: RunStepContext) -> RunStepOutcome:
 # --- checkpoint coercion ----------------------------------------------------
 
 
+# Upper bound on `config.maxSteps` — same cap the TS route's Zod schema
+# enforces (`maxSteps: z.number().int().min(1).max(50)` in
+# lib/shared/api-schemas.ts). The checkpoint is user-writable jsonb, so
+# the executor re-applies it rather than trusting the stored value.
+MAX_STEPS_CAP = 50
+
+
 def _max_steps_from(checkpoint: dict[str, Any], fallback: int) -> int:
     """Pull `config.maxSteps` from the checkpoint, falling back to the
-    payload's value when missing. Bounded to a reasonable positive
-    int to defend against a malformed jsonb."""
+    payload's value when missing. Bounded to `[1, MAX_STEPS_CAP]` to
+    defend against a malformed / hostile jsonb."""
     cfg = checkpoint.get("config") if isinstance(checkpoint, dict) else None
-    if not isinstance(cfg, dict):
-        return fallback
-    raw = cfg.get("maxSteps")
-    if isinstance(raw, int) and raw > 0:
-        return raw
-    return fallback
+    raw = cfg.get("maxSteps") if isinstance(cfg, dict) else None
+    # `bool` is an `int` subclass — `True` is not a step count.
+    value = raw if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0 else fallback
+    return max(1, min(value, MAX_STEPS_CAP))
 
 
 def _messages_from(checkpoint: dict[str, Any]) -> list[dict[str, Any]]:

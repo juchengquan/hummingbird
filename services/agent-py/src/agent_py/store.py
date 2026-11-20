@@ -309,12 +309,17 @@ async def load_run_events(
     web-search sources at the terminal `result` for a multi-chunk
     run. Same keyset as `append_event` writes (task_id, user_id,
     seq, step, kind, payload)."""
-    async with pool.acquire() as conn:
+    # `_set_user_context` issues `SET LOCAL`, which only takes effect
+    # inside a transaction — outside one Postgres warns and the query
+    # runs as the pool's (RLS-bypassing) role. The explicit
+    # `user_id = $2` filter is defence in depth on top of RLS.
+    async with pool.acquire() as conn, conn.transaction():
         await _set_user_context(conn, user_id=user_id)
         rows = await conn.fetch(
             "SELECT seq, step, kind, payload::text AS payload, created_at "
-            "FROM public.task_events WHERE task_id = $1 ORDER BY seq",
+            "FROM public.task_events WHERE task_id = $1 AND user_id = $2 ORDER BY seq",
             run_id,
+            user_id,
         )
     out: list[events.TaskEvent] = []
     for row in rows:
@@ -363,7 +368,10 @@ async def set_task_handler(
     """Stamp `tasks.metadata.handler` so post-hoc analysis can tell
     which service executed a given run. The TS worker leaves this
     unset; Python writes 'python'. Lets us audit the Phase 2 cutover
-    without instrumenting the worker code paths."""
+    without instrumenting the worker code paths.
+
+    Needs `tasks.metadata` (migration 0030). The executor treats a
+    failure here as non-fatal — it's an audit nicety, not run state."""
     async with pool.acquire() as conn:
         await conn.execute(
             _SET_HANDLER_SQL,
@@ -371,6 +379,93 @@ async def set_task_handler(
             _coerce_uuid(user_id),
             handler,
         )
+
+
+_MAX_EVENT_SEQ_SQL = """
+SELECT COALESCE(MAX(seq), 0) AS max_seq FROM public.task_events
+WHERE task_id = $1 AND user_id = $2;
+"""
+
+
+async def max_event_seq(
+    pool: asyncpg.Pool,
+    *,
+    run_id: str,
+    user_id: str,
+) -> int:
+    """Highest `seq` already written for this run (0 when none).
+
+    The executor seeds its emitter at `max(checkpoint.seq, this)` so it
+    never re-uses a seq another writer already took — `append_event` is
+    `ON CONFLICT DO NOTHING`, so a reused seq is a silently dropped
+    event. Covers the TS route's `status: queued` (seq=1) on a fresh
+    start and any events emitted after the last checkpoint save."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            _MAX_EVENT_SEQ_SQL,
+            _coerce_uuid(run_id),
+            _coerce_uuid(user_id),
+        )
+    if not row:
+        return 0
+    value = row["max_seq"]
+    return int(value) if value is not None else 0
+
+
+_CLAIM_PAUSED_FOR_RESPOND_SQL = """
+UPDATE public.tasks
+SET status = 'running', updated_at = now()
+WHERE id = $1 AND user_id = $2 AND status = 'paused'
+RETURNING id;
+"""
+
+
+async def claim_paused_for_respond(
+    pool: asyncpg.Pool,
+    *,
+    run_id: str,
+    user_id: str,
+) -> bool:
+    """Atomically flip a paused run to `running` for a `respond` job.
+
+    Returns True iff THIS call made the transition. A duplicate respond
+    (double-click, retried POST, two workers) finds the row already
+    `running` / settled / re-paused-and-claimed and gets False — the
+    caller must then settle the job as a no-op rather than re-execute
+    the approved tool."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            _CLAIM_PAUSED_FOR_RESPOND_SQL,
+            _coerce_uuid(run_id),
+            _coerce_uuid(user_id),
+        )
+    return row is not None
+
+
+_TASK_OWNED_BY_SQL = """
+SELECT 1 FROM public.tasks WHERE id = $1 AND user_id = $2;
+"""
+
+
+async def is_task_owned_by(
+    pool: asyncpg.Pool,
+    *,
+    task_id: str,
+    user_id: str,
+) -> bool:
+    """True iff `tasks.id = task_id` belongs to `user_id`.
+
+    `task_jobs` RLS lets a user insert any row with their own
+    `user_id`, including one pointing at someone else's `task_id`. The
+    poller checks this before executing so a forged job can't drive
+    (or settle) another user's run."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            _TASK_OWNED_BY_SQL,
+            _coerce_uuid(task_id),
+            _coerce_uuid(user_id),
+        )
+    return row is not None
 
 
 _IS_CANCELLED_SQL = """
@@ -585,7 +680,8 @@ async def create_child_task(
 
 
 _SET_PENDING_CHILDREN_SQL = (
-    "UPDATE public.tasks SET pending_children = $2, updated_at = now() WHERE id = $1;"
+    "UPDATE public.tasks SET pending_children = $2, updated_at = now() "
+    "WHERE id = $1 AND user_id = $3;"
 )
 
 
@@ -595,7 +691,9 @@ async def set_pending_children(pool: asyncpg.Pool, *, task_id: str, user_id: str
     `pending_children` starts at `n` and each child decrements it on
     completion. When it hits 0 the orchestrator fan-in step fires."""
     async with pool.acquire() as conn:
-        await conn.execute(_SET_PENDING_CHILDREN_SQL, _coerce_uuid(task_id), n)
+        await conn.execute(
+            _SET_PENDING_CHILDREN_SQL, _coerce_uuid(task_id), n, _coerce_uuid(user_id)
+        )
 
 
 @dataclass(frozen=True)
@@ -611,10 +709,10 @@ class ChildResult:
 _LOAD_CHILD_RESULTS_SQL = """
 SELECT t.id, t.status, t.checkpoint,
   (SELECT e.payload FROM public.task_events e
-     WHERE e.task_id = t.id AND e.kind = 'result'
+     WHERE e.task_id = t.id AND e.user_id = t.user_id AND e.kind = 'result'
      ORDER BY e.seq DESC LIMIT 1) AS result_payload
 FROM public.tasks t
-WHERE t.parent_task_id = $1
+WHERE t.parent_task_id = $1 AND t.user_id = $2
 ORDER BY t.created_at ASC;
 """
 
@@ -632,7 +730,9 @@ async def load_child_results(
     Returns an empty list when the parent has no children yet.
     """
     async with pool.acquire() as conn:
-        rows = await conn.fetch(_LOAD_CHILD_RESULTS_SQL, _coerce_uuid(parent_task_id))
+        rows = await conn.fetch(
+            _LOAD_CHILD_RESULTS_SQL, _coerce_uuid(parent_task_id), _coerce_uuid(user_id)
+        )
     out: list[ChildResult] = []
     for row in rows:
         cp = _as_dict(row["checkpoint"])

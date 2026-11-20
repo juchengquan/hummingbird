@@ -231,10 +231,11 @@ async def test_execute_continue_seeds_emitter_from_checkpoint() -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_start_seeds_at_zero_not_from_checkpoint() -> None:
-    """A `start` action ignores any pre-existing checkpoint seq/step.
-    Defends against a race where the route's initial checkpoint write
-    had stale data — `start` always starts from zero."""
+async def test_execute_start_resets_step_but_not_seq() -> None:
+    """A `start` action ignores any pre-existing checkpoint `step` —
+    `start` always runs from step zero. `seq` is NOT reset: it seeds
+    past the checkpoint / event log (the route already wrote
+    `status: queued` at seq=1), so no event reuses an existing seq."""
     pool = MagicMock()
     payload = executor.StartActionPayload(
         run_id="22222222-2222-2222-2222-222222222222",
@@ -285,8 +286,10 @@ async def test_execute_start_seeds_at_zero_not_from_checkpoint() -> None:
         await executor.execute_start(pool, payload, make_step_fn=make_step)
 
     emitter = captured_emitters[0]
-    # The first step bumped step 0 → 1; seq advanced 0 → small.
+    # The first step bumped step 0 → 1; seq advanced past the
+    # checkpoint's 19.
     assert emitter.step == 1
+    assert emitter.seq > 19
 
 
 @pytest.mark.asyncio

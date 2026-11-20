@@ -52,12 +52,13 @@ class ClaimedJob:
 # O(log N). FOR UPDATE SKIP LOCKED is what makes concurrent polling
 # safe — two workers each grab a different row, or one gets nothing.
 #
-# `attempts` is bumped here, matching the TS behaviour. The Phase 1
-# dry-run path then immediately calls `release_job_to_queue`, which
-# undoes the running→queued flip BUT keeps the bumped `attempts` so
-# stuck loops still surface via `attempts >= max_attempts`. This is
-# deliberate (not a bug) — if the Python claim path is somehow
-# misbehaving, the run-count tells us.
+# `attempts` is bumped here, matching the TS behaviour. Jobs that have
+# exhausted their budget (`attempts >= max_attempts`) are skipped so a
+# poison row can't be re-claimed forever. `release_job_to_queue` undoes
+# the bump (a release is "not mine", not a failed attempt — otherwise
+# every unflagged user's job would hit the cap after a few polls and be
+# stranded `queued` forever) and pushes `scheduled_at` forward; see
+# `_RELEASE_SQL`.
 
 _CLAIM_SQL = """
 WITH next_job AS (
@@ -65,6 +66,7 @@ WITH next_job AS (
     FROM public.task_jobs
     WHERE status = 'queued'
       AND scheduled_at <= now()
+      AND attempts < max_attempts
     ORDER BY scheduled_at ASC
     LIMIT 1
     FOR UPDATE SKIP LOCKED
@@ -85,13 +87,29 @@ RETURNING t.id,
           t.max_attempts;
 """
 
-# Release a job claimed in dry-run mode back to the ready set. Resets
-# `started_at` so the TS worker treats it as a fresh queued job.
-# `attempts` stays bumped on purpose (see above).
+# Release a claimed job back to the ready set (dry-run / unflagged
+# user / unsupported action). Resets `started_at` and undoes the claim's
+# `attempts` bump (mirrors agent-ts's RELEASE_SQL).
+#
+# Backoff: the claim orders by `scheduled_at`, so leaving it unchanged
+# made a released job the head of the queue again on the very next tick
+# — the poller hot-looped on it and head-of-line blocked every job
+# behind it. Instead push `scheduled_at` to
+#   now() + clamp((now() - created_at) / 2, 5 seconds, 5 minutes)
+# i.e. wait half the job's current age: the gaps between re-claims
+# grow geometrically (~x1.5 per release) without needing a release
+# counter, a fresh job is re-offered after 5 s, and nothing waits more
+# than 5 min once a worker that can take it appears (e.g. the user's
+# flag is flipped). Other ready jobs sort ahead of it meanwhile.
 _RELEASE_SQL = """
 UPDATE public.task_jobs
 SET status = 'queued',
     started_at = NULL,
+    attempts = GREATEST(attempts - 1, 0),
+    scheduled_at = now() + LEAST(
+        interval '5 minutes',
+        GREATEST(interval '5 seconds', (now() - created_at) / 2)
+    ),
     updated_at = now()
 WHERE id = $1
   AND status = 'running';
