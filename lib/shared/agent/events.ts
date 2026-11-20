@@ -113,11 +113,18 @@ export interface StatusEvent extends TaskEventBase {
   status: RunStatus
   /** Step ceiling, when known — drives an "N / M" progress display. */
   maxSteps?: number
-  /** Restart marker. Set on the `status: running` a reclaimed run emits
-   *  when its previous worker died mid-run and it starts over from
-   *  scratch: everything the log holds before this event is that dead
-   *  attempt's partial output, which consumers discard (`reduceRun`
-   *  resets the run-derived view). Absent on ordinary transitions. */
+  /** Resume marker. Set on the `status: running` a reclaimed job emits
+   *  when it re-runs a run whose previous worker died mid-chunk: the
+   *  `seq` of the checkpoint the run resumes from. Every event with
+   *  `resumedFromSeq < seq < marker.seq` is that dead attempt's partial
+   *  output and consumers discard it (`resumeDiscardRange`). A
+   *  from-scratch restart is the same thing, resumed from the run's
+   *  initial checkpoint. Absent on ordinary transitions. */
+  resumedFromSeq?: number
+  /** Legacy restart marker — a reclaimed run that started over set only
+   *  this before `resumedFromSeq` existed (still set on a restart, for
+   *  older readers). Without `resumedFromSeq` it reads as resumed from
+   *  `LEGACY_RESTART_RESUMED_FROM_SEQ`. */
   restarted?: boolean
 }
 
@@ -250,3 +257,47 @@ export type TaskEvent =
   | CompactEvent
   | ArtifactRefEvent
   | ResultEvent
+
+/** What a legacy `restarted: true` marker (no `resumedFromSeq`) resumed
+ *  from. Those were only ever emitted by a reclaimed `start` restarting
+ *  from its initial checkpoint, whose `seq` is 1 for a run the tasks
+ *  route created (seq 1 is its `status: queued`, which carries
+ *  `maxSteps`) and 0 for a subagent child (seq 1 is then the dead
+ *  attempt's initial `status: running`, which folds to nothing). Keeping
+ *  seq 1 is exact for the former and harmless for the latter. Mirror of
+ *  `LEGACY_RESTART_RESUMED_FROM_SEQ` in `services/agent-py/.../events.py`. */
+export const LEGACY_RESTART_RESUMED_FROM_SEQ = 1
+
+/** The seqs a resume marker discards: events with
+ *  `after < seq < before` were written by a dead attempt past the
+ *  checkpoint the reclaimed run resumed from. `null` for any event that
+ *  isn't a resume marker. Mirror of `resume_discard_range` in
+ *  `services/agent-py/src/agent_py/events.py`. */
+export function resumeDiscardRange(
+  event: TaskEvent
+): { after: number; before: number } | null {
+  if (event.kind !== "status") return null
+  if (typeof event.resumedFromSeq === "number") {
+    return { after: event.resumedFromSeq, before: event.seq }
+  }
+  if (event.restarted) {
+    return { after: LEGACY_RESTART_RESUMED_FROM_SEQ, before: event.seq }
+  }
+  return null
+}
+
+/** The log without any event a resume marker in it discards (the
+ *  markers themselves stay) — what the run actually produced, minus a
+ *  dead attempt's partial output. Order-preserving. Whole-log readers
+ *  use this; the incremental `reduceRun` applies the same
+ *  `resumeDiscardRange` by rolling its view back. Mirror of
+ *  `drop_superseded_events` in `services/agent-py/.../events.py`. */
+export function dropSupersededEvents<E extends TaskEvent>(events: readonly E[]): E[] {
+  const ranges: { after: number; before: number }[] = []
+  for (const e of events) {
+    const r = resumeDiscardRange(e)
+    if (r) ranges.push(r)
+  }
+  if (ranges.length === 0) return [...events]
+  return events.filter((e) => !ranges.some((r) => e.seq > r.after && e.seq < r.before))
+}

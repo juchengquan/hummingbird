@@ -8,6 +8,7 @@ import { NextResponse } from "next/server"
 import { getSupabaseServerClient } from "@/server/supabase/server"
 import { getRun, listEventsSince, reconcileStaleRuns } from "@/server/agent/store"
 import {
+  dropSupersededEvents,
   isTerminalStatus,
   type RunStatus,
   type TaskEvent,
@@ -112,8 +113,10 @@ export async function GET(
           writer.write(toDataPart(e))
           if (e.seq > cursor) cursor = e.seq
         }
-        // Terminal event in the log → fully drained, stop.
-        if (events.some(isTerminalEvent)) break
+        // Terminal event in the log → fully drained, stop. A terminal
+        // event a resume marker supersedes (a dead attempt's, replayed
+        // ahead of its reclaimed re-run) doesn't end the run.
+        if (dropSupersededEvents(events).some(isTerminalEvent)) break
         // The previous poll saw the row go terminal; this poll has now
         // drained anything written after it. Stop.
         if (sawTerminalRow) break
