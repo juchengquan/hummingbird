@@ -24,6 +24,10 @@ import { getSupabaseServerClient } from "@/server/supabase/server"
 import { getRun } from "@/server/agent/store"
 import { enqueueRespondJob } from "@/server/agent/jobs"
 import { taskWriteErrorResponse } from "@/server/agent/task-writes"
+import { jsonBodyError, readJsonCapped } from "@/server/read-body-capped"
+
+/** Body cap: `enqueue_task_job` (0034) rejects payloads over 64 KB anyway. */
+const RESPOND_BODY_MAX = 256 * 1024
 
 export async function POST(
   req: NextRequest,
@@ -46,15 +50,9 @@ export async function POST(
   }
   const userId = userData.user.id
 
-  let raw: unknown
-  try {
-    raw = await req.json()
-  } catch {
-    return NextResponse.json(
-      { code: "invalid_request", message: "Body must be JSON." },
-      { status: 400 }
-    )
-  }
+  const read = await readJsonCapped(req, RESPOND_BODY_MAX)
+  if (!read.ok) return jsonBodyError(read)
+  const raw = read.value
   const parsed = RespondRequestSchema.safeParse(raw)
   if (!parsed.success) {
     return NextResponse.json(

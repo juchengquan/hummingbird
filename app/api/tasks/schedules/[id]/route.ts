@@ -22,6 +22,10 @@ import { validateScheduleCron } from "@/server/agent/schedules"
 import { taskWriteErrorResponse } from "@/server/agent/task-writes"
 import { rowToSchedule } from "@/server/agent/schedule-codec"
 import type { Database, Json } from "@/shared/supabase/types"
+import { jsonBodyError, readJsonCapped } from "@/server/read-body-capped"
+
+/** Body cap: name + prompt + systemPrompt top out around 40 KB. */
+const SCHEDULE_BODY_MAX = 256 * 1024
 
 export async function PATCH(
   req: NextRequest,
@@ -44,15 +48,9 @@ export async function PATCH(
   }
   const userId = userData.user.id
 
-  let raw: unknown
-  try {
-    raw = await req.json()
-  } catch {
-    return NextResponse.json(
-      { code: "invalid_request", message: "Body must be JSON." },
-      { status: 400 }
-    )
-  }
+  const read = await readJsonCapped(req, SCHEDULE_BODY_MAX)
+  if (!read.ok) return jsonBodyError(read)
+  const raw = read.value
   const parsed = ScheduleUpdateSchema.safeParse(raw)
   if (!parsed.success) {
     return NextResponse.json(

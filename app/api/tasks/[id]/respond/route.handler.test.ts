@@ -94,6 +94,15 @@ describe("POST /api/tasks/:id/respond — body validation", () => {
     expect(mocks.enqueueRespondJob).not.toHaveBeenCalled()
   })
 
+  test("413 on an oversized body, before anything is enqueued", async () => {
+    const { POST } = await import("./route")
+    const huge = JSON.stringify({ requestId: "r1", value: "x".repeat(300 * 1024) })
+    const res = await POST(rawPost(huge), { params })
+    expect(res.status).toBe(413)
+    expect((await res.json()).code).toBe("payload_too_large")
+    expect(mocks.enqueueRespondJob).not.toHaveBeenCalled()
+  })
+
   test("400 on missing requestId", async () => {
     const { POST } = await import("./route")
     const res = await POST(jsonPost({ approved: true }), { params })

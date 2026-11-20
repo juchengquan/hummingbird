@@ -26,7 +26,7 @@ import {
   selectModel,
 } from "@/server/model-provider"
 import { categorizeError } from "@/shared/api-errors"
-import { TaskRequestSchema } from "@/shared/api-schemas"
+import { CHAT_BODY_MAX, TaskRequestSchema } from "@/shared/api-schemas"
 import type { SkillId } from "@/shared/skills/types"
 import type { SkillRequestEntry } from "@/server/skills/registry"
 import { getSupabaseServerClient } from "@/server/supabase/server"
@@ -35,6 +35,7 @@ import type { RunCheckpoint } from "@/server/agent/checkpoint"
 import { appendEvent } from "@/server/agent/store"
 import { enqueueStartJob } from "@/server/agent/jobs"
 import { createTaskRun, taskWriteErrorResponse } from "@/server/agent/task-writes"
+import { jsonBodyError, readJsonCapped } from "@/server/read-body-capped"
 
 const DEFAULT_MAX_STEPS = 25
 const MAX_MAX_STEPS = 50
@@ -80,15 +81,9 @@ export async function POST(req: NextRequest) {
   }
   const userId = userData.user.id
 
-  let raw: unknown
-  try {
-    raw = await req.json()
-  } catch {
-    return NextResponse.json(
-      { code: "invalid_request", message: "Body must be JSON." },
-      { status: 400 }
-    )
-  }
+  const read = await readJsonCapped(req, CHAT_BODY_MAX)
+  if (!read.ok) return jsonBodyError(read)
+  const raw = read.value
   const parsed = TaskRequestSchema.safeParse(raw)
   if (!parsed.success) {
     return NextResponse.json(
