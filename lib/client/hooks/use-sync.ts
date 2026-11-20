@@ -13,6 +13,14 @@ import "client-only"
  * We deliberately don't touch `lib/hooks/use-store.ts`. This keeps the
  * sync layer reversible — comment out one hook in the dashboard and
  * everything still works locally.
+ *
+ * Pause / resume (`lib/client/sync/pause-baseline.ts`): while sync is
+ * paused (local-only toggle) or the user is signed out the subscriber is
+ * detached. Detaching records a compact pause baseline (persisted, so a
+ * reload while paused keeps it); re-attaching for the same user diffs
+ * that baseline against the current store and enqueues the result
+ * BEFORE the reconcile pull runs (`resumeFromPause`, also called by
+ * `use-reconcile.ts`). Local edits made while paused win.
  */
 
 import { useEffect, useRef } from "react"
@@ -21,11 +29,25 @@ import { useSyncEnabled } from "@/client/hooks/use-sync-enabled"
 import { getSupabaseBrowserClient } from "@/client/supabase/client"
 import { fetchAccountInstructions } from "@/client/supabase/account-instructions"
 import { fetchMemoryEnabled } from "@/client/supabase/memory"
-import { configureSync, enqueue } from "@/client/sync/sync-queue"
+import {
+  configureSync,
+  enqueue,
+  enqueueMany,
+  takeRecentlyDroppedOps,
+} from "@/client/sync/sync-queue"
 import {
   computeSyncOps,
   type SyncSnapshot as Snapshot,
 } from "@/client/sync/compute-sync-ops"
+import {
+  buildPauseBaseline,
+  claimPauseBaseline,
+  computeResumeOps,
+  savePauseBaseline,
+  shouldCapturePauseBaseline,
+  type OwnershipContext,
+} from "@/client/sync/pause-baseline"
+import { getLocalDataOwner, hasReconciled } from "@/client/sync/sync-owner"
 import type { Message } from "@/shared/types"
 
 // Module-level so the reconciliation flow can reset it after hydration.
@@ -101,6 +123,73 @@ function takeSnapshot(): Snapshot {
   return snapshotOf(useStore.getState())
 }
 
+function ownershipFor(userId: string): OwnershipContext {
+  return { localOwner: getLocalDataOwner(), reconciled: hasReconciled(userId) }
+}
+
+function storeHydrated(): boolean {
+  return useStore.persist.hasHydrated()
+}
+
+/**
+ * Called when the diff subscriber detaches (pause, sign-out, user
+ * switch, unmount): records what the cloud is known to hold for
+ * `userId`, so the edits made while detached can be uploaded on resume.
+ *
+ * The baseline is the diff baseline (`lastSnapshot`), with streaming
+ * conversations rolled back to their pre-stream messages (those diffs
+ * were held, never queued). Ops still queued need nothing: they stay
+ * queued and flush first on resume. Ops a sign-out reset just dropped
+ * are marked dirty (see `takeRecentlyDroppedOps`).
+ */
+function capturePauseBaseline(userId: string): void {
+  if (!storeHydrated()) return
+  if (!shouldCapturePauseBaseline(userId, ownershipFor(userId))) return
+  const base = lastSnapshot ?? takeSnapshot()
+  const snapshot: Snapshot =
+    heldMessageBaselines.size === 0
+      ? base
+      : {
+          ...base,
+          conversations: base.conversations.map((c) => {
+            const held = heldMessageBaselines.get(c.id)
+            return held ? { ...c, messages: held } : c
+          }),
+        }
+  savePauseBaseline(
+    buildPauseBaseline({
+      userId,
+      snapshot,
+      droppedOps: takeRecentlyDroppedOps(userId),
+    })
+  )
+}
+
+/**
+ * Uploads the edits made while sync was paused for `userId`: claims the
+ * pause baseline (if it is this user's and the local data is still
+ * theirs), diffs it against the current store, enqueues the ops owner-
+ * scoped and makes the current store the diff baseline. Idempotent —
+ * the claim removes the baseline, so a second call (or a second tab)
+ * is a no-op. Synchronous, so a caller that then awaits `whenDrained()`
+ * is guaranteed to wait for these ops.
+ *
+ * Returns the number of ops enqueued.
+ */
+export function resumeFromPause(userId: string): number {
+  // Pre-hydration the store holds defaults; diffing those would read as
+  // "everything was deleted". Leave the baseline for the next attach.
+  if (!storeHydrated()) return 0
+  const baseline = claimPauseBaseline(userId, ownershipFor(userId))
+  if (!baseline) return 0
+  const current = takeSnapshot()
+  const ops = computeResumeOps(baseline, current)
+  enqueueMany(ops.map((op) => ({ ...op, ownerUserId: userId })))
+  lastSnapshot = current
+  heldMessageBaselines.clear()
+  return ops.length
+}
+
 export function useSync(): void {
   // `useSyncEnabled` folds in the local-only opt-out so disabling cloud
   // sync via the toggle behaves identically to being signed out.
@@ -116,7 +205,8 @@ export function useSync(): void {
   }, [enabled, userId])
 
   // On sign-out / local-mode-toggled-on, clear the snapshot so a future
-  // re-enable re-seeds cleanly.
+  // re-enable re-seeds cleanly (the subscriber's cleanup has already
+  // recorded the pause baseline from it).
   useEffect(() => {
     if (!enabled) {
       lastSnapshot = null
@@ -161,11 +251,13 @@ export function useSync(): void {
     }
   }, [enabled, userId])
 
-  // Subscribe to store changes and produce SyncOps. The first change
-  // after enabling seeds the snapshot if reconciliation hasn't already.
+  // Subscribe to store changes and produce SyncOps. Attaching first
+  // uploads whatever changed while detached (pause baseline), then seeds
+  // the snapshot if reconciliation hasn't already.
   useEffect(() => {
     if (!enabled || !userId) return
 
+    resumeFromPause(userId)
     if (lastSnapshot === null) {
       lastSnapshot = takeSnapshot()
     }
@@ -193,7 +285,14 @@ export function useSync(): void {
       lastSnapshot = next
     })
 
-    return () => unsubscribe()
+    return () => {
+      unsubscribe()
+      // Detached: from here on edits produce no ops. Record the pause
+      // baseline so they upload when this user re-attaches.
+      capturePauseBaseline(userId)
+      lastSnapshot = null
+      heldMessageBaselines.clear()
+    }
   }, [enabled, userId])
 }
 
