@@ -15,12 +15,14 @@ import { getLocalCred, serializeCredentialHeader } from "@/client/mcp/local-cred
 import { cn } from "@/shared/utils"
 import type { McpAppPart } from "@/shared/types"
 
+import { SandboxedFrame } from "./sandboxed-frame"
+
 /**
  * Renders an MCP App panel — bundled HTML read from an MCP tool's
- * `ui://` resource — in the same sandboxed iframe shell as live
- * artifacts (`sandbox="allow-scripts"`, null origin, CSP
- * `connect-src 'none'`). The HTML is untrusted server output, so the
- * sandbox is the security boundary.
+ * `ui://` resource — in the same sandboxed iframe as live artifacts
+ * (`SandboxedFrame`: the `/sandbox/frame` shell, `sandbox="allow-scripts"`,
+ * opaque origin, CSP `connect-src 'none'`). The HTML is untrusted
+ * server output, so the sandbox is the security boundary.
  *
  * Phase 2 adds the **tool-call bridge**: the panel can post a
  * `{ ns: "mcp-app", type: "tool-call", ... }` message; this component
@@ -63,7 +65,7 @@ export function McpAppFrame({
   const callCountRef = useRef(0)
 
   const scheme = theme === "light" ? "light" : "dark"
-  const srcDoc = useMemo(() => {
+  const html = useMemo(() => {
     // Minimal theming — a color-scheme hint so default controls /
     // scrollbars match the host. Full token passing is deferred.
     const themed = `<meta name="color-scheme" content="dark light" /><style>:root{color-scheme:${scheme}}</style>\n${app.html}`
@@ -250,15 +252,10 @@ export function McpAppFrame({
           Panel error: {scriptError}
         </div>
       )}
-      <iframe
-        ref={iframeRef}
+      <SandboxedFrame
+        frameRef={iframeRef}
+        html={html}
         title="MCP App"
-        // CRITICAL: no `allow-same-origin` — the null origin protects
-        // parent cookies / storage from the untrusted panel script.
-        sandbox="allow-scripts"
-        referrerPolicy="no-referrer"
-        loading="lazy"
-        srcDoc={srcDoc}
         className="w-full h-[420px] border-0 bg-white"
       />
     </McpAppShell>

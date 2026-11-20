@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { CDN_HOSTS, CDN_URLS } from "./cdn-urls"
+import { CDN_HOSTS, CDN_URLS } from "@/shared/live-artifact/cdn-urls"
 import { buildShell, IFRAME_MESSAGE_NS } from "./iframe-shell"
 
 describe("buildShell — every shell injects CSP + error bridge", () => {

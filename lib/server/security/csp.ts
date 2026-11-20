@@ -145,10 +145,10 @@ export function buildCspDirectives(opts: CspPolicyOptions): Array<[string, strin
     // pdfjs worker is a same-origin module script (`/_next/static/…`);
     // blob: covers libraries that wrap their worker in an object URL.
     ["worker-src", ["'self'", "blob:"]],
-    // Live-artifact and MCP-app frames use `srcdoc`, which frame-src
-    // does not govern (they inherit this policy instead — see
-    // docs/SECURITY.md). This list is the media-embed players.
-    ["frame-src", [...EMBED_FRAME_ORIGINS]],
+    // 'self': the sandbox frame shell (`/sandbox/frame`) that
+    // live-artifact and MCP-app iframes load — it sends its own CSP
+    // (`sandbox-frame.ts`). The rest are the media-embed players.
+    ["frame-src", ["'self'", ...EMBED_FRAME_ORIGINS]],
     ["object-src", ["'none'"]],
     ["base-uri", ["'self'"]],
     ["form-action", ["'self'"]],
