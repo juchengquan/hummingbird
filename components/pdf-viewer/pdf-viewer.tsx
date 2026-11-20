@@ -89,10 +89,19 @@ function PdfViewer({ fileId, initialPage, onClose }: PdfViewerProps) {
         }
         const pdfjs = await loadPdfjs()
         const buffer = await blob.arrayBuffer()
-        const task = pdfjs.getDocument({ data: buffer })
+        // `isEvalSupported: false` keeps pdfjs from compiling PDF-supplied
+        // code (fonts / PostScript functions) via `new Function`. pdfjs-dist
+        // >=6 removed that path and the option, so it's a no-op today —
+        // kept as defense-in-depth against a pin back to a 5.x build.
+        const params: NonNullable<Parameters<typeof pdfjs.getDocument>[0]> & {
+          isEvalSupported?: boolean
+        } = { data: buffer, isEvalSupported: false }
+        const task = pdfjs.getDocument(params)
         const loaded = await task.promise
         if (cancelled) {
-          await loaded.destroy()
+          // pdfjs-dist >=6 dropped `PDFDocumentProxy.destroy()`; the
+          // loading task owns teardown (worker + transport).
+          await task.destroy()
           return
         }
         setDoc(loaded)
