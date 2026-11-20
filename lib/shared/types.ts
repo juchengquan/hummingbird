@@ -408,6 +408,7 @@ export type MessageErrorCode =
   | 'rate_limit'
   | 'context_window'
   | 'invalid_model'
+  | 'unknown_model'
   | 'provider'
   | 'network'
   | 'unknown'

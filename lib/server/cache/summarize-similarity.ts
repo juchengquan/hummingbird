@@ -24,21 +24,29 @@ export type SimilarityTarget = { scope: string; text: string }
  *   exact-key only.
  * - everything else (`conversation`, `compress`) → null.
  *
- * Scope is `summarize|<mode>|<model>` so a match never crosses mode or model.
+ * Scope is `summarize|<callerScope>|<mode>|<model>` so a match never
+ * crosses callers, modes or models. `callerScope` comes from
+ * `@/server/cache/caller-scope` — a near-match serves the answer to a
+ * *similar* input, so without it user B could receive user A's summary
+ * of a near-identical document.
  */
 export function similarityTargetFor(
   body: { mode: string; text?: string; goal?: string; existingTitles?: string[] },
   modelId: string,
+  callerScope: string,
 ): SimilarityTarget | null {
   if (body.mode === "file" && typeof body.text === "string") {
-    return { scope: `summarize|file|${modelId}`, text: body.text }
+    return { scope: `summarize|${callerScope}|file|${modelId}`, text: body.text }
   }
   if (
     body.mode === "project-breakdown" &&
     typeof body.goal === "string" &&
     !body.existingTitles?.length
   ) {
-    return { scope: `summarize|project-breakdown|${modelId}`, text: body.goal }
+    return {
+      scope: `summarize|${callerScope}|project-breakdown|${modelId}`,
+      text: body.goal,
+    }
   }
   return null
 }

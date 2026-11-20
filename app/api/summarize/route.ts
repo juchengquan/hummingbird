@@ -6,6 +6,7 @@ import { z } from 'zod'
 
 import { categorizeError } from '@/shared/api-errors'
 import { generateStructured } from '@/server/ai/structured'
+import { resolveCallerScope } from '@/server/cache/caller-scope'
 import {
   findSimilarCachedResponse,
   getCachedResponse,
@@ -14,6 +15,7 @@ import {
 } from '@/server/cache/response-cache'
 import {
   ProviderUnavailableError,
+  rejectUnknownModel,
   selectModel,
 } from '@/server/model-provider'
 import { embedText, isEmbeddingConfigured } from '@/server/embeddings/provider'
@@ -214,6 +216,8 @@ export async function POST(req: NextRequest) {
 
   const body = parsed.data
   const modelId = body.model ?? DEFAULT_SUMMARY_MODEL
+  const unknownModel = rejectUnknownModel(modelId)
+  if (unknownModel) return unknownModel
   const prompt =
     body.mode === 'file'
       ? buildFilePrompt(body.name, body.text)
@@ -227,11 +231,16 @@ export async function POST(req: NextRequest) {
   // body minus its `model` field is the input (the resolved `modelId` is a
   // separate key part, so "model omitted" and "model = default" share a
   // hit). Deterministic, low-temp calls only — never the chat stream.
-  const { model: _omitModel, ...cacheInput } = body
+  // Partitioned per caller (signed-in user id, else a hash of the client
+  // IP) so neither lookup below can serve one user's result to another.
+  const callerScope = await resolveCallerScope(req)
+  const cacheInput: Record<string, unknown> = { ...body }
+  delete cacheInput.model
   const cacheKey = responseCacheKey({
     kind: 'summarize',
     model: modelId,
     input: cacheInput,
+    scope: callerScope,
   })
   const cached = getCachedResponse(cacheKey)
   if (cached !== undefined) return NextResponse.json(cached)
@@ -239,10 +248,10 @@ export async function POST(req: NextRequest) {
   // Semantic near-match (PLAN-semantic-caching Phase 2). On an exact-key
   // miss, for eligible modes (file; project-breakdown without existingTitles
   // — see similarityTargetFor), embed the input once and look for a recent
-  // result for a near-identical input (same mode + model). Advisory: any
+  // result for a near-identical input (same caller + mode + model). Advisory: any
   // embedding failure falls through to the model call. Inert unless an
   // embeddings provider is configured.
-  const similarity = similarityTargetFor(body, modelId)
+  const similarity = similarityTargetFor(body, modelId, callerScope)
   let simEmbedding: number[] | undefined
   if (similarity && isEmbeddingConfigured()) {
     try {

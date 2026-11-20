@@ -43,6 +43,16 @@ describe("responseCacheKey", () => {
     ).not.toBe(key)
   })
 
+  test("caller scope changes the key; omitted scope keeps the legacy key", () => {
+    const base = { kind: "summarize", model: "m", input: { text: "x" } }
+    const unscoped = responseCacheKey(base)
+    const a = responseCacheKey({ ...base, scope: "user:a" })
+    const b = responseCacheKey({ ...base, scope: "user:b" })
+    expect(a).not.toBe(b)
+    expect(a).not.toBe(unscoped)
+    expect(responseCacheKey({ ...base, scope: "user:a" })).toBe(a)
+  })
+
   test("keys are fixed-length hex (hashed, not the raw input)", () => {
     const key = responseCacheKey({
       kind: "summarize",
@@ -160,5 +170,46 @@ describe("findSimilarCachedResponse", () => {
     ).toBeUndefined()
     // The expired entry was evicted by the scan, not merely skipped.
     expect(getCachedResponse("k1")).toBeUndefined()
+  })
+})
+
+describe("summarize cache isolation across caller scopes", () => {
+  // Mirrors app/api/summarize/route.ts: the exact key and the near-match
+  // scope both carry the caller scope from `callerScopeFrom`.
+  const scopeFor = (caller: string) => `summarize|${caller}|file|m`
+  const keyFor = (caller: string, text: string) =>
+    responseCacheKey({
+      kind: "summarize",
+      model: "m",
+      input: { mode: "file", text },
+      scope: caller,
+    })
+
+  test("user B never gets user A's near-match result", () => {
+    setCachedResponse(keyFor("user:a", "doc"), "A's summary", {
+      embedding: [1, 0, 0],
+      scope: scopeFor("user:a"),
+    })
+    // Near-identical embedding, different caller → miss.
+    expect(
+      findSimilarCachedResponse<string>({
+        scope: scopeFor("user:b"),
+        embedding: [0.999, 0.01, 0],
+      }),
+    ).toBeUndefined()
+    // Same caller → hit.
+    expect(
+      findSimilarCachedResponse<string>({
+        scope: scopeFor("user:a"),
+        embedding: [0.999, 0.01, 0],
+      }),
+    ).toBe("A's summary")
+  })
+
+  test("exact-key lookups are partitioned too", () => {
+    setCachedResponse(keyFor("user:a", "doc"), "A's summary")
+    expect(getCachedResponse(keyFor("user:b", "doc"))).toBeUndefined()
+    expect(getCachedResponse(keyFor("anon:abc", "doc"))).toBeUndefined()
+    expect(getCachedResponse<string>(keyFor("user:a", "doc"))).toBe("A's summary")
   })
 })

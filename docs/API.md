@@ -259,8 +259,8 @@ shapes below are normative.
 // "upstream" (agent-py / agent-ts services). The consumer maps both
 // catch-alls to the same generic ErrorBubble surface.
 { "type": "error", "code": "auth" | "rate_limit" | "context_window"
-                          | "invalid_model" | "provider" | "network"
-                          | "unknown",
+                          | "invalid_model" | "unknown_model" | "provider"
+                          | "network" | "unknown",
   "message": "string" }
 
 // Stream end — last frame of a successful stream.

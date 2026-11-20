@@ -23,6 +23,7 @@ import { markdownJoinerTransform } from '@/shared/markdown-joiner-transform';
 import { categorizeError } from '@/shared/api-errors';
 import {
   ProviderUnavailableError,
+  rejectUnknownModel,
   selectModel,
 } from '@/server/model-provider';
 
@@ -35,7 +36,24 @@ import {
 } from './prompt';
 
 export async function POST(req: NextRequest) {
-  const { apiKey: key, ctx, messages: messagesRaw, model } = await req.json();
+  const {
+    apiKey: rawKey,
+    ctx,
+    messages: messagesRaw,
+    model,
+  } = await req.json();
+  const key = typeof rawKey === 'string' ? rawKey : undefined;
+
+  // Model selection happens inside the stream below, where a throw would
+  // surface as a stream error rather than a status code — so reject an
+  // unknown model id up front (400 `unknown_model`). A BYO `apiKey`
+  // lifts the restriction: the gateway call is billed to that key.
+  if (model) {
+    const unknownModel = rejectUnknownModel(String(model), {
+      gatewayApiKeyOverride: key,
+    });
+    if (unknownModel) return unknownModel;
+  }
 
   const { children, selection, toolName: toolNameParam } = ctx;
 

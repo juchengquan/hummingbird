@@ -1,10 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
+import { categorizeError } from "@/shared/api-errors"
+
 import {
+  assertModelAllowed,
   buildFallbackTable,
   isMinimaxCnConfigured,
   ProviderUnavailableError,
+  rejectUnknownModel,
   selectModel,
+  UnknownModelError,
 } from "./model-provider"
 
 const ENV_KEYS = [
@@ -47,12 +52,68 @@ describe("selectModel — happy paths", () => {
     expect(m).toBeDefined()
   })
 
-  test("falls back to gateway for an unknown model id", () => {
-    // Unknown ids implicitly route through the gateway — preserves the
-    // pre-refactor behaviour for per-request overrides that bypass
-    // config/models.json.
-    const m = selectModel("some/future-model")
+})
+
+describe("selectModel — unknown model ids", () => {
+  let snap: Record<string, string | undefined>
+  beforeEach(() => {
+    snap = snapshotEnv()
+    delete process.env.MINIMAX_CN_BASE_URL
+    delete process.env.MINIMAX_CN_API_KEY
+    process.env.AI_GATEWAY_API_KEY = "gw-operator-key"
+  })
+  afterEach(() => restoreEnv(snap))
+
+  test("rejects an id not in config/models.json (no BYO key)", () => {
+    // Would otherwise be billed to the operator's AI_GATEWAY_API_KEY.
+    expect(() => selectModel("some/expensive-model")).toThrow(UnknownModelError)
+  })
+
+  test("the rejection maps to 400 unknown_model, not a 401/500", () => {
+    let err: unknown
+    try {
+      selectModel("some/expensive-model")
+    } catch (e) {
+      err = e
+    }
+    expect(err).not.toBeInstanceOf(ProviderUnavailableError)
+    expect(categorizeError(err)).toMatchObject({
+      status: 400,
+      code: "unknown_model",
+    })
+  })
+
+  test("a blank BYO key doesn't lift the restriction", () => {
+    expect(() =>
+      selectModel("some/expensive-model", { gatewayApiKeyOverride: "  " })
+    ).toThrow(UnknownModelError)
+  })
+
+  test("passes an unknown id through to the gateway with a BYO key", () => {
+    const m = selectModel("some/future-model", {
+      gatewayApiKeyOverride: "user-key",
+    })
     expect(m).toBeDefined()
+  })
+
+  test("BYO pass-through works even without an operator gateway key", () => {
+    delete process.env.AI_GATEWAY_API_KEY
+    const m = selectModel("some/future-model", {
+      gatewayApiKeyOverride: "user-key",
+    })
+    expect(m).toBeDefined()
+  })
+
+  test("assertModelAllowed / rejectUnknownModel mirror the rule", async () => {
+    expect(() => assertModelAllowed("anthropic/claude-sonnet-4.6")).not.toThrow()
+    expect(() => assertModelAllowed("nope/nope")).toThrow(UnknownModelError)
+    expect(rejectUnknownModel("anthropic/claude-sonnet-4.6")).toBeNull()
+    expect(
+      rejectUnknownModel("nope/nope", { gatewayApiKeyOverride: "user-key" })
+    ).toBeNull()
+    const res = rejectUnknownModel("nope/nope")
+    expect(res?.status).toBe(400)
+    expect(await res?.json()).toMatchObject({ code: "unknown_model" })
   })
 })
 
