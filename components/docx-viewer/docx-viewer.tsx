@@ -8,11 +8,19 @@
  * docx-preview is dynamic-imported on first open so its ~150 KB bundle
  * doesn't ship with the initial JS. Same lazy-load pattern pdfjs uses.
  *
- * Sandboxing: docx-preview renders into a plain div on the parent
- * origin (not an iframe). Word documents can contain embedded scripts
- * via OLE objects in theory, but `docx-preview` doesn't execute any of
- * that — it only walks the OOXML structure to emit HTML and CSS. So
- * unlike the live-artifact iframe, we don't need a separate origin.
+ * Isolation: docx-preview renders into a plain div on the parent
+ * origin (not an iframe), so its output must be treated as untrusted
+ * HTML on the app origin. It doesn't execute OLE/macros, but two of its
+ * outputs ARE script vectors and are neutralized here:
+ *   - hyperlinks: `a.href` is copied verbatim from the document's
+ *     relationship target, so a `javascript:` hyperlink would be live.
+ *     `sanitizeRenderedLinks` strips any href outside the
+ *     `@/shared/safe-url` allowlist right after rendering.
+ *   - altChunks: embedded HTML chunks are rendered into an
+ *     *unsandboxed* same-origin `<iframe srcdoc>`, so we turn them off
+ *     (`renderAltChunks: false`).
+ * Anything new docx-preview starts emitting (URLs, iframes) needs the
+ * same review.
  */
 
 import { ChevronLeft, ChevronRight, Download, ExternalLink, RefreshCw, ZoomIn, ZoomOut } from "lucide-react"
@@ -31,6 +39,7 @@ import { useStore } from "@/client/hooks/use-store"
 import { fetchFileBlob } from "@/client/files/fetch-blob"
 import { cn } from "@/shared/utils"
 
+import { sanitizeRenderedLinks } from "./sanitize-links"
 import { useDocxViewer } from "./types"
 
 export function DocxViewerHost() {
@@ -132,7 +141,13 @@ function DocxViewer({ fileId, onClose }: DocxViewerProps) {
           // Render at a reasonable on-screen scale; the user can zoom
           // the whole drawer via browser zoom if needed.
           className: "docx-rendered",
+          // altChunk HTML goes into an unsandboxed same-origin iframe
+          // (`srcdoc`) -- a script vector. See the header comment.
+          renderAltChunks: false,
         })
+        // Always, even if cancelled: the container already holds the
+        // rendered DOM. Strips `javascript:` (etc.) hyperlink targets.
+        sanitizeRenderedLinks(container)
         if (!cancelled) {
           // docx-preview emits one top-level `<section>` per page break
           // (and a `.docx` div for the page surface inside each). We
