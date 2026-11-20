@@ -65,3 +65,31 @@ export function mcpAppToolResult(
 ): McpAppToolResult {
   return { ns: MCP_APP_NS, type: "tool-result", callId, ...payload }
 }
+
+/**
+ * Policy gate for a panel-initiated tool call against the producing
+ * server (`null`/`undefined` when not found). Returns `null` when the
+ * call may proceed, else the error message to post back to the panel.
+ *
+ *   - disabled server → refused: `enabled: false` is the user's
+ *     soft-off switch and must cover panel-initiated calls too.
+ *   - `requiresApproval` → refused: the only approval UI is the agent
+ *     task HITL checkpoint (server-driven), which a panel's direct
+ *     proxy call never passes through. Fail closed rather than run an
+ *     approval-gated tool unapproved.
+ */
+export function mcpAppToolCallDenial(
+  server:
+    | { enabled: boolean; requiresApproval?: boolean; deletedAt?: Date }
+    | null
+    | undefined
+): string | null {
+  if (!server || server.deletedAt) return "MCP server not available"
+  if (!server.enabled) {
+    return "MCP server is disabled — enable it in workspace settings to let this panel call tools"
+  }
+  if (server.requiresApproval) {
+    return "This MCP server requires approval for every tool call; panels can't request approval, so the call was refused"
+  }
+  return null
+}
