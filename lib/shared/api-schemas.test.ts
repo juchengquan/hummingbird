@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 
 import {
+  AiCommandRequestSchema,
+  CHAT_MESSAGES_MAX,
   ChatRequestSchema,
   COMPLETE_BLOCK_MAX,
   COMPLETE_PREFIX_MAX,
@@ -8,8 +10,12 @@ import {
   ExtractTableRequestSchema,
   RefreshFileUrlRequestSchema,
   RefreshImageUrlRequestSchema,
+  SANDBOX_FILE_BASE64_MAX,
+  SANDBOX_FILES_TOTAL_BASE64_MAX,
   TaskChildrenResponseSchema,
+  TaskRequestSchema,
 } from "./api-schemas"
+import { FILE_SIZE_LIMIT } from "./upload-config"
 
 describe("RefreshImageUrlRequestSchema", () => {
   test("accepts a normal user-scoped storage path", () => {
@@ -229,5 +235,114 @@ describe("ChatRequestSchema.memoryBypass", () => {
     expect(
       ChatRequestSchema.safeParse({ ...base, memoryBypass: "yes" }).success
     ).toBe(false)
+  })
+})
+
+describe("ChatRequestSchema bounds", () => {
+  const msg = { role: "user", content: "hi" }
+  test("accepts a long-but-real history; rejects one over CHAT_MESSAGES_MAX", () => {
+    const at = Array.from({ length: CHAT_MESSAGES_MAX }, () => msg)
+    expect(ChatRequestSchema.safeParse({ messages: at }).success).toBe(true)
+    expect(
+      ChatRequestSchema.safeParse({ messages: [...at, msg] }).success
+    ).toBe(false)
+    expect(
+      TaskRequestSchema.safeParse({ messages: [...at, msg], conversationId: "c" })
+        .success
+    ).toBe(false)
+  })
+
+  test("per-file cap matches the client's 10 MB local-file cap", () => {
+    // A 10,000,000-byte file encodes to exactly SANDBOX_FILE_BASE64_MAX chars.
+    expect(SANDBOX_FILE_BASE64_MAX).toBe(
+      Buffer.alloc(10_000_000).toString("base64").length
+    )
+  })
+
+  test("accepts 10 local files at the upload cap (the client's real maximum)", () => {
+    const b64 = "A".repeat(Math.ceil(FILE_SIZE_LIMIT / 3) * 4)
+    const files = Array.from({ length: 10 }, (_, i) => ({
+      name: `f${i}`,
+      fileId: `id${i}`,
+      dataBase64: b64,
+    }))
+    expect(
+      ChatRequestSchema.safeParse({ messages: [msg], sandboxFiles: files }).success
+    ).toBe(true)
+  })
+
+  test("rejects a manifest whose total inline data exceeds the cap", () => {
+    // Each entry is under the per-file cap, but 10 of them blow the total.
+    const each = Math.floor(SANDBOX_FILES_TOTAL_BASE64_MAX / 10) + 4
+    expect(each).toBeLessThanOrEqual(SANDBOX_FILE_BASE64_MAX)
+    const files = Array.from({ length: 10 }, (_, i) => ({
+      name: `f${i}`,
+      fileId: `id${i}`,
+      dataBase64: "A".repeat(each),
+    }))
+    expect(
+      ChatRequestSchema.safeParse({ messages: [msg], sandboxFiles: files }).success
+    ).toBe(false)
+  })
+})
+
+describe("AiCommandRequestSchema", () => {
+  // Shape the AI SDK DefaultChatTransport + Plate's AIChatPlugin send.
+  const valid = {
+    id: "editor",
+    trigger: "submit-message",
+    apiKey: "",
+    ctx: {
+      children: [{ type: "p", id: "b1", children: [{ text: "Hello" }] }],
+      selection: {
+        anchor: { path: [0, 0], offset: 0 },
+        focus: { path: [0, 0], offset: 5 },
+      },
+      toolName: "edit",
+    },
+    messages: [
+      {
+        id: "m1",
+        role: "user",
+        parts: [{ type: "text", text: "Make it formal" }],
+        metadata: {},
+      },
+    ],
+  }
+
+  test("accepts the real client payload (and null selection / absent toolName)", () => {
+    expect(AiCommandRequestSchema.safeParse(valid).success).toBe(true)
+    expect(
+      AiCommandRequestSchema.safeParse({
+        ...valid,
+        ctx: { ...valid.ctx, selection: null, toolName: undefined },
+      }).success
+    ).toBe(true)
+  })
+
+  test("rejects a missing ctx (previously a TypeError → 500)", () => {
+    const { ctx: _ctx, ...noCtx } = valid
+    expect(AiCommandRequestSchema.safeParse(noCtx).success).toBe(false)
+  })
+
+  test("rejects non-array children, bad selection and unknown toolName", () => {
+    for (const ctx of [
+      { ...valid.ctx, children: "nope" },
+      { ...valid.ctx, selection: { anchor: { path: "x", offset: 0 } } },
+      { ...valid.ctx, toolName: "delete-everything" },
+    ]) {
+      expect(AiCommandRequestSchema.safeParse({ ...valid, ctx }).success).toBe(false)
+    }
+  })
+
+  test("rejects messages without parts, empty messages, non-string model", () => {
+    expect(
+      AiCommandRequestSchema.safeParse({ ...valid, messages: [{ role: "user" }] })
+        .success
+    ).toBe(false)
+    expect(AiCommandRequestSchema.safeParse({ ...valid, messages: [] }).success).toBe(
+      false
+    )
+    expect(AiCommandRequestSchema.safeParse({ ...valid, model: 42 }).success).toBe(false)
   })
 })

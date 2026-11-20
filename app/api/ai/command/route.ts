@@ -15,12 +15,13 @@ import {
   tool,
 } from 'ai';
 import { NextResponse } from 'next/server';
-import { type SlateEditor, createSlateEditor, nanoid } from 'platejs';
+import { type SlateEditor, type Value, createSlateEditor, nanoid } from 'platejs';
 import { z } from 'zod';
 
 import { BaseEditorKit } from '@/components/editor/editor-base-kit';
 import { markdownJoinerTransform } from '@/shared/markdown-joiner-transform';
 import { categorizeError } from '@/shared/api-errors';
+import { AiCommandRequestSchema } from '@/shared/api-schemas';
 import {
   ProviderUnavailableError,
   rejectUnknownModel,
@@ -36,13 +37,31 @@ import {
 } from './prompt';
 
 export async function POST(req: NextRequest) {
-  const {
-    apiKey: rawKey,
-    ctx,
-    messages: messagesRaw,
-    model,
-  } = await req.json();
-  const key = typeof rawKey === 'string' ? rawKey : undefined;
+  let raw: unknown;
+  try {
+    raw = await req.json();
+  } catch {
+    return NextResponse.json(
+      { code: 'invalid_request', message: 'Body must be JSON.' },
+      { status: 400 }
+    );
+  }
+  const parsed = AiCommandRequestSchema.safeParse(raw);
+  if (!parsed.success) {
+    return NextResponse.json(
+      {
+        code: 'invalid_request',
+        message: parsed.error.issues[0]?.message ?? 'Invalid request body.',
+      },
+      { status: 400 }
+    );
+  }
+  const { apiKey: rawKey, ctx, model } = parsed.data;
+  // The schema validates exactly the fields the prompt builders read
+  // (role + parts[].type/text); the rest of the AI SDK UIMessage shape
+  // passes through untouched, so the cast is sound for our use.
+  const messagesRaw = parsed.data.messages as unknown as ChatMessage[];
+  const key = rawKey || undefined;
 
   // Model selection happens inside the stream below, where a throw would
   // surface as a stream error rather than a status code — so reject an
@@ -59,8 +78,8 @@ export async function POST(req: NextRequest) {
 
   const editor = createSlateEditor({
     plugins: BaseEditorKit,
-    selection,
-    value: children,
+    selection: selection ?? null,
+    value: children as Value,
   });
 
   const isSelecting = editor.api.isExpanded();
