@@ -26,7 +26,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agent_py import executor, jobs, lease, poller, store, verify
+from agent_py import executor, jobs, lease, poller, store, tool_ledger, verify
 from agent_py.emitter import RunEmitter
 from agent_py.events import (
     ApprovalEvent,
@@ -747,6 +747,43 @@ async def test_interrupted_respond_reapplies_an_unpersisted_answer() -> None:
     responses = [e for e in collected if isinstance(e, ApprovalEvent)]
     assert [(e.phase, e.approval_id, e.seq) for e in responses] == [("response", "tu_1", 12)]
     assert settle.await_args.kwargs["status"] == "done"
+    # The interim checkpoint (answer applied) is saved AFTER the marker,
+    # so its seq covers it: a reclaim from it drops only what follows.
+    interim = save.await_args_list[1].kwargs["checkpoint"]
+    assert interim["seq"] >= marker.seq
+
+
+@pytest.mark.asyncio
+async def test_interrupted_respond_emits_the_marker_before_the_interim_save() -> None:
+    """Were the attempt to die between the interim save and the marker,
+    the next reclaim would resume from the interim checkpoint with a
+    marker at its seq and never drop the first dead attempt's events."""
+    order: list[str] = []
+    collected: list[TaskEvent] = []
+
+    async def sink(event: TaskEvent) -> None:
+        order.append(f"event:{event.kind}")
+        collected.append(event)
+
+    async def save(*_a: Any, **kw: Any) -> None:
+        if tool_ledger.INFLIGHT_KEY not in kw["checkpoint"]:
+            order.append(f"save:seq={kw['checkpoint']['seq']}")
+
+    with (
+        _db(_paused_checkpoint(answered=False), max_seq=10, sink=sink),
+        patch(
+            "agent_py.executor.default_tool_registry",
+            return_value={"danger": _tool("danger", [])},
+        ),
+        patch.object(store, "save_checkpoint", new=AsyncMock(side_effect=save)),
+        patch.object(store, "update_run", new=AsyncMock()),
+        patch("agent_py.executor.settle_task_terminal", new=AsyncMock()),
+    ):
+        await executor.execute_respond(
+            MagicMock(), _respond_payload(), make_step_fn=_done_step_fn(), resume_interrupted=True
+        )
+    assert order[0] == "event:status"
+    assert order[1] == "save:seq=11"
 
 
 @pytest.mark.asyncio

@@ -1571,9 +1571,19 @@ async def _run_respond_inner(
     guard.emitter = emitter
 
     try:
-        # Persist BEFORE emitting so a crash between emit + save can't
-        # lose the appended tool_result. Mirrors the TS path. Inside the
-        # `try` so a failed save settles the (already-claimed, now
+        if resume_interrupted:
+            # Reclaimed: open with a resume marker so consumers drop
+            # anything the dead attempt wrote past the paused checkpoint.
+            # Emitted BEFORE the interim checkpoint save so the saved
+            # `seq` covers it: were this attempt to die after the save but
+            # before the marker, the next reclaim would resume from the
+            # interim checkpoint (answer already applied) with a marker
+            # at ITS seq — and the first dead attempt's events between
+            # the paused checkpoint and that seq would never be dropped.
+            await emitter.status("running", resumed_from_seq=_int_or(checkpoint.get("seq"), 0))
+        # Persist BEFORE emitting the rest so a crash between emit + save
+        # can't lose the appended tool_result. Mirrors the TS path. Inside
+        # the `try` so a failed save settles the (already-claimed, now
         # `running`) task failed instead of stranding it.
         interim_checkpoint = _build_checkpoint(checkpoint, live_messages, emitter)
         await store.save_checkpoint(
@@ -1583,10 +1593,6 @@ async def _run_respond_inner(
             checkpoint=interim_checkpoint,
         )
         await _stamp_handler(pool, run_id=payload.run_id, user_id=payload.user_id)
-        if resume_interrupted:
-            # Reclaimed: open with a resume marker so consumers drop
-            # anything the dead attempt wrote past the paused checkpoint.
-            await emitter.status("running", resumed_from_seq=_int_or(checkpoint.get("seq"), 0))
         # Emit input_response (clears pending_input on the projection)
         # then status:running before stepping again.
         await emitter.input_response(
