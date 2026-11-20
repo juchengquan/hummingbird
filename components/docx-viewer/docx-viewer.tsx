@@ -19,6 +19,9 @@
  *   - altChunks: embedded HTML chunks are rendered into an
  *     *unsandboxed* same-origin `<iframe srcdoc>`, so we turn them off
  *     (`renderAltChunks: false`).
+ *   - symbols: `w:sym/@w:char` is written via `innerHTML` unvalidated,
+ *     so the document is parsed first and `neutralizeDocxSymbols`
+ *     replaces any non-hex `char` before rendering.
  * Anything new docx-preview starts emitting (URLs, iframes) needs the
  * same review.
  */
@@ -40,6 +43,7 @@ import { fetchFileBlob } from "@/client/files/fetch-blob"
 import { cn } from "@/shared/utils"
 
 import { sanitizeRenderedLinks } from "./sanitize-links"
+import { neutralizeDocxSymbols } from "./sanitize-symbols"
 import { useDocxViewer } from "./types"
 
 export function DocxViewerHost() {
@@ -132,9 +136,9 @@ function DocxViewer({ fileId, onClose }: DocxViewerProps) {
           setLoading(false)
           return
         }
-        const { renderAsync } = await import("docx-preview")
+        const { parseAsync, renderDocument } = await import("docx-preview")
         if (cancelled) return
-        await renderAsync(blob, container, undefined, {
+        const options = {
           // Match the surrounding chat surface — no extra wrapper chrome.
           inWrapper: false,
           ignoreLastRenderedPageBreak: true,
@@ -144,7 +148,13 @@ function DocxViewer({ fileId, onClose }: DocxViewerProps) {
           // altChunk HTML goes into an unsandboxed same-origin iframe
           // (`srcdoc`) -- a script vector. See the header comment.
           renderAltChunks: false,
-        })
+        }
+        // Parse, fix the model, THEN render: symbol runs are rendered
+        // via innerHTML from an unvalidated attribute (header comment).
+        const parsed = await parseAsync(blob, options)
+        if (cancelled) return
+        neutralizeDocxSymbols(parsed)
+        await renderDocument(parsed, container, undefined, options)
         // Always, even if cancelled: the container already holds the
         // rendered DOM. Strips `javascript:` (etc.) hyperlink targets.
         sanitizeRenderedLinks(container)
