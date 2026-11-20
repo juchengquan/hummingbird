@@ -113,6 +113,8 @@ export const useChat = () => {
                 ? 'Rate limited'
                 : errorBody.code === 'invalid_model'
                   ? 'Model unavailable'
+                  : errorBody.code === 'unknown_model'
+                    ? "This model isn't available on this server — pick another model or add your own gateway key"
                   : errorBody.code === 'provider'
                     ? 'Provider error'
                     : 'Editor AI failed';
