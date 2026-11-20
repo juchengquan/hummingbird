@@ -62,6 +62,7 @@ groups them by purpose and explains when each is needed.
 | Variable | Effect |
 |---|---|
 | `CSP_MODE` | Content-Security-Policy mode: `report-only` (default — violations are reported, nothing blocked), `enforce` (violations blocked), or `off` (no CSP header). See `docs/SECURITY.md` before switching to `enforce`. |
+| `TRUSTED_PROXY_HOPS` | How many reverse proxies in front of Next.js append to `X-Forwarded-For` (default `1`). Per-IP rate limits read the client IP from that entry. **A reverse proxy is required for per-IP limits**: with `next start` exposed directly, clients can send their own `X-Forwarded-For` and pick their key; `0` makes all anonymous traffic share one bucket. `next start` warns at boot when it's unset or `0` outside a known platform (Vercel, Render, Fly, Railway, Cloud Run, Netlify). See `docs/SECURITY.md`. |
 
 ## Optional - Anthropic direct
 

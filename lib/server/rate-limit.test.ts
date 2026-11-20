@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test"
 import {
   clientIpFromHeaders,
   createSlidingWindow,
+  proxyConfigWarning,
   rateLimitKey,
   trustedProxyHopsFromEnv,
+  warnOnProxyConfig,
 } from "./rate-limit"
 
 describe("createSlidingWindow", () => {
@@ -208,5 +210,41 @@ describe("rateLimitKey", () => {
       if (prevVercel === undefined) delete process.env.VERCEL
       else process.env.VERCEL = prevVercel
     }
+  })
+})
+
+describe("proxyConfigWarning", () => {
+  const prod = { NODE_ENV: "production" }
+
+  test("dev never warns", () => {
+    expect(proxyConfigWarning({ NODE_ENV: "development" })).toBeNull()
+  })
+
+  test("known proxying platform → no warning", () => {
+    expect(proxyConfigWarning({ ...prod, VERCEL: "1" })).toBeNull()
+    expect(proxyConfigWarning({ ...prod, FLY_APP_NAME: "app" })).toBeNull()
+  })
+
+  test("production with TRUSTED_PROXY_HOPS unset → warns that XFF is spoofable", () => {
+    expect(proxyConfigWarning(prod)).toMatch(/X-Forwarded-For/)
+    expect(proxyConfigWarning({ ...prod, TRUSTED_PROXY_HOPS: " " })).toMatch(/reverse proxy/)
+  })
+
+  test("TRUSTED_PROXY_HOPS=0 → warns about the single shared bucket", () => {
+    expect(proxyConfigWarning({ ...prod, TRUSTED_PROXY_HOPS: "0" })).toMatch(
+      /ONE rate-limit bucket/
+    )
+  })
+
+  test("an explicit hop count confirms the proxy → no warning", () => {
+    expect(proxyConfigWarning({ ...prod, TRUSTED_PROXY_HOPS: "1" })).toBeNull()
+    expect(proxyConfigWarning({ ...prod, TRUSTED_PROXY_HOPS: "2" })).toBeNull()
+  })
+
+  test("warnOnProxyConfig logs at most once per process", () => {
+    const logged: string[] = []
+    warnOnProxyConfig(prod, (m) => logged.push(m))
+    warnOnProxyConfig(prod, (m) => logged.push(m))
+    expect(logged).toHaveLength(1)
   })
 })

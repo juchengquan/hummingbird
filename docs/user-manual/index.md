@@ -131,7 +131,6 @@
 | `SUPABASE_JWT_SECRET` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `TAVILY_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
-| `TRUSTED_PROXY_HOPS` | no | [21-environment-variables.md](21-environment-variables.md) |
 | `VERIFY_MODEL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `VERIFY_PROVIDER` | no | [21-environment-variables.md](21-environment-variables.md) |
 | `VISION_MODEL` | yes | [21-environment-variables.md](21-environment-variables.md) |
