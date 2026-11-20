@@ -67,9 +67,10 @@ describe("buildSandboxFrameCsp", () => {
     expect([...used].sort()).toEqual([...CDN_HOSTS].sort())
   })
 
-  test("keeps the image / font reach the srcdoc shells had", () => {
+  test("remote images stay allowed; fonts only inline or from the pinned CDNs", () => {
     expect(d.get("img-src")).toEqual(["data:", "blob:", "https:"])
-    expect(d.get("font-src")).toEqual(["data:", "https:"])
+    expect(d.get("font-src")).toEqual(["data:", "blob:", ...CDN_HOSTS])
+    expect(d.get("font-src")).not.toContain("https:")
   })
 
   test("framable only by the app; opaque origin even without the iframe attribute", () => {

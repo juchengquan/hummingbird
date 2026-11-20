@@ -36,9 +36,20 @@ export function buildSandboxFrameDirectives(): Array<[string, string[]]> {
     // artifacts have no business loading the app's own scripts.
     ["script-src", ["'unsafe-inline'", "'unsafe-eval'", ...CDN_HOSTS]],
     ["style-src", ["'unsafe-inline'", ...CDN_HOSTS]],
-    // Same image/font reach the shells' <meta> CSP has always granted.
+    // Images: any https host, deliberately. Generated pages routinely
+    // show remote images (stock photos, logos, charts from a public
+    // URL), and closing this would not close exfiltration anyway: the
+    // frame can still navigate ITSELF to an attacker URL (no CSP
+    // directive governs that; the MCP-app host then drops the frame's
+    // bridge — see `mcp-app-frame.tsx`), and WebRTC / DNS prefetch
+    // aren't governed by connect-src. What the frame can leak is what
+    // it was given (its own source, MCP tool results); it never sees
+    // the app's cookies or storage (opaque origin).
     ["img-src", ["data:", "blob:", "https:"]],
-    ["font-src", ["data:", "https:"]],
+    // Fonts: inline / generated, plus the pinned CDN hosts. A font is
+    // not something a generated page needs from an arbitrary host, and
+    // `https:` here was one more beacon channel (@font-face url()).
+    ["font-src", ["data:", "blob:", ...CDN_HOSTS]],
     // The critical line: generated code can't fetch / XHR / WebSocket /
     // EventSource anywhere. MCP-app tool calls go through the parent's
     // postMessage bridge instead.
