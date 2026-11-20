@@ -67,10 +67,118 @@ export function nextRunFromCron(
   }
 }
 
+/** Route-side floor between two fires of one schedule. */
+export const SCHEDULE_MIN_INTERVAL_MS = 5 * 60_000
+
+/** Dispatcher-side floor: the route's 5 minutes minus one tick of
+ *  slack, so a legitimate every-5-minutes schedule isn't throttled by
+ *  cron-tick jitter. Applies to every row, whatever wrote it — the
+ *  backstop for rows written straight through PostgREST or before 0035. */
+export const SCHEDULE_DISPATCH_MIN_GAP_MS = 4 * 60_000
+
+/** How many consecutive fires `validateScheduleCron` inspects. Enough to
+ *  cross hour and day boundaries for any minute field the coarse guard
+ *  admits (≤ 12 fires an hour). */
+const CRON_GAP_SAMPLE = 48
+
 /**
- * Walk the ready set and fire each. Returns the count actually enqueued
- * (some rows may have been deleted between select and update). Uses the
- * service-role client — the tick runs without a user session.
+ * Mirror of the DB's `private.task_schedule_cron_coarse_ok` (0035):
+ * five fields, and a minute field that fires at most 12 times an hour
+ * (a list of ≤ 12 minutes, or `*` / a range / a start with step ≥ 5).
+ */
+export function cronPassesCoarseGuard(cron: string): boolean {
+  const fields = cron.trim().split(/\s+/)
+  if (fields.length !== 5) return false
+  const minute = fields[0]
+  return (
+    /^[0-5]?[0-9](,[0-5]?[0-9]){0,11}$/.test(minute) ||
+    /^(\*|[0-5]?[0-9]-[0-5]?[0-9]|[0-5]?[0-9])\/([5-9]|[1-5][0-9])$/.test(minute)
+  )
+}
+
+export type CronValidation =
+  | { ok: true; next: Date }
+  | { ok: false; message: string }
+
+/**
+ * Validate a schedule's cron + timezone for the create/update routes:
+ * parseable, passes the DB's coarse guard, and never fires twice within
+ * `SCHEDULE_MIN_INTERVAL_MS`. Returns the first fire after `after`.
+ */
+export function validateScheduleCron(
+  cron: string,
+  timezone: string,
+  after: Date
+): CronValidation {
+  let fires: Date[]
+  try {
+    const it = CronExpressionParser.parse(cron, { currentDate: after, tz: timezone })
+    fires = []
+    for (let i = 0; i < CRON_GAP_SAMPLE; i++) fires.push(it.next().toDate())
+  } catch {
+    return {
+      ok: false,
+      message: `Couldn't parse cron "${cron}" with timezone "${timezone}".`,
+    }
+  }
+  const tooFrequent = {
+    ok: false as const,
+    message: `Cron "${cron}" fires more often than every ${SCHEDULE_MIN_INTERVAL_MS / 60_000} minutes.`,
+  }
+  if (!cronPassesCoarseGuard(cron)) return tooFrequent
+  for (let i = 1; i < fires.length; i++) {
+    if (fires[i].getTime() - fires[i - 1].getTime() < SCHEDULE_MIN_INTERVAL_MS) {
+      return tooFrequent
+    }
+  }
+  return { ok: true, next: fires[0] }
+}
+
+/** Due rows read per tick — a window wide enough that one account's
+ *  backlog can't hide everyone else's due rows. */
+const DUE_FETCH_LIMIT = 500
+/** Fires per tick, across all users. */
+const TICK_MAX_FIRES = 50
+/** Fires per tick for any one user. */
+const TICK_MAX_FIRES_PER_USER = 5
+
+/**
+ * Pick this tick's batch fairly: round-robin across users (each user's
+ * rows in the order given — earliest `next_run_at` first), at most
+ * `maxPerUser` per user and `maxTotal` overall. Users are visited in
+ * order of their earliest due row, so a backlog drains oldest-first
+ * without one account taking the whole batch. Pure.
+ */
+export function pickFairBatch<T extends { user_id: string }>(
+  rows: readonly T[],
+  opts: { maxTotal: number; maxPerUser: number }
+): T[] {
+  const byUser = new Map<string, T[]>()
+  for (const row of rows) {
+    const list = byUser.get(row.user_id)
+    if (list) list.push(row)
+    else byUser.set(row.user_id, [row])
+  }
+  const picked: T[] = []
+  for (let round = 0; round < opts.maxPerUser; round++) {
+    let progressed = false
+    for (const list of byUser.values()) {
+      if (picked.length >= opts.maxTotal) return picked
+      if (round < list.length) {
+        picked.push(list[round])
+        progressed = true
+      }
+    }
+    if (!progressed) break
+  }
+  return picked
+}
+
+/**
+ * Walk the ready set and fire a fair batch of it (`pickFairBatch`).
+ * Returns the count actually enqueued (some rows may have been deleted
+ * between select and update, or deferred by the minimum-gap throttle).
+ * Uses the service-role client — the tick runs without a user session.
  */
 export async function dispatchDueSchedules(db: DB): Promise<number> {
   const now = new Date()
@@ -80,14 +188,42 @@ export async function dispatchDueSchedules(db: DB): Promise<number> {
     .eq("enabled", true)
     .lte("next_run_at", now.toISOString())
     .order("next_run_at", { ascending: true })
-    .limit(50)
+    .limit(DUE_FETCH_LIMIT)
   if (error) {
     throw new Error(`dispatchDueSchedules: ${error.message}`)
   }
   if (!data || data.length === 0) return 0
 
+  // Fair share: one account's pile of due rows can't fill the tick and
+  // starve everyone else. Rows not picked stay due for the next tick.
+  const batch = pickFairBatch(data, {
+    maxTotal: TICK_MAX_FIRES,
+    maxPerUser: TICK_MAX_FIRES_PER_USER,
+  })
+
   let fired = 0
-  for (const row of data) {
+  for (const row of batch) {
+    // Minimum gap since the last fire, whatever the cron says (a legacy
+    // row, or `next_run_at` reset by a direct PostgREST write). Defer
+    // the row to the end of the gap instead of firing; the guarded
+    // update keeps a racing tick from doing the same twice.
+    const lastRunMs = row.last_run_at ? Date.parse(row.last_run_at) : NaN
+    if (
+      Number.isFinite(lastRunMs) &&
+      now.getTime() - lastRunMs < SCHEDULE_DISPATCH_MIN_GAP_MS
+    ) {
+      await db
+        .from("task_schedules")
+        .update({
+          next_run_at: new Date(lastRunMs + SCHEDULE_DISPATCH_MIN_GAP_MS).toISOString(),
+          updated_at: now.toISOString(),
+        })
+        .eq("id", row.id)
+        .eq("user_id", row.user_id)
+        .eq("next_run_at", row.next_run_at)
+      continue
+    }
+
     // Re-stamp `next_run_at` first with a guarded update. If two ticks
     // race and the other already moved this row forward, our update
     // touches zero rows and we skip the enqueue.

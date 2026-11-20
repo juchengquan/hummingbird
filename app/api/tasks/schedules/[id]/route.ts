@@ -18,7 +18,8 @@ import {
   ScheduleUpdateSchema,
 } from "@/shared/api-schemas"
 import { getSupabaseServerClient } from "@/server/supabase/server"
-import { nextRunFromCron } from "@/server/agent/schedules"
+import { validateScheduleCron } from "@/server/agent/schedules"
+import { taskWriteErrorResponse } from "@/server/agent/task-writes"
 import { rowToSchedule } from "@/server/agent/schedule-codec"
 import type { Database, Json } from "@/shared/supabase/types"
 
@@ -99,16 +100,14 @@ export async function PATCH(
   if (cronChanged || tzChanged) {
     const cron = patch.cron ?? current.cron
     const timezone = patch.timezone ?? current.timezone
-    const next = nextRunFromCron(cron, timezone, new Date())
-    if (!next) {
+    const cronCheck = validateScheduleCron(cron, timezone, new Date())
+    if (!cronCheck.ok) {
       return NextResponse.json(
-        {
-          code: "invalid_request",
-          message: `Couldn't parse cron "${cron}" with timezone "${timezone}".`,
-        },
+        { code: "invalid_request", message: cronCheck.message },
         { status: 400 }
       )
     }
+    const next = cronCheck.next
     update.cron = cron
     update.timezone = timezone
     update.next_run_at = next.toISOString()
@@ -122,7 +121,9 @@ export async function PATCH(
     .select("*")
     .single()
   if (error || !data) {
-    const { status, code, message } = categorizeError(error ?? "Update failed")
+    // 0035's guard trigger: re-enabling past the per-user cap → 409.
+    const { status, code, message } =
+      taskWriteErrorResponse(error) ?? categorizeError(error ?? "Update failed")
     return NextResponse.json({ code, message }, { status })
   }
   return NextResponse.json(ScheduleResponseSchema.parse(rowToSchedule(data)))

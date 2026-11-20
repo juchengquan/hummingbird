@@ -19,7 +19,8 @@ import {
   ScheduleResponseSchema,
 } from "@/shared/api-schemas"
 import { getSupabaseServerClient } from "@/server/supabase/server"
-import { nextRunFromCron } from "@/server/agent/schedules"
+import { validateScheduleCron } from "@/server/agent/schedules"
+import { taskWriteErrorResponse } from "@/server/agent/task-writes"
 import { rowToSchedule } from "@/server/agent/schedule-codec"
 import type { Database, Json } from "@/shared/supabase/types"
 
@@ -92,16 +93,16 @@ export async function POST(req: NextRequest) {
   }
   const body = parsed.data
   const timezone = body.timezone ?? "UTC"
-  const next = nextRunFromCron(body.cron, timezone, new Date())
-  if (!next) {
+  // Parseable AND at least 5 minutes between fires (0035's DB trigger
+  // is only a coarse floor for direct PostgREST writes).
+  const cronCheck = validateScheduleCron(body.cron, timezone, new Date())
+  if (!cronCheck.ok) {
     return NextResponse.json(
-      {
-        code: "invalid_request",
-        message: `Couldn't parse cron "${body.cron}" with timezone "${timezone}".`,
-      },
+      { code: "invalid_request", message: cronCheck.message },
       { status: 400 }
     )
   }
+  const next = cronCheck.next
 
   const insert: Database["public"]["Tables"]["task_schedules"]["Insert"] = {
     user_id: userId,
@@ -123,7 +124,10 @@ export async function POST(req: NextRequest) {
     .select("*")
     .single()
   if (error || !data) {
-    const { status, code, message } = categorizeError(error ?? "Insert failed")
+    // 0035's guard trigger: 54000 = per-user cap → 409, 22023 = cron
+    // too frequent → 400.
+    const { status, code, message } =
+      taskWriteErrorResponse(error) ?? categorizeError(error ?? "Insert failed")
     return NextResponse.json({ code, message }, { status })
   }
   return NextResponse.json(ScheduleResponseSchema.parse(rowToSchedule(data)), {
