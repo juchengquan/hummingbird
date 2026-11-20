@@ -50,6 +50,7 @@ import {
 } from "@/client/messages/message-blobs"
 import { canonicalGeneratedItemsJson } from "@/client/sync/handlers"
 import { useStore } from "@/client/hooks/use-store"
+import { heldConversationIds } from "@/client/hooks/store/slices/chat"
 import { setSyncSnapshot } from "@/client/hooks/use-sync"
 import { mergeCloudSnapshot, type MergeOptions } from "@/client/sync/snapshot-merge"
 
@@ -724,9 +725,10 @@ export async function fetchCloudSnapshot(
  * when the cloud is empty (first sign-in from a previously local-only
  * user).
  *
- * Order matters: workspaces → conversations → messages → files →
- * resources → notes → artifacts, so FK constraints hold. We use upsert
- * so retrying after a partial failure is safe.
+ * Order matters: workspaces → conversations (fork point null) →
+ * messages → conversations' fork points → files → resources → notes →
+ * artifacts, so FK constraints hold. We use upsert so retrying after a
+ * partial failure is safe.
  */
 export async function bulkUploadLocalState(
   client: AppSupabaseClient,
@@ -760,31 +762,35 @@ export async function bulkUploadLocalState(
     if (!r.ok) return r
   }
 
-  // conversations (no messages yet)
+  // conversations (no messages yet). `forked_from_message_id` points at
+  // a message, and messages need their conversation first: the FK isn't
+  // deferrable and 0031's ownership policy wants the message to exist.
+  // So it goes up null here and is set once the messages are in (below).
+  const conversationRow = (c: Conversation, forkedFrom: string | null) => ({
+    id: c.id,
+    user_id: userId,
+    workspace_id: c.workspaceId,
+    title: c.title,
+    pinned: c.pinned,
+    selected_file_ids: c.selectedFileIds,
+    selected_mcp_resource_ids: c.selectedMcpResourceIds ?? [],
+    selected_url_bookmark_ids: c.selectedUrlBookmarkIds ?? [],
+    file_retrieval_modes: (c.fileRetrievalModes ?? {}) as Json,
+    system_prompt: c.systemPrompt,
+    // document_content / document_updated_at moved onto the workspaces
+    // row. Column still exists for one release; client no longer
+    // writes to it.
+    skill_prefs: c.skillPrefs ?? {},
+    parent_id: c.parentId ?? null,
+    forked_from_message_id: forkedFrom,
+    created_at: c.createdAt.toISOString(),
+    updated_at: c.updatedAt.toISOString(),
+  })
   {
     const r = await uploadRows(
       client,
       "conversations",
-      snapshot.conversations.map((c) => ({
-        id: c.id,
-        user_id: userId,
-        workspace_id: c.workspaceId,
-        title: c.title,
-        pinned: c.pinned,
-        selected_file_ids: c.selectedFileIds,
-        selected_mcp_resource_ids: c.selectedMcpResourceIds ?? [],
-        selected_url_bookmark_ids: c.selectedUrlBookmarkIds ?? [],
-        file_retrieval_modes: (c.fileRetrievalModes ?? {}) as Json,
-        system_prompt: c.systemPrompt,
-        // document_content / document_updated_at moved onto the workspaces
-        // row. Column still exists for one release; client no longer
-        // writes to it.
-        skill_prefs: c.skillPrefs ?? {},
-        parent_id: c.parentId ?? null,
-        forked_from_message_id: c.forkedFromMessageId ?? null,
-        created_at: c.createdAt.toISOString(),
-        updated_at: c.updatedAt.toISOString(),
-      }))
+      snapshot.conversations.map((c) => conversationRow(c, null))
     )
     if (!r.ok) return r
   }
@@ -864,6 +870,22 @@ export async function bulkUploadLocalState(
       "messages",
       messageRows,
       prepareMessageRowForUpload
+    )
+    if (!r.ok) return r
+  }
+
+  // Fork branch points, now that the messages exist. A branch point that
+  // isn't among the uploaded messages (deleted since the fork) stays
+  // null — the FK's own `on delete set null`.
+  {
+    const uploaded = new Set(messageRows.map((m) => m.id))
+    const forks = snapshot.conversations.filter(
+      (c) => c.forkedFromMessageId && uploaded.has(c.forkedFromMessageId)
+    )
+    const r = await uploadRows(
+      client,
+      "conversations",
+      forks.map((c) => conversationRow(c, c.forkedFromMessageId ?? null))
     )
     if (!r.ok) return r
   }
@@ -1215,7 +1237,9 @@ export function applyCloudSnapshot(
     // cloud's `data:` URL is kept (same bytes, no churn back to inline).
     isSameBlob: (ref, value) => peekMessageBlobUrl(ref) === value,
     ...opts,
-    streamingConversationIds: new Set(s.typingConversationIds),
+    // typing ∪ streaming: typing clears on the first chunk, so typing
+    // alone let a mid-stream pull delete the in-flight placeholder.
+    streamingConversationIds: heldConversationIds(s),
   })
   const sortedWorkspaces = [...snapshot.workspaces].sort(
     (a, b) =>

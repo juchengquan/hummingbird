@@ -112,7 +112,7 @@ describe("mergeCrossTabState — entity arrays", () => {
     expect(r.oursWon).toBe(false)
   })
 
-  test("a conversation streaming here is never replaced or deleted", () => {
+  test("a conversation streaming here is never replaced by the other tab's copy", () => {
     const a = row("a", "a", { messages: ["hi"] })
     const streaming = { ...a, messages: ["hi", "partial assistant…"] }
     const conflict = mergeCrossTabState({
@@ -122,13 +122,34 @@ describe("mergeCrossTabState — entity arrays", () => {
       heldConversationIds: new Set(["a"]),
     })
     expect((conflict.merged.conversations as Row[])[0]).toBe(streaming)
+  })
+
+  test("…but the other tab's delete of it wins (no resurrection)", () => {
+    // Tab B deleted the conversation tab A is streaming into. Keeping
+    // A's copy brought it back without its images (B's delete cascade
+    // already dropped those); A aborts the stream instead (useChatSend).
+    const a = row("a", "a", { messages: ["hi"] })
+    const streaming = { ...a, messages: ["hi", "partial assistant…"] }
     const deleted = mergeCrossTabState({
       base: { conversations: [a] },
       ours: { conversations: [streaming] },
       theirs: { conversations: [] },
       heldConversationIds: new Set(["a"]),
     })
-    expect((deleted.merged.conversations as Row[])[0]).toBe(streaming)
+    expect(deleted.merged.conversations).toEqual([])
+    expect(deleted.oursWon).toBe(false)
+  })
+
+  test("a streaming conversation the other tab never saw is kept", () => {
+    const fresh = row("new", "new", { messages: ["hi", "partial…"] })
+    const r = mergeCrossTabState({
+      base: { conversations: [] },
+      ours: { conversations: [fresh] },
+      theirs: { conversations: [] },
+      heldConversationIds: new Set(["new"]),
+    })
+    expect(r.merged.conversations).toEqual([fresh])
+    expect(r.oursWon).toBe(true)
   })
 
   test("nextBase lines up with the merged live objects", () => {

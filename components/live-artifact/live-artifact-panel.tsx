@@ -115,6 +115,9 @@ function LiveArtifactPanel({ artifactId, mode, onModeChange, onClose }: PanelPro
           )}
           {artifact && detected.renderable && detected.shell && mode === "render" && (
             <LiveArtifactFrameWithStatus
+              // A new iframe per artifact: the previous artifact's
+              // document never gets to talk to the next one's frame.
+              key={artifact.id}
               shell={detected.shell}
               content={artifact.content}
               refreshKey={refreshKey}

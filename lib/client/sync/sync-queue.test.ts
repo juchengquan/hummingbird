@@ -251,3 +251,68 @@ describe("ops dropped without flushing", () => {
     expect(computeResumeOps(claimed!, snapshot).map(idOf)).toEqual(["c1"])
   })
 })
+
+describe("upsert hitting a missing reference (23503 / 42501)", () => {
+  /** Artifact upserts fail with `code` until their message_id exists. */
+  function fkClient(calls: Call[], code: string): AppSupabaseClient {
+    const messages = new Set<string>()
+    const client = {
+      from(table: string) {
+        return {
+          upsert(row: Record<string, unknown>) {
+            if (table === "artifacts" && row.message_id && !messages.has(row.message_id as string)) {
+              return Promise.resolve({ error: { code } })
+            }
+            if (table === "messages") messages.add(row.id as string)
+            calls.push({ table, kind: "upsert", row })
+            return Promise.resolve({ error: null })
+          },
+        }
+      },
+    }
+    return client as unknown as AppSupabaseClient
+  }
+  const art = (id: string, messageId: string, title = id): NewSyncOp => ({
+    kind: "upsert",
+    target: "artifacts",
+    row: { id, message_id: messageId, title },
+  })
+  const message = (id: string): NewSyncOp => ({
+    kind: "upsert",
+    target: "messages",
+    row: { id },
+  })
+
+  for (const code of ["23503", "42501"]) {
+    test(`${code}: retried behind the queued dependency instead of dropped`, async () => {
+      const calls: Call[] = []
+      configureSync({ client: null, userId: "user-a" })
+      enqueueMany([art("a1", "m1"), message("m1")])
+      configureSync({ client: fkClient(calls, code), userId: "user-a" })
+      await whenDrained(2_000)
+      expect(calls.map((c) => `${c.table}:${c.row?.id}`)).toEqual(["messages:m1", "artifacts:a1"])
+    })
+  }
+
+  test("a stale copy never overtakes a newer op for the same row", async () => {
+    const calls: Call[] = []
+    configureSync({ client: null, userId: "user-a" })
+    enqueueMany([art("a1", "m1", "old"), message("m1"), art("a1", "m1", "new")])
+    configureSync({ client: fkClient(calls, "23503"), userId: "user-a" })
+    await whenDrained(2_000)
+    expect(calls.map((c) => `${c.table}:${c.row?.title ?? c.row?.id}`)).toEqual([
+      "messages:m1",
+      "artifacts:new",
+    ])
+  })
+
+  test("a reference that never shows up is dropped after a bounded number of rounds", async () => {
+    const calls: Call[] = []
+    configureSync({ client: null, userId: "user-a" })
+    enqueue(art("a1", "never"))
+    configureSync({ client: fkClient(calls, "23503"), userId: "user-a" })
+    await whenDrained(15_000)
+    expect(pendingOpCount()).toBe(0)
+    expect(calls).toEqual([])
+  }, 20_000)
+})
