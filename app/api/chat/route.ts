@@ -50,6 +50,10 @@ import { loadMemoryState } from '@/server/memory/load-facts'
 import { renderMemoryBlock } from '@/server/memory/render'
 import { buildMemoryTools, MEMORY_TOOLS_NOTE } from '@/server/memory/tools'
 import {
+  applyMemoryWritePolicy,
+  createTurnTaint,
+} from '@/server/memory/untrusted-content-policy'
+import {
   type ResolvedAttachment,
 } from '@/server/attachments/render'
 import type { AttachmentPayload } from '@/shared/attachments'
@@ -548,6 +552,11 @@ export async function POST(req: NextRequest) {
     const memTools = buildMemoryTools({ conversationId: null })
     tools.rememberFact = memTools.rememberFact
     tools.forgetFact = memTools.forgetFact
+    // Prompt-injection guard: once a web/MCP/file/sandbox tool has run
+    // this turn, `rememberFact` refuses (with a tool result telling the
+    // model to have the user ask explicitly) so fetched content can't
+    // plant persistent memories. Fresh taint per request = per turn.
+    Object.assign(tools, applyMemoryWritePolicy(tools, createTurnTaint()))
   }
 
   // Memory block: facts (if any) + the tools note (when offered, so

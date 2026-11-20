@@ -31,7 +31,7 @@
 - `lib/server/file-storage.ts` *(new)* — `persistGeneratedFiles` + `signGeneratedFileUrl`.
 - `lib/server/chat/sse-emitter.ts` — `ToolFilePayload` + `toolFile()`.
 - `app/api/chat/route.ts` — extend `maybeEmitCodeResultFrames` to persist + emit files.
-- `supabase/migrations/0018_message_generated_files.sql` *(new)* — column + `kind` constraint.
+- `supabase/migrations/0033_message_generated_files.sql` *(new)* — column + `kind` constraint.
 - `lib/client/sync/reconcile.ts` + `lib/client/sync/handlers.ts` — parse/select/diff `generated_files`.
 
 **Slice 2 — Client wiring + inline UX (Tasks 10–14)**
@@ -915,7 +915,7 @@ git commit -m "feat(chat): persist + emit generated files from runCode"
 ### Task 9: Migration + sync parity for `generated_files`
 
 **Files:**
-- Create: `supabase/migrations/0018_message_generated_files.sql`
+- Create: `supabase/migrations/0033_message_generated_files.sql`
 - Modify: `lib/client/sync/reconcile.ts`, `lib/client/sync/handlers.ts`
 
 **Interfaces:**
@@ -924,7 +924,7 @@ git commit -m "feat(chat): persist + emit generated files from runCode"
 
 - [ ] **Step 1: Write the migration**
 
-Create `supabase/migrations/0018_message_generated_files.sql`:
+Create `supabase/migrations/0033_message_generated_files.sql`:
 
 ```sql
 -- Cross-device sync of `Message.generatedFiles` + the `file` artifact kind.
@@ -1012,7 +1012,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add supabase/migrations/0018_message_generated_files.sql lib/client/sync/reconcile.ts lib/client/sync/handlers.ts
+git add supabase/migrations/0033_message_generated_files.sql lib/client/sync/reconcile.ts lib/client/sync/handlers.ts
 git commit -m "feat(sync): persist + round-trip message generated_files"
 ```
 

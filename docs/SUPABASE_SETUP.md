@@ -154,8 +154,10 @@ errors:
 17. `supabase/migrations/0017_prompts_workspace.sql`
     - Adds `workspace_id` to `prompts` (0011 created them user-scoped);
       prompts are now workspace-scoped like conversations and
-      documents. Best-effort backfills existing rows to the user's
-      first workspace, then sets the column `not null`. Idempotent.
+      documents. Backfills every existing prompt to its owner's
+      earliest workspace (a user with prompts but no workspace gets one
+      new workspace named `Prompts` to hold them — nothing is deleted),
+      then sets the column `not null`. Idempotent.
       (Renamed from a `0012` that collided with `0012_tasks`; see #80.)
 18. Every later file (`0018_…` onward), in numerical order. Of note:
     - `supabase/migrations/0031_rls_fk_ownership.sql` — adds a
@@ -167,7 +169,8 @@ errors:
       non-exposed `private` schema for one helper. Idempotent.
 
 Later migrations (`0018_*` onward) apply the same way, in filename
-order. Of note for the Python agent service:
+order. Every migration has a unique numeric prefix (CI enforces this via
+`bun run check:migrations`). Of note for the Python agent service:
 
 - `supabase/migrations/0030_task_metadata.sql`
   - Adds `tasks.metadata jsonb not null default '{}'` — the audit
@@ -180,6 +183,34 @@ order. Of note for the Python agent service:
     makes a stranded `running` job reclaimable (or reaped as failed
     once `max_attempts` is spent). Backfills rows already stranded
     `running`. Idempotent.
+
+### Migration 0018 collision (renamed to `0033_message_generated_files.sql`)
+
+Two files used to share version `0018`: `0018_realtime_task_events.sql`
+(the original) and `0018_message_generated_files.sql` (added later). The
+Supabase CLI keys `supabase_migrations.schema_migrations` by the numeric
+prefix, so the pair broke the CLI path: a fresh `supabase db reset` /
+`supabase start` aborted on a duplicate-key error, and on a DB that had
+recorded `0018` already, `supabase migration up` treated the second file
+as applied and silently skipped it (no `messages.generated_files`
+column). The SQL Editor path and `.docker/supabase/apply-migrations.sh`
+run files by name and were unaffected.
+
+The later file is now `0033_message_generated_files.sql`. It has no
+ordering dependency on `0019`–`0031` and is fully idempotent
+(`add column if not exists`; `drop constraint if exists` before
+re-adding `artifacts_kind_check`), so:
+
+- **SQL Editor / Docker path** — if you already ran the old `0018_message_generated_files.sql`,
+  running `0033` again is a harmless no-op. Nothing else to do.
+- **Supabase CLI path** — `supabase migration up` (or `db push`) applies
+  `0033` like any new migration; on a DB that already has the column it
+  is a no-op. No `migration repair` is required. If you previously
+  hand-recorded the old file (e.g. `supabase migration repair --status
+  applied 0018` after working around the collision), nothing changes:
+  `0018` now refers only to `0018_realtime_task_events.sql`. To mark
+  `0033` applied without running it (optional — running it is safe):
+  `supabase migration repair --status applied 0033`.
 
 After running all of them, sanity-check from the **Table Editor**:
 twenty-one tables should be listed (`profiles`, `workspaces`,

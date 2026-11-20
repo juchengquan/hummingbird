@@ -44,6 +44,14 @@ Extract text from an uploaded file.
 **Errors**: `400` malformed FormData, `413` file too large, `500` for
 extractor failures. Body shape: `{ error: string }`.
 
+`413` fires in three places: the request's `Content-Length` (or the
+streamed byte count, for chunked uploads) exceeds `FILE_SIZE_LIMIT`
++ 64 KB of multipart headroom — checked before the form is parsed;
+the `file` part exceeds `FILE_SIZE_LIMIT` (5 MB); or a docx/xlsx zip
+would decompress past 100 MB / 5,000 entries (zip-bomb guard,
+`lib/server/extraction/zip-guard.ts`, which measures the real inflated
+size, not the headers' claims).
+
 ---
 
 ### `POST /api/embed`
@@ -176,11 +184,14 @@ Sends a chat request and streams the assistant response.
 
 ```ts
 {
-  messages: ModelMessage[],         // see schema; supports multimodal parts
+  messages: ModelMessage[],         // 1..CHAT_MESSAGES_MAX (2000); multimodal parts OK
   model?: string,                   // default = DEFAULT_CHAT_MODEL
   files?: FileSummary[],            // extracted-text bundles up to 20 files
   workspaceSystemPrompt?: string,   // prepended to base instructions
   skills?: { id: SkillId }[],       // e.g. [{ id: "webSearch" }]
+  sandboxFiles?: { name, fileId, dataBase64? }[]
+                                    // ≤ 10 entries; dataBase64 ≤ 10 MB decoded each,
+                                    // ≤ 10 × FILE_SIZE_LIMIT (5 MB) decoded in total
 }
 ```
 
@@ -315,6 +326,26 @@ These two are consumed by Plate (`@platejs/ai`). The wire format is
 the Vercel AI SDK's UI message stream / completion stream (not the
 custom protocol used by `/api/chat`). Plate's `useChat` / `useCompletion`
 hooks parse them — the frontend doesn't touch the bytes directly.
+
+**`/api/ai/command` request** — validated by `AiCommandRequestSchema`
+(`lib/shared/api-schemas.ts`); anything malformed is
+`400 { code: "invalid_request", message }` before any model call.
+The body is the AI SDK `DefaultChatTransport` payload merged with
+Plate's context and the editor settings:
+
+```ts
+{
+  messages: UIMessage[]   // 1..1000; each { role, parts: [{ type, text? }] , ... }
+  ctx: {
+    children: SlateElement[]                 // editor.children (≤ 50,000 blocks)
+    selection?: { anchor: Point, focus: Point } | null
+    toolName?: 'generate' | 'edit' | 'comment' | null  // absent → model chooses
+  }
+  model?: string | null   // ≤ 100 chars; unknown ids → 400 unknown_model
+  apiKey?: string | null  // BYO AI Gateway key from the settings dialog
+  // other transport fields (id, trigger, messageId, …) are ignored
+}
+```
 
 **Implication for a Python rewrite**: porting these two routes
 requires emitting the AI SDK's stream format, which is a separate
