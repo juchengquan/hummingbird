@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Humm is a Next.js 16.1.6 chat assistant application with a multi-panel interface featuring chat, rich text editor (Plate.js), and file management capabilities.
+Humm is a Next.js 16.4.6 chat assistant application with a multi-panel interface featuring chat, rich text editor (Plate.js), and file management capabilities.
 
 ## Commands
 
@@ -43,7 +43,7 @@ cd services/agent-py && uv sync && uv run uvicorn agent_py.main:app --reload
 ### Tech Stack
 
 - **Runtime**: Bun (package manager)
-- **Framework**: Next.js 16.1.6 (App Router)
+- **Framework**: Next.js 16.4.6 (App Router)
 - **Language**: TypeScript 5.x
 - **UI**: React 19.2.3
 - **Styling**: Tailwind CSS 4 + shadcn/ui components
