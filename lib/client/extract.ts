@@ -7,7 +7,7 @@ import "client-only"
 
 import { toast } from 'sonner'
 
-import { apiClient } from '@/client/api-client'
+import { apiClient, isAuthRequiredResult } from '@/client/api-client'
 import { indexFileEmbeddings } from '@/client/embeddings/index-file'
 import type { ExtractionResponse } from '@/shared/api-schemas'
 
@@ -58,7 +58,8 @@ async function summariseFileInBackground(
     name,
     text: text.slice(0, SUMMARY_MAX_TEXT_LENGTH),
   })
-  if (!data?.summary) return
+  // `auth_required` already raised the sign-in toast in apiClient.
+  if (!data || isAuthRequiredResult(data) || !data.summary) return
   setFileExtraction(fileId, {
     summary: data.summary,
     keyTopics: Array.isArray(data.keyTopics) ? data.keyTopics : undefined,

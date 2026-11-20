@@ -4,6 +4,8 @@ import "client-only"
 import { useEffect, useMemo, useState } from "react"
 
 import { apiClient } from "@/client/api-client"
+import { notifyAuthRequired } from "@/client/auth/auth-required"
+import { AUTH_REQUIRED_MESSAGE, isAuthRequiredError } from "@/shared/api-errors"
 import {
   explainSelectionPrompt,
   truncateSelectionForLabel,
@@ -85,6 +87,14 @@ export function useExplainStream({
       })
       if (!result.ok || !result.body) {
         if (cancelled) return
+        // REQUIRE_AUTH_FOR_AI: say so + offer sign-in (toast action);
+        // never the no-key mock below.
+        if (isAuthRequiredError(result.error)) {
+          setErrorMsg(AUTH_REQUIRED_MESSAGE)
+          notifyAuthRequired()
+          setDone(true)
+          return
+        }
         if (result.status === 401 || result.error?.code === "auth") {
           setStreamed(mockExplanation(selection))
           setDone(true)

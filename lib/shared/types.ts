@@ -405,6 +405,8 @@ export interface ConversationFile {
 
 export type MessageErrorCode =
   | 'auth'
+  /** Caller not signed in and the server sets REQUIRE_AUTH_FOR_AI. */
+  | 'auth_required'
   | 'rate_limit'
   | 'context_window'
   | 'invalid_model'

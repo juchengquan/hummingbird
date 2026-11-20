@@ -11,6 +11,7 @@ import { WorkspacesPanel } from "@/components/panels/workspaces"
 import { CommandPalette } from "@/components/command-palette"
 import { PdfViewerHost } from "@/components/pdf-viewer/pdf-viewer"
 import { UrlPreviewHost } from "@/components/url-viewer/url-viewer"
+import { SignInPromptHost } from "@/components/auth/sign-in-prompt-host"
 import { LiveArtifactHost } from "@/components/live-artifact/live-artifact-panel"
 import { ImageViewerHost } from "@/components/image-viewer/image-viewer"
 import { DocxViewerHost } from "@/components/docx-viewer/docx-viewer"
@@ -159,6 +160,7 @@ function DashboardShell() {
       <DocxViewerHost />
       <TextViewerHost />
       <CsvViewerHost />
+      <SignInPromptHost />
       <Toaster closeButton />
     </SidebarProvider>
   )

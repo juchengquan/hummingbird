@@ -7,6 +7,7 @@
 
 export type ApiErrorCode =
   | 'auth'
+  | 'auth_required'
   | 'rate_limit'
   | 'context_window'
   | 'invalid_model'
@@ -14,6 +15,24 @@ export type ApiErrorCode =
   | 'provider'
   | 'aborted'
   | 'unknown'
+
+/**
+ * `auth_required` — the *caller* isn't signed in and the server requires
+ * sign-in for AI routes (`REQUIRE_AUTH_FOR_AI`). Distinct from `auth`,
+ * which means the server's/provider's API key is missing or rejected
+ * (the client's mock-response fallback keys off `auth`, never this).
+ * Always `401 { code: 'auth_required', message }`.
+ */
+export const AUTH_REQUIRED_CODE = 'auth_required' satisfies ApiErrorCode
+
+export const AUTH_REQUIRED_MESSAGE = 'Sign in to use AI features on this server.'
+
+/** True when an error envelope (or SSE error frame) carries `auth_required`. */
+export function isAuthRequiredError(
+  error: { code?: string | null } | null | undefined,
+): boolean {
+  return error?.code === AUTH_REQUIRED_CODE
+}
 
 export interface CategorizedError {
   status: number

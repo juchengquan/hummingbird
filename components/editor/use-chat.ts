@@ -20,6 +20,8 @@ import { toast } from 'sonner';
 
 import { aiChatPlugin } from '@/components/editor/plugins/ai-kit';
 import { apiUrls } from '@/client/api-client';
+import { notifyAuthRequired } from '@/client/auth/auth-required';
+import { isAuthRequiredError } from '@/shared/api-errors';
 
 import { discussionPlugin } from './plugins/discussion-kit';
 import { withAIBatch } from '@platejs/ai';
@@ -105,6 +107,13 @@ export const useChat = () => {
             };
           } catch {
             /* non-JSON body — fall through to mock */
+          }
+
+          // REQUIRE_AUTH_FOR_AI: the caller must sign in — toast with a
+          // "Sign in" action instead of the generic failure / mock.
+          if (isAuthRequiredError(errorBody)) {
+            notifyAuthRequired();
+            return res;
           }
 
           if (errorBody?.code && errorBody.code !== 'auth') {

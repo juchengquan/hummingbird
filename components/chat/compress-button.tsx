@@ -15,7 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { apiClient } from "@/client/api-client"
+import { apiClient, isAuthRequiredResult } from "@/client/api-client"
 import { useStore } from "@/client/hooks/use-store"
 import { pickCompressionRange, priorRecapsBefore } from "@/shared/compression"
 import { contextZone, estimateConversationTokens } from "@/shared/tokens"
@@ -84,6 +84,11 @@ export function CompressButton({
         ],
         model: modelId,
       })
+      if (isAuthRequiredResult(response)) {
+        // Sign-in toast already raised by apiClient.
+        setBusy(false)
+        return
+      }
       if (!response) {
         toast.error("Compression failed. Try again or change models.")
         setBusy(false)

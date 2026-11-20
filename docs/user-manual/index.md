@@ -1,6 +1,6 @@
 # Hummingbird - User Manual
 
-> Generated TOC. Last inventory: 2026-06-14. Run `bun run docs:user-manual:build` to refresh.
+> Generated TOC. Last inventory: 2026-11-20. Run `bun run docs:user-manual:build` to refresh.
 
 ## Part 1 - Using Hummingbird
 
@@ -22,18 +22,25 @@
 | Panel | Source | Page |
 |---|---|---|
 | Agents Dialog | `components/panels/agents-dialog.tsx` | _unmapped_ |
+| Artifact Diff View | `components/panels/artifact-diff-view.tsx` | _unmapped_ |
+| Artifact History Panel | `components/panels/artifact-history-panel.tsx` | _unmapped_ |
 | Artifacts Tab | `components/panels/artifacts-tab.tsx` | [11-notes-and-bookmarks.md](11-notes-and-bookmarks.md) |
 | Canvas Panel | `components/panels/canvas.tsx` | [09-canvas.md](09-canvas.md) |
 | Chat Panel | `components/panels/chat.tsx` | [02-chat.md](02-chat.md) |
 | Chat Header | `components/panels/chat-header.tsx` | _unmapped_ |
 | Chat Message | `components/panels/chat-message.tsx` | _unmapped_ |
 | Chat Resources Panel | `components/panels/chat-resources-panel.tsx` | _unmapped_ |
+| Citation Cell Editor | `components/panels/citation-cell-editor.tsx` | _unmapped_ |
 | Citation Table View | `components/panels/citation-table.tsx` | _unmapped_ |
+| Citation Table Header | `components/panels/citation-table-header.tsx` | _unmapped_ |
+| Citation Table Row | `components/panels/citation-table-row.tsx` | _unmapped_ |
+| Code Result | `components/panels/code-result.tsx` | _unmapped_ |
 | Context Meter | `components/panels/context-meter.tsx` | _unmapped_ |
 | Conversation Files Section | `components/panels/conversation-files-section.tsx` | _unmapped_ |
 | Editor Panel | `components/panels/editor.tsx` | [03-editor.md](03-editor.md) |
 | Empty Chat Welcome | `components/panels/empty-chat-welcome.tsx` | _unmapped_ |
 | Error Bubble | `components/panels/error-bubble.tsx` | _unmapped_ |
+| Extract Table Popover | `components/panels/extract-table-popover.tsx` | _unmapped_ |
 | Extraction Status Badge | `components/panels/extraction-status-badge.tsx` | _unmapped_ |
 | File Availability Badge | `components/panels/file-availability-badge.tsx` | _unmapped_ |
 | File Row Meta | `components/panels/file-row-meta.tsx` | _unmapped_ |
@@ -95,11 +102,15 @@
 | `ANTHROPIC_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `ANTHROPIC_BASE_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `BRAVE_SEARCH_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
+| `CODE_SANDBOX_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
+| `CODE_SANDBOX_BASE_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
+| `CODE_SANDBOX_ENABLED` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `EMBEDDINGS_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `EMBEDDINGS_BASE_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `EMBEDDINGS_MODEL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `EXA_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `GOOGLE_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
+| `MCP_ALLOW_PRIVATE_HOSTS` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `MCP_ENCRYPTION_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `MINIMAX_CN_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `MINIMAX_CN_BASE_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
@@ -112,12 +123,15 @@
 | `OLLAMA_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `OLLAMA_BASE_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `OPENROUTER_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
+| `REQUIRE_AUTH_FOR_AI` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `SUPABASE_DB_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `SUPABASE_JWT_SECRET` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `TAVILY_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
+| `TRUSTED_PROXY_HOPS` | no | [21-environment-variables.md](21-environment-variables.md) |
 | `VERIFY_MODEL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `VERIFY_PROVIDER` | no | [21-environment-variables.md](21-environment-variables.md) |
+| `VISION_MODEL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 
 ### Settings
 
@@ -143,6 +157,7 @@
 
 | Skill | Slash trigger | Page |
 |---|---|---|
+| Code interpreter | `/code`, `/run` | _unmapped_ |
 | Image generation | `/image`, `/img` | [06-slash-commands.md](06-slash-commands.md) |
 | File search | `/files`, `/file` | [06-slash-commands.md](06-slash-commands.md) |
 | Web fetch | `/fetch`, `/f` | [06-slash-commands.md](06-slash-commands.md) |
@@ -171,14 +186,21 @@
 > These inventory entries don't have a PAGE_MAP entry yet. Add a page that documents them and wire it up.
 
 - `panel:agents-dialog` (`components/panels/agents-dialog.tsx`) - Agents Dialog
+- `panel:artifact-diff-view` (`components/panels/artifact-diff-view.tsx`) - Artifact Diff View
+- `panel:artifact-history-panel` (`components/panels/artifact-history-panel.tsx`) - Artifact History Panel
 - `panel:chat-header` (`components/panels/chat-header.tsx`) - Chat Header
 - `panel:chat-message` (`components/panels/chat-message.tsx`) - Chat Message
 - `panel:chat-resources-panel` (`components/panels/chat-resources-panel.tsx`) - Chat Resources Panel
+- `panel:citation-cell-editor` (`components/panels/citation-cell-editor.tsx`) - Citation Cell Editor
+- `panel:citation-table-header` (`components/panels/citation-table-header.tsx`) - Citation Table Header
+- `panel:citation-table-row` (`components/panels/citation-table-row.tsx`) - Citation Table Row
 - `panel:citation-table` (`components/panels/citation-table.tsx`) - Citation Table View
+- `panel:code-result` (`components/panels/code-result.tsx`) - Code Result
 - `panel:context-meter` (`components/panels/context-meter.tsx`) - Context Meter
 - `panel:conversation-files-section` (`components/panels/conversation-files-section.tsx`) - Conversation Files Section
 - `panel:empty-chat-welcome` (`components/panels/empty-chat-welcome.tsx`) - Empty Chat Welcome
 - `panel:error-bubble` (`components/panels/error-bubble.tsx`) - Error Bubble
+- `panel:extract-table-popover` (`components/panels/extract-table-popover.tsx`) - Extract Table Popover
 - `panel:extraction-status-badge` (`components/panels/extraction-status-badge.tsx`) - Extraction Status Badge
 - `panel:file-availability-badge` (`components/panels/file-availability-badge.tsx`) - File Availability Badge
 - `panel:file-row-meta` (`components/panels/file-row-meta.tsx`) - File Row Meta
@@ -201,4 +223,5 @@
 - `panel:workspace-row` (`components/panels/workspace-row.tsx`) - Workspace Row
 - `sidebar:resources-mobile-drawer` (`components/sidebars/resources-mobile-drawer.tsx`) - Resources Mobile Drawer
 - `sidebar:tasks` (`components/sidebars/tasks.tsx`) - Tasks Sidebar
+- `skill:codeInterpreter` (`lib/shared/skills/registry.ts`) - Code interpreter
 - `slash:skills` (`lib/shared/commands/registry.ts`) - `/skills` Manage skills

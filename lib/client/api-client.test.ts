@@ -14,7 +14,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test"
 
-import { apiClient, type RemoteDispatch } from "./api-client"
+import { apiClient, isAuthRequiredResult, type RemoteDispatch } from "./api-client"
 
 const REMOTE: RemoteDispatch = {
   backend: "python",
@@ -364,5 +364,49 @@ describe("dispatchedFetch — wire shape", () => {
     } finally {
       globalThis.fetch = originalFetch
     }
+  })
+})
+
+describe("apiClient — REQUIRE_AUTH_FOR_AI (401 auth_required)", () => {
+  const authRequired = {
+    status: 401,
+    jsonBody: { code: "auth_required", message: "Sign in to use AI features." },
+  }
+
+  test("summarize.* resolves AUTH_REQUIRED_RESULT, not null", async () => {
+    installFetchStub(authRequired)
+    const res = await apiClient.summarize.conversation(
+      { mode: "conversation", messages: [{ role: "user", content: "hi" }] },
+      { dispatch: "in-next" },
+    )
+    expect(isAuthRequiredResult(res)).toBe(true)
+  })
+
+  test("artifacts.extractTable resolves AUTH_REQUIRED_RESULT", async () => {
+    installFetchStub(authRequired)
+    const res = await apiClient.artifacts.extractTable(
+      { reportText: "r", sources: [{ title: "t", url: "https://x.test", snippet: "s" }] },
+      { dispatch: "in-next" },
+    )
+    expect(isAuthRequiredResult(res)).toBe(true)
+  })
+
+  test("other failures (incl. the no-key `auth` 401) stay null", async () => {
+    installFetchStub({ status: 401, jsonBody: { code: "auth", message: "no key" } })
+    const res = await apiClient.summarize.file(
+      { mode: "file", name: "n", text: "t" },
+      { dispatch: "in-next" },
+    )
+    expect(res).toBeNull()
+  })
+
+  test("chat.stream surfaces the auth_required code to the caller", async () => {
+    installFetchStub(authRequired)
+    const res = await apiClient.chat.stream({
+      messages: [{ role: "user", content: "hi" }],
+    })
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(401)
+    expect(res.error?.code).toBe("auth_required")
   })
 })

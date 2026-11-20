@@ -21,6 +21,7 @@ import { z } from 'zod';
 import { BaseEditorKit } from '@/components/editor/editor-base-kit';
 import { markdownJoinerTransform } from '@/shared/markdown-joiner-transform';
 import { categorizeError } from '@/shared/api-errors';
+import { requireAiAuth } from '@/server/auth/require-ai-auth';
 import { AiCommandRequestSchema } from '@/shared/api-schemas';
 import {
   ProviderUnavailableError,
@@ -37,6 +38,11 @@ import {
 } from './prompt';
 
 export async function POST(req: NextRequest) {
+  // REQUIRE_AUTH_FOR_AI gate — before the body is read or any model
+  // work starts. Applies even with a BYO `apiKey` (the server still
+  // does the work). No-op when the flag is off / Supabase is unset.
+  const aiAuth = await requireAiAuth();
+  if (!aiAuth.ok) return aiAuth.response;
   let raw: unknown;
   try {
     raw = await req.json();

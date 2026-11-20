@@ -56,6 +56,7 @@ import type { LiveToolCall } from "@/components/skills/tool-call-strip"
 import { composeSystemPrompts } from "@/shared/agents/resolve"
 import { withUserSkillInstructions } from "@/shared/skills/user-skill-prompt"
 import type { ChatRequestInput, TaskRequestInput } from "@/shared/api-schemas"
+import { isAuthRequiredError } from "@/shared/api-errors"
 import { parsePersistedUiPart } from "@/shared/generative-ui/schemas"
 import { modelSupportsReasoningEffort } from "@/shared/models"
 import { resolveEnabledSkills } from "@/shared/skills/resolve-enabled-skills"
@@ -546,6 +547,16 @@ export function useChatSend(): UseChatSendResult {
         )
 
         if (!result.ok) {
+          // REQUIRE_AUTH_FOR_AI: the caller must sign in. Typed bubble
+          // with a Sign in action — never the no-key mock fallback below.
+          if (isAuthRequiredError(result.error)) {
+            surfaceError({
+              code: "auth_required",
+              status: result.status,
+              model: modelForCall,
+            })
+            return
+          }
           if (result.status === 401) {
             setConversationTyping(targetConvId, false)
             setConversationStreaming(targetConvId, false)
