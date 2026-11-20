@@ -1,7 +1,9 @@
 import { deflateRawSync } from "node:zlib"
 
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
 import { NextRequest } from "next/server"
+
+import { setAiAuthScenario } from "@/server/auth/_test/ai-auth-scenario"
 
 import { EXTRACT_BODY_MAX, extractCacheKey, POST } from "./route"
 
@@ -105,5 +107,25 @@ describe("POST /api/extract size caps", () => {
     const res = await POST(multipart(new Blob([zip]), "bomb.docx"))
     expect(res.status).toBe(413)
     expect((await res.json()).error).toMatch(/extraction limit/)
+  })
+})
+
+describe("POST /api/extract — REQUIRE_AUTH_FOR_AI", () => {
+  let restore: (() => void) | null = null
+  afterEach(() => {
+    restore?.()
+    restore = null
+  })
+
+  // Text extraction spends no model budget, so an anonymous caller is
+  // never 401'd here — the gate only forces the vision pass off.
+  test("flag on + anonymous → text extraction still answers 200", async () => {
+    restore = setAiAuthScenario("anonymous")
+    const form = new FormData()
+    form.append("file", new Blob(["anon text"], { type: "text/plain" }), "anon.txt")
+    form.append("vision", "true")
+    const res = await POST(new NextRequest(URL_, { method: "POST", body: form }))
+    expect(res.status).toBe(200)
+    expect((await res.json()).text).toContain("anon text")
   })
 })

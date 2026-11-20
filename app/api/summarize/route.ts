@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
 import { categorizeError } from '@/shared/api-errors'
+import { requireAiAuth } from '@/server/auth/require-ai-auth'
 import { generateStructured } from '@/server/ai/structured'
 import { resolveCallerScope } from '@/server/cache/caller-scope'
 import {
@@ -194,6 +195,10 @@ function stripJsonFences(text: string): string {
 }
 
 export async function POST(req: NextRequest) {
+  // REQUIRE_AUTH_FOR_AI gate — before the body is read or any model
+  // work starts. No-op when the flag is off / Supabase is unset.
+  const aiAuth = await requireAiAuth()
+  if (!aiAuth.ok) return aiAuth.response
   let raw: unknown
   try {
     raw = await req.json()

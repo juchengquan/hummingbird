@@ -4,6 +4,7 @@ import { streamText } from 'ai';
 import { NextResponse } from 'next/server';
 
 import { categorizeError } from '@/shared/api-errors';
+import { requireAiAuth } from '@/server/auth/require-ai-auth';
 import { CompleteRequestSchema } from '@/shared/api-schemas';
 import {
   ProviderUnavailableError,
@@ -40,6 +41,10 @@ import { getCompletePrompt } from '../command/prompt';
 const completeRateLimit = createSlidingWindow({ windowMs: 60_000, max: 60 });
 
 export async function POST(req: NextRequest) {
+  // REQUIRE_AUTH_FOR_AI gate — before the rate-limit bucket, the body
+  // and the model call. No-op when the flag is off / Supabase is unset.
+  const aiAuth = await requireAiAuth();
+  if (!aiAuth.ok) return aiAuth.response;
   const limit = completeRateLimit.consume(rateLimitKey(req));
   if (!limit.allowed) {
     return NextResponse.json(

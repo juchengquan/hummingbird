@@ -10,6 +10,7 @@ import {
 } from '@/server/cache/response-cache'
 import { extractFile } from '@/server/extraction'
 import { ZipLimitError } from '@/server/extraction/zip-guard'
+import { requireAiAuth } from '@/server/auth/require-ai-auth'
 import { createSlidingWindow, rateLimitKey } from '@/server/rate-limit'
 import { BodyTooLargeError, readBodyCapped } from '@/server/read-body-capped'
 import { FILE_SIZE_LIMIT } from '@/shared/upload-config'
@@ -98,8 +99,16 @@ export async function POST(req: NextRequest) {
   // Optional `vision` form field: "true"/"false" forces the vision pass
   // on/off; absent → auto-decide via the extractor's heuristic.
   const visionField = form.get('vision')
-  const visionFlag =
+  const requestedVision =
     visionField === 'true' ? true : visionField === 'false' ? false : undefined
+
+  // REQUIRE_AUTH_FOR_AI: text extraction spends no model budget, so it
+  // stays open to anonymous callers (file attach keeps working). The
+  // vision pass is model-backed — an anonymous caller is forced to
+  // text-only. When the gate is inactive `aiAuth.ok` is always true.
+  const aiAuth = await requireAiAuth()
+  const visionDenied = !aiAuth.ok
+  const visionFlag = visionDenied ? false : requestedVision
 
   try {
     const data = Buffer.from(await file.arrayBuffer())
@@ -122,7 +131,12 @@ export async function POST(req: NextRequest) {
         consumeVisionBudget: () => extractVisionLimit.consume(rateLimitKey(req)),
       }
     )
-    setCachedResponse(cacheKey, result)
+    // An auth-forced text-only result for an auto/vision request isn't
+    // what a signed-in caller would get under the same key — don't cache
+    // it (a signed-in auto request would otherwise be served text-only).
+    if (!visionDenied || requestedVision === false) {
+      setCachedResponse(cacheKey, result)
+    }
     return NextResponse.json(result)
   } catch (error) {
     // Office zip whose decompressed size / entry count exceeds the
