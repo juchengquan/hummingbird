@@ -98,7 +98,9 @@ so every feature gated by `lib/shared/supabase/env.ts` lights up:
   `docs/SUPABASE_SETUP.md` → "Migration 0018 collision" for the one
   historical clash (`0018_message_generated_files.sql` → `0033_…`).
   `0005_mcp.sql` enables `pgcrypto` itself — no separate extension
-  toggle.
+  toggle. (The Supabase stack ships it in the `extensions` schema;
+  `0038_mcp_pgcrypto_schema.sql` points the credential RPCs at
+  whichever schema it is in.)
 - **MCP integration** — full tools + resources + cloud-mode
   credentials. Set `MCP_ENCRYPTION_KEY` in `.env.local` to unlock
   the Cloud radio in the Add Server dialog. See **Step 5** below.
