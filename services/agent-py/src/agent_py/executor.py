@@ -511,7 +511,11 @@ async def _run_chunk_inner(
     # after the last checkpoint save on a resume. `append_event` is
     # `ON CONFLICT DO NOTHING`, so a reused seq silently drops an event.
     start_seq = await _seed_seq(
-        pool, run_id=payload.run_id, user_id=payload.user_id, checkpoint=checkpoint
+        pool,
+        run_id=payload.run_id,
+        user_id=payload.user_id,
+        checkpoint=checkpoint,
+        reclaimed=reclaimed,
     )
     start_step = _int_or(checkpoint.get("step"), 0) if resume else 0
 
@@ -998,16 +1002,29 @@ async def _seed_seq(
     run_id: str,
     user_id: str,
     checkpoint: dict[str, Any],
+    reclaimed: bool = False,
 ) -> int:
     """Seq to seed the emitter at: the larger of the checkpoint's saved
     `seq` and the highest seq already in `task_events` for this run.
-    A failed probe falls back to the checkpoint value (the run proceeds;
-    the worst case is the pre-fix behaviour)."""
+
+    A failed probe falls back to the checkpoint value on a normal run
+    (only the route's / this worker's own events can follow it). On a
+    reclaim it does NOT: the dead attempt wrote past the checkpoint, so
+    seeding there would reuse its seqs — the resume marker itself would
+    collide and be dropped (`ON CONFLICT DO NOTHING`), leaving its
+    partial output un-superseded. The attempt is abandoned instead
+    (`lease.abandon_current`): the job is retried once its lease lapses,
+    and only spends an attempt."""
     from_checkpoint = _int_or(checkpoint.get("seq"), 0)
     try:
         from_log = await store.max_event_seq(pool, run_id=run_id, user_id=user_id)
     except Exception as exc:
-        logger.warning("executor.max_seq_probe_failed", run_id=run_id, error=str(exc))
+        logger.warning(
+            "executor.max_seq_probe_failed", run_id=run_id, reclaimed=reclaimed, error=str(exc)
+        )
+        if reclaimed:
+            lease.abandon_current("seq_probe_failed_on_reclaim")
+            raise
         return from_checkpoint
     return max(from_checkpoint, from_log)
 
@@ -1523,6 +1540,17 @@ async def _run_respond_inner(
             "is not awaiting user input"
         )
 
+    # Seeded before the gate and before an approved tool runs: on a
+    # reclaim a failed probe abandons the attempt (`_seed_seq`), which
+    # must happen before the tool has acted, not after.
+    start_seq = await _seed_seq(
+        pool,
+        run_id=payload.run_id,
+        user_id=payload.user_id,
+        checkpoint=checkpoint,
+        reclaimed=resume_interrupted,
+    )
+
     # Atomic paused → running gate. Only one respond per pause gets past
     # this; a duplicate racing us (or a run cancelled while paused) sees
     # no row and settles as a no-op — before any tool executes. A resumed
@@ -1605,9 +1633,6 @@ async def _run_respond_inner(
     # Append the user turn carrying the tool_result.
     live_messages.append({"role": "user", "content": [result_block]})
 
-    start_seq = await _seed_seq(
-        pool, run_id=payload.run_id, user_id=payload.user_id, checkpoint=checkpoint
-    )
     start_step = _int_or(checkpoint.get("step"), 0)
     db_sink = _make_db_sink(pool, user_id=payload.user_id)
 

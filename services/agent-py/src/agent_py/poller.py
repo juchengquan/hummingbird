@@ -311,6 +311,7 @@ async def _execute_claimed(
         lease_seconds=settings.JOB_LEASE_SECONDS,
         acquired_at=claimed_at,
         clock=clock,
+        attempts=job.attempts,
     )
     heartbeat = asyncio.create_task(
         _heartbeat(pool, job, settings, job_lease, clock=clock),

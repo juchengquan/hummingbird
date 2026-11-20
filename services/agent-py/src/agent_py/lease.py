@@ -65,11 +65,15 @@ class JobLease:
         lease_seconds: float,
         acquired_at: float | None = None,
         clock: Clock = time.monotonic,
+        attempts: int | None = None,
     ) -> None:
         """`acquired_at` is the local clock reading taken just BEFORE the
         claim was sent: the DB stamped `now() + lease` no earlier than
         that, so `acquired_at + lease` never overestimates the deadline."""
         self.job_id = job_id
+        # The claim's fencing token (`task_jobs.attempts` at claim time).
+        # `fence.fenced_connection` checks it DB-side on every write.
+        self.attempts = attempts
         self._lease_seconds = float(lease_seconds)
         self._clock = clock
         start = clock() if acquired_at is None else acquired_at
@@ -125,6 +129,18 @@ def bound(lease: JobLease) -> Iterator[JobLease]:
 
 def current() -> JobLease | None:
     return _current.get()
+
+
+def abandon_current(reason: str) -> None:
+    """Give up the bound job's current attempt: mark its lease lost and
+    raise `LeaseLostError`, so the poller abandons the job unsettled —
+    its lease lapses and the next claim retries it (spending an
+    attempt). For a reclaim that can't proceed safely but must not fail
+    the run either. No-op when no lease is bound."""
+    job_lease = _current.get()
+    if job_lease is not None:
+        job_lease.mark_lost(reason)
+        job_lease.check()
 
 
 def check_current() -> None:

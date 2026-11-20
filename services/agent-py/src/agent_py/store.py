@@ -31,6 +31,7 @@ import structlog
 
 from . import events
 from .events import TaskEvent, event_to_row_payload
+from .fence import fenced_connection
 
 
 async def update_run(
@@ -62,7 +63,7 @@ async def update_run(
         f"SET {', '.join(sets)} "
         f"WHERE id = ${len(args) - 1} AND user_id = ${len(args)};"
     )
-    async with pool.acquire() as conn:
+    async with fenced_connection(pool) as conn:
         await conn.execute(sql, *args)
 
 
@@ -84,7 +85,7 @@ async def append_event(
     matching the TS path's `onConflict: 'task_id,seq', ignoreDuplicates: true`.
     """
     payload = event_to_row_payload(event)
-    async with pool.acquire() as conn:
+    async with fenced_connection(pool) as conn:
         await conn.execute(
             _APPEND_EVENT_SQL,
             _coerce_uuid(event.run_id),
@@ -443,7 +444,7 @@ async def claim_paused_for_respond(
     `running` / settled / re-paused-and-claimed and gets False — the
     caller must then settle the job as a no-op rather than re-execute
     the approved tool."""
-    async with pool.acquire() as conn:
+    async with fenced_connection(pool) as conn:
         row = await conn.fetchrow(
             _CLAIM_PAUSED_FOR_RESPOND_SQL,
             _coerce_uuid(run_id),
@@ -580,7 +581,7 @@ async def save_checkpoint(
     Same shape as `RunCheckpoint` in `lib/server/agent/checkpoint.ts`
     so a Python-written checkpoint is loadable by the TS worker
     (defence in depth — flag flip should never strand a run mid-loop)."""
-    async with pool.acquire() as conn:
+    async with fenced_connection(pool) as conn:
         await conn.execute(
             _SAVE_CHECKPOINT_SQL,
             _coerce_uuid(run_id),
@@ -680,7 +681,7 @@ async def create_child_task(
     `subagent` key (e.g. `{"personaSlug": "researcher", "subgoal": "..."}`).
     The child starts in 'queued' status; caller enqueues a `start` job
     separately via `jobs.enqueue_start_job`."""
-    async with pool.acquire() as conn:
+    async with fenced_connection(pool) as conn:
         row = await conn.fetchrow(
             _CREATE_CHILD_TASK_SQL,
             _coerce_uuid(user_id),
@@ -752,7 +753,7 @@ async def commit_spawn(
     settled (e.g. cancelled while this chunk ran)."""
     parent_uuid = _coerce_uuid(parent_task_id)
     user_uuid = _coerce_uuid(user_id)
-    async with pool.acquire() as conn, conn.transaction():
+    async with fenced_connection(pool) as conn, conn.transaction():
         parent = await conn.fetchrow(
             _SPAWN_PARENT_SQL,
             parent_uuid,
@@ -800,7 +801,7 @@ async def claim_paused_for_fan_in(
     runs is skipped by `poller.reclaim_decision` if its worker dies —
     the job is settled and the task stays paused forever. Returns True
     iff THIS call made the transition."""
-    async with pool.acquire() as conn:
+    async with fenced_connection(pool) as conn:
         row = await conn.fetchrow(
             _CLAIM_PAUSED_FOR_FAN_IN_SQL,
             _coerce_uuid(run_id),
@@ -820,7 +821,7 @@ async def set_pending_children(pool: asyncpg.Pool, *, task_id: str, user_id: str
 
     `pending_children` starts at `n` and each child decrements it on
     completion. When it hits 0 the orchestrator fan-in step fires."""
-    async with pool.acquire() as conn:
+    async with fenced_connection(pool) as conn:
         await conn.execute(
             _SET_PENDING_CHILDREN_SQL, _coerce_uuid(task_id), n, _coerce_uuid(user_id)
         )
