@@ -216,6 +216,9 @@ export interface ExtractFileOptions {
   /** Per-call budget gate; called once right before the vision pass. When
    *  it denies, vision is skipped (text-only). Omitted → no gate. */
   consumeVisionBudget?: () => RateLimitVerdict
+  /** Told what happened to the vision pass (PDFs only; never called for
+   *  other kinds). Lets a caller skip caching a degraded result. */
+  onVisionOutcome?: (outcome: VisionOutcome) => void
   signal?: AbortSignal
   // --- test seams (default to the real implementations) ---
   resolveVisionModel?: () => string | null
@@ -225,6 +228,14 @@ export interface ExtractFileOptions {
     signal?: AbortSignal
   }) => Promise<{ text: string; pageCount: number }>
 }
+
+/**
+ * - `skipped`: no vision model, or the mode / heuristic said no.
+ * - `budget_denied`: wanted, but `consumeVisionBudget` refused.
+ * - `applied`: vision ran (its text merged in, or it found nothing).
+ * - `failed`: vision threw; the text-only result was returned.
+ */
+export type VisionOutcome = "skipped" | "budget_denied" | "applied" | "failed"
 
 /** Best-effort vision enhancement of a PDF text result. Never throws —
  *  any failure returns the text-only result. */
@@ -236,8 +247,13 @@ async function maybeAddVision(
   const resolve = opts.resolveVisionModel ?? resolveVisionModel
   const runVision = opts.extractWithVision ?? defaultExtractWithVision
 
+  const report = (outcome: VisionOutcome) => opts.onVisionOutcome?.(outcome)
+
   const model = resolve()
-  if (!model) return textResult
+  if (!model) {
+    report("skipped")
+    return textResult
+  }
 
   const wanted =
     opts.vision === true
@@ -245,18 +261,24 @@ async function maybeAddVision(
       : opts.vision === false
         ? false
         : shouldUseVision(textResult, data.length)
-  if (!wanted) return textResult
+  if (!wanted) {
+    report("skipped")
+    return textResult
+  }
 
   if (opts.consumeVisionBudget && !opts.consumeVisionBudget().allowed) {
+    report("budget_denied")
     return textResult
   }
 
   try {
     const vision = await runVision({ data, model, signal: opts.signal })
+    report("applied")
     if (!vision.text.trim()) return textResult
     return mergeVisionText(textResult, vision.text)
   } catch (err) {
     console.warn("[extraction] vision pass failed, using text-only:", err)
+    report("failed")
     return textResult
   }
 }

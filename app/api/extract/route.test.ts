@@ -5,18 +5,32 @@ import { NextRequest } from "next/server"
 
 import { setAiAuthScenario } from "@/server/auth/_test/ai-auth-scenario"
 
-import { EXTRACT_BODY_MAX, extractCacheKey, extractTextLimit, POST } from "./route"
+import {
+  EXTRACT_BODY_MAX,
+  effectiveVisionMode,
+  extractCacheKey,
+  extractTextLimit,
+  POST,
+} from "./route"
 
 describe("extract cache key", () => {
-  test("vision flag changes the key", () => {
+  test("auto, on and off each get their own key", () => {
     const base = { name: "a.pdf", mimeType: "application/pdf", contentHash: "abc" }
-    expect(extractCacheKey({ ...base, vision: true })).not.toBe(
-      extractCacheKey({ ...base, vision: false })
+    const keys = new Set(
+      (["auto", "on", "off"] as const).map((vision) => extractCacheKey({ ...base, vision }))
     )
+    expect(keys.size).toBe(3)
   })
   test("same inputs → same key", () => {
-    const a = { name: "a.pdf", mimeType: "application/pdf", contentHash: "abc", vision: true }
+    const a = { name: "a.pdf", mimeType: "application/pdf", contentHash: "abc", vision: "on" as const }
     expect(extractCacheKey(a)).toBe(extractCacheKey({ ...a }))
+  })
+  test("a caller denied vision is always mode off (never shares a vision key)", () => {
+    expect(effectiveVisionMode(undefined, true)).toBe("off")
+    expect(effectiveVisionMode(true, true)).toBe("off")
+    expect(effectiveVisionMode(undefined, false)).toBe("auto")
+    expect(effectiveVisionMode(true, false)).toBe("on")
+    expect(effectiveVisionMode(false, false)).toBe("off")
   })
 })
 

@@ -8,7 +8,7 @@ import {
   responseCacheKey,
   setCachedResponse,
 } from '@/server/cache/response-cache'
-import { extractFile } from '@/server/extraction'
+import { extractFile, type VisionOutcome } from '@/server/extraction'
 import { ZipLimitError } from '@/server/extraction/zip-guard'
 import { requireAiAuth } from '@/server/auth/require-ai-auth'
 import { createSlidingWindow, rateLimitKey } from '@/server/rate-limit'
@@ -37,14 +37,27 @@ const extractVisionLimit = createSlidingWindow({ windowMs: 60_000, max: 10 })
  *  leaves room for a multi-file drop. Exported for tests. */
 export const extractTextLimit = createSlidingWindow({ windowMs: 60_000, max: 60 })
 
-/** Exact-key cache key for an extraction. The `vision` flag is part of
- *  the key so a forced-vision result and a text-only result don't
- *  collide. Exported for unit testing. */
+/** The vision mode this caller actually gets: the requested `vision`
+ *  field, forced to `off` when the sign-in gate denies vision. */
+export type EffectiveVisionMode = 'auto' | 'on' | 'off'
+
+export function effectiveVisionMode(
+  requested: boolean | undefined,
+  visionDenied: boolean
+): EffectiveVisionMode {
+  if (visionDenied || requested === false) return 'off'
+  return requested === true ? 'on' : 'auto'
+}
+
+/** Exact-key cache key for an extraction. The effective vision mode is
+ *  part of the key, so `auto`, `on` and `off` results never collide and
+ *  a caller denied vision (mode `off`) can't be served a cached vision
+ *  result. Exported for unit testing. */
 export function extractCacheKey(parts: {
   name: string
   mimeType: string
   contentHash: string
-  vision: boolean
+  vision: EffectiveVisionMode
 }): string {
   return responseCacheKey({
     kind: 'extract',
@@ -121,36 +134,31 @@ export async function POST(req: NextRequest) {
   // vision pass is model-backed — an anonymous caller is forced to
   // text-only. When the gate is inactive `aiAuth.ok` is always true.
   const aiAuth = await requireAiAuth()
-  const visionDenied = !aiAuth.ok
-  const visionFlag = visionDenied ? false : requestedVision
+  const mode = effectiveVisionMode(requestedVision, !aiAuth.ok)
 
   try {
     const data = Buffer.from(await file.arrayBuffer())
     const contentHash = createHash('sha256').update(data).digest('hex')
-    // Cache key folds in the vision intent so a forced-vision result and
-    // a text-only result are stored distinctly.
-    const cacheKey = extractCacheKey({
-      name,
-      mimeType,
-      contentHash,
-      vision: visionFlag ?? false,
-    })
+    const cacheKey = extractCacheKey({ name, mimeType, contentHash, vision: mode })
     const cached = getCachedResponse(cacheKey)
     if (cached !== undefined) return NextResponse.json(cached)
 
+    let visionOutcome = null as VisionOutcome | null
     const result = await extractFile(
       { name, mimeType, data },
       {
-        vision: visionFlag,
+        vision: mode === 'on' ? true : mode === 'off' ? false : undefined,
         consumeVisionBudget: () => extractVisionLimit.consume(rateLimitKey(req)),
+        onVisionOutcome: (outcome) => {
+          visionOutcome = outcome
+        },
       }
     )
-    // An auth-forced text-only result for an auto/vision request isn't
-    // what a signed-in caller would get under the same key — don't cache
-    // it (a signed-in auto request would otherwise be served text-only).
-    if (!visionDenied || requestedVision === false) {
-      setCachedResponse(cacheKey, result)
-    }
+    // A result degraded for THIS caller (vision wanted, but their budget
+    // was spent or the pass failed) isn't what the key promises — another
+    // caller in the same mode would get the vision text. Don't cache it.
+    const degraded = visionOutcome === 'budget_denied' || visionOutcome === 'failed'
+    if (!degraded) setCachedResponse(cacheKey, result)
     return NextResponse.json(result)
   } catch (error) {
     // Office zip whose decompressed size / entry count exceeds the

@@ -73,6 +73,40 @@ describe("extractFile — vision gating", () => {
     )
     expect(visionCalled).toBe(false)
   })
+
+  test("onVisionOutcome reports what happened to the vision pass", async () => {
+    const run = async (opts: Parameters<typeof extractFile>[1]) => {
+      const seen: string[] = []
+      await extractFile(
+        { name: "doc.pdf", mimeType: "application/pdf", data: FAKE_PDF },
+        { ...opts, onVisionOutcome: (o) => seen.push(o) }
+      )
+      return seen
+    }
+    const ok = async () => ({ text: "v", pageCount: 1 })
+    expect(await run({ vision: true, resolveVisionModel: () => null })).toEqual(["skipped"])
+    expect(await run({ vision: false, resolveVisionModel: () => "m" })).toEqual(["skipped"])
+    expect(
+      await run({
+        vision: true,
+        resolveVisionModel: () => "m",
+        consumeVisionBudget: () => ({ allowed: false, retryAfterSec: 1 }),
+        extractWithVision: ok,
+      })
+    ).toEqual(["budget_denied"])
+    expect(
+      await run({ vision: true, resolveVisionModel: () => "m", extractWithVision: ok })
+    ).toEqual(["applied"])
+    expect(
+      await run({
+        vision: true,
+        resolveVisionModel: () => "m",
+        extractWithVision: async () => {
+          throw new Error("x")
+        },
+      })
+    ).toEqual(["failed"])
+  })
 })
 
 describe("extractFile — spreadsheet bounds", () => {
