@@ -33,6 +33,7 @@ from typing import Any, Literal
 
 import structlog
 
+from .model_allowlist import default_api_model_id
 from .providers.anthropic_provider import (
     AsyncAnthropicClient,
     _coerce_content_blocks,
@@ -660,10 +661,9 @@ def resolve_anthropic_client() -> AsyncAnthropicClient | None:
 # emits these via `{type: "suggestions"}` on the custom format or
 # `data-suggestions` on AI SDK.
 
-#: Cheap model for the suggestion call. Same as `summarise.py`'s
-#: default — Anthropic Haiku is fast + cheap and the task is small
-#: (200 tokens of JSON).
-SUGGESTION_MODEL = "claude-3-5-haiku-20241022"
+# The suggestion call uses `AGENT_DEFAULT_MODEL` (default Haiku — fast
+# + cheap; the task is ~200 tokens of JSON), the same allowlisted
+# default `/v1/summarize` falls back to. See `model_allowlist`.
 
 _FENCE_HEAD_RE = re.compile(r"^```(?:json)?\s*\n?", re.IGNORECASE)
 _FENCE_TAIL_RE = re.compile(r"\n?```\s*$")
@@ -737,7 +737,7 @@ async def generate_chat_suggestions(
         # `messages.stream` + drain + `get_final_message` — same
         # pattern `summarise.py` uses for one-shot generation.
         stream_kwargs: dict[str, Any] = {
-            "model": SUGGESTION_MODEL,
+            "model": default_api_model_id(),
             "max_tokens": 200,
             "temperature": 0.7,
             "messages": [{"role": "user", "content": prompt}],
@@ -774,7 +774,6 @@ __all__ = [
     "AI_SDK_STREAM_HEADER_VALUE",
     "DEFAULT_MAX_STEPS",
     "DEFAULT_MAX_TOKENS",
-    "SUGGESTION_MODEL",
     "ChatConfig",
     "ChatMessage",
     "ProviderErrorCode",

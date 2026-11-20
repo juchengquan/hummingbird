@@ -11,8 +11,8 @@ import { z } from "zod"
 
 import type { AuthVars } from "../middleware/auth"
 import { requireAuth } from "../middleware/auth"
+import { UnknownModelError, resolveRequestedModel, unknownModelBody } from "../models"
 import {
-  resolveModel,
   summariseCompress,
   summariseConversation,
   summariseFile,
@@ -77,7 +77,13 @@ summarizeRoutes.post("/v1/summarize", requireAuth, async (c) => {
     )
   }
 
-  const modelId = resolveModel(parsed.data.model)
+  let modelId: string
+  try {
+    modelId = resolveRequestedModel(parsed.data.model)
+  } catch (err) {
+    if (err instanceof UnknownModelError) return c.json(unknownModelBody(err), 400)
+    throw err
+  }
   const data = parsed.data
 
   const result =

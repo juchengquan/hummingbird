@@ -7,9 +7,10 @@
  * plain markdown. Same prompt strings as agent-py, same JSON-fence
  * stripper, same error buckets (`provider` / `invalid_json`).
  *
- * Non-Anthropic `model` ids (e.g. the TS chat default
- * `google/gemini-2.5-flash`) fall back to a cheap Anthropic default
- * — agent-ts only talks to Anthropic, same as agent-py.
+ * The request's optional `model` must be an allowed `anthropic/*`
+ * catalog id (`resolveRequestedModel` in `./models`); absent →
+ * `AGENT_DEFAULT_MODEL`. The helpers below take the already-resolved
+ * Anthropic API id.
  */
 
 import { anthropic, createAnthropic } from "@ai-sdk/anthropic"
@@ -18,19 +19,9 @@ import { generateText } from "ai"
 
 import { getEnv } from "./env"
 
-export const DEFAULT_SUMMARY_MODEL = "claude-3-5-haiku-20241022"
-
 export type SummariseResult =
   | { ok: true; payload: Record<string, unknown> }
   | { ok: false; code: "provider" | "invalid_json"; message: string }
-
-export function isAnthropicModelId(model: string): boolean {
-  return model.toLowerCase().startsWith("claude")
-}
-
-export function resolveModel(requested: string | null | undefined): string {
-  return requested && isAnthropicModelId(requested) ? requested : DEFAULT_SUMMARY_MODEL
-}
 
 function buildModel(modelId: string): LanguageModel | null {
   const env = getEnv()
