@@ -7,11 +7,12 @@
  * request before the transport opens.
  */
 
-import { describe, test, expect, beforeAll, afterAll } from "bun:test"
+import { describe, test, expect, beforeAll, afterAll, afterEach } from "bun:test"
 import { SignJWT } from "jose"
 
 import { createApp } from "../src/app"
 import { resetEnvCacheForTest } from "../src/env"
+import { _setCloudServerLookupForTest } from "../src/routes/mcp-proxy"
 
 const SECRET = "test-secret-do-not-use-in-prod-32-bytes!"
 
@@ -168,7 +169,9 @@ describe("POST /v1/mcp/server (upsert)", () => {
       id: UUID,
       workspaceId: WS_UUID,
       name: "Cloud MCP",
-      url: "https://mcp.cloud/sse",
+      // Public IP literal: clears the anti-SSRF check without a DNS
+      // lookup, so the test stays hermetic.
+      url: "https://1.1.1.1/sse",
       credentials: { type: "header", headers: { "X-API-Key": "secret" } },
       enabled: true,
     }
@@ -237,5 +240,174 @@ describe("POST /v1/mcp/server (upsert)", () => {
     expect(res.status).toBe(422)
     const body = (await res.json()) as { code: string }
     expect(body.code).toBe("invalid_request")
+  })
+})
+
+describe("MCP anti-SSRF + credential scoping", () => {
+  const UUID = "11111111-1111-1111-1111-111111111111"
+
+  type Hit = { authorization: string | null }
+  function startUpstream(label: string, hits: Hit[]) {
+    // A fake "MCP server" that records every request and fails with a
+    // body the proxy must never reflect back to its caller.
+    return Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req) {
+        hits.push({ authorization: req.headers.get("authorization") })
+        return new Response(`UPSTREAM-SECRET-BODY-${label}`, { status: 500 })
+      },
+    })
+  }
+
+  afterEach(() => {
+    delete process.env.MCP_ALLOW_PRIVATE_HOSTS
+    _setCloudServerLookupForTest(null)
+  })
+
+  async function post(
+    path: string,
+    body: unknown,
+    extra: Record<string, string> = {},
+  ): Promise<Response> {
+    const app = createApp()
+    const token = await makeJwt()
+    return app.request(path, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        ...extra,
+      },
+      body: JSON.stringify(body),
+    })
+  }
+
+  test("upsert rejects a metadata-address URL with 400 mcp_url_blocked", async () => {
+    const res = await post("/v1/mcp/server", {
+      id: UUID,
+      workspaceId: UUID,
+      name: "Evil",
+      url: "http://169.254.169.254/latest/meta-data/",
+      credentials: {},
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { code: string }
+    expect(body.code).toBe("mcp_url_blocked")
+  })
+
+  test("upsert rejects a loopback URL unless MCP_ALLOW_PRIVATE_HOSTS=true", async () => {
+    const payload = {
+      id: UUID,
+      workspaceId: UUID,
+      name: "Local",
+      url: "http://127.0.0.1:9/mcp",
+      credentials: {},
+    }
+    const blocked = await post("/v1/mcp/server", payload)
+    expect(blocked.status).toBe(400)
+    expect(((await blocked.json()) as { code: string }).code).toBe("mcp_url_blocked")
+
+    process.env.MCP_ALLOW_PRIVATE_HOSTS = "true"
+    const allowed = await post("/v1/mcp/server", payload)
+    // Passes URL validation, then hits the (absent) DB pool.
+    expect(allowed.status).toBe(503)
+  })
+
+  test("proxy rejects a private body URL with 400 mcp_url_blocked", async () => {
+    const res = await post("/v1/mcp/srv1/discover", {
+      server: { id: "srv1", name: "x", url: "http://10.0.0.5/mcp", transport: "http" },
+    })
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: string }).error).toBe("mcp_url_blocked")
+  })
+
+  test("proxy rejects a private DB-stored URL too", async () => {
+    _setCloudServerLookupForTest(async () => ({
+      id: UUID,
+      name: "Stored",
+      url: "http://169.254.169.254/",
+      credentials: { headers: { Authorization: "Bearer stored-secret" } },
+    }))
+    const res = await post(`/v1/mcp/${UUID}/discover`, {
+      server: { id: UUID, name: "Body", url: "https://1.1.1.1/mcp", transport: "http" },
+    })
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: string }).error).toBe("mcp_url_blocked")
+  })
+
+  test("cloud credentials go only to the DB-stored URL, never the body URL", async () => {
+    process.env.MCP_ALLOW_PRIVATE_HOSTS = "true"
+    const attackerHits: Hit[] = []
+    const storedHits: Hit[] = []
+    const attacker = startUpstream("attacker", attackerHits)
+    const stored = startUpstream("stored", storedHits)
+    const lookups: { userId: string; serverId: string }[] = []
+    _setCloudServerLookupForTest(async (args) => {
+      lookups.push(args)
+      return {
+        id: UUID,
+        name: "Stored",
+        url: `http://127.0.0.1:${stored.port}/mcp`,
+        credentials: { headers: { Authorization: "Bearer stored-secret" } },
+      }
+    })
+    try {
+      const res = await post(`/v1/mcp/${UUID}/discover`, {
+        server: {
+          id: UUID,
+          name: "Body",
+          url: `http://127.0.0.1:${attacker.port}/mcp`,
+          transport: "http",
+        },
+      })
+      expect(lookups).toHaveLength(1)
+      expect(attackerHits).toHaveLength(0)
+      expect(storedHits.length).toBeGreaterThan(0)
+      expect(storedHits[0]?.authorization).toBe("Bearer stored-secret")
+
+      // Upstream failure → generic 502; the upstream body is not echoed.
+      expect(res.status).toBe(502)
+      const text = await res.text()
+      expect(JSON.parse(text)).toEqual({ error: "mcp_upstream_error" })
+      expect(text).not.toContain("UPSTREAM-SECRET-BODY")
+    } finally {
+      attacker.stop(true)
+      stored.stop(true)
+    }
+  })
+
+  test("header credentials skip the cloud lookup and use the body URL", async () => {
+    process.env.MCP_ALLOW_PRIVATE_HOSTS = "true"
+    const hits: Hit[] = []
+    const upstream = startUpstream("local", hits)
+    let lookedUp = false
+    _setCloudServerLookupForTest(async () => {
+      lookedUp = true
+      return null
+    })
+    try {
+      const cred = Buffer.from(
+        JSON.stringify({ headers: { Authorization: "Bearer local-cred" } }),
+      ).toString("base64")
+      const res = await post(
+        "/v1/mcp/srv1/discover",
+        {
+          server: {
+            id: "srv1",
+            name: "Local",
+            url: `http://127.0.0.1:${upstream.port}/mcp`,
+            transport: "http",
+          },
+        },
+        { "X-MCP-Credentials": cred },
+      )
+      expect(lookedUp).toBe(false)
+      expect(hits[0]?.authorization).toBe("Bearer local-cred")
+      expect(res.status).toBe(502)
+      expect(await res.text()).not.toContain("UPSTREAM-SECRET-BODY")
+    } finally {
+      upstream.stop(true)
+    }
   })
 })

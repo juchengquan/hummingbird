@@ -89,6 +89,65 @@ export async function fetchDecryptedCredentials(
   }
 }
 
+const CLOUD_SERVER_SQL =
+  "SELECT id::text AS id, name, url FROM public.mcp_servers " +
+  "WHERE id = $1::uuid AND credential_mode = 'cloud' AND deleted_at IS NULL"
+
+/** A caller-owned cloud-mode MCP server row plus its decrypted
+ *  credential (null when decryption isn't possible). */
+export interface CloudMcpServer {
+  id: string
+  name: string
+  url: string
+  credentials: McpCredentials | null
+}
+
+/** Load the caller's cloud-mode server row (RLS-scoped) plus its
+ *  decrypted credential. Returns null when there's no such cloud-mode
+ *  row for this user (missing, soft-deleted, local-mode, someone
+ *  else's, or a DB error) — the caller then treats the request as
+ *  credential-less.
+ *
+ *  The returned `url` is the ONLY endpoint the decrypted credential
+ *  may be sent to: callers must replace any request-supplied URL with
+ *  it, otherwise a caller could exfiltrate the stored secret to a
+ *  server they control. Mirrors `fetch_cloud_server` in
+ *  `services/agent-py/src/agent_py/mcp_credentials.py` and the
+ *  `cloudServerOverride` lookup in
+ *  `app/api/mcp/[serverId]/[action]/route.ts`. */
+export async function fetchCloudServer(
+  sql: Sql,
+  { userId, serverId, encryptionKey }: FetchDecryptedCredentialsArgs,
+): Promise<CloudMcpServer | null> {
+  let row: { id: string; name: string; url: string } | undefined
+  try {
+    row = await sql.begin(async (tx) => {
+      await tx.unsafe(SET_ROLE_SQL)
+      await tx.unsafe(SET_CLAIMS_SQL, [
+        JSON.stringify({ sub: userId, role: "authenticated" }),
+      ])
+      const rows = await tx.unsafe<{ id: string; name: string; url: string }[]>(
+        CLOUD_SERVER_SQL,
+        [serverId],
+      )
+      return rows[0]
+    })
+  } catch (err) {
+    console.warn("[mcp] cloud server lookup failed", {
+      serverId,
+      message: err instanceof Error ? err.message : String(err),
+    })
+    return null
+  }
+  if (!row) return null
+  const credentials = await fetchDecryptedCredentials(sql, {
+    userId,
+    serverId,
+    encryptionKey,
+  })
+  return { id: row.id, name: row.name, url: row.url, credentials }
+}
+
 export interface UpsertServerArgs {
   userId: string
   serverId: string
