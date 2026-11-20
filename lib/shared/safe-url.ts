@@ -107,6 +107,67 @@ export function isSafeImageUrl(url: string | null | undefined): boolean {
 }
 
 /**
+ * How the markdown renderer treats an image URL:
+ *   - `auto`    → loads immediately: raster `data:` images, `blob:` URLs
+ *                 (same-origin by construction), relative URLs (the
+ *                 app's own origin) and absolute http(s) URLs on a
+ *                 trusted origin (the app's Supabase storage).
+ *   - `click`   → any other http(s) / protocol-relative URL. A remote
+ *                 image is a beacon (it tells the host who viewed the
+ *                 message, from where, and when — on a public share page
+ *                 too), so it renders as a "Load image" placeholder
+ *                 naming `host`, and loads only once clicked.
+ *   - `blocked` → everything `isSafeImageUrl` rejects (and malformed
+ *                 URLs): no `<img>`, no placeholder.
+ */
+export type MarkdownImagePolicy =
+  | { kind: "auto" }
+  | { kind: "click"; host: string }
+  | { kind: "blocked" }
+
+/** `origin` of an absolute http(s) URL, or null. */
+export function httpOriginOf(url: string | null | undefined): string | null {
+  if (typeof url !== "string" || !url.trim()) return null
+  try {
+    const u = new URL(url.trim())
+    return u.protocol === "http:" || u.protocol === "https:" ? u.origin : null
+  } catch {
+    return null
+  }
+}
+
+export function markdownImagePolicy(
+  url: string | null | undefined,
+  trustedOrigins: readonly string[] = []
+): MarkdownImagePolicy {
+  if (typeof url !== "string") return { kind: "blocked" }
+  const normalized = normalizeUrlForSchemeCheck(url)
+  const scheme = schemeOf(normalized)
+  if (scheme === "blob") {
+    return httpOriginOf(url.trim().slice("blob:".length)) !== null
+      ? { kind: "auto" }
+      : { kind: "blocked" }
+  }
+  if (!isSafeImageUrl(url)) return { kind: "blocked" }
+  if (scheme === "data") return { kind: "auto" }
+  if (scheme === null && !/^[/\\]{2}/.test(normalized)) return { kind: "auto" }
+  // Absolute or protocol-relative (`//host`, `/\host`) http(s). The
+  // protocol-relative form is resolved against an https base only to
+  // read the host the browser would contact.
+  let parsed: URL
+  try {
+    parsed = scheme === null ? new URL(url.trim(), "https://base.invalid") : new URL(url.trim())
+  } catch {
+    return { kind: "blocked" }
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return { kind: "blocked" }
+  }
+  if (trustedOrigins.includes(parsed.origin)) return { kind: "auto" }
+  return { kind: "click", host: parsed.host }
+}
+
+/**
  * True for absolute http(s) links (including protocol-relative `//host`)
  * -- the ones that should carry `rel="noopener noreferrer"`.
  */
