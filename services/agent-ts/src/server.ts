@@ -45,7 +45,6 @@ if (pollerDecision.start) {
     `[${env.SERVICE_NAME}] poller starting interval=${env.POLL_INTERVAL_SECONDS}s dry_run=${env.WORKER_DRY_RUN}`,
   )
   pollLoop = runPollLoop(env, { signal: pollerController.signal }).catch((err) => {
-    // eslint-disable-next-line no-console
     console.error(`[${env.SERVICE_NAME}] poll loop crashed: ${String(err)}`)
   })
 } else {

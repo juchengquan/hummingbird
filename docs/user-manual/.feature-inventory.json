@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-20T17:04:56Z",
+  "generatedAt": "2026-11-20T18:21:00Z",
   "panels": [
     {
       "id": "agents-dialog",
@@ -633,6 +633,12 @@
     {
       "id": "SUPABASE_SERVICE_ROLE_KEY",
       "description": "Service role key — server-side only. Required for share links so the public `/share/...` pages can read the shared conversation/document via the admin client (bypasses RLS, scoped to the token-matched row only). ALSO read by the Python agent service from Phase 3d-2+ for the `generateImage` Storage-persistence path: when SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY are both set, generated images get mirrored into `user-files/<user_id>/generated/...` and the model receives a long-lived signed URL instead of the short-lived Minimax URL. Without them the tool falls back to inline Minimax URLs (work for hours, then expire). Never expose to the browser.",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "TASK_NO_WORKER_TIMEOUT_MINUTES",
+      "description": "Background-task safety net (Next.js stale-run reconciler). agent-py executes every user's tasks unless an admin opts the user out (`auth.users.raw_app_meta_data->>'agent_backend'` set to anything but 'python'). A task still `queued` and never started after this many minutes — opted-out user, agent-py down or in WORKER_DRY_RUN — is failed with \"No task worker available\". Empty → 10.",
       "required": true,
       "sourceFile": ".env.example"
     },
