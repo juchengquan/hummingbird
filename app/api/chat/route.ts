@@ -8,6 +8,7 @@ import { reasoningCallOptions } from '@/shared/reasoning-effort'
 import { routeModel } from '@/server/routing/router'
 import {
   ProviderUnavailableError,
+  rejectUnknownModel,
   selectModel,
 } from '@/server/model-provider'
 import { categorizeError } from '@/shared/api-errors'
@@ -350,7 +351,16 @@ export async function POST(req: NextRequest) {
     )
     modelId = decision.modelId
     autoRoutedTo = decision.modelId
+  } else if (isAutoModel(requestedModel)) {
+    // No routing pair configured → `auto` is treated as the default model
+    // (see ROUTING_AVAILABLE) rather than sent upstream as a literal id.
+    modelId = DEFAULT_CHAT_MODEL
   }
+  // Fail fast on a model id outside config/models.json — before any MCP
+  // lookups / tool setup — so a client can't route arbitrary gateway
+  // models onto the operator's key.
+  const unknownModel = rejectUnknownModel(modelId)
+  if (unknownModel) return unknownModel
   // Auto-enable `searchFiles` whenever any attachment is in RAG mode —
   // the file is no longer inlined, so the model needs the skill to
   // reach it. Force-on overrides a missing client toggle but stops

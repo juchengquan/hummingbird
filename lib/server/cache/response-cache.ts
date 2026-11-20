@@ -18,10 +18,11 @@ import { createHash } from "node:crypto"
  * an unchanged TL;DR). A persistent / cross-device variant (Supabase /
  * pgvector) is a Phase-2 follow-up.
  *
- * Keys are content-derived, not user-derived: a hit only happens when the
- * caller supplies the identical input, so the returned value is the answer
- * for the input they themselves provided -- safe to share across users with
- * no leak, and no per-user keying needed.
+ * Keys are content-derived, optionally partitioned by a caller `scope`
+ * (see `@/server/cache/caller-scope`). Callers that use the Phase-2
+ * near-match lookup MUST pass a caller scope in both the exact key and the
+ * similarity scope: a near-match serves the answer to a *similar* input,
+ * which may be another user's document, so it must never cross callers.
  *
  * Never used for the chat stream -- only the deterministic side-calls.
  */
@@ -45,8 +46,8 @@ interface Entry {
   /** Phase 2: the input's embedding, present only for entries whose caller
    *  opted into similarity matching. Absent → never matched by similarity. */
   embedding?: number[]
-  /** Phase 2: `kind|mode|model` — similarity only matches within one scope,
-   *  so a file summary never matches another mode or another model. */
+  /** Phase 2: `kind|caller|mode|model` — similarity only matches within one
+   *  scope, so a file summary never matches another caller, mode or model. */
   scope?: string
 }
 
@@ -85,12 +86,16 @@ export function responseCacheKey(parts: {
   kind: string
   model: string
   input: unknown
+  /** Caller partition (e.g. `user:<id>`). Omitted → shared across callers
+   *  (keys stay identical to the pre-scope format). */
+  scope?: string
 }): string {
   const payload = JSON.stringify([
     CACHE_VERSION,
     parts.kind,
     parts.model,
     stableStringify(parts.input),
+    ...(parts.scope !== undefined ? [parts.scope] : []),
   ])
   return createHash("sha256").update(payload).digest("hex")
 }

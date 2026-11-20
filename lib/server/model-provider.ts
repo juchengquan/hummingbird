@@ -25,7 +25,9 @@ import "server-only"
  *
  * If no route resolves the dispatcher throws `ProviderUnavailableError`
  * so the calling route can return a typed 401 instead of leaking the
- * underlying SDK error.
+ * underlying SDK error. A model id that isn't in `config/models.json`
+ * throws `UnknownModelError` (→ 400 `unknown_model`) unless the request
+ * brings its own gateway key — see `selectModel`.
  */
 
 import { createAnthropic } from "@ai-sdk/anthropic"
@@ -44,6 +46,20 @@ export class ProviderUnavailableError extends Error {
   constructor(message: string) {
     super(message)
     this.name = "ProviderUnavailableError"
+  }
+}
+
+/**
+ * The requested model id isn't declared in `config/models.json` and the
+ * request didn't supply its own gateway key. `categorizeError` (shared)
+ * recognises it by `name` and maps it to 400 `unknown_model`.
+ */
+export class UnknownModelError extends Error {
+  readonly modelId: string
+  constructor(modelId: string) {
+    super(`Unknown model "${modelId}". Pick a model listed in the model picker.`)
+    this.name = "UnknownModelError"
+    this.modelId = modelId
   }
 }
 
@@ -182,22 +198,69 @@ export interface SelectModelOptions {
   gatewayApiKeyOverride?: string
 }
 
+function normaliseOverride(opts?: SelectModelOptions): string | null {
+  return opts?.gatewayApiKeyOverride?.trim() || null
+}
+
+/**
+ * Throw `UnknownModelError` when `modelId` isn't in `config/models.json`
+ * and the request carries no BYO gateway key. Exposed so routes can
+ * fail fast (before embedding calls, MCP lookups, etc.) with the same
+ * rule `selectModel` enforces.
+ */
+export function assertModelAllowed(
+  modelId: string,
+  opts?: SelectModelOptions
+): void {
+  if (getChatModel(modelId)) return
+  if (normaliseOverride(opts)) return
+  throw new UnknownModelError(modelId)
+}
+
+/**
+ * Fail-fast helper for route handlers: returns a 400 `unknown_model`
+ * JSON response when `assertModelAllowed` would throw, else null.
+ */
+export function rejectUnknownModel(
+  modelId: string,
+  opts?: SelectModelOptions
+): Response | null {
+  try {
+    assertModelAllowed(modelId, opts)
+    return null
+  } catch (error) {
+    if (!(error instanceof UnknownModelError)) throw error
+    return Response.json(
+      { code: "unknown_model", message: error.message },
+      { status: 400 }
+    )
+  }
+}
+
 /**
  * Resolve a model id to a `LanguageModel`. Throws
  * `ProviderUnavailableError` when no route is configured — callers
  * should translate this into a 401 response.
  *
- * Unknown ids are still attempted via the implicit `gateway` route
- * (preserves the prior behaviour for per-request model overrides that
- * aren't in `config/models.json`) — when `gateway` itself isn't
- * configured the same `ProviderUnavailableError` surfaces.
+ * Unknown ids (not in `config/models.json`) throw `UnknownModelError`,
+ * which callers map to 400 `unknown_model` (via `categorizeError`). The
+ * one exception is a request that brings its own gateway key
+ * (`opts.gatewayApiKeyOverride`, e.g. the editor's BYO key): then the
+ * id is passed through to the gateway as-is and billed to that key.
+ * An arbitrary client-supplied id must never reach the operator's
+ * `AI_GATEWAY_API_KEY` — the LLM routes accept anonymous callers, so
+ * that would let anyone bill any gateway model to the operator.
  */
 export function selectModel(
   modelId: string,
   opts?: SelectModelOptions
 ): LanguageModel {
-  const override = opts?.gatewayApiKeyOverride?.trim() || null
+  assertModelAllowed(modelId, opts)
+  const override = normaliseOverride(opts)
   const model = getChatModel(modelId)
+  // `model` is null only for an unknown id with a BYO key (the assert
+  // rejected the rest): route it through the gateway, where `override`
+  // replaces the env key below.
   const routes: ChatModelRoute[] = model?.routes ?? [{ via: "gateway" }]
 
   for (const route of routes) {

@@ -7,6 +7,7 @@ import { categorizeError } from '@/shared/api-errors';
 import { CompleteRequestSchema } from '@/shared/api-schemas';
 import {
   ProviderUnavailableError,
+  rejectUnknownModel,
   selectModel,
 } from '@/server/model-provider';
 import { createSlidingWindow, rateLimitKey } from '@/server/rate-limit';
@@ -73,12 +74,15 @@ export async function POST(req: NextRequest) {
     );
   }
   const { blockText, model, prefix } = parsed.data;
+  const modelId = model || 'google/gemini-2.5-flash';
+  const unknownModel = rejectUnknownModel(modelId);
+  if (unknownModel) return unknownModel;
 
   try {
     const result = streamText({
       abortSignal: req.signal,
       maxOutputTokens: 60,
-      model: selectModel(model || 'google/gemini-2.5-flash'),
+      model: selectModel(modelId),
       prompt: getCompletePrompt({ blockText, prefix }),
       temperature: 0.2,
     });

@@ -47,6 +47,16 @@ describe("categorizeError", () => {
     )
   })
 
+  test("UnknownModelError (by name) → unknown_model (400)", () => {
+    const err = new Error('Unknown model "x/y".')
+    err.name = "UnknownModelError"
+    expect(categorizeError(err)).toEqual({
+      status: 400,
+      code: "unknown_model",
+      message: 'Unknown model "x/y".',
+    })
+  })
+
   test("invalid-model phrasing → invalid_model (400)", () => {
     expect(categorizeError(new Error("invalid model id")).code).toBe(
       "invalid_model",

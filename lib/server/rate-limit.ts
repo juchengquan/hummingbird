@@ -1,7 +1,5 @@
 import "server-only"
 
-import type { NextRequest } from "next/server"
-
 /**
  * Sliding-window per-key rate limiter. In-process; not durable across
  * restarts and not shared across serverless instances — fine for our
@@ -14,6 +12,11 @@ import type { NextRequest } from "next/server"
  * than the window. When the bucket has `max` entries the check
  * returns `allowed: false` with a `retryAfterSec` hint computed from
  * the oldest entry's age.
+ *
+ * Memory is bounded two ways: a sweep (at most once per `windowMs`,
+ * run lazily from `consume`) drops buckets whose newest entry has aged
+ * out of the window, and a hard `maxBuckets` cap evicts the
+ * least-recently-used buckets when a new key would exceed it.
  *
  * Usage:
  *
@@ -28,6 +31,10 @@ import type { NextRequest } from "next/server"
 export interface SlidingWindowConfig {
   windowMs: number
   max: number
+  /** Hard cap on tracked keys. When a new key would exceed it, expired
+   *  buckets are swept and then the least-recently-used ones evicted.
+   *  Default 10_000. */
+  maxBuckets?: number
 }
 
 export interface RateLimitVerdict {
@@ -40,42 +47,157 @@ export interface SlidingWindow {
   consume(key: string): RateLimitVerdict
   /** Test-only: reset all buckets. */
   _reset(): void
+  /** Test-only: number of tracked buckets. */
+  _size(): number
 }
 
+const DEFAULT_MAX_BUCKETS = 10_000
+
 export function createSlidingWindow(config: SlidingWindowConfig): SlidingWindow {
+  const maxBuckets = Math.max(1, config.maxBuckets ?? DEFAULT_MAX_BUCKETS)
+  // Map insertion order doubles as LRU order: every touch re-inserts.
   const buckets = new Map<string, number[]>()
+  let lastSweep = Date.now()
+
+  /** Drop every bucket with no entry inside the window. Buckets are
+   *  sorted ascending, so the last entry is the newest. */
+  function sweep(now: number) {
+    lastSweep = now
+    for (const [key, bucket] of buckets) {
+      const newest = bucket[bucket.length - 1]
+      if (newest === undefined || now - newest >= config.windowMs) {
+        buckets.delete(key)
+      }
+    }
+  }
 
   return {
     consume(key) {
       const now = Date.now()
+      if (now - lastSweep >= config.windowMs) sweep(now)
+
       const bucket = buckets.get(key) ?? []
       // Drop entries outside the window.
       const fresh = bucket.filter((t) => now - t < config.windowMs)
       if (fresh.length >= config.max) {
         const oldest = fresh[0]
         const retryAfterMs = config.windowMs - (now - oldest)
+        buckets.delete(key)
+        buckets.set(key, fresh)
         return { allowed: false, retryAfterSec: Math.ceil(retryAfterMs / 1000) }
       }
       fresh.push(now)
+      buckets.delete(key)
+      if (buckets.size >= maxBuckets) {
+        sweep(now)
+        while (buckets.size >= maxBuckets) {
+          const lru = buckets.keys().next().value
+          if (lru === undefined) break
+          buckets.delete(lru)
+        }
+      }
       buckets.set(key, fresh)
       return { allowed: true, retryAfterSec: 0 }
     },
     _reset() {
       buckets.clear()
+      lastSweep = Date.now()
+    },
+    _size() {
+      return buckets.size
     },
   }
 }
 
+/** Header-reading surface shared by `NextRequest`, `Request`, and
+ *  plain `Headers` — keeps the IP derivation testable without Next. */
+interface HeaderSource {
+  get(name: string): string | null
+}
+
+export interface ClientIpOptions {
+  /** Number of reverse proxies in front of the app that each append
+   *  the peer address to `X-Forwarded-For`. The client IP is the entry
+   *  `trustedProxyHops` from the right. 0 → XFF is ignored entirely. */
+  trustedProxyHops: number
+  /** Trust the platform-set `x-real-ip` / `x-vercel-forwarded-for`
+   *  headers. Only safe where the platform overwrites them (Vercel);
+   *  behind a self-hosted proxy a client could inject them. */
+  trustPlatformHeaders: boolean
+}
+
+const DEFAULT_TRUSTED_PROXY_HOPS = 1
+/** Longest legitimate IP literal (IPv6 with zone id) is well under
+ *  this; anything longer is junk and shouldn't become a map key. */
+const MAX_IP_LENGTH = 64
+
+function cleanIp(value: string | null | undefined): string | null {
+  const v = value?.trim()
+  if (!v || v.length > MAX_IP_LENGTH) return null
+  return v
+}
+
 /**
- * Standard rate-limit key derivation. Prefers `X-Forwarded-For` (the
- * deployment proxy fills it in); falls back to a single bucket so an
- * unconfigured deploy still limits abuse to one global rate rather
- * than going unbounded.
+ * Derive the client IP from proxy headers, or null when none is
+ * trustworthy.
+ *
+ * 1. On Vercel, the platform sets `x-real-ip` and
+ *    `x-vercel-forwarded-for` itself (overwriting client values), so
+ *    those win.
+ * 2. Otherwise, `X-Forwarded-For` is read from the RIGHT: each trusted
+ *    proxy appends the address it received the connection from, so
+ *    the entry `trustedProxyHops` from the end is the one our
+ *    outermost proxy saw. Entries further left are whatever the client
+ *    sent and are never trusted.
  */
-export function rateLimitKey(req: NextRequest): string {
-  const forwarded = req.headers.get("x-forwarded-for")
-  if (forwarded) {
-    return forwarded.split(",")[0].trim()
+export function clientIpFromHeaders(
+  headers: HeaderSource,
+  opts: ClientIpOptions
+): string | null {
+  if (opts.trustPlatformHeaders) {
+    const real = cleanIp(headers.get("x-real-ip"))
+    if (real) return real
+    const vercel = cleanIp(headers.get("x-vercel-forwarded-for")?.split(",")[0])
+    if (vercel) return vercel
   }
-  return "default"
+  const hops = opts.trustedProxyHops
+  if (hops <= 0) return null
+  const forwarded = headers.get("x-forwarded-for")
+  if (!forwarded) return null
+  const entries = forwarded
+    .split(",")
+    .map((e) => e.trim())
+    .filter((e) => e.length > 0)
+  if (entries.length === 0) return null
+  // Fewer entries than configured hops means a proxy didn't append —
+  // the left-most entry is then the best (proxy-written) address left.
+  const index = Math.max(0, entries.length - hops)
+  return cleanIp(entries[index])
+}
+
+/** Parse `TRUSTED_PROXY_HOPS`; invalid/unset → 1 (one reverse proxy,
+ *  e.g. Caddy/Nginx on the self-hosted VM, or Vercel's edge). */
+export function trustedProxyHopsFromEnv(
+  raw: string | undefined = process.env.TRUSTED_PROXY_HOPS
+): number {
+  if (raw === undefined || raw.trim() === "") return DEFAULT_TRUSTED_PROXY_HOPS
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n < 0) return DEFAULT_TRUSTED_PROXY_HOPS
+  return n
+}
+
+/**
+ * Standard rate-limit key derivation: the client IP per
+ * `clientIpFromHeaders` (platform headers on Vercel, else the
+ * right-most-trusted `X-Forwarded-For` entry per `TRUSTED_PROXY_HOPS`).
+ * Falls back to a single shared bucket so an unconfigured deploy still
+ * limits abuse to one global rate rather than going unbounded.
+ */
+export function rateLimitKey(req: { headers: HeaderSource }): string {
+  return (
+    clientIpFromHeaders(req.headers, {
+      trustedProxyHops: trustedProxyHopsFromEnv(),
+      trustPlatformHeaders: Boolean(process.env.VERCEL),
+    }) ?? "default"
+  )
 }
