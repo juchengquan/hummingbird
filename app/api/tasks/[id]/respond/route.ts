@@ -23,6 +23,7 @@ import { RespondRequestSchema } from "@/shared/api-schemas"
 import { getSupabaseServerClient } from "@/server/supabase/server"
 import { getRun } from "@/server/agent/store"
 import { enqueueRespondJob } from "@/server/agent/jobs"
+import { taskWriteErrorResponse } from "@/server/agent/task-writes"
 
 export async function POST(
   req: NextRequest,
@@ -117,7 +118,10 @@ export async function POST(
       },
     })
   } catch (error) {
-    const { status, code, message } = categorizeError(error)
+    // `enqueue_task_job` re-checks the pause under a row lock (0034), so
+    // a run that settled between `getRun` and here is a 409, not a 500.
+    const { status, code, message } =
+      taskWriteErrorResponse(error) ?? categorizeError(error)
     return NextResponse.json({ code, message }, { status })
   }
 
