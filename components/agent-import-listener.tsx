@@ -124,8 +124,25 @@ export function AgentImportListener() {
             </span>
           </div>
           {shareable.systemPrompt ? (
-            <p className="text-[13px] text-[var(--muted-foreground)] line-clamp-4 whitespace-pre-wrap">
-              {shareable.systemPrompt}
+            // Full text, scrollable — never clamped: a share link could
+            // otherwise hide most of the prompt it installs below the fold.
+            <div className="space-y-1">
+              <p className="text-[11px] text-[var(--muted-foreground)]">
+                System prompt ({shareable.systemPrompt.length.toLocaleString()}{" "}
+                characters) — review it in full before importing:
+              </p>
+              <div
+                tabIndex={0}
+                aria-label="Full system prompt"
+                className="max-h-64 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--muted)]/30 p-2 text-[13px] text-[var(--muted-foreground)] whitespace-pre-wrap break-words"
+              >
+                {shareable.systemPrompt}
+              </div>
+            </div>
+          ) : null}
+          {shareable.modelId ? (
+            <p className="text-[11px] text-[var(--muted-foreground)]">
+              Model: <span className="font-mono">{shareable.modelId}</span>
             </p>
           ) : null}
           <p className="text-[11px] text-[var(--muted-foreground)]">

@@ -8,15 +8,18 @@ import "server-only"
  * run jobs anymore (the in-Next inline worker was retired alongside
  * this change).
  *
- * Auth: `Authorization: Bearer <CRON_SECRET>` or
- * `?secret=<CRON_SECRET>`. Without `CRON_SECRET` set, the route is
- * disabled (503).
+ * Auth: `Authorization: Bearer <CRON_SECRET>` only — the header Vercel
+ * Cron sends when `CRON_SECRET` is set. A `?secret=` query parameter is
+ * deliberately NOT accepted (URLs land in access logs). Compared in
+ * constant time (`isAuthorizedCronRequest`). Without `CRON_SECRET` set,
+ * the route is disabled (503).
  */
 
 import type { NextRequest } from "next/server"
 import { NextResponse } from "next/server"
 
 import { dispatchDueSchedules } from "@/server/agent/schedules"
+import { isAuthorizedCronRequest } from "@/server/cron-auth"
 import { getSupabaseAdminClient } from "@/server/supabase/admin"
 
 export async function POST(req: NextRequest) {
@@ -24,7 +27,8 @@ export async function POST(req: NextRequest) {
 }
 
 // Vercel cron triggers a GET by default; accept both so the same route
-// works under cron and manual `curl -X POST`.
+// works under cron and manual
+// `curl -X POST -H "Authorization: Bearer $CRON_SECRET" …`.
 export async function GET(req: NextRequest) {
   return handle(req)
 }
@@ -37,10 +41,7 @@ async function handle(req: NextRequest) {
       { status: 503 }
     )
   }
-  const auth = req.headers.get("authorization") ?? ""
-  const headerOk = auth === `Bearer ${expected}`
-  const queryOk = req.nextUrl.searchParams.get("secret") === expected
-  if (!headerOk && !queryOk) {
+  if (!isAuthorizedCronRequest(req.headers.get("authorization"), expected)) {
     return NextResponse.json(
       { code: "auth", message: "Unauthorized." },
       { status: 401 }

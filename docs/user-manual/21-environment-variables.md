@@ -32,6 +32,7 @@ groups them by purpose and explains when each is needed.
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-side admin (share links, generated-image Storage mirror). Never expose. |
 | `SUPABASE_JWT_SECRET` | Read by the Python agent service for auth-protected endpoints. Without it those endpoints return 503. |
 | `SUPABASE_DB_URL` | Direct Postgres connection (NOT the pooler) - required by the Python agent service's Phase 1+ poll loop. |
+| `REQUIRE_AUTH_FOR_AI` | Default off. `true`/`1` (with Supabase configured) -> anonymous visitors can't use AI: chat, summaries, editor AI / autocomplete, table extraction and memory extraction answer "Sign in required", and file uploads skip the vision pass (plain text extraction still works). Off, unset, or no Supabase -> anonymous mode works as before. Only `true`/`false`/`1`/`0` are accepted; any other value makes the AI routes fail until fixed. |
 
 ## Optional - search & image
 
@@ -55,6 +56,12 @@ groups them by purpose and explains when each is needed.
 | `NEXT_PUBLIC_API_BASE_URL` | Points the API client at a non-default origin (used when the backend is rewritten in another language). |
 | `NEXT_PUBLIC_AGENT_PY_URL` | Base URL of the Python agent service. When set, the account menu shows a "Python agent backend" toggle. |
 | `NEXT_PUBLIC_AGENT_TS_URL` | Base URL of the TypeScript agent service. When set + Python also set, surfaces a 3-way picker. |
+
+## Optional - security headers
+
+| Variable | Effect |
+|---|---|
+| `CSP_MODE` | Content-Security-Policy mode: `report-only` (default — violations are reported, nothing blocked), `enforce` (violations blocked), or `off` (no CSP header). See `docs/SECURITY.md` before switching to `enforce`. |
 
 ## Optional - Anthropic direct
 

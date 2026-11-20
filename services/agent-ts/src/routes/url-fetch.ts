@@ -15,14 +15,37 @@ import { normalizeUrl } from "@/server/url/validate"
 
 import type { AuthVars } from "../middleware/auth"
 import { requireAuth } from "../middleware/auth"
+import { createSlidingWindow, rateLimitKey } from "../rate-limit"
 
 const BodySchema = z.object({
   url: z.string().min(1).max(2000),
 })
 
+/** Per-IP fetch budget — the route makes an outbound request on the
+ *  caller's behalf, so cap it like `bookmarkRateLimit` in
+ *  `app/api/url/fetch/route.ts` (30/min/IP). */
+const urlFetchLimit = createSlidingWindow({ windowMs: 60_000, max: 30 })
+
+/** Test seam — clears the rate-limit buckets between cases. */
+export function _resetUrlFetchLimitForTest(): void {
+  urlFetchLimit._reset()
+}
+
 export const urlFetchRoutes = new Hono<{ Variables: AuthVars }>()
 
 urlFetchRoutes.post("/v1/url/fetch", requireAuth, async (c) => {
+  const verdict = urlFetchLimit.consume(rateLimitKey(c))
+  if (!verdict.allowed) {
+    c.header("Retry-After", String(verdict.retryAfterSec))
+    return c.json(
+      {
+        code: "rate_limit",
+        message: `Too many fetches. Retry in ${verdict.retryAfterSec}s.`,
+      },
+      429,
+    )
+  }
+
   let body: unknown
   try {
     body = await c.req.json()

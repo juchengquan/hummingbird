@@ -13,6 +13,16 @@ work, check the GitHub issues for your Hummingbird version.
 the key is set in `.env.local`. Restart `bun dev` after editing
 the file.
 
+## "Sign in required" instead of an AI answer
+
+The server sets `REQUIRE_AUTH_FOR_AI`, so AI features (chat, Explain,
+summaries, Compress, editor AI and autocomplete, table extraction)
+need a signed-in account. Click **Sign in** on the error bubble or
+the toast, sign in, then **Retry**. Uploads still work while signed
+out, but without the vision pass for scanned / layout-heavy PDFs.
+Operators: unset the variable (or set it to `false`) to allow
+anonymous use - see [Environment variables](21-environment-variables.md).
+
 ## "Magic-link email never arrives"
 
 In dev: check Inbucket at <http://localhost:54324>. In hosted

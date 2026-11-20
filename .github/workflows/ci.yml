@@ -64,6 +64,11 @@ jobs:
       - name: Bundle audit (fence enforcement)
         run: bun run audit:bundle
 
+      - name: Migration version prefixes are unique
+        # The Supabase CLI keys schema_migrations by the numeric prefix;
+        # two files with the same prefix break `supabase db reset`.
+        run: bun run check:migrations
+
       - name: Supabase types ↔ migrations alignment
         # Lightweight diff-pairing check — fails PRs that change a
         # migration without regenerating lib/shared/supabase/types.ts.

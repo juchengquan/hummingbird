@@ -425,7 +425,6 @@ export function diffFiles(prev: UploadedFile[], next: UploadedFile[]): SyncOp[] 
         extracted_text: f.extractedText ?? null,
         extraction_truncated: f.extractionTruncated ?? false,
         extracted_kind: f.extractedKind ?? null,
-        image_data_url: f.imageDataUrl ?? null,
         summary: f.summary ?? null,
         key_topics: f.keyTopics ?? [],
         uploaded_at: toISO(f.uploadedAt),
@@ -435,6 +434,12 @@ export function diffFiles(prev: UploadedFile[], next: UploadedFile[]): SyncOp[] 
         deleted_at: f.deletedAt ? toISO(f.deletedAt) : null,
       }
       if (f.storagePath) row.storage_path = f.storagePath
+      // Since store v32 `imageDataUrl` lives in IndexedDB and is usually
+      // absent from the in-memory row after a reload — so, like
+      // `storage_path`, only send it when present (never null-overwrite
+      // the cloud copy). A tombstone still clears it explicitly.
+      if (f.imageDataUrl) row.image_data_url = f.imageDataUrl
+      else if (f.deletedAt) row.image_data_url = null
       ops.push({
         kind: "upsert",
         target: "files",

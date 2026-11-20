@@ -97,9 +97,21 @@ export function SkillImportListener() {
             </p>
           ) : null}
           {shareable.body ? (
-            <p className="text-[12px] text-[var(--muted-foreground)] line-clamp-4 whitespace-pre-wrap border-l-2 border-[var(--border)] pl-2">
-              {shareable.body}
-            </p>
+            // Full text, scrollable — never clamped: a share link could
+            // otherwise hide most of the instructions it installs.
+            <div className="space-y-1">
+              <p className="text-[11px] text-[var(--muted-foreground)]">
+                Instructions ({shareable.body.length.toLocaleString()}{" "}
+                characters) — review them in full before importing:
+              </p>
+              <div
+                tabIndex={0}
+                aria-label="Full skill instructions"
+                className="max-h-64 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--muted)]/30 p-2 text-[12px] text-[var(--muted-foreground)] whitespace-pre-wrap break-words"
+              >
+                {shareable.body}
+              </div>
+            </div>
           ) : null}
         </div>
         <DialogFooter>

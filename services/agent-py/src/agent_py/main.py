@@ -36,6 +36,21 @@ from .settings import Settings, get_settings
 logger = structlog.get_logger(__name__)
 
 
+async def stop_poller(task: asyncio.Task[int], stop: asyncio.Event, *, grace_s: float) -> None:
+    """Graceful poller shutdown: ask the loop to stop after its current
+    tick, give an in-flight job up to `grace_s` to finish in place, then
+    cancel — the poller hands a cancelled job back to the queue (lease
+    expired on the spot) so the next worker resumes it. The DB pool must
+    still be open while this runs."""
+    stop.set()
+    done, _ = await asyncio.wait({task}, timeout=max(0.0, grace_s))
+    if not done:
+        logger.warning("lifespan.poller.grace_expired", grace_s=grace_s)
+        task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await task
+
+
 def create_app(*, enable_poller: bool = True) -> FastAPI:
     """Application factory.
 
@@ -58,9 +73,10 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
             return
         await db.init_pool(settings.SUPABASE_DB_URL)
         task: asyncio.Task[int] | None = None
+        stop = asyncio.Event()
         if settings.SUPABASE_DB_URL:
             task = asyncio.create_task(
-                poller.run_poll_loop(settings),
+                poller.run_poll_loop(settings, stop=stop),
                 name="agent-py.poller",
             )
             logger.info(
@@ -74,9 +90,7 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
             yield
         finally:
             if task is not None:
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+                await stop_poller(task, stop, grace_s=settings.SHUTDOWN_GRACE_SECONDS)
             await db.close_pool()
             logger.info("lifespan.shutdown.complete")
 

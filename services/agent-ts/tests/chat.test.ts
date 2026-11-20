@@ -534,11 +534,13 @@ describe("POST /v1/chat — per-IP rate-limit gate", () => {
     )
     // Smoke-test the key extractor directly — confirms the route's
     // bucket would route per-IP rather than via a shared counter.
+    // (Right-most-entry semantics + spoofing are covered in
+    // tests/rate-limit.test.ts.)
     const fakeReqA = {
-      req: { header: (n: string) => (n === "x-forwarded-for" ? "a.b.c.d" : undefined) },
+      req: { raw: { headers: new Headers({ "x-forwarded-for": "a.b.c.d" }) } },
     } as unknown as Parameters<typeof rateLimitKey>[0]
     const fakeReqB = {
-      req: { header: (n: string) => (n === "x-forwarded-for" ? "x.y.z.w" : undefined) },
+      req: { raw: { headers: new Headers({ "x-forwarded-for": "x.y.z.w" }) } },
     } as unknown as Parameters<typeof rateLimitKey>[0]
     expect(rateLimitKey(fakeReqA)).toBe("a.b.c.d")
     expect(rateLimitKey(fakeReqB)).toBe("x.y.z.w")

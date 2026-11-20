@@ -13,6 +13,7 @@ import { extractFile } from "@/server/extraction"
 
 import { createApp } from "../src/app"
 import { resetEnvCacheForTest } from "../src/env"
+import { EXTRACT_MAX_BODY_BYTES } from "../src/routes/extract"
 
 const SECRET = "test-secret-do-not-use-in-prod-32-bytes!"
 
@@ -171,5 +172,43 @@ describe("POST /v1/extract — route", () => {
     expect(body.kind).toBe("text")
     expect(body.text).toBe("hello world")
     expect(body.truncated).toBe(false)
+  })
+
+  test("office file failing the zip guard → 413 (parity with Next)", async () => {
+    const app = createApp()
+    const token = await makeJwt()
+    const form = new FormData()
+    // Not a zip at all — the zip guard rejects it before mammoth runs.
+    form.append(
+      "file",
+      new Blob(["not a zip"], {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      }),
+      "bomb.docx",
+    )
+    const res = await app.request("/v1/extract", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    })
+    expect(res.status).toBe(413)
+  })
+
+  test("oversized body → 413 before the multipart parser runs", async () => {
+    const app = createApp()
+    const token = await makeJwt()
+    // Declared length over the whole-body cap; the body itself is
+    // tiny, so a 413 proves the gate fires on the header alone.
+    const res = await app.request("/v1/extract", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "multipart/form-data; boundary=x",
+        "Content-Length": String(EXTRACT_MAX_BODY_BYTES + 1),
+      },
+      body: "--x--",
+    })
+    expect(res.status).toBe(413)
+    expect(((await res.json()) as { error: string }).error).toBe("File too large.")
   })
 })

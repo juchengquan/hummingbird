@@ -1,3 +1,6 @@
+-- verify-supabase-types: skip
+-- (Comment-only edit: cross-reference updated after the 0018 → 0033 rename.)
+--
 -- Artifact version history (capped, inline).
 --
 -- `updateArtifactContent` now snapshots the prior content into
@@ -6,7 +9,7 @@
 -- `lib/shared/types.ts`. Nullable + default NULL (not '[]') so pre-existing
 -- rows stay absent until first edited — the sync diff only writes a value
 -- when the artifact actually has versions. Mirrors
--- `0018_message_generated_files.sql`.
+-- `0033_message_generated_files.sql`.
 --
 -- Idempotent: column added only if missing.
 

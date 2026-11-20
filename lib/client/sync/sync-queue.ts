@@ -8,6 +8,15 @@ import "client-only"
  * Design notes:
  * - The queue is process-local but persisted to `localStorage` under
  *   `hummingbird-sync-queue`, so pending writes survive reloads.
+ * - Multi-tab: each tab owns (and flushes) only the ops it produced;
+ *   rows merged in from another tab are not re-enqueued
+ *   (`withSyncDiffSuppressed` in `use-sync.ts`). The storage key is a
+ *   per-tab crash-recovery journal and is last-writer-wins across tabs.
+ *   Merging other tabs' queues in would make two tabs flush the same
+ *   ops; the cost of not merging is that a tab closed while offline
+ *   with unflushed ops can lose them to another tab's write (the rows
+ *   themselves stay in the shared local store; only their cloud upload
+ *   is lost).
  * - It pauses entirely when the user is signed out, Supabase isn't
  *   configured, or the browser is offline. The producer side keeps
  *   enqueueing — replay happens once the gate opens.
@@ -25,6 +34,7 @@ import "client-only"
 import type { AppSupabaseClient } from "@/client/supabase/client"
 import { uuid } from "@/shared/uuid"
 import { getLocalDataOwner } from "@/client/sync/sync-owner"
+import { markPauseBaselineDirty } from "@/client/sync/pause-baseline"
 
 const STORAGE_KEY = "hummingbird-sync-queue"
 const MAX_BACKOFF_MS = 60_000
@@ -170,6 +180,7 @@ function pruneForeignOps(): void {
   const before = state.ops.length
   const kept = state.ops.filter((op) => op.ownerUserId === userId)
   if (kept.length === before) return
+  noteDroppedUnflushed(state.ops.filter((op) => op.ownerUserId !== userId))
   console.warn(
     `[sync] dropping ${before - kept.length} queued op(s) that belong to another account`
   )
@@ -356,12 +367,31 @@ export function configureSync(opts: {
  * currently configured for (producers only enqueue while signed in).
  */
 export function enqueue(op: NewSyncOp): void {
+  enqueueMany([op])
+}
+
+/**
+ * Appends several ops with ONE persist. The resume-from-pause upload
+ * (`use-sync.ts`) can produce thousands of ops at once; persisting the
+ * whole queue per op would make that O(n²).
+ */
+export function enqueueMany(ops: readonly NewSyncOp[]): void {
   ensureInit()
-  const clientOpId = op.clientOpId ?? cryptoRandomId()
-  const ownerUserId = op.ownerUserId ?? userId ?? undefined
-  state.ops.push({ ...op, clientOpId, ownerUserId } as SyncOp)
+  if (ops.length === 0) return
+  for (const op of ops) {
+    // `||`, not `??`: diff producers fill `clientOpId: ""` as a
+    // placeholder for the queue to replace.
+    const clientOpId = op.clientOpId || cryptoRandomId()
+    const ownerUserId = op.ownerUserId ?? userId ?? undefined
+    state.ops.push({ ...op, clientOpId, ownerUserId } as SyncOp)
+  }
   persist()
   scheduleFlush()
+}
+
+/** False while the browser reports itself offline (the flush gate). */
+export function isSyncOnline(): boolean {
+  return online
 }
 
 export function pendingOpCount(): number {
@@ -417,12 +447,45 @@ export function whenDrained(timeoutMs = 30_000): Promise<void> {
   })
 }
 
+/**
+ * Ops dropped WITHOUT reaching the cloud by a reset (sign-out) or by
+ * `pruneForeignOps` (another account signed in). In-memory, bounded.
+ *
+ * The pause baseline (`pause-baseline.ts`) assumes every queued op will
+ * flush eventually, so an op dropped this way must mark its row dirty
+ * there, or the edit it carried would never be uploaded on resume.
+ * Sign-out resets the queue around the same time React tears down
+ * `useSync`'s subscriber (which records the baseline), in either order:
+ *   - baseline already recorded → `markPauseBaselineDirty` updates it;
+ *   - not yet → the teardown takes these via `takeRecentlyDroppedOps`.
+ */
+const RECENTLY_DROPPED_CAP = 5_000
+let recentlyDropped: SyncOp[] = []
+
+function noteDroppedUnflushed(ops: readonly SyncOp[]): void {
+  if (ops.length === 0) return
+  recentlyDropped = [...recentlyDropped, ...ops].slice(-RECENTLY_DROPPED_CAP)
+  markPauseBaselineDirty(ops)
+}
+
+/**
+ * Returns (and forgets) the recently dropped ops owned by
+ * `ownerUserId`. Other owners' entries are forgotten too: a baseline is
+ * only recorded for the account the local data belongs to.
+ */
+export function takeRecentlyDroppedOps(ownerUserId: string): SyncOp[] {
+  const mine = recentlyDropped.filter((op) => op.ownerUserId === ownerUserId)
+  recentlyDropped = []
+  return mine
+}
+
 /** Sign-out / tests / hard resets. Drops every pending op. */
 export function resetSyncQueue(): void {
   if (scheduled !== null) {
     clearTimeout(scheduled)
     scheduled = null
   }
+  noteDroppedUnflushed(state.ops)
   state = { ops: [], notBefore: 0 }
   flushedJournal = []
   persist()

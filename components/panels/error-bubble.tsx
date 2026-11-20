@@ -1,21 +1,33 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { AlertTriangle, ChevronDown, RotateCcw } from "lucide-react"
+import { AlertTriangle, ChevronDown, LogIn, RotateCcw } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { AUTH_REQUIRED_TITLE, openSignIn } from "@/client/auth/auth-required"
+import { AUTH_REQUIRED_MESSAGE } from "@/shared/api-errors"
 import { cn } from "@/shared/utils"
 import { CHAT_MODELS, DEFAULT_CHAT_MODEL } from "@/shared/models"
 import type { MessageError } from "@/shared/types"
 
 const ERROR_TITLES: Record<string, string> = {
   auth: "Authentication failed",
+  auth_required: AUTH_REQUIRED_TITLE,
   rate_limit: "Rate limited",
   context_window: "Conversation too long",
   invalid_model: "Model unavailable",
+  unknown_model: "Model not available on this server",
   provider: "Provider error",
   network: "Network error",
   unknown: "Something went wrong",
+}
+
+/** Optional one-line guidance shown under the title, for codes where
+ *  the server's raw message alone doesn't tell the user what to do. */
+const ERROR_HINTS: Record<string, string> = {
+  auth_required: AUTH_REQUIRED_MESSAGE,
+  unknown_model:
+    "This model isn't available on this server — pick another model or add your own gateway key.",
 }
 
 const RATE_LIMIT_COOLDOWN_S = 30
@@ -56,9 +68,16 @@ interface ErrorBubbleProps {
  *
  *   - `auth`            → Dismiss + Change model (Retry hidden — same
  *                          setup will fail)
+ *   - `auth_required`   → Sign in (primary) + Retry + Dismiss — the
+ *                          server needs a signed-in caller
+ *                          (REQUIRE_AUTH_FOR_AI); Retry works once
+ *                          signed in. No Change model (not a model issue).
  *   - `rate_limit`      → Retry with a 30-second cooldown countdown
  *   - `invalid_model`   → Try {fallback} as the primary action; Retry
  *                          hidden (same model will fail again)
+ *   - `unknown_model`   → same as `invalid_model`, plus a hint that the
+ *                          model isn't in this server's catalogue (pick
+ *                          another or bring your own gateway key)
  *   - `provider`        → Retry + Try {fallback} + Change model
  *   - `network`         → Retry (no "Change model" since the network is
  *                          the issue, not the model)
@@ -91,13 +110,16 @@ export function ErrorBubble({
   }, [cooldown])
 
   const title = ERROR_TITLES[error.code] ?? ERROR_TITLES.unknown
+  const hint = ERROR_HINTS[error.code]
   // `auth` means the API key is missing/invalid — retrying with the same
   // setup will hit the same wall. Hide Retry and let the user dismiss or
   // pick a different model. `context_window` means the conversation
   // overflowed; retrying same model + same history hits the same wall.
+  const authRequired = error.code === "auth_required"
   const canRetrySameModel =
     error.code !== "auth" &&
     error.code !== "invalid_model" &&
+    error.code !== "unknown_model" &&
     error.code !== "context_window"
   // Quick-fallback only makes sense when the model itself failed (invalid)
   // or the provider behind it returned an error. For rate_limit / network
@@ -106,6 +128,7 @@ export function ErrorBubble({
   // available so the user can recover in one click.
   const fallback =
     (error.code === "invalid_model" ||
+      error.code === "unknown_model" ||
       error.code === "provider" ||
       error.code === "context_window") &&
     onTryFallback
@@ -123,6 +146,11 @@ export function ErrorBubble({
         <AlertTriangle size={14} className="text-[var(--destructive)] mt-0.5 shrink-0" />
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-[var(--destructive)]">{title}</p>
+          {hint && (
+            <p className="text-xs text-[var(--foreground)] mt-0.5 break-words">
+              {hint}
+            </p>
+          )}
           {error.detail && (
             <p className="text-xs text-[var(--muted-foreground)] mt-0.5 break-words">
               {error.detail}
@@ -131,12 +159,23 @@ export function ErrorBubble({
         </div>
       </div>
       <div className="flex flex-wrap gap-1.5">
-        {canRetrySameModel && (
+        {authRequired && (
           <Button
             size="sm"
             variant="secondary"
+            onClick={openSignIn}
+            className="h-7 gap-1.5 text-xs"
+          >
+            <LogIn size={12} />
+            Sign in
+          </Button>
+        )}
+        {canRetrySameModel && (
+          <Button
+            size="sm"
             onClick={onRetry}
             disabled={cooldown > 0}
+            variant={authRequired ? "ghost" : "secondary"}
             className="h-7 gap-1.5 text-xs"
             title={
               cooldown > 0
@@ -160,7 +199,7 @@ export function ErrorBubble({
             Try {fallback.label}
           </Button>
         )}
-        {onChangeModel && error.code !== "network" && (
+        {onChangeModel && error.code !== "network" && !authRequired && (
           <Button
             size="sm"
             variant="ghost"

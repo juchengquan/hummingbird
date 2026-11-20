@@ -13,6 +13,15 @@
 --
 -- Idempotent: column add is guarded; the constraint is dropped-if-exists
 -- before recreate.
+--
+-- Renamed from `0018_message_generated_files.sql`, which collided with
+-- `0018_realtime_task_events.sql` (the Supabase CLI keys
+-- `supabase_migrations.schema_migrations` by the numeric prefix, so two
+-- `0018`s abort `supabase db reset` / `start` with a duplicate-key error
+-- and make `migration up` treat this file as already applied). It has no
+-- ordering dependency on 0019-0031 and is fully idempotent, so moving it
+-- to the end is safe and re-running it on a DB that already has it is a
+-- no-op. See docs/SUPABASE_SETUP.md "Migration 0018 collision".
 
 alter table messages
   add column if not exists generated_files jsonb;

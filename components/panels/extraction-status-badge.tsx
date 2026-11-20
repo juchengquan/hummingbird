@@ -1,6 +1,7 @@
 "use client"
 
 import { Loader2, AlertCircle, FileQuestion, Scissors } from "lucide-react"
+import { useFileBlobFields } from "@/client/files/use-file-blob-fields"
 import { cn } from "@/shared/utils"
 import type { UploadedFile } from "@/shared/types"
 
@@ -29,6 +30,9 @@ export function ExtractionStatusBadge({
 }: ExtractionStatusBadgeProps) {
   const status = file.extractionStatus
   const truncated = !!file.extractionTruncated
+  // `extractedFullText` lives in IndexedDB since store v32 — only load
+  // it for truncated files, the one case the badge reads it.
+  const fullText = useFileBlobFields(truncated ? file : null).extractedFullText
 
   const base =
     size === "compact"
@@ -83,7 +87,7 @@ export function ExtractionStatusBadge({
     // sections that didn't fit the inline budget — otherwise
     // "Truncated" alone reads as "the model is missing content,"
     // which understates the actual capability.
-    const extraKb = indexedExtraKb(file)
+    const extraKb = indexedExtraKb(file.extractedText, fullText)
     return (
       <span
         className={cn(base, "text-amber-600 dark:text-amber-500", className)}
@@ -108,9 +112,12 @@ export function ExtractionStatusBadge({
  * Phase 3 retrieval), returns the size of the extra bytes in KB
  * (rounded). Returns null when there's nothing extra to advertise.
  */
-function indexedExtraKb(file: UploadedFile): number | null {
-  const inline = file.extractedText?.length ?? 0
-  const full = file.extractedFullText?.length ?? 0
+function indexedExtraKb(
+  extractedText: string | undefined,
+  extractedFullText: string | undefined
+): number | null {
+  const inline = extractedText?.length ?? 0
+  const full = extractedFullText?.length ?? 0
   if (full <= inline) return null
   return Math.round((full - inline) / 1024)
 }

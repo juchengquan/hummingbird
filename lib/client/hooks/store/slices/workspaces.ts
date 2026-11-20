@@ -165,6 +165,21 @@ export const createWorkspacesSlice: SliceCreator<WorkspacesSlice> = (set) => ({
       const newArtifacts = state.artifacts.filter((a) => a.workspaceId !== workspaceId)
       const newDocuments = state.documents.filter((d) => d.workspaceId !== workspaceId)
       const newProjectTasks = state.projectTasks.filter((t) => t.workspaceId !== workspaceId)
+      // Workspace-scoped prompts / personas / user skills go too. Hard
+      // removal (not a tombstone), like conversations above: the
+      // `prompts` diff turns a vanished row into a `delete` op, which is
+      // a harmless no-op after the cloud's `on delete cascade` from
+      // `workspaces` — whereas a tombstone upsert would reference a
+      // workspace the cloud has already deleted (FK violation).
+      // Agents + user skills are local-only (not synced).
+      const newPrompts = state.prompts.filter((p) => p.workspaceId !== workspaceId)
+      const newAgents = state.agents.filter((a) => a.workspaceId !== workspaceId)
+      const newUserSkills = state.userSkills.filter((s) => s.workspaceId !== workspaceId)
+      const newActiveAgentId =
+        state.activeAgentId !== null &&
+        !newAgents.some((a) => a.id === state.activeAgentId)
+          ? null
+          : state.activeAgentId
       // Drop conversation-private joins whose conversation lived in
       // this workspace, then GC files that lost their last reference.
       // `gcOrphanedAttachments` does the ref-count + tombstone logic;
@@ -258,6 +273,10 @@ export const createWorkspacesSlice: SliceCreator<WorkspacesSlice> = (set) => ({
         artifacts: newArtifacts,
         documents: newDocuments,
         projectTasks: newProjectTasks,
+        prompts: newPrompts,
+        agents: newAgents,
+        userSkills: newUserSkills,
+        activeAgentId: newActiveAgentId,
         activeDocumentId: newActiveDocumentId,
         mcpServers: newMcpServers,
         mcpResourceBindings: newMcpBindings,

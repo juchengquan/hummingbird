@@ -39,7 +39,7 @@ import {
   useWorkspaceProjectTasks,
 } from "@/client/hooks/use-store"
 import { useTaskRunContext } from "@/client/agent/task-run-context"
-import { apiClient } from "@/client/api-client"
+import { apiClient, isAuthRequiredResult } from "@/client/api-client"
 import { downloadAsFile, safeFilename } from "@/client/export"
 import {
   composeSystemPrompts,
@@ -305,6 +305,8 @@ export function ProjectTasksPanel() {
         goal,
         existingTitles: tasks.map((t) => t.title),
       })
+      // `auth_required`: apiClient already raised the "Sign in" toast.
+      if (isAuthRequiredResult(res)) return
       if (!res || res.titles.length === 0) {
         toast.error("Couldn't generate tasks. Try again or refine the goal.")
         return

@@ -3,6 +3,8 @@ import { useSyncExternalStore } from 'react'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 
+import { offloadFileBlobs } from "@/client/files/blob-fields"
+
 import { debouncedStorage } from "./store/debounced-storage"
 import { runMigrations, STORE_VERSION } from "./store/migrate"
 import { partializeState, reviveAndPruneState } from "./store/persist"
@@ -171,6 +173,14 @@ export interface AppState
     ConversationsSlice,
     AccountInstructionsSlice {}
 
+/** localStorage key of the persisted main store. */
+export const STORE_STORAGE_KEY = 'hummingbird-storage'
+
+/** The debounced storage behind `useStore`'s persist middleware.
+ *  Exported for the cross-tab merge (`store/cross-tab-sync.ts`), which
+ *  needs to inspect / drop this tab's buffered write. */
+export const persistStorage = debouncedStorage()
+
 export const useStore = create<AppState>()(
   persist(
     (set, get, api) => ({
@@ -195,12 +205,17 @@ export const useStore = create<AppState>()(
       ...createAccountInstructionsSlice(set, get, api),
     }),
     {
-      name: 'hummingbird-storage',
+      name: STORE_STORAGE_KEY,
       version: STORE_VERSION,
       migrate: runMigrations,
       onRehydrateStorage: () => (state) => {
         if (state) reviveAndPruneState(state)
         notifyHydrated()
+        // Move any blob fields still carried by the rehydrated rows
+        // (pre-v32 data, or a previous offload that never committed)
+        // into IndexedDB. Deferred: hydration can run inside `create()`,
+        // before `useStore` is assigned.
+        setTimeout(scheduleFileBlobOffload, 0)
       },
       partialize: partializeState,
       // Coalesce localStorage writes — the default storage writes the
@@ -208,10 +223,30 @@ export const useStore = create<AppState>()(
       // keys + per-token SSE updates that's a meaningful amount of
       // JSON.stringify churn. The wrapper flushes on `pagehide` so
       // committed state survives navigation.
-      storage: createJSONStorage(() => debouncedStorage()),
+      storage: createJSONStorage(() => persistStorage),
     }
   )
 )
+
+// --- Blob-field offload (v32, `client/files/blob-fields.ts`) -------------
+// Every `files` change may carry a new `imageDataUrl` / `extractedFullText`
+// (upload, re-extraction, cloud pull, cross-tab merge). Write those to
+// IndexedDB; once committed, `partializeState` strips them — so poke the
+// persist middleware (`setState({})`) to rewrite localStorage without them.
+let offloadRepersistQueued = false
+function scheduleFileBlobOffload(): void {
+  void offloadFileBlobs(useStore.getState().files).then((becameDurable) => {
+    if (!becameDurable || offloadRepersistQueued) return
+    offloadRepersistQueued = true
+    queueMicrotask(() => {
+      offloadRepersistQueued = false
+      useStore.setState({})
+    })
+  })
+}
+useStore.subscribe((state, prev) => {
+  if (state.files !== prev.files) scheduleFileBlobOffload()
+})
 
 // Separate store for session-based state (cleared when browser tab is closed)
 interface SessionState {

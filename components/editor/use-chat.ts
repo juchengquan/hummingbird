@@ -20,6 +20,8 @@ import { toast } from 'sonner';
 
 import { aiChatPlugin } from '@/components/editor/plugins/ai-kit';
 import { apiUrls } from '@/client/api-client';
+import { notifyAuthRequired } from '@/client/auth/auth-required';
+import { isAuthRequiredError } from '@/shared/api-errors';
 
 import { discussionPlugin } from './plugins/discussion-kit';
 import { withAIBatch } from '@platejs/ai';
@@ -107,12 +109,21 @@ export const useChat = () => {
             /* non-JSON body — fall through to mock */
           }
 
+          // REQUIRE_AUTH_FOR_AI: the caller must sign in — toast with a
+          // "Sign in" action instead of the generic failure / mock.
+          if (isAuthRequiredError(errorBody)) {
+            notifyAuthRequired();
+            return res;
+          }
+
           if (errorBody?.code && errorBody.code !== 'auth') {
             const label =
               errorBody.code === 'rate_limit'
                 ? 'Rate limited'
                 : errorBody.code === 'invalid_model'
                   ? 'Model unavailable'
+                  : errorBody.code === 'unknown_model'
+                    ? "This model isn't available on this server — pick another model or add your own gateway key"
                   : errorBody.code === 'provider'
                     ? 'Provider error'
                     : 'Editor AI failed';

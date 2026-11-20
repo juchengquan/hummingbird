@@ -156,7 +156,7 @@ async def test_live_mode_flagged_respond_action_dispatches_to_executor(
             assert isinstance(payload, executor.RespondActionPayload)
             assert payload.request_id == "tu_1"
             assert payload.approved is True
-            mark_done.assert_awaited_once_with(db._pool, job.id)
+            mark_done.assert_awaited_once_with(db._pool, job.id, attempts=job.attempts)
             release.assert_not_called()
     finally:
         db._pool = None
@@ -215,7 +215,7 @@ async def test_live_mode_flagged_continue_action_dispatches_to_executor(
         ):
             await poller._tick(live_settings)
             execute.assert_awaited_once()
-            mark_done.assert_awaited_once_with(db._pool, job.id)
+            mark_done.assert_awaited_once_with(db._pool, job.id, attempts=job.attempts)
             release.assert_not_called()
     finally:
         db._pool = None
@@ -246,7 +246,7 @@ async def test_live_mode_flagged_start_dispatches_to_executor_and_marks_done(
         ):
             await poller._tick(live_settings)
             execute.assert_awaited_once()
-            mark_done.assert_awaited_once_with(db._pool, job.id)
+            mark_done.assert_awaited_once_with(db._pool, job.id, attempts=job.attempts)
             mark_failed.assert_not_called()
             release.assert_not_called()
     finally:

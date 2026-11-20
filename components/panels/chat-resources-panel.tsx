@@ -19,6 +19,8 @@ import { processSelectedFiles } from "@/client/file-utils"
 import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT } from "@/shared/upload-config"
 import { runExtraction } from "@/client/extract"
 import { persistFile } from "@/client/files/persist"
+import { getFileImageDataUrl } from "@/client/files/blob-fields"
+import { toast } from "sonner"
 import { NotesTab } from "@/components/panels/notes-tab"
 import { ArtifactsTab } from "@/components/panels/artifacts-tab"
 import { PinsTab } from "@/components/panels/pins-tab"
@@ -64,18 +66,25 @@ export function ChatResourcesPanel({ mode = "chat" }: ChatResourcesPanelProps = 
   // images via the same path.
   const handleOpenImage = (fileId: string) => {
     const file = files.find((f) => f.id === fileId)
-    if (!file?.imageDataUrl) return
-    openImageViewer({
-      images: [
-        {
-          id: file.id,
-          url: file.imageDataUrl,
-          alt: file.name,
-          filename: file.name,
-          sizeBytes: file.size,
-          format: (file.type.split("/")[1] ?? "png").toLowerCase(),
-        },
-      ],
+    if (!file) return
+    // Data URLs live in IndexedDB since store v32.
+    void getFileImageDataUrl(file).then((url) => {
+      if (!url) {
+        toast.error("Image preview not available on this device")
+        return
+      }
+      openImageViewer({
+        images: [
+          {
+            id: file.id,
+            url,
+            alt: file.name,
+            filename: file.name,
+            sizeBytes: file.size,
+            format: (file.type.split("/")[1] ?? "png").toLowerCase(),
+          },
+        ],
+      })
     })
   }
 

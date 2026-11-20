@@ -12,6 +12,7 @@ import {
   selectModel,
 } from '@/server/model-provider'
 import { categorizeError } from '@/shared/api-errors'
+import { requireAiAuth } from '@/server/auth/require-ai-auth'
 import { ChatRequestSchema } from '@/shared/api-schemas'
 import {
   SERVER_SKILLS,
@@ -49,6 +50,10 @@ import { shouldOfferMemoryTools } from '@/server/memory/forget-match'
 import { loadMemoryState } from '@/server/memory/load-facts'
 import { renderMemoryBlock } from '@/server/memory/render'
 import { buildMemoryTools, MEMORY_TOOLS_NOTE } from '@/server/memory/tools'
+import {
+  applyMemoryWritePolicy,
+  createTurnTaint,
+} from '@/server/memory/untrusted-content-policy'
 import {
   type ResolvedAttachment,
 } from '@/server/attachments/render'
@@ -311,6 +316,10 @@ async function maybeEmitCodeResultFrames(
  * a reference without the tool would just be confusing context.
  */
 export async function POST(req: NextRequest) {
+  // REQUIRE_AUTH_FOR_AI gate — before the body is read or any model /
+  // tool work starts. No-op when the flag is off / Supabase is unset.
+  const aiAuth = await requireAiAuth()
+  if (!aiAuth.ok) return aiAuth.response
   let raw: unknown
   try {
     raw = await req.json()
@@ -548,6 +557,11 @@ export async function POST(req: NextRequest) {
     const memTools = buildMemoryTools({ conversationId: null })
     tools.rememberFact = memTools.rememberFact
     tools.forgetFact = memTools.forgetFact
+    // Prompt-injection guard: once a web/MCP/file/sandbox tool has run
+    // this turn, `rememberFact` refuses (with a tool result telling the
+    // model to have the user ask explicitly) so fetched content can't
+    // plant persistent memories. Fresh taint per request = per turn.
+    Object.assign(tools, applyMemoryWritePolicy(tools, createTurnTaint()))
   }
 
   // Memory block: facts (if any) + the tools note (when offered, so

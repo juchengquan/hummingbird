@@ -26,8 +26,8 @@ interface FilesTabBodyProps {
   onRequestDelete: (fileId: string) => void
   onOpenPdf: (fileId: string) => void
   /** Open an attached image in the shared right-side image viewer.
-   *  Only invoked for rows whose file has `extractedKind === "image"`
-   *  and an in-memory `imageDataUrl` to render. */
+   *  Only invoked for rows whose file has `extractedKind === "image"`;
+   *  the data URL is resolved asynchronously from IndexedDB. */
   onOpenImage: (fileId: string) => void
   /** Open a `.docx` file in the shared right-side docx viewer.
    *  Invoked for rows whose mime/extension is Word. */
@@ -210,12 +210,10 @@ export function FilesTabBody({
                     const isPdf =
                       file.type === "application/pdf" ||
                       lowerName.endsWith(".pdf")
-                    // Image preview requires the in-memory data URL —
-                    // legacy rows without `imageDataUrl` can't be
-                    // viewed inline, so we hide the button rather than
-                    // open an empty viewer.
-                    const isImage =
-                      file.extractedKind === "image" && !!file.imageDataUrl
+                    // The data URL lives in IndexedDB (store v32) and is
+                    // resolved on click; `onOpenImage` toasts when this
+                    // device doesn't have it.
+                    const isImage = file.extractedKind === "image"
                     const isDocx =
                       file.type ===
                         "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||

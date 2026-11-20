@@ -1,11 +1,21 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-06-14T01:14:57Z",
+  "generatedAt": "2026-11-20T15:24:40Z",
   "panels": [
     {
       "id": "agents-dialog",
       "title": "Agents Dialog",
       "sourceFile": "components/panels/agents-dialog.tsx"
+    },
+    {
+      "id": "artifact-diff-view",
+      "title": "Artifact Diff View",
+      "sourceFile": "components/panels/artifact-diff-view.tsx"
+    },
+    {
+      "id": "artifact-history-panel",
+      "title": "Artifact History Panel",
+      "sourceFile": "components/panels/artifact-history-panel.tsx"
     },
     {
       "id": "artifacts-tab",
@@ -38,9 +48,29 @@
       "sourceFile": "components/panels/chat-resources-panel.tsx"
     },
     {
+      "id": "citation-cell-editor",
+      "title": "Citation Cell Editor",
+      "sourceFile": "components/panels/citation-cell-editor.tsx"
+    },
+    {
       "id": "citation-table",
       "title": "Citation Table View",
       "sourceFile": "components/panels/citation-table.tsx"
+    },
+    {
+      "id": "citation-table-header",
+      "title": "Citation Table Header",
+      "sourceFile": "components/panels/citation-table-header.tsx"
+    },
+    {
+      "id": "citation-table-row",
+      "title": "Citation Table Row",
+      "sourceFile": "components/panels/citation-table-row.tsx"
+    },
+    {
+      "id": "code-result",
+      "title": "Code Result",
+      "sourceFile": "components/panels/code-result.tsx"
     },
     {
       "id": "context-meter",
@@ -66,6 +96,11 @@
       "id": "error-bubble",
       "title": "Error Bubble",
       "sourceFile": "components/panels/error-bubble.tsx"
+    },
+    {
+      "id": "extract-table-popover",
+      "title": "Extract Table Popover",
+      "sourceFile": "components/panels/extract-table-popover.tsx"
     },
     {
       "id": "extraction-status-badge",
@@ -307,6 +342,17 @@
   ],
   "skills": [
     {
+      "id": "codeInterpreter",
+      "name": "Code interpreter",
+      "description": "Let the model run Python in a sandboxed microVM and return stdout plus charts (matplotlib). Network is off; pandas/numpy/matplotlib are available. Requires a configured local sandbox.",
+      "slashTriggers": [
+        "code",
+        "run"
+      ],
+      "requiresEnv": true,
+      "sourceFile": "lib/shared/skills/registry.ts"
+    },
+    {
       "id": "imageGen",
       "name": "Image generation",
       "description": "Let the model generate images via Minimax (text-to-image, or image-to-image when you provide a reference URL). Tight per-turn cap because each generation costs ~1–3¢.",
@@ -423,6 +469,30 @@
       "sourceFile": ".env.example"
     },
     {
+      "id": "CODE_SANDBOX_API_KEY",
+      "description": "(no description)",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "CODE_SANDBOX_BASE_URL",
+      "description": "(no description)",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "CODE_SANDBOX_ENABLED",
+      "description": "Code interpreter sandbox (optional). Set CODE_SANDBOX_ENABLED=1 to register the `runCode` skill and execute model-written Python/JS in a local microsandbox microVM (libkrun; HVF on Apple Silicon). Network is OFF inside the sandbox; pandas/numpy/matplotlib available (see image note below). Absent → the skill is simply not registered (no mock). CODE_SANDBOX_BASE_URL also enables it and is reserved for a future remote backend (the local microVM runtime ignores the URL). See docs/PLAN-execution-sandbox.md + docs/PLAN-code-interpreter.md.",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "CSP_MODE",
+      "description": "Content-Security-Policy mode (optional). `proxy.ts` mints a per-request nonce and emits a strict nonce + 'strict-dynamic' policy (built by lib/server/security/csp.ts); violations are POSTed to /api/csp-report and logged as `{\"evt\":\"csp_violation\",…}` lines. report-only (default) → Content-Security-Policy-Report-Only: nothing is blocked, violations are only reported enforce               → Content-Security-Policy: violations are blocked off                   → no CSP header at all (other security headers stay) Unset or unrecognised → report-only. Read docs/SECURITY.md before flipping to `enforce` (live-artifact / MCP-app frames inherit the policy).",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
       "id": "EMBEDDINGS_API_KEY",
       "description": "(no description)",
       "required": true,
@@ -449,6 +519,12 @@
     {
       "id": "GOOGLE_API_KEY",
       "description": "Cross-family verifier key — used when VERIFY_PROVIDER=google. Either GOOGLE_API_KEY or GEMINI_API_KEY works (GOOGLE_API_KEY is checked first).",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "MCP_ALLOW_PRIVATE_HOSTS",
+      "description": "MCP private-host opt-in — optional, default off. Every MCP server URL (local-mode request bodies, cloud-mode rows, saves) is SSRF-checked and must resolve to a public address. Set to `true` to also allow loopback / RFC 1918 / `.local`-style hosts — e.g. an MCP server on `http://localhost:3001/mcp` during single-user local dev. Link-local and cloud-metadata addresses (169.254.169.254 etc.) stay blocked even then. Do NOT enable on a shared/hosted deployment: any user could then point the server at your internal network. Honoured by Next.js and services/agent-ts alike.",
       "required": true,
       "sourceFile": ".env.example"
     },
@@ -525,6 +601,12 @@
       "sourceFile": ".env.example"
     },
     {
+      "id": "REQUIRE_AUTH_FOR_AI",
+      "description": "Require sign-in for AI — optional, default off. When `true` (or `1`) AND Supabase is configured above, the routes that spend model budget (/api/chat, /api/summarize, /api/ai/command, /api/ai/complete, /api/extract-table, /api/memory/extract) answer anonymous callers with `401 { code: \"auth_required\" }`, and /api/extract skips its vision pass for them (plain text extraction still works). The session is verified server-side with Supabase `getUser()`. Off / unset / no Supabase → anonymous mode works exactly as before. Accepted values: true, false, 1, 0 (case-insensitive). Anything else is a configuration error: the gated routes fail with 500 until it's fixed (never silently open). Server-only — the browser learns it from the 401, not from an env var.",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
       "id": "SUPABASE_DB_URL",
       "description": "Direct Postgres connection string — server-side only. Required by the Python agent service's Phase 1+ poll loop (services/agent-py/poller.py) which needs `FOR UPDATE SKIP LOCKED` semantics that the transaction pooler doesn't expose. Use the *direct* connection from Supabase's dashboard (the one ending in `db.<project>.supabase.co:5432`), NOT the pooler (`*.pooler.supabase.com:6543`). Empty in dev → poller no-ops every tick (the service still serves /healthz + /readyz).",
       "required": true,
@@ -549,6 +631,12 @@
       "sourceFile": ".env.example"
     },
     {
+      "id": "TRUSTED_PROXY_HOPS",
+      "description": "Trusted reverse-proxy hops — how many proxies in front of Next.js each append the peer address to `X-Forwarded-For`. The per-IP rate limiter (and the anonymous summarize-cache scope) reads the client IP from the entry this many positions from the RIGHT; entries further left are client-supplied and ignored. Default 1 (one Caddy/Nginx on the self-hosted VM, or Vercel's edge). Set 2 for e.g. Cloudflare → Caddy → Next. Set 0 when nothing sits in front of Next.js (XFF is then ignored and all anonymous traffic shares one rate-limit bucket). On Vercel (`VERCEL` set) the platform's `x-real-ip` header is used first. services/agent-ts reads the same var with the same semantics.",
+      "required": false,
+      "sourceFile": ".env.example"
+    },
+    {
       "id": "VERIFY_MODEL",
       "description": "Citation verifier model — optional. When set, the Python agent service runs a post-run citation pass on Deep Research reports: each cited claim is checked against its sources and the result shows a confidence chip + flagged claims (see docs/PLAN-citation-verifiability.md). Empty = OFF. Use a CHEAP model id (ideally cheaper/weaker than the answerer — cross- checking your own output is weaker). Uses the same ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL client, so it's a no-op without a key regardless.",
       "required": true,
@@ -558,6 +646,12 @@
       "id": "VERIFY_PROVIDER",
       "description": "Verifier provider family — optional. Default \"anthropic\" preserves the legacy same-family behaviour. Set to \"google\" to cross-check the answer with a different model family (a model is a weak judge of its own output). The Google path needs GOOGLE_API_KEY (or GEMINI_API_KEY) and the optional google-generativeai SDK; if either is missing it falls back to Anthropic with a one-shot log warning.",
       "required": false,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "VISION_MODEL",
+      "description": "Vision document extraction (optional). Picks the vision-capable model used to transcribe layout-rich / scanned PDFs (render pages → image → markdown tables/captions) on top of the text-only pass. Must name a model flagged `supportsVision` in config/models.json. Unset → the first `supportsVision` model in the registry is used; if none is flagged, the vision pass is skipped entirely (text-only extraction). See docs/PLAN-multimodal-docs.md. Example: `anthropic/claude-sonnet-4.6`.",
+      "required": true,
       "sourceFile": ".env.example"
     }
   ],

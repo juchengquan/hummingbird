@@ -10,7 +10,7 @@ import { Copy, Pencil, RotateCcw, Check, X, Bookmark, Archive, Send, GitBranch, 
 import { toast } from "sonner"
 import { cn } from "@/shared/utils"
 import { copyText } from "@/client/export"
-import { apiClient } from "@/client/api-client"
+import { apiClient, isAuthRequiredResult } from "@/client/api-client"
 import { extractCodeBlocks } from "@/shared/code-blocks"
 import { MarkdownPreview } from "@/components/markdown-preview"
 import { MessageLiveArtifacts } from "@/components/live-artifact/message-live-artifacts"
@@ -221,6 +221,8 @@ function ChatMessageImpl({
         })),
         ...(hints ? { columnHints: hints } : {}),
       })
+      // `auth_required`: apiClient already raised the "Sign in" toast.
+      if (isAuthRequiredResult(table)) return
       if (!table) {
         toast.error("Couldn't extract a table")
         return

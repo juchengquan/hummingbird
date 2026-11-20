@@ -84,7 +84,7 @@ Everything the app uses today. The codebase has zero hosted-only
 dependencies (no Realtime, no Edge Functions, no managed-only features),
 so every feature gated by `lib/shared/supabase/env.ts` lights up:
 
-- All seventeen migrations (`supabase/migrations/0001_schema.sql`,
+- All migrations (`supabase/migrations/0001_schema.sql`,
   `0002_rls_policies.sql`, `0003_storage.sql`,
   `0004_conversation_files.sql`, `0005_mcp.sql`,
   `0006_url_bookmarks.sql`, `0007_file_full_text.sql`,
@@ -92,9 +92,13 @@ so every feature gated by `lib/shared/supabase/env.ts` lights up:
   `0010_message_generated_images.sql`, `0011_prompts.sql`,
   `0012_tasks.sql`, `0013_task_checkpoint.sql`,
   `0014_task_jobs.sql`, `0015_workspace_canvas.sql`,
-  `0016_project_mode.sql`, `0017_prompts_workspace.sql`) apply
-  identically. `0005_mcp.sql` enables `pgcrypto` itself — no separate
-  extension toggle.
+  `0016_project_mode.sql`, `0017_prompts_workspace.sql`, and every
+  later `NNNN_*.sql` file) apply identically. Each file has a unique
+  numeric prefix — the CLI keys `schema_migrations` by it; see
+  `docs/SUPABASE_SETUP.md` → "Migration 0018 collision" for the one
+  historical clash (`0018_message_generated_files.sql` → `0033_…`).
+  `0005_mcp.sql` enables `pgcrypto` itself — no separate extension
+  toggle.
 - **MCP integration** — full tools + resources + cloud-mode
   credentials. Set `MCP_ENCRYPTION_KEY` in `.env.local` to unlock
   the Cloud radio in the Add Server dialog. See **Step 5** below.

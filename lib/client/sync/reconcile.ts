@@ -42,6 +42,7 @@ import type {
 import type { AppSupabaseClient } from "@/client/supabase/client"
 import type { Json } from "@/shared/supabase/types"
 import { parseCanvasState } from "@/shared/canvas/types"
+import { loadFileBlobFieldsMap } from "@/client/files/blob-fields"
 import { useStore } from "@/client/hooks/use-store"
 import { setSyncSnapshot } from "@/client/hooks/use-sync"
 import { mergeCloudSnapshot, type MergeOptions } from "@/client/sync/snapshot-merge"
@@ -832,6 +833,8 @@ export async function bulkUploadLocalState(
   // files (storage_path / external_url stay null at this stage; the
   // upload code path is responsible for filling them)
   {
+    // Store v32: full text + image data URLs live in IndexedDB.
+    const blobs = await loadFileBlobFieldsMap(snapshot.files)
     const r = await uploadRows(
       client,
       "files",
@@ -844,9 +847,9 @@ export async function bulkUploadLocalState(
         extraction_status: f.extractionStatus ?? null,
         extracted_text: f.extractedText ?? null,
         extraction_truncated: f.extractionTruncated ?? false,
-        full_text: f.extractedFullText ?? null,
+        full_text: blobs.get(f.id)?.extractedFullText ?? null,
         extracted_kind: f.extractedKind ?? null,
-        image_data_url: f.imageDataUrl ?? null,
+        image_data_url: blobs.get(f.id)?.imageDataUrl ?? null,
         summary: f.summary ?? null,
         key_topics: f.keyTopics ?? [],
         uploaded_at: f.uploadedAt.toISOString(),

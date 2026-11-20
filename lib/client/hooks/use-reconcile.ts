@@ -18,8 +18,13 @@ import "client-only"
  *      local store. Cloud is the source of truth when signed in, except
  *      for local-only fields (no DB column), which the apply preserves.
  *
- * Conflict policy: BEFORE pulling cloud, we wait for the local sync queue
- * to drain so any local-only edits flush upward first. `whenDrained`
+ * Conflict policy: BEFORE pulling cloud, edits made while sync was
+ * paused / signed out are queued (`resumeFromPause` — diffs the pause
+ * baseline recorded when sync detached against the current store; local
+ * edits win, rows deleted while paused are deleted in the cloud), then
+ * we wait for the local sync queue to drain so they flush upward first.
+ * Offline at that point → the ops stay queued and the pull is deferred
+ * to the `online` re-pull. `whenDrained`
  * gives up after 30s, so the apply ALSO consults the queue: rows with a
  * pending delete aren't resurrected and rows with a pending upsert keep
  * their local version (see `mergeCloudSnapshot`).
@@ -48,8 +53,13 @@ import {
   localSnapshotFromStore,
   type CloudSnapshot,
 } from "@/client/sync/reconcile"
-import { seedSyncSnapshot } from "@/client/hooks/use-sync"
-import { pendingOpsFor, syncQueueMark, whenDrained } from "@/client/sync/sync-queue"
+import { resumeFromPause, seedSyncSnapshot } from "@/client/hooks/use-sync"
+import {
+  isSyncOnline,
+  pendingOpsFor,
+  syncQueueMark,
+  whenDrained,
+} from "@/client/sync/sync-queue"
 import {
   getLocalDataOwner,
   hasReconciled,
@@ -104,14 +114,19 @@ function localBelongsToOtherAccount(userId: string): boolean {
   return owner !== null && owner !== userId
 }
 
-/** Cloud pull for an already-reconciled user (refresh / reconnect). */
+/** Cloud pull for an already-reconciled user (refresh / reconnect).
+ *  "deferred" = offline; the `online` listener pulls later. */
 async function silentPull(
   client: AppSupabaseClient,
   userId: string,
   isCancelled: () => boolean
-): Promise<"ok" | "cancelled" | "failed"> {
+): Promise<"ok" | "cancelled" | "failed" | "deferred"> {
+  if (!isSyncOnline()) return "deferred"
   await whenDrained()
   if (isCancelled()) return "cancelled"
+  // Went offline while draining: the queue still holds this user's
+  // edits; a pull now would only fail. Wait for `online`.
+  if (!isSyncOnline()) return "deferred"
   // Ops that flush while the fetch is in flight still count as pending:
   // the snapshot may predate them.
   const mark = syncQueueMark()
@@ -173,11 +188,19 @@ export function useReconcile(): ReconcileState {
 
     // ---- already-reconciled user: silent pull, skip the prompt --------
     if (hasReconciled(userId)) {
+      // Queue the edits made while paused / signed out BEFORE the pull
+      // waits for the queue to drain. `useSync`'s attach does the same;
+      // whichever runs first claims the baseline, the other is a no-op.
+      resumeFromPause(userId)
       setStatus("loading")
       void (async () => {
         try {
           const result = await silentPull(client, userId, () => cancelled)
           if (result === "cancelled") return
+          if (result === "deferred") {
+            setStatus("done")
+            return
+          }
           if (result === "failed") {
             setStatus("error")
             setError("Failed to fetch cloud state")

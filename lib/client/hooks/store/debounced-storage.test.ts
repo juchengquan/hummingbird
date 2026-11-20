@@ -14,6 +14,11 @@ import {
 } from "bun:test"
 
 import { debouncedStorage } from "./debounced-storage"
+import {
+  __resetQuotaToastForTests,
+  isQuotaExceededError,
+  notifyStorageQuotaExceeded,
+} from "./quota-toast"
 
 class FakeStorage implements Storage {
   private map = new Map<string, string>()
@@ -132,5 +137,103 @@ describe("debouncedStorage", () => {
     s.setItem("k", "v")
     s.removeItem("k")
     expect(s.getItem("k")).toBeNull()
+  })
+})
+
+describe("debouncedStorage — cross-tab hooks", () => {
+  test("hasPending / discardPending drop the buffered write unwritten", async () => {
+    target.setItem("k", "theirs")
+    target.writeCount = 0
+    const s = debouncedStorage({ target, delayMs: 30 })
+    s.setItem("k", "ours")
+    expect(s.hasPending("k")).toBe(true)
+    s.discardPending("k")
+    expect(s.hasPending("k")).toBe(false)
+    // Reads go back to the target; the timer never writes.
+    expect(s.getItem("k")).toBe("theirs")
+    await tick(60)
+    expect(target.writeCount).toBe(0)
+    expect(target.getItem("k")).toBe("theirs")
+  })
+
+  test("subscribeFlush fires after each real write, until unsubscribed", async () => {
+    const s = debouncedStorage({ target, delayMs: 20 })
+    const flushed: string[] = []
+    const off = s.subscribeFlush((name) => flushed.push(name))
+    s.setItem("k", "1")
+    await tick(40)
+    expect(flushed).toEqual(["k"])
+    off()
+    s.setItem("k", "2")
+    await tick(40)
+    expect(flushed).toEqual(["k"])
+  })
+})
+
+describe("quota exceeded handling", () => {
+  class FullStorage extends FakeStorage {
+    constructor(private readonly error: unknown) {
+      super()
+    }
+    override setItem(): void {
+      throw this.error
+    }
+  }
+
+  test("isQuotaExceededError recognises the spec name, Firefox's legacy name, and codes 22 / 1014", () => {
+    expect(isQuotaExceededError(new DOMException("full", "QuotaExceededError"))).toBe(true)
+    expect(isQuotaExceededError({ name: "NS_ERROR_DOM_QUOTA_REACHED" })).toBe(true)
+    expect(isQuotaExceededError({ name: "Error", code: 22 })).toBe(true)
+    expect(isQuotaExceededError({ name: "Error", code: 1014 })).toBe(true)
+    expect(isQuotaExceededError(new Error("SecurityError"))).toBe(false)
+    expect(isQuotaExceededError(null)).toBe(false)
+  })
+
+  test("a quota failure on flush calls onQuotaExceeded and keeps the old no-throw behaviour", async () => {
+    const seen: unknown[] = []
+    const err = new DOMException("full", "QuotaExceededError")
+    const s = debouncedStorage({
+      target: new FullStorage(err),
+      delayMs: 10,
+      onQuotaExceeded: (e) => seen.push(e),
+    })
+    s.setItem("k", "v")
+    await tick(30)
+    expect(seen).toEqual([err])
+    expect(s.hasPending("k")).toBe(false)
+  })
+
+  test("non-quota storage errors stay silent", async () => {
+    const seen: unknown[] = []
+    const s = debouncedStorage({
+      target: new FullStorage(new Error("SecurityError")),
+      delayMs: 10,
+      onQuotaExceeded: (e) => seen.push(e),
+    })
+    s.setItem("k", "v")
+    await tick(30)
+    expect(seen).toEqual([])
+  })
+
+  test("the default handler toasts at most once per session, however many writes fail", async () => {
+    __resetQuotaToastForTests()
+    let shown = 0
+    const show = () => {
+      shown++
+    }
+    const s = debouncedStorage({
+      target: new FullStorage(new DOMException("full", "QuotaExceededError")),
+      delayMs: 5,
+      onQuotaExceeded: () => notifyStorageQuotaExceeded(show),
+    })
+    for (let i = 0; i < 5; i++) {
+      s.setItem("k", String(i))
+      await tick(15)
+    }
+    expect(shown).toBe(1)
+    expect(notifyStorageQuotaExceeded(show)).toBe(false)
+    __resetQuotaToastForTests()
+    expect(notifyStorageQuotaExceeded(show)).toBe(true)
+    expect(shown).toBe(2)
   })
 })

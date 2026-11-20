@@ -116,3 +116,36 @@ export function isExternalHttpUrl(url: string): boolean {
   if (scheme === "http" || scheme === "https") return true
   return scheme === null && /^[/\\]{2}/.test(normalized)
 }
+
+/**
+ * How to open a (model- or user-supplied) image URL in a new tab.
+ *
+ *   - `direct`  → safe http(s) / relative URL: `window.open(url)`.
+ *   - `blob`    → raster `data:image/*` URL. Browsers block top-level
+ *                 navigation to `data:` URLs, so the caller decodes it
+ *                 into a Blob and opens an object URL instead.
+ *   - `blocked` → anything `isSafeImageUrl` rejects (`javascript:`,
+ *                 SVG data URLs, unknown schemes). Never opened or
+ *                 assigned to an anchor href.
+ */
+export type ImageOpenPlan =
+  | { kind: "direct"; url: string }
+  | { kind: "blob"; mime: string; base64: boolean; payload: string }
+  | { kind: "blocked" }
+
+const DATA_IMAGE_PARTS_RE =
+  /^data:(image\/(?:png|jpeg|gif|webp))((?:;[^,;]*?)*?)(;base64)?,([\s\S]*)$/i
+
+export function planImageOpen(url: string | null | undefined): ImageOpenPlan {
+  if (typeof url !== "string" || !isSafeImageUrl(url)) return { kind: "blocked" }
+  const trimmed = url.trim()
+  if (!/^data:/i.test(trimmed)) return { kind: "direct", url: trimmed }
+  const m = DATA_IMAGE_PARTS_RE.exec(trimmed)
+  if (!m) return { kind: "blocked" }
+  return {
+    kind: "blob",
+    mime: m[1].toLowerCase(),
+    base64: m[3] !== undefined,
+    payload: m[4],
+  }
+}

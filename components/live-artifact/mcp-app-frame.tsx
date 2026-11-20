@@ -7,6 +7,7 @@ import { apiClient } from "@/client/api-client"
 import { useStore } from "@/client/hooks/use-store"
 import { buildShell, IFRAME_MESSAGE_NS } from "@/client/live-artifact/iframe-shell"
 import {
+  mcpAppToolCallDenial,
   mcpAppToolResult,
   parseMcpAppToolCall,
 } from "@/client/live-artifact/mcp-app-bridge"
@@ -25,8 +26,10 @@ import type { McpAppPart } from "@/shared/types"
  * `{ ns: "mcp-app", type: "tool-call", ... }` message; this component
  * forwards it to the producing MCP server via the `/api/mcp/:id/call`
  * proxy and posts the result back. Hard guards: same-server only (the
- * panel can only call tools on the server that produced it), a per-app
- * call cap, and the strict `event.source` filter.
+ * panel can only call tools on the server that produced it), the
+ * server's `enabled` switch and `requiresApproval` policy
+ * (`mcpAppToolCallDenial`), a per-app call cap, and the strict
+ * `event.source` filter.
  *
  * Phase 3 adds the **refresh affordance** (re-read the `ui://`
  * resource through the same proxy `read` action and swap the
@@ -99,12 +102,15 @@ export function McpAppFrame({
         return
       }
 
-      // Same-server only — resolve the *producing* server by id.
+      // Same-server only — resolve the *producing* server by id, then
+      // enforce its `enabled` switch and `requiresApproval` policy
+      // (re-read on every call, so toggling either takes effect at once).
       const server = mcpServers.find(
         (s) => s.id === app.serverId && !s.deletedAt
       )
-      if (!server) {
-        reply({ ok: false, error: "MCP server not available" })
+      const denial = mcpAppToolCallDenial(server)
+      if (denial !== null || !server) {
+        reply({ ok: false, error: denial ?? "MCP server not available" })
         return
       }
       const cred = getLocalCred(server.id)
@@ -157,6 +163,10 @@ export function McpAppFrame({
     )
     if (!server) {
       setRefreshError("MCP server not available")
+      return
+    }
+    if (!server.enabled) {
+      setRefreshError("MCP server is disabled")
       return
     }
     setRefreshing(true)

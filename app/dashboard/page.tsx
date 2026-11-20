@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect } from "react"
 import dynamic from "next/dynamic"
 import { Toaster } from "sonner"
 import { AppSidebar } from "@/components/sidebars/application"
@@ -10,6 +11,7 @@ import { WorkspacesPanel } from "@/components/panels/workspaces"
 import { CommandPalette } from "@/components/command-palette"
 import { PdfViewerHost } from "@/components/pdf-viewer/pdf-viewer"
 import { UrlPreviewHost } from "@/components/url-viewer/url-viewer"
+import { SignInPromptHost } from "@/components/auth/sign-in-prompt-host"
 import { LiveArtifactHost } from "@/components/live-artifact/live-artifact-panel"
 import { ImageViewerHost } from "@/components/image-viewer/image-viewer"
 import { DocxViewerHost } from "@/components/docx-viewer/docx-viewer"
@@ -22,6 +24,7 @@ import {
 } from "@/components/ui/sidebar"
 import { useHydrated, useStore } from "@/client/hooks/use-store"
 import { useSync } from "@/client/hooks/use-sync"
+import { staleCredentialFingerprints } from "@/client/mcp/local-creds"
 import { useReconcile } from "@/client/hooks/use-reconcile"
 import { ReconcileDialog } from "@/components/auth/reconcile-dialog"
 import { TaskRunProvider } from "@/client/agent/task-run-context"
@@ -82,6 +85,27 @@ function MainArea() {
 
 function SyncMount() {
   useSync()
+  // Once per page load after hydration: rewrite MCP credential
+  // fingerprints computed by the pre-canonical-JSON hash (see
+  // `staleCredentialFingerprints`). Runs after `useSync`'s subscriber
+  // is wired, so the corrections sync like ordinary edits.
+  const hydrated = useHydrated()
+  useEffect(() => {
+    if (!hydrated) return
+    let cancelled = false
+    void staleCredentialFingerprints(useStore.getState().mcpServers).then(
+      (updates) => {
+        if (cancelled) return
+        const { updateMcpServer } = useStore.getState()
+        for (const u of updates) {
+          updateMcpServer(u.id, { credentialFingerprint: u.fingerprint })
+        }
+      }
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [hydrated])
   return null
 }
 
@@ -136,6 +160,7 @@ function DashboardShell() {
       <DocxViewerHost />
       <TextViewerHost />
       <CsvViewerHost />
+      <SignInPromptHost />
       <Toaster closeButton />
     </SidebarProvider>
   )
