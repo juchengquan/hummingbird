@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect } from "react"
 import dynamic from "next/dynamic"
 import { Toaster } from "sonner"
 import { AppSidebar } from "@/components/sidebars/application"
@@ -22,6 +23,7 @@ import {
 } from "@/components/ui/sidebar"
 import { useHydrated, useStore } from "@/client/hooks/use-store"
 import { useSync } from "@/client/hooks/use-sync"
+import { staleCredentialFingerprints } from "@/client/mcp/local-creds"
 import { useReconcile } from "@/client/hooks/use-reconcile"
 import { ReconcileDialog } from "@/components/auth/reconcile-dialog"
 import { TaskRunProvider } from "@/client/agent/task-run-context"
@@ -82,6 +84,27 @@ function MainArea() {
 
 function SyncMount() {
   useSync()
+  // Once per page load after hydration: rewrite MCP credential
+  // fingerprints computed by the pre-canonical-JSON hash (see
+  // `staleCredentialFingerprints`). Runs after `useSync`'s subscriber
+  // is wired, so the corrections sync like ordinary edits.
+  const hydrated = useHydrated()
+  useEffect(() => {
+    if (!hydrated) return
+    let cancelled = false
+    void staleCredentialFingerprints(useStore.getState().mcpServers).then(
+      (updates) => {
+        if (cancelled) return
+        const { updateMcpServer } = useStore.getState()
+        for (const u of updates) {
+          updateMcpServer(u.id, { credentialFingerprint: u.fingerprint })
+        }
+      }
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [hydrated])
   return null
 }
 
