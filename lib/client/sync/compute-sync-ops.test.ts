@@ -269,6 +269,21 @@ describe("computeSyncOps — rows referencing a held message", () => {
     if (up?.kind === "upsert") expect(up.row.message_id).toBeNull()
   })
 
+  test("conversation deleted mid-stream: parked rows go out detached from it", () => {
+    const s1 = { ...snap([conv("a", [user, ph("tok")])]), artifacts: [artifact("art", "ph")] }
+    const s2 = { ...snap([]), artifacts: [artifact("art", "ph")] }
+    const { out } = driveWithDeferred(s0, [
+      { next: s1, held: ["a"] },
+      { next: s2, held: [] },
+    ])
+    expect(out[1].map(label)).toEqual(["upsert:artifacts:art", "delete:conversations:a"])
+    const up = out[1][0]
+    if (up.kind === "upsert") {
+      expect(up.row.message_id).toBeNull()
+      expect(up.row.conversation_id).toBeNull()
+    }
+  })
+
   test("parked ops still go out when the held baseline was cleared (rebase)", () => {
     const baselines = new Map<string, Message[]>()
     const deferred: DeferredDependentOps = new Map()

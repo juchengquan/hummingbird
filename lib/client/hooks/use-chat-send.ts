@@ -65,6 +65,7 @@ import { resolveEnabledSkills } from "@/shared/skills/resolve-enabled-skills"
 import type { SkillId } from "@/shared/skills/types"
 import type { Message, MessageError, MessageErrorCode } from "@/shared/types"
 import { toISO } from "@/shared/utils"
+import { abortStreamsOfDeletedConversations } from "@/client/chat/abort-deleted-streams"
 
 export interface SendOptions {
   modelOverride?: string
@@ -1021,6 +1022,21 @@ export function useChatSend(): UseChatSendResult {
   useEffect(() => {
     callChatAPIRef.current = callChatAPI
   }, [callChatAPI])
+
+  // A conversation deleted mid-stream — here, or in another tab (the
+  // cross-tab merge lets that delete win) — has its stream aborted, so
+  // it stops writing into a conversation that no longer exists.
+  useEffect(
+    () =>
+      useStore.subscribe((state, prev) => {
+        if (state.conversations === prev.conversations) return
+        abortStreamsOfDeletedConversations(
+          abortControllersRef.current,
+          state.conversations
+        )
+      }),
+    []
+  )
 
   // Stable wrapper — consumers don't manage their own ref.
   const send = useCallback(

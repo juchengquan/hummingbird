@@ -297,20 +297,24 @@ export function computeSyncOps(
     const ops = deferred.get(id)
     if (!ops) continue
     deferred.delete(id)
-    const live = new Set(
-      next.conversations.find((c) => c.id === id)?.messages.map((m) => m.id) ??
-        []
-    )
+    const conv = next.conversations.find((c) => c.id === id)
+    const live = new Set(conv?.messages.map((m) => m.id) ?? [])
     for (const op of collapseByRow(ops)) {
-      const dangling =
-        op.kind === "upsert" &&
-        typeof op.row.message_id === "string" &&
-        !live.has(op.row.message_id)
-      releasedDeferred.push(
-        dangling && op.kind === "upsert"
-          ? { ...op, row: { ...op.row, message_id: null } }
-          : op
-      )
+      if (op.kind !== "upsert") {
+        releasedDeferred.push(op)
+        continue
+      }
+      // Mirror the FKs' `on delete set null` for references that died
+      // mid-stream (message removed, or the whole conversation deleted
+      // — possibly by another tab).
+      let row = op.row
+      if (typeof row.message_id === "string" && !live.has(row.message_id)) {
+        row = { ...row, message_id: null }
+      }
+      if (!conv && row.conversation_id === id) {
+        row = { ...row, conversation_id: null }
+      }
+      releasedDeferred.push(row === op.row ? op : { ...op, row })
     }
   }
 
