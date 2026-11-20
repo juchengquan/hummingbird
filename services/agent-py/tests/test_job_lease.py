@@ -437,23 +437,28 @@ async def test_reclaimed_job_for_a_settled_task_is_skipped() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reclaimed_respond_on_a_running_task_resumes_as_continue() -> None:
+async def test_reclaimed_respond_on_a_running_task_resumes_the_interrupted_respond() -> None:
+    """The dead attempt flipped paused → running; the executor (not the
+    poller) checks whether the answer was persisted — see
+    `test_job_lease_recovery.py` for both outcomes."""
     db._pool = MagicMock()
     job = _job(action="respond", payload={"requestId": "tu_1"}, reclaimed=True)
     with (
         patch.object(store, "is_task_owned_by", new=AsyncMock(return_value=True)),
         patch.object(jobs, "load_job_task_state", new=AsyncMock(return_value=_state())),
-        patch.object(executor, "execute_respond", new=AsyncMock()) as ex_respond,
         patch.object(
             executor,
-            "execute_continue",
+            "execute_respond",
             new=AsyncMock(return_value=ExecutorOutcome(settled=True)),
-        ) as ex_continue,
+        ) as ex_respond,
+        patch.object(executor, "execute_continue", new=AsyncMock()) as ex_continue,
         patch.object(jobs, "mark_job_done", new=AsyncMock(return_value=True)),
     ):
         await poller._execute_claimed(db._pool, job, _live_settings())
-    ex_respond.assert_not_called()
-    ex_continue.assert_awaited_once()
+    ex_continue.assert_not_called()
+    ex_respond.assert_awaited_once()
+    assert ex_respond.await_args.kwargs == {"resume_interrupted": True}
+    assert ex_respond.await_args.args[1].request_id == "tu_1"
 
 
 # --- 3. reclaim_decision ----------------------------------------------------

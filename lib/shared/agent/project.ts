@@ -141,6 +141,18 @@ export function reduceRun(view: TaskRunView, event: TaskEvent): TaskRunView {
       next.toolCalls = resolveToolCall(view.toolCalls, event)
       return next
     case "status":
+      if (event.restarted) {
+        // A reclaimed run started over: drop the dead attempt's partial
+        // output. Keep only the resume cursor and the step ceiling.
+        return {
+          ...EMPTY_RUN_VIEW,
+          cursor: next.cursor,
+          step: event.step,
+          maxSteps:
+            typeof event.maxSteps === "number" ? event.maxSteps : view.maxSteps,
+          status: event.status,
+        }
+      }
       next.status = event.status
       if (typeof event.maxSteps === "number") next.maxSteps = event.maxSteps
       return next

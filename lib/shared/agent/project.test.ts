@@ -254,3 +254,31 @@ describe("reduceRun — handoff → childRuns", () => {
     expect(v.childRuns).toEqual([])
   })
 })
+
+describe("reduceRun — restart marker (reclaimed run started over)", () => {
+  test("drops the dead attempt's partial output, keeps cursor + step ceiling", () => {
+    const log: TaskEvent[] = [
+      ev({ kind: "status", status: "queued", maxSteps: 7 }, 1, 0),
+      ev({ kind: "status", status: "running" }, 2, 0),
+      ev({ kind: "step_start" }, 3, 1),
+      ev({ kind: "token", text: "half an ans" }, 4, 1),
+      ev({ kind: "tool_input", toolCallId: "t1", toolName: "webSearch", args: {} }, 5, 1),
+      ev({ kind: "status", status: "running", restarted: true }, 6, 0),
+      ev({ kind: "step_start" }, 7, 1),
+      ev({ kind: "token", text: "the answer" }, 8, 1),
+    ]
+    const view = projectRun(log)
+    expect(view.text).toBe("the answer")
+    expect(view.toolCalls).toEqual([])
+    expect(view.status).toBe("running")
+    expect(view.maxSteps).toBe(7)
+    expect(view.cursor).toBe(8)
+    expect(view.step).toBe(1)
+  })
+
+  test("an ordinary status transition keeps the accumulated view", () => {
+    let v = reduceRun(EMPTY_RUN_VIEW, ev({ kind: "token", text: "kept" }, 1, 1))
+    v = reduceRun(v, ev({ kind: "status", status: "running" }, 2, 1))
+    expect(v.text).toBe("kept")
+  })
+})

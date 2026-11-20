@@ -28,6 +28,7 @@ from typing import Any, Protocol
 
 import structlog
 
+from .. import lease
 from ..coalescer import make_token_coalescer
 from ..runner import (
     PendingInputDescriptor,
@@ -278,6 +279,11 @@ def make_anthropic_step_fn(config: AnthropicStepConfig) -> RunStepFn:
                 tool_result_blocks.append(_make_tool_result_block(tool_call_id, msg, is_error=True))
                 continue
 
+            # Last gate before a side effect: a worker whose job lease was
+            # taken over must not run the tool (the new owner will).
+            # Raises `LeaseLostError` — a BaseException, so the broad
+            # `except Exception` below can't turn it into a tool error.
+            lease.check_current()
             try:
                 result = await descriptor.execute(dict(args))
             except ToolError as exc:

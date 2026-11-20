@@ -164,6 +164,7 @@ def event_from_row_payload(
                 "Literal['queued','running','paused','cancelled','done','failed']",
                 merged.get("status", "running"),
             ),
+            restarted=merged.get("restarted") is True,
         )
     if kind == "tool_output":
         results_raw = merged.get("results")

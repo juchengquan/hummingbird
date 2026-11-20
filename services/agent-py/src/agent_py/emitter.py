@@ -92,8 +92,10 @@ class RunEmitter:
     def settled(self) -> bool:
         return self._settled
 
-    async def status(self, status: RunStatus) -> None:
-        """Emit a status transition. The terminal kinds latch."""
+    async def status(self, status: RunStatus, *, restarted: bool = False) -> None:
+        """Emit a status transition. The terminal kinds latch.
+        `restarted` marks a reclaimed run's from-scratch restart (see
+        `StatusEvent.restarted`)."""
         if self._settled:
             return
         await self._emit(
@@ -103,6 +105,7 @@ class RunEmitter:
                 step=self._step,
                 created_at=_now_iso(),
                 status=status,
+                restarted=restarted,
             )
         )
         if is_terminal_status(status):

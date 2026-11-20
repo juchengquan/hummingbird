@@ -28,7 +28,11 @@ runs. Whatever happens, the job is settled exactly one way:
     worker reclaims it immediately;
   - the process dies outright → the lease lapses and another worker
     reclaims it (or `_reap_expired` fails it once `max_attempts` is
-    spent).
+    spent);
+  - the heartbeat finds the claim gone (reclaimed underneath us), or
+    the lease runs out while the DB is unreachable → the run stops at
+    its next lease check (`lease.py`: every emit, step and tool call)
+    and the job is abandoned unsettled — its new owner settles it.
 A reclaimed job doesn't blindly re-run: `reclaim_decision` looks at the
 task first (already settled? superseded by a later job? paused on the
 user?) — see there.
@@ -45,6 +49,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
@@ -52,6 +57,7 @@ import asyncpg
 import structlog
 
 from . import db, executor, feature_flag, jobs, store
+from . import lease as lease_mod
 from .jobs import ClaimedJob, JobTaskState
 from .settings import Settings
 
@@ -200,6 +206,8 @@ async def _tick(settings: Settings) -> None:
 
     # Dry-run is a passive observer: it only ever takes (and releases)
     # fresh `queued` jobs, never a dead worker's expired lease.
+    # `claim_sent_at` anchors the local lease estimate (see `JobLease`).
+    claim_sent_at = time.monotonic()
     job = await jobs.claim_next_job(
         pool,
         lease_seconds=settings.JOB_LEASE_SECONDS,
@@ -260,7 +268,7 @@ async def _tick(settings: Settings) -> None:
         )
         return
 
-    await _execute_claimed(pool, job, settings)
+    await _execute_claimed(pool, job, settings, claimed_at=claim_sent_at)
 
 
 # --- execution + settlement -------------------------------------------------
@@ -278,15 +286,46 @@ class _Settlement:
     settle_task: bool = False
 
 
-async def _execute_claimed(pool: asyncpg.Pool, job: ClaimedJob, settings: Settings) -> None:
+async def _execute_claimed(
+    pool: asyncpg.Pool,
+    job: ClaimedJob,
+    settings: Settings,
+    *,
+    claimed_at: float | None = None,
+    clock: lease_mod.Clock = time.monotonic,
+) -> None:
     """Run one claimed job under a heartbeated lease and settle it
-    exactly once (see the module docstring)."""
+    exactly once (see the module docstring).
+
+    The lease is bound for the dispatch (`lease.bound`): once the
+    heartbeat finds the claim gone, the run's next emit / step / tool
+    call raises `LeaseLostError` and the job is abandoned — neither the
+    job nor the task is settled, because the worker that reclaimed it
+    owns both now."""
+    job_lease = lease_mod.JobLease(
+        job_id=job.id,
+        lease_seconds=settings.JOB_LEASE_SECONDS,
+        acquired_at=claimed_at,
+        clock=clock,
+    )
     heartbeat = asyncio.create_task(
-        _heartbeat(pool, job, settings),
+        _heartbeat(pool, job, settings, job_lease, clock=clock),
         name=f"agent-py.heartbeat.{job.id}",
     )
     try:
-        settlement = await _dispatch(pool, job)
+        with lease_mod.bound(job_lease):
+            settlement = await _dispatch(pool, job)
+    except lease_mod.LeaseLostError as exc:
+        heartbeat.cancel()
+        logger.warning(
+            "poller.job_abandoned_lease_lost",
+            job_id=job.id,
+            task_id=job.task_id,
+            action=job.action,
+            attempts=job.attempts,
+            reason=exc.reason,
+        )
+        return
     except asyncio.CancelledError:
         # Shutdown grace ran out mid-run. Don't guess at an outcome —
         # hand the job back so the next worker reclaims it right away
@@ -315,6 +354,11 @@ async def _execute_claimed(pool: asyncpg.Pool, job: ClaimedJob, settings: Settin
         # would race it (and log a spurious lease loss).
         heartbeat.cancel()
 
+    if job_lease.lost and settlement.settle_task:
+        # The run finished (or failed) after its last lease check, but the
+        # claim is gone: the job settle below is fenced and harmless, the
+        # unfenced task settle is not — leave the task to its new owner.
+        settlement = dataclasses.replace(settlement, settle_task=False)
     await _shielded(_settle_job(pool, job, settlement))
 
 
@@ -336,6 +380,9 @@ async def _dispatch(pool: asyncpg.Pool, job: ClaimedJob) -> _Settlement:
         return _Settlement(ok=False, error="task not owned by job user")
 
     action = job.action
+    # Reclaimed-attempt flavours, see `reclaim_decision`.
+    rerun_start = False
+    resume_respond = False
     if job.reclaimed:
         state = await jobs.load_job_task_state(
             pool, task_id=job.task_id, user_id=job.user_id, job_id=job.id
@@ -355,8 +402,15 @@ async def _dispatch(pool: asyncpg.Pool, job: ClaimedJob) -> _Settlement:
         )
         if decision == "skip":
             return _Settlement(ok=True)
-        if decision == "continue":
+        if decision == "continue" and job.action == "respond":
+            # The dead attempt flipped paused → running; whether it also
+            # persisted the user's answer is for the executor to find out
+            # (`execute_respond(resume_interrupted=True)`).
+            resume_respond = True
+        elif decision == "continue":
             action = "continue"
+        elif job.action == "start":
+            rerun_start = True
 
     if action == "respond":
         respond_payload = _respond_payload_from_job(job)
@@ -366,12 +420,27 @@ async def _dispatch(pool: asyncpg.Pool, job: ClaimedJob) -> _Settlement:
                 job_id=job.id,
                 payload_keys=sorted(job.payload.keys()) if job.payload else [],
             )
-            return _Settlement(ok=False, error="respond: invalid payload")
-        outcome = await executor.execute_respond(pool, respond_payload)
+            if not resume_respond:
+                return _Settlement(ok=False, error="respond: invalid payload")
+            # No answer to re-apply; resume from whatever was persisted.
+            outcome = await executor.execute_continue(
+                pool,
+                executor.StartActionPayload(run_id=job.task_id, user_id=job.user_id),
+            )
+        elif resume_respond:
+            outcome = await executor.execute_respond(pool, respond_payload, resume_interrupted=True)
+        else:
+            outcome = await executor.execute_respond(pool, respond_payload)
     elif action == "continue":
         outcome = await executor.execute_continue(
             pool,
             executor.StartActionPayload(run_id=job.task_id, user_id=job.user_id),
+        )
+    elif rerun_start:
+        outcome = await executor.execute_start(
+            pool,
+            executor.StartActionPayload(run_id=job.task_id, user_id=job.user_id),
+            reclaimed=True,
         )
     else:
         outcome = await executor.execute_start(
@@ -415,12 +484,19 @@ def reclaim_decision(action: str, state: JobTaskState) -> tuple[ReclaimAction, s
         gate) or on its subagents (only the barrier's `continue`, once
         `pending_children` hit zero, may resume it).
       - task queued/running:
-          * respond → the attempt had already flipped paused → running
-            (and persisted the answer), so resume with `continue` —
-            unless another live job is already driving the run.
+          * respond → the attempt had already flipped paused → running,
+            so the respond gate must not run again: `"continue"` —
+            unless another live job is already driving the run. The
+            poller runs it as `execute_respond(resume_interrupted=True)`,
+            which resumes from the checkpoint when the answer was
+            persisted and re-applies the job's answer when it wasn't.
           * start/continue → re-run it. The emitter seeds past every seq
             already written, so new events never collide with the dead
-            attempt's.
+            attempt's. A re-run `start` goes through
+            `execute_start(reclaimed=True)`: it resumes from a checkpoint
+            the dead attempt saved, else restarts behind a
+            `status: running, restarted: true` marker so the UI drops
+            the dead attempt's partial output.
     """
     status = state.task_status
     if status in _TERMINAL_TASK_STATUSES:
@@ -440,26 +516,54 @@ def reclaim_decision(action: str, state: JobTaskState) -> tuple[ReclaimAction, s
     return "run", "rerun_interrupted"
 
 
-async def _heartbeat(pool: asyncpg.Pool, job: ClaimedJob, settings: Settings) -> None:
+async def _heartbeat(
+    pool: asyncpg.Pool,
+    job: ClaimedJob,
+    settings: Settings,
+    job_lease: lease_mod.JobLease,
+    *,
+    sleep: SleepFn = _default_sleep,
+    clock: lease_mod.Clock = time.monotonic,
+) -> None:
     """Extend the job's lease until cancelled. Clamped to a third of the
-    lease so two consecutive misses still leave headroom. A failed
-    extend is retried next beat; a lost claim (settled / reclaimed
-    underneath us) stops the heartbeat — the dispatch itself carries on,
-    and its fenced settle write will match no row."""
+    lease so two consecutive misses still leave headroom.
+
+    Two failure modes, handled differently:
+      - the extend matched no row → the claim is gone (settled, reaped,
+        or reclaimed by another worker after our lease lapsed): mark the
+        lease lost so the run stops at its next check, and stop beating;
+      - the extend raised (transient DB error) → retry next beat. Only
+        if the lease's deadline passes without a successful extend is it
+        marked lost — from then on another worker may reclaim the job.
+    """
     lease_s = settings.JOB_LEASE_SECONDS
     interval = max(0.01, min(settings.JOB_HEARTBEAT_SECONDS, lease_s / 3))
-    while True:
-        await asyncio.sleep(interval)
+    while not job_lease.lost:
+        await sleep(interval)
+        if job_lease.lost:
+            return
+        sent_at = clock()
         try:
             still_ours = await jobs.extend_lease(
                 pool, job.id, attempts=job.attempts, lease_seconds=lease_s
             )
         except Exception as exc:
+            if job_lease.expired():
+                job_lease.mark_lost("heartbeat_failing_past_expiry")
+                logger.error(
+                    "poller.lease_expired_heartbeat_failing",
+                    job_id=job.id,
+                    task_id=job.task_id,
+                    error=str(exc),
+                )
+                return
             logger.warning("poller.heartbeat_failed", job_id=job.id, error=str(exc))
             continue
         if not still_ours:
+            job_lease.mark_lost("claim_taken_over")
             logger.warning("poller.lease_lost", job_id=job.id, task_id=job.task_id)
             return
+        job_lease.renewed(sent_at=sent_at)
 
 
 async def _settle_job(pool: asyncpg.Pool, job: ClaimedJob, settlement: _Settlement) -> None:
