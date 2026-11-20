@@ -19,6 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent_py import main as main_module
+from agent_py import url_validate
 from agent_py.main import create_app
 from agent_py.mcp_client import (
     McpCapabilities,
@@ -26,11 +27,23 @@ from agent_py.mcp_client import (
     McpToolDescriptor,
     McpToolResult,
 )
-from agent_py.mcp_credentials import UpsertResult
+from agent_py.mcp_credentials import CloudMcpServer, UpsertResult
 from agent_py.routers import mcp as mcp_router
 
 SECRET = "test-secret-do-not-use-in-prod-32-bytes!"
 SERVER_ID = "11111111-1111-1111-1111-111111111111"
+
+
+@pytest.fixture(autouse=True)
+def _public_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hostnames resolve to a public address so the proxy's SSRF gate
+    passes without real DNS. Tests needing a private answer use IP
+    literals."""
+
+    async def fake_getaddrinfo(host: str) -> list[str]:
+        return ["93.184.215.14"]
+
+    monkeypatch.setattr(url_validate, "_async_getaddrinfo", fake_getaddrinfo)
 
 
 @pytest.fixture
@@ -39,15 +52,20 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     return TestClient(create_app(enable_poller=False))
 
 
-def _token(sub: str = "user-uuid-1") -> str:
+def _token(sub: str = "00000000-0000-4000-8000-000000000001") -> str:
     return jwt.encode(
-        {"sub": sub, "role": "authenticated", "exp": int(time.time()) + 3600},
+        {
+            "sub": sub,
+            "role": "authenticated",
+            "aud": "authenticated",
+            "exp": int(time.time()) + 3600,
+        },
         SECRET,
         algorithm="HS256",
     )
 
 
-def _auth(sub: str = "user-uuid-1") -> dict[str, str]:
+def _auth(sub: str = "00000000-0000-4000-8000-000000000001") -> dict[str, str]:
     return {"Authorization": f"Bearer {_token(sub)}"}
 
 
@@ -232,6 +250,98 @@ def test_mcp_proxy_502_on_upstream_exception(client: TestClient) -> None:
     assert detail["code"] == "mcp_call_failed"
     # Never leak the credential.
     assert "shh" not in json.dumps(r.json())
+
+
+# --- cloud-mode URL binding + SSRF ------------------------------------
+
+
+def test_mcp_proxy_cloud_credentials_go_to_db_url_not_body_url(
+    client: TestClient,
+) -> None:
+    """Cloud-mode credentials must only be sent to the URL stored on
+    the server row. A body URL pointing elsewhere is ignored for a
+    cloud-mode server — otherwise a caller could exfiltrate the
+    decrypted secret to a host they control."""
+    captured: dict[str, Any] = {}
+
+    async def fake_discover(endpoint: Any, credentials: Any) -> McpCapabilities:
+        captured["url"] = endpoint.url
+        captured["name"] = endpoint.name
+        captured["credentials"] = credentials
+        return McpCapabilities()
+
+    cloud = CloudMcpServer(
+        id=SERVER_ID,
+        name="Stored MCP",
+        url="https://stored.mcp.example/mcp",
+        credentials={"headers": {"Authorization": "Bearer stored-secret"}},
+    )
+    lookup = AsyncMock(return_value=cloud)
+    body = _server_body()
+    body["server"]["url"] = "https://attacker.example/collect"
+    with (
+        patch.object(mcp_router, "has_pool", return_value=True),
+        patch.object(mcp_router, "get_pool", return_value=object()),
+        patch.object(mcp_router, "fetch_cloud_server", new=lookup),
+        patch.object(mcp_router, "mcp_discover", new=fake_discover),
+    ):
+        r = client.post(f"/v1/mcp/{SERVER_ID}/discover", json=body, headers=_auth())
+    assert r.status_code == 200
+    assert captured["url"] == "https://stored.mcp.example/mcp"
+    assert captured["name"] == "Stored MCP"
+    assert captured["credentials"] == {"headers": {"Authorization": "Bearer stored-secret"}}
+    assert lookup.await_args.kwargs["user_id"] == "00000000-0000-4000-8000-000000000001"
+    assert lookup.await_args.kwargs["server_id"] == SERVER_ID
+
+
+def test_mcp_proxy_no_cloud_row_uses_body_url_without_credentials(
+    client: TestClient,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_discover(endpoint: Any, credentials: Any) -> McpCapabilities:
+        captured["url"] = endpoint.url
+        captured["credentials"] = credentials
+        return McpCapabilities()
+
+    with (
+        patch.object(mcp_router, "has_pool", return_value=True),
+        patch.object(mcp_router, "get_pool", return_value=object()),
+        patch.object(mcp_router, "fetch_cloud_server", new=AsyncMock(return_value=None)),
+        patch.object(mcp_router, "mcp_discover", new=fake_discover),
+    ):
+        r = client.post(f"/v1/mcp/{SERVER_ID}/discover", json=_server_body(), headers=_auth())
+    assert r.status_code == 200
+    assert captured == {"url": "https://mcp.test/sse", "credentials": None}
+
+
+def test_mcp_proxy_rejects_private_body_url(client: TestClient) -> None:
+    called = AsyncMock(return_value=McpCapabilities())
+    for url in ("http://169.254.169.254/latest", "http://127.0.0.1:8000/mcp", "http://localhost/"):
+        body = _server_body()
+        body["server"]["url"] = url
+        with patch.object(mcp_router, "mcp_discover", new=called):
+            r = client.post(f"/v1/mcp/{SERVER_ID}/discover", json=body, headers=_auth())
+        assert r.status_code == 400, url
+        assert r.json()["detail"]["code"] == "invalid_server_url"
+    called.assert_not_awaited()
+
+
+def test_mcp_proxy_rejects_private_stored_url(client: TestClient) -> None:
+    """The SSRF gate also applies to the DB row's URL."""
+    cloud = CloudMcpServer(
+        id=SERVER_ID, name="x", url="http://10.0.0.7/mcp", credentials={"headers": {}}
+    )
+    called = AsyncMock(return_value=McpCapabilities())
+    with (
+        patch.object(mcp_router, "has_pool", return_value=True),
+        patch.object(mcp_router, "get_pool", return_value=object()),
+        patch.object(mcp_router, "fetch_cloud_server", new=AsyncMock(return_value=cloud)),
+        patch.object(mcp_router, "mcp_discover", new=called),
+    ):
+        r = client.post(f"/v1/mcp/{SERVER_ID}/discover", json=_server_body(), headers=_auth())
+    assert r.status_code == 400
+    called.assert_not_awaited()
 
 
 # --- call -----------------------------------------------------------
@@ -455,8 +565,8 @@ def test_mcp_server_upsert_happy_path_calls_rpc_with_decoded_credential(
         r = client.post("/v1/mcp/server", json=_upsert_body(), headers=_auth())
     assert r.status_code == 200
     assert r.json() == {"ok": True}
-    # JWT sub from `_auth()` is "user-uuid-1" by convention.
-    assert captured["user_id"] == "user-uuid-1"
+    # JWT sub from `_auth()` is "00000000-0000-4000-8000-000000000001" by convention.
+    assert captured["user_id"] == "00000000-0000-4000-8000-000000000001"
     assert captured["server_id"] == SERVER_ID
     assert captured["credentials"] == {
         "type": "header",

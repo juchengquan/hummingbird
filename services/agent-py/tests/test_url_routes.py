@@ -24,15 +24,20 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     return TestClient(create_app(enable_poller=False))
 
 
-def _token(sub: str = "user-uuid-123") -> str:
+def _token(sub: str = "00000000-0000-4000-8000-000000000123") -> str:
     return jwt.encode(
-        {"sub": sub, "role": "authenticated", "exp": int(time.time()) + 3600},
+        {
+            "sub": sub,
+            "role": "authenticated",
+            "aud": "authenticated",
+            "exp": int(time.time()) + 3600,
+        },
         SECRET,
         algorithm="HS256",
     )
 
 
-def _auth(sub: str = "user-uuid-123") -> dict[str, str]:
+def _auth(sub: str = "00000000-0000-4000-8000-000000000123") -> dict[str, str]:
     return {"Authorization": f"Bearer {_token(sub)}"}
 
 
@@ -124,7 +129,7 @@ def test_refresh_url_403_when_path_doesnt_match_user(
     r = client.post(
         "/v1/images/refresh-url",
         json={"storage_path": "other-user/generated/img.png"},
-        headers=_auth("user-uuid-123"),
+        headers=_auth("00000000-0000-4000-8000-000000000123"),
     )
     assert r.status_code == 403
     assert r.json()["detail"]["code"] == "forbidden"
@@ -136,8 +141,8 @@ def test_refresh_url_404_when_sign_fails(client: TestClient) -> None:
     with patch.object(images_router, "sign_storage_path", new=AsyncMock(return_value=None)):
         r = client.post(
             "/v1/images/refresh-url",
-            json={"storage_path": "user-uuid-123/generated/img.png"},
-            headers=_auth("user-uuid-123"),
+            json={"storage_path": "00000000-0000-4000-8000-000000000123/generated/img.png"},
+            headers=_auth("00000000-0000-4000-8000-000000000123"),
         )
     assert r.status_code == 404
     assert r.json()["detail"]["code"] == "not_found"
@@ -151,8 +156,8 @@ def test_refresh_url_happy_path_returns_signed_url(client: TestClient) -> None:
     ):
         r = client.post(
             "/v1/images/refresh-url",
-            json={"storage_path": "user-uuid-123/generated/img.png"},
-            headers=_auth("user-uuid-123"),
+            json={"storage_path": "00000000-0000-4000-8000-000000000123/generated/img.png"},
+            headers=_auth("00000000-0000-4000-8000-000000000123"),
         )
     assert r.status_code == 200
     assert r.json()["url"] == "https://proj.supabase.test/x?token=abc"
@@ -161,7 +166,7 @@ def test_refresh_url_happy_path_returns_signed_url(client: TestClient) -> None:
 def test_refresh_url_validates_storage_path_length(client: TestClient) -> None:
     """Length capped to 1000 chars — anything bigger → 422 before
     we touch Storage."""
-    long_path = "user-uuid-123/" + ("a" * 2000)
+    long_path = "00000000-0000-4000-8000-000000000123/" + ("a" * 2000)
     r = client.post(
         "/v1/images/refresh-url",
         json={"storage_path": long_path},

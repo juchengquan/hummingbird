@@ -33,9 +33,9 @@ afterEach(() => {
   globalThis.fetch = originalFetch
 })
 
-async function makeJwt(sub = "user-uuid-123"): Promise<string> {
+async function makeJwt(sub = "00000000-0000-4000-8000-000000000123"): Promise<string> {
   const encoder = new TextEncoder()
-  return new SignJWT({ sub, role: "authenticated" })
+  return new SignJWT({ sub, role: "authenticated", aud: "authenticated" })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("1h")
@@ -51,7 +51,7 @@ describe("POST /v1/images/refresh-url", () => {
 
   test("rejects path outside the caller's prefix with 403", async () => {
     const app = createApp()
-    const token = await makeJwt("user-uuid-123")
+    const token = await makeJwt("00000000-0000-4000-8000-000000000123")
     const res = await app.request("/v1/images/refresh-url", {
       method: "POST",
       headers: {
@@ -71,14 +71,14 @@ describe("POST /v1/images/refresh-url", () => {
       })) as unknown as typeof fetch
 
     const app = createApp()
-    const token = await makeJwt("user-uuid-123")
+    const token = await makeJwt("00000000-0000-4000-8000-000000000123")
     const res = await app.request("/v1/images/refresh-url", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ storage_path: "user-uuid-123/generated/x.png" }),
+      body: JSON.stringify({ storage_path: "00000000-0000-4000-8000-000000000123/generated/x.png" }),
     })
     expect(res.status).toBe(200)
     const body = (await res.json()) as { url: string }
@@ -93,14 +93,14 @@ describe("POST /v1/images/refresh-url", () => {
       })) as unknown as typeof fetch
 
     const app = createApp()
-    const token = await makeJwt("user-uuid-123")
+    const token = await makeJwt("00000000-0000-4000-8000-000000000123")
     const res = await app.request("/v1/images/refresh-url", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ storage_path: "user-uuid-123/missing.png" }),
+      body: JSON.stringify({ storage_path: "00000000-0000-4000-8000-000000000123/missing.png" }),
     })
     expect(res.status).toBe(404)
   })

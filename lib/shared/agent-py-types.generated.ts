@@ -103,11 +103,14 @@ export interface paths {
          *     deleted. Until then both producers exist and the wire schema
          *     keeps them aligned.
          *
-         *     File-size cap matches the Next.js side (`FILE_SIZE_LIMIT` in
-         *     `lib/shared/upload-config.ts`); FastAPI enforces multipart size
-         *     at the framework level. A read failure surfaces as 500 with
-         *     the parser's error message so the frontend can show it to the
-         *     user without trying to recover.
+         *     File-size cap (`EXTRACT_MAX_BYTES`, default 5 MB) matches the
+         *     Next.js side (`FILE_SIZE_LIMIT` in `lib/shared/upload-config.ts`);
+         *     the upload is read in chunks and anything larger is rejected with
+         *     413 before extraction runs. Extraction itself is CPU-bound
+         *     (PDF / DOCX / XLSX parsing), so it runs in a worker thread to keep
+         *     the event loop serving other requests. An extractor crash surfaces
+         *     as 500 with the parser's error message so the frontend can show it
+         *     to the user without trying to recover.
          */
         post: operations["extract_v1_extract_post"];
         delete?: never;
