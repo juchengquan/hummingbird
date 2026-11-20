@@ -1108,6 +1108,7 @@ export type Database = {
           goal: string
           id: string
           max_steps: number
+          metadata: Json
           parent_task_id: string | null
           pending_children: number
           result_message_id: string | null
@@ -1125,6 +1126,7 @@ export type Database = {
           goal: string
           id: string
           max_steps?: number
+          metadata?: Json
           parent_task_id?: string | null
           pending_children?: number
           result_message_id?: string | null
@@ -1142,6 +1144,7 @@ export type Database = {
           goal?: string
           id?: string
           max_steps?: number
+          metadata?: Json
           parent_task_id?: string | null
           pending_children?: number
           result_message_id?: string | null

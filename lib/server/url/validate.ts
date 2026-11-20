@@ -30,6 +30,29 @@ export type ValidationError =
 const ALLOWED_PROTOCOLS = new Set(["http:", "https:"])
 
 /**
+ * Per-call relaxation of the private-host rules. Default (`{}`) is the
+ * strict public-internet-only posture used by the bookmark fetcher.
+ *
+ * `allowPrivateHosts` lets loopback / RFC 1918 / ULA / `.local`-style
+ * hosts through — used by MCP when the operator opts in via
+ * `MCP_ALLOW_PRIVATE_HOSTS=true` (local dev MCP servers on
+ * `localhost`). Even then, link-local (169.254.0.0/16, fe80::/10 —
+ * which covers the 169.254.169.254 cloud metadata endpoint) and the
+ * named metadata hosts stay blocked: no legitimate MCP server lives
+ * there, and they are the single most valuable SSRF target.
+ */
+export interface OutboundUrlPolicy {
+  allowPrivateHosts?: boolean
+}
+
+/** Blocked even under `allowPrivateHosts`. */
+const ALWAYS_BLOCKED_HOSTS = new Set([
+  "metadata.google.internal",
+  "metadata.azure.com",
+  "metadata",
+])
+
+/**
  * Hostnames that resolve to non-public destinations regardless of DNS.
  * Pure textual match — `.local` covers mDNS / Bonjour, `.internal` is
  * common for corp DNS, the `*.svc.cluster.local` form is Kubernetes
@@ -96,7 +119,8 @@ export function normalizeUrl(input: string): string | null {
  * structured failure.
  */
 export async function validateOutboundUrl(
-  rawUrl: string
+  rawUrl: string,
+  policy: OutboundUrlPolicy = {}
 ): Promise<
   | { ok: true; url: URL }
   | { ok: false; error: ValidationError }
@@ -128,30 +152,47 @@ export async function validateOutboundUrl(
   // shouldn't happen for an address literal.
   const hostForIpCheck = stripIpv6Brackets(hostLower)
 
-  if (BLOCKED_EXACT_HOSTS.has(hostLower)) {
+  const allowPrivate = policy.allowPrivateHosts === true
+  // Strip a trailing root dot so `localhost.` / `metadata.google.internal.`
+  // can't dodge the textual blocklists.
+  const hostForMatch = hostLower.endsWith(".") ? hostLower.slice(0, -1) : hostLower
+
+  if (ALWAYS_BLOCKED_HOSTS.has(hostForMatch)) {
     return {
       ok: false,
       error: {
         code: "blocked_host",
-        message: `Hostname "${hostLower}" is blocked`,
+        message: `Hostname "${hostForMatch}" is blocked`,
       },
     }
   }
-  for (const suffix of BLOCKED_HOST_SUFFIXES) {
-    if (hostLower === suffix.slice(1) || hostLower.endsWith(suffix)) {
+
+  if (!allowPrivate) {
+    if (BLOCKED_EXACT_HOSTS.has(hostForMatch)) {
       return {
         ok: false,
         error: {
           code: "blocked_host",
-          message: `Hostnames ending in "${suffix}" are blocked`,
+          message: `Hostname "${hostForMatch}" is blocked`,
         },
+      }
+    }
+    for (const suffix of BLOCKED_HOST_SUFFIXES) {
+      if (hostForMatch === suffix.slice(1) || hostForMatch.endsWith(suffix)) {
+        return {
+          ok: false,
+          error: {
+            code: "blocked_host",
+            message: `Hostnames ending in "${suffix}" are blocked`,
+          },
+        }
       }
     }
   }
 
   // If the hostname is already a literal IP, check it directly.
   if (isIP(hostForIpCheck)) {
-    if (isPrivateAddress(hostForIpCheck)) {
+    if (!isAddressAllowed(hostForIpCheck, policy)) {
       return {
         ok: false,
         error: {
@@ -164,8 +205,14 @@ export async function validateOutboundUrl(
   }
 
   // DNS lookup — resolves both A and AAAA. Reject if any returned
-  // address is private (DNS rebinding defense). `all: true` returns
-  // every record; we check them all rather than the first.
+  // address is private. `all: true` returns every record; we check
+  // them all rather than the first.
+  //
+  // NOTE: this pre-flight alone is NOT a DNS-rebinding defense — a
+  // TTL-0 record can answer differently when `fetch()` resolves again
+  // at connect time. Outbound requests must also go through
+  // `@/server/url/guarded-fetch`, whose connect-time lookup re-applies
+  // `isAddressAllowed` to the address actually dialled.
   let records: Array<{ address: string; family: number }>
   try {
     records = await dns.lookup(hostLower, { all: true })
@@ -179,7 +226,7 @@ export async function validateOutboundUrl(
     }
   }
   for (const rec of records) {
-    if (isPrivateAddress(rec.address)) {
+    if (!isAddressAllowed(rec.address, policy)) {
       return {
         ok: false,
         error: {
@@ -210,7 +257,7 @@ function stripIpv6Brackets(host: string): string {
  * over CIDR matching rather than pulling in a dep — the ranges are
  * stable and well-documented.
  */
-function isPrivateAddress(addr: string): boolean {
+export function isPrivateAddress(addr: string): boolean {
   const family = isIP(addr)
   if (family === 4) return isPrivateIpv4(addr)
   if (family === 6) return isPrivateIpv6(addr)
@@ -248,6 +295,11 @@ function isPrivateIpv6(addr: string): boolean {
   // family — safest default and matches the conservative posture of
   // the rest of the blocklist.
   if (lower.startsWith("::ffff:")) return true
+  // Anything else in ::/96 (deprecated IPv4-compatible form, e.g.
+  // `::7f00:1`) and the NAT64 well-known prefix 64:ff9b::/96 embed an
+  // IPv4 address we'd otherwise not inspect. Deny both families.
+  if (lower.startsWith("::")) return true
+  if (lower.startsWith("64:ff9b:")) return true
   // First-byte heuristics for the common private prefixes:
   //   fc00::/7  — unique local (fc00, fd00)
   //   fe80::/10 — link-local (fe80, fe90, fea0, feb0)
@@ -258,4 +310,55 @@ function isPrivateIpv6(addr: string): boolean {
   }
   if (lower.startsWith("ff")) return true
   return false
+}
+
+/**
+ * Whether a numeric address may be connected to under `policy`.
+ * Shared by `validateOutboundUrl` (pre-flight) and the guarded
+ * dispatcher's connect-time lookup (`@/server/url/guarded-fetch`) so
+ * check and connect apply the exact same rules.
+ */
+export function isAddressAllowed(
+  addr: string,
+  policy: OutboundUrlPolicy = {}
+): boolean {
+  if (isAlwaysBlockedAddress(addr)) return false
+  if (policy.allowPrivateHosts === true) return true
+  return !isPrivateAddress(addr)
+}
+
+/**
+ * Addresses no outbound request may reach regardless of policy:
+ * link-local (incl. the 169.254.169.254 cloud metadata endpoint, in
+ * plain or IPv4-mapped-IPv6 form) and AWS's IPv6 IMDS address.
+ * Unparseable input is denied.
+ */
+function isAlwaysBlockedAddress(addr: string): boolean {
+  const family = isIP(addr)
+  if (family === 0) return true
+  if (family === 4) return isLinkLocalIpv4(addr)
+  const lower = addr.toLowerCase()
+  if (lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) {
+    return true
+  }
+  if (lower === "fd00:ec2::254") return true
+  const mapped = ipv4FromMappedIpv6(lower)
+  return mapped !== null && isLinkLocalIpv4(mapped)
+}
+
+function isLinkLocalIpv4(addr: string): boolean {
+  const [a, b] = addr.split(".").map((p) => Number(p))
+  return a === 169 && b === 254
+}
+
+/** `::ffff:1.2.3.4` / `::ffff:102:304` → `1.2.3.4`; otherwise null. */
+function ipv4FromMappedIpv6(lower: string): string | null {
+  if (!lower.startsWith("::ffff:")) return null
+  const rest = lower.slice("::ffff:".length)
+  if (isIP(rest) === 4) return rest
+  const m = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(rest)
+  if (!m) return null
+  const hi = parseInt(m[1], 16)
+  const lo = parseInt(m[2], 16)
+  return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`
 }

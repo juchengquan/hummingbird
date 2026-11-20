@@ -44,6 +44,7 @@ import type { Json } from "@/shared/supabase/types"
 import { parseCanvasState } from "@/shared/canvas/types"
 import { useStore } from "@/client/hooks/use-store"
 import { setSyncSnapshot } from "@/client/hooks/use-sync"
+import { mergeCloudSnapshot, type MergeOptions } from "@/client/sync/snapshot-merge"
 
 /**
  * Per-entity table-write helper for `bulkUploadLocalState`. Skips the
@@ -474,6 +475,8 @@ export async function fetchCloudSnapshot(
       if (f.key_topics && f.key_topics.length > 0) {
         file.keyTopics = f.key_topics
       }
+      // Pushed by diffFiles; read it back so a pull doesn't strip it.
+      if (f.storage_path) file.storagePath = f.storage_path
       // `deleted_at` column added in migration 0004. Older clients
       // never set it; pre-0004 rows have it null. Either way: nullish
       // → live file; non-null → tombstoned.
@@ -732,6 +735,8 @@ export async function bulkUploadLocalState(
         title: c.title,
         pinned: c.pinned,
         selected_file_ids: c.selectedFileIds,
+        selected_mcp_resource_ids: c.selectedMcpResourceIds ?? [],
+        selected_url_bookmark_ids: c.selectedUrlBookmarkIds ?? [],
         file_retrieval_modes: (c.fileRetrievalModes ?? {}) as Json,
         system_prompt: c.systemPrompt,
         // document_content / document_updated_at moved onto the workspaces
@@ -1117,18 +1122,54 @@ export async function bulkUploadLocalState(
   return { ok: true }
 }
 
+/** The synced entity slices of the current store, as a CloudSnapshot. */
+export function localSnapshotFromStore(): CloudSnapshot {
+  const s = useStore.getState()
+  return {
+    workspaces: s.workspaces,
+    documents: s.documents,
+    conversations: s.conversations,
+    files: s.files,
+    resources: s.resources,
+    conversationFiles: s.conversationFiles,
+    notes: s.notes,
+    artifacts: s.artifacts,
+    prompts: s.prompts,
+    projectTasks: s.projectTasks,
+    mcpServers: s.mcpServers,
+    mcpResources: s.mcpResources,
+    mcpResourceBindings: s.mcpResourceBindings,
+    conversationMcpResources: s.conversationMcpResources,
+    urlBookmarks: s.urlBookmarks,
+    conversationUrlBookmarks: s.conversationUrlBookmarks,
+  }
+}
+
 /**
- * Replaces the Zustand store contents with `snapshot`. Picks a sensible
+ * Applies a cloud snapshot to the Zustand store. Picks a sensible
  * activeWorkspaceId / activeConversationId by recency so the UI lands
  * somewhere useful after a refresh-pull.
+ *
+ * Not a wholesale replace: `mergeCloudSnapshot` keeps local-only fields
+ * (no DB column) from same-id local entities, skips rows with a pending
+ * delete, and keeps the local version of rows with a pending upsert
+ * (pass `opts.pendingOps`). Conversations mid-stream keep their local
+ * messages.
  *
  * Crucially, this seeds the sync layer's diff baseline BEFORE calling
  * setState, so `useSync`'s subscriber sees prev === next on the
  * synchronous notification and emits zero ops. No "re-upload everything
  * we just downloaded" storm.
  */
-export function applyCloudSnapshot(snapshot: CloudSnapshot): void {
+export function applyCloudSnapshot(
+  cloudSnapshot: CloudSnapshot,
+  opts: Omit<MergeOptions, "streamingConversationIds"> = {}
+): void {
   const s = useStore.getState()
+  const snapshot = mergeCloudSnapshot(localSnapshotFromStore(), cloudSnapshot, {
+    ...opts,
+    streamingConversationIds: new Set(s.typingConversationIds),
+  })
   const sortedWorkspaces = [...snapshot.workspaces].sort(
     (a, b) =>
       new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()

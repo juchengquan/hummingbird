@@ -31,7 +31,7 @@ full phased plan.
   injected. status → start_step → step → end_step → cancel-check →
   loop, or settle on done / max_steps.
 - **`feature_flag.py`** — `is_user_flagged_to_python` reads
-  `auth.users.raw_user_meta_data->>'agent_backend'`. Defensive on
+  `auth.users.raw_app_meta_data->>'agent_backend'`. Defensive on
   every shape (missing / NULL / JSON-string / not-a-dict / wrong
   value). Any DB error falls back to "not flagged" so a flag-lookup
   blip never silently switches a user TO Python.
@@ -176,14 +176,18 @@ After Phase 1 deploys:
 
 ## How to opt a user into Python execution
 
-Phase 2a uses `auth.users.raw_user_meta_data->>'agent_backend'` as the
+Phase 2a uses `auth.users.raw_app_meta_data->>'agent_backend'` as the
 per-user feature flag. Set it to `'python'` to route a user's `start`
-runs to the Python executor:
+runs to the Python executor. (It is `app_metadata`, not
+`user_metadata`, on purpose: users can write their own
+`user_metadata` via `supabase.auth.updateUser`, but only the service
+role can write `app_metadata`. Users flagged under the old
+`raw_user_meta_data` key must be re-flagged.)
 
 ```sql
 UPDATE auth.users
-SET raw_user_meta_data =
-    COALESCE(raw_user_meta_data, '{}'::jsonb) || '{"agent_backend":"python"}'::jsonb
+SET raw_app_meta_data =
+    COALESCE(raw_app_meta_data, '{}'::jsonb) || '{"agent_backend":"python"}'::jsonb
 WHERE id = '<user-uuid>';
 ```
 

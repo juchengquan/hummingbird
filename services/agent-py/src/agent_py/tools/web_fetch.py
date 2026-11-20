@@ -1,7 +1,10 @@
 """`webFetch` tool — GET a URL, return cleaned text + a title.
 
 Phase 2b-2 of PLAN-agent-api. Narrow port of
-`lib/server/skills/web-fetch.ts`: HTTP GET via httpx, strip HTML
+`lib/server/skills/web-fetch.ts`: SSRF-guarded HTTP GET via
+`outbound_http.safe_get` (per-hop `validate_outbound_url`, manual
+redirects, connect-time address pinning, streamed body cap, overall
+deadline — the same path the bookmark fetcher uses), strip HTML
 script/style/markup, return the first ~12k chars of text plus the
 document's `<title>` for the UI pill. No per-turn budget yet (the TS
 side has one; we can layer it on when we wire the skill cascade for
@@ -19,6 +22,7 @@ from typing import Any
 
 import httpx
 
+from ..outbound_http import OutboundFetchError, build_outbound_client, safe_get
 from .registry import ToolDescriptor, ToolError, ToolInvocationResult
 
 # Cap the text we feed back to the model. The TS side caps at ~12k
@@ -27,13 +31,20 @@ from .registry import ToolDescriptor, ToolError, ToolInvocationResult
 # URL if needed.
 MAX_TEXT_CHARS = 12_000
 
-# Cap raw response bytes before we even bother parsing — protect
-# against a malicious or accidentally huge response. ~1 MB is enough
-# for almost any text-heavy page.
-MAX_RESPONSE_BYTES = 1_000_000
+# Cap raw (decoded) response bytes, enforced while streaming so a huge
+# or never-ending body is never buffered. Larger responses are rejected
+# with a ToolError — same 5 MB cap and semantics as the TS webFetch,
+# which reuses the bookmark fetcher.
+MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 
-# Reasonable per-call timeout. The TS side uses ~15s; mirror.
+# Per-operation (connect / read) timeout. The TS side uses ~15s; mirror.
 DEFAULT_TIMEOUT_S = 15.0
+
+# Wall-clock budget for the whole fetch including redirects — stops a
+# slow-drip body from holding the turn open indefinitely.
+TOTAL_TIMEOUT_S = 30.0
+
+MAX_REDIRECTS = 5
 
 # Identifies us to upstream servers — some refuse a missing UA. The
 # TS side uses a similar generic agent string; mirror for parity.
@@ -79,26 +90,36 @@ async def _execute_with_client(
         raise ToolError("webFetch: `url` must start with http:// or https://.")
 
     try:
-        response = await client.get(url, follow_redirects=True)
-    except httpx.HTTPError as exc:
-        raise ToolError(f"webFetch: request failed — {exc}") from exc
+        response = await safe_get(
+            url,
+            client=client,
+            max_body_bytes=MAX_RESPONSE_BYTES,
+            total_timeout_s=TOTAL_TIMEOUT_S,
+            on_oversize="error",
+            max_redirects=MAX_REDIRECTS,
+        )
+    except OutboundFetchError as exc:
+        if exc.code == "validation":
+            raise ToolError(f"webFetch: URL not allowed — {exc.message}") from exc
+        if exc.code == "body_too_large":
+            raise ToolError(
+                f"webFetch: response exceeded {MAX_RESPONSE_BYTES // (1024 * 1024)} MB."
+            ) from exc
+        raise ToolError(f"webFetch: request failed — {exc.message}") from exc
 
-    if response.status_code >= 400:
+    if response.status_code >= 300:
         raise ToolError(f"webFetch: {url} returned HTTP {response.status_code}.")
 
-    # Belt-and-suspenders content-length cap — `httpx` already enforces
-    # via `limits=`, but a server can lie about content-length, so we
-    # also clip the in-memory bytes.
-    raw = response.content[:MAX_RESPONSE_BYTES]
+    raw = response.body
     content_type = response.headers.get("content-type", "")
 
     if "html" in content_type.lower() or raw.lstrip().startswith(b"<"):
-        html = raw.decode(response.encoding or "utf-8", errors="replace")
+        html = raw.decode(response.encoding, errors="replace")
         title = _extract_title(html)
         body_text = _strip_html(html)
     else:
         title = None
-        body_text = raw.decode(response.encoding or "utf-8", errors="replace")
+        body_text = raw.decode(response.encoding, errors="replace")
         body_text = _WHITESPACE_RE.sub(" ", body_text).strip()
 
     if len(body_text) > MAX_TEXT_CHARS:
@@ -116,8 +137,8 @@ async def _execute(args: dict[str, Any]) -> ToolInvocationResult:
     # One-shot client per call. The agent loop isn't hot enough that
     # the per-call client construction matters (~1ms); a shared client
     # would need lifecycle wiring we'd rather not own here.
-    async with httpx.AsyncClient(
-        timeout=DEFAULT_TIMEOUT_S,
+    async with build_outbound_client(
+        timeout_s=DEFAULT_TIMEOUT_S,
         headers={"User-Agent": USER_AGENT},
     ) as client:
         return await _execute_with_client(args, client=client)

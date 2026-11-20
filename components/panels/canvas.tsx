@@ -146,7 +146,10 @@ function CanvasInner({ workspaceId }: { workspaceId: string }) {
   // Latest RF state kept in a ref so the unmount flush sees current data
   // without re-subscribing the effect.
   const latest = useRef<{ nodes: RfNode[]; edges: Edge[] }>({ nodes: [], edges: [] })
-  latest.current = { nodes, edges }
+  // Synced in an effect (not during render) per react-hooks/refs.
+  useEffect(() => {
+    latest.current = { nodes, edges }
+  }, [nodes, edges])
 
   const persistNow = useCallback(() => {
     if (persistTimer.current) {

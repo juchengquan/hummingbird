@@ -1,7 +1,6 @@
 "use client"
 
 import { useCallback, useMemo, useRef } from "react"
-import { marked } from "marked"
 import { cn } from "@/shared/utils"
 import { openPdf } from "@/components/right-panel-slot"
 import {
@@ -10,13 +9,16 @@ import {
 } from "@/components/panels/citation-marker"
 import { mark as perfMark, count as perfCount } from "@/client/perf-chat-stream"
 import type { CitationMarkerMark } from "@/shared/verify"
+import { renderMarkdownToHtml } from "@/components/markdown-render"
 import "./markdown-preview.css"
 
 /**
  * Read-only markdown renderer for the artifacts preview. Strips raw HTML
  * passthrough so an assistant response with `<script>` (or anything else
- * surprising) renders as escaped text instead of executing. Keeps tables,
- * lists, headings, code fences, blockquotes, and links.
+ * surprising) renders as escaped text instead of executing, and drops
+ * link/image URLs outside the `@/shared/safe-url` allowlist (e.g.
+ * `javascript:`) -- see `./markdown-render.ts`. Keeps tables, lists,
+ * headings, code fences, blockquotes, and links.
  *
  * Code blocks here are rendered as plain `<pre>` — the rich
  * syntax-highlighted view lives on the `code` / `json` artifact kinds, not
@@ -86,25 +88,6 @@ function stripImageTags(html: string): string {
   return html.replace(IMG_TAG_RE, "")
 }
 
-// Configure once, module-level. Setting `gfm: true` enables tables and
-// fenced code. `breaks: false` keeps line breaks meaningful only when the
-// source uses real markdown line breaks.
-marked.use({
-  gfm: true,
-  breaks: false,
-  renderer: {
-    // Don't pass through raw HTML — escape it.
-    html({ text }) {
-      const escape = (s: string) =>
-        s
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-      return escape(text)
-    },
-  },
-})
-
 export function MarkdownPreview({
   content,
   className,
@@ -120,8 +103,7 @@ export function MarkdownPreview({
     perfMark("humm/chat/markdown-parse:start")
     perfCount("chat.markdown.parse")
     try {
-      const out = marked.parse(content, { async: false })
-      let raw = typeof out === "string" ? out : ""
+      let raw = renderMarkdownToHtml(content)
       if (pdfCitationFileId) raw = decoratePdfCitations(raw, pdfCitationFileId)
       if (sourceCount && sourceCount > 0)
         raw = decorateWebCitations(raw, sourceCount, citationMarks)

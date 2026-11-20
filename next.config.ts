@@ -22,6 +22,11 @@ const nextConfig: NextConfig = {
   // it from node_modules at runtime. Only reached behind the
   // vision-capable-model gate.
   serverExternalPackages: ["pdf-parse", "pdfjs-dist", "mammoth", "microsandbox", "pdf-to-img"],
+  // The app never renders `next/image` (plain `<img>` everywhere), so the
+  // `/_next/image` optimizer endpoint is dead weight. Disabling it is
+  // defense-in-depth against Image Optimization advisories (SSRF, AVIF/SVG
+  // RCE) — there's no reason to expose that attack surface.
+  images: { unoptimized: true },
   // Allow the dev server to be hit from LAN IPs (e.g. for testing on a
   // phone on the same Wi-Fi). Without this, Next.js 16+ warns about
   // cross-origin requests to `/_next/*` and will eventually block them.

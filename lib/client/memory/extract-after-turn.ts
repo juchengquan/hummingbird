@@ -1,5 +1,7 @@
 import "client-only"
 
+import { apiClient } from "@/client/api-client"
+
 /**
  * Best-effort, post-turn extraction trigger.
  *
@@ -14,9 +16,6 @@ import "client-only"
  * so this helper itself stays dumb.
  */
 export function extractAfterTurn(turnText: string, conversationId: string): void {
-  void fetch("/api/memory/extract", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ turnText, conversationId }),
-  }).catch(() => {})
+  // `apiClient.memory.extract` never rejects (failures resolve `false`).
+  void apiClient.memory.extract({ turnText, conversationId })
 }

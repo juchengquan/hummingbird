@@ -427,6 +427,20 @@ export const RevokeShareResponseSchema = z.object({
   ok: z.literal(true),
 })
 
+// --- /api/memory/extract ----------------------------------------------------
+// Best-effort post-turn cross-conversation memory extraction. The route
+// self-gates (sign-in + profiles.memory_enabled) and always answers
+// `{ ok: true }` for a well-formed body.
+
+export const MemoryExtractRequestSchema = z.object({
+  turnText: z.string().min(1).max(50_000),
+  conversationId: z.string().max(64).optional(),
+})
+
+export const MemoryExtractResponseSchema = z.object({
+  ok: z.literal(true),
+})
+
 // --- /api/tasks (long-running task — streaming) -----------------------------
 // A task is a chat-shaped request that runs as a multi-step agent loop and
 // streams the AI-SDK data stream of `data-agent-event` parts (see
@@ -717,6 +731,8 @@ export type CompressSummarizeResponse = z.infer<typeof CompressSummarizeResponse
 export type ProjectBreakdownResponse = z.infer<typeof ProjectBreakdownResponseSchema>
 export type CreateShareRequestInput = z.infer<typeof CreateShareRequestSchema>
 export type CreateShareResponse = z.infer<typeof CreateShareResponseSchema>
+export type MemoryExtractRequestInput = z.infer<typeof MemoryExtractRequestSchema>
+export type MemoryExtractResponse = z.infer<typeof MemoryExtractResponseSchema>
 export type RefreshImageUrlRequestInput = z.infer<typeof RefreshImageUrlRequestSchema>
 export type RefreshImageUrlResponse = z.infer<typeof RefreshImageUrlResponseSchema>
 export type RefreshFileUrlRequestInput = z.infer<typeof RefreshFileUrlRequestSchema>

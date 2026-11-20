@@ -179,15 +179,19 @@ export function useTaskRun(options?: UseTaskRunOptions): UseTaskRunResult {
           runIdRef.current
         ) {
           await new Promise<void>((resolve) => {
-            const t = setTimeout(resolve, 1500)
-            abortRef.current?.signal.addEventListener(
-              "abort",
-              () => {
-                clearTimeout(t)
-                resolve()
-              },
-              { once: true }
-            )
+            // `{ once: true }` only detaches the listener when abort
+            // fires; on the (normal) timeout path we must remove it
+            // ourselves or every 1.5s poll leaks one onto the signal.
+            const signal = abortRef.current?.signal
+            const onAbort = () => {
+              clearTimeout(t)
+              resolve()
+            }
+            const t = setTimeout(() => {
+              signal?.removeEventListener("abort", onAbort)
+              resolve()
+            }, 1500)
+            signal?.addEventListener("abort", onAbort, { once: true })
           })
           if (abortRef.current?.signal.aborted) break
           const liveId = runIdRef.current

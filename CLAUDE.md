@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Humm is a Next.js 16.1.6 chat assistant application with a multi-panel interface featuring chat, rich text editor (Plate.js), and file management capabilities.
+Humm is a Next.js 16.4.6 chat assistant application with a multi-panel interface featuring chat, rich text editor (Plate.js), and file management capabilities.
 
 ## Commands
 
@@ -43,7 +43,7 @@ cd services/agent-py && uv sync && uv run uvicorn agent_py.main:app --reload
 ### Tech Stack
 
 - **Runtime**: Bun (package manager)
-- **Framework**: Next.js 16.1.6 (App Router)
+- **Framework**: Next.js 16.4.6 (App Router)
 - **Language**: TypeScript 5.x
 - **UI**: React 19.2.3
 - **Styling**: Tailwind CSS 4 + shadcn/ui components
@@ -134,27 +134,37 @@ function MessageTime({ timestamp }) {
 
 See `.env.example` for the full list. Two groups:
 
-- **AI Gateway** (`AI_GATEWAY_API_KEY`) — required for real chat/editor AI. Without it, the chat panel falls back to a clearly-labeled mock response.
+- **AI Gateway** (`AI_GATEWAY_API_KEY`) — required for real chat/editor AI. Without it, the chat panel falls back to a clearly-labeled mock response. Only model ids declared in `config/models.json` are dispatched on this key; any other id is rejected with 400 `unknown_model` unless the request brings its own gateway key (the editor's BYO `apiKey`). See `selectModel` in `lib/server/model-provider.ts`.
+- **Trusted proxy hops** (`TRUSTED_PROXY_HOPS`, default `1`) — how many reverse proxies in front of Next.js append to `X-Forwarded-For`. `rateLimitKey` (`lib/server/rate-limit.ts`) takes the client IP from the entry that many positions from the right (left entries are client-spoofable); on Vercel (`VERCEL` set) the platform `x-real-ip` / `x-vercel-forwarded-for` headers win. `0` ignores XFF (all anonymous traffic shares one bucket). The same key, hashed, scopes anonymous callers in the summarize response cache.
 - **Minimax-CN override** (`MINIMAX_CN_BASE_URL`, `MINIMAX_CN_API_KEY`) — optional. When both are set, any `minimax/*` model id is dispatched through an OpenAI-compatible client at the configured base URL instead of going through the Vercel AI Gateway. Useful for the Minimax China endpoint or a self-hosted Minimax-compatible gateway. Either var unset → fallthrough to the gateway, as if the override didn't exist. See `lib/server/model-provider.ts`. The same key powers the `generateImage` skill; the image endpoint is derived from `MINIMAX_CN_BASE_URL`'s origin (image and chat share a host but live under different paths), falling back to `https://api.minimaxi.com/` when `MINIMAX_CN_BASE_URL` is unset. See `lib/server/skills/minimax-image-client.ts`.
 - **Ollama** (`OLLAMA_BASE_URL`, optional `OLLAMA_API_KEY`). When `OLLAMA_BASE_URL` is set (typically `http://localhost:11434/v1`), `ollama/*` models route through Ollama's OpenAI-compatible endpoint. The `ollama` provider in `config/providers.json` carries `allowInsecureBaseUrl: true` which relaxes two checks: the SSRF gate accepts `http://localhost` / loopback / private-network hosts, and the API key becomes optional (Ollama doesn't enforce auth). Only enable this for endpoints you control — by setting it you take responsibility for the upstream URL not being a credential-exfiltration sink. A malformed URL still fails at boot.
 - **OpenRouter** (`OPENROUTER_API_KEY`). When set, the `openrouter` provider activates and any `openrouter/*` model id dispatches against `https://openrouter.ai/api/v1`. Special model `openrouter/auto` lets OpenRouter pick the upstream per request based on prompt length, latency budget, and price; specific upstream ids (`openrouter/anthropic/claude-sonnet-4.5`, etc.) route to that exact model. The base URL is fixed in `config/providers.json` (not env-overridable) because OpenRouter is a hosted gateway with no self-host story.
 - **Supabase** (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`) — optional. Enables email magic-link sign-in and (eventually) cloud sync of workspaces, conversations, files, and conversation assets. Without it the app runs anonymously on `localStorage` only; the auth UI is hidden.
 - **MCP encryption** (`MCP_ENCRYPTION_KEY`) — required when any user picks Cloud-mode credentials for an MCP server. Generate with `openssl rand -base64 32`. Stored only in the Next.js server env; never persisted to Postgres. Rotating it invalidates existing cloud-mode credentials (users have to re-add).
+- **MCP private hosts** (`MCP_ALLOW_PRIVATE_HOSTS`) — optional, default off. Every MCP server URL (proxy route, chat `mcpServers`, cloud rows, `/api/mcp/server` saves) passes `validateOutboundUrl` and must be public; outbound MCP + bookmark fetches go through `lib/server/url/guarded-fetch.ts`, whose undici dispatcher re-checks the resolved IP at connect time (DNS-rebinding guard) and re-validates every redirect. Set `true` to allow loopback / RFC 1918 / `.local` hosts for a local dev MCP server; link-local + cloud-metadata addresses stay blocked regardless. Never enable on a shared deployment. See `lib/server/mcp/outbound.ts`.
 - **Code interpreter sandbox** (`CODE_SANDBOX_BASE_URL`, optional `CODE_SANDBOX_API_KEY`) — optional. When `CODE_SANDBOX_BASE_URL` is set, the `runCode` skill registers and runs model-written Python in a local **microsandbox** microVM (libkrun; HVF on Apple Silicon / KVM on Linux). Network is OFF inside the sandbox (airgapped); the pre-baked `python` image carries pandas/numpy/matplotlib; charts are produced via `savefig('/tmp/*.png')` and read back. Absent → the skill is simply not in `SERVER_SKILLS` (no mock — code execution has no meaningful mock), exactly like image-gen degrades without a Minimax key. Adapter lives in `lib/server/code-sandbox/` behind the `CodeSandbox` interface, so another provider drops in via the env seam. Caps via `CODE_SANDBOX_TIMEOUT_MS` / `_STDOUT_CAP` / `_RESULT_CAP` / `_MEM_MIB` / `_CPUS`. See `docs/PLAN-execution-sandbox.md` (runtime) + `docs/PLAN-code-interpreter.md` (consumer).
 - **Vision document extraction** (`VISION_MODEL`) — optional. On top of the text-only extraction (`lib/server/extraction.ts`), layout-rich or scanned PDFs get a best-effort vision pass: pages are rendered to images (`pdf-to-img`, isolated in a Node worker thread so its bundled pdfjs can't collide with `pdf-parse`'s — see `lib/server/extraction/render-pdf.ts`) and transcribed to markdown (tables → markdown tables, figures → captions) by a vision-capable model, merged into the result's `text`/`fullText`. Gated by `shouldUseVision` (PDF + low text-yield or table-dense) and a per-IP budget; never fatal (any failure → text-only). `VISION_MODEL` overrides which model is used; it must be flagged `supportsVision` in `config/models.json`. Unset → first `supportsVision` model; none flagged → vision skipped. PR-1 of `docs/PLAN-multimodal-docs.md` (structured blocks + `file_sections` indexing + table rendering are PR-2/PR-3).
 
-SQL lives under `supabase/migrations/` as seventeen files (`0001_schema.sql`,
+SQL lives under `supabase/migrations/` as numbered files applied in order (`0001_schema.sql`,
 `0002_rls_policies.sql`, `0003_storage.sql`, `0004_conversation_files.sql`,
 `0005_mcp.sql`, `0006_url_bookmarks.sql`, `0007_file_full_text.sql`,
 `0008_message_compression.sql`, `0009_search_file_sections.sql`,
 `0010_message_generated_images.sql`, `0011_prompts.sql`,
 `0012_tasks.sql`, `0013_task_checkpoint.sql`,
 `0014_task_jobs.sql`, `0015_workspace_canvas.sql`,
-`0016_project_mode.sql`, `0017_prompts_workspace.sql`) — see `docs/SUPABASE_SETUP.md`
+`0016_project_mode.sql`, `0017_prompts_workspace.sql`, … `0031_rls_fk_ownership.sql`) — see `docs/SUPABASE_SETUP.md`
 for the hosted-cloud run order, or `docs/SUPABASE_LOCAL.md` for the
 local Supabase CLI path (Docker-based, no cloud account needed). For
 verifying the file full-text retrieval pipeline end-to-end after
 schema or extraction changes, see `docs/SUPABASE_TEST.md`.
+
+**RLS convention (0031).** Every user-data table's permissive `own …`
+policy checks the row's own `user_id`; `0031_rls_fk_ownership.sql` adds a
+RESTRICTIVE `<table>: fk ownership (insert|update)` policy requiring every
+FK to a user-owned table to point at a row with `user_id = auth.uid()`.
+A new table (or new FK column) referencing user-owned rows needs the same
+restrictive pair, otherwise a user can hang rows off another user's data
+via PostgREST.
 
 ## Frontend module conventions
 
@@ -234,7 +244,7 @@ asyncpg · structlog · pytest · ruff · mypy.
 | `services/agent-py/src/agent_py/emitter.py` | RunEmitter — monotonic seq, settle-once. |
 | `services/agent-py/src/agent_py/store.py` | RunStore — `append_event` (idempotent on `(task_id, seq)`), `update_run`, `set_task_handler` (`metadata.handler = 'python'`), `is_run_cancelled`. |
 | `services/agent-py/src/agent_py/runner.py` | `run_agent_loop` — pure orchestration with injected RunStepFn. |
-| `services/agent-py/src/agent_py/feature_flag.py` | Per-user flag check — `auth.users.raw_user_meta_data->>'agent_backend' == 'python'`. Defensive on every shape; DB error → fall back to "not flagged". |
+| `services/agent-py/src/agent_py/feature_flag.py` | Per-user flag check — `auth.users.raw_app_meta_data->>'agent_backend' == 'python'`. Defensive on every shape; DB error → fall back to "not flagged". |
 | `services/agent-py/src/agent_py/executor.py` | `execute_start` — stamps handler, runs loop, updates task row terminal. Step fn is a Phase 2a stub; Phase 2b swaps in the real model call. |
 | `services/agent-py/src/agent_py/poller.py` | Async tick loop. Dispatch tree: dry-run → release; live + unflagged → release; live + flagged + non-`start` → release; live + flagged + `start` → execute then mark_done/failed. |
 | `services/agent-py/tests/` | 62 tests covering health + auth (Phase 0) + db / jobs / poller dry-run (Phase 1) + events / emitter / runner / feature_flag / executor / poller live-mode dispatch (Phase 2a). |
@@ -252,10 +262,10 @@ the transaction pooler (`*.pooler.supabase.com:6543`), because
 the poller no-ops every tick (`/healthz` + `/readyz` still respond).
 `WORKER_DRY_RUN` defaults to `true` (Phase 1 contract); flip to
 `false` to enable the Phase 2a executor. With it `false`, the
-per-user feature flag (`auth.users.raw_user_meta_data->>'agent_backend'`)
+per-user feature flag (`auth.users.raw_app_meta_data->>'agent_backend'`)
 gates whether Python executes a given user's runs vs releases for the
-TS worker. To opt a user in: `UPDATE auth.users SET raw_user_meta_data
-= COALESCE(raw_user_meta_data, '{}'::jsonb) ||
+TS worker. To opt a user in: `UPDATE auth.users SET raw_app_meta_data
+= COALESCE(raw_app_meta_data, '{}'::jsonb) ||
 '{"agent_backend":"python"}'::jsonb WHERE id = '<uuid>';`. The service
 reads the same top-level `.env` as Next.js.
 

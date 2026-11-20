@@ -100,6 +100,7 @@ function ReconcileMount() {
         conversations: recon.cloud?.conversations.length ?? 0,
       }}
       localCounts={{ workspaces: workspaceCount, conversations: conversationCount }}
+      localFromOtherAccount={recon.localFromOtherAccount}
       onChoose={recon.decide}
     />
   )

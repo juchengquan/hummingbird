@@ -254,6 +254,9 @@ async def test_respond_with_approved_false_appends_decline_message() -> None:
                 return_value=_checkpoint_with_pending(tool_call_id="tu_1", tool="myMcp__write")
             ),
         ),
+        patch.object(store, "claim_paused_for_respond", new=AsyncMock(return_value=True)),
+        patch.object(store, "max_event_seq", new=AsyncMock(return_value=8)),
+        patch.object(store, "load_run_events", new=AsyncMock(return_value=[])),
         patch.object(store, "set_task_handler", new=AsyncMock()),
         patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=False)),
         patch.object(store, "update_run", new=AsyncMock()),
@@ -318,6 +321,9 @@ async def test_respond_with_approved_unknown_tool_feeds_placeholder() -> None:
                 return_value=_checkpoint_with_pending(tool_call_id="tu_1", tool="myMcp__write")
             ),
         ),
+        patch.object(store, "claim_paused_for_respond", new=AsyncMock(return_value=True)),
+        patch.object(store, "max_event_seq", new=AsyncMock(return_value=8)),
+        patch.object(store, "load_run_events", new=AsyncMock(return_value=[])),
         patch.object(store, "set_task_handler", new=AsyncMock()),
         patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=False)),
         patch.object(store, "update_run", new=AsyncMock()),

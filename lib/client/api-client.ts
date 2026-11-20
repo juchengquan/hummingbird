@@ -24,6 +24,7 @@ import {
   EmbedResponseSchema,
   ExtractionResponseSchema,
   FileSummarizeResponseSchema,
+  MemoryExtractResponseSchema,
   ConversationSummarizeResponseSchema,
   CompressSummarizeResponseSchema,
   ProjectBreakdownResponseSchema,
@@ -42,6 +43,7 @@ import {
   type ScheduleUpdateInput,
   type CreateShareRequestInput,
   type CreateShareResponse,
+  type MemoryExtractRequestInput,
   type ExtractionResponse,
   type FileSummarizeResponse,
   type ConversationSummarizeResponse,
@@ -322,6 +324,7 @@ export const apiUrls = {
   share: () => url("/api/share"),
   shareToken: (token: string) =>
     url(`/api/share/${encodeURIComponent(token)}`),
+  memoryExtract: () => url("/api/memory/extract"),
   mcp: (serverId: string, action: "discover" | "call" | "read") =>
     url(`/api/mcp/${encodeURIComponent(serverId)}/${action}`),
   mcpServer: () => url("/api/mcp/server"),
@@ -862,6 +865,30 @@ async function createShare(
   }
 }
 
+// --- /api/memory/extract ----------------------------------------------------
+
+/**
+ * Trigger best-effort cross-conversation memory extraction for one
+ * finished turn. Resolves `true` when the route accepted the body,
+ * `false` on any failure (non-OK status, malformed response, network
+ * error) — never rejects, so callers can fire-and-forget.
+ */
+async function memoryExtract(
+  body: MemoryExtractRequestInput
+): Promise<boolean> {
+  try {
+    const res = await fetch(apiUrls.memoryExtract(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) return false
+    return MemoryExtractResponseSchema.safeParse(await res.json()).success
+  } catch {
+    return false
+  }
+}
+
 /** In-flight dedupe cache for `refreshGeneratedImageUrl`. Keys on
  *  `storagePath` (in-Next) or `${remote.baseUrl}::${storagePath}`
  *  (remote) so a backend switch mid-session forces a fresh request.
@@ -1155,6 +1182,7 @@ export const apiClient = {
     create: createShare,
     revoke: revokeShare,
   },
+  memory: { extract: memoryExtract },
   images: {
     refreshUrl: refreshGeneratedImageUrl,
   },

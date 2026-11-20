@@ -199,7 +199,9 @@ export async function extractFile(
 
   if (type === "application/pdf" || hasName(name, ".pdf")) {
     const { PDFParse } = await import("pdf-parse")
-    const parser = new PDFParse({ data })
+    // pdf-parse bundles its own pdfjs-dist 5.x; `isEvalSupported: false`
+    // stops it compiling attacker-supplied PDF functions via `new Function`.
+    const parser = new PDFParse({ data, isEvalSupported: false })
     const parsed = await parser.getText()
     const { text, truncated, fullText } = truncate(parsed.text ?? "")
     const textResult: ExtractionResult = { kind: "pdf", text, truncated, fullText }

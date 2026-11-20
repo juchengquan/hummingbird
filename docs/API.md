@@ -144,6 +144,28 @@ their own tokens (enforced by RLS).
 **Errors**: `401` unauthorised, `404` token not found, `500` update
 failure, `503` Supabase not configured.
 
+### `POST /api/memory/extract`
+
+Best-effort, post-turn cross-conversation memory extraction. Fired
+fire-and-forget by the chat pipeline (`lib/client/memory/extract-after-turn.ts`
+via `apiClient.memory.extract`) after a finished assistant turn when the
+user has memory enabled. The route self-gates again server-side
+(sign-in + `profiles.memory_enabled`), so an anonymous / opted-out call
+is a no-op that still answers `200`.
+
+**Request**:
+
+```ts
+{
+  turnText: string,          // 1..50_000 chars — "User: …\n\nAssistant: …"
+  conversationId?: string,   // max 64 chars
+}
+```
+
+**Response 200**: `{ ok: true }`
+
+**Errors**: `400` invalid body.
+
 ---
 
 ## Streaming route — `POST /api/chat`
@@ -259,8 +281,8 @@ shapes below are normative.
 // "upstream" (agent-py / agent-ts services). The consumer maps both
 // catch-alls to the same generic ErrorBubble surface.
 { "type": "error", "code": "auth" | "rate_limit" | "context_window"
-                          | "invalid_model" | "provider" | "network"
-                          | "unknown",
+                          | "invalid_model" | "unknown_model" | "provider"
+                          | "network" | "unknown",
   "message": "string" }
 
 // Stream end — last frame of a successful stream.

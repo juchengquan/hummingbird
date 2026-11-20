@@ -10,33 +10,52 @@ import "client-only"
  *   1. **First-sign-in reconciliation** — the very first time a given
  *      user_id signs in on this device, we may need to decide whether to
  *      keep local data, take cloud data, or merge. Tracked via a
- *      localStorage set `hummingbird-reconciled-users`.
+ *      localStorage set `hummingbird-reconciled-users` (`sync-owner.ts`).
  *
  *   2. **Silent cloud-pull on refresh / reconnect** — after the user has
  *      been reconciled once, every subsequent sign-in (including page
  *      refresh) and every `online` transition pulls cloud → applies to
- *      local store. Cloud is the source of truth when signed in.
+ *      local store. Cloud is the source of truth when signed in, except
+ *      for local-only fields (no DB column), which the apply preserves.
  *
  * Conflict policy: BEFORE pulling cloud, we wait for the local sync queue
- * to drain so any local-only edits flush upward first. Otherwise a
- * reconnect would overwrite local writes that hadn't pushed yet.
+ * to drain so any local-only edits flush upward first. `whenDrained`
+ * gives up after 30s, so the apply ALSO consults the queue: rows with a
+ * pending delete aren't resurrected and rows with a pending upsert keep
+ * their local version (see `mergeCloudSnapshot`).
+ *
+ * Shared machines: the local store may hold a DIFFERENT account's data
+ * (tracked in `sync-owner.ts`). A first sign-in never silently uploads
+ * such data into the new account — it goes through the reconcile prompt
+ * even when the new account's cloud is empty.
  *
  * Pull UX is silent — no toast, no spinner. The UI just reflects the new
  * state once the snapshot lands.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { useStore } from "@/client/hooks/use-store"
 import { useSyncEnabled } from "@/client/hooks/use-sync-enabled"
-import { getSupabaseBrowserClient } from "@/client/supabase/client"
+import { getDefaultConversations } from "@/client/hooks/store/slices/conversations"
+import { getDefaultWorkspaces } from "@/client/hooks/store/slices/workspaces"
+import {
+  getSupabaseBrowserClient,
+  type AppSupabaseClient,
+} from "@/client/supabase/client"
 import {
   applyCloudSnapshot,
   bulkUploadLocalState,
   fetchCloudSnapshot,
+  localSnapshotFromStore,
   type CloudSnapshot,
 } from "@/client/sync/reconcile"
 import { seedSyncSnapshot } from "@/client/hooks/use-sync"
-import { whenDrained } from "@/client/sync/sync-queue"
+import { pendingOpsFor, syncQueueMark, whenDrained } from "@/client/sync/sync-queue"
+import {
+  getLocalDataOwner,
+  hasReconciled,
+  markReconciled,
+  setLocalDataOwner,
+} from "@/client/sync/sync-owner"
 import type { ReconcileChoice } from "@/components/auth/reconcile-dialog"
 
 export type ReconcileStatus = "idle" | "loading" | "prompt" | "done" | "error"
@@ -45,62 +64,68 @@ export interface ReconcileState {
   status: ReconcileStatus
   cloud?: CloudSnapshot
   error?: string
+  /** True when the prompt is showing because the local data was created
+   *  under a different account than the one signing in. */
+  localFromOtherAccount: boolean
   decide: (choice: ReconcileChoice) => void
-}
-
-// ---------- reconciled-users persistence -----------------------------------
-
-const RECONCILED_KEY = "hummingbird-reconciled-users"
-
-function readReconciledSet(): Set<string> {
-  if (typeof window === "undefined") return new Set()
-  try {
-    const raw = localStorage.getItem(RECONCILED_KEY)
-    if (!raw) return new Set()
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? new Set(parsed as string[]) : new Set()
-  } catch {
-    return new Set()
-  }
-}
-
-function markReconciled(userId: string): void {
-  if (typeof window === "undefined") return
-  const set = readReconciledSet()
-  set.add(userId)
-  try {
-    localStorage.setItem(RECONCILED_KEY, JSON.stringify([...set]))
-  } catch {
-    // localStorage full / blocked — accept that we'll re-prompt next time.
-  }
-}
-
-function hasReconciled(userId: string): boolean {
-  return readReconciledSet().has(userId)
 }
 
 // ---------- helpers --------------------------------------------------------
 
-function localSnapshotFromStore(): CloudSnapshot {
-  const s = useStore.getState()
-  return {
-    workspaces: s.workspaces,
-    documents: s.documents,
-    conversations: s.conversations,
-    files: s.files,
-    resources: s.resources,
-    conversationFiles: s.conversationFiles,
-    notes: s.notes,
-    artifacts: s.artifacts,
-    prompts: s.prompts,
-    projectTasks: s.projectTasks,
-    mcpServers: s.mcpServers,
-    mcpResources: s.mcpResources,
-    mcpResourceBindings: s.mcpResourceBindings,
-    conversationMcpResources: s.conversationMcpResources,
-    urlBookmarks: s.urlBookmarks,
-    conversationUrlBookmarks: s.conversationUrlBookmarks,
-  }
+/**
+ * True when the local store holds anything beyond the pristine
+ * first-run scaffolding (one default workspace + an empty welcome chat).
+ * Used to decide whether another account's leftover data is worth a
+ * prompt at all.
+ */
+export function localHasContent(local: CloudSnapshot): boolean {
+  return (
+    local.workspaces.length > 1 ||
+    local.conversations.some((c) => c.messages.length > 0) ||
+    local.documents.length > 0 ||
+    local.files.length > 0 ||
+    local.notes.length > 0 ||
+    local.artifacts.length > 0 ||
+    local.prompts.length > 0 ||
+    local.projectTasks.length > 0 ||
+    local.mcpServers.length > 0 ||
+    local.urlBookmarks.length > 0
+  )
+}
+
+/**
+ * True when the local data is known to belong to another account. An
+ * unknown owner (fresh device, or anonymous local-only use) is NOT
+ * foreign — that's the intended "first sign-in uploads my local work"
+ * path.
+ */
+function localBelongsToOtherAccount(userId: string): boolean {
+  const owner = getLocalDataOwner()
+  return owner !== null && owner !== userId
+}
+
+/** Cloud pull for an already-reconciled user (refresh / reconnect). */
+async function silentPull(
+  client: AppSupabaseClient,
+  userId: string,
+  isCancelled: () => boolean
+): Promise<"ok" | "cancelled" | "failed"> {
+  await whenDrained()
+  if (isCancelled()) return "cancelled"
+  // Ops that flush while the fetch is in flight still count as pending:
+  // the snapshot may predate them.
+  const mark = syncQueueMark()
+  const snap = await fetchCloudSnapshot(client, userId)
+  if (isCancelled()) return "cancelled"
+  if (!snap) return "failed"
+  applyCloudSnapshot(snap, {
+    pendingOps: pendingOpsFor(userId, { since: mark }),
+    // Don't graft another account's local-only fields onto same-id rows
+    // (the default workspace / welcome chat ids collide across accounts).
+    keepLocalOnlyFields: !localBelongsToOtherAccount(userId),
+  })
+  setLocalDataOwner(userId)
+  return "ok"
 }
 
 // ---------- hook -----------------------------------------------------------
@@ -116,6 +141,7 @@ export function useReconcile(): ReconcileState {
   const [status, setStatus] = useState<ReconcileStatus>("idle")
   const [cloud, setCloud] = useState<CloudSnapshot | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
+  const [localFromOtherAccount, setLocalFromOtherAccount] = useState(false)
 
   // Per-session sticky so we don't loop the same flow. Reset on sign-out
   // and on user change.
@@ -128,6 +154,7 @@ export function useReconcile(): ReconcileState {
       setStatus("idle")
       setCloud(undefined)
       setError(undefined)
+      setLocalFromOtherAccount(false)
       return
     }
     if (handledUserId.current === userId) {
@@ -149,16 +176,13 @@ export function useReconcile(): ReconcileState {
       setStatus("loading")
       void (async () => {
         try {
-          await whenDrained()
-          if (cancelled) return
-          const snap = await fetchCloudSnapshot(client, userId)
-          if (cancelled) return
-          if (!snap) {
+          const result = await silentPull(client, userId, () => cancelled)
+          if (result === "cancelled") return
+          if (result === "failed") {
             setStatus("error")
             setError("Failed to fetch cloud state")
             return
           }
-          applyCloudSnapshot(snap)
           setStatus("done")
         } catch (err) {
           setStatus("error")
@@ -183,8 +207,12 @@ export function useReconcile(): ReconcileState {
         snap.workspaces.length > 0 ||
         snap.conversations.length > 0 ||
         snap.files.length > 0
-      if (!cloudHasData) {
-        const local = localSnapshotFromStore()
+      const local = localSnapshotFromStore()
+      // Another account's leftovers on a shared machine: never upload
+      // them into this account without asking, even into an empty cloud.
+      const foreignLocal =
+        localBelongsToOtherAccount(userId) && localHasContent(local)
+      if (!cloudHasData && !foreignLocal) {
         const result = await bulkUploadLocalState(client, userId, local)
         if (cancelled) return
         if (!result.ok) {
@@ -194,10 +222,12 @@ export function useReconcile(): ReconcileState {
         }
         seedSyncSnapshot()
         markReconciled(userId)
+        setLocalDataOwner(userId)
         setStatus("done")
         return
       }
       setCloud(snap)
+      setLocalFromOtherAccount(foreignLocal)
       setStatus("prompt")
     })
 
@@ -214,10 +244,7 @@ export function useReconcile(): ReconcileState {
 
     const onOnline = async () => {
       if (!hasReconciled(userId)) return
-      await whenDrained()
-      const snap = await fetchCloudSnapshot(client, userId)
-      if (!snap) return
-      applyCloudSnapshot(snap)
+      await silentPull(client, userId, () => false)
     }
     window.addEventListener("online", onOnline)
     return () => window.removeEventListener("online", onOnline)
@@ -228,29 +255,54 @@ export function useReconcile(): ReconcileState {
     (choice: ReconcileChoice) => {
       const client = getSupabaseBrowserClient()
       if (!client || !userId || !cloud) return
-      if (choice === "use-cloud") {
-        applyCloudSnapshot(cloud) // seeds sync snapshot internally
+      const finish = () => {
         markReconciled(userId)
+        setLocalDataOwner(userId)
         setStatus("done")
         setCloud(undefined)
-        return
+        setLocalFromOtherAccount(false)
       }
-      void (async () => {
-        const local = localSnapshotFromStore()
-        const result = await bulkUploadLocalState(client, userId, local)
+      const uploadLocal = async () => {
+        const result = await bulkUploadLocalState(
+          client,
+          userId,
+          localSnapshotFromStore()
+        )
         if (!result.ok) {
           setStatus("error")
           setError(result.error ?? "Bulk upload failed")
           return
         }
         seedSyncSnapshot()
-        markReconciled(userId)
-        setStatus("done")
-        setCloud(undefined)
-      })()
+        finish()
+      }
+      if (choice === "overwrite-cloud") {
+        void uploadLocal()
+        return
+      }
+      if (cloud.workspaces.length > 0) {
+        // seeds sync snapshot internally
+        applyCloudSnapshot(cloud, { keepLocalOnlyFields: !localFromOtherAccount })
+        finish()
+        return
+      }
+      // "Discard local" against a cloud with no workspaces (reachable when
+      // the local data belonged to another account): start this account
+      // from the same first-run scaffolding a fresh device gets, and
+      // upload it so later edits have their parent rows.
+      applyCloudSnapshot(
+        {
+          ...cloud,
+          workspaces: getDefaultWorkspaces(),
+          // (No workspaces ⇒ no conversations either: FK.)
+          conversations: getDefaultConversations(),
+        },
+        { keepLocalOnlyFields: false }
+      )
+      void uploadLocal()
     },
-    [cloud, userId]
+    [cloud, userId, localFromOtherAccount]
   )
 
-  return { status, cloud, error, decide }
+  return { status, cloud, error, localFromOtherAccount, decide }
 }

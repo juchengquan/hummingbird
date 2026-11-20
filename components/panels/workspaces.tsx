@@ -1,5 +1,6 @@
 "use client"
 
+import { useShallow } from "zustand/react/shallow"
 import * as React from "react"
 import { useStore } from "@/client/hooks/use-store"
 import { Button } from "@/components/ui/button"
@@ -53,7 +54,25 @@ export function WorkspacesPanel() {
     setActiveConversation,
     setActiveView,
     togglePin,
-  } = useStore()
+  } = useStore(
+    // Per-field (shallow-compared) so unrelated store writes, e.g. a
+    // streamed token appending to a message, don't re-render this.
+    useShallow((s) => ({
+      workspaces: s.workspaces,
+      activeWorkspaceId: s.activeWorkspaceId,
+      setActiveWorkspace: s.setActiveWorkspace,
+      createWorkspace: s.createWorkspace,
+      deleteWorkspace: s.deleteWorkspace,
+      reorderWorkspaces: s.reorderWorkspaces,
+      conversations: s.conversations,
+      resources: s.resources,
+      projectTasks: s.projectTasks,
+      createConversation: s.createConversation,
+      setActiveConversation: s.setActiveConversation,
+      setActiveView: s.setActiveView,
+      togglePin: s.togglePin,
+    }))
+  )
 
   const [openDetailId, setOpenDetailId] = React.useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null)

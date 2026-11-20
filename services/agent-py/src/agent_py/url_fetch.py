@@ -29,7 +29,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 import structlog
 
-from .url_validate import ValidationOk, validate_outbound_url
+from .outbound_http import OutboundFetchError, build_outbound_client, safe_get
 
 logger = structlog.get_logger(__name__)
 
@@ -91,104 +91,91 @@ async def fetch_url_bookmark(
     on success or a `FetchError(code, message[, status])` on any
     failure mode. Never raises — every error mode goes through the
     structured shape so the route can map to HTTP status cleanly."""
-    current_url = raw_url
-    redirects_remaining = MAX_REDIRECTS
-
     own_client = client is None
     if client is None:
-        client = httpx.AsyncClient(
-            timeout=FETCH_TIMEOUT_S,
-            follow_redirects=False,
+        client = build_outbound_client(
+            timeout_s=FETCH_TIMEOUT_S,
             headers={"User-Agent": USER_AGENT, "Accept": ACCEPT_HEADER},
         )
 
     try:
-        while True:
-            validation = await validate_outbound_url(current_url)
-            if not isinstance(validation, ValidationOk):
-                return FetchError(code="validation", message=validation.message)
-
-            try:
-                response = await client.get(validation.url)
-            except httpx.TimeoutException:
-                return FetchError(
-                    code="timeout",
-                    message=f"Fetch timed out after {FETCH_TIMEOUT_S}s",
-                )
-            except httpx.HTTPError as exc:
-                return FetchError(code="network", message=str(exc))
-
-            # Manual redirect handling so we re-validate each hop.
-            if 300 <= response.status_code < 400:
-                location = response.headers.get("location")
-                if not location:
-                    return FetchError(
-                        code="http_error",
-                        status=response.status_code,
-                        message=(f"Redirect ({response.status_code}) with no Location header"),
-                    )
-                if redirects_remaining <= 0:
-                    return FetchError(
-                        code="too_many_redirects",
-                        message=f"Exceeded {MAX_REDIRECTS} redirects",
-                    )
-                redirects_remaining -= 1
-                # Resolve relative redirects against the current URL.
-                current_url = urljoin(validation.url, location)
-                continue
-
-            if response.status_code >= 400:
-                return FetchError(
-                    code="http_error",
-                    status=response.status_code,
-                    message=(
-                        f"Upstream returned {response.status_code} "
-                        f"{response.reason_phrase or ''}".strip()
-                    ),
-                )
-
-            content_type = (response.headers.get("content-type") or "").lower()
-            is_html = "text/html" in content_type
-            is_json = "application/json" in content_type
-            is_text = content_type.startswith("text/") or "xml" in content_type
-
-            if not is_html and not is_json and not is_text:
-                return FetchError(
-                    code="unsupported_content_type",
-                    message=(f"Cannot extract text from {content_type or 'unknown content type'}"),
-                )
-
-            body = response.content
-            if len(body) > MAX_BODY_BYTES:
+        try:
+            response = await safe_get(
+                raw_url,
+                client=client,
+                max_body_bytes=MAX_BODY_BYTES,
+                total_timeout_s=FETCH_TIMEOUT_S * 2,
+                on_oversize="error",
+                max_redirects=MAX_REDIRECTS,
+                check_headers=_reject_unsupported_content_type,
+            )
+        except _UnsupportedContentType as exc:
+            return FetchError(code="unsupported_content_type", message=str(exc))
+        except OutboundFetchError as exc:
+            if exc.code == "body_too_large":
                 return FetchError(
                     code="body_too_large",
                     message=(f"Response body exceeded {MAX_BODY_BYTES // (1024 * 1024)} MB"),
                 )
-
-            text = body.decode(response.encoding or "utf-8", errors="replace")
-            if is_html:
-                extracted = _extract_html(text, validation.url)
-            else:
-                extracted = _extract_plain(text, validation.url)
-
-            final_text = extracted["content"][:EXTRACTED_TEXT_BUDGET]
-            truncated = len(extracted["content"]) > len(final_text)
-            content_hash = hashlib.sha256(final_text.encode("utf-8")).hexdigest()[:16]
-
-            return FetchOk(
-                snapshot=BookmarkSnapshot(
-                    url=validation.url,
-                    title=extracted["title"],
-                    content=final_text,
-                    content_truncated=truncated,
-                    content_hash=content_hash,
-                    description=extracted.get("description"),
-                    favicon_url=extracted.get("favicon_url"),
-                )
-            )
+            return FetchError(code=exc.code, message=exc.message)
     finally:
         if own_client:
             await client.aclose()
+
+    if 300 <= response.status_code < 400:
+        return FetchError(
+            code="http_error",
+            status=response.status_code,
+            message=f"Redirect ({response.status_code}) with no Location header",
+        )
+    if response.status_code >= 400:
+        return FetchError(
+            code="http_error",
+            status=response.status_code,
+            message=(
+                f"Upstream returned {response.status_code} {response.reason_phrase or ''}".strip()
+            ),
+        )
+
+    content_type = (response.headers.get("content-type") or "").lower()
+    text = response.body.decode(response.encoding, errors="replace")
+    if "text/html" in content_type:
+        extracted = _extract_html(text, response.url)
+    else:
+        extracted = _extract_plain(text, response.url)
+
+    final_text = extracted["content"][:EXTRACTED_TEXT_BUDGET]
+    truncated = len(extracted["content"]) > len(final_text)
+    content_hash = hashlib.sha256(final_text.encode("utf-8")).hexdigest()[:16]
+
+    return FetchOk(
+        snapshot=BookmarkSnapshot(
+            url=response.url,
+            title=extracted["title"],
+            content=final_text,
+            content_truncated=truncated,
+            content_hash=content_hash,
+            description=extracted.get("description"),
+            favicon_url=extracted.get("favicon_url"),
+        )
+    )
+
+
+class _UnsupportedContentType(Exception):
+    pass
+
+
+def _reject_unsupported_content_type(response: httpx.Response) -> Exception | None:
+    """Abort before downloading a body we can't extract text from."""
+    content_type = (response.headers.get("content-type") or "").lower()
+    is_html = "text/html" in content_type
+    is_json = "application/json" in content_type
+    is_text = content_type.startswith("text/") or "xml" in content_type
+    if is_html or is_json or is_text:
+        return None
+    return _UnsupportedContentType(
+        f"Cannot extract text from {content_type or 'unknown content type'}"
+    )
 
 
 # --- HTML extraction --------------------------------------------------------

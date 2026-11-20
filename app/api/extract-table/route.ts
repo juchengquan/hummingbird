@@ -15,6 +15,7 @@ import { modelSupportsStructuredOutput } from '@/shared/models'
 import { generateStructured } from '@/server/ai/structured'
 import {
   ProviderUnavailableError,
+  rejectUnknownModel,
   selectModel,
 } from '@/server/model-provider'
 
@@ -53,6 +54,8 @@ export async function POST(req: NextRequest) {
 
   const { reportText, sources, model, columnHints } = parsed.data
   const modelId = model ?? DEFAULT_EXTRACT_TABLE_MODEL
+  const unknownModel = rejectUnknownModel(modelId)
+  if (unknownModel) return unknownModel
   const numbered = sources.map((s, i) => ({ id: `s${i + 1}`, ...s }))
   // The wire schema accepts both string[] (legacy) and { label, type? }[].
   // buildExtractTablePrompt handles both shapes; passing it through.

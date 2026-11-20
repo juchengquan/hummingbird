@@ -416,7 +416,7 @@ Lives at `services/agent-py/`:
 - `runner.py` — `run_agent_loop`: status → start_step → step →
   end_step → cancel-check; settles on done or `max_steps`.
 - `feature_flag.py` — reads
-  `auth.users.raw_user_meta_data->>'agent_backend'`. Defensive on
+  `auth.users.raw_app_meta_data->>'agent_backend'`. Defensive on
   every shape; any DB error falls back to "not flagged" (Phase 2
   invariant: never silently route TO Python on error).
 - `executor.py` — `execute_start(pool, payload)`: stamps handler,
@@ -429,7 +429,7 @@ Lives at `services/agent-py/`:
   executor / poller dispatch decision tree).
 
 **Verification:** in production, set
-`raw_user_meta_data->>'agent_backend' = 'python'` on a test user;
+`raw_app_meta_data->>'agent_backend' = 'python'` on a test user;
 their next `start` task is handled by Python. `tasks.metadata.handler`
 reads `'python'` for that row. The stub step fn emits a canned event
 stream so the UI sees a real (if placeholder) projection.

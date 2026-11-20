@@ -2,6 +2,7 @@ import "server-only"
 
 import { getSupabaseServerClient } from "@/server/supabase/server"
 import { fetchDecryptedCredential } from "@/server/mcp/credentials"
+import { validateMcpServerUrl } from "@/server/mcp/outbound"
 import type { McpCredentials } from "@/shared/mcp/credentials"
 import type { McpCapabilities, McpTransport } from "@/shared/types"
 
@@ -74,12 +75,12 @@ export async function loadEffectiveMcpServers(
     })
   }
 
-  if (!workspaceId) return out
+  if (!workspaceId) return dropBlockedUrls(out)
 
   // Cloud-mode: requires a session. No session → user is signed out,
   // no cloud servers visible (RLS would block anyway).
   const client = await getSupabaseServerClient()
-  if (!client) return out
+  if (!client) return dropBlockedUrls(out)
 
   const { data: rows, error } = await client
     .from("mcp_servers")
@@ -91,7 +92,7 @@ export async function loadEffectiveMcpServers(
     .eq("enabled", true)
     .is("deleted_at", null)
 
-  if (error || !rows) return out
+  if (error || !rows) return dropBlockedUrls(out)
 
   // Decrypt each cred in parallel. We intentionally don't surface
   // individual decrypt failures to the caller — they look identical
@@ -129,5 +130,30 @@ export async function loadEffectiveMcpServers(
     out.push(server)
   }
 
-  return out
+  return dropBlockedUrls(out)
+}
+
+/**
+ * Anti-SSRF: drop any server whose URL fails `validateMcpServerUrl`.
+ * Local-mode URLs come straight from the request body and cloud-mode
+ * URLs from a row the user can UPDATE directly (RLS allows it), so
+ * neither is trusted. The client wrapper re-checks at connect time;
+ * filtering here keeps blocked servers' tools out of the model's
+ * toolset entirely. Logged without credentials.
+ */
+async function dropBlockedUrls(
+  servers: EffectiveMcpServer[]
+): Promise<EffectiveMcpServer[]> {
+  const verdicts = await Promise.all(
+    servers.map((s) => validateMcpServerUrl(s.url))
+  )
+  return servers.filter((s, i) => {
+    const v = verdicts[i]
+    if (v.ok) return true
+    console.warn("[mcp] dropping server with blocked URL", {
+      serverId: s.id,
+      code: v.error.code,
+    })
+    return false
+  })
 }

@@ -10,6 +10,7 @@ export type ApiErrorCode =
   | 'rate_limit'
   | 'context_window'
   | 'invalid_model'
+  | 'unknown_model'
   | 'provider'
   | 'aborted'
   | 'unknown'
@@ -25,6 +26,12 @@ export function categorizeError(error: unknown): CategorizedError {
 
   if (error instanceof Error && error.name === 'AbortError') {
     return { status: 408, code: 'aborted', message }
+  }
+  // Thrown by `selectModel` (server) for a model id outside
+  // `config/models.json` without a BYO key. Matched by name because this
+  // module is isomorphic and can't import the server-only class.
+  if (error instanceof Error && error.name === 'UnknownModelError') {
+    return { status: 400, code: 'unknown_model', message }
   }
 
   const lower = message.toLowerCase()

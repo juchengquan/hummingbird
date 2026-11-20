@@ -29,7 +29,7 @@ import "client-only"
  *    1s auto-retry-once on transient errors.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { apiClient } from "@/client/api-client"
 import { useTaskRunContext } from "@/client/agent/task-run-context"
@@ -38,6 +38,11 @@ import { shouldAutoRetry } from "@/client/chat/auto-retry-decision"
 import { resolveSendTargetConversationId } from "@/client/chat/resolve-send-target"
 import { buildAttachments } from "@/client/chat/build-attachments"
 import { buildTransmittedMessages } from "@/client/chat/build-messages"
+import {
+  finishToolCall,
+  startToolCall,
+  toPersistedToolCalls,
+} from "@/client/chat/tool-call-buffer"
 import {
   buildSandboxFiles,
   type SandboxFileSource,
@@ -132,6 +137,7 @@ export function useChatSend(): UseChatSendResult {
   const appendMessageUiPart = useStore((s) => s.appendMessageUiPart)
   const appendMessageMcpApp = useStore((s) => s.appendMessageMcpApp)
   const setConversationTyping = useStore((s) => s.setConversationTyping)
+  const setConversationStreaming = useStore((s) => s.setConversationStreaming)
   const createArtifact = useStore((s) => s.createArtifact)
 
   // Slices the pipeline reads when assembling the request. Subscribing
@@ -159,8 +165,12 @@ export function useChatSend(): UseChatSendResult {
   const memoryEnabled = useStore((s) => s.memoryEnabled)
 
   // --- own state / refs (used to live on the chat panel) ---
-  const [streamingConvIds, setStreamingConvIds] = useState<Set<string>>(
-    () => new Set()
+  // In-flight streams live in the store (not local state) so `useSync`
+  // can hold per-token message diffs until each stream settles.
+  const streamingConversationIds = useStore((s) => s.streamingConversationIds)
+  const streamingConvIds = useMemo(
+    () => new Set(streamingConversationIds),
+    [streamingConversationIds]
   )
   const [liveToolCalls, setLiveToolCalls] = useState<
     Record<string, LiveToolCall[]>
@@ -179,17 +189,6 @@ export function useChatSend(): UseChatSendResult {
   }, [taskRun])
 
   // --- shared local helpers ---
-  const markStreaming = useCallback((convId: string, on: boolean) => {
-    setStreamingConvIds((prev) => {
-      const has = prev.has(convId)
-      if (on === has) return prev
-      const next = new Set(prev)
-      if (on) next.add(convId)
-      else next.delete(convId)
-      return next
-    })
-  }, [])
-
   const mockAIResponse = useCallback(
     (userMessage: string, convId: string) => {
       setConversationTyping(convId, true)
@@ -231,6 +230,14 @@ export function useChatSend(): UseChatSendResult {
     },
     [createArtifact]
   )
+
+  // Latest-version ref so the hook can call back into itself (auto-
+  // retry-once) without becoming a stale closure across renders.
+  // Declared before `callChatAPI` (which reads it) and synced in an
+  // effect below, per react-hooks/immutability.
+  const callChatAPIRef = useRef<
+    ((history: Message[], options?: SendOptions) => Promise<void>) | null
+  >(null)
 
   // --- the pipeline (the body that used to be `callChatAPI`) ---
   const callChatAPI = useCallback(
@@ -322,13 +329,18 @@ export function useChatSend(): UseChatSendResult {
       abortControllersRef.current.get(targetConvId)?.abort()
       abortControllersRef.current.set(targetConvId, controller)
       setConversationTyping(targetConvId, true)
-      markStreaming(targetConvId, true)
+      setConversationStreaming(targetConvId, true)
       let placeholder: Message | null = null
       let firstChunk = true
       // Reasoning duration capture: first/last chunk timestamps so we
       // can persist the elapsed ms on the message at stream end.
       let reasoningStart: number | null = null
       let reasoningLast: number | null = null
+      // Tool-call buffer for this stream. Accumulated locally (and
+      // mirrored into `liveToolCalls` for the pills) so the end-of-stream
+      // flush persists what actually happened — React state captured at
+      // send start never sees the placeholder created mid-stream.
+      let toolCalls: LiveToolCall[] = []
 
       const surfaceError = (error: MessageError) => {
         setConversationTyping(targetConvId, false)
@@ -536,7 +548,7 @@ export function useChatSend(): UseChatSendResult {
         if (!result.ok) {
           if (result.status === 401) {
             setConversationTyping(targetConvId, false)
-            markStreaming(targetConvId, false)
+            setConversationStreaming(targetConvId, false)
             const lastUser = [...history]
               .reverse()
               .find((m) => m.role === "user")
@@ -618,44 +630,23 @@ export function useChatSend(): UseChatSendResult {
               parsed.name
             ) {
               const p = ensurePlaceholder()
-              const id = parsed.id
-              const name = parsed.name
-              const argsLabel =
-                typeof (parsed.args as { query?: string })?.query === "string"
-                  ? (parsed.args as { query: string }).query
-                  : undefined
-              setLiveToolCalls((prev) => ({
-                ...prev,
-                [p.id]: [
-                  ...(prev[p.id] ?? []),
-                  { id, name, argsLabel, status: "running" },
-                ],
-              }))
+              toolCalls = startToolCall(toolCalls, {
+                id: parsed.id,
+                name: parsed.name,
+                args: parsed.args,
+              })
+              const snapshot = toolCalls
+              setLiveToolCalls((prev) => ({ ...prev, [p.id]: snapshot }))
             } else if (parsed.type === "tool_result" && parsed.id) {
               const ph = placeholder as Message | null
               if (ph) {
-                const id = parsed.id
-                const summary = parsed.summary
-                const results = Array.isArray(parsed.results)
-                  ? parsed.results.filter(
-                      (r): r is {
-                        title: string
-                        url: string
-                        snippet: string
-                      } =>
-                        typeof r?.title === "string" &&
-                        typeof r?.url === "string" &&
-                        typeof r?.snippet === "string"
-                    )
-                  : undefined
-                setLiveToolCalls((prev) => ({
-                  ...prev,
-                  [ph.id]: (prev[ph.id] ?? []).map((t) =>
-                    t.id === id
-                      ? { ...t, status: "done", summary, results }
-                      : t
-                  ),
-                }))
+                toolCalls = finishToolCall(toolCalls, {
+                  id: parsed.id,
+                  summary: parsed.summary,
+                  results: parsed.results,
+                })
+                const snapshot = toolCalls
+                setLiveToolCalls((prev) => ({ ...prev, [ph.id]: snapshot }))
               }
             } else if (
               parsed.type === "tool_image" &&
@@ -874,16 +865,7 @@ export function useChatSend(): UseChatSendResult {
           // survives reload. Drop the in-flight (running) entries:
           // a tool that never returned doesn't belong in the durable
           // record.
-          const liveSnapshot = liveToolCalls[ph.id] ?? []
-          const persisted = liveSnapshot
-            .filter((t) => t.status === "done")
-            .map(({ id, name, argsLabel, summary, results }) => ({
-              id,
-              name,
-              argsLabel,
-              summary,
-              ...(results && results.length > 0 ? { results } : {}),
-            }))
+          const persisted = toPersistedToolCalls(toolCalls)
           if (persisted.length > 0) {
             setMessageToolCalls(ph.id, persisted)
           }
@@ -936,9 +918,9 @@ export function useChatSend(): UseChatSendResult {
           if (shouldAutoRetry({ isRetry, offline, placeholderEmpty: !ph || ph.content === "" })) {
             if (ph) deleteMessage(ph.id)
             setConversationTyping(targetConvId, false)
-            markStreaming(targetConvId, false)
+            setConversationStreaming(targetConvId, false)
             setTimeout(() => {
-              callChatAPIRef.current(history, {
+              void callChatAPIRef.current?.(history, {
                 modelOverride: options?.modelOverride,
                 isRetry: true,
               })
@@ -958,7 +940,6 @@ export function useChatSend(): UseChatSendResult {
         }
       } finally {
         setConversationTyping(targetConvId, false)
-        markStreaming(targetConvId, false)
         // Drop live tool-call pills now that the stream is finished.
         // The durable record lives on the message via setMessageToolCalls.
         const ph = placeholder as Message | null
@@ -972,9 +953,14 @@ export function useChatSend(): UseChatSendResult {
         }
         // Clear this conv's controller entry only if it's still the
         // one we set — guards against a follow-up send for the same
-        // conv overwriting the slot.
+        // conv overwriting the slot. Same guard for the streaming flag:
+        // a superseded stream must not end the hold `useSync` keeps on
+        // the newer stream's message diffs. Clearing it is what releases
+        // that hold, so the final message state (incl. the tool calls /
+        // reasoning duration stamped above) syncs exactly once here.
         if (abortControllersRef.current.get(targetConvId) === controller) {
           abortControllersRef.current.delete(targetConvId)
+          setConversationStreaming(targetConvId, false)
         }
       }
     },
@@ -1000,10 +986,9 @@ export function useChatSend(): UseChatSendResult {
       customInstructionsStyle,
       deleteMessage,
       files,
-      liveToolCalls,
-      markStreaming,
       memoryEnabled,
       mockAIResponse,
+      setConversationStreaming,
       setConversationTyping,
       setMessageError,
       setMessageReasoningDuration,
@@ -1016,9 +1001,6 @@ export function useChatSend(): UseChatSendResult {
     ]
   )
 
-  // Latest-version ref so the hook can call back into itself (auto-
-  // retry-once) without becoming a stale closure across renders.
-  const callChatAPIRef = useRef(callChatAPI)
   useEffect(() => {
     callChatAPIRef.current = callChatAPI
   }, [callChatAPI])
@@ -1026,7 +1008,7 @@ export function useChatSend(): UseChatSendResult {
   // Stable wrapper — consumers don't manage their own ref.
   const send = useCallback(
     (history: Message[], options?: SendOptions): Promise<void> =>
-      callChatAPIRef.current(history, options),
+      callChatAPIRef.current?.(history, options) ?? Promise.resolve(),
     []
   )
 

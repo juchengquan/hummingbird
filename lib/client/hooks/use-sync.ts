@@ -23,66 +23,39 @@ import { fetchAccountInstructions } from "@/client/supabase/account-instructions
 import { fetchMemoryEnabled } from "@/client/supabase/memory"
 import { configureSync, enqueue } from "@/client/sync/sync-queue"
 import {
-  diffArtifacts,
-  diffConversations,
-  diffConversationFiles,
-  diffConversationMcpResources,
-  diffConversationUrlBookmarks,
-  diffDocuments,
-  diffFiles,
-  diffMcpResourceBindings,
-  diffMcpResources,
-  diffMcpServers,
-  diffNotes,
-  diffProjectTasks,
-  diffPrompts,
-  diffResources,
-  diffUrlBookmarks,
-  diffWorkspaces,
-} from "@/client/sync/handlers"
-import type {
-  Artifact,
-  Conversation,
-  ConversationFile,
-  ConversationMcpResource,
-  ConversationUrlBookmark,
-  Document,
-  McpResource,
-  McpResourceBinding,
-  McpServer,
-  Note,
-  ProjectTask,
-  Prompt,
-  Resource,
-  UploadedFile,
-  UrlBookmark,
-  Workspace,
-} from "@/shared/types"
-
-interface Snapshot {
-  workspaces: Workspace[]
-  documents: Document[]
-  conversations: Conversation[]
-  files: UploadedFile[]
-  resources: Resource[]
-  conversationFiles: ConversationFile[]
-  notes: Note[]
-  artifacts: Artifact[]
-  prompts: Prompt[]
-  projectTasks: ProjectTask[]
-  mcpServers: McpServer[]
-  mcpResources: McpResource[]
-  mcpResourceBindings: McpResourceBinding[]
-  conversationMcpResources: ConversationMcpResource[]
-  urlBookmarks: UrlBookmark[]
-  conversationUrlBookmarks: ConversationUrlBookmark[]
-}
+  computeSyncOps,
+  type SyncSnapshot as Snapshot,
+} from "@/client/sync/compute-sync-ops"
+import type { Message } from "@/shared/types"
 
 // Module-level so the reconciliation flow can reset it after hydration.
 let lastSnapshot: Snapshot | null = null
 
-function takeSnapshot(): Snapshot {
-  const s = useStore.getState()
+/**
+ * Message baselines for conversations whose message diffs are being
+ * held (mid-stream). Keyed by conversation id; the value is that
+ * conversation's messages as they stood in the diff baseline when the
+ * hold began. `lastSnapshot` keeps advancing per token while a hold is
+ * on, so it can't serve as the "before" for the deferred diff — this
+ * map does. Released (diffed against the live messages, then deleted)
+ * when the id leaves the held set.
+ */
+const heldMessageBaselines = new Map<string, Message[]>()
+
+/** Conversations whose message diffs are deferred: still showing the
+ *  typing dots, or with an in-flight stream (the typing flag clears on
+ *  the first chunk, the streaming flag only when the stream settles). */
+function heldConversationIds(state: {
+  typingConversationIds: string[]
+  streamingConversationIds: string[]
+}): Set<string> {
+  return new Set([
+    ...state.typingConversationIds,
+    ...state.streamingConversationIds,
+  ])
+}
+
+function snapshotOf(s: Snapshot): Snapshot {
   return {
     workspaces: s.workspaces,
     documents: s.documents,
@@ -101,6 +74,10 @@ function takeSnapshot(): Snapshot {
     urlBookmarks: s.urlBookmarks,
     conversationUrlBookmarks: s.conversationUrlBookmarks,
   }
+}
+
+function takeSnapshot(): Snapshot {
+  return snapshotOf(useStore.getState())
 }
 
 export function useSync(): void {
@@ -122,6 +99,7 @@ export function useSync(): void {
   useEffect(() => {
     if (!enabled) {
       lastSnapshot = null
+      heldMessageBaselines.clear()
     }
   }, [enabled])
 
@@ -172,147 +150,25 @@ export function useSync(): void {
     }
 
     const unsubscribe = useStore.subscribe((state) => {
-      const next: Snapshot = {
-        workspaces: state.workspaces,
-        documents: state.documents,
-        conversations: state.conversations,
-        files: state.files,
-        resources: state.resources,
-        conversationFiles: state.conversationFiles,
-        notes: state.notes,
-        artifacts: state.artifacts,
-        prompts: state.prompts,
-        projectTasks: state.projectTasks,
-        mcpServers: state.mcpServers,
-        mcpResources: state.mcpResources,
-        mcpResourceBindings: state.mcpResourceBindings,
-        conversationMcpResources: state.conversationMcpResources,
-        urlBookmarks: state.urlBookmarks,
-        conversationUrlBookmarks: state.conversationUrlBookmarks,
-      }
+      const next: Snapshot = snapshotOf(state)
       const prev = lastSnapshot
       if (!prev) {
         lastSnapshot = next
         return
       }
 
-      if (
-        prev.workspaces === next.workspaces &&
-        prev.documents === next.documents &&
-        prev.conversations === next.conversations &&
-        prev.files === next.files &&
-        prev.resources === next.resources &&
-        prev.conversationFiles === next.conversationFiles &&
-        prev.notes === next.notes &&
-        prev.artifacts === next.artifacts &&
-        prev.prompts === next.prompts &&
-        prev.projectTasks === next.projectTasks &&
-        prev.mcpServers === next.mcpServers &&
-        prev.mcpResources === next.mcpResources &&
-        prev.mcpResourceBindings === next.mcpResourceBindings &&
-        prev.conversationMcpResources === next.conversationMcpResources &&
-        prev.urlBookmarks === next.urlBookmarks &&
-        prev.conversationUrlBookmarks === next.conversationUrlBookmarks
-      ) {
-        return
-      }
-
-      const streamingConversationIds = new Set(state.typingConversationIds)
-
-      const ops = [
-        ...(prev.workspaces !== next.workspaces
-          ? diffWorkspaces(prev.workspaces, next.workspaces)
-          : []),
-        ...(prev.documents !== next.documents
-          ? diffDocuments(prev.documents, next.documents)
-          : []),
-        ...(prev.conversations !== next.conversations
-          ? diffConversations(prev.conversations, next.conversations, {
-              streamingConversationIds,
-            })
-          : []),
-        ...(prev.files !== next.files ? diffFiles(prev.files, next.files) : []),
-        ...(prev.resources !== next.resources
-          ? diffResources(prev.resources, next.resources)
-          : []),
-        ...(prev.conversationFiles !== next.conversationFiles
-          ? diffConversationFiles(prev.conversationFiles, next.conversationFiles)
-          : []),
-        ...(prev.notes !== next.notes ? diffNotes(prev.notes, next.notes) : []),
-        ...(prev.artifacts !== next.artifacts
-          ? diffArtifacts(prev.artifacts, next.artifacts)
-          : []),
-        ...(prev.prompts !== next.prompts
-          ? diffPrompts(prev.prompts, next.prompts)
-          : []),
-        ...(prev.projectTasks !== next.projectTasks
-          ? diffProjectTasks(prev.projectTasks, next.projectTasks)
-          : []),
-        ...(prev.mcpServers !== next.mcpServers
-          ? diffMcpServers(prev.mcpServers, next.mcpServers)
-          : []),
-        ...(prev.mcpResources !== next.mcpResources
-          ? diffMcpResources(prev.mcpResources, next.mcpResources)
-          : []),
-        ...(prev.mcpResourceBindings !== next.mcpResourceBindings
-          ? diffMcpResourceBindings(
-              prev.mcpResourceBindings,
-              next.mcpResourceBindings
-            )
-          : []),
-        ...(prev.conversationMcpResources !== next.conversationMcpResources
-          ? diffConversationMcpResources(
-              prev.conversationMcpResources,
-              next.conversationMcpResources
-            )
-          : []),
-        ...(prev.urlBookmarks !== next.urlBookmarks
-          ? diffUrlBookmarks(prev.urlBookmarks, next.urlBookmarks)
-          : []),
-        ...(prev.conversationUrlBookmarks !== next.conversationUrlBookmarks
-          ? diffConversationUrlBookmarks(
-              prev.conversationUrlBookmarks,
-              next.conversationUrlBookmarks
-            )
-          : []),
-      ]
-
+      const ops = computeSyncOps(
+        prev,
+        next,
+        heldConversationIds(state),
+        heldMessageBaselines
+      )
       for (const op of ops) enqueue(op)
 
       lastSnapshot = next
     })
 
     return () => unsubscribe()
-  }, [enabled, userId])
-
-  // When a conversation transitions out of the streaming set, re-diff
-  // it so the final assistant message lands in Supabase (in-flight
-  // diffs skip its messages intentionally). Tracks the previous set
-  // so we know which ids just *exited*.
-  const prevTypingIds = useRef<Set<string>>(new Set())
-  useEffect(() => {
-    return useStore.subscribe((state) => {
-      if (!enabled || !userId) return
-      const currentIds = new Set(state.typingConversationIds)
-      const justFinished: string[] = []
-      for (const id of prevTypingIds.current) {
-        if (!currentIds.has(id)) justFinished.push(id)
-      }
-      if (justFinished.length > 0) {
-        const prev = lastSnapshot
-        if (prev) {
-          // Diff with an empty streaming set so message diffs run for
-          // the just-finished conversations (the other still-streaming
-          // ones are already being skipped at the next scheduled diff).
-          const ops = diffConversations(prev.conversations, state.conversations, {
-            streamingConversationIds: new Set(),
-          })
-          for (const op of ops) enqueue(op)
-          lastSnapshot = { ...prev, conversations: state.conversations }
-        }
-      }
-      prevTypingIds.current = currentIds
-    })
   }, [enabled, userId])
 }
 
@@ -329,6 +185,9 @@ export function useSync(): void {
  */
 export function seedSyncSnapshot(): void {
   lastSnapshot = takeSnapshot()
+  // A rebased baseline invalidates held message baselines; any still-
+  // streaming conversation re-captures from the new snapshot.
+  heldMessageBaselines.clear()
 }
 
 /**
@@ -336,23 +195,7 @@ export function seedSyncSnapshot(): void {
  * the exact snapshot you're about to commit to the store, so the
  * Zustand subscriber fires with `prev === next` and emits zero ops.
  */
-export function setSyncSnapshot(snapshot: {
-  workspaces: Workspace[]
-  documents: Document[]
-  conversations: Conversation[]
-  files: UploadedFile[]
-  resources: Resource[]
-  conversationFiles: ConversationFile[]
-  notes: Note[]
-  artifacts: Artifact[]
-  prompts: Prompt[]
-  projectTasks: ProjectTask[]
-  mcpServers: McpServer[]
-  mcpResources: McpResource[]
-  mcpResourceBindings: McpResourceBinding[]
-  conversationMcpResources: ConversationMcpResource[]
-  urlBookmarks: UrlBookmark[]
-  conversationUrlBookmarks: ConversationUrlBookmark[]
-}): void {
+export function setSyncSnapshot(snapshot: Snapshot): void {
   lastSnapshot = snapshot
+  heldMessageBaselines.clear()
 }

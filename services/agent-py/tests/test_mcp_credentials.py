@@ -15,7 +15,7 @@ import pytest
 
 from agent_py import settings as settings_module
 from agent_py import store
-from agent_py.mcp_credentials import fetch_decrypted_credentials
+from agent_py.mcp_credentials import fetch_cloud_server, fetch_decrypted_credentials
 
 SERVER_ID = "11111111-1111-1111-1111-111111111111"
 USER_ID = "22222222-2222-2222-2222-222222222222"
@@ -70,6 +70,49 @@ def _fake_pool(conn: _FakeConnection) -> Any:
 
     pool.acquire = MagicMock(return_value=_Acquire())
     return pool
+
+
+# --- fetch_cloud_server ---------------------------------------------------
+
+
+class _RowConnection(_FakeConnection):
+    def __init__(self, row: Any, rpc_return: Any = None) -> None:
+        super().__init__(rpc_return=rpc_return)
+        self._row = row
+
+    async def fetchrow(self, sql: str, *args: Any) -> Any:
+        self.fetched.append((sql, args))
+        return self._row
+
+
+@pytest.mark.asyncio
+async def test_fetch_cloud_server_returns_stored_url_and_credentials() -> None:
+    conn = _RowConnection(
+        row={"id": SERVER_ID, "name": "Stored", "url": "https://stored.example/mcp"},
+        rpc_return='{"headers":{"X":"y"}}',
+    )
+    out = await fetch_cloud_server(
+        _fake_pool(conn), user_id=USER_ID, server_id=SERVER_ID, encryption_key=KEY
+    )
+    assert out is not None
+    assert out.url == "https://stored.example/mcp"
+    assert out.name == "Stored"
+    assert out.credentials == {"headers": {"X": "y"}}
+    # The row lookup is restricted to live cloud-mode rows.
+    row_sql = conn.fetched[0][0]
+    assert "credential_mode = 'cloud'" in row_sql
+    assert "deleted_at IS NULL" in row_sql
+
+
+@pytest.mark.asyncio
+async def test_fetch_cloud_server_none_when_no_row() -> None:
+    conn = _RowConnection(row=None, rpc_return='{"headers":{}}')
+    out = await fetch_cloud_server(
+        _fake_pool(conn), user_id=USER_ID, server_id=SERVER_ID, encryption_key=KEY
+    )
+    assert out is None
+    # No decrypt attempted for a missing / local-mode row.
+    assert all("mcp_get_decrypted_credentials" not in sql for sql, _ in conn.fetched)
 
 
 # --- short / missing key ------------------------------------------------
