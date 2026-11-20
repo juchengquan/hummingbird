@@ -67,8 +67,10 @@ Extract text from an uploaded file.
 }
 ```
 
-**Errors**: `400` malformed FormData, `413` file too large, `500` for
-extractor failures. Body shape: `{ error: string }`. Never
+**Errors**: `400` malformed FormData, `413` file too large, `429` more
+than 60 extractions per minute from one client IP (with `Retry-After`;
+checked before the body is read), `500` for extractor failures. Body
+shape: `{ error: string }`. Never
 `auth_required` — with the sign-in gate on, an anonymous caller just
 gets text-only extraction (no vision pass).
 
@@ -79,6 +81,11 @@ the `file` part exceeds `FILE_SIZE_LIMIT` (5 MB); or a docx/xlsx zip
 would decompress past 100 MB / 5,000 entries (zip-bomb guard,
 `lib/server/extraction/zip-guard.ts`, which measures the real inflated
 size, not the headers' claims).
+
+Spreadsheets are parsed up to their first 5,000 rows per sheet; each
+sheet's declared range is clamped to the cells actually present, and
+the CSV text stops being built once it passes the 1 MB full-text
+budget (a tiny file declaring `A1:CV1000000` costs nothing).
 
 ---
 

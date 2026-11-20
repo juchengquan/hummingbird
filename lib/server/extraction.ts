@@ -112,6 +112,97 @@ function hasName(name: string, ...suffixes: string[]): boolean {
   return suffixes.some((s) => lower.endsWith(s))
 }
 
+/** Rows parsed per sheet (SheetJS `sheetRows`). Text past the first
+ *  few thousand rows would be cut by the budget anyway. */
+const XLSX_SHEET_ROWS = 5000
+/** Cells rendered per `sheet_to_csv` call while building a sheet's CSV
+ *  in slices, so the budget check runs between slices. */
+const XLSX_CELLS_PER_SLICE = 50_000
+
+type XlsxModule = typeof import("xlsx")
+type XlsxWorkbook = ReturnType<XlsxModule["read"]>
+type XlsxSheet = XlsxWorkbook["Sheets"][string]
+interface CellRange {
+  s: { r: number; c: number }
+  e: { r: number; c: number }
+}
+
+/** Bounds of the cells actually present in a (sparse-mode) sheet, or
+ *  null when it has none. The declared `!ref` is file-controlled and can
+ *  claim millions of empty cells; real cells cost bytes. */
+function actualCellBounds(XLSX: XlsxModule, sheet: XlsxSheet): CellRange | null {
+  let bounds: CellRange | null = null
+  for (const key of Object.keys(sheet)) {
+    if (key.startsWith("!")) continue
+    const { r, c } = XLSX.utils.decode_cell(key)
+    if (!(r >= 0 && c >= 0)) continue
+    if (!bounds) {
+      bounds = { s: { r, c }, e: { r, c } }
+      continue
+    }
+    if (r < bounds.s.r) bounds.s.r = r
+    if (c < bounds.s.c) bounds.s.c = c
+    if (r > bounds.e.r) bounds.e.r = r
+    if (c > bounds.e.c) bounds.e.c = c
+  }
+  return bounds
+}
+
+/**
+ * Render every sheet as `# Sheet: <name>\n<csv>` blocks, stopping once
+ * the output passes `budget` chars. Each sheet's range is clamped to
+ * the intersection of its declared `!ref` and its real cells, and the
+ * CSV is built in row slices so a wide/tall sheet stops early instead
+ * of materialising everything before `truncate()` runs.
+ */
+function spreadsheetToText(
+  XLSX: XlsxModule,
+  workbook: XlsxWorkbook,
+  budget: number
+): string {
+  const chunks: string[] = []
+  let total = 0
+  for (const sheetName of workbook.SheetNames) {
+    if (total > budget) break
+    const sheet = workbook.Sheets[sheetName]
+    const declared = sheet?.["!ref"]
+    if (!sheet || !declared) continue
+    const actual = actualCellBounds(XLSX, sheet)
+    if (!actual) continue
+    const d = XLSX.utils.decode_range(declared)
+    const range: CellRange = {
+      s: { r: Math.max(d.s.r, actual.s.r), c: Math.max(d.s.c, actual.s.c) },
+      e: { r: Math.min(d.e.r, actual.e.r), c: Math.min(d.e.c, actual.e.c) },
+    }
+    if (range.e.r < range.s.r || range.e.c < range.s.c) continue
+
+    const cols = range.e.c - range.s.c + 1
+    const rowsPerSlice = Math.max(1, Math.floor(XLSX_CELLS_PER_SLICE / cols))
+    const header = `# Sheet: ${sheetName}\n`
+    const slices: string[] = []
+    let sheetLen = 0
+    try {
+      for (let r = range.s.r; r <= range.e.r; r += rowsPerSlice) {
+        sheet["!ref"] = XLSX.utils.encode_range({
+          s: { r, c: range.s.c },
+          e: { r: Math.min(range.e.r, r + rowsPerSlice - 1), c: range.e.c },
+        })
+        const slice = XLSX.utils.sheet_to_csv(sheet)
+        slices.push(slice)
+        sheetLen += slice.length + 1
+        if (total + header.length + sheetLen > budget) break
+      }
+    } finally {
+      sheet["!ref"] = declared
+    }
+    const csv = slices.join("\n").trim()
+    if (!csv) continue
+    chunks.push(`${header}${csv}`)
+    total += header.length + csv.length + 2
+  }
+  return chunks.join("\n\n")
+}
+
 export interface ExtractInput {
   name: string
   mimeType: string
@@ -253,16 +344,11 @@ export async function extractFile(
     // container that SheetJS reads without inflating, so it's skipped.
     if (looksLikeZip(data)) assertZipWithinLimits(data)
     const XLSX = await import("xlsx")
-    const workbook = XLSX.read(data, { type: "buffer" })
-    const chunks: string[] = []
-    for (const sheetName of workbook.SheetNames) {
-      const sheet = workbook.Sheets[sheetName]
-      if (!sheet) continue
-      const csv = XLSX.utils.sheet_to_csv(sheet)
-      if (!csv.trim()) continue
-      chunks.push(`# Sheet: ${sheetName}\n${csv.trim()}`)
-    }
-    const joined = chunks.join("\n\n")
+    // `sheetRows` stops the parser after the first N rows. Without it a
+    // tiny file declaring a huge `<dimension>` (e.g. A1:CV1000000) is
+    // read as-is and `sheet_to_csv` walks every declared cell.
+    const workbook = XLSX.read(data, { type: "buffer", sheetRows: XLSX_SHEET_ROWS })
+    const joined = spreadsheetToText(XLSX, workbook, FULL_EXTRACTION_BUDGET)
     const { text, truncated, fullText } = truncate(joined)
     return { kind: "spreadsheet", text, truncated, fullText }
   }

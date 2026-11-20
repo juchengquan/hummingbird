@@ -31,6 +31,12 @@ import { FILE_SIZE_LIMIT } from '@/shared/upload-config'
 // branch).
 const extractVisionLimit = createSlidingWindow({ windowMs: 60_000, max: 10 })
 
+/** Per-IP cap on extraction requests of any kind. The route is open to
+ *  anonymous callers and parsing (pdf / docx / xlsx) is CPU-heavy, so a
+ *  loop of hostile files shouldn't get unlimited parser time. 60/min
+ *  leaves room for a multi-file drop. Exported for tests. */
+export const extractTextLimit = createSlidingWindow({ windowMs: 60_000, max: 60 })
+
 /** Exact-key cache key for an extraction. The `vision` flag is part of
  *  the key so a forced-vision result and a text-only result don't
  *  collide. Exported for unit testing. */
@@ -64,6 +70,14 @@ const tooLarge = () =>
   NextResponse.json({ error: 'File too large.' }, { status: 413 })
 
 export async function POST(req: NextRequest) {
+  const limit = extractTextLimit.consume(rateLimitKey(req))
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: `Too many extraction requests. Retry in ${limit.retryAfterSec}s.` },
+      { status: 429, headers: { 'Retry-After': String(limit.retryAfterSec) } }
+    )
+  }
+
   // Size-check BEFORE parsing: `req.formData()` would buffer an
   // arbitrarily large body first. Content-Length is checked up front
   // and the stream is cut off once it passes the cap.

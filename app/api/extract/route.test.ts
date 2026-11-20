@@ -5,7 +5,7 @@ import { NextRequest } from "next/server"
 
 import { setAiAuthScenario } from "@/server/auth/_test/ai-auth-scenario"
 
-import { EXTRACT_BODY_MAX, extractCacheKey, POST } from "./route"
+import { EXTRACT_BODY_MAX, extractCacheKey, extractTextLimit, POST } from "./route"
 
 describe("extract cache key", () => {
   test("vision flag changes the key", () => {
@@ -107,6 +107,28 @@ describe("POST /api/extract size caps", () => {
     const res = await POST(multipart(new Blob([zip]), "bomb.docx"))
     expect(res.status).toBe(413)
     expect((await res.json()).error).toMatch(/extraction limit/)
+  })
+})
+
+describe("POST /api/extract — per-IP rate limit", () => {
+  afterEach(() => extractTextLimit._reset())
+
+  test("past the per-minute cap → 429 with Retry-After, before reading the body", async () => {
+    extractTextLimit._reset()
+    const fromIp = () => {
+      const form = new FormData()
+      form.append("file", new Blob(["x"], { type: "text/plain" }), "a.txt")
+      return new NextRequest(URL_, {
+        method: "POST",
+        body: form,
+        headers: { "x-forwarded-for": "203.0.113.9" },
+      })
+    }
+    for (let i = 0; i < 60; i++) expect((await POST(fromIp())).status).toBe(200)
+    const res = await POST(fromIp())
+    expect(res.status).toBe(429)
+    expect(Number(res.headers.get("retry-after"))).toBeGreaterThan(0)
+    expect((await res.json()).error).toMatch(/Too many/)
   })
 })
 
