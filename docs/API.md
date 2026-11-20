@@ -144,12 +144,17 @@ the only cloud precondition is the `files` row existing (the
 
 Idempotent: a file already chunked returns `skipped/already_indexed`
 (no embed) unless `force`. `not_configured` (no server-side embedder)
-and `file_not_found` (the FK row hasn't synced yet — the client
-retries with backoff) are **200, not errors** — indexing is
-best-effort background decoration.
+and `file_not_found` (the caller can't see a live `files` row with that
+id — not synced yet, deleted, or not theirs; the client retries with
+backoff) are **200, not errors** — indexing is best-effort background
+decoration. The `files` row is looked up with the caller's RLS-scoped
+client *before* anything is embedded, so a forged id costs no model
+call.
 
-**Errors**: `400` invalid body, `401` not signed in, `500` embed/insert
-failure. Body shape: `{ code?: string, error: string }`.
+**Errors**: `400` invalid body, `401` not signed in, `413` body over
+4 MB, `429` more than 30 embed calls per minute per user (with
+`Retry-After`), `500` embed/insert failure. Body shape:
+`{ code?: string, error: string }`.
 
 ---
 

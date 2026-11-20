@@ -5,6 +5,7 @@ import { EmbedRequestSchema } from "@/shared/api-schemas"
 import { getSupabaseServerClient } from "@/server/supabase/server"
 import { isEmbeddingConfigured } from "@/server/embeddings/provider"
 import { indexFileSections } from "@/server/embeddings/index-file"
+import { createSlidingWindow } from "@/server/rate-limit"
 import {
   formatBodyLimit,
   PAYLOAD_TOO_LARGE_CODE,
@@ -14,6 +15,11 @@ import {
 /** Body cap: `text` ≤ 1.2M chars at ≤ 3 UTF-8 bytes per char, plus the
  *  tiny `fileId` / `force` fields. */
 const EMBED_BODY_MAX = 4 * 1024 * 1024
+
+/** Per-user cap. Each call can embed ~1 MB of text (many paid chunks);
+ *  30/min still covers a multi-file drop plus the client's
+ *  `file_not_found` backoff retries. */
+const embedLimit = createSlidingWindow({ windowMs: 60_000, max: 30 })
 
 /**
  * `POST /api/embed` — chunk + embed a file's extracted text into the
@@ -77,6 +83,17 @@ export async function POST(req: NextRequest) {
   // Env gate lives at the boundary; the orchestration stays env-free.
   if (!isEmbeddingConfigured()) {
     return NextResponse.json({ status: "skipped", sections: 0, reason: "not_configured" })
+  }
+
+  const limit = embedLimit.consume(`user:${userId}`)
+  if (!limit.allowed) {
+    return NextResponse.json(
+      {
+        code: "rate_limited",
+        error: `Too many embed requests. Retry in ${limit.retryAfterSec}s.`,
+      },
+      { status: 429, headers: { "Retry-After": String(limit.retryAfterSec) } }
+    )
   }
 
   try {
