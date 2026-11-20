@@ -3,6 +3,7 @@ import { NextResponse } from "next/server"
 import { z } from "zod"
 
 import { upsertServerWithCredential } from "@/server/mcp/credentials"
+import { validateMcpServerUrl } from "@/server/mcp/outbound"
 import { getSupabaseServerClient } from "@/server/supabase/server"
 
 /**
@@ -59,6 +60,17 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json(
       { error: "invalid_body", detail: parsed.error.message },
+      { status: 400 }
+    )
+  }
+
+  // Anti-SSRF: reject unsafe endpoints at save time so a blocked URL
+  // never lands in `mcp_servers`. (Rows can still be edited directly
+  // under RLS, so every use site re-validates too.)
+  const urlCheck = await validateMcpServerUrl(parsed.data.url)
+  if (!urlCheck.ok) {
+    return NextResponse.json(
+      { error: "mcp_url_blocked", detail: urlCheck.error.code },
       { status: 400 }
     )
   }

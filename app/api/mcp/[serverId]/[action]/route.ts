@@ -4,6 +4,7 @@ import { z } from "zod"
 
 import { callTool, discover, readResource } from "@/server/mcp/client"
 import { fetchDecryptedCredential } from "@/server/mcp/credentials"
+import { McpUrlBlockedError, validateMcpServerUrl } from "@/server/mcp/outbound"
 import { getSupabaseServerClient } from "@/server/supabase/server"
 import {
   MCP_CRED_HEADER,
@@ -118,51 +119,65 @@ export async function POST(
     return NextResponse.json({ error: "invalid_json" }, { status: 400 })
   }
 
+  const schema =
+    action === "discover" ? DiscoverSchema : action === "call" ? CallSchema : ReadSchema
+  const parsed = schema.safeParse(body)
+  if (!parsed.success) {
+    return badRequest("invalid_body", parsed.error.message)
+  }
+  if (parsed.data.server.id !== serverId) {
+    // Catch a body/path mismatch so a buggy client doesn't accidentally
+    // hit the wrong server config.
+    return badRequest("serverId_mismatch", "body server.id must match the path")
+  }
+  const server = toServerShape(parsed.data.server, serverId, cloudServerOverride)
+
+  // Anti-SSRF: validate the effective URL (body for local mode, the
+  // user-editable Supabase row for cloud mode) before any outbound
+  // request. The client wrapper re-checks, but rejecting here gives a
+  // clean 400 instead of an upstream error.
+  const urlCheck = await validateMcpServerUrl(server.url)
+  if (!urlCheck.ok) {
+    return NextResponse.json(
+      { error: "mcp_url_blocked", detail: urlCheck.error.code },
+      { status: 400 }
+    )
+  }
+
   try {
     if (action === "discover") {
-      const parsed = DiscoverSchema.safeParse(body)
-      if (!parsed.success) {
-        return badRequest("invalid_body", parsed.error.message)
-      }
-      const server = toServerShape(parsed.data.server, serverId, cloudServerOverride)
       const capabilities = await discover(server, credentials)
       return NextResponse.json({ capabilities })
     }
 
     if (action === "call") {
-      const parsed = CallSchema.safeParse(body)
-      if (!parsed.success) {
-        return badRequest("invalid_body", parsed.error.message)
-      }
-      const server = toServerShape(parsed.data.server, serverId, cloudServerOverride)
-      const result = await callTool(
-        server,
-        credentials,
-        parsed.data.tool,
-        parsed.data.input
-      )
+      const data = parsed.data as z.infer<typeof CallSchema>
+      const result = await callTool(server, credentials, data.tool, data.input)
       return NextResponse.json({ result })
     }
 
-    if (action === "read") {
-      const parsed = ReadSchema.safeParse(body)
-      if (!parsed.success) {
-        return badRequest("invalid_body", parsed.error.message)
-      }
-      const server = toServerShape(parsed.data.server, serverId, cloudServerOverride)
-      const result = await readResource(server, credentials, parsed.data.uri)
-      return NextResponse.json({ result })
-    }
+    const data = parsed.data as z.infer<typeof ReadSchema>
+    const result = await readResource(server, credentials, data.uri)
+    return NextResponse.json({ result })
   } catch (err) {
-    // Never include credentials in error responses.
-    const message = err instanceof Error ? err.message : String(err)
-    return NextResponse.json(
-      { error: "mcp_call_failed", message },
-      { status: 502 }
-    )
+    if (err instanceof McpUrlBlockedError) {
+      return NextResponse.json(
+        { error: "mcp_url_blocked", detail: err.validation.code },
+        { status: 400 }
+      )
+    }
+    // Never echo the upstream error: the MCP SDK embeds non-2xx
+    // response bodies in its error messages, which would turn this
+    // proxy into a response-reflecting fetcher. Log server-side only
+    // (no credentials — they never appear in the SDK's messages, but
+    // we also don't log the cred object itself).
+    console.error("[mcp-proxy] upstream call failed", {
+      serverId,
+      action,
+      message: err instanceof Error ? err.message : String(err),
+    })
+    return NextResponse.json({ error: "mcp_upstream_error" }, { status: 502 })
   }
-
-  return NextResponse.json({ error: "Not found" }, { status: 404 })
 }
 
 function badRequest(code: string, detail: string): NextResponse {
@@ -184,11 +199,6 @@ function toServerShape(
   pathServerId: string,
   cloudOverride: Partial<McpServer> | null
 ): McpServer {
-  // Catch a body/path mismatch so a buggy client doesn't accidentally
-  // hit the wrong server config.
-  if (partial.id !== pathServerId) {
-    throw new Error("serverId_mismatch")
-  }
   const merged = cloudOverride
     ? {
         ...partial,
