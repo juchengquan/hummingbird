@@ -80,6 +80,7 @@ export function InlineLiveArtifact({
       </div>
       {!collapsed && (
         <LiveArtifactFrameWithStatus
+          key={artifactId}
           shell={detected.shell}
           content={artifact.content}
         />

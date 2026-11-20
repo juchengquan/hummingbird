@@ -1,7 +1,7 @@
 "use client"
 
 import { RefreshCw } from "lucide-react"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { apiClient } from "@/client/api-client"
 import { useStore } from "@/client/hooks/use-store"
@@ -33,6 +33,13 @@ import { SandboxedFrame } from "./sandboxed-frame"
  * (`mcpAppToolCallDenial`), a per-app call cap, and the strict
  * `event.source` filter.
  *
+ * Navigation: a panel that navigates itself (a link, `location = …`)
+ * keeps the same `contentWindow`, so it would still pass the
+ * `event.source` filter — and whatever page it landed on would inherit
+ * the tool-call bridge. `SandboxedFrame` reports the navigation
+ * (`onNavigatedAway`); from then on this component ignores the frame's
+ * messages and shows a "navigated away — reload" plate instead.
+ *
  * Phase 3 adds the **refresh affordance** (re-read the `ui://`
  * resource through the same proxy `read` action and swap the
  * stored HTML) and the explicit **"UI too large" stub** that
@@ -63,6 +70,24 @@ export function McpAppFrame({
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState<string | null>(null)
   const callCountRef = useRef(0)
+  // Set synchronously by `SandboxedFrame` the moment the rendered panel
+  // navigates away; read by the bridge handler before anything else.
+  const navigatedAwayRef = useRef(false)
+  const [navigatedAway, setNavigatedAway] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
+  const handleNavigatedAway = useCallback(() => {
+    navigatedAwayRef.current = true
+    setNavigatedAway(true)
+  }, [])
+  const reloadPanel = useCallback(() => {
+    // The fresh frame mounts with a new navigation nonce; only then is
+    // its bridge trusted again.
+    navigatedAwayRef.current = false
+    callCountRef.current = 0
+    setScriptError(null)
+    setNavigatedAway(false)
+    setReloadKey((k) => k + 1)
+  }, [])
 
   const scheme = theme === "light" ? "light" : "dark"
   const html = useMemo(() => {
@@ -77,6 +102,8 @@ export function McpAppFrame({
       // Strict source filter — only this iframe's window may talk to us.
       if (!iframeRef.current) return
       if (e.source !== iframeRef.current.contentWindow) return
+      // Not the panel we rendered any more — no bridge, no error relay.
+      if (navigatedAwayRef.current) return
       const data = e.data as unknown
       if (!data || typeof data !== "object") return
 
@@ -92,11 +119,15 @@ export function McpAppFrame({
       // mcp-app ns: the tool-call bridge.
       const call = parseMcpAppToolCall(data)
       if (!call) return
-      const reply = (payload: { ok: boolean; result?: unknown; error?: string }) =>
+      const reply = (payload: { ok: boolean; result?: unknown; error?: string }) => {
+        // The panel may have navigated away while the call was in
+        // flight: never hand the result to whatever loaded since.
+        if (navigatedAwayRef.current) return
         iframeRef.current?.contentWindow?.postMessage(
           mcpAppToolResult(call.callId, payload),
           "*"
         )
+      }
 
       callCountRef.current += 1
       if (callCountRef.current > MAX_CALLS_PER_APP) {
@@ -204,6 +235,9 @@ export function McpAppFrame({
       // the badge from a prior turn doesn't stick to the new render.
       replaceMessageMcpAppHtml(messageId, app.id, html)
       setScriptError(null)
+      // Fresh HTML → fresh frame navigation (new nonce): trust it again.
+      navigatedAwayRef.current = false
+      setNavigatedAway(false)
     } catch (err) {
       setRefreshError(
         err instanceof Error ? err.message : "Refresh failed",
@@ -252,12 +286,37 @@ export function McpAppFrame({
           Panel error: {scriptError}
         </div>
       )}
-      <SandboxedFrame
-        frameRef={iframeRef}
-        html={html}
-        title="MCP App"
-        className="w-full h-[420px] border-0 bg-white"
-      />
+      {navigatedAway ? (
+        <div className="flex h-[420px] flex-col items-center justify-center gap-2 px-4 text-center text-[13px] text-[var(--muted-foreground)]">
+          <p className="font-medium text-[var(--foreground)]">
+            Panel navigated away
+          </p>
+          <p className="text-[11px]">
+            The panel left the page its server provided, so its tool access
+            was cut off. Reload it to start over.
+          </p>
+          <button
+            type="button"
+            onClick={reloadPanel}
+            className={cn(
+              "inline-flex items-center gap-1 rounded border border-[var(--border)] px-2 py-1 text-[11px]",
+              "text-[var(--foreground)] hover:bg-[var(--accent)] transition-colors",
+            )}
+          >
+            <RefreshCw size={11} />
+            Reload panel
+          </button>
+        </div>
+      ) : (
+        <SandboxedFrame
+          key={reloadKey}
+          frameRef={iframeRef}
+          html={html}
+          title="MCP App"
+          className="w-full h-[420px] border-0 bg-white"
+          onNavigatedAway={handleNavigatedAway}
+        />
+      )}
     </McpAppShell>
   )
 }
