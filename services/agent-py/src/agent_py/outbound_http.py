@@ -151,10 +151,29 @@ class _GuardedTransport(httpx.AsyncHTTPTransport):
 def build_outbound_client(*, timeout_s: float, headers: dict[str, str]) -> httpx.AsyncClient:
     """Production client for `safe_get`: connect-time SSRF guard, no
     automatic redirects, no env proxies."""
+    return build_guarded_client(timeout=timeout_s, headers=headers)
+
+
+def build_guarded_client(
+    *,
+    headers: dict[str, str] | None = None,
+    timeout: httpx.Timeout | float | None = None,
+    auth: httpx.Auth | None = None,
+) -> httpx.AsyncClient:
+    """An `httpx.AsyncClient` that can only reach public addresses:
+    every connection dials through `_SsrfGuardBackend` (resolve →
+    reject private → dial the validated IP), redirects are never
+    followed (a 3xx can't bounce the request to an internal host), and
+    `trust_env=False` keeps `HTTP(S)_PROXY` / `.netrc` out of the path.
+
+    Used directly by callers that don't go through `safe_get` — the MCP
+    client hands it to the MCP SDK as its `httpx_client_factory`, so the
+    SDK's POST / SSE GET / DELETE requests are all guarded."""
     return httpx.AsyncClient(
         transport=_GuardedTransport(),
-        timeout=timeout_s,
+        timeout=timeout if timeout is not None else 30.0,
         headers=headers,
+        auth=auth,
         follow_redirects=False,
         trust_env=False,
     )
@@ -308,6 +327,7 @@ __all__ = [
     "BlockedAddressError",
     "OutboundFetchError",
     "OutboundResponse",
+    "build_guarded_client",
     "build_outbound_client",
     "safe_get",
 ]
