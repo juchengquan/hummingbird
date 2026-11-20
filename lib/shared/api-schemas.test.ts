@@ -321,7 +321,8 @@ describe("AiCommandRequestSchema", () => {
   })
 
   test("rejects a missing ctx (previously a TypeError → 500)", () => {
-    const { ctx: _ctx, ...noCtx } = valid
+    const noCtx: Partial<typeof valid> = { ...valid }
+    delete noCtx.ctx
     expect(AiCommandRequestSchema.safeParse(noCtx).success).toBe(false)
   })
 
