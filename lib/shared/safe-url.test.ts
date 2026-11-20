@@ -5,6 +5,7 @@ import {
   isSafeImageUrl,
   isSafeLinkUrl,
   normalizeUrlForSchemeCheck,
+  planImageOpen,
 } from "./safe-url"
 
 // Payloads that must never survive as a link or image URL.
@@ -155,5 +156,47 @@ describe("isExternalHttpUrl", () => {
 describe("normalizeUrlForSchemeCheck", () => {
   test("decodes entities and percent-encoding, strips controls, lowercases", () => {
     expect(normalizeUrlForSchemeCheck(" Java&#x09;Script%3A x")).toBe("javascript:x")
+  })
+})
+
+describe("planImageOpen", () => {
+  test("http(s) and relative URLs open directly", () => {
+    expect(planImageOpen("https://cdn.example.com/a.png")).toEqual({
+      kind: "direct",
+      url: "https://cdn.example.com/a.png",
+    })
+    expect(planImageOpen("/api/files/x.png")).toEqual({
+      kind: "direct",
+      url: "/api/files/x.png",
+    })
+  })
+
+  test("raster data: URLs open via a blob", () => {
+    expect(planImageOpen("data:image/png;base64,iVBORw0KGgo=")).toEqual({
+      kind: "blob",
+      mime: "image/png",
+      base64: true,
+      payload: "iVBORw0KGgo=",
+    })
+    expect(planImageOpen("data:image/webp,abc")).toEqual({
+      kind: "blob",
+      mime: "image/webp",
+      base64: false,
+      payload: "abc",
+    })
+  })
+
+  test("script, SVG and unknown-scheme URLs are blocked", () => {
+    for (const url of SCRIPT_URLS) {
+      expect(planImageOpen(url)).toEqual({ kind: "blocked" })
+    }
+    expect(planImageOpen("data:image/svg+xml;base64,PHN2Zz4=")).toEqual({
+      kind: "blocked",
+    })
+    expect(planImageOpen("data:text/html,<script>alert(1)</script>")).toEqual({
+      kind: "blocked",
+    })
+    expect(planImageOpen("file:///etc/passwd")).toEqual({ kind: "blocked" })
+    expect(planImageOpen(undefined)).toEqual({ kind: "blocked" })
   })
 })
