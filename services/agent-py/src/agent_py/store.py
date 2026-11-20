@@ -692,6 +692,123 @@ async def create_child_task(
     return str(row["id"])
 
 
+@dataclass(frozen=True)
+class ChildSpawn:
+    """One child task to create in `commit_spawn`. The id is minted by
+    the caller so the handoff events can name it before the commit."""
+
+    id: str
+    goal: str
+    checkpoint: dict[str, object]
+
+
+# Parent first: flip to `paused` with the absolute barrier count and the
+# `awaiting_children` checkpoint — unless it settled (cancelled) under us.
+_SPAWN_PARENT_SQL = """
+UPDATE public.tasks
+SET status = 'paused',
+    pending_children = $3,
+    checkpoint = $4::jsonb,
+    updated_at = now()
+WHERE id = $1 AND user_id = $2
+  AND status NOT IN ('done', 'failed', 'cancelled')
+RETURNING id;
+"""
+
+_SPAWN_CHILD_SQL = """
+INSERT INTO public.tasks (id, user_id, conversation_id, goal, status, parent_task_id, checkpoint)
+VALUES ($1, $2, $3, $4, 'queued', $5, $6::jsonb);
+"""
+
+_SPAWN_CHILD_JOB_SQL = """
+INSERT INTO public.task_jobs (task_id, user_id, action, payload, status, scheduled_at)
+VALUES ($1, $2, 'start', '{}'::jsonb, 'queued', now());
+"""
+
+
+async def commit_spawn(
+    pool: asyncpg.Pool,
+    *,
+    parent_task_id: str,
+    user_id: str,
+    conversation_id: str,
+    children: list[ChildSpawn],
+    checkpoint: dict[str, object],
+) -> bool:
+    """Fan out in ONE transaction: the parent goes `paused` with
+    `pending_children = len(children)` and its `awaiting_children`
+    checkpoint, then the child rows and their `start` jobs are inserted.
+
+    Atomic on purpose — the join barrier needs the parent's counter,
+    checkpoint and status in place before any child can settle. With the
+    old step-by-step writes a child job committed first could finish
+    before the counter was set (decrementing 0 → -1, after which the
+    absolute `n` never reaches zero) or before the parent was paused +
+    checkpointed (the fan-in `continue` would resume a parent with no
+    `awaiting_children`). Children's jobs are invisible to workers until
+    the commit.
+
+    Returns False — and creates nothing — when the parent already
+    settled (e.g. cancelled while this chunk ran)."""
+    parent_uuid = _coerce_uuid(parent_task_id)
+    user_uuid = _coerce_uuid(user_id)
+    async with pool.acquire() as conn, conn.transaction():
+        parent = await conn.fetchrow(
+            _SPAWN_PARENT_SQL,
+            parent_uuid,
+            user_uuid,
+            len(children),
+            json.dumps(checkpoint),
+        )
+        if parent is None:
+            return False
+        conv_uuid = _coerce_uuid(conversation_id)
+        for child in children:
+            child_uuid = _coerce_uuid(child.id)
+            await conn.execute(
+                _SPAWN_CHILD_SQL,
+                child_uuid,
+                user_uuid,
+                conv_uuid,
+                child.goal,
+                parent_uuid,
+                json.dumps(child.checkpoint),
+            )
+            await conn.execute(_SPAWN_CHILD_JOB_SQL, child_uuid, user_uuid)
+    return True
+
+
+_CLAIM_PAUSED_FOR_FAN_IN_SQL = """
+UPDATE public.tasks
+SET status = 'running', updated_at = now()
+WHERE id = $1 AND user_id = $2 AND status = 'paused' AND pending_children <= 0
+RETURNING id;
+"""
+
+
+async def claim_paused_for_fan_in(
+    pool: asyncpg.Pool,
+    *,
+    run_id: str,
+    user_id: str,
+) -> bool:
+    """Atomically flip a parent paused on its subagents back to
+    `running` once every child settled (`pending_children <= 0`).
+
+    The fan-in `continue` (and a stranded paused run being recovered)
+    must do this before running: a run left `paused` while it actually
+    runs is skipped by `poller.reclaim_decision` if its worker dies —
+    the job is settled and the task stays paused forever. Returns True
+    iff THIS call made the transition."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            _CLAIM_PAUSED_FOR_FAN_IN_SQL,
+            _coerce_uuid(run_id),
+            _coerce_uuid(user_id),
+        )
+    return row is not None
+
+
 _SET_PENDING_CHILDREN_SQL = (
     "UPDATE public.tasks SET pending_children = $2, updated_at = now() "
     "WHERE id = $1 AND user_id = $3;"

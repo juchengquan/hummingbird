@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -374,6 +375,33 @@ async def settle_stranded_task(
     return True
 
 
+async def recover_stranded_paused_run(
+    pool: asyncpg.Pool,
+    *,
+    task_id: str,
+    user_id: str,
+) -> bool:
+    """Flip a `paused` run that is waiting on nothing back to `running`
+    so a reclaimed `continue` can resume it (`poller.reclaim_decision`
+    → `"recover"`). Returns True iff it was flipped.
+
+    Before the fan-in flipped its parent back to `running`, a parent
+    resumed from its subagents kept running while still `paused`; its
+    first yield saved a checkpoint without `awaiting_children`, so a
+    worker death in a later chunk left it paused with nothing to resume
+    it. It is recoverable only when the checkpoint confirms it is not
+    waiting on anyone: no `awaiting_children` (the barrier owns that)
+    and no unanswered tool call in the last turn (a pending approval /
+    question — only a `respond` may resume that)."""
+    checkpoint = await store.load_checkpoint(pool, run_id=task_id, user_id=user_id)
+    if checkpoint is None or isinstance(checkpoint.get("awaiting_children"), dict):
+        return False
+    if _unanswered_last_turn_calls(_messages_from(checkpoint)):
+        return False
+    lease.check_current()
+    return await store.claim_paused_for_fan_in(pool, run_id=task_id, user_id=user_id)
+
+
 @dataclass(frozen=True)
 class _RunTools:
     """The per-run tool set, built identically for every action so an
@@ -539,6 +567,29 @@ async def _run_chunk_inner(
     if resume:
         awaiting = checkpoint.get("awaiting_children")
         if isinstance(awaiting, dict):
+            # The parent is `paused` on its children: flip it back to
+            # `running` (only once they all settled) BEFORE resuming. Left
+            # `paused` while it runs, a worker death in any later chunk
+            # would be reclaimed as "waiting on the user / children" and
+            # skipped — stranding the task `paused` forever, since the
+            # checkpoint below no longer carries `awaiting_children`.
+            lease.check_current()
+            if not await store.claim_paused_for_fan_in(
+                pool, run_id=payload.run_id, user_id=payload.user_id
+            ):
+                status = await store.load_owned_task_status(
+                    pool, task_id=payload.run_id, user_id=payload.user_id
+                )
+                if status != "running":
+                    # Children still pending (a stray `continue`), or the
+                    # run settled / was cancelled meanwhile: nothing to do.
+                    # `running` means a dead attempt already flipped it.
+                    logger.warning(
+                        "executor.fan_in_not_ready",
+                        run_id=payload.run_id,
+                        task_status=status,
+                    )
+                    return ExecutorOutcome(settled=True)
             tool_call_id = str(awaiting.get("tool_call_id") or "")
             child_results = await store.load_child_results(
                 pool, parent_task_id=payload.run_id, user_id=payload.user_id
@@ -804,18 +855,20 @@ async def _run_chunk_inner(
             conversation_id = await store.load_conversation_id(
                 pool, run_id=payload.run_id, user_id=payload.user_id
             )
+            # Child ids are minted here so the handoff events can name
+            # them; the rows themselves are written by `commit_spawn`
+            # below, in one transaction with the parent's barrier state.
+            children: list[store.ChildSpawn] = []
             children_meta: list[dict[str, str]] = []
             for spec in specs:
-                child_checkpoint = _child_checkpoint(checkpoint, spec)
-                child_id = await store.create_child_task(
-                    pool,
-                    parent_task_id=payload.run_id,
-                    user_id=payload.user_id,
-                    conversation_id=conversation_id,
-                    goal=spec.subgoal,
-                    checkpoint=child_checkpoint,
+                child_id = str(uuid.uuid4())
+                children.append(
+                    store.ChildSpawn(
+                        id=child_id,
+                        goal=spec.subgoal,
+                        checkpoint=_child_checkpoint(checkpoint, spec),
+                    )
                 )
-                await jobs.enqueue_start_job(pool, task_id=child_id, user_id=payload.user_id)
                 await emitter.handoff(
                     agent=spec.persona_slug,
                     phase="enter",
@@ -830,26 +883,27 @@ async def _run_chunk_inner(
                     }
                 )
 
-            await store.set_pending_children(
-                pool, task_id=payload.run_id, user_id=payload.user_id, n=len(specs)
-            )
+            # Saved after the handoffs so its `seq` covers them.
             next_checkpoint = _build_checkpoint(checkpoint, live_messages, emitter)
             next_checkpoint["awaiting_children"] = {
                 "tool_call_id": spawn.tool_call_id,
                 "children": children_meta,
             }
-            await store.save_checkpoint(
+            lease.check_current()
+            # Counter + checkpoint + `paused` + children + their start
+            # jobs in ONE transaction: no child can run (let alone
+            # settle and hit the barrier) before the parent is ready.
+            committed = await store.commit_spawn(
                 pool,
-                run_id=payload.run_id,
+                parent_task_id=payload.run_id,
                 user_id=payload.user_id,
+                conversation_id=conversation_id,
+                children=children,
                 checkpoint=next_checkpoint,
             )
-            await store.update_run(
-                pool,
-                run_id=payload.run_id,
-                user_id=payload.user_id,
-                status="paused",
-            )
+            if not committed:
+                logger.warning("executor.spawn_parent_settled", run_id=payload.run_id)
+                return ExecutorOutcome(settled=True)
             logger.info(
                 "executor.spawned",
                 run_id=payload.run_id,

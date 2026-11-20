@@ -419,6 +419,21 @@ async def _dispatch(pool: asyncpg.Pool, job: ClaimedJob) -> _Settlement:
         )
         if decision == "skip":
             return _Settlement(ok=True)
+        if decision == "recover":
+            # Paused with nothing to wait on (see `reclaim_decision`):
+            # flip it back to running unless its checkpoint shows it IS
+            # waiting on the user after all.
+            recovered = await executor.recover_stranded_paused_run(
+                pool, task_id=job.task_id, user_id=job.user_id
+            )
+            logger.warning(
+                "poller.paused_run_recovery",
+                job_id=job.id,
+                task_id=job.task_id,
+                recovered=recovered,
+            )
+            if not recovered:
+                return _Settlement(ok=True)
         if decision == "continue" and job.action == "respond":
             # The dead attempt flipped paused → running; whether it also
             # persisted the user's answer is for the executor to find out
@@ -487,7 +502,7 @@ async def _dispatch(pool: asyncpg.Pool, job: ClaimedJob) -> _Settlement:
     return _Settlement(ok=False, error=outcome.error or "unknown")
 
 
-ReclaimAction = Literal["run", "continue", "skip"]
+ReclaimAction = Literal["run", "continue", "skip", "recover"]
 
 
 def reclaim_decision(action: str, state: JobTaskState) -> tuple[ReclaimAction, str]:
@@ -496,7 +511,10 @@ def reclaim_decision(action: str, state: JobTaskState) -> tuple[ReclaimAction, s
 
       - `"run"` — execute the job's own action again;
       - `"continue"` — resume the run from its checkpoint instead;
-      - `"skip"` — settle the job done without executing.
+      - `"skip"` — settle the job done without executing;
+      - `"recover"` — a `continue` whose task is `paused` with nothing to
+        wait on: the poller flips it back to `running` (if its checkpoint
+        confirms no pending input) and resumes it.
 
     The previous attempt may have died anywhere — before doing anything,
     mid-step, or after finishing the run but before settling the job —
@@ -509,7 +527,10 @@ def reclaim_decision(action: str, state: JobTaskState) -> tuple[ReclaimAction, s
       - task paused → it is legitimately waiting: on the user (only the
         respond job may proceed, through the normal paused → running
         gate) or on its subagents (only the barrier's `continue`, once
-        `pending_children` hit zero, may resume it).
+        `pending_children` hit zero, may resume it). A `continue` on a
+        paused task with no children pending and no fan-in marker is
+        `"recover"`: nothing legitimately pauses that way, it is a run
+        stranded `paused` by a pre-fix fan-in.
       - task queued/running:
           * respond → the attempt had already flipped paused → running,
             so the respond gate must not run again: `"continue"` —
@@ -539,8 +560,15 @@ def reclaim_decision(action: str, state: JobTaskState) -> tuple[ReclaimAction, s
     if status == "paused":
         if action == "respond":
             return "run", "respond_to_paused_task"
-        if action == "continue" and state.awaiting_children and state.pending_children <= 0:
-            return "run", "fan_in_resume"
+        if action == "continue" and state.pending_children <= 0:
+            if state.awaiting_children:
+                return "run", "fan_in_resume"
+            # Paused, no children pending and no fan-in marker: a run that
+            # resumed from a fan-in without leaving `paused` (before the
+            # fan-in flipped it back to running) and then lost its worker.
+            # Unless it is waiting on the user — checked against the
+            # checkpoint by the poller — it is stranded, not waiting.
+            return "recover", "paused_without_pending_children"
         return "skip", "task_paused"
     if action == "respond":
         if state.has_other_live_job:

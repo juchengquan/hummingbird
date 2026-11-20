@@ -472,7 +472,9 @@ async def test_reclaimed_respond_on_a_running_task_resumes_the_interrupted_respo
         ("start", _state(superseded=True), "skip"),
         ("continue", _state(superseded=True), "skip"),
         ("start", _state(task_status="paused"), "skip"),
-        ("continue", _state(task_status="paused"), "skip"),
+        # Paused with nothing pending: checked against the checkpoint.
+        ("continue", _state(task_status="paused"), "recover"),
+        ("continue", _state(task_status="paused", pending_children=1), "skip"),
         ("continue", _state(task_status="paused", awaiting_children=True), "run"),
         (
             "continue",
