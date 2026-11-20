@@ -1,7 +1,8 @@
 "use client"
 
 import { FileText, Trash2, ImageOff } from "lucide-react"
-import { useStore } from "@/client/hooks/use-store"
+import { useFileImageDataUrl } from "@/client/files/use-file-blob-fields"
+import { useStore, type UploadedFile } from "@/client/hooks/use-store"
 import { getFileIcon, formatFileSize } from "@/client/file-utils"
 import { cn } from "@/shared/utils"
 import { openImageViewer } from "@/components/right-panel-slot"
@@ -69,55 +70,63 @@ export function MessageAttachments({
           )
         }
 
-        const isImage = file.extractedKind === "image" && file.imageDataUrl
-        if (isImage && file.imageDataUrl) {
-          // Capture the URL up front so TS narrows it for the closure.
-          const imageUrl = file.imageDataUrl
-          return (
-            <button
-              key={id}
-              type="button"
-              onClick={() =>
-                openImageViewer({
-                  images: [
-                    {
-                      id: file.id,
-                      url: imageUrl,
-                      alt: file.name,
-                      filename: file.name,
-                      sizeBytes: file.size,
-                      format: guessFormat(file.type),
-                    },
-                  ],
-                })
-              }
-              className="group/thumb relative rounded-md overflow-hidden border border-[var(--border)] hover:border-[var(--ring)] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
-              title={`${file.name} · ${formatFileSize(file.size)}`}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={file.imageDataUrl}
-                alt={file.name}
-                className="block w-14 h-14 object-cover"
-              />
-            </button>
-          )
+        if (file.extractedKind === "image") {
+          return <ImageAttachment key={id} file={file} />
         }
 
-        return (
-          <span
-            key={id}
-            className="inline-flex items-center gap-1.5 max-w-[200px] px-2 py-1 rounded-md border border-[var(--border)] bg-[var(--background)]/60 text-[11px] text-[var(--foreground)]"
-            title={`${file.name} · ${formatFileSize(file.size)}`}
-          >
-            <span className="shrink-0">
-              {getFileIcon(file.type) ?? <FileText size={12} />}
-            </span>
-            <span className="truncate">{file.name}</span>
-          </span>
-        )
+        return <FileChip key={id} file={file} />
       })}
     </div>
+  )
+}
+
+/** Image thumbnail. The data URL is loaded lazily from IndexedDB
+ *  (store v32); until it resolves — or when this device doesn't have
+ *  it — the plain file chip renders instead. */
+function ImageAttachment({ file }: { file: UploadedFile }) {
+  const imageUrl = useFileImageDataUrl(file)
+  if (!imageUrl) return <FileChip file={file} />
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        openImageViewer({
+          images: [
+            {
+              id: file.id,
+              url: imageUrl,
+              alt: file.name,
+              filename: file.name,
+              sizeBytes: file.size,
+              format: guessFormat(file.type),
+            },
+          ],
+        })
+      }
+      className="group/thumb relative rounded-md overflow-hidden border border-[var(--border)] hover:border-[var(--ring)] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+      title={`${file.name} · ${formatFileSize(file.size)}`}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={imageUrl}
+        alt={file.name}
+        className="block w-14 h-14 object-cover"
+      />
+    </button>
+  )
+}
+
+function FileChip({ file }: { file: UploadedFile }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 max-w-[200px] px-2 py-1 rounded-md border border-[var(--border)] bg-[var(--background)]/60 text-[11px] text-[var(--foreground)]"
+      title={`${file.name} · ${formatFileSize(file.size)}`}
+    >
+      <span className="shrink-0">
+        {getFileIcon(file.type) ?? <FileText size={12} />}
+      </span>
+      <span className="truncate">{file.name}</span>
+    </span>
   )
 }
 

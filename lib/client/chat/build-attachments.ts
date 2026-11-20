@@ -6,8 +6,10 @@ import "client-only"
  * `components/panels/chat.tsx`. Given the active conversation and the
  * store's `files` + `conversationFiles` slices, returns the unioned
  * (workspace-ticked + conversation-private) list of attached files
- * along with the image data-URLs that should ride on the most recent
- * user turn.
+ * along with the image files whose data-URLs should ride on the most
+ * recent user turn. The data URLs themselves live in IndexedDB since
+ * store v32 — resolve them with `getFileImageDataUrls`
+ * (`@/client/files/blob-fields`).
  *
  * Pure: takes the store slices as args, no React, no `useStore`. Tested
  * independently in `build-attachments.test.ts`.
@@ -20,9 +22,9 @@ export interface BuiltAttachments {
   attachedFileIds: string[]
   /** The matching `UploadedFile` rows. */
   attachedFiles: UploadedFile[]
-  /** Image data-URLs to attach to the most recent user turn (vision
-   *  models). Empty array when no image files are attached. */
-  attachedImageUrls: string[]
+  /** Attached image files (vision models) — resolve their data URLs
+   *  with `getFileImageDataUrls`. Empty when no images are attached. */
+  attachedImageFiles: UploadedFile[]
 }
 
 /**
@@ -38,7 +40,8 @@ export interface BuiltAttachments {
  * Image attachment policy: images ride on the **most recent user turn
  * only** (re-sending them every turn would explode the token bill and
  * isn't how vision chats are typically structured). This helper just
- * returns the URLs; `buildTransmittedMessages` decides where they go.
+ * returns the image files; `buildTransmittedMessages` decides where
+ * their URLs go.
  */
 export function buildAttachments(input: {
   conversation: Conversation | null | undefined
@@ -64,9 +67,9 @@ export function buildAttachments(input: {
     .map((id) => filesById.get(id))
     .filter((f): f is UploadedFile => !!f && !f.deletedAt)
 
-  const attachedImageUrls = attachedFiles
-    .filter((f) => f.extractedKind === "image" && f.imageDataUrl)
-    .map((f) => f.imageDataUrl as string)
+  const attachedImageFiles = attachedFiles.filter(
+    (f) => f.extractedKind === "image"
+  )
 
-  return { attachedFileIds, attachedFiles, attachedImageUrls }
+  return { attachedFileIds, attachedFiles, attachedImageFiles }
 }

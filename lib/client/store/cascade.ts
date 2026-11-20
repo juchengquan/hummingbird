@@ -1,5 +1,6 @@
 import "client-only"
 
+import { deleteFileBlobFields } from "@/client/files/blob-fields"
 import { deleteBlob as deleteLocalBlob } from "@/client/files/local-store"
 import type { AttachmentKind } from "@/shared/attachments"
 import type {
@@ -142,6 +143,17 @@ function hasLiveRefInIndex(index: LiveRefIndex, ref: AttachmentRef): boolean {
 }
 
 /**
+ * Best-effort, fire-and-forget cleanup of everything this device keeps
+ * for a file outside localStorage: the raw blob (`local-store`) and the
+ * IndexedDB-backed `imageDataUrl` / `extractedFullText`
+ * (`blob-fields`). Called wherever a file is tombstoned.
+ */
+export function deleteFileLocalData(fileId: string): void {
+  void deleteLocalBlob(fileId)
+  void deleteFileBlobFields(fileId)
+}
+
+/**
  * Patch shape returned by `gcOrphanedAttachment`. Callers spread
  * this into the partial they pass to `set()`. Empty object when the
  * attachment still has live refs (no-op).
@@ -161,7 +173,7 @@ export interface CascadePatch {
  * `state.X.map(x => set.has(x.id) ? tombstoneX(x) : x)` blocks at
  * the call site.
  *
- * Files get `deleteLocalBlob` fired as a side effect, same as the
+ * Files get `deleteFileLocalData` fired as a side effect, same as the
  * GC-driven tombstone path.
  */
 export function bulkTombstoneByKind(
@@ -173,7 +185,7 @@ export function bulkTombstoneByKind(
   if (idSet.size === 0) return {}
   switch (kind) {
     case "file": {
-      for (const id of idSet) void deleteLocalBlob(id)
+      for (const id of idSet) deleteFileLocalData(id)
       return {
         files: state.files.map((f) =>
           idSet.has(f.id) && !f.deletedAt ? tombstoneFile(f) : f
@@ -208,7 +220,7 @@ function tombstonePatch(
 ): CascadePatch {
   switch (ref.kind) {
     case "file": {
-      void deleteLocalBlob(ref.id)
+      deleteFileLocalData(ref.id)
       return {
         files: state.files.map((f) =>
           f.id === ref.id && !f.deletedAt ? tombstoneFile(f) : f
@@ -232,7 +244,7 @@ function tombstonePatch(
 
 /**
  * If the attachment has no live references, tombstone its underlying
- * entity. Fires `deleteLocalBlob` for files as a side effect
+ * entity. Fires `deleteFileLocalData` for files as a side effect
  * (best-effort IDB cleanup).
  *
  * Caller composes the returned patch inside a single `set()`:
