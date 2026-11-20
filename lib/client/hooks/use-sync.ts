@@ -31,6 +31,27 @@ import type { Message } from "@/shared/types"
 // Module-level so the reconciliation flow can reset it after hydration.
 let lastSnapshot: Snapshot | null = null
 
+/** Set while `withSyncDiffSuppressed` runs — see that helper. */
+let suppressDiff = false
+
+/**
+ * Run `fn` (which must update the store synchronously) without turning
+ * the resulting change into SyncOps; the diff baseline just advances.
+ * Used by the cross-tab merge (`store/cross-tab-sync.ts`): the rows it
+ * installs were authored — and enqueued — by the other tab (or by this
+ * one, earlier), so re-diffing them would double-upload, and a stale
+ * row from a write race could even overwrite a newer cloud row.
+ */
+export function withSyncDiffSuppressed(fn: () => void): void {
+  const prev = suppressDiff
+  suppressDiff = true
+  try {
+    fn()
+  } finally {
+    suppressDiff = prev
+  }
+}
+
 /**
  * Message baselines for conversations whose message diffs are being
  * held (mid-stream). Keyed by conversation id; the value is that
@@ -152,7 +173,11 @@ export function useSync(): void {
     const unsubscribe = useStore.subscribe((state) => {
       const next: Snapshot = snapshotOf(state)
       const prev = lastSnapshot
-      if (!prev) {
+      // A cross-tab merge only installs rows another tab already
+      // enqueued (or rows this tab enqueued earlier) — rebase instead
+      // of re-uploading them. Held message baselines are kept so an
+      // in-flight stream still diffs against its pre-stream baseline.
+      if (!prev || suppressDiff) {
         lastSnapshot = next
         return
       }

@@ -35,10 +35,25 @@ export interface DebouncedStorageOptions {
   delayMs?: number
 }
 
+/** `StateStorage` plus the hooks the cross-tab merge
+ *  (`cross-tab-sync.ts`) needs to reason about this tab's unflushed
+ *  write. */
+export interface DebouncedStateStorage extends StateStorage {
+  /** True while a write for `name` is buffered and not yet on disk. */
+  hasPending(name: string): boolean
+  /** Drop the buffered write for `name` without writing it. */
+  discardPending(name: string): void
+  /** Called after each successful underlying write. Returns an
+   *  unsubscribe function. */
+  subscribeFlush(cb: (name: string) => void): () => void
+}
+
 /** Build a `StateStorage` that wraps `target` (default `localStorage`)
  *  and debounces writes by `delayMs`. Reads return the most-recent
  *  value, including any pending write. */
-export function debouncedStorage(opts: DebouncedStorageOptions = {}): StateStorage {
+export function debouncedStorage(
+  opts: DebouncedStorageOptions = {}
+): DebouncedStateStorage {
   const resolvedTarget =
     opts.target ?? (typeof window !== "undefined" ? window.localStorage : undefined)
   const delayMs = opts.delayMs ?? 100
@@ -50,6 +65,9 @@ export function debouncedStorage(opts: DebouncedStorageOptions = {}): StateStora
       getItem: () => null,
       setItem: () => {},
       removeItem: () => {},
+      hasPending: () => false,
+      discardPending: () => {},
+      subscribeFlush: () => () => {},
     }
   }
   // Capture as non-null after the guard so the closures below see a
@@ -62,20 +80,27 @@ export function debouncedStorage(opts: DebouncedStorageOptions = {}): StateStora
   // lands.
   const pending = new Map<string, string>()
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
+  const flushListeners = new Set<(name: string) => void>()
 
-  function flush(name: string): void {
-    const value = pending.get(name)
-    if (value === undefined) return
+  function cancel(name: string): void {
     pending.delete(name)
     const timer = timers.get(name)
     if (timer !== undefined) {
       clearTimeout(timer)
       timers.delete(name)
     }
+  }
+
+  function flush(name: string): void {
+    const value = pending.get(name)
+    if (value === undefined) return
+    cancel(name)
     perfMark("humm/chat/persist-debounce-flush:start")
     perfCount("chat.persist.flush")
+    let wrote = false
     try {
       target.setItem(name, value)
+      wrote = true
     } catch {
       // Quota exceeded or storage unavailable — surface the error on
       // the next read (callers see stale data, same as if the write
@@ -83,6 +108,7 @@ export function debouncedStorage(opts: DebouncedStorageOptions = {}): StateStora
       // middleware swallows storage errors too.
     }
     perfMark("humm/chat/persist-debounce-flush:end")
+    if (wrote) for (const cb of flushListeners) cb(name)
   }
 
   function flushAll(): void {
@@ -115,16 +141,23 @@ export function debouncedStorage(opts: DebouncedStorageOptions = {}): StateStora
       )
     },
     removeItem(name: string): void {
-      pending.delete(name)
-      const existing = timers.get(name)
-      if (existing !== undefined) {
-        clearTimeout(existing)
-        timers.delete(name)
-      }
+      cancel(name)
       try {
         target.removeItem(name)
       } catch {
         // see setItem comment
+      }
+    },
+    hasPending(name: string): boolean {
+      return pending.has(name)
+    },
+    discardPending(name: string): void {
+      cancel(name)
+    },
+    subscribeFlush(cb: (name: string) => void): () => void {
+      flushListeners.add(cb)
+      return () => {
+        flushListeners.delete(cb)
       }
     },
   }

@@ -134,3 +134,33 @@ describe("debouncedStorage", () => {
     expect(s.getItem("k")).toBeNull()
   })
 })
+
+describe("debouncedStorage — cross-tab hooks", () => {
+  test("hasPending / discardPending drop the buffered write unwritten", async () => {
+    target.setItem("k", "theirs")
+    target.writeCount = 0
+    const s = debouncedStorage({ target, delayMs: 30 })
+    s.setItem("k", "ours")
+    expect(s.hasPending("k")).toBe(true)
+    s.discardPending("k")
+    expect(s.hasPending("k")).toBe(false)
+    // Reads go back to the target; the timer never writes.
+    expect(s.getItem("k")).toBe("theirs")
+    await tick(60)
+    expect(target.writeCount).toBe(0)
+    expect(target.getItem("k")).toBe("theirs")
+  })
+
+  test("subscribeFlush fires after each real write, until unsubscribed", async () => {
+    const s = debouncedStorage({ target, delayMs: 20 })
+    const flushed: string[] = []
+    const off = s.subscribeFlush((name) => flushed.push(name))
+    s.setItem("k", "1")
+    await tick(40)
+    expect(flushed).toEqual(["k"])
+    off()
+    s.setItem("k", "2")
+    await tick(40)
+    expect(flushed).toEqual(["k"])
+  })
+})

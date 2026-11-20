@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Manrope, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeApplier } from "@/components/theme-applier";
+import { CrossTabStoreSync } from "@/components/cross-tab-store-sync";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 // Runs before React hydrates so the initial paint already has the correct
@@ -38,6 +39,7 @@ export default function RootLayout({
         className={`${manropeSans.variable} ${geistMono.variable} antialiased`}
       >
         <ThemeApplier />
+        <CrossTabStoreSync />
         <TooltipProvider delayDuration={150}>{children}</TooltipProvider>
       </body>
     </html>

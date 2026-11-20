@@ -8,6 +8,15 @@ import "client-only"
  * Design notes:
  * - The queue is process-local but persisted to `localStorage` under
  *   `hummingbird-sync-queue`, so pending writes survive reloads.
+ * - Multi-tab: each tab owns (and flushes) only the ops it produced;
+ *   rows merged in from another tab are not re-enqueued
+ *   (`withSyncDiffSuppressed` in `use-sync.ts`). The storage key is a
+ *   per-tab crash-recovery journal and is last-writer-wins across tabs.
+ *   Merging other tabs' queues in would make two tabs flush the same
+ *   ops; the cost of not merging is that a tab closed while offline
+ *   with unflushed ops can lose them to another tab's write (the rows
+ *   themselves stay in the shared local store; only their cloud upload
+ *   is lost).
  * - It pauses entirely when the user is signed out, Supabase isn't
  *   configured, or the browser is offline. The producer side keeps
  *   enqueueing — replay happens once the gate opens.

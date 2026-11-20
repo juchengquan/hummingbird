@@ -171,6 +171,14 @@ export interface AppState
     ConversationsSlice,
     AccountInstructionsSlice {}
 
+/** localStorage key of the persisted main store. */
+export const STORE_STORAGE_KEY = 'hummingbird-storage'
+
+/** The debounced storage behind `useStore`'s persist middleware.
+ *  Exported for the cross-tab merge (`store/cross-tab-sync.ts`), which
+ *  needs to inspect / drop this tab's buffered write. */
+export const persistStorage = debouncedStorage()
+
 export const useStore = create<AppState>()(
   persist(
     (set, get, api) => ({
@@ -195,7 +203,7 @@ export const useStore = create<AppState>()(
       ...createAccountInstructionsSlice(set, get, api),
     }),
     {
-      name: 'hummingbird-storage',
+      name: STORE_STORAGE_KEY,
       version: STORE_VERSION,
       migrate: runMigrations,
       onRehydrateStorage: () => (state) => {
@@ -208,7 +216,7 @@ export const useStore = create<AppState>()(
       // keys + per-token SSE updates that's a meaningful amount of
       // JSON.stringify churn. The wrapper flushes on `pagehide` so
       // committed state survives navigation.
-      storage: createJSONStorage(() => debouncedStorage()),
+      storage: createJSONStorage(() => persistStorage),
     }
   )
 )
