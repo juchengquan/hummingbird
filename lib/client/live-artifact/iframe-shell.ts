@@ -1,13 +1,17 @@
 /**
- * Build the HTML document that goes into the live-artifact iframe's
- * `srcdoc`. Four shells (`html`, `tsx`, `svg`, `mermaid`) — each is a
- * pure string template so they can be snapshot-tested without a DOM.
+ * Build the HTML document the live-artifact iframe renders — posted
+ * into the `/sandbox/frame` shell by `SandboxedFrame`, which writes it
+ * over itself. Four shells (`html`, `tsx`, `svg`, `mermaid`) — each is
+ * a pure string template so they can be snapshot-tested without a DOM.
  *
  * Security: every shell injects the same CSP `<meta>` tag locking
- * `connect-src` to none and `script-src` to the pinned CDN hosts. The
- * iframe itself runs under `sandbox="allow-scripts"` (set by the
- * frame component) so the document is at a null origin — no cookies,
- * no localStorage, no same-origin fetch to our app.
+ * `connect-src` to none and `script-src` to the pinned CDN hosts. It
+ * stacks on the shell's response CSP (`lib/server/security/sandbox-frame.ts`),
+ * which enforces the same limits even for a full document without a
+ * `<head>` to inject into. The iframe itself runs under
+ * `sandbox="allow-scripts"` (set by the frame component) so the
+ * document is at an opaque origin — no cookies, no localStorage, no
+ * same-origin fetch to our app.
  *
  * Errors thrown from the user's script bubble up via a tiny
  * `window.onerror` hook that posts `{ type: 'live-artifact-error',
@@ -15,7 +19,7 @@
  * iframe and surfaces the message in its toolbar.
  */
 
-import { CDN_HOSTS, CDN_URLS } from "./cdn-urls"
+import { CDN_HOSTS, CDN_URLS } from "@/shared/live-artifact/cdn-urls"
 import type { ShellKind } from "./detect"
 
 /** Marker on every postMessage from the iframe so the parent can

@@ -8,6 +8,7 @@ import {
   parseCspMode,
   reportingEndpointsHeader,
 } from "@/server/security/csp"
+import { SANDBOX_FRAME_PATH } from "@/shared/sandbox-frame"
 
 /**
  * Per-request CSP nonce (Next.js 16 `proxy` convention, formerly
@@ -26,6 +27,12 @@ import {
  * Referrer-Policy, …) live in `next.config.ts` instead.
  */
 export function proxy(request: NextRequest) {
+  // The sandbox frame shell carries its own (always-enforced) CSP for
+  // untrusted artifact code. The matcher already excludes it; this
+  // guard keeps a matcher edit from silently stamping the app policy
+  // over it.
+  if (request.nextUrl.pathname === SANDBOX_FRAME_PATH) return NextResponse.next()
+
   const headerName = cspHeaderName(parseCspMode(process.env.CSP_MODE))
   if (!headerName) return NextResponse.next()
 
@@ -50,6 +57,8 @@ export const config = {
     /*
      * Every page request except:
      * - api (JSON routes — no HTML, no scripts)
+     * - sandbox/frame (the artifact frame shell — sets its own CSP,
+     *   `app/sandbox/frame/route.ts`)
      * - _next/static, _next/image (build assets)
      * - favicon.ico and other root metadata / public files with an
      *   image/text extension (icon.svg, apple-icon.png, …)
@@ -58,7 +67,7 @@ export const config = {
      */
     {
       source:
-        "/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|txt|xml|webmanifest)$).*)",
+        "/((?!api|sandbox/frame$|_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|txt|xml|webmanifest)$).*)",
       missing: [
         { type: "header", key: "next-router-prefetch" },
         { type: "header", key: "purpose", value: "prefetch" },

@@ -3,8 +3,10 @@
  * one place so version bumps are a single-file PR and `iframe-shell.ts`
  * stays focused on the templating logic.
  *
- * The hosts here also have to appear in the CSP `script-src` and
- * `style-src` directives in `iframe-shell.ts`. Keep them in sync.
+ * Lives in `shared/` because two policies consume `CDN_HOSTS`: the
+ * `<meta>` CSP that `iframe-shell.ts` (client) writes into each shell,
+ * and the response CSP of the `/sandbox/frame` shell document
+ * (`lib/server/security/sandbox-frame.ts`).
  */
 
 export const CDN_URLS = {
@@ -26,9 +28,9 @@ export const CDN_URLS = {
   mermaid: "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js",
 } as const
 
-/** Hostnames the iframe's CSP allows scripts / styles from. Derived
- *  from `CDN_URLS` so the CSP and the actual `<script src>` tags can't
- *  drift. */
+/** Hostnames the iframe's CSPs allow scripts / styles from. Every
+ *  `CDN_URLS` entry must be served from one of these (the shell-policy
+ *  test checks it). */
 export const CDN_HOSTS = [
   "https://unpkg.com",
   "https://cdn.tailwindcss.com",

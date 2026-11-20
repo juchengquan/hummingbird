@@ -6,7 +6,11 @@ import { describe, expect, test } from "bun:test"
  *
  *   - `sandbox="allow-scripts"` (and nothing else — crucially NOT
  *     `allow-same-origin`, which would let the iframe read parent
- *     cookies / storage and make same-origin fetches to our API).
+ *     cookies / storage and make same-origin fetches to our API —
+ *     the `/sandbox/frame` shell is served from the app's origin).
+ *     Both consumers (`live-artifact-frame.tsx`, `mcp-app-frame.tsx`)
+ *     render through `sandboxed-frame.tsx`, the only file with the
+ *     `<iframe>`.
  *   - `referrerpolicy="no-referrer"` so the iframe's outbound
  *     requests don't leak the user's URL.
  *
@@ -23,10 +27,32 @@ import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 
-const FRAME_PATH = join(import.meta.dir, "live-artifact-frame.tsx")
+const FRAME_PATH = join(import.meta.dir, "sandboxed-frame.tsx")
 const source = readFileSync(FRAME_PATH, "utf-8")
 
-describe("LiveArtifactFrame — sandbox regression guard", () => {
+/** The components that render untrusted HTML. They must go through
+ *  `SandboxedFrame` rather than declare their own `<iframe>`. */
+const CONSUMERS = ["live-artifact-frame.tsx", "mcp-app-frame.tsx"]
+
+describe("SandboxedFrame consumers", () => {
+  for (const file of CONSUMERS) {
+    const consumer = readFileSync(join(import.meta.dir, file), "utf-8")
+    test(`${file} renders through SandboxedFrame, not its own iframe`, () => {
+      expect(consumer).toContain("<SandboxedFrame")
+      expect(consumer).not.toMatch(/<iframe\b/)
+    })
+    test(`${file} never uses srcdoc (it would inherit the app CSP)`, () => {
+      expect(consumer).not.toMatch(/srcDoc=/i)
+    })
+  }
+})
+
+describe("SandboxedFrame — sandbox regression guard", () => {
+  test("loads the /sandbox/frame shell, never srcdoc", () => {
+    expect(source).toMatch(/src=\{SANDBOX_FRAME_PATH\}/)
+    expect(source).not.toMatch(/srcDoc=/i)
+  })
+
   test("declares exactly `sandbox=\"allow-scripts\"`", () => {
     const matches = source.match(/sandbox="([^"]+)"/g) ?? []
     expect(matches.length).toBe(1)
