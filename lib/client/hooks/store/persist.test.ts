@@ -122,6 +122,10 @@ describe("partializeState — frozen persisted shape", () => {
     expect("streamingContent" in persisted).toBe(false)
     expect("streamingConversationIds" in persisted).toBe(false)
     expect("editorReloadToken" in persisted).toBe(false)
+
+    // `theme` must stay the FIRST key: the pre-paint theme script reads
+    // it by prefix without parsing the blob (`shared/persisted-theme`).
+    expect(Object.keys(persisted)[0]).toBe("theme")
   })
 
   test("STORE_VERSION is pinned (bump only with a migration step)", () => {

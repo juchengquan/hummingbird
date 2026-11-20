@@ -3,12 +3,19 @@ import { Manrope, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeApplier } from "@/components/theme-applier";
 import { CrossTabStoreSync } from "@/components/cross-tab-store-sync";
+import {
+  PERSISTED_THEME_ANY_RE,
+  PERSISTED_THEME_PREFIX_RE,
+} from "@/shared/persisted-theme";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 // Runs before React hydrates so the initial paint already has the correct
 // theme class. Mirrors the resolver in components/theme-applier.tsx.
-// Keep in sync with the zustand persist key in lib/hooks/use-store.ts.
-const themeBootstrapScript = `(function(){try{var s=localStorage.getItem('hummingbird-storage');var t='dark';if(s){var p=JSON.parse(s);if(p&&p.state&&p.state.theme)t=p.state.theme;}var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches);if(d)document.documentElement.classList.add('dark');}catch(e){}})();`
+// Keep in sync with the zustand persist key in lib/client/hooks/use-store.ts.
+// Reads the theme by regex (same patterns as `extractPersistedTheme`)
+// instead of JSON.parse-ing the whole persisted blob — it holds every
+// conversation and can be megabytes, all parsed before first paint.
+const themeBootstrapScript = `(function(){try{var s=localStorage.getItem('hummingbird-storage');var t='dark';if(s){var m=/${PERSISTED_THEME_PREFIX_RE.source}/.exec(s)||/${PERSISTED_THEME_ANY_RE.source}/.exec(s);if(m)t=m[1];}var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches);if(d)document.documentElement.classList.add('dark');}catch(e){}})();`
 
 const manropeSans = Manrope({
   variable: "--font-manrope-sans",
