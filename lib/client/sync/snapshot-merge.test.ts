@@ -80,7 +80,9 @@ function fullConversation(id = "c1", messages: Message[] = [fullMessage()]): Req
     imageGenConfig: { size: "1k" } as unknown as Required<Conversation>["imageGenConfig"],
     fileSearchConfig: { topK: 2 } as unknown as Required<Conversation>["fileSearchConfig"],
     parentId: "c0",
-    forkedFromMessageId: "m0",
+    // A message that is uploaded too: the fork point is only set when its
+    // message exists (bulkUploadLocalState).
+    forkedFromMessageId: "m1",
   }
 }
 
@@ -172,7 +174,10 @@ function fakeDb(): AppSupabaseClient {
     from(table: string) {
       return {
         upsert(rows: Record<string, unknown>[]) {
-          tables.set(table, [...(tables.get(table) ?? []), ...rows])
+          // Upsert: replace by id, keep first-insert order.
+          const byId = new Map((tables.get(table) ?? []).map((r) => [r.id, r]))
+          for (const r of rows) byId.set(r.id, r)
+          tables.set(table, [...byId.values()])
           return Promise.resolve({ error: null })
         },
         select() {
@@ -435,6 +440,59 @@ describe("applyCloudSnapshot", () => {
     expect(s.conversations[0].memoryOff).toBe(true)
     expect(s.conversations[0].messages[0].routedModel).toBe("x/y")
     expect(s.workspaces[0].webSearchConfig).toEqual(fullWorkspace().webSearchConfig)
+  })
+})
+
+describe("bulkUploadLocalState — forked conversations", () => {
+  /** Upserts rows like `fakeDb`, but enforces conversations'
+   *  `forked_from_message_id` FK (not deferrable) against messages
+   *  already stored, and records each conversations upsert. */
+  function fkDb() {
+    const tables = new Map<string, Record<string, unknown>[]>()
+    const convUpserts: Record<string, unknown>[][] = []
+    const client = {
+      from(table: string) {
+        return {
+          upsert(rows: Record<string, unknown>[]) {
+            if (table === "conversations") {
+              convUpserts.push(rows)
+              const messageIds = new Set((tables.get("messages") ?? []).map((m) => m.id))
+              const bad = rows.find(
+                (r) => r.forked_from_message_id != null && !messageIds.has(r.forked_from_message_id)
+              )
+              if (bad) {
+                return Promise.resolve({ error: { code: "23503", message: "fk violation" } })
+              }
+            }
+            const byId = new Map((tables.get(table) ?? []).map((r) => [r.id, r]))
+            for (const r of rows) byId.set(r.id, r)
+            tables.set(table, [...byId.values()])
+            return Promise.resolve({ error: null })
+          },
+        }
+      },
+    }
+    return { client: client as unknown as AppSupabaseClient, tables, convUpserts }
+  }
+
+  test("a fork's branch point is set after the messages exist", async () => {
+    const db = fkDb()
+    const parent = conv("p", { messages: [msg("m1"), msg("m2")] })
+    const fork = conv("f", { parentId: "p", forkedFromMessageId: "m1", messages: [msg("m3")] })
+    const orphan = conv("o", { parentId: "p", forkedFromMessageId: "gone", messages: [] })
+    const up = await bulkUploadLocalState(
+      db.client,
+      "user-a",
+      emptySnapshot({ workspaces: [fullWorkspace("ws-1")], conversations: [fork, parent, orphan] })
+    )
+    expect(up).toEqual({ ok: true })
+    // First pass: every conversation, no branch points.
+    expect(db.convUpserts[0].map((r) => r.forked_from_message_id)).toEqual([null, null, null])
+    // Second pass, after messages: only forks whose branch point exists.
+    expect(db.convUpserts[1].map((r) => [r.id, r.forked_from_message_id])).toEqual([["f", "m1"]])
+    const stored = db.tables.get("conversations")!
+    expect(stored.find((r) => r.id === "f")?.forked_from_message_id).toBe("m1")
+    expect(stored.find((r) => r.id === "o")?.forked_from_message_id).toBeNull()
   })
 })
 
