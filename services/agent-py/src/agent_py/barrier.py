@@ -28,14 +28,14 @@ _TERMINAL = ("done", "failed", "cancelled")
 _TRANSITION_SQL = """
 UPDATE public.tasks
 SET status = $2, finished_at = now(), updated_at = now()
-WHERE id = $1 AND status NOT IN ('done', 'failed', 'cancelled')
+WHERE id = $1 AND user_id = $3 AND status NOT IN ('done', 'failed', 'cancelled')
 RETURNING parent_task_id;
 """
 
 _DECREMENT_SQL = """
 UPDATE public.tasks
 SET pending_children = pending_children - 1, updated_at = now()
-WHERE id = $1
+WHERE id = $1 AND user_id = $2
 RETURNING pending_children, status;
 """
 
@@ -61,6 +61,10 @@ async def settle_task_terminal(
     """Move `task_id` to terminal `status`, settle its parent's barrier.
 
     `status` must be one of 'done' | 'failed' | 'cancelled'.
+
+    Both the transition and the parent decrement are `user_id`-scoped
+    (defence in depth — the worker pool bypasses RLS), so a job carrying
+    a mismatched user can never settle or decrement another user's task.
     """
     if status not in _TERMINAL:
         raise ValueError(f"settle_task_terminal: status must be terminal, got {status!r}")
@@ -69,7 +73,7 @@ async def settle_task_terminal(
     user_uuid = uuid.UUID(user_id)
 
     async with pool.acquire() as conn, conn.transaction():
-        row = await conn.fetchrow(_TRANSITION_SQL, task_uuid, status)
+        row = await conn.fetchrow(_TRANSITION_SQL, task_uuid, status, user_uuid)
         if row is None:
             return SettleResult(
                 transitioned=False,
@@ -87,7 +91,7 @@ async def settle_task_terminal(
                 reenqueued_parent=False,
             )
 
-        dec = await conn.fetchrow(_DECREMENT_SQL, parent)
+        dec = await conn.fetchrow(_DECREMENT_SQL, parent, user_uuid)
         remaining: int | None = dec["pending_children"] if dec else None
         parent_status = dec["status"] if dec else None
 

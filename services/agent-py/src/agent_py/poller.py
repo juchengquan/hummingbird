@@ -32,7 +32,7 @@ from collections.abc import Awaitable, Callable
 
 import structlog
 
-from . import db, executor, feature_flag, jobs
+from . import db, executor, feature_flag, jobs, store
 from .jobs import ClaimedJob
 from .settings import Settings
 
@@ -193,6 +193,22 @@ async def _tick(settings: Settings) -> None:
             job_id=job.id,
             released=released,
             reason="action_not_supported_yet",
+            action=job.action,
+        )
+        return
+
+    # Ownership gate. `task_jobs` RLS only checks `auth.uid() = user_id`
+    # on insert, so a user can enqueue a job carrying their own
+    # `user_id` but SOMEONE ELSE's `task_id`. Every executor write is
+    # scoped by `job.user_id`, but refuse up front rather than run a
+    # forged job against a task the job's user doesn't own.
+    if not await store.is_task_owned_by(pool, task_id=job.task_id, user_id=job.user_id):
+        await jobs.mark_job_failed(pool, job.id, error="task not owned by job user")
+        logger.error(
+            "poller.job_owner_mismatch",
+            job_id=job.id,
+            task_id=job.task_id,
+            user_id=job.user_id,
             action=job.action,
         )
         return

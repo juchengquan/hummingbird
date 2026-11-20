@@ -143,6 +143,14 @@ ShouldYieldFn = Callable[[], bool]
 #: pass over the assembled report + sources before the emitter latches —
 #: nothing can be emitted after `result`. See `agent_py.verify`.
 FinalizeFn = Callable[[], Awaitable[dict[str, object] | None]]
+#: Optional final-text provider. Awaited on the settled path just before
+#: the terminal `result`; its return value becomes `result.finalText`.
+#: The executor returns the run's accumulated assistant text (all
+#: `token(channel='text')` events across every chunk) — the same text the
+#: TS projection falls back to (`resultText = finalText ?? text`), so the
+#: UI is unchanged while the fan-in (`store.load_child_results`, which
+#: reads `finalText` off the child's `result` row) finally sees a value.
+FinalTextFn = Callable[[], Awaitable[str | None]]
 
 
 async def run_agent_loop(
@@ -153,6 +161,7 @@ async def run_agent_loop(
     is_cancelled: IsCancelledFn,
     should_yield: ShouldYieldFn | None = None,
     finalize: FinalizeFn | None = None,
+    final_text: FinalTextFn | None = None,
 ) -> AgentLoopResult:
     """Drive a run to completion or a chunk-break point. Emits exactly
     one terminal event (`status: cancelled` or `result: done|failed`)
@@ -211,19 +220,24 @@ async def run_agent_loop(
             return AgentLoopResult(kind="spawned", spawn=outcome.spawn)
 
         if outcome.done:
-            await _settle(emitter, finalize)
+            await _settle(emitter, finalize, final_text)
             return AgentLoopResult(kind="settled")
 
     # Hit the step cap without a final answer. Settle anyway —
     # mirrors the TS path; the model's accumulated text is the
     # answer.
-    await _settle(emitter, finalize)
+    await _settle(emitter, finalize, final_text)
     return AgentLoopResult(kind="settled")
 
 
-async def _settle(emitter: RunEmitter, finalize: FinalizeFn | None) -> None:
-    """Run the optional finalize hook, then emit the terminal
-    `result: done`. The hook's failures are the hook's concern (it
-    returns None) — settling never blocks on it."""
+async def _settle(
+    emitter: RunEmitter,
+    finalize: FinalizeFn | None,
+    final_text: FinalTextFn | None,
+) -> None:
+    """Run the optional finalize hook, resolve the final text, then emit
+    the terminal `result: done`. The hooks' failures are the hooks'
+    concern (they return None) — settling never blocks on them."""
     verification = await finalize() if finalize is not None else None
-    await emitter.result("done", verification=verification)
+    text = await final_text() if final_text is not None else None
+    await emitter.result("done", final_text=text, verification=verification)
