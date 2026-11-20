@@ -35,6 +35,7 @@ import { PreviewHeader } from "@/components/preview/preview-header"
 import { cn } from "@/shared/utils"
 import { useStore } from "@/client/hooks/use-store"
 import { downloadImage, openImageInNewTab } from "@/client/image-open"
+import { useMessageBlobUrl } from "@/client/messages/use-message-blob-url"
 
 import { useImageViewer, type ImageViewerItem } from "./types"
 
@@ -74,7 +75,44 @@ export function ImageViewerHost() {
   }, [target, close, next, prev])
 
   if (!target) return null
-  const image = target.images[currentIndex] ?? null
+  return (
+    <ImageViewerSheet
+      target={target}
+      currentIndex={currentIndex}
+      close={close}
+      next={next}
+      prev={prev}
+      scale={scale}
+      setScale={setScale}
+    />
+  )
+}
+
+function ImageViewerSheet({
+  target,
+  currentIndex,
+  close,
+  next,
+  prev,
+  scale,
+  setScale,
+}: {
+  target: { images: ImageViewerItem[] }
+  currentIndex: number
+  close: () => void
+  next: () => void
+  prev: () => void
+  scale: number
+  setScale: React.Dispatch<React.SetStateAction<number>>
+}) {
+  const raw = target.images[currentIndex] ?? null
+  // Store v33: a generated image may arrive as an `hb-blob:` reference to
+  // its IndexedDB-stored bytes. Resolve it; while it loads the pane shows
+  // a skeleton (never a broken `<img>`) and the URL actions stay hidden.
+  const resolved = useMessageBlobUrl(raw?.url)
+  const image: ImageViewerItem | null =
+    raw && resolved.status === "ready" ? { ...raw, url: resolved.url } : null
+  const pending = !!raw && !image ? resolved.status : null
   const hasMany = target.images.length > 1
 
   // Action handlers — Download / Open in new tab. Copy URL is handled
@@ -105,11 +143,11 @@ export function ImageViewerHost() {
         className="w-full sm:w-[640px] sm:max-w-[80vw] p-0 gap-0 flex flex-col"
       >
         <SheetHeader className="shrink-0 pl-4 pr-12 py-2.5 border-b border-[var(--border)] space-y-0">
-          <SheetTitle className="sr-only">{imageTitle(image)}</SheetTitle>
+          <SheetTitle className="sr-only">{imageTitle(raw)}</SheetTitle>
           <PreviewHeader
-            title={imageTitle(image)}
-            sizeBytes={image?.sizeBytes}
-            typeLabel={image?.format?.toUpperCase()}
+            title={imageTitle(raw)}
+            sizeBytes={raw?.sizeBytes}
+            typeLabel={raw?.format?.toUpperCase()}
             controls={
               image && (
                 <div className="flex items-center gap-1">
@@ -185,9 +223,30 @@ export function ImageViewerHost() {
             />
             <CaptionAndActions image={image} onAfterRemix={close} />
           </>
+        ) : pending === "loading" ? (
+          <div
+            role="img"
+            aria-busy
+            aria-label="Loading image"
+            className="relative flex-1 flex items-center justify-center p-6"
+          >
+            <div className="h-2/3 w-2/3 animate-pulse rounded-md bg-[var(--muted)]" />
+            {hasMany && (
+              <>
+                <NavButton side="left" onClick={prev} />
+                <NavButton side="right" onClick={next} />
+              </>
+            )}
+          </div>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-sm text-[var(--muted-foreground)] p-6">
+          <div className="relative flex-1 flex items-center justify-center text-sm text-[var(--muted-foreground)] p-6">
             This image is unavailable.
+            {hasMany && (
+              <>
+                <NavButton side="left" onClick={prev} />
+                <NavButton side="right" onClick={next} />
+              </>
+            )}
           </div>
         )}
       </SheetContent>

@@ -4,6 +4,12 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 
 import { offloadFileBlobs } from "@/client/files/blob-fields"
+import {
+  deleteMessageBlobs,
+  offloadMessageBlobs,
+  primeMessageBlobCache,
+  removedMessageBlobKeys,
+} from "@/client/messages/message-blobs"
 
 import { debouncedStorage } from "./store/debounced-storage"
 import { runMigrations, STORE_VERSION } from "./store/migrate"
@@ -210,12 +216,18 @@ export const useStore = create<AppState>()(
       migrate: runMigrations,
       onRehydrateStorage: () => (state) => {
         if (state) reviveAndPruneState(state)
+        // Make inline message `data:` URLs (pre-v33 data, or an offload
+        // that never committed) resolvable right away — the sync queue
+        // may flush a persisted op carrying their references before the
+        // deferred offload below runs.
+        if (state) primeMessageBlobCache(state.conversations)
         notifyHydrated()
         // Move any blob fields still carried by the rehydrated rows
-        // (pre-v32 data, or a previous offload that never committed)
-        // into IndexedDB. Deferred: hydration can run inside `create()`,
-        // before `useStore` is assigned.
+        // (pre-v32 / pre-v33 data, or a previous offload that never
+        // committed) into IndexedDB. Deferred: hydration can run inside
+        // `create()`, before `useStore` is assigned.
         setTimeout(scheduleFileBlobOffload, 0)
+        setTimeout(scheduleMessageBlobOffload, 0)
       },
       partialize: partializeState,
       // Coalesce localStorage writes — the default storage writes the
@@ -234,18 +246,40 @@ export const useStore = create<AppState>()(
 // IndexedDB; once committed, `partializeState` strips them — so poke the
 // persist middleware (`setState({})`) to rewrite localStorage without them.
 let offloadRepersistQueued = false
-function scheduleFileBlobOffload(): void {
-  void offloadFileBlobs(useStore.getState().files).then((becameDurable) => {
-    if (!becameDurable || offloadRepersistQueued) return
-    offloadRepersistQueued = true
-    queueMicrotask(() => {
-      offloadRepersistQueued = false
-      useStore.setState({})
-    })
+function repersistAfterOffload(becameDurable: boolean): void {
+  if (!becameDurable || offloadRepersistQueued) return
+  offloadRepersistQueued = true
+  queueMicrotask(() => {
+    offloadRepersistQueued = false
+    useStore.setState({})
   })
 }
+function scheduleFileBlobOffload(): void {
+  void offloadFileBlobs(useStore.getState().files).then(repersistAfterOffload)
+}
+
+// --- Message blob offload (v33, `client/messages/message-blobs.ts`) -------
+// Same pattern for the inline `data:` URLs on message generated images /
+// files: write them to IndexedDB; once committed `partializeState` swaps
+// them for `hb-blob:` references. Only conversation objects the offload
+// hasn't walked yet are visited, so per-token stream updates stay cheap.
+function scheduleMessageBlobOffload(): void {
+  void offloadMessageBlobs(useStore.getState().conversations).then(
+    repersistAfterOffload
+  )
+}
+
 useStore.subscribe((state, prev) => {
   if (state.files !== prev.files) scheduleFileBlobOffload()
+  if (state.conversations !== prev.conversations) {
+    scheduleMessageBlobOffload()
+    // Cascade: IndexedDB records no message references any more (message
+    // / conversation / workspace deleted, thread truncated, a pull that
+    // dropped the row). Keys still referenced elsewhere — e.g. by a
+    // fork's copied placeholder — are kept.
+    const orphaned = removedMessageBlobKeys(prev.conversations, state.conversations)
+    if (orphaned.length > 0) void deleteMessageBlobs(orphaned)
+  }
 })
 
 // Separate store for session-based state (cleared when browser tab is closed)

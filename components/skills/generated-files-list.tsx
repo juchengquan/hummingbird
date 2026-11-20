@@ -6,6 +6,8 @@ import { Download, FileText } from "lucide-react"
 import { apiClient } from "@/client/api-client"
 import { triggerDownload } from "@/client/download"
 import { useStore } from "@/client/hooks/use-store"
+import { useMessageBlobUrl } from "@/client/messages/use-message-blob-url"
+import { cn } from "@/shared/utils"
 import type { GeneratedFile } from "@/shared/types"
 
 export function humanSize(bytes: number): string {
@@ -38,6 +40,10 @@ function FileChip({
   // each attempt so a later click re-signs again (URLs are short-lived).
   const inFlight = useRef(false)
   const canRefresh = shouldRefreshFile(file, messageId)
+  // Store v33: a `data:` file may be stored in IndexedDB and carried here
+  // as an `hb-blob:` reference — resolve it; until then the chip is inert.
+  const resolved = useMessageBlobUrl(file.url)
+  const href = resolved.status === "ready" ? resolved.url : undefined
 
   const onClick = canRefresh
     ? async (e: React.MouseEvent<HTMLAnchorElement>) => {
@@ -47,16 +53,35 @@ function FileChip({
         try {
           const fresh = await apiClient.files.refreshUrl(file.storagePath!)
           if (fresh) updateFileUrl(messageId!, file.id, fresh)
-          triggerDownload(fresh ?? file.url, file.name)
+          const target = fresh ?? href
+          if (target) triggerDownload(target, file.name)
         } finally {
           inFlight.current = false
         }
       }
     : undefined
 
+  if (!href && !canRefresh) {
+    const missing = resolved.status === "missing"
+    return (
+      <span
+        aria-busy={!missing}
+        title={missing ? "File unavailable on this device" : "Loading…"}
+        className={cn(
+          "flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--muted)] px-2.5 py-1.5 text-xs text-[var(--muted-foreground)]",
+          !missing && "animate-pulse"
+        )}
+      >
+        <FileText className="size-4 shrink-0" />
+        <span className="max-w-[18ch] truncate font-medium">{file.name}</span>
+        <span>{missing ? "unavailable" : humanSize(file.sizeBytes)}</span>
+      </span>
+    )
+  }
+
   return (
     <a
-      href={file.url}
+      href={href}
       download={file.name}
       onClick={onClick}
       className="group flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--muted)] px-2.5 py-1.5 text-xs hover:bg-[var(--accent)]"
