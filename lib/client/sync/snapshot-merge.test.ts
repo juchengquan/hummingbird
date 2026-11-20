@@ -463,4 +463,52 @@ describe("mid-stream pulls keep the in-flight turn", () => {
     expect(c.messages.map((m) => m.id)).toEqual(["u1", "ph"])
     useStore.setState({ streamingConversationIds: [] })
   })
+
+  test("artifacts / notes on a not-yet-uploaded streaming message survive the pull", () => {
+    const artifact = {
+      id: "a1",
+      workspaceId: "ws-1",
+      conversationId: "c1",
+      messageId: "ph",
+      kind: "image" as const,
+      language: null,
+      title: "img",
+      content: "",
+      storagePath: "hb-blob:ph/i1",
+      pinned: false,
+      createdAt: T0,
+    }
+    const note = {
+      id: "n1",
+      workspaceId: "ws-1",
+      conversationId: "c1",
+      messageId: "ph",
+      body: "b",
+      createdAt: T0,
+      updatedAt: T0,
+    }
+    const otherArtifact = { ...artifact, id: "a2", messageId: "u1" }
+    const local = emptySnapshot({
+      conversations: [conv("c1", { messages: [msg("u1"), msg("ph")] })],
+      artifacts: [artifact, otherArtifact],
+      notes: [note],
+    })
+    const cloud = emptySnapshot({ conversations: [conv("c1", { messages: [msg("u1")] })] })
+    const merged = mergeCloudSnapshot(local, cloud, {
+      streamingConversationIds: new Set(["c1"]),
+    })
+    // a2 references an uploaded message and has no pending op → the
+    // cloud (which lacks it) wins, as before.
+    expect(merged.artifacts.map((a) => a.id)).toEqual(["a1"])
+    expect(merged.notes.map((n) => n.id)).toEqual(["n1"])
+    // A pending delete still wins.
+    expect(
+      mergeCloudSnapshot(local, cloud, {
+        streamingConversationIds: new Set(["c1"]),
+        pendingOps: [op.del("artifacts", "a1")],
+      }).artifacts
+    ).toEqual([])
+    // Not streaming → the ordinary rule applies.
+    expect(mergeCloudSnapshot(local, cloud).artifacts).toEqual([])
+  })
 })
