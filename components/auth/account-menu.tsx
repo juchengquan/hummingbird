@@ -229,7 +229,7 @@ export function AccountMenu() {
           label="Cloud sync"
           description={
             localOnlyMode
-              ? "Paused — changes stay on this device"
+              ? "Paused — changes stay on this device and upload when you resume"
               : "Workspaces, chats, files sync to Supabase"
           }
           checked={!localOnlyMode}

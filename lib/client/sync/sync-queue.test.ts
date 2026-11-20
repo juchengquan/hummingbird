@@ -4,14 +4,23 @@ import {
   attributeLegacyOps,
   configureSync,
   enqueue,
+  enqueueMany,
   pendingOpCount,
   pendingOpsFor,
   resetSyncQueue,
   syncQueueMark,
+  takeRecentlyDroppedOps,
   whenDrained,
   type NewSyncOp,
   type SyncOp,
 } from "./sync-queue"
+import {
+  buildPauseBaseline,
+  claimPauseBaseline,
+  computeResumeOps,
+  savePauseBaseline,
+} from "./pause-baseline"
+import type { SyncSnapshot } from "./compute-sync-ops"
 
 interface Call {
   table: string
@@ -55,6 +64,7 @@ function upsert(id: string, ownerUserId?: string): NewSyncOp {
 beforeEach(() => {
   configureSync({ client: null, userId: null })
   resetSyncQueue()
+  takeRecentlyDroppedOps("") // forget what the reset just recorded
 })
 
 afterEach(() => {
@@ -149,5 +159,95 @@ describe("pendingOpsFor since-mark", () => {
     expect(pendingOpsFor("user-a")).toEqual([])
     // Never another account's.
     expect(pendingOpsFor("user-b", { since: mark })).toEqual([])
+  })
+})
+
+const idOf = (op: SyncOp | NewSyncOp) =>
+  op.kind === "upsert" ? op.row.id : op.kind === "delete" ? op.where.value : null
+
+describe("enqueueMany (resume-from-pause upload)", () => {
+  test("stamps owner + clientOpId on every op and keeps order", () => {
+    configureSync({ client: null, userId: "user-a" })
+    enqueueMany([{ ...upsert("c1"), clientOpId: "" }, upsert("c2"), upsert("c3", "user-a")])
+    const ops = pendingOpsFor("user-a")
+    expect(ops.map(idOf)).toEqual(["c1", "c2", "c3"])
+    for (const op of ops) expect(op.clientOpId).not.toBe("")
+  })
+
+  test("offline / unconfigured at resume: ops stay queued, the drain wait times out", async () => {
+    // No client → the gate is closed, exactly as when offline.
+    configureSync({ client: null, userId: "user-a" })
+    enqueueMany([upsert("c1"), upsert("c2")])
+    await whenDrained(50)
+    expect(pendingOpCount()).toBe(2)
+  })
+
+  test("ops queued before the pause flush before the resume upload", async () => {
+    const calls: Call[] = []
+    enqueue(upsert("pre-pause", "user-a"))
+    enqueueMany([upsert("paused-edit", "user-a")])
+    configureSync({ client: fakeClient(calls), userId: "user-a" })
+    await whenDrained(2_000)
+    expect(calls.map((c) => c.row?.id)).toEqual(["pre-pause", "paused-edit"])
+  })
+})
+
+describe("ops dropped without flushing", () => {
+  test("a reset (sign-out) records them for the pause baseline, per owner", () => {
+    configureSync({ client: null, userId: "user-a" })
+    enqueue(upsert("a1"))
+    enqueue(upsert("b1", "user-b"))
+    resetSyncQueue()
+    expect(takeRecentlyDroppedOps("user-a").map(idOf)).toEqual(["a1"])
+    expect(takeRecentlyDroppedOps("user-a")).toEqual([])
+  })
+
+  test("another account signing in prunes them and records them", () => {
+    enqueue(upsert("a1", "user-a"))
+    configureSync({ client: null, userId: "user-b" })
+    expect(pendingOpCount()).toBe(0)
+    expect(takeRecentlyDroppedOps("user-a").map(idOf)).toEqual(["a1"])
+  })
+
+  test("a reset AFTER the pause baseline was recorded marks it dirty", () => {
+    const snapshot: SyncSnapshot = {
+      workspaces: [],
+      documents: [],
+      conversations: [
+        {
+          id: "c1",
+          workspaceId: "ws-1",
+          title: "t",
+          messages: [],
+          createdAt: new Date(0),
+          updatedAt: new Date(0),
+          pinned: false,
+          systemPrompt: "",
+          selectedFileIds: [],
+        },
+      ],
+      files: [],
+      resources: [],
+      conversationFiles: [],
+      notes: [],
+      artifacts: [],
+      prompts: [],
+      projectTasks: [],
+      mcpServers: [],
+      mcpResources: [],
+      mcpResourceBindings: [],
+      conversationMcpResources: [],
+      urlBookmarks: [],
+      conversationUrlBookmarks: [],
+    }
+    configureSync({ client: null, userId: "user-a" })
+    enqueue(upsert("c1"))
+    // Recorded while the edit was still queued, so it trusts the edit…
+    savePauseBaseline(buildPauseBaseline({ userId: "user-a", snapshot }))
+    // …then sign-out drops the op unflushed.
+    resetSyncQueue()
+    const claimed = claimPauseBaseline("user-a", { localOwner: "user-a", reconciled: true })
+    expect(claimed).not.toBeNull()
+    expect(computeResumeOps(claimed!, snapshot).map(idOf)).toEqual(["c1"])
   })
 })

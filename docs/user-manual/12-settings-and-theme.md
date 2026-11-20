@@ -21,7 +21,12 @@ Click your avatar or initial at the bottom of the left sidebar.
 ### Privacy
 - **Local-only mode** - when on, behave as if Supabase isn't
   configured: no sync, no sign-in flows, no reconcile pulls. Survives
-  reloads.
+  reloads. Changes you make while it's on stay on this device and are
+  uploaded when you turn cloud sync back on (your local edits win over
+  the cloud copy; things you deleted while paused are deleted in the
+  cloud too). The same applies when you sign out and later sign back
+  in as the same account. Signing in as a *different* account never
+  uploads them — you get the usual keep-local / keep-cloud prompt.
 - **Local files only** - when on, raw file blobs stay in IndexedDB
   instead of being uploaded to Supabase Storage. Extracted text and
   metadata still sync (it's small).
