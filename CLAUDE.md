@@ -152,7 +152,8 @@ SQL lives under `supabase/migrations/` as numbered files applied in order (`0001
 `0010_message_generated_images.sql`, `0011_prompts.sql`,
 `0012_tasks.sql`, `0013_task_checkpoint.sql`,
 `0014_task_jobs.sql`, `0015_workspace_canvas.sql`,
-`0016_project_mode.sql`, `0017_prompts_workspace.sql`, … `0031_rls_fk_ownership.sql`) — see `docs/SUPABASE_SETUP.md`
+`0016_project_mode.sql`, `0017_prompts_workspace.sql`, … `0031_rls_fk_ownership.sql`,
+`0032_task_job_lease.sql`) — see `docs/SUPABASE_SETUP.md`
 for the hosted-cloud run order, or `docs/SUPABASE_LOCAL.md` for the
 local Supabase CLI path (Docker-based, no cloud account needed). For
 verifying the file full-text retrieval pipeline end-to-end after

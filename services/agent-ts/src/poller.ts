@@ -23,11 +23,10 @@ import type { Env } from "./env"
 import {
   claimNextJob as defaultClaimNextJob,
   releaseJobToQueue as defaultReleaseJobToQueue,
+  type ClaimOptions,
   type ClaimedJob,
 } from "./jobs"
 import type { Sql } from "./db"
-
-const WORKER_ID = "agent-ts"
 
 /** Injected seam for the poller's collaborators. Defaults wire the
  *  real DB pool + SQL helpers; tests pass fakes to drive the loop
@@ -37,8 +36,8 @@ const WORKER_ID = "agent-ts"
 export interface PollerDeps {
   hasPool: () => boolean
   getPool: () => Sql
-  claimNextJob: (sql: Sql, workerId: string) => Promise<ClaimedJob | null>
-  releaseJobToQueue: (sql: Sql, jobId: string) => Promise<void>
+  claimNextJob: (sql: Sql, options: ClaimOptions) => Promise<ClaimedJob | null>
+  releaseJobToQueue: (sql: Sql, jobId: string) => Promise<unknown>
 }
 
 const defaultDeps: PollerDeps = {
@@ -95,7 +94,14 @@ export async function runPollLoop(
     }
 
     try {
-      const job = await deps.claimNextJob(deps.getPool(), WORKER_ID)
+      // This service only ever releases what it claims (no executor
+      // yet), so it must stay a passive observer: fresh `queued` jobs
+      // only — never take over (and then just release) a dead worker's
+      // expired-lease job; agent-py reclaims those.
+      const job = await deps.claimNextJob(deps.getPool(), {
+        leaseSeconds: env.JOB_LEASE_SECONDS,
+        reclaimExpired: false,
+      })
       if (job) {
         stats.claimed += 1
         if (env.WORKER_DRY_RUN) {
@@ -103,7 +109,7 @@ export async function runPollLoop(
           // executor branch.
           // eslint-disable-next-line no-console
           console.log(
-            `[agent-ts.poller] claimed ${job.id} action=${job.action} attempt=${job.attempt} — releasing (dry-run)`,
+            `[agent-ts.poller] claimed ${job.id} action=${job.action} attempts=${job.attempts} — releasing (dry-run)`,
           )
           await deps.releaseJobToQueue(deps.getPool(), job.id)
           stats.released += 1

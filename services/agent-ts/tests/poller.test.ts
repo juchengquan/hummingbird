@@ -23,6 +23,7 @@ const baseEnv: Env = {
   SUPABASE_SERVICE_ROLE_KEY: "",
   WORKER_DRY_RUN: true,
   POLL_INTERVAL_SECONDS: 0, // fire as fast as possible in tests
+  JOB_LEASE_SECONDS: 120,
   ANTHROPIC_API_KEY: "",
   ANTHROPIC_BASE_URL: "",
   TAVILY_API_KEY: "",
@@ -37,8 +38,9 @@ const sampleJob = {
   userId: "user-1",
   action: "start" as const,
   payload: {},
-  attempt: 1,
-  claimedAt: new Date(),
+  attempts: 1,
+  maxAttempts: 3,
+  reclaimed: false,
 }
 
 /** Build a minimal `PollerDeps` whose collaborators are spy-like
@@ -139,5 +141,21 @@ describe("runPollLoop — !dry-run safety", () => {
     // to the queue until Phase 2's executor branch lands.
     expect(stats).toMatchObject({ claimed: 1, released: 1 })
     expect(releases).toEqual(["job-1"])
+  })
+})
+
+describe("runPollLoop — claim options", () => {
+  test("claims passively (queued only) with the configured lease", async () => {
+    const seen: unknown[] = []
+    const { deps } = buildDeps({
+      claimNextJob: async (_sql, options) => {
+        seen.push(options)
+        return null
+      },
+    })
+    await runPollLoop({ ...baseEnv, JOB_LEASE_SECONDS: 45 }, { maxTicks: 1, deps })
+    // agent-ts only releases what it claims, so it must never take over
+    // a dead worker's expired-lease job — agent-py reclaims those.
+    expect(seen).toEqual([{ leaseSeconds: 45, reclaimExpired: false }])
   })
 })

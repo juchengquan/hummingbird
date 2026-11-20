@@ -73,6 +73,24 @@ class Settings(BaseSettings):
     fast enough that a real Phase 4+ workload would feel responsive, slow
     enough that the dry-run replica isn't fighting the TS worker."""
 
+    JOB_LEASE_SECONDS: float = 120.0
+    """Lease a claim holds on a `task_jobs` row (`lease_expires_at`,
+    migration 0032). While the job runs the poller heartbeats it forward;
+    if the worker dies the lease lapses and another worker reclaims the
+    job (or reaps it as failed once `max_attempts` is spent). Must
+    comfortably exceed `JOB_HEARTBEAT_SECONDS` — a heartbeat is clamped
+    to at most a third of the lease so two can miss before expiry."""
+
+    JOB_HEARTBEAT_SECONDS: float = 30.0
+    """How often an executing job extends its lease."""
+
+    SHUTDOWN_GRACE_SECONDS: float = 8.0
+    """On shutdown, how long the in-flight job may keep running before
+    it's cancelled and handed back to the queue (lease expired on the
+    spot so the next worker resumes it). Kept under Docker's default
+    10 s stop timeout; raise both together (`stop_grace_period`) to let
+    more jobs finish in place."""
+
     # --- Model providers --------------------------------------------------
     ANTHROPIC_API_KEY: str = ""
     """Anthropic API key — Phase 2b enables real model streaming when set.

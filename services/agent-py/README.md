@@ -150,6 +150,9 @@ CI runs all four on every PR — see `.github/workflows/ci.yml` (job
 | `SUPABASE_DB_URL` | Yes to enable the poller | Direct Postgres connection string. Must be the **direct** connection (`db.<project>.supabase.co:5432`), NOT the pooler (`*.pooler.supabase.com:6543`) — `FOR UPDATE SKIP LOCKED` needs an open transaction. Empty → poller no-ops. |
 | `WORKER_DRY_RUN` | No | Default `true` (Phase 1). Set `false` only in Phase 2+ once the executor branch lands. |
 | `POLL_INTERVAL_SECONDS` | No | Default `5.0`. |
+| `JOB_LEASE_SECONDS` | No | Default `120`. Lease a claim holds on a `task_jobs` row (`lease_expires_at`, migration 0032). A job whose worker died is reclaimed once it lapses (or reaped as failed, with its task, once `max_attempts` is spent). |
+| `JOB_HEARTBEAT_SECONDS` | No | Default `30` (clamped to a third of the lease). How often an executing job extends its lease. |
+| `SHUTDOWN_GRACE_SECONDS` | No | Default `8`. On shutdown the in-flight job may finish within this window; after it, the job is cancelled and handed back (lease expired on the spot) for the next worker. Keep it under the container stop timeout (Docker's default is 10 s). |
 | `SUPABASE_URL` | No (reported by `/readyz`) | Phase 2 will use it for things beyond what `SUPABASE_DB_URL` already gives us. |
 | `SERVICE_PORT` | No | Default 8000. |
 

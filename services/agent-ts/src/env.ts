@@ -12,6 +12,33 @@
 
 import { z } from "zod"
 
+/** Boolean env flag. `z.coerce.boolean()` is `Boolean(value)`, so the
+ *  string "false" (any non-empty string) coerced to `true` — setting
+ *  `WORKER_DRY_RUN=false` silently kept dry-run on. Accept the usual
+ *  spellings explicitly (case/whitespace-insensitive, like
+ *  pydantic-settings on the agent-py side); anything else fails boot. */
+const TRUE_VALUES = new Set(["true", "1", "yes", "on"])
+const FALSE_VALUES = new Set(["false", "0", "no", "off"])
+
+export function envBoolean(defaultValue: boolean) {
+  return z
+    .union([z.boolean(), z.string()])
+    .optional()
+    .transform((raw, ctx): boolean => {
+      if (raw === undefined) return defaultValue
+      if (typeof raw === "boolean") return raw
+      const value = raw.trim().toLowerCase()
+      if (value === "") return defaultValue
+      if (TRUE_VALUES.has(value)) return true
+      if (FALSE_VALUES.has(value)) return false
+      ctx.addIssue({
+        code: "custom",
+        message: `expected a boolean ("true"/"false"/"1"/"0"), got ${JSON.stringify(raw)}`,
+      })
+      return z.NEVER
+    })
+}
+
 const EnvSchema = z.object({
   // --- Service identity ----------------------------------------------
   SERVICE_NAME: z.string().default("agent-ts"),
@@ -42,8 +69,11 @@ const EnvSchema = z.object({
   // --- Worker --------------------------------------------------------
   /** Phase 1 default: claim jobs, log them, release back to the queue.
    *  Flip to false in Phase 2+ when the executor branch lands. */
-  WORKER_DRY_RUN: z.coerce.boolean().default(true),
+  WORKER_DRY_RUN: envBoolean(true),
   POLL_INTERVAL_SECONDS: z.coerce.number().positive().default(5),
+  /** Lease a claim holds on a `task_jobs` row (migration 0032). Same
+   *  name + default as agent-py's `JOB_LEASE_SECONDS`. */
+  JOB_LEASE_SECONDS: z.coerce.number().positive().default(120),
 
   // --- Model providers ----------------------------------------------
   /** Anthropic key. Empty falls back to the Phase 2a stub step fn so

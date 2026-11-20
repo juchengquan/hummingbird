@@ -437,7 +437,7 @@ def _paused_checkpoint(*, answered: bool) -> dict[str, Any]:
                 "content": [{"type": "tool_result", "tool_use_id": "tu_1", "content": "ran"}],
             }
         )
-    return {"messages": messages, "step": 1, "seq": 8, "config": {}}
+    return {"messages": messages, "step": 1, "seq": 8, "config": {"requireApprovalFor": ["danger"]}}
 
 
 def _recording_tool() -> tuple[list[dict[str, Any]], dict[str, ToolDescriptor]]:

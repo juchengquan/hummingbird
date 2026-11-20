@@ -973,6 +973,7 @@ export type Database = {
           error: Json | null
           finished_at: string | null
           id: string
+          lease_expires_at: string | null
           max_attempts: number
           payload: Json
           scheduled_at: string
@@ -989,6 +990,7 @@ export type Database = {
           error?: Json | null
           finished_at?: string | null
           id?: string
+          lease_expires_at?: string | null
           max_attempts?: number
           payload?: Json
           scheduled_at?: string
@@ -1005,6 +1007,7 @@ export type Database = {
           error?: Json | null
           finished_at?: string | null
           id?: string
+          lease_expires_at?: string | null
           max_attempts?: number
           payload?: Json
           scheduled_at?: string
