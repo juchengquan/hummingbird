@@ -301,3 +301,61 @@ export function dropSupersededEvents<E extends TaskEvent>(events: readonly E[]):
   if (ranges.length === 0) return [...events]
   return events.filter((e) => !ranges.some((r) => e.seq > r.after && e.seq < r.before))
 }
+
+/** A terminal event: a `result` (done/failed) or a terminal `status`
+ *  (cancelled). Its presence in the log is not by itself proof the run
+ *  is over — see `gateLiveTailBatch`. */
+export function isTerminalEvent(e: TaskEvent): boolean {
+  return e.kind === "result" || (e.kind === "status" && isTerminalStatus(e.status))
+}
+
+/** What a live tail does with one batch read from the log. */
+export interface LiveTailBatch {
+  /** Events to send on, in order. */
+  deliver: TaskEvent[]
+  /** The seq to read past next time; `null` when nothing was consumed. */
+  cursor: number | null
+  /** The run is over — stop tailing after delivering. */
+  settled: boolean
+}
+
+/**
+ * Gate a batch freshly read from a run's log (ascending `seq`) for a
+ * live tail, given whether the task row's status is terminal.
+ *
+ * A terminal event in the log only ends the run once the task row is
+ * terminal too. A worker can die after writing `result` but before
+ * settling the task; its job is then reclaimed and the re-run opens with
+ * a resume marker that supersedes that `result`. Until the row says the
+ * run is over, a terminal event is held back — not delivered, and the
+ * cursor stays before it so the next read sees it again:
+ *  - row terminal → deliver everything, `settled`;
+ *  - a later resume marker supersedes it → it is dropped (never
+ *    delivered) and the events after it flow as usual;
+ *  - neither yet → deliver only the events before it, keep tailing.
+ * A terminal event that a resume marker in the same batch supersedes is
+ * never delivered, row terminal or not.
+ */
+export function gateLiveTailBatch(
+  events: readonly TaskEvent[],
+  rowTerminal: boolean
+): LiveTailBatch {
+  const live = new Set<TaskEvent>(dropSupersededEvents(events))
+  const deliverable = events.filter((e) => live.has(e) || !isTerminalEvent(e))
+  const terminal = deliverable.find(isTerminalEvent)
+  if (!terminal || rowTerminal) {
+    return { deliver: deliverable, cursor: maxSeq(events), settled: terminal !== undefined }
+  }
+  const before = (e: TaskEvent) => e.seq < terminal.seq
+  return {
+    deliver: deliverable.filter(before),
+    cursor: maxSeq(events.filter(before)),
+    settled: false,
+  }
+}
+
+function maxSeq(events: readonly TaskEvent[]): number | null {
+  let max: number | null = null
+  for (const e of events) if (max === null || e.seq > max) max = e.seq
+  return max
+}

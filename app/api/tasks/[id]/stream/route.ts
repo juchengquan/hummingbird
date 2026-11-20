@@ -8,27 +8,19 @@ import { NextResponse } from "next/server"
 import { getSupabaseServerClient } from "@/server/supabase/server"
 import { getRun, listEventsSince, reconcileStaleRuns } from "@/server/agent/store"
 import {
-  dropSupersededEvents,
+  gateLiveTailBatch,
+  isTerminalEvent,
   isTerminalStatus,
   type RunStatus,
-  type TaskEvent,
 } from "@/shared/agent/events"
 import { toDataPart } from "@/shared/agent/wire"
 
 // How often we re-query the log while tailing an in-flight run, and a
 // hard wall-clock backstop so an orphaned run (producer died without
-// writing a terminal event) can't hold the connection open forever.
+// writing a terminal event) — or a terminal event whose task row never
+// turns terminal — can't hold the connection open forever.
 const POLL_MS = 1000
 const MAX_WALL_MS = 5 * 60_000
-
-/** A terminal event ends the run: a `result` (done/failed) or a
- *  terminal `status` (cancelled). */
-function isTerminalEvent(e: TaskEvent): boolean {
-  return (
-    e.kind === "result" ||
-    (e.kind === "status" && isTerminalStatus(e.status))
-  )
-}
 
 function delay(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -51,6 +43,11 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
  * last `seq` the client folded), then poll-tails new events until the
  * run settles. Emits the same `data-agent-event` parts the live task
  * route does, so the client folds both through the same `reduceRun`.
+ *
+ * "Settles" means a terminal event (`result`, or `status: cancelled`)
+ * is in the log AND the task row's status is terminal; a terminal event
+ * the row doesn't confirm yet is held back, not sent (see
+ * `gateLiveTailBatch`).
  *
  * Live-tailing is poll-based (no pub/sub in v1): the original POST
  * process holds the truly-live stream; this path watches the log the
@@ -107,16 +104,25 @@ export async function GET(
     execute: async ({ writer }) => {
       const start = Date.now()
       let sawTerminalRow = false
+      const rowIsTerminal = async () => {
+        const latest = await getRun(db, id, userId)
+        return !!latest && isTerminalStatus(latest.status as RunStatus)
+      }
       while (true) {
         const events = await listEventsSince(db, id, userId, cursor)
-        for (const e of events) {
-          writer.write(toDataPart(e))
-          if (e.seq > cursor) cursor = e.seq
-        }
-        // Terminal event in the log → fully drained, stop. A terminal
-        // event a resume marker supersedes (a dead attempt's, replayed
-        // ahead of its reclaimed re-run) doesn't end the run.
-        if (dropSupersededEvents(events).some(isTerminalEvent)) break
+        // A terminal event only ends the run once the task row is
+        // terminal too: a worker can die after writing `result` but
+        // before settling, and its reclaimed re-run then supersedes that
+        // `result` with a resume marker. Until the row agrees, the
+        // terminal event is held back (and re-read next poll); a
+        // superseded one is never sent. See `gateLiveTailBatch`.
+        const batch = gateLiveTailBatch(
+          events,
+          events.some(isTerminalEvent) ? await rowIsTerminal() : false
+        )
+        for (const e of batch.deliver) writer.write(toDataPart(e))
+        if (batch.cursor !== null && batch.cursor > cursor) cursor = batch.cursor
+        if (batch.settled) break
         // The previous poll saw the row go terminal; this poll has now
         // drained anything written after it. Stop.
         if (sawTerminalRow) break
@@ -124,10 +130,7 @@ export async function GET(
         if (Date.now() - start > MAX_WALL_MS) break
         // Backstop for an orphaned run: the row is terminal but no
         // terminal event reached the log (producer died mid-flush).
-        const latest = await getRun(db, id, userId)
-        if (latest && isTerminalStatus(latest.status as RunStatus)) {
-          sawTerminalRow = true
-        }
+        if (await rowIsTerminal()) sawTerminalRow = true
         await delay(POLL_MS, req.signal)
       }
     },
