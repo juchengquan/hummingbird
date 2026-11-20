@@ -164,30 +164,79 @@ async function latestEvent(
   return { seq: data.seq, step: data.step, createdAt: data.created_at }
 }
 
+/** Statuses an orphaned run can be settled from. Never `paused` (the run
+ *  is legitimately waiting on the user / its subagents) and never a
+ *  terminal status (settled already — don't overwrite it). */
+const SETTLEABLE_STATUSES = ["queued", "running"] as const
+
 /**
- * Append a terminal `result` event out-of-band and settle the run — used
- * to fail an orphaned run (the producer died without a terminal event).
- * Seq follows the last event so resume replays it; idempotent via the
- * (task_id, seq) unique index.
+ * Settle an orphaned run (the producer died without a terminal event)
+ * and append its terminal `result` event out-of-band.
+ *
+ * The status flip is conditional on the run still being queued/running,
+ * so a run that settled concurrently (or was cancelled) is never
+ * overwritten — and only when the flip actually happened is the event
+ * appended, so it can't gain a stray second `result`. Seq follows the
+ * last event so resume replays it; idempotent via the (task_id, seq)
+ * unique index. Returns whether this call settled the run.
  */
 export async function appendSyntheticResult(
   db: DB,
   runId: string,
   userId: string,
   opts: { status: "done" | "failed"; error?: string }
-): Promise<void> {
+): Promise<boolean> {
+  const nowIso = new Date().toISOString()
+  const { data, error } = await db
+    .from("tasks")
+    .update({ status: opts.status, finished_at: nowIso, updated_at: nowIso })
+    .eq("id", runId)
+    .eq("user_id", userId)
+    .in("status", [...SETTLEABLE_STATUSES])
+    .select("id")
+  if (error) throw new Error(`appendSyntheticResult: ${error.message}`)
+  if (!data || data.length === 0) return false
+
   const last = await latestEvent(db, runId, userId)
   const event: TaskEvent = {
     runId,
     seq: (last?.seq ?? 0) + 1,
     step: last?.step ?? 0,
-    createdAt: new Date().toISOString(),
+    createdAt: nowIso,
     kind: "result",
     status: opts.status,
     ...(opts.error !== undefined ? { error: opts.error } : {}),
   }
   await appendEvent(db, event, userId)
-  await updateRun(db, runId, userId, { status: opts.status, finished: true })
+  return true
+}
+
+/**
+ * Whether some worker still owns (or will pick up) this run: a job that
+ * is `queued` with attempts left, or `running` under an unexpired lease
+ * (`task_jobs.lease_expires_at`, migration 0032 — the agent service
+ * heartbeats it while a step runs, however long the step takes). A job
+ * whose lease lapsed belongs to a dead worker; failed/done jobs drive
+ * nothing. A read error counts as live — never fail a run on a guess.
+ */
+async function hasLiveJob(
+  db: DB,
+  runId: string,
+  userId: string,
+  nowMs: number
+): Promise<boolean> {
+  const { data, error } = await db
+    .from("task_jobs")
+    .select("status,lease_expires_at,attempts,max_attempts")
+    .eq("task_id", runId)
+    .eq("user_id", userId)
+    .in("status", ["queued", "running"])
+  if (error) return true
+  return (data ?? []).some((job) => {
+    if (job.status === "queued") return job.attempts < job.max_attempts
+    const lease = job.lease_expires_at ? Date.parse(job.lease_expires_at) : NaN
+    return Number.isFinite(lease) && lease > nowMs
+  })
 }
 
 /** List a task's child subagent tasks (status + goal), RLS-scoped. */
@@ -222,35 +271,42 @@ export async function cancelChildTasks(
 }
 
 /**
- * Fail this user's orphaned runs: any `queued`/`running` row whose most
- * recent activity (latest event, else `started_at`) is older than
- * `olderThanMs`. Liveness is judged by event recency — a live run emits
- * events continuously (coalesced tokens, step boundaries), so this only
- * catches genuinely dead runs (function killed mid-stream). RLS-scoped
- * to `userId`; returns how many were reconciled.
+ * Fail this user's orphaned runs: a `queued`/`running` row that
+ *   1. has had no activity (latest event, else `started_at`) for
+ *      `olderThanMs`, AND
+ *   2. has no live job — nothing queued for it and no worker holding an
+ *      unexpired lease on it.
+ * Event recency alone isn't proof of death: one long step (extended
+ * reasoning, a sandbox run) can go minutes without an event while its
+ * worker heartbeats the job lease. The lease is the liveness signal; the
+ * inactivity window just keeps this cheap and covers runs with no job.
+ * Settling is conditional on the run still being queued/running, so it
+ * never overwrites a terminal status. RLS-scoped to `userId`; returns
+ * how many were reconciled.
  */
 export async function reconcileStaleRuns(
   db: DB,
   userId: string,
-  olderThanMs = 180_000
+  olderThanMs = 180_000,
+  nowMs: number = Date.now()
 ): Promise<number> {
   const { data, error } = await db
     .from("tasks")
     .select("id,started_at")
     .eq("user_id", userId)
-    .in("status", ["queued", "running"])
+    .in("status", [...SETTLEABLE_STATUSES])
   if (error) throw new Error(`reconcileStaleRuns: ${error.message}`)
-  const now = Date.now()
   let failed = 0
   for (const row of data ?? []) {
     const last = await latestEvent(db, row.id, userId)
     const ref = last?.createdAt ?? row.started_at
-    if (!ref || now - new Date(ref).getTime() <= olderThanMs) continue
-    await appendSyntheticResult(db, row.id, userId, {
+    if (!ref || nowMs - new Date(ref).getTime() <= olderThanMs) continue
+    if (await hasLiveJob(db, row.id, userId, nowMs)) continue
+    const settled = await appendSyntheticResult(db, row.id, userId, {
       status: "failed",
       error: "Task stopped unexpectedly (no recent activity).",
     })
-    failed += 1
+    if (settled) failed += 1
   }
   return failed
 }
