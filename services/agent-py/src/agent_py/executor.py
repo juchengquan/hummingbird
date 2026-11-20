@@ -121,9 +121,11 @@ async def execute_start(
     so a blind re-run would append a second copy after it. Instead:
       - the attempt saved a checkpoint past the initial one (`step > 0`:
         it got as far as a chunk yield but died before enqueueing the
-        `continue`) → resume from it, exactly like `continue`;
-      - otherwise → start over, flagging the initial `status: running`
-        as `restarted` so consumers drop everything before it."""
+        `continue`) → resume from it, like a reclaimed `continue`;
+      - otherwise → start over from the initial checkpoint.
+    Either way the run first emits a resume marker (`status: running`
+    with `resumedFromSeq` = the checkpoint's seq) so consumers drop the
+    dead attempt's events written past that checkpoint."""
     return await _run_chunk(
         pool,
         payload=payload,
@@ -203,6 +205,7 @@ async def execute_continue(
     payload: StartActionPayload,
     *,
     make_step_fn: MakeStepFn | None = None,
+    reclaimed: bool = False,
 ) -> ExecutorOutcome:
     """Run a `continue` action — pick up after a chunk-break yield.
 
@@ -214,12 +217,20 @@ async def execute_continue(
 
     Settle / cancel / failure semantics are identical to `start`. A
     yielded chunk re-saves the checkpoint with the latest messages +
-    step + seq and enqueues yet another `continue` job."""
+    step + seq and enqueues yet another `continue` job.
+
+    `reclaimed=True` re-runs a `continue` whose previous worker died
+    mid-chunk: whatever that attempt wrote past the checkpoint is still
+    in the event log, so the run first emits a resume marker
+    (`status: running` with `resumedFromSeq` = the checkpoint's seq)
+    telling consumers to drop it. A normal `continue` (chunk boundary)
+    emits no marker."""
     return await _run_chunk(
         pool,
         payload=payload,
         make_step_fn=make_step_fn,
         resume=True,
+        reclaimed=reclaimed,
     )
 
 
@@ -441,19 +452,21 @@ async def _run_chunk_inner(
         )
         checkpoint = {}
 
-    # Reclaimed `start` (see `execute_start`): resume from a checkpoint
-    # the dead attempt saved, else restart behind a marker.
-    restarted = False
-    if reclaimed and not resume:
-        if _int_or(checkpoint.get("step"), 0) > 0:
-            resume = True
-        else:
-            restarted = True
+    # Reclaimed run (see `execute_start` / `execute_continue`): a
+    # `start` resumes from a checkpoint the dead attempt saved, else
+    # restarts from the initial one; either way the run opens with a
+    # resume marker covering the dead attempt's post-checkpoint events.
+    resumed_from_seq: int | None = None
+    if reclaimed:
+        if not resume:
+            resume = _int_or(checkpoint.get("step"), 0) > 0
+        resumed_from_seq = _int_or(checkpoint.get("seq"), 0)
         logger.warning(
-            "executor.reclaimed_start",
+            "executor.reclaimed_run",
             run_id=payload.run_id,
             mode="resume_checkpoint" if resume else "restart",
             checkpoint_step=_int_or(checkpoint.get("step"), 0),
+            resumed_from_seq=resumed_from_seq,
         )
 
     # Seed past every seq already written for this run — the TS route's
@@ -645,7 +658,7 @@ async def _run_chunk_inner(
             should_yield=should_yield,
             finalize=finalize,
             final_text=final_text,
-            restarted=restarted,
+            resumed_from_seq=resumed_from_seq,
         )
         # Every branch below writes run state (checkpoint, task status,
         # follow-up jobs) — none of it may happen without the lease.
@@ -1331,6 +1344,7 @@ async def _run_respond_inner(
             payload=StartActionPayload(run_id=payload.run_id, user_id=payload.user_id),
             make_step_fn=make_step_fn,
             resume=True,
+            reclaimed=True,
         )
     if _tool_call_answered(live_messages, payload.request_id):
         # Duplicate respond for a call that already has its tool_result
@@ -1471,6 +1485,10 @@ async def _run_respond_inner(
             checkpoint=interim_checkpoint,
         )
         await _stamp_handler(pool, run_id=payload.run_id, user_id=payload.user_id)
+        if resume_interrupted:
+            # Reclaimed: open with a resume marker so consumers drop
+            # anything the dead attempt wrote past the paused checkpoint.
+            await emitter.status("running", resumed_from_seq=_int_or(checkpoint.get("seq"), 0))
         # Emit input_response (clears pending_input on the projection)
         # then status:running before stepping again.
         await emitter.input_response(

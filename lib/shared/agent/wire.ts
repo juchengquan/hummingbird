@@ -116,6 +116,7 @@ export const TaskEventSchema: z.ZodType<TaskEvent> = z.discriminatedUnion(
       kind: z.literal("status"),
       status: runStatusSchema,
       maxSteps: z.number().int().positive().optional(),
+      resumedFromSeq: z.number().int().nonnegative().optional(),
       restarted: z.boolean().optional(),
     }),
     z.object({

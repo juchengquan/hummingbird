@@ -426,11 +426,21 @@ async def _dispatch(pool: asyncpg.Pool, job: ClaimedJob) -> _Settlement:
             outcome = await executor.execute_continue(
                 pool,
                 executor.StartActionPayload(run_id=job.task_id, user_id=job.user_id),
+                reclaimed=True,
             )
         elif resume_respond:
             outcome = await executor.execute_respond(pool, respond_payload, resume_interrupted=True)
         else:
             outcome = await executor.execute_respond(pool, respond_payload)
+    elif action == "continue" and job.reclaimed:
+        # Re-run of a chunk whose worker died: opens with a resume marker
+        # (see `execute_continue`). A normal chunk-boundary `continue`
+        # below emits none.
+        outcome = await executor.execute_continue(
+            pool,
+            executor.StartActionPayload(run_id=job.task_id, user_id=job.user_id),
+            reclaimed=True,
+        )
     elif action == "continue":
         outcome = await executor.execute_continue(
             pool,
@@ -492,11 +502,12 @@ def reclaim_decision(action: str, state: JobTaskState) -> tuple[ReclaimAction, s
             persisted and re-applies the job's answer when it wasn't.
           * start/continue → re-run it. The emitter seeds past every seq
             already written, so new events never collide with the dead
-            attempt's. A re-run `start` goes through
-            `execute_start(reclaimed=True)`: it resumes from a checkpoint
-            the dead attempt saved, else restarts behind a
-            `status: running, restarted: true` marker so the UI drops
-            the dead attempt's partial output.
+            attempt's. The re-run goes through `reclaimed=True`
+            (`execute_start` resumes from a checkpoint the dead attempt
+            saved, else restarts from the initial one) and opens with a
+            `status: running` marker carrying `resumedFromSeq` — the
+            checkpoint's seq — so consumers drop the dead attempt's
+            partial output written past it.
     """
     status = state.task_status
     if status in _TERMINAL_TASK_STATUSES:

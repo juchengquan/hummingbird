@@ -120,7 +120,11 @@ def _make_child_row(
         "status": status,
         # asyncpg may return jsonb as a dict or as a JSON string
         "checkpoint": json.dumps(checkpoint) if checkpoint is not None else None,
-        "result_payload": json.dumps(result_payload)
+        # The query aggregates the child's `result` rows (+ resume
+        # markers) into one jsonb array of `{seq, step, kind, payload}`.
+        "result_events": json.dumps(
+            [{"seq": 5, "step": 1, "kind": "result", "payload": result_payload}]
+        )
         if isinstance(result_payload, dict)
         else result_payload,
     }
@@ -184,3 +188,45 @@ async def test_load_child_results_empty_when_no_children() -> None:
     pool = _fake_pool(fetch_result=[])
     results = await load_child_results(pool, parent_task_id=_PARENT_TASK_ID, user_id=_USER_ID)
     assert results == []
+
+
+@pytest.mark.asyncio
+async def test_load_child_results_skips_a_result_a_resume_marker_supersedes() -> None:
+    """A dead attempt's `result` past the checkpoint its reclaimed re-run
+    resumed from is not the child's answer — the re-run's is."""
+    dead = {
+        "seq": 6,
+        "step": 2,
+        "kind": "result",
+        "payload": {"status": "done", "finalText": "dead"},
+    }
+    marker = {
+        "seq": 7,
+        "step": 1,
+        "kind": "status",
+        "payload": {"status": "running", "resumedFromSeq": 4},
+    }
+    live = {
+        "seq": 9,
+        "step": 2,
+        "kind": "result",
+        "payload": {"status": "done", "finalText": "live"},
+    }
+    row: dict[str, Any] = {
+        "id": uuid.UUID(_CHILD_ID),
+        "status": "done",
+        "checkpoint": json.dumps({"subagent": {"personaSlug": "r", "subgoal": "g"}}),
+        "result_events": [dead, marker, live],
+    }
+    results = await load_child_results(
+        _fake_pool(fetch_result=[row]), parent_task_id=_PARENT_TASK_ID, user_id=_USER_ID
+    )
+    assert results[0].final_text == "live"
+
+    # A re-run that ended without a `result` (cancelled) leaves no answer
+    # rather than surfacing the dead attempt's.
+    row["result_events"] = [dead, marker]
+    results = await load_child_results(
+        _fake_pool(fetch_result=[row]), parent_task_id=_PARENT_TASK_ID, user_id=_USER_ID
+    )
+    assert results[0].final_text == ""

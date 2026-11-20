@@ -6,9 +6,11 @@ Follow-ups to the lease work in `test_job_lease.py`:
      tool execution, no checkpoint / task / job settle. A transient
      heartbeat error does NOT stop it unless the lease would have
      expired by then.
-  2. Reclaimed `start` → resumes from a checkpoint the dead attempt
-     saved, else restarts behind a `status: running, restarted` marker
-     that consumers use to drop the dead attempt's partial output.
+  2. Reclaimed `start` / `continue` → resumes from the checkpoint (a
+     `start` restarts from its initial one when the dead attempt saved
+     none) behind a `status: running` marker carrying `resumedFromSeq`,
+     which consumers use to drop the dead attempt's partial output
+     written past that checkpoint. A normal `continue` emits no marker.
   3. Reclaimed `respond` whose worker died after paused → running →
      re-applies the answer from the job payload when it wasn't
      persisted, else continues from the checkpoint.
@@ -33,9 +35,12 @@ from agent_py.events import (
     StepStartEvent,
     TaskEvent,
     TokenEvent,
+    ToolCallResult,
     ToolInputEvent,
     ToolOutputEvent,
+    drop_superseded_events,
     event_to_row_payload,
+    resume_discard_range,
 )
 from agent_py.executor import ExecutorOutcome, StartActionPayload
 from agent_py.lease import JobLease, LeaseLostError
@@ -373,7 +378,8 @@ async def test_reclaimed_start_resumes_from_a_saved_checkpoint() -> None:
     collected, sink = _list_sink()
     seen: list[list[dict[str, Any]]] = []
     with (
-        _db(checkpoint, max_seq=12, sink=sink),
+        # The dead attempt wrote seqs 13..15 past the checkpoint.
+        _db(checkpoint, max_seq=15, sink=sink),
         patch.object(store, "update_run", new=AsyncMock()),
         patch("agent_py.executor.settle_task_terminal", new=AsyncMock()) as settle,
     ):
@@ -386,12 +392,16 @@ async def test_reclaimed_start_resumes_from_a_saved_checkpoint() -> None:
 
     assert outcome.settled is True
     assert seen[0] == checkpoint["messages"]
-    # Continue-style: no fresh `status: running`; numbering follows the
-    # checkpoint.
-    first = collected[0]
+    # Continue-style numbering (step follows the checkpoint), opened by a
+    # resume marker that discards the dead attempt's seqs 13..15.
+    marker, first = collected[0], collected[1]
+    assert isinstance(marker, StatusEvent)
+    assert (marker.status, marker.resumed_from_seq, marker.restarted) == ("running", 12, False)
+    assert (marker.seq, marker.step) == (16, 3)
+    assert event_to_row_payload(marker) == {"status": "running", "resumedFromSeq": 12}
     assert isinstance(first, StepStartEvent)
-    assert (first.seq, first.step) == (13, 4)
-    assert not any(isinstance(e, StatusEvent) for e in collected)
+    assert (first.seq, first.step) == (17, 4)
+    assert [e for e in collected if isinstance(e, StatusEvent)] == [marker]
     assert settle.await_args.kwargs["status"] == "done"
 
 
@@ -414,9 +424,16 @@ async def test_reclaimed_start_without_a_checkpoint_restarts_behind_a_marker() -
     assert outcome.settled is True
     marker = collected[0]
     assert isinstance(marker, StatusEvent)
-    # Follows the dead attempt's events (max seq 9), restarts at step 0.
+    # Follows the dead attempt's events (max seq 9), restarts at step 0,
+    # resumed from the initial checkpoint (seq 1). `restarted` stays on
+    # for readers that predate `resumedFromSeq`.
     assert (marker.status, marker.restarted, marker.seq, marker.step) == ("running", True, 10, 0)
-    assert event_to_row_payload(marker) == {"status": "running", "restarted": True}
+    assert marker.resumed_from_seq == 1
+    assert event_to_row_payload(marker) == {
+        "status": "running",
+        "resumedFromSeq": 1,
+        "restarted": True,
+    }
     # Only the marker carries the flag.
     assert [e.restarted for e in collected if isinstance(e, StatusEvent)] == [True]
 
@@ -437,7 +454,119 @@ async def test_fresh_start_emits_no_restart_marker() -> None:
         )
     marker = collected[0]
     assert isinstance(marker, StatusEvent) and marker.restarted is False
+    assert marker.resumed_from_seq is None
     assert event_to_row_payload(marker) == {"status": "running"}
+
+
+def _continue_checkpoint() -> dict[str, Any]:
+    return {
+        "messages": [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": [{"type": "text", "text": "part 1"}]},
+            {"role": "user", "content": "keep going"},
+        ],
+        "step": 2,
+        "seq": 6,
+        "config": {},
+    }
+
+
+#: The run's log as the dead `continue` chunk left it: the first chunk's
+#: output up to the checkpoint (seq 6), then partial output past it.
+_DEAD_CHUNK_LOG: list[TaskEvent] = [
+    StatusEvent(run_id=RUN_ID, seq=2, step=0, created_at="t", status="running"),
+    StepStartEvent(run_id=RUN_ID, seq=3, step=1, created_at="t"),
+    TokenEvent(run_id=RUN_ID, seq=4, step=1, created_at="t", text="part 1. "),
+    StepStartEvent(run_id=RUN_ID, seq=7, step=3, created_at="t"),
+    TokenEvent(run_id=RUN_ID, seq=8, step=3, created_at="t", text="ans"),
+]
+
+
+async def _run_continue(*, reclaimed: bool) -> tuple[list[TaskEvent], ExecutorOutcome]:
+    """Run a `continue` against `_DEAD_CHUNK_LOG`; `load_run_events`
+    returns that log plus whatever this chunk wrote."""
+    collected, sink = _list_sink()
+
+    async def load_log(*_a: Any, **_kw: Any) -> list[TaskEvent]:
+        return [*_DEAD_CHUNK_LOG, *collected]
+
+    with (
+        _db(_continue_checkpoint(), max_seq=8, sink=sink),
+        patch.object(store, "load_run_events", new=AsyncMock(side_effect=load_log)),
+        patch.object(store, "update_run", new=AsyncMock()),
+        patch("agent_py.executor.settle_task_terminal", new=AsyncMock()),
+    ):
+        outcome = await executor.execute_continue(
+            MagicMock(),
+            StartActionPayload(run_id=RUN_ID, user_id=USER_ID),
+            make_step_fn=_done_step_fn(),
+            reclaimed=reclaimed,
+        )
+    return collected, outcome
+
+
+@pytest.mark.asyncio
+async def test_reclaimed_continue_opens_with_a_resume_marker() -> None:
+    collected, outcome = await _run_continue(reclaimed=True)
+    assert outcome.settled is True
+    marker = collected[0]
+    assert isinstance(marker, StatusEvent)
+    # Past the dead attempt's max seq (8), at the checkpoint's step.
+    assert (marker.seq, marker.step, marker.status) == (9, 2, "running")
+    assert (marker.resumed_from_seq, marker.restarted) == (6, False)
+    assert [e for e in collected if isinstance(e, StatusEvent)] == [marker]
+
+
+@pytest.mark.asyncio
+async def test_reclaimed_continue_final_text_excludes_the_dead_chunks_output() -> None:
+    collected, _ = await _run_continue(reclaimed=True)
+    result = collected[-1]
+    assert isinstance(result, ResultEvent) and result.status == "done"
+    # "ans" (seq 8) was the dead chunk's — only the checkpointed text and
+    # the re-run's answer remain.
+    assert result.final_text == "part 1. answer"
+
+
+@pytest.mark.asyncio
+async def test_normal_continue_emits_no_resume_marker() -> None:
+    collected, outcome = await _run_continue(reclaimed=False)
+    assert outcome.settled is True
+    assert not any(isinstance(e, StatusEvent) for e in collected)
+    assert isinstance(collected[0], StepStartEvent)
+    assert collected[0].seq == 9
+
+
+@pytest.mark.asyncio
+async def test_poller_reruns_a_reclaimed_continue_as_reclaimed() -> None:
+    with (
+        patch.object(store, "is_task_owned_by", new=AsyncMock(return_value=True)),
+        patch.object(jobs, "load_job_task_state", new=AsyncMock(return_value=_state())),
+        patch.object(
+            executor,
+            "execute_continue",
+            new=AsyncMock(return_value=ExecutorOutcome(settled=True)),
+        ) as ex_continue,
+        patch.object(jobs, "mark_job_done", new=AsyncMock(return_value=True)),
+    ):
+        await poller._execute_claimed(
+            MagicMock(), _job(action="continue", reclaimed=True), _live_settings()
+        )
+    assert ex_continue.await_args.kwargs == {"reclaimed": True}
+
+
+@pytest.mark.asyncio
+async def test_poller_runs_a_fresh_continue_without_a_marker() -> None:
+    with (
+        patch.object(store, "is_task_owned_by", new=AsyncMock(return_value=True)),
+        patch.object(
+            executor,
+            "execute_continue",
+            new=AsyncMock(return_value=ExecutorOutcome(settled=True)),
+        ) as ex_continue,
+        patch.object(jobs, "mark_job_done", new=AsyncMock(return_value=True)),
+    ):
+        await poller._execute_claimed(MagicMock(), _job(action="continue"), _live_settings())
+    assert ex_continue.await_args.kwargs == {}
 
 
 @pytest.mark.asyncio
@@ -470,12 +599,80 @@ def test_restart_marker_drops_the_dead_attempts_text_from_the_final_answer() -> 
     assert verify.aggregate_from_events(events).text == "the answer"
 
 
+def test_resume_marker_drops_only_the_range_past_its_checkpoint() -> None:
+    events: list[TaskEvent] = [
+        _ev(StatusEvent, 1, status="queued"),
+        _ev(TokenEvent, 2, text="kept "),
+        _ev(TokenEvent, 3, text="also kept "),
+        _ev(TokenEvent, 4, text="dead "),
+        _ev(TokenEvent, 5, text="dead too "),
+        _ev(StatusEvent, 6, status="running", resumed_from_seq=3),
+        _ev(TokenEvent, 7, text="live"),
+    ]
+    kept = drop_superseded_events(events)
+    assert [e.seq for e in kept] == [1, 2, 3, 6, 7]
+    assert verify.aggregate_from_events(events).text == "kept also kept live"
+
+
+def test_resume_marker_drops_superseded_sources_and_renumbers() -> None:
+    def out(seq: int, url: str) -> ToolOutputEvent:
+        return _ev(
+            ToolOutputEvent,
+            seq,
+            tool_call_id=f"t{seq}",
+            tool_name="webSearch",
+            summary="1 result",
+            results=[ToolCallResult(title=url, url=url, snippet="")],
+        )
+
+    events: list[TaskEvent] = [
+        out(2, "a"),
+        out(4, "dead"),
+        _ev(StatusEvent, 5, status="running", resumed_from_seq=3),
+        out(6, "b"),
+    ]
+    sources = verify.aggregate_from_events(events).sources
+    assert [(s.id, s.url) for s in sources] == [("1", "a"), ("2", "b")]
+
+
+def test_legacy_restart_marker_reads_as_resumed_from_seq_1() -> None:
+    marker = _ev(StatusEvent, 5, status="running", restarted=True)
+    assert resume_discard_range(marker) == (1, 5)
+    assert resume_discard_range(_ev(StatusEvent, 6, status="running")) is None
+    events: list[TaskEvent] = [
+        _ev(StatusEvent, 1, status="queued"),
+        _ev(StatusEvent, 2, status="running"),
+        _ev(TokenEvent, 3, text="half"),
+        marker,
+    ]
+    assert [e.seq for e in drop_superseded_events(events)] == [1, 5]
+
+
 def test_restart_marker_survives_the_row_round_trip() -> None:
-    marker = _ev(StatusEvent, 4, status="running", restarted=True)
+    marker = _ev(StatusEvent, 4, status="running", restarted=True, resumed_from_seq=1)
     decoded = store.event_from_row_payload(
         seq=4, step=0, kind="status", created_at="t", payload=event_to_row_payload(marker)
     )
     assert isinstance(decoded, StatusEvent) and decoded.restarted is True
+    assert decoded.resumed_from_seq == 1
+    # A legacy row (flag only) and a malformed value both decode without
+    # a range of their own.
+    legacy = store.event_from_row_payload(
+        seq=4,
+        step=0,
+        kind="status",
+        created_at="t",
+        payload={"status": "running", "restarted": True},
+    )
+    assert isinstance(legacy, StatusEvent) and legacy.resumed_from_seq is None
+    bad = store.event_from_row_payload(
+        seq=4,
+        step=0,
+        kind="status",
+        created_at="t",
+        payload={"status": "running", "resumedFromSeq": "x"},
+    )
+    assert isinstance(bad, StatusEvent) and bad.resumed_from_seq is None
 
 
 # --- 3. interrupted respond -------------------------------------------------
@@ -537,8 +734,13 @@ async def test_interrupted_respond_reapplies_an_unpersisted_answer() -> None:
     assert calls == ["danger"]
     saved = save.await_args_list[0].kwargs["checkpoint"]["messages"][-1]["content"][0]
     assert (saved["tool_use_id"], saved["content"]) == ("tu_1", "danger ran")
+    # Opens with a resume marker from the paused checkpoint (seq 8), then
+    # re-emits the answer.
+    marker = collected[0]
+    assert isinstance(marker, StatusEvent)
+    assert (marker.seq, marker.resumed_from_seq) == (11, 8)
     responses = [e for e in collected if isinstance(e, ApprovalEvent)]
-    assert [(e.phase, e.approval_id, e.seq) for e in responses] == [("response", "tu_1", 11)]
+    assert [(e.phase, e.approval_id, e.seq) for e in responses] == [("response", "tu_1", 12)]
     assert settle.await_args.kwargs["status"] == "done"
 
 
@@ -571,7 +773,11 @@ async def test_interrupted_respond_with_a_persisted_answer_continues() -> None:
     assert calls == []
     assert seen[0] == checkpoint["messages"]
     assert not any(isinstance(e, ApprovalEvent) for e in collected)
-    assert collected[0].seq == 12
+    # Resumed behind a marker that drops what the dead attempt wrote past
+    # the checkpoint (seqs 9..11).
+    marker = collected[0]
+    assert isinstance(marker, StatusEvent)
+    assert (marker.seq, marker.resumed_from_seq) == (12, 8)
     assert settle.await_args.kwargs["status"] == "done"
 
 

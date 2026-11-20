@@ -163,7 +163,7 @@ async def run_agent_loop(
     should_yield: ShouldYieldFn | None = None,
     finalize: FinalizeFn | None = None,
     final_text: FinalTextFn | None = None,
-    restarted: bool = False,
+    resumed_from_seq: int | None = None,
 ) -> AgentLoopResult:
     """Drive a run to completion or a chunk-break point. Emits exactly
     one terminal event (`status: cancelled` or `result: done|failed`)
@@ -185,21 +185,31 @@ async def run_agent_loop(
     completion within the headroom the executor leaves below the
     function cap.
 
-    `restarted` (reclaimed `start` re-running from scratch) flags the
-    initial `status: running` as a restart marker — see
-    `StatusEvent.restarted`.
+    `resumed_from_seq` (set only when a reclaimed job re-runs a run
+    whose previous worker died) emits a `status: running` resume marker
+    before the first step, carrying the seq of the checkpoint the run
+    resumes from so consumers drop the dead attempt's events past it —
+    see `StatusEvent.resumed_from_seq`. At step 0 (a from-scratch
+    restart) it is the run's initial `status: running`, also flagged
+    `restarted` for legacy readers.
 
     Before every step the bound job lease is checked
     (`lease.check_current()`): a worker whose claim was taken over stops
     before its next model call, with `LeaseLostError` propagating to
     the poller. No-op when no lease is bound.
     """
-    # Only emit `status: running` on a fresh start. A continuation
-    # (Phase 3 HITL resume, or a `continue` chunk after a yield) seeds
-    # the emitter at the current step counter; the status event was
-    # already emitted on the original `start` action.
-    if emitter.step == 0:
-        await emitter.status("running", restarted=restarted)
+    # Only emit `status: running` on a fresh start or a reclaimed
+    # resume. A normal continuation (Phase 3 HITL resume, or a `continue`
+    # chunk after a yield) seeds the emitter at the current step counter;
+    # the status event was already emitted on the original `start`.
+    if resumed_from_seq is not None:
+        await emitter.status(
+            "running",
+            resumed_from_seq=resumed_from_seq,
+            restarted=emitter.step == 0,
+        )
+    elif emitter.step == 0:
+        await emitter.status("running")
 
     while emitter.step < max_steps:
         lease.check_current()
