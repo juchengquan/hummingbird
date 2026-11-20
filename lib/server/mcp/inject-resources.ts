@@ -22,7 +22,10 @@ const READ_TIMEOUT_MS = 5000
  */
 export async function resolveAttachedMcpResources(
   requests: McpResourceRef[] | undefined,
-  servers: EffectiveMcpServer[]
+  servers: EffectiveMcpServer[],
+  /** Failure-cache partition: `user:<id>` when signed in, else the
+   *  anonymous client key. See `last-failures.ts`. */
+  caller: string
 ): Promise<ResolvedAttachment[]> {
   if (!requests || requests.length === 0) return []
   const serverById = new Map(servers.map((s) => [s.id, s]))
@@ -38,7 +41,8 @@ export async function resolveAttachedMcpResources(
           error: "server not configured or not enabled",
         }
       }
-      const cachedReason = getRecentFailure(server.id)
+      const scope = { caller, serverId: server.id, url: server.url }
+      const cachedReason = getRecentFailure(scope)
       if (cachedReason !== null) {
         return {
           kind: "mcp_resource",
@@ -59,8 +63,9 @@ export async function resolveAttachedMcpResources(
           text: result.text,
         }
       } catch (err) {
-        const reason = err instanceof Error ? err.message : String(err)
-        recordFailure(server.id, reason)
+        // Only a generic category reaches the prompt: the SDK's error
+        // text carries the upstream response body.
+        const reason = recordFailure(scope, err)
         return {
           kind: "mcp_resource",
           serverName: server.name,

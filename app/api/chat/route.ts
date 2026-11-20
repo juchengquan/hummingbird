@@ -92,7 +92,8 @@ const chatImageGenLimit = createSlidingWindow({
  */
 async function resolveAttachments(
   payloads: AttachmentPayload[] | undefined,
-  mcpServers: EffectiveMcpServer[]
+  mcpServers: EffectiveMcpServer[],
+  callerKey: string
 ): Promise<ResolvedAttachment[]> {
   if (!payloads || payloads.length === 0) return []
 
@@ -122,7 +123,7 @@ async function resolveAttachments(
     }
   }
 
-  const mcpResolved = await resolveAttachedMcpResources(mcpRequests, mcpServers)
+  const mcpResolved = await resolveAttachedMcpResources(mcpRequests, mcpServers, callerKey)
   resolved.push(...mcpResolved)
   return resolved
 }
@@ -474,7 +475,11 @@ export async function POST(req: NextRequest) {
   // reads + per-call timeout + graceful error fallback inline in the
   // prompt). Failures render as "[unavailable]" markers rather than
   // blocking the turn.
-  const attachments = await resolveAttachments(body.attachments, mcpServers)
+  const attachments = await resolveAttachments(
+    body.attachments,
+    mcpServers,
+    aiAuth.user ? `user:${aiAuth.user.id}` : `ip:${ipKey}`
+  )
 
   // Idle watchdog: cancel the upstream call if the stream goes silent
   // mid-response. Declared here so the AbortSignal can be combined with
