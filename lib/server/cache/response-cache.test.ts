@@ -3,6 +3,8 @@ import { afterEach, describe, expect, test } from "bun:test"
 import {
   __clearResponseCache,
   __expireEntry,
+  __RESPONSE_CACHE_LIMITS,
+  __responseCacheStats,
   cosine,
   findSimilarCachedResponse,
   getCachedResponse,
@@ -87,6 +89,39 @@ describe("get / set", () => {
     setCachedResponse(key, "first")
     setCachedResponse(key, "second")
     expect(getCachedResponse<string>(key)).toBe("second")
+  })
+})
+
+describe("byte budget", () => {
+  const key = (i: number) => responseCacheKey({ kind: "k", model: "m", input: { i } })
+  // ~1.1 MB of UTF-16 per entry, the shape of an extraction result.
+  const bigValue = (i: number) => ({ text: "x".repeat(50_000), fullText: `${i}`.padEnd(500_000, "y") })
+
+  test("total bytes stay under the budget; oldest entries are evicted first", () => {
+    const { maxTotalBytes } = __RESPONSE_CACHE_LIMITS
+    for (let i = 0; i < 200; i++) setCachedResponse(key(i), bigValue(i))
+    const stats = __responseCacheStats()
+    expect(stats.bytes).toBeLessThanOrEqual(maxTotalBytes)
+    expect(stats.entries).toBeLessThan(200)
+    expect(getCachedResponse(key(0))).toBeUndefined()
+    expect(getCachedResponse(key(199))).toBeDefined()
+  })
+
+  test("a single value over the per-entry max is not cached (and clears the old one)", () => {
+    const { maxEntryBytes } = __RESPONSE_CACHE_LIMITS
+    setCachedResponse(key(1), "small")
+    setCachedResponse(key(1), "z".repeat(maxEntryBytes / 2 + 1))
+    expect(getCachedResponse(key(1))).toBeUndefined()
+    expect(__responseCacheStats()).toEqual({ entries: 0, bytes: 0 })
+  })
+
+  test("overwrite and expiry keep the byte count exact", () => {
+    setCachedResponse(key(1), "a".repeat(1000))
+    setCachedResponse(key(1), "b".repeat(10))
+    expect(__responseCacheStats().bytes).toBe(JSON.stringify("b".repeat(10)).length * 2)
+    __expireEntry(key(1))
+    expect(getCachedResponse(key(1))).toBeUndefined()
+    expect(__responseCacheStats()).toEqual({ entries: 0, bytes: 0 })
   })
 })
 
