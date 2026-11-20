@@ -234,9 +234,22 @@ Triage:
 5. Set `CSP_MODE=enforce` and restart. Keep watching the reports.
    `CSP_MODE=report-only` is the one-line rollback.
 
-Not a CSP issue, found during that check: TSX artifacts don't render
-(enforce or not). `CDN_URLS.react` / `reactDom` point at React 19 UMD
-builds, which React 19 no longer publishes (unpkg 404), so `ReactDOM`
-is undefined. Fixing it needs a different React build (React 18 UMD, or
-an ESM build loaded through an import map), plus a `CDN_HOSTS` change if
-the host changes.
+Found during that check and since fixed: TSX artifacts didn't render
+(enforce or not), because the React 19 UMD URLs were a 404 (React 19
+publishes no UMD build). The TSX shell now loads React / ReactDOM
+18.3.1 UMD. `iframe-shell.ts` compiles the artifact with Babel standalone
+(TypeScript + React presets, ES modules → CommonJS) and runs it through
+`new Function` with a `require` shim mapping `react` / `react-dom` /
+`react-dom/client` to the globals, so `import React, { useState } from
+"react"`, multi-line imports and every `export default` form work. Every
+`CDN_SCRIPTS` entry is pinned to an exact version. All of them carry an
+SRI hash (`integrity` + `crossorigin="anonymous"`) except Tailwind:
+`cdn.tailwindcss.com` sends no CORS headers, so an integrity check there
+would always fail. `CDN_HOSTS` is unchanged, and a test checks that it
+lists exactly the pinned scripts' origins. Checked with
+`bun run build && bun run start` under both `CSP_MODE=report-only` and
+`enforce` in headless Chromium. A TSX counter (`useState` + `onClick` +
+Tailwind classes) rendered and counted clicks in all three import
+styles, with no violations in the frame or on the app page. As negative
+controls, a tampered hash was blocked and a `fetch()` hit
+`connect-src 'none'`.

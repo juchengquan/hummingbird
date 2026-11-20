@@ -28,10 +28,12 @@ export function buildSandboxFrameDirectives(): Array<[string, string[]]> {
     // Artifact code is inline (`<script>…</script>`, the shell's own
     // bootstrap and error bridge too), so 'unsafe-inline' — and no
     // nonce/hash, which would make browsers ignore it. 'unsafe-eval':
-    // Babel standalone compiles TSX artifacts at runtime. The CDN hosts
-    // serve React/ReactDOM/Babel (unpkg), Tailwind's JIT runtime and
-    // Mermaid (jsdelivr). No 'self': artifacts have no business loading
-    // the app's own scripts.
+    // Babel standalone compiles TSX artifacts at runtime, and the TSX
+    // shell runs the compiled module through `new Function`. The CDN
+    // hosts are exactly the origins of the pinned `CDN_SCRIPTS`:
+    // React 18 / ReactDOM / Babel (unpkg), Tailwind's v3 JIT runtime
+    // (cdn.tailwindcss.com) and Mermaid (jsdelivr). No 'self':
+    // artifacts have no business loading the app's own scripts.
     ["script-src", ["'unsafe-inline'", "'unsafe-eval'", ...CDN_HOSTS]],
     ["style-src", ["'unsafe-inline'", ...CDN_HOSTS]],
     // Same image/font reach the shells' <meta> CSP has always granted.

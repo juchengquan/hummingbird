@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { CDN_HOSTS, CDN_URLS } from "@/shared/live-artifact/cdn-urls"
+import { CDN_HOSTS, CDN_SCRIPTS } from "@/shared/live-artifact/cdn-urls"
 import {
   parseRenderMessage,
   renderMessage,
@@ -57,9 +57,14 @@ describe("buildSandboxFrameCsp", () => {
   })
 
   test("every pinned CDN URL is served from an allowed host", () => {
-    for (const url of Object.values(CDN_URLS)) {
-      expect(CDN_HOSTS as readonly string[]).toContain(new URL(url).origin)
+    for (const { src } of Object.values(CDN_SCRIPTS)) {
+      expect(CDN_HOSTS as readonly string[]).toContain(new URL(src).origin)
     }
+  })
+
+  test("allows no CDN host that no pinned script uses", () => {
+    const used = new Set(Object.values(CDN_SCRIPTS).map(({ src }) => new URL(src).origin))
+    expect([...used].sort()).toEqual([...CDN_HOSTS].sort())
   })
 
   test("keeps the image / font reach the srcdoc shells had", () => {

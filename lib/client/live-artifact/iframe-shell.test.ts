@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test"
 
-import { CDN_HOSTS, CDN_URLS } from "@/shared/live-artifact/cdn-urls"
-import { buildShell, IFRAME_MESSAGE_NS } from "./iframe-shell"
+import { CDN_HOSTS, CDN_SCRIPTS, type CdnScriptName } from "@/shared/live-artifact/cdn-urls"
+import {
+  buildShell,
+  cdnScriptTag,
+  findMountName,
+  IFRAME_MESSAGE_NS,
+  TSX_BABEL_OPTIONS,
+  tsxRuntimeScript,
+} from "./iframe-shell"
 
 describe("buildShell — every shell injects CSP + error bridge", () => {
   const shells: Array<"html" | "tsx" | "svg" | "mermaid"> = [
@@ -36,11 +43,49 @@ describe("buildShell — every shell injects CSP + error bridge", () => {
   }
 })
 
+describe("CDN scripts — pinned, with SRI where the host supports it", () => {
+  const names = Object.keys(CDN_SCRIPTS) as CdnScriptName[]
+
+  test("every URL names an exact version (no ranges, no bare-host redirects)", () => {
+    for (const name of names) {
+      expect(CDN_SCRIPTS[name].src).toMatch(/[@/]\d+\.\d+\.\d+(?:\/|$)/)
+    }
+  })
+
+  test("React is 18.3.1 — React 19 publishes no UMD build", () => {
+    expect(CDN_SCRIPTS.react.src).toBe("https://unpkg.com/react@18.3.1/umd/react.development.js")
+    expect(CDN_SCRIPTS.reactDom.src).toBe(
+      "https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"
+    )
+  })
+
+  test("React, ReactDOM, Babel and Mermaid carry a sha384 hash", () => {
+    for (const name of ["react", "reactDom", "babel", "mermaid"] as const) {
+      expect(CDN_SCRIPTS[name].integrity).toMatch(/^sha384-[A-Za-z0-9+/]{64}$/)
+    }
+  })
+
+  test("a script with a hash is loaded with integrity + crossorigin", () => {
+    for (const name of names) {
+      const { src, integrity } = CDN_SCRIPTS[name]
+      const tag = cdnScriptTag(name)
+      if (integrity) {
+        expect(tag).toBe(
+          `<script src="${src}" integrity="${integrity}" crossorigin="anonymous"></script>`
+        )
+      } else {
+        // No CORS on the host → a crossorigin fetch would fail outright.
+        expect(tag).toBe(`<script src="${src}"></script>`)
+      }
+    }
+  })
+})
+
 describe("buildShell — html shell", () => {
   test("snippets get wrapped in a Tailwind envelope", () => {
     const out = buildShell("html", "<button>Click me</button>")
     expect(out).toContain("<!doctype html>")
-    expect(out).toContain(CDN_URLS.tailwind)
+    expect(out).toContain(cdnScriptTag("tailwind"))
     expect(out).toContain("<button>Click me</button>")
   })
 
@@ -71,90 +116,263 @@ describe("buildShell — html shell", () => {
   })
 })
 
-describe("buildShell — tsx shell", () => {
-  test("mounts a named App component", () => {
-    const code = `function App() { return <div>hi</div>; }`
-    const out = buildShell("tsx", code)
-    expect(out).toContain("React.createElement(App)")
-  })
-
-  test("mounts a named Demo when App is absent", () => {
-    const code = `function Demo() { return <div>hi</div>; }`
-    const out = buildShell("tsx", code)
-    expect(out).toContain("React.createElement(Demo)")
-  })
-
-  test("mounts the last declared identifier when App/Demo are absent", () => {
-    const code = `function First() { return <span/>; }\nfunction Second() { return <em/>; }`
-    const out = buildShell("tsx", code)
-    expect(out).toContain("React.createElement(Second)")
-  })
-
-  test("honours `export default function Name`", () => {
-    const code = `export default function Greeting() { return <p>hi</p>; }`
-    const out = buildShell("tsx", code)
-    expect(out).toContain("React.createElement(Greeting)")
-    // export keyword stripped (would crash in non-module script context)
-    expect(out).not.toContain("export default function Greeting")
-  })
-
-  test("honours `export default class Name`", () => {
-    const code = `export default class Widget extends React.Component { render() { return <p/>; } }`
-    const out = buildShell("tsx", code)
-    expect(out).toContain("React.createElement(Widget)")
-  })
-
-  test("honours `export default <identifier>`", () => {
-    const code = `function App() { return <p/>; }\nexport default App;`
-    const out = buildShell("tsx", code)
-    expect(out).toContain("React.createElement(App)")
-    expect(out).not.toContain("export default App")
-  })
-
-  test("honours anonymous default export (`export default function() {}`)", () => {
-    const code = `export default function() { return <p>anon</p>; }`
-    const out = buildShell("tsx", code)
-    expect(out).toContain("React.createElement(__defaultExport)")
-  })
-
-  test("strips `import React from \"react\"` lines", () => {
-    const code = `import React from "react";\nfunction App() { return <p/>; }`
-    const out = buildShell("tsx", code)
-    expect(out).not.toContain('import React from "react"')
-    expect(out).toContain("function App")
-  })
-
-  test("strips named imports", () => {
-    const code = `import { useState, useEffect } from "react";\nfunction App() { return <p/>; }`
-    const out = buildShell("tsx", code)
-    expect(out).not.toContain("from \"react\"")
-  })
-
-  test("strips bare side-effect imports", () => {
-    const code = `import "./styles.css";\nfunction App() { return <p/>; }`
-    const out = buildShell("tsx", code)
-    expect(out).not.toContain('import "./styles.css"')
-  })
-
-  test("renders an in-iframe error when nothing mountable found", () => {
-    const code = `const x = 1; // just declarations, no JSX components`
-    const out = buildShell("tsx", code)
-    // No `React.createElement` mount call when we can't find a name.
-    expect(out).not.toContain("React.createElement(x)")
-    expect(out).toContain("No mountable component found")
-  })
-
-  test("includes Babel + React + ReactDOM + Tailwind CDN scripts", () => {
+describe("buildShell — tsx shell document", () => {
+  test("loads Tailwind, React, ReactDOM and Babel (in that order) with their pinned tags", () => {
     const out = buildShell("tsx", "function App(){ return <p/>; }")
-    expect(out).toContain(CDN_URLS.babel)
-    expect(out).toContain(CDN_URLS.react)
-    expect(out).toContain(CDN_URLS.reactDom)
-    expect(out).toContain(CDN_URLS.tailwind)
+    const at = (name: CdnScriptName) => out.indexOf(cdnScriptTag(name))
+    for (const name of ["tailwind", "react", "reactDom", "babel"] as const) {
+      expect(at(name)).toBeGreaterThan(-1)
+    }
+    expect(at("react")).toBeLessThan(at("reactDom"))
+    expect(at("reactDom")).toBeLessThan(at("babel"))
+    // The runtime script comes after every CDN script it relies on.
+    expect(out.indexOf("Babel.transform")).toBeGreaterThan(at("babel"))
   })
 
-  test('uses data-presets="react,typescript" on the Babel script', () => {
+  test("no text/babel script: the runtime compiles the source itself", () => {
     const out = buildShell("tsx", "function App(){ return <p/>; }")
-    expect(out).toContain('data-presets="react,typescript"')
+    expect(out).not.toContain("text/babel")
+  })
+
+  test("embeds the source as a JSON string that can't close the script element", () => {
+    const code = `export default function App() { return <p>{"</script><script>alert(1)</script>"}<!-- x --></p> }`
+    const out = buildShell("tsx", code)
+    expect(out).not.toContain("</script><script>alert(1)")
+    expect(out).not.toContain("<!-- x")
+    expect(out).toContain("\\u003c/script>")
+  })
+
+  test("compiles with TS + React presets and ES modules → CommonJS", () => {
+    expect(TSX_BABEL_OPTIONS.presets).toContainEqual([
+      "typescript",
+      { isTSX: true, allExtensions: true },
+    ])
+    expect(TSX_BABEL_OPTIONS.presets).toContain("react")
+    expect(TSX_BABEL_OPTIONS.plugins).toContain("transform-modules-commonjs")
+  })
+})
+
+describe("findMountName — fallback when there's no default export", () => {
+  test("prefers App", () => {
+    expect(findMountName(`function Card() {}\nfunction App() {}\nfunction Z() {}`)).toBe("App")
+  })
+
+  test("then Demo", () => {
+    expect(findMountName(`function Card() {}\nconst Demo = () => null`)).toBe("Demo")
+  })
+
+  test("then the last PascalCase declaration", () => {
+    expect(findMountName(`function First() {}\nfunction Second() {}\nconst helper = 1`)).toBe(
+      "Second"
+    )
+  })
+
+  test("null when nothing looks like a component", () => {
+    expect(findMountName(`const x = 1; function useThing() {}`)).toBeNull()
+  })
+})
+
+// --------------------------------------------------------------------
+// Runtime — runs the generated inline script against stub globals. The
+// stub Babel returns hand-written CommonJS (what the real
+// `transform-modules-commonjs` output looks like) and records the
+// options it was called with; the real compile is covered by the
+// headless-browser check described in docs/SECURITY.md.
+// --------------------------------------------------------------------
+
+interface FakeNode {
+  tag: string
+  attrs: Record<string, string>
+  textContent: string
+  children: FakeNode[]
+  setAttribute(k: string, v: string): void
+  appendChild(c: FakeNode): void
+  replaceChildren(...c: FakeNode[]): void
+}
+
+function fakeNode(tag: string): FakeNode {
+  return {
+    tag,
+    attrs: {},
+    textContent: "",
+    children: [],
+    setAttribute(k, v) {
+      this.attrs[k] = v
+    },
+    appendChild(c) {
+      this.children.push(c)
+    },
+    replaceChildren(...c) {
+      this.children = c
+    },
+  }
+}
+
+function text(node: FakeNode): string {
+  return node.textContent + node.children.map(text).join(" ")
+}
+
+interface RunResult {
+  root: FakeNode
+  mounted: unknown[]
+  createRootCalls: number
+  babelCalls: Array<{ source: string; options: unknown }>
+  error: unknown
+}
+
+const React = {
+  createElement: (type: unknown) => ({ $$el: type }),
+  useState: (v: unknown) => [v, () => {}],
+}
+
+function runTsx(source: string, compiled: string | (() => never)): RunResult {
+  const root = fakeNode("div")
+  const result: RunResult = { root, mounted: [], createRootCalls: 0, babelCalls: [], error: null }
+  const ReactDOM = {
+    createRoot: () => {
+      result.createRootCalls++
+      return { render: (el: unknown) => result.mounted.push(el) }
+    },
+  }
+  const Babel = {
+    transform(src: string, options: unknown) {
+      result.babelCalls.push({ source: src, options })
+      if (typeof compiled === "function") compiled()
+      return { code: compiled }
+    },
+  }
+  const document = {
+    getElementById: (id: string) => (id === "root" ? root : null),
+    createElement: fakeNode,
+  }
+  try {
+    new Function("document", "React", "ReactDOM", "Babel", tsxRuntimeScript(source))(
+      document,
+      React,
+      ReactDOM,
+      Babel
+    )
+  } catch (err) {
+    result.error = err
+  }
+  return result
+}
+
+describe("tsx runtime", () => {
+  test("hands Babel the untouched source and the pinned options", () => {
+    const source = `import { useState } from "react"\nexport default function App() { return <p/> }`
+    const r = runTsx(source, `exports.default = function App() {};`)
+    expect(r.babelCalls).toEqual([{ source, options: TSX_BABEL_OPTIONS }])
+  })
+
+  test("mounts the default export", () => {
+    const r = runTsx(
+      `export default function Greeting() { return <p/> }`,
+      `function Greeting() {}\nexports.default = Greeting;`
+    )
+    expect(r.error).toBeNull()
+    expect(r.createRootCalls).toBe(1)
+    expect((r.mounted[0] as { $$el: { name: string } }).$$el.name).toBe("Greeting")
+  })
+
+  test("the default export beats an App declaration", () => {
+    const r = runTsx(
+      `function App() {}\nexport default function Real() {}`,
+      `function App() {}\nfunction Real() {}\nexports.default = Real;`
+    )
+    expect((r.mounted[0] as { $$el: { name: string } }).$$el.name).toBe("Real")
+  })
+
+  test("without a default export, mounts App from the module scope", () => {
+    const r = runTsx(`function Card() {}\nfunction App() {}`, `function Card() {}\nfunction App() {}`)
+    expect(r.error).toBeNull()
+    expect((r.mounted[0] as { $$el: { name: string } }).$$el.name).toBe("App")
+  })
+
+  test("mounts memo / forwardRef objects", () => {
+    const r = runTsx(
+      `export default memo(App)`,
+      `exports.default = { $$typeof: Symbol.for("react.memo"), type: function App() {} };`
+    )
+    expect(r.error).toBeNull()
+    expect(r.mounted).toHaveLength(1)
+  })
+
+  test("a non-component default export isn't mounted", () => {
+    const r = runTsx(`export default 42`, `exports.default = 42;`)
+    expect(r.mounted).toHaveLength(0)
+    expect(text(r.root)).toContain("No mountable component found")
+  })
+
+  test("resolves react / react-dom / react-dom/client to the UMD globals", () => {
+    const r = runTsx(
+      `import React, { useState } from "react"\nimport { createRoot } from "react-dom/client"\nexport default function App() {}`,
+      `var _react = require("react");
+       var _client = require("react-dom/client");
+       var _dom = require("react-dom");
+       if (_react.useState !== React.useState) throw new Error("react");
+       if (_client !== ReactDOM || _dom !== ReactDOM) throw new Error("react-dom");
+       exports.default = function App() {};`
+    )
+    expect(r.error).toBeNull()
+    expect(r.mounted).toHaveLength(1)
+  })
+
+  test("relative and stylesheet imports are no-ops", () => {
+    const r = runTsx(
+      `import "./styles.css"\nexport default function App() {}`,
+      `require("./styles.css"); require("tailwindcss/tailwind.css"); exports.default = function App() {};`
+    )
+    expect(r.error).toBeNull()
+    expect(r.mounted).toHaveLength(1)
+  })
+
+  test("an unavailable package fails with a message naming it", () => {
+    const r = runTsx(
+      `import { Heart } from "lucide-react"\nexport default function App() {}`,
+      `var _l = require("lucide-react"); exports.default = function App() {};`
+    )
+    expect(String(r.error)).toContain('Cannot import "lucide-react"')
+    expect(text(r.root)).toContain('Cannot import "lucide-react"')
+    expect(r.mounted).toHaveLength(0)
+  })
+
+  test("code that mounts itself doesn't get a second root", () => {
+    const r = runTsx(
+      `function App() {}\nReactDOM.createRoot(document.getElementById("root")).render(<App />)`,
+      `function App() {}\nReactDOM.createRoot(null).render(React.createElement(App));`
+    )
+    expect(r.error).toBeNull()
+    expect(r.createRootCalls).toBe(1)
+  })
+
+  test("renders an in-frame error when nothing is mountable", () => {
+    const r = runTsx(`const x = 1`, `const x = 1;`)
+    expect(r.mounted).toHaveLength(0)
+    expect(text(r.root)).toContain("No mountable component found")
+  })
+
+  test("a compile error is shown in the frame and rethrown for the error bridge", () => {
+    const r = runTsx(`function App( {`, () => {
+      throw new SyntaxError("Unexpected token (1:15)")
+    })
+    expect(r.error).toBeInstanceOf(SyntaxError)
+    expect(text(r.root)).toContain("Couldn't compile this component.")
+    expect(text(r.root)).toContain("Unexpected token (1:15)")
+  })
+
+  test("a missing CDN global is reported instead of a ReferenceError", () => {
+    const root = fakeNode("div")
+    const document = { getElementById: () => root, createElement: fakeNode }
+    expect(() =>
+      new Function("document", "React", "ReactDOM", "Babel", tsxRuntimeScript("function App(){}"))(
+        document,
+        React,
+        undefined,
+        undefined
+      )
+    ).toThrow("failed to load")
+    expect(text(root)).toContain("Couldn't load React / Babel")
   })
 })
 
@@ -186,10 +404,10 @@ describe("buildShell — mermaid shell", () => {
     expect(out).not.toContain("<script>x</script>")
   })
 
-  test("calls mermaid.initialize with strict security", () => {
+  test("calls mermaid.initialize with strict security, loading the pinned build", () => {
     const out = buildShell("mermaid", "graph TD")
     expect(out).toContain("securityLevel: 'strict'")
-    expect(out).toContain(CDN_URLS.mermaid)
+    expect(out).toContain(cdnScriptTag("mermaid"))
   })
 })
 
