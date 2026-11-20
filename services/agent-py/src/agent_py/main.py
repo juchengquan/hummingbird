@@ -22,6 +22,7 @@ import structlog
 from fastapi import FastAPI
 
 from . import __version__, db, poller
+from .body_limit import BodySizeLimitMiddleware, body_limit_for
 from .model_allowlist import get_model_allowlist
 from .routers import chat, extract, health, images, mcp, summarize, url, whoami
 
@@ -124,6 +125,11 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
     app.include_router(images.router)
     app.include_router(summarize.router)
     app.include_router(mcp.router)
+
+    # Cap request bodies before routing / auth: FastAPI reads (and
+    # spools multipart parts of) the body before the auth dependency
+    # runs, so this is what bounds an unauthenticated upload.
+    app.add_middleware(BodySizeLimitMiddleware, limit_for=body_limit_for(settings))
 
     return app
 
