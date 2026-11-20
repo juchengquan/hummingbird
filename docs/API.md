@@ -188,6 +188,24 @@ their own tokens (enforced by RLS).
 **Errors**: `401` unauthorised, `404` token not found, `500` update
 failure, `503` Supabase not configured.
 
+### `POST /api/mcp/{serverId}/{discover|call|read}`
+
+Server-side MCP proxy for browser-initiated discovery, resource reads
+and MCP-app tool calls (chat-turn tool calls run in-process). Local-mode
+servers send their credential in `X-MCP-Credentials`; cloud-mode
+servers are looked up (and their credential decrypted) by `serverId`.
+
+**Access**: with Supabase configured the caller must be signed in,
+whatever `REQUIRE_AUTH_FOR_AI` says — anonymous calls get
+`401 { code: "auth_required", message }`. Without Supabase (local-only
+deployment) anonymous local-mode MCP keeps working. Either way calls
+are limited to 120 per minute per user (signed in) or per client IP
+(`429 { error: "rate_limited", code, message }` + `Retry-After`).
+
+**Errors**: `400` invalid body / `mcp_url_blocked` (SSRF guard), `401`,
+`404` unknown action, `429`, `502`
+`mcp_upstream_error` (the upstream error text is never echoed).
+
 ### `POST /api/memory/extract`
 
 Best-effort, post-turn cross-conversation memory extraction. Fired

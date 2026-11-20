@@ -119,6 +119,26 @@ export async function requireAiAuth(
   deps: AiAuthDeps = aiAuthDeps,
 ): Promise<AiAuthResult> {
   if (!isAiAuthRequired(deps)) return { ok: true, user: null }
+  return verifySession(deps)
+}
+
+/**
+ * Stricter gate for routes that act as an outbound relay (the MCP
+ * proxy): whenever Supabase is configured the caller must be signed
+ * in, whatever `REQUIRE_AUTH_FOR_AI` says. Without Supabase there are
+ * no accounts to sign into, so anonymous calls pass (`user: null`) —
+ * the local-only deployment keeps working. An invalid
+ * `REQUIRE_AUTH_FOR_AI` value still throws, as for every gated route.
+ */
+export async function requireSessionWhenSupabaseConfigured(
+  deps: AiAuthDeps = aiAuthDeps,
+): Promise<AiAuthResult> {
+  isAiAuthRequired(deps)
+  if (!deps.supabaseConfigured()) return { ok: true, user: null }
+  return verifySession(deps)
+}
+
+async function verifySession(deps: AiAuthDeps): Promise<AiAuthResult> {
   try {
     const client = await deps.getClient()
     if (!client) return { ok: false, response: authRequiredResponse() }

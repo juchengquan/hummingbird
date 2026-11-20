@@ -2,9 +2,11 @@ import type { NextRequest } from "next/server"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 
+import { requireSessionWhenSupabaseConfigured } from "@/server/auth/require-ai-auth"
 import { callTool, discover, readResource } from "@/server/mcp/client"
 import { fetchDecryptedCredential } from "@/server/mcp/credentials"
 import { McpUrlBlockedError, validateMcpServerUrl } from "@/server/mcp/outbound"
+import { createSlidingWindow, rateLimitKey } from "@/server/rate-limit"
 import { getSupabaseServerClient } from "@/server/supabase/server"
 import {
   MCP_CRED_HEADER,
@@ -58,6 +60,12 @@ const DiscoverSchema = z.object({
 
 const VALID_ACTIONS = new Set(["discover", "call", "read"])
 
+/** Per-user (signed in) or per-IP (no Supabase) cap on proxied calls.
+ *  Chat-turn tool calls run in-process and don't count; this covers
+ *  discovery, resource reads and MCP-app tool calls from the browser.
+ *  Exported for tests. */
+export const mcpProxyLimit = createSlidingWindow({ windowMs: 60_000, max: 120 })
+
 export async function POST(
   req: NextRequest,
   context: { params: Promise<{ serverId: string; action: string }> }
@@ -66,6 +74,26 @@ export async function POST(
 
   if (!serverId || !VALID_ACTIONS.has(action)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 })
+  }
+
+  // The proxy fetches a caller-chosen URL with caller-chosen headers, so
+  // it must not be an anonymous open relay. With Supabase configured the
+  // caller must be signed in (this also covers REQUIRE_AUTH_FOR_AI).
+  // Without Supabase there are no accounts: local-mode MCP stays open,
+  // bounded by the per-IP limit below and the SSRF guard.
+  const session = await requireSessionWhenSupabaseConfigured()
+  if (!session.ok) return session.response
+  const limitKey = session.user ? `user:${session.user.id}` : `ip:${rateLimitKey(req)}`
+  const limit = mcpProxyLimit.consume(limitKey)
+  if (!limit.allowed) {
+    return NextResponse.json(
+      {
+        error: "rate_limited",
+        code: "rate_limited",
+        message: `Too many MCP requests. Retry in ${limit.retryAfterSec}s.`,
+      },
+      { status: 429, headers: { "Retry-After": String(limit.retryAfterSec) } }
+    )
   }
 
   // Credentials come from one of two places:
