@@ -145,18 +145,26 @@ See `.env.example` for the full list. Two groups:
 - **Code interpreter sandbox** (`CODE_SANDBOX_BASE_URL`, optional `CODE_SANDBOX_API_KEY`) — optional. When `CODE_SANDBOX_BASE_URL` is set, the `runCode` skill registers and runs model-written Python in a local **microsandbox** microVM (libkrun; HVF on Apple Silicon / KVM on Linux). Network is OFF inside the sandbox (airgapped); the pre-baked `python` image carries pandas/numpy/matplotlib; charts are produced via `savefig('/tmp/*.png')` and read back. Absent → the skill is simply not in `SERVER_SKILLS` (no mock — code execution has no meaningful mock), exactly like image-gen degrades without a Minimax key. Adapter lives in `lib/server/code-sandbox/` behind the `CodeSandbox` interface, so another provider drops in via the env seam. Caps via `CODE_SANDBOX_TIMEOUT_MS` / `_STDOUT_CAP` / `_RESULT_CAP` / `_MEM_MIB` / `_CPUS`. See `docs/PLAN-execution-sandbox.md` (runtime) + `docs/PLAN-code-interpreter.md` (consumer).
 - **Vision document extraction** (`VISION_MODEL`) — optional. On top of the text-only extraction (`lib/server/extraction.ts`), layout-rich or scanned PDFs get a best-effort vision pass: pages are rendered to images (`pdf-to-img`, isolated in a Node worker thread so its bundled pdfjs can't collide with `pdf-parse`'s — see `lib/server/extraction/render-pdf.ts`) and transcribed to markdown (tables → markdown tables, figures → captions) by a vision-capable model, merged into the result's `text`/`fullText`. Gated by `shouldUseVision` (PDF + low text-yield or table-dense) and a per-IP budget; never fatal (any failure → text-only). `VISION_MODEL` overrides which model is used; it must be flagged `supportsVision` in `config/models.json`. Unset → first `supportsVision` model; none flagged → vision skipped. PR-1 of `docs/PLAN-multimodal-docs.md` (structured blocks + `file_sections` indexing + table rendering are PR-2/PR-3).
 
-SQL lives under `supabase/migrations/` as seventeen files (`0001_schema.sql`,
+SQL lives under `supabase/migrations/` as numbered files applied in order (`0001_schema.sql`,
 `0002_rls_policies.sql`, `0003_storage.sql`, `0004_conversation_files.sql`,
 `0005_mcp.sql`, `0006_url_bookmarks.sql`, `0007_file_full_text.sql`,
 `0008_message_compression.sql`, `0009_search_file_sections.sql`,
 `0010_message_generated_images.sql`, `0011_prompts.sql`,
 `0012_tasks.sql`, `0013_task_checkpoint.sql`,
 `0014_task_jobs.sql`, `0015_workspace_canvas.sql`,
-`0016_project_mode.sql`, `0017_prompts_workspace.sql`) — see `docs/SUPABASE_SETUP.md`
+`0016_project_mode.sql`, `0017_prompts_workspace.sql`, … `0031_rls_fk_ownership.sql`) — see `docs/SUPABASE_SETUP.md`
 for the hosted-cloud run order, or `docs/SUPABASE_LOCAL.md` for the
 local Supabase CLI path (Docker-based, no cloud account needed). For
 verifying the file full-text retrieval pipeline end-to-end after
 schema or extraction changes, see `docs/SUPABASE_TEST.md`.
+
+**RLS convention (0031).** Every user-data table's permissive `own …`
+policy checks the row's own `user_id`; `0031_rls_fk_ownership.sql` adds a
+RESTRICTIVE `<table>: fk ownership (insert|update)` policy requiring every
+FK to a user-owned table to point at a row with `user_id = auth.uid()`.
+A new table (or new FK column) referencing user-owned rows needs the same
+restrictive pair, otherwise a user can hang rows off another user's data
+via PostgREST.
 
 ## Frontend module conventions
 
