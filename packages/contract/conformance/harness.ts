@@ -11,13 +11,16 @@
  *   CONTRACT_BASE_URL         backend origin, e.g. http://localhost:8765.
  *                             Unset → every conformance case is skipped.
  *   CONTRACT_AUTH_TOKEN       optional Supabase user JWT for cases that
- *                             need a signed-in caller (none yet).
+ *                             need a signed-in caller (errors.test.ts).
  *   CONTRACT_SKIP_OPERATIONS  comma-separated operationIds to skip (an
  *                             operation the backend under test does not
  *                             implement yet).
- *   CONTRACT_STRICT_ERRORS=1  validate error bodies against `ApiError`
- *                             only, rejecting the transitional
- *                             `LegacyFastApiError` envelope.
+ *
+ * Error bodies are always checked strictly: every 4xx/5xx JSON body must
+ * validate against the operation's documented schema AND against
+ * `ApiError` (`{ code, message }`). The transitional FastAPI `{ detail }`
+ * envelope (and the `CONTRACT_STRICT_ERRORS` opt-in that used to reject
+ * it) is gone.
  */
 import { fileURLToPath } from "node:url"
 
@@ -34,7 +37,6 @@ export const env = {
       .map((s) => s.trim())
       .filter(Boolean),
   ),
-  strictErrors: process.env.CONTRACT_STRICT_ERRORS === "1",
 }
 
 export type HttpMethod = "get" | "post" | "put" | "patch" | "delete"
@@ -179,18 +181,20 @@ export class Contract {
     if (!ex.contentType?.includes("application/json")) {
       throw new ConformanceError(`${label}: expected application/json, got ${ex.contentType}`)
     }
-    const isError = ex.status >= 400
-    const [key, schema] =
-      isError && env.strictErrors
-        ? ["#ApiError", this.schema("ApiError")]
-        : [`${operationId}#${ex.status}`, media.schema]
-    const validate = this.validator(key, schema)
-    if (!validate(ex.body)) {
-      throw new ConformanceError(
-        `${label}: body does not match the schema\n` +
-          `${this.ajv.errorsText(validate.errors, { separator: "\n" })}\n` +
-          `body: ${ex.text.slice(0, 500)}`,
-      )
+    const checks: [string, JsonSchema, string][] = [
+      [`${operationId}#${ex.status}`, media.schema, "the schema"],
+    ]
+    // Every error body is an `ApiError`, whatever the response documents.
+    if (ex.status >= 400) checks.push(["#ApiError", this.schema("ApiError"), "ApiError"])
+    for (const [key, schema, name] of checks) {
+      const validate = this.validator(key, schema)
+      if (!validate(ex.body)) {
+        throw new ConformanceError(
+          `${label}: body does not match ${name}\n` +
+            `${this.ajv.errorsText(validate.errors, { separator: "\n" })}\n` +
+            `body: ${ex.text.slice(0, 500)}`,
+        )
+      }
     }
   }
 }
