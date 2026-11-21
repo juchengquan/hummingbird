@@ -205,4 +205,4 @@ def test_route_maps_zip_limit_to_413(monkeypatch: pytest.MonkeyPatch) -> None:
         files={"file": ("bomb.docx", _lying_bomb(150 * 1024 * 1024), DOCX_MIME)},
     )
     assert r.status_code == 413
-    assert "expands beyond" in r.json()["detail"]
+    assert "expands beyond" in r.json()["message"]

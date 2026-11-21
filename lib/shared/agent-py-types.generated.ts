@@ -654,10 +654,17 @@ export interface components {
             /** Model */
             model?: string | null;
         };
-        /** HTTPValidationError */
+        /**
+         * HTTPValidationError
+         * @description Request validation failed: the flat error envelope with `code: invalid_request` and the issues found.
+         */
         HTTPValidationError: {
-            /** Detail */
-            detail?: components["schemas"]["ValidationError"][];
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Issues */
+            issues?: components["schemas"]["ValidationError"][];
         };
         /** HealthResponse */
         HealthResponse: {

@@ -199,7 +199,10 @@ async def chat(
     if client is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="ANTHROPIC_API_KEY is not configured on the agent service.",
+            detail={
+                "code": "unavailable",
+                "message": "ANTHROPIC_API_KEY is not configured on the agent service.",
+            },
         )
 
     # Phase 4-3 + follow-up: build a per-request `ToolContext`

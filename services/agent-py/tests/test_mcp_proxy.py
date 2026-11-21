@@ -108,7 +108,7 @@ def test_mcp_proxy_400_on_path_body_mismatch(client: TestClient) -> None:
     body["server"]["id"] = "different-id"
     r = client.post(f"/v1/mcp/{SERVER_ID}/discover", json=body, headers=_auth())
     assert r.status_code == 400
-    assert r.json()["detail"]["code"] == "serverId_mismatch"
+    assert r.json()["code"] == "serverId_mismatch"
 
 
 def test_mcp_proxy_400_on_call_missing_tool(client: TestClient) -> None:
@@ -117,7 +117,7 @@ def test_mcp_proxy_400_on_call_missing_tool(client: TestClient) -> None:
     with patch.object(mcp_router, "mcp_call_tool", new=AsyncMock()):
         r = client.post(f"/v1/mcp/{SERVER_ID}/call", json=body, headers=_auth())
     assert r.status_code == 400
-    assert r.json()["detail"]["code"] == "invalid_body"
+    assert r.json()["code"] == "invalid_body"
 
 
 def test_mcp_proxy_400_on_read_missing_uri(client: TestClient) -> None:
@@ -126,7 +126,7 @@ def test_mcp_proxy_400_on_read_missing_uri(client: TestClient) -> None:
     with patch.object(mcp_router, "mcp_read_resource", new=AsyncMock()):
         r = client.post(f"/v1/mcp/{SERVER_ID}/read", json=body, headers=_auth())
     assert r.status_code == 400
-    assert r.json()["detail"]["code"] == "invalid_body"
+    assert r.json()["code"] == "invalid_body"
 
 
 # --- discover -------------------------------------------------------
@@ -246,7 +246,7 @@ def test_mcp_proxy_502_on_upstream_exception(client: TestClient) -> None:
             },
         )
     assert r.status_code == 502
-    detail = r.json()["detail"]
+    detail = r.json()
     assert detail["code"] == "mcp_upstream_error"
     # Never leak the credential or the upstream error text.
     assert "shh" not in json.dumps(r.json())
@@ -324,7 +324,7 @@ def test_mcp_proxy_rejects_private_body_url(client: TestClient) -> None:
         with patch.object(mcp_router, "mcp_discover", new=called):
             r = client.post(f"/v1/mcp/{SERVER_ID}/discover", json=body, headers=_auth())
         assert r.status_code == 400, url
-        assert r.json()["detail"]["code"] == "invalid_server_url"
+        assert r.json()["code"] == "invalid_server_url"
     called.assert_not_awaited()
 
 
@@ -474,7 +474,7 @@ def test_mcp_server_upsert_503_without_db_pool(client: TestClient) -> None:
     the RPC fail opaquely later."""
     r = client.post("/v1/mcp/server", json=_upsert_body(), headers=_auth())
     assert r.status_code == 503
-    assert r.json()["detail"]["code"] == "db_unconfigured"
+    assert r.json()["code"] == "db_unconfigured"
 
 
 def test_mcp_server_upsert_invalid_body_returns_422(client: TestClient) -> None:
@@ -502,7 +502,7 @@ def test_mcp_server_upsert_500_when_encryption_key_unset(
     ):
         r = client.post("/v1/mcp/server", json=_upsert_body(), headers=_auth())
     assert r.status_code == 500
-    assert r.json()["detail"]["code"] == "encryption_key_unset"
+    assert r.json()["code"] == "encryption_key_unset"
 
 
 def test_mcp_server_upsert_502_on_other_rpc_failure(client: TestClient) -> None:
@@ -519,8 +519,8 @@ def test_mcp_server_upsert_502_on_other_rpc_failure(client: TestClient) -> None:
     ):
         r = client.post("/v1/mcp/server", json=_upsert_body(), headers=_auth())
     assert r.status_code == 502
-    assert r.json()["detail"]["code"] == "upsert_failed"
-    assert "security" in r.json()["detail"]["message"]
+    assert r.json()["code"] == "upsert_failed"
+    assert "security" in r.json()["message"]
 
 
 def test_mcp_server_upsert_maps_foreign_id_and_workspace(client: TestClient) -> None:
@@ -540,7 +540,7 @@ def test_mcp_server_upsert_maps_foreign_id_and_workspace(client: TestClient) -> 
         ):
             r = client.post("/v1/mcp/server", json=_upsert_body(), headers=_auth())
         assert r.status_code == expected_status
-        assert r.json()["detail"]["code"] == expected_code
+        assert r.json()["code"] == expected_code
 
 
 def test_mcp_server_upsert_happy_path_calls_rpc_with_decoded_credential(

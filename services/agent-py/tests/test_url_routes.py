@@ -61,7 +61,7 @@ def test_url_fetch_invalid_url_returns_400(client: TestClient) -> None:
     `validation` code (covered by the parametrised test below)."""
     r = client.post("/v1/url/fetch", json={"url": "   "}, headers=_auth())
     assert r.status_code == 400
-    assert r.json()["detail"]["code"] == "invalid_url"
+    assert r.json()["code"] == "invalid_url"
 
 
 def test_url_fetch_happy_path_returns_bookmark(client: TestClient) -> None:
@@ -109,7 +109,7 @@ def test_url_fetch_error_codes_to_http_status(
     with patch.object(url_router, "fetch_url_bookmark", new=AsyncMock(return_value=err)):
         r = client.post("/v1/url/fetch", json={"url": "https://example.com"}, headers=_auth())
     assert r.status_code == expected_status
-    assert r.json()["detail"]["code"] == code
+    assert r.json()["code"] == code
 
 
 # --- /v1/images/refresh-url -------------------------------------------
@@ -132,7 +132,7 @@ def test_refresh_url_403_when_path_doesnt_match_user(
         headers=_auth("00000000-0000-4000-8000-000000000123"),
     )
     assert r.status_code == 403
-    assert r.json()["detail"]["code"] == "forbidden"
+    assert r.json()["code"] == "forbidden"
 
 
 def test_refresh_url_404_when_sign_fails(client: TestClient) -> None:
@@ -145,7 +145,7 @@ def test_refresh_url_404_when_sign_fails(client: TestClient) -> None:
             headers=_auth("00000000-0000-4000-8000-000000000123"),
         )
     assert r.status_code == 404
-    assert r.json()["detail"]["code"] == "not_found"
+    assert r.json()["code"] == "not_found"
 
 
 def test_refresh_url_happy_path_returns_signed_url(client: TestClient) -> None:

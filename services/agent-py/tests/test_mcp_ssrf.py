@@ -235,7 +235,7 @@ def test_upsert_rejects_private_url_before_the_rpc(client: TestClient, bad_url: 
     ):
         r = client.post("/v1/mcp/server", json=_upsert_body(bad_url), headers=_auth())
     assert r.status_code == 400, bad_url
-    detail = r.json()["detail"]
+    detail = r.json()
     assert detail["code"] == "mcp_url_blocked"
     assert detail["message"] == "MCP server URL is not allowed."
     rpc.assert_not_awaited()
@@ -274,6 +274,6 @@ def test_proxy_blocked_url_message_is_generic(client: TestClient) -> None:
     with patch.object(mcp_router, "mcp_discover", new=AsyncMock()) as discover:
         r = client.post(f"/v1/mcp/{SERVER_ID}/discover", json=body, headers=_auth())
     assert r.status_code == 400
-    assert r.json()["detail"]["code"] == "invalid_server_url"
+    assert r.json()["code"] == "invalid_server_url"
     assert "10.0.0.7" not in r.text
     discover.assert_not_awaited()

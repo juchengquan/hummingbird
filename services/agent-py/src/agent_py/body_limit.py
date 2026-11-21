@@ -27,6 +27,7 @@ from collections.abc import Callable
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from .error_envelope import error_body
 from .settings import Settings
 
 __all__ = ["BodySizeLimitMiddleware", "BodyTooLargeError", "body_limit_for"]
@@ -68,7 +69,7 @@ def body_limit_for(settings: Settings) -> Callable[[str], int]:
     return limit_for
 
 
-_DETAIL_TOO_LARGE = "Request body too large."
+_MESSAGE_TOO_LARGE = "Request body too large."
 
 
 class BodyTooLargeError(Exception):
@@ -90,10 +91,10 @@ class BodySizeLimitMiddleware:
         limit = self.limit_for(str(scope.get("path", "")))
         declared = _content_length(scope)
         if declared == -1:
-            await _send_error(send, 400, "Invalid Content-Length header.")
+            await _send_error(send, 400, "invalid_request", "Invalid Content-Length header.")
             return
         if declared is not None and declared > limit:
-            await _send_error(send, 413, _DETAIL_TOO_LARGE)
+            await _send_error(send, 413, "payload_too_large", _MESSAGE_TOO_LARGE)
             return
 
         received = 0
@@ -131,7 +132,7 @@ class BodySizeLimitMiddleware:
             if not exceeded or response_started:
                 raise
         if exceeded and not response_started:
-            await _send_error(send, 413, _DETAIL_TOO_LARGE)
+            await _send_error(send, 413, "payload_too_large", _MESSAGE_TOO_LARGE)
 
 
 def _content_length(scope: Scope) -> int | None:
@@ -152,8 +153,9 @@ def _content_length(scope: Scope) -> int | None:
     return int(raw)
 
 
-async def _send_error(send: Send, status: int, detail: str) -> None:
-    body = json.dumps({"detail": detail}).encode()
+async def _send_error(send: Send, status: int, code: str, message: str) -> None:
+    """Answer with the flat `{code, message}` envelope (`error_envelope`)."""
+    body = json.dumps(error_body(code, message)).encode()
     await send(
         {
             "type": "http.response.start",

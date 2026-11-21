@@ -27,6 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__, db, poller
 from .body_limit import BodySizeLimitMiddleware, body_limit_for
+from .error_envelope import install_error_handlers
 from .model_allowlist import get_model_allowlist
 from .routers import (
     chat,
@@ -196,6 +197,10 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
         openapi_url="/openapi.json",
         lifespan=lifespan,
     )
+
+    # Every non-streaming error answers the flat `{code, message}`
+    # envelope (`error_envelope.py`), not FastAPI's `{detail}`.
+    install_error_handlers(app)
 
     # Order is documentation-only — routers don't share path prefixes.
     app.include_router(health.router)
