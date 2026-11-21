@@ -58,3 +58,10 @@ supabase/seed.sql
 package-lock.json
 yarn.lock
 pnpm-lock.yaml
+
+# Playwright e2e (playwright.config.ts): its Next build dir + outputs
+/.next-e2e/
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
