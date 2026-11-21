@@ -228,6 +228,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/files/refresh-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Files Refresh Url
+         * @description Re-sign an expired generated-file URL (`persistGeneratedFiles` URLs
+         *     carry a 1-year TTL; the bytes stay in Storage at `storagePath`).
+         *
+         *     Same answers as the Next.js route:
+         *       - Storage not configured → 503 `unavailable`;
+         *       - path's first segment ≠ the caller's uid (JWT `sub`) → 403
+         *         `forbidden` (bucket layout is `<user_id>/...`; the service-role
+         *         key bypasses RLS, so this check is the authorisation);
+         *       - object missing / sign failed → 404 `not_found`.
+         *
+         *     Signs in the shared `user-files` bucket with the same 1-year TTL as
+         *     the image route (`image_storage.sign_storage_path`), which is the TTL
+         *     `lib/server/file-storage.ts` uses too.
+         */
+        post: operations["files_refresh_url_v1_files_refresh_url_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/extract-table": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Extract Table
+         * @description Python mirror of `app/api/extract-table/route.ts`.
+         *
+         *     Differences from the Next.js route, both shared with `/v1/summarize`:
+         *       - **Models.** This service only calls Anthropic, so `model` must be
+         *         an allowed `anthropic/*` id from `config/models.json` (else 400
+         *         `unknown_model`, the Next.js code); absent → `AGENT_DEFAULT_MODEL`
+         *         instead of the Next.js route's `google/gemini-2.5-flash`.
+         *       - **No provider key** → 503 `auth` (this service's convention for a
+         *         missing `ANTHROPIC_API_KEY`) where the Next.js route answers 401
+         *         `auth`.
+         *
+         *     Everything else matches: structured output first when the catalog
+         *     flags the model `supportsStructuredOutput`, then the lenient JSON
+         *     text path; unparseable / off-schema output → 502 `provider`; a
+         *     provider error → `categorize_error` (port of `categorizeError`).
+         *     Sign-in is always required — like every agent-py AI route, there is
+         *     no anonymous mode here.
+         */
+        post: operations["extract_table_v1_extract_table_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/summarize": {
         parameters: {
             query?: never;
@@ -447,6 +515,51 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** CitationTableCell */
+        CitationTableCell: {
+            /** Value */
+            value: string;
+            /** Citations */
+            citations: components["schemas"]["CitationTableCitation"][];
+        };
+        /** CitationTableCitation */
+        CitationTableCitation: {
+            /** Sourceid */
+            sourceId: string;
+            /** Quote */
+            quote: string;
+        };
+        /** CitationTableColumn */
+        CitationTableColumn: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Type */
+            type?: ("text" | "number" | "link" | "date") | null;
+        };
+        /** CitationTableResponse */
+        CitationTableResponse: {
+            /** Columns */
+            columns: components["schemas"]["CitationTableColumn"][];
+            /** Rows */
+            rows: {
+                [key: string]: components["schemas"]["CitationTableCell"];
+            }[];
+            /** Sources */
+            sources: components["schemas"]["CitationTableSource"][];
+        };
+        /** CitationTableSource */
+        CitationTableSource: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Url */
+            url?: string | null;
+            /** Snippet */
+            snippet?: string | null;
+        };
         /** CompressSummariseBody */
         CompressSummariseBody: {
             /**
@@ -470,6 +583,38 @@ export interface components {
             messages: components["schemas"]["SummariseMessage"][];
             /** Model */
             model?: string | null;
+        };
+        /** ExtractTableColumnHint */
+        ExtractTableColumnHint: {
+            /** Label */
+            label: string;
+            /** Type */
+            type?: ("text" | "number" | "link" | "date") | null;
+        };
+        /**
+         * ExtractTableRequest
+         * @description Mirrors `ExtractTableRequestSchema` in `lib/shared/api-schemas.ts`
+         *     — camelCase on the wire. `columnHints` entries are a plain label
+         *     (legacy, treated as Text) or `{label, type?}`.
+         */
+        ExtractTableRequest: {
+            /** Reporttext */
+            reportText: string;
+            /** Sources */
+            sources: components["schemas"]["ExtractTableSource"][];
+            /** Model */
+            model?: string | null;
+            /** Columnhints */
+            columnHints?: (string | components["schemas"]["ExtractTableColumnHint"])[] | null;
+        };
+        /** ExtractTableSource */
+        ExtractTableSource: {
+            /** Title */
+            title: string;
+            /** Url */
+            url: string;
+            /** Snippet */
+            snippet: string;
         };
         /**
          * ExtractionResponse
@@ -637,6 +782,21 @@ export interface components {
             /** Status */
             status: string;
             checks: components["schemas"]["ReadinessChecks"];
+        };
+        /**
+         * RefreshFileUrlRequest
+         * @description Mirrors `RefreshFileUrlRequestSchema` in `lib/shared/api-schemas.ts`
+         *     — camelCase `storagePath` on the wire, unlike `/v1/images/refresh-url`
+         *     (`storage_path`), so the body is exactly the Zod shape.
+         */
+        RefreshFileUrlRequest: {
+            /** Storagepath */
+            storagePath: string;
+        };
+        /** RefreshFileUrlResponse */
+        RefreshFileUrlResponse: {
+            /** Url */
+            url: string;
         };
         /**
          * RefreshImageUrlRequest
@@ -903,6 +1063,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RefreshImageUrlResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    files_refresh_url_v1_files_refresh_url_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RefreshFileUrlRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RefreshFileUrlResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    extract_table_v1_extract_table_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExtractTableRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CitationTableResponse"];
                 };
             };
             /** @description Validation Error */

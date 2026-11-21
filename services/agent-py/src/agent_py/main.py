@@ -27,7 +27,18 @@ from fastapi import FastAPI
 from . import __version__, db, poller
 from .body_limit import BodySizeLimitMiddleware, body_limit_for
 from .model_allowlist import get_model_allowlist
-from .routers import chat, extract, health, images, mcp, summarize, url, whoami
+from .routers import (
+    chat,
+    extract,
+    extract_table,
+    files,
+    health,
+    images,
+    mcp,
+    summarize,
+    url,
+    whoami,
+)
 
 # Re-exports for symbols that tests + other callers still import
 # directly from `agent_py.main`. The endpoints + their models now
@@ -192,6 +203,8 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
     app.include_router(chat.router)
     app.include_router(url.router)
     app.include_router(images.router)
+    app.include_router(files.router)
+    app.include_router(extract_table.router)
     app.include_router(summarize.router)
     app.include_router(mcp.router)
 

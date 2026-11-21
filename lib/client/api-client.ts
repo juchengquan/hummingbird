@@ -130,6 +130,20 @@ async function resolveDispatch(
   return resolveRemoteBackend()
 }
 
+/** For endpoints only agent-py implements (`/v1/extract-table`,
+ *  `/v1/files/refresh-url`): resolve the dispatch as usual, then keep
+ *  it remote only when it resolved to agent-py. agent-ts is frozen
+ *  (docs/PLAN-frontend-backend-split.md, Q11) and will not get these
+ *  routes, so a `ts-service` account stays on the in-Next route. */
+async function agentPyOnlyDispatch(
+  option: DispatchOption | undefined,
+): Promise<DispatchOption> {
+  const remote = await resolveDispatch(option)
+  return remote?.backend === "python"
+    ? { dispatch: "remote", remote }
+    : { dispatch: "in-next" }
+}
+
 /** Resolve the `DispatchOption` and return a stable cache key that
  *  includes the backend URL so a backend switch mid-session doesn't
  *  return a stale signed URL from the wrong service. The in-Next
@@ -972,19 +986,22 @@ async function refreshGeneratedFileUrl(
   storagePath: string,
   options?: DispatchOption,
 ): Promise<string | null> {
+  // agent-py only; agent-ts accounts use the in-Next route. Same
+  // camelCase body on both (agent-py mirrors the Zod schema here,
+  // unlike its snake_case `/v1/images/refresh-url`).
+  const dispatch = await agentPyOnlyDispatch(options)
   const result = await dispatchedFetch<
     { storagePath: string },
-    { storage_path: string },
+    { storagePath: string },
     { url: string }
   >({
     path: "/v1/files/refresh-url",
     localUrl: apiUrls.filesRefreshUrl(),
     bodyForLocal: { storagePath },
-    bodyForRemote: (b) => ({ storage_path: b.storagePath }),
     schema: RefreshFileUrlResponseSchema,
-    dispatch: options,
+    dispatch,
     inflight: refreshFileUrlInflight,
-    dedupeKey: await backendCacheKey(options, storagePath),
+    dedupeKey: await backendCacheKey(dispatch, storagePath),
   })
   if (!result.ok) return null
   return result.data.url
@@ -1167,10 +1184,11 @@ async function taskChildren(
 
 /**
  * Extract a structured citation table from a research report and its
- * source list. Mirrors the `summarizePost` dispatch pattern: tries the
- * remote backend first (when configured), falls back to the in-Next
- * route. Returns `null` on any failure — callers treat a missing table
- * as a degraded-but-safe outcome.
+ * source list. Goes to agent-py's `/v1/extract-table` when the account's
+ * backend is agent-py (and its prerequisites resolve); everything else —
+ * the in-Next backend, agent-ts (frozen, no such route), a missing
+ * session — uses the in-Next route. Returns `null` on any failure —
+ * callers treat a missing table as a degraded-but-safe outcome.
  */
 async function extractTable(
   body: ExtractTableRequestInput,
@@ -1186,7 +1204,7 @@ async function extractTable(
     bodyForLocal: body,
     schema: CitationTableSchema,
     signal: options?.signal,
-    dispatch: options,
+    dispatch: await agentPyOnlyDispatch(options),
   })
   return result.ok ? result.data : failureResult(result)
 }

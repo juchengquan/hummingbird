@@ -60,6 +60,15 @@ class ModelAllowlist:
     default_model: str
     """Catalog id of the service default (`AGENT_DEFAULT_MODEL`)."""
 
+    structured_output: frozenset[str] = frozenset()
+    """Catalog ids flagged `supportsStructuredOutput` — the same flag
+    `modelSupportsStructuredOutput` in `lib/shared/models.ts` reads."""
+
+    def supports_structured_output(self, model_id: str | None) -> bool:
+        """Whether the catalog flags `model_id` (absent / empty → the
+        default model) as supporting native structured output."""
+        return (model_id or self.default_model) in self.structured_output
+
     def resolve(self, model_id: str) -> str:
         """Anthropic API id for an allowed catalog id; raises
         `UnknownModelError` otherwise."""
@@ -84,6 +93,7 @@ def parse_allowlist(raw: Any, *, default_model: str, source: str = "models.json"
     if not isinstance(models, list):
         raise ModelConfigError(f"{source}: expected an object with a `models` array")
     api_ids: dict[str, str] = {}
+    structured: set[str] = set()
     for entry in models:
         if not isinstance(entry, dict):
             continue
@@ -99,6 +109,8 @@ def parse_allowlist(raw: Any, *, default_model: str, source: str = "models.json"
         if model_id in api_ids:
             raise ModelConfigError(f'{source}: duplicate model id "{model_id}"')
         api_ids[model_id] = api_id
+        if entry.get("supportsStructuredOutput") is True:
+            structured.add(model_id)
     if not api_ids:
         raise ModelConfigError(f"{source}: no {ANTHROPIC_PREFIX}* models — nothing to serve")
     if default_model not in api_ids:
@@ -106,7 +118,11 @@ def parse_allowlist(raw: Any, *, default_model: str, source: str = "models.json"
             f'AGENT_DEFAULT_MODEL "{default_model}" is not an {ANTHROPIC_PREFIX}* '
             f"model in {source} (allowed: {', '.join(sorted(api_ids))})"
         )
-    return ModelAllowlist(api_ids=api_ids, default_model=default_model)
+    return ModelAllowlist(
+        api_ids=api_ids,
+        default_model=default_model,
+        structured_output=frozenset(structured),
+    )
 
 
 def find_models_config(start: Path | None = None) -> Path | None:

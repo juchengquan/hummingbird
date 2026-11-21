@@ -35,6 +35,11 @@ __all__ = ["BodySizeLimitMiddleware", "BodyTooLargeError", "body_limit_for"]
 # the file itself — same slack as the Next.js route's `EXTRACT_BODY_MAX`.
 _MULTIPART_OVERHEAD = 64 * 1024
 
+# `/v1/extract-table`: `reportText` ≤ 100k chars + ≤ 100 sources (~4.3k
+# chars each) at ≤ 3 UTF-8 bytes per char, plus headroom — the Next.js
+# route's `EXTRACT_TABLE_BODY_MAX`.
+_EXTRACT_TABLE_BODY_MAX = 2 * 1024 * 1024
+
 # Routes whose JSON body legitimately carries a whole conversation.
 _CONVERSATION_PATHS = frozenset({"/v1/chat", "/v1/summarize"})
 
@@ -44,6 +49,7 @@ def body_limit_for(settings: Settings) -> Callable[[str], int]:
     - `/v1/extract` — the upload cap (`EXTRACT_MAX_BYTES`) plus
       multipart overhead; the route still enforces the file cap itself;
     - `/v1/chat`, `/v1/summarize` — `CHAT_BODY_MAX_BYTES`;
+    - `/v1/extract-table` — 2 MiB, as on the Next.js route;
     - everything else — `REQUEST_BODY_MAX_BYTES`."""
     extract_limit = settings.EXTRACT_MAX_BYTES + _MULTIPART_OVERHEAD
     chat_limit = settings.CHAT_BODY_MAX_BYTES
@@ -55,6 +61,8 @@ def body_limit_for(settings: Settings) -> Callable[[str], int]:
             return extract_limit
         if normalised in _CONVERSATION_PATHS:
             return chat_limit
+        if normalised == "/v1/extract-table":
+            return _EXTRACT_TABLE_BODY_MAX
         return default_limit
 
     return limit_for

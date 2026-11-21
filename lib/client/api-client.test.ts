@@ -252,6 +252,100 @@ describe("apiClient.images.refreshUrl — dispatch + wire shape", () => {
   })
 })
 
+// agent-py-only endpoints: agent-ts is frozen (PLAN-frontend-backend-split
+// Q11) and has no `/v1/extract-table` or `/v1/files/refresh-url`, so a
+// `ts-service` account must stay on the in-Next route.
+const TS_SERVICE: RemoteDispatch = {
+  backend: "ts-service",
+  baseUrl: "https://agent-ts.example",
+  authToken: "jwt-test-token",
+}
+
+describe("apiClient.files.refreshUrl — agent-py-only dispatch", () => {
+  const storagePath = "u-1/generated/f1-report.csv"
+  const signed = { url: "https://cdn.example/signed" }
+
+  test("python → agent-py /v1/files/refresh-url, camelCase body", async () => {
+    const log = installFetchStub({ jsonBody: signed })
+    const url = await apiClient.files.refreshUrl(storagePath, {
+      dispatch: "remote",
+      remote: REMOTE,
+    })
+    expect(url).toBe(signed.url)
+    expect(log).toHaveLength(1)
+    expect(log[0].url).toBe("https://agent-py.example/v1/files/refresh-url")
+    expect(log[0].authorization).toBe("Bearer jwt-test-token")
+    expect(log[0].body).toEqual({ storagePath })
+  })
+
+  test("ts-service → in-Next route, no bearer", async () => {
+    const log = installFetchStub({ jsonBody: signed })
+    const url = await apiClient.files.refreshUrl(storagePath, {
+      dispatch: "remote",
+      remote: TS_SERVICE,
+    })
+    expect(url).toBe(signed.url)
+    expect(log).toHaveLength(1)
+    expect(log[0].url).toBe("/api/files/refresh-url")
+    expect(log[0].authorization).toBeUndefined()
+    expect(log[0].body).toEqual({ storagePath })
+  })
+
+  test("in-next → in-Next route", async () => {
+    const log = installFetchStub({ jsonBody: signed })
+    await apiClient.files.refreshUrl(storagePath, { dispatch: "in-next" })
+    expect(log[0].url).toBe("/api/files/refresh-url")
+    expect(log[0].authorization).toBeUndefined()
+    expect(log[0].body).toEqual({ storagePath })
+  })
+})
+
+describe("apiClient.artifacts.extractTable — agent-py-only dispatch", () => {
+  const body = {
+    reportText: "r",
+    sources: [{ title: "t", url: "https://x.test", snippet: "s" }],
+    columnHints: ["Price"],
+  }
+  const table = {
+    columns: [{ id: "price", label: "Price", type: "text" as const }],
+    rows: [],
+    sources: [{ id: "s1", title: "t", url: "https://x.test", snippet: "s" }],
+  }
+
+  test("python → agent-py /v1/extract-table, body unchanged", async () => {
+    const log = installFetchStub({ jsonBody: table })
+    const res = await apiClient.artifacts.extractTable(body, {
+      dispatch: "remote",
+      remote: REMOTE,
+    })
+    expect(res).toEqual(table)
+    expect(log).toHaveLength(1)
+    expect(log[0].url).toBe("https://agent-py.example/v1/extract-table")
+    expect(log[0].authorization).toBe("Bearer jwt-test-token")
+    expect(log[0].body).toEqual(body)
+  })
+
+  test("ts-service → in-Next route, no bearer", async () => {
+    const log = installFetchStub({ jsonBody: table })
+    const res = await apiClient.artifacts.extractTable(body, {
+      dispatch: "remote",
+      remote: TS_SERVICE,
+    })
+    expect(res).toEqual(table)
+    expect(log).toHaveLength(1)
+    expect(log[0].url).toBe("/api/extract-table")
+    expect(log[0].authorization).toBeUndefined()
+    expect(log[0].body).toEqual(body)
+  })
+
+  test("in-next → in-Next route", async () => {
+    const log = installFetchStub({ jsonBody: table })
+    await apiClient.artifacts.extractTable(body, { dispatch: "in-next" })
+    expect(log[0].url).toBe("/api/extract-table")
+    expect(log[0].authorization).toBeUndefined()
+  })
+})
+
 describe("apiClient.mcp.upsertCloudServer — dispatch", () => {
   function validBody() {
     return {

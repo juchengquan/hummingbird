@@ -44,6 +44,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal
+from urllib.parse import quote
 
 import httpx
 import structlog
@@ -278,7 +279,14 @@ async def sign_storage_path(
     if client is None:
         client = httpx.AsyncClient(timeout=UPLOAD_TIMEOUT_S)
     try:
-        sign_url = f"{base}/storage/v1/object/sign/{STORAGE_BUCKET}/{storage_path}"
+        # Percent-encode the caller-supplied path (keeping `/`) so `?`, `#`
+        # or an encoded `%2E%2E` can't reshape the Storage request: the
+        # service-role key bypasses RLS, so the routes' first-segment
+        # check must see the same path Storage signs. A no-op for the
+        # paths this service and the Next.js app write
+        # (`<uid>/generated/<id>[-name].<ext>`, `[A-Za-z0-9._-]` only).
+        encoded = quote(storage_path, safe="/")
+        sign_url = f"{base}/storage/v1/object/sign/{STORAGE_BUCKET}/{encoded}"
         try:
             response = await client.post(
                 sign_url,
