@@ -550,18 +550,26 @@ paths:
         "204":
           description: Received (and logged when it held CSP violations).
         "400":
-          description: The body is not valid JSON. Empty body.
+          $ref: "#/components/responses/BadRequest"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
         "415":
-          description: Unsupported `Content-Type`. Empty body.
+          description: Unsupported `Content-Type` (`code` is `unsupported_content_type`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "429":
-          description: Too many reports from this client IP. Empty body.
+          description: Too many reports from this client IP (`code` is `rate_limit`).
           headers:
             Retry-After:
               description: Seconds until the client may report again.
               schema:
                 type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
 components:
   securitySchemes:

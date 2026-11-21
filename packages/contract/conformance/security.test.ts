@@ -2,9 +2,9 @@
  * `POST /v1/csp-report` (reportCspViolation): public CSP violation-report
  * intake. A well-formed report in any accepted media type → 204 with an
  * empty body; a body that is not JSON → 400; an unsupported media type →
- * 415. The intake never echoes input, so the error answers carry no body
- * either. (The per-IP rate limit is not exercised here — tripping it would
- * make the other cases in a shared run flaky.)
+ * 415. Errors carry the standard `ApiError` body and never echo input.
+ * (The per-IP rate limit is not exercised here — tripping it would make
+ * the other cases in a shared run flaky.)
  */
 import { beforeAll, describe, expect, test } from "bun:test"
 
@@ -62,17 +62,17 @@ describe.skipIf(!env.baseUrl)(`conformance: CSP report intake @ ${env.baseUrl}`,
     contract.assertConforms(OPERATION, ex)
   })
 
-  test.skipIf(skip)("malformed JSON → 400, empty body", async () => {
+  test.skipIf(skip)("malformed JSON → 400 invalid_request", async () => {
     const ex = await post("application/csp-report", "{not json")
     expect(ex.status).toBe(400)
-    expect(ex.text).toBe("")
+    expect((ex.body as { code?: string }).code).toBe("invalid_request")
     contract.assertConforms(OPERATION, ex)
   })
 
-  test.skipIf(skip)("unsupported media type → 415, empty body", async () => {
+  test.skipIf(skip)("unsupported media type → 415 unsupported_content_type", async () => {
     const ex = await post("text/plain", JSON.stringify(validRequestBodies[OPERATION]))
     expect(ex.status).toBe(415)
-    expect(ex.text).toBe("")
+    expect((ex.body as { code?: string }).code).toBe("unsupported_content_type")
     contract.assertConforms(OPERATION, ex)
   })
 })

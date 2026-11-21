@@ -972,29 +972,27 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description The body is not valid JSON. Empty body. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
+            400: components["responses"]["BadRequest"];
             413: components["responses"]["PayloadTooLarge"];
-            /** @description Unsupported `Content-Type`. Empty body. */
+            /** @description Unsupported `Content-Type` (`code` is `unsupported_content_type`). */
             415: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
-            /** @description Too many reports from this client IP. Empty body. */
+            /** @description Too many reports from this client IP (`code` is `rate_limit`). */
             429: {
                 headers: {
                     /** @description Seconds until the client may report again. */
                     "Retry-After"?: string;
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
         };
     };

@@ -190,9 +190,10 @@ Cases today:
   ignored rather than refused. Path parameters (`{token}`) are filled
   from `pathParams` in `fixtures.ts`.
 - `security.test.ts` — the public CSP report intake: a well-formed
-  report (`application/csp-report`, `application/reports+json`) → 204,
-  malformed JSON → 400, an unsupported media type → 415, all with an
-  empty body.
+  report (`application/csp-report`, `application/reports+json`) → 204
+  with an empty body; malformed JSON → 400 `invalid_request`, an
+  unsupported media type → 415 `unsupported_content_type`, both with the
+  standard `ApiError` body.
 
 ### Running it against agent-py
 

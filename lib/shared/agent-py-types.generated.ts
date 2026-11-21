@@ -582,15 +582,17 @@ export interface paths {
         /**
          * Csp Report
          * @description Public by nature (browsers send no credentials). Same answers as the
-         *     Next.js route, all with an empty body — input is never echoed:
-         *     429 + `Retry-After` over the per-IP limit (checked first), 415 for an
-         *     unsupported `Content-Type`, 400 for a body that isn't JSON, else 204
-         *     after logging one `csp_violation` line per violation found.
+         *     Next.js route — 429 + `Retry-After` over the per-IP limit (checked
+         *     first), 415 for an unsupported `Content-Type`, 400 for a body that
+         *     isn't JSON, else an empty 204 after logging one `csp_violation` line
+         *     per violation found. Errors carry the standard `{code, message}` body
+         *     (the Next.js route sends them empty; browsers ignore report responses,
+         *     and the contract keeps one error shape) — input is never echoed.
          *
          *     The 16 KiB body cap is enforced by `BodySizeLimitMiddleware` ahead of
-         *     routing, so an oversized body gets that middleware's 413 (JSON
-         *     `{detail}` body) before the rate limit is consulted — the Next.js
-         *     route answers an empty-bodied 413 after it.
+         *     routing, so an oversized body gets that middleware's 413 before the
+         *     rate limit is consulted — the Next.js route answers an empty-bodied
+         *     413 after it.
          */
         post: operations["csp_report_v1_csp_report_post"];
         delete?: never;

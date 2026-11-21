@@ -129,13 +129,14 @@ def test_reporting_batch_is_capped(client: TestClient) -> None:
 def test_unsupported_media_type_is_415_empty(client: TestClient) -> None:
     r = _post(client, LEGACY, "text/plain")
     assert r.status_code == 415
-    assert r.content == b""
+    assert r.json()["code"] == "unsupported_content_type"
 
 
 def test_malformed_json_is_400_empty(client: TestClient) -> None:
     r = _post(client, b"{not json")
     assert r.status_code == 400
-    assert r.content == b""
+    assert r.json()["code"] == "invalid_request"
+    assert "not json" not in r.text  # input is never echoed
 
 
 def test_oversized_body_is_413(client: TestClient) -> None:
@@ -148,7 +149,7 @@ def test_rate_limited_per_ip_with_retry_after(client: TestClient) -> None:
         assert _post(client, LEGACY).status_code == 204
     r = _post(client, LEGACY)
     assert r.status_code == 429
-    assert r.content == b""
+    assert r.json()["code"] == "rate_limit"
     assert int(r.headers["retry-after"]) >= 1
     # The limit is per client IP: another address is unaffected.
     other = client.post(

@@ -234,7 +234,9 @@ share tokens are redacted. The script sample and the original policy
 are never logged. The endpoint accepts `application/csp-report`
 (`report-uri`), `application/reports+json` (Reporting API) and
 `application/json`. It caps bodies at 16 KiB, allows 60 posts per
-minute per client IP, and always answers with an empty body.
+minute per client IP, and always answers with an empty body. (agent-py's
+`/v1/csp-report` answers errors with the standard `{code, message}` body;
+browsers ignore report responses either way.)
 
 The `via` field shows which delivery path the browser used. Chrome
 switches to `report-to` / `Reporting-Endpoints` whenever it is present
