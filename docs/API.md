@@ -197,16 +197,14 @@ Requires an authenticated Supabase session (cookie-based today).
 **Request**:
 
 ```ts
-{
-  kind: "conversation" | "document",
-  conversationId: string,  // uuid of a conversation the caller owns
-}
+| { kind: "conversation", conversationId: string }  // uuid the caller owns
+| { kind: "document",     documentId: string }      // uuid the caller owns
 ```
 
 **Response 200**: `{ token: string, kind: "conversation" | "document" }`
 
 **Errors**: `400` invalid body, `401` unauthorised, `404` conversation
-not found, `500` insert failure, `503` Supabase not configured.
+/ document not found, `500` insert failure, `503` Supabase not configured.
 
 ### `DELETE /api/share/[token]`
 
@@ -217,6 +215,15 @@ their own tokens (enforced by RLS).
 
 **Errors**: `401` unauthorised, `404` token not found, `500` update
 failure, `503` Supabase not configured.
+
+**agent-py** serves both as `POST /v1/share` and `DELETE /v1/share/{token}`
+(same bodies and statuses; bearer JWT) plus the public read
+`GET /v1/share/{token}` — no auth, rate limited per IP — that the share
+pages call from the browser when `NEXT_PUBLIC_AGENT_PY_URL` is set
+(`apiClient.share.resolve`). Its body is `ResolvedShare` in
+`packages/contract/openapi.yaml` (`ResolvedShareResponseSchema` in
+`lib/shared/api-schemas.ts`); any unresolvable token is a 404. The client
+dispatches create / revoke to agent-py for `python` accounts only.
 
 ### `POST /api/mcp/{serverId}/{discover|call|read}`
 
@@ -507,7 +514,9 @@ The frontend talks directly to Supabase for:
 - Storage uploads (`hooks/use-upload-file.ts`,
   `lib/files/persist.ts`)
 - Share-page reads via the service-role admin client server-side
-  (`lib/supabase/admin.ts`, used by `app/share/.../page.tsx`)
+  (`lib/supabase/admin.ts`, used by `app/share/.../page.tsx`) — only
+  when no backend is configured; with `NEXT_PUBLIC_AGENT_PY_URL` set the
+  pages read from agent-py's `GET /v1/share/{token}` instead
 
 These bypass the backend entirely and are unaffected by a Python
 rewrite.

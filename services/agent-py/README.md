@@ -169,6 +169,22 @@ uv run mypy src             # type check
 CI runs all four on every PR — see `.github/workflows/ci.yml` (job
 `agent-py`).
 
+## Share links (`/v1/share`)
+
+`routers/share.py` (HTTP) + `shares.py` (SQL) — the Python side of
+sharing, mirroring the Next.js routes and `lib/server/share/resolve.ts`.
+Contract: the `sharing` operations in `packages/contract/openapi.yaml`.
+
+| Operation | Auth | What |
+|---|---|---|
+| `POST /v1/share` | bearer | Body `{kind: "conversation", conversationId}` or `{kind: "document", documentId}` → `{token, kind}`. Ownership check + insert in one transaction under the caller's RLS (`store._set_user_context`). Token: 16 random bytes, base64url, 22 chars (same as Next). Foreign / missing target → 404; body cap 16 KiB. |
+| `DELETE /v1/share/{token}` | bearer | Stamps `revoked_at` under the caller's RLS → `{ok: true}`; another user's token and an unknown one are the same 404. |
+| `GET /v1/share/{token}` | **none** | What the share pages render (`ResolvedShare`: title, messages or document body, `createdAt` — no user ids). Reads with the pool's own role (the service-role equivalent), filtering every target read by the share creator's `user_id`. Unknown, revoked, foreign-target, no-DB and read errors are all the same 404 `not_found`. Rate limited: 60 / minute / client IP (in-process). At most 1000 messages (PostgREST's default `max_rows`, which bounds the Next.js resolver). |
+
+All three need `SUPABASE_DB_URL`; without it create / revoke answer 503
+and the public read answers 404 (as the Next.js page does without the
+service-role key).
+
 ## Configuration
 
 | Env var | Required? | What it does |
