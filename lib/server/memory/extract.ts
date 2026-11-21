@@ -4,30 +4,13 @@ import { generateStructured } from "@/server/ai/structured"
 import { getSupabaseServerClient } from "@/server/supabase/server"
 
 import { mergeFacts } from "./merge"
+import { buildMemoryExtractPrompt } from "./prompt"
 import { ExtractionSchema, type MemoryFact } from "./types"
 
 // Cheap structured-output model. Mirrors the default used by the other
 // `generateStructured` call sites in this repo (extract-table, verify,
 // suggestions all default to `google/gemini-2.5-flash`). Overridable via env.
 const MODEL = process.env.MEMORY_EXTRACT_MODEL || "google/gemini-2.5-flash"
-
-const PROMPT = (turn: string, existing: MemoryFact[]) =>
-  [
-    "You maintain a durable memory of stable facts about a user from their chats.",
-    "From the conversation turn below, extract ONLY durable, stable facts worth",
-    "remembering long-term (role, tech stack, recurring preferences, ongoing",
-    "projects). Skip ephemeral/task-specific details. Return `facts: []` if the",
-    "turn has nothing durable (this is common).",
-    "",
-    "For each fact, emit an op: `add` for a new fact, or `update` with the `id`",
-    "of an existing fact it revises/replaces. Do NOT duplicate an existing fact.",
-    "",
-    "Existing facts (id — fact):",
-    existing.length ? existing.map((f) => `${f.id} — ${f.fact}`).join("\n") : "(none)",
-    "",
-    "Conversation turn:",
-    turn,
-  ].join("\n")
 
 /** Extract + merge + upsert durable facts for the signed-in user. Gated +
  *  best-effort: returns silently on any failure. Conversation/message ids
@@ -63,7 +46,7 @@ export async function extractFacts(input: {
       extraction = await generateStructured({
         modelId: MODEL,
         schema: ExtractionSchema,
-        prompt: PROMPT(input.turnText, existing),
+        prompt: buildMemoryExtractPrompt(input.turnText, existing),
         temperature: 0,
         maxOutputTokens: 800,
       })
