@@ -140,14 +140,24 @@ export function initialRunTurnState(): RunTurnState {
   }
 }
 
-/** Whether the view holds anything a message would show — `false` means
- *  "the model returned an empty response" for a finished run. */
+/** Turn-level parts that annotate an answer rather than being one. */
+const ANNOTATION_TYPES: ReadonlySet<string> = new Set([
+  "hummingbird.routed_model",
+  "hummingbird.suggestions",
+  "hummingbird.verification",
+])
+
+/** Whether the view holds an answer — text, reasoning, a tool call or a
+ *  content part (image, file, code result, UI part, MCP app). `false`
+ *  for a finished run is chat's "the model returned an empty response". */
 export function hasOutput(view: RunTurnView): boolean {
   return (
     view.text !== "" ||
     view.reasoning !== "" ||
     view.toolCalls.length > 0 ||
-    view.activities.some((a) => a.activityType in ACTIVITY_FRAME_TYPES)
+    view.activities.some(
+      (a) => a.activityType in ACTIVITY_FRAME_TYPES && !ANNOTATION_TYPES.has(a.activityType),
+    )
   )
 }
 

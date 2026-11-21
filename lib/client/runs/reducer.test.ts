@@ -322,16 +322,19 @@ describe("reducer edges", () => {
     expect(ops.map((o) => o.type)).toEqual(["frame", "frame"])
   })
 
-  test("hasOutput: a run with only plan activity has none", () => {
+  test("hasOutput: plan / routed-model / suggestions alone are no answer", () => {
+    const part = (activityType: string, content: unknown) => ({
+      type: "ACTIVITY_SNAPSHOT",
+      messageId: `r:${activityType}`,
+      activityType,
+      content,
+      replace: true,
+    })
     const { state } = reduceRunEvents([
       started,
-      {
-        type: "ACTIVITY_SNAPSHOT",
-        messageId: "r:plan",
-        activityType: "hummingbird.plan",
-        content: { items: [] },
-        replace: true,
-      },
+      part("hummingbird.plan", { items: [] }),
+      part("hummingbird.routed_model", { model: "m" }),
+      part("hummingbird.suggestions", { values: ["x"] }),
     ] as never)
     expect(hasOutput(state.view)).toBe(false)
     expect(hasOutput(reduceRunEvents(loadFixture("memory-interrupt-ui").items.map((i) => i.event)).state.view)).toBe(

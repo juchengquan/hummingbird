@@ -176,7 +176,7 @@ interface RunSession {
    `{ frame: handleFrame, clear }`, where `clear` calls the new store
    mutator `clearMessageOutput(placeholder.id)` and resets the local
    `toolCalls` buffer, `liveToolCalls[placeholder.id]` and the reasoning
-   timers. `ensurePlaceholder()` stays lazy (first frame).
+   timers.
    **Artifacts on reset:** a `reset` re-applies `tool_image` / `tool_file`
    frames; keep the ids of the generated images / files the message had
    before the clear and don't `createArtifact` for those again.
@@ -185,7 +185,11 @@ interface RunSession {
    enabledSkills, workspaceId: activeWorkspaceId || undefined })`, then
    `const session = (await import("@/client/runs/session")).startRunSession(body, { target, sink, onStarted, onCursor })`.
    (Parity Q32: attachments, MCP servers, sandbox files, reasoning effort,
-   reference images and the memory opt-out are not sent.)
+   reference images and the memory opt-out are not sent. The contract caps
+   `systemPrompt` at 20 000 chars and `skills` at 10 — `422` past them.)
+   Parts can arrive before any text (`routed_model` is a run's first
+   event), so create the placeholder before starting, not on the first
+   text frame; "empty response" is then `!hasOutput(result.state.view)`.
 4. Stop → `session.cancel()`. Keep a per-conversation map of sessions next
    to `abortControllersRef` (`stop()` cancels the active conversation's;
    a deleted conversation's session is `detach()`ed). Unmount → `detach()`.
@@ -203,8 +207,8 @@ interface RunSession {
    is still this one (the same "still my controller" guard as today).
 7. Pointer (Q36): `onStarted` → `saveActiveRun({ runId, threadId,
    conversationId, messageId: placeholder.id, status: "running", cursor:
-   "0", anonymous: !target.authToken, model })` — create the placeholder
-   eagerly on the runs path so the pointer has its id; `onCursor` →
+   "0", anonymous: !target.authToken, model })` (the placeholder exists
+   already, step 3); `onCursor` →
    throttled (~1 s) `updateActiveRun(conv, runId, { cursor })`; outcome
    `interrupt` → `updateActiveRun(…, { status: "interrupted" })`; any other
    outcome → `clearActiveRun(conv, runId)`.
