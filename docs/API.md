@@ -45,6 +45,18 @@ gated routes fail with a 500 until fixed.
 AI key): clients must not apply the `auth` mock-response fallback to
 it; they show a sign-in prompt instead.
 
+### Error envelope
+
+JSON error responses use `{ code, message }` — a stable machine `code`
+the client keys typed UI off, plus a display `message` (extra fields
+allowed, e.g. `issues` on a validation error). The shared contract
+(`packages/contract/openapi.yaml`, `ApiError`) allows no other error
+body, and agent-py answers every non-streaming error in this shape (its
+request validation answers `422 { code: "invalid_request", message,
+issues }`; see `services/agent-py/README.md` → *Error responses*). Some
+older Next routes listed below still answer `{ error }`; the client
+reads `message ?? error`.
+
 ### Request body caps — `413 payload_too_large`
 
 App Router route handlers have no default body limit, so every JSON
