@@ -63,6 +63,13 @@ import { isAuthRequiredError } from "@/shared/api-errors"
 import { resolveBackendBaseUrl } from "@/shared/backend-base-url"
 
 import { narrowToRemoteBody } from "@/client/api/chat-marshalling"
+import {
+  cancelRun,
+  getRun,
+  rejoinRun,
+  resumeRun,
+  startRun,
+} from "@/client/runs/transport"
 import type { ChatBackend } from "@/client/hooks/store/slices/ui"
 import { notifyAuthRequired } from "@/client/auth/auth-required"
 
@@ -1341,6 +1348,18 @@ async function extractTable(
 export const apiClient = {
   urls: apiUrls,
   chat: { stream: chatStream },
+  /** agent-py's runs API (`/v1/runs`) — chat on runs, "agent-py (runs)"
+   *  (Q33). Transport in `lib/client/runs/transport.ts`; sessions that
+   *  drive it through `@ag-ui/client` into the store are in
+   *  `lib/client/runs/session.ts` (see `lib/client/runs/README.md`).
+   *  Unlike the rest of `apiClient`, these throw `RunsError`. */
+  runs: {
+    start: startRun,
+    rejoin: rejoinRun,
+    status: getRun,
+    cancel: cancelRun,
+    resume: resumeRun,
+  },
   tasks: {
     start: tasksStart,
     resume: tasksResume,

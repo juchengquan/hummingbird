@@ -61,3 +61,26 @@ describe("updateMessageGeneratedFileUrl", () => {
     expect(got?.url).toBe("https://old")
   })
 })
+
+describe("clearMessageOutput", () => {
+  test("clears a turn's output, keeps the message itself", () => {
+    const conv = useStore.getState().createConversation()
+    const msg = useStore.getState().addMessage({ role: "assistant", content: "" }, conv.id)
+    const s = useStore.getState()
+    s.appendToMessage(msg.id, "partial")
+    s.appendToMessageReasoning(msg.id, "thinking")
+    s.setMessageReasoningDuration(msg.id, 5)
+    s.setMessageToolCalls(msg.id, [{ id: "t1", name: "webSearch", summary: "1 result" }])
+    s.setMessageSuggestions(msg.id, ["more?"])
+    s.setMessageRoutedModel(msg.id, "m")
+    s.appendMessageGeneratedFiles(msg.id, [
+      { id: "f1", name: "a", sizeBytes: 1, mimeType: "text/plain", url: "data:,", storagePath: null },
+    ])
+    s.setMessageError(msg.id, { code: "network" })
+    s.clearMessageOutput(msg.id)
+    const got = useStore.getState().conversations
+      .find((c) => c.id === conv.id)?.messages
+      .find((m) => m.id === msg.id)
+    expect(got).toEqual({ id: msg.id, role: "assistant", content: "", timestamp: msg.timestamp })
+  })
+})
