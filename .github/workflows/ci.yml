@@ -185,6 +185,54 @@ jobs:
       - name: Check generated types are up to date
         run: bun run codegen:agent-types:check
 
+  # Spec-first contract (packages/contract, PLAN-frontend-backend-split
+  # Q19): lint openapi.yaml, fail if the TS types / Pydantic models
+  # generated from it are stale, and run the contract's offline tests
+  # (spec compiles, fixtures valid, vendored AG-UI schema unchanged). The
+  # conformance cases need a live backend, so they report as skipped here.
+  # The suite's own typecheck + lint ride on the `ci` job (root tsc/eslint
+  # cover packages/).
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Cache bun install
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            node_modules
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.5.4"
+          enable-cache: true
+
+      - name: Install bun deps
+        run: bun install --frozen-lockfile
+
+      - name: Sync agent-py deps
+        working-directory: services/agent-py
+        run: uv sync --frozen
+
+      - name: Lint openapi.yaml (Redocly)
+        run: bun run contract:lint
+
+      - name: Generated code is up to date with the spec
+        run: bash packages/contract/scripts/gen.sh --check
+
+      - name: Contract offline tests
+        run: bun test ./packages/contract
+
   # Root web-app unit tests. Runs the split root suite via
   # `bun run test` → scripts/run-tests.sh (two bun processes: isolates
   # app/api/tasks/'s process-global mock.module mocks, excludes services/;
