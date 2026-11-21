@@ -344,6 +344,24 @@ walking up from the package, or via `MODELS_CONFIG_PATH`. Adding an
 `anthropic/*` model to `config/models.json` means setting its
 `anthropicModelId` too. Details: `services/README.md` § Model allowlist.
 
+**Runs API (`/v1/runs`, Phase 2 of `docs/PLAN-frontend-backend-split.md`).**
+Five endpoints in `routers/runs.py`: `POST /v1/runs` (start — AG-UI
+`RunAgentInput`, options in `forwardedProps`; interactive → `200` AG-UI
+SSE, background → `202`), `GET /v1/runs` (list), `GET /v1/runs/{id}`,
+`GET /v1/runs/{id}/events` (rejoin from a `<seq>` / `<seq>.<k>` cursor),
+`POST /v1/runs/{id}/cancel`. The run model lives in
+`services/agent-py/src/agent_py/runs/` — `wiring.py` builds every service
+(stores, event logs, encoder, stream, harness, driver) and is the one
+place to swap an implementation; a run is a `tasks` row (0041) for a
+signed-in caller with `SUPABASE_DB_URL`, else in memory. Event mapping
+and stream rules: `packages/contract/RUN_EVENTS.md`. Settings:
+`REQUIRE_AUTH_FOR_AI` (refuses anonymous runs, as on Next) and
+`RUNS_*` (lease/heartbeat, reaper interval, memory TTL/cap, per-IP
+rate limits — `services/agent-py/README.md` § Configuration).
+`RUNS_STUB_HARNESS=true` swaps the native harness (today's chat loop,
+needs `ANTHROPIC_API_KEY`) for a model-free stub — for the contract
+conformance suite (`CONTRACT_RUNS_STUB=1`) only.
+
 **Deploy target decided** — self-host on a small VM (Hetzner CX22 as
 the named example, ~€4.5/mo; home server / NAS as a parallel option
 if uptime is good). Reasoning in `PLAN-agent-api.md` §Host decision.

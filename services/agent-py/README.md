@@ -267,12 +267,24 @@ refuses anonymous starts with `401 auth_required`. Per-IP limits:
 `RUNS_ANONYMOUS_DAILY_BUDGET` and `RUNS_ANONYMOUS_MAX_CONCURRENT` →
 `429 rate_limit`.
 
-**Wave-3b seams.** On this branch the event logs are the in-memory
-reference log, the encoder is the `RecordingEncoder` fake, the stream is
-a replay + live tail without gap handling and the harness is
-`UnwiredHarness` (every run fails `unavailable`) unless
-`RUNS_STUB_HARNESS=true`; each is marked `WIRE(3b-A)` / `WIRE(3b-C)` in
-`runs/wiring.py`.
+**What runs wire to** (`runs/wiring.py`, one instance of each per
+process). Event logs: `runs/event_log_pg.py` over `task_events` for
+signed-in runs with a database, `runs/event_log_memory.py` (TTL'd,
+capped — a run past a cap fails `limit_reached`) otherwise. Streams:
+`runs/stream.py` with the AG-UI encoder of `runs/agui_encoder.py`; a
+stream pulls its first frame before answering, so a cursor beyond the
+log is `400` before any byte is sent. The driver emits through
+`runs/coalescer.py` (text deltas merged before they get a seq). The
+harness is `runs/native_harness.py` — today's chat loop
+(`chat_loop.py`) as an adapter, AG-UI history → model input by
+`runs/history.py` — or the model-free stub under `RUNS_STUB_HARNESS`.
+An interrupted run stores its harness checkpoint with its outcome
+(`tasks.checkpoint` / memory); the run that resumes it reads it as its
+own owner and continues the turn with the full tool results. Unknown
+`forwardedProps.model` → `400 unknown_model` before any row exists. The
+maintenance loop also runs `runs/compaction.py`'s retention sweep every
+10 min when a database is configured (compact ended interactive logs
+after 24 h, purge them after 30 days; background logs untouched).
 
 ## Configuration
 
@@ -288,9 +300,9 @@ a replay + live tail without gap handling and the harness is
 | `SCHEDULER_ENABLED` | No | Default `false`. Run the schedule dispatcher loop (`scheduler.py`) in this process: it fires due `task_schedules` rows exactly like the Vercel Cron's `/api/tasks/jobs/tick`. Needs `SUPABASE_DB_URL`. Safe alongside that cron and on several replicas — see [Scheduled tasks](#scheduled-tasks-replacing-the-vercel-cron). `/readyz` reports `scheduler_alive` / `scheduler_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
 | `SCHEDULER_INTERVAL_SECONDS` | No | Default `60` (the Vercel Cron's cadence). Seconds between dispatcher ticks. |
 | `REQUIRE_AUTH_FOR_AI` | No | Default off. `true` / `1` (with `SUPABASE_JWT_SECRET` set) refuses anonymous runs with `401 auth_required`. Strict values (`true` / `false` / `1` / `0`); anything else fails anonymous starts with 500 — never silently open. Same variable as the Next.js routes. |
-| `RUNS_STUB_HARNESS` | No | Default `false`. Run every run on the model-free stub (`runs/stub_harness.py`, steered by `forwardedProps.conformance`) — for the contract conformance suite only. |
+| `RUNS_STUB_HARNESS` | No | Default `false` (runs use the native harness and `ANTHROPIC_API_KEY`; without a key every run fails `unavailable`). `true` runs every run on the model-free stub (`runs/stub_harness.py`, steered by `forwardedProps.conformance`) — for the contract conformance suite only. |
 | `RUNS_LEASE_SECONDS` / `RUNS_HEARTBEAT_SECONDS` | No | Defaults `60` / `5`. An executing interactive run's lease and how often it is extended (also the latency of a cancel served by another replica). |
-| `RUNS_REAPER_INTERVAL_SECONDS` | No | Default `15`. Runs maintenance loop: reap lapsed interactive runs, drop expired in-memory runs. |
+| `RUNS_REAPER_INTERVAL_SECONDS` | No | Default `15`. Runs maintenance loop: reap lapsed interactive runs, drop expired in-memory runs and their logs (the Postgres retention sweep runs every 10 min regardless). |
 | `RUNS_MEMORY_TTL_SECONDS` / `RUNS_MEMORY_MAX_RUNS` | No | Defaults `900` / `2000`. How long an in-memory run is kept after it ends; how many runs memory holds at once (past it, starts answer 503). |
 | `RUNS_RATE_PER_MINUTE` | No | Default `30`. Run starts per client IP per minute, every caller. |
 | `RUNS_ANONYMOUS_RATE_PER_MINUTE` / `RUNS_ANONYMOUS_DAILY_BUDGET` / `RUNS_ANONYMOUS_MAX_CONCURRENT` | No | Defaults `10` / `200` / `3`. Anonymous starts per IP per minute, per rolling 24 h, and live anonymous runs per IP. |

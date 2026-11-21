@@ -1,6 +1,6 @@
 # Plan: Frontend / backend split
 
-Status: **Waves 1–2 (Phases 0–1) shipped (#294, #295). Wave 3a (Phase 2 foundation) in progress.** Decided in a design interview
+Status: **Waves 1–2 (Phases 0–1) shipped (#294, #295). Wave 3a shipped (#296). Wave 3b in progress.** Decided in a design interview
 on 2026-11-21. Supersedes the open parts of
 [`PLAN-backend-extraction.md`](PLAN-backend-extraction.md), whose Phase 1
 (single `apiClient` + Zod schemas + `docs/API.md`) shipped and is the
