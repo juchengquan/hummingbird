@@ -64,9 +64,12 @@ __all__ = [
     "LoopSucceeded",
     "PendingCall",
     "ProviderErrorCode",
+    "ToolRun",
     "UsageMeter",
     "categorize_provider_error",
+    "emit_tool_run",
     "execute_tool",
+    "race_cancel",
     "run_turn_loop",
 ]
 
