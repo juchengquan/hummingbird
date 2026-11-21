@@ -34,6 +34,7 @@ __all__ = [
     "attach_tool_results",
     "find_tool_call",
     "last_user_index",
+    "last_user_text",
     "normalize",
     "request_taint",
     "system_texts",
@@ -51,6 +52,24 @@ def last_user_index(messages: Sequence[AgUiMessage]) -> int:
         if messages[i].get("role") == "user":
             return i
     return -1
+
+
+def last_user_text(messages: Sequence[AgUiMessage]) -> str:
+    """The last `user` message's text (its `text` parts joined by
+    newlines); "" when there is none."""
+    i = last_user_index(messages)
+    if i < 0:
+        return ""
+    content = messages[i].get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    return "\n".join(
+        str(p.get("text"))
+        for p in content
+        if isinstance(p, Mapping) and p.get("type") == "text" and isinstance(p.get("text"), str)
+    )
 
 
 def system_texts(messages: Iterable[AgUiMessage]) -> list[str]:

@@ -16,8 +16,8 @@ prompt). `forwardedProps` (`RunInput.options`, `RunForwardedProps`):
 | `systemPrompt` | prepended to the system prompt |
 | `skills[]` | the backend tools offered: `webSearch`, `webFetch`, `imageGen` (→ `generateImage`), `searchFiles` (signed-in runs), with their per-skill config |
 | `maxSteps` | model calls per run, 1 to 50; absent → `DEFAULT_MAX_STEPS` (chat's 6) |
-| `requireApprovalFor[]` ✚ | tool names that wait for the user's approval (not in the contract yet) |
-| `workspaceId` ✚ | scopes `searchFiles` and adds the workspace's cloud MCP tools (not in the contract yet) |
+| `requireApprovalFor[]` | tool names that wait for the user's approval |
+| `workspaceId` | scopes `searchFiles` and adds the workspace's cloud MCP tools (signed-in runs) |
 
 `askUser` and `renderUI` are always offered and always wait for an
 answer; MCP tools their server marks for approval wait too. Client-side
@@ -106,6 +106,7 @@ from .history import (
     attach_tool_results,
     find_tool_call,
     last_user_index,
+    last_user_text,
     normalize,
     request_taint,
     system_texts,
@@ -758,7 +759,7 @@ class NativeHarness:
             values = await race_cancel(
                 generate_suggestions(
                     client=client,
-                    user_text=_last_user_text(history),
+                    user_text=last_user_text(history),
                     assistant_reply=text,
                     usage=meter,
                 ),
@@ -780,20 +781,6 @@ def _cancel_waiter(cancel: CancelSignal) -> Any:
 
 def _list(value: object) -> list[object]:
     return value if isinstance(value, list) else []
-
-
-def _last_user_text(history: Sequence[Mapping[str, object]]) -> str:
-    i = last_user_index(history)
-    if i < 0:
-        return ""
-    content = history[i].get("content")
-    if isinstance(content, str):
-        return content
-    return "\n".join(
-        str(p.get("text"))
-        for p in _list(content)
-        if isinstance(p, Mapping) and p.get("type") == "text" and isinstance(p.get("text"), str)
-    )
 
 
 def _system_prompt(opts: RunOptions, run_input: RunInput) -> str | None:

@@ -198,16 +198,32 @@ class RunRepository(Protocol):
         (False) or cancellation check."""
         ...
 
+    async def load_checkpoint(self, owner: RunOwner, run_id: str) -> dict[str, object] | None:
+        """The harness state stored on `owner`'s run `run_id`
+        (`tasks.checkpoint`): what an `Interrupted` settle stored, for the
+        run that answers it (Q24, Q31). None when the run is not the
+        owner's, or holds none."""
+        ...
+
     async def mark_running(self, run_id: str) -> bool:
         """`queued` → `running` (a background worker picking it up). False
         when the run is not `queued`."""
         ...
 
-    async def settle(self, run_id: str, outcome: RunOutcome) -> bool:
+    async def settle(
+        self,
+        run_id: str,
+        outcome: RunOutcome,
+        *,
+        checkpoint: dict[str, object] | None = None,
+    ) -> bool:
         """End a live run: `Succeeded` → `done`, `Failed` → `failed`,
         `Cancelled` → `cancelled`, `Interrupted` → `paused`; stores
         `outcome_to_json(outcome)` in `outcome`, sets `finished_at`, clears
-        the lease. Only from `queued` / `running` — returns False and
+        the lease. `checkpoint`, when given, replaces the stored harness
+        state (`tasks.checkpoint`) in the same write — the state an
+        `Interrupted` run's answer continues from; None leaves it as it
+        is. Only from `queued` / `running` — returns False and
         changes nothing otherwise (a concurrent `cancel` or reap won: the
         caller must not append its own terminal entry then)."""
         ...
@@ -426,6 +442,10 @@ class InMemoryRunRepository:
 
     # -- system --
 
+    async def load_checkpoint(self, owner: RunOwner, run_id: str) -> dict[str, object] | None:
+        row = self._owned(owner, run_id)
+        return None if row is None else row.checkpoint
+
     async def mark_running(self, run_id: str) -> bool:
         row = self._rows.get(run_id)
         if row is None or row.record.internal_status != "queued":
@@ -433,10 +453,18 @@ class InMemoryRunRepository:
         self._set(row, internal_status="running")
         return True
 
-    async def settle(self, run_id: str, outcome: RunOutcome) -> bool:
+    async def settle(
+        self,
+        run_id: str,
+        outcome: RunOutcome,
+        *,
+        checkpoint: dict[str, object] | None = None,
+    ) -> bool:
         row = self._rows.get(run_id)
         if row is None or row.record.internal_status not in ("queued", "running"):
             return False
+        if checkpoint is not None:
+            row.checkpoint = checkpoint
         self._apply_outcome(row, outcome)
         return True
 

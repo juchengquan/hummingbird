@@ -31,7 +31,10 @@ case.
 
 **Interactive streams** are readers of the run's event log (the run
 itself executes detached, `runs.driver`): a start answers exactly what
-`streamRunEvents?after=0` would.
+`streamRunEvents?after=0` would. Every stream pulls its first frame
+before committing to `200` (`_sse_response`): `stream_run_events`
+validates the cursor and the run there, so a cursor beyond the log is
+`400 invalid_request` and a run that vanished is `404`.
 """
 
 from __future__ import annotations
@@ -49,7 +52,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from ..auth import get_current_user
 from ..contract import models
 from ..events import StatusEvent
-from ..model_allowlist import UnknownModelError, resolve_api_model_id
+from ..model_allowlist import UnknownModelError
 from ..rate_limit import rate_limit_key
 from ..runs.access import (
     RUN_TOKEN_HEADER,
@@ -69,6 +72,8 @@ from ..runs.repository import (
 )
 from ..runs.repository_memory import MemoryStoreFull
 from ..runs.repository_pg import RunWriteError
+from ..runs.history import last_user_text
+from ..runs.native_harness import validate_run_options
 from ..runs.run_input import (
     DEFAULT_BACKGROUND_MAX_STEPS,
     ResumeInvalid,
@@ -77,8 +82,8 @@ from ..runs.run_input import (
     build_run_input,
     check_resume,
     forwarded_props,
-    last_user_text,
 )
+from ..runs.stream import CursorOutOfRange
 from ..runs.wiring import RunServices, get_run_services
 from ..settings import Settings, get_settings
 
@@ -203,6 +208,43 @@ def _event_stream(
     )
 
 
+async def _sse_response(
+    frames: AsyncIterator[str], *, headers: dict[str, str] | None = None
+) -> StreamingResponse:
+    """A `200` SSE response over `frames`, after pulling the first frame:
+    `stream_run_events` raises before sending anything for a cursor
+    beyond the log (→ 400) or a missing run (→ 404)."""
+    try:
+        first: str | None = await anext(frames)
+    except CursorOutOfRange:
+        await _aclose(frames)
+        _raise(400, "invalid_request", "The cursor is beyond the run's log.")
+    except LookupError:
+        await _aclose(frames)
+        _not_found()
+    except StopAsyncIteration:
+        first = None
+
+    async def body() -> AsyncIterator[str]:
+        try:
+            if first is not None:
+                yield first
+            async for frame in frames:
+                yield frame
+        finally:
+            await _aclose(frames)
+
+    return StreamingResponse(
+        body(), media_type="text/event-stream", headers={**(headers or {}), **_SSE_HEADERS}
+    )
+
+
+async def _aclose(frames: AsyncIterator[str]) -> None:
+    aclose = getattr(frames, "aclose", None)
+    if aclose is not None:
+        await aclose()
+
+
 def _location(run_id: str) -> str:
     return f"/v1/runs/{run_id}"
 
@@ -257,11 +299,12 @@ async def start_run(
     resume = body.resume or []
     if resume and fp.previousRunId is None:
         _raise(400, "invalid_request", "resume[] needs forwardedProps.previousRunId.")
-    if fp.model is not None:
-        try:
-            resolve_api_model_id(fp.model)
-        except UnknownModelError as exc:
-            raise HTTPException(status_code=400, detail=exc.to_detail()) from exc
+    # Before anything is created, as `/v1/chat` does: an unknown model is
+    # `400 unknown_model` with no row (the harness re-checks).
+    try:
+        validate_run_options(fp.model_dump(mode="json", exclude_none=True))
+    except UnknownModelError as exc:
+        raise HTTPException(status_code=400, detail=exc.to_detail()) from exc
 
     # Who owns the run. An anonymous caller's presented token counts only
     # when it owns this run (an idempotent retry) or the interrupted run a
@@ -365,11 +408,7 @@ async def start_run(
         )
     if token is not None:
         headers[RUN_TOKEN_HEADER] = token
-    return StreamingResponse(
-        _event_stream(services, owner, run, None),
-        media_type="text/event-stream",
-        headers={**headers, **_SSE_HEADERS},
-    )
+    return await _sse_response(_event_stream(services, owner, run, None), headers=headers)
 
 
 async def _queue_background(services: RunServices, owner: RunOwner, run: RunRecord) -> None:
@@ -476,16 +515,7 @@ async def stream_run_events(
         except ValueError:
             _raise(400, "invalid_request", "Invalid cursor.")
     run = await _owned_run(services, owner, run_id)
-    if cursor is not None and cursor.seq > 0:
-        last_seq = await services.log_for(owner).last_seq(run.id)
-        purged = last_seq == 0 and not run.is_live
-        if cursor.seq > last_seq and not purged:
-            _raise(400, "invalid_request", "The cursor is beyond the run's log.")
-    return StreamingResponse(
-        _event_stream(services, owner, run, cursor),
-        media_type="text/event-stream",
-        headers=_SSE_HEADERS,
-    )
+    return await _sse_response(_event_stream(services, owner, run, cursor))
 
 
 # --- POST /v1/runs/{runId}/cancel --------------------------------------------------

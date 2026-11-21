@@ -28,6 +28,7 @@ import contextlib
 
 from ..emitter import RunEmitter
 from .harness import CancelSignal, HarnessResult, RunInput
+from .history import last_user_text
 from .model import (
     Cancelled,
     Failed,
@@ -49,22 +50,6 @@ def _int(raw: object, default: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, raw))
 
 
-def _last_user_text(messages: tuple[dict[str, object], ...]) -> str:
-    for message in reversed(messages):
-        if message.get("role") != "user":
-            continue
-        content = message.get("content")
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            return " ".join(
-                str(p.get("text", ""))
-                for p in content
-                if isinstance(p, dict) and p.get("type") == "text"
-            )
-    return ""
-
-
 class StubHarness:
     name = "stub"
 
@@ -82,7 +67,7 @@ class StubHarness:
                 f"{a.interrupt_id}={a.status}" for a in run_input.resume
             )
         else:
-            first = f"Stub reply to: {_last_user_text(run_input.messages)[:200]}"
+            first = f"Stub reply to: {last_user_text(run_input.messages)[:200]}"
         texts = [first] + [f" (step {i + 1})" for i in range(1, steps)]
 
         for text in texts:

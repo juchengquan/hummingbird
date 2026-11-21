@@ -3,13 +3,22 @@
 `routers/runs.py` reads everything it needs from `RunServices`; the
 lifespan (`main.py`) builds it once the DB pool exists and runs its
 maintenance loop. Swapping an implementation means changing this file
-only. Each stand-in for another wave-3b workstream is marked:
+only. What is wired:
 
-* `# WIRE(3b-A)` — event logs (Postgres `task_events` log, TTL'd memory
-  log), the AG-UI encoder, `stream_run_events`, compaction (post-settle);
-* `# WIRE(3b-C)` — the harness adapter over today's agent loop (and,
-  in `run_input.py`, AG-UI → model-input conversion for background
-  checkpoints).
+* event logs — `PgRunEventLog` over `task_events` (signed-in runs, when
+  a pool exists) and the TTL'd `MemoryRunEventLog` (anonymous runs, and
+  signed-in runs without a database); one instance of each per process,
+  shared by the driver and every stream;
+* the AG-UI encoder (`agui_encoder.agui_encoder_factory`) and the stream
+  (`stream.stream_run_events`);
+* the harness — `native_harness.build_native_harness` (today's agent
+  loop), or the model-free `StubHarness` under `RUNS_STUB_HARNESS=true`
+  (the conformance suite);
+* maintenance — `maintain()` reaps lapsed interactive runs and drops
+  expired in-memory runs + logs every `RUNS_REAPER_INTERVAL_SECONDS`;
+  `retention_sweep` (compaction + purge, `compaction.py`) runs every
+  `SWEEP_INTERVAL` (10 min) when a pool exists. Compaction is
+  time-based (24 h after a run ends), so nothing runs post-settle.
 
 **Stores, by owner** (`repo_for` / `log_for`):
 
@@ -31,6 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
@@ -41,15 +51,20 @@ import structlog
 from .. import db
 from ..settings import Settings, get_settings
 from .access import AnonymousLimits
-from .driver import PostSettleHook, RunDriver, reap_interactive_runs
-from .encoder import AgUiEncoder, AgUiEncoderFactory, RecordingEncoder
-from .event_log import InMemoryRunEventLog, RunEventLog
+from .agui_encoder import agui_encoder_factory
+from .compaction import SWEEP_INTERVAL, retention_sweep
+from .driver import RunDriver, reap_interactive_runs
+from .encoder import AgUiEncoder, AgUiEncoderFactory
+from .event_log import RunEventLog
+from .event_log_memory import MemoryRunEventLog
+from .event_log_pg import PgRunEventLog
 from .harness import HarnessAdapter
 from .model import RunCursor, RunOwner, RunRecord
-from .placeholders import UnwiredHarness, noop_post_settle, placeholder_stream_run_events
+from .native_harness import build_native_harness
 from .repository import RunRepository
 from .repository_memory import MemoryRunRepository
 from .repository_pg import PgRunRepository
+from .stream import stream_run_events
 from .stub_harness import StubHarness
 
 __all__ = [
@@ -65,8 +80,9 @@ logger = structlog.get_logger(__name__)
 
 
 class StreamRunEvents(Protocol):
-    """Type of 3b-A's `stream.stream_run_events` (each item = one
-    complete SSE frame)."""
+    """Type of `stream.stream_run_events` (each item = one complete SSE
+    frame; the first `anext()` raises `CursorOutOfRange` / `LookupError`
+    before anything is sent)."""
 
     def __call__(
         self,
@@ -82,6 +98,8 @@ class StreamRunEvents(Protocol):
 @dataclass
 class RunServices:
     settings: Settings
+    pool: asyncpg.Pool | None
+    """The DB pool the Postgres store and log use (retention sweeps)."""
     pg_repo: PgRunRepository | None
     """Signed-in runs when the database is configured; None otherwise."""
     pg_log: RunEventLog | None
@@ -127,37 +145,51 @@ class RunServices:
         except Exception as exc:  # pragma: no cover — memory store
             logger.warning("runs.maintenance.reap_memory_failed", error=str(exc))
         for run_id in self.memory_repo.sweep():
-            # WIRE(3b-A): the TTL'd memory log drops its own entries.
+            # The run row is gone: drop its log now rather than at the
+            # log's own TTL (both are ~15 min after the run ended).
             with contextlib.suppress(Exception):
                 await self.memory_log.purge(run_id)
+        if isinstance(self.memory_log, MemoryRunEventLog):
+            self.memory_log.sweep()
+
+    async def sweep_retention(self) -> None:
+        """Compact + purge the Postgres logs that are due (`compaction.py`).
+        No-op without a pool."""
+        if self.pool is None or self.pg_log is None:
+            return
+        try:
+            await retention_sweep(self.pool, self.pg_log)
+        except Exception as exc:
+            logger.warning("runs.maintenance.retention_failed", error=str(exc))
 
 
-def build_run_services(settings: Settings, pool: asyncpg.Pool | None) -> RunServices:
-    # WIRE(3b-A): compaction scheduling (`compaction.py`) as the hook.
-    post_settle: PostSettleHook = noop_post_settle
-    # WIRE(3b-C): the adapter wrapping today's agent loop, in place of
-    # `UnwiredHarness` (the stub stays for RUNS_STUB_HARNESS).
-    harness: HarnessAdapter = StubHarness() if settings.RUNS_STUB_HARNESS else UnwiredHarness()
+def build_run_services(
+    settings: Settings,
+    pool: asyncpg.Pool | None,
+    *,
+    harness: HarnessAdapter | None = None,
+) -> RunServices:
+    """`harness` overrides the configured one (tests inject a native
+    harness over a fake model client)."""
+    if harness is None:
+        harness = StubHarness() if settings.RUNS_STUB_HARNESS else build_native_harness(settings)
+    memory_ttl = max(0.0, settings.RUNS_MEMORY_TTL_SECONDS)
     return RunServices(
         settings=settings,
+        pool=pool,
         pg_repo=None if pool is None else PgRunRepository(pool),
-        # WIRE(3b-A): `event_log_pg.PgRunEventLog(pool)` over task_events.
-        pg_log=None if pool is None else InMemoryRunEventLog(),
+        pg_log=None if pool is None else PgRunEventLog(pool),
         memory_repo=MemoryRunRepository(
             ttl_seconds=settings.RUNS_MEMORY_TTL_SECONDS,
             max_runs=settings.RUNS_MEMORY_MAX_RUNS,
         ),
-        # WIRE(3b-A): `event_log_memory` (TTL'd, Q16).
-        memory_log=InMemoryRunEventLog(),
-        # WIRE(3b-A): the real `AgUiEncoder` factory (`agui_encoder.py`).
-        encoder_factory=RecordingEncoder,
+        memory_log=MemoryRunEventLog(ttl=memory_ttl),
+        encoder_factory=agui_encoder_factory,
         harness=harness,
-        # WIRE(3b-A): `stream.stream_run_events`.
-        stream=placeholder_stream_run_events,
+        stream=stream_run_events,
         driver=RunDriver(
             lease_seconds=settings.RUNS_LEASE_SECONDS,
             heartbeat_seconds=settings.RUNS_HEARTBEAT_SECONDS,
-            post_settle=post_settle,
         ),
         limits=AnonymousLimits.from_settings(settings),
     )
@@ -182,14 +214,26 @@ def reset_run_services() -> None:
     _services = None
 
 
-async def run_maintenance_loop(services: RunServices, *, stop: asyncio.Event) -> None:
-    """`services.maintain()` every `RUNS_REAPER_INTERVAL_SECONDS` until
-    `stop` is set."""
+async def run_maintenance_loop(
+    services: RunServices,
+    *,
+    stop: asyncio.Event,
+    retention_interval: float = SWEEP_INTERVAL.total_seconds(),
+) -> None:
+    """`services.maintain()` every `RUNS_REAPER_INTERVAL_SECONDS`, and
+    `services.sweep_retention()` every `retention_interval` (10 min) when
+    a pool exists, until `stop` is set. Several processes may run it
+    (the reaper skips locked rows; compaction is idempotent)."""
     interval = max(0.05, services.settings.RUNS_REAPER_INTERVAL_SECONDS)
+    swept_at: float | None = None
     while not stop.is_set():
         try:
             await services.maintain()
         except Exception as exc:  # pragma: no cover — maintain() logs its own
             logger.warning("runs.maintenance.failed", error=str(exc))
+        now = time.monotonic()
+        if services.pool is not None and (swept_at is None or now - swept_at >= retention_interval):
+            swept_at = now
+            await services.sweep_retention()
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), timeout=interval)

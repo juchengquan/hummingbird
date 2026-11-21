@@ -98,6 +98,25 @@ def _sse(text: str) -> list[tuple[str | None, dict[str, Any]]]:
     return out
 
 
+def _cursor_key(event_id: str) -> tuple[int, float]:
+    """`<seq>` sorts after every `<seq>.<k>` (it means "after the whole
+    entry")."""
+    seq, _, k = event_id.partition(".")
+    return (int(seq), float(k) if k else float("inf"))
+
+
+def _after(
+    full: list[tuple[str | None, dict[str, Any]]], cut: str
+) -> list[tuple[str | None, dict[str, Any]]]:
+    """What a rejoin `after=cut` must send, given the full replay: the
+    priming-free opening events, every event past `cut`, the closing
+    events (opening / closing events carry no id)."""
+    opening = [e for e in full[: next(i for i, e in enumerate(full) if e[0] is not None)]]
+    body = [e for e in full if e[0] is not None and _cursor_key(e[0]) > _cursor_key(cut)]
+    closing = full[max(i for i, e in enumerate(full) if e[0] is not None) + 1 :]
+    return [*opening, *body, *closing]
+
+
 def _start(client: TestClient, body: dict[str, Any], **kw: Any) -> Any:
     return client.post("/v1/runs", json=body, **kw)
 
@@ -118,12 +137,17 @@ def test_anonymous_interactive_start_streams_and_issues_a_token(client: TestClie
         {"type": "RUN_STARTED", "threadId": body["threadId"], "runId": body["runId"]},
     )
     assert events[-1][0] is None and events[-1][1]["type"] == "RUN_FINISHED"
-    assert [e[0] for e in events[1:-1]] == [str(i) for i in range(1, len(events) - 1)]
+    ids = [e[0] for e in events[1:-1]]
+    assert all(i is not None for i in ids)
+    keys = [_cursor_key(str(i)) for i in ids]
+    assert keys == sorted(keys) and len(set(keys)) == len(keys)
+    # Entries that produce no AG-UI event (the closing `result`) send no id.
+    seqs = sorted({k[0] for k in keys})
 
     run = client.get(f"/v1/runs/{body['runId']}", headers={"X-Run-Token": token})
     assert run.status_code == 200
     assert run.json()["status"] == "succeeded"
-    assert run.json()["lastSeq"] == len(events) - 2
+    assert run.json()["lastSeq"] >= seqs[-1]
 
 
 def test_signed_in_start_has_no_run_token(client: TestClient) -> None:
@@ -294,12 +318,14 @@ def test_rejoin_from_a_cursor(client: TestClient) -> None:
     full = _sse(first.text)
     url = f"/v1/runs/{body['runId']}/events"
     assert _sse(client.get(url, headers=headers).text) == full
-    for cut in (1, 4, len(full) - 2):
-        tail = _sse(client.get(url, params={"after": str(cut)}, headers=headers).text)
-        assert tail == [full[0], *full[cut + 1 :]]
-        via_header = client.get(url, headers={**headers, "Last-Event-ID": str(cut)})
+    ids = [e[0] for e in full if e[0] is not None]
+    last_seq = max(_cursor_key(i)[0] for i in ids)
+    for cut in ("1", ids[3], ids[-2], str(last_seq), "2"):
+        tail = _sse(client.get(url, params={"after": cut}, headers=headers).text)
+        assert tail == _after(full, cut), cut
+        via_header = client.get(url, headers={**headers, "Last-Event-ID": cut})
         assert _sse(via_header.text) == tail
-    for bad in ("x", "1.2.3", "007", str(len(full) + 5)):
+    for bad in ("x", "1.2.3", "007", str(last_seq + 5)):
         r = client.get(url, params={"after": bad}, headers=headers)
         assert r.status_code == 400 and r.json()["code"] == "invalid_request", bad
 

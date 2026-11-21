@@ -421,17 +421,37 @@ class PgRunRepository:
             )
         return row is not None
 
-    async def settle(self, run_id: str, outcome: RunOutcome) -> bool:
+    async def settle(
+        self,
+        run_id: str,
+        outcome: RunOutcome,
+        *,
+        checkpoint: dict[str, object] | None = None,
+    ) -> bool:
         async with self._as_system() as conn:
             row = await conn.fetchrow(
                 "UPDATE public.tasks SET status = $2, outcome = $3::jsonb, "
+                "checkpoint = COALESCE($4::jsonb, checkpoint), "
                 "finished_at = now(), updated_at = now(), lease_expires_at = NULL "
                 "WHERE id = $1 AND status IN ('queued', 'running') RETURNING id",
                 _uuid(run_id),
                 _status_for(outcome),
                 json.dumps(outcome_to_json(outcome)),
+                None if checkpoint is None else json.dumps(checkpoint),
             )
         return row is not None
+
+    async def load_checkpoint(self, owner: RunOwner, run_id: str) -> dict[str, object] | None:
+        """Read as the owner (RLS), like `get`."""
+        if owner.user_id is None:
+            return None
+        async with self._as_user(owner.user_id) as conn:
+            raw = await conn.fetchval(
+                "SELECT t.checkpoint::text FROM public.tasks t WHERE t.id = $1 AND t.user_id = $2",
+                _uuid(run_id),
+                _uuid(owner.user_id),
+            )
+        return _json_obj(raw)
 
     async def heartbeat(self, run_id: str, *, lease_seconds: float = DEFAULT_LEASE_SECONDS) -> bool:
         async with self._as_system() as conn:

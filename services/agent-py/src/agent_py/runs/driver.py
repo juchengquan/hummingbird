@@ -8,11 +8,28 @@ stop the run, and a retry or reconnect behaves exactly like the first
 response. Lifecycle of one run:
 
     created (repo.create — row `running`, leased)
+      → previous run's checkpoint → RunInput.previous_checkpoint (resume)
       → harness.run(run_input, emitter, cancel)    progress → log
+      → emitter.aclose()                             buffered deltas get their seq
       → terminal entries from the outcome (harness.py's table)
-      → repo.settle(outcome)                         row ends
+      → repo.settle(outcome, checkpoint)             row ends
       → log.seal                                     streams drain + stop
-      → post_settle(run)                             e.g. compaction
+      → post_settle(run)                             optional hook
+
+**Emitter.** The harness emits through a `CoalescingEmitter` (Q30):
+consecutive text deltas are merged before they get a seq, so the log
+holds one entry per ~150 ms of text rather than one per model chunk.
+
+**Log caps.** The anonymous memory log refuses appends past its caps
+(`RunLogFull`). The driver then stops the harness and fails the run
+`limit_reached`; the terminal entries are always accepted.
+
+**Resume checkpoint (Q24, Q31).** An `Interrupted` outcome's
+`HarnessResult.checkpoint` is stored with the settle (`tasks.checkpoint`,
+or the memory store's copy). A resume run (`resume[]` + previous run)
+gets it back as `RunInput.previous_checkpoint`, read as the run's own
+owner — RLS for a signed-in owner, the run token's runs for an anonymous
+one — so a run never continues from someone else's state.
 
 **Ordering.** Terminal entries are appended *before* the row settles, so
 a stream that ends on the row (RUN_EVENTS.md § 6.4) has already seen
@@ -48,7 +65,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -56,12 +73,15 @@ import structlog
 
 from ..emitter import RunEmitter
 from ..events import ResultEvent, TaskEvent
+from .coalescer import CoalescingEmitter
 from .event_log import RunEventLog
+from .event_log_memory import RunLogFull
 from .harness import HarnessAdapter, RunInput, Yielded
 from .model import Cancelled, Failed, Interrupted, RunOutcome, RunRecord, Succeeded
 from .repository import RunRepository
 
 __all__ = [
+    "LOG_FULL_MESSAGE",
     "SHUTDOWN_MESSAGE",
     "WORKER_LOST_MESSAGE",
     "PostSettleHook",
@@ -78,8 +98,9 @@ PostSettleHook = Callable[[RunRecord], Awaitable[None]]
 WORKER_LOST_MESSAGE = "The run's process stopped unexpectedly."
 SHUTDOWN_MESSAGE = "The server restarted while the run was in progress."
 UNEXPECTED_MESSAGE = "The run failed unexpectedly."
+LOG_FULL_MESSAGE = "The run produced more output than this server keeps for it."
 
-_StopReason = Literal["cancelled", "lease_lost", "shutdown"]
+_StopReason = Literal["cancelled", "lease_lost", "shutdown", "log_full"]
 
 
 @dataclass
@@ -167,20 +188,31 @@ class RunDriver:
         try:
 
             async def sink(event: TaskEvent) -> None:
-                await log.append(event)
+                try:
+                    await log.append(event)
+                except RunLogFull:
+                    logger.warning("runs.driver.log_full", run_id=run.id, seq=event.seq)
+                    active.stop("log_full")
+                    raise
 
-            emitter = RunEmitter(run_id=run.id, sink=sink, start_seq=await log.last_seq(run.id))
+            emitter: RunEmitter = CoalescingEmitter(
+                run_id=run.id, sink=sink, start_seq=await log.last_seq(run.id)
+            )
             hb = asyncio.create_task(
                 self._heartbeat(active, repo), name=f"agent-py.run.hb.{run.id}"
             )
             outcome: RunOutcome
+            checkpoint: dict[str, object] | None = None
             try:
+                run_input = await _with_previous_checkpoint(run_input, run, repo)
                 result = await harness.run(run_input, emitter, active.cancel)
                 if isinstance(result.outcome, Yielded):
                     logger.error("runs.driver.interactive_yield", run_id=run.id)
                     outcome = Failed("unknown", UNEXPECTED_MESSAGE)
                 else:
                     outcome = result.outcome
+                    if isinstance(outcome, Interrupted):
+                        checkpoint = result.checkpoint
             except asyncio.CancelledError:
                 # Hard stop (shutdown past its grace): finish the run's
                 # bookkeeping below, then let the cancellation through.
@@ -194,7 +226,32 @@ class RunDriver:
                 outcome = Failed("worker_lost", SHUTDOWN_MESSAGE)
             if hb is not None:
                 hb.cancel()
-            await self._finish(active, outcome, emitter, repo, log)
+            # Give buffered deltas their seq before any terminal entry.
+            try:
+                if isinstance(emitter, CoalescingEmitter):
+                    await emitter.aclose()
+            except RunLogFull:
+                pass  # recorded by the sink (active.reason == "log_full")
+            except Exception as exc:
+                logger.warning("runs.driver.flush_failed", run_id=run.id, error=str(exc))
+            if active.reason == "log_full":
+                usage = () if isinstance(outcome, Interrupted) else outcome.usage
+                outcome = Failed("limit_reached", LOG_FULL_MESSAGE, usage=usage)
+                checkpoint = None
+
+                # The coalescer keeps the refused entry queued (it would
+                # retry it first); the terminal entries take the next seq
+                # after what the log actually holds.
+                async def terminal_sink(event: TaskEvent) -> None:
+                    await log.append(event)
+
+                emitter = RunEmitter(
+                    run_id=run.id,
+                    sink=terminal_sink,
+                    start_seq=await log.last_seq(run.id),
+                    start_step=emitter.step,
+                )
+            await self._finish(active, outcome, emitter, repo, log, checkpoint=checkpoint)
         except Exception:
             logger.exception("runs.driver.failed", run_id=run.id)
         finally:
@@ -228,6 +285,8 @@ class RunDriver:
         emitter: RunEmitter,
         repo: RunRepository,
         log: RunEventLog,
+        *,
+        checkpoint: dict[str, object] | None = None,
     ) -> None:
         run = active.run
         current: RunRecord | None = None
@@ -241,7 +300,7 @@ class RunDriver:
             await _safely(run.id, _append_terminal(emitter, outcome))
             # False → a cancel / reap won the race after our entry; the
             # row is the truth and the stream's closing event follows it.
-            await repo.settle(run.id, outcome)
+            await repo.settle(run.id, outcome, checkpoint=checkpoint)
         await _safely(run.id, log.seal(run.id))
         if self._post_settle is not None:
             final = await repo.get(run.owner, run.id)
@@ -268,6 +327,27 @@ class RunDriver:
         for task in tasks:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
+
+
+async def _with_previous_checkpoint(
+    run_input: RunInput, run: RunRecord, repo: RunRepository
+) -> RunInput:
+    """A resume run's `previous_checkpoint`: the harness state its
+    previous run stored when it was interrupted, read as this run's
+    owner (a run the owner cannot read yields None — the API checked the
+    previous run is theirs on this thread already)."""
+    previous = run_input.previous_run_id
+    if not run_input.resume or previous is None or run_input.previous_checkpoint is not None:
+        return run_input
+    try:
+        checkpoint = await repo.load_checkpoint(run.owner, previous)
+    except Exception as exc:
+        # The harness falls back to the browser's history.
+        logger.warning("runs.driver.checkpoint_load_failed", run_id=run.id, error=str(exc))
+        return run_input
+    if checkpoint is None:
+        return run_input
+    return replace(run_input, previous_checkpoint=checkpoint)
 
 
 async def _append_terminal(emitter: RunEmitter, outcome: RunOutcome) -> None:

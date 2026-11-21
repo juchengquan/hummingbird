@@ -265,6 +265,28 @@ async def test_interrupt_then_cancel(
     assert json.loads(row["outcome"]) == {"type": "cancelled"} and row["lease_expires_at"] is None
 
 
+async def test_an_interrupted_settle_stores_the_checkpoint_for_its_owner_only(
+    pool: asyncpg.Pool, users: tuple[tuple[str, str], tuple[str, str]]
+) -> None:
+    (alice, _), (bob, _) = users
+    repo = PgRunRepository(pool)
+    me = RunOwner.user(alice)
+    run = (await repo.create(me, _interactive(_id()))).run
+    assert await repo.load_checkpoint(me, run.id) is None
+    state = {"harness": "loop-v1", "version": 1, "turn": [{"role": "assistant", "content": []}]}
+    interrupt = PendingInterrupt(id="i1", tool="send", args={"to": "x"})
+    assert await repo.settle(run.id, Interrupted((interrupt,)), checkpoint=state)
+    assert json.loads((await _row(pool, run.id))["checkpoint"]) == state
+    # Read as the owner (RLS): someone else, or an anonymous owner, sees none.
+    assert await repo.load_checkpoint(me, run.id) == state
+    assert await repo.load_checkpoint(RunOwner.user(bob), run.id) is None
+    assert await repo.load_checkpoint(RunOwner.anonymous("x" * 32), run.id) is None
+    # A settle without one leaves a stored checkpoint alone.
+    other = (await repo.create(me, _interactive(_id(), checkpoint={"k": 1}))).run
+    assert await repo.settle(other.id, Succeeded())
+    assert await repo.load_checkpoint(me, other.id) == {"k": 1}
+
+
 async def test_cancel_cascades_to_background_children(
     pool: asyncpg.Pool, users: tuple[tuple[str, str], tuple[str, str]]
 ) -> None:

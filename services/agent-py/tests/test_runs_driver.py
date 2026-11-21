@@ -229,3 +229,124 @@ async def test_stub_harness_outcomes() -> None:
         assert final is not None and final.status == expected, outcome
         tokens = [e for e in await log.read(RUN) if e.kind == "token"]
         assert len(tokens) == 2
+
+
+# --- wave 3b: coalescing, log caps, the resume checkpoint ---------------------------
+
+
+async def test_text_deltas_are_coalesced_before_they_get_a_seq() -> None:
+    repo, log, run = await _setup()
+
+    async def chatty(emitter: RunEmitter) -> None:
+        for piece in ("hel", "lo ", "wor", "ld"):
+            await emitter.token(piece)
+
+    harness = ScriptedHarness([chatty], result=HarnessResult(Succeeded()))
+    await _driver().start(run=run, run_input=_input(), repo=repo, log=log, harness=harness)
+    entries = await log.read(RUN)
+    assert [e.kind for e in entries] == ["step_start", "token", "step_end", "result"]
+    assert getattr(entries[1], "text", None) == "hello world"
+
+
+async def test_a_full_memory_log_fails_the_run_with_its_terminal_entry() -> None:
+    from agent_py.runs.event_log_memory import MemoryRunEventLog
+
+    repo = InMemoryRunRepository()
+    run = (await repo.create(OWNER, RunSpec(run_id=RUN, thread_id=THREAD, mode="interactive"))).run
+    log = MemoryRunEventLog(max_entries_per_run=3, tick=0.01)
+
+    say = ScriptedHarness.say("x")
+    harness = ScriptedHarness([say, say, say], result=HarnessResult(Succeeded()))
+    await _driver().start(run=run, run_input=_input(), repo=repo, log=log, harness=harness)
+    entries = await log.read(RUN)
+    assert [e.seq for e in entries] == list(range(1, len(entries) + 1))  # no hole
+    last = entries[-1]
+    assert isinstance(last, ResultEvent) and last.status == "failed"
+    assert last.error_code == "limit_reached"
+    final = await repo.get(OWNER, RUN)
+    assert final is not None and final.status == "failed"
+    assert final.error is not None and final.error["code"] == "limit_reached"
+
+
+_CHECKPOINT = {"harness": "scripted", "turn": ["opaque"]}
+
+
+def _interrupt() -> Interrupted:
+    return Interrupted(
+        (PendingInterrupt(id="c1", request_kind="approval", tool="t", tool_call_id="c1"),)
+    )
+
+
+async def test_an_interrupted_runs_checkpoint_reaches_its_resume_run() -> None:
+    from agent_py.runs.harness import ResumeAnswer
+
+    repo, log, run = await _setup()
+    first = ScriptedHarness([], result=HarnessResult(_interrupt(), checkpoint=_CHECKPOINT))
+    await _driver().start(run=run, run_input=_input(), repo=repo, log=log, harness=first)
+    assert repo.checkpoint_of(RUN) == _CHECKPOINT
+    assert await repo.load_checkpoint(OWNER, RUN) == _CHECKPOINT
+    assert (
+        await repo.load_checkpoint(RunOwner.user("00000000-0000-4000-8000-0000000000ff"), RUN)
+        is None
+    )
+
+    resume_id = "00000000-0000-4000-8000-0000000000c2"
+    resumed = (
+        await repo.create(
+            OWNER,
+            RunSpec(run_id=resume_id, thread_id=THREAD, mode="interactive", previous_run_id=RUN),
+        )
+    ).run
+    second = ScriptedHarness([], result=HarnessResult(Succeeded()))
+    run_input = RunInput(
+        run_id=resume_id,
+        thread_id=THREAD,
+        mode="interactive",
+        user_id=OWNER.user_id,
+        messages=(),
+        resume=(ResumeAnswer("c1", "resolved", {"approved": True}),),
+        previous_run_id=RUN,
+    )
+    await _driver().start(run=resumed, run_input=run_input, repo=repo, log=log, harness=second)
+    assert second.inputs[0].previous_checkpoint == _CHECKPOINT
+    # A run that is not a resume gets none; a success stores none.
+    assert repo.checkpoint_of(resume_id) is None
+
+
+async def test_a_resume_run_of_another_owner_gets_no_checkpoint() -> None:
+    from agent_py.runs.harness import ResumeAnswer
+    from agent_py.runs.repository_memory import MemoryRunRepository
+
+    repo = MemoryRunRepository(ttl_seconds=60, max_runs=10)
+    log = InMemoryRunEventLog(tick=0.01)
+    alice, mallory = RunOwner.anonymous("a" * 32), RunOwner.anonymous("m" * 32)
+    run = (await repo.create(alice, RunSpec(run_id=RUN, thread_id=THREAD, mode="interactive"))).run
+    first = ScriptedHarness([], result=HarnessResult(_interrupt(), checkpoint=_CHECKPOINT))
+    anonymous_input = RunInput(
+        run_id=RUN, thread_id=THREAD, mode="interactive", user_id=None, messages=()
+    )
+    await _driver().start(run=run, run_input=anonymous_input, repo=repo, log=log, harness=first)
+    assert await repo.load_checkpoint(alice, RUN) == _CHECKPOINT
+    assert await repo.load_checkpoint(mallory, RUN) is None
+
+    other_id = "00000000-0000-4000-8000-0000000000c3"
+    other = (
+        await repo.create(mallory, RunSpec(run_id=other_id, thread_id=THREAD, mode="interactive"))
+    ).run
+    second = ScriptedHarness([], result=HarnessResult(Succeeded()))
+    await _driver().start(
+        run=other,
+        run_input=RunInput(
+            run_id=other_id,
+            thread_id=THREAD,
+            mode="interactive",
+            user_id=None,
+            messages=(),
+            resume=(ResumeAnswer("c1", "resolved", {"approved": True}),),
+            previous_run_id=RUN,
+        ),
+        repo=repo,
+        log=log,
+        harness=second,
+    )
+    assert second.inputs[0].previous_checkpoint is None

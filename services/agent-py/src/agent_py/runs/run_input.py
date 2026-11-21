@@ -7,16 +7,17 @@
   its interrupt's `responseSchema` (RUN_EVENTS.md § 4).
 * `background_checkpoint` — the `{messages, config}` start state the
   background executor reads from `tasks.checkpoint` (the same shape the
-  Next task route writes).
+  Next task route writes). AG-UI → model input is `runs.history`'s, the
+  same conversion the native harness applies to an interactive run.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Any
 
 from ..contract import models
 from .harness import ResumeAnswer, RunInput
+from .history import last_user_text, normalize, system_texts, to_anthropic
 from .model import RunMode, RunRecord
 
 __all__ = [
@@ -39,27 +40,6 @@ def forwarded_props(body: models.StartRunRequest) -> models.RunForwardedProps:
 def _dump(value: Any) -> dict[str, object]:
     out = value.model_dump(mode="json", exclude_none=True)
     return out if isinstance(out, dict) else {}
-
-
-def _message_text(message: dict[str, object]) -> str:
-    content = message.get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "".join(
-            str(p.get("text", ""))
-            for p in content
-            if isinstance(p, dict) and p.get("type") == "text"
-        )
-    return ""
-
-
-def last_user_text(messages: Sequence[dict[str, object]]) -> str:
-    """The last user message's text (`lastUserText` in the Next route)."""
-    for message in reversed(messages):
-        if message.get("role") == "user":
-            return _message_text(message)
-    return ""
 
 
 def resume_answers(body: models.StartRunRequest) -> tuple[ResumeAnswer, ...]:
@@ -151,26 +131,18 @@ def background_checkpoint(
     body: models.StartRunRequest, *, model: str, max_steps: int
 ) -> dict[str, object]:
     """`{messages, config}` for `create_run` (0041 pins `step`, `seq` and
-    `config.maxSteps`). Messages become the executor's model messages:
-    user / assistant / system text; tool, reasoning and activity
-    messages are display state the executor does not replay."""
-    # WIRE(3b-C): the harness adapter owns AG-UI → model-input conversion;
-    # replace this minimal text-only mapping with its converter.
-    messages: list[dict[str, object]] = []
-    for raw in body.messages:
-        message = _dump(raw)
-        role = message.get("role")
-        if role == "developer":
-            role = "system"
-        if role not in ("user", "assistant", "system"):
-            continue
-        text = _message_text(message)
-        if text:
-            messages.append({"role": role, "content": text})
+    `config.maxSteps`). Messages become the executor's Anthropic-shaped
+    model messages via `runs.history` (user text / images / documents,
+    assistant text + tool calls, tool results; reasoning and activity
+    messages dropped); `system` / `developer` text joins
+    `forwardedProps.systemPrompt` as the run's system prompt."""
+    agui = [_dump(m) for m in body.messages]
+    messages: list[dict[str, Any]] = normalize(to_anthropic(agui))
     fp = forwarded_props(body)
     config: dict[str, object] = {"model": model, "maxSteps": max_steps}
-    if fp.systemPrompt:
-        config["workspaceSystemPrompt"] = fp.systemPrompt
+    system = "\n\n".join([*([fp.systemPrompt] if fp.systemPrompt else []), *system_texts(agui)])
+    if system:
+        config["workspaceSystemPrompt"] = system
     if fp.skills:
         config["skills"] = [_dump(s) for s in fp.skills]
     return {"messages": messages, "config": config}
