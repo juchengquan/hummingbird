@@ -353,7 +353,7 @@ describe("apiClient.share.create — agent-py-only dispatch", () => {
     kind: "conversation" as const,
     conversationId: "10000000-0000-4000-8000-000000000001",
   }
-  const created = { token: "abcdefghijklmnopqrstuv", kind: "conversation" }
+  const created = { token: "abcdefghijklmnopqrstuv", kind: "conversation" as const }
 
   test("python → agent-py /v1/share with bearer, body unchanged", async () => {
     const log = installFetchStub({ jsonBody: created })
