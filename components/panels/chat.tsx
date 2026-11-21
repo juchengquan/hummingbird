@@ -833,7 +833,9 @@ export function ChatPanel() {
               The inner div does the actual reading-width centering with
               its own `max-w-5xl mx-auto`. */}
           <ScrollArea className="w-full max-h-[calc(100vh-2.75rem)] h-[calc(100vh-2.75rem)]">
-            <div className="max-w-5xl mx-auto px-4 py-4 pb-44 space-y-4">
+            {/* pt-16 while find is open so the first message can scroll
+                out from under the floating find bar. */}
+            <div className={cn("max-w-5xl mx-auto px-4 py-4 pb-44 space-y-4", find.open && "pt-16")}>
               {deferredMessages.length === 0 ? (
                 <EmptyChatWelcome onPickSuggestion={pickSuggestion} />
               ) : (

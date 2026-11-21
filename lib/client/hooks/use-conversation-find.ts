@@ -74,6 +74,9 @@ export function useConversationFind({ anchorRef, messages, resetKey }: Opts): Co
   const messagesRef = useRef(messages)
   const openRef = useRef(open)
   const throttleRef = useRef<number | null>(null)
+  // Fallback path: the message currently flashed, so a quick next/prev moves
+  // the ring instead of leaving two.
+  const flashRef = useRef<{ el: HTMLElement; timer: number } | null>(null)
   useEffect(() => {
     queryRef.current = query
     messagesRef.current = messages
@@ -83,6 +86,25 @@ export function useConversationFind({ anchorRef, messages, resetKey }: Opts): Co
   const viewport = useCallback(
     () => (anchorRef.current?.closest(VIEWPORT_SELECTOR) as HTMLElement | null) ?? null,
     [anchorRef],
+  )
+
+  const clearFlash = useCallback(() => {
+    const f = flashRef.current
+    if (!f) return
+    window.clearTimeout(f.timer)
+    f.el.classList.remove("hb-find-flash")
+    flashRef.current = null
+  }, [])
+
+  const flash = useCallback(
+    (el: HTMLElement) => {
+      clearFlash()
+      // Restart the animation even when re-flashing the same message.
+      void el.offsetWidth
+      el.classList.add("hb-find-flash")
+      flashRef.current = { el, timer: window.setTimeout(clearFlash, FLASH_MS) }
+    },
+    [clearFlash],
   )
 
   const reveal = useCallback(
@@ -98,11 +120,10 @@ export function useConversationFind({ anchorRef, messages, resetKey }: Opts): Co
         const el = id ? document.getElementById(`chat-message-${id}`) : null
         if (!el) return
         if (vp) scrollRectIntoViewport(vp, el.getBoundingClientRect())
-        el.classList.add("hb-find-flash")
-        window.setTimeout(() => el.classList.remove("hb-find-flash"), FLASH_MS)
+        flash(el)
       }
     },
-    [viewport],
+    [viewport, flash],
   )
 
   /** Re-run the search. `fresh` (a new query, or find just opened) starts at
@@ -165,14 +186,16 @@ export function useConversationFind({ anchorRef, messages, resetKey }: Opts): Co
       window.clearTimeout(throttleRef.current)
       throttleRef.current = null
     }
+    clearFlash()
     clearFindHighlights()
-  }, [open])
+  }, [open, clearFlash])
   useEffect(
     () => () => {
       if (throttleRef.current !== null) window.clearTimeout(throttleRef.current)
+      clearFlash()
       clearFindHighlights()
     },
-    [],
+    [clearFlash],
   )
 
   const step = useCallback(

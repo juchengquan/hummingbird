@@ -86,7 +86,9 @@ export function ReasoningBlock({
           open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
         )}
       >
-        <div className="overflow-hidden">
+        {/* Collapsed content stays in the DOM (height animates to 0), so
+            in-conversation find (⌘F) is told to skip it while closed. */}
+        <div className="overflow-hidden" data-find-skip={open ? undefined : ""}>
           <div className="relative px-2 pb-2 pt-1 max-h-[40vh] overflow-y-auto">
             <div className="sticky top-1 z-10 flex justify-end -mb-7 pr-2 pointer-events-none">
               <button

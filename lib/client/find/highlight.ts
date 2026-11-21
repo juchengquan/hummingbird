@@ -120,10 +120,11 @@ export function selectionTextWithin(root: HTMLElement | null): string | undefine
  *  `scrollIntoView` can scroll unintended ancestors (see use-chat-scroll). */
 export function scrollRectIntoViewport(viewport: HTMLElement, rect: DOMRect): void {
   const vr = viewport.getBoundingClientRect()
-  // The input pill and its gradient cover the bottom of the viewport.
+  // The find bar floats over the top of the viewport; the input pill and its
+  // gradient cover the bottom.
+  const topCover = 64
   const bottomCover = Math.min(200, vr.height / 3)
-  const margin = 24
-  if (rect.top >= vr.top + margin && rect.bottom <= vr.bottom - bottomCover) return
+  if (rect.top >= vr.top + topCover && rect.bottom <= vr.bottom - bottomCover) return
   const top = viewport.scrollTop + (rect.top - vr.top) - vr.height / 3
   viewport.scrollTo({ top: Math.max(0, top), behavior: "smooth" })
 }
