@@ -23,13 +23,14 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Literal, TypeVar, cast
 
 from .events import (
     ApprovalEvent,
     ApprovalRequestKind,
     HandoffEvent,
     InputRequestOption,
+    MessagesSnapshotEvent,
     ResultEvent,
     RunStatus,
     StatusEvent,
@@ -37,7 +38,9 @@ from .events import (
     StepErrorEvent,
     StepStartEvent,
     TaskEvent,
+    TaskEventBase,
     TokenEvent,
+    TokenUsage,
     ToolCallResult,
     ToolInputEvent,
     ToolOutputEvent,
@@ -46,6 +49,14 @@ from .events import (
 
 # Sink signature: receives one TaskEvent, persists / forwards it.
 EventSink = Callable[[TaskEvent], Awaitable[None]]
+
+#: The kinds `RunEmitter.emit` refuses: each has a dedicated method that
+#: owns its lifecycle rules (or, for the snapshot, only compaction writes it).
+_LIFECYCLE_EVENT_TYPES: frozenset[type[TaskEvent]] = frozenset(
+    {StatusEvent, ResultEvent, ApprovalEvent, MessagesSnapshotEvent}
+)
+
+_ProgressEvent = TypeVar("_ProgressEvent", bound=TaskEventBase)
 
 
 def _now_iso() -> str:
@@ -342,10 +353,14 @@ class RunEmitter:
         final_text: str | None = None,
         error: str | None = None,
         verification: dict[str, object] | None = None,
+        error_code: str | None = None,
+        memory_tainted: bool = False,
+        usage: tuple[TokenUsage, ...] = (),
     ) -> None:
         """Emit the terminal `result` event. Latches the emitter so
         nothing further is sent — call exactly once at the end of a
-        run."""
+        run. `error_code` / `memory_tainted` / `usage` are the run
+        model's additions (see `ResultEvent`)."""
         if self._settled:
             return
         await self._emit(
@@ -358,9 +373,37 @@ class RunEmitter:
                 final_text=final_text,
                 error=error,
                 verification=verification,
+                error_code=error_code,
+                memory_tainted=memory_tainted,
+                usage=usage,
             )
         )
         self._settled = True
+
+    async def emit(self, event_type: type[_ProgressEvent], **fields: object) -> None:
+        """Emit any **progress** event kind that has no dedicated method
+        (the run model's parts — `ToolImageEvent`, `UiPartEvent`,
+        `PlanEvent`, … — and `CompactEvent` / `ArtifactRefEvent`),
+        stamping `run_id`, the next `seq`, the current `step` and the
+        time: `await emitter.emit(SuggestionsEvent, values=("Why?",))`.
+
+        Lifecycle kinds go through their own methods, which keep the
+        settle-once latch and the resume-marker rules — `status`,
+        `result`, `approval` (`input_request` / `input_response`) and the
+        compaction-only `messages_snapshot` raise `ValueError` here.
+        Dropped after the emitter settled, like every other emit."""
+        if event_type in _LIFECYCLE_EVENT_TYPES:
+            raise ValueError(f"{event_type.__name__} has a dedicated emitter method")
+        if self._settled:
+            return
+        event = event_type(
+            run_id=self._run_id,
+            seq=self._next_seq(),
+            step=self._step,
+            created_at=_now_iso(),
+            **fields,
+        )
+        await self._emit(cast("TaskEvent", event))
 
     def _next_seq(self) -> int:
         self._seq += 1

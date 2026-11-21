@@ -1,0 +1,487 @@
+"""RunRepository — runs as rows (Q27), the store the runs API is built on.
+
+Over migration 0041's `tasks` columns for signed-in runs; in memory for
+anonymous runs. Wave 3b-B implements the Postgres version and builds the
+runs API on this interface; `InMemoryRunRepository` below is the
+reference fake (and accepts anonymous owners, so it can also back the
+anonymous store once given a TTL).
+
+Two kinds of method:
+
+  * **owner-scoped** (`create`, `get`, `list_runs`, `cancel`) — what a caller
+    of the API may do with *their* runs. A run that is not the owner's is
+    indistinguishable from one that does not exist (`get` / `cancel`
+    return None, `list_runs` omits it). Postgres: `create` calls the
+    `create_run` RPC as the user (`store._set_user_context`); the reads
+    and `cancel` filter on `user_id` (RLS on top).
+  * **system** (`mark_running`, `settle`, `heartbeat`, `reap_expired`) —
+    what the process executing a run does, by run id alone. Postgres: the
+    DSN role, like the workers today (0034: users cannot write these
+    columns).
+
+Status transitions (`tasks.status`; the contract status is derived, see
+`model.contract_status`) — anything else is refused:
+
+    create:       → queued (background) | running (interactive)
+    mark_running: queued → running                          (background worker)
+    settle:       queued | running → done | failed | cancelled | paused
+                  (paused = Interrupted; writes `outcome`, `finished_at`)
+    cancel:       queued | running | paused → cancelled     (owner; idempotent)
+    reap_expired: running (interactive, lease lapsed) → failed `worker_lost`
+
+The background-only transitions the existing executor makes (paused →
+running for a legacy respond or a fan-in; the barrier's counters) stay
+in `store.py` / `barrier.py` and are not part of this interface.
+"""
+
+from __future__ import annotations
+
+import base64
+import binascii
+import hashlib
+import json
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
+from typing import Protocol
+
+from .model import (
+    Cancelled,
+    ContractStatus,
+    Failed,
+    Interrupted,
+    RunMode,
+    RunOutcome,
+    RunOwner,
+    RunRecord,
+    Succeeded,
+    outcome_to_json,
+)
+
+__all__ = [
+    "CreateResult",
+    "InMemoryRunRepository",
+    "InvalidPageToken",
+    "PreviousRunNotFound",
+    "RunFilter",
+    "RunIdConflict",
+    "RunPage",
+    "RunRepository",
+    "RunSpec",
+    "ThreadNotFound",
+]
+
+DEFAULT_LEASE_SECONDS = 120.0
+"""Interactive lease when `RunSpec.lease_seconds` is None (0041's default)."""
+
+
+class RunIdConflict(Exception):
+    """The run id is taken and this create is not an idempotent retry of
+    it — another owner's run, or the owner's run on another thread / in
+    another mode. Carries nothing about the existing run (API: 409
+    `run_id_conflict`, the same body in every case)."""
+
+
+class ThreadNotFound(Exception):
+    """Background create on a thread that is not one of the owner's synced
+    conversations (API: 404 `not_found`)."""
+
+
+class PreviousRunNotFound(Exception):
+    """`previous_run_id` is not one of the owner's runs on the same thread
+    (API: 409 `invalid_state`)."""
+
+
+class InvalidPageToken(Exception):
+    """A `page_token` this repository did not issue for these filters
+    (API: 400 `invalid_request`)."""
+
+
+@dataclass(frozen=True)
+class RunSpec:
+    """A run to create. Mirrors `create_run`'s parameters (0041)."""
+
+    run_id: str
+    thread_id: str
+    mode: RunMode
+    goal: str | None = None
+    previous_run_id: str | None = None
+    max_steps: int | None = None
+    """1..50. Required for background runs."""
+    checkpoint: dict[str, object] | None = None
+    """Background: required, `{messages: [...], config: {...}}` (the
+    worker's start state). Interactive: optional harness state."""
+    lease_seconds: float | None = None
+    """Interactive: initial lease (clamped to 10..3600; None → 120)."""
+
+
+@dataclass(frozen=True)
+class CreateResult:
+    run: RunRecord
+    created: bool
+    """False for an idempotent retry: `run` is the existing run, unchanged."""
+
+
+@dataclass(frozen=True)
+class RunFilter:
+    """`listRuns` filters; every set field must match."""
+
+    thread_id: str | None = None
+    statuses: frozenset[ContractStatus] = frozenset()
+    """Contract statuses; empty = any."""
+    parent_run_id: str | None = None
+    mode: RunMode | None = None
+
+    def fingerprint(self) -> str:
+        raw = json.dumps(
+            [self.thread_id, sorted(self.statuses), self.parent_run_id, self.mode],
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+@dataclass(frozen=True)
+class RunPage:
+    runs: tuple[RunRecord, ...]
+    next_page_token: str | None
+
+
+class RunRepository(Protocol):
+    async def create(self, owner: RunOwner, spec: RunSpec) -> CreateResult:
+        """Create the run, idempotent on `spec.run_id` (`create_run`):
+
+        * new id → the new run, `created=True`;
+        * the owner's run with the same `thread_id` and `mode` → that run
+          unchanged, `created=False` — nothing else in `spec` is compared
+          or applied (the first request wins), and nothing is validated
+          first, so a retry cannot fail on state that changed since;
+        * anything else → `RunIdConflict`.
+
+        Background: the owner must be a user and `thread_id` one of their
+        conversations (`ThreadNotFound`); `max_steps` and `checkpoint` are
+        required (`ValueError`). Created `queued`; the caller then appends
+        `status: queued` as seq 1 and enqueues the `start` job
+        (`enqueue_task_job`). Interactive: created `running` with a lease;
+        an anonymous owner may only create interactive runs (`ValueError`).
+        `previous_run_id`, when set, must be the owner's run on the same
+        thread (`PreviousRunNotFound`)."""
+        ...
+
+    async def get(self, owner: RunOwner, run_id: str) -> RunRecord | None:
+        """The owner's run, or None (missing and not-yours alike)."""
+        ...
+
+    async def list_runs(
+        self,
+        owner: RunOwner,
+        filt: RunFilter,
+        *,
+        page_size: int = 20,
+        page_token: str | None = None,
+    ) -> RunPage:
+        """The owner's runs matching `filt`, newest first (`created_at`
+        desc, then `id` desc), keyset-paged: a page is stable under
+        concurrent inserts. `page_token` must come from a previous page
+        with the same filters (`InvalidPageToken` otherwise).
+        `page_size` 1..100 (`ValueError`). Anonymous owners list
+        nothing."""
+        ...
+
+    async def cancel(self, owner: RunOwner, run_id: str) -> RunRecord | None:
+        """Cancel the owner's run (`queued` / `running` / `paused` →
+        `cancelled`, outcome `cancelled`, `finished_at` now, lease
+        cleared) and return it as it now stands; an ended run is returned
+        unchanged. None when it is not the owner's. Idempotent. The
+        caller appends `status: cancelled` to the log when this call made
+        the change, and signals the executing harness if it is local; a
+        harness in another process notices on its next `heartbeat`
+        (False) or cancellation check."""
+        ...
+
+    async def mark_running(self, run_id: str) -> bool:
+        """`queued` → `running` (a background worker picking it up). False
+        when the run is not `queued`."""
+        ...
+
+    async def settle(self, run_id: str, outcome: RunOutcome) -> bool:
+        """End a live run: `Succeeded` → `done`, `Failed` → `failed`,
+        `Cancelled` → `cancelled`, `Interrupted` → `paused`; stores
+        `outcome_to_json(outcome)` in `outcome`, sets `finished_at`, clears
+        the lease. Only from `queued` / `running` — returns False and
+        changes nothing otherwise (a concurrent `cancel` or reap won: the
+        caller must not append its own terminal entry then)."""
+        ...
+
+    async def heartbeat(self, run_id: str, *, lease_seconds: float = DEFAULT_LEASE_SECONDS) -> bool:
+        """Extend a live interactive run's lease to now + `lease_seconds`.
+        False when the run is no longer live (cancelled elsewhere, reaped)
+        — the executing process must then stop the harness."""
+        ...
+
+    async def reap_expired(self, *, limit: int = 50) -> list[RunRecord]:
+        """Fail live interactive runs whose lease has lapsed (their process
+        died, Q28): `failed`, outcome `error` / `worker_lost`. Returns the
+        reaped runs (as now stored); the caller appends each one's
+        terminal `result` entry and seals its log."""
+        ...
+
+
+# --- Fake ----------------------------------------------------------------------
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+@dataclass
+class _Row:
+    record: RunRecord
+    checkpoint: dict[str, object] | None = None
+    outcome: dict[str, object] | None = None
+    max_steps: int = 25
+    extra: dict[str, object] = field(default_factory=dict)
+
+
+class InMemoryRunRepository:
+    """`RunRepository` in memory, with the same rules as the Postgres
+    version (0041's `create_run` + the transitions above). For tests.
+
+    `conversations` maps a user id to the thread ids that are synced
+    conversations of theirs (background runs need one). `clock` is
+    injectable so lease and ordering tests are deterministic."""
+
+    WORKER_LOST_MESSAGE = "The run's process stopped unexpectedly."
+
+    def __init__(
+        self,
+        *,
+        conversations: Mapping[str, set[str]] | None = None,
+        clock: Callable[[], datetime] = _now,
+    ) -> None:
+        self._rows: dict[str, _Row] = {}
+        self._conversations = conversations if conversations is not None else {}
+        self._clock = clock
+
+    # -- helpers --
+
+    def checkpoint_of(self, run_id: str) -> dict[str, object] | None:
+        """Test hook: the stored harness state."""
+        row = self._rows.get(run_id)
+        return None if row is None else row.checkpoint
+
+    def outcome_of(self, run_id: str) -> dict[str, object] | None:
+        """Test hook: the stored `outcome` jsonb."""
+        row = self._rows.get(run_id)
+        return None if row is None else row.outcome
+
+    def _owned(self, owner: RunOwner, run_id: str) -> _Row | None:
+        row = self._rows.get(run_id)
+        if row is None or row.record.owner != owner:
+            return None
+        return row
+
+    def _set(self, row: _Row, **changes: object) -> RunRecord:
+        row.record = replace(row.record, updated_at=self._clock(), **changes)  # type: ignore[arg-type]
+        return row.record
+
+    def _apply_outcome(self, row: _Row, outcome: RunOutcome) -> RunRecord:
+        row.outcome = outcome_to_json(outcome)
+        now = self._clock()
+        common: dict[str, object] = {"finished_at": now, "lease_expires_at": None}
+        if isinstance(outcome, Succeeded):
+            return self._set(row, internal_status="done", result=outcome.result.to_json(), **common)
+        if isinstance(outcome, Failed):
+            return self._set(
+                row,
+                internal_status="failed",
+                error={"code": outcome.code, "message": outcome.message},
+                **common,
+            )
+        if isinstance(outcome, Interrupted):
+            return self._set(
+                row,
+                internal_status="paused",
+                open_interrupts=tuple(i.to_agui() for i in outcome.interrupts),
+                **common,
+            )
+        return self._set(row, internal_status="cancelled", open_interrupts=(), **common)
+
+    # -- owner-scoped --
+
+    async def create(self, owner: RunOwner, spec: RunSpec) -> CreateResult:
+        existing = self._rows.get(spec.run_id)
+        if existing is not None:
+            rec = existing.record
+            if rec.owner == owner and rec.thread_id == spec.thread_id and rec.mode == spec.mode:
+                return CreateResult(rec, created=False)
+            raise RunIdConflict()
+
+        if spec.previous_run_id is not None:
+            prev = self._owned(owner, spec.previous_run_id)
+            if prev is None or prev.record.thread_id != spec.thread_id:
+                raise PreviousRunNotFound()
+
+        now = self._clock()
+        if spec.mode == "background":
+            if owner.user_id is None:
+                raise ValueError("anonymous runs are interactive only")
+            if spec.max_steps is None or not 1 <= spec.max_steps <= 50:
+                raise ValueError("max_steps must be between 1 and 50")
+            cp = spec.checkpoint
+            if (
+                cp is None
+                or not isinstance(cp.get("messages"), list)
+                or not isinstance(cp.get("config"), dict)
+            ):
+                raise ValueError("invalid checkpoint")
+            if spec.thread_id not in self._conversations.get(owner.user_id, set()):
+                raise ThreadNotFound()
+            config = dict(cp["config"])  # type: ignore[call-overload]
+            config["maxSteps"] = spec.max_steps
+            record = RunRecord(
+                id=spec.run_id,
+                owner=owner,
+                thread_id=spec.thread_id,
+                mode="background",
+                internal_status="queued",
+                created_at=now,
+                updated_at=now,
+                started_at=now,
+                previous_run_id=spec.previous_run_id,
+                goal=(spec.goal or "")[:2000],
+            )
+            row = _Row(
+                record,
+                checkpoint={**cp, "step": 0, "seq": 1, "config": config},
+                max_steps=spec.max_steps,
+            )
+        else:
+            if spec.max_steps is not None and not 1 <= spec.max_steps <= 50:
+                raise ValueError("max_steps must be between 1 and 50")
+            lease = min(max(spec.lease_seconds or DEFAULT_LEASE_SECONDS, 10.0), 3600.0)
+            record = RunRecord(
+                id=spec.run_id,
+                owner=owner,
+                thread_id=spec.thread_id,
+                mode="interactive",
+                internal_status="running",
+                created_at=now,
+                updated_at=now,
+                started_at=now,
+                previous_run_id=spec.previous_run_id,
+                goal=None if spec.goal is None else spec.goal[:2000],
+                lease_expires_at=now + timedelta(seconds=lease),
+            )
+            row = _Row(record, checkpoint=spec.checkpoint, max_steps=spec.max_steps or 25)
+        self._rows[spec.run_id] = row
+        return CreateResult(record, created=True)
+
+    async def get(self, owner: RunOwner, run_id: str) -> RunRecord | None:
+        row = self._owned(owner, run_id)
+        return None if row is None else row.record
+
+    async def list_runs(
+        self,
+        owner: RunOwner,
+        filt: RunFilter,
+        *,
+        page_size: int = 20,
+        page_token: str | None = None,
+    ) -> RunPage:
+        if not 1 <= page_size <= 100:
+            raise ValueError("page_size must be between 1 and 100")
+        after: tuple[str, str] | None = None
+        if page_token is not None:
+            after = _decode_token(page_token, filt.fingerprint())
+        if owner.is_anonymous:
+            return RunPage((), None)
+
+        def matches(r: RunRecord) -> bool:
+            return (
+                r.owner == owner
+                and (filt.thread_id is None or r.thread_id == filt.thread_id)
+                and (not filt.statuses or r.status in filt.statuses)
+                and (filt.parent_run_id is None or r.parent_run_id == filt.parent_run_id)
+                and (filt.mode is None or r.mode == filt.mode)
+            )
+
+        def key(r: RunRecord) -> tuple[str, str]:
+            return (r.created_at.isoformat(), r.id)
+
+        runs = sorted((row.record for row in self._rows.values()), key=key, reverse=True)
+        runs = [r for r in runs if matches(r) and (after is None or key(r) < after)]
+        page = runs[:page_size]
+        token = None
+        if len(runs) > page_size:
+            token = _encode_token(key(page[-1]), filt.fingerprint())
+        return RunPage(tuple(page), token)
+
+    async def cancel(self, owner: RunOwner, run_id: str) -> RunRecord | None:
+        row = self._owned(owner, run_id)
+        if row is None:
+            return None
+        if row.record.internal_status in ("queued", "running", "paused"):
+            return self._apply_outcome(row, Cancelled())
+        return row.record
+
+    # -- system --
+
+    async def mark_running(self, run_id: str) -> bool:
+        row = self._rows.get(run_id)
+        if row is None or row.record.internal_status != "queued":
+            return False
+        self._set(row, internal_status="running")
+        return True
+
+    async def settle(self, run_id: str, outcome: RunOutcome) -> bool:
+        row = self._rows.get(run_id)
+        if row is None or row.record.internal_status not in ("queued", "running"):
+            return False
+        self._apply_outcome(row, outcome)
+        return True
+
+    async def heartbeat(self, run_id: str, *, lease_seconds: float = DEFAULT_LEASE_SECONDS) -> bool:
+        row = self._rows.get(run_id)
+        if row is None or row.record.mode != "interactive" or not row.record.is_live:
+            return False
+        self._set(row, lease_expires_at=self._clock() + timedelta(seconds=lease_seconds))
+        return True
+
+    async def reap_expired(self, *, limit: int = 50) -> list[RunRecord]:
+        now = self._clock()
+        expired = sorted(
+            (
+                row
+                for row in self._rows.values()
+                if row.record.mode == "interactive"
+                and row.record.internal_status in ("queued", "running")
+                and row.record.lease_expires_at is not None
+                and row.record.lease_expires_at < now
+            ),
+            key=lambda r: r.record.lease_expires_at or now,
+        )[:limit]
+        return [
+            self._apply_outcome(row, Failed("worker_lost", self.WORKER_LOST_MESSAGE))
+            for row in expired
+        ]
+
+
+def _encode_token(key: tuple[str, str], fingerprint: str) -> str:
+    raw = json.dumps({"c": key[0], "i": key[1], "f": fingerprint}, separators=(",", ":"))
+    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+
+
+def _decode_token(token: str, fingerprint: str) -> tuple[str, str]:
+    try:
+        padded = token + "=" * (-len(token) % 4)
+        data = json.loads(base64.urlsafe_b64decode(padded.encode()))
+    except (binascii.Error, ValueError, UnicodeDecodeError) as exc:
+        raise InvalidPageToken() from exc
+    if (
+        not isinstance(data, dict)
+        or data.get("f") != fingerprint
+        or not isinstance(data.get("c"), str)
+        or not isinstance(data.get("i"), str)
+    ):
+        raise InvalidPageToken()
+    return (data["c"], data["i"])
