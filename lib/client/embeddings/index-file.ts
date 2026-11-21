@@ -4,7 +4,9 @@ import "client-only"
  * Client trigger for the file-embedding populate path
  * (`docs/PLAN-local-rag.md` PR 2). Called fire-and-forget from
  * `runExtraction` once a file's text is available. Sends the text to
- * `POST /api/embed`, which chunks + embeds it into `file_sections`.
+ * `POST /api/embed` (or agent-py's `/v1/embed` for agent-py accounts —
+ * `apiClient.embed.file` picks), which chunks + embeds it into
+ * `file_sections`.
  *
  * Best-effort and self-gating:
  *  - No-op for anonymous / local-only users (no Supabase session) — the
