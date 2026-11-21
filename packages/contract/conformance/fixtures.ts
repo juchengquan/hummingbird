@@ -17,4 +17,13 @@ export const validRequestBodies: Record<string, unknown> = {
     sources: [{ title: "Probe source", url: "https://example.com/sky", snippet: "The sky is blue." }],
     columnHints: ["Claim", { label: "Year", type: "number" }],
   },
+  // --- schedules ---
+  createSchedule: {
+    workspaceId: "00000000-0000-4000-8000-000000000001",
+    name: "Conformance probe",
+    prompt: "Summarise the news.",
+    cron: "0 8 * * *",
+    timezone: "UTC",
+  },
+  updateSchedule: { enabled: false },
 }

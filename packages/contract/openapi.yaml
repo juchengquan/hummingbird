@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Hummingbird backend contract
-  version: 0.1.0
+  version: 0.2.0
   summary: The frontend <-> backend HTTP contract (spec-first, PLAN-frontend-backend-split.md Q19).
   description: |
     Hand-written source of truth for the HTTP surface every Hummingbird
@@ -33,6 +33,8 @@ tags:
     description: Re-signing Supabase Storage URLs for generated artefacts.
   - name: artifacts
     description: Structured artefacts derived from model output.
+  - name: schedules
+    description: Recurring background-task runs (`task_schedules`) — a saved task spec plus a cron expression and IANA timezone.
 
 security:
   - bearerAuth: []
@@ -189,6 +191,138 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
+  # --- schedules ------------------------------------------------------------
+  /v1/tasks/schedules:
+    get:
+      operationId: listSchedules
+      tags: [schedules]
+      summary: List the caller's schedules
+      description: |
+        Every schedule the caller owns, newest first (`created_at` desc).
+        Read as the caller under row-level security. Mirrors
+        `GET /api/tasks/schedules`.
+      responses:
+        "200":
+          description: The caller's schedules.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+    post:
+      operationId: createSchedule
+      tags: [schedules]
+      summary: Create a schedule
+      description: |
+        Validates the cron + timezone (parseable; at most 12 fires an hour
+        in the minute field; never two fires within 5 minutes over the next
+        48) and stores the row with its first `nextRunAt`. Written as the
+        caller, so the database also enforces workspace ownership (403) and
+        the 20-enabled-schedules cap (409 `limit_reached`). `timezone`
+        defaults to `UTC`, `enabled` to true. Mirrors
+        `POST /api/tasks/schedules`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleCreateRequest"
+      responses:
+        "201":
+          description: The created schedule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/tasks/schedules/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The schedule's id (a UUID).
+        schema:
+          type: string
+    patch:
+      operationId: updateSchedule
+      tags: [schedules]
+      summary: Update a schedule
+      description: |
+        Partial update: absent fields are left alone, `null` clears a
+        nullable field. A changed `cron` or `timezone` is re-validated and
+        recomputes `nextRunAt`; otherwise `nextRunAt` is kept, so an edit
+        never pulls the next fire earlier. Re-enabling past the per-user cap
+        is 409 `limit_reached`. Mirrors `PATCH /api/tasks/schedules/:id`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleUpdateRequest"
+      responses:
+        "200":
+          description: The updated schedule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+    delete:
+      operationId: deleteSchedule
+      tags: [schedules]
+      summary: Delete a schedule
+      description: |
+        Deletes the caller's schedule. Idempotent: an id the caller does not
+        own (or that does not exist) is also `{ ok: true }`. Mirrors
+        `DELETE /api/tasks/schedules/:id`.
+      responses:
+        "200":
+          description: Deleted (or already gone).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteScheduleResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -261,6 +395,20 @@ components:
         The backend is misconfigured for this operation — e.g. its JWT secret
         is unset, so it cannot verify any token (`code` is `unavailable`).
         Distinct from 401 so monitoring can alert on it.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: |
+        The request conflicts with the resource's state or a per-user limit
+        (`code` is `limit_reached` or `invalid_state`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: An unexpected backend or database failure (`code` is `unknown`).
       content:
         application/json:
           schema:
@@ -373,6 +521,12 @@ components:
         poller_last_tick_age_seconds:
           type: [number, "null"]
           description: Seconds since the poll loop last finished a tick; null before the first.
+        scheduler_alive:
+          type: [boolean, "null"]
+          description: Null when the schedule dispatcher loop is not enabled; false when it was started and has died.
+        scheduler_last_tick_age_seconds:
+          type: [number, "null"]
+          description: Seconds since the schedule dispatcher last finished a tick; null before the first.
       additionalProperties:
         type: [boolean, number, string, "null"]
 
@@ -561,3 +715,246 @@ components:
         snippet:
           type: string
           maxLength: 1000
+
+    # --- schedules ----------------------------------------------------------
+    ScheduleCron:
+      type: string
+      minLength: 1
+      maxLength: 100
+      pattern: '^\S+\s+\S+\s+\S+\s+\S+\s+\S+$'
+      description: |
+        Five space-separated fields (minute hour day-of-month month
+        day-of-week), evaluated with cron-parser semantics. The backend
+        additionally rejects expressions that cannot be parsed or fire more
+        often than every 5 minutes (400 `invalid_request`).
+      examples: ["0 8 * * *", "*/15 9-17 * * 1-5"]
+
+    ScheduleCreateRequest:
+      type: object
+      required: [workspaceId, name, prompt, cron]
+      properties:
+        workspaceId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: The workspace (owned by the caller) the scheduled runs belong to.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 20000
+        cron:
+          $ref: "#/components/schemas/ScheduleCron"
+        timezone:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: IANA timezone, e.g. `America/Los_Angeles`. Absent means `UTC`.
+        enabled:
+          type: boolean
+          description: Absent means true.
+        model:
+          type: [string, "null"]
+          maxLength: 100
+          description: Model id; null falls back to the workspace / global default at run time.
+        systemPrompt:
+          type: [string, "null"]
+          maxLength: 20000
+        skills:
+          type: array
+          maxItems: 10
+          items:
+            $ref: "#/components/schemas/SkillConfig"
+        maxSteps:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 50
+          description: Step budget per run; null means 25.
+
+    ScheduleUpdateRequest:
+      type: object
+      description: Any subset of the create fields. `null` is accepted only where the create body accepts it.
+      properties:
+        workspaceId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 20000
+        cron:
+          $ref: "#/components/schemas/ScheduleCron"
+        timezone:
+          type: string
+          minLength: 1
+          maxLength: 100
+        enabled:
+          type: boolean
+        model:
+          type: [string, "null"]
+          maxLength: 100
+        systemPrompt:
+          type: [string, "null"]
+          maxLength: 20000
+        skills:
+          type: array
+          maxItems: 10
+          items:
+            $ref: "#/components/schemas/SkillConfig"
+        maxSteps:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 50
+
+    ScheduleResponse:
+      type: object
+      required:
+        - id
+        - workspaceId
+        - name
+        - prompt
+        - cron
+        - timezone
+        - enabled
+        - model
+        - systemPrompt
+        - maxSteps
+        - lastRunAt
+        - lastRunTaskId
+        - nextRunAt
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        workspaceId:
+          type: string
+        name:
+          type: string
+        prompt:
+          type: string
+        cron:
+          type: string
+        timezone:
+          type: string
+        enabled:
+          type: boolean
+        model:
+          type: [string, "null"]
+        systemPrompt:
+          type: [string, "null"]
+        skills:
+          type: array
+          description: Absent when the schedule has no skill list.
+          items:
+            $ref: "#/components/schemas/SkillConfig"
+        maxSteps:
+          type: [integer, "null"]
+        lastRunAt:
+          type: [string, "null"]
+          format: date-time
+        lastRunTaskId:
+          type: [string, "null"]
+          description: The task the last fire created, for deep-linking to its result.
+        nextRunAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ScheduleListResponse:
+      type: object
+      required: [schedules]
+      properties:
+        schedules:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScheduleResponse"
+
+    DeleteScheduleResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          const: true
+
+    SkillConfig:
+      type: object
+      description: A skill enabled for a run, with optional per-skill settings (`ChatRequestSchema.shape.skills` in `lib/shared/api-schemas.ts`).
+      required: [id]
+      properties:
+        id:
+          type: string
+          maxLength: 40
+        webSearchConfig:
+          $ref: "#/components/schemas/WebSearchSkillConfig"
+        webFetchConfig:
+          $ref: "#/components/schemas/MaxCallsSkillConfig"
+        imageGenConfig:
+          $ref: "#/components/schemas/ImageGenSkillConfig"
+        fileSearchConfig:
+          $ref: "#/components/schemas/MaxCallsSkillConfig"
+
+    MaxCallsSkillConfig:
+      type: object
+      properties:
+        maxCalls:
+          type: integer
+          minimum: 1
+          maximum: 50
+
+    WebSearchSkillConfig:
+      type: object
+      properties:
+        maxCalls:
+          type: integer
+          minimum: 1
+          maximum: 50
+        tavily:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            searchDepth:
+              type: string
+              enum: [basic, advanced]
+        brave:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            freshness:
+              type: string
+              enum: [any, pd, pw, pm, py]
+        exa:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            type:
+              type: string
+              enum: [auto, neural, keyword]
+
+    ImageGenSkillConfig:
+      type: object
+      properties:
+        maxCalls:
+          type: integer
+          minimum: 1
+          maximum: 50
+        aspectRatio:
+          type: string
+          enum: ["1:1", "16:9", "9:16", "4:3", "3:4", "2:3", "3:2"]
