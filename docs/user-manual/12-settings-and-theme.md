@@ -45,12 +45,16 @@ Click your avatar or initial at the bottom of the left sidebar.
   - `ts-service` - the TypeScript agent service (Phase 5+; shows
     when `NEXT_PUBLIC_AGENT_TS_URL` is set).
   - `python-runs` - **agent-py (runs)**, experimental: chat turns run
-    on the agent-py runs API (`/v1/runs`), where Stop cancels the
-    answer on the server and a reload picks a running answer back up.
-    Also offered to signed-out users. Not shown yet: it appears once
-    chat is wired onto runs; until then choosing it behaves like
-    `python`. Every other request (summaries, embeds, sharing, …)
-    goes exactly where `python` sends it.
+    on the agent-py runs API (`/v1/runs`). Stop cancels the answer on
+    the server; closing or reloading the tab doesn't — after a reload
+    the running answer is picked back up into its message. When the
+    assistant needs your input mid-answer (an approval or a question),
+    the answer pauses until you reply; typing a new message instead
+    cancels the paused one. Also offered to signed-out users (shows
+    when `NEXT_PUBLIC_AGENT_PY_URL` is set). Like `python`, it doesn't
+    send attachments, MCP servers, reasoning effort or reference images
+    yet. Every other request (summaries, embeds, sharing, …) goes
+    exactly where `python` sends it.
 
 ## Tips & gotchas
 - The Chat backend toggle is only visible when the corresponding
