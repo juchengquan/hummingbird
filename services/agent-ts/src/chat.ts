@@ -69,16 +69,21 @@ export function categorizeProviderError(err: unknown): ProviderErrorCode {
 
   const message = err instanceof Error ? err.message : String(err)
   const lower = message.toLowerCase()
+  // A status only counts when it's on the error or anchored in the
+  // message ("429 …", "HTTP 401", "status: 403") — same rule as Next's
+  // `categorizeError`, so a token count or request id that happens to
+  // contain 401/429 doesn't change the bucket.
+  const status = upstreamStatus(err, message)
   if (
     (lower.includes("rate") && lower.includes("limit")) ||
-    lower.includes("429") ||
+    status === 429 ||
     lower.includes("too many requests")
   ) {
     return "rate_limit"
   }
   if (
-    lower.includes("401") ||
-    lower.includes("403") ||
+    status === 401 ||
+    status === 403 ||
     lower.includes("unauthor") ||
     lower.includes("forbidden")
   ) {
@@ -422,6 +427,7 @@ export function stringifyToolOutput(output: unknown): string {
 // import it from this module.
 export { parseSuggestionsJson } from "@/shared/suggestions-parser"
 import { parseSuggestionsJson } from "@/shared/suggestions-parser"
+import { upstreamStatus } from "@/shared/api-errors"
 
 /** Pull the last `user` role message's content. Mirrors the
  *  Next.js inline route's `lastUserText`. */

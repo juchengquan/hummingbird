@@ -45,6 +45,31 @@ gated routes fail with a 500 until fixed.
 AI key): clients must not apply the `auth` mock-response fallback to
 it; they show a sign-in prompt instead.
 
+### Request body caps — `413 payload_too_large`
+
+App Router route handlers have no default body limit, so every JSON
+route reads its body through `readJsonCapped`
+(`lib/server/read-body-capped.ts`): a `Content-Length` over the cap is
+rejected before anything is read, and a chunked body is cut off once the
+streamed count passes it. Routes with the `{ code, message }` envelope
+answer `413 { code: "payload_too_large", message }`; older `{ error }`
+routes answer `413` in their own envelope.
+
+| Route | Cap | Derived from |
+|---|---|---|
+| `/api/chat` | `CHAT_BODY_MAX` ≈ 125 MB | inline `sandboxFiles` total + 40 attachments × 220k chars × 3 bytes + 32 MB for history / images |
+| `/api/ai/command` | 32 MB | ≤ 1000 messages + ≤ 50,000 editor blocks |
+| `/api/summarize` | 8 MB | ≤ 200 messages |
+| `/api/embed` | 4 MB | `text` ≤ 1.2M chars |
+| `/api/extract-table` | 2 MB | `reportText` ≤ 100k chars + ≤ 100 sources |
+| `/api/mcp/server` | 2 MB | config + cached capabilities |
+| `/api/mcp/{id}/{action}` | 1 MB | server config + tool input |
+| `/api/ai/complete`, `/api/memory/extract` | 256 KB | ≤ 36k / 50k chars |
+| `/api/url/fetch`, `/api/share`, `/api/images/refresh-url`, `/api/files/refresh-url` | 16 KB | one URL / id / path |
+
+`/api/extract` (multipart) and `/api/csp-report` cap their raw bodies the
+same way. The `/api/tasks/**` routes still use a bare `req.json()`.
+
 ---
 
 ## JSON routes
@@ -67,8 +92,10 @@ Extract text from an uploaded file.
 }
 ```
 
-**Errors**: `400` malformed FormData, `413` file too large, `500` for
-extractor failures. Body shape: `{ error: string }`. Never
+**Errors**: `400` malformed FormData, `413` file too large, `429` more
+than 60 extractions per minute from one client IP (with `Retry-After`;
+checked before the body is read), `500` for extractor failures. Body
+shape: `{ error: string }`. Never
 `auth_required` — with the sign-in gate on, an anonymous caller just
 gets text-only extraction (no vision pass).
 
@@ -79,6 +106,11 @@ the `file` part exceeds `FILE_SIZE_LIMIT` (5 MB); or a docx/xlsx zip
 would decompress past 100 MB / 5,000 entries (zip-bomb guard,
 `lib/server/extraction/zip-guard.ts`, which measures the real inflated
 size, not the headers' claims).
+
+Spreadsheets are parsed up to their first 5,000 rows per sheet; each
+sheet's declared range is clamped to the cells actually present, and
+the CSV text stops being built once it passes the 1 MB full-text
+budget (a tiny file declaring `A1:CV1000000` costs nothing).
 
 ---
 
@@ -112,12 +144,17 @@ the only cloud precondition is the `files` row existing (the
 
 Idempotent: a file already chunked returns `skipped/already_indexed`
 (no embed) unless `force`. `not_configured` (no server-side embedder)
-and `file_not_found` (the FK row hasn't synced yet — the client
-retries with backoff) are **200, not errors** — indexing is
-best-effort background decoration.
+and `file_not_found` (the caller can't see a live `files` row with that
+id — not synced yet, deleted, or not theirs; the client retries with
+backoff) are **200, not errors** — indexing is best-effort background
+decoration. The `files` row is looked up with the caller's RLS-scoped
+client *before* anything is embedded, so a forged id costs no model
+call.
 
-**Errors**: `400` invalid body, `401` not signed in, `500` embed/insert
-failure. Body shape: `{ code?: string, error: string }`.
+**Errors**: `400` invalid body, `401` not signed in, `413` body over
+4 MB, `429` more than 30 embed calls per minute per user (with
+`Retry-After`), `500` embed/insert failure. Body shape:
+`{ code?: string, error: string }`.
 
 ---
 
@@ -181,6 +218,24 @@ their own tokens (enforced by RLS).
 **Errors**: `401` unauthorised, `404` token not found, `500` update
 failure, `503` Supabase not configured.
 
+### `POST /api/mcp/{serverId}/{discover|call|read}`
+
+Server-side MCP proxy for browser-initiated discovery, resource reads
+and MCP-app tool calls (chat-turn tool calls run in-process). Local-mode
+servers send their credential in `X-MCP-Credentials`; cloud-mode
+servers are looked up (and their credential decrypted) by `serverId`.
+
+**Access**: with Supabase configured the caller must be signed in,
+whatever `REQUIRE_AUTH_FOR_AI` says — anonymous calls get
+`401 { code: "auth_required", message }`. Without Supabase (local-only
+deployment) anonymous local-mode MCP keeps working. Either way calls
+are limited to 120 per minute per user (signed in) or per client IP
+(`429 { error: "rate_limited", code, message }` + `Retry-After`).
+
+**Errors**: `400` invalid body / `mcp_url_blocked` (SSRF guard), `401`,
+`404` unknown action, `413` body over 1 MB, `429`, `502`
+`mcp_upstream_error` (the upstream error text is never echoed).
+
 ### `POST /api/memory/extract`
 
 Best-effort, post-turn cross-conversation memory extraction. Fired
@@ -196,10 +251,13 @@ is a no-op that still answers `200`.
 {
   turnText: string,          // 1..50_000 chars — "User: …\n\nAssistant: …"
   conversationId?: string,   // max 64 chars
+  tainted?: boolean,         // the chat stream flagged the turn (memoryTainted)
 }
 ```
 
-**Response 200**: `{ ok: true }`
+**Response 200**: `{ ok: true }`. With `tainted: true` nothing is
+extracted (still `200 { ok: true }`); the first-party client doesn't
+send tainted turns at all.
 
 **Errors**: `400` invalid body, `401 auth_required` (sign-in gate on,
 anonymous caller).
@@ -330,6 +388,22 @@ shapes below are normative.
 // Stream end — last frame of a successful stream.
 { "type": "done" }
 ```
+
+**Memory taint.** On the wire (AI SDK v5 UI message stream) a
+successful stream ends `finish-step`, `finish`, `[DONE]`. When the turn
+read third-party content — the request carried attachments (files, URL
+bookmarks, MCP resources), uploaded image / file parts, or replayed
+tool results, or a web / MCP / file / sandbox tool ran — the `finish`
+frame carries per-message metadata:
+
+```jsonc
+{ "type": "finish", "messageMetadata": { "memoryTainted": true } }
+```
+
+Absent metadata means untainted. On a tainted turn the server refuses
+`rememberFact` / `forgetFact`, and the client must not run post-turn
+memory extraction (`POST /api/memory/extract`) for it. The client's
+translator surfaces it as `{ type: "memory_tainted" }`.
 
 ### Ordering rules
 

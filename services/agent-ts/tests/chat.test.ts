@@ -454,6 +454,13 @@ describe("categorizeProviderError — string-match fallback for generic errors",
   })
 
   test("unrecognised → upstream", () => {
+    // Bare numbers elsewhere in the text are not statuses (parity with
+    // Next's categorizeError): a token count / request id stays upstream.
+    expect(categorizeProviderError(new Error("upstream failed after 4290 tokens"))).toBe(
+      "upstream",
+    )
+    expect(categorizeProviderError(new Error("request req_401abc failed"))).toBe("upstream")
+    expect(categorizeProviderError(new Error("HTTP 401 from gateway"))).toBe("auth")
     expect(categorizeProviderError(new Error("connection reset"))).toBe(
       "upstream",
     )

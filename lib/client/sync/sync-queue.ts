@@ -53,6 +53,9 @@ export type SyncOp =
       /** Row to send to .upsert(). user_id MUST be present. */
       row: Record<string, unknown>
       attempts?: number
+      /** Times this upsert was moved to the back of the queue because a
+       *  row it references wasn't in the cloud yet (see `classify`). */
+      dependencyRetries?: number
       /** User id that produced this op (see header). Absent only on ops
        *  persisted by builds that predate owner stamping. */
       ownerUserId?: string
@@ -245,7 +248,32 @@ async function flush(): Promise<void> {
         persist()
         continue
       }
-      if (result === "drop") {
+      if (result === "dependency" && op.kind === "upsert") {
+        state.ops.shift()
+        const retries = (op.dependencyRetries ?? 0) + 1
+        const superseded = state.ops.some((o) => sameRow(o, op))
+        if (superseded || retries > MAX_DEPENDENCY_RETRIES) {
+          // A later op for the same row already carries the newer state
+          // (moving this one behind it would let the stale row win), or
+          // the referenced row never showed up.
+          if (!superseded) console.warn("[sync] dropping op with a missing reference", op)
+        } else {
+          // Behind everything queued now, so the row it references (queued
+          // later — e.g. a message released after a stream) goes first.
+          state.ops.push({ ...op, dependencyRetries: retries })
+        }
+        persist()
+        if (state.ops.length > 0 && state.ops[0].clientOpId === op.clientOpId) {
+          // Nothing else to try first: back off before retrying it alone.
+          const backoff = BASE_BACKOFF_MS * 2 ** (retries - 1)
+          state.notBefore = Date.now() + backoff
+          persist()
+          scheduleFlush(backoff)
+          return
+        }
+        continue
+      }
+      if (result === "drop" || result === "dependency") {
         // 4xx that won't be fixed by retrying. Surface to console; don't
         // wedge the queue.
         console.warn("[sync] dropping un-retryable op", op)
@@ -273,7 +301,23 @@ async function flush(): Promise<void> {
   }
 }
 
-type OpResult = "ok" | "retry" | "drop"
+type OpResult = "ok" | "retry" | "drop" | "dependency"
+
+/** How often an upsert that hit a missing reference is re-tried from the
+ *  back of the queue before it is dropped. */
+const MAX_DEPENDENCY_RETRIES = 3
+
+function rowIdOf(op: SyncOp): string | null {
+  if (op.kind === "upsert") return typeof op.row.id === "string" ? op.row.id : null
+  if (op.kind === "delete" && op.where.column === "id") return op.where.value
+  return null
+}
+
+function sameRow(a: SyncOp, b: SyncOp): boolean {
+  if (a.target !== b.target) return false
+  const id = rowIdOf(a)
+  return id !== null && id === rowIdOf(b)
+}
 
 function recordFlushed(op: SyncOp): void {
   flushSeq += 1
@@ -307,7 +351,7 @@ async function runOp(op: SyncOp): Promise<OpResult> {
         .from(op.target)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .upsert(row as any, { onConflict: "id" })
-      if (error) return classify(error.code)
+      if (error) return classifyUpsert(error.code)
       return "ok"
     }
     if (op.kind === "delete") {
@@ -350,6 +394,21 @@ function classify(code: string | undefined): OpResult {
   if (code.startsWith("42")) return "drop"
   if (code.startsWith("PGRST")) return "drop"
   return "retry"
+}
+
+/**
+ * An upsert that references a row the cloud doesn't have YET fails with
+ * 23503 (foreign_key_violation) — or 42501 when 0031's ownership policy
+ * runs first and can't see the referenced row. Usually the referenced
+ * row is just queued behind it, so this is a bounded "retry after the
+ * rest of the queue", not a drop (see the flush loop). Bounded and
+ * superseded-aware, so a genuinely dangling reference / a real
+ * permission error still gets dropped after a few rounds and a stale
+ * copy never overtakes a newer op for the same row.
+ */
+function classifyUpsert(code: string | undefined): OpResult {
+  if (code === "23503" || code === "42501") return "dependency"
+  return classify(code)
 }
 
 // -- public API --------------------------------------------------------------

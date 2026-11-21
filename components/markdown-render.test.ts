@@ -61,10 +61,12 @@ describe("renderMarkdownToHtml -- link sanitization", () => {
 })
 
 describe("renderMarkdownToHtml -- image sanitization", () => {
-  test("safe images render unchanged", () => {
-    expect(renderMarkdownToHtml("![alt](https://example.com/a.png)")).toContain(
-      '<img src="https://example.com/a.png" alt="alt">'
-    )
+  test("safe images render unchanged once loaded", () => {
+    expect(
+      renderMarkdownToHtml("![alt](https://example.com/a.png)", {
+        loadedRemoteImages: new Set(["https://example.com/a.png"]),
+      })
+    ).toContain('<img referrerpolicy="no-referrer" src="https://example.com/a.png" alt="alt">')
     expect(renderMarkdownToHtml("![alt](data:image/png;base64,AAAA)")).toContain(
       '<img src="data:image/png;base64,AAAA" alt="alt">'
     )
@@ -85,6 +87,68 @@ describe("renderMarkdownToHtml -- image sanitization", () => {
   test("alt text of a dropped image is escaped", () => {
     const html = renderMarkdownToHtml("![<b>x</b>](javascript:alert(1))")
     expect(html).not.toContain("<b>")
+  })
+})
+
+describe("renderMarkdownToHtml -- click-to-load remote images", () => {
+  const SUPABASE = "https://proj.supabase.co"
+  const opts = { trustedImageOrigins: [SUPABASE] }
+
+  test("a remote https image renders as a placeholder naming the host", () => {
+    const html = renderMarkdownToHtml("![a chart](https://tracker.example.com/p.png?u=1&v=2)", opts)
+    expect(html).not.toMatch(/<img\b/i)
+    expect(html).toContain('<button type="button" class="md-remote-image"')
+    expect(html).toContain('data-remote-image-src="https://tracker.example.com/p.png?u=1&amp;v=2"')
+    expect(html).toContain('<span class="md-remote-image-host">tracker.example.com</span>')
+    expect(html).toContain("Load image")
+    expect(html).toContain('<span class="md-remote-image-alt">a chart</span>')
+    // No inline handlers (CSP; the component uses event delegation).
+    expect(html).not.toMatch(/\son\w+=/i)
+  })
+
+  test("protocol-relative and http images are click-to-load too", () => {
+    for (const src of ["//cdn.example.com/x.png", "http://cdn.example.com/x.png", "/\\cdn.example.com/x.png"]) {
+      const html = renderMarkdownToHtml(`![x](${src})`, opts)
+      expect(html).not.toMatch(/<img\b/i)
+      expect(html).toContain("cdn.example.com")
+    }
+  })
+
+  test("only the clicked URL loads", () => {
+    const md = "![a](https://a.example.com/1.png) ![b](https://b.example.com/2.png)"
+    const html = renderMarkdownToHtml(md, {
+      ...opts,
+      loadedRemoteImages: new Set(["https://a.example.com/1.png"]),
+    })
+    expect(html).toContain('<img referrerpolicy="no-referrer" src="https://a.example.com/1.png"')
+    expect(html).not.toMatch(/<img [^>]*src="https:\/\/b\.example/)
+    expect(html).toContain('data-remote-image-src="https://b.example.com/2.png"')
+  })
+
+  test("the app's Supabase storage, data:, blob: and relative images load immediately", () => {
+    for (const src of [
+      `${SUPABASE}/storage/v1/object/sign/x.png?token=t`,
+      "data:image/webp;base64,AAAA",
+      "blob:https://app.example.com/0b7c-uuid",
+      "/api/files/x.png",
+    ]) {
+      const html = renderMarkdownToHtml(`![x](${src})`, opts)
+      expect(html).toMatch(/<img src="/)
+      expect(html).not.toContain("md-remote-image")
+    }
+  })
+
+  test("a look-alike of the trusted origin is still click-to-load", () => {
+    const html = renderMarkdownToHtml("![x](https://proj.supabase.co.evil.com/x.png)", opts)
+    expect(html).not.toMatch(/<img\b/i)
+    expect(html).toContain("proj.supabase.co.evil.com")
+  })
+
+  test("hostile alt / URL text stays inert in the placeholder", () => {
+    const html = renderMarkdownToHtml('![<img src=x onerror=alert(1)>](https://e.com/a.png "t")', opts)
+    expect(html).not.toMatch(/<img\b/i)
+    const quoted = renderMarkdownToHtml('![x](<https://e.com/a.png?"onmouseover="alert(1)>)', opts)
+    expect(quoted).not.toMatch(/"\s*onmouseover=/i)
   })
 })
 

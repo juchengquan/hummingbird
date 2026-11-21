@@ -192,6 +192,17 @@ class Settings(BaseSettings):
     `FILE_SIZE_LIMIT` (`lib/shared/upload-config.ts`, 5 MB). Larger
     uploads get 413 before extraction runs."""
 
+    REQUEST_BODY_MAX_BYTES: int = 1024 * 1024
+    """Default request-body cap (`body_limit.py`), enforced before
+    routing / auth so an unauthenticated caller can't make the service
+    buffer an unbounded body. `/v1/extract` uses `EXTRACT_MAX_BYTES`
+    (+ multipart overhead) instead, `/v1/chat` + `/v1/summarize` use
+    `CHAT_BODY_MAX_BYTES`. Over the cap → 413."""
+
+    CHAT_BODY_MAX_BYTES: int = 16 * 1024 * 1024
+    """Request-body cap for `/v1/chat` and `/v1/summarize`, whose JSON
+    carries a whole conversation (up to 200 messages)."""
+
     # --- Service identity -------------------------------------------------
     SERVICE_NAME: str = "agent-py"
     SERVICE_PORT: int = 8000

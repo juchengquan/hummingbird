@@ -90,6 +90,24 @@ describe("categorizeError", () => {
     expect(categorizeError("a plain string").code).toBe("unknown")
   })
 
+  test("bare status-like numbers elsewhere in a message don't pick the category", () => {
+    // Request ids, counts and model names used to match `400`/`401`/`502`.
+    expect(categorizeError(new Error("request req_4014001 failed")).code).toBe("unknown")
+    expect(categorizeError(new Error("connection dropped after 502 bytes")).code).toBe(
+      "unknown",
+    )
+    expect(categorizeError(new Error("retried 401 times then gave up")).code).toBe("unknown")
+    expect(categorizeError(new Error("fetch to llama-3-400b timed out")).code).toBe("unknown")
+  })
+
+  test("anchored status mentions and a statusCode property still categorise", () => {
+    expect(categorizeError(new Error("Error POSTing (HTTP 429)")).code).toBe("rate_limit")
+    expect(categorizeError(new Error("failed with status code: 401")).code).toBe("auth")
+    expect(categorizeError(new Error("HTTP/1.1 503")).code).toBe("provider")
+    const apiErr = Object.assign(new Error("Something odd"), { statusCode: 403 })
+    expect(categorizeError(apiErr)).toMatchObject({ code: "auth", status: 401 })
+  })
+
   test("context_window wins over invalid_model when a 400 mentions both", () => {
     // The two branches BOTH match this message; the order in the
     // categoriser puts context_window first so the consumer sees the

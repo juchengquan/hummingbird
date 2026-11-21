@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -374,6 +375,33 @@ async def settle_stranded_task(
     return True
 
 
+async def recover_stranded_paused_run(
+    pool: asyncpg.Pool,
+    *,
+    task_id: str,
+    user_id: str,
+) -> bool:
+    """Flip a `paused` run that is waiting on nothing back to `running`
+    so a reclaimed `continue` can resume it (`poller.reclaim_decision`
+    → `"recover"`). Returns True iff it was flipped.
+
+    Before the fan-in flipped its parent back to `running`, a parent
+    resumed from its subagents kept running while still `paused`; its
+    first yield saved a checkpoint without `awaiting_children`, so a
+    worker death in a later chunk left it paused with nothing to resume
+    it. It is recoverable only when the checkpoint confirms it is not
+    waiting on anyone: no `awaiting_children` (the barrier owns that)
+    and no unanswered tool call in the last turn (a pending approval /
+    question — only a `respond` may resume that)."""
+    checkpoint = await store.load_checkpoint(pool, run_id=task_id, user_id=user_id)
+    if checkpoint is None or isinstance(checkpoint.get("awaiting_children"), dict):
+        return False
+    if _unanswered_last_turn_calls(_messages_from(checkpoint)):
+        return False
+    lease.check_current()
+    return await store.claim_paused_for_fan_in(pool, run_id=task_id, user_id=user_id)
+
+
 @dataclass(frozen=True)
 class _RunTools:
     """The per-run tool set, built identically for every action so an
@@ -483,7 +511,11 @@ async def _run_chunk_inner(
     # after the last checkpoint save on a resume. `append_event` is
     # `ON CONFLICT DO NOTHING`, so a reused seq silently drops an event.
     start_seq = await _seed_seq(
-        pool, run_id=payload.run_id, user_id=payload.user_id, checkpoint=checkpoint
+        pool,
+        run_id=payload.run_id,
+        user_id=payload.user_id,
+        checkpoint=checkpoint,
+        reclaimed=reclaimed,
     )
     start_step = _int_or(checkpoint.get("step"), 0) if resume else 0
 
@@ -539,6 +571,29 @@ async def _run_chunk_inner(
     if resume:
         awaiting = checkpoint.get("awaiting_children")
         if isinstance(awaiting, dict):
+            # The parent is `paused` on its children: flip it back to
+            # `running` (only once they all settled) BEFORE resuming. Left
+            # `paused` while it runs, a worker death in any later chunk
+            # would be reclaimed as "waiting on the user / children" and
+            # skipped — stranding the task `paused` forever, since the
+            # checkpoint below no longer carries `awaiting_children`.
+            lease.check_current()
+            if not await store.claim_paused_for_fan_in(
+                pool, run_id=payload.run_id, user_id=payload.user_id
+            ):
+                status = await store.load_owned_task_status(
+                    pool, task_id=payload.run_id, user_id=payload.user_id
+                )
+                if status != "running":
+                    # Children still pending (a stray `continue`), or the
+                    # run settled / was cancelled meanwhile: nothing to do.
+                    # `running` means a dead attempt already flipped it.
+                    logger.warning(
+                        "executor.fan_in_not_ready",
+                        run_id=payload.run_id,
+                        task_status=status,
+                    )
+                    return ExecutorOutcome(settled=True)
             tool_call_id = str(awaiting.get("tool_call_id") or "")
             child_results = await store.load_child_results(
                 pool, parent_task_id=payload.run_id, user_id=payload.user_id
@@ -804,18 +859,20 @@ async def _run_chunk_inner(
             conversation_id = await store.load_conversation_id(
                 pool, run_id=payload.run_id, user_id=payload.user_id
             )
+            # Child ids are minted here so the handoff events can name
+            # them; the rows themselves are written by `commit_spawn`
+            # below, in one transaction with the parent's barrier state.
+            children: list[store.ChildSpawn] = []
             children_meta: list[dict[str, str]] = []
             for spec in specs:
-                child_checkpoint = _child_checkpoint(checkpoint, spec)
-                child_id = await store.create_child_task(
-                    pool,
-                    parent_task_id=payload.run_id,
-                    user_id=payload.user_id,
-                    conversation_id=conversation_id,
-                    goal=spec.subgoal,
-                    checkpoint=child_checkpoint,
+                child_id = str(uuid.uuid4())
+                children.append(
+                    store.ChildSpawn(
+                        id=child_id,
+                        goal=spec.subgoal,
+                        checkpoint=_child_checkpoint(checkpoint, spec),
+                    )
                 )
-                await jobs.enqueue_start_job(pool, task_id=child_id, user_id=payload.user_id)
                 await emitter.handoff(
                     agent=spec.persona_slug,
                     phase="enter",
@@ -830,26 +887,27 @@ async def _run_chunk_inner(
                     }
                 )
 
-            await store.set_pending_children(
-                pool, task_id=payload.run_id, user_id=payload.user_id, n=len(specs)
-            )
+            # Saved after the handoffs so its `seq` covers them.
             next_checkpoint = _build_checkpoint(checkpoint, live_messages, emitter)
             next_checkpoint["awaiting_children"] = {
                 "tool_call_id": spawn.tool_call_id,
                 "children": children_meta,
             }
-            await store.save_checkpoint(
+            lease.check_current()
+            # Counter + checkpoint + `paused` + children + their start
+            # jobs in ONE transaction: no child can run (let alone
+            # settle and hit the barrier) before the parent is ready.
+            committed = await store.commit_spawn(
                 pool,
-                run_id=payload.run_id,
+                parent_task_id=payload.run_id,
                 user_id=payload.user_id,
+                conversation_id=conversation_id,
+                children=children,
                 checkpoint=next_checkpoint,
             )
-            await store.update_run(
-                pool,
-                run_id=payload.run_id,
-                user_id=payload.user_id,
-                status="paused",
-            )
+            if not committed:
+                logger.warning("executor.spawn_parent_settled", run_id=payload.run_id)
+                return ExecutorOutcome(settled=True)
             logger.info(
                 "executor.spawned",
                 run_id=payload.run_id,
@@ -944,16 +1002,29 @@ async def _seed_seq(
     run_id: str,
     user_id: str,
     checkpoint: dict[str, Any],
+    reclaimed: bool = False,
 ) -> int:
     """Seq to seed the emitter at: the larger of the checkpoint's saved
     `seq` and the highest seq already in `task_events` for this run.
-    A failed probe falls back to the checkpoint value (the run proceeds;
-    the worst case is the pre-fix behaviour)."""
+
+    A failed probe falls back to the checkpoint value on a normal run
+    (only the route's / this worker's own events can follow it). On a
+    reclaim it does NOT: the dead attempt wrote past the checkpoint, so
+    seeding there would reuse its seqs — the resume marker itself would
+    collide and be dropped (`ON CONFLICT DO NOTHING`), leaving its
+    partial output un-superseded. The attempt is abandoned instead
+    (`lease.abandon_current`): the job is retried once its lease lapses,
+    and only spends an attempt."""
     from_checkpoint = _int_or(checkpoint.get("seq"), 0)
     try:
         from_log = await store.max_event_seq(pool, run_id=run_id, user_id=user_id)
     except Exception as exc:
-        logger.warning("executor.max_seq_probe_failed", run_id=run_id, error=str(exc))
+        logger.warning(
+            "executor.max_seq_probe_failed", run_id=run_id, reclaimed=reclaimed, error=str(exc)
+        )
+        if reclaimed:
+            lease.abandon_current("seq_probe_failed_on_reclaim")
+            raise
         return from_checkpoint
     return max(from_checkpoint, from_log)
 
@@ -1469,6 +1540,17 @@ async def _run_respond_inner(
             "is not awaiting user input"
         )
 
+    # Seeded before the gate and before an approved tool runs: on a
+    # reclaim a failed probe abandons the attempt (`_seed_seq`), which
+    # must happen before the tool has acted, not after.
+    start_seq = await _seed_seq(
+        pool,
+        run_id=payload.run_id,
+        user_id=payload.user_id,
+        checkpoint=checkpoint,
+        reclaimed=resume_interrupted,
+    )
+
     # Atomic paused → running gate. Only one respond per pause gets past
     # this; a duplicate racing us (or a run cancelled while paused) sees
     # no row and settles as a no-op — before any tool executes. A resumed
@@ -1551,9 +1633,6 @@ async def _run_respond_inner(
     # Append the user turn carrying the tool_result.
     live_messages.append({"role": "user", "content": [result_block]})
 
-    start_seq = await _seed_seq(
-        pool, run_id=payload.run_id, user_id=payload.user_id, checkpoint=checkpoint
-    )
     start_step = _int_or(checkpoint.get("step"), 0)
     db_sink = _make_db_sink(pool, user_id=payload.user_id)
 
@@ -1571,9 +1650,19 @@ async def _run_respond_inner(
     guard.emitter = emitter
 
     try:
-        # Persist BEFORE emitting so a crash between emit + save can't
-        # lose the appended tool_result. Mirrors the TS path. Inside the
-        # `try` so a failed save settles the (already-claimed, now
+        if resume_interrupted:
+            # Reclaimed: open with a resume marker so consumers drop
+            # anything the dead attempt wrote past the paused checkpoint.
+            # Emitted BEFORE the interim checkpoint save so the saved
+            # `seq` covers it: were this attempt to die after the save but
+            # before the marker, the next reclaim would resume from the
+            # interim checkpoint (answer already applied) with a marker
+            # at ITS seq — and the first dead attempt's events between
+            # the paused checkpoint and that seq would never be dropped.
+            await emitter.status("running", resumed_from_seq=_int_or(checkpoint.get("seq"), 0))
+        # Persist BEFORE emitting the rest so a crash between emit + save
+        # can't lose the appended tool_result. Mirrors the TS path. Inside
+        # the `try` so a failed save settles the (already-claimed, now
         # `running`) task failed instead of stranding it.
         interim_checkpoint = _build_checkpoint(checkpoint, live_messages, emitter)
         await store.save_checkpoint(
@@ -1583,10 +1672,6 @@ async def _run_respond_inner(
             checkpoint=interim_checkpoint,
         )
         await _stamp_handler(pool, run_id=payload.run_id, user_id=payload.user_id)
-        if resume_interrupted:
-            # Reclaimed: open with a resume marker so consumers drop
-            # anything the dead attempt wrote past the paused checkpoint.
-            await emitter.status("running", resumed_from_seq=_int_or(checkpoint.get("seq"), 0))
         # Emit input_response (clears pending_input on the projection)
         # then status:running before stepping again.
         await emitter.input_response(

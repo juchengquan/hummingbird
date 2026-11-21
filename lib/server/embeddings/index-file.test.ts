@@ -7,11 +7,16 @@ import { indexFileSections } from "./index-file"
 
 /**
  * Minimal chainable fake of the bits of the Supabase client
- * `indexFileSections` touches: `.from().select().eq()` (HEAD count),
+ * `indexFileSections` touches: the `files` ownership lookup
+ * (`.from("files")…maybeSingle()`), `.from().select().eq()` (HEAD count),
  * `.from().delete().eq()`, and `.from().insert()`. Each builder is
  * awaitable and resolves a result keyed off the last verb invoked.
  */
 interface FakeOpts {
+  /** Whether the caller's RLS-scoped `files` lookup finds the row.
+   *  Default true. */
+  fileExists?: boolean
+  fileError?: { message: string } | null
   existingCount?: number
   countError?: { message: string } | null
   insertError?: { code?: string; message: string } | null
@@ -27,6 +32,24 @@ function makeClient(opts: FakeOpts = {}): {
 } {
   const capture: Capture = { insertedRows: null, deleted: false }
   let lastVerb: "select" | "insert" | "delete" | "" = ""
+
+  const filesBuilder = {
+    select() {
+      return filesBuilder
+    },
+    eq() {
+      return filesBuilder
+    },
+    is() {
+      return filesBuilder
+    },
+    maybeSingle() {
+      return Promise.resolve({
+        data: (opts.fileExists ?? true) ? { id: "f" } : null,
+        error: opts.fileError ?? null,
+      })
+    },
+  }
 
   const builder = {
     select() {
@@ -57,7 +80,9 @@ function makeClient(opts: FakeOpts = {}): {
     },
   }
 
-  const client = { from: () => builder } as unknown as SupabaseClient<Database>
+  const client = {
+    from: (table: string) => (table === "files" ? filesBuilder : builder),
+  } as unknown as SupabaseClient<Database>
   return { client, capture }
 }
 
@@ -156,6 +181,46 @@ describe("indexFileSections", () => {
       embed: fakeEmbed,
     })
     expect(result).toEqual({ status: "skipped", sections: 0, reason: "file_not_found" })
+  })
+
+  test("file not visible to the caller → file_not_found BEFORE any embed or delete", async () => {
+    let embedCalls = 0
+    const { client, capture } = makeClient({ fileExists: false })
+    const result = await indexFileSections({
+      client,
+      userId: "u1",
+      fileId: "someone-elses-file",
+      text: LONG_TEXT,
+      chunkOptions: SMALL_CHUNKS,
+      force: true,
+      embed: (t) => {
+        embedCalls++
+        return fakeEmbed(t)
+      },
+    })
+    expect(result).toEqual({ status: "skipped", sections: 0, reason: "file_not_found" })
+    expect(embedCalls).toBe(0)
+    expect(capture.deleted).toBe(false)
+    expect(capture.insertedRows).toBeNull()
+  })
+
+  test("files lookup error → throws, no embed", async () => {
+    let embedCalls = 0
+    const { client } = makeClient({ fileError: { message: "boom" } })
+    await expect(
+      indexFileSections({
+        client,
+        userId: "u1",
+        fileId: "f1",
+        text: LONG_TEXT,
+        chunkOptions: SMALL_CHUNKS,
+        embed: (t) => {
+          embedCalls++
+          return fakeEmbed(t)
+        },
+      })
+    ).rejects.toThrow(/files lookup failed/)
+    expect(embedCalls).toBe(0)
   })
 
   test("non-FK insert error → throws", async () => {

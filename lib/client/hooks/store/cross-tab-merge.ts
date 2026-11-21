@@ -22,8 +22,9 @@ import "client-only"
  *   - added on one side                      → kept
  *   - deleted on one side, untouched on the other → deleted
  *   - deleted on one side, edited on the other    → the edit wins
- *   - a conversation this tab is streaming into  → always ours, so an
- *     in-flight assistant message is never dropped mid-stream
+ *   - a conversation this tab is streaming into  → ours over their
+ *     copy, so an in-flight assistant message is never dropped
+ *     mid-stream; but their DELETE of it wins (the stream is aborted)
  *   - per-tab view state (`PER_TAB_KEYS`)        → always ours, so
  *     switching conversation in one tab doesn't yank the other
  *
@@ -147,8 +148,14 @@ function mergeEntities(
   for (const o of ours) {
     if (theirsIds.has(o.id)) continue
     const b = baseById.get(o.id)
+    // In `base` but not in theirs: the other tab deleted it. Our edits
+    // win over that delete ("edit wins") — except a held row's: those
+    // are the in-flight stream's token updates, not a user edit, and
+    // keeping the row resurrected a conversation the user deleted (minus
+    // the images its delete cascade dropped). The streaming tab aborts
+    // that stream when the row disappears (`useChatSend`).
     const keep =
-      b === undefined || isHeld(o.id) || !(o === b || same(o, b))
+      b === undefined || (!isHeld(o.id) && !(o === b || same(o, b)))
     if (keep) {
       additions.add(o.id)
       oursWon = true

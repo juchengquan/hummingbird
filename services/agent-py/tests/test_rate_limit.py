@@ -168,37 +168,74 @@ def test_rate_limit_key_prefers_forwarded_for() -> None:
     """`X-Forwarded-For` beats the socket peer, but with the default
     single trusted hop it's the RIGHTMOST entry (the one our proxy
     appended) — the leftmost is client-controlled."""
-    from unittest.mock import MagicMock
-
-    from agent_py.rate_limit import rate_limit_key
-
-    req = MagicMock()
-    req.headers = {"x-forwarded-for": "203.0.113.42, 198.51.100.1"}
-    req.client = MagicMock(host="127.0.0.1")
+    req = _request({"x-forwarded-for": "203.0.113.42, 198.51.100.1"}, peer="127.0.0.1")
     assert rate_limit_key(req) == "198.51.100.1"
 
 
 def test_rate_limit_key_falls_back_to_client_host() -> None:
     """No XFF header → use the socket peer."""
-    from unittest.mock import MagicMock
-
-    from agent_py.rate_limit import rate_limit_key
-
-    req = MagicMock()
-    req.headers = {}
-    req.client = MagicMock(host="10.0.0.1")
-    assert rate_limit_key(req) == "10.0.0.1"
+    assert rate_limit_key(_request({}, peer="10.0.0.1")) == "10.0.0.1"
 
 
 def test_rate_limit_key_default_when_unknown() -> None:
     """Neither header nor client → the global `"default"` bucket so an
     unconfigured deploy still limits abuse rather than going
     unbounded."""
-    from unittest.mock import MagicMock
+    assert rate_limit_key(_request({}, peer=None)) == "default"
 
-    from agent_py.rate_limit import rate_limit_key
 
-    req = MagicMock()
-    req.headers = {}
-    req.client = None
-    assert rate_limit_key(req) == "default"
+def _request_raw(header_lines: list[tuple[str, str]], peer: str = "203.0.113.9") -> Request:
+    """Like `_request`, but each tuple is its own header LINE, so the
+    same name may repeat (a proxy that adds a separate XFF line)."""
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/v1/chat",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in header_lines],
+        "client": (peer, 1234),
+    }
+    return Request(scope)
+
+
+def test_key_joins_repeated_xff_lines() -> None:
+    """A proxy that adds its OWN `X-Forwarded-For` line (rather than
+    appending to the client's) must not leave the client's line as the
+    key: every line counts, in order, so the rightmost entry is still
+    the one the trusted proxy wrote."""
+    real = "198.51.100.7"
+    for spoof in ("1.1.1.1", "2.2.2.2, 3.3.3.3"):
+        req = _request_raw([("x-forwarded-for", spoof), ("x-forwarded-for", real)])
+        assert rate_limit_key(req, trusted_proxy_hops=1, client_ip_header="") == real
+
+
+def test_sweep_drops_buckets_aged_out_of_the_window() -> None:
+    """Keys never seen again don't accumulate forever: once a window has
+    passed, the next consume sweeps every bucket whose newest entry aged
+    out."""
+    limit = SlidingWindow(window_ms=1_000, max=5)
+    start = time.monotonic()
+    with patch("agent_py.rate_limit.time.monotonic") as mock_time:
+        mock_time.return_value = start
+        limit.reset()
+        for i in range(50):
+            limit.consume(f"ip-{i}")
+        assert limit.size() == 50
+        mock_time.return_value = start + 1.5
+        limit.consume("fresh")
+        assert limit.size() == 1
+
+
+def test_bucket_count_is_capped_lru() -> None:
+    """Within one window (no sweep yet) the hard cap evicts the least
+    recently used keys; a recently touched key survives."""
+    limit = SlidingWindow(window_ms=60_000, max=5, max_buckets=3)
+    limit.consume("a")
+    limit.consume("b")
+    limit.consume("c")
+    limit.consume("a")  # touch: `b` is now the LRU
+    limit.consume("d")
+    assert limit.size() == 3
+    # `b` was evicted (fresh bucket), `a` kept its two entries.
+    for _ in range(3):
+        assert limit.consume("a").allowed is True
+    assert limit.consume("a").allowed is False

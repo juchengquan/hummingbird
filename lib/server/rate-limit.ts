@@ -186,6 +186,71 @@ export function trustedProxyHopsFromEnv(
   return n
 }
 
+/** Platforms whose edge sets / appends `X-Forwarded-For` itself, so the
+ *  right-most entry is trustworthy without a self-hosted proxy. */
+const PROXYING_PLATFORM_ENV = [
+  "VERCEL",
+  "RENDER",
+  "FLY_APP_NAME",
+  "RAILWAY_ENVIRONMENT",
+  "K_SERVICE", // Cloud Run
+  "NETLIFY",
+] as const
+
+/**
+ * Boot-time check for a deploy where per-IP limits can't work, or null
+ * when nothing looks wrong. Heuristic (we can't see the network):
+ *
+ * - Only production (`next start`); dev on localhost has no clients.
+ * - A known proxying platform → fine.
+ * - `TRUSTED_PROXY_HOPS=0` → every anonymous caller shares one bucket.
+ * - `TRUSTED_PROXY_HOPS` unset → the default of 1 assumes a reverse
+ *   proxy. If Next.js is exposed directly, that's spoofable: Next only
+ *   sets `X-Forwarded-For` when the request has none, so a client that
+ *   sends its own XFF picks its own rate-limit key. Setting the var
+ *   explicitly (≥ 1) is taken as the operator confirming the proxy.
+ */
+export function proxyConfigWarning(
+  env: Record<string, string | undefined> = process.env
+): string | null {
+  if (env.NODE_ENV !== "production") return null
+  if (PROXYING_PLATFORM_ENV.some((name) => Boolean(env[name]))) return null
+  const raw = env.TRUSTED_PROXY_HOPS
+  if (raw !== undefined && raw.trim() !== "" && trustedProxyHopsFromEnv(raw) === 0) {
+    return (
+      "[rate-limit] TRUSTED_PROXY_HOPS=0: X-Forwarded-For is ignored, so every " +
+      "anonymous caller shares ONE rate-limit bucket. Per-IP limits need a reverse " +
+      "proxy (Caddy / Nginx) in front of Next.js and TRUSTED_PROXY_HOPS set to the " +
+      "number of proxies."
+    )
+  }
+  if (raw === undefined || raw.trim() === "") {
+    return (
+      "[rate-limit] TRUSTED_PROXY_HOPS is unset, so the client IP is read as if ONE " +
+      "reverse proxy appends to X-Forwarded-For. If Next.js is exposed directly, " +
+      "clients can send their own X-Forwarded-For and choose their rate-limit key " +
+      "(Next.js only sets the header when it's absent). Put a reverse proxy in front " +
+      "and set TRUSTED_PROXY_HOPS to the number of proxies to confirm the setup."
+    )
+  }
+  return null
+}
+
+let proxyWarningLogged = false
+
+/** Log `proxyConfigWarning` once per process. Called from
+ *  `instrumentation.ts` at server start. */
+export function warnOnProxyConfig(
+  env: Record<string, string | undefined> = process.env,
+  log: (message: string) => void = console.warn
+): void {
+  if (proxyWarningLogged) return
+  const warning = proxyConfigWarning(env)
+  if (!warning) return
+  proxyWarningLogged = true
+  log(warning)
+}
+
 /**
  * Standard rate-limit key derivation: the client IP per
  * `clientIpFromHeaders` (platform headers on Vercel, else the

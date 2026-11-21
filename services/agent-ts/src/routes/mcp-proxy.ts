@@ -188,6 +188,16 @@ mcpProxyRoutes.post("/v1/mcp/server", requireAuth, async (c) => {
         500,
       )
     }
+    // 0039 SQLSTATEs — same 409 / 404 mapping as the Next route.
+    if (result.code === "23505") {
+      return c.json(
+        { code: "mcp_server_id_conflict", message: "That server id is already in use." },
+        409,
+      )
+    }
+    if (result.code === "P0002") {
+      return c.json({ code: "workspace_not_found", message: "Workspace not found." }, 404)
+    }
     return c.json(
       { code: "upsert_failed", message: result.error ?? "RPC failed." },
       502,

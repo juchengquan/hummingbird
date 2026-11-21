@@ -37,6 +37,8 @@ from typing import Any
 
 import asyncpg
 
+from .fence import fenced_connection
+
 
 @dataclass(frozen=True)
 class ClaimedJob:
@@ -453,7 +455,7 @@ async def enqueue_continue_job(
     path — the executor saved a checkpoint, now the worker (Python OR
     TS, whichever wins the next claim) picks up from there. Payload is
     empty: `continue` reads everything from `tasks.checkpoint`."""
-    async with pool.acquire() as conn:
+    async with fenced_connection(pool) as conn:
         await conn.execute(
             ENQUEUE_CONTINUE_SQL,
             _coerce_uuid(task_id),
@@ -471,7 +473,7 @@ async def enqueue_start_job(
 ) -> None:
     """Insert a `start` job for a (child) task. Payload empty — `start`
     reads everything from `tasks.checkpoint`."""
-    async with pool.acquire() as conn:
+    async with fenced_connection(pool) as conn:
         await conn.execute(
             ENQUEUE_CONTINUE_SQL,
             _coerce_uuid(task_id),

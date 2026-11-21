@@ -21,6 +21,7 @@ The DB layer is patched so tests don't need a real Postgres.
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -252,9 +253,10 @@ def _make_spawn_step_fn(
 
 @pytest.mark.asyncio
 async def test_fanout_happy_path(payload: StartActionPayload) -> None:
-    """A spawned outcome from the step fn → create 2 children, enqueue
-    2 start jobs, set_pending_children n=2, save checkpoint with
-    awaiting_children, update_run to paused, NO terminal settle."""
+    """A spawned outcome from the step fn → ONE `commit_spawn` carrying
+    both children (their rows + start jobs), the absolute barrier count
+    and the `awaiting_children` checkpoint; the handoff events name the
+    same child ids; NO terminal settle and no piecemeal writes."""
     pool = MagicMock()
     descriptor = SpawnDescriptor(
         tool_call_id="call-1",
@@ -265,19 +267,73 @@ async def test_fanout_happy_path(payload: StartActionPayload) -> None:
     )
     _, make_step = _make_spawn_step_fn(descriptor)
 
-    # Return child IDs in order.
-    child_id_iter = iter([CHILD_ID_A, CHILD_ID_B])
-
-    async def fake_create_child(*args: object, **kwargs: object) -> str:  # type: ignore[misc]
-        return next(child_id_iter)
-
     checkpoint = {
         "messages": [],
         "step": 0,
         "seq": 0,
         "config": {"maxSteps": 5},
     }
+    appended: list[Any] = []
 
+    async def record_event(_pool: object, event: Any, **_kw: object) -> None:
+        appended.append(event)
+
+    with (
+        patch.object(store, "set_task_handler", new=AsyncMock()),
+        patch.object(store, "append_event", new=AsyncMock(side_effect=record_event)),
+        patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=False)),
+        patch.object(store, "load_checkpoint", new=AsyncMock(return_value=checkpoint)),
+        patch.object(store, "load_parent_task_id", new=AsyncMock(return_value=None)),
+        patch.object(store, "load_conversation_id", new=AsyncMock(return_value=CONV_ID)),
+        patch.object(store, "commit_spawn", new=AsyncMock(return_value=True)) as commit,
+        patch.object(store, "create_child_task", new=AsyncMock()) as create_child,
+        patch.object(store, "set_pending_children", new=AsyncMock()) as set_pending,
+        patch.object(store, "save_checkpoint", new=AsyncMock()) as save_cp,
+        patch.object(store, "update_run", new=AsyncMock()) as update_run,
+        patch.object(jobs, "enqueue_start_job", new=AsyncMock()) as enqueue_start,
+        patch("agent_py.executor.settle_task_terminal", new=AsyncMock()) as settle,
+    ):
+        outcome = await execute_start(pool, payload, make_step_fn=make_step)
+
+    assert outcome == ExecutorOutcome(settled=True)
+
+    commit.assert_awaited_once()
+    kw = commit.await_args.kwargs
+    assert kw["parent_task_id"] == RUN_ID
+    assert kw["user_id"] == USER_ID
+    assert kw["conversation_id"] == CONV_ID
+    children = kw["children"]
+    assert [c.goal for c in children] == ["a", "b"]
+    assert all(c.checkpoint["subagent"]["subgoal"] == c.goal for c in children)
+    saved_checkpoint = kw["checkpoint"]
+    ac = saved_checkpoint["awaiting_children"]
+    assert ac["tool_call_id"] == "call-1"
+    assert [c["id"] for c in ac["children"]] == [c.id for c in children]
+
+    # Handoffs name the committed child ids, and the checkpoint's seq
+    # covers them.
+    handoffs = [e for e in appended if e.kind == "handoff"]
+    assert [h.child_task_id for h in handoffs] == [c.id for c in children]
+    assert saved_checkpoint["seq"] >= max(h.seq for h in handoffs)
+
+    # Nothing written outside the one transaction.
+    create_child.assert_not_awaited()
+    enqueue_start.assert_not_awaited()
+    set_pending.assert_not_awaited()
+    save_cp.assert_not_awaited()
+    assert not [c for c in update_run.await_args_list if c.kwargs.get("status")]
+    settle.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fanout_on_a_settled_parent_creates_nothing(payload: StartActionPayload) -> None:
+    """`commit_spawn` returns False when the parent settled (cancelled)
+    while the chunk ran: the run ends cleanly, no terminal settle."""
+    descriptor = SpawnDescriptor(
+        tool_call_id="call-1", tasks=[SpawnSpec(persona_slug="g1", subgoal="a")]
+    )
+    _, make_step = _make_spawn_step_fn(descriptor)
+    checkpoint = {"messages": [], "step": 0, "seq": 0, "config": {"maxSteps": 5}}
     with (
         patch.object(store, "set_task_handler", new=AsyncMock()),
         patch.object(store, "append_event", new=AsyncMock()),
@@ -285,46 +341,12 @@ async def test_fanout_happy_path(payload: StartActionPayload) -> None:
         patch.object(store, "load_checkpoint", new=AsyncMock(return_value=checkpoint)),
         patch.object(store, "load_parent_task_id", new=AsyncMock(return_value=None)),
         patch.object(store, "load_conversation_id", new=AsyncMock(return_value=CONV_ID)),
-        patch.object(
-            store,
-            "create_child_task",
-            new=AsyncMock(side_effect=fake_create_child),
-        ) as create_child,
-        patch.object(store, "set_pending_children", new=AsyncMock()) as set_pending,
-        patch.object(store, "save_checkpoint", new=AsyncMock()) as save_cp,
-        patch.object(store, "update_run", new=AsyncMock()) as update_run,
-        patch.object(jobs, "enqueue_start_job", new=AsyncMock()) as enqueue_start,
+        patch.object(store, "commit_spawn", new=AsyncMock(return_value=False)),
+        patch("agent_py.executor.settle_task_terminal", new=AsyncMock()) as settle,
     ):
-        outcome = await execute_start(pool, payload, make_step_fn=make_step)
-
+        outcome = await execute_start(MagicMock(), payload, make_step_fn=make_step)
     assert outcome == ExecutorOutcome(settled=True)
-
-    # create_child_task called exactly twice (one per spec).
-    assert create_child.await_count == 2
-
-    # enqueue_start_job called twice (one per child).
-    assert enqueue_start.await_count == 2
-    enqueue_start.assert_any_await(pool, task_id=CHILD_ID_A, user_id=USER_ID)
-    enqueue_start.assert_any_await(pool, task_id=CHILD_ID_B, user_id=USER_ID)
-
-    # set_pending_children called once with n=2.
-    set_pending.assert_awaited_once_with(pool, task_id=RUN_ID, user_id=USER_ID, n=2)
-
-    # save_checkpoint called and includes awaiting_children.
-    save_cp.assert_awaited_once()
-    saved_checkpoint = save_cp.await_args.kwargs["checkpoint"]
-    assert "awaiting_children" in saved_checkpoint
-    ac = saved_checkpoint["awaiting_children"]
-    assert ac["tool_call_id"] == "call-1"
-    assert len(ac["children"]) == 2
-
-    # update_run called to set status="paused" (not finished=True).
-    update_run.assert_awaited()
-    paused_calls = [c for c in update_run.await_args_list if c.kwargs.get("status") == "paused"]
-    assert paused_calls, "update_run should be called with status='paused'"
-    # No terminal done/failed settle.
-    terminal_calls = [c for c in update_run.await_args_list if c.kwargs.get("finished") is True]
-    assert not terminal_calls, "spawned path must not call terminal update_run"
+    settle.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -356,17 +378,14 @@ async def test_fanout_depth_cap(payload: StartActionPayload) -> None:
         patch.object(store, "load_parent_task_id", new=AsyncMock(return_value=PARENT_ID)),
         patch.object(store, "save_checkpoint", new=AsyncMock()) as save_cp,
         patch.object(store, "update_run", new=AsyncMock()),
-        patch.object(store, "create_child_task", new=AsyncMock()) as create_child,
+        patch.object(store, "commit_spawn", new=AsyncMock()) as commit,
         patch.object(jobs, "enqueue_continue_job", new=AsyncMock()) as enqueue_cont,
-        patch.object(jobs, "enqueue_start_job", new=AsyncMock()) as enqueue_start,
     ):
         outcome = await execute_start(pool, payload, make_step_fn=make_step)
 
     assert outcome == ExecutorOutcome(settled=True)
-    # No children created.
-    create_child.assert_not_awaited()
-    # No start jobs enqueued.
-    enqueue_start.assert_not_awaited()
+    # No children created, no start jobs enqueued.
+    commit.assert_not_awaited()
     # A continue job was enqueued so the parent can proceed.
     enqueue_cont.assert_awaited_once_with(pool, task_id=RUN_ID, user_id=USER_ID)
     # Checkpoint was saved (carries the rejection tool_result in messages).
@@ -384,13 +403,6 @@ async def test_fanout_breadth_clamp(payload: StartActionPayload) -> None:
     descriptor = SpawnDescriptor(tool_call_id="call-wide", tasks=too_many)
     _, make_step = _make_spawn_step_fn(descriptor)
 
-    child_counter = 0
-
-    async def fake_create(*args: object, **kwargs: object) -> str:  # type: ignore[misc]
-        nonlocal child_counter
-        child_counter += 1
-        return f"child-{child_counter:02d}-0000-0000-0000-000000000000"
-
     checkpoint = {
         "messages": [],
         "step": 0,
@@ -405,19 +417,12 @@ async def test_fanout_breadth_clamp(payload: StartActionPayload) -> None:
         patch.object(store, "load_checkpoint", new=AsyncMock(return_value=checkpoint)),
         patch.object(store, "load_parent_task_id", new=AsyncMock(return_value=None)),
         patch.object(store, "load_conversation_id", new=AsyncMock(return_value=CONV_ID)),
-        patch.object(
-            store, "create_child_task", new=AsyncMock(side_effect=fake_create)
-        ) as create_child,
-        patch.object(store, "set_pending_children", new=AsyncMock()),
-        patch.object(store, "save_checkpoint", new=AsyncMock()),
-        patch.object(store, "update_run", new=AsyncMock()),
-        patch.object(jobs, "enqueue_start_job", new=AsyncMock()) as enqueue_start,
+        patch.object(store, "commit_spawn", new=AsyncMock(return_value=True)) as commit,
     ):
         outcome = await execute_start(pool, payload, make_step_fn=make_step)
 
     assert outcome == ExecutorOutcome(settled=True)
-    assert create_child.await_count == MAX_CHILDREN
-    assert enqueue_start.await_count == MAX_CHILDREN
+    assert len(commit.await_args.kwargs["children"]) == MAX_CHILDREN
 
 
 # ---------------------------------------------------------------------------

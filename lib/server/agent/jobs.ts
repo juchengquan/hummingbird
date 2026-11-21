@@ -2,8 +2,10 @@ import "server-only"
 
 /**
  * Enqueue side of the `task_jobs` queue. The user-facing routes
- * (`/api/tasks` POST, `/api/tasks/:id/respond`) call these helpers
- * to write new rows. Claim / settle / release happen elsewhere
+ * (`/api/tasks` POST, `/api/tasks/:id/respond`) and the schedule tick
+ * call these helpers to write new rows, via the `enqueue_task_job` RPC
+ * (`./task-writes.ts`). `userId` is kept on the inputs for call-site
+ * symmetry; the RPC derives the job's owner from the task row. Claim / settle / release happen elsewhere
  * now — the dedicated agent services own that path through their
  * own `postgres`-driver implementations:
  *   - `services/agent-py/src/agent_py/jobs.py` (asyncpg)
@@ -21,6 +23,8 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 
 import type { Database, Json } from "@/shared/supabase/types"
 
+import { enqueueTaskJob } from "./task-writes"
+
 type DB = SupabaseClient<Database>
 
 export type JobAction = "start" | "respond" | "continue"
@@ -34,7 +38,7 @@ export async function enqueueStartJob(
   db: DB,
   input: { taskId: string; userId: string }
 ): Promise<void> {
-  await enqueue(db, input.taskId, input.userId, "start", {})
+  await enqueue(db, input.taskId, "start", {})
 }
 
 /** Insert a `respond` job. The payload carries the human's answer; the
@@ -57,25 +61,18 @@ export async function enqueueRespondJob(
     }
   }
 ): Promise<void> {
-  await enqueue(db, input.taskId, input.userId, "respond", input.payload as unknown as Json)
+  await enqueue(db, input.taskId, "respond", input.payload as unknown as Json)
 }
 
 async function enqueue(
   db: DB,
   taskId: string,
-  userId: string,
   action: JobAction,
-  payload: Json,
-  delayMs?: number
+  payload: Json
 ): Promise<void> {
-  const scheduledAt = new Date(Date.now() + (delayMs ?? 0)).toISOString()
-  const { error } = await db.from("task_jobs").insert({
-    task_id: taskId,
-    user_id: userId,
-    action,
-    payload,
-    status: "queued",
-    scheduled_at: scheduledAt,
-  })
-  if (error) throw new Error(`enqueue ${action}: ${error.message}`)
+  // Since migration 0034 the API roles can't INSERT `task_jobs`; the
+  // SECURITY DEFINER RPC pins status / attempts / scheduled_at and
+  // derives `user_id` from the task. Throws `TaskWriteError` (SQLSTATE
+  // kept) so routes can map a 404 / 409 instead of a blanket 500.
+  await enqueueTaskJob(db, { taskId, action, payload })
 }

@@ -21,6 +21,7 @@ from dataclasses import dataclass
 
 import asyncpg
 
+from agent_py.fence import fenced_connection
 from agent_py.jobs import ENQUEUE_CONTINUE_SQL
 
 _TERMINAL = ("done", "failed", "cancelled")
@@ -72,7 +73,7 @@ async def settle_task_terminal(
     task_uuid = uuid.UUID(task_id)
     user_uuid = uuid.UUID(user_id)
 
-    async with pool.acquire() as conn, conn.transaction():
+    async with fenced_connection(pool) as conn, conn.transaction():
         row = await conn.fetchrow(_TRANSITION_SQL, task_uuid, status, user_uuid)
         if row is None:
             return SettleResult(

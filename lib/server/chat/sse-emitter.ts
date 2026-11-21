@@ -299,11 +299,18 @@ export class ChatSseEmitter {
   }
 
   /** Lifecycle terminator for a successful stream. Closes any open
-   *  channel, emits `finish-step` + `finish` + `[DONE]`. */
-  done(): void {
+   *  channel, emits `finish-step` + `finish` + `[DONE]`. When the turn
+   *  read third-party content, `finish` carries
+   *  `messageMetadata: { memoryTainted: true }` (AI SDK v5's slot for
+   *  per-message metadata) so the client skips memory auto-extraction. */
+  done(meta?: { memoryTainted?: boolean }): void {
     this.closeAllChannels()
     this.send({ type: "finish-step" })
-    this.send({ type: "finish" })
+    this.send(
+      meta?.memoryTainted
+        ? { type: "finish", messageMetadata: { memoryTainted: true } }
+        : { type: "finish" },
+    )
     this.sendDoneTerminator()
   }
 

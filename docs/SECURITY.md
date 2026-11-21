@@ -91,7 +91,7 @@ MCP-app panels (`mcp-app-frame.tsx`) run untrusted HTML. Both render
 through `SandboxedFrame` (`components/live-artifact/sandboxed-frame.tsx`):
 
 ```html
-<iframe src="/sandbox/frame" sandbox="allow-scripts" referrerpolicy="no-referrer">
+<iframe src="/sandbox/frame?n=<per-navigation nonce>" sandbox="allow-scripts" referrerpolicy="no-referrer">
 ```
 
 **Why not `srcdoc`.** A `srcdoc` document inherits the parent's policy
@@ -111,7 +111,7 @@ is the frame's security boundary, as the `<meta>` CSP always was:
 default-src 'none';
 script-src 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net;
 style-src 'unsafe-inline' https://unpkg.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net;
-img-src data: blob: https:; font-src data: https:;
+img-src data: blob: https:; font-src data: blob: <CDN hosts>;
 connect-src 'none'; base-uri 'none'; form-action 'none';
 frame-ancestors 'self'; sandbox allow-scripts
 ```
@@ -119,6 +119,12 @@ frame-ancestors 'self'; sandbox allow-scripts
 - The CDN hosts are `CDN_HOSTS` in `lib/shared/live-artifact/cdn-urls.ts`,
   shared with the `<meta>` CSP that `iframe-shell.ts` still writes into
   each document (defense in depth; the two stack).
+- `img-src https:` is deliberate: generated pages routinely show remote
+  images, and the frame can't be made exfiltration-proof anyway (it can
+  navigate itself; WebRTC and DNS prefetch aren't governed by
+  `connect-src`). It only holds what it was given — its own source and
+  MCP tool results — never the app's cookies or storage. `font-src` has
+  no such need and is limited to inline fonts and the CDN hosts.
 - `connect-src 'none'`: generated code can't fetch anywhere. MCP-app
   tool calls go through the parent's postMessage bridge, which keeps its
   same-server, `enabled` and `requiresApproval` checks.
@@ -142,15 +148,28 @@ same-origin with full access to cookies, storage and the API.
 origin, so both sides post with target `"*"` and check the sender
 instead:
 
-1. The shell posts `{ ns: "sandbox-frame", type: "shell-ready" }` to its
-   parent.
-2. The parent checks `event.source === iframe.contentWindow`, then posts
-   `{ ns: "sandbox-frame", type: "render", html }` — once per navigation.
+1. The shell (once loaded) posts `{ ns: "sandbox-frame", type:
+   "shell-ready", nonce }` to its parent, echoing the `?n=` nonce of its
+   URL. Every navigation the parent starts gets a fresh random nonce.
+2. The parent checks `event.source === iframe.contentWindow` and that the
+   nonce is the one it just navigated with, then posts `{ ns:
+   "sandbox-frame", type: "render", nonce, html }` — once per navigation.
+   Without the nonce the previous, already-rendered (untrusted) document
+   could answer first and be handed the next artifact's source.
 3. The shell accepts it only if `event.source === window.parent` and
    `event.origin === location.origin` (the app page that framed it),
    removes its listener and replaces itself with the HTML
    (`document.open/write/close`). The policy container survives
    `document.open`, so the shell's CSP keeps applying.
+4. It then hooks `pagehide` and posts `{ type: "navigating", nonce }`
+   when the rendered document is navigated away from. The iframe keeps
+   its `contentWindow` across a self-navigation, so `event.source` alone
+   would keep trusting whatever page loads next; this message (delivered
+   with `event.source === null` — the nonce authenticates it) arrives
+   before anything the next document posts. `SandboxedFrame` reports it
+   (`onNavigatedAway`, with an extra-`load` backstop) and the MCP-app
+   frame drops its tool-call bridge and shows a "navigated away —
+   reload" plate.
 
 New HTML (artifact edit, MCP-app refresh, theme change) or the panel's
 Refresh button re-navigates the frame and runs the handshake again —
@@ -169,6 +188,28 @@ filters.
   Browsers ignore it over plain http, so `bun run start` on localhost is
   unaffected. It has no `includeSubDomains` / `preload`, because sibling
   subdomains may not be https. Raise it once the domain is settled.
+
+## Per-IP rate limits need a reverse proxy
+
+Anonymous callers are rate-limited per client IP (`rateLimitKey` in
+`lib/server/rate-limit.ts`: `/api/extract`, `/api/url/fetch`,
+`/api/ai/complete`, the MCP proxy without Supabase, chat web tools,
+CSP reports). Route handlers never see the socket peer, so the IP comes
+from `X-Forwarded-For`, read `TRUSTED_PROXY_HOPS` entries from the right.
+
+That only works with a reverse proxy (Caddy, Nginx, a platform edge)
+that appends the real peer to `X-Forwarded-For`. `next start` itself
+sets the header only when the request has none, so with Next.js exposed
+directly a client that sends `X-Forwarded-For: <anything>` chooses its
+own key and gets a fresh bucket per value. `TRUSTED_PROXY_HOPS=0` closes
+that, but then every anonymous caller shares one bucket.
+
+At boot (`instrumentation.ts` → `warnOnProxyConfig`) a production server
+outside a known platform (Vercel, Render, Fly, Railway, Cloud Run,
+Netlify) logs a warning when `TRUSTED_PROXY_HOPS` is unset or `0`.
+Setting it explicitly to the number of proxies confirms the setup and
+silences the warning. Signed-in limits (MCP proxy, `/api/embed`) key on
+the user id and don't depend on any of this.
 
 ## Reading reports
 

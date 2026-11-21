@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-20T17:04:56Z",
+  "generatedAt": "2026-11-20T18:26:56Z",
   "panels": [
     {
       "id": "agents-dialog",
@@ -637,15 +637,15 @@
       "sourceFile": ".env.example"
     },
     {
-      "id": "TAVILY_API_KEY",
-      "description": "Tavily — optional. Backs the \"Web search (Tavily)\" skill on the Next.js chat route AND the Python agent service's `webSearch` tool (Phase 3c of PLAN-agent-api). When unset: - Next.js side: the skill toggle still appears in the UI but the chat route omits the tool and tells the model so it falls back to training data instead of inventing a search call. - Python service: the `webSearch` tool is omitted entirely from `default_tool_registry()`, so the model never sees it.",
+      "id": "TASK_NO_WORKER_TIMEOUT_MINUTES",
+      "description": "Background-task safety net (Next.js stale-run reconciler). agent-py executes every user's tasks unless an admin opts the user out (`auth.users.raw_app_meta_data->>'agent_backend'` set to anything but 'python'; their tasks fail up front). A task still `queued` and never started after this many minutes while NO worker executed anything in that window — agent-py down or in WORKER_DRY_RUN — is failed with \"No task worker available\". A busy worker's backlog waits. Empty → 10.",
       "required": true,
       "sourceFile": ".env.example"
     },
     {
-      "id": "TRUSTED_PROXY_HOPS",
-      "description": "Trusted reverse-proxy hops — how many proxies in front of Next.js each append the peer address to `X-Forwarded-For`. The per-IP rate limiter (and the anonymous summarize-cache scope) reads the client IP from the entry this many positions from the RIGHT; entries further left are client-supplied and ignored. Default 1 (one Caddy/Nginx on the self-hosted VM, or Vercel's edge). Set 2 for e.g. Cloudflare → Caddy → Next. Set 0 when nothing sits in front of Next.js (XFF is then ignored and all anonymous traffic shares one rate-limit bucket). On Vercel (`VERCEL` set) the platform's `x-real-ip` header is used first. services/agent-ts reads the same var with the same semantics.",
-      "required": false,
+      "id": "TAVILY_API_KEY",
+      "description": "Tavily — optional. Backs the \"Web search (Tavily)\" skill on the Next.js chat route AND the Python agent service's `webSearch` tool (Phase 3c of PLAN-agent-api). When unset: - Next.js side: the skill toggle still appears in the UI but the chat route omits the tool and tells the model so it falls back to training data instead of inventing a search call. - Python service: the `webSearch` tool is omitted entirely from `default_tool_registry()`, so the model never sees it.",
+      "required": true,
       "sourceFile": ".env.example"
     },
     {

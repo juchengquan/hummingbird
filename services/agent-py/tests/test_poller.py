@@ -6,9 +6,11 @@ supported-action filter.
 
 The dispatch decision tree on each `_tick` (with pool + job):
   1. dry-run mode → release
-  2. live mode + unflagged → release
-  3. live mode + flagged + action != 'start' → release (not supported)
-  4. live mode + flagged + action == 'start' → execute, mark_done/failed
+  2. live mode + user opted out → fail job + task (OPTED_OUT_ERROR);
+     flag lookup failed → release
+  3. live mode + action not start/continue/respond → release
+  4. live mode + task already terminal → settle the job done, no run
+  5. live mode otherwise → execute, mark_done/failed
 """
 
 from __future__ import annotations
@@ -82,7 +84,7 @@ async def test_dry_run_always_releases(
         with (
             patch.object(jobs, "claim_next_job", new=AsyncMock(return_value=job)),
             patch.object(jobs, "release_job_to_queue", new=AsyncMock(return_value=True)) as release,
-            patch.object(feature_flag, "is_user_flagged_to_python", new=AsyncMock()) as flag,
+            patch.object(feature_flag, "python_executes_for_user", new=AsyncMock()) as flag,
             patch.object(executor, "execute_start", new=AsyncMock()) as execute,
         ):
             await poller._tick(dry_run_settings)
@@ -97,8 +99,46 @@ async def test_dry_run_always_releases(
 
 
 @pytest.mark.asyncio
-async def test_live_mode_unflagged_user_releases(
-    live_settings: Settings,
+async def test_live_mode_opted_out_user_fails_job_and_task(live_settings: Settings) -> None:
+    """Nothing else executes an opted-out user's job: it's failed (fenced
+    on the claim's attempts) and its task settled with OPTED_OUT_ERROR —
+    never released, which would re-claim it forever."""
+    job = _make_job()
+    db._pool = MagicMock()
+    try:
+        with (
+            patch.object(jobs, "claim_next_job", new=AsyncMock(return_value=job)),
+            patch.object(jobs, "release_job_to_queue", new=AsyncMock()) as release,
+            patch.object(jobs, "mark_job_failed", new=AsyncMock(return_value=True)) as mark_failed,
+            patch.object(
+                feature_flag, "python_executes_for_user", new=AsyncMock(return_value=False)
+            ),
+            patch.object(
+                executor, "settle_stranded_task", new=AsyncMock(return_value=True)
+            ) as settle,
+            patch.object(executor, "execute_start", new=AsyncMock()) as execute,
+        ):
+            await poller._tick(live_settings)
+            release.assert_not_called()
+            execute.assert_not_called()
+            mark_failed.assert_awaited_once_with(
+                db._pool, job.id, error="user_opted_out", attempts=job.attempts
+            )
+            settle.assert_awaited_once_with(
+                db._pool,
+                task_id=job.task_id,
+                user_id=job.user_id,
+                job_id=job.id,
+                error=poller.OPTED_OUT_ERROR,
+            )
+    finally:
+        db._pool = None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("executes", "reason"), [(None, "flag_lookup_failed")])
+async def test_live_mode_unknown_user_releases(
+    live_settings: Settings, executes: bool | None, reason: str
 ) -> None:
     job = _make_job()
     db._pool = MagicMock()
@@ -108,14 +148,53 @@ async def test_live_mode_unflagged_user_releases(
             patch.object(jobs, "release_job_to_queue", new=AsyncMock(return_value=True)) as release,
             patch.object(
                 feature_flag,
-                "is_user_flagged_to_python",
-                new=AsyncMock(return_value=False),
+                "python_executes_for_user",
+                new=AsyncMock(return_value=executes),
             ),
             patch.object(executor, "execute_start", new=AsyncMock()) as execute,
+            patch.object(poller.logger, "info") as log_info,
         ):
             await poller._tick(live_settings)
             release.assert_awaited_once_with(db._pool, job.id)
             execute.assert_not_called()
+            released_logs = [c for c in log_info.call_args_list if c.args[0] == "poller.released"]
+            assert released_logs[-1].kwargs["reason"] == reason
+    finally:
+        db._pool = None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["start", "continue", "respond"])
+@pytest.mark.parametrize("task_status", ["done", "failed", "cancelled"])
+async def test_live_mode_job_for_settled_task_is_done_without_running(
+    live_settings: Settings, action: str, task_status: str
+) -> None:
+    """A job whose task settled while it waited — e.g. failed by the
+    stale-run reconciler because no worker took it in time — must not
+    run the task again after its terminal event."""
+    job = _make_job(action=action, payload={"requestId": "tu_1"})
+    db._pool = MagicMock()
+    try:
+        with (
+            patch.object(jobs, "claim_next_job", new=AsyncMock(return_value=job)),
+            patch.object(jobs, "mark_job_done", new=AsyncMock()) as mark_done,
+            patch.object(jobs, "mark_job_failed", new=AsyncMock()) as mark_failed,
+            patch.object(
+                feature_flag, "python_executes_for_user", new=AsyncMock(return_value=True)
+            ),
+            patch.object(
+                poller.store, "load_owned_task_status", new=AsyncMock(return_value=task_status)
+            ),
+            patch.object(executor, "execute_start", new=AsyncMock()) as ex_start,
+            patch.object(executor, "execute_continue", new=AsyncMock()) as ex_continue,
+            patch.object(executor, "execute_respond", new=AsyncMock()) as ex_respond,
+        ):
+            await poller._tick(live_settings)
+        mark_done.assert_awaited_once_with(db._pool, job.id, attempts=job.attempts)
+        mark_failed.assert_not_called()
+        ex_start.assert_not_called()
+        ex_continue.assert_not_called()
+        ex_respond.assert_not_called()
     finally:
         db._pool = None
 
@@ -139,7 +218,7 @@ async def test_live_mode_flagged_respond_action_dispatches_to_executor(
             patch.object(jobs, "mark_job_done", new=AsyncMock()) as mark_done,
             patch.object(
                 feature_flag,
-                "is_user_flagged_to_python",
+                "python_executes_for_user",
                 new=AsyncMock(return_value=True),
             ),
             patch.object(
@@ -177,7 +256,7 @@ async def test_live_mode_flagged_respond_invalid_payload_marks_failed(
             patch.object(jobs, "mark_job_failed", new=AsyncMock()) as mark_failed,
             patch.object(
                 feature_flag,
-                "is_user_flagged_to_python",
+                "python_executes_for_user",
                 new=AsyncMock(return_value=True),
             ),
             patch.object(executor, "execute_respond", new=AsyncMock()) as execute,
@@ -204,7 +283,7 @@ async def test_live_mode_flagged_continue_action_dispatches_to_executor(
             patch.object(jobs, "mark_job_done", new=AsyncMock()) as mark_done,
             patch.object(
                 feature_flag,
-                "is_user_flagged_to_python",
+                "python_executes_for_user",
                 new=AsyncMock(return_value=True),
             ),
             patch.object(
@@ -235,7 +314,7 @@ async def test_live_mode_flagged_start_dispatches_to_executor_and_marks_done(
             patch.object(jobs, "mark_job_failed", new=AsyncMock()) as mark_failed,
             patch.object(
                 feature_flag,
-                "is_user_flagged_to_python",
+                "python_executes_for_user",
                 new=AsyncMock(return_value=True),
             ),
             patch.object(
@@ -266,7 +345,7 @@ async def test_live_mode_executor_failure_marks_job_failed(
             patch.object(jobs, "mark_job_failed", new=AsyncMock()) as mark_failed,
             patch.object(
                 feature_flag,
-                "is_user_flagged_to_python",
+                "python_executes_for_user",
                 new=AsyncMock(return_value=True),
             ),
             patch.object(

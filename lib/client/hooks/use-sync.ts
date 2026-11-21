@@ -25,6 +25,7 @@ import "client-only"
 
 import { useEffect, useRef } from "react"
 import { useStore } from "@/client/hooks/use-store"
+import { heldConversationIds } from "@/client/hooks/store/slices/chat"
 import { useSyncEnabled } from "@/client/hooks/use-sync-enabled"
 import { getSupabaseBrowserClient } from "@/client/supabase/client"
 import { fetchAccountInstructions } from "@/client/supabase/account-instructions"
@@ -36,7 +37,9 @@ import {
   takeRecentlyDroppedOps,
 } from "@/client/sync/sync-queue"
 import {
+  allDeferredOps,
   computeSyncOps,
+  type DeferredDependentOps,
   type SyncSnapshot as Snapshot,
 } from "@/client/sync/compute-sync-ops"
 import {
@@ -85,18 +88,12 @@ export function withSyncDiffSuppressed(fn: () => void): void {
  */
 const heldMessageBaselines = new Map<string, Message[]>()
 
-/** Conversations whose message diffs are deferred: still showing the
- *  typing dots, or with an in-flight stream (the typing flag clears on
- *  the first chunk, the streaming flag only when the stream settles). */
-function heldConversationIds(state: {
-  typingConversationIds: string[]
-  streamingConversationIds: string[]
-}): Set<string> {
-  return new Set([
-    ...state.typingConversationIds,
-    ...state.streamingConversationIds,
-  ])
-}
+/**
+ * Artifact / note ops parked until the held message they reference is
+ * uploaded (see `computeSyncOps`). Survives a pull's rebase (the cloud
+ * still lacks those rows); cleared with the subscriber.
+ */
+const deferredDependentOps: DeferredDependentOps = new Map()
 
 function snapshotOf(s: Snapshot): Snapshot {
   return {
@@ -160,7 +157,15 @@ function capturePauseBaseline(userId: string): void {
     buildPauseBaseline({
       userId,
       snapshot,
-      droppedOps: takeRecentlyDroppedOps(userId),
+      // Parked ops never reached the queue, yet their rows are in the
+      // diff baseline: mark them dirty so the resume re-sends them.
+      droppedOps: [
+        ...takeRecentlyDroppedOps(userId),
+        ...allDeferredOps(deferredDependentOps).map((op) => ({
+          ...op,
+          ownerUserId: userId,
+        })),
+      ],
     })
   )
 }
@@ -187,6 +192,7 @@ export function resumeFromPause(userId: string): number {
   enqueueMany(ops.map((op) => ({ ...op, ownerUserId: userId })))
   lastSnapshot = current
   heldMessageBaselines.clear()
+  deferredDependentOps.clear()
   return ops.length
 }
 
@@ -211,6 +217,7 @@ export function useSync(): void {
     if (!enabled) {
       lastSnapshot = null
       heldMessageBaselines.clear()
+      deferredDependentOps.clear()
     }
   }, [enabled])
 
@@ -278,7 +285,8 @@ export function useSync(): void {
         prev,
         next,
         heldConversationIds(state),
-        heldMessageBaselines
+        heldMessageBaselines,
+        deferredDependentOps
       )
       for (const op of ops) enqueue(op)
 
@@ -292,6 +300,7 @@ export function useSync(): void {
       capturePauseBaseline(userId)
       lastSnapshot = null
       heldMessageBaselines.clear()
+      deferredDependentOps.clear()
     }
   }, [enabled, userId])
 }
@@ -321,5 +330,10 @@ export function seedSyncSnapshot(): void {
  */
 export function setSyncSnapshot(snapshot: Snapshot): void {
   lastSnapshot = snapshot
-  heldMessageBaselines.clear()
+  // Held message baselines are KEPT: a pull keeps a streaming
+  // conversation's local messages (`mergeCloudSnapshot`), and the cloud
+  // still lacks the in-flight placeholder. Re-capturing the baseline
+  // from the merged snapshot would count the placeholder as uploaded,
+  // so artifacts / notes created on it afterwards would no longer be
+  // parked behind its upsert (`computeSyncOps`).
 }

@@ -351,6 +351,49 @@ export interface MergeOptions {
   isSameBlob?: (ref: string, value: string) => boolean
 }
 
+/**
+ * Local artifacts / notes that reference a message of a streaming
+ * conversation the cloud doesn't have yet are "local ahead": their
+ * upserts are parked until that message uploads (`computeSyncOps`), so
+ * they have no queued op — without this a mid-stream pull would delete
+ * them (and their IndexedDB bytes with them). A pending delete wins.
+ */
+function markRowsOnHeldMessages(
+  index: PendingIndex,
+  local: CloudSnapshot,
+  cloud: CloudSnapshot,
+  streaming: ReadonlySet<string> | undefined
+): void {
+  if (!streaming || streaming.size === 0) return
+  const unsynced = new Set<string>()
+  for (const id of streaming) {
+    const l = local.conversations.find((c) => c.id === id)
+    if (!l) continue
+    const inCloud = new Set(
+      cloud.conversations.find((c) => c.id === id)?.messages.map((m) => m.id) ??
+        []
+    )
+    for (const m of l.messages) if (!inCloud.has(m.id)) unsynced.add(m.id)
+  }
+  if (unsynced.size === 0) return
+  const mark = (
+    target: SyncTarget,
+    rows: readonly { id: string; messageId: string | null }[]
+  ) => {
+    for (const r of rows) {
+      if (!r.messageId || !unsynced.has(r.messageId)) continue
+      let byId = index.get(target)
+      if (!byId) {
+        byId = new Map()
+        index.set(target, byId)
+      }
+      if (!byId.has(r.id)) byId.set(r.id, "upsert")
+    }
+  }
+  mark("artifacts", local.artifacts)
+  mark("notes", local.notes)
+}
+
 export function mergeCloudSnapshot(
   local: CloudSnapshot,
   cloud: CloudSnapshot,
@@ -359,6 +402,7 @@ export function mergeCloudSnapshot(
   const index = indexPendingOps(opts.pendingOps ?? [])
   const keepLocal = opts.keepLocalOnlyFields ?? true
   const streaming = opts.streamingConversationIds
+  markRowsOnHeldMessages(index, local, cloud, streaming)
   const pendingFor = (t: SyncTarget) => index.get(t) ?? NO_PENDING
 
   function list<T extends { id: string }>(

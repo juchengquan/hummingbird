@@ -10,7 +10,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from .. import __version__, db
+from .. import __version__, db, poller
 from ..settings import Settings, get_settings
 
 router = APIRouter(tags=["meta"])
@@ -27,6 +27,12 @@ class ReadinessChecks(BaseModel):
     supabase_db_configured: bool
     jwt_secret_configured: bool
     db_pool_open: bool
+    # None when no poll loop was started (no `SUPABASE_DB_URL`); False
+    # when it was started and has died — nothing executes tasks then.
+    poller_alive: bool | None = None
+    # Seconds since the loop last finished a tick (None before the
+    # first). A tick executing a job lasts as long as that job's chunk.
+    poller_last_tick_age_seconds: float | None = None
 
 
 class ReadinessResponse(BaseModel):
@@ -58,13 +64,20 @@ def readyz(
     reports whether the Postgres pool is open (which is the closest
     we get to "Postgres reachable" without a per-request `SELECT 1`).
     Phase 2+ may add a `SELECT 1` if we see false-positive ready.
+
+    Also reports the task poller's liveness: `status` is `degraded` when
+    the poll loop was started and has since died (the HTTP API still
+    works, but no background task will run).
     """
+    alive, tick_age = poller.liveness()
     return ReadinessResponse(
-        status="ok",
+        status="degraded" if alive is False else "ok",
         checks=ReadinessChecks(
             supabase_url_configured=bool(settings.SUPABASE_URL),
             supabase_db_configured=bool(settings.SUPABASE_DB_URL),
             jwt_secret_configured=bool(settings.SUPABASE_JWT_SECRET),
             db_pool_open=db.has_pool(),
+            poller_alive=alive,
+            poller_last_tick_age_seconds=None if tick_age is None else round(tick_age, 1),
         ),
     )

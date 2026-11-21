@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 
 import { CDN_HOSTS, CDN_SCRIPTS } from "@/shared/live-artifact/cdn-urls"
 import {
+  navigatingMessage,
   parseRenderMessage,
   renderMessage,
   SANDBOX_FRAME_NS,
@@ -67,9 +68,10 @@ describe("buildSandboxFrameCsp", () => {
     expect([...used].sort()).toEqual([...CDN_HOSTS].sort())
   })
 
-  test("keeps the image / font reach the srcdoc shells had", () => {
+  test("remote images stay allowed; fonts only inline or from the pinned CDNs", () => {
     expect(d.get("img-src")).toEqual(["data:", "blob:", "https:"])
-    expect(d.get("font-src")).toEqual(["data:", "https:"])
+    expect(d.get("font-src")).toEqual(["data:", "blob:", ...CDN_HOSTS])
+    expect(d.get("font-src")).not.toContain("https:")
   })
 
   test("framable only by the app; opaque origin even without the iframe attribute", () => {
@@ -109,16 +111,18 @@ describe("buildSandboxFrameDocument", () => {
 // ---------------------------------------------------------------------
 
 const APP_ORIGIN = "https://app.example"
+const N = "0123456789abcdef0123456789abcdef"
 
 interface Posted {
   data: unknown
   target: string
 }
 
-function runBootstrap(opts: { topLevel?: boolean; readyState?: string } = {}) {
+function runBootstrap(
+  opts: { topLevel?: boolean; readyState?: string; search?: string } = {}
+) {
   const posted: Posted[] = []
   const listeners = new Map<string, Set<(e: unknown) => void>>()
-  const docListeners = new Map<string, Array<() => void>>()
   const written: string[] = []
   const calls: string[] = []
 
@@ -136,21 +140,25 @@ function runBootstrap(opts: { topLevel?: boolean; readyState?: string } = {}) {
   }
   win.parent = opts.topLevel ? win : parent
   const doc = {
-    readyState: opts.readyState ?? "interactive",
-    addEventListener: (t: string, fn: () => void) => {
-      docListeners.set(t, [...(docListeners.get(t) ?? []), fn])
+    readyState: opts.readyState ?? "complete",
+    open: () => {
+      calls.push("open")
+      // document.open() erases every listener on the window.
+      listeners.clear()
     },
-    open: () => calls.push("open"),
     write: (html: string) => {
       calls.push("write")
       written.push(html)
     },
     close: () => calls.push("close"),
   }
-  const location = { origin: APP_ORIGIN }
+  const location = { origin: APP_ORIGIN, search: opts.search ?? `?n=${N}` }
 
   new Function("window", "document", "location", sandboxFrameBootstrapScript())(win, doc, location)
 
+  const fire = (type: string, e: unknown = {}) => {
+    for (const fn of [...(listeners.get(type) ?? [])]) fn(e)
+  }
   return {
     posted,
     written,
@@ -158,63 +166,107 @@ function runBootstrap(opts: { topLevel?: boolean; readyState?: string } = {}) {
     parent,
     win,
     listenerCount: () => listeners.get("message")?.size ?? 0,
-    fireDomContentLoaded: () => docListeners.get("DOMContentLoaded")?.forEach((fn) => fn()),
+    fire,
     deliver: (data: unknown, from: { source?: unknown; origin?: string } = {}) => {
-      const e = { data, source: from.source ?? parent, origin: from.origin ?? APP_ORIGIN }
-      for (const fn of [...(listeners.get("message") ?? [])]) fn(e)
+      fire("message", { data, source: from.source ?? parent, origin: from.origin ?? APP_ORIGIN })
     },
   }
 }
 
 describe("sandbox frame bootstrap", () => {
-  test("announces shell-ready to the parent once parsed", () => {
+  test("announces shell-ready with this navigation's nonce once loaded", () => {
     const f = runBootstrap()
-    expect(f.posted).toEqual([{ data: shellReadyMessage(), target: "*" }])
+    expect(f.posted).toEqual([{ data: shellReadyMessage(N), target: "*" }])
   })
 
-  test("waits for DOMContentLoaded while the shell is still parsing", () => {
-    const f = runBootstrap({ readyState: "loading" })
-    expect(f.posted).toEqual([])
-    f.fireDomContentLoaded()
-    expect(f.posted).toEqual([{ data: shellReadyMessage(), target: "*" }])
+  test("waits for load while the shell is still loading", () => {
+    for (const readyState of ["loading", "interactive"]) {
+      const f = runBootstrap({ readyState })
+      expect(f.posted).toEqual([])
+      f.fire("load")
+      expect(f.posted).toEqual([{ data: shellReadyMessage(N), target: "*" }])
+    }
+  })
+
+  test("no (valid) nonce in the URL: inert", () => {
+    for (const search of ["", "?x=1", "?n=short", "?n=<script>aaaaaaaaaaaaaaaa", `?nn=${N}`]) {
+      const f = runBootstrap({ search })
+      expect(f.posted).toEqual([])
+      f.deliver(renderMessage("x", N))
+      expect(f.calls).toEqual([])
+    }
+  })
+
+  test("reads the nonce among other query params", () => {
+    const f = runBootstrap({ search: `?a=1&n=${N}&b=2` })
+    expect(f.posted).toEqual([{ data: shellReadyMessage(N), target: "*" }])
   })
 
   test("renders a valid render message from the parent exactly once", () => {
     const f = runBootstrap()
-    f.deliver(renderMessage("<p>one</p>"))
+    f.deliver(renderMessage("<p>one</p>", N))
     expect(f.calls).toEqual(["open", "write", "close"])
     expect(f.written).toEqual(["<p>one</p>"])
     // The listener is gone; a second render can't replace the content.
     expect(f.listenerCount()).toBe(0)
-    f.deliver(renderMessage("<p>two</p>"))
+    f.deliver(renderMessage("<p>two</p>", N))
     expect(f.written).toEqual(["<p>one</p>"])
+  })
+
+  test("a render for another navigation's nonce is ignored", () => {
+    const f = runBootstrap()
+    f.deliver(renderMessage("<p>stale</p>", "ffffffffffffffffffffffffffffffff"))
+    expect(f.calls).toEqual([])
+    expect(f.listenerCount()).toBe(1)
+  })
+
+  test("after rendering, pagehide tells the parent the frame is navigating away", () => {
+    const f = runBootstrap()
+    f.deliver(renderMessage("<p>one</p>", N))
+    f.posted.length = 0
+    f.fire("pagehide")
+    expect(f.posted).toEqual([{ data: navigatingMessage(N), target: "*" }])
+  })
+
+  test("the rendered content can't stub addEventListener before the hook is added", () => {
+    const f = runBootstrap()
+    const realAdd = f.win.addEventListener
+    // What `document.write(html)` running a script could do.
+    f.win.addEventListener = () => {}
+    f.deliver(renderMessage("<p>one</p>", N))
+    f.win.addEventListener = realAdd
+    f.posted.length = 0
+    f.fire("pagehide")
+    expect(f.posted).toEqual([{ data: navigatingMessage(N), target: "*" }])
   })
 
   test("ignores render messages from anything but the framing app page", () => {
     const f = runBootstrap()
-    f.deliver(renderMessage("x"), { source: {} }) // sibling frame / popup
-    f.deliver(renderMessage("x"), { source: f.win }) // itself
-    f.deliver(renderMessage("x"), { origin: "https://evil.example" })
-    f.deliver(renderMessage("x"), { origin: "null" })
+    f.deliver(renderMessage("x", N), { source: {} }) // sibling frame / popup
+    f.deliver(renderMessage("x", N), { source: f.win }) // itself
+    f.deliver(renderMessage("x", N), { origin: "https://evil.example" })
+    f.deliver(renderMessage("x", N), { origin: "null" })
     expect(f.calls).toEqual([])
     expect(f.listenerCount()).toBe(1)
   })
 
   test("accepts exactly what parseRenderMessage accepts", () => {
     const candidates: unknown[] = [
-      renderMessage("<i>ok</i>"),
-      renderMessage(""),
+      renderMessage("<i>ok</i>", N),
+      renderMessage("", N),
+      renderMessage("x", "ffffffffffffffffffffffffffffffff"),
       null,
       "string",
-      { ns: SANDBOX_FRAME_NS, type: "render" },
-      { ns: SANDBOX_FRAME_NS, type: "render", html: 7 },
-      { ns: SANDBOX_FRAME_NS, type: "shell-ready", html: "x" },
-      { ns: "live-artifact", type: "render", html: "x" },
+      { ns: SANDBOX_FRAME_NS, type: "render", nonce: N },
+      { ns: SANDBOX_FRAME_NS, type: "render", nonce: N, html: 7 },
+      { ns: SANDBOX_FRAME_NS, type: "render", html: "x" },
+      { ns: SANDBOX_FRAME_NS, type: "shell-ready", nonce: N, html: "x" },
+      { ns: "live-artifact", type: "render", nonce: N, html: "x" },
     ]
     for (const c of candidates) {
       const f = runBootstrap()
       f.deliver(c)
-      const expected = parseRenderMessage(c)
+      const expected = parseRenderMessage(c, N)
       expect(f.written).toEqual(expected === null ? [] : [expected])
     }
   })
@@ -222,7 +274,7 @@ describe("sandbox frame bootstrap", () => {
   test("opened top-level (not framed): never announces, never renders", () => {
     const f = runBootstrap({ topLevel: true })
     expect(f.posted).toEqual([])
-    f.deliver(renderMessage("x"), { source: f.win })
+    f.deliver(renderMessage("x", N), { source: f.win })
     expect(f.calls).toEqual([])
   })
 })

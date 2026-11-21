@@ -1,15 +1,20 @@
 "use client"
 
-import { useCallback, useMemo, useRef } from "react"
+import { useCallback, useMemo, useRef, useState } from "react"
 import { cn } from "@/shared/utils"
 import { openPdf } from "@/components/right-panel-slot"
 import {
   decorateWebCitations,
   escapeAttr,
+  replaceInHtmlText,
 } from "@/components/panels/citation-marker"
 import { mark as perfMark, count as perfCount } from "@/client/perf-chat-stream"
 import type { CitationMarkerMark } from "@/shared/verify"
-import { renderMarkdownToHtml } from "@/components/markdown-render"
+import {
+  REMOTE_IMAGE_SRC_ATTR,
+  renderMarkdownToHtml,
+} from "@/components/markdown-render"
+import { markdownImagePolicy } from "@/shared/safe-url"
 import "./markdown-preview.css"
 
 /**
@@ -64,7 +69,10 @@ interface MarkdownPreviewProps {
 const PDF_CITATION_RE = /\[p\.(\d+)\]/g
 
 function decoratePdfCitations(html: string, fileId: string): string {
-  return html.replace(
+  // Text runs only: a `[p.N]` inside an attribute (a link href, an
+  // image alt / URL) must not be rewritten into markup.
+  return replaceInHtmlText(
+    html,
     PDF_CITATION_RE,
     (_, page) =>
       `<button type="button" class="pdf-citation" data-citation-file="${escapeAttr(fileId)}" data-citation-page="${page}">[p.${page}]</button>`
@@ -84,8 +92,12 @@ function decoratePdfCitations(html: string, fileId: string): string {
  * non-greedy match is safe.
  */
 const IMG_TAG_RE = /<img\b[^>]*\/?>/gi
+// Click-to-load placeholders (`markdown-render.ts`) go too. Their
+// content is escaped text + spans, never a nested `</button>`.
+const REMOTE_IMAGE_PLACEHOLDER_RE =
+  /<button type="button" class="md-remote-image"[^>]*>[\s\S]*?<\/button>/gi
 function stripImageTags(html: string): string {
-  return html.replace(IMG_TAG_RE, "")
+  return html.replace(IMG_TAG_RE, "").replace(REMOTE_IMAGE_PLACEHOLDER_RE, "")
 }
 
 export function MarkdownPreview({
@@ -98,12 +110,18 @@ export function MarkdownPreview({
   suppressImages,
 }: MarkdownPreviewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+  // Remote image URLs the viewer clicked "Load image" on. Kept as state
+  // (not a DOM swap) so a re-render — every streamed token replaces the
+  // innerHTML — keeps them loaded.
+  const [loadedRemoteImages, setLoadedRemoteImages] = useState<
+    ReadonlySet<string>
+  >(() => new Set())
 
   const html = useMemo(() => {
     perfMark("humm/chat/markdown-parse:start")
     perfCount("chat.markdown.parse")
     try {
-      let raw = renderMarkdownToHtml(content)
+      let raw = renderMarkdownToHtml(content, { loadedRemoteImages })
       if (pdfCitationFileId) raw = decoratePdfCitations(raw, pdfCitationFileId)
       if (sourceCount && sourceCount > 0)
         raw = decorateWebCitations(raw, sourceCount, citationMarks)
@@ -114,13 +132,37 @@ export function MarkdownPreview({
     } finally {
       perfMark("humm/chat/markdown-parse:end")
     }
-  }, [content, pdfCitationFileId, sourceCount, citationMarks, suppressImages])
+  }, [
+    content,
+    pdfCitationFileId,
+    sourceCount,
+    citationMarks,
+    suppressImages,
+    loadedRemoteImages,
+  ])
 
   // Event-delegated click handler for citation buttons. Lives on the
   // container so it stays attached across re-renders without React owning
   // each citation as its own element.
   const handleClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
+      const remote = (e.target as HTMLElement).closest<HTMLElement>(
+        `button[${REMOTE_IMAGE_SRC_ATTR}]`
+      )
+      if (remote && e.currentTarget.contains(remote)) {
+        e.preventDefault()
+        e.stopPropagation()
+        const src = remote.getAttribute(REMOTE_IMAGE_SRC_ATTR)
+        // Re-checked: only a URL the renderer would show as an image.
+        if (!src || markdownImagePolicy(src).kind === "blocked") return
+        setLoadedRemoteImages((prev) => {
+          if (prev.has(src)) return prev
+          const next = new Set(prev)
+          next.add(src)
+          return next
+        })
+        return
+      }
       const target = (e.target as HTMLElement).closest<HTMLElement>(
         "button.pdf-citation, button.web-citation"
       )

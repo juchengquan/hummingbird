@@ -18,6 +18,8 @@
 
 import { mock } from "bun:test"
 
+import * as realTaskWrites from "@/server/agent/task-writes"
+
 // --- Supabase server client + auth -----------------------------------------
 
 type GetUserResult = {
@@ -129,6 +131,8 @@ export const mocks = {
   reconcileStaleRuns: mock(
     async (_db: unknown, _userId: string): Promise<number> => 0,
   ),
+  // task-writes (RPC-backed run creation, 0034)
+  createTaskRun: mock(async (_db: unknown, _input: unknown) => {}),
   // jobs
   enqueueStartJob: mock(
     async (_db: unknown, _input: { taskId: string; userId: string }) => {},
@@ -156,6 +160,13 @@ mock.module("@/server/agent/store", () => ({
   reconcileStaleRuns: mocks.reconcileStaleRuns,
 }))
 
+// The error class + SQLSTATE mapping stay real so the routes' status
+// mapping is exercised; only the RPC call is stubbed.
+mock.module("@/server/agent/task-writes", () => ({
+  ...realTaskWrites,
+  createTaskRun: mocks.createTaskRun,
+}))
+
 mock.module("@/server/agent/jobs", () => ({
   enqueueStartJob: mocks.enqueueStartJob,
   enqueueRespondJob: mocks.enqueueRespondJob,
@@ -180,6 +191,8 @@ export function resetAgentMocks(): void {
   mocks.cancelChildTasks.mockImplementation(async () => {})
   mocks.reconcileStaleRuns.mockClear()
   mocks.reconcileStaleRuns.mockImplementation(async () => 0)
+  mocks.createTaskRun.mockClear()
+  mocks.createTaskRun.mockImplementation(async () => {})
   mocks.enqueueStartJob.mockClear()
   mocks.enqueueStartJob.mockImplementation(async () => {})
   mocks.enqueueRespondJob.mockClear()

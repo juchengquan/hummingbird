@@ -27,7 +27,38 @@ import type { CitationMarkerMark, ClaimStatus } from "@/shared/verify"
 export const WEB_CITATION_RE = /(^|[^\w])\[(\d{1,2})\]/g
 
 export function escapeAttr(value: string): string {
-  return value.replace(/"/g, "&quot;")
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+}
+
+/** A tag (`<…>`). Marked escapes `<`/`>` in text and attribute values,
+ *  and our own decorations escape attributes, so a raw `>` only ever
+ *  closes a tag. */
+const HTML_TAG_RE = /<[^>]*>/g
+
+/**
+ * `html.replace(re, fn)` applied to text runs only — never inside a tag
+ * (its name or attributes). The citation decorators run over rendered
+ * HTML; without this a `[1]` / `[p.2]` inside an href, an image URL or
+ * an alt/title attribute was rewritten into a `<button>`, breaking the
+ * attribute (and the markup around it).
+ */
+export function replaceInHtmlText(
+  html: string,
+  re: RegExp,
+  fn: (match: string, ...groups: string[]) => string
+): string {
+  let out = ""
+  let last = 0
+  for (const m of html.matchAll(HTML_TAG_RE)) {
+    out += html.slice(last, m.index).replace(re, fn)
+    out += m[0]
+    last = m.index + m[0].length
+  }
+  return out + html.slice(last).replace(re, fn)
 }
 
 const TONE: Record<ClaimStatus, string> = {
@@ -68,7 +99,7 @@ export function decorateWebCitations(
   sourceCount: number,
   marks?: Map<string, CitationMarkerMark>
 ): string {
-  return html.replace(WEB_CITATION_RE, (_, lead, indexStr) => {
+  return replaceInHtmlText(html, WEB_CITATION_RE, (_, lead, indexStr) => {
     const idx = Number(indexStr)
     if (!Number.isFinite(idx) || idx < 1 || idx > sourceCount) {
       return `${lead}[${indexStr}]`

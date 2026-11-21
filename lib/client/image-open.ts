@@ -50,6 +50,5 @@ export function openImageInNewTab(url: string): boolean {
  *  `isSafeImageUrl` — a `javascript:` href would run on click. */
 export function downloadImage(url: string, name: string): boolean {
   if (!isSafeImageUrl(url)) return false
-  triggerDownload(url, name)
-  return true
+  return triggerDownload(url, name)
 }

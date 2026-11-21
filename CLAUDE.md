@@ -143,7 +143,7 @@ function MessageTime({ timestamp }) {
 See `.env.example` for the full list. Two groups:
 
 - **AI Gateway** (`AI_GATEWAY_API_KEY`) — required for real chat/editor AI. Without it, the chat panel falls back to a clearly-labeled mock response. Only model ids declared in `config/models.json` are dispatched on this key; any other id is rejected with 400 `unknown_model` unless the request brings its own gateway key (the editor's BYO `apiKey`). See `selectModel` in `lib/server/model-provider.ts`.
-- **Trusted proxy hops** (`TRUSTED_PROXY_HOPS`, default `1`) — how many reverse proxies in front of Next.js append to `X-Forwarded-For`. `rateLimitKey` (`lib/server/rate-limit.ts`) takes the client IP from the entry that many positions from the right (left entries are client-spoofable); on Vercel (`VERCEL` set) the platform `x-real-ip` / `x-vercel-forwarded-for` headers win. `0` ignores XFF (all anonymous traffic shares one bucket). The same key, hashed, scopes anonymous callers in the summarize response cache.
+- **Trusted proxy hops** (`TRUSTED_PROXY_HOPS`, default `1`) — how many reverse proxies in front of Next.js append to `X-Forwarded-For`. `rateLimitKey` (`lib/server/rate-limit.ts`) takes the client IP from the entry that many positions from the right (left entries are client-spoofable); on Vercel (`VERCEL` set) the platform `x-real-ip` / `x-vercel-forwarded-for` headers win. `0` ignores XFF (all anonymous traffic shares one bucket). The same key, hashed, scopes anonymous callers in the summarize response cache. **A reverse proxy is required for per-IP limits** — `next start` only sets XFF when the client sent none, so with Next exposed directly clients pick their own key; production boot warns (`instrumentation.ts` → `warnOnProxyConfig`) when the var is unset or `0` outside a known platform. See `docs/SECURITY.md`.
 - **Minimax-CN override** (`MINIMAX_CN_BASE_URL`, `MINIMAX_CN_API_KEY`) — optional. When both are set, any `minimax/*` model id is dispatched through an OpenAI-compatible client at the configured base URL instead of going through the Vercel AI Gateway. Useful for the Minimax China endpoint or a self-hosted Minimax-compatible gateway. Either var unset → fallthrough to the gateway, as if the override didn't exist. See `lib/server/model-provider.ts`. The same key powers the `generateImage` skill; the image endpoint is derived from `MINIMAX_CN_BASE_URL`'s origin (image and chat share a host but live under different paths), falling back to `https://api.minimaxi.com/` when `MINIMAX_CN_BASE_URL` is unset. See `lib/server/skills/minimax-image-client.ts`.
 - **Ollama** (`OLLAMA_BASE_URL`, optional `OLLAMA_API_KEY`). When `OLLAMA_BASE_URL` is set (typically `http://localhost:11434/v1`), `ollama/*` models route through Ollama's OpenAI-compatible endpoint. The `ollama` provider in `config/providers.json` carries `allowInsecureBaseUrl: true` which relaxes two checks: the SSRF gate accepts `http://localhost` / loopback / private-network hosts, and the API key becomes optional (Ollama doesn't enforce auth). Only enable this for endpoints you control — by setting it you take responsibility for the upstream URL not being a credential-exfiltration sink. A malformed URL still fails at boot.
 - **OpenRouter** (`OPENROUTER_API_KEY`). When set, the `openrouter` provider activates and any `openrouter/*` model id dispatches against `https://openrouter.ai/api/v1`. Special model `openrouter/auto` lets OpenRouter pick the upstream per request based on prompt length, latency budget, and price; specific upstream ids (`openrouter/anthropic/claude-sonnet-4.5`, etc.) route to that exact model. The base URL is fixed in `config/providers.json` (not env-overridable) because OpenRouter is a hosted gateway with no self-host story.
@@ -163,7 +163,11 @@ SQL lives under `supabase/migrations/` as numbered files applied in order (`0001
 `0012_tasks.sql`, `0013_task_checkpoint.sql`,
 `0014_task_jobs.sql`, `0015_workspace_canvas.sql`,
 `0016_project_mode.sql`, `0017_prompts_workspace.sql`, … `0031_rls_fk_ownership.sql`,
-`0032_task_job_lease.sql`) — see `docs/SUPABASE_SETUP.md`
+`0032_task_job_lease.sql`, `0033_message_generated_files.sql`,
+`0034_task_write_hardening.sql`, `0035_task_schedule_limits.sql`,
+`0036_task_job_stale_lease_backfill.sql`,
+`0037_validate_artifacts_kind_check.sql`, `0038_mcp_pgcrypto_schema.sql`,
+`0039_mcp_upsert_foreign_id.sql`, `0040_task_worker_liveness.sql`) — see `docs/SUPABASE_SETUP.md`
 for the hosted-cloud run order, or `docs/SUPABASE_LOCAL.md` for the
 local Supabase CLI path (Docker-based, no cloud account needed). For
 verifying the file full-text retrieval pipeline end-to-end after
@@ -176,6 +180,19 @@ FK to a user-owned table to point at a row with `user_id = auth.uid()`.
 A new table (or new FK column) referencing user-owned rows needs the same
 restrictive pair, otherwise a user can hang rows off another user's data
 via PostgREST.
+
+**Worker tables are not user-writable (0034/0035).** `anon` /
+`authenticated` cannot INSERT `tasks` or write `task_jobs`; API code
+creates runs with the `create_task_run` RPC and enqueues with
+`enqueue_task_job` (`lib/server/agent/task-writes.ts`, used by
+`jobs.ts`). `tasks` UPDATE is column-granted to `status` / `finished_at`
+/ `updated_at`, and a trigger only allows a live run → `cancelled` /
+`failed`. `task_schedules` is column-granted (no `last_run_at` /
+`last_run_task_id`), with a trigger enforcing a coarse cron floor and
+20 enabled schedules per user; routes validate the exact ≥ 5 min gap
+(`validateScheduleCron`). Workers (agent-py / agent-ts, DSN role) and the
+service-role client are unaffected. A new column a route must write
+needs a matching column GRANT.
 
 ## Frontend module conventions
 
@@ -236,10 +253,11 @@ shipped the scaffolding (FastAPI + JWT auth + OpenAPI codegen).
 **Phase 1** added a background `task_jobs` poll loop in dry-run
 mode — claims a job, structured-logs it, releases it back. **Phase 2a**
 added the executor pattern end-to-end: TaskEvent IR, RunEmitter,
-RunStore writes, the agent loop, per-user feature flag, and the
-executor that runs `start` actions for flagged users. Step fn is a
-stub emitting a canned event stream — real model + tools land in
-Phase 2b.
+RunStore writes, the agent loop, a per-user opt-out, and the
+executor. Later phases added the real model + tools, `continue` /
+`respond`, subagents and lease-based crash recovery. **agent-py is the
+task executor for every user** (agent-ts has no executor; its poller is
+off unless `AGENT_TS_POLLER_ENABLED`).
 
 Stack: Python 3.12 · FastAPI · uv (package manager) · PyJWT ·
 asyncpg · structlog · pytest · ruff · mypy.
@@ -256,9 +274,9 @@ asyncpg · structlog · pytest · ruff · mypy.
 | `services/agent-py/src/agent_py/emitter.py` | RunEmitter — monotonic seq, settle-once. |
 | `services/agent-py/src/agent_py/store.py` | RunStore — `append_event` (idempotent on `(task_id, seq)`), `update_run`, `set_task_handler` (`metadata.handler = 'python'`), `is_run_cancelled`. |
 | `services/agent-py/src/agent_py/runner.py` | `run_agent_loop` — pure orchestration with injected RunStepFn. |
-| `services/agent-py/src/agent_py/feature_flag.py` | Per-user flag check — `auth.users.raw_app_meta_data->>'agent_backend' == 'python'`. Defensive on every shape; DB error → fall back to "not flagged". |
+| `services/agent-py/src/agent_py/feature_flag.py` | Per-user **opt-out** — `auth.users.raw_app_meta_data->>'agent_backend'` absent / `'python'` → Python executes; any other value → opted out (job + task failed up front). DB error → unknown → release + retry. |
 | `services/agent-py/src/agent_py/executor.py` | `execute_start` — stamps handler, runs loop, updates task row terminal. Step fn is a Phase 2a stub; Phase 2b swaps in the real model call. |
-| `services/agent-py/src/agent_py/poller.py` | Async tick loop. Dispatch tree: dry-run → release; live + unflagged → release; live + flagged + non-`start` → release; live + flagged + `start` → execute then mark_done/failed. |
+| `services/agent-py/src/agent_py/poller.py` | Async tick loop. Dispatch tree: dry-run → release; live + opted-out user → fail job + task; live + task already terminal → job done, no run; live otherwise → execute `start` / `continue` / `respond` under a heartbeated lease, then mark_done/failed. |
 | `services/agent-py/tests/` | 62 tests covering health + auth (Phase 0) + db / jobs / poller dry-run (Phase 1) + events / emitter / runner / feature_flag / executor / poller live-mode dispatch (Phase 2a). |
 | `services/agent-py/Dockerfile` | Multi-stage uv build, slim runtime, non-root user. Build context is the **repo root** (`docker build -f services/agent-py/Dockerfile .`) so the image ships `config/models.json`. |
 | `docker-compose.yml` (repo root) | Spins up the agent service alongside `bun dev`. |
@@ -272,14 +290,23 @@ distinct signal from 401 so monitoring can alert on misconfig).
 the transaction pooler (`*.pooler.supabase.com:6543`), because
 `FOR UPDATE SKIP LOCKED` needs an open transaction. With it empty,
 the poller no-ops every tick (`/healthz` + `/readyz` still respond).
-`WORKER_DRY_RUN` defaults to `true` (Phase 1 contract); flip to
-`false` to enable the Phase 2a executor. With it `false`, the
-per-user feature flag (`auth.users.raw_app_meta_data->>'agent_backend'`)
-gates whether Python executes a given user's runs vs releases for the
-TS worker. To opt a user in: `UPDATE auth.users SET raw_app_meta_data
-= COALESCE(raw_app_meta_data, '{}'::jsonb) ||
-'{"agent_backend":"python"}'::jsonb WHERE id = '<uuid>';`. The service
-reads the same top-level `.env` as Next.js.
+`WORKER_DRY_RUN` defaults to `true` (Phase 1 contract); set it
+`false` in any deployment that should run tasks — nothing else executes
+them. With it `false`, Python runs **every** user's tasks unless the
+user is opted out via `auth.users.raw_app_meta_data->>'agent_backend'`
+(app metadata — service-role only; `raw_user_meta_data` is
+user-writable and ignored). Absent or `'python'` → executed; any other
+value (e.g. `'off'`) → the job and task are failed up front ("Background
+tasks are disabled for this account"). To opt a user out:
+`UPDATE auth.users SET raw_app_meta_data = COALESCE(raw_app_meta_data,
+'{}'::jsonb) || '{"agent_backend":"off"}'::jsonb WHERE id = '<uuid>';`
+(undo: `raw_app_meta_data - 'agent_backend'`). Safety net: the Next.js
+stale-run reconciler (`lib/server/agent/store.ts`) fails a task still
+`queued` and never started after `TASK_NO_WORKER_TIMEOUT_MINUTES`
+(default 10) with "No task worker available" — but only when no worker
+has executed anything in that window (`task_worker_active_within`,
+migration 0040), so a busy worker's backlog waits instead. The service reads the
+same top-level `.env` as Next.js.
 
 **Model allowlist (agent-py + agent-ts):** both services accept only the
 `anthropic/*` entries of `config/models.json` and send each entry's

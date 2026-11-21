@@ -69,4 +69,11 @@ EXPOSE 8000
 # deploy target (host-dependent — see PLAN-agent-api.md "Deliberately
 # deferred" section). Adding `--workers N` here would conflict with how
 # most PaaS orchestrators expect to scale.
-CMD ["uvicorn", "agent_py.main:app", "--host", "0.0.0.0", "--port", "8000"]
+#
+# --timeout-graceful-shutdown: uvicorn otherwise waits for every open
+# connection (long-lived /v1/chat SSE streams) before running the
+# lifespan shutdown that closes the DB pool. The poller's own stop starts
+# on SIGTERM (main.install_shutdown_signal_hook) and takes at most
+# SHUTDOWN_GRACE_SECONDS (8); cutting streams at 8 s keeps the whole
+# shutdown inside Docker's 10 s stop timeout.
+CMD ["uvicorn", "agent_py.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "8"]

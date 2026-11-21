@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test"
 
 import {
+  httpOriginOf,
   isExternalHttpUrl,
+  isSafeDownloadUrl,
   isSafeImageUrl,
   isSafeLinkUrl,
+  markdownImagePolicy,
   normalizeUrlForSchemeCheck,
   planImageOpen,
 } from "./safe-url"
@@ -198,5 +201,71 @@ describe("planImageOpen", () => {
     })
     expect(planImageOpen("file:///etc/passwd")).toEqual({ kind: "blocked" })
     expect(planImageOpen(undefined)).toEqual({ kind: "blocked" })
+  })
+})
+
+describe("isSafeDownloadUrl", () => {
+  test.each([
+    "https://proj.supabase.co/storage/v1/object/sign/a.csv?token=t",
+    "http://example.com/a.zip",
+    "blob:https://app.example.com/uuid",
+    "data:text/csv;base64,QQ==",
+    "data:application/pdf;base64,JVBERi0=",
+    "/api/files/a.csv",
+  ])("allows %p", (url) => {
+    expect(isSafeDownloadUrl(url)).toBe(true)
+  })
+
+  test.each([
+    ...SCRIPT_URLS.filter((u) => !/^(blob|data):/i.test(u)),
+    "",
+    "   ",
+    undefined,
+    null,
+  ])("refuses %p", (url) => {
+    expect(isSafeDownloadUrl(url as string)).toBe(false)
+  })
+})
+
+describe("markdownImagePolicy", () => {
+  const trusted = ["https://proj.supabase.co"]
+
+  test.each([
+    "https://proj.supabase.co/storage/v1/object/public/x.png",
+    "data:image/png;base64,AAAA",
+    "blob:https://app.example.com/uuid",
+    "/relative.png",
+    "relative.png",
+  ])("auto-loads %p", (url) => {
+    expect(markdownImagePolicy(url, trusted)).toEqual({ kind: "auto" })
+  })
+
+  test.each([
+    ["https://evil.example.com/a.png", "evil.example.com"],
+    ["http://evil.example.com:8080/a.png", "evil.example.com:8080"],
+    ["//evil.example.com/a.png", "evil.example.com"],
+    ["/\\evil.example.com/a.png", "evil.example.com"],
+    ["https://proj.supabase.co.evil.com/a.png", "proj.supabase.co.evil.com"],
+    ["http://proj.supabase.co/a.png", "proj.supabase.co"],
+  ])("click-to-load %p (host %p)", (url, host) => {
+    expect(markdownImagePolicy(url, trusted)).toEqual({ kind: "click", host })
+  })
+
+  test("nothing is trusted by default", () => {
+    expect(markdownImagePolicy("https://proj.supabase.co/x.png").kind).toBe("click")
+  })
+
+  test.each([...SCRIPT_URLS.filter((u) => !u.startsWith("blob:")), "data:image/svg+xml,<svg/>", "blob:javascript:alert(1)"])(
+    "blocks %p",
+    (url) => {
+      expect(markdownImagePolicy(url, trusted)).toEqual({ kind: "blocked" })
+    }
+  )
+
+  test("httpOriginOf", () => {
+    expect(httpOriginOf("https://proj.supabase.co/rest/v1")).toBe("https://proj.supabase.co")
+    expect(httpOriginOf("javascript:alert(1)")).toBeNull()
+    expect(httpOriginOf(undefined)).toBeNull()
+    expect(httpOriginOf("")).toBeNull()
   })
 })

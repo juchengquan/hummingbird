@@ -4,8 +4,8 @@ import "server-only"
  * `POST /api/tasks` — start a long-running agent task.
  *
  * After Phase 6 steps 3+4 of `PLAN-agent-task-queue.md` this route is
- * a thin enqueuer: it validates the request, writes the initial
- * checkpoint, emits a synthetic `status:queued` event so the client's
+ * a thin enqueuer: it validates the request, creates the run with its
+ * initial checkpoint (`create_task_run` RPC), emits a synthetic `status:queued` event so the client's
  * resume stream has something to show immediately, enqueues a `start`
  * job, optionally bootstraps the worker for a few seconds (so short
  * runs feel synchronous instead of waiting on the minute-granularity
@@ -26,18 +26,16 @@ import {
   selectModel,
 } from "@/server/model-provider"
 import { categorizeError } from "@/shared/api-errors"
-import { TaskRequestSchema } from "@/shared/api-schemas"
+import { CHAT_BODY_MAX, TaskRequestSchema } from "@/shared/api-schemas"
 import type { SkillId } from "@/shared/skills/types"
 import type { SkillRequestEntry } from "@/server/skills/registry"
 import { getSupabaseServerClient } from "@/server/supabase/server"
 import type { TaskEvent } from "@/shared/agent/events"
 import type { RunCheckpoint } from "@/server/agent/checkpoint"
-import {
-  appendEvent,
-  createRun,
-  saveCheckpoint,
-} from "@/server/agent/store"
+import { appendEvent } from "@/server/agent/store"
 import { enqueueStartJob } from "@/server/agent/jobs"
+import { createTaskRun, taskWriteErrorResponse } from "@/server/agent/task-writes"
+import { jsonBodyError, readJsonCapped } from "@/server/read-body-capped"
 
 const DEFAULT_MAX_STEPS = 25
 const MAX_MAX_STEPS = 50
@@ -83,15 +81,9 @@ export async function POST(req: NextRequest) {
   }
   const userId = userData.user.id
 
-  let raw: unknown
-  try {
-    raw = await req.json()
-  } catch {
-    return NextResponse.json(
-      { code: "invalid_request", message: "Body must be JSON." },
-      { status: 400 }
-    )
-  }
+  const read = await readJsonCapped(req, CHAT_BODY_MAX)
+  if (!read.ok) return jsonBodyError(read)
+  const raw = read.value
   const parsed = TaskRequestSchema.safeParse(raw)
   if (!parsed.success) {
     return NextResponse.json(
@@ -145,18 +137,6 @@ export async function POST(req: NextRequest) {
 
   const runId = crypto.randomUUID()
   const goal = lastUserText(body.messages as ModelMessage[]).slice(0, 2000)
-  try {
-    await createRun(db, {
-      id: runId,
-      userId,
-      conversationId: body.conversationId,
-      goal,
-      maxSteps,
-    })
-  } catch (error) {
-    const { status, code, message } = categorizeError(error)
-    return NextResponse.json({ code, message }, { status })
-  }
 
   // The worker is system-driven; cast `skills` to the registry's
   // request-entry shape (same as the chat route does).
@@ -188,10 +168,21 @@ export async function POST(req: NextRequest) {
         : {}),
     },
   }
+
+  // Run row + initial checkpoint in one `create_task_run` RPC (0034):
+  // API callers can no longer INSERT `tasks` directly, so the run's
+  // status / step budget / checkpoint are pinned server-side.
   try {
-    await saveCheckpoint(db, runId, userId, checkpoint)
+    await createTaskRun(db, {
+      id: runId,
+      conversationId: body.conversationId,
+      goal,
+      maxSteps,
+      checkpoint,
+    })
   } catch (error) {
-    const { status, code, message } = categorizeError(error)
+    const { status, code, message } =
+      taskWriteErrorResponse(error) ?? categorizeError(error)
     return NextResponse.json({ code, message }, { status })
   }
   // Touch `enabledSkillIds` so the unused-import linter is happy
@@ -220,7 +211,8 @@ export async function POST(req: NextRequest) {
   try {
     await enqueueStartJob(db, { taskId: runId, userId })
   } catch (error) {
-    const { status, code, message } = categorizeError(error)
+    const { status, code, message } =
+      taskWriteErrorResponse(error) ?? categorizeError(error)
     return NextResponse.json({ code, message }, { status })
   }
 

@@ -5,6 +5,7 @@ import {
   isAiAuthRequired,
   parseRequireAuthFlag,
   requireAiAuth,
+  requireSessionWhenSupabaseConfigured,
   type AiAuthDeps,
 } from "./require-ai-auth"
 
@@ -124,5 +125,34 @@ describe("requireAiAuth", () => {
     await expect(requireAiAuth(deps({ env: () => "yes" }))).rejects.toThrow(
       RequireAuthConfigError,
     )
+  })
+})
+
+describe("requireSessionWhenSupabaseConfigured", () => {
+  test("Supabase unconfigured → anonymous pass-through, no client built", async () => {
+    const d = deps({ supabaseConfigured: () => false })
+    expect(await requireSessionWhenSupabaseConfigured(d)).toEqual({ ok: true, user: null })
+    expect(d.getClientCalls).toBe(0)
+  })
+
+  test("Supabase configured + anonymous → 401 even with the AI flag off", async () => {
+    const result = await requireSessionWhenSupabaseConfigured(deps({ env: () => "false" }))
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.response.status).toBe(401)
+    expect((await result.response.json()).code).toBe("auth_required")
+  })
+
+  test("Supabase configured + signed in → ok with the user", async () => {
+    const result = await requireSessionWhenSupabaseConfigured(
+      deps({ env: () => "false", getUser: async () => signedInUser("u-7") }),
+    )
+    expect(result.ok && result.user?.id).toBe("u-7")
+  })
+
+  test("invalid flag value still throws", async () => {
+    await expect(
+      requireSessionWhenSupabaseConfigured(deps({ env: () => "ture" })),
+    ).rejects.toThrow(RequireAuthConfigError)
   })
 })

@@ -33,6 +33,21 @@ function resolveFactory(): IDBFactory | null {
 
 const openConnections = new Map<string, Promise<IDBDatabase | null>>()
 
+/** Drop the cached connection for `name` — only if it is still `p` (a
+ *  newer connection may already be cached). */
+function forget(name: string, p: Promise<IDBDatabase | null>): void {
+  if (openConnections.get(name) === p) openConnections.delete(name)
+}
+
+/** Drop whatever connection is cached for `db.name` if it is `db`. */
+function forgetDb(db: IDBDatabase): void {
+  const cached = openConnections.get(db.name)
+  if (!cached) return
+  void cached.then((current) => {
+    if (current === db) forget(db.name, cached)
+  })
+}
+
 /**
  * Open (and cache) a database with the given object stores. The
  * connection closes itself on `versionchange` so a future schema bump
@@ -66,8 +81,13 @@ export function openDatabase(
       const db = req.result
       db.onversionchange = () => {
         db.close()
-        openConnections.delete(name)
+        forget(name, p)
       }
+      // The browser closed the connection on us (Safari drops it after
+      // a while in the background, storage pressure, "clear site data").
+      // Every op on the cached handle would now throw InvalidStateError
+      // for the rest of the session: drop it so the next call reopens.
+      db.onclose = () => forget(name, p)
       resolve(db)
     }
     req.onerror = () => resolve(null)
@@ -75,7 +95,7 @@ export function openDatabase(
   })
   openConnections.set(name, p)
   void p.then((db) => {
-    if (!db && openConnections.get(name) === p) openConnections.delete(name)
+    if (!db) forget(name, p)
   })
   return p
 }
@@ -88,7 +108,17 @@ export async function runTransaction<T>(
   mode: IDBTransactionMode,
   fn: (store: IDBObjectStore) => T
 ): Promise<T> {
-  const transaction = db.transaction(store, mode)
+  let transaction: IDBTransaction
+  try {
+    transaction = db.transaction(store, mode)
+  } catch (err) {
+    // InvalidStateError: the connection is closing / closed without a
+    // `close` event reaching us. Forget it so the next call reopens.
+    if (err instanceof DOMException && err.name === "InvalidStateError") {
+      forgetDb(db)
+    }
+    throw err
+  }
   const done = new Promise<void>((resolve, reject) => {
     transaction.oncomplete = () => resolve()
     transaction.onerror = () => reject(transaction.error)

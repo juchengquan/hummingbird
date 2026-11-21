@@ -20,6 +20,10 @@ import { NextResponse } from "next/server"
 import { signGeneratedFileUrl } from "@/server/file-storage"
 import { getSupabaseServerClient } from "@/server/supabase/server"
 import { RefreshFileUrlRequestSchema } from "@/shared/api-schemas"
+import { jsonBodyError, readJsonCapped } from "@/server/read-body-capped"
+
+/** Body cap: a single ≤ 512-char storage path. */
+const REFRESH_BODY_MAX = 16 * 1024
 
 export async function POST(req: NextRequest) {
   const client = await getSupabaseServerClient()
@@ -37,15 +41,9 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  let raw: unknown
-  try {
-    raw = await req.json()
-  } catch {
-    return NextResponse.json(
-      { code: "invalid_request", message: "Body must be JSON." },
-      { status: 400 },
-    )
-  }
+  const read = await readJsonCapped(req, REFRESH_BODY_MAX)
+  if (!read.ok) return jsonBodyError(read)
+  const raw = read.value
   const parsed = RefreshFileUrlRequestSchema.safeParse(raw)
   if (!parsed.success) {
     return NextResponse.json(

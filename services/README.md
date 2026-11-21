@@ -20,6 +20,19 @@ picks per account via the Phase 4-2 selector
 | **agent-py** | `services/agent-py/` | Python 3.12 · FastAPI · uv · asyncpg · Anthropic SDK | `'remote'` (`NEXT_PUBLIC_AGENT_PY_URL`) | Standalone container. Owns the `task_jobs` poller + executor. |
 | **agent-ts** | `services/agent-ts/` | Bun · Hono · `@ai-sdk/*` · `postgres` (pg under RLS impersonation) | `'remote'` (`NEXT_PUBLIC_AGENT_TS_URL`) | Standalone container. Mirrors agent-py's surface in TS. |
 
+## Background tasks — who executes them
+
+Only **agent-py** executes `task_jobs` (`start` / `continue` /
+`respond`), for every user unless an admin opts the user out
+(`auth.users.raw_app_meta_data->>'agent_backend'` set to anything but
+`'python'` — see `services/agent-py/README.md` § "Who executes tasks").
+agent-ts has no executor; its poll loop only claims and releases, so it
+is off unless `AGENT_TS_POLLER_ENABLED=true` (each release pushes the
+job's `scheduled_at` back and delays agent-py). The Next.js app runs no
+worker; its stale-run reconciler fails a task no worker started within
+`TASK_NO_WORKER_TIMEOUT_MINUTES` (default 10) with "No task worker
+available".
+
 ## Why the third backend doesn't live under `services/`
 
 Next.js's App Router resolves URLs by the filesystem layout under

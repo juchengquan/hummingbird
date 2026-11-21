@@ -56,12 +56,14 @@ groups them by purpose and explains when each is needed.
 | `NEXT_PUBLIC_API_BASE_URL` | Points the API client at a non-default origin (used when the backend is rewritten in another language). |
 | `NEXT_PUBLIC_AGENT_PY_URL` | Base URL of the Python agent service. When set, the account menu shows a "Python agent backend" toggle. |
 | `NEXT_PUBLIC_AGENT_TS_URL` | Base URL of the TypeScript agent service. When set + Python also set, surfaces a 3-way picker. |
+| `TASK_NO_WORKER_TIMEOUT_MINUTES` | Default 10. Background tasks run on the Python agent service. A task that no worker has started after this many minutes is marked failed with "No task worker available". This happens only when no worker has run anything in that window — the agent service is down or in dry-run — so a busy worker's backlog keeps waiting. (Tasks of a user an admin has opted out fail right away.) |
 
 ## Optional - security headers
 
 | Variable | Effect |
 |---|---|
 | `CSP_MODE` | Content-Security-Policy mode: `report-only` (default — violations are reported, nothing blocked), `enforce` (violations blocked), or `off` (no CSP header). See `docs/SECURITY.md` before switching to `enforce`. |
+| `TRUSTED_PROXY_HOPS` | How many reverse proxies in front of Next.js append to `X-Forwarded-For` (default `1`). Per-IP rate limits read the client IP from that entry. **A reverse proxy is required for per-IP limits**: with `next start` exposed directly, clients can send their own `X-Forwarded-For` and pick their key; `0` makes all anonymous traffic share one bucket. `next start` warns at boot when it's unset or `0` outside a known platform (Vercel, Render, Fly, Railway, Cloud Run, Netlify). See `docs/SECURITY.md`. |
 
 ## Optional - Anthropic direct
 

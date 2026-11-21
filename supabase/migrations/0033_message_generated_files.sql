@@ -29,6 +29,15 @@ alter table messages
 alter table artifacts
   drop constraint if exists artifacts_kind_check;
 
+-- NOT VALID: the add only records the constraint (new/updated rows are
+-- checked from here on) instead of scanning every artifact while holding
+-- the ACCESS EXCLUSIVE lock the ALTER takes. The scan of existing rows
+-- happens in 0037 (`VALIDATE CONSTRAINT`, SHARE UPDATE EXCLUSIVE —
+-- reads and writes keep flowing). It has to be a separate file: each
+-- migration runs in one transaction, so a VALIDATE here would still run
+-- under this file's ACCESS EXCLUSIVE lock. Every existing kind is in the
+-- new (wider) list, so validation cannot fail.
 alter table artifacts
   add constraint artifacts_kind_check
-  check (kind in ('code', 'markdown', 'image', 'table', 'json', 'file', 'other'));
+  check (kind in ('code', 'markdown', 'image', 'table', 'json', 'file', 'other'))
+  not valid;

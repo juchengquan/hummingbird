@@ -23,7 +23,11 @@ selector) or the schedule editor inside a workspace.
 
 ## Tips & gotchas
 - Scheduled runs count against your normal rate limits and token
-  usage. A schedule that runs every minute will add up.
+  usage.
+- A schedule can fire at most once every 5 minutes: crons such as
+  `* * * * *` or `0,2 * * * *` are rejected when you save. Use five
+  fields (no seconds field).
+- You can have up to 20 enabled schedules. Pause one to enable another.
 - Schedules are workspace-scoped. Move a workspace, move its
   schedules with it.
 - A paused schedule retains its history but stops firing until

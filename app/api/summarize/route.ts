@@ -22,6 +22,7 @@ import {
 import { embedText, isEmbeddingConfigured } from '@/server/embeddings/provider'
 import { similarityTargetFor } from '@/server/cache/summarize-similarity'
 import { modelSupportsStructuredOutput } from '@/shared/models'
+import { jsonBodyError, readJsonCapped } from '@/server/read-body-capped'
 
 export const runtime = 'nodejs'
 
@@ -194,20 +195,18 @@ function stripJsonFences(text: string): string {
     .trim()
 }
 
+/** Body cap: up to 200 messages of unbounded text (conversation /
+ *  compress modes); 8 MB is far past any real thread. */
+const SUMMARIZE_BODY_MAX = 8 * 1024 * 1024
+
 export async function POST(req: NextRequest) {
   // REQUIRE_AUTH_FOR_AI gate — before the body is read or any model
   // work starts. No-op when the flag is off / Supabase is unset.
   const aiAuth = await requireAiAuth()
   if (!aiAuth.ok) return aiAuth.response
-  let raw: unknown
-  try {
-    raw = await req.json()
-  } catch {
-    return NextResponse.json(
-      { code: 'invalid_request', message: 'Body must be JSON.' },
-      { status: 400 }
-    )
-  }
+  const read = await readJsonCapped(req, SUMMARIZE_BODY_MAX)
+  if (!read.ok) return jsonBodyError(read)
+  const raw = read.value
   const parsed = BodySchema.safeParse(raw)
   if (!parsed.success) {
     return NextResponse.json(

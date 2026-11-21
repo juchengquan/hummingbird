@@ -49,7 +49,8 @@ describe("SandboxedFrame consumers", () => {
 
 describe("SandboxedFrame — sandbox regression guard", () => {
   test("loads the /sandbox/frame shell, never srcdoc", () => {
-    expect(source).toMatch(/src=\{SANDBOX_FRAME_PATH\}/)
+    // Navigated by the layout effect, with a per-navigation nonce.
+    expect(source).toMatch(/frame\.src = sandboxFrameUrl\(nonce\)/)
     expect(source).not.toMatch(/srcDoc=/i)
   })
 

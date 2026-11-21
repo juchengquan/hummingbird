@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test"
 
-import { reconcileStaleRuns } from "./store"
+import {
+  DEFAULT_NO_WORKER_TIMEOUT_MS,
+  NO_WORKER_ERROR,
+  noWorkerTimeoutMs,
+  reconcileStaleRuns,
+} from "./store"
 
 /**
  * `reconcileStaleRuns` against a recording fake of the Supabase query
@@ -32,7 +37,12 @@ type Result = { data: unknown; error: { message: string } | null }
 interface Scenario {
   /** Last event time for the run (null → no events, falls back to started_at). */
   lastEventAt: number | null
+  /** Seq of the latest event (default 41 — a started run). */
+  lastEventSeq?: number
   startedAt?: number
+  /** Task row status (default `running`). */
+  status?: string
+  createdAt?: number
   jobs?: Array<{
     status: string
     lease_expires_at: string | null
@@ -42,6 +52,8 @@ interface Scenario {
   jobsError?: boolean
   /** Rows the conditional update reports as changed. */
   updatedRows?: number
+  /** `task_worker_active_within` result (default false); "error" → RPC error. */
+  workerActive?: boolean | "error"
 }
 
 function fakeDb(s: Scenario) {
@@ -53,7 +65,9 @@ function fakeDb(s: Scenario) {
         data: [
           {
             id: RUN,
+            status: s.status ?? "running",
             started_at: new Date(s.startedAt ?? NOW - 60 * MIN).toISOString(),
+            created_at: new Date(s.createdAt ?? s.startedAt ?? NOW - 60 * MIN).toISOString(),
           },
         ],
         error: null,
@@ -65,7 +79,7 @@ function fakeDb(s: Scenario) {
           s.lastEventAt === null
             ? null
             : {
-                seq: 41,
+                seq: s.lastEventSeq ?? 41,
                 step: 6,
                 created_at: new Date(s.lastEventAt).toISOString(),
               },
@@ -113,14 +127,22 @@ function fakeDb(s: Scenario) {
     return b
   }
 
+  const rpcCalls: Array<{ fn: string; args: unknown }> = []
   const db = {
+    rpc: async (fn: string, args: unknown) => {
+      rpcCalls.push({ fn, args })
+      if (fn !== "task_worker_active_within") throw new Error(`unexpected rpc ${fn}`)
+      return s.workerActive === "error"
+        ? { data: null, error: { message: "boom" } }
+        : { data: s.workerActive ?? false, error: null }
+    },
     from: (table: string) => ({
       select: () => builder({ table, op: "select", filters: [] }),
       update: (payload: unknown) => builder({ table, op: "update", payload, filters: [] }),
       upsert: (payload: unknown) => builder({ table, op: "upsert", payload, filters: [] }),
     }),
   }
-  return { db: db as never, queries }
+  return { db: db as never, queries, rpcCalls }
 }
 
 const iso = (ms: number) => new Date(ms).toISOString()
@@ -205,5 +227,99 @@ describe("reconcileStaleRuns", () => {
   test("falls back to started_at when the run has no events", async () => {
     const { db } = fakeDb({ lastEventAt: null, startedAt: NOW - 10 * MIN, jobs: [] })
     expect(await reconcileStaleRuns(db, USER, 3 * MIN, NOW)).toBe(1)
+  })
+})
+
+describe("reconcileStaleRuns — never-started runs (no task worker)", () => {
+  const neverStarted = (over: Partial<Scenario> = {}): Scenario => ({
+    status: "queued",
+    lastEventAt: NOW - 30 * MIN,
+    lastEventSeq: 1, // only the route's `status: queued` marker
+    createdAt: NOW - 30 * MIN,
+    ...over,
+  })
+
+  test("is failed with the no-worker error despite a claimable queued job", async () => {
+    // No worker executed anything in the window (agent-py down or in
+    // dry-run, which releases + refunds the claim), so the job sits
+    // `queued` with attempts left forever.
+    const { db, queries, rpcCalls } = fakeDb(
+      neverStarted({
+        jobs: [{ status: "queued", lease_expires_at: null, attempts: 0, max_attempts: 3 }],
+      })
+    )
+    expect(await reconcileStaleRuns(db, USER, 3 * MIN, NOW, 10 * MIN)).toBe(1)
+    const upsert = queries.find((q) => q.op === "upsert")!
+    expect(JSON.stringify(upsert.payload)).toContain(NO_WORKER_ERROR)
+    const update = queries.find((q) => q.table === "tasks" && q.op === "update")!
+    expect(update.filters).toContainEqual(["in", "status", ["queued", "running"]])
+    expect(rpcCalls).toEqual([
+      { fn: "task_worker_active_within", args: { p_seconds: 600 } },
+    ])
+  })
+
+  test("a busy worker elsewhere (backlog) keeps a long-queued run waiting", async () => {
+    const { db, queries } = fakeDb(
+      neverStarted({
+        workerActive: true,
+        jobs: [{ status: "queued", lease_expires_at: null, attempts: 0, max_attempts: 3 }],
+      })
+    )
+    expect(await reconcileStaleRuns(db, USER, 3 * MIN, NOW, 10 * MIN)).toBe(0)
+    expect(queries.some((q) => q.op === "update")).toBe(false)
+  })
+
+  test("a liveness probe error never fails the run", async () => {
+    const { db } = fakeDb(neverStarted({ workerActive: "error", jobs: [] }))
+    expect(await reconcileStaleRuns(db, USER, 3 * MIN, NOW, 10 * MIN)).toBe(0)
+  })
+
+  test("a run with no events at all (child task) counts as never started", async () => {
+    const { db } = fakeDb(neverStarted({ lastEventAt: null, jobs: [] }))
+    expect(await reconcileStaleRuns(db, USER, 3 * MIN, NOW, 10 * MIN)).toBe(1)
+  })
+
+  test("waits the full no-worker window, not the 3-min inactivity window", async () => {
+    const { db, queries } = fakeDb(
+      neverStarted({ createdAt: NOW - 5 * MIN, lastEventAt: NOW - 5 * MIN, jobs: [] })
+    )
+    expect(await reconcileStaleRuns(db, USER, 3 * MIN, NOW, 10 * MIN)).toBe(0)
+    expect(queries.some((q) => q.op === "update")).toBe(false)
+  })
+
+  test("a worker holding the job's lease (first step, no event yet) keeps it alive", async () => {
+    const { db, queries } = fakeDb(
+      neverStarted({
+        jobs: [
+          { status: "running", lease_expires_at: iso(NOW + 60_000), attempts: 1, max_attempts: 3 },
+        ],
+      })
+    )
+    expect(await reconcileStaleRuns(db, USER, 3 * MIN, NOW, 10 * MIN)).toBe(0)
+    expect(queries.some((q) => q.op === "update")).toBe(false)
+  })
+
+  test("a started run keeps the lease-aware rule: its queued job keeps it alive", async () => {
+    const { db } = fakeDb({
+      status: "queued",
+      lastEventAt: NOW - 30 * MIN,
+      lastEventSeq: 7,
+      jobs: [{ status: "queued", lease_expires_at: null, attempts: 0, max_attempts: 3 }],
+    })
+    expect(await reconcileStaleRuns(db, USER, 3 * MIN, NOW, 10 * MIN)).toBe(0)
+  })
+})
+
+describe("noWorkerTimeoutMs", () => {
+  test.each([
+    [undefined, DEFAULT_NO_WORKER_TIMEOUT_MS],
+    ["", DEFAULT_NO_WORKER_TIMEOUT_MS],
+    ["abc", DEFAULT_NO_WORKER_TIMEOUT_MS],
+    ["0", DEFAULT_NO_WORKER_TIMEOUT_MS],
+    ["-2", DEFAULT_NO_WORKER_TIMEOUT_MS],
+    ["15", 15 * MIN],
+    ["0.5", 30_000],
+  ] as const)("%p → %p", (raw, expected) => {
+    expect(noWorkerTimeoutMs(raw)).toBe(expected)
   })
 })

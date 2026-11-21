@@ -30,18 +30,17 @@ full phased plan.
 - **`runner.py`** — `run_agent_loop`: pure orchestration, RunStepFn
   injected. status → start_step → step → end_step → cancel-check →
   loop, or settle on done / max_steps.
-- **`feature_flag.py`** — `is_user_flagged_to_python` reads
-  `auth.users.raw_app_meta_data->>'agent_backend'`. Defensive on
-  every shape (missing / NULL / JSON-string / not-a-dict / wrong
-  value). Any DB error falls back to "not flagged" so a flag-lookup
-  blip never silently switches a user TO Python.
+- **`feature_flag.py`** — `python_executes_for_user` reads the
+  per-user opt-out `auth.users.raw_app_meta_data->>'agent_backend'`
+  (see "Who executes tasks" below). Defensive on every shape; a DB
+  error returns "unknown" and the poller releases the job.
 - **`executor.py`** — `execute_start(pool, payload)`: stamps handler,
   builds emitter with DB sink, runs the loop, updates task row to
   terminal, returns `ExecutorOutcome(settled, error)`.
-- **Poller** extended: live mode (`WORKER_DRY_RUN=false`) → if the
-  user is flagged AND the action is `start`, dispatch to executor
-  and `mark_job_done` / `mark_job_failed`. Otherwise (unflagged user,
-  or `continue` / `respond` action), release back to the TS worker.
+- **Poller** extended: live mode (`WORKER_DRY_RUN=false`) → dispatch
+  to the executor and `mark_job_done` / `mark_job_failed`, unless the
+  user opted out (see "Who executes tasks" below) → the job and task
+  are failed up front with a clear error.
 - **Tests**: 62 total (+35 vs Phase 1) covering event IR / emitter
   invariants / runner control flow / feature-flag shapes / executor
   happy/cancel/error paths / poller dispatch decision tree.
@@ -149,11 +148,11 @@ CI runs all four on every PR — see `.github/workflows/ci.yml` (job
 |---|---|---|
 | `SUPABASE_JWT_SECRET` | Yes for auth endpoints | The JWT secret from your Supabase project's API settings. Without it, every protected endpoint returns 503. |
 | `SUPABASE_DB_URL` | Yes to enable the poller | Direct Postgres connection string. Must be the **direct** connection (`db.<project>.supabase.co:5432`), NOT the pooler (`*.pooler.supabase.com:6543`) — `FOR UPDATE SKIP LOCKED` needs an open transaction. Empty → poller no-ops. |
-| `WORKER_DRY_RUN` | No | Default `true` (Phase 1). Set `false` only in Phase 2+ once the executor branch lands. |
+| `WORKER_DRY_RUN` | No | Default `true` (claim + log + release only). Set `false` in every deployment that should run tasks — agent-py is the only executor. |
 | `POLL_INTERVAL_SECONDS` | No | Default `5.0`. |
 | `JOB_LEASE_SECONDS` | No | Default `120`. Lease a claim holds on a `task_jobs` row (`lease_expires_at`, migration 0032). A job whose worker died is reclaimed once it lapses (or reaped as failed, with its task, once `max_attempts` is spent). |
 | `JOB_HEARTBEAT_SECONDS` | No | Default `30` (clamped to a third of the lease). How often an executing job extends its lease. |
-| `SHUTDOWN_GRACE_SECONDS` | No | Default `8`. On shutdown the in-flight job may finish within this window; after it, the job is cancelled and handed back (lease expired on the spot) for the next worker. Keep it under the container stop timeout (Docker's default is 10 s). |
+| `SHUTDOWN_GRACE_SECONDS` | No | Default `8`. On shutdown the in-flight job may finish within this window; after it, the job is cancelled and handed back (lease expired on the spot) for the next worker. Keep it under the container stop timeout (Docker's default is 10 s). The stop starts on SIGTERM itself (the server's signal handler is chained), not after uvicorn has drained open SSE streams; the image also runs uvicorn with `--timeout-graceful-shutdown 8` so the lifespan (which closes the DB pool) isn't held past the stop timeout by a chat stream. `/readyz` reports `poller_alive` / `poller_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
 | `SUPABASE_URL` | No (reported by `/readyz`) | Phase 2 will use it for things beyond what `SUPABASE_DB_URL` already gives us. |
 | `SERVICE_PORT` | No | Default 8000. |
 
@@ -196,32 +195,57 @@ After Phase 1 deploys:
    so Phase 1 should win the race roughly 1-in-N times where N is the
    cron-to-Python ratio).
 
-## How to opt a user into Python execution
+## Who executes tasks — the opt-out flag
 
-Phase 2a uses `auth.users.raw_app_meta_data->>'agent_backend'` as the
-per-user feature flag. Set it to `'python'` to route a user's `start`
-runs to the Python executor. (It is `app_metadata`, not
-`user_metadata`, on purpose: users can write their own
-`user_metadata` via `supabase.auth.updateUser`, but only the service
-role can write `app_metadata`. Users flagged under the old
-`raw_user_meta_data` key must be re-flagged.)
+agent-py executes **every** user's tasks (`start`, `continue`,
+`respond`) once `WORKER_DRY_RUN=false`. Nothing else does: agent-ts has
+no executor (its poller is off unless `AGENT_TS_POLLER_ENABLED`) and
+the Next.js app runs no worker. So the per-user flag
+`auth.users.raw_app_meta_data->>'agent_backend'` is an **opt-out**
+(`feature_flag.python_executes_for_user`):
+
+| `agent_backend` | Python |
+|---|---|
+| absent / `null` / `'python'` | executes |
+| anything else (`'off'`, `'none'`, `'ts'`, …) | releases the job — nothing runs it |
+| lookup failed (DB blip) | releases; retried after the release backoff |
+
+It is `app_metadata`, not `user_metadata`, on purpose: users can write
+their own `user_metadata` via `supabase.auth.updateUser`, but only the
+service role can write `app_metadata`.
 
 ```sql
+-- opt a user out
 UPDATE auth.users
 SET raw_app_meta_data =
-    COALESCE(raw_app_meta_data, '{}'::jsonb) || '{"agent_backend":"python"}'::jsonb
+    COALESCE(raw_app_meta_data, '{}'::jsonb) || '{"agent_backend":"off"}'::jsonb
+WHERE id = '<user-uuid>';
+
+-- undo
+UPDATE auth.users
+SET raw_app_meta_data = raw_app_meta_data - 'agent_backend'
 WHERE id = '<user-uuid>';
 ```
 
-The poller reads the flag on every claim. With it set:
-- `start` actions → Python executor → terminal events into
-  `task_events`.
-- `continue` / `respond` actions → released back to the TS worker
-  (Phase 2a doesn't support them yet).
-- Any DB blip reading the flag → fall back to TS worker.
+The poller reads the flag on every claim; no restart needed.
 
-To revert: rewrite the column to `'ts'` (or any non-`python` value);
-no service restart needed.
+**Opted-out users.** Nothing else executes their jobs, so the poller
+fails the job (fenced on the claim's attempts) and settles the task
+failed with "Background tasks are disabled for this account…" instead
+of releasing it — a release would be re-claimed forever.
+
+**Safety net.** A task no worker ever starts (agent-py down or still in
+dry-run) would otherwise sit `queued` forever: a dry-run release refunds
+the claim's attempt, so its job always looks claimable. The Next.js
+stale-run reconciler (`reconcileStaleRuns` in
+`lib/server/agent/store.ts`, run by `/api/tasks/sweep` and the task
+stream) fails a task that is still `queued`, has no event past the
+route's `status: queued` marker, is older than
+`TASK_NO_WORKER_TIMEOUT_MINUTES` (default 10), has no job under a live
+lease, AND no worker has executed anything in that window
+(`task_worker_active_within`, migration 0040) — with "No task worker
+available…". A busy worker's backlog keeps waiting. A job claimed later
+for a task that is already terminal is settled done without running.
 
 ## What ships next (Phase 2b)
 

@@ -1,3 +1,5 @@
+import "client-only"
+
 /**
  * Build the HTML document the live-artifact iframe renders — posted
  * into the `/sandbox/frame` shell by `SandboxedFrame`, which writes it
@@ -57,7 +59,7 @@ function cspMeta(): string {
     `script-src ${scriptSrc};`,
     `style-src ${styleSrc};`,
     `img-src 'self' data: blob: https:;`,
-    `font-src 'self' data: https:;`,
+    `font-src 'self' data: blob: ${CDN_HOSTS.join(" ")};`,
     `connect-src 'none';`,
     `base-uri 'none';`,
     `form-action 'none';`,

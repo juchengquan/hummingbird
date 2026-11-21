@@ -1,3 +1,5 @@
+import "client-only"
+
 /**
  * Detect whether a code artifact (or fenced chat code block) can be
  * rendered live in the iframe surface, and which shell template to

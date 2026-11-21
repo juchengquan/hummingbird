@@ -1383,6 +1383,25 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      create_task_run: {
+        Args: {
+          p_checkpoint: Json
+          p_conversation_id: string
+          p_goal: string
+          p_id: string
+          p_max_steps: number
+        }
+        Returns: undefined
+      }
+      enqueue_task_job: {
+        Args: {
+          p_action: string
+          p_payload?: Json
+          p_scheduled_at?: string
+          p_task_id: string
+        }
+        Returns: string
+      }
       match_file_sections: {
         Args: {
           p_file_id: string
@@ -1424,6 +1443,12 @@ export type Database = {
           excerpt: string
           rank: number
         }[]
+      }
+      task_worker_active_within: {
+        Args: {
+          p_seconds: number
+        }
+        Returns: boolean
       }
     }
     Enums: {

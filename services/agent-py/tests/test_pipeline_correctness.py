@@ -611,9 +611,10 @@ async def test_load_run_events_sets_rls_context_inside_a_transaction() -> None:
 
 
 @pytest.mark.asyncio
-async def test_is_task_owned_by_sql() -> None:
+async def test_load_owned_task_status_sql() -> None:
     conn = _RecordingConn(fetchrow=[None])
-    assert await store.is_task_owned_by(_pool(conn), task_id=RUN_ID, user_id=USER_ID) is False
+    status = await store.load_owned_task_status(_pool(conn), task_id=RUN_ID, user_id=USER_ID)
+    assert status is None
     _, (sql, *args) = conn.calls[0]
     assert "id = $1 AND user_id = $2" in sql
     assert args == [uuid.UUID(RUN_ID), uuid.UUID(USER_ID)]
@@ -643,9 +644,11 @@ async def test_poller_rejects_job_for_a_task_the_user_does_not_own(action: str) 
             patch.object(jobs, "mark_job_failed", new=AsyncMock()) as mark_failed,
             patch.object(jobs, "mark_job_done", new=AsyncMock()) as mark_done,
             patch.object(
-                feature_flag, "is_user_flagged_to_python", new=AsyncMock(return_value=True)
+                feature_flag, "python_executes_for_user", new=AsyncMock(return_value=True)
             ),
-            patch.object(store, "is_task_owned_by", new=AsyncMock(return_value=False)) as owned,
+            patch.object(
+                store, "load_owned_task_status", new=AsyncMock(return_value=None)
+            ) as owned,
             patch.object(executor, "execute_start", new=AsyncMock()) as ex_start,
             patch.object(executor, "execute_continue", new=AsyncMock()) as ex_continue,
             patch.object(executor, "execute_respond", new=AsyncMock()) as ex_respond,
