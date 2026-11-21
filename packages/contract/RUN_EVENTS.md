@@ -223,13 +223,25 @@ history it already holds (where the assistant message with that tool
 call is). The answers' `TOOL_CALL_RESULT`s are the only events of a
 resume run that refer to another run's ids.
 
+**One live resume per interrupted run.** The interrupted run stays
+`interrupted`; while another run that answers it is running,
+interrupted or succeeded, a new resume is `409 run_already_resumed` —
+two answers would both continue the same turn, and an approved tool
+would run twice. The rule is enforced where runs are stored
+(`tasks_one_live_resume`, migration 0042; the memory store applies the
+same rule), so two concurrent requests to different processes cannot
+both start. A resume that failed or was cancelled frees the slot: the
+interrupts can be answered again with a new `runId`. A retry of the
+resume itself (same `runId`) is the usual idempotent replay.
+
 **What the model continues from (Q31).** The interrupted run stores its
 harness state with its outcome (`tasks.checkpoint`, or the memory
 store's copy for a run without a database); the resume run reads it
 as its own owner and continues the turn from it — the tool results the
 model saw, in full, not the summaries the client holds. Without one
-(an anonymous run past its TTL, another harness) the harness rebuilds
-what it can from the client's `messages`.
+(an anonymous run past its TTL, an interactive run whose log was purged
+— the checkpoint goes with it, § 7 — or another harness) the harness
+rebuilds what it can from the client's `messages`.
 
 ## 5. Results, errors and usage
 
@@ -389,7 +401,10 @@ fold) read background runs' full logs and would break on a compacted
 one. Once they are gone, background runs are compacted the same way
 and keep the compacted log as long as the run row exists. Interactive
 runs' compacted logs are deleted after a further retention window
-(**purged**), the run row staying (Q30).
+(**purged**), the run row staying (Q30); the purge also clears the run's
+`tasks.checkpoint` (an interrupted run's harness state holds full tool
+outputs — conversation content like the log). Background runs keep
+theirs.
 
 **What.** Let `T` be the seq of the run's first **closing entry** — a
 `result`, or a `status` of `cancelled`, `done`, `failed` or `paused`

@@ -349,6 +349,44 @@ async def test_retention_sweep(pool: asyncpg.Pool, user: uuid.UUID) -> None:
         )
 
 
+async def test_purge_clears_an_interactive_runs_checkpoint_only(
+    pool: asyncpg.Pool, user: uuid.UUID
+) -> None:
+    log = PgRunEventLog(pool)
+    state = {"harness": "loop-v1", "turn": [{"role": "assistant", "content": "full tool output"}]}
+    interrupted = await _interactive_run(
+        pool, user, status="paused", finished_ago=timedelta(days=40)
+    )
+    # Its log is already gone (purged before checkpoints were cleared):
+    # the checkpoint alone still makes it due.
+    orphan = await _interactive_run(pool, user, status="done", finished_ago=timedelta(days=40))
+    recent = await _interactive_run(pool, user, status="paused", finished_ago=timedelta(days=1))
+    background = await _background_run(pool, user, finished_ago=timedelta(days=40))
+    async with pool.acquire() as conn:
+        for run in (interrupted, orphan, recent, background):
+            await conn.execute(
+                "UPDATE public.tasks SET checkpoint = $2::jsonb WHERE id = $1",
+                uuid.UUID(run),
+                json.dumps(state),
+            )
+    for e in _with_run(example_log().entries, interrupted):
+        await log.append(e)
+
+    await retention_sweep(pool, log)
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id::text AS id, checkpoint::text AS cp FROM public.tasks "
+            "WHERE id = ANY($1::uuid[])",
+            [uuid.UUID(r) for r in (interrupted, orphan, recent, background)],
+        )
+    cp = {r["id"]: r["cp"] for r in rows}
+    assert await log.read(interrupted) == []
+    assert cp[interrupted] is None and cp[orphan] is None
+    assert json.loads(cp[recent]) == state  # not due yet
+    assert json.loads(cp[background]) == state  # background keeps its state
+
+
 async def test_concurrent_compactions_do_not_conflict(
     pool: asyncpg.Pool, other_pool: asyncpg.Pool, user: uuid.UUID
 ) -> None:

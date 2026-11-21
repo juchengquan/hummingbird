@@ -3,8 +3,8 @@
 The run event log is a replay buffer, not the transcript. Once a run has
 ended and the delta retention (~24 h) has passed, its output is folded
 into one `messages_snapshot` entry (`compact_run`); after a further
-retention window an interactive run's log is deleted, the `tasks` row
-staying (`purge_expired`). A rejoin then answers `hummingbird.gap`
+retention window an interactive run's log is deleted, with its stored
+harness checkpoint, the `tasks` row staying (`purge_expired`). A rejoin then answers `hummingbird.gap`
 (`compacted` / `purged`) + `MESSAGES_SNAPSHOT` (`stream.py`).
 
 **Background runs are left alone until Phase 5**: the old task routes
@@ -24,6 +24,7 @@ Wiring (the app lifespan, next to the scheduler loop): every
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -220,9 +221,18 @@ SELECT t.id::text AS id
    AND t.status IN ('done', 'failed', 'cancelled', 'paused')
    AND t.finished_at IS NOT NULL
    AND t.finished_at < $1
-   AND EXISTS (SELECT 1 FROM public.task_events e WHERE e.task_id = t.id)
+   AND (EXISTS (SELECT 1 FROM public.task_events e WHERE e.task_id = t.id)
+        OR t.checkpoint IS NOT NULL)
  ORDER BY t.finished_at
  LIMIT $2;
+"""
+
+# An interactive run's checkpoint is its harness state at an interrupt —
+# the turn with full tool outputs, i.e. conversation content (Q30): it
+# goes with the log. Background runs keep theirs (the executor's state).
+_CLEAR_CHECKPOINT_SQL = """
+UPDATE public.tasks SET checkpoint = NULL
+ WHERE id = $1 AND mode = 'interactive' AND checkpoint IS NOT NULL;
 """
 
 
@@ -263,13 +273,18 @@ async def purge_expired(
     now: datetime | None = None,
 ) -> int:
     """Delete the logs of up to `limit` interactive runs that ended more
-    than `retention` ago (Q30). The `tasks` rows stay; a rejoin answers
-    `gap { reason: "purged" }`. Background runs keep their logs as long
-    as the row exists (Q17). Returns how many logs were deleted."""
+    than `retention` ago (Q30), and their stored harness checkpoint (an
+    interrupted run's turn, full tool outputs included — conversation
+    content like the log). The `tasks` rows stay; a rejoin answers
+    `gap { reason: "purged" }`, and a late resume falls back to the
+    client's history. Background runs keep their logs and checkpoints as
+    long as the row exists (Q17). Returns how many runs were purged."""
     before = (now or datetime.now(UTC)) - retention
     purged = 0
     for run_id in await _due(pool, _DUE_FOR_PURGE_SQL, before, limit):
         await log.purge(run_id)
+        async with pool.acquire() as conn:
+            await conn.execute(_CLEAR_CHECKPOINT_SQL, uuid.UUID(run_id))
         purged += 1
     return purged
 

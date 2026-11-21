@@ -232,7 +232,7 @@ wiring seam: stores, event logs, encoder, harness, stream, driver).
 
 | Operation | Auth | What |
 |---|---|---|
-| `POST /v1/runs` | bearer or none | Body: AG-UI `RunAgentInput`, options in `forwardedProps`. Interactive (default) → `200` SSE, executed in this process by `runs/driver.py`; background → `202 {runId, status}`: `create_run` + `status: queued` (seq 1) + `enqueue_task_job('start')`, then the poller runs it. Client-minted `runId`: the owner's repeat (same thread + mode) replays; any other use of a taken id → `409 run_id_conflict`. `resume[]` must answer exactly the open interrupts of `forwardedProps.previousRunId` (else `409 invalid_state`). Anonymous: interactive only, `X-Run-Token` in the response. |
+| `POST /v1/runs` | bearer or none | Body: AG-UI `RunAgentInput`, options in `forwardedProps`. Interactive (default) → `200` SSE, executed in this process by `runs/driver.py`; background → `202 {runId, status}`: `create_run` + `status: queued` (seq 1) + `enqueue_task_job('start')`, then the poller runs it. Client-minted `runId`: the owner's repeat (same thread + mode) replays; any other use of a taken id → `409 run_id_conflict`. `resume[]` must answer exactly the open interrupts of `forwardedProps.previousRunId` (else `409 invalid_state`); one live resume per interrupted run (0042 — a second is `409 run_already_resumed` until the first fails or is cancelled). Anonymous: interactive only, `X-Run-Token` in the response. |
 | `GET /v1/runs` | bearer | The caller's runs, newest first, `threadId` / repeated `status` / `parentRunId` / `mode` filters, keyset token paging. |
 | `GET /v1/runs/{id}` | bearer or `X-Run-Token` | The `Run` resource. Missing / foreign / wrong token → the same 404. |
 | `GET /v1/runs/{id}/events` | bearer or `X-Run-Token` | Replay after `after` / `Last-Event-ID`, then live, then the closing event (from the row). Malformed or out-of-range cursor → 400. |
@@ -284,7 +284,8 @@ own owner and continues the turn with the full tool results. Unknown
 `forwardedProps.model` → `400 unknown_model` before any row exists. The
 maintenance loop also runs `runs/compaction.py`'s retention sweep every
 10 min when a database is configured (compact ended interactive logs
-after 24 h, purge them after 30 days; background logs untouched).
+after 24 h, purge them — and the run's stored checkpoint — after 30
+days; background logs and checkpoints untouched).
 
 ## Configuration
 
