@@ -7,6 +7,11 @@ import { beforeAll, describe, expect, test } from "bun:test"
 import { validRequestBodies } from "../conformance/fixtures"
 import { Contract, createAjv, loadSpec, operations } from "../conformance/harness"
 
+/** `/v1` operations that are public by nature — browsers POST CSP
+ *  violation reports without credentials. Every other `/v1` operation
+ *  must be bearer-secured. */
+const PUBLIC_V1_OPERATIONS = new Set(["reportCspViolation"])
+
 describe("contract: openapi.yaml", () => {
   let contract: Contract
   beforeAll(async () => {
@@ -17,7 +22,8 @@ describe("contract: openapi.yaml", () => {
     const ops = operations(contract.spec)
     expect(new Set(ops.map((o) => o.operationId)).size).toBe(ops.length)
     for (const op of ops) {
-      if (op.path.startsWith("/v1/")) expect([op.operationId, op.secured]).toEqual([op.operationId, true])
+      const secured = !PUBLIC_V1_OPERATIONS.has(op.operationId)
+      if (op.path.startsWith("/v1/")) expect([op.operationId, op.secured]).toEqual([op.operationId, secured])
       else expect(op.path).toMatch(/^\/(healthz|readyz)$/)
     }
   })

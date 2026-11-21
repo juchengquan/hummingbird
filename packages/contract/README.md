@@ -73,7 +73,9 @@ ride on the root `tsc` / `eslint` in the `ci` job.
 - `operationId` is camelCase and unique; it names the generated
   operation types and the conformance cases.
 - Every `/v1` operation is bearer-secured (a Supabase user JWT); only
-  the probes are public (`security: []`). A test enforces this.
+  the probes and `reportCspViolation` (browsers post CSP reports without
+  credentials) are public (`security: []`). A test enforces this
+  (`PUBLIC_V1_OPERATIONS` in `tests/spec.test.ts`).
 - Error responses reference `components/schemas/ErrorResponse` through
   the shared `components/responses/*`.
 - Field casing follows the wire as it already exists: the refresh-url
@@ -165,6 +167,10 @@ Cases today:
   documented error body. Needs no Supabase — only the backend's JWT
   secret configured (without it agent-py answers 503 and the case fails
   with a hint).
+- `security.test.ts` — the public CSP report intake: a well-formed
+  report (`application/csp-report`, `application/reports+json`) → 204,
+  malformed JSON → 400, an unsupported media type → 415, all with an
+  empty body.
 
 ### Running it against agent-py
 
