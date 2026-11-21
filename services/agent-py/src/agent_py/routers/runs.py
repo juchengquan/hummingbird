@@ -61,7 +61,7 @@ from ..runs.access import (
     mint_run_token,
     require_auth_for_ai,
 )
-from ..runs.history import last_user_text
+from ..runs.history import AttachmentRejected, check_attachments, last_user_text
 from ..runs.model import ContractStatus, RunCursor, RunMode, RunOwner, RunRecord, run_to_contract
 from ..runs.native_harness import validate_run_options
 from ..runs.repository import (
@@ -307,6 +307,12 @@ async def start_run(
         validate_run_options(fp.model_dump(mode="json", exclude_none=True))
     except UnknownModelError as exc:
         raise HTTPException(status_code=400, detail=exc.to_detail()) from exc
+    # Likewise an attachment the model cannot be given (an unsupported
+    # type, over a size or count limit): `400 invalid_attachment`.
+    try:
+        check_attachments([m.model_dump(mode="json", exclude_none=True) for m in body.messages])
+    except AttachmentRejected as exc:
+        _raise(400, exc.code, str(exc))
 
     # Who owns the run. An anonymous caller's presented token counts only
     # when it owns this run (an idempotent retry) or the interrupted run a

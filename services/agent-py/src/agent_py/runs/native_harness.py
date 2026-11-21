@@ -18,6 +18,13 @@ prompt). `forwardedProps` (`RunInput.options`, `RunForwardedProps`):
 | `maxSteps` | model calls per run, 1 to 50; absent → `DEFAULT_MAX_STEPS` (chat's 6) |
 | `requireApprovalFor[]` | tool names that wait for the user's approval |
 | `workspaceId` | scopes `searchFiles` and adds the workspace's cloud MCP tools (signed-in runs) |
+| `reasoningEffort` | `low` / `medium` / `high` → extended thinking with that tier's budget, as the Next chat route maps it (`reasoning_effort.py`); ignored for a model the catalog does not flag `supportsReasoningEffort`, and on a call continuing a tool-use turn whose assistant turns carry no thinking blocks (a resume of a run that did not think — Anthropic rejects thinking there) |
+
+User messages may carry images and documents (`runs.history`,
+*Attachments* — refused at the API when they cannot be given to the
+model). A tool that produces images or files (`generateImage`) emits
+them as a `tool_image` / `tool_file` part after its result
+(`chat_loop.emit_tool_run`; RUN_EVENTS.md § 3.3).
 
 `askUser` and `renderUI` are always offered and always wait for an
 answer; MCP tools their server marks for approval wait too. Client-side
@@ -99,6 +106,7 @@ from ..events import InputRequestOption, SuggestionsEvent
 from ..input_policy import ASK_USER_TOOL_NAME, RENDER_UI_TOOL_NAME, request_kind_for
 from ..model_allowlist import UnknownModelError, resolve_optional_model
 from ..providers.anthropic_provider import AsyncAnthropicClient, _make_tool_result_block
+from ..reasoning_effort import ReasoningEffort, parse_reasoning_effort, thinking_params
 from ..settings import Settings
 from ..tools import SkillConfigs, ToolContext, ToolDescriptor, ToolError, default_tool_registry
 from .harness import CancelSignal, HarnessResult, ResumeAnswer, RunInput
@@ -176,6 +184,7 @@ class RunOptions:
     max_steps: int = DEFAULT_MAX_STEPS
     require_approval_for: frozenset[str] = frozenset()
     workspace_id: str | None = None
+    reasoning_effort: ReasoningEffort | None = None
 
 
 def _str(value: object, *, max_len: int | None = None) -> str | None:
@@ -225,6 +234,7 @@ def parse_run_options(options: Mapping[str, object]) -> RunOptions:
             g for g in (gated if isinstance(gated, list) else []) if isinstance(g, str) and g
         ),
         workspace_id=_str(options.get("workspaceId"), max_len=64),
+        reasoning_effort=parse_reasoning_effort(options.get("reasoningEffort")),
     )
 
 
@@ -555,13 +565,18 @@ class NativeHarness:
         async def on_answer(text: str) -> None:
             await self._suggest(client, history, text, emitter, cancel, meter)
 
+        thinking = thinking_params(opts.model, opts.reasoning_effort)
+        if thinking is not None and not _turn_can_think(prepared.messages):
+            thinking = None
+
         result = await run_turn_loop(
             client=client,
             emitter=emitter,
             model=model,
             messages=prepared.messages,
             system=_system_prompt(opts, run_input),
-            max_tokens=self._max_tokens,
+            max_tokens=max(self._max_tokens, thinking.max_tokens) if thinking else self._max_tokens,
+            thinking=thinking.thinking if thinking else None,
             tools=list(tools.values()),
             max_steps=opts.max_steps,
             gated=gated,
@@ -771,6 +786,31 @@ class NativeHarness:
             waiter.cancel()
         if values:
             await emitter.emit(SuggestionsEvent, values=tuple(values))
+
+
+_THINKING_BLOCKS = frozenset({"thinking", "redacted_thinking"})
+
+
+def _turn_can_think(messages: Sequence[Mapping[str, Any]]) -> bool:
+    """Whether a call on `messages` may enable extended thinking: with
+    thinking on, Anthropic requires every assistant turn that continues
+    the current tool-use turn (after the last user turn that is more than
+    tool results) to open with a thinking block. A fresh turn always
+    can; a resume continues a turn whose assistant turns only carry
+    thinking blocks if the interrupted run thought too."""
+    for m in reversed(messages):
+        content = m.get("content")
+        blocks = content if isinstance(content, list) else []
+        if m.get("role") == "user":
+            if isinstance(content, str) or any(
+                isinstance(b, Mapping) and b.get("type") != "tool_result" for b in blocks
+            ):
+                return True
+            continue
+        first = blocks[0] if blocks else None
+        if not isinstance(first, Mapping) or first.get("type") not in _THINKING_BLOCKS:
+            return False
+    return True
 
 
 def _cancel_waiter(cancel: CancelSignal) -> Any:

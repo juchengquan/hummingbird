@@ -98,6 +98,25 @@ async def test_happy_path_t2i(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert out.summary == "2 images (t2i)"
     assert "[1] https://m.test/a.png" in out.text
+    # The images also travel to the user, as the `tool_image` part's
+    # records (the loop adds `id` / `mode`); no Storage → Minimax URLs.
+    assert out.image_mode == "t2i"
+    assert out.images == (
+        {
+            "url": "https://m.test/a.png",
+            "width": 0,
+            "height": 0,
+            "format": "png",
+            "prompt": "a cat",
+        },
+        {
+            "url": "https://m.test/b.png",
+            "width": 0,
+            "height": 0,
+            "format": "png",
+            "prompt": "a cat",
+        },
+    )
     assert "[2] https://m.test/b.png" in out.text
     # The mode/I2I plumbing — no `reference_image_url` since the model didn't pass one.
     kwargs = call.call_args.kwargs
@@ -120,6 +139,7 @@ async def test_happy_path_i2i(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
     assert out.summary == "1 image (i2i)"
+    assert out.image_mode == "i2i" and [i["url"] for i in out.images] == ["https://m.test/i.png"]
     assert "[1] https://m.test/i.png" in out.text
     assert call.call_args.kwargs["reference_image_url"] == "https://cdn.test/ref.png"
 
@@ -437,3 +457,14 @@ async def test_persist_failure_falls_back_to_minimax_url(
     # First image: raw Minimax URL (persist failed). Second: signed URL.
     assert "https://m.test/a.png" in out.text
     assert "https://signed.test/ok" in out.text
+    assert out.images == (
+        {"url": "https://m.test/a.png", "width": 0, "height": 0, "format": "png", "prompt": "x"},
+        {
+            "url": "https://signed.test/ok",
+            "storagePath": "u/g/img.png",
+            "width": 0,
+            "height": 0,
+            "format": "png",
+            "prompt": "x",
+        },
+    )
