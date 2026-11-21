@@ -61,7 +61,9 @@ from ..runs.access import (
     mint_run_token,
     require_auth_for_ai,
 )
+from ..runs.history import last_user_text
 from ..runs.model import ContractStatus, RunCursor, RunMode, RunOwner, RunRecord, run_to_contract
+from ..runs.native_harness import validate_run_options
 from ..runs.repository import (
     InvalidPageToken,
     PreviousRunNotFound,
@@ -72,8 +74,6 @@ from ..runs.repository import (
 )
 from ..runs.repository_memory import MemoryStoreFull
 from ..runs.repository_pg import RunWriteError
-from ..runs.history import last_user_text
-from ..runs.native_harness import validate_run_options
 from ..runs.run_input import (
     DEFAULT_BACKGROUND_MAX_STEPS,
     ResumeInvalid,
