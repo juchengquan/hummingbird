@@ -601,10 +601,139 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Runs */
+        get: operations["list_runs_v1_runs_get"];
+        put?: never;
+        /** Start Run */
+        post: operations["start_run_v1_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run */
+        get: operations["get_run_v1_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{run_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream Run Events */
+        get: operations["stream_run_events_v1_runs__run_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{run_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Run */
+        post: operations["cancel_run_v1_runs__run_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * ActivityMessage
+         * @description Structured progress that is not conversation content, materialised as a message so it keeps its place in the sequence. Stands alone rather than composing BaseMessage, because its content is an object rather than a string.
+         */
+        ActivityMessage: {
+            subagentRunId?: components["schemas"]["SubagentRunId"] | null;
+            /** Id */
+            id: string;
+            /**
+             * Role
+             * @constant
+             */
+            role: "activity";
+            /** Activitytype */
+            activityType: string;
+            /** Content */
+            content: {
+                [key: string]: unknown;
+            };
+            metadata?: components["schemas"]["Metadata"] | null;
+        };
+        /**
+         * AssistantMessage
+         * @description A message from the agent. Content is optional because a turn may consist only of tool calls.
+         */
+        AssistantMessage: {
+            subagentRunId?: components["schemas"]["SubagentRunId"] | null;
+            /** Id */
+            id: string;
+            /**
+             * Role
+             * @constant
+             */
+            role: "assistant";
+            /** Name */
+            name?: string | null;
+            /** Encryptedvalue */
+            encryptedValue?: string | null;
+            metadata?: components["schemas"]["Metadata"] | null;
+            /** Content */
+            content?: string | null;
+            /** Toolcalls */
+            toolCalls?: components["schemas"]["ToolCall"][] | null;
+        };
+        /**
+         * AudioPart
+         * @description An audio part.
+         */
+        AudioPart: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "audio";
+            /** Id */
+            id?: string | null;
+            source: components["schemas"]["PartSource"];
+            /** Metadata */
+            metadata?: unknown | null;
+        };
         /** Body_extract_v1_extract_post */
         Body_extract_v1_extract_post: {
             /**
@@ -777,6 +906,17 @@ export interface components {
             /** Model */
             model?: string | null;
         };
+        ContentPart: components["schemas"]["TextPart"] | components["schemas"]["ImagePart"] | components["schemas"]["AudioPart"] | components["schemas"]["VideoPart"] | components["schemas"]["DocumentPart"];
+        /**
+         * Context
+         * @description A named piece of ambient information given to the agent for the run, distinct from the conversation.
+         */
+        Context: {
+            /** Description */
+            description: string;
+            /** Value */
+            value: string;
+        };
         /** ConversationSummariseBody */
         ConversationSummariseBody: {
             /**
@@ -821,6 +961,21 @@ export interface components {
             token: string;
             kind: components["schemas"]["ShareKind"];
         };
+        /**
+         * DataSource
+         * @description Bytes carried inline.
+         */
+        DataSource: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "data";
+            /** Value */
+            value: string;
+            /** Mimetype */
+            mimeType: string;
+        };
         /** DeleteScheduleResponse */
         DeleteScheduleResponse: {
             /**
@@ -828,6 +983,43 @@ export interface components {
              * @constant
              */
             ok: true;
+        };
+        /**
+         * DeveloperMessage
+         * @description Instructions from the application developer.
+         */
+        DeveloperMessage: {
+            subagentRunId?: components["schemas"]["SubagentRunId"] | null;
+            /** Id */
+            id: string;
+            /**
+             * Role
+             * @constant
+             */
+            role: "developer";
+            /** Name */
+            name?: string | null;
+            /** Encryptedvalue */
+            encryptedValue?: string | null;
+            metadata?: components["schemas"]["Metadata"] | null;
+            /** Content */
+            content: string;
+        };
+        /**
+         * DocumentPart
+         * @description A document part.
+         */
+        DocumentPart: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "document";
+            /** Id */
+            id?: string | null;
+            source: components["schemas"]["PartSource"];
+            /** Metadata */
+            metadata?: unknown | null;
         };
         /** EmbedRequest */
         EmbedRequest: {
@@ -913,6 +1105,23 @@ export interface components {
             /** Language */
             language?: string | null;
         };
+        /**
+         * FileSource
+         * @description Bytes already at the provider, named by a handle the provider issued: an OpenAI or Anthropic file id, a Gemini file URI, a storage URL only that provider can read. No bytes travel and nothing is fetched. Only the provider that minted the handle can resolve it; a peer that cannot drops the part as it drops any part it cannot use.
+         */
+        FileSource: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "file";
+            /** Value */
+            value: string;
+            /** Provider */
+            provider?: string | null;
+            /** Mimetype */
+            mimeType?: string | null;
+        };
         /** FileSummariseBody */
         FileSummariseBody: {
             /**
@@ -926,6 +1135,16 @@ export interface components {
             text: string;
             /** Model */
             model?: string | null;
+        };
+        /**
+         * FunctionCall
+         * @description The name and arguments of a tool call.
+         */
+        FunctionCall: {
+            /** Name */
+            name: string;
+            /** Arguments */
+            arguments: string;
         };
         /**
          * HTTPValidationError
@@ -954,6 +1173,44 @@ export interface components {
             maxCalls?: number | null;
             /** Aspectratio */
             aspectRatio?: ("1:1" | "16:9" | "9:16" | "4:3" | "3:4" | "2:3" | "3:2") | null;
+        };
+        /**
+         * ImagePart
+         * @description An image part.
+         */
+        ImagePart: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "image";
+            /** Id */
+            id?: string | null;
+            source: components["schemas"]["PartSource"];
+            /** Metadata */
+            metadata?: unknown | null;
+        };
+        /**
+         * Interrupt
+         * @description Something a run needs from outside before it can continue, such as an approval or a missing value.
+         */
+        Interrupt: {
+            subagentRunId?: components["schemas"]["SubagentRunId"] | null;
+            /** Id */
+            id: string;
+            /** Reason */
+            reason: string;
+            /** Message */
+            message?: string | null;
+            /** Toolcallid */
+            toolCallId?: string | null;
+            /** Responseschema */
+            responseSchema?: {
+                [key: string]: unknown;
+            } | null;
+            /** Expiresat */
+            expiresAt?: string | null;
+            metadata?: components["schemas"]["Metadata"] | null;
         };
         /** MaxCallsSkillConfig */
         MaxCallsSkillConfig: {
@@ -1057,6 +1314,15 @@ export interface components {
              */
             ok: true;
         };
+        Message: components["schemas"]["DeveloperMessage"] | components["schemas"]["SystemMessage"] | components["schemas"]["AssistantMessage"] | components["schemas"]["UserMessage"] | components["schemas"]["ToolMessage"] | components["schemas"]["ActivityMessage"] | components["schemas"]["ReasoningMessage"];
+        /**
+         * Metadata
+         * @description Extra information attached to an event, a message, a tool call, a tool, an interrupt or a resume entry. Open by key: any JSON value is allowed under a key, including null, because a null there is meaningful data. The object itself may be absent but is never null when present. The key ag-ui is reserved for the protocol's own use; reservation is by convention, since validating the shape of a key's value would contradict being open by key.
+         */
+        Metadata: {
+            [key: string]: unknown;
+        };
+        PartSource: components["schemas"]["DataSource"] | components["schemas"]["UrlSource"] | components["schemas"]["FileSource"];
         /** ProjectBreakdownBody */
         ProjectBreakdownBody: {
             /**
@@ -1095,6 +1361,25 @@ export interface components {
             /** Status */
             status: string;
             checks: components["schemas"]["ReadinessChecks"];
+        };
+        /**
+         * ReasoningMessage
+         * @description A span of the agent's reasoning, materialised as a message. Stands alone rather than composing BaseMessage, because it carries no name.
+         */
+        ReasoningMessage: {
+            subagentRunId?: components["schemas"]["SubagentRunId"] | null;
+            /** Id */
+            id: string;
+            /**
+             * Role
+             * @constant
+             */
+            role: "reasoning";
+            /** Content */
+            content: string;
+            /** Encryptedvalue */
+            encryptedValue?: string | null;
+            metadata?: components["schemas"]["Metadata"] | null;
         };
         /**
          * RefreshFileUrlRequest
@@ -1161,6 +1446,22 @@ export interface components {
              */
             createdAt: string;
         };
+        /**
+         * ResumeEntry
+         * @description An answer to one interrupt, sent on the run that continues from it.
+         */
+        ResumeEntry: {
+            /** Interruptid */
+            interruptId: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "resolved" | "cancelled";
+            /** Payload */
+            payload?: unknown | null;
+            metadata?: components["schemas"]["Metadata"] | null;
+        };
         /** RevokeShareResponse */
         RevokeShareResponse: {
             /**
@@ -1169,6 +1470,119 @@ export interface components {
              */
             ok: true;
         };
+        /**
+         * Run
+         * @description The run resource (modelled on the LangChain Agent Protocol's run).
+         *     Exactly one of `result` / `error` / `openInterrupts` is meaningful,
+         *     by `status`: `succeeded` → `result`; `failed` → `error`;
+         *     `interrupted` → `openInterrupts` (non-empty); otherwise all are
+         *     empty.
+         */
+        Run: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Threadid
+             * Format: uuid
+             */
+            threadId: string;
+            mode: components["schemas"]["RunMode"];
+            status: components["schemas"]["RunStatus"];
+            /** Parentrunid */
+            parentRunId: string | null;
+            /** Previousrunid */
+            previousRunId: string | null;
+            /** Openinterrupts */
+            openInterrupts: components["schemas"]["Interrupt"][];
+            result: components["schemas"]["RunResult"] | null;
+            error: components["schemas"]["RunError"] | null;
+            /** Lastseq */
+            lastSeq: number;
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /** Startedat */
+            startedAt: string | null;
+            /** Finishedat */
+            finishedAt: string | null;
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+        };
+        /** RunAccepted */
+        RunAccepted: {
+            /**
+             * Runid
+             * Format: uuid
+             */
+            runId: string;
+            status: components["schemas"]["RunStatus"];
+        };
+        /**
+         * RunError
+         * @description Why a run failed — also `RUN_ERROR`'s `code` / `message`.
+         */
+        RunError: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+        };
+        /**
+         * RunForwardedProps
+         * @description Hummingbird's run options, carried in AG-UI's
+         *     `RunAgentInput.forwardedProps` (application-specific values the
+         *     protocol passes through). Open: a backend ignores keys it does not
+         *     know, and new keys are additive. Every key is optional.
+         */
+        RunForwardedProps: {
+            mode?: components["schemas"]["RunMode"] | null;
+            /** Previousrunid */
+            previousRunId?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Systemprompt */
+            systemPrompt?: string | null;
+            /** Skills */
+            skills?: components["schemas"]["SkillConfig"][] | null;
+            /** Goal */
+            goal?: string | null;
+            /** Maxsteps */
+            maxSteps?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** RunList */
+        RunList: {
+            /** Runs */
+            runs: components["schemas"]["Run"][];
+            /** Nextpagetoken */
+            nextPageToken: string | null;
+        };
+        /** @enum {string} */
+        RunMode: "interactive" | "background";
+        /**
+         * RunResult
+         * @description A succeeded run's return value — also `RUN_FINISHED.result` on the
+         *     wire. Open; keys are additive.
+         */
+        RunResult: {
+            /** Text */
+            text?: string | null;
+            /** Memorytainted */
+            memoryTainted?: boolean | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** @enum {string} */
+        RunStatus: "queued" | "running" | "interrupted" | "succeeded" | "failed" | "cancelled";
         /** ScheduleListResponse */
         ScheduleListResponse: {
             /** Schedules */
@@ -1248,10 +1662,66 @@ export interface components {
             imageGenConfig?: components["schemas"]["ImageGenSkillConfig"] | null;
             fileSearchConfig?: components["schemas"]["MaxCallsSkillConfig"] | null;
         };
+        /**
+         * StartRunRequest
+         * @description An AG-UI 1.0 `RunAgentInput`, by reference into the pinned schema,
+         *     narrowed: `threadId` and `runId` are UUIDs, and `forwardedProps`,
+         *     when present, is a `RunForwardedProps`. (`mode` cannot be a
+         *     top-level field: `RunAgentInput` is closed —
+         *     `unevaluatedProperties: false` — so any extra key fails it.)
+         *
+         *     `messages` is the thread's history up to and including the new
+         *     user message (Q15 — the browser owns the history; the backend
+         *     keeps nothing across runs). Messages with role `activity` are
+         *     display state and are not sent to the model. `tools` are
+         *     client-side tools; the backend's own tools come from
+         *     `forwardedProps.skills`.
+         */
+        StartRunRequest: {
+            threadId: components["schemas"]["UuidString"];
+            runId: components["schemas"]["UuidString"];
+            /** Protocolversion */
+            protocolVersion?: string | null;
+            /** Parentrunid */
+            parentRunId?: string | null;
+            state?: components["schemas"]["State"] | null;
+            /** Messages */
+            messages: components["schemas"]["Message"][];
+            /** Tools */
+            tools?: components["schemas"]["Tool"][] | null;
+            /** Context */
+            context?: components["schemas"]["Context"][] | null;
+            forwardedProps?: components["schemas"]["RunForwardedProps"] | null;
+            /** Resume */
+            resume?: components["schemas"]["ResumeEntry"][] | null;
+        };
+        State: unknown;
+        SubagentRunId: string;
         /** SummariseMessage */
         SummariseMessage: {
             /** Role */
             role: string;
+            /** Content */
+            content: string;
+        };
+        /**
+         * SystemMessage
+         * @description Instructions from the system.
+         */
+        SystemMessage: {
+            subagentRunId?: components["schemas"]["SubagentRunId"] | null;
+            /** Id */
+            id: string;
+            /**
+             * Role
+             * @constant
+             */
+            role: "system";
+            /** Name */
+            name?: string | null;
+            /** Encryptedvalue */
+            encryptedValue?: string | null;
+            metadata?: components["schemas"]["Metadata"] | null;
             /** Content */
             content: string;
         };
@@ -1261,6 +1731,76 @@ export interface components {
             enabled?: boolean | null;
             /** Searchdepth */
             searchDepth?: ("basic" | "advanced") | null;
+        };
+        /**
+         * TextPart
+         * @description A text part.
+         */
+        TextPart: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "text";
+            /** Id */
+            id?: string | null;
+            /** Text */
+            text: string;
+            /** Metadata */
+            metadata?: unknown | null;
+        };
+        /**
+         * Tool
+         * @description A tool the agent may call.
+         */
+        Tool: {
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Parameters */
+            parameters?: unknown | null;
+            metadata?: components["schemas"]["Metadata"] | null;
+        };
+        /**
+         * ToolCall
+         * @description A call an assistant message made. Carries no subagent attribution of its own and inherits its containing message's, since several calls can share one parent.
+         */
+        ToolCall: {
+            /** Id */
+            id: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "function";
+            function: components["schemas"]["FunctionCall"];
+            /** Encryptedvalue */
+            encryptedValue?: string | null;
+            metadata?: components["schemas"]["Metadata"] | null;
+        };
+        /**
+         * ToolMessage
+         * @description What a tool returned, as a message in the conversation. Stands alone rather than composing BaseMessage, because it carries no name.
+         */
+        ToolMessage: {
+            subagentRunId?: components["schemas"]["SubagentRunId"] | null;
+            /** Id */
+            id: string;
+            /**
+             * Role
+             * @constant
+             */
+            role: "tool";
+            /** Content */
+            content: string | components["schemas"]["ContentPart"][];
+            /** Toolcallid */
+            toolCallId: string;
+            /** Error */
+            error?: string | null;
+            /** Encryptedvalue */
+            encryptedValue?: string | null;
+            metadata?: components["schemas"]["Metadata"] | null;
         };
         /**
          * UrlFetchRequest
@@ -1277,6 +1817,44 @@ export interface components {
             ok: boolean;
             bookmark: components["schemas"]["BookmarkSnapshotModel"];
         };
+        /**
+         * UrlSource
+         * @description Bytes referenced by URL, fetched by whoever needs them.
+         */
+        UrlSource: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "url";
+            /** Value */
+            value: string;
+            /** Mimetype */
+            mimeType?: string | null;
+        };
+        /**
+         * UserMessage
+         * @description A message from the person using the application.
+         */
+        UserMessage: {
+            subagentRunId?: components["schemas"]["SubagentRunId"] | null;
+            /** Id */
+            id: string;
+            /**
+             * Role
+             * @constant
+             */
+            role: "user";
+            /** Name */
+            name?: string | null;
+            /** Encryptedvalue */
+            encryptedValue?: string | null;
+            metadata?: components["schemas"]["Metadata"] | null;
+            /** Content */
+            content: string | components["schemas"]["ContentPart"][];
+        };
+        /** @example 8a6e0804-2bd0-4672-b79d-d97027f9071a */
+        UuidString: string;
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -1289,6 +1867,22 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /**
+         * VideoPart
+         * @description A video part.
+         */
+        VideoPart: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "video";
+            /** Id */
+            id?: string | null;
+            source: components["schemas"]["PartSource"];
+            /** Metadata */
+            metadata?: unknown | null;
         };
         /** WebSearchSkillConfig */
         WebSearchSkillConfig: {
@@ -2171,6 +2765,194 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    list_runs_v1_runs_get: {
+        parameters: {
+            query?: {
+                threadId?: string | null;
+                status?: ("queued" | "running" | "interrupted" | "succeeded" | "failed" | "cancelled")[] | null;
+                parentRunId?: string | null;
+                mode?: ("interactive" | "background") | null;
+                pageSize?: number;
+                pageToken?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_run_v1_runs_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Run-Token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Interactive run: its AG-UI event stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Background run accepted. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_run_v1_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Run-Token"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_run_events_v1_runs__run_id__events_get: {
+        parameters: {
+            query?: {
+                after?: string | null;
+            };
+            header?: {
+                "Last-Event-ID"?: string | null;
+                authorization?: string | null;
+                "X-Run-Token"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run's AG-UI event stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_run_v1_runs__run_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Run-Token"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };

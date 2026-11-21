@@ -40,6 +40,7 @@ from .routers import (
     images,
     mcp,
     memory,
+    runs,
     schedules,
     share,
     summarize,
@@ -54,6 +55,7 @@ from .routers import (
 from .routers.chat import ChatRequest, _collect_skill_configs
 from .routers.health import HealthResponse, ReadinessChecks, ReadinessResponse
 from .routers.mcp import _decode_mcp_credential_header
+from .runs import wiring as runs_wiring
 from .settings import Settings, get_settings
 
 logger = structlog.get_logger(__name__)
@@ -147,6 +149,16 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
             yield
             return
         await db.init_pool(settings.SUPABASE_DB_URL)
+        # The runs API (`/v1/runs`): its services see the pool opened just
+        # above; the maintenance loop reaps interactive runs whose process
+        # died and drops expired in-memory runs, with or without a DB.
+        runs_services = runs_wiring.get_run_services()
+        runs_stop = asyncio.Event()
+        runs_task = asyncio.create_task(
+            runs_wiring.run_maintenance_loop(runs_services, stop=runs_stop),
+            name="agent-py.runs.maintenance",
+        )
+        runs_stopping: asyncio.Task[None] | None = None
         task: asyncio.Task[int] | None = None
         stop = asyncio.Event()
         stopping: asyncio.Task[None] | None = None
@@ -157,7 +169,15 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
 
         def begin_shutdown() -> None:
             # Idempotent: the signal hook and the lifespan both call it.
-            nonlocal stopping, sched_stopping
+            nonlocal stopping, sched_stopping, runs_stopping
+            if runs_stopping is None:
+                # Interactive runs end now (failed / worker_lost), so their
+                # streams close and the server can drain connections.
+                runs_stop.set()
+                runs_stopping = asyncio.create_task(
+                    runs_services.driver.shutdown(grace_s=settings.SHUTDOWN_GRACE_SECONDS),
+                    name="agent-py.runs.stop",
+                )
             if task is not None and stopping is None:
                 logger.info("lifespan.poller.stopping")
                 stopping = asyncio.create_task(
@@ -192,11 +212,13 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
                     "lifespan.scheduler.started",
                     interval=settings.SCHEDULER_INTERVAL_SECONDS,
                 )
-            restore_signals = install_shutdown_signal_hook(begin_shutdown)
         else:
             logger.info("lifespan.poller.skipped", reason="no_supabase_db_url")
             if settings.SCHEDULER_ENABLED:
                 logger.warning("lifespan.scheduler.skipped", reason="no_supabase_db_url")
+        # Installed with or without a DB: live interactive runs hold SSE
+        # connections open, which the server waits on before shutdown.
+        restore_signals = install_shutdown_signal_hook(begin_shutdown)
         try:
             yield
         finally:
@@ -205,9 +227,12 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
             begin_shutdown()
             # The pool must stay open until the in-flight job / dispatch
             # is settled or handed back.
-            for pending in (stopping, sched_stopping):
+            for pending in (stopping, sched_stopping, runs_stopping):
                 if pending is not None:
                     await pending
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await runs_task
+            runs_wiring.reset_run_services()
             poller.register_loop_task(None)
             scheduler.register_loop_task(None)
             await db.close_pool()
@@ -246,6 +271,7 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
     app.include_router(embed.router)
     app.include_router(memory.router)
     app.include_router(csp_report.router)
+    app.include_router(runs.router)
 
     # Cap request bodies before routing / auth: FastAPI reads (and
     # spools multipart parts of) the body before the auth dependency
@@ -264,7 +290,9 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
             allow_origins=cors_origins,
             allow_credentials=False,
             allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-            allow_headers=["authorization", "content-type", "last-event-id"],
+            allow_headers=["authorization", "content-type", "last-event-id", "x-run-token"],
+            # Read by the runs client: an anonymous run's token, the run URL.
+            expose_headers=["x-run-token", "location"],
             max_age=600,
         )
 

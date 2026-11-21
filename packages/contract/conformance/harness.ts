@@ -15,6 +15,19 @@
  *   CONTRACT_SKIP_OPERATIONS  comma-separated operationIds to skip (an
  *                             operation the backend under test does not
  *                             implement yet).
+ *   CONTRACT_RUNS_STUB        "1" when the backend runs agent runs on a
+ *                             model-free stub harness that honours
+ *                             `forwardedProps.conformance` (runs.test.ts;
+ *                             agent-py: RUNS_STUB_HARNESS=true). Cases
+ *                             that start runs are skipped without it, so
+ *                             the suite never spends model budget.
+ *   CONTRACT_AUTH_TOKEN_2     optional JWT of a second user (cross-user
+ *                             cases: foreign runs are 404, never listed).
+ *   CONTRACT_THREAD_ID        optional id of a synced conversation that
+ *                             CONTRACT_AUTH_TOKEN's user owns (the
+ *                             background `startRun` → 202 case).
+ *   CONTRACT_COMPACTED_RUN_ID optional id of a compacted run of that user
+ *                             (the gap + MESSAGES_SNAPSHOT replay case).
  *
  * Operations the spec marks `x-planned` (specified, implemented in a
  * later wave) are skipped automatically — see `Operation.planned`. A
@@ -44,6 +57,10 @@ export const env = {
       .map((s) => s.trim())
       .filter(Boolean),
   ),
+  runsStub: process.env.CONTRACT_RUNS_STUB === "1",
+  authToken2: process.env.CONTRACT_AUTH_TOKEN_2 || null,
+  threadId: process.env.CONTRACT_THREAD_ID || null,
+  compactedRunId: process.env.CONTRACT_COMPACTED_RUN_ID || null,
 }
 
 export type HttpMethod = "get" | "post" | "put" | "patch" | "delete"
@@ -167,6 +184,48 @@ export interface Exchange {
   contentType: string | null
   body: unknown
   text: string
+  headers: Headers
+}
+
+export type Query = Record<string, string | string[]>
+
+interface RequestOptions {
+  body?: unknown
+  token?: string | null
+  headers?: Record<string, string>
+  /** Overrides for `fixtures.ts` `pathParams`. */
+  pathParams?: Record<string, string>
+  /** Query parameters; an array value repeats the parameter. */
+  query?: Query
+}
+
+function buildRequest(
+  op: Pick<Operation, "method" | "path">,
+  opts: RequestOptions,
+  accept: string,
+): [string, RequestInit] {
+  if (!env.baseUrl) throw new ConformanceError("CONTRACT_BASE_URL is not set")
+  const headers: Record<string, string> = { accept, ...opts.headers }
+  if (opts.body !== undefined) headers["content-type"] = "application/json"
+  if (opts.token) headers.authorization = `Bearer ${opts.token}`
+  const path = op.path.replace(/\{(\w+)\}/g, (_, name: string) => {
+    const value = opts.pathParams?.[name] ?? pathParams[name]
+    if (value === undefined) throw new ConformanceError(`no value for path parameter {${name}}`)
+    return encodeURIComponent(value)
+  })
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(opts.query ?? {})) {
+    for (const v of Array.isArray(value) ? value : [value]) search.append(key, v)
+  }
+  const qs = search.size > 0 ? `?${search.toString()}` : ""
+  return [
+    `${env.baseUrl}${path}${qs}`,
+    {
+      method: op.method.toUpperCase(),
+      headers,
+      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+    },
+  ]
 }
 
 export class Contract {
@@ -246,29 +305,10 @@ export class Contract {
 /** One HTTP exchange with the backend under test. */
 export async function call(
   op: Pick<Operation, "method" | "path">,
-  opts: {
-    body?: unknown
-    token?: string | null
-    headers?: Record<string, string>
-    /** Overrides for `fixtures.ts` `pathParams`. */
-    pathParams?: Record<string, string>
-  } = {},
+  opts: RequestOptions = {},
 ): Promise<Exchange> {
-  if (!env.baseUrl) throw new ConformanceError("CONTRACT_BASE_URL is not set")
-  const headers: Record<string, string> = { accept: "application/json", ...opts.headers }
-  if (opts.body !== undefined) headers["content-type"] = "application/json"
-  if (opts.token) headers.authorization = `Bearer ${opts.token}`
-  const path = op.path.replace(/\{(\w+)\}/g, (_, name: string) => {
-    const value = opts.pathParams?.[name] ?? pathParams[name]
-    if (value === undefined) throw new ConformanceError(`no value for path parameter {${name}}`)
-    return encodeURIComponent(value)
-  })
-  const res = await fetch(`${env.baseUrl}${path}`, {
-    method: op.method.toUpperCase(),
-    headers,
-    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-    signal: AbortSignal.timeout(10_000),
-  })
+  const [url, init] = buildRequest(op, opts, "application/json")
+  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(10_000) })
   const text = await res.text()
   let body: unknown = undefined
   try {
@@ -276,5 +316,88 @@ export async function call(
   } catch {
     body = undefined
   }
-  return { status: res.status, contentType: res.headers.get("content-type"), body, text }
+  return { status: res.status, contentType: res.headers.get("content-type"), body, text, headers: res.headers }
+}
+
+/** One message of a `text/event-stream` response. */
+export interface SseMessage {
+  /** The SSE `id:` field, or null when the message carried none. */
+  id: string | null
+  /** The `data:` payload (lines joined with `\n`). */
+  data: string
+}
+
+export interface SseExchange extends Exchange {
+  /** Every message of the stream, in order (empty for a non-SSE answer). */
+  messages: SseMessage[]
+}
+
+/** Parse SSE text into messages (comment-only blocks are dropped). */
+export function parseSse(text: string): { messages: SseMessage[]; rest: string } {
+  const normalised = text.replace(/\r\n?/g, "\n")
+  const blocks = normalised.split("\n\n")
+  const rest = blocks.pop() ?? ""
+  const messages: SseMessage[] = []
+  for (const block of blocks) {
+    let id: string | null = null
+    const data: string[] = []
+    for (const line of block.split("\n")) {
+      if (line === "" || line.startsWith(":")) continue
+      const colon = line.indexOf(":")
+      const field = colon === -1 ? line : line.slice(0, colon)
+      let value = colon === -1 ? "" : line.slice(colon + 1)
+      if (value.startsWith(" ")) value = value.slice(1)
+      if (field === "id") id = value
+      else if (field === "data") data.push(value)
+    }
+    if (data.length > 0) messages.push({ id, data: data.join("\n") })
+  }
+  return { messages, rest }
+}
+
+/**
+ * An exchange whose success answer is an SSE stream, read to its end.
+ * `onMessage` sees each message as it arrives (e.g. to cancel a run
+ * mid-stream). A non-SSE answer (an error) is read like `call` does.
+ */
+export async function callSse(
+  op: Pick<Operation, "method" | "path">,
+  opts: RequestOptions & {
+    /** Called per message as it arrives, with the response headers. */
+    onMessage?: (message: SseMessage, index: number, headers: Headers) => void | Promise<void>
+    timeoutMs?: number
+  } = {},
+): Promise<SseExchange> {
+  const [url, init] = buildRequest(op, opts, "text/event-stream")
+  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(opts.timeoutMs ?? 20_000) })
+  const contentType = res.headers.get("content-type")
+  if (!contentType?.includes("text/event-stream") || !res.body) {
+    const text = await res.text()
+    let body: unknown = undefined
+    try {
+      body = text ? JSON.parse(text) : undefined
+    } catch {
+      body = undefined
+    }
+    return { status: res.status, contentType, body, text, headers: res.headers, messages: [] }
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  const messages: SseMessage[] = []
+  let buffer = ""
+  let text = ""
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    const chunk = decoder.decode(value, { stream: true })
+    text += chunk
+    const parsed = parseSse(buffer + chunk)
+    buffer = parsed.rest
+    for (const message of parsed.messages) {
+      messages.push(message)
+      await opts.onMessage?.(message, messages.length - 1, res.headers)
+    }
+  }
+  messages.push(...parseSse(`${buffer}\n\n`).messages)
+  return { status: res.status, contentType, body: undefined, text, headers: res.headers, messages }
 }

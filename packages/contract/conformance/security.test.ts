@@ -29,7 +29,7 @@ async function post(contentType: string, body: string): Promise<Exchange> {
   } catch {
     parsed = undefined
   }
-  return { status: res.status, contentType: res.headers.get("content-type"), body: parsed, text }
+  return { status: res.status, contentType: res.headers.get("content-type"), body: parsed, text, headers: res.headers }
 }
 
 const skip = env.skipOperations.has(OPERATION)

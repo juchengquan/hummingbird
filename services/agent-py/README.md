@@ -222,6 +222,58 @@ All three need `SUPABASE_DB_URL`; without it create / revoke answer 503
 and the public read answers 404 (as the Next.js page does without the
 service-role key).
 
+## Runs (`/v1/runs`)
+
+The runs API of [`docs/PLAN-frontend-backend-split.md`](../../docs/PLAN-frontend-backend-split.md)
+Phase 2 — contract: the `runs` operations in
+`packages/contract/openapi.yaml`, events per `packages/contract/RUN_EVENTS.md`.
+`routers/runs.py` (HTTP) reads every service from `runs/wiring.py` (the
+wiring seam: stores, event logs, encoder, harness, stream, driver).
+
+| Operation | Auth | What |
+|---|---|---|
+| `POST /v1/runs` | bearer or none | Body: AG-UI `RunAgentInput`, options in `forwardedProps`. Interactive (default) → `200` SSE, executed in this process by `runs/driver.py`; background → `202 {runId, status}`: `create_run` + `status: queued` (seq 1) + `enqueue_task_job('start')`, then the poller runs it. Client-minted `runId`: the owner's repeat (same thread + mode) replays; any other use of a taken id → `409 run_id_conflict`. `resume[]` must answer exactly the open interrupts of `forwardedProps.previousRunId` (else `409 invalid_state`). Anonymous: interactive only, `X-Run-Token` in the response. |
+| `GET /v1/runs` | bearer | The caller's runs, newest first, `threadId` / repeated `status` / `parentRunId` / `mode` filters, keyset token paging. |
+| `GET /v1/runs/{id}` | bearer or `X-Run-Token` | The `Run` resource. Missing / foreign / wrong token → the same 404. |
+| `GET /v1/runs/{id}/events` | bearer or `X-Run-Token` | Replay after `after` / `Last-Event-ID`, then live, then the closing event (from the row). Malformed or out-of-range cursor → 400. |
+| `POST /v1/runs/{id}/cancel` | bearer or `X-Run-Token` | Idempotent; returns the run as it now stands. |
+
+**Where runs live.** Signed-in runs are `tasks` rows (migration 0041,
+`runs/repository_pg.py`: owner-scoped calls run as the user under RLS,
+system writes as the DSN role). Anonymous runs — and signed-in runs when
+`SUPABASE_DB_URL` is unset — live in memory (`runs/repository_memory.py`)
+until `RUNS_MEMORY_TTL_SECONDS` after they end, then 404. Without a
+database, background runs answer `503 unavailable` ("Supabase is not
+configured."), like the schedules routes; interactive runs still work.
+
+**Interactive execution (Q28).** The driver runs the harness detached
+from the request (a dropped connection does not stop the run; the
+stream is a reader of the run's event log, so a retry or a rejoin gets
+exactly the same events). It heartbeats the run's lease every
+`RUNS_HEARTBEAT_SECONDS`; a heartbeat finding the row no longer live
+(cancelled through another replica, or reaped) stops the harness — the
+cross-process cancel path. A cancel served by this process reaches the
+run at once. The maintenance loop (every `RUNS_REAPER_INTERVAL_SECONDS`)
+fails interactive runs whose lease lapsed (`worker_lost` — never handed
+to another process) and drops expired in-memory runs. Shutdown fails
+this process's live runs as `worker_lost`.
+
+**Anonymous runs (Q16/Q20).** `X-Run-Token` (192 random bits; only its
+SHA-256 is kept) is the run's only credential, accepted by status,
+rejoin and cancel; `startRun` uses a presented token only to recognise a
+retry of its run or a resume of its interrupted run. `REQUIRE_AUTH_FOR_AI`
+refuses anonymous starts with `401 auth_required`. Per-IP limits:
+`RUNS_RATE_PER_MINUTE` (everyone) plus `RUNS_ANONYMOUS_RATE_PER_MINUTE`,
+`RUNS_ANONYMOUS_DAILY_BUDGET` and `RUNS_ANONYMOUS_MAX_CONCURRENT` →
+`429 rate_limit`.
+
+**Wave-3b seams.** On this branch the event logs are the in-memory
+reference log, the encoder is the `RecordingEncoder` fake, the stream is
+a replay + live tail without gap handling and the harness is
+`UnwiredHarness` (every run fails `unavailable`) unless
+`RUNS_STUB_HARNESS=true`; each is marked `WIRE(3b-A)` / `WIRE(3b-C)` in
+`runs/wiring.py`.
+
 ## Configuration
 
 | Env var | Required? | What it does |
@@ -235,6 +287,13 @@ service-role key).
 | `SHUTDOWN_GRACE_SECONDS` | No | Default `8`. On shutdown the in-flight job may finish within this window; after it, the job is cancelled and handed back (lease expired on the spot) for the next worker. Keep it under the container stop timeout (Docker's default is 10 s). The stop starts on SIGTERM itself (the server's signal handler is chained), not after uvicorn has drained open SSE streams; the image also runs uvicorn with `--timeout-graceful-shutdown 8` so the lifespan (which closes the DB pool) isn't held past the stop timeout by a chat stream. `/readyz` reports `poller_alive` / `poller_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
 | `SCHEDULER_ENABLED` | No | Default `false`. Run the schedule dispatcher loop (`scheduler.py`) in this process: it fires due `task_schedules` rows exactly like the Vercel Cron's `/api/tasks/jobs/tick`. Needs `SUPABASE_DB_URL`. Safe alongside that cron and on several replicas — see [Scheduled tasks](#scheduled-tasks-replacing-the-vercel-cron). `/readyz` reports `scheduler_alive` / `scheduler_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
 | `SCHEDULER_INTERVAL_SECONDS` | No | Default `60` (the Vercel Cron's cadence). Seconds between dispatcher ticks. |
+| `REQUIRE_AUTH_FOR_AI` | No | Default off. `true` / `1` (with `SUPABASE_JWT_SECRET` set) refuses anonymous runs with `401 auth_required`. Strict values (`true` / `false` / `1` / `0`); anything else fails anonymous starts with 500 — never silently open. Same variable as the Next.js routes. |
+| `RUNS_STUB_HARNESS` | No | Default `false`. Run every run on the model-free stub (`runs/stub_harness.py`, steered by `forwardedProps.conformance`) — for the contract conformance suite only. |
+| `RUNS_LEASE_SECONDS` / `RUNS_HEARTBEAT_SECONDS` | No | Defaults `60` / `5`. An executing interactive run's lease and how often it is extended (also the latency of a cancel served by another replica). |
+| `RUNS_REAPER_INTERVAL_SECONDS` | No | Default `15`. Runs maintenance loop: reap lapsed interactive runs, drop expired in-memory runs. |
+| `RUNS_MEMORY_TTL_SECONDS` / `RUNS_MEMORY_MAX_RUNS` | No | Defaults `900` / `2000`. How long an in-memory run is kept after it ends; how many runs memory holds at once (past it, starts answer 503). |
+| `RUNS_RATE_PER_MINUTE` | No | Default `30`. Run starts per client IP per minute, every caller. |
+| `RUNS_ANONYMOUS_RATE_PER_MINUTE` / `RUNS_ANONYMOUS_DAILY_BUDGET` / `RUNS_ANONYMOUS_MAX_CONCURRENT` | No | Defaults `10` / `200` / `3`. Anonymous starts per IP per minute, per rolling 24 h, and live anonymous runs per IP. |
 | `SUPABASE_URL` | No (reported by `/readyz`) | Phase 2 will use it for things beyond what `SUPABASE_DB_URL` already gives us. |
 | `SERVICE_PORT` | No | Default 8000. |
 | `CORS_ALLOWED_ORIGINS` | No | Default empty (no CORS). Comma-separated exact origins allowed to call the API from a browser on another origin, e.g. `http://localhost:3000` when Next calls agent-py on `:8000`. Not needed behind the same-origin proxy. `*` and non-origin values are ignored; credentialed CORS is never enabled (auth is a bearer JWT). |

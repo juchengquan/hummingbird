@@ -285,7 +285,11 @@ export interface paths {
          *     requires sign-in for AI (today's `REQUIRE_AUTH_FOR_AI`, Q20). The
          *     200 response then carries `X-Run-Token`, the run's capability: the
          *     only credential `getRun`, `streamRunEvents` and `cancelRun` accept
-         *     for that run, and what makes a retry of it idempotent. Anonymous
+         *     for that run, and what makes a retry of it idempotent (send it
+         *     with the retry). An anonymous resume sends the interrupted run's
+         *     token the same way, as proof that the run is the caller's; the
+         *     answering run keeps that token. Any other new anonymous run gets a
+         *     fresh one. Anonymous
          *     runs are not persisted: their event log lives in backend memory
          *     for about 15 minutes after the run ends (Q16), after which every
          *     operation on them answers 404. Anonymous runs are rate- and
