@@ -1,5 +1,8 @@
 # Plan: Frontend / backend extraction (Python-ready)
 
+> **Superseded (2026-11-21)** by [`PLAN-frontend-backend-split.md`](PLAN-frontend-backend-split.md)
+> for everything after Phase 1. Kept for history.
+
 Status: **Phase 1 ✅ shipped.** Phase 2 (stand up the Python backend)
 is now under way as [`PLAN-agent-api.md`](PLAN-agent-api.md) —
 that plan's Phase 0 scaffolded the FastAPI service (#119) and Phases
