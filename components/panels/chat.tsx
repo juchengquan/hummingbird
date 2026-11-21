@@ -2,6 +2,9 @@
 
 import { useState, useRef, useEffect, useMemo, useCallback, useDeferredValue } from "react"
 import { useChatScroll } from "@/components/panels/use-chat-scroll"
+import { ConversationFindBar } from "@/components/panels/conversation-find-bar"
+import { useConversationFind } from "@/client/hooks/use-conversation-find"
+import { selectionTextWithin } from "@/client/find/highlight"
 import { toast } from "sonner"
 import {
   useConversationPrivateFiles,
@@ -385,6 +388,34 @@ export function ChatPanel() {
     messageCount: messages.length,
     isTyping,
   })
+
+  // In-conversation find (⌘F). Fed the deferred list because that is what
+  // the DOM shows, and the highlight search reads the DOM.
+  const find = useConversationFind({
+    anchorRef: messagesEndRef,
+    messages: deferredMessages,
+    resetKey: activeConversationId,
+  })
+  const { openFind } = find
+  const hasMessages = messages.length > 0
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Something closer to the target already claimed it (same rule as ⌘K).
+      if (e.defaultPrevented) return
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return
+      if (e.key?.toLowerCase() !== "f") return
+      // Nothing to search: leave the browser's own find alone.
+      if (!activeConversationId || !hasMessages) return
+      e.preventDefault()
+      // Read the selection now: focusing the find input collapses it.
+      const viewport = messagesEndRef.current?.closest(
+        '[data-slot="scroll-area-viewport"]',
+      ) as HTMLElement | null
+      openFind(selectionTextWithin(viewport))
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [activeConversationId, hasMessages, openFind, messagesEndRef])
 
 
   const handleAttachClick = useCallback(() => {
@@ -782,7 +813,20 @@ export function ChatPanel() {
           runAsTask={taskRun.runAsTask}
           onRunAsTaskChange={taskRun.setRunAsTask}
         />
-        <div className="flex-1 min-h-0 overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-hidden relative">
+          {/* Find bar floats over the top of the messages, under the header. */}
+          {find.open && (
+            <ConversationFindBar
+              query={find.query}
+              setQuery={find.setQuery}
+              total={find.total}
+              current={find.current}
+              focusToken={find.focusToken}
+              next={find.next}
+              prev={find.prev}
+              close={find.close}
+            />
+          )}
           {/* ScrollArea fills the full messages column so its right-edge
               scrollbar sits at the column edge (not floating in mid-air
               the way a centered ScrollArea on a wide viewport does).
