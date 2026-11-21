@@ -30,7 +30,7 @@ import "client-only"
 
 import type { ReasoningEffort } from "@/shared/reasoning-effort"
 import { mintRunId, threadIdFor } from "@/shared/runs/ids"
-import type { Message } from "@/shared/types"
+import type { Message, UploadedFile } from "@/shared/types"
 
 import type { AgUiMessage, RunForwardedProps, SkillConfig, StartRunRequest } from "./types"
 
@@ -68,6 +68,25 @@ export interface RunDocument {
   text: string
   /** `UploadedFile.extractionTruncated`: the model is told the text was cut. */
   truncated?: boolean
+}
+
+/**
+ * The turn's attached files as `RunDocument`s, the way `/v1/chat` builds
+ * its file attachments (`use-chat-send`): an inline-mode file sends its
+ * extracted text (and `truncated`); a RAG-mode file (`retrievalModes[id]
+ * === "rag"`) and a file without extracted text send nothing — the model
+ * reaches those through `searchFiles`.
+ */
+export function runDocumentsFor(
+  files: readonly Pick<UploadedFile, "id" | "name" | "extractedText" | "extractionTruncated">[],
+  retrievalModes: Readonly<Record<string, "rag">> = {},
+): RunDocument[] {
+  const out: RunDocument[] = []
+  for (const f of files) {
+    if (retrievalModes[f.id] === "rag" || !f.extractedText) continue
+    out.push({ name: f.name, text: f.extractedText, ...(f.extractionTruncated ? { truncated: true } : {}) })
+  }
+  return out
 }
 
 /** What the newest user message carries besides its text. */

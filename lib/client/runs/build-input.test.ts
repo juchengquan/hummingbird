@@ -6,7 +6,7 @@ import { describe, expect, test } from "bun:test"
 
 import type { Message } from "@/shared/types"
 
-import { buildRunInput, toRunMessages, utf8ToBase64 } from "./build-input"
+import { buildRunInput, runDocumentsFor, toRunMessages, utf8ToBase64 } from "./build-input"
 
 const msg = (id: string, role: Message["role"], content: string): Message => ({
   id,
@@ -108,5 +108,24 @@ describe("buildRunInput — new options", () => {
     const input = buildRunInput({ conversationId: "c1", history: [msg("u1", "user", "hi")], runId: "r1" })
     expect(input.messages).toEqual([{ id: "u1", role: "user", content: "hi" }])
     expect(input.forwardedProps).toBeUndefined()
+  })
+})
+
+describe("runDocumentsFor", () => {
+  test("inline files with text become documents; RAG-mode and text-less files are skipped", () => {
+    const docs = runDocumentsFor(
+      [
+        { id: "a", name: "a.txt", extractedText: "alpha" },
+        { id: "b", name: "b.pdf", extractedText: "beta", extractionTruncated: true },
+        { id: "c", name: "c.pdf", extractedText: "gamma" },
+        { id: "d", name: "d.png" },
+        { id: "e", name: "e.txt", extractedText: "" },
+      ],
+      { c: "rag" },
+    )
+    expect(docs).toEqual([
+      { name: "a.txt", text: "alpha" },
+      { name: "b.pdf", text: "beta", truncated: true },
+    ])
   })
 })

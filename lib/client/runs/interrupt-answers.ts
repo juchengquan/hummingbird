@@ -137,6 +137,7 @@ const ERROR_TEXT: Record<string, string> = {
   context_window: "The conversation is too long to continue.",
   invalid_model: "The model is unavailable.",
   unknown_model: "This model isn't available on this server.",
+  invalid_attachment: "An attached file or image can't be sent to the model.",
   provider: "The model provider returned an error.",
   network: "Network error — check your connection.",
   unknown: "Something went wrong.",

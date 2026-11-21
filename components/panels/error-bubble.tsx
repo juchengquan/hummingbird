@@ -5,7 +5,10 @@ import { AlertTriangle, ChevronDown, LogIn, RotateCcw } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { AUTH_REQUIRED_TITLE, openSignIn } from "@/client/auth/auth-required"
-import { AUTH_REQUIRED_MESSAGE } from "@/shared/api-errors"
+import {
+  AUTH_REQUIRED_MESSAGE,
+  INVALID_ATTACHMENT_MESSAGE,
+} from "@/shared/api-errors"
 import { cn } from "@/shared/utils"
 import { CHAT_MODELS, DEFAULT_CHAT_MODEL } from "@/shared/models"
 import type { MessageError } from "@/shared/types"
@@ -17,6 +20,7 @@ const ERROR_TITLES: Record<string, string> = {
   context_window: "Conversation too long",
   invalid_model: "Model unavailable",
   unknown_model: "Model not available on this server",
+  invalid_attachment: "Attachment can't be sent",
   provider: "Provider error",
   network: "Network error",
   unknown: "Something went wrong",
@@ -28,6 +32,7 @@ const ERROR_HINTS: Record<string, string> = {
   auth_required: AUTH_REQUIRED_MESSAGE,
   unknown_model:
     "This model isn't available on this server — pick another model or add your own gateway key.",
+  invalid_attachment: INVALID_ATTACHMENT_MESSAGE,
 }
 
 const RATE_LIMIT_COOLDOWN_S = 30
@@ -78,6 +83,9 @@ interface ErrorBubbleProps {
  *   - `unknown_model`   → same as `invalid_model`, plus a hint that the
  *                          model isn't in this server's catalogue (pick
  *                          another or bring your own gateway key)
+ *   - `invalid_attachment` → Retry + Dismiss, with a hint to remove the
+ *                          attachment first (Retry re-reads the chat's
+ *                          attachments). No Change model.
  *   - `provider`        → Retry + Try {fallback} + Change model
  *   - `network`         → Retry (no "Change model" since the network is
  *                          the issue, not the model)
@@ -199,7 +207,10 @@ export function ErrorBubble({
             Try {fallback.label}
           </Button>
         )}
-        {onChangeModel && error.code !== "network" && !authRequired && (
+        {onChangeModel &&
+          error.code !== "network" &&
+          error.code !== "invalid_attachment" &&
+          !authRequired && (
           <Button
             size="sm"
             variant="ghost"

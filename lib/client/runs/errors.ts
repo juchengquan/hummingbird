@@ -25,6 +25,7 @@ export type RunsErrorKind = "http" | "network" | "aborted" | "protocol"
 export const RUN_ID_CONFLICT = "run_id_conflict"
 export const RUN_ALREADY_RESUMED = "run_already_resumed"
 export const INVALID_STATE = "invalid_state"
+export const INVALID_ATTACHMENT = "invalid_attachment"
 
 export class RunsError extends Error {
   readonly kind: RunsErrorKind
@@ -64,6 +65,7 @@ const KNOWN: ReadonlySet<MessageErrorCode> = new Set<MessageErrorCode>([
   "context_window",
   "invalid_model",
   "unknown_model",
+  "invalid_attachment",
   "provider",
   "network",
 ])

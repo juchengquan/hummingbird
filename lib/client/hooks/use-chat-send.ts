@@ -61,7 +61,7 @@ import type { SkillId } from "@/shared/skills/types"
 import type { Message, MessageError, MessageErrorCode } from "@/shared/types"
 import { toISO } from "@/shared/utils"
 import { abortStreamsOfDeletedConversations } from "@/client/chat/abort-deleted-streams"
-import { buildRunInput } from "@/client/runs/build-input"
+import { buildRunInput, runDocumentsFor } from "@/client/runs/build-input"
 import { registerChatRunBridge } from "@/client/runs/chat-bridge"
 import { createChatRunner, type ChatRunner } from "@/client/runs/chat-runner"
 import { RUNS_CHAT_ENABLED } from "@/client/runs/config"
@@ -216,8 +216,9 @@ export function useChatSend(): UseChatSendResult {
         const conv = st.conversations.find((c) => c.id === turn.conversationId)
         const workspaceId = conv?.workspaceId || st.activeWorkspaceId
         const workspace = st.workspaces.find((w) => w.id === workspaceId)
+        const model = turn.model ?? st.chatModel
         return {
-          model: turn.model ?? st.chatModel,
+          model,
           systemPrompt: withUserSkillInstructions(
             composeSystemPrompts(
               st.customInstructionsStyle,
@@ -231,6 +232,9 @@ export function useChatSend(): UseChatSendResult {
           ),
           skills: resolveEnabledSkills({ workspace, conversation: conv }),
           workspaceId: workspaceId || undefined,
+          reasoningEffort: modelSupportsReasoningEffort(model)
+            ? st.chatReasoningEffort ?? undefined
+            : undefined,
         }
       },
     })
@@ -384,9 +388,13 @@ export function useChatSend(): UseChatSendResult {
       // `resolveRunsTarget()` is `null` unless that option is selected and
       // agent-py configured — then the path below runs exactly as before.
       // Signed-out users get a target too (anonymous runs, Q34), so no
-      // `authToken` / mock fallback here. Parity with `/v1/chat` (Q32):
-      // attachments, MCP servers, sandbox files, reasoning effort,
-      // reference images and the memory opt-out aren't sent.
+      // `authToken` / mock fallback here. Attachments go as the newest
+      // user message's parts — the attached images' data URLs (as
+      // `buildMessages` sends them) and the inline-mode files' extracted
+      // text (`runDocumentsFor`, as the file attachments below) — and the
+      // reasoning tier as `/v1/chat` sends it. Not yet sent (Q32, see the
+      // plan's Phase 3 checklist): MCP servers / resources, URL bookmarks,
+      // sandbox files, reference images, the memory opt-out.
       const runsTarget = RUNS_CHAT_ENABLED
         ? await (
             await import("@/client/api/backend-resolver")
@@ -408,6 +416,14 @@ export function useChatSend(): UseChatSendResult {
             systemPrompt: workspaceSystemPrompt,
             skills: enabledSkills,
             workspaceId: activeWorkspaceId || undefined,
+            images: attachedImageUrls,
+            documents: runDocumentsFor(
+              attachedFiles,
+              conv?.fileRetrievalModes
+            ),
+            reasoningEffort: modelSupportsReasoningEffort(modelForCall)
+              ? useStore.getState().chatReasoningEffort ?? undefined
+              : undefined,
           }),
         })
         return

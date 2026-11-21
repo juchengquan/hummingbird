@@ -117,7 +117,8 @@ interrupted), on a 404, or after an hour.
 Error codes worth handling: `409 run_id_conflict` (never expected: run ids
 are fresh UUIDv4s), `409 run_already_resumed` (someone answered first —
 refresh with `status`), `409 invalid_state` (stale interrupts), `429
-rate_limit`, `401 auth_required`, `400 unknown_model` (only `anthropic/*`
+rate_limit`, `401 auth_required`, `400 invalid_attachment` (an attachment
+the backend can't give the model), `400 unknown_model` (only `anthropic/*`
 models with an `anthropicModelId` are allowed, as on `/v1/chat`), `404`
 (anonymous run forgotten). `messageErrorFor` maps known codes and aliases
 `upstream` / `unavailable` → `provider`; the rest → `unknown` + `detail`.
@@ -207,9 +208,21 @@ run (a rejoin after a reload) restores the paused run's output first
    model: modelForCall, systemPrompt: workspaceSystemPrompt, skills:
    enabledSkills, workspaceId: activeWorkspaceId || undefined })`, then
    `const session = (await import("@/client/runs/session")).startRunSession(body, { target, sink, onStarted, onCursor })`.
-   (Parity Q32: attachments, MCP servers, sandbox files, reasoning effort,
-   reference images and the memory opt-out are not sent. The contract caps
-   `systemPrompt` at 20 000 chars and `skills` at 10 — `422` past them.)
+   **Attachments and reasoning effort are sent** (wave 4b-D): `images`
+   (the attached image files' data URLs, `getFileImageDataUrls` — what
+   `/v1/chat` puts on the last user turn), `documents`
+   (`runDocumentsFor(attachedFiles, conv.fileRetrievalModes)`: inline-mode
+   files' extracted text + `truncated`; RAG-mode and text-less files are
+   left to `searchFiles`) and `reasoningEffort`
+   (`modelSupportsReasoningEffort(model) ? chatReasoningEffort : undefined`,
+   as `/v1/chat`). They ride on the newest user message as AG-UI
+   `image` / `document` parts; one the backend can't give the model is
+   `400 invalid_attachment` before the run exists — the "Attachment can't
+   be sent" bubble (Retry re-reads the chat's attachments). Still not sent
+   (Q32; the plan's Phase 3 checklist): MCP servers / resources, URL
+   bookmarks, sandbox files, reference images, the memory opt-out. The
+   contract caps `systemPrompt` at 20 000 chars and `skills` at 10 — `422`
+   past them.
    Parts can arrive before any text (`routed_model` is a run's first
    event), so create the placeholder before starting, not on the first
    text frame; "empty response" is then `!hasOutput(result.state.view)`.
