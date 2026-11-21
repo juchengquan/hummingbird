@@ -218,6 +218,63 @@ class Settings(BaseSettings):
     else (the Next.js default is `google/gemini-2.5-flash`, which this
     service cannot call) → `AGENT_DEFAULT_MODEL`."""
 
+    # --- Runs (`/v1/runs`, PLAN-frontend-backend-split Phase 2) ------------
+    REQUIRE_AUTH_FOR_AI: str = ""
+    """Refuse anonymous runs (`401 auth_required`) when true — today's
+    Next.js `REQUIRE_AUTH_FOR_AI` (Q20), same strict parsing as
+    `lib/server/auth/require-ai-auth.ts`: `true` / `false` / `1` / `0`
+    (case-insensitive, whitespace ignored), unset / empty = off; any other
+    value fails every anonymous run start with a 500 (never silently
+    open). Inert while `SUPABASE_JWT_SECRET` is unset: without it nobody
+    can sign in, so there is nothing to require (as in Next.js without
+    Supabase). Parsed by `agent_py.runs.access.require_auth_for_ai`."""
+
+    RUNS_STUB_HARNESS: bool = False
+    """Run every run on the model-free stub harness
+    (`agent_py.runs.stub_harness`) — for the contract conformance suite
+    and local development. Never in production: it answers without a
+    model. The stub reads `forwardedProps.conformance` (see the
+    harness's docstring)."""
+
+    RUNS_LEASE_SECONDS: float = 60.0
+    """Lease an interactive run holds on its row (`tasks.lease_expires_at`
+    / the in-memory equivalent) while this process executes it. A run
+    whose lease lapses belongs to a dead process and is failed
+    `worker_lost` by the reaper (Q28 — never handed over)."""
+
+    RUNS_HEARTBEAT_SECONDS: float = 5.0
+    """How often an executing interactive run extends its lease. Also the
+    latency of a cancel made in another process: the heartbeat finding
+    the row no longer live is how the executing process learns of it."""
+
+    RUNS_REAPER_INTERVAL_SECONDS: float = 15.0
+    """Seconds between passes of the runs maintenance loop: the
+    interactive-run reaper (lapsed leases) and the in-memory store's
+    TTL sweep."""
+
+    RUNS_MEMORY_TTL_SECONDS: float = 900.0
+    """How long an in-memory run (anonymous, or signed-in without
+    `SUPABASE_DB_URL`) and its event log are kept after it ends (Q16:
+    ~15 min). Afterwards every operation on it answers 404."""
+
+    RUNS_MEMORY_MAX_RUNS: int = 2000
+    """Cap on runs held in memory at once (live + recently ended). A start
+    past it answers `503 unavailable` instead of growing without bound."""
+
+    RUNS_RATE_PER_MINUTE: int = 30
+    """Run starts per client IP per minute, every caller (the same budget
+    as `/v1/chat`'s turns)."""
+
+    RUNS_ANONYMOUS_RATE_PER_MINUTE: int = 10
+    """Anonymous run starts per client IP per minute (on top of
+    `RUNS_RATE_PER_MINUTE`)."""
+
+    RUNS_ANONYMOUS_DAILY_BUDGET: int = 200
+    """Anonymous run starts per client IP per rolling 24 h."""
+
+    RUNS_ANONYMOUS_MAX_CONCURRENT: int = 3
+    """Live anonymous runs per client IP at once."""
+
     # --- Request hardening ------------------------------------------------
     CORS_ALLOWED_ORIGINS: str = ""
     """Comma-separated exact origins (scheme://host[:port]) allowed to
