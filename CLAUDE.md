@@ -22,6 +22,7 @@ bun run typecheck    # Run `tsc --noEmit`
 bun run check        # typecheck + lint (fast — mirrors CI without build/audit)
 bun run check:ci     # typecheck + lint + build + audit:bundle (full CI gate locally)
 bun run test         # split runner (scripts/run-tests.sh): isolates app/api/tasks/ (process-global mock.module mocks) + excludes services/ (own CI jobs); a coverage guard fails if a *.test.ts sits outside the configured roots
+bun run test:e2e     # Playwright smoke: starts agent-py (stub harness) + a Next production build; see playwright.config.ts
 
 # Agent service (Python — Phase 0 of PLAN-agent-api.md)
 docker compose up agent-py            # run service in container
