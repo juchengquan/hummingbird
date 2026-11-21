@@ -424,6 +424,11 @@ Absent metadata means untainted. On a tainted turn the server refuses
 memory extraction (`POST /api/memory/extract`) for it. The client's
 translator surfaces it as `{ type: "memory_tainted" }`.
 
+agent-py's `/v1/chat` sends the same flag when any tool outside the
+trusted set (`rememberFact`, `forgetFact`, `renderUI`, `generateImage`)
+ran in the turn (`TRUSTED_TOOLS` in `services/agent-py/src/agent_py/chat.py`);
+its request carries only plain-text messages, so it has no request-side taint.
+
 ### Ordering rules
 
 - Any number of `text` and `reasoning` frames may interleave.

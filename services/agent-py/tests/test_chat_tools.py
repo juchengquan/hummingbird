@@ -287,3 +287,55 @@ async def test_with_tools_ai_sdk_upstream_exception_closes_text_then_error() -> 
     # Categorised — "rate limited" matches the rate_limit string
     # branch (the RuntimeError has no SDK type to lean on).
     assert payloads[2]["code"] == "rate_limit"
+
+
+# --- memory taint on the finish frame ----------------------------------------
+
+
+def _named_tool(name: str) -> ToolDescriptor:
+    return _make_echo_tool(name)
+
+
+async def _finish_payload(tools: list[ToolDescriptor], tool_uses: list[dict[str, Any]]) -> Any:
+    steps = (
+        [_Step(tool_uses=tool_uses), _Step(deltas=["done"])]
+        if tool_uses
+        else [_Step(deltas=["hi"])]
+    )
+    frames = [
+        f
+        async for f in chat_stream_with_tools_ai_sdk(
+            client=_FakeClient(steps), config=_config(tools=tools)
+        )
+    ]
+    return next(
+        p for p in _parse_ai_sdk_frames(frames) if isinstance(p, dict) and p["type"] == "finish"
+    )
+
+
+@pytest.mark.asyncio
+async def test_untrusted_tool_marks_the_turn_memory_tainted() -> None:
+    """A web/file/MCP tool ran → the client must skip memory extraction,
+    same `messageMetadata.memoryTainted` slot as the Next.js route."""
+    finish = await _finish_payload(
+        [_named_tool("webFetch")], [{"id": "tu_1", "name": "webFetch", "input": {}}]
+    )
+    assert finish == {"type": "finish", "messageMetadata": {"memoryTainted": True}}
+
+
+@pytest.mark.asyncio
+async def test_unknown_or_new_tools_taint_by_default() -> None:
+    finish = await _finish_payload(
+        [_named_tool("mcp__notion__search")],
+        [{"id": "tu_1", "name": "mcp__notion__search", "input": {}}],
+    )
+    assert finish["messageMetadata"] == {"memoryTainted": True}
+
+
+@pytest.mark.asyncio
+async def test_trusted_tool_and_tool_free_turns_are_not_tainted() -> None:
+    finish = await _finish_payload(
+        [_named_tool("generateImage")], [{"id": "tu_1", "name": "generateImage", "input": {}}]
+    )
+    assert finish == {"type": "finish"}
+    assert await _finish_payload([_named_tool("webFetch")], []) == {"type": "finish"}
