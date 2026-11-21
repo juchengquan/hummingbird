@@ -336,7 +336,9 @@ run (a rejoin after a reload) restores the paused run's output first
   existing value).
 - Steer the stub per run by rewriting the request with `page.route("**/v1/runs",
   …)`: add `forwardedProps.conformance = { outcome: "succeed" | "fail" |
-  "interrupt", steps: 1..20, stepDelayMs: 0..10000 }` (and drop
+  "interrupt", interrupt?: "approval" | "ui-part", steps: 1..20,
+  stepDelayMs: 0..10000 }` (`interrupt: "ui-part"` pauses on a `renderUI`
+  confirm card, `Confirm the stub action?`, instead of an approval) (and drop
   `forwardedProps.model` unless the chosen model is an allow-listed
   `anthropic/*` one — otherwise `400 unknown_model`).
 - Assert: **send** → the bubble reads `Stub reply to: <text>` (plus

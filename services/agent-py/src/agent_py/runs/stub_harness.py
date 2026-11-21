@@ -7,6 +7,7 @@ an open `RunForwardedProps` key that every other harness ignores:
 
     "conformance": {
       "outcome": "succeed" | "fail" | "interrupt",   # default "succeed"
+      "interrupt": "approval" | "ui-part",            # default "approval"
       "steps": 1..20,                                 # default 1
       "stepDelayMs": 0..10000                         # default 0
     }
@@ -15,8 +16,10 @@ an open `RunForwardedProps` key that every other harness ignores:
   `step_end`; then `Succeeded` with the text it streamed.
 * `fail` — the same steps, then `Failed("provider", …)`.
 * `interrupt` — the same steps, then `Interrupted` with one `approval`
-  interrupt (id `<runId>:approve`). A run that answers it (`resume[]`)
-  succeeds, saying how each interrupt was answered.
+  interrupt (id `<runId>:approve`), or with `"interrupt": "ui-part"` one
+  `renderUI` confirm part (id `<runId>:ui`, props `{prompt: "Confirm the
+  stub action?"}`). A run that answers it (`resume[]`) succeeds, saying
+  how each interrupt was answered.
 * `stepDelayMs` — a pause after each step (cancellable), so a run stays
   live long enough to cancel it or to rejoin it mid-flight.
 """
@@ -84,6 +87,23 @@ class StubHarness:
 
         if outcome == "fail":
             return HarnessResult(Failed("provider", "Stub harness failure (requested)."))
+        if outcome == "interrupt" and not run_input.resume and cfg.get("interrupt") == "ui-part":
+            ui_props: dict[str, object] = {"prompt": "Confirm the stub action?"}
+            return HarnessResult(
+                Interrupted(
+                    (
+                        PendingInterrupt(
+                            id=f"{run_input.run_id}:ui",
+                            request_kind="ui-part",
+                            tool="renderUI",
+                            tool_call_id=f"{run_input.run_id}:ui",
+                            args={"kind": "confirm", "props": ui_props},
+                            ui_kind="confirm",
+                            ui_props=ui_props,
+                        ),
+                    )
+                )
+            )
         if outcome == "interrupt" and not run_input.resume:
             return HarnessResult(
                 Interrupted(
