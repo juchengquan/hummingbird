@@ -36,6 +36,8 @@
     "supabase:docker:migrate": "bash .docker/supabase/apply-migrations.sh"
   },
   "dependencies": {
+    "@ag-ui/client": "1.0.5",
+    "@ag-ui/core": "1.0.5",
     "@ai-sdk/anthropic": "^2.0.79",
     "@ai-sdk/openai-compatible": "^1.0.39",
     "@ai-sdk/react": "2.0.28",
