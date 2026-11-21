@@ -94,7 +94,7 @@ assistant message tool calls attach to).
 | `token`, `channel: "text"`, non-empty `text` | close an open reasoning block; if no text block is open: `TEXT_MESSAGE_START { messageId: "R:s", role: "assistant" }` and set the step's parent message id to `"R:s"`; then `TEXT_MESSAGE_CONTENT { messageId, delta: text }` |
 | `token`, `channel: "reasoning"`, non-empty `text` | close an open text block; if no reasoning block is open: `REASONING_START { messageId: "R:s" }`, `REASONING_MESSAGE_START { messageId: "R:s", role: "reasoning" }`; then `REASONING_MESSAGE_CONTENT { messageId, delta: text }` |
 | `token` with empty `text` | nothing (and closes nothing) |
-| **any other entry** | first close the open block, if any — **even when the entry itself encodes to nothing** |
+| **any other entry** | first close the open block, if any — **even when the entry itself encodes to nothing**. The one exception is a resume marker, which drops the open block without closing it (§ 3.2) |
 
 Closing a text block: `TEXT_MESSAGE_END { messageId }`. Closing a
 reasoning block: `REASONING_MESSAGE_END { messageId }`,
@@ -107,14 +107,14 @@ The parent message id is reset to none by every `step_start`.
 | Internal entry | AG-UI events | Notes |
 |---|---|---|
 | `status` `queued` / `running`, no resume marker | — | `RUN_STARTED` is stream framing (§ 6), not an entry |
-| `status` `running` with `resumedFromSeq` (or legacy `restarted`) — a **resume marker** | `CUSTOM hb.rewind { after }` | `after` = `resumedFromSeq` (legacy `restarted` without it: `1`). Then the encoder forgets its block state and parent message id. See § 6.5 |
+| `status` `running` with `resumedFromSeq` (or legacy `restarted`) — a **resume marker** | `CUSTOM hb.rewind { after }` | `after` = `resumedFromSeq` (legacy `restarted` without it: `1`). The marker does **not** close the open block: the encoder drops it (no `*_END` events — live, the block was opened by the dead attempt and the client discards its start on the rewind, so an `END` at the marker's seq would end a message the client no longer holds; on replay nothing is open here). It also forgets its parent message id and whatever it tracked from entries with `seq > after` (open sub-agents, the last `result`). See § 6.5 |
 | `status` `paused` / `cancelled` / `done` / `failed` | — | the closing event comes from the run row (§ 6.4) |
 | `step_start` | `STEP_STARTED { stepName: "step-<step>" }` | resets the parent message id |
 | `step_end` | `STEP_FINISHED { stepName: "step-<step>" }` | |
-| `tool_input` | `TOOL_CALL_START { toolCallId, toolCallName: toolName, parentMessageId }`, `TOOL_CALL_ARGS { toolCallId, delta: JSON(args) }`, `TOOL_CALL_END { toolCallId }` | `parentMessageId` = the step's parent message id; when none, set it to `"R:s"` first (a tool-only assistant message). `JSON()` is compact JSON (`separators=(",", ":")`), keys in insertion order |
+| `tool_input` | `TOOL_CALL_START { toolCallId, toolCallName: toolName, parentMessageId }`, `TOOL_CALL_ARGS { toolCallId, delta: JSON(args) }`, `TOOL_CALL_END { toolCallId }` | `parentMessageId` = the step's parent message id; when none, set it to `"R:s"` first (a tool-only assistant message). `JSON()` is compact JSON (`separators=(",", ":")`), keys in insertion order, non-ASCII characters not escaped — byte for byte `JSON.stringify` |
 | `tool_output` | `TOOL_CALL_RESULT { messageId: "R:s", toolCallId, role: "tool", content, metadata: { "hummingbird": { "toolName", "isError"? } } }` | `content` = `JSON({ "summary": summary, "results": results })`, `results` omitted when absent — the exact string chat's `tool-output-available.output` carries today. `isError: true` only when the tool failed (then `summary` is the error text) |
 | `step_error` | `CUSTOM hb.step_error { message, willRetry }` | non-fatal |
-| `handoff` `enter` | `SUBAGENT_STARTED { subagentRunId, name: agent, description: subgoal? }` | today every sub-agent is a separate background run (`parentRunId`), so nothing is attributed to it inline |
+| `handoff` `enter` | `SUBAGENT_STARTED { subagentRunId, name: agent, metadata?: { hummingbird: { subgoal } } }` | the pinned schema's `SUBAGENT_STARTED` has no `description`, so the subgoal rides in the event's `metadata` (only when set). Today every sub-agent is a separate background run (`parentRunId`), so nothing is attributed to it inline |
 | `handoff` `exit` | `SUBAGENT_FINISHED { subagentRunId }` | `subagentRunId`: by `child_task_id`; without one, the most recent unmatched `enter` of the same `agent`. An `exit` matching no `enter` encodes to nothing |
 | `approval` `request` | — | the interrupt is reported by the closing `RUN_FINISHED` (§ 4) |
 | `approval` `response` | `CUSTOM hb.interrupt_resolved { interruptId: approvalId, payload }` | `payload` as in § 4.2. Only legacy in-place resumes write these into the same run's log; a Q24 resume run has the answers in its `RUN_STARTED.input.resume` instead |
@@ -220,10 +220,13 @@ log for pre-0041 rows (`outcome` null):
 - `RUN_ERROR` (failed) = `tasks.outcome { code, message }`, else the
   `result` entry's `{ errorCode ?? "unknown", error ?? "Run failed." }`;
   a failed run with neither (orphaned, failed by a reaper) uses the
-  reaper's code: `worker_lost` (interactive process died, Q28) or
-  `no_worker`.
+  reaper's code: `worker_lost` for an interactive run (its process
+  died, Q28), `no_worker` for a background one, with the message
+  `"Run failed."`.
 - `usage` (both events) = the `result` entry's `usage`, each entry
-  already an AG-UI `TokenUsage`; omitted when empty.
+  already an AG-UI `TokenUsage`; omitted when empty. "The `result`
+  entry" is the last one encoded that no later resume marker
+  superseded.
 - `Run.result` / `Run.error` carry the same objects.
 
 ## 6. Streams
@@ -244,7 +247,7 @@ Every stream, `startRun` (interactive) and `streamRunEvents` alike:
 Each SSE message is `id: <cursor>\n` (omitted where 1. says) + `data:
 <compact JSON of one AG-UI event>\n\n`. No `event:`
 field. Comment lines (`: keep-alive`) may be sent at any time and carry
-no id.
+no id; agent-py sends one after ~15 s without a frame.
 
 ### 6.2 Cursor
 
@@ -259,6 +262,10 @@ Replaying after cursor `c`:
 - `c = s.k` → re-encode entry `s` and send its events with index `> k`,
   then continue with `seq > s`;
 - `c = 0` → the whole log.
+
+A cursor whose entry `s` is superseded (§ 6.5 — the client saw it live
+before a rewind) has nothing to re-encode: replay continues with the
+first retained entry with `seq > s`, which is at the latest the marker.
 
 The encoder is stateful (open block, parent message id, open
 sub-agents), so before sending anything after `c` the stream **primes**
@@ -275,7 +282,8 @@ compacted or purged range) is `400 invalid_request`.
 The log is compacted (§ 7) — its entries below a point replaced by one
 `messages_snapshot` entry at `seq = C` — or purged (no entries left).
 
-- Compacted and `c` has `seq < C`: send `CUSTOM hummingbird.gap { after:
+- Compacted and `c` is before `C` — `seq < C`, or `C.k` (a cursor the
+  client got for the original entry `C` before it was folded): send `CUSTOM hummingbird.gap { after:
   c, resumeAt: C, reason: "compacted" }` (no id), then the
   `messages_snapshot` entry encoded as `MESSAGES_SNAPSHOT` (id `C`),
   then continue after `C`.
@@ -294,8 +302,13 @@ ever sent right after a `gap`.
 ### 6.4 Live tail and the closing events
 
 After replay the stream follows the log: in the run's own process
-in-memory (the appender notifies subscribers), elsewhere by polling
-the log about every 250 ms (Q29).
+the appender wakes its subscribers at once, elsewhere they poll the
+log about every 250 ms (Q29). Either way a woken subscriber reads the
+new entries from the log rather than taking the appender's objects, so
+a live stream and a replay decode the same stored entries (Postgres
+`jsonb` reorders object keys). While idle, the stream re-reads the run
+row on each poll tick, and at once after an entry that ends a run
+(`result`, a `status` of `paused` / `cancelled` / `done` / `failed`).
 
 **The run row decides when the stream ends**, not an entry — a worker
 can die after writing `result` but before settling the row, and a
@@ -334,8 +347,8 @@ attempt's output.
   }` it discards every event it received from this stream whose cursor
   `seq` is greater than `a` and smaller than the rewind's own. Resume
   checkpoints are taken at step boundaries, where no block is open, so
-  nothing is left half-open; the encoder resets its block state at the
-  marker.
+  nothing is left half-open on replay; live, the encoder drops the
+  dead attempt's open block at the marker without closing it (§ 3.2).
 
 Interactive runs never resume (Q28: a dead process fails the run), so
 they never rewind.
@@ -392,8 +405,11 @@ step errors, the timing of deltas.
 
 Same events, same encoder, same stream rules. The log lives in the
 backend process's memory (interactive runs execute there anyway, Q28)
-and is dropped about 15 minutes after the run ends; it is never
-compacted. Afterwards every operation on the run answers 404. A
+and is dropped about 15 minutes after the run ends (it is sealed); it
+is never compacted. The memory is bounded per run and in total; an
+append past a cap fails, except for the entries that end a run, and
+the run driver fails the run (`event_log_memory.py` documents the
+caps). Afterwards every operation on the run answers 404. A
 process restart loses anonymous runs.
 
 ## 9. Example
