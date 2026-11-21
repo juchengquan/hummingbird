@@ -12,7 +12,7 @@
 
 import { z } from "zod"
 
-import { getAnthropicApiModelId } from "@/shared/models"
+import { getAnthropicApiModelId } from "./vendor/shared/models"
 
 /** Boolean env flag. `z.coerce.boolean()` is `Boolean(value)`, so the
  *  string "false" (any non-empty string) coerced to `true` — setting

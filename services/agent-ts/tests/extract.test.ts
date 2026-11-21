@@ -9,7 +9,7 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { SignJWT } from "jose"
 
-import { extractFile } from "@/server/extraction"
+import { extractFile } from "../src/vendor/server/extraction"
 
 import { createApp } from "../src/app"
 import { resetEnvCacheForTest } from "../src/env"

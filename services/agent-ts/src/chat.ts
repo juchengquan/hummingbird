@@ -425,9 +425,9 @@ export function stringifyToolOutput(output: unknown): string {
 // the Next.js inline route + agent-ts service share one
 // implementation. Re-exported here for callers / tests that already
 // import it from this module.
-export { parseSuggestionsJson } from "@/shared/suggestions-parser"
-import { parseSuggestionsJson } from "@/shared/suggestions-parser"
-import { upstreamStatus } from "@/shared/api-errors"
+export { parseSuggestionsJson } from "./vendor/shared/suggestions-parser"
+import { parseSuggestionsJson } from "./vendor/shared/suggestions-parser"
+import { upstreamStatus } from "./vendor/shared/api-errors"
 
 /** Pull the last `user` role message's content. Mirrors the
  *  Next.js inline route's `lastUserText`. */

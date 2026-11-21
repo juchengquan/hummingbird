@@ -14,7 +14,7 @@ import { simulateReadableStream, tool } from "ai"
 import { MockLanguageModelV2 } from "ai/test"
 import { z } from "zod"
 
-import type { ServerSkill } from "@/server/skills/registry"
+import type { ServerSkill } from "../src/vendor/server/skills/registry"
 
 import {
   chatStreamAiSdk,

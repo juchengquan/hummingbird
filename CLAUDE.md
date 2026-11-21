@@ -243,7 +243,11 @@ Components). The frontend picks one per account via
 `lib/client/api/backend-resolver.ts`'s `DispatchOption` (`'in-next'` /
 `'remote'`). See [`services/README.md`](services/README.md) for the
 full per-surface entry-point map and the rationale for why the third
-backend doesn't live under `services/`.
+backend doesn't live under `services/`. **agent-ts is frozen** (bug and
+security fixes only, no new endpoints; Q11 of
+`docs/PLAN-frontend-backend-split.md`) and doesn't import `lib/`: what
+it used is vendored under `services/agent-ts/src/vendor/`, so fixes to
+the `lib/` originals don't reach it. See `services/agent-ts/README.md`.
 
 ## Agent service (Python — Phases 0+1+2a)
 

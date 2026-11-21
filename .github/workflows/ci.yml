@@ -131,15 +131,19 @@ jobs:
         with:
           bun-version-file: package.json
 
-      # Root deps first — Phase 4 routes reuse `@/server/url/*` and
-      # `@/server/mcp/*`, whose transitive imports
-      # (`@modelcontextprotocol/sdk`, `mammoth`, `pdf-parse`, `xlsx`,
-      # `node-html-parser`, `server-only`) live in the root
-      # `package.json`. Without this, tsc + the test runner can't
-      # resolve them.
-      - name: Install root dependencies
-        working-directory: ${{ github.workspace }}
-        run: bun install --frozen-lockfile
+      # agent-ts is frozen and self-contained (docs/PLAN-frontend-backend-split.md
+      # Q11): the Next app modules it used are vendored under
+      # `src/vendor/`, so no root `bun install` — only its own deps.
+      # Guard: nothing under services/agent-ts may reach back into the
+      # Next app's `lib/` (via the `@/server|shared|client` aliases or a
+      # relative `../lib` path). Repo-root `config/` stays shared, read
+      # as `@config/*`.
+      - name: Guard against lib/ reach-back imports
+        run: |
+          if grep -rnE "['\"](@/(server|shared|client)(/|['\"])|(\.\./)+lib(/|['\"]))" src tests tsconfig.json; then
+            echo "::error::services/agent-ts must not import the Next app's lib/ — use the vendored copies under src/vendor/"
+            exit 1
+          fi
 
       - name: Install agent-ts dependencies
         run: bun install --frozen-lockfile
@@ -149,9 +153,10 @@ jobs:
 
       - name: Test
         # Use `bun run test` (not `bun test`) so the package.json
-        # script's `--conditions=react-server` flag applies — Phase 4
-        # routes reuse `lib/server/*` modules whose `import "server-only"`
-        # marker only resolves to a no-op under that condition.
+        # script's `--conditions=react-server` flag applies — the
+        # vendored `src/vendor/server/*` modules keep their
+        # `import "server-only"` marker, which only resolves to a no-op
+        # under that condition.
         run: bun run test
 
   # Drift gate for the TS types generated from the agent service's

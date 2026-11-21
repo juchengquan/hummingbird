@@ -29,9 +29,9 @@
 import { Hono } from "hono"
 import { z } from "zod"
 
-import { callTool, discover, readResource } from "@/server/mcp/client"
-import { McpUrlBlockedError, validateMcpServerUrl } from "@/server/mcp/outbound"
-import type { McpServer } from "@/shared/types"
+import { callTool, discover, readResource } from "../vendor/server/mcp/client"
+import { McpUrlBlockedError, validateMcpServerUrl } from "../vendor/server/mcp/outbound"
+import type { McpServer } from "../vendor/shared/types"
 
 import { hasPool, getPool } from "../db"
 import {

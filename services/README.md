@@ -9,16 +9,19 @@ those paths. The frontend picks one per account via
 `lib/client/api/backend-resolver.ts`'s `DispatchOption` union (`'in-next'`
 / `'remote'`).
 
-Both `services/` backends are kept live indefinitely per project
-policy — neither is the "default" or the "deprecated" one. The user
-picks per account via the Phase 4-2 selector
-(`PLAN-agent-api.md`).
+Both `services/` backends stay live and the user picks one per account
+via the Phase 4-2 selector (`PLAN-agent-api.md`). **agent-ts is frozen**,
+though: bug and security fixes only, no new endpoints (decision Q11 of
+`docs/PLAN-frontend-backend-split.md`; see
+[`agent-ts/README.md`](agent-ts/README.md) § Frozen). It is
+self-contained: what it used from the Next app's `lib/` is vendored
+under `services/agent-ts/src/vendor/` as frozen copies.
 
 | Backend | Where | Stack | DispatchOption | Notes |
 |---|---|---|---|---|
 | **Next.js (original TS)** | `app/api/**/route.ts` + `lib/server/**` | Next.js App Router · `@ai-sdk/*` · Vercel AI Gateway | `'in-next'` | Co-located with the frontend; route handlers can't move out of `app/` without giving up App Router routing. Shared by Server Components too. |
 | **agent-py** | `services/agent-py/` | Python 3.12 · FastAPI · uv · asyncpg · Anthropic SDK | `'remote'` (`NEXT_PUBLIC_AGENT_PY_URL`) | Standalone container. Owns the `task_jobs` poller + executor. |
-| **agent-ts** | `services/agent-ts/` | Bun · Hono · `@ai-sdk/*` · `postgres` (pg under RLS impersonation) | `'remote'` (`NEXT_PUBLIC_AGENT_TS_URL`) | Standalone container. Mirrors agent-py's surface in TS. |
+| **agent-ts** | `services/agent-ts/` | Bun · Hono · `@ai-sdk/*` · `postgres` (pg under RLS impersonation) | `'remote'` (`NEXT_PUBLIC_AGENT_TS_URL`) | Standalone container. **Frozen** (Q11): mirrors agent-py's surface as of the freeze; no new endpoints. Doesn't import the Next app's `lib/`. |
 
 ## Background tasks — who executes them
 
@@ -65,7 +68,8 @@ If you're looking for the chat-route equivalent in each backend:
 | Refresh image URL | `app/api/images/refresh-url/route.ts` | `routers/images.py` | `routes/refresh-url.ts` |
 
 Shared by all three: the Zod wire schemas in `lib/shared/api-schemas.ts`
-and the streaming SSE protocol documented in `docs/API.md`.
+(agent-ts uses a frozen copy, `src/vendor/shared/api-schemas.ts`) and
+the streaming SSE protocol documented in `docs/API.md`.
 
 ## Model allowlist
 
@@ -82,7 +86,7 @@ typo — is a 400 `unknown_model`:
 
 | | agent-py | agent-ts |
 |---|---|---|
-| Rule | `agent_py/model_allowlist.py` (reads the JSON itself) | `src/models.ts` over `ANTHROPIC_SERVICE_MODELS` in `lib/shared/models.ts` |
+| Rule | `agent_py/model_allowlist.py` (reads the JSON itself) | `src/models.ts` over `ANTHROPIC_SERVICE_MODELS` in `src/vendor/shared/models.ts` (frozen copy of `lib/shared/models.ts`; reads `config/models.json` via `@config/*`) |
 | 400 body | `{"detail": {"code": "unknown_model", "message"}}` (FastAPI `HTTPException`) | `{code: "unknown_model", message}` (Next.js envelope) |
 
 Where it's enforced:

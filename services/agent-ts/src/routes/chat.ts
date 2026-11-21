@@ -19,7 +19,7 @@ import { Hono } from "hono"
 import { stream } from "hono/streaming"
 import { z } from "zod"
 
-import { ChatRequestSchema as SharedChatRequestSchema } from "@/shared/api-schemas"
+import { ChatRequestSchema as SharedChatRequestSchema } from "../vendor/shared/api-schemas"
 
 import {
   AI_SDK_STREAM_HEADER_NAME,
