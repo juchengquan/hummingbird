@@ -235,6 +235,16 @@ order. Every migration has a unique numeric prefix (CI enforces this via
     before failing a never-started run as "No task worker available",
     so a busy worker's backlog isn't failed. Adds an index on
     `task_jobs(updated_at)`. Idempotent.
+- `supabase/migrations/0041_runs_on_tasks.sql`
+  - Runs on the task tables (`mode`, `thread_id`, `previous_run_id`,
+    `outcome`, `lease_expires_at`) and the `create_run` RPC for the
+    runs API (`/v1/runs`). Idempotent.
+- `supabase/migrations/0042_one_live_resume.sql`
+  - At most one live resume per interrupted run: a unique partial
+    index on `tasks(previous_run_id)` over rows that are not `failed` /
+    `cancelled`, and `create_run` raising 23505 'run already resumed'
+    (constraint `tasks_one_live_resume`) for a second one — agent-py
+    answers `409 run_already_resumed`. Idempotent.
 
 ### Migration 0018 collision (renamed to `0033_message_generated_files.sql`)
 

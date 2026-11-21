@@ -585,6 +585,47 @@ describe.skipIf(!env.baseUrl)(`conformance: runs @ ${env.baseUrl}`, () => {
       TIMEOUT,
     )
 
+    test(
+      "one live resume per interrupted run: a second → 409 run_already_resumed; a failed one frees the slot",
+      async () => {
+        const threadId = randomUUID()
+        const first = await startInteractive({ threadId, conformance: { outcome: "interrupt" } })
+        const closing = assertRunStream(first.ex, first).events.at(-1) as Json
+        const interrupts = (closing.outcome as { interrupts: Json[] }).interrupts
+        const token = first.ex.headers.get("x-run-token")!
+        const answers = interrupts.map((i) => ({ interruptId: i.id, status: "resolved", payload: { approved: true } }))
+        const resume = (extra: RunBodyOptions = {}) =>
+          startInteractive({ threadId, runToken: token, previousRunId: first.runId, resume: answers, ...extra })
+
+        // A resume that fails does not count: the interrupts can be answered again.
+        const failed = await resume({ conformance: { outcome: "fail" } })
+        expect(assertRunStream(failed.ex, failed).events.at(-1)).toMatchObject({ type: "RUN_ERROR" })
+        expect((await getRun(failed.runId, { runToken: token })).status).toBe("failed")
+
+        const answer = await resume()
+        assertRunStream(answer.ex, answer)
+        expect((await getRun(answer.runId, { runToken: token })).status).toBe("succeeded")
+
+        // A second live answer, with a new runId → 409, and no run.
+        const again = runBody({ threadId, previousRunId: first.runId, resume: answers })
+        const second = await call(op("startRun"), { headers: { "x-run-token": token }, body: again })
+        expect(second.status).toBe(409)
+        contract.assertConforms("startRun", second)
+        expect(code(second)).toBe("run_already_resumed")
+        const missing = await call(op("getRun"), {
+          headers: { "x-run-token": token },
+          pathParams: { runId: again.runId as string },
+        })
+        expect(missing.status).toBe(404)
+
+        // The resume's own idempotent retry still replays it.
+        const retry = await callSse(op("startRun"), { body: answer.body, headers: { "x-run-token": token } })
+        expect(retry.status).toBe(200)
+        expect(retry.text).toBe(answer.ex.text)
+      },
+      TIMEOUT,
+    )
+
     test.skipIf(!env.authToken)(
       "status / cancel for a signed-in run; another user's run is the same 404",
       async () => {

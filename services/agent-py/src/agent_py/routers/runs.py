@@ -66,6 +66,7 @@ from ..runs.model import ContractStatus, RunCursor, RunMode, RunOwner, RunRecord
 from ..runs.native_harness import validate_run_options
 from ..runs.repository import (
     InvalidPageToken,
+    PreviousRunAlreadyResumed,
     PreviousRunNotFound,
     RunFilter,
     RunIdConflict,
@@ -95,6 +96,7 @@ AUTH_REQUIRED_MESSAGE = "Sign in to use AI features on this server."
 
 _RUN_NOT_FOUND = "Run not found."
 _RUN_ID_CONFLICT = "This runId is already in use."
+_RUN_ALREADY_RESUMED = "Another run already answers this run's interrupts."
 
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
@@ -380,6 +382,8 @@ async def start_run(
             _raise(404, "not_found", "Thread not found.")
         except PreviousRunNotFound:
             _raise(409, "invalid_state", "The previous run is not one of yours on this thread.")
+        except PreviousRunAlreadyResumed:
+            _raise(409, "run_already_resumed", _RUN_ALREADY_RESUMED)
         except MemoryStoreFull:
             _raise(503, "unavailable", "Too many runs in progress on this server. Retry shortly.")
         except ValueError as exc:

@@ -350,3 +350,29 @@ async def test_a_resume_run_of_another_owner_gets_no_checkpoint() -> None:
         harness=second,
     )
     assert second.inputs[0].previous_checkpoint is None
+
+
+async def test_one_live_resume_per_interrupted_run_in_memory() -> None:
+    from agent_py.runs.repository import PreviousRunAlreadyResumed
+    from agent_py.runs.repository_memory import MemoryRunRepository
+
+    repo = MemoryRunRepository(ttl_seconds=60, max_runs=10)
+    prev = (await repo.create(OWNER, RunSpec(run_id=RUN, thread_id=THREAD, mode="interactive"))).run
+    await repo.settle(prev.id, _interrupt())
+
+    def resume(run_id: str) -> RunSpec:
+        return RunSpec(run_id=run_id, thread_id=THREAD, mode="interactive", previous_run_id=RUN)
+
+    a, b, c = (f"00000000-0000-4000-8000-0000000000d{i}" for i in range(3))
+    assert (await repo.create(OWNER, resume(a))).created
+    try:
+        await repo.create(OWNER, resume(b))
+        raise AssertionError("a second live resume was created")
+    except PreviousRunAlreadyResumed:
+        pass
+    assert not repo.contains(b)
+    # Its own idempotent retry still answers.
+    assert not (await repo.create(OWNER, resume(a))).created
+    # Failed (or cancelled) frees the slot.
+    await repo.settle(a, Failed("provider", "boom"))
+    assert (await repo.create(OWNER, resume(c))).created

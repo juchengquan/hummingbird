@@ -60,6 +60,7 @@ from .repository import (
     DEFAULT_LEASE_SECONDS,
     CreateResult,
     InvalidPageToken,
+    PreviousRunAlreadyResumed,
     PreviousRunNotFound,
     RunFilter,
     RunIdConflict,
@@ -109,6 +110,9 @@ _RUN_COLUMNS = """
 """
 
 _LIVE = ("queued", "running")
+
+_ONE_LIVE_RESUME = "tasks_one_live_resume"
+"""0042's unique index: one live resume per interrupted run."""
 
 # A row the contract calls `interrupted` (RUN_EVENTS.md § 1), in SQL.
 _INTERRUPTED_SQL = (
@@ -273,6 +277,8 @@ class PgRunRepository:
             state = _sqlstate(exc)
             message = str(getattr(exc, "message", "") or exc)
             if state == "23505":
+                if getattr(exc, "constraint_name", None) == _ONE_LIVE_RESUME:
+                    raise PreviousRunAlreadyResumed() from None
                 raise RunIdConflict() from None
             if state == "P0002":
                 if "previous" in message:

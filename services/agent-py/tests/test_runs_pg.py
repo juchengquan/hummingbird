@@ -287,6 +287,52 @@ async def test_an_interrupted_settle_stores_the_checkpoint_for_its_owner_only(
     assert await repo.load_checkpoint(me, other.id) == {"k": 1}
 
 
+async def test_one_live_resume_per_interrupted_run(
+    pool: asyncpg.Pool, users: tuple[tuple[str, str], tuple[str, str]]
+) -> None:
+    import asyncio
+
+    from agent_py.runs.repository import PreviousRunAlreadyResumed
+
+    (alice, _), _ = users
+    me = RunOwner.user(alice)
+    repo, other = PgRunRepository(pool), PgRunRepository(pool)
+    thread = _id()
+    prev = (await repo.create(me, _interactive(thread))).run
+    assert await repo.settle(prev.id, Interrupted((PendingInterrupt(id="i1", tool="send"),)))
+
+    # Two concurrent creates (separate connections) with different ids:
+    # exactly one wins, the other is the distinct error, not a conflict.
+    ids = [_id() for _ in range(4)]
+    results = await asyncio.gather(
+        *(
+            r.create(me, _interactive(thread, run_id=i, previous_run_id=prev.id))
+            for r, i in zip((repo, other, repo, other), ids, strict=True)
+        ),
+        return_exceptions=True,
+    )
+    won = [r for r in results if not isinstance(r, BaseException)]
+    lost = [r for r in results if isinstance(r, BaseException)]
+    assert len(won) == 1 and won[0].created
+    assert len(lost) == 3 and all(isinstance(e, PreviousRunAlreadyResumed) for e in lost)
+    winner = won[0].run.id
+    for i in ids:
+        if i != winner:
+            assert await repo.get(me, i) is None
+    # The winner's idempotent retry still answers; a fresh id still refused.
+    again = await repo.create(me, _interactive(thread, run_id=winner, previous_run_id=prev.id))
+    assert not again.created
+    with pytest.raises(PreviousRunAlreadyResumed):
+        await repo.create(me, _interactive(thread, previous_run_id=prev.id))
+    # A plain id clash is still RunIdConflict.
+    with pytest.raises(RunIdConflict):
+        await repo.create(me, _interactive(_id(), run_id=winner))
+    # Failed / cancelled frees the slot.
+    assert await repo.settle(winner, Cancelled())
+    retry = await repo.create(me, _interactive(thread, previous_run_id=prev.id))
+    assert retry.created
+
+
 async def test_cancel_cascades_to_background_children(
     pool: asyncpg.Pool, users: tuple[tuple[str, str], tuple[str, str]]
 ) -> None:

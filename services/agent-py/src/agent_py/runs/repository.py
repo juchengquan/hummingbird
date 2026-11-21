@@ -62,6 +62,7 @@ __all__ = [
     "CreateResult",
     "InMemoryRunRepository",
     "InvalidPageToken",
+    "PreviousRunAlreadyResumed",
     "PreviousRunNotFound",
     "RunFilter",
     "RunIdConflict",
@@ -90,6 +91,13 @@ class ThreadNotFound(Exception):
 class PreviousRunNotFound(Exception):
     """`previous_run_id` is not one of the owner's runs on the same thread
     (API: 409 `invalid_state`)."""
+
+
+class PreviousRunAlreadyResumed(Exception):
+    """Another run already answers `previous_run_id` and has not failed or
+    been cancelled — one live resume per interrupted run (0042's
+    `tasks_one_live_resume`), so an approved tool cannot run twice
+    (API: 409 `run_already_resumed`)."""
 
 
 class InvalidPageToken(Exception):
@@ -164,7 +172,10 @@ class RunRepository(Protocol):
         (`enqueue_task_job`). Interactive: created `running` with a lease;
         an anonymous owner may only create interactive runs (`ValueError`).
         `previous_run_id`, when set, must be the owner's run on the same
-        thread (`PreviousRunNotFound`)."""
+        thread (`PreviousRunNotFound`), and no other run that is not
+        `failed` / `cancelled` may have it as its previous run
+        (`PreviousRunAlreadyResumed`) — checked atomically with the
+        insert, so two concurrent resumes cannot both be created."""
         ...
 
     async def get(self, owner: RunOwner, run_id: str) -> RunRecord | None:
@@ -336,6 +347,14 @@ class InMemoryRunRepository:
             prev = self._owned(owner, spec.previous_run_id)
             if prev is None or prev.record.thread_id != spec.thread_id:
                 raise PreviousRunNotFound()
+            # 0042's `tasks_one_live_resume`; no await between this check
+            # and the insert below, so it is atomic in one event loop.
+            if any(
+                row.record.previous_run_id == spec.previous_run_id
+                and row.record.internal_status not in ("failed", "cancelled")
+                for row in self._rows.values()
+            ):
+                raise PreviousRunAlreadyResumed()
 
         now = self._clock()
         if spec.mode == "background":

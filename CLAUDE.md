@@ -174,7 +174,7 @@ SQL lives under `supabase/migrations/` as numbered files applied in order (`0001
 `0036_task_job_stale_lease_backfill.sql`,
 `0037_validate_artifacts_kind_check.sql`, `0038_mcp_pgcrypto_schema.sql`,
 `0039_mcp_upsert_foreign_id.sql`, `0040_task_worker_liveness.sql`,
-`0041_runs_on_tasks.sql`) — see `docs/SUPABASE_SETUP.md`
+`0041_runs_on_tasks.sql`, `0042_one_live_resume.sql`) — see `docs/SUPABASE_SETUP.md`
 for the hosted-cloud run order, or `docs/SUPABASE_LOCAL.md` for the
 local Supabase CLI path (Docker-based, no cloud account needed). For
 verifying the file full-text retrieval pipeline end-to-end after
@@ -210,7 +210,10 @@ background rows also keep `conversation_id = thread_id`, interactive
 rows have `conversation_id` NULL (their conversation may not have synced)
 and are deleted with their conversation by a trigger. Interactive runs
 are created with the `create_run` RPC (idempotent on the client-minted
-id). **Every old task surface only sees `mode = 'background'`** — a new
+id). One live resume per interrupted run (0042): the unique partial
+index `tasks_one_live_resume` on `previous_run_id` (rows not `failed` /
+`cancelled`), surfaced by `create_run` as 23505 with that constraint
+name → `409 run_already_resumed`. **Every old task surface only sees `mode = 'background'`** — a new
 reader of `tasks` for the task routes must filter on it too (see
 `lib/server/agent/store.ts`).
 

@@ -277,7 +277,12 @@ export interface paths {
          *     names the interrupted run; it must be the caller's, on the same
          *     thread, `interrupted`, and `resume[]` must cover exactly its open
          *     interrupts — otherwise `409 invalid_state`. A `resume[]` without
-         *     `previousRunId` is `400 invalid_request`.
+         *     `previousRunId` is `400 invalid_request`. An interrupted run has
+         *     at most one live resume: while another run answering it is
+         *     running, interrupted or succeeded, a new one is `409
+         *     run_already_resumed` (an idempotent retry of that resume, same
+         *     `runId`, still replays it); once it has failed or been cancelled,
+         *     the interrupts can be answered again with a new `runId`.
          *
          *     A `forwardedProps.model` outside the backend's allow-list is `400
          *     unknown_model`, answered before the run exists (as `/v1/chat`):
@@ -620,7 +625,8 @@ export interface components {
          *     `unavailable`, `rate_limit`, `context_window`, `invalid_model`,
          *     `unknown_model`, `provider`, `aborted`, `unknown`. See
          *     `lib/shared/api-errors.ts`. The runs operations add
-         *     `run_id_conflict` and use `invalid_state`.
+         *     `run_id_conflict` and `run_already_resumed`, and use
+         *     `invalid_state`.
          */
         ApiError: {
             /**
@@ -2575,7 +2581,12 @@ export interface operations {
              *     not an idempotent retry of it (identical body in every case);
              *     `invalid_state` — a resume that does not match the previous
              *     run (not the caller's, another thread, not `interrupted`, or
-             *     `resume[]` not covering exactly its open interrupts).
+             *     `resume[]` not covering exactly its open interrupts);
+             *     `run_already_resumed` — another run already answers the
+             *     previous run's interrupts and has not failed or been
+             *     cancelled (one live resume per interrupted run, so an
+             *     approved tool never runs twice; after a failed or cancelled
+             *     resume, answer again with a new `runId`).
              */
             409: {
                 headers: {

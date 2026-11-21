@@ -163,8 +163,13 @@ class FakeAnthropic:
 # --- tools ------------------------------------------------------------------------------
 
 
+EXECUTED: list[str] = []
+"""Every tool execution, by name (cleared per test by `serve`)."""
+
+
 def _tool(name: str, full: str, summary: str) -> ToolDescriptor:
     async def execute(_args: dict[str, Any]) -> ToolInvocationResult:
+        EXECUTED.append(name)
         return ToolInvocationResult(text=full, summary=summary)
 
     return ToolDescriptor(
@@ -267,6 +272,8 @@ def serve(backend: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..
     user deleted) after the test."""
     started: list[tuple[uvicorn.Server, threading.Thread, Env]] = []
     seeded: list[str] = []
+
+    EXECUTED.clear()
 
     def start(*turns: Turn, **env: str) -> Env:
         model = FakeAnthropic(*turns)
@@ -479,7 +486,11 @@ def test_interactive_start_streams_valid_agui(serve: Callable[..., Env]) -> None
         }
         closing = frames[-1][1]
         assert closing["type"] == "RUN_FINISHED" and closing["outcome"] == {"type": "success"}
-        # The run's text is every step's text (as on /v1/chat).
+        # The run's text is every step's text, concatenated — exactly the
+        # final assistant message a /v1/chat user sees: the client appends
+        # every text delta of the turn to one message's content, with no
+        # separator between steps (`appendToMessage` in
+        # lib/client/hooks/use-chat-send.ts, `text-start` ignored).
         assert closing["result"]["text"] == "Let me check.It is done."
         assert closing["result"].get("memoryTainted") is True  # `lookup` is untrusted
         assert closing["usage"]
@@ -661,6 +672,64 @@ def test_approval_interrupt_then_resume_continues_from_the_checkpoint(
     assert set(results) == {"c1", "c2"}
     assert LOOKUP_FULL in json.dumps(results["c1"])
     assert "SEND FULL RESULT" in json.dumps(results["c2"])
+
+
+def test_two_racing_resumes_run_the_approved_tool_once(serve: Callable[..., Env]) -> None:
+    env = serve(
+        Turn([text("Sending.")], tools=[tool_use("c2", "send", to="bob")]),
+        Turn([text("Sent it.")]),
+        Turn([text("Sent it again?")]),
+    )
+    headers = env.auth()
+    first = start_body([user_msg("send it")], model=MODEL, requireApprovalFor=["send"])
+    with env.http() as http:
+        r = http.post("/v1/runs", json=first, headers=headers)
+        assert r.status_code == 200 and '"interrupt"' in r.text
+    assert EXECUTED == []
+
+    def resume_body() -> dict[str, Any]:
+        return {
+            "threadId": first["threadId"],
+            "runId": str(uuid.uuid4()),
+            "messages": [user_msg("send it")],
+            "forwardedProps": {
+                "model": MODEL,
+                "requireApprovalFor": ["send"],
+                "previousRunId": first["runId"],
+            },
+            "resume": [{"interruptId": "c2", "status": "resolved", "payload": {"approved": True}}],
+        }
+
+    bodies = [resume_body(), resume_body()]
+    barrier = threading.Barrier(len(bodies))
+    answers: list[httpx.Response | None] = [None] * len(bodies)
+
+    def post(i: int) -> None:
+        with env.http() as http:
+            barrier.wait()
+            answers[i] = http.post("/v1/runs", json=bodies[i], headers=headers)
+
+    threads = [threading.Thread(target=post, args=(i,)) for i in range(len(bodies))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(20)
+    got = [a for a in answers if a is not None]
+    assert sorted(a.status_code for a in got) == [200, 409], [a.text for a in got]
+    loser = next(a for a in got if a.status_code == 409)
+    assert loser.json()["code"] == "run_already_resumed"
+    winner = next(i for i, a in enumerate(got) if a.status_code == 200)
+    assert parse_sse(got[winner].text)[-1][1]["outcome"] == {"type": "success"}
+    assert EXECUTED == ["send"]
+    with env.http() as http:
+        # The loser left no run; the winner's retry replays, a third is refused.
+        lost = bodies[1 - winner]["runId"]
+        assert http.get(f"/v1/runs/{lost}", headers=headers).status_code == 404
+        retry = http.post("/v1/runs", json=bodies[winner], headers=headers)
+        assert retry.status_code == 200 and parse_sse(retry.text) == parse_sse(got[winner].text)
+        third = http.post("/v1/runs", json=resume_body(), headers=headers)
+        assert third.status_code == 409 and third.json()["code"] == "run_already_resumed"
+    assert EXECUTED == ["send"]
 
 
 def test_cancel_mid_stream(serve: Callable[..., Env]) -> None:
