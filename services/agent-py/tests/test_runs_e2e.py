@@ -184,10 +184,40 @@ def _tool(name: str, full: str, summary: str) -> ToolDescriptor:
     )
 
 
+GENERATED_IMAGE = {
+    "url": "https://storage.example/u/generated/fox.png",
+    "storagePath": "u/generated/fox.png",
+    "width": 1024,
+    "height": 1024,
+    "format": "png",
+    "prompt": "a red fox",
+}
+
+
+def _image_tool() -> ToolDescriptor:
+    """`generateImage` as the real tool returns it (without Minimax)."""
+
+    async def execute(_args: dict[str, Any]) -> ToolInvocationResult:
+        EXECUTED.append("generateImage")
+        return ToolInvocationResult(
+            text=f"Generated 1 image (t2i) for 'a red fox':\n\n[1] {GENERATED_IMAGE['url']}",
+            summary="1 image (t2i)",
+            images=(GENERATED_IMAGE,),
+        )
+
+    return ToolDescriptor(
+        name="generateImage",
+        description="generateImage",
+        input_schema={"type": "object"},
+        execute=execute,
+    )
+
+
 async def _toolset(_run_input: RunInput) -> Toolset:
     tools = [
         _tool("lookup", LOOKUP_FULL, LOOKUP_SUMMARY),
         _tool("send", "SEND FULL RESULT: delivered", "Sent"),
+        _image_tool(),
         build_ask_user_tool(),
         build_render_ui_tool(),
     ]
@@ -835,12 +865,18 @@ def test_ask_user_choice_interrupt_then_answer(serve: Callable[..., Env]) -> Non
         ]
 
 
-def test_render_ui_interrupt(serve: Callable[..., Env]) -> None:
+def test_render_ui_interrupt_then_answer(serve: Callable[..., Env]) -> None:
     env = serve(
-        Turn([], tools=[tool_use("c-ui", "renderUI", kind="confirm", props={"title": "Sure?"})])
+        Turn(
+            [text("One moment.")],
+            tools=[tool_use("c-ui", "renderUI", kind="confirm", props={"prompt": "Sure?"})],
+        ),
+        Turn([text("Done.")]),
     )
+    headers = env.auth()
+    first = start_body([user_msg("ask me")], model=MODEL)
     with env.http() as http:
-        r = http.post("/v1/runs", json=start_body([user_msg("ask me")], model=MODEL))
+        r = http.post("/v1/runs", json=first, headers=headers)
         assert r.status_code == 200, r.text
         env.save("interrupt-ui", r.text)
         frames = parse_sse(r.text)
@@ -848,6 +884,61 @@ def test_render_ui_interrupt(serve: Callable[..., Env]) -> None:
         [interrupt] = frames[-1][1]["outcome"]["interrupts"]
         assert interrupt["reason"] == "ui-part"
         assert interrupt["metadata"]["hummingbird"]["uiKind"] == "confirm"
+        assert interrupt["metadata"]["hummingbird"]["uiProps"] == {"prompt": "Sure?"}
+        # The card's answer: the structured `uiAnswer` + the formatted text
+        # the model is shown (`respondBodyForUiAnswer` minus `requestId`).
+        resume = {
+            "threadId": first["threadId"],
+            "runId": str(uuid.uuid4()),
+            "messages": [user_msg("ask me")],
+            "forwardedProps": {"model": MODEL, "previousRunId": first["runId"]},
+            "resume": [
+                {
+                    "interruptId": "c-ui",
+                    "status": "resolved",
+                    "payload": {"uiAnswer": {"kind": "confirm", "confirmed": True}, "value": "Yes"},
+                }
+            ],
+        }
+        r2 = http.post("/v1/runs", json=resume, headers=headers)
+        assert r2.status_code == 200, r2.text
+        env.save("resume-ui", r2.text)
+        resumed = parse_sse(r2.text)
+        check_ids(resumed)
+        assert resumed[-1][1]["outcome"] == {"type": "success"}
+        [result] = [f[1] for f in resumed if f[1]["type"] == "TOOL_CALL_RESULT"]
+        assert result["toolCallId"] == "c-ui"
+        assert json.loads(result["content"])["summary"] == "Yes"
+
+
+def test_render_ui_with_props_the_client_cannot_render_is_a_tool_error(
+    serve: Callable[..., Env],
+) -> None:
+    """`{title}` isn't a confirm part (`prompt` is required): the run
+    doesn't pause on a card that would fail validation in the browser —
+    the model gets the error back and answers on."""
+    env = serve(
+        Turn([], tools=[tool_use("c-ui", "renderUI", kind="confirm", props={"title": "Sure?"})]),
+        Turn([text("Let me just ask: sure?")]),
+    )
+    with env.http() as http:
+        r = http.post(
+            "/v1/runs", json=start_body([user_msg("ask me")], model=MODEL), headers=env.auth()
+        )
+        assert r.status_code == 200, r.text
+        frames = parse_sse(r.text)
+        check_ids(frames)
+        assert frames[-1][1]["outcome"] == {"type": "success"}
+        [result] = [f[1] for f in frames if f[1]["type"] == "TOOL_CALL_RESULT"]
+        assert result["toolCallId"] == "c-ui"
+        assert "'prompt' is a required property" in json.loads(result["content"])["summary"]
+    tool_results = [
+        b
+        for m in env.model.requests[-1]["messages"]
+        for b in (m["content"] if isinstance(m["content"], list) else [])
+        if b.get("type") == "tool_result"
+    ]
+    assert [b["is_error"] for b in tool_results] == [True]
 
 
 def test_model_failure_ends_the_stream_with_run_error(serve: Callable[..., Env]) -> None:
@@ -882,6 +973,136 @@ def test_unknown_model_is_400_without_a_run(serve: Callable[..., Env]) -> None:
 
         assert _db(count) == 0
     assert env.model.requests == []
+
+
+# --- attachments, reasoning effort, generated images (wave 4b-D) -----------------------------
+
+PNG_B64 = "iVBORw0KGgo="  # the PNG signature
+NOTES_B64 = "UTMgcmV2ZW51ZSB3YXMgdXAu"  # "Q3 revenue was up."
+
+
+def test_attachments_and_reasoning_effort_reach_the_model(serve: Callable[..., Env]) -> None:
+    env = serve(Turn([text("Revenue rose.")]))
+    message = {
+        "id": "u1",
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "Summarise the attachments."},
+            {
+                "type": "image",
+                "source": {"type": "data", "value": PNG_B64, "mimeType": "image/png"},
+            },
+            {
+                "type": "document",
+                "source": {"type": "data", "value": NOTES_B64, "mimeType": "text/plain"},
+                "metadata": {"name": "q3.txt", "truncated": True},
+            },
+        ],
+    }
+    body = start_body([message], model=MODEL, reasoningEffort="high")
+    with env.http() as http:
+        r = http.post("/v1/runs", json=body, headers=env.auth())
+        assert r.status_code == 200, r.text
+        closing = parse_sse(r.text)[-1][1]
+        assert closing["type"] == "RUN_FINISHED" and closing["result"]["text"] == "Revenue rose."
+        # Uploaded content is third-party: no memory extraction.
+        assert closing["result"]["memoryTainted"] is True
+    (req,) = env.model.requests
+    assert req["thinking"] == {"type": "enabled", "budget_tokens": 16384}
+    assert req["max_tokens"] == 16384 + 8192
+    assert req["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Summarise the attachments."},
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": "image/png", "data": PNG_B64},
+                },
+                {
+                    "type": "document",
+                    "source": {
+                        "type": "text",
+                        "media_type": "text/plain",
+                        "data": "Q3 revenue was up.",
+                    },
+                    "title": "q3.txt",
+                    "context": "The text was extracted from the file and truncated.",
+                },
+            ],
+        }
+    ]
+
+
+def test_invalid_attachment_is_400_without_a_run(serve: Callable[..., Env]) -> None:
+    env = serve()
+    bad_parts = [
+        {"type": "image", "source": {"type": "data", "value": PNG_B64, "mimeType": "image/bmp"}},
+        {"type": "audio", "source": {"type": "data", "value": PNG_B64, "mimeType": "audio/wav"}},
+        {"type": "image", "source": {"type": "data", "value": "%%%", "mimeType": "image/png"}},
+    ]
+    for headers in (env.auth(), {}):
+        for part in bad_parts:
+            msg = {"id": "u1", "role": "user", "content": [{"type": "text", "text": "x"}, part]}
+            body = start_body([msg], model=MODEL)
+            with env.http() as http:
+                r = http.post("/v1/runs", json=body, headers=headers)
+                assert r.status_code == 400, r.text
+                err = r.json()
+                assert err["code"] == "invalid_attachment"
+                assert err["message"].startswith("messages[0].content[1]: ")
+                assert http.get(f"/v1/runs/{body['runId']}", headers=env.auth()).status_code == 404
+    # A reasoning tier outside the enum is a validation error.
+    with env.http() as http:
+        r = http.post(
+            "/v1/runs",
+            json=start_body([user_msg("hi")], model=MODEL, reasoningEffort="max"),
+            headers=env.auth(),
+        )
+        assert r.status_code == 422 and r.json()["code"] == "invalid_request"
+    assert env.model.requests == []
+
+
+def test_generated_image_streams_as_an_activity(serve: Callable[..., Env]) -> None:
+    env = serve(
+        Turn([text("Drawing.")], tools=[tool_use("c-img", "generateImage", prompt="a red fox")]),
+        Turn([text("Here is your fox.")]),
+    )
+    body = start_body([user_msg("draw a fox")], model=MODEL, skills=[{"id": "imageGen"}])
+    with env.http() as http:
+        r = http.post("/v1/runs", json=body, headers=env.auth())
+        assert r.status_code == 200, r.text
+        env.save("generated-image", r.text)
+        frames = parse_sse(r.text)
+        check_ids(frames)
+        events = [f[1] for f in frames]
+        kinds = types(frames)
+        result_at = next(
+            i
+            for i, e in enumerate(events)
+            if e["type"] == "TOOL_CALL_RESULT" and e["toolCallId"] == "c-img"
+        )
+        activity = events[result_at + 1]
+        assert activity == {
+            "type": "ACTIVITY_SNAPSHOT",
+            "messageId": f"{body['runId']}:tool_image:c-img",
+            "activityType": "hummingbird.tool_image",
+            "content": {
+                "id": "c-img",
+                "mode": "t2i",
+                "images": [{"id": "c-img-0", **GENERATED_IMAGE, "mode": "t2i"}],
+            },
+            "replace": True,
+        }
+        closing = events[-1]
+        assert closing["type"] == "RUN_FINISHED"
+        assert closing["result"]["text"] == "Drawing.Here is your fox."
+        assert not closing["result"].get("memoryTainted")  # generateImage is trusted
+        assert kinds.count("ACTIVITY_SNAPSHOT") == 1
+        # A rejoin replays the part in place.
+        replay = http.get(f"/v1/runs/{body['runId']}/events", headers=env.auth())
+        assert parse_sse(replay.text) == frames
+    assert EXECUTED == ["generateImage"]
 
 
 # --- background (Postgres only) --------------------------------------------------------------

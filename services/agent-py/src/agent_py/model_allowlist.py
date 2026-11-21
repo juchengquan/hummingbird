@@ -64,6 +64,16 @@ class ModelAllowlist:
     """Catalog ids flagged `supportsStructuredOutput` — the same flag
     `modelSupportsStructuredOutput` in `lib/shared/models.ts` reads."""
 
+    reasoning_effort: frozenset[str] = frozenset()
+    """Catalog ids flagged `supportsReasoningEffort` — the flag
+    `modelSupportsReasoningEffort` in `lib/shared/models.ts` reads (the
+    models that take a thinking budget)."""
+
+    def supports_reasoning_effort(self, model_id: str | None) -> bool:
+        """Whether the catalog flags `model_id` (absent / empty → the
+        default model) as taking a reasoning-effort tier."""
+        return (model_id or self.default_model) in self.reasoning_effort
+
     def supports_structured_output(self, model_id: str | None) -> bool:
         """Whether the catalog flags `model_id` (absent / empty → the
         default model) as supporting native structured output."""
@@ -94,6 +104,7 @@ def parse_allowlist(raw: Any, *, default_model: str, source: str = "models.json"
         raise ModelConfigError(f"{source}: expected an object with a `models` array")
     api_ids: dict[str, str] = {}
     structured: set[str] = set()
+    reasoning: set[str] = set()
     for entry in models:
         if not isinstance(entry, dict):
             continue
@@ -111,6 +122,8 @@ def parse_allowlist(raw: Any, *, default_model: str, source: str = "models.json"
         api_ids[model_id] = api_id
         if entry.get("supportsStructuredOutput") is True:
             structured.add(model_id)
+        if entry.get("supportsReasoningEffort") is True:
+            reasoning.add(model_id)
     if not api_ids:
         raise ModelConfigError(f"{source}: no {ANTHROPIC_PREFIX}* models — nothing to serve")
     if default_model not in api_ids:
@@ -122,6 +135,7 @@ def parse_allowlist(raw: Any, *, default_model: str, source: str = "models.json"
         api_ids=api_ids,
         default_model=default_model,
         structured_output=frozenset(structured),
+        reasoning_effort=frozenset(reasoning),
     )
 
 

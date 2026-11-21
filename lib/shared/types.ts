@@ -414,6 +414,8 @@ export type MessageErrorCode =
   | 'context_window'
   | 'invalid_model'
   | 'unknown_model'
+  /** An attachment the backend can't give the model (runs, 400). */
+  | 'invalid_attachment'
   | 'provider'
   | 'network'
   | 'unknown'

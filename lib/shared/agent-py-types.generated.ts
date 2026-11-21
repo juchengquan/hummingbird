@@ -1561,6 +1561,8 @@ export interface components {
             requireApprovalFor?: components["schemas"]["RequireApprovalForItem"][] | null;
             /** Workspaceid */
             workspaceId?: string | null;
+            /** Reasoningeffort */
+            reasoningEffort?: ("low" | "medium" | "high") | null;
         } & {
             [key: string]: unknown;
         };
@@ -1681,6 +1683,24 @@ export interface components {
          *     display state and are not sent to the model. `tools` are
          *     client-side tools; the backend's own tools come from
          *     `forwardedProps.skills`.
+         *
+         *     **Attachments.** A user message's `content` may list `image` and
+         *     `document` parts (AG-UI `ContentPart`) next to its `text`:
+         *
+         *     | part | source | limit |
+         *     |---|---|---|
+         *     | `image` | `data` with `mimeType` `image/jpeg`, `image/png`, `image/gif` or `image/webp` | 5 MiB of base64 each |
+         *     | `image` | `url` (`https://`) | — |
+         *     | `document` | `data` with a `text/*` `mimeType` — the file's extracted text, UTF-8 | 1 MiB of text each |
+         *     | `document` | `data` with `application/pdf` | 10 MiB of base64 each |
+         *     | `document` | `url` (`https://`, a PDF) | — |
+         *
+         *     At most 20 images and 40 documents per run, over all messages. A
+         *     document's `metadata.name` is its title for the model, and
+         *     `metadata.truncated: true` tells the model the text was cut.
+         *     Anything else — `audio` / `video` parts, `file` (provider handle)
+         *     sources, other media types, malformed base64, a part over its
+         *     limit, more parts than allowed — is `400 invalid_attachment`.
          */
         StartRunRequest: {
             threadId: components["schemas"]["UuidString"];

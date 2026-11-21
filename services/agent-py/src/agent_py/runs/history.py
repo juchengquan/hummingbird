@@ -6,7 +6,7 @@ The browser owns the conversation history and sends it with every run
 
 | AG-UI message | Anthropic |
 |---|---|
-| `user` (text, or `text` / `image` / `document` parts) | `user` turn (text / image / document blocks) |
+| `user` (text, or `text` / `image` / `document` parts) | `user` turn (text / image / document blocks — see *Attachments*) |
 | `assistant` (`content` + `toolCalls`) | `assistant` turn (`text` + `tool_use` blocks; `arguments` JSON-decoded) |
 | `tool` | `tool_result` block in a `user` turn (`error` → `is_error`) |
 | `system` / `developer` | not a turn: their text joins the system prompt (`system_texts`) |
@@ -17,6 +17,26 @@ roles merge), every `tool_use` is answered in the very next `user` turn
 (a call the history never answered — an abandoned interrupt — gets an
 error `tool_result`; a `tool_result` answering nothing is dropped), and
 the first turn is the user's.
+
+**Attachments** (Q32, wave 4b-D) — the media parts of a `user` message:
+
+| part | source | Anthropic block |
+|---|---|---|
+| `image` | `data`, `mimeType` one of `IMAGE_MEDIA_TYPES` | `image`, base64 source |
+| `image` | `url` (`https://` only) | `image`, url source |
+| `document` | `data`, `mimeType` `text/*` (extracted text, UTF-8) | `document`, text source |
+| `document` | `data`, `application/pdf` | `document`, base64 source |
+| `document` | `url` (`https://`, a PDF) | `document`, url source |
+
+A document's `metadata.name` becomes the block's `title`, and
+`metadata.truncated: true` adds a `context` note that the text was cut.
+Anything else — an `audio` / `video` part, a provider `file` handle, an
+unsupported media type, malformed base64, a part over its size limit, or
+more images / documents than the limits allow — is refused:
+`check_attachments` raises `AttachmentRejected` (the API answers `400
+invalid_attachment` before the run exists), rather than the model
+silently never seeing what the user attached. `to_anthropic` drops such
+a part (defensive: the API already refused it).
 
 Pure — no I/O, no settings.
 """
@@ -30,8 +50,16 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 __all__ = [
+    "IMAGE_MEDIA_TYPES",
+    "MAX_DOCUMENTS",
+    "MAX_IMAGES",
+    "MAX_IMAGE_BASE64_CHARS",
+    "MAX_PDF_BASE64_CHARS",
+    "MAX_TEXT_DOCUMENT_BYTES",
     "UNANSWERED_TOOL_RESULT",
+    "AttachmentRejected",
     "attach_tool_results",
+    "check_attachments",
     "find_tool_call",
     "last_user_index",
     "last_user_text",
@@ -44,6 +72,36 @@ __all__ = [
 UNANSWERED_TOOL_RESULT = "(No result: this tool call was never completed.)"
 
 AgUiMessage = Mapping[str, object]
+
+# --- Attachment limits -------------------------------------------------------------
+
+#: The image media types Anthropic accepts.
+IMAGE_MEDIA_TYPES: frozenset[str] = frozenset(
+    {"image/jpeg", "image/png", "image/gif", "image/webp"}
+)
+#: Images per request, over the whole history (Anthropic's per-image
+#: dimension limit tightens beyond 20; the client attaches images to the
+#: newest user message only, as `buildTransmittedMessages` does).
+MAX_IMAGES = 20
+#: One inline image, as base64 text — Anthropic's 5 MB image limit.
+MAX_IMAGE_BASE64_CHARS = 5 * 1024 * 1024
+#: Documents per request — the Next route's `CHAT_ATTACHMENTS_MAX`.
+MAX_DOCUMENTS = 40
+#: One text document, decoded (the Next route's attachment text fields
+#: stay under 220k characters, ≤ 660 KB of UTF-8).
+MAX_TEXT_DOCUMENT_BYTES = 1024 * 1024
+#: One inline PDF, as base64 text (the request body is capped at 16 MB).
+MAX_PDF_BASE64_CHARS = 10 * 1024 * 1024
+_MAX_TITLE = 500
+_TRUNCATED_CONTEXT = "The text was extracted from the file and truncated."
+
+
+class AttachmentRejected(ValueError):
+    """A user message part the model cannot be given (see *Attachments*
+    in the module docstring). The API maps it to `400
+    {"code": "invalid_attachment", "message": str(exc)}`."""
+
+    code = "invalid_attachment"
 
 
 def last_user_index(messages: Sequence[AgUiMessage]) -> int:
@@ -201,47 +259,140 @@ def _user_content(content: object) -> str | list[dict[str, Any]]:
         return ""
     blocks: list[dict[str, Any]] = []
     for part in content:
-        if isinstance(part, Mapping):
+        if not isinstance(part, Mapping):
+            continue
+        try:
             block = _part_block(part)
-            if block is not None:
-                blocks.append(block)
+        except AttachmentRejected:
+            continue  # refused at the API (`check_attachments`)
+        if block is not None:
+            blocks.append(block)
     return blocks
 
 
+def check_attachments(messages: Iterable[AgUiMessage]) -> None:
+    """Raise `AttachmentRejected` unless every media part of every `user`
+    message converts (see *Attachments*) and the counts are within
+    `MAX_IMAGES` / `MAX_DOCUMENTS`."""
+    images = documents = 0
+    for i, m in enumerate(messages):
+        content = m.get("content")
+        if m.get("role") != "user" or not isinstance(content, list):
+            continue
+        for j, part in enumerate(content):
+            if not isinstance(part, Mapping) or part.get("type") == "text":
+                continue
+            try:
+                block = _part_block(part)
+            except AttachmentRejected as exc:
+                raise AttachmentRejected(f"messages[{i}].content[{j}]: {exc}") from None
+            if block is None:
+                continue
+            if block["type"] == "image":
+                images += 1
+            else:
+                documents += 1
+    if images > MAX_IMAGES:
+        raise AttachmentRejected(f"Too many images: {images} (at most {MAX_IMAGES} per run).")
+    if documents > MAX_DOCUMENTS:
+        raise AttachmentRejected(
+            f"Too many documents: {documents} (at most {MAX_DOCUMENTS} per run)."
+        )
+
+
+def _mib(n: int) -> str:
+    return f"{n / (1024 * 1024):g} MiB"
+
+
+def _b64decode(value: str) -> bytes:
+    try:
+        return base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError):
+        raise AttachmentRejected("the data is not valid base64.") from None
+
+
+def _https(value: str, kind: str) -> str:
+    if not value.lower().startswith("https://"):
+        raise AttachmentRejected(f"an {kind} URL must be an https:// URL.")
+    return value
+
+
 def _part_block(part: Mapping[str, object]) -> dict[str, Any] | None:
+    """One user message part as an Anthropic block; None for an empty
+    text part. Raises `AttachmentRejected` for a media part that cannot
+    be given to the model."""
     kind = part.get("type")
     if kind == "text":
         text = part.get("text")
         return {"type": "text", "text": text} if isinstance(text, str) and text else None
+    if kind not in ("image", "document"):
+        raise AttachmentRejected(f"{kind!s} parts are not supported (images and documents are).")
     source = part.get("source")
-    if kind not in ("image", "document") or not isinstance(source, Mapping):
-        return None
+    if not isinstance(source, Mapping):
+        raise AttachmentRejected(f"the {kind} has no source.")
     src_type = source.get("type")
     value = source.get("value")
     mime = source.get("mimeType")
     if not isinstance(value, str) or not value:
-        return None
-    if src_type == "url":
-        return {"type": kind, "source": {"type": "url", "url": value}}
-    if src_type != "data" or not isinstance(mime, str):
-        return None  # provider file handles are not ours to resolve
-    if kind == "image" and mime.startswith("image/"):
+        raise AttachmentRejected(f"the {kind} source is empty.")
+    if src_type == "file":
+        raise AttachmentRejected("provider file handles are not supported; send the data inline.")
+    if kind == "image":
+        if src_type == "url":
+            return {"type": "image", "source": {"type": "url", "url": _https(value, "image")}}
+        if mime not in IMAGE_MEDIA_TYPES:
+            raise AttachmentRejected(
+                f"image type {mime!s} is not supported ({', '.join(sorted(IMAGE_MEDIA_TYPES))})."
+            )
+        if len(value) > MAX_IMAGE_BASE64_CHARS:
+            raise AttachmentRejected(
+                f"the image is too large ({_mib(len(value))} of base64; "
+                f"at most {_mib(MAX_IMAGE_BASE64_CHARS)})."
+            )
+        _b64decode(value)
         return {"type": "image", "source": {"type": "base64", "media_type": mime, "data": value}}
-    if kind == "document" and mime == "application/pdf":
-        return {
+    block: dict[str, Any]
+    if src_type == "url":
+        if isinstance(mime, str) and mime != "application/pdf":
+            raise AttachmentRejected("a document URL must point to a PDF.")
+        block = {"type": "document", "source": {"type": "url", "url": _https(value, "document")}}
+    elif mime == "application/pdf":
+        if len(value) > MAX_PDF_BASE64_CHARS:
+            raise AttachmentRejected(
+                f"the PDF is too large ({_mib(len(value))} of base64; "
+                f"at most {_mib(MAX_PDF_BASE64_CHARS)})."
+            )
+        _b64decode(value)
+        block = {
             "type": "document",
             "source": {"type": "base64", "media_type": mime, "data": value},
         }
-    if kind == "document" and mime.startswith("text/"):
-        try:
-            text = base64.b64decode(value, validate=True).decode("utf-8", errors="replace")
-        except (binascii.Error, ValueError):
-            return None
-        return {
+    elif isinstance(mime, str) and mime.startswith("text/"):
+        raw = _b64decode(value)
+        if len(raw) > MAX_TEXT_DOCUMENT_BYTES:
+            raise AttachmentRejected(
+                f"the document is too large ({_mib(len(raw))}; "
+                f"at most {_mib(MAX_TEXT_DOCUMENT_BYTES)} of text)."
+            )
+        text = raw.decode("utf-8", errors="replace")
+        if not text.strip():
+            raise AttachmentRejected("the document is empty.")
+        block = {
             "type": "document",
             "source": {"type": "text", "media_type": "text/plain", "data": text},
         }
-    return None
+    else:
+        raise AttachmentRejected(
+            f"document type {mime!s} is not supported (text/* or application/pdf)."
+        )
+    metadata = part.get("metadata")
+    if isinstance(metadata, Mapping):
+        name = metadata.get("name")
+        if isinstance(name, str) and name.strip():
+            block["title"] = name.strip()[:_MAX_TITLE]
+        if metadata.get("truncated") is True:
+            block["context"] = _TRUNCATED_CONTEXT
+    return block
 
 
 def _tool_result_text(content: object) -> str:

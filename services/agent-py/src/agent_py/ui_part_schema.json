@@ -1,0 +1,390 @@
+{
+ "$comment": "DO NOT EDIT — generated from UiPartSchema (lib/shared/generative-ui/schemas.ts) by `bun run codegen:agent-py-parity`.",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "oneOf": [
+  {
+   "type": "object",
+   "properties": {
+    "kind": {
+     "type": "string",
+     "const": "info-table"
+    },
+    "props": {
+     "type": "object",
+     "properties": {
+      "title": {
+       "type": "string",
+       "maxLength": 200
+      },
+      "columns": {
+       "minItems": 1,
+       "maxItems": 6,
+       "type": "array",
+       "items": {
+        "type": "object",
+        "properties": {
+         "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+         },
+         "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+         }
+        },
+        "required": [
+         "id",
+         "label"
+        ]
+       }
+      },
+      "rows": {
+       "maxItems": 50,
+       "type": "array",
+       "items": {
+        "type": "object",
+        "propertyNames": {
+         "type": "string",
+         "minLength": 1,
+         "maxLength": 80
+        },
+        "additionalProperties": {
+         "type": "string",
+         "maxLength": 500
+        }
+       }
+      }
+     },
+     "required": [
+      "rows"
+     ]
+    }
+   },
+   "required": [
+    "kind",
+    "props"
+   ]
+  },
+  {
+   "type": "object",
+   "properties": {
+    "kind": {
+     "type": "string",
+     "const": "choice"
+    },
+    "props": {
+     "type": "object",
+     "properties": {
+      "prompt": {
+       "type": "string",
+       "minLength": 1,
+       "maxLength": 500
+      },
+      "options": {
+       "minItems": 2,
+       "maxItems": 8,
+       "type": "array",
+       "items": {
+        "type": "object",
+        "properties": {
+         "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+         },
+         "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+         }
+        },
+        "required": [
+         "id",
+         "label"
+        ]
+       }
+      },
+      "multiSelect": {
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "prompt",
+      "options"
+     ]
+    }
+   },
+   "required": [
+    "kind",
+    "props"
+   ]
+  },
+  {
+   "type": "object",
+   "properties": {
+    "kind": {
+     "type": "string",
+     "const": "confirm"
+    },
+    "props": {
+     "type": "object",
+     "properties": {
+      "prompt": {
+       "type": "string",
+       "minLength": 1,
+       "maxLength": 500
+      },
+      "confirmLabel": {
+       "type": "string",
+       "minLength": 1,
+       "maxLength": 40
+      },
+      "cancelLabel": {
+       "type": "string",
+       "minLength": 1,
+       "maxLength": 40
+      }
+     },
+     "required": [
+      "prompt"
+     ]
+    }
+   },
+   "required": [
+    "kind",
+    "props"
+   ]
+  },
+  {
+   "type": "object",
+   "properties": {
+    "kind": {
+     "type": "string",
+     "const": "mini-form"
+    },
+    "props": {
+     "type": "object",
+     "properties": {
+      "prompt": {
+       "type": "string",
+       "maxLength": 500
+      },
+      "fields": {
+       "minItems": 1,
+       "maxItems": 4,
+       "type": "array",
+       "items": {
+        "oneOf": [
+         {
+          "type": "object",
+          "properties": {
+           "type": {
+            "type": "string",
+            "const": "text"
+           },
+           "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+           },
+           "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+           },
+           "placeholder": {
+            "type": "string",
+            "maxLength": 160
+           },
+           "maxLength": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2000
+           }
+          },
+          "required": [
+           "type",
+           "id",
+           "label"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "type": {
+            "type": "string",
+            "const": "number"
+           },
+           "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+           },
+           "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+           },
+           "placeholder": {
+            "type": "string",
+            "maxLength": 40
+           },
+           "min": {
+            "type": "number"
+           },
+           "max": {
+            "type": "number"
+           }
+          },
+          "required": [
+           "type",
+           "id",
+           "label"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "type": {
+            "type": "string",
+            "const": "select"
+           },
+           "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+           },
+           "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+           },
+           "options": {
+            "minItems": 2,
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+             "type": "object",
+             "properties": {
+              "id": {
+               "type": "string",
+               "minLength": 1,
+               "maxLength": 80
+              },
+              "label": {
+               "type": "string",
+               "minLength": 1,
+               "maxLength": 160
+              }
+             },
+             "required": [
+              "id",
+              "label"
+             ]
+            }
+           }
+          },
+          "required": [
+           "type",
+           "id",
+           "label",
+           "options"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "type": {
+            "type": "string",
+            "const": "date"
+           },
+           "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+           },
+           "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+           },
+           "min": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+           },
+           "max": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+           }
+          },
+          "required": [
+           "type",
+           "id",
+           "label"
+          ]
+         }
+        ]
+       }
+      },
+      "submitLabel": {
+       "type": "string",
+       "minLength": 1,
+       "maxLength": 40
+      }
+     },
+     "required": [
+      "fields"
+     ]
+    }
+   },
+   "required": [
+    "kind",
+    "props"
+   ]
+  },
+  {
+   "type": "object",
+   "properties": {
+    "kind": {
+     "type": "string",
+     "const": "date-picker"
+    },
+    "props": {
+     "type": "object",
+     "properties": {
+      "prompt": {
+       "type": "string",
+       "minLength": 1,
+       "maxLength": 500
+      },
+      "mode": {
+       "default": "single",
+       "type": "string",
+       "enum": [
+        "single",
+        "range"
+       ]
+      },
+      "min": {
+       "type": "string",
+       "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+      },
+      "max": {
+       "type": "string",
+       "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+      }
+     },
+     "required": [
+      "prompt"
+     ]
+    }
+   },
+   "required": [
+    "kind",
+    "props"
+   ]
+  }
+ ]
+}

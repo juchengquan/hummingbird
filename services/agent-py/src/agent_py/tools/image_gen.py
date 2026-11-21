@@ -46,7 +46,7 @@ from ..image_storage import (
     persist_generated_image,
 )
 from ..settings import get_settings
-from .minimax_image_client import minimax_generate_image
+from .minimax_image_client import MinimaxImage, minimax_generate_image
 from .registry import ToolContext, ToolDescriptor, ToolError, ToolInvocationResult
 
 logger = structlog.get_logger(__name__)
@@ -136,31 +136,45 @@ def _validate_reference_url(raw: str) -> str | None:
 async def _persist_or_passthrough(
     *,
     user_id: str | None,
-    minimax_urls: list[str],
-) -> list[str]:
-    """Mirror each Minimax URL into Supabase Storage when possible.
-    Returns one URL per input — either a signed Storage URL (success)
-    or the original Minimax URL (Storage not configured, no user
-    context, or per-image failure). Order matches the input."""
+    images: list[MinimaxImage],
+    prompt: str,
+) -> list[dict[str, object]]:
+    """Mirror each Minimax image into Supabase Storage when possible.
+    Returns one image record per input, in order — `{url,
+    storagePath?, width, height, format, prompt}`, the `tool_image`
+    part's image shape minus `id` / `mode` (the loop adds them). `url`
+    is a signed Storage URL (success, with `storagePath`) or the
+    original Minimax URL (Storage not configured, no user context, or
+    per-image failure)."""
+
+    def record(
+        img: MinimaxImage, url: str, storage_path: str | None, fmt: str
+    ) -> dict[str, object]:
+        out: dict[str, object] = {"url": url}
+        if storage_path:
+            out["storagePath"] = storage_path
+        out.update(width=img.width, height=img.height, format=fmt, prompt=prompt)
+        return out
+
     if user_id is None or not is_storage_configured():
-        return minimax_urls
+        return [record(img, img.url, None, img.format) for img in images]
 
     import time
     import uuid
 
-    out: list[str] = []
-    for idx, minimax_url in enumerate(minimax_urls):
+    out: list[dict[str, object]] = []
+    for idx, img in enumerate(images):
         # Stable per-image id — `<unix-ms>-<rand>` matches the TS
         # path's `${Date.now()}-${i}` shape while avoiding collisions
         # within the same millisecond.
         image_id = f"{int(time.time() * 1000)}-{idx}-{uuid.uuid4().hex[:8]}"
         result = await persist_generated_image(
-            minimax_url,
+            img.url,
             user_id=user_id,
             image_id=image_id,
         )
         if isinstance(result, PersistedImage):
-            out.append(result.url)
+            out.append(record(img, result.url, result.storage_path, result.format))
         else:
             persist_err: PersistError = result
             logger.warning(
@@ -170,7 +184,7 @@ async def _persist_or_passthrough(
                 code=persist_err.code,
                 error=persist_err.message,
             )
-            out.append(minimax_url)
+            out.append(record(img, img.url, None, img.format))
     return out
 
 
@@ -334,13 +348,22 @@ def build_image_gen_tool(
         # failures fall back to the raw Minimax URL so the model still
         # gets *something* — the user-facing degradation is "URL
         # expires in hours instead of a year" rather than a tool error.
-        urls = await _persist_or_passthrough(
+        images = await _persist_or_passthrough(
             user_id=context.user_id if context else None,
-            minimax_urls=[img.url for img in result.images],
+            images=list(result.images),
+            prompt=prompt,
         )
+        urls = [str(img["url"]) for img in images]
         text = _build_text(prompt, mode, urls)
         summary = f"{len(urls)} image{'s' if len(urls) != 1 else ''} ({mode})"
-        return ToolInvocationResult(text=text, summary=summary)
+        # The images also reach the user as a `tool_image` part (the
+        # loop emits it after the tool result, as the Next route does).
+        return ToolInvocationResult(
+            text=text,
+            summary=summary,
+            images=tuple(images),
+            image_mode="i2i" if mode == "i2i" else "t2i",
+        )
 
     return ToolDescriptor(
         name="generateImage",

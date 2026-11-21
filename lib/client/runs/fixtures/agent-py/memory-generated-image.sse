@@ -1,0 +1,49 @@
+data: {"type":"RUN_STARTED","threadId":"222ba1e3-6768-4c56-b465-e342a21da0f5","runId":"0f6b72cb-f7e8-47ae-8dea-08b8dd623a5b"}
+
+id: 1
+data: {"type":"STEP_STARTED","stepName":"step-1"}
+
+id: 2.0
+data: {"type":"TEXT_MESSAGE_START","messageId":"0f6b72cb-f7e8-47ae-8dea-08b8dd623a5b:2","role":"assistant"}
+
+id: 2
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"0f6b72cb-f7e8-47ae-8dea-08b8dd623a5b:2","delta":"Drawing."}
+
+id: 3.0
+data: {"type":"TEXT_MESSAGE_END","messageId":"0f6b72cb-f7e8-47ae-8dea-08b8dd623a5b:2"}
+
+id: 3.1
+data: {"type":"TOOL_CALL_START","toolCallId":"c-img","toolCallName":"generateImage","parentMessageId":"0f6b72cb-f7e8-47ae-8dea-08b8dd623a5b:2"}
+
+id: 3.2
+data: {"type":"TOOL_CALL_ARGS","toolCallId":"c-img","delta":"{\"prompt\":\"a red fox\"}"}
+
+id: 3
+data: {"type":"TOOL_CALL_END","toolCallId":"c-img"}
+
+id: 4
+data: {"type":"TOOL_CALL_RESULT","messageId":"0f6b72cb-f7e8-47ae-8dea-08b8dd623a5b:4","toolCallId":"c-img","role":"tool","content":"{\"summary\":\"1 image (t2i)\"}","metadata":{"hummingbird":{"toolName":"generateImage"}}}
+
+id: 5
+data: {"type":"ACTIVITY_SNAPSHOT","messageId":"0f6b72cb-f7e8-47ae-8dea-08b8dd623a5b:tool_image:c-img","activityType":"hummingbird.tool_image","content":{"id":"c-img","mode":"t2i","images":[{"id":"c-img-0","url":"https://storage.example/u/generated/fox.png","storagePath":"u/generated/fox.png","width":1024,"height":1024,"format":"png","prompt":"a red fox","mode":"t2i"}]},"replace":true}
+
+id: 6
+data: {"type":"STEP_FINISHED","stepName":"step-1"}
+
+id: 7
+data: {"type":"STEP_STARTED","stepName":"step-2"}
+
+id: 8.0
+data: {"type":"TEXT_MESSAGE_START","messageId":"0f6b72cb-f7e8-47ae-8dea-08b8dd623a5b:8","role":"assistant"}
+
+id: 8
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"0f6b72cb-f7e8-47ae-8dea-08b8dd623a5b:8","delta":"Here is your fox."}
+
+id: 9.0
+data: {"type":"TEXT_MESSAGE_END","messageId":"0f6b72cb-f7e8-47ae-8dea-08b8dd623a5b:8"}
+
+id: 9
+data: {"type":"STEP_FINISHED","stepName":"step-2"}
+
+data: {"type":"RUN_FINISHED","threadId":"222ba1e3-6768-4c56-b465-e342a21da0f5","runId":"0f6b72cb-f7e8-47ae-8dea-08b8dd623a5b","outcome":{"type":"success"},"result":{"text":"Drawing.Here is your fox."},"usage":[{"provider":"anthropic","model":"claude-sonnet-4-6","inputTokens":22,"outputTokens":14,"totalTokens":36}]}
+

@@ -26,6 +26,9 @@ dependencies = [
     # IANA zones for the schedule cron port (`agent_py.cron`): `zoneinfo`
     # falls back to this when the image has no system tzdata (slim images).
     "tzdata>=2025.2",
+    # `renderUI` validates parts against the generated `UiPartSchema`
+    # (`agent_py.ui_parts`); the tests also check AG-UI streams with it.
+    "jsonschema>=4.23",
 ]
 
 [dependency-groups]
@@ -36,7 +39,6 @@ dev = [
     "ruff>=0.7.0",
     "mypy>=1.13.0",
     "datamodel-code-generator>=0.99.0",
-    "jsonschema>=4.23",
 ]
 
 [tool.uv]
@@ -75,6 +77,11 @@ strict = true
 # Any rather than fail every import.
 [[tool.mypy.overrides]]
 module = ["asyncpg", "asyncpg.*"]
+ignore_missing_imports = true
+
+# jsonschema ships no inline types (stubs are a separate package).
+[[tool.mypy.overrides]]
+module = ["jsonschema", "jsonschema.*"]
 ignore_missing_imports = true
 
 # pypdf + python-docx + openpyxl + lxml — extraction libs. Some ship

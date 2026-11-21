@@ -17,7 +17,7 @@ session.ts ── HummingbirdRunAgent (agent.ts, @ag-ui/client: enforce → veri
 
 | Module | What |
 |---|---|
-| `config.ts` | `RUNS_CHAT_ENABLED` — hides the option until 4b-A flips it |
+| `config.ts` | `RUNS_CHAT_ENABLED` — `true` since 4b-A (shows the option; `false` hides it again) |
 | `types.ts` | `RunsTarget`, contract types (`Run`, `StartRunRequest`, `RunForwardedProps`, …), AG-UI re-exports |
 | `transport.ts` | `startRun`, `rejoinRun`, `getRun`, `cancelRun`, `resumeRun` = `apiClient.runs.{start,rejoin,status,cancel,resume}` |
 | `sse.ts` | SSE parser that keeps each message's `id:` (the cursor) |
@@ -26,9 +26,15 @@ session.ts ── HummingbirdRunAgent (agent.ts, @ag-ui/client: enforce → veri
 | `active-run.ts` | per-conversation active-run pointer (codec: `lib/shared/runs/active-run.ts`) |
 | `build-input.ts` | `buildRunInput(chat inputs)` → `RunAgentInput` |
 | `interrupts.ts` | `PendingInterrupt`, `InterruptAnswer`, `buildResume` |
+| `chat-bridge.ts` | the 4b-A ↔ 4b-B seam: `useInterruptedTurns` (ephemeral paused turns) + `registerChatRunBridge` / `getChatRunBridge` (`answerInterrupts`), and the answered turn's lifecycle |
+| `interrupt-answers.ts` | 4b-B, pure: interrupt → card question, card answer → `InterruptAnswer`, `submitTurnAnswers` (via the bridge), failure classes, answered ui parts |
+| `restore-interrupted.ts` | 4b-B: rebuild interrupted turns after a reload (pointer + `status`); `use-restore-interrupted-turns.ts` mounts it from the chat panel |
 | `reducer.ts` | the pure AG-UI → store step |
 | `agent.ts` | `HummingbirdRunAgent extends AbstractAgent` with our transport |
 | `session.ts` | `startRunSession` / `rejoinRunSession` / `resumeRunSession`, `RunSink`, `applyRunOps` |
+| `chat-runner.ts` | 4b-A: chat turns on runs below `use-chat-send` — placeholder, session + sink (`lib/client/chat/turn-writer.ts`), Stop, sync hold, pointer, outcomes, rejoin, the `ChatRunBridge` |
+| `chat-outcome.ts` | `planRunOutcome` (outcome → what chat does), `pointerActionFor`, the cursor throttle — pure |
+| `run-base.ts` | a resume run's **base** (what the paused run wrote), saved as sizes per run so a reload's reset restores it |
 | `fixtures/` | recorded agent-py streams + a store-message model (tests only) |
 
 Ids: `lib/shared/runs/ids.ts` (`mintRunId`, `threadIdFor(conversationId)`),
@@ -111,7 +117,8 @@ interrupted), on a 404, or after an hour.
 Error codes worth handling: `409 run_id_conflict` (never expected: run ids
 are fresh UUIDv4s), `409 run_already_resumed` (someone answered first —
 refresh with `status`), `409 invalid_state` (stale interrupts), `429
-rate_limit`, `401 auth_required`, `400 unknown_model` (only `anthropic/*`
+rate_limit`, `401 auth_required`, `400 invalid_attachment` (an attachment
+the backend can't give the model), `400 unknown_model` (only `anthropic/*`
 models with an `anthropicModelId` are allowed, as on `/v1/chat`), `404`
 (anonymous run forgotten). `messageErrorFor` maps known codes and aliases
 `upstream` / `unavailable` → `provider`; the rest → `unknown` + `detail`.
@@ -165,6 +172,24 @@ interface RunSession {
 
 ## For wave 4b-A — wiring `use-chat-send`
 
+**Done** (below: the spec it followed). Where it landed:
+`use-chat-send.ts` resolves the target after the task-mode branch and
+hands the composed `buildRunInput(...)` body to `chat-runner.ts`
+(`runner.send`); everything after that — the steps below plus the
+interrupt hand-over — lives in the runner, with the per-frame handling
+shared with `/v1/chat` through `lib/client/chat/turn-writer.ts`
+(`createTurnWriter(...).handleFrame`; `clear()` for resets). The
+bridge's `answerInterrupts` resolves `{ ok: false, error, code }` only
+when the resume run never started (`run_already_resumed`,
+`invalid_state`, `invalid_answers` — an unanswered / expired interrupt
+caught before sending —, `busy`, `not_found`, `not_on_runs`, `network`);
+the message and the paused turn are then untouched. Once the resume run
+started — the answered generative-UI parts written, the base saved, the
+turn cleared, in that order — its outcome is handled like a send's (an
+error is the message's bubble) and it resolves `{ ok: true }`. A reset of a resume
+run (a rejoin after a reload) restores the paused run's output first
+(`run-base.ts`).
+
 1. In `callChatAPI`, after the existing request assembly:
    `const target = await (await import("@/client/api/backend-resolver")).resolveRunsTarget()`.
    `null` → today's path, unchanged. Otherwise the runs path (and flip
@@ -184,9 +209,21 @@ interface RunSession {
    model: modelForCall, systemPrompt: workspaceSystemPrompt, skills:
    enabledSkills, workspaceId: activeWorkspaceId || undefined })`, then
    `const session = (await import("@/client/runs/session")).startRunSession(body, { target, sink, onStarted, onCursor })`.
-   (Parity Q32: attachments, MCP servers, sandbox files, reasoning effort,
-   reference images and the memory opt-out are not sent. The contract caps
-   `systemPrompt` at 20 000 chars and `skills` at 10 — `422` past them.)
+   **Attachments and reasoning effort are sent** (wave 4b-D): `images`
+   (the attached image files' data URLs, `getFileImageDataUrls` — what
+   `/v1/chat` puts on the last user turn), `documents`
+   (`runDocumentsFor(attachedFiles, conv.fileRetrievalModes)`: inline-mode
+   files' extracted text + `truncated`; RAG-mode and text-less files are
+   left to `searchFiles`) and `reasoningEffort`
+   (`modelSupportsReasoningEffort(model) ? chatReasoningEffort : undefined`,
+   as `/v1/chat`). They ride on the newest user message as AG-UI
+   `image` / `document` parts; one the backend can't give the model is
+   `400 invalid_attachment` before the run exists — the "Attachment can't
+   be sent" bubble (Retry re-reads the chat's attachments). Still not sent
+   (Q32; the plan's Phase 3 checklist): MCP servers / resources, URL
+   bookmarks, sandbox files, reference images, the memory opt-out. The
+   contract caps `systemPrompt` at 20 000 chars and `skills` at 10 — `422`
+   past them.
    Parts can arrive before any text (`routed_model` is a run's first
    event), so create the placeholder before starting, not on the first
    text frame; "empty response" is then `!hasOutput(result.state.view)`.
@@ -250,6 +287,42 @@ interface RunSession {
   previousRunId, { target })`, `clearActiveRun`, then send normally.
 - `409 run_already_resumed` → another tab answered: re-read `status`.
 
+### Built (4b-B)
+
+- **Cards** — `components/agent/interrupt-cards/answer-cards.tsx`
+  (approval / choice / input / ui-part), shared with the task strip;
+  model + respond bodies in `lib/shared/agent/answer-cards.ts`. Chat
+  renders them under the paused message (`components/chat/interrupted-turn-cards.tsx`,
+  mounted by `chat-message.tsx` from `useInterruptedTurn(activeConversationId)`).
+  Once every open interrupt has an answer they go to
+  `getChatRunBridge().answerInterrupts(turn, answers, { uiParts })` (the
+  answered `ui-part`s, `answeredUiParts`); the cards stay disabled
+  ("Sending your answer…") until the resume run starts. **Lifecycle**
+  (one behaviour for 4b-A and 4b-B, `chat-bridge.ts`'s docstring): when
+  the resume run starts, the bridge writes the answered parts to the
+  message's `uiParts` (inert, as on `/api/chat`), saves the resume's base
+  (which counts them — `withAnsweredUiParts`, `run-base.ts`) and clears
+  the turn, so the cards go and the answer streams into the message; a
+  reload-rejoin's reset restores text *and* answered parts. A refusal
+  before the start comes back to the cards (below), nothing written.
+- **Failures** — `run_already_resumed` → "answered in another tab", the
+  run is re-read and a run that moved on / 404 loses card + pointer;
+  `invalid_state` → "expired" + **Resend message** (= the error bubble's
+  retry: delete the paused message and resend the history before it);
+  others → inline error + Retry. An interrupt past `expiresAt` (or of an
+  unknown reason) can only be dismissed (`{ cancelled: true }`). No bridge
+  → disabled with a hint, sent once it registers.
+- **renderUI (Q35)** — a `ui-part` interrupt is the registry's component
+  as the card; its answer is `{ uiAnswer, value?, selection? }` (the
+  respond route's body minus `requestId`: agent-py shows the model
+  `value`, the formatted text). `MessageUiParts` hides the parts an open
+  turn owns, so a runs part never auto-sends or prefills the composer.
+  A read-only `info-table` part gets a **Continue** button.
+- **Reload** — `useRestoreInterruptedTurns(hydrated)` (chat panel):
+  `interrupted` pointers whose message exists → `status` → turn; 404 /
+  not interrupted → `clearActiveRun`; network errors / a changed
+  identity (signed in ↔ out) leave the pointer alone.
+
 ## For wave 4b-C — Playwright smoke
 
 - Backend: `RUNS_STUB_HARNESS=true` agent-py (`docker compose up proxy
@@ -263,7 +336,9 @@ interface RunSession {
   existing value).
 - Steer the stub per run by rewriting the request with `page.route("**/v1/runs",
   …)`: add `forwardedProps.conformance = { outcome: "succeed" | "fail" |
-  "interrupt", steps: 1..20, stepDelayMs: 0..10000 }` (and drop
+  "interrupt", interrupt?: "approval" | "ui-part", steps: 1..20,
+  stepDelayMs: 0..10000 }` (`interrupt: "ui-part"` pauses on a `renderUI`
+  confirm card, `Confirm the stub action?`, instead of an approval) (and drop
   `forwardedProps.model` unless the chosen model is an allow-listed
   `anthropic/*` one — otherwise `400 unknown_model`).
 - Assert: **send** → the bubble reads `Stub reply to: <text>` (plus

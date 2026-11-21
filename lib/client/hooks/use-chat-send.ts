@@ -38,18 +38,14 @@ import { shouldAutoRetry } from "@/client/chat/auto-retry-decision"
 import { resolveSendTargetConversationId } from "@/client/chat/resolve-send-target"
 import { buildAttachments } from "@/client/chat/build-attachments"
 import { buildTransmittedMessages } from "@/client/chat/build-messages"
-import {
-  finishToolCall,
-  startToolCall,
-  toPersistedToolCalls,
-} from "@/client/chat/tool-call-buffer"
+import { toPersistedToolCalls } from "@/client/chat/tool-call-buffer"
+import { createTurnWriter } from "@/client/chat/turn-writer"
 import {
   buildSandboxFiles,
   type SandboxFileSource,
 } from "@/client/chat/build-sandbox-files"
 import { getFileImageDataUrls } from "@/client/files/blob-fields"
 import { getBlob } from "@/client/files/local-store"
-import { artifactStoragePathFor } from "@/client/messages/message-blobs"
 import { extractAfterTurn } from "@/client/memory/extract-after-turn"
 import { translateFrame } from "@/client/chat/sse-frame-translator"
 import { useStore } from "@/client/hooks/use-store"
@@ -59,13 +55,16 @@ import { composeSystemPrompts } from "@/shared/agents/resolve"
 import { withUserSkillInstructions } from "@/shared/skills/user-skill-prompt"
 import type { ChatRequestInput, TaskRequestInput } from "@/shared/api-schemas"
 import { isAuthRequiredError } from "@/shared/api-errors"
-import { parsePersistedUiPart } from "@/shared/generative-ui/schemas"
 import { modelSupportsReasoningEffort } from "@/shared/models"
 import { resolveEnabledSkills } from "@/shared/skills/resolve-enabled-skills"
 import type { SkillId } from "@/shared/skills/types"
 import type { Message, MessageError, MessageErrorCode } from "@/shared/types"
 import { toISO } from "@/shared/utils"
 import { abortStreamsOfDeletedConversations } from "@/client/chat/abort-deleted-streams"
+import { buildRunInput, runDocumentsFor } from "@/client/runs/build-input"
+import { registerChatRunBridge } from "@/client/runs/chat-bridge"
+import { createChatRunner, type ChatRunner } from "@/client/runs/chat-runner"
+import { RUNS_CHAT_ENABLED } from "@/client/runs/config"
 
 export interface SendOptions {
   modelOverride?: string
@@ -182,6 +181,64 @@ export function useChatSend(): UseChatSendResult {
   // Per-conversation abort controllers. Stop on the active conv aborts
   // *that* controller only; sibling conversations keep streaming.
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
+  // Chat on agent-py's runs API ("agent-py (runs)") — its sessions,
+  // Stop → cancel, pointer, rejoin and the answer-card bridge
+  // (`lib/client/runs/chat-runner.ts`). Reads the store fresh; the
+  // session module (`@ag-ui/client`) is imported only when a run starts.
+  const [runner] = useState<ChatRunner>(() =>
+    createChatRunner({
+      store: () => useStore.getState(),
+      setLiveToolCalls,
+      loadSession: () => import("@/client/runs/session"),
+      resolveTarget: async () =>
+        RUNS_CHAT_ENABLED
+          ? (await import("@/client/api/backend-resolver")).resolveRunsTarget()
+          : null,
+      cancelRun: (runId, opts) => apiClient.runs.cancel(runId, opts),
+      buildRunInput,
+      autoArchive: (messageId, conversationId) => {
+        const st = useStore.getState()
+        const message = st.conversations
+          .find((c) => c.id === conversationId)
+          ?.messages.find((m) => m.id === messageId)
+        if (!message) return
+        autoArchiveCodeBlocksPure(
+          { content: message.content, messageId, conversationId },
+          st.createArtifact
+        )
+      },
+      extractMemory: extractAfterTurn,
+      memoryEnabled: () => useStore.getState().memoryEnabled,
+      // A resume after a reload (the paused run's request is gone):
+      // composed like a send's, minus the per-turn persona / forced skills.
+      composeResumeInput: (turn) => {
+        const st = useStore.getState()
+        const conv = st.conversations.find((c) => c.id === turn.conversationId)
+        const workspaceId = conv?.workspaceId || st.activeWorkspaceId
+        const workspace = st.workspaces.find((w) => w.id === workspaceId)
+        const model = turn.model ?? st.chatModel
+        return {
+          model,
+          systemPrompt: withUserSkillInstructions(
+            composeSystemPrompts(
+              st.customInstructionsStyle,
+              st.customInstructionsAbout,
+              workspace?.systemPrompt,
+              conv?.systemPrompt,
+              ""
+            ),
+            st.userSkills,
+            workspaceId
+          ),
+          skills: resolveEnabledSkills({ workspace, conversation: conv }),
+          workspaceId: workspaceId || undefined,
+          reasoningEffort: modelSupportsReasoningEffort(model)
+            ? st.chatReasoningEffort ?? undefined
+            : undefined,
+        }
+      },
+    })
+  )
 
   // Long-running task mode. The provider owns the active run so the chat
   // panel + Tasks panel share it. Ref so the pipeline can reach
@@ -327,6 +384,54 @@ export function useChatSend(): UseChatSendResult {
         return
       }
 
+      // Chat on agent-py's runs API ("agent-py (runs)", Q33):
+      // `resolveRunsTarget()` is `null` unless that option is selected and
+      // agent-py configured — then the path below runs exactly as before.
+      // Signed-out users get a target too (anonymous runs, Q34), so no
+      // `authToken` / mock fallback here. Attachments go as the newest
+      // user message's parts — the attached images' data URLs (as
+      // `buildMessages` sends them) and the inline-mode files' extracted
+      // text (`runDocumentsFor`, as the file attachments below) — and the
+      // reasoning tier as `/v1/chat` sends it. Not yet sent (Q32, see the
+      // plan's Phase 3 checklist): MCP servers / resources, URL bookmarks,
+      // sandbox files, reference images, the memory opt-out.
+      const runsTarget = RUNS_CHAT_ENABLED
+        ? await (
+            await import("@/client/api/backend-resolver")
+          ).resolveRunsTarget()
+        : null
+      if (runsTarget) {
+        // Q35: a new message while a turn is paused cancels the paused run.
+        await runner.supersedeInterrupted(targetConvId, runsTarget)
+        await runner.send({
+          conversationId: targetConvId,
+          history,
+          target: runsTarget,
+          model: modelForCall,
+          isRetry,
+          body: buildRunInput({
+            conversationId: targetConvId,
+            history,
+            model: modelForCall,
+            systemPrompt: workspaceSystemPrompt,
+            skills: enabledSkills,
+            workspaceId: activeWorkspaceId || undefined,
+            images: attachedImageUrls,
+            documents: runDocumentsFor(
+              attachedFiles,
+              conv?.fileRetrievalModes
+            ),
+            reasoningEffort: modelSupportsReasoningEffort(modelForCall)
+              ? useStore.getState().chatReasoningEffort ?? undefined
+              : undefined,
+          }),
+        })
+        return
+      }
+      // Off runs now: a turn paused on runs earlier can't be answered any
+      // more — forget it (local state only; nothing else changes here).
+      void runner.supersedeInterrupted(targetConvId, null)
+
       const controller = new AbortController()
       // If this conversation already has an in-flight controller
       // (very rare — user double-clicks Send before the previous turn
@@ -336,20 +441,34 @@ export function useChatSend(): UseChatSendResult {
       abortControllersRef.current.set(targetConvId, controller)
       setConversationTyping(targetConvId, true)
       setConversationStreaming(targetConvId, true)
-      let placeholder: Message | null = null
-      let firstChunk = true
-      // Reasoning duration capture: first/last chunk timestamps so we
-      // can persist the elapsed ms on the message at stream end.
-      let reasoningStart: number | null = null
-      let reasoningLast: number | null = null
-      // Tool-call buffer for this stream. Accumulated locally (and
-      // mirrored into `liveToolCalls` for the pills) so the end-of-stream
-      // flush persists what actually happened — React state captured at
-      // send start never sees the placeholder created mid-stream.
-      let toolCalls: LiveToolCall[] = []
+      // The stream's per-frame handling + local state (placeholder created
+      // on the first output frame, tool-call buffer, reasoning timers,
+      // `error` / `memory_tainted`) — `turn-writer.ts`, shared with chat
+      // on runs.
+      const writer = createTurnWriter(
+        {
+          addMessage,
+          setConversationTyping,
+          appendToMessage,
+          appendToMessageReasoning,
+          appendMessageGeneratedImages,
+          appendMessageGeneratedFiles,
+          appendMessageCodeResult,
+          appendMessageUiPart,
+          appendMessageMcpApp,
+          setMessageSuggestions,
+          setMessageVerification,
+          setMessageRoutedModel,
+          setMessageToolCalls,
+          createArtifact,
+          setLiveToolCalls,
+        },
+        { conversationId: targetConvId }
+      )
 
       const surfaceError = (error: MessageError) => {
         setConversationTyping(targetConvId, false)
+        const placeholder = writer.placeholder
         if (placeholder) {
           setMessageError(placeholder.id, error)
         } else {
@@ -484,10 +603,9 @@ export function useChatSend(): UseChatSendResult {
       // Supabase JWT lazily; null means "in-Next route, no token
       // needed." Shared with the four non-chat endpoints in
       // `apiClient.{summarize,mcp,url,images}.*` so divergence is
-      // impossible. `'python-runs'` ("agent-py (runs)") is sent as
-      // `'python'` by `apiClient.chat.stream` until wave 4b-A routes it
-      // through `apiClient.runs.*` (`resolveRunsTarget`, see
-      // `lib/client/runs/README.md`).
+      // impossible. `'python-runs'` ("agent-py (runs)") took the runs
+      // path above whenever it resolved a target; when it didn't
+      // (agent-py unconfigured) it is sent as `'python'` here.
       const { resolveRemoteBackend } = await import(
         "@/client/api/backend-resolver"
       )
@@ -596,25 +714,8 @@ export function useChatSend(): UseChatSendResult {
         const reader = result.body.getReader()
         const decoder = new TextDecoder()
         let buffer = ""
-        let streamError: { code?: string; message?: string } | null = null
-        // Server-flagged: this turn read third-party content, so memory
-        // auto-extraction must skip it (see `memory_tainted` below).
-        let memoryTainted = false
 
-        // SSE frames: `data: <json>\n\n`. Placeholder created on the
-        // first event of any kind so reasoning-first models still show
-        // typing UI disappearing as soon as any output arrives.
-        const ensurePlaceholder = () => {
-          if (placeholder) return placeholder
-          setConversationTyping(targetConvId, false)
-          placeholder = addMessage(
-            { role: "assistant", content: "" },
-            targetConvId
-          )
-          firstChunk = false
-          return placeholder
-        }
-
+        // SSE frames: `data: <json>\n\n`, each applied by the writer.
         outer: while (true) {
           const { value, done } = await reader.read()
           if (done) break
@@ -633,241 +734,20 @@ export function useChatSend(): UseChatSendResult {
             if (payload === "[DONE]") break outer
             const translated = translateFrame(payload)
             if (!translated) continue
-            const parsed = translated
-            if (parsed.type === "text" && typeof parsed.value === "string") {
-              const p = ensurePlaceholder()
-              appendToMessage(p.id, parsed.value)
-            } else if (
-              parsed.type === "reasoning" &&
-              typeof parsed.value === "string"
-            ) {
-              const p = ensurePlaceholder()
-              const now = Date.now()
-              if (reasoningStart === null) reasoningStart = now
-              reasoningLast = now
-              appendToMessageReasoning(p.id, parsed.value)
-            } else if (
-              parsed.type === "tool_call" &&
-              parsed.id &&
-              parsed.name
-            ) {
-              const p = ensurePlaceholder()
-              toolCalls = startToolCall(toolCalls, {
-                id: parsed.id,
-                name: parsed.name,
-                args: parsed.args,
-              })
-              const snapshot = toolCalls
-              setLiveToolCalls((prev) => ({ ...prev, [p.id]: snapshot }))
-            } else if (parsed.type === "tool_result" && parsed.id) {
-              const ph = placeholder as Message | null
-              if (ph) {
-                toolCalls = finishToolCall(toolCalls, {
-                  id: parsed.id,
-                  summary: parsed.summary,
-                  results: parsed.results,
-                })
-                const snapshot = toolCalls
-                setLiveToolCalls((prev) => ({ ...prev, [ph.id]: snapshot }))
-              }
-            } else if (
-              parsed.type === "tool_image" &&
-              Array.isArray(parsed.images)
-            ) {
-              // generateImage produced images; the server pre-persisted
-              // each URL to a durable form so the message survives reload.
-              const ph = placeholder as Message | null
-              if (ph) {
-                const mode: "t2i" | "i2i" =
-                  parsed.mode === "i2i" ? "i2i" : "t2i"
-                const images = (
-                  parsed.images as Array<Record<string, unknown>>
-                )
-                  .filter(
-                    (img): img is {
-                      id: string
-                      url: string
-                      storagePath?: string
-                      width: number
-                      height: number
-                      format: string
-                      prompt: string
-                      mode: "t2i" | "i2i"
-                    } =>
-                      typeof img?.id === "string" &&
-                      typeof img?.url === "string" &&
-                      typeof img?.width === "number" &&
-                      typeof img?.height === "number" &&
-                      typeof img?.format === "string" &&
-                      typeof img?.prompt === "string" &&
-                      (img.storagePath === undefined ||
-                        typeof img.storagePath === "string")
-                  )
-                  .map((img) => ({ ...img, mode }))
-                if (images.length > 0) {
-                  appendMessageGeneratedImages(ph.id, images)
-                  images.forEach((img) => {
-                    createArtifact({
-                      conversationId: targetConvId,
-                      messageId: ph.id,
-                      kind: "image",
-                      title: img.prompt
-                        ? img.prompt.slice(0, 80).trim()
-                        : `Generated image`,
-                      // Prompt as text content (small). The image lives
-                      // in storagePath: a signed URL as-is, or — for an
-                      // inline data: URL — an `hb-blob:` reference to the
-                      // message item's IndexedDB record, so the bytes are
-                      // stored once, not copied onto the artifact (v34).
-                      content: img.prompt ?? "",
-                      storagePath: artifactStoragePathFor(ph.id, img),
-                    })
-                  })
-                }
-              }
-            } else if (
-              parsed.type === "tool_file" &&
-              Array.isArray(parsed.files)
-            ) {
-              const ph = placeholder as Message | null
-              if (ph) {
-                const files = (parsed.files as Array<Record<string, unknown>>)
-                  .filter(
-                    (f): f is {
-                      id: string
-                      name: string
-                      sizeBytes: number
-                      mimeType: string
-                      url: string
-                      storagePath?: string
-                    } =>
-                      typeof f?.id === "string" &&
-                      typeof f?.name === "string" &&
-                      typeof f?.sizeBytes === "number" &&
-                      typeof f?.mimeType === "string" &&
-                      typeof f?.url === "string" &&
-                      (f.storagePath === undefined ||
-                        typeof f.storagePath === "string")
-                  )
-                  .map((f) => ({
-                    id: f.id,
-                    name: f.name,
-                    sizeBytes: f.sizeBytes,
-                    mimeType: f.mimeType,
-                    url: f.url,
-                    storagePath: f.storagePath ?? null,
-                  }))
-                if (files.length > 0) {
-                  appendMessageGeneratedFiles(ph.id, files)
-                  files.forEach((f) => {
-                    createArtifact({
-                      conversationId: targetConvId,
-                      messageId: ph.id,
-                      kind: "file",
-                      title: f.name,
-                      content: "",
-                      // Mirrors the image path: a signed URL as-is, or a
-                      // reference to the message item's bytes.
-                      storagePath: artifactStoragePathFor(ph.id, f),
-                    })
-                  })
-                }
-              }
-            } else if (
-              parsed.type === "suggestions" &&
-              Array.isArray(parsed.values)
-            ) {
-              const ph = placeholder as Message | null
-              if (ph) {
-                setMessageSuggestions(ph.id, parsed.values)
-              }
-            } else if (
-              parsed.type === "verification" &&
-              parsed.verification
-            ) {
-              // Citation verification — stamp the per-claim verdicts +
-              // confidence summary onto the message. See
-              // PLAN-citation-verifiability.md.
-              const ph = placeholder as Message | null
-              if (ph) setMessageVerification(ph.id, parsed.verification)
-            } else if (
-              parsed.type === "routed_model" &&
-              typeof parsed.value === "string"
-            ) {
-              // Smart-routing transparency — stamp the resolved model so
-              // the bubble shows "Auto → <label>".
-              const ph = placeholder as Message | null
-              if (ph) setMessageRoutedModel(ph.id, parsed.value)
-            } else if (
-              parsed.type === "mcp_app" &&
-              typeof parsed.id === "string" &&
-              typeof parsed.serverId === "string" &&
-              typeof parsed.html === "string"
-            ) {
-              // MCP App panel — append to the message for a sandboxed
-              // iframe render. See PLAN-mcp-apps.md.
-              const ph = placeholder as Message | null
-              if (ph) {
-                appendMessageMcpApp(ph.id, {
-                  id: parsed.id,
-                  serverId: parsed.serverId,
-                  html: parsed.html,
-                  // Phase 3 — optional on the wire; included so the
-                  // refresh button + truncation stub work.
-                  ...(parsed.resourceUri
-                    ? { resourceUri: parsed.resourceUri }
-                    : {}),
-                  ...(parsed.truncated ? { truncated: true } : {}),
-                })
-              }
-            } else if (parsed.type === "code_result") {
-              // Code-interpreter result — append stdout/stderr + inline
-              // text/table cells to the message. Images produced by code
-              // arrive separately via `tool_image` (the gallery). See
-              // docs/superpowers/plans/2026-06-19-code-interpreter-microsandbox.md.
-              const ph = placeholder as Message | null
-              if (ph) {
-                appendMessageCodeResult(ph.id, {
-                  id: parsed.id ?? "",
-                  stdout: parsed.stdout ?? "",
-                  stderr: parsed.stderr ?? "",
-                  results: parsed.codeCells ?? [],
-                })
-              }
-            } else if (parsed.type === "ui_part") {
-              // Generative-UI part — server validated via the `renderUI`
-              // tool's execute; we re-validate defensively via
-              // `parsePersistedUiPart` so a malformed in-flight payload
-              // from a future server version can't crash the renderer.
-              const ph = placeholder as Message | null
-              if (ph && typeof parsed.id === "string" && parsed.kind) {
-                const persisted = parsePersistedUiPart({
-                  id: parsed.id,
-                  kind: parsed.kind,
-                  props: parsed.props,
-                })
-                if (persisted) {
-                  appendMessageUiPart(ph.id, persisted)
-                }
-              }
-            } else if (parsed.type === "error") {
-              streamError = { code: parsed.code, message: parsed.message }
-              break outer
-            } else if (parsed.type === "memory_tainted") {
-              memoryTainted = true
-            } else if (parsed.type === "done") {
-              break outer
-            }
+            if (writer.handleFrame(translated) === "stop") break outer
           }
         }
 
+        const { streamError, memoryTainted, toolCalls, reasoningStart, reasoningLast } =
+          writer
+        const placeholder = writer.placeholder
         if (streamError) {
           surfaceError({
             code: (streamError.code as MessageErrorCode) || "unknown",
             model: modelForCall,
             detail: streamError.message,
           })
-        } else if (firstChunk) {
+        } else if (writer.firstChunk) {
           surfaceError({
             code: "provider",
             model: modelForCall,
@@ -927,7 +807,7 @@ export function useChatSend(): UseChatSendResult {
         const aborted =
           (err instanceof DOMException && err.name === "AbortError") ||
           controller.signal.aborted
-        const ph = placeholder as Message | null
+        const ph = writer.placeholder
         if (aborted) {
           if (ph && ph.content === "") {
             deleteMessage(ph.id)
@@ -968,7 +848,7 @@ export function useChatSend(): UseChatSendResult {
         setConversationTyping(targetConvId, false)
         // Drop live tool-call pills now that the stream is finished.
         // The durable record lives on the message via setMessageToolCalls.
-        const ph = placeholder as Message | null
+        const ph = writer.placeholder
         if (ph) {
           setLiveToolCalls((prev) => {
             if (!(ph.id in prev)) return prev
@@ -1014,6 +894,7 @@ export function useChatSend(): UseChatSendResult {
       files,
       memoryEnabled,
       mockAIResponse,
+      runner,
       setConversationStreaming,
       setConversationTyping,
       setMessageError,
@@ -1042,9 +923,32 @@ export function useChatSend(): UseChatSendResult {
           abortControllersRef.current,
           state.conversations
         )
+        // Runs: detach (the run goes on server-side, but nothing writes
+        // into a conversation that's gone), drop pointers + paused turns.
+        runner.forgetDeleted(state.conversations, prev.conversations)
       }),
-    []
+    [runner]
   )
+
+  // Runs: the answer cards resume paused turns through this hook
+  // (`ChatRunBridge`); after a reload, running answers are rejoined into
+  // their messages. Unmount stops reading every run (they go on
+  // server-side and are rejoined on the next mount).
+  useEffect(() => {
+    const unregister = registerChatRunBridge({
+      answerInterrupts: (turn, answers, opts) =>
+        runner.answerInterrupts(turn, answers, opts),
+    })
+    const rejoin = () => void runner.rejoinActive()
+    let offHydrate: (() => void) | undefined
+    if (useStore.persist.hasHydrated()) rejoin()
+    else offHydrate = useStore.persist.onFinishHydration(rejoin)
+    return () => {
+      offHydrate?.()
+      unregister()
+      runner.detachAll()
+    }
+  }, [runner])
 
   // Stable wrapper — consumers don't manage their own ref.
   const send = useCallback(
@@ -1057,8 +961,10 @@ export function useChatSend(): UseChatSendResult {
     // Stop only the *active* conv's stream. Other conversations
     // mid-stream stay running — each has its own controller.
     if (!activeConversationId) return
+    // Runs: Stop cancels the run on the server (Q36).
+    if (runner.stop(activeConversationId)) return
     abortControllersRef.current.get(activeConversationId)?.abort()
-  }, [activeConversationId])
+  }, [activeConversationId, runner])
 
   const isStreaming = useCallback(
     (convId: string | null | undefined): boolean =>

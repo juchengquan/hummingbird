@@ -181,6 +181,7 @@ describe("start", () => {
       [429, "rate_limit", "rate_limit"],
       [401, "auth_required", "auth_required"],
       [400, "unknown_model", "unknown_model"],
+      [400, "invalid_attachment", "invalid_attachment"],
     ] as const) {
       const { fetch } = fakeFetch(
         () => new Response(JSON.stringify({ code, message: `m-${code}` }), { status }),

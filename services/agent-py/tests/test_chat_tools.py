@@ -339,3 +339,56 @@ async def test_trusted_tool_and_tool_free_turns_are_not_tainted() -> None:
     )
     assert finish == {"type": "finish"}
     assert await _finish_payload([_named_tool("webFetch")], []) == {"type": "finish"}
+
+
+@pytest.mark.asyncio
+async def test_generated_images_add_a_data_tool_image_frame() -> None:
+    """Wave 4b-D (additive): a tool that returns images (`generateImage`)
+    is followed by a `data-tool-image` frame — the Next route's frame,
+    `id` = the tool call id — and nothing else changes."""
+
+    async def execute(_args: dict[str, Any]) -> ToolInvocationResult:
+        return ToolInvocationResult(
+            text="Generated 1 image",
+            summary="1 image (t2i)",
+            images=(
+                {"url": "https://m/a.png", "width": 0, "height": 0, "format": "png", "prompt": "p"},
+            ),
+        )
+
+    gen = ToolDescriptor(
+        name="generateImage", description="", input_schema={"type": "object"}, execute=execute
+    )
+    steps = [
+        _Step(tool_uses=[{"id": "tu_1", "name": "generateImage", "input": {"prompt": "p"}}]),
+        _Step(deltas=["Here."]),
+    ]
+    frames = [
+        f
+        async for f in chat_stream_with_tools_ai_sdk(
+            client=_FakeClient(steps), config=_config(tools=[gen])
+        )
+    ]
+    payloads = [p for p in _parse_ai_sdk_frames(frames) if isinstance(p, dict)]
+    types = [p["type"] for p in payloads]
+    i = types.index("tool-output-available")
+    assert types[i + 1] == "data-tool-image"
+    assert payloads[i + 1] == {
+        "type": "data-tool-image",
+        "id": "tu_1",
+        "data": {
+            "id": "tu_1",
+            "mode": "t2i",
+            "images": [
+                {
+                    "id": "tu_1-0",
+                    "url": "https://m/a.png",
+                    "width": 0,
+                    "height": 0,
+                    "format": "png",
+                    "prompt": "p",
+                    "mode": "t2i",
+                }
+            ],
+        },
+    }

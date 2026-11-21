@@ -18,18 +18,12 @@ from __future__ import annotations
 from typing import Any
 
 from ..input_policy import RENDER_UI_TOOL_NAME
+from ..ui_parts import render_ui_args_error, ui_kinds
 from .registry import ToolDescriptor, ToolError, ToolInvocationResult
 
-# The kinds the shared `UiPartSchema` allows. Keep in lockstep
-# with `UI_KIND_VALUES` in `lib/shared/generative-ui/schemas.ts` —
-# adding a kind there means adding it here too.
-UI_KIND_VALUES: tuple[str, ...] = (
-    "info-table",
-    "choice",
-    "confirm",
-    "mini-form",
-    "date-picker",
-)
+# The kinds the shared `UiPartSchema` allows — read from the schema
+# generated from it (`ui_parts`), so they can't drift.
+UI_KIND_VALUES: tuple[str, ...] = ui_kinds()
 
 
 RENDER_UI_DESCRIPTION = (
@@ -42,13 +36,11 @@ RENDER_UI_DESCRIPTION = (
 )
 
 
-# Coarse JSON schema — the discriminated `props` shape is enforced by
-# the client-side Zod (`UiPartSchema`) on render. Going stricter here
-# would mean encoding the discriminator-by-kind variant in JSON
-# Schema, which Anthropic accepts but adds maintenance friction for
-# little gain (the model produces sensible shapes from the
-# description; a bad shape produces a non-renderable part, not a
-# silent failure).
+# Coarse JSON schema for the model (as Next's `renderUI` input schema:
+# `kind` + an untyped `props`); the per-kind shapes are spelled out in
+# the description. The real check is `ui_parts.render_ui_args_error`
+# (the shared `UiPartSchema`): a call that fails it never pauses the
+# run — the model gets the error back as the tool result instead.
 RENDER_UI_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -59,9 +51,13 @@ RENDER_UI_INPUT_SCHEMA: dict[str, Any] = {
         "props": {
             "type": "object",
             "description": (
-                "The kind-specific props payload. Shape depends on `kind`. "
-                "See the chat-route renderUI tool description for per-kind "
-                "schemas."
+                "The kind-specific props. `confirm`: {prompt, confirmLabel?, "
+                "cancelLabel?}; `choice`: {prompt, options: [{id, label}] (2 to 8), "
+                "multiSelect?}; `info-table`: {title?, columns?: [{id, label}] "
+                "(1 to 6), rows: [{<key or column id>: string}] (at most 50)}; "
+                "`mini-form`: {prompt?, fields: [{type: text|number|select|date, "
+                "id, label, ...}] (1 to 4), submitLabel?}; `date-picker`: {prompt, "
+                "mode?: single|range, min?, max?}. Dates are ISO YYYY-MM-DD."
             ),
         },
     },
@@ -69,20 +65,26 @@ RENDER_UI_INPUT_SCHEMA: dict[str, Any] = {
 }
 
 
-async def _render_ui_execute_fallback(_args: dict[str, Any]) -> ToolInvocationResult:
-    """Defensive — `renderUI` should never reach the executor's
-    invoke path because the always-gated check suspends the run
-    first. If this fires, gating is broken; raise a clear ToolError
-    so the failure is visible instead of silently emitting a
+async def _render_ui_execute_fallback(args: dict[str, Any]) -> ToolInvocationResult:
+    """Reached only for a call the gate let through: `{kind, props}` the
+    client can't render (`input_policy.pauses_for_input`). The model gets
+    the validation error back to correct, as from Next's `renderUI`.
+
+    A *valid* call reaching here means gating is broken; raise a clear
+    ToolError so the failure is visible instead of silently emitting a
     placeholder result."""
+    error = render_ui_args_error(args)
+    if error is not None:
+        raise ToolError(error)
     raise ToolError("renderUI was invoked instead of suspended — gating is misconfigured")
 
 
 def build_render_ui_tool() -> ToolDescriptor:
     """Build the `renderUI` no-execute tool descriptor.
 
-    The descriptor's `execute` raises — it should never be reached
-    because the executor's gating set includes `renderUI`. Registered
+    The descriptor's `execute` raises — a valid call never reaches it
+    (the gate suspends the run first); an invalid one gets its
+    validation error back as the tool error. Registered
     unconditionally by `default_tool_registry`."""
     return ToolDescriptor(
         name=RENDER_UI_TOOL_NAME,

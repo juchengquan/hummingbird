@@ -8,8 +8,12 @@
  *   chunk_parity.json          lib/server/embeddings/chunk.ts  ↔ agent_py.chunk
  *   memory_parity.json         lib/server/memory/{prompt,merge}.ts ↔ agent_py.memory_extract
  *   csp_report_parity.json     lib/server/security/csp-report.ts ↔ agent_py.csp_report
+ *   ui_part_parity.json        lib/shared/generative-ui/schemas.ts (`UiPartSchema`) ↔ agent_py.ui_parts
  *
- * Written to services/agent-py/tests/fixtures/. Run:
+ * Written to services/agent-py/tests/fixtures/. One file ships with the
+ * service instead: `ui_part_schema.json` (`UiPartSchema` as JSON Schema,
+ * what agent-py's `renderUI` validates against) goes into the package,
+ * `services/agent-py/src/agent_py/` (`PACKAGE_FILES`). Run:
  *   bun run codegen:agent-py-parity            # write
  *   bun run codegen:agent-py-parity --check    # exit 1 on drift
  * `scripts/__tests__/agent-py-parity.test.ts` runs the check in
@@ -23,11 +27,14 @@
 import { readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 
+import { z } from "zod"
+
 import { chunkText, type ChunkOptions } from "@/server/embeddings/chunk"
 import { mergeFacts } from "@/server/memory/merge"
 import { buildMemoryExtractPrompt } from "@/server/memory/prompt"
 import type { FactOp, MemoryFact } from "@/server/memory/types"
 import { parseCspReports, sanitizeReportedUrl } from "@/server/security/csp-report"
+import { UiPartSchema } from "@/shared/generative-ui/schemas"
 
 export const FIXTURE_DIR = path.join(
   import.meta.dir,
@@ -400,6 +407,104 @@ function cspPayloadCases(): Array<{ name: string; payload: unknown }> {
   ]
 }
 
+export const PACKAGE_DIR = path.join(
+  import.meta.dir,
+  "..",
+  "services",
+  "agent-py",
+  "src",
+  "agent_py",
+)
+
+// --- Generative-UI parts -----------------------------------------------------
+
+/** `UiPartSchema` as JSON Schema — the props shapes agent-py's `renderUI`
+ *  validates against. The one rule JSON Schema can't carry (date-picker's
+ *  `min <= max` refine) is mirrored by hand in `agent_py.ui_parts`; the
+ *  parity cases below pin it. */
+export function uiPartJsonSchema(): Record<string, unknown> {
+  return {
+    $comment:
+      "DO NOT EDIT — generated from UiPartSchema (lib/shared/generative-ui/schemas.ts) by `bun run codegen:agent-py-parity`.",
+    ...z.toJSONSchema(UiPartSchema, { io: "input", target: "draft-2020-12" }),
+  }
+}
+
+function uiPartCases(): Array<{ name: string; part: unknown }> {
+  const opts = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `o${i}`, label: `Option ${i}` }))
+  return [
+    { name: "confirm with prompt", part: { kind: "confirm", props: { prompt: "Sure?" } } },
+    { name: "confirm with title only (no prompt)", part: { kind: "confirm", props: { title: "Sure?" } } },
+    { name: "confirm, empty prompt", part: { kind: "confirm", props: { prompt: "" } } },
+    {
+      name: "confirm, labels",
+      part: { kind: "confirm", props: { prompt: "Go?", confirmLabel: "Go", cancelLabel: "Stop" } },
+    },
+    { name: "confirm, label too long", part: { kind: "confirm", props: { prompt: "Go?", confirmLabel: "x".repeat(41) } } },
+    { name: "confirm, extra key", part: { kind: "confirm", props: { prompt: "Go?", tone: "warm" } } },
+    { name: "choice, two options", part: { kind: "choice", props: { prompt: "Pick", options: opts(2) } } },
+    { name: "choice, one option", part: { kind: "choice", props: { prompt: "Pick", options: opts(1) } } },
+    { name: "choice, nine options", part: { kind: "choice", props: { prompt: "Pick", options: opts(9) } } },
+    {
+      name: "choice, multiSelect not a boolean",
+      part: { kind: "choice", props: { prompt: "Pick", options: opts(3), multiSelect: "yes" } },
+    },
+    { name: "info-table, key/value rows", part: { kind: "info-table", props: { rows: [{ key: "a", value: "1" }] } } },
+    { name: "info-table, no rows", part: { kind: "info-table", props: { title: "T" } } },
+    {
+      name: "info-table, columns",
+      part: {
+        kind: "info-table",
+        props: { columns: [{ id: "a", label: "A" }], rows: [{ a: "1" }] },
+      },
+    },
+    {
+      name: "info-table, seven columns",
+      part: {
+        kind: "info-table",
+        props: { columns: Array.from({ length: 7 }, (_, i) => ({ id: `c${i}`, label: `C${i}` })), rows: [] },
+      },
+    },
+    { name: "info-table, 51 rows", part: { kind: "info-table", props: { rows: Array.from({ length: 51 }, () => ({ k: "v" })) } } },
+    { name: "info-table, empty cell key", part: { kind: "info-table", props: { rows: [{ "": "v" }] } } },
+    { name: "info-table, number cell", part: { kind: "info-table", props: { rows: [{ k: 1 }] } } },
+    {
+      name: "mini-form, every field type",
+      part: {
+        kind: "mini-form",
+        props: {
+          fields: [
+            { type: "text", id: "t", label: "Text" },
+            { type: "number", id: "n", label: "Number", min: 0 },
+            { type: "select", id: "s", label: "Select", options: opts(2) },
+            { type: "date", id: "d", label: "Date", min: "2026-01-01" },
+          ],
+        },
+      },
+    },
+    { name: "mini-form, no fields", part: { kind: "mini-form", props: { fields: [] } } },
+    { name: "mini-form, unknown field type", part: { kind: "mini-form", props: { fields: [{ type: "color", id: "c", label: "C" }] } } },
+    {
+      name: "mini-form, date field with a bad min",
+      part: { kind: "mini-form", props: { fields: [{ type: "date", id: "d", label: "D", min: "01/02/2026" }] } },
+    },
+    { name: "date-picker, single", part: { kind: "date-picker", props: { prompt: "When?" } } },
+    {
+      name: "date-picker, range min <= max",
+      part: { kind: "date-picker", props: { prompt: "When?", mode: "range", min: "2026-01-01", max: "2026-02-01" } },
+    },
+    {
+      name: "date-picker, min > max",
+      part: { kind: "date-picker", props: { prompt: "When?", min: "2026-03-01", max: "2026-02-01" } },
+    },
+    { name: "date-picker, unknown mode", part: { kind: "date-picker", props: { prompt: "When?", mode: "week" } } },
+    { name: "date-picker, bad date", part: { kind: "date-picker", props: { prompt: "When?", max: "2026-1-1" } } },
+    { name: "unknown kind", part: { kind: "slider", props: {} } },
+    { name: "props missing", part: { kind: "confirm" } },
+    { name: "props not an object", part: { kind: "confirm", props: "Sure?" } },
+  ]
+}
+
 // --- Build -----------------------------------------------------------------
 
 export function buildFixtures(): Record<string, unknown> {
@@ -426,7 +531,24 @@ export function buildFixtures(): Record<string, unknown> {
       urls: cspUrlCases().map((raw) => ({ raw, sanitized: sanitizeReportedUrl(raw) })),
       payloads: cspPayloadCases().map((c) => ({ ...c, logs: parseCspReports(c.payload) })),
     },
+    "ui_part_parity.json": {
+      source: "lib/shared/generative-ui/schemas.ts (UiPartSchema)",
+      cases: uiPartCases().map((c) => ({ ...c, valid: UiPartSchema.safeParse(c.part).success })),
+    },
   }
+}
+
+/** Files that ship inside agent-py's package (not test fixtures). */
+export function buildPackageFiles(): Record<string, unknown> {
+  return { "ui_part_schema.json": uiPartJsonSchema() }
+}
+
+/** Every generated file, by absolute path. */
+export function allOutputs(): Array<{ file: string; value: unknown }> {
+  return [
+    ...Object.entries(buildFixtures()).map(([name, value]) => ({ file: path.join(FIXTURE_DIR, name), value })),
+    ...Object.entries(buildPackageFiles()).map(([name, value]) => ({ file: path.join(PACKAGE_DIR, name), value })),
+  ]
 }
 
 export function serialize(value: unknown): string {
@@ -436,8 +558,7 @@ export function serialize(value: unknown): string {
 if (import.meta.main) {
   const check = process.argv.includes("--check")
   let drift = false
-  for (const [name, value] of Object.entries(buildFixtures())) {
-    const file = path.join(FIXTURE_DIR, name)
+  for (const { file, value } of allOutputs()) {
     const next = serialize(value)
     if (check) {
       let current = ""

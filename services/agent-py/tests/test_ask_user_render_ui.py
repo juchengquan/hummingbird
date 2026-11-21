@@ -96,9 +96,13 @@ async def test_ask_user_execute_raises_tool_error() -> None:
 
 @pytest.mark.asyncio
 async def test_render_ui_execute_raises_tool_error() -> None:
+    """Invalid args get their validation error (the gate lets those
+    through to run — `test_ui_parts.py`); valid ones mean gating broke."""
     descriptor = default_tool_registry()[RENDER_UI_TOOL_NAME]
-    with pytest.raises(ToolError, match="gating is misconfigured"):
+    with pytest.raises(ToolError, match="Invalid renderUI kind"):
         await descriptor.execute({})
+    with pytest.raises(ToolError, match="gating is misconfigured"):
+        await descriptor.execute({"kind": "info-table", "props": {"rows": []}})
 
 
 # --- `_gated_tools_from` union --------------------------------------------

@@ -1,0 +1,621 @@
+{
+ "source": "lib/shared/generative-ui/schemas.ts (UiPartSchema)",
+ "cases": [
+  {
+   "name": "confirm with prompt",
+   "part": {
+    "kind": "confirm",
+    "props": {
+     "prompt": "Sure?"
+    }
+   },
+   "valid": true
+  },
+  {
+   "name": "confirm with title only (no prompt)",
+   "part": {
+    "kind": "confirm",
+    "props": {
+     "title": "Sure?"
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "confirm, empty prompt",
+   "part": {
+    "kind": "confirm",
+    "props": {
+     "prompt": ""
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "confirm, labels",
+   "part": {
+    "kind": "confirm",
+    "props": {
+     "prompt": "Go?",
+     "confirmLabel": "Go",
+     "cancelLabel": "Stop"
+    }
+   },
+   "valid": true
+  },
+  {
+   "name": "confirm, label too long",
+   "part": {
+    "kind": "confirm",
+    "props": {
+     "prompt": "Go?",
+     "confirmLabel": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "confirm, extra key",
+   "part": {
+    "kind": "confirm",
+    "props": {
+     "prompt": "Go?",
+     "tone": "warm"
+    }
+   },
+   "valid": true
+  },
+  {
+   "name": "choice, two options",
+   "part": {
+    "kind": "choice",
+    "props": {
+     "prompt": "Pick",
+     "options": [
+      {
+       "id": "o0",
+       "label": "Option 0"
+      },
+      {
+       "id": "o1",
+       "label": "Option 1"
+      }
+     ]
+    }
+   },
+   "valid": true
+  },
+  {
+   "name": "choice, one option",
+   "part": {
+    "kind": "choice",
+    "props": {
+     "prompt": "Pick",
+     "options": [
+      {
+       "id": "o0",
+       "label": "Option 0"
+      }
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "choice, nine options",
+   "part": {
+    "kind": "choice",
+    "props": {
+     "prompt": "Pick",
+     "options": [
+      {
+       "id": "o0",
+       "label": "Option 0"
+      },
+      {
+       "id": "o1",
+       "label": "Option 1"
+      },
+      {
+       "id": "o2",
+       "label": "Option 2"
+      },
+      {
+       "id": "o3",
+       "label": "Option 3"
+      },
+      {
+       "id": "o4",
+       "label": "Option 4"
+      },
+      {
+       "id": "o5",
+       "label": "Option 5"
+      },
+      {
+       "id": "o6",
+       "label": "Option 6"
+      },
+      {
+       "id": "o7",
+       "label": "Option 7"
+      },
+      {
+       "id": "o8",
+       "label": "Option 8"
+      }
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "choice, multiSelect not a boolean",
+   "part": {
+    "kind": "choice",
+    "props": {
+     "prompt": "Pick",
+     "options": [
+      {
+       "id": "o0",
+       "label": "Option 0"
+      },
+      {
+       "id": "o1",
+       "label": "Option 1"
+      },
+      {
+       "id": "o2",
+       "label": "Option 2"
+      }
+     ],
+     "multiSelect": "yes"
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "info-table, key/value rows",
+   "part": {
+    "kind": "info-table",
+    "props": {
+     "rows": [
+      {
+       "key": "a",
+       "value": "1"
+      }
+     ]
+    }
+   },
+   "valid": true
+  },
+  {
+   "name": "info-table, no rows",
+   "part": {
+    "kind": "info-table",
+    "props": {
+     "title": "T"
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "info-table, columns",
+   "part": {
+    "kind": "info-table",
+    "props": {
+     "columns": [
+      {
+       "id": "a",
+       "label": "A"
+      }
+     ],
+     "rows": [
+      {
+       "a": "1"
+      }
+     ]
+    }
+   },
+   "valid": true
+  },
+  {
+   "name": "info-table, seven columns",
+   "part": {
+    "kind": "info-table",
+    "props": {
+     "columns": [
+      {
+       "id": "c0",
+       "label": "C0"
+      },
+      {
+       "id": "c1",
+       "label": "C1"
+      },
+      {
+       "id": "c2",
+       "label": "C2"
+      },
+      {
+       "id": "c3",
+       "label": "C3"
+      },
+      {
+       "id": "c4",
+       "label": "C4"
+      },
+      {
+       "id": "c5",
+       "label": "C5"
+      },
+      {
+       "id": "c6",
+       "label": "C6"
+      }
+     ],
+     "rows": []
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "info-table, 51 rows",
+   "part": {
+    "kind": "info-table",
+    "props": {
+     "rows": [
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      },
+      {
+       "k": "v"
+      }
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "info-table, empty cell key",
+   "part": {
+    "kind": "info-table",
+    "props": {
+     "rows": [
+      {
+       "": "v"
+      }
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "info-table, number cell",
+   "part": {
+    "kind": "info-table",
+    "props": {
+     "rows": [
+      {
+       "k": 1
+      }
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "mini-form, every field type",
+   "part": {
+    "kind": "mini-form",
+    "props": {
+     "fields": [
+      {
+       "type": "text",
+       "id": "t",
+       "label": "Text"
+      },
+      {
+       "type": "number",
+       "id": "n",
+       "label": "Number",
+       "min": 0
+      },
+      {
+       "type": "select",
+       "id": "s",
+       "label": "Select",
+       "options": [
+        {
+         "id": "o0",
+         "label": "Option 0"
+        },
+        {
+         "id": "o1",
+         "label": "Option 1"
+        }
+       ]
+      },
+      {
+       "type": "date",
+       "id": "d",
+       "label": "Date",
+       "min": "2026-01-01"
+      }
+     ]
+    }
+   },
+   "valid": true
+  },
+  {
+   "name": "mini-form, no fields",
+   "part": {
+    "kind": "mini-form",
+    "props": {
+     "fields": []
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "mini-form, unknown field type",
+   "part": {
+    "kind": "mini-form",
+    "props": {
+     "fields": [
+      {
+       "type": "color",
+       "id": "c",
+       "label": "C"
+      }
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "mini-form, date field with a bad min",
+   "part": {
+    "kind": "mini-form",
+    "props": {
+     "fields": [
+      {
+       "type": "date",
+       "id": "d",
+       "label": "D",
+       "min": "01/02/2026"
+      }
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "date-picker, single",
+   "part": {
+    "kind": "date-picker",
+    "props": {
+     "prompt": "When?"
+    }
+   },
+   "valid": true
+  },
+  {
+   "name": "date-picker, range min <= max",
+   "part": {
+    "kind": "date-picker",
+    "props": {
+     "prompt": "When?",
+     "mode": "range",
+     "min": "2026-01-01",
+     "max": "2026-02-01"
+    }
+   },
+   "valid": true
+  },
+  {
+   "name": "date-picker, min > max",
+   "part": {
+    "kind": "date-picker",
+    "props": {
+     "prompt": "When?",
+     "min": "2026-03-01",
+     "max": "2026-02-01"
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "date-picker, unknown mode",
+   "part": {
+    "kind": "date-picker",
+    "props": {
+     "prompt": "When?",
+     "mode": "week"
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "date-picker, bad date",
+   "part": {
+    "kind": "date-picker",
+    "props": {
+     "prompt": "When?",
+     "max": "2026-1-1"
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "unknown kind",
+   "part": {
+    "kind": "slider",
+    "props": {}
+   },
+   "valid": false
+  },
+  {
+   "name": "props missing",
+   "part": {
+    "kind": "confirm"
+   },
+   "valid": false
+  },
+  {
+   "name": "props not an object",
+   "part": {
+    "kind": "confirm",
+    "props": "Sure?"
+   },
+   "valid": false
+  }
+ ]
+}

@@ -231,6 +231,20 @@ async def test_stub_harness_outcomes() -> None:
         assert len(tokens) == 2
 
 
+async def test_stub_harness_ui_part_interrupt() -> None:
+    from agent_py.ui_parts import render_ui_args_error
+
+    repo, log, run = await _setup()
+    ri = _input(options={"conformance": {"outcome": "interrupt", "interrupt": "ui-part"}})
+    await _driver().start(run=run, run_input=ri, repo=repo, log=log, harness=StubHarness())
+    final = await repo.get(OWNER, RUN)
+    assert final is not None and final.status == "interrupted"
+    [request] = [e for e in await log.read(RUN) if getattr(e, "phase", None) == "request"]
+    assert request.request_kind == "ui-part" and request.tool == "renderUI"
+    # A part the browser's registry renders.
+    assert render_ui_args_error({"kind": request.ui_kind, "props": request.ui_props}) is None
+
+
 # --- wave 3b: coalescing, log caps, the resume checkpoint ---------------------------
 
 

@@ -12,6 +12,7 @@ export type ApiErrorCode =
   | 'context_window'
   | 'invalid_model'
   | 'unknown_model'
+  | 'invalid_attachment'
   | 'provider'
   | 'aborted'
   | 'unknown'
@@ -26,6 +27,18 @@ export type ApiErrorCode =
 export const AUTH_REQUIRED_CODE = 'auth_required' satisfies ApiErrorCode
 
 export const AUTH_REQUIRED_MESSAGE = 'Sign in to use AI features on this server.'
+
+/**
+ * `invalid_attachment` — the backend can't give the model something the
+ * user attached (agent-py's `/v1/runs`: an unsupported image / document
+ * type, a file over its size limit, too many images or documents).
+ * Always `400 { code: 'invalid_attachment', message }`, before the run
+ * exists; nothing else categorises into it.
+ */
+export const INVALID_ATTACHMENT_CODE = 'invalid_attachment' satisfies ApiErrorCode
+
+export const INVALID_ATTACHMENT_MESSAGE =
+  "An attached file or image can't be sent to the model — it may be too large, of an unsupported type, or one too many. Remove it from this chat and retry."
 
 /** True when an error envelope (or SSE error frame) carries `auth_required`. */
 export function isAuthRequiredError(

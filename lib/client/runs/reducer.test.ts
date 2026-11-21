@@ -53,6 +53,23 @@ const CASES: Record<string, Expect> = {
     outcome: { type: "success", memoryTainted: false },
   },
   "memory-cancel": { content: "partial answer", outcome: { type: "cancelled" } },
+  // generateImage on runs: the image part follows the tool result (wave 4b-D).
+  "memory-generated-image": {
+    content: "Drawing.Here is your fox.",
+    toolCalls: [{ id: "c-img", name: "generateImage", status: "done", summary: "1 image (t2i)" }],
+    outcome: { type: "success", memoryTainted: false },
+    extra: ({ message }) => {
+      expect(message.images).toEqual([
+        expect.objectContaining({
+          id: "c-img-0",
+          url: "https://storage.example/u/generated/fox.png",
+          storagePath: "u/generated/fox.png",
+          prompt: "a red fox",
+          mode: "t2i",
+        }),
+      ])
+    },
+  },
   "memory-error": {
     content: "partial ",
     outcome: { type: "error", code: "upstream" },
@@ -111,7 +128,7 @@ const CASES: Record<string, Expect> = {
     outcome: { type: "success", memoryTainted: false },
   },
   "memory-interrupt-ui": {
-    content: "",
+    content: "One moment.",
     toolCalls: [{ id: "c-ui", name: "renderUI", status: "running", summary: undefined }],
     outcome: { type: "interrupt" },
     extra: ({ outcome }) => {
@@ -119,9 +136,14 @@ const CASES: Record<string, Expect> = {
       expect(outcome.interrupts[0]).toMatchObject({
         reason: "ui-part",
         uiKind: "confirm",
-        uiProps: { title: "Sure?" },
+        uiProps: { prompt: "Sure?" },
       })
     },
+  },
+  "memory-resume-ui": {
+    content: "Done.",
+    toolCalls: [{ id: "c-ui", name: "renderUI", status: "done", summary: "Yes" }],
+    outcome: { type: "success", memoryTainted: false },
   },
   "memory-rejoin-full": {
     content: "first part second partFinished.",

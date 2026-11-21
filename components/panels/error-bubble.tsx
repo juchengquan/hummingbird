@@ -5,9 +5,12 @@ import { AlertTriangle, ChevronDown, LogIn, RotateCcw } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { AUTH_REQUIRED_TITLE, openSignIn } from "@/client/auth/auth-required"
-import { AUTH_REQUIRED_MESSAGE } from "@/shared/api-errors"
+import {
+  AUTH_REQUIRED_MESSAGE,
+  INVALID_ATTACHMENT_MESSAGE,
+} from "@/shared/api-errors"
 import { cn } from "@/shared/utils"
-import { CHAT_MODELS, DEFAULT_CHAT_MODEL } from "@/shared/models"
+import { pickFallbackModel, type ModelBackendKind } from "@/shared/backend-models"
 import type { MessageError } from "@/shared/types"
 
 const ERROR_TITLES: Record<string, string> = {
@@ -17,6 +20,7 @@ const ERROR_TITLES: Record<string, string> = {
   context_window: "Conversation too long",
   invalid_model: "Model unavailable",
   unknown_model: "Model not available on this server",
+  invalid_attachment: "Attachment can't be sent",
   provider: "Provider error",
   network: "Network error",
   unknown: "Something went wrong",
@@ -28,27 +32,10 @@ const ERROR_HINTS: Record<string, string> = {
   auth_required: AUTH_REQUIRED_MESSAGE,
   unknown_model:
     "This model isn't available on this server — pick another model or add your own gateway key.",
+  invalid_attachment: INVALID_ATTACHMENT_MESSAGE,
 }
 
 const RATE_LIMIT_COOLDOWN_S = 30
-
-/**
- * Pick a fallback model id for one-click retry. Prefers
- * `DEFAULT_CHAT_MODEL` when it differs from the failed one, otherwise
- * the first different model in `CHAT_MODELS`. Returns null when no
- * different model exists (unreachable given the current list, but kept
- * for safety).
- */
-function pickFallbackModel(
-  failedModelId: string | undefined
-): { id: string; label: string } | null {
-  if (DEFAULT_CHAT_MODEL !== failedModelId) {
-    const def = CHAT_MODELS.find((m) => m.id === DEFAULT_CHAT_MODEL)
-    if (def) return { id: def.id, label: def.label }
-  }
-  const other = CHAT_MODELS.find((m) => m.id !== failedModelId)
-  return other ? { id: other.id, label: other.label } : null
-}
 
 interface ErrorBubbleProps {
   error: MessageError
@@ -60,6 +47,8 @@ interface ErrorBubbleProps {
    *  `invalid_model` / `provider` errors. */
   onTryFallback?: (modelId: string) => void
   onDelete: () => void
+  /** Which models the serving backend accepts, for the fallback (Q40). */
+  modelBackend?: ModelBackendKind
 }
 
 /**
@@ -78,6 +67,9 @@ interface ErrorBubbleProps {
  *   - `unknown_model`   → same as `invalid_model`, plus a hint that the
  *                          model isn't in this server's catalogue (pick
  *                          another or bring your own gateway key)
+ *   - `invalid_attachment` → Retry + Dismiss, with a hint to remove the
+ *                          attachment first (Retry re-reads the chat's
+ *                          attachments). No Change model.
  *   - `provider`        → Retry + Try {fallback} + Change model
  *   - `network`         → Retry (no "Change model" since the network is
  *                          the issue, not the model)
@@ -93,6 +85,7 @@ export function ErrorBubble({
   onChangeModel,
   onTryFallback,
   onDelete,
+  modelBackend = "any",
 }: ErrorBubbleProps) {
   const [showDetails, setShowDetails] = useState(false)
   // Rate-limit cooldown: retrying immediately just hits the same wall.
@@ -132,7 +125,7 @@ export function ErrorBubble({
       error.code === "provider" ||
       error.code === "context_window") &&
     onTryFallback
-      ? pickFallbackModel(error.model)
+      ? pickFallbackModel(error.model, modelBackend)
       : null
 
   return (
@@ -199,7 +192,10 @@ export function ErrorBubble({
             Try {fallback.label}
           </Button>
         )}
-        {onChangeModel && error.code !== "network" && !authRequired && (
+        {onChangeModel &&
+          error.code !== "network" &&
+          error.code !== "invalid_attachment" &&
+          !authRequired && (
           <Button
             size="sm"
             variant="ghost"
