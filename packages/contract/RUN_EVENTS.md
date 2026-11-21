@@ -107,7 +107,7 @@ The parent message id is reset to none by every `step_start`.
 | Internal entry | AG-UI events | Notes |
 |---|---|---|
 | `status` `queued` / `running`, no resume marker | — | `RUN_STARTED` is stream framing (§ 6), not an entry |
-| `status` `running` with `resumedFromSeq` (or legacy `restarted`) — a **resume marker** | `CUSTOM hb.rewind { after }` | `after` = `resumedFromSeq` (legacy `restarted` without it: `1`). The marker does **not** close the open block: the encoder drops it (no `*_END` events — live, the block was opened by the dead attempt and the client discards its start on the rewind, so an `END` at the marker's seq would end a message the client no longer holds; on replay nothing is open here). It also forgets its parent message id and whatever it tracked from entries with `seq > after` (open sub-agents, the last `result`). See § 6.5 |
+| `status` `running` with `resumedFromSeq` (or legacy `restarted`) — a **resume marker** | `CUSTOM hb.rewind { after }` | `after` = `resumedFromSeq` (legacy `restarted` without it: `1`). The marker does **not** close the open block: the encoder drops it (no `*_END` events — live, the block was opened by the dead attempt and the client discards its start on the rewind, so an `END` at the marker's seq would end a message the client no longer holds; on replay nothing is open here). It also forgets its parent message id and whatever it tracked from entries with `seq > after` (open sub-agents, the open step, the last `result`). See § 6.5 |
 | `status` `paused` / `cancelled` / `done` / `failed` | — | the closing event comes from the run row (§ 6.4) |
 | `step_start` | `STEP_STARTED { stepName: "step-<step>" }` | resets the parent message id |
 | `step_end` | `STEP_FINISHED { stepName: "step-<step>" }` | |
@@ -356,8 +356,14 @@ reclaimed job's resume marker then supersedes that `result` (today's
   interrupted (`paused` with open interrupts), and every entry the log
   holds has been sent, the stream emits the **closing events** and
   ends: close the open block (if any — normally the terminal entry,
-  being a non-token entry, has closed it already), then the run's
-  closing AG-UI event from § 1 with the data from § 5. The encoder
+  being a non-token entry, has closed it already); end every sub-agent
+  still open (`SUBAGENT_FINISHED`, innermost first) and the step still
+  open (`STEP_FINISHED`) — a cancel or a reap settles the row before the
+  harness writes its `step_end`, and AG-UI forbids `RUN_FINISHED` inside
+  a step or sub-agent (the `@ag-ui/client` verifier rejects it); then
+  the run's closing AG-UI event from § 1 with the data from § 5. A step
+  or sub-agent opened by a rewound attempt (§ 6.5) is discarded with it,
+  not closed. The encoder
   exposes this as a separate call (`finish`), because it depends on the
   row, not on an entry.
 - **The closing events carry no SSE id** (like `RUN_STARTED` and

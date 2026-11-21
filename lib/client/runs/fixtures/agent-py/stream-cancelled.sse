@@ -12,5 +12,7 @@ data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"8a6e0804-0000-4000-8000-000000
 id: 3
 data: {"type":"TEXT_MESSAGE_END","messageId":"8a6e0804-0000-4000-8000-00000000f907:2"}
 
+data: {"type":"STEP_FINISHED","stepName":"step-1"}
+
 data: {"type":"RUN_FINISHED","threadId":"11111111-2222-4333-8444-555555555555","runId":"8a6e0804-0000-4000-8000-00000000f907","outcome":{"type":"cancelled"}}
 

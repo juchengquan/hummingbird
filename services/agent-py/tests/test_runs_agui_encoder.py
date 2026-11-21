@@ -606,6 +606,51 @@ def test_finish_closes_an_open_block_and_spends_the_encoder() -> None:
         enc.encode(log.text("more"))
 
 
+@pytest.mark.parametrize("status", ["cancelled", "failed", "done"])
+def test_finish_closes_an_open_step_and_subagents(status: str) -> None:
+    """A cancel settles the row before the harness writes its `step_end`,
+    so a stream can end mid-step: the closing event must not land inside
+    the step (or a sub-agent) — AG-UI forbids RUN_FINISHED there."""
+    enc = AgUiRunEncoder(R)
+    log = Log()
+    for entry in (
+        log.step_start(),
+        log.handoff("researcher", "enter", child_task_id="child-1"),
+        log.handoff("writer", "enter"),
+        log.text("dangling"),
+    ):
+        enc.encode(entry)
+    closing = enc.finish(run_record(status=status))
+    assert closing[:4] == [
+        {"type": "TEXT_MESSAGE_END", "messageId": f"{R}:4"},
+        {"type": "SUBAGENT_FINISHED", "subagentRunId": f"{R}:3"},
+        {"type": "SUBAGENT_FINISHED", "subagentRunId": "child-1"},
+        {"type": "STEP_FINISHED", "stepName": "step-1"},
+    ]
+    assert closing[4]["type"] == ("RUN_ERROR" if status == "failed" else "RUN_FINISHED")
+    for event in closing:
+        assert_valid(event)
+
+
+def test_finish_leaves_closed_steps_and_rewound_ones_alone() -> None:
+    enc = AgUiRunEncoder(R)
+    log = Log()
+    for entry in (log.step_start(), log.step_end()):
+        enc.encode(entry)
+    assert _types(enc.finish(run_record(status="done"))) == ["RUN_FINISHED"]
+    # A step the dead attempt opened is discarded by the rewind, not closed.
+    enc = AgUiRunEncoder(R)
+    log = Log()
+    for entry in (
+        log.step_start(),  # 1
+        log.step_end(),  # 2  ← checkpoint
+        log.step_start(),  # 3  dead attempt
+        log.status("running", resumed_from_seq=2),  # 4
+    ):
+        enc.encode(entry)
+    assert _types(enc.finish(run_record(status="cancelled"))) == ["RUN_FINISHED"]
+
+
 @pytest.mark.parametrize("status", ["queued", "running"])
 def test_finish_refuses_a_live_run(status: str) -> None:
     with pytest.raises(ValueError):

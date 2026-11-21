@@ -292,6 +292,7 @@ async def test_paused_waiting_on_children_keeps_tailing() -> None:
         "TEXT_MESSAGE_START",
         "TEXT_MESSAGE_CONTENT",
         "TEXT_MESSAGE_END",
+        "STEP_FINISHED",  # the log never ended step 1; the closing events do
         "RUN_FINISHED",
     ]
 
@@ -374,6 +375,7 @@ async def test_live_rewind_after_a_dead_attempt() -> None:
         ("2", "TEXT_MESSAGE_CONTENT"),
         ("3", "CUSTOM"),  # rewind, no TEXT_MESSAGE_END for the discarded block
         ("4", "STEP_STARTED"),
+        (None, "STEP_FINISHED"),  # step 4 never ended in the log
         (None, "RUN_FINISHED"),
     ]
 

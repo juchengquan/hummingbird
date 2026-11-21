@@ -1,19 +1,19 @@
-data: {"type":"RUN_STARTED","threadId":"550f9ef5-e209-494a-a07c-ca4aa35cfbae","runId":"9fd13759-1b2c-4e6f-a981-c4fb3fd90383"}
+data: {"type":"RUN_STARTED","threadId":"75be189a-4d57-4257-bcaa-906ba283955c","runId":"1dacbffd-86d7-449f-bc02-a821613a3725"}
 
 id: 1
 data: {"type":"STEP_STARTED","stepName":"step-1"}
 
 id: 2.0
-data: {"type":"TEXT_MESSAGE_START","messageId":"9fd13759-1b2c-4e6f-a981-c4fb3fd90383:2","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_START","messageId":"1dacbffd-86d7-449f-bc02-a821613a3725:2","role":"assistant"}
 
 id: 2
-data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"9fd13759-1b2c-4e6f-a981-c4fb3fd90383:2","delta":"Hello, stranger."}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"1dacbffd-86d7-449f-bc02-a821613a3725:2","delta":"Hello, stranger."}
 
 id: 3.0
-data: {"type":"TEXT_MESSAGE_END","messageId":"9fd13759-1b2c-4e6f-a981-c4fb3fd90383:2"}
+data: {"type":"TEXT_MESSAGE_END","messageId":"1dacbffd-86d7-449f-bc02-a821613a3725:2"}
 
 id: 3
 data: {"type":"STEP_FINISHED","stepName":"step-1"}
 
-data: {"type":"RUN_FINISHED","threadId":"550f9ef5-e209-494a-a07c-ca4aa35cfbae","runId":"9fd13759-1b2c-4e6f-a981-c4fb3fd90383","outcome":{"type":"success"},"result":{"text":"Hello, stranger."},"usage":[{"provider":"anthropic","model":"claude-sonnet-4-6","inputTokens":11,"outputTokens":7,"totalTokens":18}]}
+data: {"type":"RUN_FINISHED","threadId":"75be189a-4d57-4257-bcaa-906ba283955c","runId":"1dacbffd-86d7-449f-bc02-a821613a3725","outcome":{"type":"success"},"result":{"text":"Hello, stranger."},"usage":[{"provider":"anthropic","model":"claude-sonnet-4-6","inputTokens":11,"outputTokens":7,"totalTokens":18}]}
 
