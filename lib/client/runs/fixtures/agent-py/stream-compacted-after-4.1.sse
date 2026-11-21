@@ -1,0 +1,9 @@
+data: {"type":"RUN_STARTED","threadId":"11111111-2222-4333-8444-555555555555","runId":"8a6e0804-0000-4000-8000-00000000f907"}
+
+data: {"type":"CUSTOM","name":"hummingbird.gap","value":{"after":"4.1","resumeAt":11,"reason":"compacted"}}
+
+id: 11
+data: {"type":"MESSAGES_SNAPSHOT","messages":[{"id":"8a6e0804-0000-4000-8000-00000000f907:routed_model","role":"activity","activityType":"hummingbird.routed_model","content":{"model":"anthropic/claude-sonnet-4.6"}},{"id":"8a6e0804-0000-4000-8000-00000000f907:3","role":"reasoning","content":"Look it up."},{"id":"8a6e0804-0000-4000-8000-00000000f907:5","role":"assistant","toolCalls":[{"id":"tc1","type":"function","function":{"name":"webSearch","arguments":"{\"query\":\"sky colour\"}"}}]},{"id":"8a6e0804-0000-4000-8000-00000000f907:6","role":"tool","toolCallId":"tc1","content":"{\"summary\":\"1 result\",\"results\":[{\"title\":\"Sky\",\"url\":\"https://sky.example\",\"snippet\":\"It is blue.\"}]}","metadata":{"hummingbird":{"toolName":"webSearch"}}},{"id":"8a6e0804-0000-4000-8000-00000000f907:9","role":"assistant","content":"It is blue."}]}
+
+data: {"type":"RUN_FINISHED","threadId":"11111111-2222-4333-8444-555555555555","runId":"8a6e0804-0000-4000-8000-00000000f907","outcome":{"type":"success"},"result":{"text":"It is blue.","memoryTainted":true}}
+

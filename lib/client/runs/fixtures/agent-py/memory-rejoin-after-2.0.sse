@@ -1,0 +1,43 @@
+data: {"type":"RUN_STARTED","threadId":"5edf0f3f-0a44-4dbf-941c-3b0b9fa61ff6","runId":"60f585a1-25a2-4036-b503-31cf4f810af1"}
+
+id: 2
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"60f585a1-25a2-4036-b503-31cf4f810af1:2","delta":"first part"}
+
+id: 3
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"60f585a1-25a2-4036-b503-31cf4f810af1:2","delta":" second part"}
+
+id: 4.0
+data: {"type":"TEXT_MESSAGE_END","messageId":"60f585a1-25a2-4036-b503-31cf4f810af1:2"}
+
+id: 4.1
+data: {"type":"TOOL_CALL_START","toolCallId":"c1","toolCallName":"lookup","parentMessageId":"60f585a1-25a2-4036-b503-31cf4f810af1:2"}
+
+id: 4.2
+data: {"type":"TOOL_CALL_ARGS","toolCallId":"c1","delta":"{}"}
+
+id: 4
+data: {"type":"TOOL_CALL_END","toolCallId":"c1"}
+
+id: 5
+data: {"type":"TOOL_CALL_RESULT","messageId":"60f585a1-25a2-4036-b503-31cf4f810af1:5","toolCallId":"c1","role":"tool","content":"{\"summary\":\"Looked it up\"}","metadata":{"hummingbird":{"toolName":"lookup"}}}
+
+id: 6
+data: {"type":"STEP_FINISHED","stepName":"step-1"}
+
+id: 7
+data: {"type":"STEP_STARTED","stepName":"step-2"}
+
+id: 8.0
+data: {"type":"TEXT_MESSAGE_START","messageId":"60f585a1-25a2-4036-b503-31cf4f810af1:8","role":"assistant"}
+
+id: 8
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"60f585a1-25a2-4036-b503-31cf4f810af1:8","delta":"Finished."}
+
+id: 9.0
+data: {"type":"TEXT_MESSAGE_END","messageId":"60f585a1-25a2-4036-b503-31cf4f810af1:8"}
+
+id: 9
+data: {"type":"STEP_FINISHED","stepName":"step-2"}
+
+data: {"type":"RUN_FINISHED","threadId":"5edf0f3f-0a44-4dbf-941c-3b0b9fa61ff6","runId":"60f585a1-25a2-4036-b503-31cf4f810af1","outcome":{"type":"success"},"result":{"text":"first part second partFinished.","memoryTainted":true},"usage":[{"provider":"anthropic","model":"claude-sonnet-4-6","inputTokens":22,"outputTokens":14,"totalTokens":36}]}
+

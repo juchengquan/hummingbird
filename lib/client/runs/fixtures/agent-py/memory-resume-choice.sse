@@ -1,0 +1,28 @@
+data: {"type":"RUN_STARTED","threadId":"889a8d8a-30fa-4d70-bd34-2237c96fa8ba","runId":"8aabd41c-98fd-4b94-98b9-2575d58e6371"}
+
+id: 1
+data: {"type":"STEP_STARTED","stepName":"step-1"}
+
+id: 2
+data: {"type":"TOOL_CALL_RESULT","messageId":"8aabd41c-98fd-4b94-98b9-2575d58e6371:2","toolCallId":"c-ask","role":"tool","content":"{\"summary\":\"User selected: a\"}","metadata":{"hummingbird":{"toolName":"askUser"}}}
+
+id: 3
+data: {"type":"STEP_FINISHED","stepName":"step-1"}
+
+id: 4
+data: {"type":"STEP_STARTED","stepName":"step-2"}
+
+id: 5.0
+data: {"type":"TEXT_MESSAGE_START","messageId":"8aabd41c-98fd-4b94-98b9-2575d58e6371:5","role":"assistant"}
+
+id: 5
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"8aabd41c-98fd-4b94-98b9-2575d58e6371:5","delta":"You picked A."}
+
+id: 6.0
+data: {"type":"TEXT_MESSAGE_END","messageId":"8aabd41c-98fd-4b94-98b9-2575d58e6371:5"}
+
+id: 6
+data: {"type":"STEP_FINISHED","stepName":"step-2"}
+
+data: {"type":"RUN_FINISHED","threadId":"889a8d8a-30fa-4d70-bd34-2237c96fa8ba","runId":"8aabd41c-98fd-4b94-98b9-2575d58e6371","outcome":{"type":"success"},"result":{"text":"You picked A."},"usage":[{"provider":"anthropic","model":"claude-sonnet-4-6","inputTokens":11,"outputTokens":7,"totalTokens":18}]}
+

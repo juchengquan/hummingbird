@@ -1,0 +1,43 @@
+data: {"type":"RUN_STARTED","threadId":"11111111-2222-4333-8444-555555555555","runId":"8a6e0804-0000-4000-8000-00000000f907"}
+
+id: 1
+data: {"type":"STEP_STARTED","stepName":"step-1"}
+
+id: 2.0
+data: {"type":"TEXT_MESSAGE_START","messageId":"8a6e0804-0000-4000-8000-00000000f907:2","role":"assistant"}
+
+id: 2
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"8a6e0804-0000-4000-8000-00000000f907:2","delta":"Trying. "}
+
+id: 3.0
+data: {"type":"TEXT_MESSAGE_END","messageId":"8a6e0804-0000-4000-8000-00000000f907:2"}
+
+id: 3
+data: {"type":"CUSTOM","name":"hummingbird.step_error","value":{"message":"search timed out","willRetry":true}}
+
+id: 4
+data: {"type":"SUBAGENT_STARTED","subagentRunId":"8a6e0804-0000-4000-8000-00000000f907:4","name":"researcher","metadata":{"hummingbird":{"subgoal":"dig deeper"}}}
+
+id: 5
+data: {"type":"SUBAGENT_FINISHED","subagentRunId":"8a6e0804-0000-4000-8000-00000000f907:4"}
+
+id: 6
+data: {"type":"CUSTOM","name":"hummingbird.context_compacted","value":{"summary":"earlier turns"}}
+
+id: 7.0
+data: {"type":"TOOL_CALL_START","toolCallId":"tc1","toolCallName":"webSearch","parentMessageId":"8a6e0804-0000-4000-8000-00000000f907:2"}
+
+id: 7.1
+data: {"type":"TOOL_CALL_ARGS","toolCallId":"tc1","delta":"{\"query\":\"x\"}"}
+
+id: 7
+data: {"type":"TOOL_CALL_END","toolCallId":"tc1"}
+
+id: 8
+data: {"type":"TOOL_CALL_RESULT","messageId":"8a6e0804-0000-4000-8000-00000000f907:8","toolCallId":"tc1","role":"tool","content":"{\"summary\":\"Search failed: quota\"}","metadata":{"hummingbird":{"toolName":"webSearch","isError":true}}}
+
+id: 9
+data: {"type":"STEP_FINISHED","stepName":"step-1"}
+
+data: {"type":"RUN_ERROR","message":"Rate limited by the provider.","code":"rate_limit"}
+

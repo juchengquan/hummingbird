@@ -1,0 +1,100 @@
+data: {"type":"RUN_STARTED","threadId":"11111111-2222-4333-8444-555555555555","runId":"8a6e0804-0000-4000-8000-00000000f907"}
+
+id: 1
+data: {"type":"ACTIVITY_SNAPSHOT","messageId":"8a6e0804-0000-4000-8000-00000000f907:routed_model","activityType":"hummingbird.routed_model","content":{"model":"anthropic/claude-sonnet-4.6"},"replace":true}
+
+id: 2
+data: {"type":"STEP_STARTED","stepName":"step-1"}
+
+id: 3
+data: {"type":"ACTIVITY_SNAPSHOT","messageId":"8a6e0804-0000-4000-8000-00000000f907:plan","activityType":"hummingbird.plan","content":{"items":[{"id":"p1","text":"Draw","status":"in_progress"},{"id":"p2","text":"Explain","status":"pending"}]},"replace":true}
+
+id: 4.0
+data: {"type":"TEXT_MESSAGE_START","messageId":"8a6e0804-0000-4000-8000-00000000f907:4","role":"assistant"}
+
+id: 4
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"8a6e0804-0000-4000-8000-00000000f907:4","delta":"Here you go."}
+
+id: 5.0
+data: {"type":"TEXT_MESSAGE_END","messageId":"8a6e0804-0000-4000-8000-00000000f907:4"}
+
+id: 5.1
+data: {"type":"TOOL_CALL_START","toolCallId":"img1","toolCallName":"generateImage","parentMessageId":"8a6e0804-0000-4000-8000-00000000f907:4"}
+
+id: 5.2
+data: {"type":"TOOL_CALL_ARGS","toolCallId":"img1","delta":"{\"prompt\":\"a cat\"}"}
+
+id: 5
+data: {"type":"TOOL_CALL_END","toolCallId":"img1"}
+
+id: 6
+data: {"type":"TOOL_CALL_RESULT","messageId":"8a6e0804-0000-4000-8000-00000000f907:6","toolCallId":"img1","role":"tool","content":"{\"summary\":\"1 image\"}","metadata":{"hummingbird":{"toolName":"generateImage"}}}
+
+id: 7
+data: {"type":"ACTIVITY_SNAPSHOT","messageId":"8a6e0804-0000-4000-8000-00000000f907:tool_image:img1","activityType":"hummingbird.tool_image","content":{"id":"img1","mode":"t2i","images":[{"id":"i1","url":"data:image/png;base64,AAAA","width":64,"height":64,"format":"png","prompt":"a cat","mode":"t2i"}]},"replace":true}
+
+id: 8.0
+data: {"type":"TOOL_CALL_START","toolCallId":"code1","toolCallName":"runCode","parentMessageId":"8a6e0804-0000-4000-8000-00000000f907:4"}
+
+id: 8.1
+data: {"type":"TOOL_CALL_ARGS","toolCallId":"code1","delta":"{\"code\":\"print(1)\"}"}
+
+id: 8
+data: {"type":"TOOL_CALL_END","toolCallId":"code1"}
+
+id: 9
+data: {"type":"TOOL_CALL_RESULT","messageId":"8a6e0804-0000-4000-8000-00000000f907:9","toolCallId":"code1","role":"tool","content":"{\"summary\":\"Ran\"}","metadata":{"hummingbird":{"toolName":"runCode"}}}
+
+id: 10
+data: {"type":"ACTIVITY_SNAPSHOT","messageId":"8a6e0804-0000-4000-8000-00000000f907:code_result:code1","activityType":"hummingbird.code_result","content":{"id":"code1","stdout":"1\n","stderr":"","results":[{"type":"text","value":"1"}]},"replace":true}
+
+id: 11
+data: {"type":"ACTIVITY_SNAPSHOT","messageId":"8a6e0804-0000-4000-8000-00000000f907:tool_file:code1","activityType":"hummingbird.tool_file","content":{"id":"code1","files":[{"id":"f1","name":"out.csv","sizeBytes":4,"mimeType":"text/csv","url":"https://files.example/out.csv"}]},"replace":true}
+
+id: 12.0
+data: {"type":"TOOL_CALL_START","toolCallId":"ui1","toolCallName":"renderUI","parentMessageId":"8a6e0804-0000-4000-8000-00000000f907:4"}
+
+id: 12.1
+data: {"type":"TOOL_CALL_ARGS","toolCallId":"ui1","delta":"{\"kind\":\"info-table\",\"props\":{\"rows\":[]}}"}
+
+id: 12
+data: {"type":"TOOL_CALL_END","toolCallId":"ui1"}
+
+id: 13
+data: {"type":"TOOL_CALL_RESULT","messageId":"8a6e0804-0000-4000-8000-00000000f907:13","toolCallId":"ui1","role":"tool","content":"{\"summary\":\"Rendered\"}","metadata":{"hummingbird":{"toolName":"renderUI"}}}
+
+id: 14
+data: {"type":"ACTIVITY_SNAPSHOT","messageId":"8a6e0804-0000-4000-8000-00000000f907:ui_part:ui1","activityType":"hummingbird.ui_part","content":{"id":"ui1","kind":"info-table","props":{"title":"Facts","rows":[{"label":"Colour","value":"Blue"}]}},"replace":true}
+
+id: 15.0
+data: {"type":"TOOL_CALL_START","toolCallId":"app1","toolCallName":"mcp__srv__show","parentMessageId":"8a6e0804-0000-4000-8000-00000000f907:4"}
+
+id: 15.1
+data: {"type":"TOOL_CALL_ARGS","toolCallId":"app1","delta":"{}"}
+
+id: 15
+data: {"type":"TOOL_CALL_END","toolCallId":"app1"}
+
+id: 16
+data: {"type":"TOOL_CALL_RESULT","messageId":"8a6e0804-0000-4000-8000-00000000f907:16","toolCallId":"app1","role":"tool","content":"{\"summary\":\"Shown\"}","metadata":{"hummingbird":{"toolName":"mcp__srv__show"}}}
+
+id: 17
+data: {"type":"ACTIVITY_SNAPSHOT","messageId":"8a6e0804-0000-4000-8000-00000000f907:mcp_app:app1","activityType":"hummingbird.mcp_app","content":{"id":"app1","serverId":"srv","html":"<p>app</p>","resourceUri":"ui://srv/app"},"replace":true}
+
+id: 18
+data: {"type":"ACTIVITY_SNAPSHOT","messageId":"8a6e0804-0000-4000-8000-00000000f907:artifact:art-1","activityType":"hummingbird.artifact_ref","content":{"artifactId":"art-1"},"replace":true}
+
+id: 19
+data: {"type":"ACTIVITY_SNAPSHOT","messageId":"8a6e0804-0000-4000-8000-00000000f907:plan","activityType":"hummingbird.plan","content":{"items":[{"id":"p1","text":"Draw","status":"completed"},{"id":"p2","text":"Explain","status":"completed"}]},"replace":true}
+
+id: 20
+data: {"type":"STEP_FINISHED","stepName":"step-1"}
+
+id: 21
+data: {"type":"ACTIVITY_SNAPSHOT","messageId":"8a6e0804-0000-4000-8000-00000000f907:verification","activityType":"hummingbird.verification","content":{"checks":[{"claim":"It is blue.","status":"supported","sourceIds":["s1"]}],"summary":{"supported":1,"partial":0,"unsupported":0,"total":1}},"replace":true}
+
+id: 22
+data: {"type":"ACTIVITY_SNAPSHOT","messageId":"8a6e0804-0000-4000-8000-00000000f907:suggestions","activityType":"hummingbird.suggestions","content":{"values":["Why blue?","Draw a dog"]},"replace":true}
+
+data: {"type":"RUN_FINISHED","threadId":"11111111-2222-4333-8444-555555555555","runId":"8a6e0804-0000-4000-8000-00000000f907","outcome":{"type":"success"},"result":{"text":"Here you go."}}
+

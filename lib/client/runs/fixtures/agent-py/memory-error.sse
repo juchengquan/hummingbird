@@ -1,0 +1,19 @@
+data: {"type":"RUN_STARTED","threadId":"2a2cfe3a-6c17-4a92-87e2-93b000b8c141","runId":"ad6b6089-0393-4fe2-9dc2-f387e17ebfdc"}
+
+id: 1
+data: {"type":"STEP_STARTED","stepName":"step-1"}
+
+id: 2.0
+data: {"type":"TEXT_MESSAGE_START","messageId":"ad6b6089-0393-4fe2-9dc2-f387e17ebfdc:2","role":"assistant"}
+
+id: 2
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"ad6b6089-0393-4fe2-9dc2-f387e17ebfdc:2","delta":"partial "}
+
+id: 3.0
+data: {"type":"TEXT_MESSAGE_END","messageId":"ad6b6089-0393-4fe2-9dc2-f387e17ebfdc:2"}
+
+id: 3
+data: {"type":"STEP_FINISHED","stepName":"step-1"}
+
+data: {"type":"RUN_ERROR","message":"model stream broke","code":"upstream","usage":[{"provider":"anthropic","model":"claude-sonnet-4-6","inputTokens":11,"outputTokens":0,"totalTokens":11}]}
+

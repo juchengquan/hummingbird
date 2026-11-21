@@ -33,7 +33,8 @@
     "supabase:docker:up": "docker compose -f docker-compose.supabase.yml up -d",
     "supabase:docker:down": "docker compose -f docker-compose.supabase.yml down",
     "supabase:docker:reset": "docker compose -f docker-compose.supabase.yml down -v && docker compose -f docker-compose.supabase.yml up -d && sleep 8 && bash .docker/supabase/apply-migrations.sh",
-    "supabase:docker:migrate": "bash .docker/supabase/apply-migrations.sh"
+    "supabase:docker:migrate": "bash .docker/supabase/apply-migrations.sh",
+    "fixtures:runs": "bash scripts/record-runs-fixtures.sh"
   },
   "dependencies": {
     "@ag-ui/client": "1.0.5",

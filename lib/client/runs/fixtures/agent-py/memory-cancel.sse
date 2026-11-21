@@ -1,0 +1,19 @@
+data: {"type":"RUN_STARTED","threadId":"c0b89120-b390-4281-8fd3-2e9d1d06fe58","runId":"b5c2afe1-5f19-424c-ab1b-25e9227accb8"}
+
+id: 1
+data: {"type":"STEP_STARTED","stepName":"step-1"}
+
+id: 2.0
+data: {"type":"TEXT_MESSAGE_START","messageId":"b5c2afe1-5f19-424c-ab1b-25e9227accb8:2","role":"assistant"}
+
+id: 2
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"b5c2afe1-5f19-424c-ab1b-25e9227accb8:2","delta":"partial answer"}
+
+id: 3.0
+data: {"type":"TEXT_MESSAGE_END","messageId":"b5c2afe1-5f19-424c-ab1b-25e9227accb8:2"}
+
+id: 3
+data: {"type":"STEP_FINISHED","stepName":"step-1"}
+
+data: {"type":"RUN_FINISHED","threadId":"c0b89120-b390-4281-8fd3-2e9d1d06fe58","runId":"b5c2afe1-5f19-424c-ab1b-25e9227accb8","outcome":{"type":"cancelled"}}
+
