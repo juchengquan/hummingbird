@@ -8,6 +8,9 @@
 #  2. services/** are separate sub-projects (agent-ts/agent-py) with their own
 #     deps + CI jobs; the root run must not sweep them in (agent-ts's
 #     `import postgres` is unresolved at the repo root).
+#  3. packages/contract/conformance/** cases need a live backend
+#     (CONTRACT_BASE_URL); without it they report as skipped here. Run them
+#     with `bun run contract:conformance` — see packages/contract/README.md.
 # Paths are ./-anchored because bun's positional filters are substring matches:
 # a bare `tests` would also match services/agent-ts/tests/.
 set -euo pipefail
@@ -15,7 +18,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 ISOLATED="./app/api/tasks"
-MAIN_ROOTS=(./app/api/ai ./app/api/chat ./app/api/extract ./app/api/mcp ./app/api/memory ./components ./lib ./scripts ./tests)
+MAIN_ROOTS=(./app/api/ai ./app/api/chat ./app/api/extract ./app/api/mcp ./app/api/memory ./components ./lib ./packages ./scripts ./tests)
 
 # Coverage guard: every *.test.ts (outside node_modules/ and services/) must
 # live under a configured root, so nothing is silently skipped when bun has no

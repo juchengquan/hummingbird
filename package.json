@@ -20,6 +20,7 @@
     "contract:gen": "bash packages/contract/scripts/gen.sh",
     "contract:check": "bun packages/contract/scripts/lint.ts && bash packages/contract/scripts/gen.sh --check",
     "contract:lint": "bun packages/contract/scripts/lint.ts",
+    "contract:conformance": "bun test ./packages/contract/conformance",
     "codegen:agent-types": "bash scripts/codegen-agent-types.sh",
     "codegen:agent-types:check": "bash scripts/codegen-agent-types.sh --check",
     "check:agent-py": "cd services/agent-py && uv run ruff check . && uv run ruff format --check . && uv run mypy src && uv run pytest",
