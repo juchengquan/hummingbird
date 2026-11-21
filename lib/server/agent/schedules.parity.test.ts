@@ -400,14 +400,18 @@ function buildFixture(): ParityFixture {
 }
 
 describe("cron parity fixture (agent-py port)", () => {
-  test("committed fixture matches what the TS schedule functions compute", { timeout: 120_000 }, () => {
-    const fixture = buildFixture()
-    if (process.env.CRON_PARITY_WRITE === "1") {
-      writeFileSync(FIXTURE_PATH, serialize(fixture))
-    }
-    const committed = JSON.parse(readFileSync(FIXTURE_PATH, "utf8")) as ParityFixture
-    expect(committed).toEqual(fixture)
-  })
+  test(
+    "committed fixture matches what the TS schedule functions compute",
+    () => {
+      const fixture = buildFixture()
+      if (process.env.CRON_PARITY_WRITE === "1") {
+        writeFileSync(FIXTURE_PATH, serialize(fixture))
+      }
+      const committed = JSON.parse(readFileSync(FIXTURE_PATH, "utf8")) as ParityFixture
+      expect(committed).toEqual(fixture)
+    },
+    { timeout: 120_000 },
+  )
 
   test("pins the cron-parser version the fixture was generated with", async () => {
     const pkg = (await import("cron-parser/package.json")) as { version: string }
