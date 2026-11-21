@@ -1,0 +1,172 @@
+// VENDORED from `lib/shared/skills/web-search-config.ts` (Next app) at commit afc33009135d6166adb4196598350638a8aafc3f.
+// Frozen copy — agent-ts is frozen (docs/PLAN-frontend-backend-split.md Q11); do not extend.
+// Fixes to the original no longer propagate here. Only import specifiers were rewritten
+// (`@/server/*` / `@/shared/*` → relative, `@/config/*` → `@config/*`) unless a
+// "VENDOR DEVIATION" note below says otherwise.
+
+/**
+ * Per-skill config for `webSearch`.
+ *
+ * Shape:
+ *   {
+ *     maxCalls?: number,           // tool-level — total calls per turn
+ *     tavily?:  { enabled?, searchDepth? },
+ *     brave?:   { enabled?, freshness? },
+ *     exa?:     { enabled?, type? },
+ *   }
+ *
+ * `maxCalls` is enforced at the tool level: one `webSearch` invocation
+ * counts as one cap unit even when it fans out to multiple providers.
+ *
+ * Provider-level `enabled` is a user opt-out. The default is "use it if
+ * the server has the API key" — i.e. enabled is treated as `true` when
+ * absent and the server has the credential. Setting it to `false`
+ * explicitly suppresses that provider regardless of credentials.
+ *
+ * Resolution order — for each scalar field — is conversation override
+ * → workspace default → built-in default. Provider sub-objects merge
+ * field-by-field rather than wholesale-replacing, so a workspace can
+ * set `tavily.searchDepth = 'advanced'` and a conversation can set
+ * `brave.enabled = false` without either erasing the other's setting.
+ */
+
+// --- Maxcalls ---------------------------------------------------------------
+
+import { makeBoundedIntField } from "./bounded-int"
+
+const WEB_SEARCH_MAX = makeBoundedIntField({ default: 3, min: 1, max: 10 })
+/** Built-in default when neither workspace nor conversation specifies. */
+export const DEFAULT_MAX_WEB_SEARCHES = WEB_SEARCH_MAX.DEFAULT
+/** Inclusive bounds the UI enforces on the stepper. */
+export const MIN_MAX_WEB_SEARCHES = WEB_SEARCH_MAX.MIN
+export const MAX_MAX_WEB_SEARCHES = WEB_SEARCH_MAX.MAX
+export const clampMaxWebSearches = WEB_SEARCH_MAX.clamp
+
+// --- Per-provider option types ---------------------------------------------
+
+/** Tavily-specific knobs. */
+export type TavilySearchDepth = "basic" | "advanced"
+export const TAVILY_SEARCH_DEPTHS: ReadonlyArray<TavilySearchDepth> = [
+  "basic",
+  "advanced",
+]
+export const DEFAULT_TAVILY_SEARCH_DEPTH: TavilySearchDepth = "basic"
+
+export interface TavilyConfig {
+  enabled?: boolean
+  searchDepth?: TavilySearchDepth
+}
+
+/** Brave-specific knobs. */
+export type BraveFreshness = "any" | "pd" | "pw" | "pm" | "py"
+export const BRAVE_FRESHNESSES: ReadonlyArray<BraveFreshness> = [
+  "any",
+  "pd",
+  "pw",
+  "pm",
+  "py",
+]
+export const DEFAULT_BRAVE_FRESHNESS: BraveFreshness = "any"
+/** User-facing labels for the freshness select. */
+export const BRAVE_FRESHNESS_LABELS: Record<BraveFreshness, string> = {
+  any: "Any time",
+  pd: "Past 24 hours",
+  pw: "Past week",
+  pm: "Past month",
+  py: "Past year",
+}
+
+export interface BraveConfig {
+  enabled?: boolean
+  freshness?: BraveFreshness
+}
+
+/** Exa-specific knobs.
+ *
+ * Exa exposes three retrieval modes:
+ *   - "neural"  → embedding-based semantic search (Exa's flagship mode)
+ *   - "keyword" → traditional lexical search
+ *   - "auto"    → Exa picks per query (default; recommended)
+ */
+export type ExaSearchType = "auto" | "neural" | "keyword"
+export const EXA_SEARCH_TYPES: ReadonlyArray<ExaSearchType> = [
+  "auto",
+  "neural",
+  "keyword",
+]
+export const DEFAULT_EXA_SEARCH_TYPE: ExaSearchType = "auto"
+/** User-facing labels for the search-type select. */
+export const EXA_SEARCH_TYPE_LABELS: Record<ExaSearchType, string> = {
+  auto: "Auto (recommended)",
+  neural: "Neural (semantic)",
+  keyword: "Keyword (lexical)",
+}
+
+export interface ExaConfig {
+  enabled?: boolean
+  type?: ExaSearchType
+}
+
+// --- Top-level config + resolver -------------------------------------------
+
+export interface WebSearchConfig {
+  maxCalls?: number
+  tavily?: TavilyConfig
+  brave?: BraveConfig
+  exa?: ExaConfig
+}
+
+/**
+ * Fully-resolved config after cascading + clamping. Every field is
+ * concrete so server code doesn't have to keep guarding for `undefined`.
+ */
+export interface ResolvedWebSearchConfig {
+  maxCalls: number
+  tavily: { enabled: boolean; searchDepth: TavilySearchDepth }
+  brave: { enabled: boolean; freshness: BraveFreshness }
+  exa: { enabled: boolean; type: ExaSearchType }
+}
+
+export function resolveWebSearchConfig(
+  workspaceCfg: WebSearchConfig | undefined,
+  conversationCfg: WebSearchConfig | undefined
+): ResolvedWebSearchConfig {
+  const maxCalls = clampMaxWebSearches(
+    conversationCfg?.maxCalls ??
+      workspaceCfg?.maxCalls ??
+      DEFAULT_MAX_WEB_SEARCHES
+  )
+  return {
+    maxCalls,
+    tavily: {
+      enabled:
+        conversationCfg?.tavily?.enabled ??
+        workspaceCfg?.tavily?.enabled ??
+        true,
+      searchDepth:
+        conversationCfg?.tavily?.searchDepth ??
+        workspaceCfg?.tavily?.searchDepth ??
+        DEFAULT_TAVILY_SEARCH_DEPTH,
+    },
+    brave: {
+      enabled:
+        conversationCfg?.brave?.enabled ??
+        workspaceCfg?.brave?.enabled ??
+        true,
+      freshness:
+        conversationCfg?.brave?.freshness ??
+        workspaceCfg?.brave?.freshness ??
+        DEFAULT_BRAVE_FRESHNESS,
+    },
+    exa: {
+      enabled:
+        conversationCfg?.exa?.enabled ??
+        workspaceCfg?.exa?.enabled ??
+        true,
+      type:
+        conversationCfg?.exa?.type ??
+        workspaceCfg?.exa?.type ??
+        DEFAULT_EXA_SEARCH_TYPE,
+    },
+  }
+}

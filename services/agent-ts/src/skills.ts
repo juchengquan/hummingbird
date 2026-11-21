@@ -25,12 +25,12 @@
 
 import type { streamText } from "ai"
 
-import { SERVER_SKILLS } from "@/server/skills/registry"
+import { SERVER_SKILLS } from "./vendor/server/skills/registry"
 import type {
   ServerSkill,
   SkillRequestEntry,
   SkillRuntimeContext,
-} from "@/server/skills/registry"
+} from "./vendor/server/skills/registry"
 
 import { type Sql } from "./db"
 import { buildSearchFilesTool } from "./search-files"

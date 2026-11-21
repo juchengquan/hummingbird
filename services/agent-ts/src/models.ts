@@ -12,7 +12,7 @@
  * `agent_py/model_allowlist.py`.
  */
 
-import { getAnthropicApiModelId } from "@/shared/models"
+import { getAnthropicApiModelId } from "./vendor/shared/models"
 
 import { getEnv } from "./env"
 

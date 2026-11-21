@@ -15,7 +15,7 @@ import type { Context } from "hono"
 import {
   createSlidingWindow,
   rateLimitKey as rateLimitKeyFromRequest,
-} from "@/server/rate-limit"
+} from "./vendor/server/rate-limit"
 
 export { createSlidingWindow }
 

@@ -10,8 +10,8 @@
 import { Hono } from "hono"
 import { z } from "zod"
 
-import { fetchUrlBookmark, type FetchError } from "@/server/url/fetch"
-import { normalizeUrl } from "@/server/url/validate"
+import { fetchUrlBookmark, type FetchError } from "../vendor/server/url/fetch"
+import { normalizeUrl } from "../vendor/server/url/validate"
 
 import type { AuthVars } from "../middleware/auth"
 import { requireAuth } from "../middleware/auth"
