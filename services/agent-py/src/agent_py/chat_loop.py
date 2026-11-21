@@ -14,8 +14,9 @@ the turn ended. Two consumers:
 
 What it emits, per model call ("step"): `step_start`, `token`s (text /
 reasoning), then for each `tool_use` block `tool_input` and — unless the
-tool is gated — `step_error` (on failure) + `tool_output`, then
-`step_end`. On a provider error or a cancel it returns with the step
+tool is gated — `step_error` (on failure) + `tool_output` (+ the
+`tool_image` / `tool_file` part of a tool that produced images / files,
+e.g. `generateImage`), then `step_end`. On a provider error or a cancel it returns with the step
 still open (no `step_end`), because `/v1/chat`'s wire has no
 `finish-step` there; a caller that wants a balanced log closes it
 (`LoopResult.step_open`). It never emits lifecycle events (`status`,
@@ -37,7 +38,7 @@ from typing import Any, Literal, Protocol
 import structlog
 
 from .emitter import RunEmitter
-from .events import TokenUsage, ToolCallResult
+from .events import TokenUsage, ToolCallResult, ToolFileEvent, ToolImageEvent, ToolImageMode
 from .providers.anthropic_provider import (
     AsyncAnthropicClient,
     _coerce_content_blocks,
@@ -439,6 +440,9 @@ class ToolRun:
     """The one-line UI summary; the error text on failure."""
     is_error: bool
     sources: list[ToolCallResult] | None = None
+    images: tuple[dict[str, object], ...] = ()
+    image_mode: ToolImageMode = "t2i"
+    files: tuple[dict[str, object], ...] = ()
 
 
 async def execute_tool(
@@ -458,13 +462,24 @@ async def execute_tool(
         msg = f"tool error: {exc.__class__.__name__}"
         logger.warning("chat.tool_execute_failed", tool=name, error=str(exc))
         return ToolRun(msg, msg, True)
-    return ToolRun(result.text, result.summary, False, result.source_results)
+    return ToolRun(
+        result.text,
+        result.summary,
+        False,
+        result.source_results,
+        images=result.images,
+        image_mode=result.image_mode,
+        files=result.files,
+    )
 
 
 async def emit_tool_run(
     emitter: RunEmitter, *, tool_call_id: str, tool_name: str, run: ToolRun
 ) -> None:
-    """`step_error` (on failure) + `tool_output` for a finished call."""
+    """`step_error` (on failure) + `tool_output` for a finished call,
+    then the images / files it produced as one `tool_image` /
+    `tool_file` part each (the Next route's `maybeEmitImageFrame`: after
+    the tool result, ids `<toolCallId>-<i>`)."""
     if run.is_error:
         await emitter.step_error(run.summary, will_retry=True)
     await emitter.tool_output(
@@ -475,6 +490,24 @@ async def emit_tool_run(
         is_error=run.is_error,
         output=run.text,
     )
+    if run.is_error:
+        return
+    if run.images:
+        await emitter.emit(
+            ToolImageEvent,
+            tool_call_id=tool_call_id,
+            mode=run.image_mode,
+            images=tuple(
+                {"id": f"{tool_call_id}-{i}", **img, "mode": run.image_mode}
+                for i, img in enumerate(run.images)
+            ),
+        )
+    if run.files:
+        await emitter.emit(
+            ToolFileEvent,
+            tool_call_id=tool_call_id,
+            files=tuple({"id": f"{tool_call_id}-file-{i}", **f} for i, f in enumerate(run.files)),
+        )
 
 
 def tool_use_fields(block: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
@@ -503,6 +536,7 @@ async def run_turn_loop(
     on_answer: AnswerHook | None = None,
     tainted_by: str | None = None,
     usage: UsageMeter | None = None,
+    thinking: dict[str, Any] | None = None,
 ) -> LoopResult:
     """Run model calls + tool executions until the model answers, calls a
     gated tool, fails, is cancelled or runs out of steps. `messages`
@@ -512,6 +546,11 @@ async def run_turn_loop(
     Without tools no `tools` kwarg is sent and the final message is not
     fetched (the text-only `/v1/chat` path); with tools each step reads
     `stream.get_final_message()` for its `tool_use` blocks.
+
+    `thinking` (Anthropic's extended-thinking parameter, e.g.
+    `reasoning_effort.thinking_params`) is sent on every call when given;
+    the assistant turns appended to `messages` keep their (signed)
+    thinking blocks, as tool use with thinking requires.
     """
     tools_param = [tool_to_anthropic_param(t) for t in tools] if tools else None
     tools_by_name = {t.name: t for t in tools}
@@ -545,6 +584,8 @@ async def run_turn_loop(
                 kwargs["system"] = system
             if tools_param:
                 kwargs["tools"] = tools_param
+            if thinking:
+                kwargs["thinking"] = thinking
 
             step_usage = _StepUsage()
             final_message: Any = None

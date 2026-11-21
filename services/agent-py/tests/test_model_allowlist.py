@@ -115,6 +115,28 @@ def test_structured_output_flag_is_read_from_the_catalog() -> None:
     assert get_model_allowlist().supports_structured_output("anthropic/claude-haiku-4.5")
 
 
+def test_reasoning_effort_flag_is_read_from_the_catalog() -> None:
+    """`supportsReasoningEffort: true` marks a model that takes a
+    reasoning tier (`forwardedProps.reasoningEffort` on runs)."""
+    allowlist = parse_allowlist(
+        {
+            "models": [
+                {"id": "anthropic/a", "supportsReasoningEffort": True},
+                {"id": "anthropic/b", "supportsReasoningEffort": 1},
+                {"id": "anthropic/c"},
+            ]
+        },
+        default_model="anthropic/a",
+    )
+    assert allowlist.reasoning_effort == frozenset({"anthropic/a"})
+    assert allowlist.supports_reasoning_effort("anthropic/b") is False
+    assert allowlist.supports_reasoning_effort(None) is True  # the default's flag
+    # Both served models take one in the real catalog.
+    real = get_model_allowlist()
+    assert real.supports_reasoning_effort("anthropic/claude-sonnet-4.6")
+    assert real.supports_reasoning_effort("anthropic/claude-haiku-4.5")
+
+
 # --- boot-time validation ---------------------------------------------------
 
 

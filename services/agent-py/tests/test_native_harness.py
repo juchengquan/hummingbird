@@ -9,6 +9,7 @@ an `asyncio.Event` cancel signal.
 from __future__ import annotations
 
 import asyncio
+import base64
 import copy
 import json
 from collections.abc import AsyncIterator, Callable
@@ -18,16 +19,19 @@ from typing import Any
 
 import pytest
 
+from agent_py import reasoning_effort
 from agent_py.emitter import RunEmitter
 from agent_py.events import (
     StepErrorEvent,
     SuggestionsEvent,
     TaskEvent,
     TokenEvent,
+    ToolFileEvent,
+    ToolImageEvent,
     ToolInputEvent,
     ToolOutputEvent,
 )
-from agent_py.model_allowlist import resolve_api_model_id
+from agent_py.model_allowlist import parse_allowlist, resolve_api_model_id
 from agent_py.runs.harness import HarnessResult, ResumeAnswer, RunInput
 from agent_py.runs.history import UNANSWERED_TOOL_RESULT
 from agent_py.runs.model import Cancelled, Failed, Interrupted, Succeeded
@@ -86,6 +90,8 @@ class _Call:
     tools: list[dict[str, Any]] = field(default_factory=list)
     raises: Exception | None = None
     final_text: str = ""
+    thought: str | None = None
+    """The final message opens with a (signed) thinking block."""
 
 
 class _Stream:
@@ -113,6 +119,8 @@ class _Stream:
 
     async def get_final_message(self) -> dict[str, Any]:
         content: list[dict[str, Any]] = []
+        if self._step.thought is not None:
+            content.append({"type": "thinking", "thinking": self._step.thought, "signature": "sig"})
         if self._step.final_text:
             content.append({"type": "text", "text": self._step.final_text})
         content += [{"type": "tool_use", **t} for t in self._step.tools]
@@ -974,3 +982,236 @@ async def test_fallback_resume_refuses_to_approve_a_tool_that_is_not_gated() -> 
     assert isinstance(out, Failed) and out.code == "invalid_state"
     assert echo.calls == []  # type: ignore[attr-defined]
     assert r.events == []
+
+
+# --- wave 4b-D: attachments, reasoning effort, generated images ----------------------------
+
+
+async def test_attachments_reach_the_model_as_image_and_document_blocks() -> None:
+    png = base64.b64encode(b"\x89PNG").decode()
+    notes = base64.b64encode(b"Q3 numbers").decode()
+    r = await _drive(
+        _Model(_Call([text("Seen.")])),
+        run_input(
+            [
+                user(
+                    [
+                        {"type": "text", "text": "What do these say?"},
+                        {
+                            "type": "image",
+                            "source": {"type": "data", "value": png, "mimeType": "image/png"},
+                        },
+                        {
+                            "type": "document",
+                            "source": {"type": "data", "value": notes, "mimeType": "text/plain"},
+                            "metadata": {"name": "notes.txt"},
+                        },
+                    ]
+                )
+            ]
+        ),
+    )
+    assert r.model.requests[0]["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "What do these say?"},
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": "image/png", "data": png},
+                },
+                {
+                    "type": "document",
+                    "source": {"type": "text", "media_type": "text/plain", "data": "Q3 numbers"},
+                    "title": "notes.txt",
+                },
+            ],
+        }
+    ]
+    out = r.result.outcome
+    # An uploaded file is third-party content: memory extraction skips it.
+    assert isinstance(out, Succeeded) and out.result.memory_tainted
+
+
+@pytest.mark.parametrize(
+    ("effort", "expected", "max_tokens"),
+    [
+        (None, None, 4096),
+        ("low", {"type": "enabled", "budget_tokens": 2048}, 2048 + 8192),
+        ("medium", {"type": "enabled", "budget_tokens": 8192}, 8192 + 8192),
+        ("high", {"type": "enabled", "budget_tokens": 16384}, 16384 + 8192),
+        ("extreme", None, 4096),  # not a tier: ignored, like an absent one
+    ],
+)
+async def test_reasoning_effort_maps_to_extended_thinking(
+    effort: str | None, expected: dict[str, Any] | None, max_tokens: int
+) -> None:
+    r = await _drive(
+        _Model(
+            _Call(
+                [thinking("hmm"), text("Let me look.")],
+                tools=[call("c1", "lookup")],
+                final_text="Let me look.",
+                thought="hmm",
+            ),
+            _Call([text("Done.")]),
+        ),
+        run_input(options={} if effort is None else {"reasoningEffort": effort}),
+        tools=toolset(tool("lookup")),
+    )
+    assert isinstance(r.result.outcome, Succeeded)
+    for req in r.model.requests:  # every call of the run
+        assert req.get("thinking") == expected
+        assert req["max_tokens"] == max_tokens
+    # Tool use with thinking: the continued assistant turn keeps its
+    # signed thinking block, first.
+    assistant = r.model.requests[1]["messages"][1]
+    assert assistant["role"] == "assistant"
+    assert assistant["content"][0] == {"type": "thinking", "thinking": "hmm", "signature": "sig"}
+
+
+async def test_reasoning_effort_is_ignored_for_a_model_without_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = {
+        "models": [{"id": MODEL, "anthropicModelId": resolve_api_model_id(MODEL)}],
+    }
+    monkeypatch.setattr(
+        reasoning_effort,
+        "get_model_allowlist",
+        lambda: parse_allowlist(catalog, default_model=MODEL),
+    )
+    r = await _drive(_Model(_Call([text("ok")])), run_input(options={"reasoningEffort": "high"}))
+    (req,) = r.model.requests
+    assert "thinking" not in req and req["max_tokens"] == 4096
+
+
+@pytest.mark.parametrize("thought_in_run_1", [True, False])
+async def test_resume_thinks_only_if_the_interrupted_turn_did(thought_in_run_1: bool) -> None:
+    effort = {"reasoningEffort": "medium"}
+    _, r2 = await _interrupt_then_resume(
+        [
+            _Call(
+                tools=[call("c-ask", "askUser", prompt="Name?")],
+                thought="who?" if thought_in_run_1 else None,
+            )
+        ],
+        [_Call([text("Hi Ann.")])],
+        (ResumeAnswer("c-ask", "resolved", {"value": "Ann"}),),
+        # Run 1 thought only if it was asked to; the resume always asks.
+        options=effort,
+    )
+    assert isinstance(r2.result.outcome, Succeeded)
+    (req,) = r2.model.requests
+    if thought_in_run_1:
+        assert req["thinking"] == {"type": "enabled", "budget_tokens": 8192}
+        assert req["messages"][1]["content"][0]["type"] == "thinking"
+    else:
+        # Anthropic rejects thinking on a tool-use turn whose assistant
+        # turn has no thinking block: this call goes without.
+        assert "thinking" not in req and req["max_tokens"] == 4096
+
+
+def _imaging_tool(*, fail: bool = False) -> ToolDescriptor:
+    async def execute(_args: dict[str, Any]) -> ToolInvocationResult:
+        if fail:
+            raise ToolError("upstream down")
+        return ToolInvocationResult(
+            text="Generated 2 images",
+            summary="2 images (i2i)",
+            images=(
+                {
+                    "url": "https://s/1.png",
+                    "storagePath": "u/1.png",
+                    "width": 8,
+                    "height": 8,
+                    "format": "png",
+                    "prompt": "a fox",
+                },
+                {
+                    "url": "https://m/2.jpeg",
+                    "width": 0,
+                    "height": 0,
+                    "format": "jpeg",
+                    "prompt": "a fox",
+                },
+            ),
+            image_mode="i2i",
+            files=(
+                {"name": "fox.csv", "sizeBytes": 3, "mimeType": "text/csv", "url": "https://s/f"},
+            ),
+        )
+
+    return ToolDescriptor(
+        name="generateImage", description="", input_schema={"type": "object"}, execute=execute
+    )
+
+
+async def test_generated_images_and_files_follow_the_tool_result() -> None:
+    r = await _drive(
+        _Model(
+            _Call(tools=[call("c-img", "generateImage", prompt="a fox")]), _Call([text("Here.")])
+        ),
+        run_input(),
+        tools=toolset(_imaging_tool()),
+    )
+    assert r.kinds() == [
+        "step_start",
+        "tool_input",
+        "tool_output",
+        "tool_image",
+        "tool_file",
+        "step_end",
+        "step_start",
+        "token",
+        "step_end",
+    ]
+    image = next(e for e in r.events if isinstance(e, ToolImageEvent))
+    assert image.tool_call_id == "c-img" and image.mode == "i2i"
+    assert image.images == (
+        {
+            "id": "c-img-0",
+            "url": "https://s/1.png",
+            "storagePath": "u/1.png",
+            "width": 8,
+            "height": 8,
+            "format": "png",
+            "prompt": "a fox",
+            "mode": "i2i",
+        },
+        {
+            "id": "c-img-1",
+            "url": "https://m/2.jpeg",
+            "width": 0,
+            "height": 0,
+            "format": "jpeg",
+            "prompt": "a fox",
+            "mode": "i2i",
+        },
+    )
+    files = next(e for e in r.events if isinstance(e, ToolFileEvent))
+    assert files.files == (
+        {
+            "id": "c-img-file-0",
+            "name": "fox.csv",
+            "sizeBytes": 3,
+            "mimeType": "text/csv",
+            "url": "https://s/f",
+        },
+    )
+    # The model got the tool's text, never the part.
+    assert r.model.requests[1]["messages"][-1]["content"] == [
+        {"type": "tool_result", "tool_use_id": "c-img", "content": "Generated 2 images"}
+    ]
+    out = r.result.outcome
+    assert isinstance(out, Succeeded) and not out.result.memory_tainted  # generateImage is trusted
+
+
+async def test_a_failed_image_tool_emits_no_part() -> None:
+    r = await _drive(
+        _Model(_Call(tools=[call("c-img", "generateImage", prompt="x")]), _Call([text("Sorry.")])),
+        run_input(),
+        tools=toolset(_imaging_tool(fail=True)),
+    )
+    assert "tool_image" not in r.kinds() and "tool_file" not in r.kinds()
+    assert "step_error" in r.kinds()

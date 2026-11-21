@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..events import ToolCallResult
 
@@ -42,6 +42,16 @@ class ToolInvocationResult:
     text: str
     summary: str
     source_results: list[ToolCallResult] | None = None
+    images: tuple[dict[str, object], ...] = ()
+    """Images the tool produced, for the user (not the model): each
+    `{url, storagePath?, width, height, format, prompt}`. The loop emits
+    them as one `tool_image` part (`ToolImageEvent`), giving each an `id`
+    (`<toolCallId>-<i>`) and `mode` (`image_mode`)."""
+    image_mode: Literal["t2i", "i2i", "code"] = "t2i"
+    files: tuple[dict[str, object], ...] = ()
+    """Files the tool produced (`{name, sizeBytes, mimeType, url,
+    storagePath?}` each), emitted as one `tool_file` part with ids
+    `<toolCallId>-file-<i>` when absent."""
 
 
 @dataclass(frozen=True)

@@ -53,6 +53,23 @@ const CASES: Record<string, Expect> = {
     outcome: { type: "success", memoryTainted: false },
   },
   "memory-cancel": { content: "partial answer", outcome: { type: "cancelled" } },
+  // generateImage on runs: the image part follows the tool result (wave 4b-D).
+  "memory-generated-image": {
+    content: "Drawing.Here is your fox.",
+    toolCalls: [{ id: "c-img", name: "generateImage", status: "done", summary: "1 image (t2i)" }],
+    outcome: { type: "success", memoryTainted: false },
+    extra: ({ message }) => {
+      expect(message.images).toEqual([
+        expect.objectContaining({
+          id: "c-img-0",
+          url: "https://storage.example/u/generated/fox.png",
+          storagePath: "u/generated/fox.png",
+          prompt: "a red fox",
+          mode: "t2i",
+        }),
+      ])
+    },
+  },
   "memory-error": {
     content: "partial ",
     outcome: { type: "error", code: "upstream" },
