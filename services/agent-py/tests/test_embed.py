@@ -451,7 +451,7 @@ def test_not_configured_is_a_200_skip(client: TestClient, monkeypatch: pytest.Mo
 def test_no_db_pool_is_503(client: TestClient) -> None:
     r = client.post(PATH, json=BODY, headers=_auth())
     assert r.status_code == 503
-    assert r.json()["detail"]["code"] == "db_unconfigured"
+    assert r.json()["code"] == "db_unconfigured"
 
 
 def test_happy_path_indexes(client: TestClient) -> None:
@@ -513,7 +513,7 @@ def test_failures_are_500_embed_failed(client: TestClient) -> None:
     with has, get, patch.object(embed_router, "index_file_sections", boom):
         r = client.post(PATH, json=BODY, headers=_auth())
     assert r.status_code == 500
-    assert r.json()["detail"] == {
+    assert r.json() == {
         "code": "embed_failed",
         "message": "Failed after 3 attempts. Last error: down",
     }
@@ -527,7 +527,7 @@ def test_rate_limited_per_user(client: TestClient) -> None:
             assert client.post(PATH, json=BODY, headers=_auth()).status_code == 200
         r = client.post(PATH, json=BODY, headers=_auth())
         assert r.status_code == 429
-        assert r.json()["detail"]["code"] == "rate_limit"
+        assert r.json()["code"] == "rate_limit"
         assert int(r.headers["retry-after"]) >= 1
         other = client.post(PATH, json=BODY, headers=_auth("00000000-0000-4000-8000-0000000000bb"))
         assert other.status_code == 200
