@@ -286,7 +286,10 @@ export interface paths {
          *
          *     A `forwardedProps.model` outside the backend's allow-list is `400
          *     unknown_model`, answered before the run exists (as `/v1/chat`):
-         *     no row, no stream, nothing to rejoin.
+         *     no row, no stream, nothing to rejoin. So is a user message part
+         *     the backend cannot give the model (`400 invalid_attachment`, the
+         *     `message` naming the part and the limit — see `StartRunRequest`):
+         *     an attachment is refused, never silently dropped.
          *
          *     **Anonymous callers** (no `Authorization` header) may start
          *     interactive runs only — `mode: background` answers `401
@@ -625,8 +628,8 @@ export interface components {
          *     `unavailable`, `rate_limit`, `context_window`, `invalid_model`,
          *     `unknown_model`, `provider`, `aborted`, `unknown`. See
          *     `lib/shared/api-errors.ts`. The runs operations add
-         *     `run_id_conflict` and `run_already_resumed`, and use
-         *     `invalid_state`.
+         *     `run_id_conflict`, `run_already_resumed` and `invalid_attachment`,
+         *     and use `invalid_state`.
          */
         ApiError: {
             /**
@@ -1378,6 +1381,16 @@ export interface components {
              */
             previousRunId?: string;
             /**
+             * @description Reasoning-effort tier (the chat's `reasoningEffort`): the
+             *     model thinks before answering with a budget per tier (agent-py:
+             *     Anthropic extended thinking, 2048 / 8192 / 16384 budget
+             *     tokens). Ignored for a model that takes no tier
+             *     (`supportsReasoningEffort` in the catalog). Absent means the
+             *     provider default (no extended thinking). Interactive runs.
+             * @enum {string}
+             */
+            reasoningEffort?: "low" | "medium" | "high";
+            /**
              * @description Tool names that wait for the user's approval before they run
              *     (an `approval` interrupt, RUN_EVENTS.md § 4). Adds to what
              *     always waits (`askUser`, `renderUI`, MCP tools their server
@@ -1584,6 +1597,24 @@ export interface components {
          *     display state and are not sent to the model. `tools` are
          *     client-side tools; the backend's own tools come from
          *     `forwardedProps.skills`.
+         *
+         *     **Attachments.** A user message's `content` may list `image` and
+         *     `document` parts (AG-UI `ContentPart`) next to its `text`:
+         *
+         *     | part | source | limit |
+         *     |---|---|---|
+         *     | `image` | `data` with `mimeType` `image/jpeg`, `image/png`, `image/gif` or `image/webp` | 5 MiB of base64 each |
+         *     | `image` | `url` (`https://`) | — |
+         *     | `document` | `data` with a `text/*` `mimeType` — the file's extracted text, UTF-8 | 1 MiB of text each |
+         *     | `document` | `data` with `application/pdf` | 10 MiB of base64 each |
+         *     | `document` | `url` (`https://`, a PDF) | — |
+         *
+         *     At most 20 images and 40 documents per run, over all messages. A
+         *     document's `metadata.name` is its title for the model, and
+         *     `metadata.truncated: true` tells the model the text was cut.
+         *     Anything else — `audio` / `video` parts, `file` (provider handle)
+         *     sources, other media types, malformed base64, a part over its
+         *     limit, more parts than allowed — is `400 invalid_attachment`.
          */
         StartRunRequest: components["schemas"]["RunAgentInput"] & {
             forwardedProps?: components["schemas"]["RunForwardedProps"];
@@ -1960,7 +1991,7 @@ export interface components {
         };
     };
     responses: {
-        /** @description The request body failed validation (`code` is `invalid_request`), or named an unknown model (`unknown_model`). */
+        /** @description The request body failed validation (`code` is `invalid_request`), named an unknown model (`unknown_model`), or (`startRun`) carried an attachment the backend cannot give the model (`invalid_attachment`). */
         BadRequest: {
             headers: {
                 [name: string]: unknown;

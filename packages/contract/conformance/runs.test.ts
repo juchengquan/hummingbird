@@ -213,6 +213,30 @@ describe.skipIf(!env.baseUrl)(`conformance: runs @ ${env.baseUrl}`, () => {
       }
     })
 
+    test("an attachment the backend cannot use → 400 invalid_attachment, and no run exists", async () => {
+      const parts: Json[] = [
+        { type: "audio", source: { type: "data", value: "AAAA", mimeType: "audio/wav" } },
+        { type: "image", source: { type: "data", value: "AAAA", mimeType: "image/x-conformance" } },
+        { type: "image", source: { type: "data", value: "not base64!", mimeType: "image/png" } },
+      ]
+      for (const token of env.authToken ? [undefined, env.authToken] : [undefined]) {
+        for (const part of parts) {
+          const body = runBody()
+          const [message] = body.messages as Json[]
+          message.content = [{ type: "text", text: "What is attached?" }, part]
+          const ex = await call(op("startRun"), { body, token })
+          expect(ex.status).toBe(400)
+          contract.assertConforms("startRun", ex)
+          expect(code(ex)).toBe("invalid_attachment")
+          expect(ex.headers.get("x-run-token")).toBeNull()
+          if (token) {
+            const run = await call(op("getRun"), { token, pathParams: { runId: body.runId as string } })
+            expect(run.status).toBe(404)
+          }
+        }
+      }
+    })
+
     test("anonymous background start → 401 auth_required", async () => {
       const ex = await call(op("startRun"), { body: runBody({ mode: "background" }) })
       expect(ex.status).toBe(401)

@@ -148,6 +148,12 @@ apply unchanged.
 | `plan` | `hummingbird.plan` | `"R:plan"` | `{ items: [{ id, text, status }] }` (the whole list, every time) |
 | `artifact_ref` | `hummingbird.artifact_ref` | `"R:artifact:<artifactId>"` | `{ artifactId }` |
 
+A tool's parts follow its `TOOL_CALL_RESULT`. agent-py's native harness
+emits `tool_image` for `generateImage` (`mode` `t2i` / `i2i`; each image
+`{ id: "<toolCallId>-<i>", url, storagePath?, width, height, format,
+prompt, mode }`, as the Next route's `data-tool-image`), and `tool_file`
+for any tool that returns files.
+
 `ActivityMessage`s are display state: a client that sends history back
 in a later `RunAgentInput.messages` may include them, and the backend
 never passes them to the model.
