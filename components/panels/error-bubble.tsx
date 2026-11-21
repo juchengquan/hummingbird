@@ -10,7 +10,7 @@ import {
   INVALID_ATTACHMENT_MESSAGE,
 } from "@/shared/api-errors"
 import { cn } from "@/shared/utils"
-import { CHAT_MODELS, DEFAULT_CHAT_MODEL } from "@/shared/models"
+import { pickFallbackModel, type ModelBackendKind } from "@/shared/backend-models"
 import type { MessageError } from "@/shared/types"
 
 const ERROR_TITLES: Record<string, string> = {
@@ -37,24 +37,6 @@ const ERROR_HINTS: Record<string, string> = {
 
 const RATE_LIMIT_COOLDOWN_S = 30
 
-/**
- * Pick a fallback model id for one-click retry. Prefers
- * `DEFAULT_CHAT_MODEL` when it differs from the failed one, otherwise
- * the first different model in `CHAT_MODELS`. Returns null when no
- * different model exists (unreachable given the current list, but kept
- * for safety).
- */
-function pickFallbackModel(
-  failedModelId: string | undefined
-): { id: string; label: string } | null {
-  if (DEFAULT_CHAT_MODEL !== failedModelId) {
-    const def = CHAT_MODELS.find((m) => m.id === DEFAULT_CHAT_MODEL)
-    if (def) return { id: def.id, label: def.label }
-  }
-  const other = CHAT_MODELS.find((m) => m.id !== failedModelId)
-  return other ? { id: other.id, label: other.label } : null
-}
-
 interface ErrorBubbleProps {
   error: MessageError
   /** Any text the assistant managed to stream before the error fired. */
@@ -65,6 +47,8 @@ interface ErrorBubbleProps {
    *  `invalid_model` / `provider` errors. */
   onTryFallback?: (modelId: string) => void
   onDelete: () => void
+  /** Which models the serving backend accepts, for the fallback (Q40). */
+  modelBackend?: ModelBackendKind
 }
 
 /**
@@ -101,6 +85,7 @@ export function ErrorBubble({
   onChangeModel,
   onTryFallback,
   onDelete,
+  modelBackend = "any",
 }: ErrorBubbleProps) {
   const [showDetails, setShowDetails] = useState(false)
   // Rate-limit cooldown: retrying immediately just hits the same wall.
@@ -140,7 +125,7 @@ export function ErrorBubble({
       error.code === "provider" ||
       error.code === "context_window") &&
     onTryFallback
-      ? pickFallbackModel(error.model)
+      ? pickFallbackModel(error.model, modelBackend)
       : null
 
   return (

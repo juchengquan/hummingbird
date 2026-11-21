@@ -51,10 +51,17 @@ Click your avatar or initial at the bottom of the left sidebar.
     assistant needs your input mid-answer (an approval or a question),
     the answer pauses until you reply; typing a new message instead
     cancels the paused one. Also offered to signed-out users (shows
-    when `NEXT_PUBLIC_AGENT_PY_URL` is set). Like `python`, it doesn't
-    send attachments, MCP servers, reasoning effort or reference images
-    yet. Every other request (summaries, embeds, sharing, …) goes
-    exactly where `python` sends it.
+    when `NEXT_PUBLIC_AGENT_PY_URL` is set). It sends attached images
+    and text/PDF documents and the reasoning-effort setting, but not
+    MCP servers, the code interpreter or reference images yet. Every
+    other request (summaries, embeds, sharing, …) goes exactly where
+    `python` sends it.
+- **Models per backend.** The agent services (`python` and `ts-service`
+  when signed in, `python-runs` always) only run the Anthropic models,
+  so while one of them serves chat the model picker lists just those
+  (no Auto), and a model they can't run is switched to one they can,
+  with a note saying so. Switching back to `ts` brings the full list
+  back.
 
 ## Tips & gotchas
 - The Chat backend toggle is only visible when the corresponding

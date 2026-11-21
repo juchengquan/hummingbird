@@ -37,7 +37,6 @@ import {
 import {
   AUTO_MODEL_ID,
   CHAT_MODELS,
-  ROUTING_AVAILABLE,
   modelSupportsReasoningEffort,
 } from "@/shared/models"
 import {
@@ -75,6 +74,11 @@ import { ResourcesMobileDrawer } from "@/components/sidebars/resources-mobile-dr
 import { ShareDialog } from "@/components/share-dialog"
 import { BranchesDialog } from "@/components/branches-dialog"
 import { cn } from "@/shared/utils"
+import {
+  autoAvailableForBackend,
+  modelsForBackend,
+  type ModelBackendKind,
+} from "@/shared/backend-models"
 
 /**
  * Top-of-chat header showing the workspace → conversation breadcrumb plus a
@@ -89,6 +93,9 @@ import { cn } from "@/shared/utils"
 interface ChatHeaderProps {
   /** Current model id. */
   chatModel: string
+  /** Which models the serving backend accepts (Q40): the agent services
+   *  take only the `anthropic/*` allowlist and no `auto`. */
+  modelBackend: ModelBackendKind
   /** Called when the user picks a model from the header's model select.
    *  Owned by ChatPanel so it can chain a retry on the pending-error case. */
   onModelPick: (modelId: string) => void
@@ -108,6 +115,7 @@ interface ChatHeaderProps {
 
 export function ChatHeader({
   chatModel,
+  modelBackend,
   onModelPick,
   modelPickerOpen,
   onModelPickerOpenChange,
@@ -429,13 +437,13 @@ export function ChatHeader({
               {/* Smart routing — picks the cheapest capable model per
                   message. Shown only when a routing pair is configured.
                   See docs/PLAN-model-routing.md. */}
-              {ROUTING_AVAILABLE && (
+              {autoAvailableForBackend(modelBackend) && (
                 <SelectGroup>
                   <SelectItem value={AUTO_MODEL_ID}>Auto</SelectItem>
                 </SelectGroup>
               )}
               {Object.entries(
-                CHAT_MODELS.reduce<Record<string, typeof CHAT_MODELS>>((acc, m) => {
+                modelsForBackend(modelBackend).reduce<Record<string, typeof CHAT_MODELS>>((acc, m) => {
                   if (!acc[m.provider]) acc[m.provider] = []
                   acc[m.provider].push(m)
                   return acc

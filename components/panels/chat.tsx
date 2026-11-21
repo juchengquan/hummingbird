@@ -54,6 +54,7 @@ import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/shared/
 import type { Agent } from "@/shared/types"
 import { forkTargetForEdit, forkTargetForRegenerate } from "@/shared/branches/fork-target"
 import { useRestoreInterruptedTurns } from "@/client/runs/use-restore-interrupted-turns"
+import { useModelBackend, useModelBackendGuard } from "@/client/hooks/use-model-backend"
 
 export function ChatPanel() {
   const addMessage = useStore((state) => state.addMessage)
@@ -103,6 +104,9 @@ export function ChatPanel() {
   const hydrated = useHydrated()
   // Chat on runs: rebuild paused turns' answer cards after a reload (Q35).
   useRestoreInterruptedTurns(hydrated)
+  // Only offer / keep models the serving backend accepts (Q40).
+  const modelBackend = useModelBackend()
+  useModelBackendGuard(modelBackend, hydrated)
   const [inputValue, setInputValue] = useState("")
   // Send pipeline lives in its own hook (see lib/client/hooks/use-chat-send).
   // The hook owns the abort-controller map, the streaming-conv-ids Set,
@@ -802,6 +806,7 @@ export function ChatPanel() {
       <div className="flex flex-col flex-1 min-w-0 min-h-0 relative">
         <ChatHeader
           chatModel={chatModel}
+          modelBackend={modelBackend.kind}
           onModelPick={handleModelPick}
           modelPickerOpen={modelPickerOpen}
           onModelPickerOpenChange={(open) => {
@@ -857,6 +862,7 @@ export function ChatPanel() {
                       onRetryError={handleRetryErrorMessage}
                       onChangeModel={handleChangeModel}
                       onTryFallback={handleTryFallback}
+                      modelBackend={modelBackend.kind}
                       onPickSuggestion={pickSuggestion}
                       onSendUserMessageFromUiPart={
                         handleSendUserMessageFromUiPart

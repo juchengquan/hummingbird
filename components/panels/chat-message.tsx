@@ -33,6 +33,7 @@ import type { ExtractColumnHint } from "@/shared/artifacts/extract-table"
 import { MessageVerification } from "@/components/panels/message-verification"
 import { countSupportPerSource, markerMarksFor } from "@/shared/verify"
 import { ErrorBubble } from "@/components/panels/error-bubble"
+import type { ModelBackendKind } from "@/shared/backend-models"
 import { useStore, useMessageBookmark } from "@/client/hooks/use-store"
 import { mark as perfMark, count as perfCount } from "@/client/perf-chat-stream"
 import type { ArtifactKind } from "@/shared/types"
@@ -77,6 +78,8 @@ interface ChatMessageProps {
   onChangeModel?: (messageId?: string) => void
   /** Retry with a different model in one click. Wired by chat.tsx for invalid_model / provider errors. */
   onTryFallback?: (messageId: string, modelId: string) => void
+  /** Which models the serving backend accepts, for the error bubble's fallback (Q40). */
+  modelBackend?: ModelBackendKind
   onPickSuggestion?: (text: string) => void
   /** Generative-UI auto-send: invoked when an interactive UI part
    *  resolves to a follow-up user turn (e.g. a picked `choice`). */
@@ -98,6 +101,7 @@ function ChatMessageImpl({
   onRetryError,
   onChangeModel,
   onTryFallback,
+  modelBackend,
   onPickSuggestion,
   onSendUserMessageFromUiPart,
   liveToolCalls,
@@ -378,6 +382,7 @@ function ChatMessageImpl({
             onChangeModel={() => onChangeModel?.(message.id)}
             onTryFallback={(modelId) => onTryFallback?.(message.id, modelId)}
             onDelete={() => onDelete(message.id)}
+            modelBackend={modelBackend}
           />
         ) : (
         <div className={cn("flex flex-col min-w-0", isUser ? "items-end max-w-[90%]" : "items-start w-full")}>
