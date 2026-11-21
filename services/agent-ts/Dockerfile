@@ -25,16 +25,15 @@ COPY services/agent-ts/package.json services/agent-ts/bun.lock ./
 RUN bun install --frozen-lockfile --production
 
 FROM oven/bun:1.3.9-slim AS runtime
-ARG UID=1000
-ARG GID=1000
-RUN groupadd -g ${GID} app && useradd -m -u ${UID} -g app app
+# Run as the base image's own non-root user (`bun`, uid/gid 1000). Creating
+# a separate uid/gid 1000 user failed: the image already uses both ids.
 WORKDIR /srv/services/agent-ts
 
 COPY --from=deps /srv/services/agent-ts/node_modules ./node_modules
 COPY config /srv/config
 COPY services/agent-ts/ ./
 
-USER app
+USER bun
 EXPOSE 8001
 # `--conditions=react-server` makes `import "server-only"` (kept in the
 # vendored `src/vendor/server/*` copies) resolve to its empty shim
