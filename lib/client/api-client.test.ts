@@ -346,6 +346,104 @@ describe("apiClient.artifacts.extractTable — agent-py-only dispatch", () => {
   })
 })
 
+describe("apiClient.tasks.schedules — agent-py-only dispatch", () => {
+  const schedule = {
+    id: "s/1",
+    workspaceId: "w1",
+    name: "Morning",
+    prompt: "p",
+    cron: "0 8 * * *",
+    timezone: "UTC",
+    enabled: true,
+    model: null,
+    systemPrompt: null,
+    maxSteps: null,
+    lastRunAt: null,
+    lastRunTaskId: null,
+    nextRunAt: "2026-11-22T08:00:00+00:00",
+    createdAt: "2026-11-21T08:00:00+00:00",
+    updatedAt: "2026-11-21T08:00:00+00:00",
+  }
+  const create = { workspaceId: "w1", name: "Morning", prompt: "p", cron: "0 8 * * *" }
+  const python = { dispatch: "remote" as const, remote: REMOTE }
+  const tsService = { dispatch: "remote" as const, remote: TS_SERVICE }
+
+  test("python: list → GET agent-py /v1/tasks/schedules with bearer", async () => {
+    const log = installFetchStub({ jsonBody: { schedules: [schedule] } })
+    const list = await apiClient.tasks.schedules.list(python)
+    expect(list).toEqual([schedule])
+    expect(log).toHaveLength(1)
+    expect(log[0].url).toBe("https://agent-py.example/v1/tasks/schedules")
+    expect(log[0].method).toBe("GET")
+    expect(log[0].authorization).toBe("Bearer jwt-test-token")
+  })
+
+  test("python: create → POST agent-py, same body", async () => {
+    const log = installFetchStub({ status: 201, jsonBody: schedule })
+    const res = await apiClient.tasks.schedules.create(create, python)
+    expect(res).toEqual({ ok: true, status: 201, schedule })
+    expect(log[0].url).toBe("https://agent-py.example/v1/tasks/schedules")
+    expect(log[0].method).toBe("POST")
+    expect(log[0].authorization).toBe("Bearer jwt-test-token")
+    expect(log[0].contentType).toBe("application/json")
+    expect(log[0].body).toEqual(create)
+  })
+
+  test("python: update / delete → agent-py /v1/tasks/schedules/{id} (id encoded)", async () => {
+    let log = installFetchStub({ jsonBody: schedule })
+    const res = await apiClient.tasks.schedules.update("s/1", { enabled: false }, python)
+    expect(res.ok).toBe(true)
+    expect(log[0].url).toBe("https://agent-py.example/v1/tasks/schedules/s%2F1")
+    expect(log[0].method).toBe("PATCH")
+    expect(log[0].authorization).toBe("Bearer jwt-test-token")
+    expect(log[0].body).toEqual({ enabled: false })
+
+    log = installFetchStub({ jsonBody: { ok: true } })
+    expect(await apiClient.tasks.schedules.delete("s/1", python)).toEqual({ ok: true, status: 200 })
+    expect(log[0].url).toBe("https://agent-py.example/v1/tasks/schedules/s%2F1")
+    expect(log[0].method).toBe("DELETE")
+    expect(log[0].authorization).toBe("Bearer jwt-test-token")
+  })
+
+  test("python: error envelope surfaces code + message", async () => {
+    installFetchStub({ status: 409, jsonBody: { code: "limit_reached", message: "cap" } })
+    const res = await apiClient.tasks.schedules.create(create, python)
+    expect(res).toEqual({ ok: false, status: 409, error: { code: "limit_reached", message: "cap" } })
+  })
+
+  test("ts-service → in-Next routes, no bearer", async () => {
+    let log = installFetchStub({ jsonBody: { schedules: [] } })
+    await apiClient.tasks.schedules.list(tsService)
+    expect(log[0].url).toBe("/api/tasks/schedules")
+    expect(log[0].authorization).toBeUndefined()
+
+    log = installFetchStub({ status: 201, jsonBody: schedule })
+    await apiClient.tasks.schedules.create(create, tsService)
+    expect(log[0].url).toBe("/api/tasks/schedules")
+    expect(log[0].authorization).toBeUndefined()
+    expect(log[0].body).toEqual(create)
+
+    log = installFetchStub({ jsonBody: schedule })
+    await apiClient.tasks.schedules.update("s1", { name: "x" }, tsService)
+    expect(log[0].url).toBe("/api/tasks/schedules/s1")
+    expect(log[0].method).toBe("PATCH")
+    expect(log[0].authorization).toBeUndefined()
+
+    log = installFetchStub({ jsonBody: { ok: true } })
+    await apiClient.tasks.schedules.delete("s1", tsService)
+    expect(log[0].url).toBe("/api/tasks/schedules/s1")
+    expect(log[0].method).toBe("DELETE")
+    expect(log[0].authorization).toBeUndefined()
+  })
+
+  test("in-next → in-Next routes", async () => {
+    const log = installFetchStub({ jsonBody: { schedules: [] } })
+    await apiClient.tasks.schedules.list({ dispatch: "in-next" })
+    expect(log[0].url).toBe("/api/tasks/schedules")
+    expect(log[0].authorization).toBeUndefined()
+  })
+})
+
 describe("apiClient.mcp.upsertCloudServer — dispatch", () => {
   function validBody() {
     return {

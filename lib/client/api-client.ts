@@ -131,7 +131,7 @@ async function resolveDispatch(
 }
 
 /** For endpoints only agent-py implements (`/v1/extract-table`,
- *  `/v1/files/refresh-url`): resolve the dispatch as usual, then keep
+ *  `/v1/files/refresh-url`, `/v1/tasks/schedules`): resolve the dispatch as usual, then keep
  *  it remote only when it resolved to agent-py. agent-ts is frozen
  *  (docs/PLAN-frontend-backend-split.md, Q11) and will not get these
  *  routes, so a `ts-service` account stays on the in-Next route. */
@@ -645,10 +645,50 @@ async function tasksSweep(): Promise<number> {
 }
 
 // --- /api/tasks/schedules (recurring task runs) ----------------------------
+// agent-py serves these at `/v1/tasks/schedules[/{id}]` (same shapes);
+// `python` accounts go there, everyone else (agent-ts is frozen, and the
+// in-Next fallback) keeps the Next routes.
 
-async function schedulesList(): Promise<ScheduleResponse[]> {
+/** URL + headers for one schedules call, after `agentPyOnlyDispatch`. */
+async function scheduleRequest(
+  remotePath: string,
+  localUrl: string,
+  options: DispatchOption | undefined,
+  hasBody: boolean,
+): Promise<{ url: string; headers: Record<string, string> }> {
+  const dispatch = await agentPyOnlyDispatch(options)
+  const headers: Record<string, string> = hasBody
+    ? { "Content-Type": "application/json" }
+    : {}
+  if (dispatch.dispatch === "remote") {
+    headers.Authorization = `Bearer ${dispatch.remote.authToken}`
+    return { url: `${dispatch.remote.baseUrl}${remotePath}`, headers }
+  }
+  return { url: localUrl, headers }
+}
+
+const SCHEDULES_PATH = "/v1/tasks/schedules"
+const scheduleByIdPath = (id: string) =>
+  `${SCHEDULES_PATH}/${encodeURIComponent(id)}`
+
+async function scheduleErrorResult(res: Response) {
+  const errBody = await readErrorBody(res)
+  return {
+    ok: false as const,
+    status: res.status,
+    error: { code: errBody.code, message: errBody.message ?? errBody.error },
+  }
+}
+
+async function schedulesList(options?: DispatchOption): Promise<ScheduleResponse[]> {
   try {
-    const res = await fetch(apiUrls.taskSchedules())
+    const { url, headers } = await scheduleRequest(
+      SCHEDULES_PATH,
+      apiUrls.taskSchedules(),
+      options,
+      false,
+    )
+    const res = await fetch(url, { headers })
     if (!res.ok) return []
     const data = ScheduleListResponseSchema.parse(await res.json())
     return data.schedules
@@ -658,24 +698,24 @@ async function schedulesList(): Promise<ScheduleResponse[]> {
 }
 
 async function schedulesCreate(
-  body: ScheduleCreateInput
+  body: ScheduleCreateInput,
+  options?: DispatchOption,
 ): Promise<
   | { ok: true; status: number; schedule: ScheduleResponse }
   | { ok: false; status: number; error: { code?: string; message?: string } }
 > {
-  const res = await fetch(apiUrls.taskSchedules(), {
+  const { url, headers } = await scheduleRequest(
+    SCHEDULES_PATH,
+    apiUrls.taskSchedules(),
+    options,
+    true,
+  )
+  const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(body),
   })
-  if (!res.ok) {
-    const errBody = await readErrorBody(res)
-    return {
-      ok: false,
-      status: res.status,
-      error: { code: errBody.code, message: errBody.message ?? errBody.error },
-    }
-  }
+  if (!res.ok) return scheduleErrorResult(res)
   return {
     ok: true,
     status: res.status,
@@ -685,24 +725,24 @@ async function schedulesCreate(
 
 async function schedulesUpdate(
   id: string,
-  patch: ScheduleUpdateInput
+  patch: ScheduleUpdateInput,
+  options?: DispatchOption,
 ): Promise<
   | { ok: true; status: number; schedule: ScheduleResponse }
   | { ok: false; status: number; error: { code?: string; message?: string } }
 > {
-  const res = await fetch(apiUrls.taskScheduleById(id), {
+  const { url, headers } = await scheduleRequest(
+    scheduleByIdPath(id),
+    apiUrls.taskScheduleById(id),
+    options,
+    true,
+  )
+  const res = await fetch(url, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(patch),
   })
-  if (!res.ok) {
-    const errBody = await readErrorBody(res)
-    return {
-      ok: false,
-      status: res.status,
-      error: { code: errBody.code, message: errBody.message ?? errBody.error },
-    }
-  }
+  if (!res.ok) return scheduleErrorResult(res)
   return {
     ok: true,
     status: res.status,
@@ -711,17 +751,17 @@ async function schedulesUpdate(
 }
 
 async function schedulesDelete(
-  id: string
+  id: string,
+  options?: DispatchOption,
 ): Promise<{ ok: boolean; status: number; error?: { code?: string; message?: string } }> {
-  const res = await fetch(apiUrls.taskScheduleById(id), { method: "DELETE" })
-  if (!res.ok) {
-    const errBody = await readErrorBody(res)
-    return {
-      ok: false,
-      status: res.status,
-      error: { code: errBody.code, message: errBody.message ?? errBody.error },
-    }
-  }
+  const { url, headers } = await scheduleRequest(
+    scheduleByIdPath(id),
+    apiUrls.taskScheduleById(id),
+    options,
+    false,
+  )
+  const res = await fetch(url, { method: "DELETE", headers })
+  if (!res.ok) return scheduleErrorResult(res)
   return { ok: true, status: res.status }
 }
 
