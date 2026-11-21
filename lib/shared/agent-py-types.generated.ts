@@ -1412,6 +1412,7 @@ export interface components {
             /** Url */
             url: string;
         };
+        RequireApprovalForItem: string;
         /** ResolvedConversationShare */
         ResolvedConversationShare: {
             /**
@@ -1556,6 +1557,10 @@ export interface components {
             goal?: string | null;
             /** Maxsteps */
             maxSteps?: number | null;
+            /** Requireapprovalfor */
+            requireApprovalFor?: components["schemas"]["RequireApprovalForItem"][] | null;
+            /** Workspaceid */
+            workspaceId?: string | null;
         } & {
             [key: string]: unknown;
         };

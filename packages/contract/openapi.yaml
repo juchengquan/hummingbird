@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Hummingbird backend contract
-  version: 0.3.1
+  version: 0.3.2
   summary: The frontend <-> backend HTTP contract (spec-first, PLAN-frontend-backend-split.md Q19).
   description: |
     Hand-written source of truth for the HTTP surface every Hummingbird
@@ -1868,6 +1868,25 @@ components:
           minimum: 1
           maximum: 50
           description: Step budget. Absent means 25 (background) or the chat default (interactive).
+        requireApprovalFor:
+          type: array
+          maxItems: 64
+          items:
+            type: string
+            minLength: 1
+          description: |
+            Tool names that wait for the user's approval before they run
+            (an `approval` interrupt, RUN_EVENTS.md § 4). Adds to what
+            always waits (`askUser`, `renderUI`, MCP tools their server
+            marks for approval).
+        workspaceId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: |
+            The caller's workspace the run belongs to (signed-in runs):
+            scopes `searchFiles` and adds the workspace's cloud MCP
+            tools. Ignored for anonymous runs.
       additionalProperties: true
 
     StartRunRequest:

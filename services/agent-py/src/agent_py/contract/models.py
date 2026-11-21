@@ -682,6 +682,9 @@ class RefreshStorageUrlResponse(BaseModel):
     """
 
 
+type RequireApprovalForItem = Annotated[str, Field(min_length=1)]
+
+
 class ResolvedConversationShare(BaseModel):
     kind: Literal["conversation"]
     conversationTitle: str
@@ -907,6 +910,21 @@ class RunForwardedProps(BaseModel):
     maxSteps: Annotated[int | None, Field(ge=1, le=50)] = None
     """
     Step budget. Absent means 25 (background) or the chat default (interactive).
+    """
+    requireApprovalFor: Annotated[list[RequireApprovalForItem] | None, Field(max_length=64)] = None
+    """
+    Tool names that wait for the user's approval before they run
+    (an `approval` interrupt, RUN_EVENTS.md § 4). Adds to what
+    always waits (`askUser`, `renderUI`, MCP tools their server
+    marks for approval).
+
+    """
+    workspaceId: Annotated[str | None, Field(max_length=64, min_length=1)] = None
+    """
+    The caller's workspace the run belongs to (signed-in runs):
+    scopes `searchFiles` and adds the workspace's cloud MCP
+    tools. Ignored for anonymous runs.
+
     """
 
 

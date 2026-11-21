@@ -1367,9 +1367,22 @@ export interface components {
              *     non-empty `resume[]`, otherwise ignored.
              */
             previousRunId?: string;
+            /**
+             * @description Tool names that wait for the user's approval before they run
+             *     (an `approval` interrupt, RUN_EVENTS.md § 4). Adds to what
+             *     always waits (`askUser`, `renderUI`, MCP tools their server
+             *     marks for approval).
+             */
+            requireApprovalFor?: string[];
             skills?: components["schemas"]["SkillConfig"][];
             /** @description Extra instructions (workspace / conversation system prompt), prepended to the backend's own. */
             systemPrompt?: string;
+            /**
+             * @description The caller's workspace the run belongs to (signed-in runs):
+             *     scopes `searchFiles` and adds the workspace's cloud MCP
+             *     tools. Ignored for anonymous runs.
+             */
+            workspaceId?: string;
         } & {
             [key: string]: unknown;
         };
