@@ -54,7 +54,8 @@ groups them by purpose and explains when each is needed.
 | Variable | Effect |
 |---|---|
 | `NEXT_PUBLIC_API_BASE_URL` | Points the API client at a non-default origin (used when the backend is rewritten in another language). |
-| `NEXT_PUBLIC_AGENT_PY_URL` | Base URL of the Python agent service. When set, the account menu shows a "Python agent backend" toggle. |
+| `NEXT_PUBLIC_AGENT_PY_URL` | Base URL of the Python agent service. When set, the account menu shows a "Python agent backend" toggle. Use an absolute URL (`http://localhost:8000`) for a separate origin, or `/` when a reverse proxy serves the agent service on the app's own origin (local dev: `docker compose up proxy agent-py`, then open `http://localhost:8080`). |
+| `CORS_ALLOWED_ORIGINS` | Set on the Python agent service, not Next.js. Comma-separated exact origins allowed to call it from a browser on another origin, e.g. `http://localhost:3000` when `NEXT_PUBLIC_AGENT_PY_URL` is `http://localhost:8000`; without it the browser blocks those calls. Leave it empty with the same-origin proxy (`/`). No wildcards. |
 | `NEXT_PUBLIC_AGENT_TS_URL` | Base URL of the TypeScript agent service. When set + Python also set, surfaces a 3-way picker. |
 | `TASK_NO_WORKER_TIMEOUT_MINUTES` | Default 10. Background tasks run on the Python agent service. A task that no worker has started after this many minutes is marked failed with "No task worker available". This happens only when no worker has run anything in that window — the agent service is down or in dry-run — so a busy worker's backlog keeps waiting. (Tasks of a user an admin has opted out fail right away.) |
 

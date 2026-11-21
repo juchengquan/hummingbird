@@ -13,9 +13,9 @@
 import { Hono } from "hono"
 import { bodyLimit } from "hono/body-limit"
 
-import { extractFile } from "@/server/extraction"
-import { ZipLimitError } from "@/server/extraction/zip-guard"
-import { FILE_SIZE_LIMIT } from "@/shared/upload-config"
+import { extractFile } from "../vendor/server/extraction"
+import { ZipLimitError } from "../vendor/server/extraction/zip-guard"
+import { FILE_SIZE_LIMIT } from "../vendor/shared/upload-config"
 
 import type { AuthVars } from "../middleware/auth"
 import { requireAuth } from "../middleware/auth"

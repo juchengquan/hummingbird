@@ -23,11 +23,23 @@ from types import FrameType
 
 import structlog
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__, db, poller
 from .body_limit import BodySizeLimitMiddleware, body_limit_for
 from .model_allowlist import get_model_allowlist
-from .routers import chat, extract, health, images, mcp, summarize, url, whoami
+from .routers import (
+    chat,
+    extract,
+    extract_table,
+    files,
+    health,
+    images,
+    mcp,
+    summarize,
+    url,
+    whoami,
+)
 
 # Re-exports for symbols that tests + other callers still import
 # directly from `agent_py.main`. The endpoints + their models now
@@ -192,6 +204,8 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
     app.include_router(chat.router)
     app.include_router(url.router)
     app.include_router(images.router)
+    app.include_router(files.router)
+    app.include_router(extract_table.router)
     app.include_router(summarize.router)
     app.include_router(mcp.router)
 
@@ -200,7 +214,40 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
     # runs, so this is what bounds an unauthenticated upload.
     app.add_middleware(BodySizeLimitMiddleware, limit_for=body_limit_for(settings))
 
+    # Opt-in CORS for a frontend on a different origin (e.g. Next on :3000
+    # calling agent-py on :8000). Without it the browser's preflight for a
+    # bearer-authenticated request gets a 405 and every call fails. Added
+    # last so it is the outermost middleware and answers preflights before
+    # the body limit or routing see them.
+    cors_origins = cors_allowed_origins(settings)
+    if cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_credentials=False,
+            allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+            allow_headers=["authorization", "content-type", "last-event-id"],
+            max_age=600,
+        )
+
     return app
+
+
+def cors_allowed_origins(settings: Settings) -> list[str]:
+    """Exact origins from `CORS_ALLOWED_ORIGINS`; a `*` or anything that is
+    not a bare scheme://host[:port] origin is dropped (and logged) rather
+    than widening access."""
+    out: list[str] = []
+    for raw in settings.CORS_ALLOWED_ORIGINS.split(","):
+        origin = raw.strip().rstrip("/")
+        if not origin:
+            continue
+        scheme, sep, rest = origin.partition("://")
+        if origin == "*" or not sep or scheme not in ("http", "https") or not rest or "/" in rest:
+            logger.warning("cors.origin_ignored", origin=origin)
+            continue
+        out.append(origin)
+    return out
 
 
 # Module-level app for `uvicorn agent_py.main:app`. Tests use `create_app()`

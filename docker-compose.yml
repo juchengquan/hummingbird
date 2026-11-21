@@ -10,6 +10,14 @@
 #   docker compose up --build agent-py    # rebuild image then run
 #   bun dev                               # in another terminal, runs Next.js
 #
+# Same-origin mode (PLAN-frontend-backend-split.md Q21) — one origin in
+# front of both halves, the way a deployment serves them:
+#   bun dev                               # Next on the host, port 3000
+#   docker compose up proxy agent-py      # Caddy on :8080 + agent-py
+#   # with NEXT_PUBLIC_AGENT_PY_URL=/ in .env.local, open http://localhost:8080
+# The proxy sends /v1/*, /healthz and /readyz to agent-py and everything
+# else to the Next dev server (.docker/proxy/Caddyfile).
+#
 # Phase 0 ship: just the agent service. Phase 1+ may add the Supabase local
 # stack here too (Supabase CLI already supports compose); for now the
 # agent talks to whatever Supabase project the top-level `.env` points at.
@@ -28,9 +36,37 @@ services:
       # Reuses the same .env the Next.js side reads. SUPABASE_JWT_SECRET is
       # the only required value; the rest are silently ignored.
       - .env
+    environment:
+      # Client IP for the per-IP rate limits (rate_limit.py). Behind the
+      # `proxy` service there is exactly one trusted hop: Caddy discards
+      # any client-sent X-Forwarded-For and sets it to the peer it saw, so
+      # agent-py keys on that single (rightmost) entry. Pinned here so a
+      # deploy-oriented value in .env can't change it. CLIENT_IP_HEADER is
+      # cleared because Caddy passes arbitrary headers through, so a
+      # platform header like cf-connecting-ip would be client-controlled.
+      # Requests to the directly-published :8000 bypass the proxy; that
+      # port is for the cross-origin dev setup only.
+      TRUSTED_PROXY_HOPS: "1"
+      CLIENT_IP_HEADER: ""
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz').read()"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  proxy:
+    # Same-origin reverse proxy (see header + .docker/proxy/Caddyfile).
+    # 8080 avoids Next (3000), agent-py (8000) and local Supabase
+    # (54321-54329); override with PROXY_PORT.
+    image: caddy:2.10-alpine
+    ports:
+      - "${PROXY_PORT:-8080}:8080"
+    volumes:
+      - ./.docker/proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+    extra_hosts:
+      # Docker Desktop resolves host.docker.internal itself; on Linux this
+      # maps it to the host so Caddy can reach `bun dev` on port 3000.
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - agent-py

@@ -174,6 +174,14 @@ class Settings(BaseSettings):
     `docs/PLAN-citation-verifiability.md` open question #2."""
 
     # --- Request hardening ------------------------------------------------
+    CORS_ALLOWED_ORIGINS: str = ""
+    """Comma-separated exact origins (scheme://host[:port]) allowed to
+    call the API cross-origin from a browser, e.g. `http://localhost:3000`
+    when the frontend calls agent-py on its own port. Empty (default) = no
+    CORS headers at all, which is right for the same-origin reverse-proxy
+    setup. No wildcards and no credentialed CORS: the browser sends the
+    Supabase JWT as a bearer header, never cookies."""
+
     TRUSTED_PROXY_HOPS: int = 1
     """How many reverse proxies in front of the service append to
     `X-Forwarded-For`. The rate-limit key is the XFF entry this many

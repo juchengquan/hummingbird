@@ -1,0 +1,49 @@
+# Same-origin reverse proxy for local dev (PLAN-frontend-backend-split.md
+# Q21): one origin, http://localhost:8080, in front of both halves.
+#
+#   /v1/*, /healthz, /readyz  → agent-py (compose service, port 8000)
+#   everything else           → Next dev server on the host (`bun dev`, port 3000)
+#
+# Started by `docker compose up proxy agent-py` (see docker-compose.yml).
+# Set NEXT_PUBLIC_AGENT_PY_URL=/ so the browser calls `/v1/...` on this
+# origin. The bearer JWT still rides on every request, so moving agent-py
+# to its own origin later is a config change, not a code change.
+#
+# This file is also the template for a deployment: swap the `:8080` site
+# address for the real hostname (Caddy then provisions TLS itself) and
+# point the second upstream at wherever Next runs.
+#
+# Header behaviour (Caddy defaults, relied on deliberately):
+#   - Authorization and every other request header pass through untouched.
+#   - Host is preserved (Next builds absolute URLs from it).
+#   - X-Forwarded-For is SET to the address Caddy saw. Any X-Forwarded-For
+#     the client sent is discarded, because no `trusted_proxies` is
+#     configured. agent-py therefore runs with TRUSTED_PROXY_HOPS=1 and
+#     reads exactly this one entry as the client IP for its rate limits.
+#   - X-Forwarded-Proto / X-Forwarded-Host are set the same way.
+#   - No `encode` directive: compressing would buffer SSE streams.
+{
+	# Plain HTTP on localhost; no certificates, no admin API.
+	auto_https off
+	admin off
+}
+
+:8080 {
+	@backend path /v1/* /healthz /readyz
+
+	handle @backend {
+		reverse_proxy agent-py:8000 {
+			# Chat (/v1/chat) and task event streams are SSE: write each
+			# chunk to the client as soon as it arrives.
+			flush_interval -1
+		}
+	}
+
+	handle {
+		reverse_proxy host.docker.internal:3000 {
+			# Next streams too (RSC payloads, the in-Next /api/chat SSE
+			# route). WebSocket upgrades (dev HMR) are proxied by default.
+			flush_interval -1
+		}
+	}
+}

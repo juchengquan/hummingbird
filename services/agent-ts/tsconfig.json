@@ -11,12 +11,8 @@
     "noEmit": true,
     "resolveJsonModule": true,
     "types": ["bun-types"],
-    "baseUrl": "../..",
     "paths": {
-      "@/*": ["./*"],
-      "@/client/*": ["./lib/client/*"],
-      "@/server/*": ["./lib/server/*"],
-      "@/shared/*": ["./lib/shared/*"]
+      "@config/*": ["../../config/*"]
     }
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"],

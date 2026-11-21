@@ -108,6 +108,7 @@ scheduling**) is shipped — its plans live in
 | ✅ [Local RAG vector store](PLAN-local-rag.md) | **driver chosen + substrate shipped (#196–#198)** | Supabase pgvector: chunking + provider + migration (#196), `file_sections` populated on extraction (#197), hybrid `searchFiles` = FTS + vector (#198). The embedding pipeline is live |
 | 📐 [Replace Supabase with self-hosted Postgres](PLAN-replace-supabase-with-postgres.md) | planning | Infrastructure migration — 5 phases, ~2 weeks total. Separate from `PLAN-local-supabase-switch.md`, which keeps Supabase but moves it onto your machine |
 | 🪜 [Backend extraction](PLAN-backend-extraction.md) | Phase 2 satisfied by agent-api | Phase 1 (contract-first frontend ⇄ API surface) shipped; Phase 2 (stand up a Python backend) satisfied by PLAN-agent-api `services/agent-py/`. The plan stays in `docs/` for the contract narrative but has no open work |
+| 🪜 [Frontend / backend split](PLAN-frontend-backend-split.md) | Wave 1 (Phase 0) in progress | Decided 2026-11-21: agent-py becomes the one backend; spec-first contract in `packages/contract`; AG-UI 1.0 events + a run resource for agent runs; frontend-only Next.js; agent-ts frozen as a future second implementation behind a conformance suite. Supersedes the per-account Python/TS policy above once Phase 5 lands |
 
 ---
 

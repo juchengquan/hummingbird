@@ -57,6 +57,7 @@ import {
 
 import { CitationTableSchema, type CitationTable } from "@/shared/artifacts/citation-table"
 import { isAuthRequiredError } from "@/shared/api-errors"
+import { resolveBackendBaseUrl } from "@/shared/backend-base-url"
 
 import { narrowToRemoteBody } from "@/client/api/chat-marshalling"
 import { notifyAuthRequired } from "@/client/auth/auth-required"
@@ -127,6 +128,20 @@ async function resolveDispatch(
   if (option?.dispatch === "remote") return option.remote
   const { resolveRemoteBackend } = await import("@/client/api/backend-resolver")
   return resolveRemoteBackend()
+}
+
+/** For endpoints only agent-py implements (`/v1/extract-table`,
+ *  `/v1/files/refresh-url`): resolve the dispatch as usual, then keep
+ *  it remote only when it resolved to agent-py. agent-ts is frozen
+ *  (docs/PLAN-frontend-backend-split.md, Q11) and will not get these
+ *  routes, so a `ts-service` account stays on the in-Next route. */
+async function agentPyOnlyDispatch(
+  option: DispatchOption | undefined,
+): Promise<DispatchOption> {
+  const remote = await resolveDispatch(option)
+  return remote?.backend === "python"
+    ? { dispatch: "remote", remote }
+    : { dispatch: "in-next" }
 }
 
 /** Resolve the `DispatchOption` and return a stable cache key that
@@ -249,24 +264,28 @@ const API_BASE_URL = (
 /**
  * Base URL for the Python agent service (`services/agent-py/`). Set
  * to its origin (e.g. `http://localhost:8000` in dev) to enable the
- * "Chat backend → Python" toggle in the account menu. Empty / unset →
+ * "Chat backend → Python" toggle in the account menu, or to `/` when a
+ * reverse proxy serves agent-py on the frontend's own origin
+ * (`PLAN-frontend-backend-split.md` Q21) — requests then go to
+ * `/v1/...` on the current origin and the prefix is `""`. See
+ * `resolveBackendBaseUrl` (`@/shared/backend-base-url`). Empty / unset →
  * the apiClient ignores the `backend: 'python'` option and falls
  * through to the TS route, so a misconfigured deploy degrades safely.
  *
  * Phase 4-2 of `PLAN-agent-api.md`. Per user policy, both stacks
  * stay live indefinitely — this is the selector wire, not a cutover.
  */
-export const AGENT_PY_BASE_URL = (
-  typeof process !== "undefined" && process.env.NEXT_PUBLIC_AGENT_PY_URL
-    ? process.env.NEXT_PUBLIC_AGENT_PY_URL
-    : ""
-).replace(/\/+$/, "")
+const AGENT_PY = resolveBackendBaseUrl(
+  typeof process !== "undefined" ? process.env.NEXT_PUBLIC_AGENT_PY_URL : undefined
+)
+export const AGENT_PY_BASE_URL = AGENT_PY.baseUrl
 
 /** Whether the Python agent endpoint is reachable as a backend
  *  option. The UI toggle hides itself when this is false so users
- *  don't see a switch that does nothing. */
+ *  don't see a switch that does nothing. Not `AGENT_PY_BASE_URL !== ""`:
+ *  the same-origin value `/` resolves to an empty prefix. */
 export function isAgentPyConfigured(): boolean {
-  return AGENT_PY_BASE_URL.length > 0
+  return AGENT_PY.configured
 }
 
 /**
@@ -281,16 +300,15 @@ export function isAgentPyConfigured(): boolean {
  * stacks coexist — this is the third option on the selector wire,
  * not a replacement for either existing backend.
  */
-export const AGENT_TS_BASE_URL = (
-  typeof process !== "undefined" && process.env.NEXT_PUBLIC_AGENT_TS_URL
-    ? process.env.NEXT_PUBLIC_AGENT_TS_URL
-    : ""
-).replace(/\/+$/, "")
+const AGENT_TS = resolveBackendBaseUrl(
+  typeof process !== "undefined" ? process.env.NEXT_PUBLIC_AGENT_TS_URL : undefined
+)
+export const AGENT_TS_BASE_URL = AGENT_TS.baseUrl
 
 /** Whether the TS agent service endpoint is reachable. Mirrors
  *  `isAgentPyConfigured` — same UI gating semantics. */
 export function isAgentTsConfigured(): boolean {
-  return AGENT_TS_BASE_URL.length > 0
+  return AGENT_TS.configured
 }
 
 function url(path: string): string {
@@ -404,14 +422,14 @@ async function chatStream(
 
   if (
     options?.backend === "python" &&
-    AGENT_PY_BASE_URL.length > 0 &&
+    isAgentPyConfigured() &&
     hasToken
   ) {
     return chatStreamRemote(body, AGENT_PY_BASE_URL, token, options.signal)
   }
   if (
     options?.backend === "ts-service" &&
-    AGENT_TS_BASE_URL.length > 0 &&
+    isAgentTsConfigured() &&
     hasToken
   ) {
     return chatStreamRemote(body, AGENT_TS_BASE_URL, token, options.signal)
@@ -968,19 +986,22 @@ async function refreshGeneratedFileUrl(
   storagePath: string,
   options?: DispatchOption,
 ): Promise<string | null> {
+  // agent-py only; agent-ts accounts use the in-Next route. Same
+  // camelCase body on both (agent-py mirrors the Zod schema here,
+  // unlike its snake_case `/v1/images/refresh-url`).
+  const dispatch = await agentPyOnlyDispatch(options)
   const result = await dispatchedFetch<
     { storagePath: string },
-    { storage_path: string },
+    { storagePath: string },
     { url: string }
   >({
     path: "/v1/files/refresh-url",
     localUrl: apiUrls.filesRefreshUrl(),
     bodyForLocal: { storagePath },
-    bodyForRemote: (b) => ({ storage_path: b.storagePath }),
     schema: RefreshFileUrlResponseSchema,
-    dispatch: options,
+    dispatch,
     inflight: refreshFileUrlInflight,
-    dedupeKey: await backendCacheKey(options, storagePath),
+    dedupeKey: await backendCacheKey(dispatch, storagePath),
   })
   if (!result.ok) return null
   return result.data.url
@@ -1163,10 +1184,11 @@ async function taskChildren(
 
 /**
  * Extract a structured citation table from a research report and its
- * source list. Mirrors the `summarizePost` dispatch pattern: tries the
- * remote backend first (when configured), falls back to the in-Next
- * route. Returns `null` on any failure — callers treat a missing table
- * as a degraded-but-safe outcome.
+ * source list. Goes to agent-py's `/v1/extract-table` when the account's
+ * backend is agent-py (and its prerequisites resolve); everything else —
+ * the in-Next backend, agent-ts (frozen, no such route), a missing
+ * session — uses the in-Next route. Returns `null` on any failure —
+ * callers treat a missing table as a degraded-but-safe outcome.
  */
 async function extractTable(
   body: ExtractTableRequestInput,
@@ -1182,7 +1204,7 @@ async function extractTable(
     bodyForLocal: body,
     schema: CitationTableSchema,
     signal: options?.signal,
-    dispatch: options,
+    dispatch: await agentPyOnlyDispatch(options),
   })
   return result.ok ? result.data : failureResult(result)
 }

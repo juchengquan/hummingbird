@@ -1,24 +1,28 @@
 # Hummingbird backends — where they live
 
 Hummingbird ships with **three interchangeable backends** for the chat
-turn (`/v1/chat`-shaped wire) plus the four non-chat endpoints
-(`summarize`, `extract`, `url/fetch`, `images/refresh-url`, `mcp/...`).
+turn (`/v1/chat`-shaped wire) plus the non-chat endpoints
+(`summarize`, `extract`, `url/fetch`, `images/refresh-url`, `mcp/...`;
+agent-py also serves `files/refresh-url` and `extract-table`).
 Two live here under `services/`; the third lives split across `app/api/`
 and `lib/server/` at the repo root because Next.js's App Router owns
 those paths. The frontend picks one per account via
 `lib/client/api/backend-resolver.ts`'s `DispatchOption` union (`'in-next'`
 / `'remote'`).
 
-Both `services/` backends are kept live indefinitely per project
-policy — neither is the "default" or the "deprecated" one. The user
-picks per account via the Phase 4-2 selector
-(`PLAN-agent-api.md`).
+Both `services/` backends stay live and the user picks one per account
+via the Phase 4-2 selector (`PLAN-agent-api.md`). **agent-ts is frozen**,
+though: bug and security fixes only, no new endpoints (decision Q11 of
+`docs/PLAN-frontend-backend-split.md`; see
+[`agent-ts/README.md`](agent-ts/README.md) § Frozen). It is
+self-contained: what it used from the Next app's `lib/` is vendored
+under `services/agent-ts/src/vendor/` as frozen copies.
 
 | Backend | Where | Stack | DispatchOption | Notes |
 |---|---|---|---|---|
 | **Next.js (original TS)** | `app/api/**/route.ts` + `lib/server/**` | Next.js App Router · `@ai-sdk/*` · Vercel AI Gateway | `'in-next'` | Co-located with the frontend; route handlers can't move out of `app/` without giving up App Router routing. Shared by Server Components too. |
 | **agent-py** | `services/agent-py/` | Python 3.12 · FastAPI · uv · asyncpg · Anthropic SDK | `'remote'` (`NEXT_PUBLIC_AGENT_PY_URL`) | Standalone container. Owns the `task_jobs` poller + executor. |
-| **agent-ts** | `services/agent-ts/` | Bun · Hono · `@ai-sdk/*` · `postgres` (pg under RLS impersonation) | `'remote'` (`NEXT_PUBLIC_AGENT_TS_URL`) | Standalone container. Mirrors agent-py's surface in TS. |
+| **agent-ts** | `services/agent-ts/` | Bun · Hono · `@ai-sdk/*` · `postgres` (pg under RLS impersonation) | `'remote'` (`NEXT_PUBLIC_AGENT_TS_URL`) | Standalone container. **Frozen** (Q11): mirrors agent-py's surface as of the freeze; no new endpoints. Doesn't import the Next app's `lib/`. |
 
 ## Background tasks — who executes them
 
@@ -63,9 +67,18 @@ If you're looking for the chat-route equivalent in each backend:
 | URL fetch | `app/api/url/fetch/route.ts` | `routers/url.py` | `routes/url-fetch.ts` |
 | MCP proxy | `app/api/mcp/[serverId]/[action]/route.ts` | `routers/mcp.py` | `routes/mcp-proxy.ts` |
 | Refresh image URL | `app/api/images/refresh-url/route.ts` | `routers/images.py` | `routes/refresh-url.ts` |
+| Refresh file URL | `app/api/files/refresh-url/route.ts` | `routers/files.py` | — (frozen; client uses the Next.js route) |
+| Extract table | `app/api/extract-table/route.ts` | `routers/extract_table.py` | — (frozen; client uses the Next.js route) |
 
 Shared by all three: the Zod wire schemas in `lib/shared/api-schemas.ts`
-and the streaming SSE protocol documented in `docs/API.md`.
+(agent-ts uses a frozen copy, `src/vendor/shared/api-schemas.ts`) and
+the streaming SSE protocol documented in `docs/API.md`.
+
+agent-ts is frozen (no new endpoints — `docs/PLAN-frontend-backend-split.md`,
+Q11), so surfaces added after the freeze exist only in agent-py. For
+those (`files/refresh-url`, `extract-table`) `lib/client/api-client.ts`
+dispatches remotely only when the account's backend is agent-py
+(`agentPyOnlyDispatch`); `ts-service` accounts stay on the Next.js route.
 
 ## Model allowlist
 
@@ -82,7 +95,7 @@ typo — is a 400 `unknown_model`:
 
 | | agent-py | agent-ts |
 |---|---|---|
-| Rule | `agent_py/model_allowlist.py` (reads the JSON itself) | `src/models.ts` over `ANTHROPIC_SERVICE_MODELS` in `lib/shared/models.ts` |
+| Rule | `agent_py/model_allowlist.py` (reads the JSON itself) | `src/models.ts` over `ANTHROPIC_SERVICE_MODELS` in `src/vendor/shared/models.ts` (frozen copy of `lib/shared/models.ts`; reads `config/models.json` via `@config/*`) |
 | 400 body | `{"detail": {"code": "unknown_model", "message"}}` (FastAPI `HTTPException`) | `{code: "unknown_model", message}` (Next.js envelope) |
 
 Where it's enforced:
@@ -97,9 +110,13 @@ Where it's enforced:
   creation, but the checkpoint row is owner-writable under RLS, so a
   tampered id fails the run (`result: failed`, task `failed`) instead
   of reaching Anthropic.
-- `/v1/extract`, `/v1/url/fetch`, MCP and image refresh take no model
-  id. `/v1/extract-table` isn't implemented by either service (the
-  client falls back to the Next.js route).
+- **`/v1/extract-table`** (agent-py only) — `model` is optional; absent
+  → `AGENT_DEFAULT_MODEL` (the Next.js route defaults to
+  `google/gemini-2.5-flash`, which this service can't call), present →
+  must be allowed. The entry's `supportsStructuredOutput` flag picks the
+  native structured path first, as on the Next.js route.
+- `/v1/extract`, `/v1/url/fetch`, MCP and image / file refresh take no
+  model id.
 
 Config:
 

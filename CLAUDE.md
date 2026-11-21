@@ -25,9 +25,15 @@ bun run test         # split runner (scripts/run-tests.sh): isolates app/api/tas
 
 # Agent service (Python — Phase 0 of PLAN-agent-api.md)
 docker compose up agent-py            # run service in container
+docker compose up proxy agent-py      # + Caddy on :8080, same origin (NEXT_PUBLIC_AGENT_PY_URL=/; README "Same-origin backend")
 bun run codegen:agent-types           # regen lib/shared/agent-py-types.generated.ts
 bun run codegen:agent-types:check     # CI mode — fail if drifted
 bun run check:agent-py                # ruff check + ruff format --check + mypy + pytest (mirrors the agent-py CI job)
+
+# Frontend↔backend contract (spec-first, docs/PLAN-frontend-backend-split.md)
+bun run contract:gen                  # packages/contract/openapi.yaml → TS types + agent-py Pydantic models
+bun run contract:check                # lint the spec + fail if generated outputs drifted (CI job `contract`)
+CONTRACT_BASE_URL=http://localhost:8000 bun run contract:conformance   # run the conformance suite against a live backend
 
 # Or to develop the agent service on the host:
 cd services/agent-py && uv sync && uv run uvicorn agent_py.main:app --reload
@@ -243,7 +249,11 @@ Components). The frontend picks one per account via
 `lib/client/api/backend-resolver.ts`'s `DispatchOption` (`'in-next'` /
 `'remote'`). See [`services/README.md`](services/README.md) for the
 full per-surface entry-point map and the rationale for why the third
-backend doesn't live under `services/`.
+backend doesn't live under `services/`. **agent-ts is frozen** (bug and
+security fixes only, no new endpoints; Q11 of
+`docs/PLAN-frontend-backend-split.md`) and doesn't import `lib/`: what
+it used is vendored under `services/agent-ts/src/vendor/`, so fixes to
+the `lib/` originals don't reach it. See `services/agent-ts/README.md`.
 
 ## Agent service (Python — Phases 0+1+2a)
 
