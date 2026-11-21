@@ -519,7 +519,7 @@ CASES = [
     ),
     Case(
         "renderUI interrupt",
-        [_Call(tools=[call("c-ui", "renderUI", kind="confirm", props={"title": "Sure?"})])],
+        [_Call(tools=[call("c-ui", "renderUI", kind="confirm", props={"prompt": "Sure?"})])],
         _render_ui,
     ),
     Case(

@@ -39,6 +39,7 @@ import structlog
 
 from .emitter import RunEmitter
 from .events import TokenUsage, ToolCallResult, ToolFileEvent, ToolImageEvent, ToolImageMode
+from .input_policy import pauses_for_input
 from .providers.anthropic_provider import (
     AsyncAnthropicClient,
     _coerce_content_blocks,
@@ -637,7 +638,7 @@ async def run_turn_loop(
             for block in tool_uses:
                 tool_call_id, tool_name, args = tool_use_fields(block)
                 await emitter.tool_input(tool_call_id=tool_call_id, tool_name=tool_name, args=args)
-                if tool_name in gated:
+                if pauses_for_input(tool_name, args, gated):
                     pending.append(PendingCall(tool_call_id, tool_name, args))
                     continue
                 try:

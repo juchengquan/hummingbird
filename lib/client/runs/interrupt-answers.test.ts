@@ -105,7 +105,7 @@ describe("questionFromInterrupt (recorded interrupts)", () => {
     const q = questionFromInterrupt(uiPart)!
     expect(q.reason).toBe("ui-part")
     expect(q.uiKind).toBe("confirm")
-    expect(q.uiProps).toEqual({ title: "Sure?" })
+    expect(q.uiProps).toEqual({ prompt: "Sure?" })
   })
 
   test("an unknown reason has no card (dismiss only)", () => {

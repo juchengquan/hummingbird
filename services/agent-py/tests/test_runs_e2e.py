@@ -865,12 +865,18 @@ def test_ask_user_choice_interrupt_then_answer(serve: Callable[..., Env]) -> Non
         ]
 
 
-def test_render_ui_interrupt(serve: Callable[..., Env]) -> None:
+def test_render_ui_interrupt_then_answer(serve: Callable[..., Env]) -> None:
     env = serve(
-        Turn([], tools=[tool_use("c-ui", "renderUI", kind="confirm", props={"title": "Sure?"})])
+        Turn(
+            [text("One moment.")],
+            tools=[tool_use("c-ui", "renderUI", kind="confirm", props={"prompt": "Sure?"})],
+        ),
+        Turn([text("Done.")]),
     )
+    headers = env.auth()
+    first = start_body([user_msg("ask me")], model=MODEL)
     with env.http() as http:
-        r = http.post("/v1/runs", json=start_body([user_msg("ask me")], model=MODEL))
+        r = http.post("/v1/runs", json=first, headers=headers)
         assert r.status_code == 200, r.text
         env.save("interrupt-ui", r.text)
         frames = parse_sse(r.text)
@@ -878,6 +884,61 @@ def test_render_ui_interrupt(serve: Callable[..., Env]) -> None:
         [interrupt] = frames[-1][1]["outcome"]["interrupts"]
         assert interrupt["reason"] == "ui-part"
         assert interrupt["metadata"]["hummingbird"]["uiKind"] == "confirm"
+        assert interrupt["metadata"]["hummingbird"]["uiProps"] == {"prompt": "Sure?"}
+        # The card's answer: the structured `uiAnswer` + the formatted text
+        # the model is shown (`respondBodyForUiAnswer` minus `requestId`).
+        resume = {
+            "threadId": first["threadId"],
+            "runId": str(uuid.uuid4()),
+            "messages": [user_msg("ask me")],
+            "forwardedProps": {"model": MODEL, "previousRunId": first["runId"]},
+            "resume": [
+                {
+                    "interruptId": "c-ui",
+                    "status": "resolved",
+                    "payload": {"uiAnswer": {"kind": "confirm", "confirmed": True}, "value": "Yes"},
+                }
+            ],
+        }
+        r2 = http.post("/v1/runs", json=resume, headers=headers)
+        assert r2.status_code == 200, r2.text
+        env.save("resume-ui", r2.text)
+        resumed = parse_sse(r2.text)
+        check_ids(resumed)
+        assert resumed[-1][1]["outcome"] == {"type": "success"}
+        [result] = [f[1] for f in resumed if f[1]["type"] == "TOOL_CALL_RESULT"]
+        assert result["toolCallId"] == "c-ui"
+        assert json.loads(result["content"])["summary"] == "Yes"
+
+
+def test_render_ui_with_props_the_client_cannot_render_is_a_tool_error(
+    serve: Callable[..., Env],
+) -> None:
+    """`{title}` isn't a confirm part (`prompt` is required): the run
+    doesn't pause on a card that would fail validation in the browser —
+    the model gets the error back and answers on."""
+    env = serve(
+        Turn([], tools=[tool_use("c-ui", "renderUI", kind="confirm", props={"title": "Sure?"})]),
+        Turn([text("Let me just ask: sure?")]),
+    )
+    with env.http() as http:
+        r = http.post(
+            "/v1/runs", json=start_body([user_msg("ask me")], model=MODEL), headers=env.auth()
+        )
+        assert r.status_code == 200, r.text
+        frames = parse_sse(r.text)
+        check_ids(frames)
+        assert frames[-1][1]["outcome"] == {"type": "success"}
+        [result] = [f[1] for f in frames if f[1]["type"] == "TOOL_CALL_RESULT"]
+        assert result["toolCallId"] == "c-ui"
+        assert "'prompt' is a required property" in json.loads(result["content"])["summary"]
+    tool_results = [
+        b
+        for m in env.model.requests[-1]["messages"]
+        for b in (m["content"] if isinstance(m["content"], list) else [])
+        if b.get("type") == "tool_result"
+    ]
+    assert [b["is_error"] for b in tool_results] == [True]
 
 
 def test_model_failure_ends_the_stream_with_run_error(serve: Callable[..., Env]) -> None:

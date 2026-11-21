@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from .ui_parts import render_ui_args_error
+
 # Stable name for the `askUser` no-execute tool. Always gated.
 ASK_USER_TOOL_NAME = "askUser"
 # Stable name for the `renderUI` task-mode no-execute tool. Always
@@ -29,6 +31,21 @@ RequestKind = Literal["approval", "choice", "input", "ui-part"]
 # tools — they suspend the run instead of executing — so the gate
 # must apply on every run that registers them.
 ALWAYS_GATED_TOOL_NAMES: frozenset[str] = frozenset({ASK_USER_TOOL_NAME, RENDER_UI_TOOL_NAME})
+
+
+def pauses_for_input(tool_name: str, args: Any, gated: frozenset[str] | set[str]) -> bool:
+    """Whether a call to a gated tool suspends the run for an answer.
+
+    A `renderUI` call whose `{kind, props}` the client couldn't render
+    (`ui_parts.render_ui_args_error`) does not: it runs instead, and its
+    `execute` hands the model the validation error to correct — as Next's
+    `renderUI` does — rather than raising a `ui-part` interrupt that shows
+    "props validation failed"."""
+    if tool_name not in gated:
+        return False
+    if tool_name == RENDER_UI_TOOL_NAME:
+        return render_ui_args_error(args if isinstance(args, dict) else {}) is None
+    return True
 
 
 def request_kind_for(tool_name: str, args: Any) -> RequestKind:

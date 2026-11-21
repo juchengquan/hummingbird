@@ -128,7 +128,7 @@ const CASES: Record<string, Expect> = {
     outcome: { type: "success", memoryTainted: false },
   },
   "memory-interrupt-ui": {
-    content: "",
+    content: "One moment.",
     toolCalls: [{ id: "c-ui", name: "renderUI", status: "running", summary: undefined }],
     outcome: { type: "interrupt" },
     extra: ({ outcome }) => {
@@ -136,9 +136,14 @@ const CASES: Record<string, Expect> = {
       expect(outcome.interrupts[0]).toMatchObject({
         reason: "ui-part",
         uiKind: "confirm",
-        uiProps: { title: "Sure?" },
+        uiProps: { prompt: "Sure?" },
       })
     },
+  },
+  "memory-resume-ui": {
+    content: "Done.",
+    toolCalls: [{ id: "c-ui", name: "renderUI", status: "done", summary: "Yes" }],
+    outcome: { type: "success", memoryTainted: false },
   },
   "memory-rejoin-full": {
     content: "first part second partFinished.",

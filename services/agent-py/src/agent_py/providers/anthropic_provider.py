@@ -31,6 +31,7 @@ import structlog
 from .. import lease, tool_ledger
 from ..coalescer import make_token_coalescer
 from ..emitter import RunEmitter
+from ..input_policy import pauses_for_input
 from ..runner import (
     PendingInputDescriptor,
     RunStepContext,
@@ -228,11 +229,11 @@ def make_anthropic_step_fn(config: AnthropicStepConfig) -> RunStepFn:
         # until the `respond` action appends one.
         for block in tool_use_blocks:
             tool_name = _block_field(block, "name") or ""
-            if tool_name in config.gated_tool_names:
+            args = _block_field(block, "input") or {}
+            if not isinstance(args, dict):
+                args = {}
+            if pauses_for_input(tool_name, args, config.gated_tool_names):
                 tool_call_id = _block_field(block, "id") or ""
-                args = _block_field(block, "input") or {}
-                if not isinstance(args, dict):
-                    args = {}
                 # Emit a tool_input event for the UI even though the
                 # tool didn't actually run — the strip shows "Tool X
                 # is awaiting approval".

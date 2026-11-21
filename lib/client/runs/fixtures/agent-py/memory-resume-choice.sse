@@ -1,10 +1,10 @@
-data: {"type":"RUN_STARTED","threadId":"01684313-59ff-4586-af49-7ed13219b73c","runId":"10db7da7-da38-4e45-b5fe-8787dbe0e82e"}
+data: {"type":"RUN_STARTED","threadId":"da5ce8fd-42b9-4014-bcc6-492baff69d09","runId":"10f37a07-027f-4a3f-a67b-99dc1c43207f"}
 
 id: 1
 data: {"type":"STEP_STARTED","stepName":"step-1"}
 
 id: 2
-data: {"type":"TOOL_CALL_RESULT","messageId":"10db7da7-da38-4e45-b5fe-8787dbe0e82e:2","toolCallId":"c-ask","role":"tool","content":"{\"summary\":\"User selected: a\"}","metadata":{"hummingbird":{"toolName":"askUser"}}}
+data: {"type":"TOOL_CALL_RESULT","messageId":"10f37a07-027f-4a3f-a67b-99dc1c43207f:2","toolCallId":"c-ask","role":"tool","content":"{\"summary\":\"User selected: a\"}","metadata":{"hummingbird":{"toolName":"askUser"}}}
 
 id: 3
 data: {"type":"STEP_FINISHED","stepName":"step-1"}
@@ -13,16 +13,16 @@ id: 4
 data: {"type":"STEP_STARTED","stepName":"step-2"}
 
 id: 5.0
-data: {"type":"TEXT_MESSAGE_START","messageId":"10db7da7-da38-4e45-b5fe-8787dbe0e82e:5","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_START","messageId":"10f37a07-027f-4a3f-a67b-99dc1c43207f:5","role":"assistant"}
 
 id: 5
-data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"10db7da7-da38-4e45-b5fe-8787dbe0e82e:5","delta":"You picked A."}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"10f37a07-027f-4a3f-a67b-99dc1c43207f:5","delta":"You picked A."}
 
 id: 6.0
-data: {"type":"TEXT_MESSAGE_END","messageId":"10db7da7-da38-4e45-b5fe-8787dbe0e82e:5"}
+data: {"type":"TEXT_MESSAGE_END","messageId":"10f37a07-027f-4a3f-a67b-99dc1c43207f:5"}
 
 id: 6
 data: {"type":"STEP_FINISHED","stepName":"step-2"}
 
-data: {"type":"RUN_FINISHED","threadId":"01684313-59ff-4586-af49-7ed13219b73c","runId":"10db7da7-da38-4e45-b5fe-8787dbe0e82e","outcome":{"type":"success"},"result":{"text":"You picked A."},"usage":[{"provider":"anthropic","model":"claude-sonnet-4-6","inputTokens":11,"outputTokens":7,"totalTokens":18}]}
+data: {"type":"RUN_FINISHED","threadId":"da5ce8fd-42b9-4014-bcc6-492baff69d09","runId":"10f37a07-027f-4a3f-a67b-99dc1c43207f","outcome":{"type":"success"},"result":{"text":"You picked A."},"usage":[{"provider":"anthropic","model":"claude-sonnet-4-6","inputTokens":11,"outputTokens":7,"totalTokens":18}]}
 
