@@ -183,8 +183,11 @@ async def create_schedule(
     claims: Annotated[dict[str, object], Depends(get_current_user)],
 ) -> JSONResponse:
     user_id = _user_id(claims)
-    _pool()
+    # Validate before checking the database (the Next.js route checks the
+    # database first): an invalid body is 400/422 whether or not a database
+    # is configured — the contract's rule for every body-taking operation.
     body = await _read_body(request, partial=False)
+    _pool()
     timezone = body.get("timezone", "UTC")
     check = validate_schedule_cron(body["cron"], timezone, _now())
     if not check.ok or check.next is None:
@@ -252,8 +255,8 @@ async def update_schedule(
 ) -> JSONResponse:
     user_id = _user_id(claims)
     user = uuid.UUID(user_id)
+    patch = await _read_body(request, partial=True)  # validated first, as in create
     _pool()
-    patch = await _read_body(request, partial=True)
 
     # The current row's cron / timezone decide whether `next_run_at` is
     # recomputed (and prove the row exists and is the caller's).

@@ -23,7 +23,13 @@ async function post(contentType: string, body: string): Promise<Exchange> {
     signal: AbortSignal.timeout(10_000),
   })
   const text = await res.text()
-  return { status: res.status, contentType: res.headers.get("content-type"), body: undefined, text }
+  let parsed: unknown
+  try {
+    parsed = text ? JSON.parse(text) : undefined
+  } catch {
+    parsed = undefined
+  }
+  return { status: res.status, contentType: res.headers.get("content-type"), body: parsed, text }
 }
 
 const skip = env.skipOperations.has(OPERATION)

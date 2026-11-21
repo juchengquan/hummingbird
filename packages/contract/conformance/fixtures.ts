@@ -55,4 +55,5 @@ export const validRequestBodies: Record<string, unknown> = {
  */
 export const pathParams: Record<string, string> = {
   token: "conformance-unknown-share-token",
+  id: "00000000-0000-4000-8000-0000000000aa",
 }
