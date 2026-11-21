@@ -1,6 +1,6 @@
 # Plan: Frontend / backend split
 
-Status: **Wave 1 (Phase 0) in progress.** Decided in a design interview
+Status: **Wave 1 (Phase 0) shipped (#294). Wave 2 (Phase 1) in progress.** Decided in a design interview
 on 2026-11-21. Supersedes the open parts of
 [`PLAN-backend-extraction.md`](PLAN-backend-extraction.md), whose Phase 1
 (single `apiClient` + Zod schemas + `docs/API.md`) shipped and is the
@@ -137,7 +137,7 @@ has shipped behind the existing per-account backend switch.
 | Wave | Parallel work | Depends on |
 |---|---|---|
 | 1 (Phase 0) | **A** contract foundation · **B** the two missing remote endpoints · **C** agent-ts decoupling + freeze · **D** reverse proxy + docs | — |
-| 2 (Phase 1) | sharing · schedules + scheduler · embed + memory extract + csp-report | A merged |
+| 2 (Phase 1) | **A** flat `{code, message}` error envelope in agent-py (drop the spec's legacy `{detail}` variant) · **B** sharing (create / revoke / public read; share pages read from the backend when one is configured) · **C** schedules CRUD + an env-gated agent-py scheduler loop (safe alongside the Vercel Cron: same guarded `next_run_at` claim) · **D** embed + memory extract + csp-report | Wave 1 merged |
 | 3+ (Phase 2) | mostly sequential (event log ↔ encoder ↔ runs API ↔ harness interface); split decided when Phase 1 lands | Wave 2 merged |
 
 Each wave merges into one integration branch and ships as one PR
