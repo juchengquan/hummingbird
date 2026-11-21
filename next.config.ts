@@ -22,6 +22,11 @@ const SECURITY_HEADERS: { key: string; value: string }[] = [
 ];
 
 const nextConfig: NextConfig = {
+  // `.next` unless overridden: the Playwright suite builds into
+  // `.next-e2e` (playwright.config.ts) with its own NEXT_PUBLIC_* values,
+  // so it never clobbers a normal build. tsconfig.json already lists
+  // `.next-e2e/types`, so that build leaves it untouched.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   // pdf-parse v2 wraps pdfjs-dist, which dynamically imports its worker
   // (`pdf.worker.mjs`) relative to its own package location at runtime.
   // Bundling those modules through Turbopack breaks the worker resolution

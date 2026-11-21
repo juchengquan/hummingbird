@@ -10,6 +10,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "bash scripts/run-tests.sh",
+    "test:e2e": "playwright test",
     "check": "bun run typecheck && bun run lint && bun run check:migrations && bun run test",
     "check:migrations": "bun scripts/check-migration-versions.ts",
     "check:ci": "bun run typecheck && bun run lint && bun run check:migrations && bun run test && bun run build && bun run audit:bundle",
@@ -148,6 +149,7 @@
     "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@playwright/test": "1.65.1",
     "@redocly/openapi-core": "^1.34.15",
     "@tailwindcss/postcss": "^4",
     "@types/bun": "^1.3.14",
