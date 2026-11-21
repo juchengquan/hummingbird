@@ -35,6 +35,18 @@ or click the **+** next to the **Chats** group to start a new one.
   ask the self-hoster to enable the key.
 - Switching the chat backend (Next.js vs. the Python agent service)
   is a power-user setting - see [Settings & theme](12-settings-and-theme.md).
+- **Questions from the assistant (agent-py (runs) backend).** When the
+  assistant needs you mid-answer - approve a tool call, pick an option,
+  type an answer, or fill in an interactive card (confirm, form, date
+  picker) - the reply pauses and answer cards appear under it, the same
+  cards the [task strip](08-agent-tasks.md) uses. Answer them and the
+  same reply continues; with several questions, the answers are sent
+  together once all are answered (**Change** edits one before that).
+  Sending a new message instead skips the question. The cards survive a
+  reload. A question that has expired can only be dismissed; if the
+  answer comes too late for the server, **Resend message** asks again
+  from your original message. If another tab or device already answered,
+  the card says so and can be dismissed.
 
 ## Related
 - [Slash commands](06-slash-commands.md)
