@@ -115,10 +115,10 @@ const DST_ZONES: { tz: string; transitions: string[] }[] = [
   { tz: "Europe/Berlin", transitions: ["2026-03-29T01:00:00Z", "2026-10-25T01:00:00Z"] },
   { tz: "Australia/Sydney", transitions: ["2026-04-04T16:00:00Z", "2026-10-03T16:00:00Z"] },
   { tz: "Australia/Lord_Howe", transitions: ["2026-10-03T15:30:00Z"] },
-  { tz: "America/Santiago", transitions: ["2026-04-05T03:00:00Z", "2026-09-06T04:00:00Z"] },
   { tz: "Pacific/Chatham", transitions: ["2026-04-04T14:00:00Z", "2026-09-26T14:00:00Z"] },
-  // Not here: zones whose *future* rules change in almost every tzdata
-  // release (America/Havana, Asia/Gaza). The fixture is computed once and
+  // Not here (nor in FUZZ_ZONES): zones whose *future* rules change from one
+  // tzdata release to the next — America/Havana, Asia/Gaza, America/Santiago,
+  // Africa/Casablanca (predicted Ramadan transitions). The fixture is computed once and
   // compared on other machines — CI's tz database disagreed with the
   // generating machine's on Havana's Nov-2026 transition. This test pins the
   // TS ⇄ Python ports to each other, not one machine's tz database.
@@ -268,11 +268,9 @@ const FUZZ_ZONES = [
   "Europe/Berlin",
   "Europe/London",
   "Australia/Sydney",
-  "America/Santiago",
   "Asia/Kolkata",
   "Asia/Kathmandu",
   "Pacific/Chatham",
-  "Africa/Casablanca",
   "America/Sao_Paulo",
   "Asia/Tokyo",
 ]
