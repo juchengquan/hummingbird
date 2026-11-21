@@ -99,6 +99,12 @@ class RunInput:
     checkpoint: dict[str, object] | None = None
     """The harness state stored for this run (`tasks.checkpoint`): set
     for a background run's continuation, None for a fresh run."""
+    previous_checkpoint: dict[str, object] | None = None
+    """On a resume run (`resume` non-empty, Q24): the harness state the
+    interrupted run `previous_run_id` returned with its `Interrupted`
+    outcome (its `tasks.checkpoint`, or the anonymous store's copy) — what
+    the answers continue from (Q31). None when that run stored none; an
+    adapter then rebuilds what it can from `messages`."""
 
 
 class CancelSignal(Protocol):
