@@ -158,7 +158,8 @@ Things worth knowing when changing them:
 ### Planned operations (`x-planned`)
 
 An operation can be specified before any backend implements it: it
-carries `x-planned: <wave>` (the runs operations: `wave-3b`). The
+carries `x-planned: <wave>` (none does today — the runs operations
+carried `wave-3b` until agent-py implemented them). The
 conformance suite skips planned operations (`Operation.planned` in
 `conformance/harness.ts`), so a backend is held to everything else with
 `CONTRACT_SKIP_OPERATIONS` unset — "strict" conformance. Planned
@@ -204,6 +205,10 @@ it would not replace hand-written cases for auth and lifecycle.)
 | `CONTRACT_BASE_URL` | Backend origin, e.g. `http://localhost:8765`. Unset → every case is skipped (so `bun run test` stays offline) |
 | `CONTRACT_AUTH_TOKEN` | Optional Supabase user JWT for cases that need a signed-in caller (`errors.test.ts`; skipped without it) |
 | `CONTRACT_SKIP_OPERATIONS` | Comma-separated `operationId`s the backend does not implement yet |
+| `CONTRACT_RUNS_STUB` | `1` when the backend runs agent runs on a **model-free stub harness** that honours `forwardedProps.conformance` (below; agent-py: `RUNS_STUB_HARNESS=true`). The `runs.test.ts` cases that start runs are skipped without it, so the suite never spends model budget |
+| `CONTRACT_AUTH_TOKEN_2` | Optional JWT of a **second** user: foreign runs answer the same 404, are never listed, and a reused `runId` gets the same 409 |
+| `CONTRACT_THREAD_ID` | Optional id of a synced conversation `CONTRACT_AUTH_TOKEN`'s user owns — the background `startRun` → 202 case (the contract has no operation that creates one) |
+| `CONTRACT_COMPACTED_RUN_ID` | Optional id of a compacted run of that user — the `gap` + `MESSAGES_SNAPSHOT` replay case (compaction runs a retention window after a run ends, so the suite cannot produce one) |
 
 Cases today:
 
@@ -229,70 +234,109 @@ Cases today:
   with an empty body; malformed JSON → 400 `invalid_request`, an
   unsupported media type → 415 `unsupported_content_type`, both with the
   standard `ApiError` body.
+- `runs.test.ts` — the runs operations beyond the generic cases; see
+  "The runs cases" below. `harness.ts` has the SSE reader they use
+  (`callSse`, `parseSse`): `assertConforms` checks JSON bodies only, so
+  stream frames are checked by the case itself.
 
 ### Running it against agent-py
 
 ```bash
-# terminal 1 — any non-empty secret makes agent-py verify (and reject) tokens
+# terminal 1 — any non-empty secret makes agent-py verify (and reject) tokens;
+# the stub harness answers runs without a model, and the raised limits keep
+# the suite's burst of runs from one IP under the per-IP caps
 cd services/agent-py
-SUPABASE_JWT_SECRET=conformance-local-secret uv run uvicorn agent_py.main:app --port 8765
+SUPABASE_JWT_SECRET=conformance-local-secret-at-least-32-bytes \
+RUNS_STUB_HARNESS=true RUNS_RATE_PER_MINUTE=1000 \
+RUNS_ANONYMOUS_RATE_PER_MINUTE=1000 RUNS_ANONYMOUS_MAX_CONCURRENT=50 \
+  uv run uvicorn agent_py.main:app --port 8765
 
-# terminal 2
-CONTRACT_BASE_URL=http://localhost:8765 bun run contract:conformance
+# terminal 2 — tokens: HS256 JWTs signed with that secret (role
+# `authenticated`, a UUID `sub`, aud `authenticated`, future `exp`)
+CONTRACT_BASE_URL=http://localhost:8765 CONTRACT_RUNS_STUB=1 \
+CONTRACT_AUTH_TOKEN=<jwt user 1> CONTRACT_AUTH_TOKEN_2=<jwt user 2> \
+  bun run contract:conformance
 ```
+
+Without `SUPABASE_DB_URL` agent-py keeps signed-in interactive runs in
+memory and answers background starts `503 unavailable` (the background
+case accepts that and stops there). With a database, the tokens' users
+must exist in `auth.users`, and `CONTRACT_THREAD_ID` (a conversation of
+user 1) enables the background 202 case; keep `WORKER_DRY_RUN` at its
+default so no worker executes the background run the case creates (it
+cancels it at the end).
 
 An operation the backend has not implemented yet answers 404 and fails
 with a hint; mark it `x-planned` in the spec (preferred — see above) or
 skip it locally, e.g. `CONTRACT_SKIP_OPERATIONS=refreshFileUrl,extractTable`.
 Strict conformance is the suite passing with `CONTRACT_SKIP_OPERATIONS`
-unset (and `CONTRACT_AUTH_TOKEN` set, so `errors.test.ts` runs too).
+unset, `CONTRACT_AUTH_TOKEN` and `CONTRACT_AUTH_TOKEN_2` set (so
+`errors.test.ts` and the cross-user cases run) and, against a backend
+with a stub harness, `CONTRACT_RUNS_STUB=1`.
 
-### What the runs conformance cases must cover (wave 3b)
+### The runs cases
 
-Removing `x-planned` from the runs operations brings them under the
-generic cases (`auth.test.ts`: 401 without / with a bad credential —
-`startRun`'s fixture is a **background** run so an anonymous call is a
-401 too; `errors.test.ts`: `{}` → `invalid_request`). Wave 3b adds a
-`runs.test.ts` (and an SSE reader in the harness — `assertConforms`
-only checks JSON bodies) covering at least:
+The runs operations are under the generic cases (`auth.test.ts`: 401
+without / with a bad credential — `startRun`'s fixture is a
+**background** run so an anonymous call is a 401 too; `errors.test.ts`:
+`{}` → `invalid_request`). `runs.test.ts` adds:
 
-- **start, interactive**: 200 `text/event-stream`; every `data:` is a
-  valid AG-UI `Event`; the stream opens with `RUN_STARTED` (matching
-  `threadId` / `runId`), ends with `RUN_FINISHED` or `RUN_ERROR`, and
-  every other event (bar a `gap`) has a strictly increasing `id:` in
-  `RunCursor` form. Needs a model-free path in the backend under test
-  (e.g. its stub harness) so the case costs nothing.
-- **start, background**: 202 `RunAccepted`; `getRun` then answers
-  `queued`/`running`; without a token → 401 `auth_required`; a
-  `threadId` the caller does not own → 404.
-- **idempotency**: the same body twice → one run (202 twice / the second
-  interactive call replays from `0`); same `runId`, other `threadId` or
-  `mode` → 409 `run_id_conflict`; a second user reusing the `runId` →
-  the identical 409 body.
-- **validation**: non-UUID `runId` / `threadId` → 422; `resume[]`
-  without `forwardedProps.previousRunId` → 400; `resume[]` not covering
-  the previous run's open interrupts → 409 `invalid_state`.
-- **anonymous**: no `Authorization` → 200 + an `X-Run-Token` matching
-  `RunToken`; `getRun` / `streamRunEvents` / `cancelRun` with that
-  token → 200, with another token or none → 404 / 401; `listRuns`
-  without a bearer → 401.
-- **rejoin**: `after=<cursor>` returns exactly the events after it (no
-  repeat, no skip) — compare with a full replay; `Last-Event-ID` is
-  equivalent; a malformed or out-of-range cursor → 400; a compacted run
-  replayed from `0` → `RUN_STARTED`, `CUSTOM hummingbird.gap` (value
-  valid against `RunGapEventValue`), `MESSAGES_SNAPSHOT`, then the
-  closing event.
-- **status / cancel**: `getRun` body valid against `Run`, with the
-  `status` ↔ `result` / `error` / `openInterrupts` rule; cancel is
-  idempotent (twice → 200 `cancelled` both times; a finished run is
-  returned unchanged) and closes a live stream with `RUN_FINISHED {
-  outcome: { type: "cancelled" } }`.
-- **list**: filters (`threadId`, repeated `status`, `parentRunId`,
-  `mode`), newest-first order, `pageSize` bounds, `nextPageToken` walk
-  with no duplicates or gaps, garbage `pageToken` → 400, another user's
-  runs never listed.
-- **not found**: an unknown or foreign `runId` → the same 404 body for
-  `getRun`, `streamRunEvents` and `cancelRun`.
+- **validation** (no run started): non-UUID `runId` / `threadId` → 422;
+  `resume[]` without `forwardedProps.previousRunId` → 400; anonymous
+  background start → 401 `auth_required`.
+- **credentials**: `getRun` / `streamRunEvents` / `cancelRun` with no
+  credential or a malformed `X-Run-Token` → 401; `listRuns` with only a
+  run token → 401; an unknown run → one identical 404 body from all three
+  operations, with a random run token and with a bearer token.
+- **start, interactive** (stub): 200 `text/event-stream`, `X-Run-Token`
+  valid against `RunToken` (anonymous only), `Location`; every `data:` is
+  a valid AG-UI `Event`; `RUN_STARTED` first (matching ids, no SSE id);
+  `RUN_FINISHED` / `RUN_ERROR` last (no id); every other event bar a
+  `gap` carries a strictly increasing `RunCursor` id. A failed run ends
+  with `RUN_ERROR` whose code matches `Run.error`.
+- **idempotency** (stub): the same body again (anonymous: with its run
+  token) replays the identical stream; a taken `runId` — anonymous
+  without its token, on another thread, from a signed-in user, the
+  caller's own on another thread or in another mode, a second user —
+  answers 409 `run_id_conflict` with one identical body.
+- **run-token scoping** (stub): with its token → 200; another token →
+  404; none → 401; a signed-in user → 404.
+- **rejoin** (stub): no cursor, `after=0` and the full stream agree;
+  `after=<id>` and `Last-Event-ID: <id>` give exactly the tail after it
+  (first, middle, last id); `after` wins over `Last-Event-ID`; a
+  malformed or beyond-the-log cursor → 400 `invalid_request`.
+- **cancel** (stub): cancelling mid-stream (twice) closes the live stream
+  with `RUN_FINISHED { outcome: { type: "cancelled" } }`, both answers
+  `cancelled`, a rejoin closes the same way; a finished run is returned
+  unchanged, every time; an interrupted run → `cancelled` with no open
+  interrupts.
+- **interrupt + resume** (stub, Q24): `RUN_FINISHED` interrupt outcome
+  equal to `Run.openInterrupts`; a `resume[]` that misses, over-covers or
+  is on another thread → 409 `invalid_state`; an exact one starts a run
+  that succeeds with `previousRunId` set, and the interrupted run stays
+  `interrupted`.
+- **list** (stub + token): newest first, `pageSize=1` walk with
+  `nextPageToken` (no duplicates or gaps), `status` (repeated), `mode`,
+  `parentRunId` filters, `pageSize` 0 / 101 → 422, garbage or
+  filter-mismatched `pageToken` → 400, another user lists nothing.
+- **background** (token): a thread the caller does not own → 404 (or 503
+  `unavailable` on a backend without a store for background runs); with
+  `CONTRACT_THREAD_ID`: 202 `RunAccepted` + `Location`, the retry → 202,
+  `getRun` `queued` / `running`, another thread → 409, then cancelled.
+- **compacted replay** (`CONTRACT_COMPACTED_RUN_ID`): `RUN_STARTED`,
+  `CUSTOM hummingbird.gap` (valid `RunGapEventValue`),
+  `MESSAGES_SNAPSHOT`, …, the closing event.
+- Every `Run` body the cases see is checked against `Run` and the
+  `status` ↔ `result` / `error` / `openInterrupts` / `finishedAt` rule.
+
+**The stub harness.** A backend under test exposes a model-free harness
+for these cases (agent-py: `RUNS_STUB_HARNESS=true`,
+`runs/stub_harness.py`) steered per run by `forwardedProps.conformance`
+— an open `RunForwardedProps` key every real harness ignores:
+`{ outcome?: "succeed" | "fail" | "interrupt", steps?: 1..20,
+stepDelayMs?: 0..10000 }`. Each step streams some text; `interrupt`
+ends with one `approval` interrupt, and a run answering it succeeds;
+`stepDelayMs` keeps a run live long enough to cancel it.
 
 The suite is not in CI yet (CI starts no backend); that comes with the
 reverse-proxy / compose setup.
