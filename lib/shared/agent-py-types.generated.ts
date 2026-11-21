@@ -500,6 +500,105 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/embed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Embed File
+         * @description Python mirror of `app/api/embed/route.ts`: same body, same answers —
+         *     `skipped / not_configured` (200) with no embedder, the per-user
+         *     30/min limit (429 + `Retry-After`), `indexFileSections`' outcomes,
+         *     500 `embed_failed` on an embedder / database failure.
+         *
+         *     Differences from the Next.js route:
+         *       - Sign-in is checked first (every agent-py route requires a bearer
+         *         token), and an invalid body is FastAPI's 422, not 400.
+         *       - No DB pool (`SUPABASE_DB_URL` unset) with an embedder configured →
+         *         503 `db_unconfigured` (the Next.js route answers 401 when Supabase
+         *         is not configured — it cannot tell the cases apart).
+         *       - The 429 `code` is `rate_limit` (this service's and the contract's
+         *         code) where the Next.js route says `rate_limited`.
+         */
+        post: operations["embed_file_v1_embed_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memory/extract": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Memory Extract
+         * @description Python mirror of `app/api/memory/extract/route.ts`. Every
+         *     well-formed, authenticated request answers `{ok: true}`; extraction
+         *     runs only when the turn is not `tainted` and the user has
+         *     `profiles.memory_enabled`, and never surfaces a failure.
+         *
+         *     Differences from the Next.js route:
+         *       - **Sign-in is always required** (401 without a valid bearer token).
+         *         The Next.js route only 401s under `REQUIRE_AUTH_FOR_AI` and
+         *         otherwise no-ops for anonymous callers.
+         *       - **Model.** `MEMORY_EXTRACT_MODEL` is used only when it is an
+         *         allowed `anthropic/*` id of `config/models.json`; otherwise (and
+         *         when unset — the Next.js default is `google/gemini-2.5-flash`)
+         *         `AGENT_DEFAULT_MODEL`. No `ANTHROPIC_API_KEY` → nothing is
+         *         extracted (still `{ok: true}`), as when the Next.js route's model
+         *         provider is unavailable.
+         *       - **No DB pool** (`SUPABASE_DB_URL` unset) → nothing is extracted
+         *         (still `{ok: true}`), as when Supabase is not configured for the
+         *         Next.js route.
+         *       - An invalid body is FastAPI's 422, not 400.
+         */
+        post: operations["memory_extract_v1_memory_extract_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/csp-report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Csp Report
+         * @description Public by nature (browsers send no credentials). Same answers as the
+         *     Next.js route, all with an empty body — input is never echoed:
+         *     429 + `Retry-After` over the per-IP limit (checked first), 415 for an
+         *     unsupported `Content-Type`, 400 for a body that isn't JSON, else 204
+         *     after logging one `csp_violation` line per violation found.
+         *
+         *     The 16 KiB body cap is enforced by `BodySizeLimitMiddleware` ahead of
+         *     routing, so an oversized body gets that middleware's 413 (JSON
+         *     `{detail}` body) before the rate limit is consulted — the Next.js
+         *     route answers an empty-bodied 413 after it.
+         */
+        post: operations["csp_report_v1_csp_report_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -728,6 +827,27 @@ export interface components {
              */
             ok: true;
         };
+        /** EmbedRequest */
+        EmbedRequest: {
+            /** Fileid */
+            fileId: string;
+            /** Text */
+            text: string;
+            /** Force */
+            force?: boolean | null;
+        };
+        /** EmbedResponse */
+        EmbedResponse: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "indexed" | "skipped";
+            /** Sections */
+            sections: number;
+            /** Reason */
+            reason?: ("not_configured" | "empty" | "already_indexed" | "file_not_found") | null;
+        };
         /** Exa */
         Exa: {
             /** Enabled */
@@ -917,6 +1037,23 @@ export interface components {
              * @default true
              */
             enabled: boolean | null;
+        };
+        /** MemoryExtractRequest */
+        MemoryExtractRequest: {
+            /** Turntext */
+            turnText: string;
+            /** Conversationid */
+            conversationId?: string | null;
+            /** Tainted */
+            tainted?: boolean | null;
+        };
+        /** MemoryExtractResponse */
+        MemoryExtractResponse: {
+            /**
+             * Ok
+             * @constant
+             */
+            ok: true;
         };
         /** ProjectBreakdownBody */
         ProjectBreakdownBody: {
@@ -1944,6 +2081,94 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    embed_file_v1_embed_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmbedRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmbedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    memory_extract_v1_memory_extract_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryExtractRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryExtractResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    csp_report_v1_csp_report_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

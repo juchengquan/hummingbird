@@ -173,24 +173,6 @@ describe("apiClient.summarize — dispatch", () => {
   })
 })
 
-describe("apiClient.embed.file — dispatch", () => {
-  // embedFile is pinned to in-next: there is no remote `/v1/embed`
-  // handler, so it must never route remote even for remote-backend
-  // users. This asserts the local-only contract (URL + no auth). The
-  // resolver's auto→remote path is not exercised here — it needs
-  // env vars captured at module load + a Supabase session, which the
-  // file's header deliberately keeps out of this suite.
-  test("always posts to /api/embed without auth", async () => {
-    const log = installFetchStub({
-      jsonBody: { status: "indexed", sections: 0 },
-    })
-    await apiClient.embed.file({ fileId: "f-1", text: "hello" })
-    expect(log[0].url).toBe("/api/embed")
-    expect(log[0].authorization).toBeUndefined()
-    expect(log[0].contentType).toBe("application/json")
-  })
-})
-
 describe("apiClient.mcp.proxy — dispatch", () => {
   test("remote dispatch posts to {baseUrl}/v1/mcp/{id}/{action} with bearer JWT", async () => {
     const log = installFetchStub({ jsonBody: { capabilities: {} } })
@@ -345,6 +327,81 @@ describe("apiClient.artifacts.extractTable — agent-py-only dispatch", () => {
     await apiClient.artifacts.extractTable(body, { dispatch: "in-next" })
     expect(log[0].url).toBe("/api/extract-table")
     expect(log[0].authorization).toBeUndefined()
+  })
+})
+
+describe("apiClient.embed.file — agent-py-only dispatch", () => {
+  const body = { fileId: "f-1", text: "hello" }
+  const indexed = { status: "indexed" as const, sections: 1 }
+
+  test("python → agent-py /v1/embed, body unchanged", async () => {
+    const log = installFetchStub({ jsonBody: indexed })
+    const res = await apiClient.embed.file(body, { dispatch: "remote", remote: REMOTE })
+    expect(res).toEqual(indexed)
+    expect(log).toHaveLength(1)
+    expect(log[0].url).toBe("https://agent-py.example/v1/embed")
+    expect(log[0].authorization).toBe("Bearer jwt-test-token")
+    expect(log[0].body).toEqual(body)
+  })
+
+  test("ts-service → in-Next route, no bearer", async () => {
+    const log = installFetchStub({ jsonBody: indexed })
+    const res = await apiClient.embed.file(body, { dispatch: "remote", remote: TS_SERVICE })
+    expect(res).toEqual(indexed)
+    expect(log).toHaveLength(1)
+    expect(log[0].url).toBe("/api/embed")
+    expect(log[0].authorization).toBeUndefined()
+    expect(log[0].body).toEqual(body)
+  })
+
+  test("in-next → in-Next route", async () => {
+    const log = installFetchStub({ jsonBody: indexed })
+    await apiClient.embed.file(body, { dispatch: "in-next" })
+    expect(log[0].url).toBe("/api/embed")
+    expect(log[0].authorization).toBeUndefined()
+    expect(log[0].contentType).toBe("application/json")
+  })
+
+  test("a failed call resolves null", async () => {
+    installFetchStub({ status: 500, jsonBody: { code: "embed_failed", message: "x" } })
+    expect(await apiClient.embed.file(body, { dispatch: "remote", remote: REMOTE })).toBeNull()
+  })
+})
+
+describe("apiClient.memory.extract — agent-py-only dispatch", () => {
+  const body = { turnText: "User: I write Rust.", conversationId: "c-1" }
+
+  test("python → agent-py /v1/memory/extract, body unchanged", async () => {
+    const log = installFetchStub({ jsonBody: { ok: true } })
+    const ok = await apiClient.memory.extract(body, { dispatch: "remote", remote: REMOTE })
+    expect(ok).toBe(true)
+    expect(log).toHaveLength(1)
+    expect(log[0].url).toBe("https://agent-py.example/v1/memory/extract")
+    expect(log[0].authorization).toBe("Bearer jwt-test-token")
+    expect(log[0].body).toEqual(body)
+  })
+
+  test("ts-service → in-Next route, no bearer", async () => {
+    const log = installFetchStub({ jsonBody: { ok: true } })
+    const ok = await apiClient.memory.extract(body, { dispatch: "remote", remote: TS_SERVICE })
+    expect(ok).toBe(true)
+    expect(log[0].url).toBe("/api/memory/extract")
+    expect(log[0].authorization).toBeUndefined()
+    expect(log[0].body).toEqual(body)
+  })
+
+  test("in-next → in-Next route", async () => {
+    const log = installFetchStub({ jsonBody: { ok: true } })
+    expect(await apiClient.memory.extract(body, { dispatch: "in-next" })).toBe(true)
+    expect(log[0].url).toBe("/api/memory/extract")
+    expect(log[0].authorization).toBeUndefined()
+  })
+
+  test("a non-OK or off-schema answer resolves false", async () => {
+    installFetchStub({ status: 401, jsonBody: { detail: "Invalid token." } })
+    expect(await apiClient.memory.extract(body, { dispatch: "remote", remote: REMOTE })).toBe(false)
+    installFetchStub({ jsonBody: { ok: "yes" } })
+    expect(await apiClient.memory.extract(body, { dispatch: "remote", remote: REMOTE })).toBe(false)
   })
 })
 

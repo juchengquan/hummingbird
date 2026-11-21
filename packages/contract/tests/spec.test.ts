@@ -11,8 +11,10 @@ import { Contract, createAjv, loadSpec, operations } from "../conformance/harnes
  *  needs a reason; adding one here is a security decision, not a fix for
  *  a failing test.
  *  - getShare: the share token is the capability — anonymous viewers open
- *    a share link without an account. */
-const PUBLIC_V1_OPERATIONS = new Set(["getShare"])
+ *    a share link without an account.
+ *  - reportCspViolation: browsers POST CSP violation reports without
+ *    credentials. */
+const PUBLIC_V1_OPERATIONS = new Set(["getShare", "reportCspViolation"])
 
 describe("contract: openapi.yaml", () => {
   let contract: Contract

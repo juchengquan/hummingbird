@@ -115,6 +115,7 @@
 | `GOOGLE_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `MCP_ALLOW_PRIVATE_HOSTS` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `MCP_ENCRYPTION_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
+| `MEMORY_EXTRACT_MODEL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `MINIMAX_CN_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `MINIMAX_CN_BASE_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `MINIMAX_IMAGE_RATE_LIMIT_PER_MINUTE` | no | [21-environment-variables.md](21-environment-variables.md) |

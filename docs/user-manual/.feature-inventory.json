@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-21T06:23:29Z",
+  "generatedAt": "2026-11-21T06:59:40Z",
   "panels": [
     {
       "id": "agents-dialog",
@@ -511,7 +511,7 @@
     },
     {
       "id": "EMBEDDINGS_BASE_URL",
-      "description": "Embeddings — optional. Enables the vector / hybrid-retrieval pipeline (chunk + embed file text → pgvector). Without it, retrieval stays full-text only (nothing changes). Points at an OpenAI-compatible `/v1/embeddings` endpoint; Ollama works (set EMBEDDINGS_BASE_URL to the same `/v1` URL, or leave blank to reuse OLLAMA_BASE_URL above). EMBEDDINGS_MODEL defaults to `nomic-embed-text` (768-dim — must match the vector(768) column in migration 0023). See lib/server/embeddings/.",
+      "description": "Embeddings — optional. Enables the vector / hybrid-retrieval pipeline (chunk + embed file text → pgvector). Without it, retrieval stays full-text only (nothing changes). Points at an OpenAI-compatible `/v1/embeddings` endpoint; Ollama works (set EMBEDDINGS_BASE_URL to the same `/v1` URL, or leave blank to reuse OLLAMA_BASE_URL above). EMBEDDINGS_MODEL defaults to `nomic-embed-text` (768-dim — must match the vector(768) column in migration 0023). See lib/server/embeddings/. Also read by the Python agent service (services/agent-py/), which serves /v1/embed for agent-py accounts with the same precedence (EMBEDDINGS_* first, then OLLAMA_BASE_URL / OLLAMA_API_KEY above).",
       "required": true,
       "sourceFile": ".env.example"
     },
@@ -546,6 +546,12 @@
       "sourceFile": ".env.example"
     },
     {
+      "id": "MEMORY_EXTRACT_MODEL",
+      "description": "Memory-extraction model — optional. Distils durable facts from a finished chat turn when the user has memory on. Next.js: any model id (default `google/gemini-2.5-flash`). The Python agent service (/v1/memory/extract, agent-py accounts) uses it only when it is an allowed `anthropic/*` entry of config/models.json; otherwise (or empty) AGENT_DEFAULT_MODEL.",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
       "id": "MINIMAX_CN_API_KEY",
       "description": "(no description)",
       "required": true,
@@ -571,7 +577,7 @@
     },
     {
       "id": "NEXT_PUBLIC_AGENT_PY_URL",
-      "description": "Optional. Base URL of the Python agent service (services/agent-py/). Phase 4-2 of PLAN-agent-api.md — when set, the account menu shows a \"Python agent backend\" toggle that routes chat turns at `${NEXT_PUBLIC_AGENT_PY_URL}/v1/chat`. Empty (default) → the toggle is hidden and chat always uses the Next.js route. Per project policy both stacks stay live indefinitely; this is the user-facing selector, not a cutover. Example: `http://localhost:8000` in dev — then also set CORS_ALLOWED_ORIGINS=http://localhost:3000 for agent-py (cross-origin). Same origin: set it to `/` when a reverse proxy serves agent-py on the frontend's own origin (PLAN-frontend-backend-split.md Q21) — requests go to `/v1/...` on the current origin and CSP needs no extra source. Local dev: `docker compose up proxy agent-py`, then open http://localhost:8080 (see README \"Same-origin backend\").",
+      "description": "Optional. Base URL of the Python agent service (services/agent-py/). Phase 4-2 of PLAN-agent-api.md — when set, the account menu shows a \"Python agent backend\" toggle that routes chat turns at `${NEXT_PUBLIC_AGENT_PY_URL}/v1/chat`. Empty (default) → the toggle is hidden and chat always uses the Next.js route. Per project policy both stacks stay live indefinitely; this is the user-facing selector, not a cutover. Example: `http://localhost:8000` in dev — then also set CORS_ALLOWED_ORIGINS=http://localhost:3000 for agent-py (cross-origin). Same origin: set it to `/` when a reverse proxy serves agent-py on the frontend's own origin (PLAN-frontend-backend-split.md Q21) — requests go to `/v1/...` on the current origin and CSP needs no extra source. Local dev: `docker compose up proxy agent-py`, then open http://localhost:8080 (see README \"Same-origin backend\"). When set, the CSP's report-uri / Reporting-Endpoints point at agent-py's `/v1/csp-report` (`/` → same-origin `/v1/csp-report`) instead of `/api/csp-report`.",
       "required": true,
       "sourceFile": ".env.example"
     },

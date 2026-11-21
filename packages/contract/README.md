@@ -74,8 +74,9 @@ ride on the root `tsc` / `eslint` in the `ci` job.
   operation types and the conformance cases.
 - Every `/v1` operation is bearer-secured (a Supabase user JWT); only
   the probes and the operations listed in `PUBLIC_V1_OPERATIONS`
-  (`tests/spec.test.ts`, each with its reason — today just `getShare`,
-  the anonymous share-link read) are public (`security: []`). A test
+  (`tests/spec.test.ts`, each with its reason — `getShare`, the
+  anonymous share-link read, and `reportCspViolation`, which browsers
+  post without credentials) are public (`security: []`). A test
   enforces this.
 - Error responses reference `components/schemas/ErrorResponse` through
   the shared `components/responses/*`.
@@ -188,6 +189,10 @@ Cases today:
   `not_found` with no token, and a bogus `Authorization` header is
   ignored rather than refused. Path parameters (`{token}`) are filled
   from `pathParams` in `fixtures.ts`.
+- `security.test.ts` — the public CSP report intake: a well-formed
+  report (`application/csp-report`, `application/reports+json`) → 204,
+  malformed JSON → 400, an unsupported media type → 415, all with an
+  empty body.
 
 ### Running it against agent-py
 

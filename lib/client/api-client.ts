@@ -46,6 +46,7 @@ import {
   type CreateShareResponse,
   type ResolvedShareResponse,
   type MemoryExtractRequestInput,
+  type MemoryExtractResponse,
   type ExtractionResponse,
   type FileSummarizeResponse,
   type ConversationSummarizeResponse,
@@ -136,7 +137,8 @@ async function resolveDispatch(
 }
 
 /** For endpoints only agent-py implements (`/v1/extract-table`,
- *  `/v1/files/refresh-url`, `/v1/share`, `/v1/tasks/schedules`): resolve the dispatch as usual, then keep
+ *  `/v1/files/refresh-url`, `/v1/share`, `/v1/tasks/schedules`, `/v1/embed`,
+ *  `/v1/memory/extract`): resolve the dispatch as usual, then keep
  *  it remote only when it resolved to agent-py. agent-ts is frozen
  *  (docs/PLAN-frontend-backend-split.md, Q11) and will not get these
  *  routes, so a `ts-service` account stays on the in-Next route. */
@@ -803,14 +805,16 @@ async function extract(
 
 /**
  * Chunk + embed a file's extracted text into the `file_sections` vector
- * table (PLAN-local-rag.md PR 2). Best-effort: resolves to the parsed
- * status on success, or `null` on any failure (anonymous → 401, network
- * error, malformed response) — callers treat indexing as background
- * decoration that quietly no-ops when it can't run.
+ * table (PLAN-local-rag.md PR 2). Goes to agent-py's `/v1/embed` when
+ * the account's backend is agent-py, else the in-Next route. Best-effort:
+ * resolves to the parsed status on success, or `null` on any failure
+ * (anonymous → 401, network error, malformed response) — callers treat
+ * indexing as background decoration that quietly no-ops when it can't
+ * run.
  */
 async function embedFile(
   body: EmbedRequestInput,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal } & DispatchOption,
 ): Promise<EmbedResponse | null> {
   const result = await dispatchedFetch<
     EmbedRequestInput,
@@ -822,11 +826,9 @@ async function embedFile(
     bodyForLocal: body,
     schema: EmbedResponseSchema,
     signal: options?.signal,
-    // Pin to in-next: embedding was never dispatch-aware (no remote
-    // `/v1/embed` handler exists). Without this, 'auto' resolution
-    // would route remote-backend users to a 404 and silently break
-    // file full-text indexing.
-    dispatch: { dispatch: "in-next" },
+    // agent-py implements `/v1/embed`; agent-ts (frozen) does not, so a
+    // `ts-service` account stays on the in-Next route instead of a 404.
+    dispatch: await agentPyOnlyDispatch(options),
   })
   return result.ok ? result.data : null
 }
@@ -1020,24 +1022,30 @@ async function resolveShareFromBackend(
 
 /**
  * Trigger best-effort cross-conversation memory extraction for one
- * finished turn. Resolves `true` when the route accepted the body,
+ * finished turn. Resolves `true` when the backend accepted the body,
  * `false` on any failure (non-OK status, malformed response, network
  * error) — never rejects, so callers can fire-and-forget.
+ *
+ * Goes to agent-py's `/v1/memory/extract` when the account's backend is
+ * agent-py; the in-Next backend and agent-ts (frozen, no such route)
+ * keep the in-Next route. Same body on both.
  */
 async function memoryExtract(
-  body: MemoryExtractRequestInput
+  body: MemoryExtractRequestInput,
+  options?: DispatchOption,
 ): Promise<boolean> {
-  try {
-    const res = await fetch(apiUrls.memoryExtract(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    })
-    if (!res.ok) return false
-    return MemoryExtractResponseSchema.safeParse(await res.json()).success
-  } catch {
-    return false
-  }
+  const result = await dispatchedFetch<
+    MemoryExtractRequestInput,
+    MemoryExtractRequestInput,
+    MemoryExtractResponse
+  >({
+    path: "/v1/memory/extract",
+    localUrl: apiUrls.memoryExtract(),
+    bodyForLocal: body,
+    schema: MemoryExtractResponseSchema,
+    dispatch: await agentPyOnlyDispatch(options),
+  })
+  return result.ok
 }
 
 /** In-flight dedupe cache for `refreshGeneratedImageUrl`. Keys on

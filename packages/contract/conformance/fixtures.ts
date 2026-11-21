@@ -21,6 +21,22 @@ export const validRequestBodies: Record<string, unknown> = {
     sources: [{ title: "Probe source", url: "https://example.com/sky", snippet: "The sky is blue." }],
     columnHints: ["Claim", { label: "Year", type: "number" }],
   },
+  embedFile: {
+    fileId: "00000000-0000-4000-8000-000000000000",
+    text: "Conformance probe: a short paragraph to embed.",
+  },
+  extractMemory: {
+    turnText: "User: I write Rust at work.\n\nAssistant: Noted.",
+    conversationId: "00000000-0000-4000-8000-000000000000",
+  },
+  reportCspViolation: {
+    "csp-report": {
+      "document-uri": "https://app.example.com/dashboard",
+      "effective-directive": "script-src-elem",
+      "blocked-uri": "https://cdn.example.com/x.js",
+      disposition: "report",
+    },
+  },
   // --- schedules ---
   createSchedule: {
     workspaceId: "00000000-0000-4000-8000-000000000001",

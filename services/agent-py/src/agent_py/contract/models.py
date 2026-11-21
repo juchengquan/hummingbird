@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
@@ -113,8 +113,59 @@ class CreateShareResponse(BaseModel):
     kind: ShareKind
 
 
+type CspReportBody = Annotated[
+    Any,
+    Field(
+        examples=[
+            {
+                "csp-report": {
+                    "document-uri": "https://app.example.com/dashboard",
+                    "effective-directive": "script-src-elem",
+                    "blocked-uri": "https://cdn.example.com/x.js",
+                    "disposition": "report",
+                }
+            }
+        ]
+    ),
+]
+"""
+A legacy `report-uri` object (`{ "csp-report": { ... } }`) or a
+Reporting-API batch (an array of `{ type, body }` reports; only
+`type: csp-violation` entries are read, at most 20 per batch). Left
+open: any JSON value is accepted and unknown shapes are ignored.
+
+"""
+
+
 class DeleteScheduleResponse(BaseModel):
     ok: Literal[True]
+
+
+class EmbedRequest(BaseModel):
+    fileId: Annotated[str, Field(max_length=64, min_length=1)]
+    """
+    Id of the caller's `files` row the sections belong to.
+    """
+    text: Annotated[str, Field(max_length=1200000)]
+    """
+    The file's extracted full text.
+    """
+    force: bool | None = None
+    """
+    Drop the file's existing sections and rebuild them.
+    """
+
+
+class EmbedResponse(BaseModel):
+    status: Literal["indexed", "skipped"]
+    sections: Annotated[int, Field(ge=0)]
+    """
+    Chunks written (`indexed`) or already present (`already_indexed`); otherwise 0.
+    """
+    reason: Literal["not_configured", "empty", "already_indexed", "file_not_found"] | None = None
+    """
+    Why the request was skipped. Absent when `indexed`.
+    """
 
 
 class ErrorResponse(ApiError):
@@ -171,6 +222,25 @@ class ImageGenSkillConfig(BaseModel):
 
 class MaxCallsSkillConfig(BaseModel):
     maxCalls: Annotated[int | None, Field(ge=1, le=50)] = None
+
+
+class MemoryExtractRequest(BaseModel):
+    turnText: Annotated[str, Field(max_length=50000, min_length=1)]
+    """
+    The finished turn, as `User: ...` / `Assistant: ...` paragraphs.
+    """
+    conversationId: Annotated[str | None, Field(max_length=64)] = None
+    """
+    Provenance stamped on new facts (`source_conversation_id`).
+    """
+    tainted: bool | None = None
+    """
+    The turn read third-party content; nothing is extracted.
+    """
+
+
+class MemoryExtractResponse(BaseModel):
+    ok: Literal[True]
 
 
 class ReadinessChecks(BaseModel):

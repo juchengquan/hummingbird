@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test"
 
 import {
+  BACKEND_CSP_REPORT_PATH,
   buildCsp,
   buildCspDirectives,
   CSP_REPORT_GROUP,
   CSP_REPORT_PATH,
   cspHeaderName,
   cspOptionsFromEnv,
+  cspReportUri,
   EMBED_FRAME_ORIGINS,
   generateNonce,
   originOf,
@@ -217,8 +219,56 @@ describe("cspOptionsFromEnv", () => {
       isDev: false,
       supabaseUrl: "https://abc.supabase.co",
       backendUrls: ["https://api.example.com", "http://localhost:8000", undefined],
+      reportUri: "http://localhost:8000/v1/csp-report",
     })
     expect(cspOptionsFromEnv(NONCE, { NODE_ENV: "development" }).isDev).toBe(true)
+  })
+
+  test("reports go to the in-Next route when no backend is configured", () => {
+    expect(cspOptionsFromEnv(NONCE, {}).reportUri).toBe(CSP_REPORT_PATH)
+    expect(cspOptionsFromEnv(NONCE, { NEXT_PUBLIC_AGENT_PY_URL: "  " }).reportUri).toBe(CSP_REPORT_PATH)
+  })
+})
+
+describe("cspReportUri", () => {
+  test("unset / blank → the in-Next route", () => {
+    expect(cspReportUri(undefined)).toBe("/api/csp-report")
+    expect(cspReportUri(null)).toBe("/api/csp-report")
+    expect(cspReportUri("")).toBe("/api/csp-report")
+    expect(cspReportUri("   ")).toBe("/api/csp-report")
+  })
+
+  test("same origin (`/` or a path prefix) → /v1/csp-report on the page's origin", () => {
+    expect(cspReportUri("/")).toBe(BACKEND_CSP_REPORT_PATH)
+    expect(cspReportUri("/")).toBe("/v1/csp-report")
+    expect(cspReportUri("/backend/")).toBe("/backend/v1/csp-report")
+  })
+
+  test("absolute → <base>/v1/csp-report", () => {
+    expect(cspReportUri("https://api.example.com")).toBe("https://api.example.com/v1/csp-report")
+    expect(cspReportUri("https://api.example.com/")).toBe("https://api.example.com/v1/csp-report")
+    expect(cspReportUri("http://localhost:8000")).toBe("http://localhost:8000/v1/csp-report")
+  })
+
+  test("a value that could break out of the policy falls back to the in-Next route", () => {
+    expect(cspReportUri("https://a.com; script-src *")).toBe(CSP_REPORT_PATH)
+    expect(cspReportUri('/x"; script-src *')).toBe(CSP_REPORT_PATH)
+    expect(cspReportUri("/a,b")).toBe(CSP_REPORT_PATH)
+    expect(cspReportUri("javascript:alert(1)")).toBe(CSP_REPORT_PATH)
+    expect(cspReportUri("not a url")).toBe(CSP_REPORT_PATH)
+  })
+
+  test("buildCsp + reportingEndpointsHeader carry the chosen URI", () => {
+    for (const [env, expected] of [
+      [undefined, "/api/csp-report"],
+      ["/", "/v1/csp-report"],
+      ["https://api.example.com", "https://api.example.com/v1/csp-report"],
+    ] as const) {
+      const opts = cspOptionsFromEnv(NONCE, { NEXT_PUBLIC_AGENT_PY_URL: env })
+      expect(directives(buildCsp(opts)).get("report-uri")).toEqual([expected])
+      expect(directives(buildCsp(opts)).get("report-to")).toEqual([CSP_REPORT_GROUP])
+      expect(reportingEndpointsHeader(opts.reportUri)).toBe(`${CSP_REPORT_GROUP}="${expected}"`)
+    }
   })
 })
 

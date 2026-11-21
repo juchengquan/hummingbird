@@ -1,5 +1,7 @@
 import "server-only"
 
+import { resolveBackendBaseUrl } from "@/shared/backend-base-url"
+
 /**
  * Content-Security-Policy builder. Pure: every env-derived input comes
  * in through `CspPolicyOptions`, so the policy is unit-testable and the
@@ -14,9 +16,36 @@ import "server-only"
 export type CspMode = "report-only" | "enforce" | "off"
 
 /** Endpoint the browser POSTs violation reports to (`report-uri`) and
- *  the Reporting-API group name that points at it (`report-to`). */
+ *  the Reporting-API group name that points at it (`report-to`). The
+ *  in-Next route is the default; `cspReportUri` moves reports to the
+ *  backend's `/v1/csp-report` when one is configured. */
 export const CSP_REPORT_PATH = "/api/csp-report"
 export const CSP_REPORT_GROUP = "csp-endpoint"
+/** The backend's intake route (agent-py `POST /v1/csp-report`). */
+export const BACKEND_CSP_REPORT_PATH = "/v1/csp-report"
+
+/** Characters a report URL may contain once it lands in the policy and
+ *  in the quoted `Reporting-Endpoints` value: no whitespace, `;` / `,`
+ *  (directive / list separators), `"` or a backslash (structured-field string
+ *  delimiters). */
+const SAFE_REPORT_URL_RE = /^[A-Za-z0-9\-._~:/?#@!$&'()*+=%[\]]+$/
+
+/**
+ * Where violation reports go. `NEXT_PUBLIC_AGENT_PY_URL` configured
+ * (resolved like the API client does, `resolveBackendBaseUrl`) → the
+ * backend's `/v1/csp-report`: same origin (`/`, or a `/prefix`) →
+ * `/v1/csp-report` under that prefix; absolute → `<base>/v1/csp-report`.
+ * Unset → the in-Next route `/api/csp-report`. A value that is not a
+ * plain http(s) URL / path, or that carries a character that could
+ * break out of the policy, also falls back to the in-Next route.
+ */
+export function cspReportUri(agentPyUrl: string | undefined | null): string {
+  const backend = resolveBackendBaseUrl(agentPyUrl)
+  if (!backend.configured) return CSP_REPORT_PATH
+  if (!backend.sameOrigin && originOf(backend.baseUrl) === null) return CSP_REPORT_PATH
+  const uri = `${backend.baseUrl}${BACKEND_CSP_REPORT_PATH}`
+  return SAFE_REPORT_URL_RE.test(uri) ? uri : CSP_REPORT_PATH
+}
 
 /**
  * `CSP_MODE` → mode. Unset / empty / unrecognised → `report-only` so a
@@ -106,6 +135,9 @@ export interface CspPolicyOptions {
    *  backend behind the frontend's reverse proxy): it is not an
    *  absolute URL, `originOf` returns null, and `'self'` covers it. */
   backendUrls?: ReadonlyArray<string | undefined>
+  /** `report-uri` / `Reporting-Endpoints` target (`cspReportUri`).
+   *  Absent → `CSP_REPORT_PATH`. */
+  reportUri?: string
 }
 
 function unique(values: string[]): string[] {
@@ -159,7 +191,7 @@ export function buildCspDirectives(opts: CspPolicyOptions): Array<[string, strin
     // in Report-Only policies, so X-Frame-Options: DENY (next.config.ts)
     // carries the enforcement meanwhile.
     ["frame-ancestors", ["'none'"]],
-    ["report-uri", [CSP_REPORT_PATH]],
+    ["report-uri", [opts.reportUri ?? CSP_REPORT_PATH]],
     ["report-to", [CSP_REPORT_GROUP]],
   ]
 }
@@ -170,9 +202,10 @@ export function buildCsp(opts: CspPolicyOptions): string {
     .join("; ")
 }
 
-/** `Reporting-Endpoints` value pairing `report-to` with the route. */
-export function reportingEndpointsHeader(): string {
-  return `${CSP_REPORT_GROUP}="${CSP_REPORT_PATH}"`
+/** `Reporting-Endpoints` value pairing `report-to` with the report
+ *  route — pass the policy's `reportUri` so both delivery paths agree. */
+export function reportingEndpointsHeader(reportUri: string = CSP_REPORT_PATH): string {
+  return `${CSP_REPORT_GROUP}="${reportUri}"`
 }
 
 /** Everything the proxy needs, from an env bag (defaults to
@@ -190,5 +223,6 @@ export function cspOptionsFromEnv(
       env.NEXT_PUBLIC_AGENT_PY_URL,
       env.NEXT_PUBLIC_AGENT_TS_URL,
     ],
+    reportUri: cspReportUri(env.NEXT_PUBLIC_AGENT_PY_URL),
   }
 }

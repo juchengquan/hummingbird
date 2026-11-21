@@ -51,6 +51,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/csp-report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Receive Content-Security-Policy violation reports
+         * @description Where browsers send CSP violation reports (`report-uri` and
+         *     `Reporting-Endpoints` / `report-to` in the frontend's policy, when a
+         *     backend is configured). Mirrors `app/api/csp-report/route.ts`.
+         *     Public — browsers send no credentials. Reports are attacker-
+         *     controllable, so the backend logs only an allow-list of fields
+         *     (truncated, URLs cut to origin + path, share tokens redacted), caps
+         *     the body, rate-limits per client IP and never echoes input: every
+         *     answer except the transport-level 413 has an empty body.
+         *
+         *     Accepted media types: `application/csp-report` (legacy `report-uri`:
+         *     `{ "csp-report": { ... } }`), `application/reports+json` (Reporting
+         *     API: `[{ "type": "csp-violation", "body": { ... } }, ...]`) and
+         *     `application/json` (either shape). Any well-formed JSON is accepted;
+         *     shapes that are not CSP reports are ignored.
+         */
+        post: operations["reportCspViolation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/embed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Chunk and embed a file's text into the vector index
+         * @description Splits `text` into overlapping paragraph-aware chunks (the exact
+         *     algorithm of `lib/server/embeddings/chunk.ts`), embeds them with the
+         *     backend's configured OpenAI-compatible embedder and writes them to
+         *     `file_sections` as the caller (RLS). Mirrors `app/api/embed/route.ts`.
+         *
+         *     The expected "nothing to do" outcomes are 200 `skipped` answers, not
+         *     errors: no embedder configured (`not_configured`), blank text
+         *     (`empty`), the file already has sections and `force` is not set
+         *     (`already_indexed`, `sections` = the existing count), and the `files`
+         *     row is not visible to the caller yet (`file_not_found` — the client
+         *     retries with backoff while its metadata sync catches up). `force`
+         *     drops the file's sections and rebuilds them. Spends embedder budget.
+         */
+        post: operations["embedFile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/extract-table": {
         parameters: {
             query?: never;
@@ -115,6 +179,34 @@ export interface paths {
          *     the object is missing or Storage is not configured.
          */
         post: operations["refreshImageUrl"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memory/extract": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Extract durable facts from a finished chat turn
+         * @description Best-effort, post-turn memory upkeep. Mirrors
+         *     `app/api/memory/extract/route.ts`: when the caller has
+         *     `profiles.memory_enabled`, a model distils durable facts from
+         *     `turnText` and merges them into the caller's `user_memories` (as the
+         *     caller, RLS). A `tainted` turn — one that read third-party content —
+         *     is never extracted from. Every well-formed, authenticated request
+         *     answers `{ ok: true }`, whether or not anything was extracted (memory
+         *     off, tainted turn, model unavailable or failing, write failure).
+         *     Spends model budget.
+         */
+        post: operations["extractMemory"];
         delete?: never;
         options?: never;
         head?: never;
@@ -341,9 +433,43 @@ export interface components {
             /** @description The share token. The share page URL is `/share/<kind>/<token>`. */
             token: string;
         };
+        /**
+         * @description A legacy `report-uri` object (`{ "csp-report": { ... } }`) or a
+         *     Reporting-API batch (an array of `{ type, body }` reports; only
+         *     `type: csp-violation` entries are read, at most 20 per batch). Left
+         *     open: any JSON value is accepted and unknown shapes are ignored.
+         * @example {
+         *       "csp-report": {
+         *         "document-uri": "https://app.example.com/dashboard",
+         *         "effective-directive": "script-src-elem",
+         *         "blocked-uri": "https://cdn.example.com/x.js",
+         *         "disposition": "report"
+         *       }
+         *     }
+         */
+        CspReportBody: unknown;
         DeleteScheduleResponse: {
             /** @constant */
             ok: true;
+        };
+        EmbedRequest: {
+            /** @description Id of the caller's `files` row the sections belong to. */
+            fileId: string;
+            /** @description Drop the file's existing sections and rebuild them. */
+            force?: boolean;
+            /** @description The file's extracted full text. */
+            text: string;
+        };
+        EmbedResponse: {
+            /**
+             * @description Why the request was skipped. Absent when `indexed`.
+             * @enum {string}
+             */
+            reason?: "not_configured" | "empty" | "already_indexed" | "file_not_found";
+            /** @description Chunks written (`indexed`) or already present (`already_indexed`); otherwise 0. */
+            sections: number;
+            /** @enum {string} */
+            status: "indexed" | "skipped";
         };
         /**
          * @description The body of every non-2xx JSON response: an `ApiError`. (The
@@ -382,6 +508,18 @@ export interface components {
         };
         MaxCallsSkillConfig: {
             maxCalls?: number;
+        };
+        MemoryExtractRequest: {
+            /** @description Provenance stamped on new facts (`source_conversation_id`). */
+            conversationId?: string;
+            /** @description The turn read third-party content; nothing is extracted. */
+            tainted?: boolean;
+            /** @description The finished turn, as `User: ...` / `Assistant: ...` paragraphs. */
+            turnText: string;
+        };
+        MemoryExtractResponse: {
+            /** @constant */
+            ok: true;
         };
         /**
          * @description Implementation-specific dependency checks. The keys below are the
@@ -725,13 +863,18 @@ export type CreateConversationShareRequest = components['schemas']['CreateConver
 export type CreateDocumentShareRequest = components['schemas']['CreateDocumentShareRequest'];
 export type CreateShareRequest = components['schemas']['CreateShareRequest'];
 export type CreateShareResponse = components['schemas']['CreateShareResponse'];
+export type CspReportBody = components['schemas']['CspReportBody'];
 export type DeleteScheduleResponse = components['schemas']['DeleteScheduleResponse'];
+export type EmbedRequest = components['schemas']['EmbedRequest'];
+export type EmbedResponse = components['schemas']['EmbedResponse'];
 export type ErrorResponse = components['schemas']['ErrorResponse'];
 export type ExtractTableRequest = components['schemas']['ExtractTableRequest'];
 export type ExtractTableSource = components['schemas']['ExtractTableSource'];
 export type HealthResponse = components['schemas']['HealthResponse'];
 export type ImageGenSkillConfig = components['schemas']['ImageGenSkillConfig'];
 export type MaxCallsSkillConfig = components['schemas']['MaxCallsSkillConfig'];
+export type MemoryExtractRequest = components['schemas']['MemoryExtractRequest'];
+export type MemoryExtractResponse = components['schemas']['MemoryExtractResponse'];
 export type ReadinessChecks = components['schemas']['ReadinessChecks'];
 export type ReadinessResponse = components['schemas']['ReadinessResponse'];
 export type RefreshFileUrlRequest = components['schemas']['RefreshFileUrlRequest'];
@@ -805,6 +948,93 @@ export interface operations {
                     "application/json": components["schemas"]["ReadinessResponse"];
                 };
             };
+        };
+    };
+    reportCspViolation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/csp-report": components["schemas"]["CspReportBody"];
+                "application/json": components["schemas"]["CspReportBody"];
+                "application/reports+json": components["schemas"]["CspReportBody"];
+            };
+        };
+        responses: {
+            /** @description Received (and logged when it held CSP violations). */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The body is not valid JSON. Empty body. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            413: components["responses"]["PayloadTooLarge"];
+            /** @description Unsupported `Content-Type`. Empty body. */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Too many reports from this client IP. Empty body. */
+            429: {
+                headers: {
+                    /** @description Seconds until the client may report again. */
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    embedFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmbedRequest"];
+            };
+        };
+        responses: {
+            /** @description Indexed, or skipped with a reason. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmbedResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description The embedder or the database write failed (`code` is `embed_failed`). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     extractTable: {
@@ -898,6 +1128,34 @@ export interface operations {
             413: components["responses"]["PayloadTooLarge"];
             422: components["responses"]["ValidationError"];
             503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    extractMemory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryExtractRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted (extraction is best-effort). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryExtractResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
         };
     };
     createShare: {

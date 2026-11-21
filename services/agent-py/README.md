@@ -240,6 +240,11 @@ service-role key).
 | `CORS_ALLOWED_ORIGINS` | No | Default empty (no CORS). Comma-separated exact origins allowed to call the API from a browser on another origin, e.g. `http://localhost:3000` when Next calls agent-py on `:8000`. Not needed behind the same-origin proxy. `*` and non-origin values are ignored; credentialed CORS is never enabled (auth is a bearer JWT). |
 | `TRUSTED_PROXY_HOPS` | No | Default `1`. How many reverse proxies in front of the service append to `X-Forwarded-For`; the rate-limit key is the entry this many places from the right. `0` ignores the header and keys on the socket peer. Pinned to `1` in `docker-compose.yml` (one Caddy hop). |
 | `CLIENT_IP_HEADER` | No | Empty by default. A single-value header a trusted edge overwrites with the client IP (e.g. `cf-connecting-ip`); wins over `X-Forwarded-For` when present. Only set it if the edge overwrites it. Cleared in `docker-compose.yml`. |
+| `EMBEDDINGS_BASE_URL` | No | OpenAI-compatible embedder for `/v1/embed` (`<base>/embeddings`, e.g. `http://localhost:11434/v1`). Same var, precedence and defaults as the Next.js provider. Neither this nor `OLLAMA_BASE_URL` set → embedding is off (`/v1/embed` answers `skipped / not_configured`). Operator config, so it is called without the SSRF guard (a localhost Ollama works). |
+| `EMBEDDINGS_API_KEY` | No | Bearer key for `EMBEDDINGS_BASE_URL`; empty → `OLLAMA_API_KEY` → a placeholder (Ollama ignores auth). |
+| `EMBEDDINGS_MODEL` | No | Default `nomic-embed-text` (768-dim, matching `file_sections.embedding vector(768)`). |
+| `OLLAMA_BASE_URL` / `OLLAMA_API_KEY` | No | Fallback embedder when `EMBEDDINGS_BASE_URL` is unset — the same Ollama host the Next.js app uses. |
+| `MEMORY_EXTRACT_MODEL` | No | Catalog id for `/v1/memory/extract`. Used only when it is an allowed `anthropic/*` entry of `config/models.json`; otherwise (or empty — the Next.js default is `google/gemini-2.5-flash`) `AGENT_DEFAULT_MODEL`. Needs `ANTHROPIC_API_KEY`; without it extraction is skipped (still `{ok: true}`). |
 
 A repo-level `.env` works — `pydantic-settings` looks for `.env` in the
 current working directory. The service shares the same `.env` as the

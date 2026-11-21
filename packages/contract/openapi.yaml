@@ -37,6 +37,12 @@ tags:
     description: Read-only public share links for a conversation or a document.
   - name: schedules
     description: Recurring background-task runs (`task_schedules`) — a saved task spec plus a cron expression and IANA timezone.
+  - name: embeddings
+    description: Chunking and embedding file text into the vector index.
+  - name: memory
+    description: Cross-conversation memory upkeep.
+  - name: security
+    description: Browser security telemetry (CSP violation reports). Public.
 
 security:
   - bearerAuth: []
@@ -419,6 +425,143 @@ paths:
           $ref: "#/components/responses/InternalError"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/embed:
+    post:
+      operationId: embedFile
+      tags: [embeddings]
+      summary: Chunk and embed a file's text into the vector index
+      description: |
+        Splits `text` into overlapping paragraph-aware chunks (the exact
+        algorithm of `lib/server/embeddings/chunk.ts`), embeds them with the
+        backend's configured OpenAI-compatible embedder and writes them to
+        `file_sections` as the caller (RLS). Mirrors `app/api/embed/route.ts`.
+
+        The expected "nothing to do" outcomes are 200 `skipped` answers, not
+        errors: no embedder configured (`not_configured`), blank text
+        (`empty`), the file already has sections and `force` is not set
+        (`already_indexed`, `sections` = the existing count), and the `files`
+        row is not visible to the caller yet (`file_not_found` — the client
+        retries with backoff while its metadata sync catches up). `force`
+        drops the file's sections and rebuilds them. Spends embedder budget.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmbedRequest"
+      responses:
+        "200":
+          description: Indexed, or skipped with a reason.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmbedResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          description: The embedder or the database write failed (`code` is `embed_failed`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/memory/extract:
+    post:
+      operationId: extractMemory
+      tags: [memory]
+      summary: Extract durable facts from a finished chat turn
+      description: |
+        Best-effort, post-turn memory upkeep. Mirrors
+        `app/api/memory/extract/route.ts`: when the caller has
+        `profiles.memory_enabled`, a model distils durable facts from
+        `turnText` and merges them into the caller's `user_memories` (as the
+        caller, RLS). A `tainted` turn — one that read third-party content —
+        is never extracted from. Every well-formed, authenticated request
+        answers `{ ok: true }`, whether or not anything was extracted (memory
+        off, tainted turn, model unavailable or failing, write failure).
+        Spends model budget.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemoryExtractRequest"
+      responses:
+        "200":
+          description: Accepted (extraction is best-effort).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryExtractResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /v1/csp-report:
+    post:
+      operationId: reportCspViolation
+      tags: [security]
+      summary: Receive Content-Security-Policy violation reports
+      description: |
+        Where browsers send CSP violation reports (`report-uri` and
+        `Reporting-Endpoints` / `report-to` in the frontend's policy, when a
+        backend is configured). Mirrors `app/api/csp-report/route.ts`.
+        Public — browsers send no credentials. Reports are attacker-
+        controllable, so the backend logs only an allow-list of fields
+        (truncated, URLs cut to origin + path, share tokens redacted), caps
+        the body, rate-limits per client IP and never echoes input: every
+        answer except the transport-level 413 has an empty body.
+
+        Accepted media types: `application/csp-report` (legacy `report-uri`:
+        `{ "csp-report": { ... } }`), `application/reports+json` (Reporting
+        API: `[{ "type": "csp-violation", "body": { ... } }, ...]`) and
+        `application/json` (either shape). Any well-formed JSON is accepted;
+        shapes that are not CSP reports are ignored.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/csp-report:
+            schema:
+              $ref: "#/components/schemas/CspReportBody"
+          application/reports+json:
+            schema:
+              $ref: "#/components/schemas/CspReportBody"
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CspReportBody"
+      responses:
+        "204":
+          description: Received (and logged when it held CSP violations).
+        "400":
+          description: The body is not valid JSON. Empty body.
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          description: Unsupported `Content-Type`. Empty body.
+        "429":
+          description: Too many reports from this client IP. Empty body.
+          headers:
+            Retry-After:
+              description: Seconds until the client may report again.
+              schema:
+                type: string
 
 components:
   securitySchemes:
@@ -1189,3 +1332,74 @@ components:
         aspectRatio:
           type: string
           enum: ["1:1", "16:9", "9:16", "4:3", "3:4", "2:3", "3:2"]
+
+    EmbedRequest:
+      type: object
+      required: [fileId, text]
+      properties:
+        fileId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Id of the caller's `files` row the sections belong to.
+        text:
+          type: string
+          maxLength: 1200000
+          description: The file's extracted full text.
+        force:
+          type: boolean
+          description: Drop the file's existing sections and rebuild them.
+
+    EmbedResponse:
+      type: object
+      required: [status, sections]
+      properties:
+        status:
+          type: string
+          enum: [indexed, skipped]
+        sections:
+          type: integer
+          minimum: 0
+          description: Chunks written (`indexed`) or already present (`already_indexed`); otherwise 0.
+        reason:
+          type: string
+          enum: [not_configured, empty, already_indexed, file_not_found]
+          description: Why the request was skipped. Absent when `indexed`.
+
+    MemoryExtractRequest:
+      type: object
+      required: [turnText]
+      properties:
+        turnText:
+          type: string
+          minLength: 1
+          maxLength: 50000
+          description: "The finished turn, as `User: ...` / `Assistant: ...` paragraphs."
+        conversationId:
+          type: string
+          maxLength: 64
+          description: Provenance stamped on new facts (`source_conversation_id`).
+        tainted:
+          type: boolean
+          description: The turn read third-party content; nothing is extracted.
+
+    MemoryExtractResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          const: true
+
+    CspReportBody:
+      description: |
+        A legacy `report-uri` object (`{ "csp-report": { ... } }`) or a
+        Reporting-API batch (an array of `{ type, body }` reports; only
+        `type: csp-violation` entries are read, at most 20 per batch). Left
+        open: any JSON value is accepted and unknown shapes are ignored.
+      examples:
+        - csp-report:
+            document-uri: https://app.example.com/dashboard
+            effective-directive: script-src-elem
+            blocked-uri: https://cdn.example.com/x.js
+            disposition: report

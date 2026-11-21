@@ -7,7 +7,7 @@ Operational notes for the browser-facing security headers. Code:
 | Policy builder (pure, unit-tested) | `lib/server/security/csp.ts` |
 | Per-request nonce + CSP header | `proxy.ts` (Next 16's name for `middleware.ts`) |
 | Nonce on the inline theme script | `app/layout.tsx` (`x-nonce` request header) |
-| Report intake | `app/api/csp-report/route.ts` → `lib/server/security/csp-report.ts` |
+| Report intake | `app/api/csp-report/route.ts` → `lib/server/security/csp-report.ts`; with `NEXT_PUBLIC_AGENT_PY_URL` set, agent-py's `/v1/csp-report` (`services/agent-py/src/agent_py/routers/csp_report.py`, a port of the same module) |
 | Artifact / MCP-app frame shell + its own CSP | `app/sandbox/frame/route.ts` → `lib/server/security/sandbox-frame.ts` |
 | Frame handshake (protocol, iframe) | `lib/shared/sandbox-frame.ts`, `components/live-artifact/sandboxed-frame.tsx` |
 | Static headers | `next.config.ts` → `headers()` |
@@ -45,6 +45,15 @@ report-uri /api/csp-report; report-to csp-endpoint
 
 Dev (`NODE_ENV=development`) adds `'unsafe-eval'` to `script-src`, which
 React's dev tooling needs.
+
+When `NEXT_PUBLIC_AGENT_PY_URL` is set, `report-uri` and the
+`Reporting-Endpoints` header point at the backend instead
+(`cspReportUri` in `csp.ts`): `/` → `/v1/csp-report` on the app's own
+origin, `https://api.example.com` → `https://api.example.com/v1/csp-report`.
+A value that isn't a plain http(s) URL or path keeps `/api/csp-report`.
+agent-py logs the same fields as `"event": "csp_violation"` structlog
+lines; a cross-origin agent-py needs the app's origin in
+`CORS_ALLOWED_ORIGINS` for Reporting-API deliveries.
 
 Why each non-obvious source is there:
 

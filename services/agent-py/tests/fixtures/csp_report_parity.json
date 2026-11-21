@@ -1,0 +1,697 @@
+{
+ "source": "lib/server/security/csp-report.ts",
+ "urls": [
+  {
+   "raw": "",
+   "sanitized": ""
+  },
+  {
+   "raw": "inline",
+   "sanitized": "inline"
+  },
+  {
+   "raw": "eval",
+   "sanitized": "eval"
+  },
+  {
+   "raw": "wasm-eval",
+   "sanitized": "wasm-eval"
+  },
+  {
+   "raw": "trusted-types-sink",
+   "sanitized": "trusted-types-sink"
+  },
+  {
+   "raw": "https://cdn.example.com/x.js?token=secret#frag",
+   "sanitized": "https://cdn.example.com/x.js"
+  },
+  {
+   "raw": "HTTPS://Example.COM:443/A/./b/../c?q",
+   "sanitized": "https://example.com/A/c"
+  },
+  {
+   "raw": "http://localhost:3000/share/conversation/abc123/more?x=1",
+   "sanitized": "http://localhost:3000/share/conversation/:token/more"
+  },
+  {
+   "raw": "https://app.example.com/share/document/tok_9/",
+   "sanitized": "https://app.example.com/share/document/:token/"
+  },
+  {
+   "raw": "wss://rt.example.com:8443/realtime/v1?apikey=x",
+   "sanitized": "wss://rt.example.com:8443/realtime/v1"
+  },
+  {
+   "raw": "data:image/png;base64,AAAA",
+   "sanitized": "data:"
+  },
+  {
+   "raw": "blob:https://app.example.com/1234",
+   "sanitized": "blob:"
+  },
+  {
+   "raw": "about:srcdoc",
+   "sanitized": "about:srcdoc"
+  },
+  {
+   "raw": "about:blank",
+   "sanitized": "about:"
+  },
+  {
+   "raw": "chrome-extension://abcdef/script.js",
+   "sanitized": "chrome-extension:"
+  },
+  {
+   "raw": "not a url",
+   "sanitized": "invalid"
+  },
+  {
+   "raw": "/relative/path",
+   "sanitized": "invalid"
+  },
+  {
+   "raw": "https://example.com/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+   "sanitized": "https://example.com/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp…"
+  },
+  {
+   "raw": "https://user:pass@example.com/path",
+   "sanitized": "https://example.com/path"
+  },
+  {
+   "raw": "https://example.com",
+   "sanitized": "https://example.com/"
+  },
+  {
+   "raw": "https://a.com/a^b|c`d{e}f g\"h<i>j",
+   "sanitized": "https://a.com/a%5Eb|c%60d%7Be%7Df%20g%22h%3Ci%3Ej"
+  },
+  {
+   "raw": "https:example.com/x",
+   "sanitized": "https://example.com/x"
+  },
+  {
+   "raw": "https:/x.com/y",
+   "sanitized": "https://x.com/y"
+  },
+  {
+   "raw": "https://x.com\\a\\b",
+   "sanitized": "https://x.com/a/b"
+  },
+  {
+   "raw": "https://ex.com:80/",
+   "sanitized": "https://ex.com:80/"
+  },
+  {
+   "raw": "http://ex.com:80/a",
+   "sanitized": "http://ex.com/a"
+  },
+  {
+   "raw": "https://ex.com:/a",
+   "sanitized": "https://ex.com/a"
+  },
+  {
+   "raw": "https://ex.com:99999/",
+   "sanitized": "invalid"
+  },
+  {
+   "raw": "https://exämple.com/ü",
+   "sanitized": "https://xn--exmple-cua.com/%C3%BC"
+  },
+  {
+   "raw": "https://[::1]:3000/a",
+   "sanitized": "https://[::1]:3000/a"
+  },
+  {
+   "raw": "https://[0:0:0:0:0:0:0:1]/",
+   "sanitized": "https://[::1]/"
+  },
+  {
+   "raw": "  https://x.com/a  ",
+   "sanitized": "https://x.com/a"
+  },
+  {
+   "raw": "ht\ttps://x.com/a\nb",
+   "sanitized": "https://x.com/ab"
+  },
+  {
+   "raw": "https://",
+   "sanitized": "invalid"
+  },
+  {
+   "raw": "https:///x",
+   "sanitized": "https://x/"
+  },
+  {
+   "raw": "ftp://x.com/a",
+   "sanitized": "ftp:"
+  },
+  {
+   "raw": "HTTP://X.COM/%2e%2E/a/./%2e",
+   "sanitized": "http://x.com/a/"
+  },
+  {
+   "raw": "https://x.com/a/b/..",
+   "sanitized": "https://x.com/a/"
+  },
+  {
+   "raw": "https://x.com/a/b/.",
+   "sanitized": "https://x.com/a/b/"
+  },
+  {
+   "raw": "https://x.com/",
+   "sanitized": "https://x.com/%7F"
+  },
+  {
+   "raw": "file:///etc/passwd",
+   "sanitized": "file:"
+  },
+  {
+   "raw": "ws://h/a?b",
+   "sanitized": "ws://h/a"
+  },
+  {
+   "raw": "https://x.com#frag",
+   "sanitized": "https://x.com/"
+  },
+  {
+   "raw": "https://a b.com/",
+   "sanitized": "invalid"
+  },
+  {
+   "raw": "https://x.com/%zz",
+   "sanitized": "https://x.com/%zz"
+  },
+  {
+   "raw": "mailto:a@b.c",
+   "sanitized": "mailto:"
+  },
+  {
+   "raw": "javascript:alert(1)",
+   "sanitized": "javascript:"
+  },
+  {
+   "raw": "https://@x.com/",
+   "sanitized": "https://x.com/"
+  },
+  {
+   "raw": "https://x.com/share/conversation/",
+   "sanitized": "https://x.com/share/conversation/"
+  },
+  {
+   "raw": "https://x.com/a/share/document/t/b/share/conversation/u",
+   "sanitized": "https://x.com/a/share/document/:token/b/share/conversation/u"
+  },
+  {
+   "raw": "ABOUT:srcdoc",
+   "sanitized": "about:srcdoc"
+  },
+  {
+   "raw": "about:srcdoc#x",
+   "sanitized": "about:"
+  }
+ ],
+ "payloads": [
+  {
+   "name": "legacy report-uri",
+   "payload": {
+    "csp-report": {
+     "document-uri": "https://app.example.com/dashboard?tab=1",
+     "effective-directive": "script-src-elem",
+     "violated-directive": "script-src",
+     "blocked-uri": "https://cdn.example.com/x.js?sig=abc",
+     "source-file": "https://app.example.com/_next/static/chunks/a.js",
+     "line-number": 12.9,
+     "column-number": 345,
+     "disposition": "report",
+     "script-sample": "alert(document.cookie)"
+    }
+   },
+   "logs": [
+    {
+     "evt": "csp_violation",
+     "via": "report-uri",
+     "directive": "script-src-elem",
+     "blocked": "https://cdn.example.com/x.js",
+     "document": "https://app.example.com/dashboard",
+     "source": "https://app.example.com/_next/static/chunks/a.js",
+     "line": 12,
+     "column": 345,
+     "disposition": "report"
+    }
+   ]
+  },
+  {
+   "name": "legacy, violated-directive fallback + srcdoc",
+   "payload": {
+    "csp-report": {
+     "document-uri": "about:srcdoc",
+     "violated-directive": "style-src-elem 'self'",
+     "blocked-uri": "inline",
+     "disposition": "enforce"
+    }
+   },
+   "logs": [
+    {
+     "evt": "csp_violation",
+     "via": "report-uri",
+     "directive": "style-src-elem",
+     "blocked": "inline",
+     "document": "about:srcdoc",
+     "disposition": "enforce",
+     "srcdoc": true
+    }
+   ]
+  },
+  {
+   "name": "legacy, odd field types",
+   "payload": {
+    "csp-report": {
+     "document-uri": 42,
+     "effective-directive": "",
+     "blocked-uri": null,
+     "line-number": "12",
+     "column-number": 9007199254740991,
+     "disposition": "monitor"
+    }
+   },
+   "logs": [
+    {
+     "evt": "csp_violation",
+     "via": "report-uri",
+     "directive": "unknown",
+     "blocked": "",
+     "document": "",
+     "column": 9007199254740991
+    }
+   ]
+  },
+  {
+   "name": "reporting API batch",
+   "payload": [
+    {
+     "type": "csp-violation",
+     "age": 3,
+     "url": "https://app.example.com/",
+     "body": {
+      "documentURL": "https://app.example.com/share/conversation/tok/x",
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://tracker.example.com/p.gif?id=1",
+      "sourceFile": "https://app.example.com/a.js",
+      "lineNumber": 1,
+      "columnNumber": 2,
+      "disposition": "report"
+     }
+    },
+    {
+     "type": "deprecation",
+     "body": {
+      "id": "x"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": "not an object"
+    },
+    "junk",
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd extra"
+     }
+    }
+   ],
+   "logs": [
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "img-src",
+     "blocked": "https://tracker.example.com/p.gif",
+     "document": "https://app.example.com/share/conversation/:token/x",
+     "source": "https://app.example.com/a.js",
+     "line": 1,
+     "column": 2,
+     "disposition": "report"
+    },
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd…",
+     "blocked": "",
+     "document": ""
+    }
+   ]
+  },
+  {
+   "name": "reporting API batch over the entry cap",
+   "payload": [
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e0.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e1.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e2.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e3.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e4.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e5.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e6.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e7.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e8.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e9.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e10.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e11.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e12.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e13.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e14.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e15.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e16.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e17.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e18.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e19.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e20.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e21.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e22.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e23.example.com/"
+     }
+    },
+    {
+     "type": "csp-violation",
+     "body": {
+      "effectiveDirective": "img-src",
+      "blockedURL": "https://e24.example.com/"
+     }
+    }
+   ],
+   "logs": [
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "img-src",
+     "blocked": "https://e0.example.com/",
+     "document": ""
+    },
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "img-src",
+     "blocked": "https://e1.example.com/",
+     "document": ""
+    },
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "img-src",
+     "blocked": "https://e2.example.com/",
+     "document": ""
+    },
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "img-src",
+     "blocked": "https://e3.example.com/",
+     "document": ""
+    },
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "img-src",
+     "blocked": "https://e4.example.com/",
+     "document": ""
+    },
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "img-src",
+     "blocked": "https://e5.example.com/",
+     "document": ""
+    },
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "img-src",
+     "blocked": "https://e6.example.com/",
+     "document": ""
+    },
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "img-src",
+     "blocked": "https://e7.example.com/",
+     "document": ""
+    },
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "img-src",
+     "blocked": "https://e8.example.com/",
+     "document": ""
+    },
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "img-src",
+     "blocked": "https://e9.example.com/",
+     "document": ""
+    },
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "img-src",
+     "blocked": "https://e10.example.com/",
+     "document": ""
+    },
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "img-src",
+     "blocked": "https://e11.example.com/",
+     "document": ""
+    },
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "img-src",
+     "blocked": "https://e12.example.com/",
+     "document": ""
+    },
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "img-src",
+     "blocked": "https://e13.example.com/",
+     "document": ""
+    },
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "img-src",
+     "blocked": "https://e14.example.com/",
+     "document": ""
+    },
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "img-src",
+     "blocked": "https://e15.example.com/",
+     "document": ""
+    },
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "img-src",
+     "blocked": "https://e16.example.com/",
+     "document": ""
+    },
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "img-src",
+     "blocked": "https://e17.example.com/",
+     "document": ""
+    },
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "img-src",
+     "blocked": "https://e18.example.com/",
+     "document": ""
+    },
+    {
+     "evt": "csp_violation",
+     "via": "reporting-api",
+     "directive": "img-src",
+     "blocked": "https://e19.example.com/",
+     "document": ""
+    }
+   ]
+  },
+  {
+   "name": "unknown shape",
+   "payload": {
+    "hello": "world"
+   },
+   "logs": []
+  },
+  {
+   "name": "array of junk",
+   "payload": [
+    1,
+    2,
+    3
+   ],
+   "logs": []
+  },
+  {
+   "name": "null",
+   "payload": null,
+   "logs": []
+  },
+  {
+   "name": "csp-report not an object",
+   "payload": {
+    "csp-report": [
+     1
+    ]
+   },
+   "logs": []
+  }
+ ]
+}
