@@ -1,7 +1,7 @@
 # Local Supabase setup
 
 Run the entire Supabase stack on your machine via the Supabase CLI
-(Postgres + Auth + Storage + Studio + Inbucket email sink) instead of a
+(Postgres + Auth + Storage + Studio + a local email inbox) instead of a
 hosted project. Useful for offline development, faster iteration, no
 shared dev database, and full schema resets in seconds.
 
@@ -45,7 +45,7 @@ bun dev                                  # → http://localhost:3000
 | App (Next.js dev) | http://localhost:3000 |
 | Supabase API | http://localhost:54321 |
 | Studio (DB GUI) | http://localhost:54323 |
-| Inbucket (catches magic-link emails) | http://localhost:54324 |
+| Email inbox (catches magic-link emails; Mailpit on Path A, Inbucket on Path B) | http://localhost:54324 |
 | Postgres | `postgres://postgres:postgres@localhost:54322/postgres` |
 
 ### Common follow-ups
@@ -104,7 +104,7 @@ so every feature gated by `lib/shared/supabase/env.ts` lights up:
 - **MCP integration** — full tools + resources + cloud-mode
   credentials. Set `MCP_ENCRYPTION_KEY` in `.env.local` to unlock
   the Cloud radio in the Add Server dialog. See **Step 5** below.
-- Magic-link auth via local **Inbucket** (no real inbox needed —
+- Magic-link auth via the local email inbox (no real inbox needed —
   emails are captured at http://localhost:54324)
 - File uploads to the local `user-files` Storage bucket
 - Share links via the local service-role key
@@ -121,7 +121,7 @@ install the Supabase CLI:
 | **B. Standalone docker-compose** | CI, environments where CLI install is painful | Docker only |
 
 Both produce the same URLs (`:54321` API, `:54323` Studio, `:54324`
-Inbucket, `:54322` Postgres) and the same deterministic dev keys, so
+email inbox, `:54322` Postgres) and the same deterministic dev keys, so
 `.env.local` is identical for either.
 
 ## Prerequisites
@@ -135,7 +135,9 @@ Inbucket, `:54322` Postgres) and the same deterministic dev keys, so
   scoop install supabase                # Windows
   ```
   See https://supabase.com/docs/guides/cli/getting-started for other
-  options. Verify with `supabase --version`.
+  options. Verify with `supabase --version`. CLI v2 and v3 both work
+  with the committed `config.toml` (its email inbox is the
+  `[local_smtp]` section; v3 rejects the old `[inbucket]` name).
 
 ---
 
@@ -160,7 +162,7 @@ boots take ~30 s. On success it prints something like:
          API URL: http://localhost:54321
           DB URL: postgresql://postgres:postgres@localhost:54322/postgres
       Studio URL: http://localhost:54323
-    Inbucket URL: http://localhost:54324
+     Mailpit URL: http://localhost:54324
         anon key: eyJhbGc…(long string)
 service_role key: eyJhbGc…(long string)
 ```
@@ -270,7 +272,7 @@ With Supabase running and `bun dev` up:
    The sidebar header shows a **Sign in** button (it's hidden when env
    vars are absent; presence of the button confirms the local URL +
    anon key resolved).
-3. **Magic-link sign-in via Inbucket**:
+3. **Magic-link sign-in via the local inbox**:
    - Click **Sign in**, enter any email (e.g. `me@local.test`), click
      **Send magic link**.
    - Open http://localhost:54324 — the email is waiting. Click the
@@ -513,8 +515,9 @@ and bump the port (e.g. `api.port = 54331`); update
 `NEXT_PUBLIC_SUPABASE_URL` to match.
 
 **Magic-link email never arrives.**
-It never arrives at your real inbox — local Inbucket captures
-everything. Check http://localhost:54324. If Inbucket is empty, the
+It never arrives at your real inbox — the local inbox (Mailpit on
+Path A, Inbucket on Path B) captures everything. Check
+http://localhost:54324. If the inbox is empty, the
 sign-in call likely failed before sending — check the browser console
 and `docker logs supabase_auth_*`.
 
@@ -543,7 +546,7 @@ tweaks via Studio that you want to keep, dump them with
 | Configure auth provider + redirect URLs | Defaults in `config.toml` already match `/auth/callback` |
 | Copy URL + anon + service-role keys from dashboard | Printed by `supabase start` (deterministic) |
 | Set `Site URL` to your domain | Already `http://localhost:3000` by default |
-| Use real email inbox for magic link | Inbucket at http://localhost:54324 |
+| Use real email inbox for magic link | Local inbox at http://localhost:54324 |
 | Cloud Studio (per-project dashboard) | Local Studio at http://localhost:54323 |
 
 Everything in the app — `lib/client/supabase/client.ts`,
