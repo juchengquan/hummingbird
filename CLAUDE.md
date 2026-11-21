@@ -30,6 +30,11 @@ bun run codegen:agent-types           # regen lib/shared/agent-py-types.generate
 bun run codegen:agent-types:check     # CI mode — fail if drifted
 bun run check:agent-py                # ruff check + ruff format --check + mypy + pytest (mirrors the agent-py CI job)
 
+# Frontend↔backend contract (spec-first, docs/PLAN-frontend-backend-split.md)
+bun run contract:gen                  # packages/contract/openapi.yaml → TS types + agent-py Pydantic models
+bun run contract:check                # lint the spec + fail if generated outputs drifted (CI job `contract`)
+CONTRACT_BASE_URL=http://localhost:8000 bun run contract:conformance   # run the conformance suite against a live backend
+
 # Or to develop the agent service on the host:
 cd services/agent-py && uv sync && uv run uvicorn agent_py.main:app --reload
 # Auto-fix formatting before committing: cd services/agent-py && uv run ruff format . && uv run ruff check --fix .
