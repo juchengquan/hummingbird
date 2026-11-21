@@ -18,6 +18,13 @@ Errors emit `{"type":"error","errorText":"..."}` instead of
 `finish` and still write the `[DONE]` terminator so consumers'
 finally-blocks fire.
 
+**Internal events first (wave 3b-C).** The agent loop itself lives in
+`chat_loop.run_turn_loop` and emits the run model's internal events
+(`events.py`) — the same events a run's log stores. This module runs it
+with a queue sink and turns the events into frames with
+`AiSdkFrameTranslator`, so `/v1/chat`'s wire is unchanged while chat and
+the runs API (`runs/native_harness.py`) share one loop.
+
 The legacy custom wire format (`{type:"text",value}` etc.) was
 retired in B.3 of PLAN-useChat-adoption.md once the frontend
 consumer switched to reading the AI SDK shape.
@@ -25,46 +32,64 @@ consumer switched to reading the AI SDK shape.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 import structlog
 
-from .model_allowlist import default_api_model_id
-from .providers.anthropic_provider import (
-    AsyncAnthropicClient,
-    _coerce_content_blocks,
-    _make_tool_result_block,
+from .chat_loop import (
+    DEFAULT_MAX_STEPS,
+    DEFAULT_MAX_TOKENS,
+    TRUSTED_TOOLS,
+    ChatConfig,
+    ChatMessage,
+    LoopFailed,
+    LoopResult,
+    LoopSucceeded,
+    ProviderErrorCode,
+    UsageMeter,
+    _delta_pair_from_event,
+    categorize_provider_error,
+    run_turn_loop,
 )
+from .emitter import RunEmitter
+from .events import (
+    CodeResultEvent,
+    McpAppEvent,
+    RoutedModelEvent,
+    StepEndEvent,
+    StepStartEvent,
+    SuggestionsEvent,
+    TaskEvent,
+    TokenEvent,
+    ToolFileEvent,
+    ToolImageEvent,
+    ToolInputEvent,
+    ToolOutputEvent,
+    UiPartEvent,
+    VerificationEvent,
+)
+from .model_allowlist import default_api_model_id
+from .providers.anthropic_provider import AsyncAnthropicClient
 from .settings import get_settings
-from .tools import ToolDescriptor, ToolError, tool_to_anthropic_param
 
 logger = structlog.get_logger(__name__)
 
-#: Stable provider-error categories surfaced on the wire in the
-#: AI SDK error frame's `code` field. The consumer renders a typed
-#: inline error bubble per code (rate-limited → cooldown, auth →
-#: hide Retry, context_window → suggest a larger-context fallback).
-#: `"upstream"` is the catch-all for anything else.
-ProviderErrorCode = Literal["rate_limit", "auth", "context_window", "upstream"]
-
-DEFAULT_MAX_TOKENS = 4096
-
-#: Frame protocols. ``custom`` matches the existing TS chat
-#: consumer (text / error / done). ``ai-sdk`` matches the AI SDK
-#: v5 UI message stream protocol (text-start / text-delta /
-#: text-end / finish / `[DONE]` terminator) for consumers using
-#: ``@ai-sdk/react``'s ``useChat()``.
 #: Post-stream interceptor — awaited once on a successful chat turn
 #: just before the terminal `finish` frame, with the accumulated
 #: assistant text. Any frames it yields are emitted ahead of the
-#: terminator. PLAN-useChat-adoption.md Phase B.1d — used by the
-#: route to fire follow-up suggestion chips as `data-suggestions`
-#: parts.
+#: terminator. PLAN-useChat-adoption.md Phase B.1d. Kept for callers that
+#: build their own frames; the route uses `SuggestFn`, which goes through
+#: the internal `suggestions` event instead.
 OnCompleteFn = Callable[[str], AsyncIterator[str]]
+
+#: Follow-up chips for a finished answer: awaited with the turn's text;
+#: a non-empty result becomes a `suggestions` event (`data-suggestions`).
+SuggestFn = Callable[[str], Awaitable[Sequence[str]]]
 
 #: The HTTP response header the AI SDK uses to advertise its
 #: stream protocol version (`x-vercel-ai-ui-message-stream: v1`).
@@ -73,38 +98,7 @@ OnCompleteFn = Callable[[str], AsyncIterator[str]]
 AI_SDK_STREAM_HEADER_NAME = "x-vercel-ai-ui-message-stream"
 AI_SDK_STREAM_HEADER_VALUE = "v1"
 
-
-@dataclass(frozen=True)
-class ChatMessage:
-    """One message in the chat history. Mirrors Anthropic's `role +
-    content` shape; the route accepts a tighter wire schema (string
-    content only) that we coerce into this dataclass."""
-
-    role: str
-    content: str
-
-
-#: Cap on tool-execution iterations per request. Each iteration is
-#: one `messages.stream` call → optional text deltas → optional
-#: tool_use blocks → execute → loop. Six matches the TS chat path's
-#: `stepBudget` when no MCP tools are registered. Increase only if
-#: production traces show the model legitimately needing more steps
-#: — most over-cap hits are runaway / confused chains.
-DEFAULT_MAX_STEPS = 6
-
-#: Tools whose results carry no third-party content — the same allowlist
-#: as `TRUSTED_TOOLS` in `lib/server/memory/untrusted-content-policy.ts`.
-#: Any other tool that runs in a turn (web fetch / search, file search,
-#: every MCP tool) may have put attacker-controllable text in context, so
-#: the turn is "memory tainted": the `finish` frame says so and the client
-#: skips post-turn memory extraction for it, exactly as on the Next.js
-#: route. Safe by default — a newly added tool taints without anyone
-#: having to list it. (Request-side taint — attachments, uploaded parts,
-#: replayed tool results — can't occur here: `/v1/chat` accepts only
-#: plain-text user/assistant messages.)
-TRUSTED_TOOLS: frozenset[str] = frozenset(
-    {"rememberFact", "forgetFact", "renderUI", "generateImage"}
-)
+_DONE_FRAME = "data: [DONE]\n\n"
 
 
 def finish_frame(*, memory_tainted: bool) -> str:
@@ -114,92 +108,6 @@ def finish_frame(*, memory_tainted: bool) -> str:
     if memory_tainted:
         return sse_frame({"type": "finish", "messageMetadata": {"memoryTainted": True}})
     return sse_frame({"type": "finish"})
-
-
-@dataclass(frozen=True)
-class ChatConfig:
-    """Per-request agent config.
-
-    Phase 4-3 adds `tools` + `max_steps` — when `tools` is non-empty,
-    the route uses `chat_stream_with_tools(_ai_sdk)` which loops
-    `messages.stream` + tool execution until the model produces a
-    text-only answer or `max_steps` is hit. Empty tools list falls
-    through to the Phase 4-1 text-only path."""
-
-    model: str
-    messages: list[ChatMessage]
-    system: str | None = None
-    max_tokens: int = DEFAULT_MAX_TOKENS
-    tools: tuple[ToolDescriptor, ...] = ()
-    max_steps: int = DEFAULT_MAX_STEPS
-
-
-#: Regex matching Anthropic's "prompt is too long" / OpenAI-flavoured
-#: "context length exceeded" 400 surfaces. Used by
-#: `categorize_provider_error` to bucket BadRequest 400s into
-#: `context_window` instead of the generic `upstream` bucket. Kept
-#: permissive — every provider phrases the same failure differently.
-_CONTEXT_WINDOW_RE = re.compile(
-    r"prompt is too long"
-    r"|context[_ ]?(?:window|length)"
-    r"|maximum (?:context|tokens)"
-    r"|too many tokens"
-    r"|input is too long"
-    r"|exceeds.*token"
-    r"|reduce.*input",
-    re.IGNORECASE,
-)
-
-
-def categorize_provider_error(exc: BaseException) -> ProviderErrorCode:
-    """Bucket an Anthropic SDK exception into one of the four wire
-    codes. Mirrors `categorizeProviderError` in
-    `services/agent-ts/src/chat.ts` and the shared `categorizeError`
-    in `lib/shared/api-errors.ts`.
-
-    Order matters — rate-limit-with-a-context-window-message would
-    still be a rate limit, not a context bust. We check the Anthropic
-    SDK's typed exceptions first (those are unambiguous) and fall
-    back to string matching the message only for the BadRequest 400
-    surface where the SDK reuses one class for several causes.
-    """
-    # The SDK exception module is imported lazily — the lib pulls in
-    # anyio/httpx and we don't want to require it at chat.py import
-    # time for tests that hit `sse_frame` and never touch the
-    # network path.
-    try:
-        from anthropic import (
-            AuthenticationError,
-            BadRequestError,
-            PermissionDeniedError,
-            RateLimitError,
-        )
-    except ImportError:  # pragma: no cover — anthropic is a hard dep
-        AuthenticationError = PermissionDeniedError = RateLimitError = ()  # type: ignore[assignment,misc]
-        BadRequestError = ()  # type: ignore[assignment,misc]
-
-    if isinstance(exc, RateLimitError):
-        return "rate_limit"
-    if isinstance(exc, (AuthenticationError, PermissionDeniedError)):
-        return "auth"
-    if isinstance(exc, BadRequestError):
-        if _CONTEXT_WINDOW_RE.search(str(exc)):
-            return "context_window"
-        return "upstream"
-
-    # Some upstream gateways (Vercel AI Gateway, self-hosted proxies)
-    # repackage typed errors as generic exceptions with the SDK message
-    # preserved verbatim. Fall back to string-matching the rendered
-    # text so we still bucket those correctly.
-    message = str(exc)
-    lower = message.lower()
-    if ("rate" in lower and "limit" in lower) or "429" in lower or "too many requests" in lower:
-        return "rate_limit"
-    if "401" in lower or "403" in lower or "unauthor" in lower or "forbidden" in lower:
-        return "auth"
-    if _CONTEXT_WINDOW_RE.search(message):
-        return "context_window"
-    return "upstream"
 
 
 def sse_frame(payload: dict[str, Any]) -> str:
@@ -212,87 +120,270 @@ def sse_frame(payload: dict[str, Any]) -> str:
     return f"data: {json.dumps(payload, separators=(',', ':'))}\n\n"
 
 
-async def _stream_text_deltas(
+# --- Internal events → AI SDK frames ----------------------------------------------
+
+
+class AiSdkFrameTranslator:
+    """Internal run events → AI SDK v5 UI-message-stream SSE frames, for
+    one stream. The `/v1/chat` counterpart of the runs API's AG-UI
+    encoder (`packages/contract/RUN_EVENTS.md`), with the same block
+    rule: at most one open text or reasoning block; a token of the other
+    channel closes it, and so does **any** non-token event (even one
+    that has no frame here). Block ids are fresh `uuid4().hex`s, as the
+    pre-3b code minted them.
+
+    | Internal event | Frames |
+    |---|---|
+    | `step_start` / `step_end` | `start-step` / `finish-step` |
+    | `token` (text / reasoning) | `text-start`?, `text-delta` / `reasoning-start`?, `reasoning-delta` |
+    | `tool_input` | `tool-input-available { toolCallId, toolName, input }` |
+    | `tool_output` | `tool-output-available { toolCallId, output, errorText? }` (`output` = the full result text when the event carries it, else `summary`) |
+    | `tool_image` / `tool_file` / `code_result` / `ui_part` / `mcp_app` | `data-tool-image` / `data-tool-file` / `data-code-result` / `data-ui` / `data-mcp-app`, `id` = the tool call id |
+    | `suggestions` / `verification` / `routed_model` | `data-suggestions` / `data-verification` / `data-routed-model` |
+    | anything else | — |
+
+    The run's end is not an event: `succeeded` / `failed` add the
+    closing frames (`finish` or `error`, then `[DONE]`).
+    """
+
+    def __init__(self, new_id: Callable[[], str] | None = None) -> None:
+        self._new_id = new_id or (lambda: uuid.uuid4().hex)
+        self._text_id: str | None = None
+        self._reasoning_id: str | None = None
+
+    def start(self) -> list[str]:
+        return [sse_frame({"type": "start"})]
+
+    def close_blocks(self) -> list[str]:
+        out: list[str] = []
+        if self._text_id is not None:
+            out.append(sse_frame({"type": "text-end", "id": self._text_id}))
+            self._text_id = None
+        if self._reasoning_id is not None:
+            out.append(sse_frame({"type": "reasoning-end", "id": self._reasoning_id}))
+            self._reasoning_id = None
+        return out
+
+    def event(self, ev: TaskEvent) -> list[str]:
+        if isinstance(ev, TokenEvent):
+            return self._token(ev)
+        out = self.close_blocks()
+        frame = self._frame(ev)
+        if frame is not None:
+            out.append(sse_frame(frame))
+        return out
+
+    def succeeded(self, *, memory_tainted: bool) -> list[str]:
+        return [*self.close_blocks(), finish_frame(memory_tainted=memory_tainted), _DONE_FRAME]
+
+    def failed(self, *, message: str, code: str) -> list[str]:
+        return [
+            *self.close_blocks(),
+            sse_frame({"type": "error", "errorText": message, "code": code}),
+            _DONE_FRAME,
+        ]
+
+    def _token(self, ev: TokenEvent) -> list[str]:
+        if not ev.text:
+            return []
+        out: list[str] = []
+        if ev.channel == "reasoning":
+            if self._text_id is not None:
+                out.append(sse_frame({"type": "text-end", "id": self._text_id}))
+                self._text_id = None
+            if self._reasoning_id is None:
+                self._reasoning_id = self._new_id()
+                out.append(sse_frame({"type": "reasoning-start", "id": self._reasoning_id}))
+            out.append(
+                sse_frame({"type": "reasoning-delta", "id": self._reasoning_id, "delta": ev.text})
+            )
+            return out
+        if self._reasoning_id is not None:
+            out.append(sse_frame({"type": "reasoning-end", "id": self._reasoning_id}))
+            self._reasoning_id = None
+        if self._text_id is None:
+            self._text_id = self._new_id()
+            out.append(sse_frame({"type": "text-start", "id": self._text_id}))
+        out.append(sse_frame({"type": "text-delta", "id": self._text_id, "delta": ev.text}))
+        return out
+
+    @staticmethod
+    def _frame(ev: TaskEvent) -> dict[str, Any] | None:
+        if isinstance(ev, StepStartEvent):
+            return {"type": "start-step"}
+        if isinstance(ev, StepEndEvent):
+            return {"type": "finish-step"}
+        if isinstance(ev, ToolInputEvent):
+            return {
+                "type": "tool-input-available",
+                "toolCallId": ev.tool_call_id,
+                "toolName": ev.tool_name,
+                "input": ev.args,
+            }
+        if isinstance(ev, ToolOutputEvent):
+            # Errors ride in `errorText` (AI SDK convention) next to
+            # `output`; successful results only in `output`.
+            payload: dict[str, Any] = {
+                "type": "tool-output-available",
+                "toolCallId": ev.tool_call_id,
+                "output": ev.output if ev.output is not None else ev.summary,
+            }
+            if ev.is_error:
+                payload["errorText"] = ev.summary
+            return payload
+        if isinstance(ev, ToolImageEvent):
+            return {
+                "type": "data-tool-image",
+                "id": ev.tool_call_id,
+                "data": {"id": ev.tool_call_id, "mode": ev.mode, "images": list(ev.images)},
+            }
+        if isinstance(ev, ToolFileEvent):
+            return {
+                "type": "data-tool-file",
+                "id": ev.tool_call_id,
+                "data": {"id": ev.tool_call_id, "files": list(ev.files)},
+            }
+        if isinstance(ev, CodeResultEvent):
+            return {
+                "type": "data-code-result",
+                "id": ev.tool_call_id,
+                "data": {
+                    "id": ev.tool_call_id,
+                    "stdout": ev.stdout,
+                    "stderr": ev.stderr,
+                    "results": list(ev.results),
+                },
+            }
+        if isinstance(ev, UiPartEvent):
+            return {
+                "type": "data-ui",
+                "id": ev.tool_call_id,
+                "data": {"id": ev.tool_call_id, "kind": ev.ui_kind, "props": ev.props},
+            }
+        if isinstance(ev, McpAppEvent):
+            app: dict[str, Any] = {
+                "id": ev.tool_call_id,
+                "serverId": ev.server_id,
+                "html": ev.html,
+            }
+            if ev.resource_uri:
+                app["resourceUri"] = ev.resource_uri
+            if ev.truncated:
+                app["truncated"] = True
+            return {"type": "data-mcp-app", "id": ev.tool_call_id, "data": app}
+        if isinstance(ev, SuggestionsEvent):
+            return {"type": "data-suggestions", "data": {"values": list(ev.values)}}
+        if isinstance(ev, VerificationEvent):
+            return {"type": "data-verification", "data": ev.verification}
+        if isinstance(ev, RoutedModelEvent):
+            return {"type": "data-routed-model", "data": {"model": ev.model}}
+        return None
+
+
+# --- Driving the loop -------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _RawFrames:
+    """Frames a legacy `on_complete` produced, spliced in as they are."""
+
+    frame: str
+
+
+@dataclass(frozen=True)
+class _LoopDone:
+    result: LoopResult
+
+
+@dataclass(frozen=True)
+class _LoopCrashed:
+    exc: BaseException
+
+
+_QueueItem = TaskEvent | _RawFrames | _LoopDone | _LoopCrashed
+
+
+async def _stream_turn(
     *,
     client: AsyncAnthropicClient,
     config: ChatConfig,
-) -> AsyncIterator[str | BaseException]:
-    """Back-compat wrapper around `_stream_channel_deltas` that
-    yields only the text channel. Existing callers that don't care
-    about reasoning continue to work without churn.
+    with_tools: bool,
+    on_complete: OnCompleteFn | None,
+    suggest: SuggestFn | None,
+) -> AsyncIterator[str]:
+    """Run the loop as a task whose emitter sink is a queue, and yield
+    the translated frames as the events arrive. Closing this generator
+    (client gone, idle watchdog) cancels the task, which closes the
+    provider stream."""
+    queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
 
-    The yielded item is either a delta string or an exception —
-    caller pattern-matches with `isinstance`."""
-    async for channel, item in _stream_channel_deltas(client=client, config=config):
-        if isinstance(item, BaseException):
-            yield item
+    async def sink(event: TaskEvent) -> None:
+        queue.put_nowait(event)
+
+    emitter = RunEmitter(run_id="chat", sink=sink)
+
+    async def on_answer(text: str) -> None:
+        if on_complete is not None:
+            async for frame in on_complete(text):
+                queue.put_nowait(_RawFrames(frame))
+        if suggest is not None:
+            values = tuple(await suggest(text))
+            if values:
+                await emitter.emit(SuggestionsEvent, values=values)
+
+    async def run() -> None:
+        try:
+            result = await run_turn_loop(
+                client=client,
+                emitter=emitter,
+                model=config.model,
+                messages=[{"role": m.role, "content": m.content} for m in config.messages],
+                system=config.system,
+                max_tokens=config.max_tokens,
+                tools=config.tools if with_tools else (),
+                max_steps=config.max_steps if with_tools else 1,
+                on_answer=on_answer if (on_complete or suggest) else None,
+            )
+        except Exception as exc:
+            queue.put_nowait(_LoopCrashed(exc))
             return
-        if channel == "text":
-            yield item
+        queue.put_nowait(_LoopDone(result))
 
-
-async def _stream_channel_deltas(
-    *,
-    client: AsyncAnthropicClient,
-    config: ChatConfig,
-) -> AsyncIterator[tuple[str, str | BaseException]]:
-    """Open one Anthropic `messages.stream(...)` and yield
-    `(channel, delta)` tuples for both text and thinking content.
-
-    Channels:
-      - `"text"` — `text_delta` events; the model's user-visible answer.
-      - `"reasoning"` — `thinking_delta` events; extended-thinking
-        tokens. Only flows when the model + request enable thinking.
-
-    On any exception, yields `("error", exc)` and returns; callers
-    pattern-match with `isinstance(item, BaseException)`. Using a raw
-    event walk rather than the high-level `stream.text_stream` is
-    what lets us see the reasoning channel — the helper filters it
-    out. PLAN-useChat-adoption.md Phase B.1b."""
-    anthropic_messages = [{"role": m.role, "content": m.content} for m in config.messages]
-    stream_kwargs: dict[str, Any] = {
-        "model": config.model,
-        "max_tokens": config.max_tokens,
-        "messages": anthropic_messages,
-    }
-    if config.system:
-        stream_kwargs["system"] = config.system
-
+    translator = AiSdkFrameTranslator()
+    for frame in translator.start():
+        yield frame
+    task = asyncio.create_task(run())
     try:
-        async with client.messages.stream(**stream_kwargs) as stream:
-            async for event in stream:  # type: ignore[attr-defined]
-                pair = _delta_pair_from_event(event)
-                if pair is not None:
-                    yield pair
-    except Exception as exc:  # broad — see chat_stream's catch
-        logger.warning("chat.stream_failed", error=str(exc), model=config.model)
-        yield ("error", exc)
+        while True:
+            item = await queue.get()
+            if isinstance(item, _RawFrames):
+                for frame in translator.close_blocks():
+                    yield frame
+                yield item.frame
+            elif isinstance(item, _LoopDone):
+                for frame in _closing_frames(translator, item.result):
+                    yield frame
+                return
+            elif isinstance(item, _LoopCrashed):
+                raise item.exc
+            else:
+                for frame in translator.event(item):
+                    yield frame
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
-def _delta_pair_from_event(event: Any) -> tuple[str, str] | None:
-    """Extract a `(channel, delta)` pair from a raw Anthropic stream
-    event, or None when the event isn't a content-delta we care about.
-
-    Walks duck-typed because the SDK uses pydantic models and tests
-    pass synthetic objects; both shapes carry `type` and `delta` /
-    `delta.thinking` / `delta.text` attributes."""
-    if getattr(event, "type", None) != "content_block_delta":
-        return None
-    delta = getattr(event, "delta", None)
-    if delta is None:
-        return None
-    delta_type = getattr(delta, "type", None)
-    if delta_type == "text_delta":
-        text = getattr(delta, "text", None)
-        if isinstance(text, str) and text:
-            return ("text", text)
-        return None
-    if delta_type == "thinking_delta":
-        thinking = getattr(delta, "thinking", None)
-        if isinstance(thinking, str) and thinking:
-            return ("reasoning", thinking)
-        return None
-    return None
+def _closing_frames(translator: AiSdkFrameTranslator, result: LoopResult) -> list[str]:
+    outcome = result.outcome
+    if isinstance(outcome, LoopFailed):
+        return translator.failed(message=outcome.message, code=outcome.wire_code)
+    if isinstance(outcome, LoopSucceeded):
+        return translator.succeeded(memory_tainted=result.tainted_by is not None)
+    # Unreachable on `/v1/chat` — it gates no tool and has no cancel
+    # signal — but a stream must still end with its terminator.
+    return [*translator.close_blocks(), _DONE_FRAME]
 
 
 async def chat_stream_ai_sdk(
@@ -300,11 +391,12 @@ async def chat_stream_ai_sdk(
     client: AsyncAnthropicClient,
     config: ChatConfig,
     on_complete: OnCompleteFn | None = None,
+    suggest: SuggestFn | None = None,
 ) -> AsyncIterator[str]:
-    """Run one Anthropic `messages.stream(...)` and yield AI-SDK-v5
-    UI-message-stream SSE frames. Frame envelopes match the AI SDK's
-    own writer (`JsonToSseTransformStream` in `ai/dist/index.js`) so
-    `useChat()` consumes the stream natively.
+    """Run one Anthropic `messages.stream(...)` (no tools) and yield
+    AI-SDK-v5 UI-message-stream SSE frames. Frame envelopes match the
+    AI SDK's own writer (`JsonToSseTransformStream` in `ai/dist/index.js`)
+    so `useChat()` consumes the stream natively.
 
     Frame sequence on a normal completion (text-only):
         start → start-step → text-start → text-delta… → text-end →
@@ -315,161 +407,20 @@ async def chat_stream_ai_sdk(
         reasoning-end → text-start → text-delta… → text-end →
         finish-step → finish → `[DONE]`.
 
-    The model can switch channels mid-step; we close the previous
-    channel's block before opening the next so `useChat()` sees
-    matched start/end pairs per id.
+    The model can switch channels mid-step; the previous channel's block
+    is closed before the next opens so `useChat()` sees matched
+    start/end pairs per id.
 
     On an exception mid-stream: close any open block, then
     `error` + `[DONE]`. `finish` is intentionally skipped on the
     error path — mirrors the AI SDK's behaviour and lets `useChat()`
-    distinguish completion from failure.
+    distinguish completion from failure. `on_complete` / `suggest` run
+    only on success, before `finish-step`.
     """
-    yield sse_frame({"type": "start"})
-    yield sse_frame({"type": "start-step"})
-
-    assistant_text = ""
-    active_text_id: str | None = None
-    active_reasoning_id: str | None = None
-
-    def close_text() -> list[str]:
-        nonlocal active_text_id
-        if active_text_id is None:
-            return []
-        frame = sse_frame({"type": "text-end", "id": active_text_id})
-        active_text_id = None
-        return [frame]
-
-    def close_reasoning() -> list[str]:
-        nonlocal active_reasoning_id
-        if active_reasoning_id is None:
-            return []
-        frame = sse_frame({"type": "reasoning-end", "id": active_reasoning_id})
-        active_reasoning_id = None
-        return [frame]
-
-    def close_all() -> list[str]:
-        return close_text() + close_reasoning()
-
-    async for channel, item in _stream_channel_deltas(client=client, config=config):
-        if isinstance(item, BaseException):
-            for frame in close_all():
-                yield frame
-            yield sse_frame(
-                {
-                    "type": "error",
-                    "errorText": str(item) or "Chat stream failed.",
-                    "code": categorize_provider_error(item),
-                }
-            )
-            yield "data: [DONE]\n\n"
-            return
-        if channel == "reasoning":
-            for frame in close_text():
-                yield frame
-            if active_reasoning_id is None:
-                active_reasoning_id = uuid.uuid4().hex
-                yield sse_frame({"type": "reasoning-start", "id": active_reasoning_id})
-            yield sse_frame({"type": "reasoning-delta", "id": active_reasoning_id, "delta": item})
-        else:
-            for frame in close_reasoning():
-                yield frame
-            assistant_text += item
-            if active_text_id is None:
-                active_text_id = uuid.uuid4().hex
-                yield sse_frame({"type": "text-start", "id": active_text_id})
-            yield sse_frame({"type": "text-delta", "id": active_text_id, "delta": item})
-
-    for frame in close_all():
+    async for frame in _stream_turn(
+        client=client, config=config, with_tools=False, on_complete=on_complete, suggest=suggest
+    ):
         yield frame
-    if on_complete is not None:
-        async for extra in on_complete(assistant_text):
-            yield extra
-    yield sse_frame({"type": "finish-step"})
-    yield sse_frame({"type": "finish"})
-    yield "data: [DONE]\n\n"
-
-
-# --- Tool-enabled streaming (Phase 4-3) -----------------------------------
-#
-# When the route gets `enable_tools: true` AND there are tools in the
-# context, it dispatches to one of these two functions instead of the
-# text-only path. The contract:
-#
-#  - Each iteration of the loop opens a fresh `messages.stream(...)`,
-#    streams text deltas, and inspects the final message for `tool_use`
-#    blocks.
-#  - If the model emitted tool calls, we emit `tool_call` events, run
-#    each tool, emit `tool_result`, append the result to the running
-#    messages list, and start the next iteration.
-#  - If the model emitted no tool calls, the assistant turn is done —
-#    we emit the format's "done" envelope and return.
-#  - On a hard cap, we emit a recoverable error frame so the client
-#    can show a "Max steps exhausted" surface.
-#
-# Per-tool failures (ToolError, unknown tool, unexpected exception) are
-# caught and fed back into the conversation as `is_error: true`
-# tool_result blocks — the model gets to choose whether to retry,
-# switch tools, or give up. This mirrors the agent-loop step fn's
-# behaviour so chat and background-task tool surfaces stay aligned.
-
-
-def _to_anthropic_messages(messages: list[ChatMessage]) -> list[dict[str, Any]]:
-    """Coerce the wire-shape ChatMessage list into Anthropic's message
-    schema. Single text-content shape today — multimodal lands when
-    the chat schema grows."""
-    return [{"role": m.role, "content": m.content} for m in messages]
-
-
-def _build_stream_kwargs(
-    config: ChatConfig,
-    messages: list[dict[str, Any]],
-    tools_param: list[dict[str, Any]] | None,
-) -> dict[str, Any]:
-    kwargs: dict[str, Any] = {
-        "model": config.model,
-        "max_tokens": config.max_tokens,
-        "messages": messages,
-    }
-    if config.system:
-        kwargs["system"] = config.system
-    if tools_param:
-        kwargs["tools"] = tools_param
-    return kwargs
-
-
-async def _execute_tool_block(
-    block: dict[str, Any],
-    tools_by_name: dict[str, ToolDescriptor],
-) -> tuple[str, str, dict[str, Any], str, str, bool]:
-    """Run the tool referenced by an Anthropic `tool_use` block and
-    return ``(tool_call_id, tool_name, args, result_text, summary,
-    is_error)``. Per-tool failure modes (unknown tool, ToolError,
-    unexpected exception) are translated into ``is_error=True``
-    tool_results so the conversation keeps moving."""
-    tool_call_id = block.get("id") or ""
-    tool_name = block.get("name") or ""
-    raw_args = block.get("input") or {}
-    args: dict[str, Any] = raw_args if isinstance(raw_args, dict) else {}
-
-    descriptor = tools_by_name.get(tool_name)
-    if descriptor is None:
-        msg = f"unknown tool: {tool_name}"
-        return tool_call_id, tool_name, args, msg, msg, True
-
-    try:
-        result = await descriptor.execute(dict(args))
-    except ToolError as exc:
-        return tool_call_id, tool_name, args, str(exc), str(exc), True
-    except Exception as exc:
-        msg = f"tool error: {exc.__class__.__name__}"
-        logger.warning(
-            "chat.tool_execute_failed",
-            tool=tool_name,
-            error=str(exc),
-        )
-        return tool_call_id, tool_name, args, msg, msg, True
-
-    return tool_call_id, tool_name, args, result.text, result.summary, False
 
 
 async def chat_stream_with_tools_ai_sdk(
@@ -477,178 +428,28 @@ async def chat_stream_with_tools_ai_sdk(
     client: AsyncAnthropicClient,
     config: ChatConfig,
     on_complete: OnCompleteFn | None = None,
+    suggest: SuggestFn | None = None,
 ) -> AsyncIterator[str]:
     """Tool-enabled chat stream in the AI SDK v5 UI message stream
-    format. Same loop as `chat_stream_with_tools` but rendered into
-    `start` / `start-step` / `text-delta` / `tool-input-available` /
-    `tool-output-available` / `finish-step` / `finish` / `[DONE]`
-    frames.
+    format: `start` / `start-step` / `text-delta` / `tool-input-available` /
+    `tool-output-available` / `finish-step` / `finish` / `[DONE]` frames.
 
-    Each loop iteration is one "step" in AI-SDK terms — emits
-    `start-step` at the top, `finish-step` at the bottom. Text content
-    is wrapped in a per-step `text-start` / `text-end` pair so
-    `useChat()`'s message assembler closes the text block cleanly
-    before tool-input frames land.
+    Each loop iteration is one "step" in AI-SDK terms — `start-step` at
+    the top, `finish-step` at the bottom. Text content is wrapped in a
+    per-step `text-start` / `text-end` pair so `useChat()`'s message
+    assembler closes the text block cleanly before tool-input frames
+    land. Per-tool failures are fed back to the model as `is_error`
+    tool results (and ride in `errorText`); the turn keeps going.
 
     Error path: close any open text block, emit
     `{type:"error","errorText":<msg>}`, then `[DONE]`. `finish` is
     intentionally skipped — same as the text-only path's convention.
+    Running out of steps is the same error with code `upstream`.
     """
-    tools_param = [tool_to_anthropic_param(t) for t in config.tools] if config.tools else None
-    tools_by_name = {t.name: t for t in config.tools}
-    # First untrusted tool that ran this turn (see `TRUSTED_TOOLS`).
-    tainted_by: str | None = None
-    messages = _to_anthropic_messages(config.messages)
-    assistant_text = ""
-
-    yield sse_frame({"type": "start"})
-
-    for _step in range(config.max_steps):
-        yield sse_frame({"type": "start-step"})
-
-        # Channel state for THIS step. Each step opens its own
-        # text/reasoning blocks; we close whichever is open before
-        # the step's tool-call frames (or the finish-step boundary).
-        active_text_id: str | None = None
-        active_reasoning_id: str | None = None
-
-        def close_text() -> list[str]:
-            nonlocal active_text_id
-            if active_text_id is None:
-                return []
-            frame = sse_frame({"type": "text-end", "id": active_text_id})
-            active_text_id = None
-            return [frame]
-
-        def close_reasoning() -> list[str]:
-            nonlocal active_reasoning_id
-            if active_reasoning_id is None:
-                return []
-            frame = sse_frame({"type": "reasoning-end", "id": active_reasoning_id})
-            active_reasoning_id = None
-            return [frame]
-
-        try:
-            async with client.messages.stream(
-                **_build_stream_kwargs(config, messages, tools_param)
-            ) as stream:
-                async for event in stream:  # type: ignore[attr-defined]
-                    pair = _delta_pair_from_event(event)
-                    if pair is None:
-                        continue
-                    channel, delta = pair
-                    if channel == "reasoning":
-                        for frame in close_text():
-                            yield frame
-                        if active_reasoning_id is None:
-                            active_reasoning_id = uuid.uuid4().hex
-                            yield sse_frame({"type": "reasoning-start", "id": active_reasoning_id})
-                        yield sse_frame(
-                            {
-                                "type": "reasoning-delta",
-                                "id": active_reasoning_id,
-                                "delta": delta,
-                            }
-                        )
-                    else:
-                        for frame in close_reasoning():
-                            yield frame
-                        assistant_text += delta
-                        if active_text_id is None:
-                            active_text_id = uuid.uuid4().hex
-                            yield sse_frame({"type": "text-start", "id": active_text_id})
-                        yield sse_frame(
-                            {"type": "text-delta", "id": active_text_id, "delta": delta}
-                        )
-                final_message = await stream.get_final_message()
-        except Exception as exc:
-            logger.warning(
-                "chat.stream_failed",
-                error=str(exc),
-                model=config.model,
-            )
-            for frame in close_text():
-                yield frame
-            for frame in close_reasoning():
-                yield frame
-            yield sse_frame(
-                {
-                    "type": "error",
-                    "errorText": str(exc) or "Chat stream failed.",
-                    "code": categorize_provider_error(exc),
-                }
-            )
-            yield "data: [DONE]\n\n"
-            return
-
-        for frame in close_text():
-            yield frame
-        for frame in close_reasoning():
-            yield frame
-
-        blocks = _coerce_content_blocks(final_message)
-        tool_use_blocks = [b for b in blocks if b.get("type") == "tool_use"]
-
-        if not tool_use_blocks:
-            if on_complete is not None:
-                async for extra in on_complete(assistant_text):
-                    yield extra
-            yield sse_frame({"type": "finish-step"})
-            yield finish_frame(memory_tainted=tainted_by is not None)
-            yield "data: [DONE]\n\n"
-            return
-
-        messages.append({"role": "assistant", "content": blocks})
-        tool_result_blocks: list[dict[str, Any]] = []
-
-        for block in tool_use_blocks:
-            (
-                tool_call_id,
-                tool_name,
-                args,
-                result_text,
-                _summary,  # AI SDK has no `summary` slot — only on the custom format
-                is_error,
-            ) = await _execute_tool_block(block, tools_by_name)
-            if tainted_by is None and tool_name not in TRUSTED_TOOLS:
-                tainted_by = tool_name
-            yield sse_frame(
-                {
-                    "type": "tool-input-available",
-                    "toolCallId": tool_call_id,
-                    "toolName": tool_name,
-                    "input": args,
-                }
-            )
-            # `tool-output-available` carries the result. Errors ride
-            # in `errorText` (AI SDK convention); successful results
-            # land in `output`.
-            output_payload: dict[str, Any] = {
-                "type": "tool-output-available",
-                "toolCallId": tool_call_id,
-                "output": result_text,
-            }
-            if is_error:
-                output_payload["errorText"] = result_text
-            yield sse_frame(output_payload)
-            tool_result_blocks.append(
-                _make_tool_result_block(tool_call_id, result_text, is_error=is_error)
-            )
-
-        messages.append({"role": "user", "content": tool_result_blocks})
-        yield sse_frame({"type": "finish-step"})
-
-    yield sse_frame(
-        {
-            "type": "error",
-            "errorText": (
-                f"Chat exceeded {config.max_steps} tool-use iterations "
-                "without producing a final answer."
-            ),
-            "code": "upstream",
-        }
-    )
-    yield "data: [DONE]\n\n"
+    async for frame in _stream_turn(
+        client=client, config=config, with_tools=True, on_complete=on_complete, suggest=suggest
+    ):
+        yield frame
 
 
 # --- Client resolution ----------------------------------------------------
@@ -745,10 +546,23 @@ async def generate_chat_suggestions(
     Mirrors `generateSuggestions` in `app/api/chat/route.ts` and
     `generateChatSuggestions` in `services/agent-ts/src/chat.ts`.
     """
+    return await generate_suggestions(
+        client=client, user_text=_last_user_text(history), assistant_reply=assistant_reply
+    )
+
+
+async def generate_suggestions(
+    *,
+    client: AsyncAnthropicClient,
+    user_text: str,
+    assistant_reply: str,
+    usage: UsageMeter | None = None,
+) -> list[str]:
+    """`generate_chat_suggestions` given the user's question directly;
+    the call's tokens go to `usage` when given."""
     if not assistant_reply.strip():
         return []
 
-    user_text = _last_user_text(history)
     prompt = (
         "Based on this exchange, propose 3 concise follow-up questions "
         "the user might want to ask next. Each must be under 14 words, "
@@ -760,11 +574,12 @@ async def generate_chat_suggestions(
         f'Assistant answered:\n"""\n{assistant_reply[:4000]}\n"""'
     )
 
+    model = default_api_model_id()
     try:
         # `messages.stream` + drain + `get_final_message` — same
         # pattern `summarise.py` uses for one-shot generation.
         stream_kwargs: dict[str, Any] = {
-            "model": default_api_model_id(),
+            "model": model,
             "max_tokens": 200,
             "temperature": 0.7,
             "messages": [{"role": "user", "content": prompt}],
@@ -777,6 +592,10 @@ async def generate_chat_suggestions(
         logger.info("chat.suggestions_failed", error=str(exc))
         return []
 
+    if usage is not None:
+        usage.add_anthropic(
+            model, final.get("usage") if isinstance(final, dict) else getattr(final, "usage", None)
+        )
     content = getattr(final, "content", None)
     if content is None and isinstance(final, dict):
         content = final.get("content")
@@ -801,13 +620,20 @@ __all__ = [
     "AI_SDK_STREAM_HEADER_VALUE",
     "DEFAULT_MAX_STEPS",
     "DEFAULT_MAX_TOKENS",
+    "TRUSTED_TOOLS",
+    "AiSdkFrameTranslator",
     "ChatConfig",
     "ChatMessage",
+    "OnCompleteFn",
     "ProviderErrorCode",
+    "SuggestFn",
+    "_delta_pair_from_event",
     "categorize_provider_error",
     "chat_stream_ai_sdk",
     "chat_stream_with_tools_ai_sdk",
+    "finish_frame",
     "generate_chat_suggestions",
+    "generate_suggestions",
     "parse_suggestions_json",
     "resolve_anthropic_client",
     "sse_frame",
