@@ -1,6 +1,6 @@
 # Plan: Frontend / backend split
 
-Status: **Waves 1–3 (Phases 0–2) shipped (#294–#297). Wave 4a (Phase 3 foundation) in progress.** Decided in a design interview
+Status: **Waves 1–4a (Phases 0–2, Phase 3 foundation) shipped (#294–#298). Wave 4b in progress.** Decided in a design interview
 on 2026-11-21. Supersedes the open parts of
 [`PLAN-backend-extraction.md`](PLAN-backend-extraction.md), whose Phase 1
 (single `apiClient` + Zod schemas + `docs/API.md`) shipped and is the
@@ -153,6 +153,25 @@ has shipped behind the existing per-account backend switch.
    "agent-py (runs)" backend option (Q33); then the tasks panel onto
    threads/runs (Q38). In parallel, the backend catches up with the Next
    chat route's features (Q32).
+
+   **Backend catch-up (Q32).** Wave 4b-D sent image / document
+   attachments, reasoning effort and generated images (`tool_image`) on
+   runs. Still to do before Phase 5:
+   - [ ] attached-file context as Next builds it — the text budget across
+     files, and the meta notes for RAG-mode files ("available via
+     `searchFiles`") instead of dropping them
+   - [ ] MCP resources and URL bookmarks as attachments
+   - [ ] local MCP servers (browser-held credentials)
+   - [ ] code interpreter — `runCode`, `sandboxFiles`, `code_result`
+     parts (generated files have no producer on runs until then)
+   - [ ] reference image for image generation
+   - [ ] `localFilesOnly` for generated images
+   - [ ] citation checks
+   - [ ] memory — the per-conversation opt-out, facts in the prompt, the
+     remember / forget tools
+   - [ ] the per-IP image-generation budget
+   - [ ] reasoning effort and the attachment checks in the background
+     executor
 4. **Editor AI to the backend** (Q23).
 5. **Removal** — all Next API routes, AI/admin keys from the frontend
    env, the old `/v1/chat`, agent-ts's old routes, the server session;
