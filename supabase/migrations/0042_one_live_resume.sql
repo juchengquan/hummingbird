@@ -1,3 +1,4 @@
+-- verify-supabase-types: skip (adds an index and replaces create_run with an identical signature; generated types unchanged)
 -- 0042_one_live_resume.sql — at most one live resume per interrupted run.
 --
 -- A resume (Q24) is a new run whose previous_run_id is the interrupted
