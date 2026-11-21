@@ -95,6 +95,7 @@ three times. The goals:
 | Q37 | `@ag-ui/client`'s event checks and state handling with **our own transport** (cursor rejoin, `Last-Event-ID`, `X-Run-Token` — `HttpAgent` can't do these). The AG-UI → store step is a pure function tested against agent-py's recorded run streams |
 | Q38 | The tasks panel moves in a later wave, after chat: it needs background answers as new runs, children via `parentRunId`, and cancel through runs first |
 | Q39 | A small Playwright smoke test (browser → agent-py with the stub harness: send, stop, reload + rejoin, answer an interrupt) ships with the chat switch |
+| Q40 | While an agent service serves chat (`python` / `ts-service` signed in, `python-runs` always), the model picker offers only the models it accepts (the `anthropic/*` allowlist, no Auto), and a selected model it can't run is switched to its default with a visible note — not a 400 on every message, and never silently |
 
 ## Run contract (v1)
 
