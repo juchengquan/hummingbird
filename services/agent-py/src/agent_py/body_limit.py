@@ -40,6 +40,16 @@ _MULTIPART_OVERHEAD = 64 * 1024
 # route's `EXTRACT_TABLE_BODY_MAX`.
 _EXTRACT_TABLE_BODY_MAX = 2 * 1024 * 1024
 
+# Per-route caps mirroring the Next.js routes: `/v1/embed` (`text` ≤ 1.2M
+# chars at ≤ 3 UTF-8 bytes each — `EMBED_BODY_MAX`), `/v1/memory/extract`
+# (`turnText` ≤ 50k chars — `MEMORY_EXTRACT_BODY_MAX`), `/v1/csp-report`
+# (`CSP_REPORT_MAX_BYTES`; it is public, so the cap matters most there).
+_FIXED_PATH_LIMITS = {
+    "/v1/embed": 4 * 1024 * 1024,
+    "/v1/memory/extract": 256 * 1024,
+    "/v1/csp-report": 16 * 1024,
+}
+
 # Routes whose JSON body legitimately carries a whole conversation.
 _CONVERSATION_PATHS = frozenset({"/v1/chat", "/v1/summarize"})
 
@@ -50,6 +60,8 @@ def body_limit_for(settings: Settings) -> Callable[[str], int]:
       multipart overhead; the route still enforces the file cap itself;
     - `/v1/chat`, `/v1/summarize` — `CHAT_BODY_MAX_BYTES`;
     - `/v1/extract-table` — 2 MiB, as on the Next.js route;
+    - `/v1/embed` 4 MiB, `/v1/memory/extract` 256 KiB, `/v1/csp-report`
+      16 KiB — as on the Next.js routes;
     - everything else — `REQUEST_BODY_MAX_BYTES`."""
     extract_limit = settings.EXTRACT_MAX_BYTES + _MULTIPART_OVERHEAD
     chat_limit = settings.CHAT_BODY_MAX_BYTES
@@ -63,6 +75,8 @@ def body_limit_for(settings: Settings) -> Callable[[str], int]:
             return chat_limit
         if normalised == "/v1/extract-table":
             return _EXTRACT_TABLE_BODY_MAX
+        if normalised in _FIXED_PATH_LIMITS:
+            return _FIXED_PATH_LIMITS[normalised]
         return default_limit
 
     return limit_for

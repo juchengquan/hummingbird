@@ -173,6 +173,37 @@ class Settings(BaseSettings):
     model is a poor judge of its own output. See
     `docs/PLAN-citation-verifiability.md` open question #2."""
 
+    # --- Embeddings (`/v1/embed`) ----------------------------------------
+    # Same env vars, precedence and defaults as the Next.js provider
+    # (`lib/server/embeddings/provider.ts`), so one `.env` configures both.
+    EMBEDDINGS_BASE_URL: str = ""
+    """OpenAI-compatible embedder base URL (`<base>/embeddings` is called),
+    e.g. `http://localhost:11434/v1`. Wins over `OLLAMA_BASE_URL`. Neither
+    set → embedding is off and `/v1/embed` answers `skipped /
+    not_configured`."""
+
+    EMBEDDINGS_API_KEY: str = ""
+    """Bearer key for `EMBEDDINGS_BASE_URL`; empty falls back to
+    `OLLAMA_API_KEY`, then to a placeholder (Ollama ignores auth)."""
+
+    EMBEDDINGS_MODEL: str = ""
+    """Embedding model id. Empty → `nomic-embed-text` (768-dim — must match
+    the `vector(768)` column of `file_sections`)."""
+
+    OLLAMA_BASE_URL: str = ""
+    """Fallback embedder base URL when `EMBEDDINGS_BASE_URL` is unset (the
+    Ollama host the Next.js app also uses for `ollama/*` chat models)."""
+
+    OLLAMA_API_KEY: str = ""
+    """Optional key for `OLLAMA_BASE_URL`."""
+
+    # --- Memory extraction (`/v1/memory/extract`) -------------------------
+    MEMORY_EXTRACT_MODEL: str = ""
+    """Catalog id of the memory-extraction model. Used only when it is an
+    allowed `anthropic/*` entry of `config/models.json`; empty or anything
+    else (the Next.js default is `google/gemini-2.5-flash`, which this
+    service cannot call) → `AGENT_DEFAULT_MODEL`."""
+
     # --- Request hardening ------------------------------------------------
     CORS_ALLOWED_ORIGINS: str = ""
     """Comma-separated exact origins (scheme://host[:port]) allowed to

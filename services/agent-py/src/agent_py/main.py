@@ -30,12 +30,15 @@ from .body_limit import BodySizeLimitMiddleware, body_limit_for
 from .model_allowlist import get_model_allowlist
 from .routers import (
     chat,
+    csp_report,
+    embed,
     extract,
     extract_table,
     files,
     health,
     images,
     mcp,
+    memory,
     summarize,
     url,
     whoami,
@@ -208,6 +211,9 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
     app.include_router(extract_table.router)
     app.include_router(summarize.router)
     app.include_router(mcp.router)
+    app.include_router(embed.router)
+    app.include_router(memory.router)
+    app.include_router(csp_report.router)
 
     # Cap request bodies before routing / auth: FastAPI reads (and
     # spools multipart parts of) the body before the auth dependency
