@@ -87,8 +87,9 @@ export interface paths {
          * Re-sign an expired generated-file URL
          * @description Same contract as `/v1/images/refresh-url`, for files the model
          *     generated (bucket layout `<user_id>/...`). Mirrors the Next.js route
-         *     `app/api/files/refresh-url/route.ts`, whose local body field is
-         *     `storagePath`; the `/v1` wire uses `storage_path`.
+         *     `app/api/files/refresh-url/route.ts` exactly, including its body
+         *     field `storagePath` (camelCase — unlike `/v1/images/refresh-url`,
+         *     whose older wire uses `storage_path`).
          */
         post: operations["refreshFileUrl"];
         delete?: never;
@@ -243,6 +244,15 @@ export interface components {
             /** @enum {string} */
             status: "ok" | "degraded";
         };
+        RefreshFileUrlRequest: {
+            /**
+             * @description Object path inside the bucket, `<user_id>/...`. Must not start
+             *     with `/` or contain `..`; its first segment must be the caller's
+             *     user id.
+             * @example 8a6e0804-2bd0-4672-b79d-d97027f9071a/generated/report.pdf
+             */
+            storagePath: string;
+        };
         RefreshStorageUrlRequest: {
             /**
              * @description Object path inside the bucket, `<user_id>/...`. Must not start
@@ -381,6 +391,7 @@ export type HealthResponse = components['schemas']['HealthResponse'];
 export type LegacyFastApiError = components['schemas']['LegacyFastApiError'];
 export type ReadinessChecks = components['schemas']['ReadinessChecks'];
 export type ReadinessResponse = components['schemas']['ReadinessResponse'];
+export type RefreshFileUrlRequest = components['schemas']['RefreshFileUrlRequest'];
 export type RefreshStorageUrlRequest = components['schemas']['RefreshStorageUrlRequest'];
 export type RefreshStorageUrlResponse = components['schemas']['RefreshStorageUrlResponse'];
 export type TypedColumnHint = components['schemas']['TypedColumnHint'];
@@ -476,7 +487,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RefreshStorageUrlRequest"];
+                "application/json": components["schemas"]["RefreshFileUrlRequest"];
             };
         };
         responses: {

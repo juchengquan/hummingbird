@@ -163,6 +163,23 @@ class ReadinessResponse(BaseModel):
     checks: ReadinessChecks
 
 
+class RefreshFileUrlRequest(BaseModel):
+    storagePath: Annotated[
+        str,
+        Field(
+            examples=["8a6e0804-2bd0-4672-b79d-d97027f9071a/generated/report.pdf"],
+            max_length=512,
+            min_length=1,
+        ),
+    ]
+    """
+    Object path inside the bucket, `<user_id>/...`. Must not start
+    with `/` or contain `..`; its first segment must be the caller's
+    user id.
+
+    """
+
+
 class RefreshStorageUrlRequest(BaseModel):
     storage_path: Annotated[
         str,

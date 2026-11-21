@@ -10,7 +10,7 @@ export const validRequestBodies: Record<string, unknown> = {
     storage_path: "00000000-0000-4000-8000-000000000000/images/conformance.png",
   },
   refreshFileUrl: {
-    storage_path: "00000000-0000-4000-8000-000000000000/files/conformance.csv",
+    storagePath: "00000000-0000-4000-8000-000000000000/files/conformance.csv",
   },
   extractTable: {
     reportText: "Conformance probe: the sky is blue [s1].",

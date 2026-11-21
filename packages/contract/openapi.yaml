@@ -120,14 +120,15 @@ paths:
       description: |
         Same contract as `/v1/images/refresh-url`, for files the model
         generated (bucket layout `<user_id>/...`). Mirrors the Next.js route
-        `app/api/files/refresh-url/route.ts`, whose local body field is
-        `storagePath`; the `/v1` wire uses `storage_path`.
+        `app/api/files/refresh-url/route.ts` exactly, including its body
+        field `storagePath` (camelCase — unlike `/v1/images/refresh-url`,
+        whose older wire uses `storage_path`).
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RefreshStorageUrlRequest"
+              $ref: "#/components/schemas/RefreshFileUrlRequest"
       responses:
         "200":
           description: A freshly signed URL.
@@ -388,6 +389,20 @@ components:
             with `/` or contain `..`; its first segment must be the caller's
             user id.
           examples: ["8a6e0804-2bd0-4672-b79d-d97027f9071a/images/abc.png"]
+
+    RefreshFileUrlRequest:
+      type: object
+      required: [storagePath]
+      properties:
+        storagePath:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: |
+            Object path inside the bucket, `<user_id>/...`. Must not start
+            with `/` or contain `..`; its first segment must be the caller's
+            user id.
+          examples: ["8a6e0804-2bd0-4672-b79d-d97027f9071a/generated/report.pdf"]
 
     RefreshStorageUrlResponse:
       type: object
