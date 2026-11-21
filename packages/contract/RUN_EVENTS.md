@@ -117,7 +117,7 @@ The parent message id is reset to none by every `step_start`.
 | `handoff` `enter` | `SUBAGENT_STARTED { subagentRunId, name: agent, metadata?: { hummingbird: { subgoal } } }` | the pinned schema's `SUBAGENT_STARTED` has no `description`, so the subgoal rides in the event's `metadata` (only when set). Today every sub-agent is a separate background run (`parentRunId`), so nothing is attributed to it inline |
 | `handoff` `exit` | `SUBAGENT_FINISHED { subagentRunId }` | `subagentRunId`: by `child_task_id`; without one, the most recent unmatched `enter` of the same `agent`. An `exit` matching no `enter` encodes to nothing |
 | `approval` `request` | — | the interrupt is reported by the closing `RUN_FINISHED` (§ 4) |
-| `approval` `response` | `CUSTOM hb.interrupt_resolved { interruptId: approvalId, payload }` | `payload` as in § 4.2. Only legacy in-place resumes write these into the same run's log; a Q24 resume run has the answers in its `RUN_STARTED.input.resume` instead |
+| `approval` `response` | `CUSTOM hb.interrupt_resolved { interruptId: approvalId, payload }` | `payload` as in § 4.2. Only legacy in-place resumes write these into the same run's log; a Q24 resume run's answers are its request's `resume[]`, and what they produced shows as its `TOOL_CALL_RESULT`s (§ 4.2) |
 | `compact` | `CUSTOM hb.context_compacted { summary? }` | model-context compaction, not log compaction |
 | part kinds (§ 3.3) | `ACTIVITY_SNAPSHOT { messageId, activityType, content, replace: true }` | |
 | `result` with `verification` (background runs) | `ACTIVITY_SNAPSHOT` as for a `verification` entry | the rest of `result` feeds the closing event (§ 6.4) |
@@ -208,6 +208,28 @@ A new `startRun` on the same thread with `forwardedProps.previousRunId`
   declined to answer" result.
 
 `hb.interrupt_resolved.payload` has the same shape.
+
+**The resume run's stream.** The resume run continues the interrupted
+turn: before any model output it emits, in a step of its own, one
+`tool_output` per answered interrupt (the approved tool's result, the
+"declined" text, or the answer itself) → `TOOL_CALL_RESULT {
+toolCallId }`. That call's `TOOL_CALL_START` / `ARGS` / `END` were in
+the **previous** run's stream (its `tool_input`), never in this one.
+AG-UI allows it — a `TOOL_CALL_RESULT` needs no open tool call: the
+`@ag-ui/client` 1.0.5 verifier and apply pipeline accept the resume
+stream both after the interrupted run's stream on the same client and
+on a fresh client — so a client appends the tool message to the
+history it already holds (where the assistant message with that tool
+call is). The answers' `TOOL_CALL_RESULT`s are the only events of a
+resume run that refer to another run's ids.
+
+**What the model continues from (Q31).** The interrupted run stores its
+harness state with its outcome (`tasks.checkpoint`, or the memory
+store's copy for a run without a database); the resume run reads it
+as its own owner and continues the turn from it — the tool results the
+model saw, in full, not the summaries the client holds. Without one
+(an anonymous run past its TTL, another harness) the harness rebuilds
+what it can from the client's `messages`.
 
 ## 5. Results, errors and usage
 
@@ -409,8 +431,11 @@ and is dropped about 15 minutes after the run ends (it is sealed); it
 is never compacted. The memory is bounded per run and in total; an
 append past a cap fails, except for the entries that end a run, and
 the run driver fails the run (`event_log_memory.py` documents the
-caps). Afterwards every operation on the run answers 404. A
-process restart loses anonymous runs.
+caps) with `RUN_ERROR { code: "limit_reached" }`. Afterwards every
+operation on the run answers 404. A process restart loses anonymous
+runs. A backend without a database keeps signed-in interactive runs
+the same way (memory, same TTL); their background runs are `503
+unavailable`.
 
 ## 9. Example
 
