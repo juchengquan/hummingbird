@@ -1,0 +1,6 @@
+# Deliberate exceptions to redocly.yaml's rules. Each entry needs a reason.
+openapi.yaml:
+  # Public liveness/readiness probes take no input and have no 4xx outcome.
+  operation-4xx-response:
+    - "#/paths/~1healthz/get/responses"
+    - "#/paths/~1readyz/get/responses"

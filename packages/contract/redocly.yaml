@@ -1,0 +1,4 @@
+# Redocly lint config for openapi.yaml — read by scripts/lint.ts
+# (`bun run contract:lint`). Starts from Redocly's `recommended` ruleset.
+extends:
+  - recommended
