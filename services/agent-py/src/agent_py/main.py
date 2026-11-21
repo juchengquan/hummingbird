@@ -30,6 +30,7 @@ from .model_allowlist import get_model_allowlist
 from .routers import (
     chat,
     extract,
+    extract_table,
     files,
     health,
     images,
@@ -203,6 +204,7 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
     app.include_router(url.router)
     app.include_router(images.router)
     app.include_router(files.router)
+    app.include_router(extract_table.router)
     app.include_router(summarize.router)
     app.include_router(mcp.router)
 

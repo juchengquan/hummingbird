@@ -111,6 +111,8 @@ def test_per_path_limits() -> None:
     assert limit_for("/v1/extract/") == 5_000_000 + 64 * 1024
     assert limit_for("/v1/chat") == 2_000_000
     assert limit_for("/v1/summarize") == 2_000_000
+    assert limit_for("/v1/extract-table") == 2 * 1024 * 1024
+    assert limit_for("/v1/files/refresh-url") == 1_000
     assert limit_for("/v1/url/fetch") == 1_000
     assert limit_for("/v1/mcp/server") == 1_000
 

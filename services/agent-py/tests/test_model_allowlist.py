@@ -93,6 +93,28 @@ def test_explicit_field_wins_and_prefix_strip_is_the_fallback() -> None:
     }
 
 
+def test_structured_output_flag_is_read_from_the_catalog() -> None:
+    """`supportsStructuredOutput: true` marks a model for the native
+    structured path (`/v1/extract-table`); absent / non-true → not."""
+    allowlist = parse_allowlist(
+        {
+            "models": [
+                {"id": "anthropic/a", "supportsStructuredOutput": True},
+                {"id": "anthropic/b", "supportsStructuredOutput": "yes"},
+                {"id": "anthropic/c"},
+                {"id": "openai/x", "supportsStructuredOutput": True},
+            ]
+        },
+        default_model="anthropic/c",
+    )
+    assert allowlist.structured_output == frozenset({"anthropic/a"})
+    assert allowlist.supports_structured_output("anthropic/a") is True
+    assert allowlist.supports_structured_output("anthropic/b") is False
+    # Absent → the default model's flag.
+    assert allowlist.supports_structured_output(None) is False
+    assert get_model_allowlist().supports_structured_output("anthropic/claude-haiku-4.5")
+
+
 # --- boot-time validation ---------------------------------------------------
 
 
