@@ -25,7 +25,7 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import __version__, db, poller
+from . import __version__, db, poller, scheduler
 from .body_limit import BodySizeLimitMiddleware, body_limit_for
 from .error_envelope import install_error_handlers
 from .model_allowlist import get_model_allowlist
@@ -37,6 +37,7 @@ from .routers import (
     health,
     images,
     mcp,
+    schedules,
     share,
     summarize,
     url,
@@ -146,16 +147,25 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
         task: asyncio.Task[int] | None = None
         stop = asyncio.Event()
         stopping: asyncio.Task[None] | None = None
+        sched_task: asyncio.Task[int] | None = None
+        sched_stop = asyncio.Event()
+        sched_stopping: asyncio.Task[None] | None = None
         restore_signals: Callable[[], None] | None = None
 
         def begin_shutdown() -> None:
             # Idempotent: the signal hook and the lifespan both call it.
-            nonlocal stopping
+            nonlocal stopping, sched_stopping
             if task is not None and stopping is None:
                 logger.info("lifespan.poller.stopping")
                 stopping = asyncio.create_task(
                     stop_poller(task, stop, grace_s=settings.SHUTDOWN_GRACE_SECONDS),
                     name="agent-py.poller.stop",
+                )
+            if sched_task is not None and sched_stopping is None:
+                logger.info("lifespan.scheduler.stopping")
+                sched_stopping = asyncio.create_task(
+                    stop_poller(sched_task, sched_stop, grace_s=settings.SHUTDOWN_GRACE_SECONDS),
+                    name="agent-py.scheduler.stop",
                 )
 
         if settings.SUPABASE_DB_URL:
@@ -164,25 +174,39 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
                 name="agent-py.poller",
             )
             poller.register_loop_task(task)
-            restore_signals = install_shutdown_signal_hook(begin_shutdown)
             logger.info(
                 "lifespan.poller.started",
                 interval=settings.POLL_INTERVAL_SECONDS,
                 dry_run=settings.WORKER_DRY_RUN,
             )
+            if settings.SCHEDULER_ENABLED:
+                sched_task = asyncio.create_task(
+                    scheduler.run_scheduler_loop(settings, stop=sched_stop),
+                    name="agent-py.scheduler",
+                )
+                scheduler.register_loop_task(sched_task)
+                logger.info(
+                    "lifespan.scheduler.started",
+                    interval=settings.SCHEDULER_INTERVAL_SECONDS,
+                )
+            restore_signals = install_shutdown_signal_hook(begin_shutdown)
         else:
             logger.info("lifespan.poller.skipped", reason="no_supabase_db_url")
+            if settings.SCHEDULER_ENABLED:
+                logger.warning("lifespan.scheduler.skipped", reason="no_supabase_db_url")
         try:
             yield
         finally:
             if restore_signals is not None:
                 restore_signals()
             begin_shutdown()
-            if stopping is not None:
-                # The pool must stay open until the in-flight job is
-                # settled or handed back.
-                await stopping
+            # The pool must stay open until the in-flight job / dispatch
+            # is settled or handed back.
+            for pending in (stopping, sched_stopping):
+                if pending is not None:
+                    await pending
             poller.register_loop_task(None)
+            scheduler.register_loop_task(None)
             await db.close_pool()
             logger.info("lifespan.shutdown.complete")
 
@@ -214,6 +238,7 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
     app.include_router(extract_table.router)
     app.include_router(summarize.router)
     app.include_router(mcp.router)
+    app.include_router(schedules.router)
     app.include_router(share.router)
 
     # Cap request bodies before routing / auth: FastAPI reads (and

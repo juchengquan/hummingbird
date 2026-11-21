@@ -48,9 +48,10 @@ export interface paths {
          *     we get to "Postgres reachable" without a per-request `SELECT 1`).
          *     Phase 2+ may add a `SELECT 1` if we see false-positive ready.
          *
-         *     Also reports the task poller's liveness: `status` is `degraded` when
-         *     the poll loop was started and has since died (the HTTP API still
-         *     works, but no background task will run).
+         *     Also reports the task poller's and the schedule dispatcher's
+         *     liveness: `status` is `degraded` when either loop was started and has
+         *     since died (the HTTP API still works, but no background task — or no
+         *     scheduled fire — will run).
          */
         get: operations["readyz_readyz_get"];
         put?: never;
@@ -403,6 +404,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/tasks/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Schedules */
+        get: operations["list_schedules_v1_tasks_schedules_get"];
+        put?: never;
+        /** Create Schedule */
+        post: operations["create_schedule_v1_tasks_schedules_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/schedules/{schedule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Schedule */
+        delete: operations["delete_schedule_v1_tasks_schedules__schedule_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Schedule */
+        patch: operations["update_schedule_v1_tasks_schedules__schedule_id__patch"];
+        trace?: never;
+    };
     "/v1/share": {
         parameters: {
             query?: never;
@@ -496,6 +533,13 @@ export interface components {
             description?: string | null;
             /** Favicon Url */
             favicon_url?: string | null;
+        };
+        /** Brave */
+        Brave: {
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Freshness */
+            freshness?: ("any" | "pd" | "pw" | "pm" | "py") | null;
         };
         /**
          * ChatMessageRequest
@@ -676,6 +720,21 @@ export interface components {
             token: string;
             kind: components["schemas"]["ShareKind"];
         };
+        /** DeleteScheduleResponse */
+        DeleteScheduleResponse: {
+            /**
+             * Ok
+             * @constant
+             */
+            ok: true;
+        };
+        /** Exa */
+        Exa: {
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Type */
+            type?: ("auto" | "neural" | "keyword") | null;
+        };
         /** ExtractTableColumnHint */
         ExtractTableColumnHint: {
             /** Label */
@@ -766,6 +825,18 @@ export interface components {
             service: string;
             /** Version */
             version: string;
+        };
+        /** ImageGenSkillConfig */
+        ImageGenSkillConfig: {
+            /** Maxcalls */
+            maxCalls?: number | null;
+            /** Aspectratio */
+            aspectRatio?: ("1:1" | "16:9" | "9:16" | "4:3" | "3:4" | "2:3" | "3:2") | null;
+        };
+        /** MaxCallsSkillConfig */
+        MaxCallsSkillConfig: {
+            /** Maxcalls */
+            maxCalls?: number | null;
         };
         /**
          * McpProxyBody
@@ -875,6 +946,10 @@ export interface components {
             poller_alive?: boolean | null;
             /** Poller Last Tick Age Seconds */
             poller_last_tick_age_seconds?: number | null;
+            /** Scheduler Alive */
+            scheduler_alive?: boolean | null;
+            /** Scheduler Last Tick Age Seconds */
+            scheduler_last_tick_age_seconds?: number | null;
         };
         /** ReadinessResponse */
         ReadinessResponse: {
@@ -955,6 +1030,55 @@ export interface components {
              */
             ok: true;
         };
+        /** ScheduleListResponse */
+        ScheduleListResponse: {
+            /** Schedules */
+            schedules: components["schemas"]["ScheduleResponse"][];
+        };
+        /** ScheduleResponse */
+        ScheduleResponse: {
+            /** Id */
+            id: string;
+            /** Workspaceid */
+            workspaceId: string;
+            /** Name */
+            name: string;
+            /** Prompt */
+            prompt: string;
+            /** Cron */
+            cron: string;
+            /** Timezone */
+            timezone: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Model */
+            model: string | null;
+            /** Systemprompt */
+            systemPrompt: string | null;
+            /** Skills */
+            skills?: components["schemas"]["SkillConfig"][] | null;
+            /** Maxsteps */
+            maxSteps: number | null;
+            /** Lastrunat */
+            lastRunAt: string | null;
+            /** Lastruntaskid */
+            lastRunTaskId: string | null;
+            /**
+             * Nextrunat
+             * Format: date-time
+             */
+            nextRunAt: string;
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+        };
         /** @enum {string} */
         ShareKind: "conversation" | "document";
         /** SharedMessage */
@@ -973,12 +1097,31 @@ export interface components {
             /** Position */
             position: number;
         };
+        /**
+         * SkillConfig
+         * @description A skill enabled for a run, with optional per-skill settings (`ChatRequestSchema.shape.skills` in `lib/shared/api-schemas.ts`).
+         */
+        SkillConfig: {
+            /** Id */
+            id: string;
+            webSearchConfig?: components["schemas"]["WebSearchSkillConfig"] | null;
+            webFetchConfig?: components["schemas"]["MaxCallsSkillConfig"] | null;
+            imageGenConfig?: components["schemas"]["ImageGenSkillConfig"] | null;
+            fileSearchConfig?: components["schemas"]["MaxCallsSkillConfig"] | null;
+        };
         /** SummariseMessage */
         SummariseMessage: {
             /** Role */
             role: string;
             /** Content */
             content: string;
+        };
+        /** Tavily */
+        Tavily: {
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Searchdepth */
+            searchDepth?: ("basic" | "advanced") | null;
         };
         /**
          * UrlFetchRequest
@@ -1007,6 +1150,14 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** WebSearchSkillConfig */
+        WebSearchSkillConfig: {
+            /** Maxcalls */
+            maxCalls?: number | null;
+            tavily?: components["schemas"]["Tavily"] | null;
+            brave?: components["schemas"]["Brave"] | null;
+            exa?: components["schemas"]["Exa"] | null;
         };
         /** WhoAmIResponse */
         WhoAmIResponse: {
@@ -1417,6 +1568,281 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    list_schedules_v1_tasks_schedules_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleListResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    create_schedule_v1_tasks_schedules_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    delete_schedule_v1_tasks_schedules__schedule_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteScheduleResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    update_schedule_v1_tasks_schedules__schedule_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

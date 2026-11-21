@@ -94,6 +94,20 @@ class Settings(BaseSettings):
     10 s stop timeout; raise both together (`stop_grace_period`) to let
     more jobs finish in place."""
 
+    # --- Schedule dispatcher -----------------------------------------------
+    SCHEDULER_ENABLED: bool = False
+    """Run the `task_schedules` dispatcher loop (`agent_py.scheduler`) in
+    this process: every `SCHEDULER_INTERVAL_SECONDS` it fires due
+    schedules exactly like the Vercel Cron's `/api/tasks/jobs/tick`
+    (`dispatchDueSchedules`). Off by default. Safe to run alongside that
+    cron and on several replicas: each occurrence is claimed with a
+    guarded `next_run_at` update, so only one dispatcher fires it. Needs
+    `SUPABASE_DB_URL`."""
+
+    SCHEDULER_INTERVAL_SECONDS: float = 60.0
+    """Seconds between dispatcher ticks. 60 matches the Vercel Cron's
+    one-minute cadence (and the 4-minute minimum gap's one tick of slack)."""
+
     # --- Model providers --------------------------------------------------
     ANTHROPIC_API_KEY: str = ""
     """Anthropic API key — Phase 2b enables real model streaming when set.

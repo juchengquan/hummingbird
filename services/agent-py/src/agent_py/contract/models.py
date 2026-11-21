@@ -30,6 +30,11 @@ class ApiError(BaseModel):
     message: str
 
 
+class Brave(BaseModel):
+    enabled: bool | None = None
+    freshness: Literal["any", "pd", "pw", "pm", "py"] | None = None
+
+
 class Citation(BaseModel):
     sourceId: Annotated[str, Field(min_length=1)]
     quote: Annotated[str, Field(max_length=2000)]
@@ -108,12 +113,21 @@ class CreateShareResponse(BaseModel):
     kind: ShareKind
 
 
+class DeleteScheduleResponse(BaseModel):
+    ok: Literal[True]
+
+
 class ErrorResponse(ApiError):
     """
     The body of every non-2xx JSON response: an `ApiError`. (The
     transitional FastAPI `{ detail }` envelope is no longer accepted.)
 
     """
+
+
+class Exa(BaseModel):
+    enabled: bool | None = None
+    type: Literal["auto", "neural", "keyword"] | None = None
 
 
 class ExtractTableRequest(BaseModel):
@@ -150,6 +164,15 @@ class HealthResponse(BaseModel):
     """
 
 
+class ImageGenSkillConfig(BaseModel):
+    maxCalls: Annotated[int | None, Field(ge=1, le=50)] = None
+    aspectRatio: Literal["1:1", "16:9", "9:16", "4:3", "3:4", "2:3", "3:2"] | None = None
+
+
+class MaxCallsSkillConfig(BaseModel):
+    maxCalls: Annotated[int | None, Field(ge=1, le=50)] = None
+
+
 class ReadinessChecks(BaseModel):
     """
     Implementation-specific dependency checks. The keys below are the
@@ -175,6 +198,14 @@ class ReadinessChecks(BaseModel):
     poller_last_tick_age_seconds: float | None = None
     """
     Seconds since the poll loop last finished a tick; null before the first.
+    """
+    scheduler_alive: bool | None = None
+    """
+    Null when the schedule dispatcher loop is not enabled; false when it was started and has died.
+    """
+    scheduler_last_tick_age_seconds: float | None = None
+    """
+    Seconds since the schedule dispatcher last finished a tick; null before the first.
     """
 
 
@@ -265,6 +296,98 @@ class RevokeShareResponse(BaseModel):
     ok: Literal[True]
 
 
+class ScheduleCreateRequest(BaseModel):
+    workspaceId: Annotated[str, Field(max_length=64, min_length=1)]
+    """
+    The workspace (owned by the caller) the scheduled runs belong to.
+    """
+    name: Annotated[str, Field(max_length=200, min_length=1)]
+    prompt: Annotated[str, Field(max_length=20000, min_length=1)]
+    cron: ScheduleCron
+    timezone: Annotated[str | None, Field(max_length=100, min_length=1)] = None
+    """
+    IANA timezone, e.g. `America/Los_Angeles`. Absent means `UTC`.
+    """
+    enabled: bool | None = None
+    """
+    Absent means true.
+    """
+    model: Annotated[str | None, Field(max_length=100)] = None
+    """
+    Model id; null falls back to the workspace / global default at run time.
+    """
+    systemPrompt: Annotated[str | None, Field(max_length=20000)] = None
+    skills: Annotated[list[SkillConfig] | None, Field(max_length=10)] = None
+    maxSteps: Annotated[int | None, Field(ge=1, le=50)] = None
+    """
+    Step budget per run; null means 25.
+    """
+
+
+type ScheduleCron = Annotated[
+    str,
+    Field(
+        examples=["0 8 * * *", "*/15 9-17 * * 1-5"],
+        max_length=100,
+        min_length=1,
+        pattern="^\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\S+$",
+    ),
+]
+"""
+Five space-separated fields (minute hour day-of-month month
+day-of-week), evaluated with cron-parser semantics. The backend
+additionally rejects expressions that cannot be parsed or fire more
+often than every 5 minutes (400 `invalid_request`).
+
+"""
+
+
+class ScheduleListResponse(BaseModel):
+    schedules: list[ScheduleResponse]
+
+
+class ScheduleResponse(BaseModel):
+    id: str
+    workspaceId: str
+    name: str
+    prompt: str
+    cron: str
+    timezone: str
+    enabled: bool
+    model: str | None
+    systemPrompt: str | None
+    skills: list[SkillConfig] | None = None
+    """
+    Absent when the schedule has no skill list.
+    """
+    maxSteps: int | None
+    lastRunAt: AwareDatetime | None
+    lastRunTaskId: str | None
+    """
+    The task the last fire created, for deep-linking to its result.
+    """
+    nextRunAt: AwareDatetime
+    createdAt: AwareDatetime
+    updatedAt: AwareDatetime
+
+
+class ScheduleUpdateRequest(BaseModel):
+    """
+    Any subset of the create fields. `null` is accepted only where the create body accepts it.
+    """
+
+    workspaceId: Annotated[str | None, Field(max_length=64, min_length=1)] = None
+    name: Annotated[str | None, Field(max_length=200, min_length=1)] = None
+    prompt: Annotated[str | None, Field(max_length=20000, min_length=1)] = None
+    cron: ScheduleCron | None = None
+    timezone: Annotated[str | None, Field(max_length=100, min_length=1)] = None
+    enabled: bool | None = None
+    model: Annotated[str | None, Field(max_length=100)] = None
+    systemPrompt: Annotated[str | None, Field(max_length=20000)] = None
+    skills: Annotated[list[SkillConfig] | None, Field(max_length=10)] = None
+    maxSteps: Annotated[int | None, Field(ge=1, le=50)] = None
+
+
 type ShareKind = Literal["conversation", "document"]
 """
 What a share points at.
@@ -280,6 +403,23 @@ class SharedMessage(BaseModel):
     The model's reasoning text, when it was kept.
     """
     position: int
+
+
+class SkillConfig(BaseModel):
+    """
+    A skill enabled for a run, with optional per-skill settings (`ChatRequestSchema.shape.skills` in `lib/shared/api-schemas.ts`).
+    """
+
+    id: Annotated[str, Field(max_length=40)]
+    webSearchConfig: WebSearchSkillConfig | None = None
+    webFetchConfig: MaxCallsSkillConfig | None = None
+    imageGenConfig: ImageGenSkillConfig | None = None
+    fileSearchConfig: MaxCallsSkillConfig | None = None
+
+
+class Tavily(BaseModel):
+    enabled: bool | None = None
+    searchDepth: Literal["basic", "advanced"] | None = None
 
 
 class TypedColumnHint(BaseModel):
@@ -309,3 +449,10 @@ class ValidationIssue(BaseModel):
     loc: list[str | int]
     msg: str
     type: str
+
+
+class WebSearchSkillConfig(BaseModel):
+    maxCalls: Annotated[int | None, Field(ge=1, le=50)] = None
+    tavily: Tavily | None = None
+    brave: Brave | None = None
+    exa: Exa | None = None

@@ -37,6 +37,12 @@ worker; its stale-run reconciler fails a task no worker started within
 `TASK_NO_WORKER_TIMEOUT_MINUTES` (default 10) with "No task worker
 available".
 
+Recurring runs (`task_schedules`) are enqueued by a dispatcher: today the
+Vercel Cron calling `/api/tasks/jobs/tick` every minute, and — when
+`SCHEDULER_ENABLED=true` — agent-py's own loop (`scheduler.py`). The two
+can run side by side (a guarded `next_run_at` claim fires each occurrence
+once); see `services/agent-py/README.md` § "Scheduled tasks".
+
 ## Why the third backend doesn't live under `services/`
 
 Next.js's App Router resolves URLs by the filesystem layout under
@@ -71,6 +77,8 @@ If you're looking for the chat-route equivalent in each backend:
 | Extract table | `app/api/extract-table/route.ts` | `routers/extract_table.py` | — (frozen; client uses the Next.js route) |
 | Share create / revoke | `app/api/share/route.ts`, `app/api/share/[token]/route.ts` | `routers/share.py` (data: `shares.py`) | — (frozen; client uses the Next.js routes) |
 | Share public read | `lib/server/share/resolve.ts` (server-rendered in `app/share/*/[token]/page.tsx`) | `routers/share.py` — `GET /v1/share/{token}`, no auth | — |
+| Task schedules (CRUD) | `app/api/tasks/schedules/**/route.ts` | `routers/schedules.py` | — (frozen; client uses the Next.js routes) |
+| Schedule dispatcher | `app/api/tasks/jobs/tick/route.ts` (Vercel Cron) | `scheduler.py` (`SCHEDULER_ENABLED`) | — |
 
 Shared by all three: the Zod wire schemas in `lib/shared/api-schemas.ts`
 (agent-ts uses a frozen copy, `src/vendor/shared/api-schemas.ts`) and
@@ -78,7 +86,8 @@ the streaming SSE protocol documented in `docs/API.md`.
 
 agent-ts is frozen (no new endpoints — `docs/PLAN-frontend-backend-split.md`,
 Q11), so surfaces added after the freeze exist only in agent-py. For
-those (`files/refresh-url`, `extract-table`, share create / revoke)
+those (`files/refresh-url`, `extract-table`, share create / revoke,
+`tasks/schedules`)
 `lib/client/api-client.ts` dispatches remotely only when the account's
 backend is agent-py (`agentPyOnlyDispatch`); `ts-service` accounts stay
 on the Next.js route.

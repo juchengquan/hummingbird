@@ -233,6 +233,8 @@ service-role key).
 | `JOB_LEASE_SECONDS` | No | Default `120`. Lease a claim holds on a `task_jobs` row (`lease_expires_at`, migration 0032). A job whose worker died is reclaimed once it lapses (or reaped as failed, with its task, once `max_attempts` is spent). |
 | `JOB_HEARTBEAT_SECONDS` | No | Default `30` (clamped to a third of the lease). How often an executing job extends its lease. |
 | `SHUTDOWN_GRACE_SECONDS` | No | Default `8`. On shutdown the in-flight job may finish within this window; after it, the job is cancelled and handed back (lease expired on the spot) for the next worker. Keep it under the container stop timeout (Docker's default is 10 s). The stop starts on SIGTERM itself (the server's signal handler is chained), not after uvicorn has drained open SSE streams; the image also runs uvicorn with `--timeout-graceful-shutdown 8` so the lifespan (which closes the DB pool) isn't held past the stop timeout by a chat stream. `/readyz` reports `poller_alive` / `poller_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
+| `SCHEDULER_ENABLED` | No | Default `false`. Run the schedule dispatcher loop (`scheduler.py`) in this process: it fires due `task_schedules` rows exactly like the Vercel Cron's `/api/tasks/jobs/tick`. Needs `SUPABASE_DB_URL`. Safe alongside that cron and on several replicas — see [Scheduled tasks](#scheduled-tasks-replacing-the-vercel-cron). `/readyz` reports `scheduler_alive` / `scheduler_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
+| `SCHEDULER_INTERVAL_SECONDS` | No | Default `60` (the Vercel Cron's cadence). Seconds between dispatcher ticks. |
 | `SUPABASE_URL` | No (reported by `/readyz`) | Phase 2 will use it for things beyond what `SUPABASE_DB_URL` already gives us. |
 | `SERVICE_PORT` | No | Default 8000. |
 | `CORS_ALLOWED_ORIGINS` | No | Default empty (no CORS). Comma-separated exact origins allowed to call the API from a browser on another origin, e.g. `http://localhost:3000` when Next calls agent-py on `:8000`. Not needed behind the same-origin proxy. `*` and non-origin values are ignored; credentialed CORS is never enabled (auth is a bearer JWT). |
@@ -242,6 +244,55 @@ service-role key).
 A repo-level `.env` works — `pydantic-settings` looks for `.env` in the
 current working directory. The service shares the same `.env` as the
 Next.js app (same Supabase project, same vars).
+
+## Scheduled tasks (replacing the Vercel Cron)
+
+Recurring runs live in `task_schedules` (a task spec + a cron expression
++ an IANA timezone). agent-py serves their CRUD at
+`/v1/tasks/schedules[/{id}]` (`routers/schedules.py`, the contract's
+`schedules` tag) and can run the dispatcher that fires them
+(`scheduler.py` → `schedules.dispatch_due_schedules`), replacing the
+Vercel Cron that calls `/api/tasks/jobs/tick` every minute
+(`docs/PLAN-frontend-backend-split.md`, Q9).
+
+- **CRUD runs as the caller.** Each query runs in a transaction after
+  `SET LOCAL ROLE authenticated` + `request.jwt.claims`
+  (`store._set_user_context`), so RLS, 0031's workspace-ownership check
+  (→ 403), and 0035's column grants and guard trigger (coarse cron floor,
+  20 enabled schedules per user → 409 `limit_reached`) apply exactly as
+  they do to the Next routes' PostgREST calls.
+- **Same cron semantics as the TS side.** `cron.py` is a port of
+  cron-parser 5.5.0 + the luxon date math it uses — DST quirks
+  included — because both backends write and fire the same rows.
+  `tests/test_cron_parity.py` replays ~1950 cases computed by the TS
+  functions (`lib/server/agent/schedules.parity.test.ts`, which fails if
+  the committed fixture drifts from cron-parser). Not comparable, by
+  nature: `H` (hashed) fields are random per parse on both sides; zones
+  resolve through `zoneinfo` (tzdata, case-insensitive like ICU), so a
+  name only ICU still knows (e.g. `US/Pacific-New`) is rejected here.
+- **Same dispatch as the TS tick.** Up to 500 due rows (earliest
+  `next_run_at` first), a fair batch of at most 50 fires per tick and 5
+  per user, a 4-minute minimum gap since the last fire (deferred, not
+  fired), invalid cron/timezone → the row is disabled, and every fire is
+  claimed first with a guarded `UPDATE … WHERE next_run_at = <value
+  read>`. A fire writes what `fireSchedule` writes — conversation
+  (`Scheduled: <name>`), queued task + checkpoint, `status: queued`
+  event, `start` job, `last_run_task_id` — in one transaction (the TS
+  path writes them one by one, so a failure there can leave a partial
+  run).
+
+**Switching from the Vercel Cron.** Both dispatchers can run at the same
+time: the guarded claim lets exactly one of them fire each occurrence
+(tested with concurrent dispatchers against Postgres, including the TS
+dispatcher racing this one).
+
+1. Set `SCHEDULER_ENABLED=true` (with `SUPABASE_DB_URL`) on one or more
+   agent-py instances and deploy. Look for `lifespan.scheduler.started`,
+   then `scheduler.fired` as schedules come due; `/readyz` shows
+   `scheduler_alive: true`.
+2. Remove the `/api/tasks/jobs/tick` entry from `vercel.json`'s `crons`
+   (and, once nothing calls the route, `CRON_SECRET`). Until then the
+   two simply share the work.
 
 ## Crash recovery and side-effecting tools
 

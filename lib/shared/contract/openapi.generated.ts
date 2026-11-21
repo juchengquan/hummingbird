@@ -183,6 +183,71 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/tasks/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the caller's schedules
+         * @description Every schedule the caller owns, newest first (`created_at` desc).
+         *     Read as the caller under row-level security. Mirrors
+         *     `GET /api/tasks/schedules`.
+         */
+        get: operations["listSchedules"];
+        put?: never;
+        /**
+         * Create a schedule
+         * @description Validates the cron + timezone (parseable; at most 12 fires an hour
+         *     in the minute field; never two fires within 5 minutes over the next
+         *     48) and stores the row with its first `nextRunAt`. Written as the
+         *     caller, so the database also enforces workspace ownership (403) and
+         *     the 20-enabled-schedules cap (409 `limit_reached`). `timezone`
+         *     defaults to `UTC`, `enabled` to true. Mirrors
+         *     `POST /api/tasks/schedules`.
+         */
+        post: operations["createSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/schedules/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The schedule's id (a UUID). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a schedule
+         * @description Deletes the caller's schedule. Idempotent: an id the caller does not
+         *     own (or that does not exist) is also `{ ok: true }`. Mirrors
+         *     `DELETE /api/tasks/schedules/:id`.
+         */
+        delete: operations["deleteSchedule"];
+        options?: never;
+        head?: never;
+        /**
+         * Update a schedule
+         * @description Partial update: absent fields are left alone, `null` clears a
+         *     nullable field. A changed `cron` or `timezone` is re-validated and
+         *     recomputes `nextRunAt`; otherwise `nextRunAt` is kept, so an edit
+         *     never pulls the next fire earlier. Re-enabling past the per-user cap
+         *     is 409 `limit_reached`. Mirrors `PATCH /api/tasks/schedules/:id`.
+         */
+        patch: operations["updateSchedule"];
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -276,6 +341,10 @@ export interface components {
             /** @description The share token. The share page URL is `/share/<kind>/<token>`. */
             token: string;
         };
+        DeleteScheduleResponse: {
+            /** @constant */
+            ok: true;
+        };
         /**
          * @description The body of every non-2xx JSON response: an `ApiError`. (The
          *     transitional FastAPI `{ detail }` envelope is no longer accepted.)
@@ -306,6 +375,14 @@ export interface components {
             /** @description The implementation's own version. */
             version: string;
         };
+        ImageGenSkillConfig: {
+            /** @enum {string} */
+            aspectRatio?: "1:1" | "16:9" | "9:16" | "4:3" | "3:4" | "2:3" | "3:2";
+            maxCalls?: number;
+        };
+        MaxCallsSkillConfig: {
+            maxCalls?: number;
+        };
         /**
          * @description Implementation-specific dependency checks. The keys below are the
          *     ones agent-py reports; every key is optional and another backend may
@@ -318,6 +395,10 @@ export interface components {
             poller_alive?: boolean | null;
             /** @description Seconds since the poll loop last finished a tick; null before the first. */
             poller_last_tick_age_seconds?: number | null;
+            /** @description Null when the schedule dispatcher loop is not enabled; false when it was started and has died. */
+            scheduler_alive?: boolean | null;
+            /** @description Seconds since the schedule dispatcher last finished a tick; null before the first. */
+            scheduler_last_tick_age_seconds?: number | null;
             supabase_db_configured?: boolean;
             supabase_url_configured?: boolean;
         } & {
@@ -387,6 +468,72 @@ export interface components {
             /** @enum {boolean} */
             ok: true;
         };
+        ScheduleCreateRequest: {
+            cron: components["schemas"]["ScheduleCron"];
+            /** @description Absent means true. */
+            enabled?: boolean;
+            /** @description Step budget per run; null means 25. */
+            maxSteps?: number | null;
+            /** @description Model id; null falls back to the workspace / global default at run time. */
+            model?: string | null;
+            name: string;
+            prompt: string;
+            skills?: components["schemas"]["SkillConfig"][];
+            systemPrompt?: string | null;
+            /** @description IANA timezone, e.g. `America/Los_Angeles`. Absent means `UTC`. */
+            timezone?: string;
+            /** @description The workspace (owned by the caller) the scheduled runs belong to. */
+            workspaceId: string;
+        };
+        /**
+         * @description Five space-separated fields (minute hour day-of-month month
+         *     day-of-week), evaluated with cron-parser semantics. The backend
+         *     additionally rejects expressions that cannot be parsed or fire more
+         *     often than every 5 minutes (400 `invalid_request`).
+         * @example 0 8 * * *
+         * @example *\/15 9-17 * * 1-5
+         */
+        ScheduleCron: string;
+        ScheduleListResponse: {
+            schedules: components["schemas"]["ScheduleResponse"][];
+        };
+        ScheduleResponse: {
+            /** Format: date-time */
+            createdAt: string;
+            cron: string;
+            enabled: boolean;
+            id: string;
+            /** Format: date-time */
+            lastRunAt: string | null;
+            /** @description The task the last fire created, for deep-linking to its result. */
+            lastRunTaskId: string | null;
+            maxSteps: number | null;
+            model: string | null;
+            name: string;
+            /** Format: date-time */
+            nextRunAt: string;
+            prompt: string;
+            /** @description Absent when the schedule has no skill list. */
+            skills?: components["schemas"]["SkillConfig"][];
+            systemPrompt: string | null;
+            timezone: string;
+            /** Format: date-time */
+            updatedAt: string;
+            workspaceId: string;
+        };
+        /** @description Any subset of the create fields. `null` is accepted only where the create body accepts it. */
+        ScheduleUpdateRequest: {
+            cron?: components["schemas"]["ScheduleCron"];
+            enabled?: boolean;
+            maxSteps?: number | null;
+            model?: string | null;
+            name?: string;
+            prompt?: string;
+            skills?: components["schemas"]["SkillConfig"][];
+            systemPrompt?: string | null;
+            timezone?: string;
+            workspaceId?: string;
+        };
         SharedMessage: {
             content: string;
             id: string;
@@ -401,6 +548,14 @@ export interface components {
          * @enum {string}
          */
         ShareKind: "conversation" | "document";
+        /** @description A skill enabled for a run, with optional per-skill settings (`ChatRequestSchema.shape.skills` in `lib/shared/api-schemas.ts`). */
+        SkillConfig: {
+            fileSearchConfig?: components["schemas"]["MaxCallsSkillConfig"];
+            id: string;
+            imageGenConfig?: components["schemas"]["ImageGenSkillConfig"];
+            webFetchConfig?: components["schemas"]["MaxCallsSkillConfig"];
+            webSearchConfig?: components["schemas"]["WebSearchSkillConfig"];
+        };
         TypedColumnHint: {
             label: string;
             type?: components["schemas"]["ColumnType"];
@@ -417,10 +572,40 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        WebSearchSkillConfig: {
+            brave?: {
+                enabled?: boolean;
+                /** @enum {string} */
+                freshness?: "any" | "pd" | "pw" | "pm" | "py";
+            };
+            exa?: {
+                enabled?: boolean;
+                /** @enum {string} */
+                type?: "auto" | "neural" | "keyword";
+            };
+            maxCalls?: number;
+            tavily?: {
+                enabled?: boolean;
+                /** @enum {string} */
+                searchDepth?: "basic" | "advanced";
+            };
+        };
     };
     responses: {
         /** @description The request body failed validation (`code` is `invalid_request`), or named an unknown model (`unknown_model`). */
         BadRequest: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /**
+         * @description The request conflicts with the resource's state or a per-user limit
+         *     (`code` is `limit_reached` or `invalid_state`).
+         */
+        Conflict: {
             headers: {
                 [name: string]: unknown;
             };
@@ -540,10 +725,13 @@ export type CreateConversationShareRequest = components['schemas']['CreateConver
 export type CreateDocumentShareRequest = components['schemas']['CreateDocumentShareRequest'];
 export type CreateShareRequest = components['schemas']['CreateShareRequest'];
 export type CreateShareResponse = components['schemas']['CreateShareResponse'];
+export type DeleteScheduleResponse = components['schemas']['DeleteScheduleResponse'];
 export type ErrorResponse = components['schemas']['ErrorResponse'];
 export type ExtractTableRequest = components['schemas']['ExtractTableRequest'];
 export type ExtractTableSource = components['schemas']['ExtractTableSource'];
 export type HealthResponse = components['schemas']['HealthResponse'];
+export type ImageGenSkillConfig = components['schemas']['ImageGenSkillConfig'];
+export type MaxCallsSkillConfig = components['schemas']['MaxCallsSkillConfig'];
 export type ReadinessChecks = components['schemas']['ReadinessChecks'];
 export type ReadinessResponse = components['schemas']['ReadinessResponse'];
 export type RefreshFileUrlRequest = components['schemas']['RefreshFileUrlRequest'];
@@ -553,12 +741,20 @@ export type ResolvedConversationShare = components['schemas']['ResolvedConversat
 export type ResolvedDocumentShare = components['schemas']['ResolvedDocumentShare'];
 export type ResolvedShare = components['schemas']['ResolvedShare'];
 export type RevokeShareResponse = components['schemas']['RevokeShareResponse'];
+export type ScheduleCreateRequest = components['schemas']['ScheduleCreateRequest'];
+export type ScheduleCron = components['schemas']['ScheduleCron'];
+export type ScheduleListResponse = components['schemas']['ScheduleListResponse'];
+export type ScheduleResponse = components['schemas']['ScheduleResponse'];
+export type ScheduleUpdateRequest = components['schemas']['ScheduleUpdateRequest'];
 export type SharedMessage = components['schemas']['SharedMessage'];
 export type ShareKind = components['schemas']['ShareKind'];
+export type SkillConfig = components['schemas']['SkillConfig'];
 export type TypedColumnHint = components['schemas']['TypedColumnHint'];
 export type ValidationErrorResponse = components['schemas']['ValidationErrorResponse'];
 export type ValidationIssue = components['schemas']['ValidationIssue'];
+export type WebSearchSkillConfig = components['schemas']['WebSearchSkillConfig'];
 export type ResponseBadRequest = components['responses']['BadRequest'];
+export type ResponseConflict = components['responses']['Conflict'];
 export type ResponseForbidden = components['responses']['Forbidden'];
 export type ResponseInternalError = components['responses']['InternalError'];
 export type ResponseNotFound = components['responses']['NotFound'];
@@ -783,6 +979,121 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listSchedules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's schedules. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleListResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    createSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description The created schedule. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    deleteSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The schedule's id (a UUID). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted (or already gone). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteScheduleResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    updateSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The schedule's id (a UUID). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated schedule. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
             500: components["responses"]["InternalError"];
             503: components["responses"]["ServiceUnavailable"];
         };
