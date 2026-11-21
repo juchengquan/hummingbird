@@ -340,7 +340,7 @@ def test_summarize_provider_error_returns_502(client: TestClient) -> None:
             headers=_auth(),
         )
     assert r.status_code == 502
-    detail = r.json()["detail"]
+    detail = r.json()
     assert detail["code"] == "provider"
 
 
@@ -353,7 +353,7 @@ def test_summarize_invalid_json_response_returns_502(client: TestClient) -> None
             headers=_auth(),
         )
     assert r.status_code == 502
-    detail = r.json()["detail"]
+    detail = r.json()
     assert detail["code"] == "invalid_json"
 
 
@@ -401,7 +401,7 @@ def test_summarize_rejects_unlisted_model(client: TestClient, model: str) -> Non
             headers=_auth(),
         )
     assert r.status_code == 400
-    assert r.json()["detail"]["code"] == "unknown_model"
+    assert r.json()["code"] == "unknown_model"
     assert fake.messages.calls == []
 
 

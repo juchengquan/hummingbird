@@ -185,8 +185,11 @@ export interface components {
          * @enum {string}
          */
         ColumnType: "text" | "number" | "link" | "date";
-        /** @description An `ApiError`, or (transitionally) the legacy FastAPI envelope. */
-        ErrorResponse: components["schemas"]["ApiError"] | components["schemas"]["LegacyFastApiError"];
+        /**
+         * @description The body of every non-2xx JSON response: an `ApiError`. (The
+         *     transitional FastAPI `{ detail }` envelope is no longer accepted.)
+         */
+        ErrorResponse: components["schemas"]["ApiError"];
         ExtractTableRequest: {
             /**
              * @description Optional column hints. Each entry is a plain label (legacy, treated
@@ -211,16 +214,6 @@ export interface components {
             status: "ok";
             /** @description The implementation's own version. */
             version: string;
-        };
-        /**
-         * @description Transitional. agent-py currently returns FastAPI's default envelope —
-         *     `{ detail: <string | ApiError | validation issues> }` — instead of a
-         *     flat `ApiError`. Accepted so the suite describes today's backend;
-         *     removed once agent-py flattens its errors (run the conformance suite
-         *     with `CONTRACT_STRICT_ERRORS=1` to reject it).
-         */
-        LegacyFastApiError: {
-            detail: string | components["schemas"]["ApiError"] | components["schemas"]["ValidationIssue"][];
         };
         /**
          * @description Implementation-specific dependency checks. The keys below are the
@@ -270,7 +263,11 @@ export interface components {
             label: string;
             type?: components["schemas"]["ColumnType"];
         };
-        /** @description One FastAPI/Pydantic request-validation issue. */
+        /** @description An `ApiError` (`code` is `invalid_request`) carrying the validation issues found. */
+        ValidationErrorResponse: components["schemas"]["ApiError"] & {
+            issues?: components["schemas"]["ValidationIssue"][];
+        };
+        /** @description One request-validation issue — where (`loc`), what (`msg`), and its machine `type`. */
         ValidationIssue: {
             loc: (string | number)[];
             msg: string;
@@ -307,7 +304,7 @@ export interface components {
                 "application/json": components["schemas"]["ErrorResponse"];
             };
         };
-        /** @description The request body exceeds the backend's per-route cap. */
+        /** @description The request body exceeds the backend's per-route cap (`code` is `payload_too_large`). */
         PayloadTooLarge: {
             headers: {
                 [name: string]: unknown;
@@ -359,15 +356,16 @@ export interface components {
             };
         };
         /**
-         * @description Transitional: FastAPI's own request validation (agent-py) answers 422
-         *     with `{ detail: [...] }`. Backends should prefer 400 `invalid_request`.
+         * @description The request body failed the backend's schema validation (`code` is
+         *     `invalid_request`, with the individual problems in `issues`).
+         *     agent-py answers these with 422; a 400 `invalid_request` means the same.
          */
         ValidationError: {
             headers: {
                 [name: string]: unknown;
             };
             content: {
-                "application/json": components["schemas"]["ErrorResponse"];
+                "application/json": components["schemas"]["ValidationErrorResponse"];
             };
         };
     };
@@ -388,13 +386,13 @@ export type ErrorResponse = components['schemas']['ErrorResponse'];
 export type ExtractTableRequest = components['schemas']['ExtractTableRequest'];
 export type ExtractTableSource = components['schemas']['ExtractTableSource'];
 export type HealthResponse = components['schemas']['HealthResponse'];
-export type LegacyFastApiError = components['schemas']['LegacyFastApiError'];
 export type ReadinessChecks = components['schemas']['ReadinessChecks'];
 export type ReadinessResponse = components['schemas']['ReadinessResponse'];
 export type RefreshFileUrlRequest = components['schemas']['RefreshFileUrlRequest'];
 export type RefreshStorageUrlRequest = components['schemas']['RefreshStorageUrlRequest'];
 export type RefreshStorageUrlResponse = components['schemas']['RefreshStorageUrlResponse'];
 export type TypedColumnHint = components['schemas']['TypedColumnHint'];
+export type ValidationErrorResponse = components['schemas']['ValidationErrorResponse'];
 export type ValidationIssue = components['schemas']['ValidationIssue'];
 export type ResponseBadRequest = components['responses']['BadRequest'];
 export type ResponseForbidden = components['responses']['Forbidden'];

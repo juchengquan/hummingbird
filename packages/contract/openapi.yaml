@@ -231,19 +231,20 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
     PayloadTooLarge:
-      description: The request body exceeds the backend's per-route cap.
+      description: The request body exceeds the backend's per-route cap (`code` is `payload_too_large`).
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
     ValidationError:
       description: |
-        Transitional: FastAPI's own request validation (agent-py) answers 422
-        with `{ detail: [...] }`. Backends should prefer 400 `invalid_request`.
+        The request body failed the backend's schema validation (`code` is
+        `invalid_request`, with the individual problems in `issues`).
+        agent-py answers these with 422; a 400 `invalid_request` means the same.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/ErrorResponse"
+            $ref: "#/components/schemas/ValidationErrorResponse"
     RateLimited:
       description: The caller or the upstream model provider is rate limited (`code` is `rate_limit`).
       content:
@@ -289,27 +290,9 @@ components:
           type: string
       additionalProperties: true
 
-    LegacyFastApiError:
-      type: object
-      description: |
-        Transitional. agent-py currently returns FastAPI's default envelope —
-        `{ detail: <string | ApiError | validation issues> }` — instead of a
-        flat `ApiError`. Accepted so the suite describes today's backend;
-        removed once agent-py flattens its errors (run the conformance suite
-        with `CONTRACT_STRICT_ERRORS=1` to reject it).
-      required: [detail]
-      properties:
-        detail:
-          anyOf:
-            - type: string
-            - $ref: "#/components/schemas/ApiError"
-            - type: array
-              items:
-                $ref: "#/components/schemas/ValidationIssue"
-
     ValidationIssue:
       type: object
-      description: One FastAPI/Pydantic request-validation issue.
+      description: One request-validation issue — where (`loc`), what (`msg`), and its machine `type`.
       required: [loc, msg, type]
       properties:
         loc:
@@ -323,10 +306,22 @@ components:
       additionalProperties: true
 
     ErrorResponse:
-      description: An `ApiError`, or (transitionally) the legacy FastAPI envelope.
-      anyOf:
+      description: |
+        The body of every non-2xx JSON response: an `ApiError`. (The
+        transitional FastAPI `{ detail }` envelope is no longer accepted.)
+      allOf:
         - $ref: "#/components/schemas/ApiError"
-        - $ref: "#/components/schemas/LegacyFastApiError"
+
+    ValidationErrorResponse:
+      description: An `ApiError` (`code` is `invalid_request`) carrying the validation issues found.
+      allOf:
+        - $ref: "#/components/schemas/ApiError"
+        - type: object
+          properties:
+            issues:
+              type: array
+              items:
+                $ref: "#/components/schemas/ValidationIssue"
 
     HealthResponse:
       type: object

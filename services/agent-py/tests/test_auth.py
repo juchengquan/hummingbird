@@ -133,11 +133,11 @@ def test_error_body_does_not_echo_jwt_library_message(client: TestClient) -> Non
     tell a prober exactly which check failed)."""
     r = _get(client, _make_jwt({"exp": int(time.time()) - 60}))
     assert r.status_code == 401
-    assert r.json() == {"detail": "Invalid token."}
+    assert r.json() == {"code": "auth", "message": "Invalid token."}
     r = _get(client, _make_jwt({"aud": "nope"}))
-    assert r.json() == {"detail": "Invalid token."}
+    assert r.json() == {"code": "auth", "message": "Invalid token."}
     r = _get(client, "not-a-jwt")
-    assert r.json() == {"detail": "Invalid token."}
+    assert r.json() == {"code": "auth", "message": "Invalid token."}
 
 
 def test_whoami_returns_503_when_secret_unset(

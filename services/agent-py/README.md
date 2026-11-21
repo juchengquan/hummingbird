@@ -156,6 +156,43 @@ curl localhost:8080/healthz   # → this service, via the proxy
 - **SSE.** The proxy flushes every chunk (`flush_interval -1`) and does
   not compress, so `/v1/chat` and task event streams arrive unbuffered.
 
+## Error responses
+
+Every non-streaming error is the flat envelope the frontend and the
+contract (`packages/contract/openapi.yaml`, `ApiError`) expect — never
+FastAPI's default `{"detail": ...}`:
+
+```jsonc
+{ "code": "auth", "message": "Invalid token." }                 // 401
+{ "code": "invalid_request", "message": "body.storagePath: Field required",
+  "issues": [{ "loc": ["body", "storagePath"], "msg": "Field required", "type": "missing" }] } // 422
+```
+
+The exception handlers live in `src/agent_py/error_envelope.py`
+(installed by `create_app()`); status codes and exception headers
+(`WWW-Authenticate`, `Retry-After`) pass through unchanged.
+
+- **Raise** `HTTPException(status_code=..., detail={"code": ..., "message": ...})`
+  — the dict is returned flat; extra keys (`reason`, `status`, ...) are
+  kept. Prefer this: pick the `code` the matching Next.js route uses.
+- A **string** `detail` still works: its `code` comes from the status
+  table `STATUS_CODES` in `error_envelope.py` (400/422 `invalid_request`,
+  401 `auth`, 403 `forbidden`, 404 `not_found`, 405
+  `method_not_allowed`, 408/504 `timeout`, 409 `conflict`, 413
+  `payload_too_large`, 415 `unsupported_content_type`, 429 `rate_limit`,
+  500 `unknown`, 502 `provider`, 503 `unavailable`; any other 4xx
+  `invalid_request`, any other 5xx `unknown`).
+- **Request validation** keeps FastAPI's 422, as `invalid_request` with
+  the problems in `issues` (`loc` / `msg` / `type` only — the caller's
+  input is not echoed).
+- An **uncaught exception** is a 500 `{"code": "unknown", "message":
+  "Internal server error."}`; the exception is logged, not echoed.
+- Hand-built responses (the body-size middleware's 413 / 400) use
+  `error_body(code, message)` from the same module.
+
+SSE in-stream `error` events on `/v1/chat` are a separate protocol
+(`docs/API.md`) and are unaffected.
+
 ## Run tests
 
 ```bash

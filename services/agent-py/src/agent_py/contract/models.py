@@ -77,6 +77,14 @@ How a citation-table column's values are formatted and sorted.
 """
 
 
+class ErrorResponse(ApiError):
+    """
+    The body of every non-2xx JSON response: an `ApiError`. (The
+    transitional FastAPI `{ detail }` envelope is no longer accepted.)
+
+    """
+
+
 class ExtractTableRequest(BaseModel):
     reportText: Annotated[str, Field(max_length=100000, min_length=1)]
     sources: Annotated[list[ExtractTableSource], Field(max_length=100, min_length=1)]
@@ -109,25 +117,6 @@ class HealthResponse(BaseModel):
     """
     The implementation's own version.
     """
-
-
-class LegacyFastApiError(BaseModel):
-    """
-    Transitional. agent-py currently returns FastAPI's default envelope —
-    `{ detail: <string | ApiError | validation issues> }` — instead of a
-    flat `ApiError`. Accepted so the suite describes today's backend;
-    removed once agent-py flattens its errors (run the conformance suite
-    with `CONTRACT_STRICT_ERRORS=1` to reject it).
-
-    """
-
-    detail: str | ApiError | list[ValidationIssue]
-
-
-type ErrorResponse = ApiError | LegacyFastApiError
-"""
-An `ApiError`, or (transitionally) the legacy FastAPI envelope.
-"""
 
 
 class ReadinessChecks(BaseModel):
@@ -212,9 +201,17 @@ class TypedColumnHint(BaseModel):
 type ColumnHint = ColumnHint1 | TypedColumnHint
 
 
+class ValidationErrorResponse(ApiError):
+    """
+    An `ApiError` (`code` is `invalid_request`) carrying the validation issues found.
+    """
+
+    issues: list[ValidationIssue] | None = None
+
+
 class ValidationIssue(BaseModel):
     """
-    One FastAPI/Pydantic request-validation issue.
+    One request-validation issue — where (`loc`), what (`msg`), and its machine `type`.
     """
 
     model_config = ConfigDict(

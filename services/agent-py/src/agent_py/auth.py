@@ -36,10 +36,10 @@ logger = structlog.get_logger(__name__)
 REQUIRED_ROLE = "authenticated"
 
 
-def _unauthorized(detail: str) -> HTTPException:
+def _unauthorized(message: str) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail=detail,
+        detail={"code": "auth", "message": message},
         headers={"WWW-Authenticate": "Bearer"},
     )
 
@@ -78,7 +78,10 @@ def get_current_user(
         # Distinct from 401 so /healthz alerts can fire on misconfig.
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Auth not configured (SUPABASE_JWT_SECRET missing).",
+            detail={
+                "code": "unavailable",
+                "message": "Auth not configured (SUPABASE_JWT_SECRET missing).",
+            },
         )
     if not authorization or not authorization.startswith("Bearer "):
         raise _unauthorized("Missing or malformed Authorization header.")
