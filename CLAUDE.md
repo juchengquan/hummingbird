@@ -173,7 +173,8 @@ SQL lives under `supabase/migrations/` as numbered files applied in order (`0001
 `0034_task_write_hardening.sql`, `0035_task_schedule_limits.sql`,
 `0036_task_job_stale_lease_backfill.sql`,
 `0037_validate_artifacts_kind_check.sql`, `0038_mcp_pgcrypto_schema.sql`,
-`0039_mcp_upsert_foreign_id.sql`, `0040_task_worker_liveness.sql`) — see `docs/SUPABASE_SETUP.md`
+`0039_mcp_upsert_foreign_id.sql`, `0040_task_worker_liveness.sql`,
+`0041_runs_on_tasks.sql`) — see `docs/SUPABASE_SETUP.md`
 for the hosted-cloud run order, or `docs/SUPABASE_LOCAL.md` for the
 local Supabase CLI path (Docker-based, no cloud account needed). For
 verifying the file full-text retrieval pipeline end-to-end after
@@ -199,6 +200,19 @@ creates runs with the `create_task_run` RPC and enqueues with
 (`validateScheduleCron`). Workers (agent-py / agent-ts, DSN role) and the
 service-role client are unaffected. A new column a route must write
 needs a matching column GRANT.
+
+**Runs live on the task tables (0041).** A `tasks` row is also a run of
+the runs API (`docs/PLAN-frontend-backend-split.md` Q27): `mode` is
+`background` (default — every pre-0041 row and writer) or `interactive`
+(runs in agent-py's API process, never queued: a `task_jobs` trigger
+refuses them). The thread is `thread_id` (= the conversation id, no FK);
+background rows also keep `conversation_id = thread_id`, interactive
+rows have `conversation_id` NULL (their conversation may not have synced)
+and are deleted with their conversation by a trigger. Interactive runs
+are created with the `create_run` RPC (idempotent on the client-minted
+id). **Every old task surface only sees `mode = 'background'`** — a new
+reader of `tasks` for the task routes must filter on it too (see
+`lib/server/agent/store.ts`).
 
 ## Frontend module conventions
 

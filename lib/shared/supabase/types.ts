@@ -1105,55 +1105,70 @@ export type Database = {
       tasks: {
         Row: {
           checkpoint: Json | null
-          conversation_id: string
+          conversation_id: string | null
           created_at: string
           finished_at: string | null
-          goal: string
+          goal: string | null
           id: string
+          lease_expires_at: string | null
           max_steps: number
           metadata: Json
+          mode: string
+          outcome: Json | null
           parent_task_id: string | null
           pending_children: number
+          previous_run_id: string | null
           result_message_id: string | null
           started_at: string | null
           status: string
           step: number
+          thread_id: string
           updated_at: string
           user_id: string
         }
         Insert: {
           checkpoint?: Json | null
-          conversation_id: string
+          conversation_id?: string | null
           created_at?: string
           finished_at?: string | null
-          goal: string
+          goal?: string | null
           id: string
+          lease_expires_at?: string | null
           max_steps?: number
           metadata?: Json
+          mode?: string
+          outcome?: Json | null
           parent_task_id?: string | null
           pending_children?: number
+          previous_run_id?: string | null
           result_message_id?: string | null
           started_at?: string | null
           status: string
           step?: number
+          thread_id: string
           updated_at?: string
           user_id: string
         }
         Update: {
           checkpoint?: Json | null
-          conversation_id?: string
+          conversation_id?: string | null
           created_at?: string
           finished_at?: string | null
-          goal?: string
+          goal?: string | null
           id?: string
+          lease_expires_at?: string | null
           max_steps?: number
           metadata?: Json
+          mode?: string
+          outcome?: Json | null
           parent_task_id?: string | null
           pending_children?: number
+          previous_run_id?: string | null
           result_message_id?: string | null
           started_at?: string | null
           status?: string
           step?: number
+          thread_id?: string
           updated_at?: string
           user_id?: string
         }
@@ -1166,17 +1181,24 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "tasks_result_message_id_fkey"
-            columns: ["result_message_id"]
-            isOneToOne: false
-            referencedRelation: "messages"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "tasks_parent_task_id_fkey"
             columns: ["parent_task_id"]
             isOneToOne: false
             referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_previous_run_id_fkey"
+            columns: ["previous_run_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_result_message_id_fkey"
+            columns: ["result_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
             referencedColumns: ["id"]
           },
         ]
@@ -1383,6 +1405,23 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      create_run: {
+        Args: {
+          p_checkpoint?: Json
+          p_goal?: string
+          p_id: string
+          p_lease_seconds?: number
+          p_max_steps?: number
+          p_mode: string
+          p_previous_run_id?: string
+          p_thread_id: string
+        }
+        Returns: {
+          created: boolean
+          id: string
+          status: string
+        }[]
+      }
       create_task_run: {
         Args: {
           p_checkpoint: Json

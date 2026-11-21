@@ -14,6 +14,32 @@ kind, payload jsonb)`. The TS side uses a discriminated union; we
 keep that on the Python side too via `dataclass(kw_only=True)`
 subclasses, with one shared serialise that puts the right keys in
 the `payload` jsonb column.
+
+**The run model (wave 3a of PLAN-frontend-backend-split).** This IR is
+also the internal event model of the runs API (Q8/Q13): every harness
+adapter emits these events, the run event log stores them, and the
+AG-UI encoder translates them for the wire
+(`packages/contract/RUN_EVENTS.md` is the normative mapping). So it
+covers everything interactive chat produces today, not only background
+tasks:
+
+  * the TS-only kinds, now on both sides: `plan`, `compact`,
+    `artifact_ref`;
+  * chat's AI SDK data parts, as **part** events the UI attaches to the
+    turn: `tool_image` (`data-tool-image`), `tool_file`
+    (`data-tool-file`), `code_result` (`data-code-result`), `ui_part`
+    (`data-ui`), `mcp_app` (`data-mcp-app`), `verification`
+    (`data-verification`), `suggestions` (`data-suggestions`),
+    `routed_model` (`data-routed-model`);
+  * on `ResultEvent`: `error_code` (chat's typed `error` frame code),
+    `memory_tainted` (the `finish` frame's `messageMetadata`) and
+    `usage`; on `ToolOutputEvent`: `is_error` (`errorText`);
+  * `messages_snapshot` — written only by log compaction (Q17/Q30),
+    never by a harness: the run's output folded into AG-UI messages.
+
+The new kinds are Python-only: the TS task routes never read an
+interactive run (0041), and the TS row codec drops kinds it does not
+know and ignores extra payload keys.
 """
 
 from __future__ import annotations
@@ -56,6 +82,16 @@ TaskEventKind = Literal[
     "compact",
     "artifact_ref",
     "result",
+    # Run model (wave 3a): chat's data parts + the compaction snapshot.
+    "tool_image",
+    "tool_file",
+    "code_result",
+    "ui_part",
+    "mcp_app",
+    "verification",
+    "suggestions",
+    "routed_model",
+    "messages_snapshot",
 ]
 
 
@@ -110,6 +146,64 @@ class TokenEvent(TaskEventBase):
 
 
 @dataclass(kw_only=True, frozen=True)
+class TokenUsage:
+    """Token counts for one provider + model, in AG-UI's accounting
+    (`TokenUsage` in the pinned schema): `input_tokens` / `output_tokens`
+    are totals; `reasoning_tokens`, `cached_input_tokens` and
+    `cache_write_input_tokens` are parts of them, never additions."""
+
+    provider: str | None = None
+    model: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    cached_input_tokens: int | None = None
+    cache_write_input_tokens: int | None = None
+
+    def to_payload(self) -> dict[str, object]:
+        """camelCase, set fields only — also exactly an AG-UI `TokenUsage`
+        (plus `totalTokens` when both totals are known)."""
+        out: dict[str, object] = {}
+        for key, value in (
+            ("provider", self.provider),
+            ("model", self.model),
+            ("inputTokens", self.input_tokens),
+            ("outputTokens", self.output_tokens),
+            ("reasoningTokens", self.reasoning_tokens),
+            ("cachedInputTokens", self.cached_input_tokens),
+            ("cacheWriteInputTokens", self.cache_write_input_tokens),
+        ):
+            if value is not None:
+                out[key] = value
+        if self.input_tokens is not None and self.output_tokens is not None:
+            out["totalTokens"] = self.input_tokens + self.output_tokens
+        return out
+
+    @staticmethod
+    def from_payload(raw: object) -> TokenUsage | None:
+        if not isinstance(raw, dict):
+            return None
+
+        def _int(key: str) -> int | None:
+            v = raw.get(key)
+            return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+        def _str(key: str) -> str | None:
+            v = raw.get(key)
+            return v if isinstance(v, str) else None
+
+        return TokenUsage(
+            provider=_str("provider"),
+            model=_str("model"),
+            input_tokens=_int("inputTokens"),
+            output_tokens=_int("outputTokens"),
+            reasoning_tokens=_int("reasoningTokens"),
+            cached_input_tokens=_int("cachedInputTokens"),
+            cache_write_input_tokens=_int("cacheWriteInputTokens"),
+        )
+
+
+@dataclass(kw_only=True, frozen=True)
 class ResultEvent(TaskEventBase):
     """Terminal projection — written once when the run settles."""
 
@@ -122,6 +216,16 @@ class ResultEvent(TaskEventBase):
     # settled Message by the TS projection. None when verification didn't
     # run. See `agent_py.verify` + `docs/PLAN-citation-verifiability.md`.
     verification: dict[str, object] | None = None
+    # Run model (wave 3a). `error_code`: the machine code of a failure —
+    # an `ApiError` code (`rate_limit`, `auth`, `context_window`,
+    # `provider`, `upstream`, `max_steps`, ...), what chat's `error` frame
+    # carries today. `memory_tainted`: the run read third-party content
+    # (chat's `finish.messageMetadata.memoryTainted`), so post-turn memory
+    # extraction must skip it. `usage`: one entry per provider + model,
+    # every model call of the run (subagents included).
+    error_code: str | None = None
+    memory_tainted: bool = False
+    usage: tuple[TokenUsage, ...] = ()
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -160,6 +264,9 @@ class ToolOutputEvent(TaskEventBase):
     """Optional structured rows for the Sources strip — currently
     only `webSearch`-shaped outputs populate this. None for tools
     whose output is plain text (`webFetch` summary)."""
+    is_error: bool = False
+    """The tool failed; `summary` is the error text (chat's
+    `tool-output-available.errorText`). Serialised only when true."""
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -250,10 +357,184 @@ class ApprovalEvent(TaskEventBase):
     ui_answer: dict[str, object] | None = None
 
 
-# Discriminated union of the kinds the Python service emits today
-# (Phases 2a + 2b-1 + 2b-2 + 3b). Newer kinds slot in here as their
-# feature ports; the TS-side projection reducer tolerates unknown
-# kinds, so a Python-only event survives an older client.
+# --- Plan / compact / artifact (TS-only until wave 3a) -----------------------
+
+PlanItemStatus = Literal["pending", "in_progress", "completed"]
+
+
+@dataclass(kw_only=True, frozen=True)
+class PlanItem:
+    """One row of the agent's todo list. Mirrors `PlanItem` in
+    `lib/shared/agent/events.ts`."""
+
+    id: str
+    text: str
+    status: PlanItemStatus
+
+
+@dataclass(kw_only=True, frozen=True)
+class PlanEvent(TaskEventBase):
+    """The full todo list, carried whole every time (not deltas)."""
+
+    kind: Literal["plan"] = field(default="plan", init=False)
+    items: tuple[PlanItem, ...]
+
+
+@dataclass(kw_only=True, frozen=True)
+class CompactEvent(TaskEventBase):
+    """Model-context compaction mid-run (a Claude compact boundary): the
+    harness summarised earlier turns to fit the context window. Not log
+    compaction — that is `MessagesSnapshotEvent`."""
+
+    kind: Literal["compact"] = field(default="compact", init=False)
+    summary: str | None = None
+
+
+@dataclass(kw_only=True, frozen=True)
+class ArtifactRefEvent(TaskEventBase):
+    """An artifact (the `artifacts` entity) produced or updated mid-run."""
+
+    kind: Literal["artifact_ref"] = field(default="artifact_ref", init=False)
+    artifact_id: str
+
+
+# --- Chat data parts (wave 3a) ----------------------------------------------
+#
+# What `ChatSseEmitter` (`lib/server/chat/sse-emitter.ts`) sends as AI SDK
+# `data-*` parts today. Every part is attached to the tool call that
+# produced it (`tool_call_id`, which is also the part's id on the wire)
+# except the turn-level ones (`verification`, `suggestions`,
+# `routed_model`). Payloads are kept as the JSON the frontend already
+# parses (`lib/client/chat/sse-frame-translator.ts`), so a part survives
+# the encoder byte for byte.
+
+ToolImageMode = Literal["t2i", "i2i", "code"]
+
+
+@dataclass(kw_only=True, frozen=True)
+class ToolImageEvent(TaskEventBase):
+    """Generated images (`data-tool-image`): `generateImage` (`t2i` /
+    `i2i`) or `runCode` charts (`code`). Each image is `{id, url,
+    storagePath?, width, height, format, prompt, mode}`."""
+
+    kind: Literal["tool_image"] = field(default="tool_image", init=False)
+    tool_call_id: str
+    mode: ToolImageMode
+    images: tuple[dict[str, object], ...]
+
+
+@dataclass(kw_only=True, frozen=True)
+class ToolFileEvent(TaskEventBase):
+    """Generated files (`data-tool-file`): `{id, name, sizeBytes,
+    mimeType, url, storagePath?}` each."""
+
+    kind: Literal["tool_file"] = field(default="tool_file", init=False)
+    tool_call_id: str
+    files: tuple[dict[str, object], ...]
+
+
+@dataclass(kw_only=True, frozen=True)
+class CodeResultEvent(TaskEventBase):
+    """Code-interpreter output (`data-code-result`): stdout / stderr plus
+    the non-image result cells (`{type: "table", columns, rows}` /
+    `{type: "text", value}`). Charts travel as a `ToolImageEvent`."""
+
+    kind: Literal["code_result"] = field(default="code_result", init=False)
+    tool_call_id: str
+    stdout: str = ""
+    stderr: str = ""
+    results: tuple[dict[str, object], ...] = ()
+
+
+@dataclass(kw_only=True, frozen=True)
+class UiPartEvent(TaskEventBase):
+    """A display-only generative-UI part (`data-ui`) from the `renderUI`
+    tool, already validated against `UiPartSchema`. A `renderUI` call
+    that waits for the user's answer is an interrupt (`ApprovalEvent`
+    with `request_kind="ui-part"`), not this."""
+
+    kind: Literal["ui_part"] = field(default="ui_part", init=False)
+    tool_call_id: str
+    ui_kind: str
+    props: dict[str, object] | None = None
+
+
+@dataclass(kw_only=True, frozen=True)
+class McpAppEvent(TaskEventBase):
+    """An MCP App (`data-mcp-app`): bundled HTML read from the tool's
+    `ui://` resource, rendered in a sandboxed iframe."""
+
+    kind: Literal["mcp_app"] = field(default="mcp_app", init=False)
+    tool_call_id: str
+    server_id: str
+    html: str
+    resource_uri: str | None = None
+    truncated: bool = False
+
+
+@dataclass(kw_only=True, frozen=True)
+class VerificationEvent(TaskEventBase):
+    """Citation-verification verdicts for the turn (`data-verification`):
+    `{checks, summary}` as `VerificationResult.to_payload` builds it.
+    Background runs still carry theirs on `ResultEvent.verification`."""
+
+    kind: Literal["verification"] = field(default="verification", init=False)
+    verification: dict[str, object]
+
+
+@dataclass(kw_only=True, frozen=True)
+class SuggestionsEvent(TaskEventBase):
+    """Follow-up suggestion chips (`data-suggestions`), at most once per
+    run, after the answer."""
+
+    kind: Literal["suggestions"] = field(default="suggestions", init=False)
+    values: tuple[str, ...]
+
+
+@dataclass(kw_only=True, frozen=True)
+class RoutedModelEvent(TaskEventBase):
+    """The concrete model the `auto` option resolved to for this run
+    (`data-routed-model`)."""
+
+    kind: Literal["routed_model"] = field(default="routed_model", init=False)
+    model: str
+
+
+@dataclass(kw_only=True, frozen=True)
+class MessagesSnapshotEvent(TaskEventBase):
+    """Written by log compaction only (Q17/Q30), never by a harness: the
+    output of every compacted entry, folded into AG-UI messages
+    (assistant / tool / reasoning / activity), in order. Its `seq` is
+    the highest compacted seq; the rejoin stream sends it as
+    `MESSAGES_SNAPSHOT` after a `gap`. See `packages/contract/RUN_EVENTS.md`
+    § Compaction for the exact fold."""
+
+    kind: Literal["messages_snapshot"] = field(default="messages_snapshot", init=False)
+    messages: tuple[dict[str, object], ...]
+
+
+#: The part events, in the order RUN_EVENTS.md lists them. They encode to
+#: AG-UI `ACTIVITY_SNAPSHOT` and fold into `ActivityMessage`s.
+PART_EVENT_KINDS: frozenset[TaskEventKind] = frozenset(
+    {
+        "plan",
+        "artifact_ref",
+        "tool_image",
+        "tool_file",
+        "code_result",
+        "ui_part",
+        "mcp_app",
+        "verification",
+        "suggestions",
+        "routed_model",
+    }
+)
+
+
+# Discriminated union of every kind the Python service can emit or read
+# back. Newer kinds slot in here; the TS-side projection reducer
+# tolerates unknown kinds, so a Python-only event survives an older
+# client.
 TaskEvent = (
     StatusEvent
     | StepStartEvent
@@ -265,6 +546,18 @@ TaskEvent = (
     | StepErrorEvent
     | HandoffEvent
     | ApprovalEvent
+    | PlanEvent
+    | CompactEvent
+    | ArtifactRefEvent
+    | ToolImageEvent
+    | ToolFileEvent
+    | CodeResultEvent
+    | UiPartEvent
+    | McpAppEvent
+    | VerificationEvent
+    | SuggestionsEvent
+    | RoutedModelEvent
+    | MessagesSnapshotEvent
 )
 
 
@@ -294,6 +587,12 @@ def event_to_row_payload(event: TaskEvent) -> dict[str, object]:
             result_payload["error"] = event.error
         if event.verification is not None:
             result_payload["verification"] = event.verification
+        if event.error_code is not None:
+            result_payload["errorCode"] = event.error_code
+        if event.memory_tainted:
+            result_payload["memoryTainted"] = True
+        if event.usage:
+            result_payload["usage"] = [u.to_payload() for u in event.usage]
         return result_payload
     if isinstance(event, ToolInputEvent):
         return {
@@ -311,6 +610,8 @@ def event_to_row_payload(event: TaskEvent) -> dict[str, object]:
             tool_payload["results"] = [
                 {"title": r.title, "url": r.url, "snippet": r.snippet} for r in event.results
             ]
+        if event.is_error:
+            tool_payload["isError"] = True
         return tool_payload
     if isinstance(event, StepErrorEvent):
         return {"message": event.message, "willRetry": event.will_retry}
@@ -353,6 +654,51 @@ def event_to_row_payload(event: TaskEvent) -> dict[str, object]:
         if event.ui_answer is not None:
             approval_payload["uiAnswer"] = event.ui_answer
         return approval_payload
+    if isinstance(event, PlanEvent):
+        return {"items": [{"id": i.id, "text": i.text, "status": i.status} for i in event.items]}
+    if isinstance(event, CompactEvent):
+        return {} if event.summary is None else {"summary": event.summary}
+    if isinstance(event, ArtifactRefEvent):
+        return {"artifactId": event.artifact_id}
+    if isinstance(event, ToolImageEvent):
+        return {
+            "toolCallId": event.tool_call_id,
+            "mode": event.mode,
+            "images": list(event.images),
+        }
+    if isinstance(event, ToolFileEvent):
+        return {"toolCallId": event.tool_call_id, "files": list(event.files)}
+    if isinstance(event, CodeResultEvent):
+        return {
+            "toolCallId": event.tool_call_id,
+            "stdout": event.stdout,
+            "stderr": event.stderr,
+            "results": list(event.results),
+        }
+    if isinstance(event, UiPartEvent):
+        ui_payload: dict[str, object] = {"toolCallId": event.tool_call_id, "uiKind": event.ui_kind}
+        if event.props is not None:
+            ui_payload["props"] = event.props
+        return ui_payload
+    if isinstance(event, McpAppEvent):
+        app_payload: dict[str, object] = {
+            "toolCallId": event.tool_call_id,
+            "serverId": event.server_id,
+            "html": event.html,
+        }
+        if event.resource_uri is not None:
+            app_payload["resourceUri"] = event.resource_uri
+        if event.truncated:
+            app_payload["truncated"] = True
+        return app_payload
+    if isinstance(event, VerificationEvent):
+        return {"verification": event.verification}
+    if isinstance(event, SuggestionsEvent):
+        return {"values": list(event.values)}
+    if isinstance(event, RoutedModelEvent):
+        return {"model": event.model}
+    if isinstance(event, MessagesSnapshotEvent):
+        return {"messages": list(event.messages)}
     # step_start / step_end carry no payload-only fields.
     return {}
 

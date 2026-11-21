@@ -46,6 +46,16 @@ export const validRequestBodies: Record<string, unknown> = {
     timezone: "UTC",
   },
   updateSchedule: { enabled: false },
+  // --- runs ---
+  // A background run: without a token it can only be refused (background
+  // runs require sign-in), so the auth cases get their 401 even though
+  // `startRun` also admits anonymous interactive callers.
+  startRun: {
+    threadId: "00000000-0000-4000-8000-000000000000",
+    runId: "00000000-0000-4000-8000-0000000000bb",
+    messages: [{ id: "m1", role: "user", content: "Conformance probe: say hi." }],
+    forwardedProps: { mode: "background", goal: "Conformance probe", maxSteps: 1 },
+  },
 }
 
 /**
@@ -56,4 +66,5 @@ export const validRequestBodies: Record<string, unknown> = {
 export const pathParams: Record<string, string> = {
   token: "conformance-unknown-share-token",
   id: "00000000-0000-4000-8000-0000000000aa",
+  runId: "00000000-0000-4000-8000-0000000000cc",
 }

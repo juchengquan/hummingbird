@@ -19,7 +19,8 @@ class ApiError(BaseModel):
     `invalid_request`, `auth`, `auth_required`, `forbidden`, `not_found`,
     `unavailable`, `rate_limit`, `context_window`, `invalid_model`,
     `unknown_model`, `provider`, `aborted`, `unknown`. See
-    `lib/shared/api-errors.ts`.
+    `lib/shared/api-errors.ts`. The runs operations add
+    `run_id_conflict` and use `invalid_state`.
 
     """
 
@@ -28,6 +29,126 @@ class ApiError(BaseModel):
     )
     code: Annotated[str, Field(examples=["auth", "invalid_request", "not_found"], min_length=1)]
     message: str
+
+
+class Attributable(BaseModel):
+    """
+    Composed into everything that can belong to a subagent's work: the events that describe content or progress, the message types, and each interrupt. Run-scoped events omit it — RUN_STARTED, RUN_FINISHED and RUN_ERROR describe the run itself and MESSAGES_SNAPSHOT is conversation-wide, so none of them can belong to one subagent. A tool call omits it too and inherits its containing message's attribution.
+    """
+
+    subagentRunId: SubagentRunId | None = None
+    """
+    The subagent invocation this belongs to. Absent means the parent agent produced it directly.
+    """
+
+
+class ActivityMessage(Attributable):
+    """
+    Structured progress that is not conversation content, materialised as a message so it keeps its place in the sequence. Stands alone rather than composing BaseMessage, because its content is an object rather than a string.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    id: str
+    """
+    Identifies the message.
+    """
+    role: Literal["activity"]
+    """
+    Fixed. Declared here rather than inherited, because this message does not compose BaseMessage.
+    """
+    activityType: str
+    """
+    What kind of activity this is. An open string: the set is the producer's.
+    """
+    content: dict[str, Any]
+    """
+    The activity's payload, open by key.
+    """
+    metadata: Metadata | None = None
+    """
+    Extra information attached to this message.
+    """
+
+
+class AudioPart(BaseModel):
+    """
+    An audio part.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    type: Literal["audio"]
+    """
+    Discriminator.
+    """
+    id: str | None = None
+    """
+    Identifies this part within its message. Optional, and nothing reads it yet: reserved as on the text part.
+    """
+    source: PartSource
+    """
+    Where the audio comes from.
+    """
+    metadata: Any | None = None
+    """
+    Extra information about this part. Unconstrained, as on the other media parts.
+    """
+
+
+class BaseMessage(Attributable):
+    """
+    The fields shared by the developer, system, assistant and user messages. Deliberately excludes content, because a user message's content may be an array while the others are strings, and composition here intersects rather than overrides: a base that constrained content to a string would make an array content invalid. The tool, activity and reasoning messages do not compose this, because they carry no name.
+    """
+
+    id: str
+    """
+    Identifies the message within the conversation.
+    """
+    role: str
+    """
+    Who the message is from. Each message definition narrows this to a single value.
+    """
+    name: str | None = None
+    """
+    An optional display name for the author.
+    """
+    encryptedValue: str | None = None
+    """
+    A provider's opaque artefact belonging to this message, stored by a consumer and returned on a later turn.
+    """
+    metadata: Metadata | None = None
+    """
+    Extra information attached to this message.
+    """
+
+
+class AssistantMessage(BaseMessage):
+    """
+    A message from the agent. Content is optional because a turn may consist only of tool calls.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    role: Literal["assistant"]
+    """
+    Who the message is from. Each message definition narrows this to a single value.
+    """
+    content: str | None = None
+    """
+    What the agent said, if it said anything.
+    """
+    toolCalls: list[ToolCall] | None = None
+    """
+    The tool calls this turn made.
+    """
+    id: str
+    """
+    Identifies the message within the conversation.
+    """
 
 
 class Brave(BaseModel):
@@ -81,6 +202,24 @@ type ColumnType = Literal["text", "number", "link", "date"]
 """
 How a citation-table column's values are formatted and sorted.
 """
+
+
+class Context(BaseModel):
+    """
+    A named piece of ambient information given to the agent for the run, distinct from the conversation.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    description: str
+    """
+    What this context is, for the agent to interpret.
+    """
+    value: str
+    """
+    The context itself.
+    """
 
 
 class CreateConversationShareRequest(BaseModel):
@@ -137,8 +276,78 @@ open: any JSON value is accepted and unknown shapes are ignored.
 """
 
 
+class DataSource(BaseModel):
+    """
+    Bytes carried inline.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    type: Literal["data"]
+    """
+    Discriminator.
+    """
+    value: Annotated[str, Field(json_schema_extra={"contentEncoding": "base64"})]
+    """
+    The bytes, base64-encoded. contentEncoding is an annotation rather than a constraint in 2020-12, so a malformed string still validates here; rejecting one is the decoder's job.
+    """
+    mimeType: str
+    """
+    What the bytes are. Required here, unlike on a URL source, because nothing else can tell a consumer how to read them.
+    """
+
+
 class DeleteScheduleResponse(BaseModel):
     ok: Literal[True]
+
+
+class DeveloperMessage(BaseMessage):
+    """
+    Instructions from the application developer.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    role: Literal["developer"]
+    """
+    Who the message is from. Each message definition narrows this to a single value.
+    """
+    content: str
+    """
+    The instructions. Required: a developer message with nothing in it says nothing.
+    """
+    id: str
+    """
+    Identifies the message within the conversation.
+    """
+
+
+class DocumentPart(BaseModel):
+    """
+    A document part.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    type: Literal["document"]
+    """
+    Discriminator.
+    """
+    id: str | None = None
+    """
+    Identifies this part within its message. Optional, and nothing reads it yet: reserved as on the text part.
+    """
+    source: PartSource
+    """
+    Where the document comes from.
+    """
+    metadata: Any | None = None
+    """
+    Extra information about this part. Unconstrained, as on the other media parts.
+    """
 
 
 class EmbedRequest(BaseModel):
@@ -203,6 +412,50 @@ class ExtractTableSource(BaseModel):
     snippet: Annotated[str, Field(max_length=2000)]
 
 
+class FileSource(BaseModel):
+    """
+    Bytes already at the provider, named by a handle the provider issued: an OpenAI or Anthropic file id, a Gemini file URI, a storage URL only that provider can read. No bytes travel and nothing is fetched. Only the provider that minted the handle can resolve it; a peer that cannot drops the part as it drops any part it cannot use.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    type: Literal["file"]
+    """
+    Discriminator.
+    """
+    value: str
+    """
+    The handle, exactly as the provider issued it. Opaque: a consumer MUST NOT fetch it, parse it or read a scheme out of it.
+    """
+    provider: str | None = None
+    """
+    Who issued the handle, when the producer knows. Optional: an agent already knows which provider it talks to. When present, SHOULD be the lowercase vendor id (openai, anthropic, google) that TokenUsage.provider uses, so a peer can tell before sending whether a handle is one it can use.
+    """
+    mimeType: str | None = None
+    """
+    What the file is, when the producer knows. Optional, because the provider that holds the bytes knows.
+    """
+
+
+class FunctionCall(BaseModel):
+    """
+    The name and arguments of a tool call.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    name: str
+    """
+    Which tool is being called.
+    """
+    arguments: str
+    """
+    The arguments as a JSON string, not as parsed JSON. Kept as written because a model can emit arguments that are not valid JSON, and losing them at the protocol boundary would hide the fault from the consumer that has to handle it.
+    """
+
+
 class HealthResponse(BaseModel):
     status: Literal["ok"]
     service: str
@@ -218,6 +471,70 @@ class HealthResponse(BaseModel):
 class ImageGenSkillConfig(BaseModel):
     maxCalls: Annotated[int | None, Field(ge=1, le=50)] = None
     aspectRatio: Literal["1:1", "16:9", "9:16", "4:3", "3:4", "2:3", "3:2"] | None = None
+
+
+class ImagePart(BaseModel):
+    """
+    An image part.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    type: Literal["image"]
+    """
+    Discriminator.
+    """
+    id: str | None = None
+    """
+    Identifies this part within its message. Optional, and nothing reads it yet: reserved as on the text part.
+    """
+    source: PartSource
+    """
+    Where the image comes from.
+    """
+    metadata: Any | None = None
+    """
+    Extra information about this part. Unconstrained rather than an object: inherited from the SDKs, which declare it unknown rather than a record; listed under known divergences in the README rather than resolved here.
+    """
+
+
+class Interrupt(Attributable):
+    """
+    Something a run needs from outside before it can continue, such as an approval or a missing value.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    id: str
+    """
+    Identifies the interrupt. A resume entry answers it by this id.
+    """
+    reason: str
+    """
+    Why the run stopped. An open string rather than an enumeration: the protocol does not attempt to classify every reason an agent might need input.
+    """
+    message: str | None = None
+    """
+    A human-readable prompt for whoever answers.
+    """
+    toolCallId: str | None = None
+    """
+    The tool call this interrupt concerns, when it is a tool approval.
+    """
+    responseSchema: dict[str, Any] | None = None
+    """
+    A JSON Schema describing the answer this interrupt expects, so a consumer can build a form for it. Carried opaquely: the protocol does not constrain or validate it. Restricted to an object because TypeScript and Python both declare it that way; .NET holds it as any JSON, and the ticket that commissioned this schema lists it among the arbitrary-JSON fields. Following the two that constrain it keeps the schema from accepting documents the reference client rejects, at the cost of rejecting the boolean schemas JSON Schema also permits — a bare true for "any answer". Recorded as a known divergence rather than settled.
+    """
+    expiresAt: str | None = None
+    """
+    When the interrupt stops being answerable. Deliberately unconstrained rather than a date-time format, because producers already disagree about the representation and tightening it here would reject streams that work today. The documented convention is ISO 8601, and a consumer comparing this value will parse it as a date, so a value that is not one leaves the interrupt looking permanently unexpired.
+    """
+    metadata: Metadata | None = None
+    """
+    Extra information attached to this interrupt.
+    """
 
 
 class MaxCallsSkillConfig(BaseModel):
@@ -241,6 +558,16 @@ class MemoryExtractRequest(BaseModel):
 
 class MemoryExtractResponse(BaseModel):
     ok: Literal[True]
+
+
+class Metadata(BaseModel):
+    """
+    Extra information attached to an event, a message, a tool call, a tool, an interrupt or a resume entry. Open by key: any JSON value is allowed under a key, including null, because a null there is meaningful data. The object itself may be absent but is never null when present. The key ag-ui is reserved for the protocol's own use; reservation is by convention, since validating the shape of a key's value would contradict being open by key.
+    """
+
+    model_config = ConfigDict(
+        extra="allow",
+    )
 
 
 class ReadinessChecks(BaseModel):
@@ -282,6 +609,36 @@ class ReadinessChecks(BaseModel):
 class ReadinessResponse(BaseModel):
     status: Literal["ok", "degraded"]
     checks: ReadinessChecks
+
+
+class ReasoningMessage(Attributable):
+    """
+    A span of the agent's reasoning, materialised as a message. Stands alone rather than composing BaseMessage, because it carries no name.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    id: str
+    """
+    Identifies the message.
+    """
+    role: Literal["reasoning"]
+    """
+    Fixed. Declared here rather than inherited, because this message does not compose BaseMessage.
+    """
+    content: str
+    """
+    The reasoning text.
+    """
+    encryptedValue: str | None = None
+    """
+    A provider's opaque reasoning artefact belonging to this message.
+    """
+    metadata: Metadata | None = None
+    """
+    Extra information attached to this message.
+    """
 
 
 class RefreshFileUrlRequest(BaseModel):
@@ -362,8 +719,291 @@ What a share page renders, by `kind`.
 """
 
 
+class ResumeEntry(BaseModel):
+    """
+    An answer to one interrupt, sent on the run that continues from it.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    interruptId: str
+    """
+    The interrupt being answered.
+    """
+    status: Literal["resolved", "cancelled"]
+    """
+    Whether the interrupt was answered or abandoned.
+    """
+    payload: Any | None = None
+    """
+    The answer the agent asked for and will act on. Any JSON value.
+    """
+    metadata: Metadata | None = None
+    """
+    Envelope information about the response, such as signatures or routing keys, as opposed to payload, which is the answer itself.
+    """
+
+
 class RevokeShareResponse(BaseModel):
     ok: Literal[True]
+
+
+class Run(BaseModel):
+    """
+    The run resource (modelled on the LangChain Agent Protocol's run).
+    Exactly one of `result` / `error` / `openInterrupts` is meaningful,
+    by `status`: `succeeded` → `result`; `failed` → `error`;
+    `interrupted` → `openInterrupts` (non-empty); otherwise all are
+    empty.
+
+    """
+
+    id: UUID
+    threadId: UUID
+    mode: RunMode
+    status: RunStatus
+    parentRunId: UUID | None
+    """
+    The run that spawned this one as a separate (background) sub-agent run. Sub-agents that run inside a run appear in its stream as `SUBAGENT_*` events instead.
+    """
+    previousRunId: UUID | None
+    """
+    The interrupted run this one answered (`forwardedProps.previousRunId`).
+    """
+    openInterrupts: list[Interrupt]
+    """
+    What an `interrupted` run waits for; the same objects as its `RUN_FINISHED` interrupt outcome. Empty in every other status.
+    """
+    result: RunResult | None
+    error: RunError | None
+    lastSeq: Annotated[int, Field(ge=0)]
+    """
+    The highest log `seq` so far (0 before the first event, or after the log was purged).
+    """
+    createdAt: AwareDatetime
+    startedAt: AwareDatetime | None
+    finishedAt: AwareDatetime | None
+    """
+    When the run ended (`succeeded`, `failed`, `cancelled` or `interrupted`).
+    """
+    updatedAt: AwareDatetime
+
+
+class RunAccepted(BaseModel):
+    runId: UUID
+    status: RunStatus
+
+
+class RunAgentInput(BaseModel):
+    """
+    A request to run an agent. Also echoed back as RUN_STARTED.input. Only threadId, runId and messages are required: those are the three the SDKs already agree on, and for tools and context an absent key and an empty array mean the same thing, so requiring them would catch nothing a producer could get wrong.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    threadId: str
+    """
+    The conversation this run belongs to.
+    """
+    runId: str
+    """
+    Identifies this run.
+    """
+    protocolVersion: str | None = None
+    """
+    The protocol version this consumer speaks, such as "1.0". Absent means the input was produced before the protocol carried a version — the versioning rules in the prose govern what each side does with that. Sent in-band rather than by the transport, so a recorded exchange stays self-describing.
+    """
+    parentRunId: str | None = None
+    """
+    The run that spawned this one.
+    """
+    state: State | None = None
+    """
+    The state the run starts from.
+    """
+    messages: list[Message]
+    """
+    The conversation so far, in order.
+    """
+    tools: list[Tool] | None = None
+    """
+    The tools the agent may call. Absent means none.
+    """
+    context: list[Context] | None = None
+    """
+    Ambient information for the run. Absent means none.
+    """
+    forwardedProps: Any | None = None
+    """
+    Application-specific values passed through to the agent untouched. Any JSON value.
+    """
+    resume: list[ResumeEntry] | None = None
+    """
+    Answers to the interrupts that ended a previous run, when this run continues from one.
+    """
+
+
+type RunCursor = Annotated[
+    str,
+    Field(
+        examples=["0", "42", "42.1"],
+        pattern="^(0|[1-9][0-9]{0,9})(\\.(0|[1-9][0-9]{0,3}))?$",
+    ),
+]
+"""
+A replay cursor — an SSE `id` a run stream sent: `<seq>` (after
+log entry `seq` entirely) or `<seq>.<k>` (after the k-th AG-UI
+event entry `seq` produced). `0` is before the first entry.
+
+"""
+
+
+class RunError(BaseModel):
+    """
+    Why a run failed — also `RUN_ERROR`'s `code` / `message`.
+    """
+
+    code: Annotated[str, Field(min_length=1)]
+    """
+    An `ApiError` code: `rate_limit`, `auth`, `context_window`, `provider`, `upstream`, `max_steps`, `no_worker`, `worker_lost`, `unknown`, …
+    """
+    message: str
+
+
+class RunForwardedProps(BaseModel):
+    """
+    Hummingbird's run options, carried in AG-UI's
+    `RunAgentInput.forwardedProps` (application-specific values the
+    protocol passes through). Open: a backend ignores keys it does not
+    know, and new keys are additive. Every key is optional.
+
+    """
+
+    model_config = ConfigDict(
+        extra="allow",
+    )
+    mode: RunMode | None = None
+    previousRunId: UUID | None = None
+    """
+    The interrupted run this one answers. Required with a
+    non-empty `resume[]`, otherwise ignored.
+
+    """
+    model: Annotated[str | None, Field(max_length=100)] = None
+    """
+    Model id from the backend's allow-list. Absent means the backend's default.
+    """
+    systemPrompt: Annotated[str | None, Field(max_length=20000)] = None
+    """
+    Extra instructions (workspace / conversation system prompt), prepended to the backend's own.
+    """
+    skills: Annotated[list[SkillConfig] | None, Field(max_length=10)] = None
+    goal: Annotated[str | None, Field(max_length=2000)] = None
+    """
+    Background runs — the task's title. Absent means the last user message's text.
+    """
+    maxSteps: Annotated[int | None, Field(ge=1, le=50)] = None
+    """
+    Step budget. Absent means 25 (background) or the chat default (interactive).
+    """
+
+
+class RunGapEventValue(BaseModel):
+    """
+    The `value` of the `CUSTOM` event named `hummingbird.gap`: the
+    requested cursor points at events the log no longer holds. The
+    next event is always a `MESSAGES_SNAPSHOT` (id `resumeAt`, or no id
+    when `resumeAt` is null) holding this run's output up to
+    `resumeAt`; the stream then continues after it.
+
+    """
+
+    after: RunCursor
+    resumeAt: Annotated[int | None, Field(ge=1)]
+    """
+    The seq the snapshot covers up to (the compacted entry's seq); null when the whole log was purged.
+    """
+    reason: Literal["compacted", "purged"]
+    """
+    `compacted` — deltas were folded into the snapshot (Q17); `purged` — the log is gone after its retention window and the snapshot is empty (Q30).
+    """
+
+
+class RunList(BaseModel):
+    runs: list[Run]
+    nextPageToken: str | None
+    """
+    Pass back as `pageToken` for the next page; null on the last page.
+    """
+
+
+type RunMode = Literal["interactive", "background"]
+"""
+`interactive`: runs in the API process that received `startRun`,
+streamed to the caller (Q28). `background`: queued for a worker;
+requires sign-in.
+
+"""
+
+
+class RunResult(BaseModel):
+    """
+    A succeeded run's return value — also `RUN_FINISHED.result` on the
+    wire. Open; keys are additive.
+
+    """
+
+    model_config = ConfigDict(
+        extra="allow",
+    )
+    text: str | None = None
+    """
+    The run's final assistant text, when it produced one.
+    """
+    memoryTainted: bool | None = None
+    """
+    The run read third-party content (web, file, MCP or sandbox
+    tools), so post-turn memory extraction must skip it. Absent
+    means false.
+
+    """
+
+
+class RunRewindEventValue(BaseModel):
+    """
+    The `value` of the `CUSTOM` event named `hummingbird.rewind`: a
+    background run's worker died and another resumed it from the
+    checkpoint at `after`. Discard every event received from this
+    run's stream whose cursor seq is greater than `after` (they were
+    the dead attempt's); the events that follow replace them.
+
+    """
+
+    after: Annotated[int, Field(ge=0)]
+
+
+type RunStatus = Literal["queued", "running", "interrupted", "succeeded", "failed", "cancelled"]
+"""
+A run's lifecycle. `queued` (background, not picked up yet) →
+`running` → one of the four ends: `succeeded`, `failed`,
+`cancelled`, or `interrupted` (waiting for answers to its open
+interrupts — which a **new** run answers, Q24; an interrupted run
+itself never runs again). A background run waiting on its own
+sub-agent runs is still `running`. Mapping to the internal status
+and `tasks.status`: `RUN_EVENTS.md` § Status.
+
+"""
+
+
+type RunToken = Annotated[str, Field(max_length=128, min_length=22, pattern="^[A-Za-z0-9_-]+$")]
+"""
+An anonymous run's capability: at least 128 random bits,
+base64url without padding. Issued once, in `startRun`'s
+`X-Run-Token` response header; the backend stores only a hash.
+
+"""
 
 
 class ScheduleCreateRequest(BaseModel):
@@ -487,9 +1127,185 @@ class SkillConfig(BaseModel):
     fileSearchConfig: MaxCallsSkillConfig | None = None
 
 
+class StartRunRequest(RunAgentInput):
+    """
+    An AG-UI 1.0 `RunAgentInput`, by reference into the pinned schema,
+    narrowed: `threadId` and `runId` are UUIDs, and `forwardedProps`,
+    when present, is a `RunForwardedProps`. (`mode` cannot be a
+    top-level field: `RunAgentInput` is closed —
+    `unevaluatedProperties: false` — so any extra key fails it.)
+
+    `messages` is the thread's history up to and including the new
+    user message (Q15 — the browser owns the history; the backend
+    keeps nothing across runs). Messages with role `activity` are
+    display state and are not sent to the model. `tools` are
+    client-side tools; the backend's own tools come from
+    `forwardedProps.skills`.
+
+    """
+
+    threadId: UuidString
+    runId: UuidString
+    forwardedProps: RunForwardedProps | None = None
+
+
+type State = Any
+"""
+Agent state. Any JSON value: the protocol carries state without interpreting it, so an object, an array, a string and a number are all valid.
+"""
+
+
+type SubagentRunId = str
+"""
+An opaque handle for one subagent invocation, not a reusable name for a subagent definition: two invocations of the same subagent carry two different values. Named to mirror runId one level down, the way the subagent's name mirrors agentId.
+"""
+
+
+class SystemMessage(BaseMessage):
+    """
+    Instructions from the system.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    role: Literal["system"]
+    """
+    Who the message is from. Each message definition narrows this to a single value.
+    """
+    content: str
+    """
+    The instructions. Required.
+    """
+    id: str
+    """
+    Identifies the message within the conversation.
+    """
+
+
 class Tavily(BaseModel):
     enabled: bool | None = None
     searchDepth: Literal["basic", "advanced"] | None = None
+
+
+class TextPart(BaseModel):
+    """
+    A text part.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    type: Literal["text"]
+    """
+    Discriminator.
+    """
+    id: str | None = None
+    """
+    Identifies this part within its message. Optional, and nothing reads it yet: reserved so that a streamed part can be matched to its entry in history once assistant messages carry parts too.
+    """
+    text: str
+    """
+    The text.
+    """
+    metadata: Any | None = None
+    """
+    Extra information about this part. Unconstrained, as on the media parts. This is where a text search hit carries its source and title, rather than the protocol modelling a search-result part of its own.
+    """
+
+
+class Tool(BaseModel):
+    """
+    A tool the agent may call.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    name: str
+    """
+    The tool's name, as the agent will call it.
+    """
+    description: str
+    """
+    What the tool does, for the agent to decide when to use it.
+    """
+    parameters: Any | None = None
+    """
+    A JSON Schema describing the tool's arguments. Carried opaquely: the protocol does not constrain or validate it. Optional, because all three SDKs already treat it that way and a tool that takes no arguments has nothing to declare; an absent schema and an empty one mean the same thing to an agent.
+    """
+    metadata: Metadata | None = None
+    """
+    Extra information about the tool, for consumers that attach their own rendering or routing information to it.
+    """
+
+
+class ToolCall(BaseModel):
+    """
+    A call an assistant message made. Carries no subagent attribution of its own and inherits its containing message's, since several calls can share one parent.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    id: str
+    """
+    Identifies the call. The answering tool message carries this as its toolCallId.
+    """
+    type: Literal["function"]
+    """
+    The only kind of call the protocol models.
+    """
+    function: FunctionCall
+    """
+    What is being called, and with what.
+    """
+    encryptedValue: str | None = None
+    """
+    A provider's opaque artefact belonging to this call.
+    """
+    metadata: Metadata | None = None
+    """
+    Extra information attached to this call. Carried here rather than folded into the containing message, because several calls can share one parent and merging them would make the result depend on their order.
+    """
+
+
+class ToolMessage(Attributable):
+    """
+    What a tool returned, as a message in the conversation. Stands alone rather than composing BaseMessage, because it carries no name.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    id: str
+    """
+    Identifies the message.
+    """
+    role: Literal["tool"]
+    """
+    Fixed. Declared here rather than inherited, because this message does not compose BaseMessage.
+    """
+    content: str | list[ContentPart]
+    """
+    What the tool returned: either plain text, or an ordered list of parts. A tool returning structured data serialises it into text; media travel as parts of their own.
+    """
+    toolCallId: str
+    """
+    The call this answers.
+    """
+    error: str | None = None
+    """
+    Why the tool failed, when it did. Present alongside content rather than instead of it, so a partial result survives a failure.
+    """
+    encryptedValue: str | None = None
+    """
+    A provider's opaque artefact belonging to this message.
+    """
+    metadata: Metadata | None = None
+    """
+    Extra information attached to this message.
+    """
 
 
 class TypedColumnHint(BaseModel):
@@ -498,6 +1314,85 @@ class TypedColumnHint(BaseModel):
 
 
 type ColumnHint = ColumnHint1 | TypedColumnHint
+
+
+class UrlSource(BaseModel):
+    """
+    Bytes referenced by URL, fetched by whoever needs them.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    type: Literal["url"]
+    """
+    Discriminator.
+    """
+    value: str
+    """
+    The URL. Deliberately not constrained to a URI format, so a scheme a producer already uses is not rejected here.
+    """
+    mimeType: str | None = None
+    """
+    What the resource is, when the producer knows. Optional, because the response can say.
+    """
+
+
+type PartSource = DataSource | UrlSource | FileSource
+"""
+Where a media part's bytes come from: carried inline, referenced by URL, or already at the provider under a handle it issued.
+"""
+
+
+class UserMessage(BaseMessage):
+    """
+    A message from the person using the application.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    role: Literal["user"]
+    """
+    Who the message is from. Each message definition narrows this to a single value.
+    """
+    content: str | list[ContentPart]
+    """
+    What the person sent: either plain text, or an ordered list of parts for a multimodal message.
+    """
+    id: str
+    """
+    Identifies the message within the conversation.
+    """
+
+
+type Message = (
+    DeveloperMessage
+    | SystemMessage
+    | AssistantMessage
+    | UserMessage
+    | ToolMessage
+    | ActivityMessage
+    | ReasoningMessage
+)
+"""
+Any message in a conversation. Discriminated by role.
+"""
+
+
+type UuidString = Annotated[
+    str,
+    Field(
+        examples=["8a6e0804-2bd0-4672-b79d-d97027f9071a"],
+        pattern="^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+    ),
+]
+"""
+A UUID in its canonical text form. A pattern rather than
+`format: uuid` where it narrows an AG-UI string field, so the
+generated models keep the AG-UI field's `str` type.
+
+"""
 
 
 class ValidationErrorResponse(ApiError):
@@ -519,6 +1414,38 @@ class ValidationIssue(BaseModel):
     loc: list[str | int]
     msg: str
     type: str
+
+
+class VideoPart(BaseModel):
+    """
+    A video part.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    type: Literal["video"]
+    """
+    Discriminator.
+    """
+    id: str | None = None
+    """
+    Identifies this part within its message. Optional, and nothing reads it yet: reserved as on the text part.
+    """
+    source: PartSource
+    """
+    Where the video comes from.
+    """
+    metadata: Any | None = None
+    """
+    Extra information about this part. Unconstrained, as on the other media parts.
+    """
+
+
+type ContentPart = TextPart | ImagePart | AudioPart | VideoPart | DocumentPart
+"""
+One part of a message body: what a person sends in a user message, or what a tool returns in a tool message. Discriminated by type. Named by what the part is rather than by direction, because the same part travels into the model inside a user message and back out of the stream inside a tool result.
+"""
 
 
 class WebSearchSkillConfig(BaseModel):

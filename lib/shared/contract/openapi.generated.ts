@@ -213,6 +213,205 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the caller's runs
+         * @description The signed-in caller's runs, newest first (`createdAt` desc, then
+         *     `id` desc), filtered by every parameter given. Token paging in the
+         *     A2A style: pass `nextPageToken` back as `pageToken` with the same
+         *     filters; a page is stable under concurrent inserts (keyset
+         *     paging), and an unknown, malformed or filter-mismatched token is
+         *     `400 invalid_request`. The tasks panel reads threads of
+         *     background runs from here (`mode=background`). Anonymous runs are
+         *     never listed.
+         */
+        get: operations["listRuns"];
+        put?: never;
+        /**
+         * Start a run — interactive (streamed) or background (queued)
+         * @description Starts one agent run on a thread (Q7, Q24, Q27). The body is an AG-UI
+         *     1.0 `RunAgentInput`; Hummingbird's own run options ride in
+         *     `forwardedProps` (`RunForwardedProps`), `mode` among them, because
+         *     `RunAgentInput` is a closed schema and cannot carry a top-level
+         *     `mode` (see `StartRunRequest`). The event model and every event's
+         *     wire mapping are in `RUN_EVENTS.md`.
+         *
+         *     **Modes.** `interactive` (the default) runs in the process that
+         *     received the request and answers `200 text/event-stream`: the
+         *     run's AG-UI events, exactly as `streamRunEvents` would send them
+         *     from cursor `0` (Q28). `background` queues the run for a worker and
+         *     answers `202 RunAccepted`; follow it with `streamRunEvents` or
+         *     `getRun`. Background runs require a signed-in caller and a thread
+         *     that is one of the caller's synced conversations (`404 not_found`
+         *     otherwise). An interactive run needs neither: its thread may exist
+         *     only in the browser (local-first, Q2/Q15).
+         *
+         *     **Client-minted ids.** `runId` and `threadId` are UUIDs the client
+         *     generates (AG-UI: the client mints `runId`). A repeated `runId` is
+         *     an **idempotent retry**, never a second run, when it comes from the
+         *     run's owner (the same user; for an anonymous run, the same
+         *     `X-Run-Token`) with the same `threadId` and `mode`: an interactive
+         *     retry answers 200 and streams the run from cursor `0` (replay, then
+         *     live), a background retry answers 202 with the run's current
+         *     status. Nothing in the retried body is re-validated or applied —
+         *     the first request's input wins. Any other request carrying a
+         *     `runId` that already exists — another user's run, an anonymous
+         *     run without its token, or the caller's own run on another thread
+         *     or in another mode — answers `409 run_id_conflict`, always with
+         *     the same body, which says nothing about the existing run. (A
+         *     client-chosen id in a global id space cannot be made fully
+         *     unobservable: refusing it reveals that it is taken. UUIDv4 ids
+         *     make that worthless — an id is only known to whoever was given
+         *     it — and the refusal discloses nothing else.)
+         *
+         *     **Resume (Q24).** Answering an interrupted run is a new run on the
+         *     same thread whose `resume[]` answers every open interrupt of that
+         *     run (one `ResumeEntry` per interrupt id; `payload` per
+         *     `RUN_EVENTS.md` § Interrupts). `forwardedProps.previousRunId`
+         *     names the interrupted run; it must be the caller's, on the same
+         *     thread, `interrupted`, and `resume[]` must cover exactly its open
+         *     interrupts — otherwise `409 invalid_state`. A `resume[]` without
+         *     `previousRunId` is `400 invalid_request`.
+         *
+         *     **Anonymous callers** (no `Authorization` header) may start
+         *     interactive runs only — `mode: background` answers `401
+         *     auth_required`, as does every anonymous run when the backend
+         *     requires sign-in for AI (today's `REQUIRE_AUTH_FOR_AI`, Q20). The
+         *     200 response then carries `X-Run-Token`, the run's capability: the
+         *     only credential `getRun`, `streamRunEvents` and `cancelRun` accept
+         *     for that run, and what makes a retry of it idempotent. Anonymous
+         *     runs are not persisted: their event log lives in backend memory
+         *     for about 15 minutes after the run ends (Q16), after which every
+         *     operation on them answers 404. Anonymous runs are rate- and
+         *     budget-limited per client IP (`429 rate_limit`).
+         *
+         *     A present but invalid credential (a malformed or rejected bearer
+         *     token, a non-Bearer scheme) is always `401`, never treated as
+         *     anonymous. Spends model budget.
+         */
+        post: operations["startRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{runId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The run's id — the client-minted AG-UI `runId` (a UUID). */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read a run's status
+         * @description The run resource. Authorised by the owner's bearer token, or by
+         *     the run's `X-Run-Token` for an anonymous run. A run that does not
+         *     exist, belongs to someone else, or whose token does not match all
+         *     answer the same `404 not_found`.
+         */
+        get: operations["getRun"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{runId}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The run's id — the client-minted AG-UI `runId` (a UUID). */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel a run
+         * @description Idempotent. A `queued`, `running` or `interrupted` run becomes
+         *     `cancelled` (an interrupted run's open interrupts are abandoned),
+         *     and its stream closes with `RUN_FINISHED { outcome: { type:
+         *     "cancelled" } }`; a run that already ended is left as it is. Either
+         *     way the answer is the run as it now stands. Cancelling stops the
+         *     harness at its next cancellation check — events already produced
+         *     stay in the log. Authorised like `getRun`, with the same `404`.
+         */
+        post: operations["cancelRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{runId}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The run's id — the client-minted AG-UI `runId` (a UUID). */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Rejoin a run's event stream (replay from a cursor, then live)
+         * @description Replays the run's event log after a cursor and then follows it
+         *     live until the run ends (finished, failed, cancelled or
+         *     interrupted), then closes. Works for live and finished runs; no
+         *     published protocol defines replay from an offset, so this is ours
+         *     (see `RUN_EVENTS.md` § Streams for the normative rules).
+         *
+         *     **Framing.** Every stream — this one and `startRun`'s — opens with
+         *     exactly one `RUN_STARTED` (no SSE `id`), then the replayed and live
+         *     events, and ends with the closing `RUN_FINISHED` (success,
+         *     interrupt or cancelled outcome) or `RUN_ERROR`. A client
+         *     reconnecting after it already saw a run's `RUN_STARTED` ignores
+         *     the repeat.
+         *
+         *     **Cursor.** Every event encoded from a log entry carries an SSE
+         *     `id:` — the replay cursor, `<seq>` or `<seq>.<k>` — where `seq`
+         *     numbers the internal log entry and `k` (0-based) orders the
+         *     AG-UI events one entry produced: an entry's last event has id
+         *     `<seq>`, any before it `<seq>.0`, `<seq>.1`, …. Ids increase
+         *     strictly within a stream. `RUN_STARTED`, a `gap` (and a purged
+         *     run's empty snapshot) and the closing event belong to no entry
+         *     and carry no id. Resuming at the last id received (`after` or
+         *     `Last-Event-ID`) neither repeats nor skips an entry's event.
+         *     Clients may treat the id as opaque; the integer part is the log
+         *     `seq` (`Run.lastSeq` is the highest).
+         *
+         *     **Gap.** When the cursor points into the part of the log that
+         *     compaction folded away (Q17/Q30), or the run's log has been
+         *     purged, the stream sends a `CUSTOM` event named `hummingbird.gap`
+         *     (`RunGapEventValue`, no `id`) and immediately after it a
+         *     `MESSAGES_SNAPSHOT` (id `<resumeAt>`) whose messages are **this
+         *     run's output only** — not the whole thread — then continues after
+         *     `resumeAt`. A client replaces what it holds of this run's output
+         *     with the snapshot.
+         */
+        get: operations["streamRunEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/share": {
         parameters: {
             query?: never;
@@ -344,6 +543,65 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Changes an activity message's content incrementally. */
+        ActivityDeltaEvent: {
+            /** @description What kind of activity this is. */
+            activityType: string;
+            /** @description The activity message being changed. */
+            messageId: string;
+            /** @description The change, as an RFC 6902 patch against the activity's content. */
+            patch: components["schemas"]["JsonPatch"];
+            /** @constant */
+            type: "ACTIVITY_DELTA";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /** @description Structured progress that is not conversation content, materialised as a message so it keeps its place in the sequence. Stands alone rather than composing BaseMessage, because its content is an object rather than a string. */
+        ActivityMessage: {
+            /** @description What kind of activity this is. An open string: the set is the producer's. */
+            activityType: string;
+            /** @description The activity's payload, open by key. */
+            content: {
+                [key: string]: unknown;
+            };
+            /** @description Identifies the message. */
+            id: string;
+            /** @description Extra information attached to this message. */
+            metadata?: components["schemas"]["Metadata"];
+            /**
+             * @description Fixed. Declared here rather than inherited, because this message does not compose BaseMessage.
+             * @constant
+             */
+            role: "activity";
+        } & components["schemas"]["Attributable"];
+        /** @description Reports structured progress that is not conversation content, such as a step a UI renders as its own widget. */
+        ActivitySnapshotEvent: {
+            /** @description What kind of activity this is. An open string: the set is the producer's, not the protocol's. */
+            activityType: string;
+            /** @description The activity's payload, open by key. */
+            content: {
+                [key: string]: unknown;
+            };
+            /** @description The activity message this describes. */
+            messageId: string;
+            /**
+             * @description Whether this snapshot overwrites the activity's existing content. Absent means it does, and that meaning is normative; only an explicit false asks a consumer to leave what is already there. It does not ask for a merge — ACTIVITY_DELTA is how content is changed incrementally. What a consumer does with a non-overwriting snapshot is behavioural and belongs in the prose.
+             * @default true
+             */
+            replace: boolean;
+            /** @constant */
+            type: "ACTIVITY_SNAPSHOT";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /** @description Inserts value at path. RFC 6902 section 4.1. */
+        AddOperation: {
+            /**
+             * @description Discriminator for the add operation.
+             * @constant
+             */
+            op: "add";
+            /** @description Where to insert the value. */
+            path: components["schemas"]["JsonPointer"];
+            /** @description The value to insert. Any JSON value, including null, which is a legitimate thing to add. */
+            value: unknown;
+        };
         /**
          * @description The error envelope every backend returns on a non-2xx JSON response:
          *     a stable machine-readable `code` plus a human-readable `message`. The
@@ -353,7 +611,8 @@ export interface components {
          *     `invalid_request`, `auth`, `auth_required`, `forbidden`, `not_found`,
          *     `unavailable`, `rate_limit`, `context_window`, `invalid_model`,
          *     `unknown_model`, `provider`, `aborted`, `unknown`. See
-         *     `lib/shared/api-errors.ts`.
+         *     `lib/shared/api-errors.ts`. The runs operations add
+         *     `run_id_conflict` and use `invalid_state`.
          */
         ApiError: {
             /**
@@ -366,6 +625,58 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** @description A message from the agent. Content is optional because a turn may consist only of tool calls. */
+        AssistantMessage: {
+            /** @description What the agent said, if it said anything. */
+            content?: string;
+            /** @constant */
+            role: "assistant";
+            /** @description The tool calls this turn made. */
+            toolCalls?: components["schemas"]["ToolCall"][];
+        } & WithRequired<components["schemas"]["BaseMessage"], "id" | "role">;
+        /** @description Composed into everything that can belong to a subagent's work: the events that describe content or progress, the message types, and each interrupt. Run-scoped events omit it — RUN_STARTED, RUN_FINISHED and RUN_ERROR describe the run itself and MESSAGES_SNAPSHOT is conversation-wide, so none of them can belong to one subagent. A tool call omits it too and inherits its containing message's attribution. */
+        Attributable: {
+            /** @description The subagent invocation this belongs to. Absent means the parent agent produced it directly. */
+            subagentRunId?: components["schemas"]["SubagentRunId"];
+        };
+        /** @description An audio part. */
+        AudioPart: {
+            /** @description Identifies this part within its message. Optional, and nothing reads it yet: reserved as on the text part. */
+            id?: string;
+            /** @description Extra information about this part. Unconstrained, as on the other media parts. */
+            metadata?: unknown;
+            /** @description Where the audio comes from. */
+            source: components["schemas"]["PartSource"];
+            /**
+             * @description Discriminator.
+             * @constant
+             */
+            type: "audio";
+        };
+        /** @description The fields every event carries, whatever its type. Composed into each event definition rather than repeated, so a change here reaches every event at once. */
+        BaseEvent: {
+            /** @description Extra information attached to this event. */
+            metadata?: components["schemas"]["Metadata"];
+            /** @description The provider-native event this one was translated from, carried verbatim for debugging and for consumers that need detail the protocol does not model. Any JSON value. */
+            rawEvent?: unknown;
+            /** @description When the event was created. Bounded to the range JSON numbers survive a round trip in, so the value a consumer reads is the value the producer wrote. Deliberately not a float. The unit is not constrained here, because it never has been stated normatively; every SDK that sets it in practice uses milliseconds since the Unix epoch, and a producer choosing another unit will be misread by consumers even though it validates. Nothing in the protocol computes with this value. */
+            timestamp?: number;
+            /** @description Which event this is. Each event definition narrows this to a single value. */
+            type: components["schemas"]["EventType"];
+        };
+        /** @description The fields shared by the developer, system, assistant and user messages. Deliberately excludes content, because a user message's content may be an array while the others are strings, and composition here intersects rather than overrides: a base that constrained content to a string would make an array content invalid. The tool, activity and reasoning messages do not compose this, because they carry no name. */
+        BaseMessage: {
+            /** @description A provider's opaque artefact belonging to this message, stored by a consumer and returned on a later turn. */
+            encryptedValue?: string;
+            /** @description Identifies the message within the conversation. */
+            id: string;
+            /** @description Extra information attached to this message. */
+            metadata?: components["schemas"]["Metadata"];
+            /** @description An optional display name for the author. */
+            name?: string;
+            /** @description Who the message is from. Each message definition narrows this to a single value. */
+            role: string;
+        } & components["schemas"]["Attributable"];
         Citation: {
             quote: string;
             sourceId: string;
@@ -404,6 +715,27 @@ export interface components {
          * @enum {string}
          */
         ColumnType: "text" | "number" | "link" | "date";
+        /** @description One part of a message body: what a person sends in a user message, or what a tool returns in a tool message. Discriminated by type. Named by what the part is rather than by direction, because the same part travels into the model inside a user message and back out of the stream inside a tool result. */
+        ContentPart: components["schemas"]["TextPart"] | components["schemas"]["ImagePart"] | components["schemas"]["AudioPart"] | components["schemas"]["VideoPart"] | components["schemas"]["DocumentPart"];
+        /** @description A named piece of ambient information given to the agent for the run, distinct from the conversation. */
+        Context: {
+            /** @description What this context is, for the agent to interpret. */
+            description: string;
+            /** @description The context itself. */
+            value: string;
+        };
+        /** @description Copies the value at from to path. RFC 6902 section 4.5. */
+        CopyOperation: {
+            /** @description Where the value is copied from. */
+            from: components["schemas"]["JsonPointer"];
+            /**
+             * @description Discriminator for the copy operation.
+             * @constant
+             */
+            op: "copy";
+            /** @description Where the value is copied to. */
+            path: components["schemas"]["JsonPointer"];
+        };
         CreateConversationShareRequest: {
             /** Format: uuid */
             conversationId: string;
@@ -448,9 +780,51 @@ export interface components {
          *     }
          */
         CspReportBody: unknown;
+        /** @description The protocol's extension point for an application's own events. Anything a consumer does with one is outside the protocol. */
+        CustomEvent: {
+            /** @description What this custom event is. Required: without it a consumer cannot route the value. */
+            name: string;
+            /** @constant */
+            type: "CUSTOM";
+            /** @description The payload. Any JSON value, and required. */
+            value: unknown;
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /** @description Bytes carried inline. */
+        DataSource: {
+            /** @description What the bytes are. Required here, unlike on a URL source, because nothing else can tell a consumer how to read them. */
+            mimeType: string;
+            /**
+             * @description Discriminator.
+             * @constant
+             */
+            type: "data";
+            /** @description The bytes, base64-encoded. contentEncoding is an annotation rather than a constraint in 2020-12, so a malformed string still validates here; rejecting one is the decoder's job. */
+            value: string;
+        };
         DeleteScheduleResponse: {
             /** @constant */
             ok: true;
+        };
+        /** @description Instructions from the application developer. */
+        DeveloperMessage: {
+            /** @description The instructions. Required: a developer message with nothing in it says nothing. */
+            content: string;
+            /** @constant */
+            role: "developer";
+        } & WithRequired<components["schemas"]["BaseMessage"], "id" | "role">;
+        /** @description A document part. */
+        DocumentPart: {
+            /** @description Identifies this part within its message. Optional, and nothing reads it yet: reserved as on the text part. */
+            id?: string;
+            /** @description Extra information about this part. Unconstrained, as on the other media parts. */
+            metadata?: unknown;
+            /** @description Where the document comes from. */
+            source: components["schemas"]["PartSource"];
+            /**
+             * @description Discriminator.
+             * @constant
+             */
+            type: "document";
         };
         EmbedRequest: {
             /** @description Id of the caller's `files` row the sections belong to. */
@@ -476,6 +850,13 @@ export interface components {
          *     transitional FastAPI `{ detail }` envelope is no longer accepted.)
          */
         ErrorResponse: components["schemas"]["ApiError"];
+        /** @description Any AG-UI event. Every member is normative: there is no optional tier and no event a consumer may decline to implement. Discriminated by the type property. */
+        Event: components["schemas"]["TextMessageStartEvent"] | components["schemas"]["TextMessageContentEvent"] | components["schemas"]["TextMessageEndEvent"] | components["schemas"]["TextMessageChunkEvent"] | components["schemas"]["ToolCallStartEvent"] | components["schemas"]["ToolCallArgsEvent"] | components["schemas"]["ToolCallEndEvent"] | components["schemas"]["ToolCallChunkEvent"] | components["schemas"]["ToolCallResultEvent"] | components["schemas"]["StateSnapshotEvent"] | components["schemas"]["StateDeltaEvent"] | components["schemas"]["MessagesSnapshotEvent"] | components["schemas"]["ActivitySnapshotEvent"] | components["schemas"]["ActivityDeltaEvent"] | components["schemas"]["RawEvent"] | components["schemas"]["CustomEvent"] | components["schemas"]["RunStartedEvent"] | components["schemas"]["RunFinishedEvent"] | components["schemas"]["RunErrorEvent"] | components["schemas"]["StepStartedEvent"] | components["schemas"]["StepFinishedEvent"] | components["schemas"]["ReasoningStartEvent"] | components["schemas"]["ReasoningMessageStartEvent"] | components["schemas"]["ReasoningMessageContentEvent"] | components["schemas"]["ReasoningMessageEndEvent"] | components["schemas"]["ReasoningMessageChunkEvent"] | components["schemas"]["ReasoningEndEvent"] | components["schemas"]["ReasoningEncryptedValueEvent"] | components["schemas"]["SubagentStartedEvent"] | components["schemas"]["SubagentFinishedEvent"] | components["schemas"]["SubagentErrorEvent"];
+        /**
+         * @description The discriminator carried by every event.
+         * @enum {string}
+         */
+        EventType: "TEXT_MESSAGE_START" | "TEXT_MESSAGE_CONTENT" | "TEXT_MESSAGE_END" | "TEXT_MESSAGE_CHUNK" | "TOOL_CALL_START" | "TOOL_CALL_ARGS" | "TOOL_CALL_END" | "TOOL_CALL_CHUNK" | "TOOL_CALL_RESULT" | "STATE_SNAPSHOT" | "STATE_DELTA" | "MESSAGES_SNAPSHOT" | "ACTIVITY_SNAPSHOT" | "ACTIVITY_DELTA" | "RAW" | "CUSTOM" | "RUN_STARTED" | "RUN_FINISHED" | "RUN_ERROR" | "STEP_STARTED" | "STEP_FINISHED" | "REASONING_START" | "REASONING_MESSAGE_START" | "REASONING_MESSAGE_CONTENT" | "REASONING_MESSAGE_END" | "REASONING_MESSAGE_CHUNK" | "REASONING_END" | "REASONING_ENCRYPTED_VALUE" | "SUBAGENT_STARTED" | "SUBAGENT_FINISHED" | "SUBAGENT_ERROR";
         ExtractTableRequest: {
             /**
              * @description Optional column hints. Each entry is a plain label (legacy, treated
@@ -493,6 +874,27 @@ export interface components {
             title: string;
             url: string;
         };
+        /** @description Bytes already at the provider, named by a handle the provider issued: an OpenAI or Anthropic file id, a Gemini file URI, a storage URL only that provider can read. No bytes travel and nothing is fetched. Only the provider that minted the handle can resolve it; a peer that cannot drops the part as it drops any part it cannot use. */
+        FileSource: {
+            /** @description What the file is, when the producer knows. Optional, because the provider that holds the bytes knows. */
+            mimeType?: string;
+            /** @description Who issued the handle, when the producer knows. Optional: an agent already knows which provider it talks to. When present, SHOULD be the lowercase vendor id (openai, anthropic, google) that TokenUsage.provider uses, so a peer can tell before sending whether a handle is one it can use. */
+            provider?: string;
+            /**
+             * @description Discriminator.
+             * @constant
+             */
+            type: "file";
+            /** @description The handle, exactly as the provider issued it. Opaque: a consumer MUST NOT fetch it, parse it or read a scheme out of it. */
+            value: string;
+        };
+        /** @description The name and arguments of a tool call. */
+        FunctionCall: {
+            /** @description The arguments as a JSON string, not as parsed JSON. Kept as written because a model can emit arguments that are not valid JSON, and losing them at the protocol boundary would hide the fault from the consumer that has to handle it. */
+            arguments: string;
+            /** @description Which tool is being called. */
+            name: string;
+        };
         HealthResponse: {
             /** @description The implementation's name, e.g. `agent-py`. */
             service: string;
@@ -506,6 +908,45 @@ export interface components {
             aspectRatio?: "1:1" | "16:9" | "9:16" | "4:3" | "3:4" | "2:3" | "3:2";
             maxCalls?: number;
         };
+        /** @description An image part. */
+        ImagePart: {
+            /** @description Identifies this part within its message. Optional, and nothing reads it yet: reserved as on the text part. */
+            id?: string;
+            /** @description Extra information about this part. Unconstrained rather than an object: inherited from the SDKs, which declare it unknown rather than a record; listed under known divergences in the README rather than resolved here. */
+            metadata?: unknown;
+            /** @description Where the image comes from. */
+            source: components["schemas"]["PartSource"];
+            /**
+             * @description Discriminator.
+             * @constant
+             */
+            type: "image";
+        };
+        /** @description Something a run needs from outside before it can continue, such as an approval or a missing value. */
+        Interrupt: {
+            /** @description When the interrupt stops being answerable. Deliberately unconstrained rather than a date-time format, because producers already disagree about the representation and tightening it here would reject streams that work today. The documented convention is ISO 8601, and a consumer comparing this value will parse it as a date, so a value that is not one leaves the interrupt looking permanently unexpired. */
+            expiresAt?: string;
+            /** @description Identifies the interrupt. A resume entry answers it by this id. */
+            id: string;
+            /** @description A human-readable prompt for whoever answers. */
+            message?: string;
+            /** @description Extra information attached to this interrupt. */
+            metadata?: components["schemas"]["Metadata"];
+            /** @description Why the run stopped. An open string rather than an enumeration: the protocol does not attempt to classify every reason an agent might need input. */
+            reason: string;
+            /** @description A JSON Schema describing the answer this interrupt expects, so a consumer can build a form for it. Carried opaquely: the protocol does not constrain or validate it. Restricted to an object because TypeScript and Python both declare it that way; .NET holds it as any JSON, and the ticket that commissioned this schema lists it among the arbitrary-JSON fields. Following the two that constrain it keeps the schema from accepting documents the reference client rejects, at the cost of rejecting the boolean schemas JSON Schema also permits — a bare true for "any answer". Recorded as a known divergence rather than settled. */
+            responseSchema?: {
+                [key: string]: unknown;
+            };
+            /** @description The tool call this interrupt concerns, when it is a tool approval. */
+            toolCallId?: string;
+        } & components["schemas"]["Attributable"];
+        /** @description A JSON Patch document as defined by RFC 6902, referenced by STATE_DELTA.delta and ACTIVITY_DELTA.patch: an ordered sequence of operations applied to a target document. An empty array is a valid no-op patch. Whether the operations actually apply to the document they target is a runtime question RFC 6902 leaves to the applier; structural validity here says nothing about it. */
+        JsonPatch: components["schemas"]["JsonPatchOperation"][];
+        /** @description A single RFC 6902 operation. Exactly one of the operation shapes must match, discriminated by op. Unlike the protocol's own objects, the operations are open: RFC 6902 section 4 requires members an operation does not define to be ignored rather than rejected, so a remove carrying a leftover value is a valid patch. Two of the RFC's rules are relations between values rather than shapes, so no static schema can express them and neither is checked here: a move whose from is a proper prefix of its path (section 4.4), and any operation whose pointer does not resolve in the target document. Both are the applier's to reject. */
+        JsonPatchOperation: components["schemas"]["AddOperation"] | components["schemas"]["RemoveOperation"] | components["schemas"]["ReplaceOperation"] | components["schemas"]["MoveOperation"] | components["schemas"]["CopyOperation"] | components["schemas"]["TestOperation"];
+        /** @description A JSON Pointer as defined by RFC 6901. Either the empty string, meaning the whole document, or a sequence of slash-prefixed reference tokens in which a tilde is escaped as ~0 and a slash as ~1. A value with no leading slash, or a tilde followed by anything other than 0 or 1, is not a JSON Pointer. */
+        JsonPointer: string;
         MaxCallsSkillConfig: {
             maxCalls?: number;
         };
@@ -521,6 +962,42 @@ export interface components {
             /** @constant */
             ok: true;
         };
+        /** @description Any message in a conversation. Discriminated by role. */
+        Message: components["schemas"]["DeveloperMessage"] | components["schemas"]["SystemMessage"] | components["schemas"]["AssistantMessage"] | components["schemas"]["UserMessage"] | components["schemas"]["ToolMessage"] | components["schemas"]["ActivityMessage"] | components["schemas"]["ReasoningMessage"];
+        /** @description The complete set of messages the producer owns, in order. Conversation-wide rather than a plain overwrite: a consumer may keep messages of its own that no producer tracks, so exactly how a snapshot reconciles with those is behavioural and belongs in the prose. Being conversation-wide it cannot belong to a single subagent, so it carries no attribution; it does establish which subagent owns each message it contains, through the messages themselves. */
+        MessagesSnapshotEvent: {
+            /** @description The messages the producer is declaring, in order. */
+            messages: components["schemas"]["Message"][];
+            /** @constant */
+            type: "MESSAGES_SNAPSHOT";
+        } & WithRequired<components["schemas"]["BaseEvent"], "type">;
+        /** @description Extra information attached to an event, a message, a tool call, a tool, an interrupt or a resume entry. Open by key: any JSON value is allowed under a key, including null, because a null there is meaningful data. The object itself may be absent but is never null when present. The key ag-ui is reserved for the protocol's own use; reservation is by convention, since validating the shape of a key's value would contradict being open by key. */
+        Metadata: {
+            [key: string]: unknown;
+        };
+        /** @description Moves the value at from to path. RFC 6902 section 4.4. */
+        MoveOperation: {
+            /** @description Where the value is moved from. */
+            from: components["schemas"]["JsonPointer"];
+            /**
+             * @description Discriminator for the move operation.
+             * @constant
+             */
+            op: "move";
+            /** @description Where the value is moved to. */
+            path: components["schemas"]["JsonPointer"];
+        };
+        /** @description Where a media part's bytes come from: carried inline, referenced by URL, or already at the provider under a handle it issued. */
+        PartSource: components["schemas"]["DataSource"] | components["schemas"]["UrlSource"] | components["schemas"]["FileSource"];
+        /** @description Passes a provider-native event through untranslated, for consumers that need detail the protocol does not model. */
+        RawEvent: {
+            /** @description The provider's own event. Any JSON value, and required: an event whose only purpose is to carry this would say nothing without it. */
+            event: unknown;
+            /** @description Which provider or framework the event came from. */
+            source?: string;
+            /** @constant */
+            type: "RAW";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
         /**
          * @description Implementation-specific dependency checks. The keys below are the
          *     ones agent-py reports; every key is optional and another backend may
@@ -547,6 +1024,89 @@ export interface components {
             /** @enum {string} */
             status: "ok" | "degraded";
         };
+        /** @description Carries a provider's opaque, encrypted reasoning artefact, which a consumer stores and returns on a later turn without being able to read it. */
+        ReasoningEncryptedValueEvent: {
+            /** @description The provider's opaque artefact. */
+            encryptedValue: string;
+            /** @description What the value belongs to: a message id or a tool call id, according to subtype. */
+            entityId: string;
+            /** @description What kind of thing entityId names, which decides where the value is stored. */
+            subtype: components["schemas"]["ReasoningEncryptedValueSubtype"];
+            /** @constant */
+            type: "REASONING_ENCRYPTED_VALUE";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /**
+         * @description Whether a REASONING_ENCRYPTED_VALUE belongs to a message or to a tool call.
+         * @enum {string}
+         */
+        ReasoningEncryptedValueSubtype: "tool-call" | "message";
+        /** @description Closes a span of reasoning. */
+        ReasoningEndEvent: {
+            /** @description The span being closed. */
+            messageId: string;
+            /** @constant */
+            type: "REASONING_END";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /** @description A span of the agent's reasoning, materialised as a message. Stands alone rather than composing BaseMessage, because it carries no name. */
+        ReasoningMessage: {
+            /** @description The reasoning text. */
+            content: string;
+            /** @description A provider's opaque reasoning artefact belonging to this message. */
+            encryptedValue?: string;
+            /** @description Identifies the message. */
+            id: string;
+            /** @description Extra information attached to this message. */
+            metadata?: components["schemas"]["Metadata"];
+            /**
+             * @description Fixed. Declared here rather than inherited, because this message does not compose BaseMessage.
+             * @constant
+             */
+            role: "reasoning";
+        } & components["schemas"]["Attributable"];
+        /** @description A shorthand that stands in for a reasoning message's start, content and end sequence. */
+        ReasoningMessageChunkEvent: {
+            /** @description The fragment to append. May be the empty string. */
+            delta?: string;
+            /** @description The reasoning message this chunk belongs to. Absent continues the one already open. */
+            messageId?: string;
+            /** @constant */
+            type: "REASONING_MESSAGE_CHUNK";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /** @description Appends a fragment to a streamed reasoning message. */
+        ReasoningMessageContentEvent: {
+            /** @description The fragment to append. May be the empty string. */
+            delta: string;
+            /** @description The reasoning message this fragment belongs to. */
+            messageId: string;
+            /** @constant */
+            type: "REASONING_MESSAGE_CONTENT";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /** @description Closes a streamed reasoning message. */
+        ReasoningMessageEndEvent: {
+            /** @description The reasoning message being closed. */
+            messageId: string;
+            /** @constant */
+            type: "REASONING_MESSAGE_END";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /** @description Opens a streamed reasoning message. */
+        ReasoningMessageStartEvent: {
+            /** @description The reasoning message this stream builds. */
+            messageId: string;
+            /**
+             * @description Fixed, and required rather than defaulted. The requirement is inherited from the SDKs rather than chosen.
+             * @constant
+             */
+            role: "reasoning";
+            /** @constant */
+            type: "REASONING_MESSAGE_START";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /** @description Opens a span of reasoning. A span may contain several reasoning messages. */
+        ReasoningStartEvent: {
+            /** @description The span being opened. */
+            messageId: string;
+            /** @constant */
+            type: "REASONING_START";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
         RefreshFileUrlRequest: {
             /**
              * @description Object path inside the bucket, `<user_id>/...`. Must not start
@@ -568,6 +1128,28 @@ export interface components {
         RefreshStorageUrlResponse: {
             /** @description A newly signed, long-lived URL for the object. */
             url: string;
+        };
+        /** @description Removes the value at path. RFC 6902 section 4.2. */
+        RemoveOperation: {
+            /**
+             * @description Discriminator for the remove operation.
+             * @constant
+             */
+            op: "remove";
+            /** @description What to remove. */
+            path: components["schemas"]["JsonPointer"];
+        };
+        /** @description Replaces the value at path. RFC 6902 section 4.3. */
+        ReplaceOperation: {
+            /**
+             * @description Discriminator for the replace operation.
+             * @constant
+             */
+            op: "replace";
+            /** @description What to replace. */
+            path: components["schemas"]["JsonPointer"];
+            /** @description The replacement. Any JSON value, including null. */
+            value: unknown;
         };
         ResolvedConversationShare: {
             conversationTitle: string;
@@ -602,10 +1184,278 @@ export interface components {
         };
         /** @description What a share page renders, by `kind`. */
         ResolvedShare: components["schemas"]["ResolvedConversationShare"] | components["schemas"]["ResolvedDocumentShare"];
+        /** @description An answer to one interrupt, sent on the run that continues from it. */
+        ResumeEntry: {
+            /** @description The interrupt being answered. */
+            interruptId: string;
+            /** @description Envelope information about the response, such as signatures or routing keys, as opposed to payload, which is the answer itself. */
+            metadata?: components["schemas"]["Metadata"];
+            /** @description The answer the agent asked for and will act on. Any JSON value. */
+            payload?: unknown;
+            /**
+             * @description Whether the interrupt was answered or abandoned.
+             * @enum {string}
+             */
+            status: "resolved" | "cancelled";
+        };
         RevokeShareResponse: {
             /** @enum {boolean} */
             ok: true;
         };
+        /**
+         * @description The run resource (modelled on the LangChain Agent Protocol's run).
+         *     Exactly one of `result` / `error` / `openInterrupts` is meaningful,
+         *     by `status`: `succeeded` → `result`; `failed` → `error`;
+         *     `interrupted` → `openInterrupts` (non-empty); otherwise all are
+         *     empty.
+         */
+        Run: {
+            /** Format: date-time */
+            createdAt: string;
+            error: components["schemas"]["RunError"] | null;
+            /**
+             * Format: date-time
+             * @description When the run ended (`succeeded`, `failed`, `cancelled` or `interrupted`).
+             */
+            finishedAt: string | null;
+            /** Format: uuid */
+            id: string;
+            /** @description The highest log `seq` so far (0 before the first event, or after the log was purged). */
+            lastSeq: number;
+            mode: components["schemas"]["RunMode"];
+            /** @description What an `interrupted` run waits for; the same objects as its `RUN_FINISHED` interrupt outcome. Empty in every other status. */
+            openInterrupts: components["schemas"]["Interrupt"][];
+            /**
+             * Format: uuid
+             * @description The run that spawned this one as a separate (background) sub-agent run. Sub-agents that run inside a run appear in its stream as `SUBAGENT_*` events instead.
+             */
+            parentRunId: string | null;
+            /**
+             * Format: uuid
+             * @description The interrupted run this one answered (`forwardedProps.previousRunId`).
+             */
+            previousRunId: string | null;
+            result: components["schemas"]["RunResult"] | null;
+            /** Format: date-time */
+            startedAt: string | null;
+            status: components["schemas"]["RunStatus"];
+            /** Format: uuid */
+            threadId: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        RunAccepted: {
+            /** Format: uuid */
+            runId: string;
+            status: components["schemas"]["RunStatus"];
+        };
+        /** @description A request to run an agent. Also echoed back as RUN_STARTED.input. Only threadId, runId and messages are required: those are the three the SDKs already agree on, and for tools and context an absent key and an empty array mean the same thing, so requiring them would catch nothing a producer could get wrong. */
+        RunAgentInput: {
+            /** @description Ambient information for the run. Absent means none. */
+            context?: components["schemas"]["Context"][];
+            /** @description Application-specific values passed through to the agent untouched. Any JSON value. */
+            forwardedProps?: unknown;
+            /** @description The conversation so far, in order. */
+            messages: components["schemas"]["Message"][];
+            /** @description The run that spawned this one. */
+            parentRunId?: string;
+            /** @description The protocol version this consumer speaks, such as "1.0". Absent means the input was produced before the protocol carried a version — the versioning rules in the prose govern what each side does with that. Sent in-band rather than by the transport, so a recorded exchange stays self-describing. */
+            protocolVersion?: string;
+            /** @description Answers to the interrupts that ended a previous run, when this run continues from one. */
+            resume?: components["schemas"]["ResumeEntry"][];
+            /** @description Identifies this run. */
+            runId: string;
+            /** @description The state the run starts from. */
+            state?: components["schemas"]["State"];
+            /** @description The conversation this run belongs to. */
+            threadId: string;
+            /** @description The tools the agent may call. Absent means none. */
+            tools?: components["schemas"]["Tool"][];
+        };
+        /**
+         * @description A replay cursor — an SSE `id` a run stream sent: `<seq>` (after
+         *     log entry `seq` entirely) or `<seq>.<k>` (after the k-th AG-UI
+         *     event entry `seq` produced). `0` is before the first entry.
+         * @example 0
+         * @example 42
+         * @example 42.1
+         */
+        RunCursor: string;
+        /** @description Why a run failed — also `RUN_ERROR`'s `code` / `message`. */
+        RunError: {
+            /** @description An `ApiError` code: `rate_limit`, `auth`, `context_window`, `provider`, `upstream`, `max_steps`, `no_worker`, `worker_lost`, `unknown`, … */
+            code: string;
+            message: string;
+        };
+        /** @description Ends a run that failed. Run-scoped, so it carries no subagent attribution; a subagent that fails without ending the run reports SUBAGENT_ERROR instead. */
+        RunErrorEvent: {
+            /** @description A machine-readable error code. An open string: the protocol defines no vocabulary. */
+            code?: string;
+            /** @description What went wrong, for a person to read. */
+            message: string;
+            /** @constant */
+            type: "RUN_ERROR";
+            /** @description Token usage accrued before the failure, for a run that completed one or more model calls before dying. Scoped as on RUN_FINISHED: the run's own calls, subagents included. */
+            usage?: components["schemas"]["TokenUsage"][];
+        } & WithRequired<components["schemas"]["BaseEvent"], "type">;
+        /** @description The run was stopped before it completed, by whoever was running it, and did not fail. Neither success nor interrupt: nothing was produced as a result, and nothing is waited for, so the next run on the thread is an ordinary new run rather than a resume. Closed like its siblings: a cancelled run has no interrupts to carry. Named in the schema before 1.0 because an outcome a consumer does not recognise is stripped and read as success — a cancellation added later would reach every 1.0 consumer as a completed run. */
+        RunFinishedCancelledOutcome: {
+            /**
+             * @description Discriminator.
+             * @constant
+             */
+            type: "cancelled";
+        };
+        /** @description Closes a run that did not fail. Run-scoped, so it carries no subagent attribution. */
+        RunFinishedEvent: {
+            /** @description Why the run ended. Absent means success, so every producer written before outcomes existed is already conformant. */
+            outcome?: components["schemas"]["RunFinishedOutcome"];
+            /** @description The run's return value, if it has one. Any JSON value. */
+            result?: unknown;
+            /** @description The run being closed. */
+            runId: string;
+            /** @description The conversation this run belongs to. */
+            threadId: string;
+            /** @constant */
+            type: "RUN_FINISHED";
+            /** @description Token usage for the run, one entry per provider and model, so a run that invoked several models keeps them separate. A consumer that only wants totals sums across the entries. The run is the accounting boundary: usage covers every model call made within the run, calls made by its subagents included; an agent invoked as a separate run under parentRunId reports its own usage on its own terminal event; and a run that resumes an interrupted one reports only the calls it made itself, not the interrupted run's. */
+            usage?: components["schemas"]["TokenUsage"][];
+        } & WithRequired<components["schemas"]["BaseEvent"], "type">;
+        /** @description The run is paused, waiting for something outside it. Resuming means starting a new run whose resume entries answer these interrupts. */
+        RunFinishedInterruptOutcome: {
+            /** @description What the run is waiting for. At least one: an interrupt outcome with nothing to answer would leave a consumer with nothing to do. */
+            interrupts: components["schemas"]["Interrupt"][];
+            /**
+             * @description Discriminator.
+             * @constant
+             */
+            type: "interrupt";
+        };
+        /** @description Why a run ended. */
+        RunFinishedOutcome: components["schemas"]["RunFinishedSuccessOutcome"] | components["schemas"]["RunFinishedInterruptOutcome"] | components["schemas"]["RunFinishedCancelledOutcome"];
+        /** @description The run completed. Equivalent to an absent outcome. Closed like every other object, which is also what keeps it from carrying the suspended sibling's interrupts — a success with an interrupt still pending would be a contradiction, not an extension. A completed run may still have left frontend tool calls for the application to answer; pendingToolCallIds names them. */
+        RunFinishedSuccessOutcome: {
+            /** @description The tool calls this run started and left unanswered — no TOOL_CALL_RESULT in the run — for the application to answer in the next input's messages, in the order they were made. Absent or empty means the producer named none, and a consumer derives the list from the stream; otherwise it is the list, and it agrees with the stream. On the success outcome rather than the event because a run that stopped on a frontend tool call is a completed run: whether the application continues the thread is its own decision, so the producer reports what it knows and no more. */
+            pendingToolCallIds?: string[];
+            /**
+             * @description Discriminator.
+             * @constant
+             */
+            type: "success";
+        };
+        /**
+         * @description Hummingbird's run options, carried in AG-UI's
+         *     `RunAgentInput.forwardedProps` (application-specific values the
+         *     protocol passes through). Open: a backend ignores keys it does not
+         *     know, and new keys are additive. Every key is optional.
+         */
+        RunForwardedProps: {
+            /** @description Background runs — the task's title. Absent means the last user message's text. */
+            goal?: string;
+            /** @description Step budget. Absent means 25 (background) or the chat default (interactive). */
+            maxSteps?: number;
+            mode?: components["schemas"]["RunMode"];
+            /** @description Model id from the backend's allow-list. Absent means the backend's default. */
+            model?: string;
+            /**
+             * Format: uuid
+             * @description The interrupted run this one answers. Required with a
+             *     non-empty `resume[]`, otherwise ignored.
+             */
+            previousRunId?: string;
+            skills?: components["schemas"]["SkillConfig"][];
+            /** @description Extra instructions (workspace / conversation system prompt), prepended to the backend's own. */
+            systemPrompt?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * @description The `value` of the `CUSTOM` event named `hummingbird.gap`: the
+         *     requested cursor points at events the log no longer holds. The
+         *     next event is always a `MESSAGES_SNAPSHOT` (id `resumeAt`, or no id
+         *     when `resumeAt` is null) holding this run's output up to
+         *     `resumeAt`; the stream then continues after it.
+         */
+        RunGapEventValue: {
+            after: components["schemas"]["RunCursor"];
+            /**
+             * @description `compacted` — deltas were folded into the snapshot (Q17); `purged` — the log is gone after its retention window and the snapshot is empty (Q30).
+             * @enum {string}
+             */
+            reason: "compacted" | "purged";
+            /** @description The seq the snapshot covers up to (the compacted entry's seq); null when the whole log was purged. */
+            resumeAt: number | null;
+        };
+        RunList: {
+            /** @description Pass back as `pageToken` for the next page; null on the last page. */
+            nextPageToken: string | null;
+            runs: components["schemas"]["Run"][];
+        };
+        /**
+         * @description `interactive`: runs in the API process that received `startRun`,
+         *     streamed to the caller (Q28). `background`: queued for a worker;
+         *     requires sign-in.
+         * @enum {string}
+         */
+        RunMode: "interactive" | "background";
+        /**
+         * @description A succeeded run's return value — also `RUN_FINISHED.result` on the
+         *     wire. Open; keys are additive.
+         */
+        RunResult: {
+            /**
+             * @description The run read third-party content (web, file, MCP or sandbox
+             *     tools), so post-turn memory extraction must skip it. Absent
+             *     means false.
+             */
+            memoryTainted?: boolean;
+            /** @description The run's final assistant text, when it produced one. */
+            text?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * @description The `value` of the `CUSTOM` event named `hummingbird.rewind`: a
+         *     background run's worker died and another resumed it from the
+         *     checkpoint at `after`. Discard every event received from this
+         *     run's stream whose cursor seq is greater than `after` (they were
+         *     the dead attempt's); the events that follow replace them.
+         */
+        RunRewindEventValue: {
+            after: number;
+        };
+        /** @description Opens a run. Run-scoped, so it carries no subagent attribution. */
+        RunStartedEvent: {
+            /** @description The request this run was started from, echoed back so a consumer that did not make the request can still see what the agent was asked. */
+            input?: components["schemas"]["RunAgentInput"];
+            /** @description The run that spawned this one, when an agent invokes another agent as a separate run rather than as a subagent within one. */
+            parentRunId?: string;
+            /** @description The protocol version this producer speaks, such as "1.0" — the producer's own version, not an echo of the input's, which is what makes the pair a negotiation: each side declares itself and the consumer sees a downgrade the moment it happens. Absent means a producer from before the protocol carried a version. */
+            protocolVersion?: string;
+            /** @description Identifies this run. */
+            runId: string;
+            /** @description The conversation this run belongs to. */
+            threadId: string;
+            /** @constant */
+            type: "RUN_STARTED";
+        } & WithRequired<components["schemas"]["BaseEvent"], "type">;
+        /**
+         * @description A run's lifecycle. `queued` (background, not picked up yet) →
+         *     `running` → one of the four ends: `succeeded`, `failed`,
+         *     `cancelled`, or `interrupted` (waiting for answers to its open
+         *     interrupts — which a **new** run answers, Q24; an interrupted run
+         *     itself never runs again). A background run waiting on its own
+         *     sub-agent runs is still `running`. Mapping to the internal status
+         *     and `tasks.status`: `RUN_EVENTS.md` § Status.
+         * @enum {string}
+         */
+        RunStatus: "queued" | "running" | "interrupted" | "succeeded" | "failed" | "cancelled";
+        /**
+         * @description An anonymous run's capability: at least 128 random bits,
+         *     base64url without padding. Issued once, in `startRun`'s
+         *     `X-Run-Token` response header; the backend stores only a hash.
+         */
+        RunToken: string;
         ScheduleCreateRequest: {
             cron: components["schemas"]["ScheduleCron"];
             /** @description Absent means true. */
@@ -694,10 +1544,349 @@ export interface components {
             webFetchConfig?: components["schemas"]["MaxCallsSkillConfig"];
             webSearchConfig?: components["schemas"]["WebSearchSkillConfig"];
         };
+        /**
+         * @description An AG-UI 1.0 `RunAgentInput`, by reference into the pinned schema,
+         *     narrowed: `threadId` and `runId` are UUIDs, and `forwardedProps`,
+         *     when present, is a `RunForwardedProps`. (`mode` cannot be a
+         *     top-level field: `RunAgentInput` is closed —
+         *     `unevaluatedProperties: false` — so any extra key fails it.)
+         *
+         *     `messages` is the thread's history up to and including the new
+         *     user message (Q15 — the browser owns the history; the backend
+         *     keeps nothing across runs). Messages with role `activity` are
+         *     display state and are not sent to the model. `tools` are
+         *     client-side tools; the backend's own tools come from
+         *     `forwardedProps.skills`.
+         */
+        StartRunRequest: components["schemas"]["RunAgentInput"] & {
+            forwardedProps?: components["schemas"]["RunForwardedProps"];
+            runId?: components["schemas"]["UuidString"];
+            threadId?: components["schemas"]["UuidString"];
+        };
+        /** @description Agent state. Any JSON value: the protocol carries state without interpreting it, so an object, an array, a string and a number are all valid. */
+        State: unknown;
+        /** @description Changes the agent state incrementally. */
+        StateDeltaEvent: {
+            /** @description The change, as an RFC 6902 patch against the current state. Structural validity here does not mean the patch applies: a well-formed operation may point at a path that does not exist, which RFC 6902 leaves to the applier. */
+            delta: components["schemas"]["JsonPatch"];
+            /** @constant */
+            type: "STATE_DELTA";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /** @description Replaces the agent state wholesale. Sent when a delta cannot express the change, or to resynchronise a consumer. */
+        StateSnapshotEvent: {
+            /** @description The complete new state. */
+            snapshot: components["schemas"]["State"];
+            /** @constant */
+            type: "STATE_SNAPSHOT";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /** @description Closes a named step. */
+        StepFinishedEvent: {
+            /** @description The step being closed. */
+            stepName: string;
+            /** @constant */
+            type: "STEP_FINISHED";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /** @description Opens a named step within a run, for producers whose frameworks have a step concept worth surfacing. */
+        StepStartedEvent: {
+            /** @description The step's name. Identifies it: the matching STEP_FINISHED carries the same name. */
+            stepName: string;
+            /** @constant */
+            type: "STEP_STARTED";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /** @description Reports that a subagent invocation failed. The run may continue: a parent agent is free to handle a failed subagent, which is why this is not RUN_ERROR. */
+        SubagentErrorEvent: {
+            /** @description A machine-readable error code. An open string. */
+            code?: string;
+            /** @description What went wrong, for a person to read. */
+            message: string;
+            /** @description The invocation that failed. */
+            subagentRunId: components["schemas"]["SubagentRunId"];
+            /** @constant */
+            type: "SUBAGENT_ERROR";
+        } & WithRequired<components["schemas"]["BaseEvent"], "type">;
+        /** @description Ends a subagent invocation's segment of this run, either because the work completed or because it is suspended awaiting outside input. */
+        SubagentFinishedEvent: {
+            /** @description Why the segment ended. Absent means success. A suspended subagent is neither a success nor a failure, which is why saying so needs its own value rather than being inferred from a later interrupt. */
+            outcome?: components["schemas"]["SubagentFinishedOutcome"];
+            /** @description The subagent's return value, if it has one. Any JSON value, mirroring RUN_FINISHED.result. */
+            result?: unknown;
+            /** @description The invocation being closed. */
+            subagentRunId: components["schemas"]["SubagentRunId"];
+            /** @constant */
+            type: "SUBAGENT_FINISHED";
+        } & WithRequired<components["schemas"]["BaseEvent"], "type">;
+        /** @description Why a subagent's segment of a run ended. Mirrors RunFinishedOutcome one level down. */
+        SubagentFinishedOutcome: components["schemas"]["SubagentFinishedSuccessOutcome"] | components["schemas"]["SubagentFinishedSuspendedOutcome"];
+        /** @description The subagent completed its work. Equivalent to an absent outcome. */
+        SubagentFinishedSuccessOutcome: {
+            /**
+             * @description Discriminator.
+             * @constant
+             */
+            type: "success";
+        };
+        /** @description The subagent is paused awaiting outside input. Terminal for this stream, not for the subagent: a later run may continue the same invocation once the interrupts are answered. */
+        SubagentFinishedSuspendedOutcome: {
+            /** @description The run-level interrupts this subagent raised itself. May be empty or absent: a subagent suspended because a descendant interrupted owns no interrupt of its own. */
+            interruptIds?: string[];
+            /**
+             * @description Discriminator.
+             * @constant
+             */
+            type: "suspended";
+        };
+        /** @description An opaque handle for one subagent invocation, not a reusable name for a subagent definition: two invocations of the same subagent carry two different values. Named to mirror runId one level down, the way the subagent's name mirrors agentId. */
+        SubagentRunId: string;
+        /** @description Announces that a subagent invocation has begun. Everything the subagent produces afterwards is attributed by carrying its subagentRunId, so a consumer can group the work without replaying the stream. Composed from BaseEvent alone rather than Attributable, because here subagentRunId identifies the subagent rather than attributing the event to one; attribution to an enclosing subagent is parentSubagentRunId. */
+        SubagentStartedEvent: {
+            /** @description What this subagent is for, for a consumer to display. */
+            description?: string;
+            /** @description The subagent's name, which is reusable across invocations, unlike subagentRunId. */
+            name: string;
+            /** @description The message that held the spawning tool call. */
+            parentMessageId?: string;
+            /** @description The subagent invocation that spawned this one, for nested delegation. Absent means the parent agent spawned it directly. */
+            parentSubagentRunId?: components["schemas"]["SubagentRunId"];
+            /** @description The tool call that spawned this subagent, for the pattern where agents are exposed to a model as tools. Lets a consumer tie the subagent to the call without reading rawEvent. */
+            parentToolCallId?: string;
+            /** @description The invocation being announced. */
+            subagentRunId: components["schemas"]["SubagentRunId"];
+            /** @constant */
+            type: "SUBAGENT_STARTED";
+        } & WithRequired<components["schemas"]["BaseEvent"], "type">;
+        /** @description Instructions from the system. */
+        SystemMessage: {
+            /** @description The instructions. Required. */
+            content: string;
+            /** @constant */
+            role: "system";
+        } & WithRequired<components["schemas"]["BaseMessage"], "id" | "role">;
+        /** @description Asserts that the value at path equals value. RFC 6902 section 4.6. */
+        TestOperation: {
+            /**
+             * @description Discriminator for the test operation.
+             * @constant
+             */
+            op: "test";
+            /** @description What to compare. */
+            path: components["schemas"]["JsonPointer"];
+            /** @description The value the target must equal. Any JSON value, including null. */
+            value: unknown;
+        };
+        /** @description A shorthand that stands in for a start, content and end sequence, for producers that cannot know in advance where a message begins. Every field is optional because a continuation chunk omits what has not changed; which message a field-less chunk continues is a sequence question the prose specification answers. */
+        TextMessageChunkEvent: {
+            /** @description The fragment to append. May be the empty string. */
+            delta?: string;
+            /** @description The message this chunk belongs to. Absent continues the message already open. */
+            messageId?: string;
+            /** @description An optional display name for the author. */
+            name?: string;
+            /** @description Who the message is from, on the chunk that opens it. */
+            role?: components["schemas"]["TextMessageRole"];
+            /** @constant */
+            type: "TEXT_MESSAGE_CHUNK";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /** @description Appends a fragment to a streamed text message. */
+        TextMessageContentEvent: {
+            /** @description The fragment to append. May be the empty string: providers emit empty deltas as keep-alives and while a tool call is being decided, and rejecting them would kill runs that are working correctly. */
+            delta: string;
+            /** @description The message this fragment belongs to. */
+            messageId: string;
+            /** @constant */
+            type: "TEXT_MESSAGE_CONTENT";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /** @description Closes a streamed text message. */
+        TextMessageEndEvent: {
+            /** @description The message being closed. */
+            messageId: string;
+            /** @constant */
+            type: "TEXT_MESSAGE_END";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /**
+         * @description The roles a streamed text message may take. Excludes tool, which is carried by TOOL_CALL_RESULT rather than streamed as text.
+         * @enum {string}
+         */
+        TextMessageRole: "developer" | "system" | "assistant" | "user";
+        /** @description Opens a streamed text message. The content arrives as TEXT_MESSAGE_CONTENT events and the message closes with TEXT_MESSAGE_END. */
+        TextMessageStartEvent: {
+            /** @description Identifies the message this stream builds, and ties the later content and end events to it. */
+            messageId: string;
+            /** @description An optional display name for the author, for providers that distinguish several participants in one role. */
+            name?: string;
+            /**
+             * @description Who the message is from. An absent role means assistant; that meaning is normative and stated in the prose, because a validator treats a default as documentation rather than as behaviour.
+             * @default assistant
+             */
+            role: components["schemas"]["TextMessageRole"];
+            /** @constant */
+            type: "TEXT_MESSAGE_START";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /** @description A text part. */
+        TextPart: {
+            /** @description Identifies this part within its message. Optional, and nothing reads it yet: reserved so that a streamed part can be matched to its entry in history once assistant messages carry parts too. */
+            id?: string;
+            /** @description Extra information about this part. Unconstrained, as on the media parts. This is where a text search hit carries its source and title, rather than the protocol modelling a search-result part of its own. */
+            metadata?: unknown;
+            /** @description The text. */
+            text: string;
+            /**
+             * @description Discriminator.
+             * @constant
+             */
+            type: "text";
+        };
+        /** @description Token counts for one provider and model, in the protocol's own accounting: every count is either a total or a named part of one, so entries from different providers add up without double-counting. inputTokens and outputTokens are the totals; reasoningTokens, cachedInputTokens and cacheWriteInputTokens are parts of them, never additions to them; totalTokens is the two totals summed. Every field is a label or a number — nothing content-bearing or identifying, no prompts, completions, messages, or thread, run and user identifiers. */
+        TokenUsage: {
+            /** @description Input tokens read from a provider cache. Part of inputTokens, not in addition to it, and disjoint from cacheWriteInputTokens. */
+            cachedInputTokens?: number;
+            /** @description Input tokens written to a provider cache on this call, where the provider distinguishes them. Part of inputTokens, not in addition to it, and disjoint from cachedInputTokens. Its own field because providers price a cache write differently from a cache read, so a consumer computing cost cannot do without it. */
+            cacheWriteInputTokens?: number;
+            /** @description Every prompt token the call was charged for: tokens read from a provider cache, tokens written to one, and audio or other non-text input all count here. cachedInputTokens and cacheWriteInputTokens break this number down and are never added to it — a provider that reports its cache counts beside a smaller input count has them added in by the producer before the entry leaves. Bounded like timestamp and for the same reason: a count above the JSON safe-integer range does not survive a round trip, so a consumer would silently read a different number than the producer wrote. */
+            inputTokens?: number;
+            /** @description Which model served the request. */
+            model?: string;
+            /** @description Every generated token, reasoning included where the provider distinguishes it. reasoningTokens breaks this number down and is never added to it — a provider that reports reasoning tokens beside a smaller completion count has them added in by the producer. */
+            outputTokens?: number;
+            /** @description Which provider served the request. */
+            provider?: string;
+            /** @description Output tokens spent on reasoning, where the provider distinguishes them. Part of outputTokens, not in addition to it. */
+            reasoningTokens?: number;
+            /** @description inputTokens plus outputTokens, under the accounting above. A producer MAY compute it rather than copy a provider's total, and copies a provider's total only when that total counts the same way, so a consumer can read this field as the sum of the other two. */
+            totalTokens?: number;
+        };
+        /** @description A tool the agent may call. */
+        Tool: {
+            /** @description What the tool does, for the agent to decide when to use it. */
+            description: string;
+            /** @description Extra information about the tool, for consumers that attach their own rendering or routing information to it. */
+            metadata?: components["schemas"]["Metadata"];
+            /** @description The tool's name, as the agent will call it. */
+            name: string;
+            /** @description A JSON Schema describing the tool's arguments. Carried opaquely: the protocol does not constrain or validate it. Optional, because all three SDKs already treat it that way and a tool that takes no arguments has nothing to declare; an absent schema and an empty one mean the same thing to an agent. */
+            parameters?: unknown;
+        };
+        /** @description A call an assistant message made. Carries no subagent attribution of its own and inherits its containing message's, since several calls can share one parent. */
+        ToolCall: {
+            /** @description A provider's opaque artefact belonging to this call. */
+            encryptedValue?: string;
+            /** @description What is being called, and with what. */
+            function: components["schemas"]["FunctionCall"];
+            /** @description Identifies the call. The answering tool message carries this as its toolCallId. */
+            id: string;
+            /** @description Extra information attached to this call. Carried here rather than folded into the containing message, because several calls can share one parent and merging them would make the result depend on their order. */
+            metadata?: components["schemas"]["Metadata"];
+            /**
+             * @description The only kind of call the protocol models.
+             * @constant
+             */
+            type: "function";
+        };
+        /** @description Appends a fragment of a tool call's arguments. */
+        ToolCallArgsEvent: {
+            /** @description A fragment of the arguments, which concatenate into the call's argument text — conventionally a JSON document, though the protocol does not validate it (see FunctionCall.arguments). Deliberately a string rather than parsed JSON: a fragment is not itself a document. May be the empty string. */
+            delta: string;
+            /** @description The call these arguments belong to. */
+            toolCallId: string;
+            /** @constant */
+            type: "TOOL_CALL_ARGS";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /** @description A shorthand that stands in for a tool call's start, args and end sequence. Every field is optional for the same reason as TEXT_MESSAGE_CHUNK. */
+        ToolCallChunkEvent: {
+            /** @description A fragment of the arguments. May be the empty string. */
+            delta?: string;
+            /** @description The assistant message that holds this call. */
+            parentMessageId?: string;
+            /** @description The call this chunk belongs to. Absent continues the call already open. */
+            toolCallId?: string;
+            /** @description Which tool is being called, on the chunk that opens it. */
+            toolCallName?: string;
+            /** @constant */
+            type: "TOOL_CALL_CHUNK";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /** @description Closes a tool call, meaning its arguments are complete. */
+        ToolCallEndEvent: {
+            /** @description The call being closed. */
+            toolCallId: string;
+            /** @constant */
+            type: "TOOL_CALL_END";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /** @description Carries what a tool returned. Mints a tool message rather than appending to an existing one, which is why it has its own messageId. */
+        ToolCallResultEvent: {
+            /** @description What the tool returned: either plain text, or an ordered list of parts, exactly as on the tool message this event mints. A tool returning structured data serialises it into text; media travel as parts of their own. */
+            content: string | components["schemas"]["ContentPart"][];
+            /** @description The tool message this result becomes. */
+            messageId: string;
+            /**
+             * @description Present only for symmetry with the message it mints; the value is fixed, so a producer may leave it out.
+             * @constant
+             */
+            role?: "tool";
+            /** @description The call being answered. */
+            toolCallId: string;
+            /** @constant */
+            type: "TOOL_CALL_RESULT";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /** @description Opens a tool call. The arguments arrive as TOOL_CALL_ARGS events and the call closes with TOOL_CALL_END. */
+        ToolCallStartEvent: {
+            /** @description The assistant message that holds this call. Absent means the producer did not attribute it to one. */
+            parentMessageId?: string;
+            /** @description Identifies the call, and ties the later args, end and result events to it. */
+            toolCallId: string;
+            /** @description Which tool is being called. */
+            toolCallName: string;
+            /** @constant */
+            type: "TOOL_CALL_START";
+        } & (WithRequired<components["schemas"]["BaseEvent"], "type"> & components["schemas"]["Attributable"]);
+        /** @description What a tool returned, as a message in the conversation. Stands alone rather than composing BaseMessage, because it carries no name. */
+        ToolMessage: {
+            /** @description What the tool returned: either plain text, or an ordered list of parts. A tool returning structured data serialises it into text; media travel as parts of their own. */
+            content: string | components["schemas"]["ContentPart"][];
+            /** @description A provider's opaque artefact belonging to this message. */
+            encryptedValue?: string;
+            /** @description Why the tool failed, when it did. Present alongside content rather than instead of it, so a partial result survives a failure. */
+            error?: string;
+            /** @description Identifies the message. */
+            id: string;
+            /** @description Extra information attached to this message. */
+            metadata?: components["schemas"]["Metadata"];
+            /**
+             * @description Fixed. Declared here rather than inherited, because this message does not compose BaseMessage.
+             * @constant
+             */
+            role: "tool";
+            /** @description The call this answers. */
+            toolCallId: string;
+        } & components["schemas"]["Attributable"];
         TypedColumnHint: {
             label: string;
             type?: components["schemas"]["ColumnType"];
         };
+        /** @description Bytes referenced by URL, fetched by whoever needs them. */
+        UrlSource: {
+            /** @description What the resource is, when the producer knows. Optional, because the response can say. */
+            mimeType?: string;
+            /**
+             * @description Discriminator.
+             * @constant
+             */
+            type: "url";
+            /** @description The URL. Deliberately not constrained to a URI format, so a scheme a producer already uses is not rejected here. */
+            value: string;
+        };
+        /** @description A message from the person using the application. */
+        UserMessage: {
+            /** @description What the person sent: either plain text, or an ordered list of parts for a multimodal message. */
+            content: string | components["schemas"]["ContentPart"][];
+            /** @constant */
+            role: "user";
+        } & WithRequired<components["schemas"]["BaseMessage"], "id" | "role">;
+        /**
+         * @description A UUID in its canonical text form. A pattern rather than
+         *     `format: uuid` where it narrows an AG-UI string field, so the
+         *     generated models keep the AG-UI field's `str` type.
+         * @example 8a6e0804-2bd0-4672-b79d-d97027f9071a
+         */
+        UuidString: string;
         /** @description An `ApiError` (`code` is `invalid_request`) carrying the validation issues found. */
         ValidationErrorResponse: components["schemas"]["ApiError"] & {
             issues?: components["schemas"]["ValidationIssue"][];
@@ -709,6 +1898,20 @@ export interface components {
             type: string;
         } & {
             [key: string]: unknown;
+        };
+        /** @description A video part. */
+        VideoPart: {
+            /** @description Identifies this part within its message. Optional, and nothing reads it yet: reserved as on the text part. */
+            id?: string;
+            /** @description Extra information about this part. Unconstrained, as on the other media parts. */
+            metadata?: unknown;
+            /** @description Where the video comes from. */
+            source: components["schemas"]["PartSource"];
+            /**
+             * @description Discriminator.
+             * @constant
+             */
+            type: "video";
         };
         WebSearchSkillConfig: {
             brave?: {
@@ -844,6 +2047,8 @@ export interface components {
         };
     };
     parameters: {
+        /** @description The run's id — the client-minted AG-UI `runId` (a UUID). */
+        RunId: string;
         /** @description The opaque share token returned by `createShare`. */
         ShareToken: string;
     };
@@ -851,7 +2056,16 @@ export interface components {
     headers: never;
     pathItems: never;
 }
+export type ActivityDeltaEvent = components['schemas']['ActivityDeltaEvent'];
+export type ActivityMessage = components['schemas']['ActivityMessage'];
+export type ActivitySnapshotEvent = components['schemas']['ActivitySnapshotEvent'];
+export type AddOperation = components['schemas']['AddOperation'];
 export type ApiError = components['schemas']['ApiError'];
+export type AssistantMessage = components['schemas']['AssistantMessage'];
+export type Attributable = components['schemas']['Attributable'];
+export type AudioPart = components['schemas']['AudioPart'];
+export type BaseEvent = components['schemas']['BaseEvent'];
+export type BaseMessage = components['schemas']['BaseMessage'];
 export type Citation = components['schemas']['Citation'];
 export type CitationTable = components['schemas']['CitationTable'];
 export type CitationTableCell = components['schemas']['CitationTableCell'];
@@ -859,31 +2073,85 @@ export type CitationTableColumn = components['schemas']['CitationTableColumn'];
 export type CitationTableSource = components['schemas']['CitationTableSource'];
 export type ColumnHint = components['schemas']['ColumnHint'];
 export type ColumnType = components['schemas']['ColumnType'];
+export type ContentPart = components['schemas']['ContentPart'];
+export type Context = components['schemas']['Context'];
+export type CopyOperation = components['schemas']['CopyOperation'];
 export type CreateConversationShareRequest = components['schemas']['CreateConversationShareRequest'];
 export type CreateDocumentShareRequest = components['schemas']['CreateDocumentShareRequest'];
 export type CreateShareRequest = components['schemas']['CreateShareRequest'];
 export type CreateShareResponse = components['schemas']['CreateShareResponse'];
 export type CspReportBody = components['schemas']['CspReportBody'];
+export type CustomEvent = components['schemas']['CustomEvent'];
+export type DataSource = components['schemas']['DataSource'];
 export type DeleteScheduleResponse = components['schemas']['DeleteScheduleResponse'];
+export type DeveloperMessage = components['schemas']['DeveloperMessage'];
+export type DocumentPart = components['schemas']['DocumentPart'];
 export type EmbedRequest = components['schemas']['EmbedRequest'];
 export type EmbedResponse = components['schemas']['EmbedResponse'];
 export type ErrorResponse = components['schemas']['ErrorResponse'];
+export type Event = components['schemas']['Event'];
+export type EventType = components['schemas']['EventType'];
 export type ExtractTableRequest = components['schemas']['ExtractTableRequest'];
 export type ExtractTableSource = components['schemas']['ExtractTableSource'];
+export type FileSource = components['schemas']['FileSource'];
+export type FunctionCall = components['schemas']['FunctionCall'];
 export type HealthResponse = components['schemas']['HealthResponse'];
 export type ImageGenSkillConfig = components['schemas']['ImageGenSkillConfig'];
+export type ImagePart = components['schemas']['ImagePart'];
+export type Interrupt = components['schemas']['Interrupt'];
+export type JsonPatch = components['schemas']['JsonPatch'];
+export type JsonPatchOperation = components['schemas']['JsonPatchOperation'];
+export type JsonPointer = components['schemas']['JsonPointer'];
 export type MaxCallsSkillConfig = components['schemas']['MaxCallsSkillConfig'];
 export type MemoryExtractRequest = components['schemas']['MemoryExtractRequest'];
 export type MemoryExtractResponse = components['schemas']['MemoryExtractResponse'];
+export type Message = components['schemas']['Message'];
+export type MessagesSnapshotEvent = components['schemas']['MessagesSnapshotEvent'];
+export type Metadata = components['schemas']['Metadata'];
+export type MoveOperation = components['schemas']['MoveOperation'];
+export type PartSource = components['schemas']['PartSource'];
+export type RawEvent = components['schemas']['RawEvent'];
 export type ReadinessChecks = components['schemas']['ReadinessChecks'];
 export type ReadinessResponse = components['schemas']['ReadinessResponse'];
+export type ReasoningEncryptedValueEvent = components['schemas']['ReasoningEncryptedValueEvent'];
+export type ReasoningEncryptedValueSubtype = components['schemas']['ReasoningEncryptedValueSubtype'];
+export type ReasoningEndEvent = components['schemas']['ReasoningEndEvent'];
+export type ReasoningMessage = components['schemas']['ReasoningMessage'];
+export type ReasoningMessageChunkEvent = components['schemas']['ReasoningMessageChunkEvent'];
+export type ReasoningMessageContentEvent = components['schemas']['ReasoningMessageContentEvent'];
+export type ReasoningMessageEndEvent = components['schemas']['ReasoningMessageEndEvent'];
+export type ReasoningMessageStartEvent = components['schemas']['ReasoningMessageStartEvent'];
+export type ReasoningStartEvent = components['schemas']['ReasoningStartEvent'];
 export type RefreshFileUrlRequest = components['schemas']['RefreshFileUrlRequest'];
 export type RefreshStorageUrlRequest = components['schemas']['RefreshStorageUrlRequest'];
 export type RefreshStorageUrlResponse = components['schemas']['RefreshStorageUrlResponse'];
+export type RemoveOperation = components['schemas']['RemoveOperation'];
+export type ReplaceOperation = components['schemas']['ReplaceOperation'];
 export type ResolvedConversationShare = components['schemas']['ResolvedConversationShare'];
 export type ResolvedDocumentShare = components['schemas']['ResolvedDocumentShare'];
 export type ResolvedShare = components['schemas']['ResolvedShare'];
+export type ResumeEntry = components['schemas']['ResumeEntry'];
 export type RevokeShareResponse = components['schemas']['RevokeShareResponse'];
+export type Run = components['schemas']['Run'];
+export type RunAccepted = components['schemas']['RunAccepted'];
+export type RunAgentInput = components['schemas']['RunAgentInput'];
+export type RunCursor = components['schemas']['RunCursor'];
+export type RunError = components['schemas']['RunError'];
+export type RunErrorEvent = components['schemas']['RunErrorEvent'];
+export type RunFinishedCancelledOutcome = components['schemas']['RunFinishedCancelledOutcome'];
+export type RunFinishedEvent = components['schemas']['RunFinishedEvent'];
+export type RunFinishedInterruptOutcome = components['schemas']['RunFinishedInterruptOutcome'];
+export type RunFinishedOutcome = components['schemas']['RunFinishedOutcome'];
+export type RunFinishedSuccessOutcome = components['schemas']['RunFinishedSuccessOutcome'];
+export type RunForwardedProps = components['schemas']['RunForwardedProps'];
+export type RunGapEventValue = components['schemas']['RunGapEventValue'];
+export type RunList = components['schemas']['RunList'];
+export type RunMode = components['schemas']['RunMode'];
+export type RunResult = components['schemas']['RunResult'];
+export type RunRewindEventValue = components['schemas']['RunRewindEventValue'];
+export type RunStartedEvent = components['schemas']['RunStartedEvent'];
+export type RunStatus = components['schemas']['RunStatus'];
+export type RunToken = components['schemas']['RunToken'];
 export type ScheduleCreateRequest = components['schemas']['ScheduleCreateRequest'];
 export type ScheduleCron = components['schemas']['ScheduleCron'];
 export type ScheduleListResponse = components['schemas']['ScheduleListResponse'];
@@ -892,9 +2160,43 @@ export type ScheduleUpdateRequest = components['schemas']['ScheduleUpdateRequest
 export type SharedMessage = components['schemas']['SharedMessage'];
 export type ShareKind = components['schemas']['ShareKind'];
 export type SkillConfig = components['schemas']['SkillConfig'];
+export type StartRunRequest = components['schemas']['StartRunRequest'];
+export type State = components['schemas']['State'];
+export type StateDeltaEvent = components['schemas']['StateDeltaEvent'];
+export type StateSnapshotEvent = components['schemas']['StateSnapshotEvent'];
+export type StepFinishedEvent = components['schemas']['StepFinishedEvent'];
+export type StepStartedEvent = components['schemas']['StepStartedEvent'];
+export type SubagentErrorEvent = components['schemas']['SubagentErrorEvent'];
+export type SubagentFinishedEvent = components['schemas']['SubagentFinishedEvent'];
+export type SubagentFinishedOutcome = components['schemas']['SubagentFinishedOutcome'];
+export type SubagentFinishedSuccessOutcome = components['schemas']['SubagentFinishedSuccessOutcome'];
+export type SubagentFinishedSuspendedOutcome = components['schemas']['SubagentFinishedSuspendedOutcome'];
+export type SubagentRunId = components['schemas']['SubagentRunId'];
+export type SubagentStartedEvent = components['schemas']['SubagentStartedEvent'];
+export type SystemMessage = components['schemas']['SystemMessage'];
+export type TestOperation = components['schemas']['TestOperation'];
+export type TextMessageChunkEvent = components['schemas']['TextMessageChunkEvent'];
+export type TextMessageContentEvent = components['schemas']['TextMessageContentEvent'];
+export type TextMessageEndEvent = components['schemas']['TextMessageEndEvent'];
+export type TextMessageRole = components['schemas']['TextMessageRole'];
+export type TextMessageStartEvent = components['schemas']['TextMessageStartEvent'];
+export type TextPart = components['schemas']['TextPart'];
+export type TokenUsage = components['schemas']['TokenUsage'];
+export type Tool = components['schemas']['Tool'];
+export type ToolCall = components['schemas']['ToolCall'];
+export type ToolCallArgsEvent = components['schemas']['ToolCallArgsEvent'];
+export type ToolCallChunkEvent = components['schemas']['ToolCallChunkEvent'];
+export type ToolCallEndEvent = components['schemas']['ToolCallEndEvent'];
+export type ToolCallResultEvent = components['schemas']['ToolCallResultEvent'];
+export type ToolCallStartEvent = components['schemas']['ToolCallStartEvent'];
+export type ToolMessage = components['schemas']['ToolMessage'];
 export type TypedColumnHint = components['schemas']['TypedColumnHint'];
+export type UrlSource = components['schemas']['UrlSource'];
+export type UserMessage = components['schemas']['UserMessage'];
+export type UuidString = components['schemas']['UuidString'];
 export type ValidationErrorResponse = components['schemas']['ValidationErrorResponse'];
 export type ValidationIssue = components['schemas']['ValidationIssue'];
+export type VideoPart = components['schemas']['VideoPart'];
 export type WebSearchSkillConfig = components['schemas']['WebSearchSkillConfig'];
 export type ResponseBadRequest = components['responses']['BadRequest'];
 export type ResponseConflict = components['responses']['Conflict'];
@@ -907,6 +2209,7 @@ export type ResponseServiceUnavailable = components['responses']['ServiceUnavail
 export type ResponseUnauthorized = components['responses']['Unauthorized'];
 export type ResponseUpstreamError = components['responses']['UpstreamError'];
 export type ResponseValidationError = components['responses']['ValidationError'];
+export type ParameterRunId = components['parameters']['RunId'];
 export type ParameterShareToken = components['parameters']['ShareToken'];
 export type $defs = Record<string, never>;
 export interface operations {
@@ -1156,6 +2459,215 @@ export interface operations {
             422: components["responses"]["ValidationError"];
         };
     };
+    listRuns: {
+        parameters: {
+            query?: {
+                /** @description Only runs in this mode. */
+                mode?: components["schemas"]["RunMode"];
+                /** @description Page size; absent means 20. */
+                pageSize?: number;
+                /** @description The previous page's `nextPageToken`. */
+                pageToken?: string;
+                /** @description Only sub-agent runs spawned by this run. */
+                parentRunId?: string;
+                /** @description Only runs in one of these statuses (repeat the parameter for several). */
+                status?: components["schemas"]["RunStatus"][];
+                /** @description Only runs on this thread (conversation). */
+                threadId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of runs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            422: components["responses"]["ValidationError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    startRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartRunRequest"];
+            };
+        };
+        responses: {
+            /**
+             * @description Interactive run: the run's event stream. Each SSE message is
+             *     `id: <cursor>` (absent on `RUN_STARTED`, a `gap` and the
+             *     closing event) and `data: <one AG-UI event as JSON>`. Cursor
+             *     format and replay rules: see `streamRunEvents`.
+             */
+            200: {
+                headers: {
+                    /** @description `/v1/runs/{runId}` of the run. */
+                    Location?: string;
+                    /** @description Anonymous runs only — the run's capability token (see `runToken`). */
+                    "X-Run-Token"?: components["schemas"]["RunToken"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["Event"];
+                };
+            };
+            /** @description Background run accepted (new, or an idempotent retry of an existing one). */
+            202: {
+                headers: {
+                    /** @description `/v1/runs/{runId}` of the run. */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunAccepted"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Background run whose thread is not one of the caller's conversations (`code` is `not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /**
+             * @description `run_id_conflict` — the `runId` is taken and this request is
+             *     not an idempotent retry of it (identical body in every case);
+             *     `invalid_state` — a resume that does not match the previous
+             *     run (not the caller's, another thread, not `interrupted`, or
+             *     `resume[]` not covering exactly its open interrupts).
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The run's id — the client-minted AG-UI `runId` (a UUID). */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    cancelRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The run's id — the client-minted AG-UI `runId` (a UUID). */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run after the request. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    streamRunEvents: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Replay strictly after this cursor (an SSE `id` this run's
+                 *     stream sent, `<seq>` or `<seq>.<k>`). Wins over
+                 *     `Last-Event-ID`. Absent (and no `Last-Event-ID`) means `0`:
+                 *     the whole run.
+                 */
+                after?: components["schemas"]["RunCursor"];
+            };
+            header?: {
+                /** @description The standard SSE reconnection header; same meaning as `after`. */
+                "Last-Event-ID"?: components["schemas"]["RunCursor"];
+            };
+            path: {
+                /** @description The run's id — the client-minted AG-UI `runId` (a UUID). */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run's event stream (`text/event-stream`, one AG-UI event per SSE message). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["Event"];
+                };
+            };
+            /** @description The cursor is malformed or beyond the run's log (`code` is `invalid_request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     createShare: {
         parameters: {
             query?: never;
@@ -1355,3 +2867,6 @@ export interface operations {
         };
     };
 }
+type WithRequired<T, K extends keyof T> = T & {
+    [P in K]-?: T[P];
+};

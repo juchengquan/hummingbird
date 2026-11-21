@@ -4,3 +4,11 @@ openapi.yaml:
   operation-4xx-response:
     - "#/paths/~1healthz/get/responses"
     - "#/paths/~1readyz/get/responses"
+  # The `value` payloads of Hummingbird's CUSTOM run events. They travel
+  # inside SSE frames (as AG-UI `CustomEvent.value`), which OpenAPI cannot
+  # reference from an operation, but they are part of the contract and
+  # are generated into the TS / Python types the stream consumers use.
+  # Normative description: RUN_EVENTS.md.
+  no-unused-components:
+    - "#/components/schemas/RunGapEventValue"
+    - "#/components/schemas/RunRewindEventValue"

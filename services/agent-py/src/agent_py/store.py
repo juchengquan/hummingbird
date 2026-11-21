@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal, cast, get_args
 
 import asyncpg
 import structlog
@@ -99,23 +99,18 @@ async def append_event(
 
 _log = structlog.get_logger(__name__)
 
-_VALID_KINDS: frozenset[str] = frozenset(
-    {
-        "token",
-        "tool_input",
-        "tool_output",
-        "step_start",
-        "step_end",
-        "status",
-        "plan",
-        "step_error",
-        "handoff",
-        "approval",
-        "compact",
-        "artifact_ref",
-        "result",
-    }
-)
+_VALID_KINDS: frozenset[str] = frozenset(get_args(events.TaskEventKind))
+
+
+def _opt_str(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _dict_tuple(value: object) -> tuple[dict[str, object], ...]:
+    """A list of JSON objects read back from a payload; non-objects dropped."""
+    if not isinstance(value, list):
+        return ()
+    return tuple(v for v in value if isinstance(v, dict))
 
 
 def event_from_row_payload(
@@ -190,6 +185,7 @@ def event_from_row_payload(
             tool_name=str(merged.get("toolName", "")),
             summary=str(merged.get("summary", "")),
             results=results,
+            is_error=merged.get("isError") is True,
         )
     if kind == "result":
         return events.ResultEvent(
@@ -211,6 +207,18 @@ def event_from_row_payload(
                 if isinstance(merged.get("verification"), dict)
                 else None,
             ),
+            error_code=_opt_str(merged.get("errorCode")),
+            memory_tainted=merged.get("memoryTainted") is True,
+            usage=tuple(
+                u
+                for u in (
+                    events.TokenUsage.from_payload(raw)
+                    for raw in cast("list[object]", merged.get("usage") or [])
+                )
+                if u is not None
+            )
+            if isinstance(merged.get("usage"), list)
+            else (),
         )
     if kind == "step_start":
         return events.StepStartEvent(run_id="", seq=seq, step=step, created_at=created_at)
@@ -262,10 +270,12 @@ def event_from_row_payload(
                 "str | None",
                 merged.get("prompt") if isinstance(merged.get("prompt"), str) else None,
             ),
-            options=cast(
-                "list[events.InputRequestOption] | None",
-                merged.get("options") if isinstance(merged.get("options"), list) else None,
-            ),
+            options=[
+                events.InputRequestOption(id=str(o.get("id", "")), label=str(o.get("label", "")))
+                for o in _dict_tuple(merged.get("options"))
+            ]
+            if isinstance(merged.get("options"), list)
+            else None,
             multi=cast(
                 "bool | None",
                 merged.get("multi") if isinstance(merged.get("multi"), bool) else None,
@@ -293,6 +303,130 @@ def event_from_row_payload(
                 "dict[str, object] | None",
                 merged.get("uiAnswer") if isinstance(merged.get("uiAnswer"), dict) else None,
             ),
+        )
+    if kind == "handoff":
+        return events.HandoffEvent(
+            run_id="",
+            seq=seq,
+            step=step,
+            created_at=created_at,
+            agent=str(merged.get("agent", "")),
+            phase=cast("Literal['enter', 'exit']", merged.get("phase", "enter")),
+            child_task_id=_opt_str(merged.get("childTaskId")),
+            subgoal=_opt_str(merged.get("subgoal")),
+        )
+    if kind == "plan":
+        items = tuple(
+            events.PlanItem(
+                id=str(i.get("id", "")),
+                text=str(i.get("text", "")),
+                status=cast("events.PlanItemStatus", i.get("status", "pending")),
+            )
+            for i in _dict_tuple(merged.get("items"))
+        )
+        return events.PlanEvent(run_id="", seq=seq, step=step, created_at=created_at, items=items)
+    if kind == "compact":
+        return events.CompactEvent(
+            run_id="",
+            seq=seq,
+            step=step,
+            created_at=created_at,
+            summary=_opt_str(merged.get("summary")),
+        )
+    if kind == "artifact_ref":
+        return events.ArtifactRefEvent(
+            run_id="",
+            seq=seq,
+            step=step,
+            created_at=created_at,
+            artifact_id=str(merged.get("artifactId", "")),
+        )
+    if kind == "tool_image":
+        return events.ToolImageEvent(
+            run_id="",
+            seq=seq,
+            step=step,
+            created_at=created_at,
+            tool_call_id=str(merged.get("toolCallId", "")),
+            mode=cast("events.ToolImageMode", merged.get("mode", "t2i")),
+            images=_dict_tuple(merged.get("images")),
+        )
+    if kind == "tool_file":
+        return events.ToolFileEvent(
+            run_id="",
+            seq=seq,
+            step=step,
+            created_at=created_at,
+            tool_call_id=str(merged.get("toolCallId", "")),
+            files=_dict_tuple(merged.get("files")),
+        )
+    if kind == "code_result":
+        return events.CodeResultEvent(
+            run_id="",
+            seq=seq,
+            step=step,
+            created_at=created_at,
+            tool_call_id=str(merged.get("toolCallId", "")),
+            stdout=str(merged.get("stdout", "")),
+            stderr=str(merged.get("stderr", "")),
+            results=_dict_tuple(merged.get("results")),
+        )
+    if kind == "ui_part":
+        props = merged.get("props")
+        return events.UiPartEvent(
+            run_id="",
+            seq=seq,
+            step=step,
+            created_at=created_at,
+            tool_call_id=str(merged.get("toolCallId", "")),
+            ui_kind=str(merged.get("uiKind", "")),
+            props=cast("dict[str, object]", props) if isinstance(props, dict) else None,
+        )
+    if kind == "mcp_app":
+        return events.McpAppEvent(
+            run_id="",
+            seq=seq,
+            step=step,
+            created_at=created_at,
+            tool_call_id=str(merged.get("toolCallId", "")),
+            server_id=str(merged.get("serverId", "")),
+            html=str(merged.get("html", "")),
+            resource_uri=_opt_str(merged.get("resourceUri")),
+            truncated=merged.get("truncated") is True,
+        )
+    if kind == "verification":
+        verification = merged.get("verification")
+        return events.VerificationEvent(
+            run_id="",
+            seq=seq,
+            step=step,
+            created_at=created_at,
+            verification=cast("dict[str, object]", verification)
+            if isinstance(verification, dict)
+            else {},
+        )
+    if kind == "suggestions":
+        values = merged.get("values")
+        return events.SuggestionsEvent(
+            run_id="",
+            seq=seq,
+            step=step,
+            created_at=created_at,
+            values=tuple(v for v in values if isinstance(v, str))
+            if isinstance(values, list)
+            else (),
+        )
+    if kind == "routed_model":
+        return events.RoutedModelEvent(
+            run_id="", seq=seq, step=step, created_at=created_at, model=str(merged.get("model", ""))
+        )
+    if kind == "messages_snapshot":
+        return events.MessagesSnapshotEvent(
+            run_id="",
+            seq=seq,
+            step=step,
+            created_at=created_at,
+            messages=_dict_tuple(merged.get("messages")),
         )
     # Unhandled kinds in this build; the row was preserved but not
     # parsed. Caller should skip + warn.

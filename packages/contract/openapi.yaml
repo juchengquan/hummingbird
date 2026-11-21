@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Hummingbird backend contract
-  version: 0.2.0
+  version: 0.3.0
   summary: The frontend <-> backend HTTP contract (spec-first, PLAN-frontend-backend-split.md Q19).
   description: |
     Hand-written source of truth for the HTTP surface every Hummingbird
@@ -16,8 +16,13 @@ info:
     deliberately left open (no `additionalProperties: false`) so that a
     field added later does not break an older receiver.
 
-    Agent runs (Phase 2) will be described with the pinned AG-UI 1.0 JSON
-    Schema in `agui/1.0/schema.json`, referenced by `$ref` — see README.md.
+    Agent runs (tag `runs`) are described with the pinned AG-UI 1.0 JSON
+    Schema in `agui/1.0/schema.json`, referenced by `$ref`; how the
+    backend's internal events map onto AG-UI is `RUN_EVENTS.md`.
+
+    `x-planned` on an operation marks it specified but not implemented yet
+    (its value names the wave that implements it). The conformance suite
+    skips planned operations; implementing one means deleting its marker.
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
@@ -43,6 +48,11 @@ tags:
     description: Cross-conversation memory upkeep.
   - name: security
     description: Browser security telemetry (CSP violation reports). Public.
+  - name: runs
+    description: |
+      Agent runs (Phase 2, Q7): start, rejoin, status, cancel, list. Events
+      are AG-UI 1.0 (`agui/1.0/schema.json`); the internal-event mapping is
+      `RUN_EVENTS.md`. Planned — implemented in wave 3b (`x-planned`).
 
 security:
   - bearerAuth: []
@@ -571,6 +581,357 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  # --- runs (planned: wave 3b implements these; see x-planned) ---------------
+  /v1/runs:
+    post:
+      operationId: startRun
+      x-planned: wave-3b
+      tags: [runs]
+      summary: Start a run — interactive (streamed) or background (queued)
+      description: |
+        Starts one agent run on a thread (Q7, Q24, Q27). The body is an AG-UI
+        1.0 `RunAgentInput`; Hummingbird's own run options ride in
+        `forwardedProps` (`RunForwardedProps`), `mode` among them, because
+        `RunAgentInput` is a closed schema and cannot carry a top-level
+        `mode` (see `StartRunRequest`). The event model and every event's
+        wire mapping are in `RUN_EVENTS.md`.
+
+        **Modes.** `interactive` (the default) runs in the process that
+        received the request and answers `200 text/event-stream`: the
+        run's AG-UI events, exactly as `streamRunEvents` would send them
+        from cursor `0` (Q28). `background` queues the run for a worker and
+        answers `202 RunAccepted`; follow it with `streamRunEvents` or
+        `getRun`. Background runs require a signed-in caller and a thread
+        that is one of the caller's synced conversations (`404 not_found`
+        otherwise). An interactive run needs neither: its thread may exist
+        only in the browser (local-first, Q2/Q15).
+
+        **Client-minted ids.** `runId` and `threadId` are UUIDs the client
+        generates (AG-UI: the client mints `runId`). A repeated `runId` is
+        an **idempotent retry**, never a second run, when it comes from the
+        run's owner (the same user; for an anonymous run, the same
+        `X-Run-Token`) with the same `threadId` and `mode`: an interactive
+        retry answers 200 and streams the run from cursor `0` (replay, then
+        live), a background retry answers 202 with the run's current
+        status. Nothing in the retried body is re-validated or applied —
+        the first request's input wins. Any other request carrying a
+        `runId` that already exists — another user's run, an anonymous
+        run without its token, or the caller's own run on another thread
+        or in another mode — answers `409 run_id_conflict`, always with
+        the same body, which says nothing about the existing run. (A
+        client-chosen id in a global id space cannot be made fully
+        unobservable: refusing it reveals that it is taken. UUIDv4 ids
+        make that worthless — an id is only known to whoever was given
+        it — and the refusal discloses nothing else.)
+
+        **Resume (Q24).** Answering an interrupted run is a new run on the
+        same thread whose `resume[]` answers every open interrupt of that
+        run (one `ResumeEntry` per interrupt id; `payload` per
+        `RUN_EVENTS.md` § Interrupts). `forwardedProps.previousRunId`
+        names the interrupted run; it must be the caller's, on the same
+        thread, `interrupted`, and `resume[]` must cover exactly its open
+        interrupts — otherwise `409 invalid_state`. A `resume[]` without
+        `previousRunId` is `400 invalid_request`.
+
+        **Anonymous callers** (no `Authorization` header) may start
+        interactive runs only — `mode: background` answers `401
+        auth_required`, as does every anonymous run when the backend
+        requires sign-in for AI (today's `REQUIRE_AUTH_FOR_AI`, Q20). The
+        200 response then carries `X-Run-Token`, the run's capability: the
+        only credential `getRun`, `streamRunEvents` and `cancelRun` accept
+        for that run, and what makes a retry of it idempotent. Anonymous
+        runs are not persisted: their event log lives in backend memory
+        for about 15 minutes after the run ends (Q16), after which every
+        operation on them answers 404. Anonymous runs are rate- and
+        budget-limited per client IP (`429 rate_limit`).
+
+        A present but invalid credential (a malformed or rejected bearer
+        token, a non-Bearer scheme) is always `401`, never treated as
+        anonymous. Spends model budget.
+      security:
+        - bearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartRunRequest"
+      responses:
+        "200":
+          description: |
+            Interactive run: the run's event stream. Each SSE message is
+            `id: <cursor>` (absent on `RUN_STARTED`, a `gap` and the
+            closing event) and `data: <one AG-UI event as JSON>`. Cursor
+            format and replay rules: see `streamRunEvents`.
+          headers:
+            Location:
+              description: "`/v1/runs/{runId}` of the run."
+              schema:
+                type: string
+            X-Run-Token:
+              description: Anonymous runs only — the run's capability token (see `runToken`).
+              schema:
+                $ref: "#/components/schemas/RunToken"
+          content:
+            text/event-stream:
+              schema:
+                $ref: "./agui/1.0/schema.json#/$defs/Event"
+        "202":
+          description: Background run accepted (new, or an idempotent retry of an existing one).
+          headers:
+            Location:
+              description: "`/v1/runs/{runId}` of the run."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Background run whose thread is not one of the caller's conversations (`code` is `not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: |
+            `run_id_conflict` — the `runId` is taken and this request is
+            not an idempotent retry of it (identical body in every case);
+            `invalid_state` — a resume that does not match the previous
+            run (not the caller's, another thread, not `interrupted`, or
+            `resume[]` not covering exactly its open interrupts).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+    get:
+      operationId: listRuns
+      x-planned: wave-3b
+      tags: [runs]
+      summary: List the caller's runs
+      description: |
+        The signed-in caller's runs, newest first (`createdAt` desc, then
+        `id` desc), filtered by every parameter given. Token paging in the
+        A2A style: pass `nextPageToken` back as `pageToken` with the same
+        filters; a page is stable under concurrent inserts (keyset
+        paging), and an unknown, malformed or filter-mismatched token is
+        `400 invalid_request`. The tasks panel reads threads of
+        background runs from here (`mode=background`). Anonymous runs are
+        never listed.
+      parameters:
+        - name: threadId
+          in: query
+          description: Only runs on this thread (conversation).
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          description: Only runs in one of these statuses (repeat the parameter for several).
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/RunStatus"
+        - name: parentRunId
+          in: query
+          description: Only sub-agent runs spawned by this run.
+          schema:
+            type: string
+            format: uuid
+        - name: mode
+          in: query
+          description: Only runs in this mode.
+          schema:
+            $ref: "#/components/schemas/RunMode"
+        - name: pageSize
+          in: query
+          description: Page size; absent means 20.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: pageToken
+          in: query
+          description: The previous page's `nextPageToken`.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+      responses:
+        "200":
+          description: One page of runs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/runs/{runId}:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      operationId: getRun
+      x-planned: wave-3b
+      tags: [runs]
+      summary: Read a run's status
+      description: |
+        The run resource. Authorised by the owner's bearer token, or by
+        the run's `X-Run-Token` for an anonymous run. A run that does not
+        exist, belongs to someone else, or whose token does not match all
+        answer the same `404 not_found`.
+      security:
+        - bearerAuth: []
+        - runToken: []
+      responses:
+        "200":
+          description: The run.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Run"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/runs/{runId}/events:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      operationId: streamRunEvents
+      x-planned: wave-3b
+      tags: [runs]
+      summary: Rejoin a run's event stream (replay from a cursor, then live)
+      description: |
+        Replays the run's event log after a cursor and then follows it
+        live until the run ends (finished, failed, cancelled or
+        interrupted), then closes. Works for live and finished runs; no
+        published protocol defines replay from an offset, so this is ours
+        (see `RUN_EVENTS.md` § Streams for the normative rules).
+
+        **Framing.** Every stream — this one and `startRun`'s — opens with
+        exactly one `RUN_STARTED` (no SSE `id`), then the replayed and live
+        events, and ends with the closing `RUN_FINISHED` (success,
+        interrupt or cancelled outcome) or `RUN_ERROR`. A client
+        reconnecting after it already saw a run's `RUN_STARTED` ignores
+        the repeat.
+
+        **Cursor.** Every event encoded from a log entry carries an SSE
+        `id:` — the replay cursor, `<seq>` or `<seq>.<k>` — where `seq`
+        numbers the internal log entry and `k` (0-based) orders the
+        AG-UI events one entry produced: an entry's last event has id
+        `<seq>`, any before it `<seq>.0`, `<seq>.1`, …. Ids increase
+        strictly within a stream. `RUN_STARTED`, a `gap` (and a purged
+        run's empty snapshot) and the closing event belong to no entry
+        and carry no id. Resuming at the last id received (`after` or
+        `Last-Event-ID`) neither repeats nor skips an entry's event.
+        Clients may treat the id as opaque; the integer part is the log
+        `seq` (`Run.lastSeq` is the highest).
+
+        **Gap.** When the cursor points into the part of the log that
+        compaction folded away (Q17/Q30), or the run's log has been
+        purged, the stream sends a `CUSTOM` event named `hummingbird.gap`
+        (`RunGapEventValue`, no `id`) and immediately after it a
+        `MESSAGES_SNAPSHOT` (id `<resumeAt>`) whose messages are **this
+        run's output only** — not the whole thread — then continues after
+        `resumeAt`. A client replaces what it holds of this run's output
+        with the snapshot.
+      security:
+        - bearerAuth: []
+        - runToken: []
+      parameters:
+        - name: after
+          in: query
+          description: |
+            Replay strictly after this cursor (an SSE `id` this run's
+            stream sent, `<seq>` or `<seq>.<k>`). Wins over
+            `Last-Event-ID`. Absent (and no `Last-Event-ID`) means `0`:
+            the whole run.
+          schema:
+            $ref: "#/components/schemas/RunCursor"
+        - name: Last-Event-ID
+          in: header
+          description: The standard SSE reconnection header; same meaning as `after`.
+          schema:
+            $ref: "#/components/schemas/RunCursor"
+      responses:
+        "200":
+          description: The run's event stream (`text/event-stream`, one AG-UI event per SSE message).
+          content:
+            text/event-stream:
+              schema:
+                $ref: "./agui/1.0/schema.json#/$defs/Event"
+        "400":
+          description: The cursor is malformed or beyond the run's log (`code` is `invalid_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/runs/{runId}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    post:
+      operationId: cancelRun
+      x-planned: wave-3b
+      tags: [runs]
+      summary: Cancel a run
+      description: |
+        Idempotent. A `queued`, `running` or `interrupted` run becomes
+        `cancelled` (an interrupted run's open interrupts are abandoned),
+        and its stream closes with `RUN_FINISHED { outcome: { type:
+        "cancelled" } }`; a run that already ended is left as it is. Either
+        way the answer is the run as it now stands. Cancelling stops the
+        harness at its next cancellation check — events already produced
+        stay in the log. Authorised like `getRun`, with the same `404`.
+      security:
+        - bearerAuth: []
+        - runToken: []
+      responses:
+        "200":
+          description: The run after the request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Run"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  # --- end runs ----------------------------------------------------------------
+
 components:
   securitySchemes:
     bearerAuth:
@@ -581,8 +942,25 @@ components:
         A Supabase user access token (`Authorization: Bearer <jwt>`). The
         backend requires `role = authenticated`, a UUID `sub`, the configured
         audience and an unexpired `exp`; the anon key is rejected.
+    runToken:
+      type: apiKey
+      in: header
+      name: X-Run-Token
+      description: |
+        An anonymous run's capability token (Q20), issued by `startRun` in
+        the `X-Run-Token` response header. Accepted only by the operations
+        on that one run (`getRun`, `streamRunEvents`, `cancelRun`). Never
+        put it in a URL.
 
   parameters:
+    RunId:
+      name: runId
+      in: path
+      required: true
+      description: The run's id — the client-minted AG-UI `runId` (a UUID).
+      schema:
+        type: string
+        format: uuid
     ShareToken:
       name: token
       in: path
@@ -687,7 +1065,8 @@ components:
         `invalid_request`, `auth`, `auth_required`, `forbidden`, `not_found`,
         `unavailable`, `rate_limit`, `context_window`, `invalid_model`,
         `unknown_model`, `provider`, `aborted`, `unknown`. See
-        `lib/shared/api-errors.ts`.
+        `lib/shared/api-errors.ts`. The runs operations add
+        `run_id_conflict` and use `invalid_state`.
       required: [code, message]
       properties:
         code:
@@ -1411,3 +1790,277 @@ components:
             effective-directive: script-src-elem
             blocked-uri: https://cdn.example.com/x.js
             disposition: report
+
+    # --- runs ------------------------------------------------------------------
+    RunMode:
+      type: string
+      enum: [interactive, background]
+      description: |
+        `interactive`: runs in the API process that received `startRun`,
+        streamed to the caller (Q28). `background`: queued for a worker;
+        requires sign-in.
+
+    RunStatus:
+      type: string
+      enum: [queued, running, interrupted, succeeded, failed, cancelled]
+      description: |
+        A run's lifecycle. `queued` (background, not picked up yet) →
+        `running` → one of the four ends: `succeeded`, `failed`,
+        `cancelled`, or `interrupted` (waiting for answers to its open
+        interrupts — which a **new** run answers, Q24; an interrupted run
+        itself never runs again). A background run waiting on its own
+        sub-agent runs is still `running`. Mapping to the internal status
+        and `tasks.status`: `RUN_EVENTS.md` § Status.
+
+    RunToken:
+      type: string
+      minLength: 22
+      maxLength: 128
+      pattern: "^[A-Za-z0-9_-]+$"
+      description: |
+        An anonymous run's capability: at least 128 random bits,
+        base64url without padding. Issued once, in `startRun`'s
+        `X-Run-Token` response header; the backend stores only a hash.
+
+    RunCursor:
+      type: string
+      pattern: "^(0|[1-9][0-9]{0,9})(\\.(0|[1-9][0-9]{0,3}))?$"
+      description: |
+        A replay cursor — an SSE `id` a run stream sent: `<seq>` (after
+        log entry `seq` entirely) or `<seq>.<k>` (after the k-th AG-UI
+        event entry `seq` produced). `0` is before the first entry.
+      examples: ["0", "42", "42.1"]
+
+    RunForwardedProps:
+      type: object
+      description: |
+        Hummingbird's run options, carried in AG-UI's
+        `RunAgentInput.forwardedProps` (application-specific values the
+        protocol passes through). Open: a backend ignores keys it does not
+        know, and new keys are additive. Every key is optional.
+      properties:
+        mode:
+          $ref: "#/components/schemas/RunMode"
+        previousRunId:
+          type: string
+          format: uuid
+          description: |
+            The interrupted run this one answers. Required with a
+            non-empty `resume[]`, otherwise ignored.
+        model:
+          type: string
+          maxLength: 100
+          description: Model id from the backend's allow-list. Absent means the backend's default.
+        systemPrompt:
+          type: string
+          maxLength: 20000
+          description: Extra instructions (workspace / conversation system prompt), prepended to the backend's own.
+        skills:
+          type: array
+          maxItems: 10
+          items:
+            $ref: "#/components/schemas/SkillConfig"
+        goal:
+          type: string
+          maxLength: 2000
+          description: Background runs — the task's title. Absent means the last user message's text.
+        maxSteps:
+          type: integer
+          minimum: 1
+          maximum: 50
+          description: Step budget. Absent means 25 (background) or the chat default (interactive).
+      additionalProperties: true
+
+    StartRunRequest:
+      description: |
+        An AG-UI 1.0 `RunAgentInput`, by reference into the pinned schema,
+        narrowed: `threadId` and `runId` are UUIDs, and `forwardedProps`,
+        when present, is a `RunForwardedProps`. (`mode` cannot be a
+        top-level field: `RunAgentInput` is closed —
+        `unevaluatedProperties: false` — so any extra key fails it.)
+
+        `messages` is the thread's history up to and including the new
+        user message (Q15 — the browser owns the history; the backend
+        keeps nothing across runs). Messages with role `activity` are
+        display state and are not sent to the model. `tools` are
+        client-side tools; the backend's own tools come from
+        `forwardedProps.skills`.
+      allOf:
+        - $ref: "./agui/1.0/schema.json#/$defs/RunAgentInput"
+        - type: object
+          properties:
+            threadId:
+              $ref: "#/components/schemas/UuidString"
+            runId:
+              $ref: "#/components/schemas/UuidString"
+            forwardedProps:
+              $ref: "#/components/schemas/RunForwardedProps"
+
+    UuidString:
+      type: string
+      pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+      description: |
+        A UUID in its canonical text form. A pattern rather than
+        `format: uuid` where it narrows an AG-UI string field, so the
+        generated models keep the AG-UI field's `str` type.
+      examples: ["8a6e0804-2bd0-4672-b79d-d97027f9071a"]
+
+    RunAccepted:
+      type: object
+      required: [runId, status]
+      properties:
+        runId:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/RunStatus"
+
+    RunResult:
+      type: object
+      description: |
+        A succeeded run's return value — also `RUN_FINISHED.result` on the
+        wire. Open; keys are additive.
+      properties:
+        text:
+          type: string
+          description: The run's final assistant text, when it produced one.
+        memoryTainted:
+          type: boolean
+          description: |
+            The run read third-party content (web, file, MCP or sandbox
+            tools), so post-turn memory extraction must skip it. Absent
+            means false.
+      additionalProperties: true
+
+    RunError:
+      type: object
+      description: Why a run failed — also `RUN_ERROR`'s `code` / `message`.
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          minLength: 1
+          description: "An `ApiError` code: `rate_limit`, `auth`, `context_window`, `provider`, `upstream`, `max_steps`, `no_worker`, `worker_lost`, `unknown`, …"
+        message:
+          type: string
+
+    Run:
+      type: object
+      description: |
+        The run resource (modelled on the LangChain Agent Protocol's run).
+        Exactly one of `result` / `error` / `openInterrupts` is meaningful,
+        by `status`: `succeeded` → `result`; `failed` → `error`;
+        `interrupted` → `openInterrupts` (non-empty); otherwise all are
+        empty.
+      required:
+        - id
+        - threadId
+        - mode
+        - status
+        - parentRunId
+        - previousRunId
+        - openInterrupts
+        - result
+        - error
+        - lastSeq
+        - createdAt
+        - startedAt
+        - finishedAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        threadId:
+          type: string
+          format: uuid
+        mode:
+          $ref: "#/components/schemas/RunMode"
+        status:
+          $ref: "#/components/schemas/RunStatus"
+        parentRunId:
+          type: [string, "null"]
+          format: uuid
+          description: The run that spawned this one as a separate (background) sub-agent run. Sub-agents that run inside a run appear in its stream as `SUBAGENT_*` events instead.
+        previousRunId:
+          type: [string, "null"]
+          format: uuid
+          description: The interrupted run this one answered (`forwardedProps.previousRunId`).
+        openInterrupts:
+          type: array
+          description: What an `interrupted` run waits for; the same objects as its `RUN_FINISHED` interrupt outcome. Empty in every other status.
+          items:
+            $ref: "./agui/1.0/schema.json#/$defs/Interrupt"
+        result:
+          oneOf:
+            - $ref: "#/components/schemas/RunResult"
+            - type: "null"
+        error:
+          oneOf:
+            - $ref: "#/components/schemas/RunError"
+            - type: "null"
+        lastSeq:
+          type: integer
+          minimum: 0
+          description: The highest log `seq` so far (0 before the first event, or after the log was purged).
+        createdAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: [string, "null"]
+          format: date-time
+        finishedAt:
+          type: [string, "null"]
+          format: date-time
+          description: When the run ended (`succeeded`, `failed`, `cancelled` or `interrupted`).
+        updatedAt:
+          type: string
+          format: date-time
+
+    RunList:
+      type: object
+      required: [runs, nextPageToken]
+      properties:
+        runs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Run"
+        nextPageToken:
+          type: [string, "null"]
+          description: Pass back as `pageToken` for the next page; null on the last page.
+
+    RunGapEventValue:
+      type: object
+      description: |
+        The `value` of the `CUSTOM` event named `hummingbird.gap`: the
+        requested cursor points at events the log no longer holds. The
+        next event is always a `MESSAGES_SNAPSHOT` (id `resumeAt`, or no id
+        when `resumeAt` is null) holding this run's output up to
+        `resumeAt`; the stream then continues after it.
+      required: [after, resumeAt, reason]
+      properties:
+        after:
+          $ref: "#/components/schemas/RunCursor"
+        resumeAt:
+          type: [integer, "null"]
+          minimum: 1
+          description: The seq the snapshot covers up to (the compacted entry's seq); null when the whole log was purged.
+        reason:
+          type: string
+          enum: [compacted, purged]
+          description: "`compacted` — deltas were folded into the snapshot (Q17); `purged` — the log is gone after its retention window and the snapshot is empty (Q30)."
+
+    RunRewindEventValue:
+      type: object
+      description: |
+        The `value` of the `CUSTOM` event named `hummingbird.rewind`: a
+        background run's worker died and another resumed it from the
+        checkpoint at `after`. Discard every event received from this
+        run's stream whose cursor seq is greater than `after` (they were
+        the dead attempt's); the events that follow replace them.
+      required: [after]
+      properties:
+        after:
+          type: integer
+          minimum: 0
+  # --- end runs ----------------------------------------------------------------
