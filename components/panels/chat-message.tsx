@@ -19,6 +19,11 @@ import { ToolCallStrip, type LiveToolCall } from "@/components/skills/tool-call-
 import { GeneratedImagesGallery } from "@/components/skills/generated-images-gallery"
 import { GeneratedFilesList } from "@/components/skills/generated-files-list"
 import { MessageUiParts } from "@/components/chat/generative-ui/message-ui-parts"
+import {
+  InterruptedTurnCards,
+  useMessageInterruptedTurn,
+} from "@/components/chat/interrupted-turn-cards"
+import { uiPartIdsOwnedByTurn } from "@/client/runs/interrupt-answers"
 import { MessageAttachments } from "@/components/panels/message-attachments"
 import { ReasoningBlock } from "@/components/panels/reasoning-block"
 import { SourcesStrip } from "@/components/panels/sources-strip"
@@ -105,6 +110,9 @@ function ChatMessageImpl({
   // can scroll-and-flash the matching card. Local state — the strip
   // observes the value, scrolls, flashes for 1.2s, then we're done.
   const [highlightedCitation, setHighlightedCitation] = useState<number | null>(null)
+  // Chat on runs (Q35): the turn this message is paused on, if any — its
+  // answer cards render below, and own the generative-UI parts they ask.
+  const interruptedTurn = useMessageInterruptedTurn(message.id)
 
   // Derive the persisted web-search results (if any) for the Sources
   // strip + `[N]` citation markers. We only thread through the
@@ -512,7 +520,14 @@ function ChatMessageImpl({
                 {!isUser && message.uiParts && message.uiParts.length > 0 && (
                   <MessageUiParts
                     parts={message.uiParts}
+                    hiddenPartIds={uiPartIdsOwnedByTurn(interruptedTurn)}
                     onSendUserMessage={onSendUserMessageFromUiPart}
+                  />
+                )}
+                {!isUser && interruptedTurn && (
+                  <InterruptedTurnCards
+                    turn={interruptedTurn}
+                    onResend={onRetryError ? () => onRetryError(message.id) : undefined}
                   />
                 )}
                 {!isUser &&
