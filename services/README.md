@@ -3,7 +3,8 @@
 Hummingbird ships with **three interchangeable backends** for the chat
 turn (`/v1/chat`-shaped wire) plus the non-chat endpoints
 (`summarize`, `extract`, `url/fetch`, `images/refresh-url`, `mcp/...`;
-agent-py also serves `files/refresh-url` and `extract-table`).
+agent-py also serves `files/refresh-url`, `extract-table`, `embed`,
+`memory/extract` and `csp-report`).
 Two live here under `services/`; the third lives split across `app/api/`
 and `lib/server/` at the repo root because Next.js's App Router owns
 those paths. The frontend picks one per account via
@@ -69,6 +70,9 @@ If you're looking for the chat-route equivalent in each backend:
 | Refresh image URL | `app/api/images/refresh-url/route.ts` | `routers/images.py` | `routes/refresh-url.ts` |
 | Refresh file URL | `app/api/files/refresh-url/route.ts` | `routers/files.py` | — (frozen; client uses the Next.js route) |
 | Extract table | `app/api/extract-table/route.ts` | `routers/extract_table.py` | — (frozen; client uses the Next.js route) |
+| Embed file | `app/api/embed/route.ts` | `routers/embed.py` (+ `embeddings.py`, `chunk.py`) | — (frozen; client uses the Next.js route) |
+| Memory extract | `app/api/memory/extract/route.ts` | `routers/memory.py` (+ `memory_extract.py`) | — (frozen; client uses the Next.js route) |
+| CSP reports | `app/api/csp-report/route.ts` | `routers/csp_report.py` (+ `csp_report.py`) | — |
 
 Shared by all three: the Zod wire schemas in `lib/shared/api-schemas.ts`
 (agent-ts uses a frozen copy, `src/vendor/shared/api-schemas.ts`) and
@@ -76,9 +80,27 @@ the streaming SSE protocol documented in `docs/API.md`.
 
 agent-ts is frozen (no new endpoints — `docs/PLAN-frontend-backend-split.md`,
 Q11), so surfaces added after the freeze exist only in agent-py. For
-those (`files/refresh-url`, `extract-table`) `lib/client/api-client.ts`
-dispatches remotely only when the account's backend is agent-py
-(`agentPyOnlyDispatch`); `ts-service` accounts stay on the Next.js route.
+those (`files/refresh-url`, `extract-table`, `embed`, `memory/extract`)
+`lib/client/api-client.ts` dispatches remotely only when the account's
+backend is agent-py (`agentPyOnlyDispatch`); `ts-service` accounts stay
+on the Next.js route.
+
+CSP reports are not per-account: the browser posts them wherever the
+page's policy says. `proxy.ts` points `report-uri` /
+`Reporting-Endpoints` at agent-py's `/v1/csp-report` whenever
+`NEXT_PUBLIC_AGENT_PY_URL` is set (`/` → same-origin `/v1/csp-report`;
+an absolute URL → `<base>/v1/csp-report`; `cspReportUri` in
+`lib/server/security/csp.ts`), else at the Next.js route. A
+cross-origin agent-py needs the frontend's origin in
+`CORS_ALLOWED_ORIGINS`: Reporting-API deliveries
+(`application/reports+json`) are CORS requests with a preflight.
+
+Ports of TypeScript logic that must behave identically — the embedding
+chunker, the memory prompt + merge, CSP report sanitising — are pinned
+by parity fixtures generated from the TS originals
+(`bun run codegen:agent-py-parity` → `services/agent-py/tests/fixtures/`;
+`scripts/__tests__/agent-py-parity.test.ts` fails when a TS original
+changes without regenerating them).
 
 ## Model allowlist
 
@@ -115,8 +137,16 @@ Where it's enforced:
   `google/gemini-2.5-flash`, which this service can't call), present →
   must be allowed. The entry's `supportsStructuredOutput` flag picks the
   native structured path first, as on the Next.js route.
-- `/v1/extract`, `/v1/url/fetch`, MCP and image / file refresh take no
-  model id.
+- **`/v1/memory/extract`** (agent-py only) — no request model; the
+  operator's `MEMORY_EXTRACT_MODEL` is used only when it is an allowed
+  `anthropic/*` id, otherwise (and when unset) `AGENT_DEFAULT_MODEL`. The
+  Next.js route defaults to `google/gemini-2.5-flash`, so a shared
+  `.env` with a non-Anthropic value is not an error here — it falls
+  back. Always the forced-tool structured path (as `generateObject`).
+- `/v1/extract`, `/v1/url/fetch`, `/v1/embed` (its embedder is an
+  OpenAI-compatible endpoint, `EMBEDDINGS_*` / `OLLAMA_*`, not a chat
+  model), `/v1/csp-report`, MCP and image / file refresh take no model
+  id.
 
 Config:
 
