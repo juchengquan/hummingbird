@@ -61,6 +61,10 @@ import type { SkillId } from "@/shared/skills/types"
 import type { Message, MessageError, MessageErrorCode } from "@/shared/types"
 import { toISO } from "@/shared/utils"
 import { abortStreamsOfDeletedConversations } from "@/client/chat/abort-deleted-streams"
+import { buildRunInput } from "@/client/runs/build-input"
+import { registerChatRunBridge } from "@/client/runs/chat-bridge"
+import { createChatRunner, type ChatRunner } from "@/client/runs/chat-runner"
+import { RUNS_CHAT_ENABLED } from "@/client/runs/config"
 
 export interface SendOptions {
   modelOverride?: string
@@ -177,6 +181,60 @@ export function useChatSend(): UseChatSendResult {
   // Per-conversation abort controllers. Stop on the active conv aborts
   // *that* controller only; sibling conversations keep streaming.
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
+  // Chat on agent-py's runs API ("agent-py (runs)") — its sessions,
+  // Stop → cancel, pointer, rejoin and the answer-card bridge
+  // (`lib/client/runs/chat-runner.ts`). Reads the store fresh; the
+  // session module (`@ag-ui/client`) is imported only when a run starts.
+  const [runner] = useState<ChatRunner>(() =>
+    createChatRunner({
+      store: () => useStore.getState(),
+      setLiveToolCalls,
+      loadSession: () => import("@/client/runs/session"),
+      resolveTarget: async () =>
+        RUNS_CHAT_ENABLED
+          ? (await import("@/client/api/backend-resolver")).resolveRunsTarget()
+          : null,
+      cancelRun: (runId, opts) => apiClient.runs.cancel(runId, opts),
+      buildRunInput,
+      autoArchive: (messageId, conversationId) => {
+        const st = useStore.getState()
+        const message = st.conversations
+          .find((c) => c.id === conversationId)
+          ?.messages.find((m) => m.id === messageId)
+        if (!message) return
+        autoArchiveCodeBlocksPure(
+          { content: message.content, messageId, conversationId },
+          st.createArtifact
+        )
+      },
+      extractMemory: extractAfterTurn,
+      memoryEnabled: () => useStore.getState().memoryEnabled,
+      // A resume after a reload (the paused run's request is gone):
+      // composed like a send's, minus the per-turn persona / forced skills.
+      composeResumeInput: (turn) => {
+        const st = useStore.getState()
+        const conv = st.conversations.find((c) => c.id === turn.conversationId)
+        const workspaceId = conv?.workspaceId || st.activeWorkspaceId
+        const workspace = st.workspaces.find((w) => w.id === workspaceId)
+        return {
+          model: turn.model ?? st.chatModel,
+          systemPrompt: withUserSkillInstructions(
+            composeSystemPrompts(
+              st.customInstructionsStyle,
+              st.customInstructionsAbout,
+              workspace?.systemPrompt,
+              conv?.systemPrompt,
+              ""
+            ),
+            st.userSkills,
+            workspaceId
+          ),
+          skills: resolveEnabledSkills({ workspace, conversation: conv }),
+          workspaceId: workspaceId || undefined,
+        }
+      },
+    })
+  )
 
   // Long-running task mode. The provider owns the active run so the chat
   // panel + Tasks panel share it. Ref so the pipeline can reach
@@ -321,6 +379,42 @@ export function useChatSend(): UseChatSendResult {
         )
         return
       }
+
+      // Chat on agent-py's runs API ("agent-py (runs)", Q33):
+      // `resolveRunsTarget()` is `null` unless that option is selected and
+      // agent-py configured — then the path below runs exactly as before.
+      // Signed-out users get a target too (anonymous runs, Q34), so no
+      // `authToken` / mock fallback here. Parity with `/v1/chat` (Q32):
+      // attachments, MCP servers, sandbox files, reasoning effort,
+      // reference images and the memory opt-out aren't sent.
+      const runsTarget = RUNS_CHAT_ENABLED
+        ? await (
+            await import("@/client/api/backend-resolver")
+          ).resolveRunsTarget()
+        : null
+      if (runsTarget) {
+        // Q35: a new message while a turn is paused cancels the paused run.
+        await runner.supersedeInterrupted(targetConvId, runsTarget)
+        await runner.send({
+          conversationId: targetConvId,
+          history,
+          target: runsTarget,
+          model: modelForCall,
+          isRetry,
+          body: buildRunInput({
+            conversationId: targetConvId,
+            history,
+            model: modelForCall,
+            systemPrompt: workspaceSystemPrompt,
+            skills: enabledSkills,
+            workspaceId: activeWorkspaceId || undefined,
+          }),
+        })
+        return
+      }
+      // Off runs now: a turn paused on runs earlier can't be answered any
+      // more — forget it (local state only; nothing else changes here).
+      void runner.supersedeInterrupted(targetConvId, null)
 
       const controller = new AbortController()
       // If this conversation already has an in-flight controller
@@ -493,10 +587,9 @@ export function useChatSend(): UseChatSendResult {
       // Supabase JWT lazily; null means "in-Next route, no token
       // needed." Shared with the four non-chat endpoints in
       // `apiClient.{summarize,mcp,url,images}.*` so divergence is
-      // impossible. `'python-runs'` ("agent-py (runs)") is sent as
-      // `'python'` by `apiClient.chat.stream` until wave 4b-A routes it
-      // through `apiClient.runs.*` (`resolveRunsTarget`, see
-      // `lib/client/runs/README.md`).
+      // impossible. `'python-runs'` ("agent-py (runs)") took the runs
+      // path above whenever it resolved a target; when it didn't
+      // (agent-py unconfigured) it is sent as `'python'` here.
       const { resolveRemoteBackend } = await import(
         "@/client/api/backend-resolver"
       )
@@ -785,6 +878,7 @@ export function useChatSend(): UseChatSendResult {
       files,
       memoryEnabled,
       mockAIResponse,
+      runner,
       setConversationStreaming,
       setConversationTyping,
       setMessageError,
@@ -813,9 +907,31 @@ export function useChatSend(): UseChatSendResult {
           abortControllersRef.current,
           state.conversations
         )
+        // Runs: detach (the run goes on server-side, but nothing writes
+        // into a conversation that's gone), drop pointers + paused turns.
+        runner.forgetDeleted(state.conversations, prev.conversations)
       }),
-    []
+    [runner]
   )
+
+  // Runs: the answer cards resume paused turns through this hook
+  // (`ChatRunBridge`); after a reload, running answers are rejoined into
+  // their messages. Unmount stops reading every run (they go on
+  // server-side and are rejoined on the next mount).
+  useEffect(() => {
+    const unregister = registerChatRunBridge({
+      answerInterrupts: (turn, answers) => runner.answerInterrupts(turn, answers),
+    })
+    const rejoin = () => void runner.rejoinActive()
+    let offHydrate: (() => void) | undefined
+    if (useStore.persist.hasHydrated()) rejoin()
+    else offHydrate = useStore.persist.onFinishHydration(rejoin)
+    return () => {
+      offHydrate?.()
+      unregister()
+      runner.detachAll()
+    }
+  }, [runner])
 
   // Stable wrapper — consumers don't manage their own ref.
   const send = useCallback(
@@ -828,8 +944,10 @@ export function useChatSend(): UseChatSendResult {
     // Stop only the *active* conv's stream. Other conversations
     // mid-stream stay running — each has its own controller.
     if (!activeConversationId) return
+    // Runs: Stop cancels the run on the server (Q36).
+    if (runner.stop(activeConversationId)) return
     abortControllersRef.current.get(activeConversationId)?.abort()
-  }, [activeConversationId])
+  }, [activeConversationId, runner])
 
   const isStreaming = useCallback(
     (convId: string | null | undefined): boolean =>

@@ -17,7 +17,7 @@ session.ts ── HummingbirdRunAgent (agent.ts, @ag-ui/client: enforce → veri
 
 | Module | What |
 |---|---|
-| `config.ts` | `RUNS_CHAT_ENABLED` — hides the option until 4b-A flips it |
+| `config.ts` | `RUNS_CHAT_ENABLED` — `true` since 4b-A (shows the option; `false` hides it again) |
 | `types.ts` | `RunsTarget`, contract types (`Run`, `StartRunRequest`, `RunForwardedProps`, …), AG-UI re-exports |
 | `transport.ts` | `startRun`, `rejoinRun`, `getRun`, `cancelRun`, `resumeRun` = `apiClient.runs.{start,rejoin,status,cancel,resume}` |
 | `sse.ts` | SSE parser that keeps each message's `id:` (the cursor) |
@@ -30,6 +30,9 @@ session.ts ── HummingbirdRunAgent (agent.ts, @ag-ui/client: enforce → veri
 | `reducer.ts` | the pure AG-UI → store step |
 | `agent.ts` | `HummingbirdRunAgent extends AbstractAgent` with our transport |
 | `session.ts` | `startRunSession` / `rejoinRunSession` / `resumeRunSession`, `RunSink`, `applyRunOps` |
+| `chat-runner.ts` | 4b-A: chat turns on runs below `use-chat-send` — placeholder, session + sink (`lib/client/chat/turn-writer.ts`), Stop, sync hold, pointer, outcomes, rejoin, the `ChatRunBridge` |
+| `chat-outcome.ts` | `planRunOutcome` (outcome → what chat does), `pointerActionFor`, the cursor throttle — pure |
+| `run-base.ts` | a resume run's **base** (what the paused run wrote), saved as sizes per run so a reload's reset restores it |
 | `fixtures/` | recorded agent-py streams + a store-message model (tests only) |
 
 Ids: `lib/shared/runs/ids.ts` (`mintRunId`, `threadIdFor(conversationId)`),
@@ -165,6 +168,23 @@ interface RunSession {
 ```
 
 ## For wave 4b-A — wiring `use-chat-send`
+
+**Done** (below: the spec it followed). Where it landed:
+`use-chat-send.ts` resolves the target after the task-mode branch and
+hands the composed `buildRunInput(...)` body to `chat-runner.ts`
+(`runner.send`); everything after that — the steps below plus the
+interrupt hand-over — lives in the runner, with the per-frame handling
+shared with `/v1/chat` through `lib/client/chat/turn-writer.ts`
+(`createTurnWriter(...).handleFrame`; `clear()` for resets). The
+bridge's `answerInterrupts` resolves `{ ok: false, error, code }` only
+when the resume run never started (`run_already_resumed`,
+`invalid_state`, `invalid_answers` — an unanswered / expired interrupt
+caught before sending —, `busy`, `not_found`, `not_on_runs`, `network`);
+the message and the paused turn are then untouched. Once the resume run
+started, its outcome is handled like a send's (an error is the
+message's bubble) and it resolves `{ ok: true }`. A reset of a resume
+run (a rejoin after a reload) restores the paused run's output first
+(`run-base.ts`).
 
 1. In `callChatAPI`, after the existing request assembly:
    `const target = await (await import("@/client/api/backend-resolver")).resolveRunsTarget()`.
