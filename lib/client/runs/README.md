@@ -27,6 +27,8 @@ session.ts ── HummingbirdRunAgent (agent.ts, @ag-ui/client: enforce → veri
 | `build-input.ts` | `buildRunInput(chat inputs)` → `RunAgentInput` |
 | `interrupts.ts` | `PendingInterrupt`, `InterruptAnswer`, `buildResume` |
 | `chat-bridge.ts` | the 4b-A ↔ 4b-B seam: `useInterruptedTurns` (ephemeral paused turns) + `registerChatRunBridge` / `getChatRunBridge` (`answerInterrupts`) |
+| `interrupt-answers.ts` | 4b-B, pure: interrupt → card question, card answer → `InterruptAnswer`, `submitTurnAnswers` (via the bridge), failure classes, answered ui parts |
+| `restore-interrupted.ts` | 4b-B: rebuild interrupted turns after a reload (pointer + `status`); `use-restore-interrupted-turns.ts` mounts it from the chat panel |
 | `reducer.ts` | the pure AG-UI → store step |
 | `agent.ts` | `HummingbirdRunAgent extends AbstractAgent` with our transport |
 | `session.ts` | `startRunSession` / `rejoinRunSession` / `resumeRunSession`, `RunSink`, `applyRunOps` |
@@ -270,6 +272,36 @@ run (a rejoin after a reload) restores the paused run's output first
 - Typing a new message while interrupted (Q35): `apiClient.runs.cancel(
   previousRunId, { target })`, `clearActiveRun`, then send normally.
 - `409 run_already_resumed` → another tab answered: re-read `status`.
+
+### Built (4b-B)
+
+- **Cards** — `components/agent/interrupt-cards/answer-cards.tsx`
+  (approval / choice / input / ui-part), shared with the task strip;
+  model + respond bodies in `lib/shared/agent/answer-cards.ts`. Chat
+  renders them under the paused message (`components/chat/interrupted-turn-cards.tsx`,
+  mounted by `chat-message.tsx` from `useInterruptedTurn(activeConversationId)`).
+  Once every open interrupt has an answer they go to
+  `getChatRunBridge().answerInterrupts(turn, answers)`; the cards stay
+  disabled ("Sending your answer…") until it resolves. On success the
+  answered `ui-part`s are written to the message's `uiParts` (inert, as
+  on `/api/chat`) and the turn is cleared if the bridge hasn't already.
+- **Failures** — `run_already_resumed` → "answered in another tab", the
+  run is re-read and a run that moved on / 404 loses card + pointer;
+  `invalid_state` → "expired" + **Resend message** (= the error bubble's
+  retry: delete the paused message and resend the history before it);
+  others → inline error + Retry. An interrupt past `expiresAt` (or of an
+  unknown reason) can only be dismissed (`{ cancelled: true }`). No bridge
+  → disabled with a hint, sent once it registers.
+- **renderUI (Q35)** — a `ui-part` interrupt is the registry's component
+  as the card; its answer is `{ uiAnswer, value?, selection? }` (the
+  respond route's body minus `requestId`: agent-py shows the model
+  `value`, the formatted text). `MessageUiParts` hides the parts an open
+  turn owns, so a runs part never auto-sends or prefills the composer.
+  A read-only `info-table` part gets a **Continue** button.
+- **Reload** — `useRestoreInterruptedTurns(hydrated)` (chat panel):
+  `interrupted` pointers whose message exists → `status` → turn; 404 /
+  not interrupted → `clearActiveRun`; network errors / a changed
+  identity (signed in ↔ out) leave the pointer alone.
 
 ## For wave 4b-C — Playwright smoke
 

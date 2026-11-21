@@ -53,6 +53,7 @@ import { useAttachmentMentionAutocomplete } from "@/client/hooks/use-attachment-
 import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/shared/upload-config"
 import type { Agent } from "@/shared/types"
 import { forkTargetForEdit, forkTargetForRegenerate } from "@/shared/branches/fork-target"
+import { useRestoreInterruptedTurns } from "@/client/runs/use-restore-interrupted-turns"
 
 export function ChatPanel() {
   const addMessage = useStore((state) => state.addMessage)
@@ -100,6 +101,8 @@ export function ChatPanel() {
     [conversations, activeConversationId]
   )
   const hydrated = useHydrated()
+  // Chat on runs: rebuild paused turns' answer cards after a reload (Q35).
+  useRestoreInterruptedTurns(hydrated)
   const [inputValue, setInputValue] = useState("")
   // Send pipeline lives in its own hook (see lib/client/hooks/use-chat-send).
   // The hook owns the abort-controller map, the streaming-conv-ids Set,

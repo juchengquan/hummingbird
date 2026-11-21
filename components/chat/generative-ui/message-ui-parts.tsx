@@ -39,9 +39,14 @@ interface MessageUiPartsProps {
    *  Optional — when absent, every resolution falls back to the
    *  composer-prefill path so the user always has *some* recourse. */
   onSendUserMessage?: (text: string) => void
+  /** Parts not to render here: on runs (Q35) a `renderUI` part that is
+   *  still an open interrupt is rendered — and answered — by the turn's
+   *  answer cards (`interrupted-turn-cards.tsx`), never auto-sent or
+   *  prefilled from here. */
+  hiddenPartIds?: ReadonlySet<string>
 }
 
-export function MessageUiParts({ parts, onSendUserMessage }: MessageUiPartsProps) {
+export function MessageUiParts({ parts, onSendUserMessage, hiddenPartIds }: MessageUiPartsProps) {
   const resolveMessageUiPart = useStore((s) => s.resolveMessageUiPart)
   const setPendingChatInput = useStore((s) => s.setPendingChatInput)
   const messageId = useStore((s) => {
@@ -79,6 +84,7 @@ export function MessageUiParts({ parts, onSendUserMessage }: MessageUiPartsProps
   return (
     <div className="flex flex-col gap-2">
       {parts.map((part) => {
+        if (hiddenPartIds?.has(part.id)) return null
         const def = getUiKindDef(part.kind)
         if (!def) return null
         const parsed = def.schema.safeParse(part.props)

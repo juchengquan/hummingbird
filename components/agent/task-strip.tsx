@@ -5,7 +5,6 @@ import { useEffect, useState } from "react"
 import {
   Ban,
   CheckCircle2,
-  Check,
   Circle,
   CircleDot,
   FileText,
@@ -22,28 +21,21 @@ import {
   type LiveToolCall,
 } from "@/components/skills/tool-call-strip"
 import { apiClient } from "@/client/api-client"
-import { getUiKindDef } from "@/client/chat/generative-ui/registry"
 import { isTerminalStatus, type RunStatus } from "@/shared/agent/events"
 import type { PlanItem } from "@/shared/agent/events"
 import type { ChildRunRef, PendingInput, TaskRunView } from "@/shared/agent/project"
 import type { RespondRequestInput } from "@/shared/api-schemas"
 import {
-  respondBodyForUiAnswer,
-  type UiAnswer,
-  type UiKind,
-} from "@/shared/generative-ui/schemas"
+  questionFromPendingInput,
+  respondBodyForCardAnswer,
+  type CardAnswer,
+} from "@/shared/agent/answer-cards"
 import { cn } from "@/shared/utils"
 
 import { openChildRunViewer } from "@/client/agent/child-run-viewer/types"
 
+import { AnswerCard } from "./interrupt-cards/answer-cards"
 import { subagentPillLabel } from "./subagent-pill-label"
-
-export interface RespondAnswer {
-  approved?: boolean
-  args?: unknown
-  selection?: string[]
-  value?: string
-}
 
 interface TaskStripProps {
   view: TaskRunView
@@ -215,9 +207,11 @@ export function TaskStrip({
   )
 }
 
-/** The "Approve / Reject" card shown when the run is paused on an
- *  approval-gated tool. v1 — binary only; `choice` and `input` kinds
- *  are added in the next phase. */
+/** The answer card shown when the run is paused on a pending input —
+ *  approval, choice, input or a generative-UI part. The cards are shared
+ *  with chat on runs (`components/agent/interrupt-cards/`); the answer
+ *  goes to `/api/tasks/:id/respond` as it always has
+ *  (`respondBodyForCardAnswer`). */
 function InputRequestCard({
   input,
   onRespond,
@@ -226,223 +220,30 @@ function InputRequestCard({
   onRespond: (body: RespondRequestInput) => void | Promise<void>
 }) {
   const [busy, setBusy] = useState(false)
-  const submit = async (answer: RespondAnswer) => {
+  const submit = async (answer: CardAnswer) => {
     if (busy) return
     setBusy(true)
     try {
-      await onRespond({ requestId: input.requestId, ...answer })
+      await onRespond(respondBodyForCardAnswer(input.requestId, answer))
     } finally {
       setBusy(false)
     }
   }
-  const kind = input.kind ?? "approval"
-  if (kind === "ui-part") {
-    return (
-      <UiPartCard input={input} busy={busy} onRespond={onRespond} />
-    )
-  }
-  if (kind === "choice") {
-    return (
-      <ChoiceCard input={input} busy={busy} onSubmit={submit} />
-    )
-  }
-  if (kind === "input") {
-    return <InputCard input={input} busy={busy} onSubmit={submit} />
-  }
-  const args = formatArgs(input.args)
-  return (
-    <div className="rounded-md border border-[var(--primary)]/40 bg-[var(--primary)]/5 p-2 space-y-2">
-      <div className="text-xs">
-        <p className="font-medium">Approve action?</p>
-        <p className="text-[var(--muted-foreground)]">
-          The agent wants to call <code>{input.tool}</code>.
-        </p>
-        {args ? (
-          <pre className="mt-1 max-h-32 overflow-auto rounded bg-[var(--background)] p-1.5 text-[10px]">
-            {args}
-          </pre>
-        ) : null}
-      </div>
-      <div className="flex items-center gap-1.5">
-        <Button
-          size="xs"
-          variant="default"
-          disabled={busy}
-          onClick={() => submit({ approved: true })}
-        >
-          <Check />
-          Approve
-        </Button>
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={busy}
-          onClick={() => submit({ approved: false })}
-        >
-          <X />
-          Reject
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-/** Task-mode `renderUI` HITL card — reuses the chat-mode components
- *  from `lib/client/chat/generative-ui/registry.ts` so the
- *  presentational core stays in one place. The user's answer routes
- *  to `/api/tasks/:id/respond` via `respondBodyForUiAnswer`. */
-function UiPartCard({
-  input,
-  busy,
-  onRespond,
-}: {
-  input: PendingInput
-  busy: boolean
-  onRespond: (body: RespondRequestInput) => void | Promise<void>
-}) {
-  const def = input.uiKind ? getUiKindDef(input.uiKind) : null
-  // Defensive: server should have validated, but a stale client
-  // across a deploy window might see an unknown kind — render an
-  // explanatory placeholder rather than crash the strip.
-  if (!def) {
-    return (
-      <div className="rounded-md border border-[var(--primary)]/40 bg-[var(--primary)]/5 p-2 text-xs">
-        <p className="font-medium">Generative UI input</p>
-        <p className="text-[var(--muted-foreground)]">
-          (unknown kind <code>{input.uiKind ?? "—"}</code>; update the
-          client to render this.)
-        </p>
-      </div>
-    )
-  }
-  const parsed = def.schema.safeParse(input.uiProps)
-  if (!parsed.success) {
-    return (
-      <div className="rounded-md border border-[var(--primary)]/40 bg-[var(--primary)]/5 p-2 text-xs">
-        <p className="font-medium">Generative UI input</p>
-        <p className="text-[var(--muted-foreground)]">
-          (props validation failed; the agent runner may have emitted
-          a malformed payload.)
-        </p>
-      </div>
-    )
-  }
-  const Component = def.Component
-  const handleResolve = (answer: UiAnswer) => {
-    if (busy) return
-    const body = respondBodyForUiAnswer(
-      input.requestId,
-      { kind: input.uiKind as UiKind, props: parsed.data },
-      answer,
-    )
-    void onRespond(body)
-  }
-  return (
-    <div className="rounded-md border border-[var(--primary)]/40 bg-[var(--primary)]/5 p-2">
-      <Component props={parsed.data} inert={busy} onResolve={handleResolve} />
-    </div>
-  )
-}
-
-function ChoiceCard({
-  input,
-  busy,
-  onSubmit,
-}: {
-  input: PendingInput
-  busy: boolean
-  onSubmit: (answer: RespondAnswer) => void | Promise<void>
-}) {
-  const options = input.options ?? []
-  const multi = !!input.multi
-  const [selected, setSelected] = useState<string[]>([])
-  const toggle = (id: string) => {
-    if (multi) {
-      setSelected((prev) =>
-        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-      )
-    } else {
-      setSelected([id])
+  const handleAnswer = (answer: CardAnswer) => {
+    // A generative-UI answer is sent without the busy state, as before.
+    if ("uiAnswer" in answer) {
+      void onRespond(respondBodyForCardAnswer(input.requestId, answer))
+      return
     }
+    void submit(answer)
   }
-  const canSubmit = selected.length > 0 && !busy
   return (
-    <div className="rounded-md border border-[var(--primary)]/40 bg-[var(--primary)]/5 p-2 space-y-2">
-      <p className="text-xs">{input.prompt ?? "Pick one:"}</p>
-      <ul className="space-y-1">
-        {options.map((opt) => {
-          const checked = selected.includes(opt.id)
-          return (
-            <li key={opt.id}>
-              <label className="flex items-center gap-2 text-xs cursor-pointer">
-                <input
-                  type={multi ? "checkbox" : "radio"}
-                  name={`choice-${input.requestId}`}
-                  checked={checked}
-                  onChange={() => toggle(opt.id)}
-                  disabled={busy}
-                />
-                <span>{opt.label}</span>
-              </label>
-            </li>
-          )
-        })}
-      </ul>
-      <Button
-        size="xs"
-        variant="default"
-        disabled={!canSubmit}
-        onClick={() => onSubmit({ selection: selected })}
-      >
-        <Check />
-        Submit
-      </Button>
-    </div>
+    <AnswerCard
+      question={questionFromPendingInput(input)}
+      busy={busy}
+      onAnswer={handleAnswer}
+    />
   )
-}
-
-function InputCard({
-  input,
-  busy,
-  onSubmit,
-}: {
-  input: PendingInput
-  busy: boolean
-  onSubmit: (answer: RespondAnswer) => void | Promise<void>
-}) {
-  const [value, setValue] = useState("")
-  const canSubmit = value.trim().length > 0 && !busy
-  return (
-    <div className="rounded-md border border-[var(--primary)]/40 bg-[var(--primary)]/5 p-2 space-y-2">
-      <p className="text-xs">{input.prompt ?? "Your input:"}</p>
-      <textarea
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        disabled={busy}
-        rows={3}
-        className="w-full rounded border border-[var(--border)] bg-[var(--background)] p-1.5 text-xs"
-        placeholder="Type your answer…"
-      />
-      <Button
-        size="xs"
-        variant="default"
-        disabled={!canSubmit}
-        onClick={() => onSubmit({ value })}
-      >
-        <Check />
-        Submit
-      </Button>
-    </div>
-  )
-}
-
-function formatArgs(args: unknown): string {
-  if (args == null) return ""
-  try {
-    return JSON.stringify(args, null, 2)
-  } catch {
-    return String(args)
-  }
 }
 
 function SubagentGroup({
