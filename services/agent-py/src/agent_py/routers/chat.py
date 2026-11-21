@@ -261,25 +261,20 @@ async def chat(
 
     # Post-stream chips. Mirrors the Next.js inline route's
     # behaviour: on a successful turn, ask a cheap Haiku call
-    # for 3 follow-up questions and emit them as
-    # `data-suggestions` parts. Decoration only — failures are
-    # swallowed by `generate_chat_suggestions`.
-    async def on_complete(assistant_text: str) -> AsyncIterator[str]:
-        values = await generate_chat_suggestions(
+    # for 3 follow-up questions; they reach the wire as a
+    # `suggestions` event → `data-suggestions` part. Decoration
+    # only — failures are swallowed by `generate_chat_suggestions`.
+    async def suggest(assistant_text: str) -> list[str]:
+        return await generate_chat_suggestions(
             client=client,
             history=config.messages,
             assistant_reply=assistant_text,
         )
-        if not values:
-            return
-        yield sse_frame({"type": "data-suggestions", "data": {"values": values}})
 
     if tools:
-        stream_gen = chat_stream_with_tools_ai_sdk(
-            client=client, config=config, on_complete=on_complete
-        )
+        stream_gen = chat_stream_with_tools_ai_sdk(client=client, config=config, suggest=suggest)
     else:
-        stream_gen = chat_stream_ai_sdk(client=client, config=config, on_complete=on_complete)
+        stream_gen = chat_stream_ai_sdk(client=client, config=config, suggest=suggest)
 
     async def event_source() -> AsyncIterator[bytes]:
         # Idle watchdog: wrap each `__anext__` in `asyncio.wait_for` so a

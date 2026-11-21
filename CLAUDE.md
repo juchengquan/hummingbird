@@ -174,7 +174,7 @@ SQL lives under `supabase/migrations/` as numbered files applied in order (`0001
 `0036_task_job_stale_lease_backfill.sql`,
 `0037_validate_artifacts_kind_check.sql`, `0038_mcp_pgcrypto_schema.sql`,
 `0039_mcp_upsert_foreign_id.sql`, `0040_task_worker_liveness.sql`,
-`0041_runs_on_tasks.sql`) — see `docs/SUPABASE_SETUP.md`
+`0041_runs_on_tasks.sql`, `0042_one_live_resume.sql`) — see `docs/SUPABASE_SETUP.md`
 for the hosted-cloud run order, or `docs/SUPABASE_LOCAL.md` for the
 local Supabase CLI path (Docker-based, no cloud account needed). For
 verifying the file full-text retrieval pipeline end-to-end after
@@ -210,7 +210,10 @@ background rows also keep `conversation_id = thread_id`, interactive
 rows have `conversation_id` NULL (their conversation may not have synced)
 and are deleted with their conversation by a trigger. Interactive runs
 are created with the `create_run` RPC (idempotent on the client-minted
-id). **Every old task surface only sees `mode = 'background'`** — a new
+id). One live resume per interrupted run (0042): the unique partial
+index `tasks_one_live_resume` on `previous_run_id` (rows not `failed` /
+`cancelled`), surfaced by `create_run` as 23505 with that constraint
+name → `409 run_already_resumed`. **Every old task surface only sees `mode = 'background'`** — a new
 reader of `tasks` for the task routes must filter on it too (see
 `lib/server/agent/store.ts`).
 
@@ -343,6 +346,24 @@ the allowlist or the service won't boot. agent-py finds the catalog by
 walking up from the package, or via `MODELS_CONFIG_PATH`. Adding an
 `anthropic/*` model to `config/models.json` means setting its
 `anthropicModelId` too. Details: `services/README.md` § Model allowlist.
+
+**Runs API (`/v1/runs`, Phase 2 of `docs/PLAN-frontend-backend-split.md`).**
+Five endpoints in `routers/runs.py`: `POST /v1/runs` (start — AG-UI
+`RunAgentInput`, options in `forwardedProps`; interactive → `200` AG-UI
+SSE, background → `202`), `GET /v1/runs` (list), `GET /v1/runs/{id}`,
+`GET /v1/runs/{id}/events` (rejoin from a `<seq>` / `<seq>.<k>` cursor),
+`POST /v1/runs/{id}/cancel`. The run model lives in
+`services/agent-py/src/agent_py/runs/` — `wiring.py` builds every service
+(stores, event logs, encoder, stream, harness, driver) and is the one
+place to swap an implementation; a run is a `tasks` row (0041) for a
+signed-in caller with `SUPABASE_DB_URL`, else in memory. Event mapping
+and stream rules: `packages/contract/RUN_EVENTS.md`. Settings:
+`REQUIRE_AUTH_FOR_AI` (refuses anonymous runs, as on Next) and
+`RUNS_*` (lease/heartbeat, reaper interval, memory TTL/cap, per-IP
+rate limits — `services/agent-py/README.md` § Configuration).
+`RUNS_STUB_HARNESS=true` swaps the native harness (today's chat loop,
+needs `ANTHROPIC_API_KEY`) for a model-free stub — for the contract
+conformance suite (`CONTRACT_RUNS_STUB=1`) only.
 
 **Deploy target decided** — self-host on a small VM (Hetzner CX22 as
 the named example, ~€4.5/mo; home server / NAS as a parallel option

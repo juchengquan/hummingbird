@@ -83,6 +83,7 @@ If you're looking for the chat-route equivalent in each backend:
 | Embed file | `app/api/embed/route.ts` | `routers/embed.py` (+ `embeddings.py`, `chunk.py`) | — (frozen; client uses the Next.js route) |
 | Memory extract | `app/api/memory/extract/route.ts` | `routers/memory.py` (+ `memory_extract.py`) | — (frozen; client uses the Next.js route) |
 | CSP reports | `app/api/csp-report/route.ts` | `routers/csp_report.py` (+ `csp_report.py`) | — |
+| Runs (`/v1/runs`, Phase 2) | — (the old task routes read the same `tasks` rows, background only) | `routers/runs.py` (+ `runs/`: wiring, driver, repositories, event logs, AG-UI encoder + stream, native harness over `chat_loop.py`) | — |
 
 Shared by all three: the Zod wire schemas in `lib/shared/api-schemas.ts`
 (agent-ts uses a frozen copy, `src/vendor/shared/api-schemas.ts`) and

@@ -277,7 +277,16 @@ export interface paths {
          *     names the interrupted run; it must be the caller's, on the same
          *     thread, `interrupted`, and `resume[]` must cover exactly its open
          *     interrupts — otherwise `409 invalid_state`. A `resume[]` without
-         *     `previousRunId` is `400 invalid_request`.
+         *     `previousRunId` is `400 invalid_request`. An interrupted run has
+         *     at most one live resume: while another run answering it is
+         *     running, interrupted or succeeded, a new one is `409
+         *     run_already_resumed` (an idempotent retry of that resume, same
+         *     `runId`, still replays it); once it has failed or been cancelled,
+         *     the interrupts can be answered again with a new `runId`.
+         *
+         *     A `forwardedProps.model` outside the backend's allow-list is `400
+         *     unknown_model`, answered before the run exists (as `/v1/chat`):
+         *     no row, no stream, nothing to rejoin.
          *
          *     **Anonymous callers** (no `Authorization` header) may start
          *     interactive runs only — `mode: background` answers `401
@@ -285,7 +294,11 @@ export interface paths {
          *     requires sign-in for AI (today's `REQUIRE_AUTH_FOR_AI`, Q20). The
          *     200 response then carries `X-Run-Token`, the run's capability: the
          *     only credential `getRun`, `streamRunEvents` and `cancelRun` accept
-         *     for that run, and what makes a retry of it idempotent. Anonymous
+         *     for that run, and what makes a retry of it idempotent (send it
+         *     with the retry). An anonymous resume sends the interrupted run's
+         *     token the same way, as proof that the run is the caller's; the
+         *     answering run keeps that token. Any other new anonymous run gets a
+         *     fresh one. Anonymous
          *     runs are not persisted: their event log lives in backend memory
          *     for about 15 minutes after the run ends (Q16), after which every
          *     operation on them answers 404. Anonymous runs are rate- and
@@ -612,7 +625,8 @@ export interface components {
          *     `unavailable`, `rate_limit`, `context_window`, `invalid_model`,
          *     `unknown_model`, `provider`, `aborted`, `unknown`. See
          *     `lib/shared/api-errors.ts`. The runs operations add
-         *     `run_id_conflict` and use `invalid_state`.
+         *     `run_id_conflict` and `run_already_resumed`, and use
+         *     `invalid_state`.
          */
         ApiError: {
             /**
@@ -1363,9 +1377,22 @@ export interface components {
              *     non-empty `resume[]`, otherwise ignored.
              */
             previousRunId?: string;
+            /**
+             * @description Tool names that wait for the user's approval before they run
+             *     (an `approval` interrupt, RUN_EVENTS.md § 4). Adds to what
+             *     always waits (`askUser`, `renderUI`, MCP tools their server
+             *     marks for approval).
+             */
+            requireApprovalFor?: string[];
             skills?: components["schemas"]["SkillConfig"][];
             /** @description Extra instructions (workspace / conversation system prompt), prepended to the backend's own. */
             systemPrompt?: string;
+            /**
+             * @description The caller's workspace the run belongs to (signed-in runs):
+             *     scopes `searchFiles` and adds the workspace's cloud MCP
+             *     tools. Ignored for anonymous runs.
+             */
+            workspaceId?: string;
         } & {
             [key: string]: unknown;
         };
@@ -2554,7 +2581,12 @@ export interface operations {
              *     not an idempotent retry of it (identical body in every case);
              *     `invalid_state` — a resume that does not match the previous
              *     run (not the caller's, another thread, not `interrupted`, or
-             *     `resume[]` not covering exactly its open interrupts).
+             *     `resume[]` not covering exactly its open interrupts);
+             *     `run_already_resumed` — another run already answers the
+             *     previous run's interrupts and has not failed or been
+             *     cancelled (one live resume per interrupted run, so an
+             *     approved tool never runs twice; after a failed or cancelled
+             *     resume, answer again with a new `runId`).
              */
             409: {
                 headers: {

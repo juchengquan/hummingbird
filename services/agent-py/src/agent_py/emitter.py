@@ -201,11 +201,16 @@ class RunEmitter:
         tool_name: str,
         summary: str,
         results: list[ToolCallResult] | None = None,
+        is_error: bool = False,
+        output: str | None = None,
     ) -> None:
         """Emit a `tool_output` event — the tool resolved. `summary`
         is a one-line user-facing description ("Fetched <title>",
         "5 results"); `results` is set when the output is a list of
-        sources for the rail (`webSearch`-shaped)."""
+        sources for the rail (`webSearch`-shaped). `is_error` marks a
+        failed call (`summary` is then the error text); `output` is the
+        full result text the model got — transient, see
+        `ToolOutputEvent.output`."""
         if self._settled:
             return
         await self._emit(
@@ -218,6 +223,8 @@ class RunEmitter:
                 tool_name=tool_name,
                 summary=summary,
                 results=results,
+                is_error=is_error,
+                output=output,
             )
         )
 

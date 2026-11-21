@@ -37,6 +37,7 @@ dependencies = [
 dev = [
     { name = "datamodel-code-generator" },
     { name = "httpx" },
+    { name = "jsonschema" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -68,6 +69,7 @@ requires-dist = [
 dev = [
     { name = "datamodel-code-generator", specifier = ">=0.99.0" },
     { name = "httpx", specifier = ">=0.27.0" },
+    { name = "jsonschema", specifier = ">=4.23" },
     { name = "mypy", specifier = ">=1.13.0" },
     { name = "pytest", specifier = ">=8.3.0" },
     { name = "pytest-asyncio", specifier = ">=0.24.0" },
