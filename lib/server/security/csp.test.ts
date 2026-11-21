@@ -146,6 +146,32 @@ describe("buildCsp", () => {
     expect(connect).toEqual(["'self'", "https://react-tweet.vercel.app", "data:", "blob:"])
   })
 
+  test("a same-origin backend (`/`, `/backend`) adds no source — 'self' covers it", () => {
+    const sameOrigin = directives(
+      buildCsp({
+        nonce: NONCE,
+        isDev: false,
+        backendUrls: ["/", " / ", "/backend/", "//"],
+      }),
+    ).get("connect-src")!
+    const baseline = directives(buildCsp({ nonce: NONCE, isDev: false })).get("connect-src")!
+    expect(sameOrigin).toEqual(baseline)
+    // Never a bare path or empty token, which would be an invalid source.
+    expect(sameOrigin.every((s) => s.length > 0 && !s.startsWith("/"))).toBe(true)
+  })
+
+  test("same-origin env value flows through cspOptionsFromEnv without an extra origin", () => {
+    const policy = buildCsp(
+      cspOptionsFromEnv(NONCE, { NODE_ENV: "production", NEXT_PUBLIC_AGENT_PY_URL: "/" }),
+    )
+    expect(directives(policy).get("connect-src")).toEqual([
+      "'self'",
+      "https://react-tweet.vercel.app",
+      "data:",
+      "blob:",
+    ])
+  })
+
   test("deduplicates repeated origins", () => {
     const connect = directives(
       buildCsp({
