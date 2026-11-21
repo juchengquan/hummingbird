@@ -16,6 +16,27 @@ import { Contract, createAjv, loadSpec, operations } from "../conformance/harnes
  *    credentials. */
 const PUBLIC_V1_OPERATIONS = new Set(["getShare", "reportCspViolation"])
 
+/** `/v1` operations that take a bearer token OR no credential at all
+ *  (`security: [{ bearerAuth: [] }, {}]`). Same bar as above.
+ *  - startRun: anonymous callers may start interactive runs (Q2/Q16/Q20);
+ *    the run's `X-Run-Token` is their credential afterwards. */
+const ANONYMOUS_ALLOWED_V1_OPERATIONS = new Set(["startRun"])
+
+/** The operations an anonymous run's `runToken` authorises — only the
+ *  ones addressing that one run. */
+const RUN_TOKEN_OPERATIONS = new Set(["getRun", "streamRunEvents", "cancelRun"])
+
+/** Specified but not implemented yet (`x-planned`), so the conformance
+ *  suite skips them. Implementing one means deleting its marker in
+ *  openapi.yaml AND its entry here — this list makes that deliberate. */
+const PLANNED_OPERATIONS: Record<string, string> = {
+  startRun: "wave-3b",
+  listRuns: "wave-3b",
+  getRun: "wave-3b",
+  streamRunEvents: "wave-3b",
+  cancelRun: "wave-3b",
+}
+
 describe("contract: openapi.yaml", () => {
   let contract: Contract
   beforeAll(async () => {
@@ -31,6 +52,46 @@ describe("contract: openapi.yaml", () => {
         expect([op.operationId, op.secured]).toEqual([op.operationId, expected])
       } else expect(op.path).toMatch(/^\/(healthz|readyz)$/)
     }
+  })
+
+  test("anonymous alternatives and run tokens appear only where listed", () => {
+    for (const op of contract.all()) {
+      const security = op.raw.security ?? contract.spec.security ?? []
+      const anonymousAlt = op.secured && security.some((req) => Object.keys(req).length === 0)
+      expect([op.operationId, anonymousAlt]).toEqual([
+        op.operationId,
+        ANONYMOUS_ALLOWED_V1_OPERATIONS.has(op.operationId),
+      ])
+      const runToken = security.some((req) => "runToken" in req)
+      expect([op.operationId, runToken]).toEqual([op.operationId, RUN_TOKEN_OPERATIONS.has(op.operationId)])
+      // A run token is an alternative to the bearer token, never a replacement.
+      if (runToken) expect(security.some((req) => "bearerAuth" in req)).toBe(true)
+    }
+  })
+
+  test("x-planned marks exactly the operations listed as planned", () => {
+    const planned = Object.fromEntries(
+      contract
+        .all()
+        .filter((op) => op.planned !== null)
+        .map((op) => [op.operationId, op.planned]),
+    )
+    expect(planned).toEqual(PLANNED_OPERATIONS)
+  })
+
+  test("startRun's body is an AG-UI RunAgentInput narrowed to UUID ids", () => {
+    const validate = createAjv().compile(contract.operation("startRun").raw.requestBody!.content!["application/json"]!.schema!)
+    const base = validRequestBodies.startRun as Record<string, unknown>
+    expect(validate(base)).toBe(true)
+    // Plain AG-UI input (no forwardedProps) is a valid interactive run.
+    expect(validate({ threadId: base.threadId, runId: base.runId, messages: base.messages })).toBe(true)
+    expect(validate({ ...base, runId: "r1" })).toBe(false)
+    expect(validate({ ...base, threadId: "t1" })).toBe(false)
+    // Closed like RunAgentInput: no top-level extras (mode lives in forwardedProps).
+    expect(validate({ ...base, mode: "background" })).toBe(false)
+    expect(validate({ ...base, forwardedProps: { mode: "sometimes" } })).toBe(false)
+    // forwardedProps stays open for keys a later wave adds.
+    expect(validate({ ...base, forwardedProps: { mode: "interactive", futureKey: 1 } })).toBe(true)
   })
 
   test("every response and request schema compiles as JSON Schema 2020-12", () => {

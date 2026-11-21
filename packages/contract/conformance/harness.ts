@@ -16,6 +16,11 @@
  *                             operation the backend under test does not
  *                             implement yet).
  *
+ * Operations the spec marks `x-planned` (specified, implemented in a
+ * later wave) are skipped automatically — see `Operation.planned`. A
+ * backend is "strictly" conformant when the suite passes with
+ * CONTRACT_SKIP_OPERATIONS unset.
+ *
  * Error bodies are always checked strictly: every 4xx/5xx JSON body must
  * validate against the operation's documented schema AND against
  * `ApiError` (`{ code, message }`). The transitional FastAPI `{ detail }`
@@ -53,6 +58,9 @@ interface ResponseObject {
 
 interface OperationObject {
   operationId: string
+  /** Specified but not implemented yet; the value names the wave that
+   *  implements it (e.g. `wave-3b`). Removed when it lands. */
+  "x-planned"?: string
   security?: Record<string, string[]>[]
   requestBody?: { content?: Record<string, { schema?: JsonSchema }> }
   responses: Record<string, ResponseObject>
@@ -62,8 +70,12 @@ export interface Operation {
   operationId: string
   method: HttpMethod
   path: string
-  /** True when the operation requires a bearer token. */
+  /** True when the operation requires a credential (every security
+   *  requirement but an anonymous `{}` alternative counts). */
   secured: boolean
+  /** The operation's `x-planned` marker, or null once it is implemented.
+   *  Conformance cases skip planned operations. */
+  planned: string | null
   raw: OperationObject
 }
 
@@ -84,7 +96,36 @@ export async function loadSpec(): Promise<OpenApiDoc> {
   if (errors.length > 0) {
     throw new Error(`openapi.yaml failed to bundle: ${errors.map((e) => e.message).join("; ")}`)
   }
-  return doc.parsed as OpenApiDoc
+  return stripAnchors(doc.parsed) as OpenApiDoc
+}
+
+/** Drops every `$anchor` from the dereferenced spec. Each AG-UI
+ *  definition declares one (`"$anchor": "BaseMessage"`, …); once Redocly
+ *  has inlined a definition at every place that references it, one
+ *  schema can hold the same anchor several times, which Ajv rejects
+ *  ("resolves to more than one schema"). Nothing refers to them any
+ *  more — the contract references AG-UI by JSON pointer, and those refs
+ *  are already resolved. Returns a copy; shared subtrees stay shared. */
+function stripAnchors(value: unknown, seen = new Map<object, unknown>()): unknown {
+  if (Array.isArray(value)) {
+    const hit = seen.get(value)
+    if (hit) return hit
+    const out: unknown[] = []
+    seen.set(value, out)
+    for (const item of value) out.push(stripAnchors(item, seen))
+    return out
+  }
+  if (value && typeof value === "object") {
+    const hit = seen.get(value)
+    if (hit) return hit
+    const out: Record<string, unknown> = {}
+    seen.set(value, out)
+    for (const [key, item] of Object.entries(value)) {
+      if (key !== "$anchor") out[key] = stripAnchors(item, seen)
+    }
+    return out
+  }
+  return value
 }
 
 export function operations(spec: OpenApiDoc): Operation[] {
@@ -99,6 +140,7 @@ export function operations(spec: OpenApiDoc): Operation[] {
         method,
         path,
         secured: security.some((req) => Object.keys(req).length > 0),
+        planned: op["x-planned"] ?? null,
         raw: op,
       })
     }

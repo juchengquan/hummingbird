@@ -10,6 +10,7 @@ files here; nothing here is generated from code.
 |---|---|
 | `openapi.yaml` | Hand-written **OpenAPI 3.1**: paths, request/response schemas, the shared `ApiError`, the bearer security scheme |
 | `agui/1.0/schema.json` | The **AG-UI 1.0** JSON Schema, vendored byte-for-byte. Never edit — see [`agui/SOURCE.md`](agui/SOURCE.md) for the source URL, commit and SHA-256 |
+| [`RUN_EVENTS.md`](RUN_EVENTS.md) | Normative: how the backend's internal run events map onto AG-UI events, run statuses, interrupts, streams (cursor, replay, gap) and log compaction |
 | `redocly.yaml`, `.redocly.lint-ignore.yaml` | Lint config for `openapi.yaml` (Redocly `recommended`; exceptions need a reason) |
 | `scripts/gen.sh` | The single codegen entry point (`--check` for CI) |
 | `scripts/lint.ts` | Redocly lint/validation of `openapi.yaml` |
@@ -77,7 +78,13 @@ ride on the root `tsc` / `eslint` in the `ci` job.
   (`tests/spec.test.ts`, each with its reason — `getShare`, the
   anonymous share-link read, and `reportCspViolation`, which browsers
   post without credentials) are public (`security: []`). A test
-  enforces this.
+  enforces this. Two narrower exceptions, also listed there with
+  reasons: `startRun` also admits **no** credential (`security:
+  [{bearerAuth: []}, {}]` — anonymous interactive runs), and the three
+  operations on one run (`getRun`, `streamRunEvents`, `cancelRun`) also
+  accept that run's `runToken` (`X-Run-Token` header) instead of a
+  bearer token. A present but invalid credential is always 401, never
+  read as anonymous.
 - Error responses reference `components/schemas/ErrorResponse` through
   the shared `components/responses/*`.
 - Field casing follows the wire as it already exists: the refresh-url
@@ -107,30 +114,58 @@ validation still answers 422.
 its older shapes and is **not claimed conformant** — only agent-py is
 run against the suite.
 
-### AG-UI (Phase 2)
+### AG-UI and the runs operations (Phase 2)
 
-No run endpoints exist yet. When they land, reference the vendored
-schema by JSON pointer, relative to `openapi.yaml`:
+The runs operations (tag `runs`: `startRun`, `listRuns`, `getRun`,
+`streamRunEvents`, `cancelRun`) reference the vendored schema by JSON
+pointer, relative to `openapi.yaml` — `RunAgentInput`, `Interrupt`, and
+`Event` for the `text/event-stream` responses. How the backend's
+internal events become AG-UI events, what each status means, the
+stream cursor, `gap` + `MESSAGES_SNAPSHOT` and compaction are specified
+in [`RUN_EVENTS.md`](RUN_EVENTS.md); the operation descriptions in
+`openapi.yaml` carry the HTTP-level rules (idempotent `runId`,
+`runToken`, errors).
 
-```yaml
-requestBody:
-  content:
-    application/json:
-      schema:
-        $ref: "./agui/1.0/schema.json#/$defs/RunAgentInput"
-# SSE events: "./agui/1.0/schema.json#/$defs/Event"  (type-discriminated union)
-```
+Things worth knowing when changing them:
 
-Verified while setting this package up: Redocly bundles such a `$ref`,
-`openapi-typescript` inlines it into the generated types, and
-`datamodel-code-generator` emits importable Pydantic models for it
-(~90 classes). They are deliberately not referenced yet, so the
-generated code carries only what is in use. `tests/agui-schema.test.ts`
-already compiles the schema with the conformance suite's validator and
-checks `RunAgentInput` and the events the run contract uses. The
-schema is strict (closed objects): use it to validate a backend's
-output in conformance, never in the frontend's receive path (AG-UI's
-own guidance).
+- **`RunAgentInput` is closed** (`unevaluatedProperties: false`), so
+  nothing can be added at its top level — not even under `allOf`.
+  `StartRunRequest` narrows it (UUID `threadId` / `runId`, a typed
+  `forwardedProps`) and Hummingbird's run options, `mode` included, live
+  in `forwardedProps` (`RunForwardedProps`, open). The narrowing uses a
+  UUID `pattern`, not `format: uuid`, so the generated Pydantic subclass
+  keeps AG-UI's `str` fields (mypy rejects a `UUID` override).
+- **Anchors.** Every AG-UI definition carries a `$anchor`; Redocly's
+  dereference inlines a definition everywhere it is used, so one schema
+  can hold the same anchor twice, which Ajv rejects. `loadSpec()`
+  strips `$anchor` after bundling (the refs are all resolved by then).
+- **Generated code.** `openapi-typescript` inlines the referenced
+  AG-UI types (the full `Event` union included); `datamodel-code-generator`
+  emits the referenced AG-UI models (`RunAgentInput`, `Message` and its
+  members, `Interrupt`, `ResumeEntry`, …) but not the SSE `Event` union
+  — the backend's AG-UI encoder builds events as plain JSON objects.
+- **Strictness.** The generated `RunAgentInput` model forbids extra
+  keys, like the schema. That is right for conformance (validating a
+  backend's output), but AG-UI's guidance is that receivers tolerate
+  unknown fields: the frontend must never validate a stream with it,
+  and the backend should decide deliberately whether a newer client's
+  extra input field is a 422.
+- The custom-event payload schemas (`RunGapEventValue`,
+  `RunRewindEventValue`) are not referenced by any operation — they
+  travel inside SSE frames — so `.redocly.lint-ignore.yaml` exempts
+  them from `no-unused-components`.
+
+### Planned operations (`x-planned`)
+
+An operation can be specified before any backend implements it: it
+carries `x-planned: <wave>` (the runs operations: `wave-3b`). The
+conformance suite skips planned operations (`Operation.planned` in
+`conformance/harness.ts`), so a backend is held to everything else with
+`CONTRACT_SKIP_OPERATIONS` unset — "strict" conformance. Planned
+operations still get the offline checks (schemas compile, fixtures
+validate, security shape). `tests/spec.test.ts` keeps the planned set
+in `PLANNED_OPERATIONS`, so implementing one is deliberate: delete the
+marker **and** the entry, add its conformance cases, and run the suite.
 
 ### The Zod schemas
 
@@ -207,8 +242,57 @@ CONTRACT_BASE_URL=http://localhost:8765 bun run contract:conformance
 ```
 
 An operation the backend has not implemented yet answers 404 and fails
-with a hint; skip it until it lands, e.g.
-`CONTRACT_SKIP_OPERATIONS=refreshFileUrl,extractTable`.
+with a hint; mark it `x-planned` in the spec (preferred — see above) or
+skip it locally, e.g. `CONTRACT_SKIP_OPERATIONS=refreshFileUrl,extractTable`.
+Strict conformance is the suite passing with `CONTRACT_SKIP_OPERATIONS`
+unset (and `CONTRACT_AUTH_TOKEN` set, so `errors.test.ts` runs too).
+
+### What the runs conformance cases must cover (wave 3b)
+
+Removing `x-planned` from the runs operations brings them under the
+generic cases (`auth.test.ts`: 401 without / with a bad credential —
+`startRun`'s fixture is a **background** run so an anonymous call is a
+401 too; `errors.test.ts`: `{}` → `invalid_request`). Wave 3b adds a
+`runs.test.ts` (and an SSE reader in the harness — `assertConforms`
+only checks JSON bodies) covering at least:
+
+- **start, interactive**: 200 `text/event-stream`; every `data:` is a
+  valid AG-UI `Event`; the stream opens with `RUN_STARTED` (matching
+  `threadId` / `runId`), ends with `RUN_FINISHED` or `RUN_ERROR`, and
+  every other event (bar a `gap`) has a strictly increasing `id:` in
+  `RunCursor` form. Needs a model-free path in the backend under test
+  (e.g. its stub harness) so the case costs nothing.
+- **start, background**: 202 `RunAccepted`; `getRun` then answers
+  `queued`/`running`; without a token → 401 `auth_required`; a
+  `threadId` the caller does not own → 404.
+- **idempotency**: the same body twice → one run (202 twice / the second
+  interactive call replays from `0`); same `runId`, other `threadId` or
+  `mode` → 409 `run_id_conflict`; a second user reusing the `runId` →
+  the identical 409 body.
+- **validation**: non-UUID `runId` / `threadId` → 422; `resume[]`
+  without `forwardedProps.previousRunId` → 400; `resume[]` not covering
+  the previous run's open interrupts → 409 `invalid_state`.
+- **anonymous**: no `Authorization` → 200 + an `X-Run-Token` matching
+  `RunToken`; `getRun` / `streamRunEvents` / `cancelRun` with that
+  token → 200, with another token or none → 404 / 401; `listRuns`
+  without a bearer → 401.
+- **rejoin**: `after=<cursor>` returns exactly the events after it (no
+  repeat, no skip) — compare with a full replay; `Last-Event-ID` is
+  equivalent; a malformed or out-of-range cursor → 400; a compacted run
+  replayed from `0` → `RUN_STARTED`, `CUSTOM hummingbird.gap` (value
+  valid against `RunGapEventValue`), `MESSAGES_SNAPSHOT`, then the
+  closing event.
+- **status / cancel**: `getRun` body valid against `Run`, with the
+  `status` ↔ `result` / `error` / `openInterrupts` rule; cancel is
+  idempotent (twice → 200 `cancelled` both times; a finished run is
+  returned unchanged) and closes a live stream with `RUN_FINISHED {
+  outcome: { type: "cancelled" } }`.
+- **list**: filters (`threadId`, repeated `status`, `parentRunId`,
+  `mode`), newest-first order, `pageSize` bounds, `nextPageToken` walk
+  with no duplicates or gaps, garbage `pageToken` → 400, another user's
+  runs never listed.
+- **not found**: an unknown or foreign `runId` → the same 404 body for
+  `getRun`, `streamRunEvents` and `cancelRun`.
 
 The suite is not in CI yet (CI starts no backend); that comes with the
 reverse-proxy / compose setup.

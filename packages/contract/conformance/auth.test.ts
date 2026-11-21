@@ -39,7 +39,8 @@ describe.skipIf(!env.baseUrl)(`conformance: bearer auth @ ${env.baseUrl}`, () =>
   })
 
   for (const op of secured) {
-    const skip = env.skipOperations.has(op.operationId)
+    // A planned operation (`x-planned`) is not implemented yet: skipped.
+    const skip = env.skipOperations.has(op.operationId) || op.planned !== null
     const body = validRequestBodies[op.operationId]
 
     test.skipIf(skip)(`${op.operationId}: no token → 401 + error body`, async () => {

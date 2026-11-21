@@ -23,7 +23,7 @@ describe.skipIf(!env.baseUrl || !env.authToken)(`conformance: error envelope @ $
   })
 
   for (const op of withBody) {
-    test.skipIf(env.skipOperations.has(op.operationId))(
+    test.skipIf(env.skipOperations.has(op.operationId) || op.planned !== null)(
       `${op.operationId}: schema-invalid body → 400/422 invalid_request`,
       async () => {
         const schema = op.raw.requestBody?.content?.["application/json"]?.schema
