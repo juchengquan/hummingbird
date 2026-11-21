@@ -144,7 +144,7 @@
 |---|---|---|
 | Theme | system / dark / light | [12-settings-and-theme.md](12-settings-and-theme.md) |
 | Color scheme | default / anthropic | [12-settings-and-theme.md](12-settings-and-theme.md) |
-| Chat backend | ts / python / ts-service | [12-settings-and-theme.md](12-settings-and-theme.md) |
+| Chat backend | ts / python / ts-service / python-runs | [12-settings-and-theme.md](12-settings-and-theme.md) |
 | Local-only mode | - | [12-settings-and-theme.md](12-settings-and-theme.md) |
 | Local files only | - | [12-settings-and-theme.md](12-settings-and-theme.md) |
 | AI review changes (editor) | - | [12-settings-and-theme.md](12-settings-and-theme.md) |

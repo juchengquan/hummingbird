@@ -484,7 +484,10 @@ export function useChatSend(): UseChatSendResult {
       // Supabase JWT lazily; null means "in-Next route, no token
       // needed." Shared with the four non-chat endpoints in
       // `apiClient.{summarize,mcp,url,images}.*` so divergence is
-      // impossible.
+      // impossible. `'python-runs'` ("agent-py (runs)") is sent as
+      // `'python'` by `apiClient.chat.stream` until wave 4b-A routes it
+      // through `apiClient.runs.*` (`resolveRunsTarget`, see
+      // `lib/client/runs/README.md`).
       const { resolveRemoteBackend } = await import(
         "@/client/api/backend-resolver"
       )

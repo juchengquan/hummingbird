@@ -829,3 +829,79 @@ describe("apiClient.tasks.schedules — agent-py-only dispatch", () => {
   })
 })
 
+
+// "agent-py (runs)" (Q33): every non-chat call dispatches exactly as
+// under `python` — same URL, bearer and body.
+describe("python-runs — non-chat dispatch is identical to python", () => {
+  const RUNS_REMOTE: RemoteDispatch = { ...REMOTE, backend: "python-runs" }
+
+  async function both(
+    call: (remote: RemoteDispatch) => Promise<unknown>,
+    jsonBody: unknown,
+  ): Promise<[FetchCall[], FetchCall[]]> {
+    const python = installFetchStub({ jsonBody })
+    await call(REMOTE)
+    const runs = installFetchStub({ jsonBody })
+    await call(RUNS_REMOTE)
+    return [python, runs]
+  }
+
+  const cases: Array<[string, (remote: RemoteDispatch) => Promise<unknown>, unknown]> = [
+    [
+      "summarize",
+      (remote) =>
+        apiClient.summarize.file({ mode: "file", name: "n", text: "t" }, { dispatch: "remote", remote }),
+      { summary: "ok" },
+    ],
+    [
+      "url.fetch",
+      (remote) => apiClient.url.fetch("https://example.com", { dispatch: "remote", remote }),
+      {},
+    ],
+    [
+      "files.refreshUrl (agent-py only)",
+      (remote) => apiClient.files.refreshUrl("u/f.csv", { dispatch: "remote", remote }),
+      { url: "https://cdn.example/signed" },
+    ],
+    [
+      "embed.file (agent-py only)",
+      (remote) =>
+        apiClient.embed.file({ fileId: "f-1", text: "hello" }, { dispatch: "remote", remote }),
+      { status: "indexed", sections: 1 },
+    ],
+    [
+      "memory.extract (agent-py only)",
+      (remote) =>
+        apiClient.memory.extract(
+          { turnText: "User: hi", conversationId: "c-1" },
+          { dispatch: "remote", remote },
+        ),
+      { ok: true },
+    ],
+    [
+      "tasks.schedules.list (agent-py only)",
+      (remote) => apiClient.tasks.schedules.list({ dispatch: "remote", remote }),
+      { schedules: [] },
+    ],
+  ]
+
+  for (const [name, call, jsonBody] of cases) {
+    test(name, async () => {
+      const [python, runs] = await both(call, jsonBody)
+      expect(python).toHaveLength(1)
+      expect(python[0].url.startsWith("https://agent-py.example/v1/")).toBe(true)
+      expect(runs).toEqual(python)
+    })
+  }
+
+  test("chat.stream: 'python-runs' takes the 'python' path", async () => {
+    // agent-py's URL is captured at module load and unset here, so both
+    // fall through to the in-Next route the same way.
+    const body = { model: "m", messages: [{ role: "user" as const, content: "hi" }] }
+    const python = installFetchStub({ jsonBody: {} })
+    await apiClient.chat.stream(body, { backend: "python", authToken: "t" })
+    const runs = installFetchStub({ jsonBody: {} })
+    await apiClient.chat.stream(body, { backend: "python-runs", authToken: "t" })
+    expect(runs).toEqual(python)
+  })
+})

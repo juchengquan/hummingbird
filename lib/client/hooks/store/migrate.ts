@@ -9,7 +9,7 @@ import { isInlineDataUrl, messageBlobKey, messageBlobRef } from "@/shared/messag
  * step in `runMigrations`. Wired into the `version` field of the persist
  * config in `use-store.ts`.
  */
-export const STORE_VERSION = 34
+export const STORE_VERSION = 35
 
 /**
  * Sequential schema migrations from older persisted shapes to the
@@ -653,5 +653,22 @@ export function runMigrations(
       })
     }
   }
+  if (fromVersion < 35) {
+    // `ChatBackend` widened to `'python-runs'` — "agent-py (runs)",
+    // chat on agent-py's `/v1/runs` (PLAN-frontend-backend-split Q33).
+    // Existing values stay valid and the default stays `'ts'` (off by
+    // default), so nothing is rewritten. The bump exists so an older
+    // build never reads a value it doesn't know. A value no build ever
+    // wrote (hand-edited storage) falls back to the default.
+    if (
+      "chatBackend" in state &&
+      !(KNOWN_CHAT_BACKENDS as readonly unknown[]).includes(state.chatBackend)
+    ) {
+      state.chatBackend = "ts"
+    }
+  }
   return persistedState
 }
+
+/** Every `ChatBackend` value a build has persisted (v20 → v35). */
+const KNOWN_CHAT_BACKENDS = ["ts", "python", "ts-service", "python-runs"] as const

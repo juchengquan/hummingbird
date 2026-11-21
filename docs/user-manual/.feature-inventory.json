@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-21T06:59:40Z",
+  "generatedAt": "2026-11-21T14:33:59Z",
   "panels": [
     {
       "id": "agents-dialog",
@@ -429,7 +429,8 @@
       "values": [
         "ts",
         "python",
-        "ts-service"
+        "ts-service",
+        "python-runs"
       ]
     },
     {

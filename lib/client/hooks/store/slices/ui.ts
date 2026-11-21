@@ -22,7 +22,7 @@ export type ColorScheme = "default" | "anthropic"
 
 /** Which `/api/chat` producer the apiClient hits. See `chatBackend`
  *  on the UI slice for the full rationale. */
-export type ChatBackend = "ts" | "python" | "ts-service"
+export type ChatBackend = "ts" | "python" | "ts-service" | "python-runs"
 
 /** Tab ids for the right resources sidebar. */
 export type ResourcesSidebarTab =
@@ -155,6 +155,14 @@ export interface UiSlice {
    * - `'python'` — the Phase 4-1 agent service at
    *   `<NEXT_PUBLIC_AGENT_PY_URL>/v1/chat`. Text-only today; tools
    *   and skills land in later phases.
+   * - `'ts-service'` — the frozen agent-ts service's `/v1/chat`.
+   * - `'python-runs'` — "agent-py (runs)" (store v35,
+   *   `PLAN-frontend-backend-split.md` Q33/Q34): chat turns go to
+   *   agent-py's `/v1/runs` (AG-UI, `lib/client/runs/`), signed-in or
+   *   anonymous; every non-chat call dispatches exactly as under
+   *   `'python'`. Hidden in the selector behind `RUNS_CHAT_ENABLED`
+   *   (`lib/client/runs/config.ts`) until chat is wired onto runs;
+   *   until then a chat turn under it behaves as `'python'`.
    *
    * Per `PLAN-agent-api.md`, both stacks stay live indefinitely —
    * this setting is the user-facing selector, NOT a phased cutover.

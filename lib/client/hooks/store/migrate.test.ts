@@ -212,3 +212,32 @@ describe("v<28 — MCP App polish (resourceUri + truncated on McpAppPart)", () =
     ).not.toThrow()
   })
 })
+
+describe("v<35 — ChatBackend widened to 'python-runs'", () => {
+  test("keeps every known value, including the new one", () => {
+    for (const value of ["ts", "python", "ts-service", "python-runs"]) {
+      const out = runMigrations({ chatBackend: value }, 34) as {
+        chatBackend: string
+      }
+      expect(out.chatBackend).toBe(value)
+    }
+  })
+
+  test("an unknown value falls back to the default 'ts'", () => {
+    const out = runMigrations({ chatBackend: "rust" }, 34) as {
+      chatBackend: string
+    }
+    expect(out.chatBackend).toBe("ts")
+  })
+
+  test("a v34 state without the key is left alone (v20 seeds it for older ones)", () => {
+    expect(runMigrations({}, 34)).toEqual({})
+  })
+
+  test("already-v35 state is not touched", () => {
+    const out = runMigrations({ chatBackend: "rust" }, 35) as {
+      chatBackend: string
+    }
+    expect(out.chatBackend).toBe("rust")
+  })
+})

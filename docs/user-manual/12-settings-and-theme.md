@@ -44,6 +44,13 @@ Click your avatar or initial at the bottom of the left sidebar.
     var is set).
   - `ts-service` - the TypeScript agent service (Phase 5+; shows
     when `NEXT_PUBLIC_AGENT_TS_URL` is set).
+  - `python-runs` - **agent-py (runs)**, experimental: chat turns run
+    on the agent-py runs API (`/v1/runs`), where Stop cancels the
+    answer on the server and a reload picks a running answer back up.
+    Also offered to signed-out users. Not shown yet: it appears once
+    chat is wired onto runs; until then choosing it behaves like
+    `python`. Every other request (summaries, embeds, sharing, …)
+    goes exactly where `python` sends it.
 
 ## Tips & gotchas
 - The Chat backend toggle is only visible when the corresponding
