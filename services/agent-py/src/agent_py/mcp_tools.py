@@ -210,6 +210,8 @@ def build_mcp_tool(
         description=description,
         input_schema=schema,
         execute=execute,
+        # An arbitrary third-party action — assume it has side effects.
+        side_effecting=True,
     )
 
 

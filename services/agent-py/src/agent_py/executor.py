@@ -27,14 +27,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 import asyncpg
 import structlog
 
-from . import jobs, lease, store, verify
+from . import jobs, lease, store, tool_ledger, verify
 from .aggregate import aggregate_child_results
 from .barrier import settle_task_terminal
 from .emitter import EventSink, RunEmitter
@@ -48,10 +48,12 @@ from .model_allowlist import resolve_api_model_id
 from .providers.anthropic_provider import (
     AnthropicStepConfig,
     AsyncAnthropicClient,
+    execute_tool_call,
     make_anthropic_step_fn,
 )
 from .runner import (
     AgentLoopResult,
+    PendingInputDescriptor,
     RunStepContext,
     RunStepFn,
     RunStepOutcome,
@@ -61,7 +63,7 @@ from .runner import (
 from .settings import get_settings
 from .tools import ToolContext, default_tool_registry
 from .tools.registry import ToolDescriptor
-from .tools.spawn_subagent import MAX_CHILDREN
+from .tools.spawn_subagent import MAX_CHILDREN, SPAWN_SUBAGENT_TOOL_NAME
 
 logger = structlog.get_logger(__name__)
 
@@ -195,9 +197,15 @@ async def execute_respond(
       - it doesn't → re-apply the answer from the payload, skipping the
         paused gate (the task is already `running` on this job's
         account; `poller.reclaim_decision` checked nothing else drives
-        it). An approved tool may then run a second time if the dead
-        attempt got as far as executing it — at-least-once, the same
-        guarantee any reclaimed tool step has."""
+        it) — unless the checkpoint's execution record says the dead
+        attempt already STARTED the approved tool: then it is not run
+        again and the model is told its outcome is unknown
+        (`tool_ledger`).
+
+    Any resume through the checkpoint (here, or `_run_chunk` for a
+    reclaimed start / continue) also finishes a tool turn the dead
+    attempt was executing, and re-pauses on an approval-gated call
+    nobody answered, instead of letting the model step past it."""
     return await _run_respond(pool, payload, make_step_fn, resume_interrupted)
 
 
@@ -588,6 +596,65 @@ async def _run_chunk_inner(
         def should_yield() -> bool:
             return deadline_s is not None and asyncio.get_event_loop().time() > deadline_s
 
+        # Execution record for side-effecting tools (see `tool_ledger`):
+        # each save is a checkpoint at the run's current position plus the
+        # record, so a reclaim resumes mid-turn instead of re-asking the
+        # model (which could re-issue — and re-run — the same call).
+        gated_names = frozenset(_gated_tools_from(checkpoint) | run_tools.mcp_gated)
+
+        async def save_inflight(record: dict[str, Any]) -> None:
+            lease.check_current()
+            marked = _build_checkpoint(checkpoint, live_messages, emitter)
+            marked[tool_ledger.INFLIGHT_KEY] = record
+            await store.save_checkpoint(
+                pool, run_id=payload.run_id, user_id=payload.user_id, checkpoint=marked
+            )
+
+        ledger = tool_ledger.ToolLedger(save=save_inflight, gated_tool_names=gated_names)
+
+        # A resumed checkpoint can end in an assistant turn whose tool
+        # calls have no results: the dead attempt saved its suspend
+        # checkpoint but never got the task row to `paused`, or it died
+        # mid-way through executing the turn's tools. Never let the model
+        # step past those calls — re-pause on a gated one, else finish the
+        # turn without re-running anything that may already have acted.
+        unanswered = _unanswered_last_turn_calls(live_messages) if resume else []
+        if unanswered:
+            if resumed_from_seq is not None:
+                # The resume marker opens the recovered run, before the
+                # re-emitted request / the completed turn's tool events.
+                await emitter.status(
+                    "running",
+                    resumed_from_seq=resumed_from_seq,
+                    restarted=emitter.step == 0,
+                )
+                resumed_from_seq = None
+            gated_call = next((c for c in unanswered if c["tool_name"] in gated_names), None)
+            if gated_call is not None:
+                return await _resuspend_on_unanswered_call(
+                    pool,
+                    payload=payload,
+                    checkpoint=checkpoint,
+                    live_messages=live_messages,
+                    emitter=emitter,
+                    call=gated_call,
+                )
+            with tool_ledger.bound(ledger):
+                await _complete_inflight_turn(
+                    emitter=emitter,
+                    live_messages=live_messages,
+                    calls=unanswered,
+                    record=tool_ledger.read_record(checkpoint),
+                    registry=run_tools.registry(),
+                )
+            lease.check_current()
+            await store.save_checkpoint(
+                pool,
+                run_id=payload.run_id,
+                user_id=payload.user_id,
+                checkpoint=_build_checkpoint(checkpoint, live_messages, emitter),
+            )
+
         # Citation verification (research runs only). Runs at settle, just
         # before the terminal `result`, over the accumulated report text +
         # web-search sources. Advisory + non-blocking — `_maybe_verify`
@@ -651,16 +718,17 @@ async def _run_chunk_inner(
                 return None
             return text or None
 
-        result: AgentLoopResult = await run_agent_loop(
-            emitter=emitter,
-            max_steps=max_steps,
-            run_step=step_fn,
-            is_cancelled=is_cancelled,
-            should_yield=should_yield,
-            finalize=finalize,
-            final_text=final_text,
-            resumed_from_seq=resumed_from_seq,
-        )
+        with tool_ledger.bound(ledger):
+            result: AgentLoopResult = await run_agent_loop(
+                emitter=emitter,
+                max_steps=max_steps,
+                run_step=step_fn,
+                is_cancelled=is_cancelled,
+                should_yield=should_yield,
+                finalize=finalize,
+                final_text=final_text,
+                resumed_from_seq=resumed_from_seq,
+            )
         # Every branch below writes run state (checkpoint, task status,
         # follow-up jobs) — none of it may happen without the lease.
         lease.check_current()
@@ -1435,29 +1503,53 @@ async def _run_respond_inner(
     # with what the user actually saw.
     request_kind = request_kind_for(pending["tool_name"], pending["args"])
     final_args = payload.args if payload.args is not None else pending["args"]
-    tool_result_text = await _build_tool_result_text(
-        request_kind=request_kind,
-        tool_name=pending["tool_name"],
-        approved=payload.approved,
-        selection=payload.selection,
-        value=payload.value,
-        final_args=final_args,
-        registry=run_tools.registry(),
+
+    # An approved tool is side-effecting by definition (the user gated
+    # it). The execution record is saved before it runs; a reclaimed
+    # respond that finds it — the dead attempt started the tool but never
+    # persisted its result — must not run it again (`tool_ledger`).
+    runs_tool = request_kind == "approval" and payload.approved is not False
+    interrupted = (
+        resume_interrupted
+        and runs_tool
+        and pending["tool_call_id"] in tool_ledger.read_record(checkpoint).started
     )
 
-    # Append the user turn carrying the tool_result.
-    live_messages.append(
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "tool_result",
-                    "tool_use_id": pending["tool_call_id"],
-                    "content": tool_result_text,
-                }
-            ],
+    async def record_started() -> None:
+        lease.check_current()
+        marked = dict(checkpoint)
+        marked[tool_ledger.INFLIGHT_KEY] = tool_ledger.record_payload([pending["tool_call_id"]], [])
+        await store.save_checkpoint(
+            pool, run_id=payload.run_id, user_id=payload.user_id, checkpoint=marked
+        )
+
+    if interrupted:
+        logger.warning(
+            "executor.respond.approved_tool_interrupted",
+            run_id=payload.run_id,
+            request_id=payload.request_id,
+            tool=pending["tool_name"],
+        )
+        result_block = tool_ledger.interrupted_tool_result(pending["tool_call_id"])
+    else:
+        tool_result_text = await _build_tool_result_text(
+            request_kind=request_kind,
+            tool_name=pending["tool_name"],
+            approved=payload.approved,
+            selection=payload.selection,
+            value=payload.value,
+            final_args=final_args,
+            registry=run_tools.registry(),
+            before_execute=record_started,
+        )
+        result_block = {
+            "type": "tool_result",
+            "tool_use_id": pending["tool_call_id"],
+            "content": tool_result_text,
         }
-    )
+
+    # Append the user turn carrying the tool_result.
+    live_messages.append({"role": "user", "content": [result_block]})
 
     start_seq = await _seed_seq(
         pool, run_id=payload.run_id, user_id=payload.user_id, checkpoint=checkpoint
@@ -1504,6 +1596,12 @@ async def _run_respond_inner(
             value=payload.value,
             ui_answer=payload.ui_answer,
         )
+        if interrupted:
+            await emitter.step_error(
+                f'"{pending["tool_name"]}" was interrupted while running and its '
+                "outcome is unknown; it was not run again.",
+                will_retry=False,
+            )
         await emitter.status("running")
 
         if make_step_fn is None:
@@ -1698,6 +1796,133 @@ def _tool_call_answered(messages: list[dict[str, Any]], tool_call_id: str) -> bo
     return False
 
 
+def _unanswered_last_turn_calls(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The tool calls of the history's final assistant turn that have no
+    `tool_result` yet, in call order (`{tool_call_id, tool_name, args}`).
+    Empty unless the history ENDS in that assistant turn — a resumable
+    checkpoint only does that when it was saved with calls outstanding
+    (a suspend, or a mid-turn execution record — see `tool_ledger`)."""
+    if not messages or messages[-1].get("role") != "assistant":
+        return []
+    content = messages[-1].get("content")
+    if not isinstance(content, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            continue
+        tool_call_id = str(block.get("id") or "")
+        if not tool_call_id or _tool_call_answered(messages, tool_call_id):
+            continue
+        args = block.get("input")
+        out.append(
+            {
+                "tool_call_id": tool_call_id,
+                "tool_name": str(block.get("name") or ""),
+                "args": dict(args) if isinstance(args, dict) else {},
+            }
+        )
+    return out
+
+
+async def _resuspend_on_unanswered_call(
+    pool: asyncpg.Pool,
+    *,
+    payload: StartActionPayload,
+    checkpoint: dict[str, Any],
+    live_messages: list[dict[str, Any]],
+    emitter: RunEmitter,
+    call: dict[str, Any],
+) -> ExecutorOutcome:
+    """Reclaimed run whose checkpoint is suspended on an approval-gated
+    call nobody answered: the dead attempt saved the suspend checkpoint
+    but died before the task row reached `paused` (and possibly before
+    the request / `status: paused` were emitted). Pause again — same
+    writes, same order as the original suspend path — rather than let
+    the model step past the call."""
+    logger.warning(
+        "executor.reclaimed_resuspend",
+        run_id=payload.run_id,
+        tool=call["tool_name"],
+        tool_call_id=call["tool_call_id"],
+    )
+    await _emit_pending_input_request(
+        emitter,
+        PendingInputDescriptor(
+            tool_call_id=call["tool_call_id"], tool=call["tool_name"], args=call["args"]
+        ),
+    )
+    await emitter.status("paused")
+    lease.check_current()
+    await store.save_checkpoint(
+        pool,
+        run_id=payload.run_id,
+        user_id=payload.user_id,
+        checkpoint=_build_checkpoint(checkpoint, live_messages, emitter),
+    )
+    await store.update_run(pool, run_id=payload.run_id, user_id=payload.user_id, status="paused")
+    return ExecutorOutcome(settled=True)
+
+
+async def _complete_inflight_turn(
+    *,
+    emitter: RunEmitter,
+    live_messages: list[dict[str, Any]],
+    calls: list[dict[str, Any]],
+    record: tool_ledger.InflightRecord,
+    registry: dict[str, ToolDescriptor],
+) -> None:
+    """Finish the tool turn a dead attempt was executing (its checkpoint
+    ends in the assistant turn, see `tool_ledger`), then close the step:
+
+      - a call with a recorded result → reuse it (it already ran);
+      - a call recorded as started without a result (a side-effecting
+        tool cut off mid-execution) → NOT re-run; the model gets
+        `interrupted_tool_result` and decides how to verify;
+      - a `spawnSubagent` call (children may already exist) → same;
+      - anything else (read-only, or side-effecting but never started)
+        → run it now, under the bound ledger like any tool call."""
+    results: list[dict[str, Any]] = []
+    for call in calls:
+        tool_call_id = call["tool_call_id"]
+        tool_name = call["tool_name"]
+        recorded = record.results.get(tool_call_id)
+        if recorded is not None:
+            results.append(recorded)
+            continue
+        if tool_call_id in record.started or tool_name == SPAWN_SUBAGENT_TOOL_NAME:
+            logger.warning(
+                "executor.reclaimed_tool_interrupted",
+                tool=tool_name,
+                tool_call_id=tool_call_id,
+            )
+            await emitter.step_error(
+                f'"{tool_name}" was interrupted while running and its outcome is '
+                "unknown; it was not run again.",
+                will_retry=False,
+            )
+            await emitter.tool_output(
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                summary=tool_ledger.INTERRUPTED_TOOL_SUMMARY,
+            )
+            results.append(tool_ledger.interrupted_tool_result(tool_call_id))
+            continue
+        await emitter.tool_input(
+            tool_call_id=tool_call_id, tool_name=tool_name, args=dict(call["args"])
+        )
+        await execute_tool_call(
+            emitter,
+            registry.get(tool_name),
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            args=call["args"],
+            results=results,
+        )
+    live_messages.append({"role": "user", "content": results})
+    await emitter.end_step()
+
+
 async def _build_tool_result_text(
     *,
     request_kind: str,
@@ -1707,6 +1932,7 @@ async def _build_tool_result_text(
     value: str | None,
     final_args: Any,
     registry: dict[str, ToolDescriptor],
+    before_execute: Callable[[], Awaitable[None]] | None = None,
 ) -> str:
     """Build the text fed back to the model as the `tool_result.content`.
 
@@ -1714,7 +1940,9 @@ async def _build_tool_result_text(
       - approval rejected → "User declined ..."
       - approval approved → execute the matching tool from `registry`
         (the run's full tool set — see `_RunTools.registry`);
-        placeholder when it isn't there
+        placeholder when it isn't there. `before_execute` runs right
+        before the tool does (the respond path records the execution
+        there — see `tool_ledger`)
       - choice → "User selected: <ids>" or "(no selection)"
       - input → the raw value or "(no value)" """
     if request_kind == "approval":
@@ -1729,6 +1957,8 @@ async def _build_tool_result_text(
                 f'(Approved, but the tool "{tool_name}" is not registered '
                 "for this run — it may have been removed since the run paused.)"
             )
+        if before_execute is not None:
+            await before_execute()
         # Last gate before the approved tool's side effect.
         lease.check_current()
         try:

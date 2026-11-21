@@ -28,8 +28,9 @@ from typing import Any, Protocol
 
 import structlog
 
-from .. import lease
+from .. import lease, tool_ledger
 from ..coalescer import make_token_coalescer
+from ..emitter import RunEmitter
 from ..runner import (
     PendingInputDescriptor,
     RunStepContext,
@@ -267,65 +268,13 @@ def make_anthropic_step_fn(config: AnthropicStepConfig) -> RunStepFn:
                 args=dict(args),
             )
 
-            descriptor = tools_by_name.get(tool_name)
-            if descriptor is None:
-                msg = f"unknown tool: {tool_name}"
-                await ctx.emitter.step_error(msg, will_retry=True)
-                await ctx.emitter.tool_output(
-                    tool_call_id=tool_call_id,
-                    tool_name=tool_name,
-                    summary=msg,
-                )
-                tool_result_blocks.append(_make_tool_result_block(tool_call_id, msg, is_error=True))
-                continue
-
-            # Last gate before a side effect: a worker whose job lease was
-            # taken over must not run the tool (the new owner will).
-            # Raises `LeaseLostError` — a BaseException, so the broad
-            # `except Exception` below can't turn it into a tool error.
-            lease.check_current()
-            try:
-                result = await descriptor.execute(dict(args))
-            except ToolError as exc:
-                await ctx.emitter.step_error(str(exc), will_retry=True)
-                await ctx.emitter.tool_output(
-                    tool_call_id=tool_call_id,
-                    tool_name=tool_name,
-                    summary=str(exc),
-                )
-                tool_result_blocks.append(
-                    _make_tool_result_block(tool_call_id, str(exc), is_error=True)
-                )
-                continue
-            except Exception as exc:
-                # Unexpected exception — log + feed a generic error
-                # back to the model so it can choose a different
-                # strategy. Don't propagate; the model usually
-                # recovers and we don't want one flaky tool to fail
-                # the whole run.
-                msg = f"tool error: {exc.__class__.__name__}"
-                logger.warning(
-                    "tool.execute.failed",
-                    tool=tool_name,
-                    error=str(exc),
-                )
-                await ctx.emitter.step_error(msg, will_retry=True)
-                await ctx.emitter.tool_output(
-                    tool_call_id=tool_call_id,
-                    tool_name=tool_name,
-                    summary=msg,
-                )
-                tool_result_blocks.append(_make_tool_result_block(tool_call_id, msg, is_error=True))
-                continue
-
-            await ctx.emitter.tool_output(
+            await execute_tool_call(
+                ctx.emitter,
+                tools_by_name.get(tool_name),
                 tool_call_id=tool_call_id,
                 tool_name=tool_name,
-                summary=result.summary,
-                results=result.source_results,
-            )
-            tool_result_blocks.append(
-                _make_tool_result_block(tool_call_id, result.text, is_error=False)
+                args=args,
+                results=tool_result_blocks,
             )
 
         config.messages.append({"role": "user", "content": tool_result_blocks})
@@ -335,6 +284,73 @@ def make_anthropic_step_fn(config: AnthropicStepConfig) -> RunStepFn:
         return RunStepOutcome(done=False)
 
     return run_step
+
+
+# --- tool execution ------------------------------------------------------
+
+
+async def execute_tool_call(
+    emitter: RunEmitter,
+    descriptor: ToolDescriptor | None,
+    *,
+    tool_call_id: str,
+    tool_name: str,
+    args: dict[str, Any],
+    results: list[dict[str, Any]],
+) -> None:
+    """Run one tool call: emit its `tool_output` (plus a `step_error`
+    on failure) and append its `tool_result` block to `results`.
+
+    A side-effecting tool (see `tool_ledger`) is bracketed by the bound
+    ledger's execution record — `record_started` before it runs,
+    `record_finished` once its result is in `results` — so a worker that
+    dies mid-execution leaves a checkpoint saying so, and the reclaimed
+    run does not run it again. Shared by the step fn and the executor's
+    completion of a reclaimed in-flight turn."""
+    if descriptor is None:
+        msg = f"unknown tool: {tool_name}"
+        await emitter.step_error(msg, will_retry=True)
+        await emitter.tool_output(tool_call_id=tool_call_id, tool_name=tool_name, summary=msg)
+        results.append(_make_tool_result_block(tool_call_id, msg, is_error=True))
+        return
+
+    ledger = tool_ledger.current()
+    guarded = ledger is not None and ledger.is_side_effecting(tool_name, descriptor)
+    if ledger is not None and guarded:
+        await ledger.record_started(tool_call_id, results)
+
+    # Last gate before a side effect: a worker whose job lease was
+    # taken over must not run the tool (the new owner will).
+    # Raises `LeaseLostError` — a BaseException, so the broad
+    # `except Exception` below can't turn it into a tool error.
+    lease.check_current()
+    try:
+        result = await descriptor.execute(dict(args))
+    except ToolError as exc:
+        await emitter.step_error(str(exc), will_retry=True)
+        await emitter.tool_output(tool_call_id=tool_call_id, tool_name=tool_name, summary=str(exc))
+        results.append(_make_tool_result_block(tool_call_id, str(exc), is_error=True))
+    except Exception as exc:
+        # Unexpected exception — log + feed a generic error back to the
+        # model so it can choose a different strategy. Don't propagate;
+        # the model usually recovers and we don't want one flaky tool to
+        # fail the whole run.
+        msg = f"tool error: {exc.__class__.__name__}"
+        logger.warning("tool.execute.failed", tool=tool_name, error=str(exc))
+        await emitter.step_error(msg, will_retry=True)
+        await emitter.tool_output(tool_call_id=tool_call_id, tool_name=tool_name, summary=msg)
+        results.append(_make_tool_result_block(tool_call_id, msg, is_error=True))
+    else:
+        await emitter.tool_output(
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            summary=result.summary,
+            results=result.source_results,
+        )
+        results.append(_make_tool_result_block(tool_call_id, result.text, is_error=False))
+
+    if ledger is not None and guarded:
+        await ledger.record_finished(results)
 
 
 # --- helpers -------------------------------------------------------------
@@ -395,5 +411,6 @@ __all__ = [
     "DEFAULT_MAX_TOKENS",
     "AnthropicStepConfig",
     "AsyncAnthropicClient",
+    "execute_tool_call",
     "make_anthropic_step_fn",
 ]

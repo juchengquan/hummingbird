@@ -875,6 +875,11 @@ async def test_respond_executes_an_approved_mcp_tool_with_the_workspace_context(
 
     assert outcome.settled is True
     assert calls == [{"id": 7}]
-    saved = save_checkpoint.await_args_list[0].kwargs["checkpoint"]
+    # First save: the execution record, before the approved tool ran.
+    record = save_checkpoint.await_args_list[0].kwargs["checkpoint"]
+    assert record["inflight_tools"] == {"started": ["tu_1"], "results": []}
+    assert record["messages"] == checkpoint["messages"]
+    saved = save_checkpoint.await_args_list[1].kwargs["checkpoint"]
     assert saved["messages"][-1]["content"][0]["content"] == "crm updated"
+    assert "inflight_tools" not in saved
     assert seen_contexts[0].workspace_id == "ws_1"

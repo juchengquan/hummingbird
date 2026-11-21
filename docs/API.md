@@ -351,6 +351,39 @@ shapes below are normative.
 
 ---
 
+## Streaming route — `GET /api/tasks/:id/stream`
+
+Replays a long-running task's `task_events` log and live-tails it. The
+body is the AI SDK UI message stream (SSE `data:` frames); every
+`TaskEvent` travels as one `data-agent-event` part (codec:
+`lib/shared/agent/wire.ts`, client decoder:
+`lib/shared/agent/stream.ts`). The client folds them through
+`reduceRun` (`lib/shared/agent/project.ts`).
+
+- **Cursor.** `Last-Event-ID` carries the last `seq` the client folded;
+  the replay starts strictly after it (absent / garbage → from 0).
+- **Resume markers.** A reclaimed job's re-run opens with
+  `status: running` + `resumedFromSeq`; every event with
+  `resumedFromSeq < seq < marker.seq` is a dead attempt's output and
+  consumers discard it (`resumeDiscardRange`). Such events may already
+  have been sent; the fold rolls them back.
+- **Terminal rule.** A terminal event — `result`, or `status:
+  cancelled` — only ends the stream once the task row's status is
+  terminal (`done` / `failed` / `cancelled`). A worker can die after
+  writing `result` but before settling the task; until the row
+  confirms it, the route holds that event back (does not send it, and
+  re-reads it next poll). If a resume marker supersedes it, it is never
+  sent. See `gateLiveTailBatch` in `lib/shared/agent/events.ts`.
+- **End of stream.** The stream closes after a confirmed terminal
+  event; or one poll after the row turned terminal with no terminal
+  event in the log (orphaned run); or after a 5-minute wall-clock cap
+  (the client reconnects with its cursor while the run is still live).
+- **Realtime.** The client also subscribes to `task_events` inserts via
+  Supabase Realtime for lower latency, but folds only non-terminal
+  events from it — terminal events come from this route, confirmed.
+
+---
+
 ## Streaming route — `POST /api/ai/command` and `POST /api/ai/copilot`
 
 These two are consumed by Plate (`@platejs/ai`). The wire format is
