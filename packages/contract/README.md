@@ -73,7 +73,10 @@ ride on the root `tsc` / `eslint` in the `ci` job.
 - `operationId` is camelCase and unique; it names the generated
   operation types and the conformance cases.
 - Every `/v1` operation is bearer-secured (a Supabase user JWT); only
-  the probes are public (`security: []`). A test enforces this.
+  the probes and the operations listed in `PUBLIC_V1_OPERATIONS`
+  (`tests/spec.test.ts`, each with its reason — today just `getShare`,
+  the anonymous share-link read) are public (`security: []`). A test
+  enforces this.
 - Error responses reference `components/schemas/ErrorResponse` through
   the shared `components/responses/*`.
 - Field casing follows the wire as it already exists: the refresh-url
@@ -165,6 +168,10 @@ Cases today:
   documented error body. Needs no Supabase — only the backend's JWT
   secret configured (without it agent-py answers 503 and the case fails
   with a hint).
+- `share.test.ts` — the public `getShare`: an unknown token answers 404
+  `not_found` with no token, and a bogus `Authorization` header is
+  ignored rather than refused. Path parameters (`{token}`) are filled
+  from `pathParams` in `fixtures.ts`.
 
 ### Running it against agent-py
 

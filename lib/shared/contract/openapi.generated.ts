@@ -121,6 +121,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/share": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a share link
+         * @description Mints an opaque share token (128 random bits, base64url without
+         *     padding — 22 characters) for one of the caller's conversations or
+         *     documents. The target must be the caller's own (checked under the
+         *     caller's row-level security): someone else's id, or one that does
+         *     not exist, answers 404. Mirrors `app/api/share/route.ts`.
+         */
+        post: operations["createShare"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/share/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The opaque share token returned by `createShare`. */
+                token: components["parameters"]["ShareToken"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read a shared conversation or document (public)
+         * @description **Public — no bearer token.** The token is the capability: anyone
+         *     holding it can read what it points at. Returns only what the
+         *     read-only share pages render — never user ids or other rows. An
+         *     unknown or revoked token, a share whose target is missing or not
+         *     owned by the share's creator, and a backend without a database all
+         *     answer the same 404, so a response reveals nothing beyond "this
+         *     token resolves". Rate limited per client IP. Mirrors
+         *     `lib/server/share/resolve.ts` (`resolveShare`).
+         */
+        get: operations["getShare"];
+        put?: never;
+        post?: never;
+        /**
+         * Revoke a share link
+         * @description Stamps `revoked_at` on the caller's share. Scoped by the caller's
+         *     row-level security, so a token that does not exist and one that
+         *     belongs to another user both answer 404 without revealing which.
+         *     Revoking an already-revoked share succeeds again. Mirrors
+         *     `app/api/share/[token]/route.ts`.
+         */
+        delete: operations["revokeShare"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -185,6 +247,35 @@ export interface components {
          * @enum {string}
          */
         ColumnType: "text" | "number" | "link" | "date";
+        CreateConversationShareRequest: {
+            /** Format: uuid */
+            conversationId: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "conversation";
+        };
+        CreateDocumentShareRequest: {
+            /** Format: uuid */
+            documentId: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "document";
+        };
+        /**
+         * @description A conversation share names `conversationId`; a document share names
+         *     `documentId` (a workspace owns several documents, so the target is
+         *     one document, not the workspace).
+         */
+        CreateShareRequest: components["schemas"]["CreateConversationShareRequest"] | components["schemas"]["CreateDocumentShareRequest"];
+        CreateShareResponse: {
+            kind: components["schemas"]["ShareKind"];
+            /** @description The share token. The share page URL is `/share/<kind>/<token>`. */
+            token: string;
+        };
         /** @description An `ApiError`, or (transitionally) the legacy FastAPI envelope. */
         ErrorResponse: components["schemas"]["ApiError"] | components["schemas"]["LegacyFastApiError"];
         ExtractTableRequest: {
@@ -266,6 +357,57 @@ export interface components {
             /** @description A newly signed, long-lived URL for the object. */
             url: string;
         };
+        ResolvedConversationShare: {
+            conversationTitle: string;
+            /**
+             * Format: date-time
+             * @description When the share was created.
+             */
+            createdAt: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "conversation";
+            /** @description The conversation's messages in `position` order. */
+            messages: components["schemas"]["SharedMessage"][];
+        };
+        ResolvedDocumentShare: {
+            /**
+             * Format: date-time
+             * @description When the share was created.
+             */
+            createdAt: string;
+            /** @description The document body (markdown). */
+            documentContent: string;
+            /** @description The document's title, or `Untitled` when it has none. */
+            documentTitle: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "document";
+        };
+        /** @description What a share page renders, by `kind`. */
+        ResolvedShare: components["schemas"]["ResolvedConversationShare"] | components["schemas"]["ResolvedDocumentShare"];
+        RevokeShareResponse: {
+            /** @enum {boolean} */
+            ok: true;
+        };
+        SharedMessage: {
+            content: string;
+            id: string;
+            position: number;
+            /** @description The model's reasoning text, when it was kept. */
+            reasoning?: string | null;
+            /** @enum {string} */
+            role: "user" | "assistant";
+        };
+        /**
+         * @description What a share points at.
+         * @enum {string}
+         */
+        ShareKind: "conversation" | "document";
         TypedColumnHint: {
             label: string;
             type?: components["schemas"]["ColumnType"];
@@ -291,6 +433,15 @@ export interface components {
         };
         /** @description The caller is authenticated but does not own the resource (`code` is `forbidden`). */
         Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /** @description The backend failed to complete the operation (`code` is `unknown`). */
+        InternalError: {
             headers: {
                 [name: string]: unknown;
             };
@@ -371,7 +522,10 @@ export interface components {
             };
         };
     };
-    parameters: never;
+    parameters: {
+        /** @description The opaque share token returned by `createShare`. */
+        ShareToken: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -384,6 +538,10 @@ export type CitationTableColumn = components['schemas']['CitationTableColumn'];
 export type CitationTableSource = components['schemas']['CitationTableSource'];
 export type ColumnHint = components['schemas']['ColumnHint'];
 export type ColumnType = components['schemas']['ColumnType'];
+export type CreateConversationShareRequest = components['schemas']['CreateConversationShareRequest'];
+export type CreateDocumentShareRequest = components['schemas']['CreateDocumentShareRequest'];
+export type CreateShareRequest = components['schemas']['CreateShareRequest'];
+export type CreateShareResponse = components['schemas']['CreateShareResponse'];
 export type ErrorResponse = components['schemas']['ErrorResponse'];
 export type ExtractTableRequest = components['schemas']['ExtractTableRequest'];
 export type ExtractTableSource = components['schemas']['ExtractTableSource'];
@@ -394,10 +552,17 @@ export type ReadinessResponse = components['schemas']['ReadinessResponse'];
 export type RefreshFileUrlRequest = components['schemas']['RefreshFileUrlRequest'];
 export type RefreshStorageUrlRequest = components['schemas']['RefreshStorageUrlRequest'];
 export type RefreshStorageUrlResponse = components['schemas']['RefreshStorageUrlResponse'];
+export type ResolvedConversationShare = components['schemas']['ResolvedConversationShare'];
+export type ResolvedDocumentShare = components['schemas']['ResolvedDocumentShare'];
+export type ResolvedShare = components['schemas']['ResolvedShare'];
+export type RevokeShareResponse = components['schemas']['RevokeShareResponse'];
+export type SharedMessage = components['schemas']['SharedMessage'];
+export type ShareKind = components['schemas']['ShareKind'];
 export type TypedColumnHint = components['schemas']['TypedColumnHint'];
 export type ValidationIssue = components['schemas']['ValidationIssue'];
 export type ResponseBadRequest = components['responses']['BadRequest'];
 export type ResponseForbidden = components['responses']['Forbidden'];
+export type ResponseInternalError = components['responses']['InternalError'];
 export type ResponseNotFound = components['responses']['NotFound'];
 export type ResponsePayloadTooLarge = components['responses']['PayloadTooLarge'];
 export type ResponseRateLimited = components['responses']['RateLimited'];
@@ -405,6 +570,7 @@ export type ResponseServiceUnavailable = components['responses']['ServiceUnavail
 export type ResponseUnauthorized = components['responses']['Unauthorized'];
 export type ResponseUpstreamError = components['responses']['UpstreamError'];
 export type ResponseValidationError = components['responses']['ValidationError'];
+export type ParameterShareToken = components['parameters']['ShareToken'];
 export type $defs = Record<string, never>;
 export interface operations {
     getHealthz: {
@@ -537,6 +703,89 @@ export interface operations {
             404: components["responses"]["NotFound"];
             413: components["responses"]["PayloadTooLarge"];
             422: components["responses"]["ValidationError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    createShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateShareRequest"];
+            };
+        };
+        responses: {
+            /** @description The new share. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateShareResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The opaque share token returned by `createShare`. */
+                token: components["parameters"]["ShareToken"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The shared content. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResolvedShare"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    revokeShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The opaque share token returned by `createShare`. */
+                token: components["parameters"]["ShareToken"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The share is revoked. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RevokeShareResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };

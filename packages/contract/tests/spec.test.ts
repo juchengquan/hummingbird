@@ -7,18 +7,27 @@ import { beforeAll, describe, expect, test } from "bun:test"
 import { validRequestBodies } from "../conformance/fixtures"
 import { Contract, createAjv, loadSpec, operations } from "../conformance/harness"
 
+/** `/v1` operations that are deliberately public (`security: []`). Each
+ *  needs a reason; adding one here is a security decision, not a fix for
+ *  a failing test.
+ *  - getShare: the share token is the capability — anonymous viewers open
+ *    a share link without an account. */
+const PUBLIC_V1_OPERATIONS = new Set(["getShare"])
+
 describe("contract: openapi.yaml", () => {
   let contract: Contract
   beforeAll(async () => {
     contract = new Contract(await loadSpec())
   })
 
-  test("operationIds are unique and every /v1 operation is bearer-secured", () => {
+  test("operationIds are unique and every /v1 operation is bearer-secured (bar the listed public ones)", () => {
     const ops = operations(contract.spec)
     expect(new Set(ops.map((o) => o.operationId)).size).toBe(ops.length)
     for (const op of ops) {
-      if (op.path.startsWith("/v1/")) expect([op.operationId, op.secured]).toEqual([op.operationId, true])
-      else expect(op.path).toMatch(/^\/(healthz|readyz)$/)
+      if (op.path.startsWith("/v1/")) {
+        const expected = !PUBLIC_V1_OPERATIONS.has(op.operationId)
+        expect([op.operationId, op.secured]).toEqual([op.operationId, expected])
+      } else expect(op.path).toMatch(/^\/(healthz|readyz)$/)
     }
   })
 
