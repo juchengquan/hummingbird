@@ -632,6 +632,10 @@ paths:
         interrupts — otherwise `409 invalid_state`. A `resume[]` without
         `previousRunId` is `400 invalid_request`.
 
+        A `forwardedProps.model` outside the backend's allow-list is `400
+        unknown_model`, answered before the run exists (as `/v1/chat`):
+        no row, no stream, nothing to rejoin.
+
         **Anonymous callers** (no `Authorization` header) may start
         interactive runs only — `mode: background` answers `401
         auth_required`, as does every anonymous run when the backend

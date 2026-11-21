@@ -282,8 +282,9 @@ without / with a bad credential — `startRun`'s fixture is a
 `{}` → `invalid_request`). `runs.test.ts` adds:
 
 - **validation** (no run started): non-UUID `runId` / `threadId` → 422;
-  `resume[]` without `forwardedProps.previousRunId` → 400; anonymous
-  background start → 401 `auth_required`.
+  `resume[]` without `forwardedProps.previousRunId` → 400; an unknown
+  `forwardedProps.model` → 400 `unknown_model` with no run left behind
+  (`getRun` 404); anonymous background start → 401 `auth_required`.
 - **credentials**: `getRun` / `streamRunEvents` / `cancelRun` with no
   credential or a malformed `X-Run-Token` → 401; `listRuns` with only a
   run token → 401; an unknown run → one identical 404 body from all three

@@ -44,6 +44,7 @@ interface RunBodyOptions {
   conformance?: { outcome?: "succeed" | "fail" | "interrupt"; steps?: number; stepDelayMs?: number }
   resume?: Json[]
   previousRunId?: string
+  model?: string
   text?: string
 }
 
@@ -52,6 +53,7 @@ function runBody(o: RunBodyOptions = {}): Json {
   if (o.mode) forwardedProps.mode = o.mode
   if (o.conformance) forwardedProps.conformance = o.conformance
   if (o.previousRunId) forwardedProps.previousRunId = o.previousRunId
+  if (o.model) forwardedProps.model = o.model
   if (o.mode === "background") Object.assign(forwardedProps, { goal: "Conformance probe", maxSteps: 1 })
   const body: Json = {
     threadId: o.threadId ?? randomUUID(),
@@ -194,6 +196,21 @@ describe.skipIf(!env.baseUrl)(`conformance: runs @ ${env.baseUrl}`, () => {
       expect(ex.status).toBe(400)
       contract.assertConforms("startRun", ex)
       expect(code(ex)).toBe("invalid_request")
+    })
+
+    test("unknown forwardedProps.model → 400 unknown_model, and no run exists", async () => {
+      for (const token of env.authToken ? [undefined, env.authToken] : [undefined]) {
+        const body = runBody({ model: "conformance/not-a-model" })
+        const ex = await call(op("startRun"), { body, token })
+        expect(ex.status).toBe(400)
+        contract.assertConforms("startRun", ex)
+        expect(code(ex)).toBe("unknown_model")
+        expect(ex.headers.get("x-run-token")).toBeNull()
+        if (token) {
+          const run = await call(op("getRun"), { token, pathParams: { runId: body.runId as string } })
+          expect(run.status).toBe(404)
+        }
+      }
     })
 
     test("anonymous background start → 401 auth_required", async () => {
