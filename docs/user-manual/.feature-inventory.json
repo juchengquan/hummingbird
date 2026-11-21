@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-21T03:13:23Z",
+  "generatedAt": "2026-11-21T06:14:28Z",
   "panels": [
     {
       "id": "agents-dialog",
@@ -571,13 +571,13 @@
     },
     {
       "id": "NEXT_PUBLIC_AGENT_PY_URL",
-      "description": "Optional. Base URL of the Python agent service (services/agent-py/). Phase 4-2 of PLAN-agent-api.md — when set, the account menu shows a \"Python agent backend\" toggle that routes chat turns at `${NEXT_PUBLIC_AGENT_PY_URL}/v1/chat`. Empty (default) → the toggle is hidden and chat always uses the Next.js route. Per project policy both stacks stay live indefinitely; this is the user-facing selector, not a cutover. Example: `http://localhost:8000` in dev.",
+      "description": "Optional. Base URL of the Python agent service (services/agent-py/). Phase 4-2 of PLAN-agent-api.md — when set, the account menu shows a \"Python agent backend\" toggle that routes chat turns at `${NEXT_PUBLIC_AGENT_PY_URL}/v1/chat`. Empty (default) → the toggle is hidden and chat always uses the Next.js route. Per project policy both stacks stay live indefinitely; this is the user-facing selector, not a cutover. Example: `http://localhost:8000` in dev. Same origin: set it to `/` when a reverse proxy serves agent-py on the frontend's own origin (PLAN-frontend-backend-split.md Q21) — requests go to `/v1/...` on the current origin and CSP needs no extra source. Local dev: `docker compose up proxy agent-py`, then open http://localhost:8080 (see README \"Same-origin backend\").",
       "required": true,
       "sourceFile": ".env.example"
     },
     {
       "id": "NEXT_PUBLIC_AGENT_TS_URL",
-      "description": "Optional. Base URL of the TypeScript agent service (services/agent-ts/). Phase 5 of PLAN-agent-ts.md — same selector wire as the Python service. When NEXT_PUBLIC_AGENT_PY_URL is also set, the account menu surfaces a 3-way segmented picker (Next.js / TS service / Python); otherwise it falls back to a single Switch. Empty (default) → no toggle, chat uses the Next.js route. Example: `http://localhost:8001` in dev.",
+      "description": "Optional. Base URL of the TypeScript agent service (services/agent-ts/). Phase 5 of PLAN-agent-ts.md — same selector wire as the Python service. When NEXT_PUBLIC_AGENT_PY_URL is also set, the account menu surfaces a 3-way segmented picker (Next.js / TS service / Python); otherwise it falls back to a single Switch. Empty (default) → no toggle, chat uses the Next.js route. Example: `http://localhost:8001` in dev. `/` (same origin) works here too.",
       "required": true,
       "sourceFile": ".env.example"
     },

@@ -25,6 +25,7 @@ bun run test         # split runner (scripts/run-tests.sh): isolates app/api/tas
 
 # Agent service (Python — Phase 0 of PLAN-agent-api.md)
 docker compose up agent-py            # run service in container
+docker compose up proxy agent-py      # + Caddy on :8080, same origin (NEXT_PUBLIC_AGENT_PY_URL=/; README "Same-origin backend")
 bun run codegen:agent-types           # regen lib/shared/agent-py-types.generated.ts
 bun run codegen:agent-types:check     # CI mode — fail if drifted
 bun run check:agent-py                # ruff check + ruff format --check + mypy + pytest (mirrors the agent-py CI job)
