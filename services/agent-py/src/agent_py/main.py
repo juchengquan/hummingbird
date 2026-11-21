@@ -37,6 +37,7 @@ from .routers import (
     health,
     images,
     mcp,
+    share,
     summarize,
     url,
     whoami,
@@ -213,6 +214,7 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
     app.include_router(extract_table.router)
     app.include_router(summarize.router)
     app.include_router(mcp.router)
+    app.include_router(share.router)
 
     # Cap request bodies before routing / auth: FastAPI reads (and
     # spools multipart parts of) the body before the auth dependency

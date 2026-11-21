@@ -526,6 +526,32 @@ export const RevokeShareResponseSchema = z.object({
   ok: z.literal(true),
 })
 
+// GET /v1/share/{token} (agent-py, public): what the read-only share pages
+// render. Same shape as `resolveShare` (`lib/server/share/resolve.ts`) and
+// `ResolvedShare` in `packages/contract/openapi.yaml`.
+export const SharedMessageSchema = z.object({
+  id: z.string(),
+  role: z.enum(['user', 'assistant']),
+  content: z.string(),
+  reasoning: z.string().nullable().optional(),
+  position: z.number().int(),
+})
+
+export const ResolvedShareResponseSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('conversation'),
+    conversationTitle: z.string(),
+    messages: z.array(SharedMessageSchema),
+    createdAt: z.string(),
+  }),
+  z.object({
+    kind: z.literal('document'),
+    documentTitle: z.string(),
+    documentContent: z.string(),
+    createdAt: z.string(),
+  }),
+])
+
 // --- /api/memory/extract ----------------------------------------------------
 // Best-effort post-turn cross-conversation memory extraction. The route
 // self-gates (sign-in + profiles.memory_enabled) and always answers
@@ -834,6 +860,7 @@ export type CompressSummarizeResponse = z.infer<typeof CompressSummarizeResponse
 export type ProjectBreakdownResponse = z.infer<typeof ProjectBreakdownResponseSchema>
 export type CreateShareRequestInput = z.infer<typeof CreateShareRequestSchema>
 export type CreateShareResponse = z.infer<typeof CreateShareResponseSchema>
+export type ResolvedShareResponse = z.infer<typeof ResolvedShareResponseSchema>
 export type MemoryExtractRequestInput = z.infer<typeof MemoryExtractRequestSchema>
 export type MemoryExtractResponse = z.infer<typeof MemoryExtractResponseSchema>
 export type RefreshImageUrlRequestInput = z.infer<typeof RefreshImageUrlRequestSchema>

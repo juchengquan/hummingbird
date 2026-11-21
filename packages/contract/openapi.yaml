@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Hummingbird backend contract
-  version: 0.1.0
+  version: 0.2.0
   summary: The frontend <-> backend HTTP contract (spec-first, PLAN-frontend-backend-split.md Q19).
   description: |
     Hand-written source of truth for the HTTP surface every Hummingbird
@@ -33,6 +33,8 @@ tags:
     description: Re-signing Supabase Storage URLs for generated artefacts.
   - name: artifacts
     description: Structured artefacts derived from model output.
+  - name: sharing
+    description: Read-only public share links for a conversation or a document.
 
 security:
   - bearerAuth: []
@@ -189,6 +191,101 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
+  # --- sharing ---------------------------------------------------------------
+  /v1/share:
+    post:
+      operationId: createShare
+      tags: [sharing]
+      summary: Create a share link
+      description: |
+        Mints an opaque share token (128 random bits, base64url without
+        padding — 22 characters) for one of the caller's conversations or
+        documents. The target must be the caller's own (checked under the
+        caller's row-level security): someone else's id, or one that does
+        not exist, answers 404. Mirrors `app/api/share/route.ts`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateShareRequest"
+      responses:
+        "200":
+          description: The new share.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateShareResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/share/{token}:
+    parameters:
+      - $ref: "#/components/parameters/ShareToken"
+    get:
+      operationId: getShare
+      tags: [sharing]
+      summary: Read a shared conversation or document (public)
+      description: |
+        **Public — no bearer token.** The token is the capability: anyone
+        holding it can read what it points at. Returns only what the
+        read-only share pages render — never user ids or other rows. An
+        unknown or revoked token, a share whose target is missing or not
+        owned by the share's creator, and a backend without a database all
+        answer the same 404, so a response reveals nothing beyond "this
+        token resolves". Rate limited per client IP. Mirrors
+        `lib/server/share/resolve.ts` (`resolveShare`).
+      security: []
+      responses:
+        "200":
+          description: The shared content.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResolvedShare"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    delete:
+      operationId: revokeShare
+      tags: [sharing]
+      summary: Revoke a share link
+      description: |
+        Stamps `revoked_at` on the caller's share. Scoped by the caller's
+        row-level security, so a token that does not exist and one that
+        belongs to another user both answer 404 without revealing which.
+        Revoking an already-revoked share succeeds again. Mirrors
+        `app/api/share/[token]/route.ts`.
+      responses:
+        "200":
+          description: The share is revoked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevokeShareResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  # --- end sharing -----------------------------------------------------------
+
 components:
   securitySchemes:
     bearerAuth:
@@ -200,7 +297,25 @@ components:
         backend requires `role = authenticated`, a UUID `sub`, the configured
         audience and an unexpired `exp`; the anon key is rejected.
 
+  parameters:
+    ShareToken:
+      name: token
+      in: path
+      required: true
+      description: The opaque share token returned by `createShare`.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+        examples: ["q3Jx0dQe2yQb7m3YqH1v8w"]
+
   responses:
+    InternalError:
+      description: The backend failed to complete the operation (`code` is `unknown`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     BadRequest:
       description: The request body failed validation (`code` is `invalid_request`), or named an unknown model (`unknown_model`).
       content:
@@ -556,3 +671,130 @@ components:
         snippet:
           type: string
           maxLength: 1000
+
+    # --- sharing -------------------------------------------------------------
+    ShareKind:
+      type: string
+      enum: [conversation, document]
+      description: What a share points at.
+
+    CreateShareRequest:
+      description: |
+        A conversation share names `conversationId`; a document share names
+        `documentId` (a workspace owns several documents, so the target is
+        one document, not the workspace).
+      oneOf:
+        - $ref: "#/components/schemas/CreateConversationShareRequest"
+        - $ref: "#/components/schemas/CreateDocumentShareRequest"
+      discriminator:
+        propertyName: kind
+        mapping:
+          conversation: "#/components/schemas/CreateConversationShareRequest"
+          document: "#/components/schemas/CreateDocumentShareRequest"
+
+    CreateConversationShareRequest:
+      type: object
+      required: [kind, conversationId]
+      properties:
+        kind:
+          type: string
+          enum: [conversation]
+        conversationId:
+          type: string
+          format: uuid
+
+    CreateDocumentShareRequest:
+      type: object
+      required: [kind, documentId]
+      properties:
+        kind:
+          type: string
+          enum: [document]
+        documentId:
+          type: string
+          format: uuid
+
+    CreateShareResponse:
+      type: object
+      required: [token, kind]
+      properties:
+        token:
+          type: string
+          minLength: 1
+          description: The share token. The share page URL is `/share/<kind>/<token>`.
+        kind:
+          $ref: "#/components/schemas/ShareKind"
+
+    RevokeShareResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+
+    ResolvedShare:
+      description: What a share page renders, by `kind`.
+      oneOf:
+        - $ref: "#/components/schemas/ResolvedConversationShare"
+        - $ref: "#/components/schemas/ResolvedDocumentShare"
+      discriminator:
+        propertyName: kind
+        mapping:
+          conversation: "#/components/schemas/ResolvedConversationShare"
+          document: "#/components/schemas/ResolvedDocumentShare"
+
+    ResolvedConversationShare:
+      type: object
+      required: [kind, conversationTitle, messages, createdAt]
+      properties:
+        kind:
+          type: string
+          enum: [conversation]
+        conversationTitle:
+          type: string
+        messages:
+          type: array
+          description: The conversation's messages in `position` order.
+          items:
+            $ref: "#/components/schemas/SharedMessage"
+        createdAt:
+          type: string
+          format: date-time
+          description: When the share was created.
+
+    ResolvedDocumentShare:
+      type: object
+      required: [kind, documentTitle, documentContent, createdAt]
+      properties:
+        kind:
+          type: string
+          enum: [document]
+        documentTitle:
+          type: string
+          description: The document's title, or `Untitled` when it has none.
+        documentContent:
+          type: string
+          description: The document body (markdown).
+        createdAt:
+          type: string
+          format: date-time
+          description: When the share was created.
+
+    SharedMessage:
+      type: object
+      required: [id, role, content, position]
+      properties:
+        id:
+          type: string
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+        reasoning:
+          type: [string, "null"]
+          description: The model's reasoning text, when it was kept.
+        position:
+          type: integer
+    # --- end sharing ---------------------------------------------------------

@@ -31,6 +31,7 @@ import {
   RefreshImageUrlResponseSchema,
   RefreshFileUrlResponseSchema,
   RevokeShareResponseSchema,
+  ResolvedShareResponseSchema,
   TaskChildrenResponseSchema,
   type ChatRequestInput,
   type TaskRequestInput,
@@ -43,6 +44,7 @@ import {
   type ScheduleUpdateInput,
   type CreateShareRequestInput,
   type CreateShareResponse,
+  type ResolvedShareResponse,
   type MemoryExtractRequestInput,
   type ExtractionResponse,
   type FileSummarizeResponse,
@@ -103,6 +105,9 @@ export type DispatchedFetchResult<T> =
 export interface DispatchedFetchOptions<LocalBody, RemoteBody, T> {
   path: string
   localUrl: string
+  /** Defaults to POST. A DELETE sends no body and no Content-Type
+   *  (`bodyForLocal` is ignored). */
+  method?: "POST" | "DELETE"
   bodyForLocal: LocalBody
   bodyForRemote?: (local: LocalBody) => RemoteBody
   schema?: {
@@ -131,7 +136,7 @@ async function resolveDispatch(
 }
 
 /** For endpoints only agent-py implements (`/v1/extract-table`,
- *  `/v1/files/refresh-url`): resolve the dispatch as usual, then keep
+ *  `/v1/files/refresh-url`, `/v1/share`): resolve the dispatch as usual, then keep
  *  it remote only when it resolved to agent-py. agent-ts is frozen
  *  (docs/PLAN-frontend-backend-split.md, Q11) and will not get these
  *  routes, so a `ts-service` account stays on the in-Next route. */
@@ -187,9 +192,11 @@ async function dispatchedFetch<LocalBody, RemoteBody, T>(
       const target = remote
         ? `${remote.baseUrl}${options.path}`
         : options.localUrl
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-      }
+      const method = options.method ?? "POST"
+      const hasBody = method !== "DELETE"
+      const headers: Record<string, string> = hasBody
+        ? { "Content-Type": "application/json" }
+        : {}
       if (remote) headers.Authorization = `Bearer ${remote.authToken}`
       if (options.extraHeaders) {
         Object.assign(headers, options.extraHeaders)
@@ -199,9 +206,9 @@ async function dispatchedFetch<LocalBody, RemoteBody, T>(
           ? options.bodyForRemote(options.bodyForLocal)
           : options.bodyForLocal
       const res = await fetch(target, {
-        method: "POST",
+        method,
         headers,
-        body: JSON.stringify(body),
+        body: hasBody ? JSON.stringify(body) : undefined,
         signal: options.signal,
       })
       if (!res.ok) {
@@ -900,22 +907,72 @@ export interface ShareCreateResult {
   error?: string
 }
 
+/** Mint a share token. agent-py accounts post to `/v1/share`; agent-ts
+ *  (frozen, Q11) and in-Next accounts keep the Next route. Same body
+ *  and response on both. */
 async function createShare(
-  body: CreateShareRequestInput
+  body: CreateShareRequestInput,
+  options?: DispatchOption,
 ): Promise<ShareCreateResult> {
-  const res = await fetch(apiUrls.share(), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+  const result = await dispatchedFetch<
+    CreateShareRequestInput,
+    CreateShareRequestInput,
+    CreateShareResponse
+  >({
+    path: "/v1/share",
+    localUrl: apiUrls.share(),
+    bodyForLocal: body,
+    schema: CreateShareResponseSchema,
+    dispatch: await agentPyOnlyDispatch(options),
   })
-  if (!res.ok) {
-    const errBody = await readErrorBody(res)
-    return { ok: false, status: res.status, error: errBody.error }
-  }
-  return {
-    ok: true,
-    status: res.status,
-    data: CreateShareResponseSchema.parse(await res.json()),
+  return result.ok
+    ? { ok: true, status: result.status, data: result.data }
+    : { ok: false, status: result.status, error: result.error.message }
+}
+
+export type ShareResolveResult =
+  | { ok: true; status: number; data: ResolvedShareResponse }
+  | {
+      ok: false
+      status: number
+      /** The backend answered 404: unknown, revoked or unresolvable
+       *  token — render the not-found page. Anything else (network,
+       *  5xx, 429, a malformed body) is transient. */
+      notFound: boolean
+    }
+
+/**
+ * Public read of a share for the read-only share pages:
+ * `GET /v1/share/{token}` on agent-py. Anonymous by design — no
+ * Authorization header, no cookies — so it works for viewers without an
+ * account. Only used when a backend is configured
+ * (`NEXT_PUBLIC_AGENT_PY_URL`); otherwise the share pages resolve the
+ * share server-side as before and this returns `{ ok: false, status: 0 }`.
+ *
+ * `options.baseUrl` overrides the configured prefix (tests).
+ */
+async function resolveShareFromBackend(
+  token: string,
+  options?: { signal?: AbortSignal; baseUrl?: string },
+): Promise<ShareResolveResult> {
+  const baseUrl = options?.baseUrl ?? (AGENT_PY.configured ? AGENT_PY.baseUrl : null)
+  if (baseUrl === null) return { ok: false, status: 0, notFound: false }
+  try {
+    const res = await fetch(`${baseUrl}/v1/share/${encodeURIComponent(token)}`, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      credentials: "omit",
+      cache: "no-store",
+      signal: options?.signal,
+    })
+    if (!res.ok) {
+      return { ok: false, status: res.status, notFound: res.status === 404 }
+    }
+    const parsed = ResolvedShareResponseSchema.safeParse(await res.json())
+    if (!parsed.success) return { ok: false, status: res.status, notFound: false }
+    return { ok: true, status: res.status, data: parsed.data }
+  } catch {
+    return { ok: false, status: 0, notFound: false }
   }
 }
 
@@ -1007,14 +1064,23 @@ async function refreshGeneratedFileUrl(
   return result.data.url
 }
 
-async function revokeShare(token: string): Promise<{ ok: boolean; status: number; error?: string }> {
-  const res = await fetch(apiUrls.shareToken(token), { method: "DELETE" })
-  if (!res.ok) {
-    const errBody = await readErrorBody(res)
-    return { ok: false, status: res.status, error: errBody.error }
-  }
-  RevokeShareResponseSchema.parse(await res.json())
-  return { ok: true, status: res.status }
+/** Revoke a share. Same dispatch as `createShare`: agent-py accounts
+ *  call `DELETE /v1/share/{token}`, everyone else the Next route. */
+async function revokeShare(
+  token: string,
+  options?: DispatchOption,
+): Promise<{ ok: boolean; status: number; error?: string }> {
+  const result = await dispatchedFetch<undefined, undefined, { ok: true }>({
+    method: "DELETE",
+    path: `/v1/share/${encodeURIComponent(token)}`,
+    localUrl: apiUrls.shareToken(token),
+    bodyForLocal: undefined,
+    schema: RevokeShareResponseSchema,
+    dispatch: await agentPyOnlyDispatch(options),
+  })
+  return result.ok
+    ? { ok: true, status: result.status }
+    : { ok: false, status: result.status, error: result.error.message }
 }
 
 // --- /api/mcp (proxy) -------------------------------------------------------
@@ -1239,6 +1305,7 @@ export const apiClient = {
   share: {
     create: createShare,
     revoke: revokeShare,
+    resolve: resolveShareFromBackend,
   },
   memory: { extract: memoryExtract },
   images: {

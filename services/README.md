@@ -3,7 +3,7 @@
 Hummingbird ships with **three interchangeable backends** for the chat
 turn (`/v1/chat`-shaped wire) plus the non-chat endpoints
 (`summarize`, `extract`, `url/fetch`, `images/refresh-url`, `mcp/...`;
-agent-py also serves `files/refresh-url` and `extract-table`).
+agent-py also serves `files/refresh-url`, `extract-table` and `share`).
 Two live here under `services/`; the third lives split across `app/api/`
 and `lib/server/` at the repo root because Next.js's App Router owns
 those paths. The frontend picks one per account via
@@ -69,6 +69,8 @@ If you're looking for the chat-route equivalent in each backend:
 | Refresh image URL | `app/api/images/refresh-url/route.ts` | `routers/images.py` | `routes/refresh-url.ts` |
 | Refresh file URL | `app/api/files/refresh-url/route.ts` | `routers/files.py` | — (frozen; client uses the Next.js route) |
 | Extract table | `app/api/extract-table/route.ts` | `routers/extract_table.py` | — (frozen; client uses the Next.js route) |
+| Share create / revoke | `app/api/share/route.ts`, `app/api/share/[token]/route.ts` | `routers/share.py` (data: `shares.py`) | — (frozen; client uses the Next.js routes) |
+| Share public read | `lib/server/share/resolve.ts` (server-rendered in `app/share/*/[token]/page.tsx`) | `routers/share.py` — `GET /v1/share/{token}`, no auth | — |
 
 Shared by all three: the Zod wire schemas in `lib/shared/api-schemas.ts`
 (agent-ts uses a frozen copy, `src/vendor/shared/api-schemas.ts`) and
@@ -76,9 +78,18 @@ the streaming SSE protocol documented in `docs/API.md`.
 
 agent-ts is frozen (no new endpoints — `docs/PLAN-frontend-backend-split.md`,
 Q11), so surfaces added after the freeze exist only in agent-py. For
-those (`files/refresh-url`, `extract-table`) `lib/client/api-client.ts`
-dispatches remotely only when the account's backend is agent-py
-(`agentPyOnlyDispatch`); `ts-service` accounts stay on the Next.js route.
+those (`files/refresh-url`, `extract-table`, share create / revoke)
+`lib/client/api-client.ts` dispatches remotely only when the account's
+backend is agent-py (`agentPyOnlyDispatch`); `ts-service` accounts stay
+on the Next.js route.
+
+The share pages are not per-account (their viewers are usually
+anonymous): when `NEXT_PUBLIC_AGENT_PY_URL` is set they read every share
+from agent-py's public `GET /v1/share/{token}` in the browser
+(`components/share/backend-share-view.tsx` → `apiClient.share.resolve`);
+unset, they resolve it server-side with the service-role key as before.
+For a cross-origin agent-py the page's origin must be in agent-py's
+`CORS_ALLOWED_ORIGINS`.
 
 ## Model allowlist
 

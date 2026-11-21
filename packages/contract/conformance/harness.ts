@@ -28,6 +28,8 @@ import { bundle, loadConfig } from "@redocly/openapi-core"
 import Ajv2020, { type ValidateFunction } from "ajv/dist/2020"
 import addFormats from "ajv-formats"
 
+import { pathParams } from "./fixtures"
+
 export const env = {
   baseUrl: process.env.CONTRACT_BASE_URL?.replace(/\/+$/, "") || null,
   authToken: process.env.CONTRACT_AUTH_TOKEN || null,
@@ -202,13 +204,24 @@ export class Contract {
 /** One HTTP exchange with the backend under test. */
 export async function call(
   op: Pick<Operation, "method" | "path">,
-  opts: { body?: unknown; token?: string | null; headers?: Record<string, string> } = {},
+  opts: {
+    body?: unknown
+    token?: string | null
+    headers?: Record<string, string>
+    /** Overrides for `fixtures.ts` `pathParams`. */
+    pathParams?: Record<string, string>
+  } = {},
 ): Promise<Exchange> {
   if (!env.baseUrl) throw new ConformanceError("CONTRACT_BASE_URL is not set")
   const headers: Record<string, string> = { accept: "application/json", ...opts.headers }
   if (opts.body !== undefined) headers["content-type"] = "application/json"
   if (opts.token) headers.authorization = `Bearer ${opts.token}`
-  const res = await fetch(`${env.baseUrl}${op.path}`, {
+  const path = op.path.replace(/\{(\w+)\}/g, (_, name: string) => {
+    const value = opts.pathParams?.[name] ?? pathParams[name]
+    if (value === undefined) throw new ConformanceError(`no value for path parameter {${name}}`)
+    return encodeURIComponent(value)
+  })
+  const res = await fetch(`${env.baseUrl}${path}`, {
     method: op.method.toUpperCase(),
     headers,
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),

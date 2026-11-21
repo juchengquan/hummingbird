@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 from typing import Annotated, Literal
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 
 class ApiError(BaseModel):
@@ -75,6 +76,36 @@ type ColumnType = Literal["text", "number", "link", "date"]
 """
 How a citation-table column's values are formatted and sorted.
 """
+
+
+class CreateConversationShareRequest(BaseModel):
+    kind: Literal["conversation"]
+    conversationId: UUID
+
+
+class CreateDocumentShareRequest(BaseModel):
+    kind: Literal["document"]
+    documentId: UUID
+
+
+type CreateShareRequest = Annotated[
+    CreateConversationShareRequest | CreateDocumentShareRequest,
+    Field(discriminator="kind"),
+]
+"""
+A conversation share names `conversationId`; a document share names
+`documentId` (a workspace owns several documents, so the target is
+one document, not the workspace).
+
+"""
+
+
+class CreateShareResponse(BaseModel):
+    token: Annotated[str, Field(min_length=1)]
+    """
+    The share token. The share page URL is `/share/<kind>/<token>`.
+    """
+    kind: ShareKind
 
 
 class ErrorResponse(ApiError):
@@ -191,6 +222,64 @@ class RefreshStorageUrlResponse(BaseModel):
     """
     A newly signed, long-lived URL for the object.
     """
+
+
+class ResolvedConversationShare(BaseModel):
+    kind: Literal["conversation"]
+    conversationTitle: str
+    messages: list[SharedMessage]
+    """
+    The conversation's messages in `position` order.
+    """
+    createdAt: AwareDatetime
+    """
+    When the share was created.
+    """
+
+
+class ResolvedDocumentShare(BaseModel):
+    kind: Literal["document"]
+    documentTitle: str
+    """
+    The document's title, or `Untitled` when it has none.
+    """
+    documentContent: str
+    """
+    The document body (markdown).
+    """
+    createdAt: AwareDatetime
+    """
+    When the share was created.
+    """
+
+
+type ResolvedShare = Annotated[
+    ResolvedConversationShare | ResolvedDocumentShare, Field(discriminator="kind")
+]
+"""
+What a share page renders, by `kind`.
+"""
+
+
+class RevokeShareResponse(BaseModel):
+    ok: Literal[True]
+
+
+type ShareKind = Literal["conversation", "document"]
+"""
+What a share points at.
+"""
+
+
+class SharedMessage(BaseModel):
+    id: str
+    role: Literal["user", "assistant"]
+    content: str
+    reasoning: str | None = None
+    """
+    The model's reasoning text, when it was kept.
+    """
+    position: int
 
 
 class TypedColumnHint(BaseModel):
