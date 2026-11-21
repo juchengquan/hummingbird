@@ -134,7 +134,7 @@ export const assistantBubbles = (page: Page): Locator => page.locator('[data-sel
 
 /** The titles ErrorBubble can show (components/panels/error-bubble.tsx). */
 export const ERROR_TITLE =
-  /Authentication failed|Sign in required|Rate limited|Conversation too long|Model unavailable|Model not available on this server|Provider error|Network error|Something went wrong/
+  /Authentication failed|Sign in required|Rate limited|Conversation too long|Model unavailable|Model not available on this server|Attachment can't be sent|Provider error|Network error|Something went wrong/
 
 export async function sendMessage(page: Page, text: string): Promise<void> {
   await composer(page).fill(text)

@@ -62,6 +62,8 @@ export function ApprovalAnswerCard({ question, busy, onAnswer }: AnswerCardProps
         <p id={titleId} className="font-medium">
           Approve action?
         </p>
+        {/* The interrupt's own question (a run's `message`), when it has one. */}
+        {question.prompt ? <p>{question.prompt}</p> : null}
         <p className="text-[var(--muted-foreground)]">
           The agent wants to call <code>{question.tool}</code>.
         </p>
