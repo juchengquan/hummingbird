@@ -187,7 +187,7 @@ bun dev
 
 1. Open http://localhost:3000/dashboard
 2. Sign in via magic link (the link arrives at http://localhost:54324
-   — Inbucket, the local SMTP catcher Supabase ships)
+   — the local email inbox the Supabase stack ships)
 3. Upload `/tmp/large.txt` from the prerequisites step
 4. Wait for the badge to read `Truncated · +924 KB indexed`
 5. Open the Skills tab (sparkles icon) → toggle **File search** on

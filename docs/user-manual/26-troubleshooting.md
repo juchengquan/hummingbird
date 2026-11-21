@@ -25,7 +25,7 @@ anonymous use - see [Environment variables](21-environment-variables.md).
 
 ## "Magic-link email never arrives"
 
-In dev: check Inbucket at <http://localhost:54324>. In hosted
+In dev: check the local inbox at <http://localhost:54324>. In hosted
 Supabase: check the project's auth email templates - the magic-
 link template must be enabled.
 

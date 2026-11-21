@@ -44,7 +44,8 @@ bun dev
 ```
 
 Verify: open Studio at <http://localhost:54323>; magic-link emails
-land in Inbucket at <http://localhost:54324>.
+land in the local inbox at <http://localhost:54324> (Mailpit with
+the CLI, Inbucket with docker-compose).
 
 ## Requirements
 

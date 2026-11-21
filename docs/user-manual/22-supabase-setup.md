@@ -20,7 +20,8 @@ bun run supabase:docker:migrate
 ```
 
 The local stack starts Studio at <http://localhost:54323> and
-Inbucket (the magic-link inbox) at <http://localhost:54324>. The
+the magic-link inbox (Mailpit with the CLI, Inbucket with
+docker-compose) at <http://localhost:54324>. The
 dev keys are dumped to `.docker/supabase/dev-keys.txt` - paste
 them into `.env.local`.
 
@@ -53,7 +54,7 @@ pipeline (after schema or extraction changes), see
 - The hosted project MUST expose a **direct** Postgres connection
   for the Python agent service's poll loop. Use
   `db.<project>.supabase.co:5432`, not the pooler.
-- Magic-link emails in dev land in Inbucket, not your real inbox.
+- Magic-link emails in dev land in the local inbox, not your real inbox.
   Open <http://localhost:54324> to find them.
 
 ## Related
