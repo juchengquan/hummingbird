@@ -27,6 +27,7 @@ interface FetchCall {
   method: string
   authorization?: string
   contentType?: string
+  credentials?: RequestCredentials
   body?: unknown
 }
 
@@ -57,6 +58,7 @@ function installFetchStub(response: {
       method,
       authorization: headers["Authorization"] ?? headers["authorization"],
       contentType: headers["Content-Type"] ?? headers["content-type"],
+      credentials: init?.credentials,
       body,
     })
     return new Response(JSON.stringify(response.jsonBody ?? {}), {
@@ -344,6 +346,173 @@ describe("apiClient.artifacts.extractTable — agent-py-only dispatch", () => {
     expect(log[0].url).toBe("/api/extract-table")
     expect(log[0].authorization).toBeUndefined()
   })
+})
+
+describe("apiClient.share.create — agent-py-only dispatch", () => {
+  const body = {
+    kind: "conversation" as const,
+    conversationId: "10000000-0000-4000-8000-000000000001",
+  }
+  const created = { token: "abcdefghijklmnopqrstuv", kind: "conversation" }
+
+  test("python → agent-py /v1/share with bearer, body unchanged", async () => {
+    const log = installFetchStub({ jsonBody: created })
+    const res = await apiClient.share.create(body, { dispatch: "remote", remote: REMOTE })
+    expect(res).toEqual({ ok: true, status: 200, data: created })
+    expect(log).toHaveLength(1)
+    expect(log[0].url).toBe("https://agent-py.example/v1/share")
+    expect(log[0].method).toBe("POST")
+    expect(log[0].authorization).toBe("Bearer jwt-test-token")
+    expect(log[0].body).toEqual(body)
+  })
+
+  test("ts-service → in-Next route, no bearer", async () => {
+    const log = installFetchStub({ jsonBody: created })
+    const res = await apiClient.share.create(body, { dispatch: "remote", remote: TS_SERVICE })
+    expect(res.ok).toBe(true)
+    expect(log[0].url).toBe("/api/share")
+    expect(log[0].authorization).toBeUndefined()
+    expect(log[0].body).toEqual(body)
+  })
+
+  test("in-next → in-Next route", async () => {
+    const log = installFetchStub({ jsonBody: created })
+    await apiClient.share.create(body, { dispatch: "in-next" })
+    expect(log[0].url).toBe("/api/share")
+    expect(log[0].authorization).toBeUndefined()
+  })
+
+  test("error → message from either envelope ({ error } / { code, message })", async () => {
+    installFetchStub({ status: 404, jsonBody: { error: "Conversation not found" } })
+    expect(await apiClient.share.create(body, { dispatch: "in-next" })).toEqual({
+      ok: false,
+      status: 404,
+      error: "Conversation not found",
+    })
+    installFetchStub({
+      status: 404,
+      jsonBody: { code: "not_found", message: "Conversation not found" },
+    })
+    expect(
+      await apiClient.share.create(body, { dispatch: "remote", remote: REMOTE }),
+    ).toEqual({ ok: false, status: 404, error: "Conversation not found" })
+  })
+})
+
+describe("apiClient.share.revoke — agent-py-only dispatch", () => {
+  const token = "abc/def+ghi"
+
+  test("python → DELETE agent-py /v1/share/{token} with bearer, no body", async () => {
+    const log = installFetchStub({ jsonBody: { ok: true } })
+    const res = await apiClient.share.revoke(token, { dispatch: "remote", remote: REMOTE })
+    expect(res).toEqual({ ok: true, status: 200 })
+    expect(log).toHaveLength(1)
+    expect(log[0].url).toBe("https://agent-py.example/v1/share/abc%2Fdef%2Bghi")
+    expect(log[0].method).toBe("DELETE")
+    expect(log[0].authorization).toBe("Bearer jwt-test-token")
+    expect(log[0].body).toBeUndefined()
+    expect(log[0].contentType).toBeUndefined()
+  })
+
+  test("ts-service → DELETE in-Next route, no bearer", async () => {
+    const log = installFetchStub({ jsonBody: { ok: true } })
+    const res = await apiClient.share.revoke(token, { dispatch: "remote", remote: TS_SERVICE })
+    expect(res.ok).toBe(true)
+    expect(log[0].url).toBe("/api/share/abc%2Fdef%2Bghi")
+    expect(log[0].method).toBe("DELETE")
+    expect(log[0].authorization).toBeUndefined()
+  })
+
+  test("404 → not ok with the message", async () => {
+    installFetchStub({ status: 404, jsonBody: { error: "Not found" } })
+    expect(await apiClient.share.revoke(token, { dispatch: "in-next" })).toEqual({
+      ok: false,
+      status: 404,
+      error: "Not found",
+    })
+  })
+})
+
+describe("apiClient.share.resolve — public backend read", () => {
+  const conversation = {
+    kind: "conversation",
+    conversationTitle: "Alice chat",
+    messages: [
+      { id: "m1", role: "user", content: "hi", reasoning: null, position: 1 },
+      { id: "m2", role: "assistant", content: "hello", reasoning: "think", position: 2 },
+    ],
+    createdAt: "2026-01-01T12:30:00Z",
+  }
+
+  test("GET {base}/v1/share/{token}, anonymous (no bearer, no cookies)", async () => {
+    const log = installFetchStub({ jsonBody: conversation })
+    const res = await apiClient.share.resolve("tok/1", { baseUrl: "https://agent-py.example" })
+    expect(res).toEqual({ ok: true, status: 200, data: conversation as never })
+    expect(log).toHaveLength(1)
+    expect(log[0].url).toBe("https://agent-py.example/v1/share/tok%2F1")
+    expect(log[0].method).toBe("GET")
+    expect(log[0].authorization).toBeUndefined()
+    expect(log[0].credentials).toBe("omit")
+  })
+
+  test("same origin (empty prefix) → relative /v1 path", async () => {
+    const log = installFetchStub({
+      jsonBody: { kind: "document", documentTitle: "D", documentContent: "# D", createdAt: "x" },
+    })
+    const res = await apiClient.share.resolve("tok", { baseUrl: "" })
+    expect(res.ok).toBe(true)
+    expect(log[0].url).toBe("/v1/share/tok")
+  })
+
+  test("404 → notFound", async () => {
+    installFetchStub({ status: 404, jsonBody: { code: "not_found", message: "Share not found." } })
+    expect(await apiClient.share.resolve("tok", { baseUrl: "" })).toEqual({
+      ok: false,
+      status: 404,
+      notFound: true,
+    })
+  })
+
+  test("429 / malformed body → transient failure, not notFound", async () => {
+    installFetchStub({ status: 429, jsonBody: { code: "rate_limit", message: "slow" } })
+    expect(await apiClient.share.resolve("tok", { baseUrl: "" })).toEqual({
+      ok: false,
+      status: 429,
+      notFound: false,
+    })
+    installFetchStub({ jsonBody: { kind: "conversation", conversationTitle: "no messages" } })
+    expect(await apiClient.share.resolve("tok", { baseUrl: "" })).toEqual({
+      ok: false,
+      status: 200,
+      notFound: false,
+    })
+  })
+
+  test("network error → transient failure", async () => {
+    globalThis.fetch = (async () => {
+      throw new TypeError("Failed to fetch")
+    }) as unknown as typeof fetch
+    expect(await apiClient.share.resolve("tok", { baseUrl: "" })).toEqual({
+      ok: false,
+      status: 0,
+      notFound: false,
+    })
+  })
+
+  // Module-load env: only meaningful when NEXT_PUBLIC_AGENT_PY_URL is unset
+  // (bun auto-loads a local .env that might set it).
+  test.skipIf(Boolean(process.env.NEXT_PUBLIC_AGENT_PY_URL?.trim()))(
+    "no backend configured (and no override) → not attempted",
+    async () => {
+      const log = installFetchStub({ jsonBody: conversation })
+      expect(await apiClient.share.resolve("tok")).toEqual({
+        ok: false,
+        status: 0,
+        notFound: false,
+      })
+      expect(log).toHaveLength(0)
+    },
+  )
 })
 
 describe("apiClient.mcp.upsertCloudServer — dispatch", () => {
