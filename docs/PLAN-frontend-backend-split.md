@@ -1,6 +1,6 @@
 # Plan: Frontend / backend split
 
-Status: **Wave 1 (Phase 0) shipped (#294). Wave 2 (Phase 1) in progress.** Decided in a design interview
+Status: **Waves 1–2 (Phases 0–1) shipped (#294, #295). Wave 3a (Phase 2 foundation) in progress.** Decided in a design interview
 on 2026-11-21. Supersedes the open parts of
 [`PLAN-backend-extraction.md`](PLAN-backend-extraction.md), whose Phase 1
 (single `apiClient` + Zod schemas + `docs/API.md`) shipped and is the
@@ -81,6 +81,11 @@ three times. The goals:
 | Q18 | Frontend uses `@ag-ui/client` wrapped in our own hook feeding the Zustand message store — not CopilotKit, not `useChat` + a converter |
 | Q20 | Anonymous runs are addressed with a per-run secret token (`runToken`); the backend enforces anonymous per-IP rate/budget limits (today's `REQUIRE_AUTH_FOR_AI` moves there) |
 | Q24 | Answering an interrupt starts a **new run on the same thread** with `resume[]` (AG-UI semantics). A background "task" is a thread of runs |
+| Q27 | Runs reuse the existing `tasks` / `task_events` / `task_jobs` tables during the migration: a run is a `tasks` row (with `mode`), the thread is the conversation. The old task routes and the runs API read the same rows, so nothing is copied or written twice. Old surfaces only see `mode = 'background'`. **Phase 5 renames and reshapes** them into the long-run model (below) |
+| Q28 | Interactive runs execute in the API process that received `POST /v1/runs`, streaming to the caller while writing every event to the log; background runs go through `task_jobs` + the poller. If the process dies mid-turn the run is failed (reaper), not handed to another worker |
+| Q29 | Rejoin reads the event log: readers in the run's own process get events in memory; readers elsewhere poll the log (~250 ms). Postgres LISTEN/NOTIFY only if polling becomes a problem |
+| Q30 | The run event log is a **replay buffer, not the transcript**: text deltas are stored coalesced (flushed every ~100–250 ms), compacted on finish (Q17), and deleted after a retention window while the run row stays. `messages` remains the durable record of a conversation. Partition `run_events` by time only once volume calls for it |
+| Q31 | **Harness state stays outside the contract.** A harness's own persistence (LangGraph checkpointers, Claude Agent SDK sessions) is stored opaquely, keyed by run/thread — in `checkpoint` jsonb or harness-owned tables in their own schema — and never shapes `runs` or the API, so swapping harnesses touches neither the contract nor the frontend |
 
 ## Run contract (v1)
 
@@ -98,6 +103,19 @@ additions are marked ✚.
 | Cancel | `POST /v1/runs/{id}/cancel` — idempotent; the stream closes with `RUN_FINISHED { outcome: cancelled }` |
 | List ✚ | `GET /v1/runs?threadId=&status=&parentRunId=&pageToken=` (A2A-style token paging); the tasks panel reads threads from here |
 | Sub-agents | Inline in the parent's log as AG-UI `SUBAGENT_*` events; `parentRunId` only for sub-agents that run as separate background runs |
+
+**Long-run data model (Q27, reached in Phase 5).**
+
+| Today | Long run |
+|---|---|
+| `conversations` | stays the thread |
+| `tasks` | `runs`: one row per run, interactive or background — `mode`, `thread_id`, `parent_run_id`, previous run in the thread, status, timestamps |
+| `task_events` | `run_events`, numbered per run |
+| `task_jobs` | `run_jobs`, the queue for background runs only |
+| background-only columns (`goal NOT NULL`, `step`, `max_steps`) | a `mode`-specific `input` jsonb or a small side table for background tasks |
+
+Table renames are atomic metadata changes in Postgres; a short-lived view
+covers any outside reader of the old names.
 
 No published protocol defines replay from an event offset (AG-UI
 explicitly can't re-enter a stream; A2A warns clients may miss updates;
@@ -127,7 +145,8 @@ has shipped behind the existing per-account backend switch.
 4. **Editor AI to the backend** (Q23).
 5. **Removal** — all Next API routes, AI/admin keys from the frontend
    env, the old `/v1/chat`, agent-ts's old routes, the server session;
-   move the Next app into `apps/web`.
+   move the Next app into `apps/web`; rename and reshape the run tables
+   into the long-run model (Q27).
 6. **Later, separately** — harness trials (deepagents, Claude Agent SDK)
    as adapters; a TypeScript backend against the conformance suite; the
    revisits (Supabase Q3, same origin Q21, A2A Q14).
@@ -138,7 +157,8 @@ has shipped behind the existing per-account backend switch.
 |---|---|---|
 | 1 (Phase 0) | **A** contract foundation · **B** the two missing remote endpoints · **C** agent-ts decoupling + freeze · **D** reverse proxy + docs | — |
 | 2 (Phase 1) | **A** flat `{code, message}` error envelope in agent-py (drop the spec's legacy `{detail}` variant) · **B** sharing (create / revoke / public read; share pages read from the backend when one is configured) · **C** schedules CRUD + an env-gated agent-py scheduler loop (safe alongside the Vercel Cron: same guarded `next_run_at` claim) · **D** embed + memory extract + csp-report | Wave 1 merged |
-| 3+ (Phase 2) | mostly sequential (event log ↔ encoder ↔ runs API ↔ harness interface); split decided when Phase 1 lands | Wave 2 merged |
+| 3a (Phase 2) | one agent, sequential: the runs operations in `packages/contract`; the internal-event → AG-UI mapping; the `tasks` migration (Q27) with every old reader limited to background runs; the Python interfaces 3b codes against (event log, encoder, harness adapter, run repository) | Wave 2 merged |
+| 3b (Phase 2) | **A** AG-UI encoder + stream mechanics (seq in SSE `id:`, replay, `gap` + `MESSAGES_SNAPSHOT`, in-memory log for anonymous runs, compaction) · **B** runs API (start with idempotent client `runId`, status, cancel, list, `runToken`) + conformance cases · **C** harness-adapter interface with today's loop as the first adapter; chat emits internal events | Wave 3a merged |
 
 Each wave merges into one integration branch and ships as one PR
 against `dev`.
