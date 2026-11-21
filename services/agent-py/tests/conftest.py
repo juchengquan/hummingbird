@@ -14,6 +14,7 @@ import pytest
 from agent_py import db as db_module
 from agent_py import model_allowlist as model_allowlist_module
 from agent_py import settings as settings_module
+from agent_py.runs import wiring as runs_wiring
 
 
 @pytest.fixture(autouse=True)
@@ -27,7 +28,9 @@ def reset_module_state() -> Iterator[None]:
     settings_module.get_settings.cache_clear()
     model_allowlist_module.get_model_allowlist.cache_clear()
     db_module._pool = None  # type: ignore[attr-defined]  # test-only reset
+    runs_wiring.reset_run_services()
     yield
     settings_module.get_settings.cache_clear()
     model_allowlist_module.get_model_allowlist.cache_clear()
     db_module._pool = None  # type: ignore[attr-defined]  # test-only reset
+    runs_wiring.reset_run_services()
