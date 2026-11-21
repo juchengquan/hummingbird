@@ -696,8 +696,13 @@ describe.skipIf(!env.baseUrl)(`conformance: runs @ ${env.baseUrl}`, () => {
         const body = runBody({ mode: "background", threadId: env.threadId! })
         const runId = body.runId as string
         const first = await call(op("startRun"), { body, token: env.authToken })
-        expect(first.status).toBe(202)
         contract.assertConforms("startRun", first)
+        if (first.status === 503) {
+          // No store for background runs on this backend (see the case above).
+          expect(code(first)).toBe("unavailable")
+          return
+        }
+        expect(first.status).toBe(202)
         expect(first.body).toMatchObject({ runId })
         expect(first.headers.get("location")).toBe(`/v1/runs/${runId}`)
         const again = await call(op("startRun"), { body, token: env.authToken })
