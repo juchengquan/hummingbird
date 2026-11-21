@@ -15,10 +15,33 @@ import "client-only"
  *   registers an implementation (it owns the message's sink, the sync hold,
  *   the pointer and the outcome handling — a resumed run may finish, fail,
  *   or interrupt again); 4b-B only calls `answerInterrupts`.
+ *
+ * **A turn's lifecycle once answered** (one behaviour, both sides):
+ *
+ * 1. The cards send every answer at once and show "Sending your answer…"
+ *    (locked) while the bridge checks them and asks for the resume run.
+ * 2. **Refused before the resume run starts** (`run_already_resumed`,
+ *    `invalid_state`, `invalid_answers`, `busy`, `not_found`,
+ *    `not_on_runs`, `network`): `answerInterrupts` resolves `{ ok: false,
+ *    code }`; the turn, its cards and the message are untouched and the
+ *    cards show the failure (answered elsewhere / expired → resend /
+ *    retry).
+ * 3. **The resume run started** (its `RUN_STARTED`): in this order, the
+ *    answered generative-UI parts (`AnswerOptions.uiParts`) are written to
+ *    the message — inert, as `/api/chat`'s answered parts — the resume's
+ *    **base** (the message as the paused run left it *plus* those parts)
+ *    is saved for a reload (`run-base.ts`), and the turn is cleared: the
+ *    cards disappear and the resume's output streams into the same
+ *    message, after the base. A reset of the resume run (a rejoin after a
+ *    reload) restores that base, answered parts included.
+ * 4. From then on the resume is a send: an error is the message's bubble,
+ *    a further interrupt sets a new turn (new run id → new cards), and
+ *    `answerInterrupts` resolves `{ ok: true }` once the run settles.
  */
 
 import { create } from "zustand"
 
+import type { PersistedUiPart } from "@/shared/generative-ui/schemas"
 import type { MessageError } from "@/shared/types"
 
 import type { InterruptAnswer, PendingInterrupt } from "./interrupts"
@@ -46,16 +69,26 @@ export type AnswerResult =
    */
   | { ok: false; error: MessageError; code?: string }
 
+export interface AnswerOptions {
+  /** The answered generative-UI parts (`answeredUiParts`): written to the
+   *  message when the resume run starts, before its output (step 3). */
+  uiParts?: readonly PersistedUiPart[]
+}
+
 export interface ChatRunBridge {
   /**
    * Continue `turn` in the same assistant message with one answer per open
-   * interrupt (keyed by `PendingInterrupt.id`). Resolves once the resumed
-   * run settles and its outcome has been handled like a send's (including
-   * a further interrupt, which replaces this turn's entry).
+   * interrupt (keyed by `PendingInterrupt.id`). `{ ok: false }` only when
+   * the resume run never started (the turn is then untouched); otherwise
+   * the turn is cleared as the run starts and this resolves `{ ok: true }`
+   * once the run settles and its outcome has been handled like a send's
+   * (including a further interrupt, which sets a new turn). See the
+   * lifecycle above.
    */
   answerInterrupts(
     turn: InterruptedTurn,
     answers: Record<string, InterruptAnswer>,
+    opts?: AnswerOptions,
   ): Promise<AnswerResult>
 }
 

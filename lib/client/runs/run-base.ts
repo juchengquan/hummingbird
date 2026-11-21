@@ -9,11 +9,17 @@ import "client-only"
  * run, and cuts the persisted message back to them (`baseFromCounts`):
  * a resume run only appends (text, reasoning, parts) to the message.
  *
+ * The answered generative-UI parts of the turn the resume continues are
+ * part of its base: they are written to the message when the resume run
+ * starts, before its output (`withAnsweredUiParts`; `chat-bridge.ts`'s
+ * lifecycle), so the saved sizes count them and a reset keeps them.
+ *
  * localStorage key `humm.runBases`, `{ [runId]: counts + updatedAt }`;
  * entries older than a day are dropped, like the active-run pointers.
  */
 
 import type { MessageBase } from "@/client/chat/turn-writer"
+import type { PersistedUiPart } from "@/shared/generative-ui/schemas"
 import type { Message } from "@/shared/types"
 
 import { MAX_AGE_MS } from "./active-run"
@@ -74,6 +80,25 @@ export function baseFromCounts(message: Message, counts: RunBaseCounts): Message
     mcpApps: cut(message.mcpApps, counts.mcpApps),
     routedModel: message.routedModel,
   }
+}
+
+/**
+ * `message` with the answered generative-UI parts applied as the store
+ * applies them (`appendMessageUiPart` — idempotent on id — then
+ * `resolveMessageUiPart`, which never re-answers a part): a part already
+ * on the message takes the answer, a new one is appended. Pure.
+ */
+export function withAnsweredUiParts(message: Message, parts: readonly PersistedUiPart[]): Message {
+  if (parts.length === 0) return message
+  const uiParts = [...(message.uiParts ?? [])]
+  for (const part of parts) {
+    const i = uiParts.findIndex((p) => p.id === part.id)
+    if (i < 0) uiParts.push(part)
+    else if (!uiParts[i].answeredAt && part.answer) {
+      uiParts[i] = { ...uiParts[i], answeredAt: part.answeredAt, answer: part.answer }
+    }
+  }
+  return { ...message, uiParts }
 }
 
 type Stored = RunBaseCounts & { updatedAt: number }

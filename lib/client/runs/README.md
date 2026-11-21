@@ -26,7 +26,7 @@ session.ts ── HummingbirdRunAgent (agent.ts, @ag-ui/client: enforce → veri
 | `active-run.ts` | per-conversation active-run pointer (codec: `lib/shared/runs/active-run.ts`) |
 | `build-input.ts` | `buildRunInput(chat inputs)` → `RunAgentInput` |
 | `interrupts.ts` | `PendingInterrupt`, `InterruptAnswer`, `buildResume` |
-| `chat-bridge.ts` | the 4b-A ↔ 4b-B seam: `useInterruptedTurns` (ephemeral paused turns) + `registerChatRunBridge` / `getChatRunBridge` (`answerInterrupts`) |
+| `chat-bridge.ts` | the 4b-A ↔ 4b-B seam: `useInterruptedTurns` (ephemeral paused turns) + `registerChatRunBridge` / `getChatRunBridge` (`answerInterrupts`), and the answered turn's lifecycle |
 | `interrupt-answers.ts` | 4b-B, pure: interrupt → card question, card answer → `InterruptAnswer`, `submitTurnAnswers` (via the bridge), failure classes, answered ui parts |
 | `restore-interrupted.ts` | 4b-B: rebuild interrupted turns after a reload (pointer + `status`); `use-restore-interrupted-turns.ts` mounts it from the chat panel |
 | `reducer.ts` | the pure AG-UI → store step |
@@ -184,8 +184,9 @@ when the resume run never started (`run_already_resumed`,
 `invalid_state`, `invalid_answers` — an unanswered / expired interrupt
 caught before sending —, `busy`, `not_found`, `not_on_runs`, `network`);
 the message and the paused turn are then untouched. Once the resume run
-started, its outcome is handled like a send's (an error is the
-message's bubble) and it resolves `{ ok: true }`. A reset of a resume
+started — the answered generative-UI parts written, the base saved, the
+turn cleared, in that order — its outcome is handled like a send's (an
+error is the message's bubble) and it resolves `{ ok: true }`. A reset of a resume
 run (a rejoin after a reload) restores the paused run's output first
 (`run-base.ts`).
 
@@ -294,10 +295,16 @@ run (a rejoin after a reload) restores the paused run's output first
   renders them under the paused message (`components/chat/interrupted-turn-cards.tsx`,
   mounted by `chat-message.tsx` from `useInterruptedTurn(activeConversationId)`).
   Once every open interrupt has an answer they go to
-  `getChatRunBridge().answerInterrupts(turn, answers)`; the cards stay
-  disabled ("Sending your answer…") until it resolves. On success the
-  answered `ui-part`s are written to the message's `uiParts` (inert, as
-  on `/api/chat`) and the turn is cleared if the bridge hasn't already.
+  `getChatRunBridge().answerInterrupts(turn, answers, { uiParts })` (the
+  answered `ui-part`s, `answeredUiParts`); the cards stay disabled
+  ("Sending your answer…") until the resume run starts. **Lifecycle**
+  (one behaviour for 4b-A and 4b-B, `chat-bridge.ts`'s docstring): when
+  the resume run starts, the bridge writes the answered parts to the
+  message's `uiParts` (inert, as on `/api/chat`), saves the resume's base
+  (which counts them — `withAnsweredUiParts`, `run-base.ts`) and clears
+  the turn, so the cards go and the answer streams into the message; a
+  reload-rejoin's reset restores text *and* answered parts. A refusal
+  before the start comes back to the cards (below), nothing written.
 - **Failures** — `run_already_resumed` → "answered in another tab", the
   run is re-read and a run that moved on / 404 loses card + pointer;
   `invalid_state` → "expired" + **Resend message** (= the error bubble's

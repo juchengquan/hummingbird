@@ -4,7 +4,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test"
 
-import { formatAnswerForChat } from "@/shared/generative-ui/schemas"
+import { formatAnswerForChat, type PersistedUiPart } from "@/shared/generative-ui/schemas"
 
 import {
   getChatRunBridge,
@@ -285,10 +285,14 @@ describe("submitTurnAnswers (fake bridge)", () => {
   })
 
   function fakeBridge(result: AnswerResult | Error) {
-    const calls: Array<{ turn: InterruptedTurn; answers: Record<string, InterruptAnswer> }> = []
+    const calls: Array<{
+      turn: InterruptedTurn
+      answers: Record<string, InterruptAnswer>
+      uiParts?: readonly PersistedUiPart[]
+    }> = []
     const bridge: ChatRunBridge = {
-      async answerInterrupts(turn, answers) {
-        calls.push({ turn, answers })
+      async answerInterrupts(turn, answers, opts) {
+        calls.push({ turn, answers, uiParts: opts?.uiParts })
         if (result instanceof Error) throw result
         return result
       },
@@ -311,7 +315,7 @@ describe("submitTurnAnswers (fake bridge)", () => {
     })
   })
 
-  test("answers reach the bridge keyed by interrupt id; parts come back answered", async () => {
+  test("answers reach the bridge keyed by interrupt id, with the parts they answer", async () => {
     const { calls } = fakeBridge({ ok: true })
     const turn = turnOf([approval, confirmPart])
     const uiAnswer = { kind: "confirm" as const, confirmed: true }
@@ -322,7 +326,20 @@ describe("submitTurnAnswers (fake bridge)", () => {
       new Date("2026-11-21T12:00:00Z"),
     )
     expect(calls).toEqual([
-      { turn, answers: { c2: { approved: true }, "c-confirm": { uiAnswer, value: "Send" } } },
+      {
+        turn,
+        answers: { c2: { approved: true }, "c-confirm": { uiAnswer, value: "Send" } },
+        // For the bridge to write when the resume starts (`chat-bridge.ts`).
+        uiParts: [
+          {
+            id: "c-confirm",
+            kind: "confirm",
+            props: confirmPart.uiProps,
+            answeredAt: "2026-11-21T12:00:00.000Z",
+            answer: uiAnswer,
+          },
+        ],
+      },
     ])
     expect(outcome.type).toBe("answered")
     expect(outcome.type === "answered" && outcome.uiParts.map((p) => p.id)).toEqual(["c-confirm"])

@@ -32,12 +32,14 @@ import {
 } from "@/client/chat/turn-writer"
 import type { AppState } from "@/client/hooks/use-store"
 import type { LiveToolCall } from "@/components/skills/tool-call-strip"
+import type { PersistedUiPart } from "@/shared/generative-ui/schemas"
 import type { Message } from "@/shared/types"
 
 import * as activeRunStore from "./active-run"
 import type { ChatRunInput } from "./build-input"
 import {
   useInterruptedTurns,
+  type AnswerOptions,
   type AnswerResult,
   type InterruptedTurn,
 } from "./chat-bridge"
@@ -62,6 +64,7 @@ export type ChatRunnerStore = TurnWriterStore &
     | "setMessageReasoningDuration"
     | "setConversationStreaming"
     | "clearMessageOutput"
+    | "resolveMessageUiPart"
   >
 
 type InterruptedTurnsApi = Pick<
@@ -129,8 +132,12 @@ export interface ChatRunner {
   detachAll(): void
   /** Mount: rejoin each `running` pointer whose message still exists. */
   rejoinActive(): Promise<void>
-  /** `ChatRunBridge.answerInterrupts`. */
-  answerInterrupts(turn: InterruptedTurn, answers: Record<string, InterruptAnswer>): Promise<AnswerResult>
+  /** `ChatRunBridge.answerInterrupts` (lifecycle: `chat-bridge.ts`). */
+  answerInterrupts(
+    turn: InterruptedTurn,
+    answers: Record<string, InterruptAnswer>,
+    opts?: AnswerOptions,
+  ): Promise<AnswerResult>
 }
 
 interface Entry {
@@ -156,6 +163,9 @@ interface TurnSpec {
   reopen?: (opts: RunSessionOptions) => RunSession
   /** `resume`: the run it answers. */
   previousRunId?: string
+  /** `resume`: the answered generative-UI parts, written when it starts
+   *  (already in `base`). */
+  answeredUiParts?: readonly PersistedUiPart[]
 }
 
 function lastUserText(messages: readonly Message[]): string {
@@ -253,10 +263,18 @@ export function createChatRunner(deps: ChatRunnerDeps): ChatRunner {
           ...(spec.model ? { model: spec.model } : {}),
         })
         if (spec.kind === "resume" && spec.previousRunId) {
-          // Answered: the paused turn is over; a reload must rebuild this
-          // message on top of what the paused run wrote.
-          interrupted().clearInterruptedTurn(conv, spec.previousRunId)
+          // Answered (`chat-bridge.ts`, lifecycle step 3), in this order:
+          // the answered parts go on the message before any of the resume's
+          // output; the base (which includes them) is saved so a reload
+          // rebuilds this message on top of it; then the paused turn — and
+          // its cards — is over.
+          const s = deps.store()
+          for (const part of spec.answeredUiParts ?? []) {
+            s.appendMessageUiPart(messageId, part)
+            if (part.answer) s.resolveMessageUiPart(messageId, part.id, part.answer)
+          }
           if (spec.base) bases.saveRunBase(info.runId, runBaseStore.countsOf(spec.base))
+          interrupted().clearInterruptedTurn(conv, spec.previousRunId)
         }
       },
       onCursor: (cursor) => {
@@ -559,7 +577,7 @@ export function createChatRunner(deps: ChatRunnerDeps): ChatRunner {
       }
     },
 
-    async answerInterrupts(turn, answers) {
+    async answerInterrupts(turn, answers, opts) {
       const target = await deps.resolveTarget()
       if (!target) {
         return {
@@ -613,13 +631,17 @@ export function createChatRunner(deps: ChatRunnerDeps): ChatRunner {
         }
       }
       bodies.set(input.runId, input)
+      const answeredUiParts = opts?.uiParts ?? []
       return runTurn({
         kind: "resume",
         conversationId: turn.conversationId,
         placeholder: message,
         target,
         model: turn.model,
-        base: messageBaseOf(message),
+        // What the resume continues: the paused run's output plus the
+        // answered parts (written as it starts) — what a reset restores.
+        base: messageBaseOf(runBaseStore.withAnsweredUiParts(message, answeredUiParts)),
+        answeredUiParts,
         userText: lastUserText(history),
         isRetry: true,
         open: (opts) =>

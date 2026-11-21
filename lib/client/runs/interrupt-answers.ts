@@ -151,11 +151,12 @@ export function answerErrorText(error: MessageError): string {
 }
 
 /**
- * The generative-UI parts a successful answer resolved, as answered
+ * The generative-UI parts an answer resolves, as answered
  * `Message.uiParts` entries (`answeredAt` + `answer`), so the message
  * keeps showing what was picked — inert, like `/api/chat`'s answered
- * parts — once the cards are gone. Dismissed parts and parts whose
- * kind / props don't validate are skipped.
+ * parts — once the cards are gone. The bridge writes them when the resume
+ * run starts, before its output (`chat-bridge.ts`, lifecycle step 3).
+ * Dismissed parts and parts whose kind / props don't validate are skipped.
  */
 export function answeredUiParts(
   turn: Pick<InterruptedTurn, "interrupts">,
@@ -199,13 +200,15 @@ export type SubmitOutcome =
   | { type: "incomplete" }
   /** No bridge registered (chat not mounted): nothing was sent. */
   | { type: "no-bridge" }
-  /** The resumed run settled and the bridge handled its outcome; these
-   *  generative-UI parts were answered (`answeredUiParts`). */
+  /** The resumed run started (the bridge wrote these answered
+   *  generative-UI parts and cleared the turn) and has since settled. */
   | { type: "answered"; uiParts: PersistedUiPart[] }
   | { type: "failed"; failure: AnswerFailure }
 
 /** Send every open interrupt's answer through the bridge — the cards'
- *  submit. Never throws: a bridge that throws counts as an `unknown` error. */
+ *  submit — with the generative-UI parts they answer, for the bridge to
+ *  write when the resume starts. Never throws: a bridge that throws counts
+ *  as an `unknown` error. */
 export async function submitTurnAnswers(
   turn: InterruptedTurn,
   drafts: Readonly<Record<string, DraftAnswer>>,
@@ -215,16 +218,17 @@ export async function submitTurnAnswers(
   const answers = resumeAnswers(turn.interrupts, drafts)
   if (!answers) return { type: "incomplete" }
   if (!bridge) return { type: "no-bridge" }
+  const uiParts = answeredUiParts(turn, drafts, now.toISOString())
   let result: AnswerResult
   try {
-    result = await bridge.answerInterrupts(turn, answers)
+    result = await bridge.answerInterrupts(turn, answers, { uiParts })
   } catch (err) {
     result = {
       ok: false,
       error: { code: "unknown", detail: err instanceof Error ? err.message : String(err) },
     }
   }
-  if (result.ok) return { type: "answered", uiParts: answeredUiParts(turn, drafts, now.toISOString()) }
+  if (result.ok) return { type: "answered", uiParts }
   return { type: "failed", failure: classifyAnswerFailure(result) }
 }
 

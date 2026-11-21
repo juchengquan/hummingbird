@@ -7,7 +7,11 @@ import "client-only"
  * as the task strip (`components/agent/interrupt-cards/`). Once every
  * interrupt has an answer, they go to the chat run bridge
  * (`getChatRunBridge().answerInterrupts`, wave 4b-A), which resumes the
- * run into the same message.
+ * run into the same message. Lifecycle (`chat-bridge.ts`): the cards show
+ * "Sending your answer…" until the resume run starts; then the bridge
+ * writes the answered generative-UI parts to the message and clears the
+ * turn, so the cards unmount and the answer streams into the message. A
+ * refusal before the start comes back here:
  *
  * - `run_already_resumed` → "answered elsewhere"; the run is re-read, and
  *   a run that moved on loses its card + pointer.
@@ -106,19 +110,13 @@ function TurnCards({ turn, onResend }: InterruptedTurnCardsProps) {
           setPhase({ type: "answering" })
           setBridgeReady(false)
           return
-        case "answered": {
-          // Keep what was picked on the message, inert (as `/api/chat`'s
-          // answered parts are), once the cards are gone.
-          const store = useStore.getState()
-          for (const part of outcome.uiParts) {
-            store.appendMessageUiPart(turn.messageId, part)
-            if (part.answer) store.resolveMessageUiPart(turn.messageId, part.id, part.answer)
-          }
-          // The bridge replaces / clears the turn; this is only a backstop.
+        case "answered":
+          // The bridge wrote the answered parts and cleared the turn when
+          // the resume started (these cards are unmounted by now); the
+          // clear is only a backstop.
           useInterruptedTurns.getState().clearInterruptedTurn(turn.conversationId, turn.runId)
           setPhase({ type: "sent" })
           return
-        }
         case "failed":
           setPhase({ type: "failed", ...outcome.failure })
           if (outcome.failure.kind === "answered-elsewhere") void recheckRun(turn)

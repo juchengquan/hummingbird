@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test"
 
+import type { PersistedUiPart } from "@/shared/generative-ui/schemas"
 import type { Message } from "@/shared/types"
 
 import { MAX_AGE_MS } from "./active-run"
 import { memoryStorage } from "./fixtures"
-import { baseFromCounts, clearRunBase, countsOf, loadRunBase, saveRunBase } from "./run-base"
+import { baseFromCounts, clearRunBase, countsOf, loadRunBase, saveRunBase, withAnsweredUiParts } from "./run-base"
 
 const message: Message = {
   id: "a",
@@ -58,5 +59,42 @@ describe("run base", () => {
     expect(loadRunBase("r2", storage, 1)).toBeNull()
     storage.setItem("humm.runBases", "{not json")
     expect(loadRunBase("r2", storage, 1)).toBeNull()
+  })
+})
+
+describe("withAnsweredUiParts", () => {
+  const msg = (uiParts?: Message["uiParts"]): Message => ({
+    id: "a",
+    role: "assistant",
+    content: "x",
+    timestamp: new Date(0),
+    ...(uiParts ? { uiParts } : {}),
+  })
+  const part = (id: string, extra: Partial<PersistedUiPart> = {}): PersistedUiPart => ({
+    id,
+    kind: "confirm",
+    props: { prompt: "?" },
+    ...extra,
+  })
+  const answer = { kind: "confirm" as const, confirmed: true }
+
+  test("appends a new part, answers a present unanswered one, leaves an answered one", () => {
+    const answeredOld = part("old", { answeredAt: "t0", answer: { kind: "confirm", confirmed: false } })
+    const out = withAnsweredUiParts(msg([part("p"), answeredOld]), [
+      part("p", { answeredAt: "t1", answer }),
+      part("old", { answeredAt: "t1", answer }),
+      part("new", { answeredAt: "t1", answer }),
+    ])
+    expect(out.uiParts).toEqual([
+      part("p", { answeredAt: "t1", answer }),
+      answeredOld,
+      part("new", { answeredAt: "t1", answer }),
+    ])
+    expect(countsOf(out).uiParts).toBe(3)
+  })
+
+  test("no parts → the same message", () => {
+    const m = msg()
+    expect(withAnsweredUiParts(m, [])).toBe(m)
   })
 })

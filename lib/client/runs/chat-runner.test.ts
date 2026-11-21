@@ -7,6 +7,7 @@
 
 import { describe, expect, test } from "bun:test"
 
+import type { PersistedUiPart, UiAnswer } from "@/shared/generative-ui/schemas"
 import type { Message, MessageError } from "@/shared/types"
 
 import { buildRunInput } from "./build-input"
@@ -37,6 +38,8 @@ function fakeStore(initial: Message[] = []) {
     streaming: new Set<string>(),
     typing: new Set<string>(),
     artifacts: [] as Array<{ messageId: string; kind: string }>,
+    /** The order of text / ui-part writes (lifecycle assertions). */
+    log: [] as string[],
   }
   const update = (id: string, f: (m: Message) => Message) => {
     for (const c of state.conversations) c.messages = c.messages.map((m) => (m.id === id ? f(m) : m))
@@ -60,7 +63,10 @@ function fakeStore(initial: Message[] = []) {
     setConversationTyping: (id: string, on: boolean) => (on ? state.typing.add(id) : state.typing.delete(id)),
     clearMessageOutput: (id: string) =>
       update(id, (m) => ({ id: m.id, role: m.role, timestamp: m.timestamp, content: "" }) as Message),
-    appendToMessage: (id: string, chunk: string) => update(id, (m) => ({ ...m, content: m.content + chunk })),
+    appendToMessage: (id: string, chunk: string) => {
+      state.log.push(`text:${chunk}`)
+      update(id, (m) => ({ ...m, content: m.content + chunk }))
+    },
     appendToMessageReasoning: (id: string, chunk: string) =>
       update(id, (m) => ({ ...m, reasoning: (m.reasoning ?? "") + chunk })),
     appendMessageGeneratedImages: (id: string, images: NonNullable<Message["generatedImages"]>) =>
@@ -68,7 +74,19 @@ function fakeStore(initial: Message[] = []) {
     appendMessageGeneratedFiles: (id: string, files: NonNullable<Message["generatedFiles"]>) =>
       update(id, (m) => ({ ...m, generatedFiles: [...(m.generatedFiles ?? []), ...files] })),
     appendMessageCodeResult: () => {},
-    appendMessageUiPart: () => {},
+    appendMessageUiPart: (id: string, part: PersistedUiPart) => {
+      state.log.push(`ui:${part.id}`)
+      update(id, (m) =>
+        (m.uiParts ?? []).some((p) => p.id === part.id) ? m : { ...m, uiParts: [...(m.uiParts ?? []), part] },
+      )
+    },
+    resolveMessageUiPart: (id: string, partId: string, answer: UiAnswer) =>
+      update(id, (m) => ({
+        ...m,
+        uiParts: (m.uiParts ?? []).map((p) =>
+          p.id === partId && !p.answeredAt ? { ...p, answeredAt: "resolved-now", answer } : p,
+        ),
+      })),
     appendMessageMcpApp: () => {},
     setMessageSuggestions: () => {},
     setMessageVerification: () => {},
@@ -128,6 +146,7 @@ function harness(
         turns[t.conversationId] = t
       },
       clearInterruptedTurn: (conv, runId) => {
+        fake.state.log.push(`clear:${runId ?? "*"}`)
         if (turns[conv] && (runId === undefined || turns[conv].runId === runId)) delete turns[conv]
       },
     }),
@@ -501,6 +520,124 @@ describe("interrupt → bridge → resume", () => {
     failing.turns[CONV] = h.turns[CONV]
     await failing.runner.supersedeInterrupted(CONV, SIGNED_IN)
     expect(failing.turns[CONV]).toBeUndefined()
+  })
+})
+
+describe("answered generative-UI parts (chat-bridge lifecycle)", () => {
+  const interruptedBody = bodyFor("memory-interrupt-ui")
+  const resumed = bodyFor("memory-resume-ui")
+  const buildFixed = (input: Parameters<typeof buildRunInput>[0]) => ({
+    ...buildRunInput(input),
+    runId: resumed.runId,
+    threadId: resumed.threadId,
+  })
+  const confirmed: UiAnswer = { kind: "confirm", confirmed: true }
+  const answered: PersistedUiPart = {
+    id: "c-ui",
+    kind: "confirm",
+    props: { prompt: "Sure?" },
+    answeredAt: "2026-11-21T12:00:00.000Z",
+    answer: confirmed,
+  }
+  const answers = { "c-ui": { uiAnswer: confirmed, value: "Yes" } }
+
+  async function paused(resumeResponse: () => Response) {
+    let phase: "interrupt" | "resume" = "interrupt"
+    const { fetch } = fakeFetch(() =>
+      phase === "interrupt" ? sseResponse(loadFixture("memory-interrupt-ui").body) : resumeResponse(),
+    )
+    const saved: runBase.RunBaseCounts[] = []
+    const h = harness(fetch, {
+      initial: [user("ask me")],
+      deps: {
+        buildRunInput: buildFixed,
+        runBases: {
+          saveRunBase: (id, c) => {
+            saved.push(c)
+            runBase.saveRunBase(id, c, h.storage)
+          },
+          loadRunBase: (id) => runBase.loadRunBase(id, h.storage),
+          clearRunBase: (id) => runBase.clearRunBase(id, h.storage),
+        },
+      },
+    })
+    await h.runner.send({
+      conversationId: CONV,
+      history: [user("ask me")],
+      body: interruptedBody,
+      target: SIGNED_IN,
+      model: "anthropic/claude-haiku-4.5",
+    })
+    phase = "resume"
+    return { h, saved }
+  }
+
+  test("on start: parts written, base saved with them, turn cleared — then the answer streams", async () => {
+    const { h, saved } = await paused(() => sseResponse(loadFixture("memory-resume-ui").body))
+    const message = h.fake.conversation.messages[1]
+    expect(message.content).toBe("One moment.")
+    expect(message.uiParts).toBeUndefined()
+    h.fake.state.log.length = 0
+
+    const result = await h.runner.answerInterrupts(h.turns[CONV], answers, { uiParts: [answered] })
+    expect(result).toEqual({ ok: true })
+    // Order: the answered part, then the turn (cards) cleared, then the
+    // resume's output — never an unanswered, interactive copy in between.
+    expect(h.fake.state.log).toEqual(["ui:c-ui", `clear:${interruptedBody.runId}`, "text:Done."])
+    // The saved base counts the part (a reload's reset keeps it).
+    expect(saved).toEqual([{ ...runBase.countsOf({ content: "One moment." }), uiParts: 1 }])
+    const done = h.fake.message(message.id)!
+    expect(done.content).toBe("One moment.Done.")
+    expect(done.uiParts).toEqual([answered])
+    expect(done.toolCalls).toEqual([
+      { id: "c-ui", name: "renderUI", argsLabel: undefined, summary: "Yes" },
+    ])
+    expect(h.turns[CONV]).toBeUndefined()
+  })
+
+  test("refused before it starts: no part written, the turn stays for the cards", async () => {
+    const { h } = await paused(
+      () => new Response(JSON.stringify({ code: "invalid_state", message: "expired" }), { status: 409 }),
+    )
+    const turn = h.turns[CONV]
+    const result = await h.runner.answerInterrupts(turn, answers, { uiParts: [answered] })
+    expect(result).toMatchObject({ ok: false, code: "invalid_state" })
+    expect(h.fake.conversation.messages[1].uiParts).toBeUndefined()
+    expect(h.turns[CONV]).toBe(turn)
+  })
+
+  test("a reload mid-resume rebuilds on the base: earlier text and the answered part survive the reset", async () => {
+    const fixture = loadFixture("memory-resume-ui")
+    const { fetch } = fakeFetch(() => sseResponse(fixture.body))
+    // Persisted mid-resume: the paused run's text, the answered part
+    // (written at the resume's start) and part of the resume's text.
+    const message: Message = {
+      id: "a-1",
+      role: "assistant",
+      content: "One moment.Do",
+      uiParts: [answered],
+      timestamp: new Date(),
+    }
+    const h = harness(fetch, { initial: [user("ask me"), message] })
+    const base = runBase.withAnsweredUiParts({ ...message, content: "One moment.", uiParts: undefined }, [answered])
+    runBase.saveRunBase(resumed.runId, runBase.countsOf(base), h.storage)
+    activeRun.saveActiveRun(
+      {
+        runId: resumed.runId,
+        threadId: resumed.threadId,
+        conversationId: CONV,
+        messageId: "a-1",
+        status: "running",
+        cursor: "0",
+        anonymous: false,
+      },
+      h.storage,
+    )
+    await h.runner.rejoinActive()
+    await tick(50)
+    const after = h.fake.message("a-1")!
+    expect(after.content).toBe("One moment.Done.")
+    expect(after.uiParts).toEqual([answered])
   })
 })
 

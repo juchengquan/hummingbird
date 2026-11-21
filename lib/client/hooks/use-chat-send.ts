@@ -936,7 +936,8 @@ export function useChatSend(): UseChatSendResult {
   // server-side and are rejoined on the next mount).
   useEffect(() => {
     const unregister = registerChatRunBridge({
-      answerInterrupts: (turn, answers) => runner.answerInterrupts(turn, answers),
+      answerInterrupts: (turn, answers, opts) =>
+        runner.answerInterrupts(turn, answers, opts),
     })
     const rejoin = () => void runner.rejoinActive()
     let offHydrate: (() => void) | undefined

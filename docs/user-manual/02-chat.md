@@ -40,8 +40,11 @@ or click the **+** next to the **Chats** group to start a new one.
   type an answer, or fill in an interactive card (confirm, form, date
   picker) - the reply pauses and answer cards appear under it, the same
   cards the [task strip](08-agent-tasks.md) uses. Answer them and the
-  same reply continues; with several questions, the answers are sent
-  together once all are answered (**Change** edits one before that).
+  same reply continues: the cards go away as soon as the assistant picks
+  your answer up, and an interactive card you answered stays in the reply
+  showing what you picked (also after a reload). With several questions,
+  the answers are sent together once all are answered (**Change** edits
+  one before that).
   Sending a new message instead skips the question. The cards survive a
   reload. A question that has expired can only be dismissed; if the
   answer comes too late for the server, **Resend message** asks again
