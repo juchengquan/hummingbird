@@ -26,6 +26,7 @@ session.ts ── HummingbirdRunAgent (agent.ts, @ag-ui/client: enforce → veri
 | `active-run.ts` | per-conversation active-run pointer (codec: `lib/shared/runs/active-run.ts`) |
 | `build-input.ts` | `buildRunInput(chat inputs)` → `RunAgentInput` |
 | `interrupts.ts` | `PendingInterrupt`, `InterruptAnswer`, `buildResume` |
+| `chat-bridge.ts` | the 4b-A ↔ 4b-B seam: `useInterruptedTurns` (ephemeral paused turns) + `registerChatRunBridge` / `getChatRunBridge` (`answerInterrupts`) |
 | `reducer.ts` | the pure AG-UI → store step |
 | `agent.ts` | `HummingbirdRunAgent extends AbstractAgent` with our transport |
 | `session.ts` | `startRunSession` / `rejoinRunSession` / `resumeRunSession`, `RunSink`, `applyRunOps` |
