@@ -23,6 +23,9 @@ dependencies = [
     "python-multipart>=0.0.9",
     "mcp>=1.27.2",
     "google-generativeai>=0.8.6",
+    # IANA zones for the schedule cron port (`agent_py.cron`): `zoneinfo`
+    # falls back to this when the image has no system tzdata (slim images).
+    "tzdata>=2025.2",
 ]
 
 [dependency-groups]
