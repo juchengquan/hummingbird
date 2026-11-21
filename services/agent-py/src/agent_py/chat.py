@@ -92,6 +92,29 @@ class ChatMessage:
 #: — most over-cap hits are runaway / confused chains.
 DEFAULT_MAX_STEPS = 6
 
+#: Tools whose results carry no third-party content — the same allowlist
+#: as `TRUSTED_TOOLS` in `lib/server/memory/untrusted-content-policy.ts`.
+#: Any other tool that runs in a turn (web fetch / search, file search,
+#: every MCP tool) may have put attacker-controllable text in context, so
+#: the turn is "memory tainted": the `finish` frame says so and the client
+#: skips post-turn memory extraction for it, exactly as on the Next.js
+#: route. Safe by default — a newly added tool taints without anyone
+#: having to list it. (Request-side taint — attachments, uploaded parts,
+#: replayed tool results — can't occur here: `/v1/chat` accepts only
+#: plain-text user/assistant messages.)
+TRUSTED_TOOLS: frozenset[str] = frozenset(
+    {"rememberFact", "forgetFact", "renderUI", "generateImage"}
+)
+
+
+def finish_frame(*, memory_tainted: bool) -> str:
+    """The AI SDK `finish` frame; a memory-tainted turn carries
+    `messageMetadata.memoryTainted` (the slot the Next.js route uses,
+    read by `lib/client/chat/sse-frame-translator.ts`)."""
+    if memory_tainted:
+        return sse_frame({"type": "finish", "messageMetadata": {"memoryTainted": True}})
+    return sse_frame({"type": "finish"})
+
 
 @dataclass(frozen=True)
 class ChatConfig:
@@ -473,6 +496,8 @@ async def chat_stream_with_tools_ai_sdk(
     """
     tools_param = [tool_to_anthropic_param(t) for t in config.tools] if config.tools else None
     tools_by_name = {t.name: t for t in config.tools}
+    # First untrusted tool that ran this turn (see `TRUSTED_TOOLS`).
+    tainted_by: str | None = None
     messages = _to_anthropic_messages(config.messages)
     assistant_text = ""
 
@@ -569,7 +594,7 @@ async def chat_stream_with_tools_ai_sdk(
                 async for extra in on_complete(assistant_text):
                     yield extra
             yield sse_frame({"type": "finish-step"})
-            yield sse_frame({"type": "finish"})
+            yield finish_frame(memory_tainted=tainted_by is not None)
             yield "data: [DONE]\n\n"
             return
 
@@ -585,6 +610,8 @@ async def chat_stream_with_tools_ai_sdk(
                 _summary,  # AI SDK has no `summary` slot — only on the custom format
                 is_error,
             ) = await _execute_tool_block(block, tools_by_name)
+            if tainted_by is None and tool_name not in TRUSTED_TOOLS:
+                tainted_by = tool_name
             yield sse_frame(
                 {
                     "type": "tool-input-available",

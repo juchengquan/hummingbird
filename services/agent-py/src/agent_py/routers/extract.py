@@ -45,7 +45,7 @@ async def _read_capped(file: UploadFile, max_bytes: int) -> bytes:
     if file.size is not None and file.size > max_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-            detail="File too large.",
+            detail={"code": "payload_too_large", "message": "File too large."},
         )
     buf = bytearray()
     try:
@@ -57,7 +57,7 @@ async def _read_capped(file: UploadFile, max_bytes: int) -> bytes:
             if len(buf) > max_bytes:
                 raise HTTPException(
                     status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-                    detail="File too large.",
+                    detail={"code": "payload_too_large", "message": "File too large."},
                 )
     except HTTPException:
         raise
@@ -65,7 +65,7 @@ async def _read_capped(file: UploadFile, max_bytes: int) -> bytes:
         logger.warning("extract.read_failed", error=str(exc), filename=file.filename)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Could not read uploaded file.",
+            detail={"code": "invalid_request", "message": "Could not read uploaded file."},
         ) from exc
     return bytes(buf)
 
@@ -110,7 +110,7 @@ async def extract(
         logger.warning("extract.zip_limit", error=str(exc), filename=file.filename)
         raise HTTPException(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-            detail=str(exc),
+            detail={"code": "payload_too_large", "message": str(exc)},
         ) from exc
     except Exception as exc:  # broad on purpose — see comment
         # Any extractor crash is unexpected — the extractors swallow
@@ -119,7 +119,7 @@ async def extract(
         logger.warning("extract.failed", error=str(exc), filename=file.filename)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc) or "Extraction failed.",
+            detail={"code": "unknown", "message": str(exc) or "Extraction failed."},
         ) from exc
 
     return ExtractionResponse(

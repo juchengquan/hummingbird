@@ -45,6 +45,18 @@ gated routes fail with a 500 until fixed.
 AI key): clients must not apply the `auth` mock-response fallback to
 it; they show a sign-in prompt instead.
 
+### Error envelope
+
+JSON error responses use `{ code, message }` — a stable machine `code`
+the client keys typed UI off, plus a display `message` (extra fields
+allowed, e.g. `issues` on a validation error). The shared contract
+(`packages/contract/openapi.yaml`, `ApiError`) allows no other error
+body, and agent-py answers every non-streaming error in this shape (its
+request validation answers `422 { code: "invalid_request", message,
+issues }`; see `services/agent-py/README.md` → *Error responses*). Some
+older Next routes listed below still answer `{ error }`; the client
+reads `message ?? error`.
+
 ### Request body caps — `413 payload_too_large`
 
 App Router route handlers have no default body limit, so every JSON
@@ -197,16 +209,14 @@ Requires an authenticated Supabase session (cookie-based today).
 **Request**:
 
 ```ts
-{
-  kind: "conversation" | "document",
-  conversationId: string,  // uuid of a conversation the caller owns
-}
+| { kind: "conversation", conversationId: string }  // uuid the caller owns
+| { kind: "document",     documentId: string }      // uuid the caller owns
 ```
 
 **Response 200**: `{ token: string, kind: "conversation" | "document" }`
 
 **Errors**: `400` invalid body, `401` unauthorised, `404` conversation
-not found, `500` insert failure, `503` Supabase not configured.
+/ document not found, `500` insert failure, `503` Supabase not configured.
 
 ### `DELETE /api/share/[token]`
 
@@ -217,6 +227,15 @@ their own tokens (enforced by RLS).
 
 **Errors**: `401` unauthorised, `404` token not found, `500` update
 failure, `503` Supabase not configured.
+
+**agent-py** serves both as `POST /v1/share` and `DELETE /v1/share/{token}`
+(same bodies and statuses; bearer JWT) plus the public read
+`GET /v1/share/{token}` — no auth, rate limited per IP — that the share
+pages call from the browser when `NEXT_PUBLIC_AGENT_PY_URL` is set
+(`apiClient.share.resolve`). Its body is `ResolvedShare` in
+`packages/contract/openapi.yaml` (`ResolvedShareResponseSchema` in
+`lib/shared/api-schemas.ts`); any unresolvable token is a 404. The client
+dispatches create / revoke to agent-py for `python` accounts only.
 
 ### `POST /api/mcp/{serverId}/{discover|call|read}`
 
@@ -405,6 +424,11 @@ Absent metadata means untainted. On a tainted turn the server refuses
 memory extraction (`POST /api/memory/extract`) for it. The client's
 translator surfaces it as `{ type: "memory_tainted" }`.
 
+agent-py's `/v1/chat` sends the same flag when any tool outside the
+trusted set (`rememberFact`, `forgetFact`, `renderUI`, `generateImage`)
+ran in the turn (`TRUSTED_TOOLS` in `services/agent-py/src/agent_py/chat.py`);
+its request carries only plain-text messages, so it has no request-side taint.
+
 ### Ordering rules
 
 - Any number of `text` and `reasoning` frames may interleave.
@@ -507,7 +531,9 @@ The frontend talks directly to Supabase for:
 - Storage uploads (`hooks/use-upload-file.ts`,
   `lib/files/persist.ts`)
 - Share-page reads via the service-role admin client server-side
-  (`lib/supabase/admin.ts`, used by `app/share/.../page.tsx`)
+  (`lib/supabase/admin.ts`, used by `app/share/.../page.tsx`) — only
+  when no backend is configured; with `NEXT_PUBLIC_AGENT_PY_URL` set the
+  pages read from agent-py's `GET /v1/share/{token}` instead
 
 These bypass the backend entirely and are unaffected by a Python
 rewrite.

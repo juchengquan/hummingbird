@@ -51,6 +51,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/csp-report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Receive Content-Security-Policy violation reports
+         * @description Where browsers send CSP violation reports (`report-uri` and
+         *     `Reporting-Endpoints` / `report-to` in the frontend's policy, when a
+         *     backend is configured). Mirrors `app/api/csp-report/route.ts`.
+         *     Public — browsers send no credentials. Reports are attacker-
+         *     controllable, so the backend logs only an allow-list of fields
+         *     (truncated, URLs cut to origin + path, share tokens redacted), caps
+         *     the body, rate-limits per client IP and never echoes input: every
+         *     answer except the transport-level 413 has an empty body.
+         *
+         *     Accepted media types: `application/csp-report` (legacy `report-uri`:
+         *     `{ "csp-report": { ... } }`), `application/reports+json` (Reporting
+         *     API: `[{ "type": "csp-violation", "body": { ... } }, ...]`) and
+         *     `application/json` (either shape). Any well-formed JSON is accepted;
+         *     shapes that are not CSP reports are ignored.
+         */
+        post: operations["reportCspViolation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/embed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Chunk and embed a file's text into the vector index
+         * @description Splits `text` into overlapping paragraph-aware chunks (the exact
+         *     algorithm of `lib/server/embeddings/chunk.ts`), embeds them with the
+         *     backend's configured OpenAI-compatible embedder and writes them to
+         *     `file_sections` as the caller (RLS). Mirrors `app/api/embed/route.ts`.
+         *
+         *     The expected "nothing to do" outcomes are 200 `skipped` answers, not
+         *     errors: no embedder configured (`not_configured`), blank text
+         *     (`empty`), the file already has sections and `force` is not set
+         *     (`already_indexed`, `sections` = the existing count), and the `files`
+         *     row is not visible to the caller yet (`file_not_found` — the client
+         *     retries with backoff while its metadata sync catches up). `force`
+         *     drops the file's sections and rebuilds them. Spends embedder budget.
+         */
+        post: operations["embedFile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/extract-table": {
         parameters: {
             query?: never;
@@ -121,6 +185,161 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/memory/extract": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Extract durable facts from a finished chat turn
+         * @description Best-effort, post-turn memory upkeep. Mirrors
+         *     `app/api/memory/extract/route.ts`: when the caller has
+         *     `profiles.memory_enabled`, a model distils durable facts from
+         *     `turnText` and merges them into the caller's `user_memories` (as the
+         *     caller, RLS). A `tainted` turn — one that read third-party content —
+         *     is never extracted from. Every well-formed, authenticated request
+         *     answers `{ ok: true }`, whether or not anything was extracted (memory
+         *     off, tainted turn, model unavailable or failing, write failure).
+         *     Spends model budget.
+         */
+        post: operations["extractMemory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/share": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a share link
+         * @description Mints an opaque share token (128 random bits, base64url without
+         *     padding — 22 characters) for one of the caller's conversations or
+         *     documents. The target must be the caller's own (checked under the
+         *     caller's row-level security): someone else's id, or one that does
+         *     not exist, answers 404. Mirrors `app/api/share/route.ts`.
+         */
+        post: operations["createShare"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/share/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The opaque share token returned by `createShare`. */
+                token: components["parameters"]["ShareToken"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read a shared conversation or document (public)
+         * @description **Public — no bearer token.** The token is the capability: anyone
+         *     holding it can read what it points at. Returns only what the
+         *     read-only share pages render — never user ids or other rows. An
+         *     unknown or revoked token, a share whose target is missing or not
+         *     owned by the share's creator, and a backend without a database all
+         *     answer the same 404, so a response reveals nothing beyond "this
+         *     token resolves". Rate limited per client IP. Mirrors
+         *     `lib/server/share/resolve.ts` (`resolveShare`).
+         */
+        get: operations["getShare"];
+        put?: never;
+        post?: never;
+        /**
+         * Revoke a share link
+         * @description Stamps `revoked_at` on the caller's share. Scoped by the caller's
+         *     row-level security, so a token that does not exist and one that
+         *     belongs to another user both answer 404 without revealing which.
+         *     Revoking an already-revoked share succeeds again. Mirrors
+         *     `app/api/share/[token]/route.ts`.
+         */
+        delete: operations["revokeShare"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the caller's schedules
+         * @description Every schedule the caller owns, newest first (`created_at` desc).
+         *     Read as the caller under row-level security. Mirrors
+         *     `GET /api/tasks/schedules`.
+         */
+        get: operations["listSchedules"];
+        put?: never;
+        /**
+         * Create a schedule
+         * @description Validates the cron + timezone (parseable; at most 12 fires an hour
+         *     in the minute field; never two fires within 5 minutes over the next
+         *     48) and stores the row with its first `nextRunAt`. Written as the
+         *     caller, so the database also enforces workspace ownership (403) and
+         *     the 20-enabled-schedules cap (409 `limit_reached`). `timezone`
+         *     defaults to `UTC`, `enabled` to true. Mirrors
+         *     `POST /api/tasks/schedules`.
+         */
+        post: operations["createSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/schedules/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The schedule's id (a UUID). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a schedule
+         * @description Deletes the caller's schedule. Idempotent: an id the caller does not
+         *     own (or that does not exist) is also `{ ok: true }`. Mirrors
+         *     `DELETE /api/tasks/schedules/:id`.
+         */
+        delete: operations["deleteSchedule"];
+        options?: never;
+        head?: never;
+        /**
+         * Update a schedule
+         * @description Partial update: absent fields are left alone, `null` clears a
+         *     nullable field. A changed `cron` or `timezone` is re-validated and
+         *     recomputes `nextRunAt`; otherwise `nextRunAt` is kept, so an edit
+         *     never pulls the next fire earlier. Re-enabling past the per-user cap
+         *     is 409 `limit_reached`. Mirrors `PATCH /api/tasks/schedules/:id`.
+         */
+        patch: operations["updateSchedule"];
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -185,8 +404,78 @@ export interface components {
          * @enum {string}
          */
         ColumnType: "text" | "number" | "link" | "date";
-        /** @description An `ApiError`, or (transitionally) the legacy FastAPI envelope. */
-        ErrorResponse: components["schemas"]["ApiError"] | components["schemas"]["LegacyFastApiError"];
+        CreateConversationShareRequest: {
+            /** Format: uuid */
+            conversationId: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "conversation";
+        };
+        CreateDocumentShareRequest: {
+            /** Format: uuid */
+            documentId: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "document";
+        };
+        /**
+         * @description A conversation share names `conversationId`; a document share names
+         *     `documentId` (a workspace owns several documents, so the target is
+         *     one document, not the workspace).
+         */
+        CreateShareRequest: components["schemas"]["CreateConversationShareRequest"] | components["schemas"]["CreateDocumentShareRequest"];
+        CreateShareResponse: {
+            kind: components["schemas"]["ShareKind"];
+            /** @description The share token. The share page URL is `/share/<kind>/<token>`. */
+            token: string;
+        };
+        /**
+         * @description A legacy `report-uri` object (`{ "csp-report": { ... } }`) or a
+         *     Reporting-API batch (an array of `{ type, body }` reports; only
+         *     `type: csp-violation` entries are read, at most 20 per batch). Left
+         *     open: any JSON value is accepted and unknown shapes are ignored.
+         * @example {
+         *       "csp-report": {
+         *         "document-uri": "https://app.example.com/dashboard",
+         *         "effective-directive": "script-src-elem",
+         *         "blocked-uri": "https://cdn.example.com/x.js",
+         *         "disposition": "report"
+         *       }
+         *     }
+         */
+        CspReportBody: unknown;
+        DeleteScheduleResponse: {
+            /** @constant */
+            ok: true;
+        };
+        EmbedRequest: {
+            /** @description Id of the caller's `files` row the sections belong to. */
+            fileId: string;
+            /** @description Drop the file's existing sections and rebuild them. */
+            force?: boolean;
+            /** @description The file's extracted full text. */
+            text: string;
+        };
+        EmbedResponse: {
+            /**
+             * @description Why the request was skipped. Absent when `indexed`.
+             * @enum {string}
+             */
+            reason?: "not_configured" | "empty" | "already_indexed" | "file_not_found";
+            /** @description Chunks written (`indexed`) or already present (`already_indexed`); otherwise 0. */
+            sections: number;
+            /** @enum {string} */
+            status: "indexed" | "skipped";
+        };
+        /**
+         * @description The body of every non-2xx JSON response: an `ApiError`. (The
+         *     transitional FastAPI `{ detail }` envelope is no longer accepted.)
+         */
+        ErrorResponse: components["schemas"]["ApiError"];
         ExtractTableRequest: {
             /**
              * @description Optional column hints. Each entry is a plain label (legacy, treated
@@ -212,15 +501,25 @@ export interface components {
             /** @description The implementation's own version. */
             version: string;
         };
-        /**
-         * @description Transitional. agent-py currently returns FastAPI's default envelope —
-         *     `{ detail: <string | ApiError | validation issues> }` — instead of a
-         *     flat `ApiError`. Accepted so the suite describes today's backend;
-         *     removed once agent-py flattens its errors (run the conformance suite
-         *     with `CONTRACT_STRICT_ERRORS=1` to reject it).
-         */
-        LegacyFastApiError: {
-            detail: string | components["schemas"]["ApiError"] | components["schemas"]["ValidationIssue"][];
+        ImageGenSkillConfig: {
+            /** @enum {string} */
+            aspectRatio?: "1:1" | "16:9" | "9:16" | "4:3" | "3:4" | "2:3" | "3:2";
+            maxCalls?: number;
+        };
+        MaxCallsSkillConfig: {
+            maxCalls?: number;
+        };
+        MemoryExtractRequest: {
+            /** @description Provenance stamped on new facts (`source_conversation_id`). */
+            conversationId?: string;
+            /** @description The turn read third-party content; nothing is extracted. */
+            tainted?: boolean;
+            /** @description The finished turn, as `User: ...` / `Assistant: ...` paragraphs. */
+            turnText: string;
+        };
+        MemoryExtractResponse: {
+            /** @constant */
+            ok: true;
         };
         /**
          * @description Implementation-specific dependency checks. The keys below are the
@@ -234,6 +533,10 @@ export interface components {
             poller_alive?: boolean | null;
             /** @description Seconds since the poll loop last finished a tick; null before the first. */
             poller_last_tick_age_seconds?: number | null;
+            /** @description Null when the schedule dispatcher loop is not enabled; false when it was started and has died. */
+            scheduler_alive?: boolean | null;
+            /** @description Seconds since the schedule dispatcher last finished a tick; null before the first. */
+            scheduler_last_tick_age_seconds?: number | null;
             supabase_db_configured?: boolean;
             supabase_url_configured?: boolean;
         } & {
@@ -266,11 +569,140 @@ export interface components {
             /** @description A newly signed, long-lived URL for the object. */
             url: string;
         };
+        ResolvedConversationShare: {
+            conversationTitle: string;
+            /**
+             * Format: date-time
+             * @description When the share was created.
+             */
+            createdAt: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "conversation";
+            /** @description The conversation's messages in `position` order. */
+            messages: components["schemas"]["SharedMessage"][];
+        };
+        ResolvedDocumentShare: {
+            /**
+             * Format: date-time
+             * @description When the share was created.
+             */
+            createdAt: string;
+            /** @description The document body (markdown). */
+            documentContent: string;
+            /** @description The document's title, or `Untitled` when it has none. */
+            documentTitle: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "document";
+        };
+        /** @description What a share page renders, by `kind`. */
+        ResolvedShare: components["schemas"]["ResolvedConversationShare"] | components["schemas"]["ResolvedDocumentShare"];
+        RevokeShareResponse: {
+            /** @enum {boolean} */
+            ok: true;
+        };
+        ScheduleCreateRequest: {
+            cron: components["schemas"]["ScheduleCron"];
+            /** @description Absent means true. */
+            enabled?: boolean;
+            /** @description Step budget per run; null means 25. */
+            maxSteps?: number | null;
+            /** @description Model id; null falls back to the workspace / global default at run time. */
+            model?: string | null;
+            name: string;
+            prompt: string;
+            skills?: components["schemas"]["SkillConfig"][];
+            systemPrompt?: string | null;
+            /** @description IANA timezone, e.g. `America/Los_Angeles`. Absent means `UTC`. */
+            timezone?: string;
+            /** @description The workspace (owned by the caller) the scheduled runs belong to. */
+            workspaceId: string;
+        };
+        /**
+         * @description Five space-separated fields (minute hour day-of-month month
+         *     day-of-week), evaluated with cron-parser semantics. The backend
+         *     additionally rejects expressions that cannot be parsed or fire more
+         *     often than every 5 minutes (400 `invalid_request`).
+         * @example 0 8 * * *
+         * @example *\/15 9-17 * * 1-5
+         */
+        ScheduleCron: string;
+        ScheduleListResponse: {
+            schedules: components["schemas"]["ScheduleResponse"][];
+        };
+        ScheduleResponse: {
+            /** Format: date-time */
+            createdAt: string;
+            cron: string;
+            enabled: boolean;
+            id: string;
+            /** Format: date-time */
+            lastRunAt: string | null;
+            /** @description The task the last fire created, for deep-linking to its result. */
+            lastRunTaskId: string | null;
+            maxSteps: number | null;
+            model: string | null;
+            name: string;
+            /** Format: date-time */
+            nextRunAt: string;
+            prompt: string;
+            /** @description Absent when the schedule has no skill list. */
+            skills?: components["schemas"]["SkillConfig"][];
+            systemPrompt: string | null;
+            timezone: string;
+            /** Format: date-time */
+            updatedAt: string;
+            workspaceId: string;
+        };
+        /** @description Any subset of the create fields. `null` is accepted only where the create body accepts it. */
+        ScheduleUpdateRequest: {
+            cron?: components["schemas"]["ScheduleCron"];
+            enabled?: boolean;
+            maxSteps?: number | null;
+            model?: string | null;
+            name?: string;
+            prompt?: string;
+            skills?: components["schemas"]["SkillConfig"][];
+            systemPrompt?: string | null;
+            timezone?: string;
+            workspaceId?: string;
+        };
+        SharedMessage: {
+            content: string;
+            id: string;
+            position: number;
+            /** @description The model's reasoning text, when it was kept. */
+            reasoning?: string | null;
+            /** @enum {string} */
+            role: "user" | "assistant";
+        };
+        /**
+         * @description What a share points at.
+         * @enum {string}
+         */
+        ShareKind: "conversation" | "document";
+        /** @description A skill enabled for a run, with optional per-skill settings (`ChatRequestSchema.shape.skills` in `lib/shared/api-schemas.ts`). */
+        SkillConfig: {
+            fileSearchConfig?: components["schemas"]["MaxCallsSkillConfig"];
+            id: string;
+            imageGenConfig?: components["schemas"]["ImageGenSkillConfig"];
+            webFetchConfig?: components["schemas"]["MaxCallsSkillConfig"];
+            webSearchConfig?: components["schemas"]["WebSearchSkillConfig"];
+        };
         TypedColumnHint: {
             label: string;
             type?: components["schemas"]["ColumnType"];
         };
-        /** @description One FastAPI/Pydantic request-validation issue. */
+        /** @description An `ApiError` (`code` is `invalid_request`) carrying the validation issues found. */
+        ValidationErrorResponse: components["schemas"]["ApiError"] & {
+            issues?: components["schemas"]["ValidationIssue"][];
+        };
+        /** @description One request-validation issue — where (`loc`), what (`msg`), and its machine `type`. */
         ValidationIssue: {
             loc: (string | number)[];
             msg: string;
@@ -278,10 +710,40 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        WebSearchSkillConfig: {
+            brave?: {
+                enabled?: boolean;
+                /** @enum {string} */
+                freshness?: "any" | "pd" | "pw" | "pm" | "py";
+            };
+            exa?: {
+                enabled?: boolean;
+                /** @enum {string} */
+                type?: "auto" | "neural" | "keyword";
+            };
+            maxCalls?: number;
+            tavily?: {
+                enabled?: boolean;
+                /** @enum {string} */
+                searchDepth?: "basic" | "advanced";
+            };
+        };
     };
     responses: {
         /** @description The request body failed validation (`code` is `invalid_request`), or named an unknown model (`unknown_model`). */
         BadRequest: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /**
+         * @description The request conflicts with the resource's state or a per-user limit
+         *     (`code` is `limit_reached` or `invalid_state`).
+         */
+        Conflict: {
             headers: {
                 [name: string]: unknown;
             };
@@ -298,6 +760,15 @@ export interface components {
                 "application/json": components["schemas"]["ErrorResponse"];
             };
         };
+        /** @description The backend failed to complete the operation (`code` is `unknown`). */
+        InternalError: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
         /** @description The resource does not exist, or the backing store is not configured (`code` is `not_found`). */
         NotFound: {
             headers: {
@@ -307,7 +778,7 @@ export interface components {
                 "application/json": components["schemas"]["ErrorResponse"];
             };
         };
-        /** @description The request body exceeds the backend's per-route cap. */
+        /** @description The request body exceeds the backend's per-route cap (`code` is `payload_too_large`). */
         PayloadTooLarge: {
             headers: {
                 [name: string]: unknown;
@@ -359,19 +830,23 @@ export interface components {
             };
         };
         /**
-         * @description Transitional: FastAPI's own request validation (agent-py) answers 422
-         *     with `{ detail: [...] }`. Backends should prefer 400 `invalid_request`.
+         * @description The request body failed the backend's schema validation (`code` is
+         *     `invalid_request`, with the individual problems in `issues`).
+         *     agent-py answers these with 422; a 400 `invalid_request` means the same.
          */
         ValidationError: {
             headers: {
                 [name: string]: unknown;
             };
             content: {
-                "application/json": components["schemas"]["ErrorResponse"];
+                "application/json": components["schemas"]["ValidationErrorResponse"];
             };
         };
     };
-    parameters: never;
+    parameters: {
+        /** @description The opaque share token returned by `createShare`. */
+        ShareToken: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -384,20 +859,47 @@ export type CitationTableColumn = components['schemas']['CitationTableColumn'];
 export type CitationTableSource = components['schemas']['CitationTableSource'];
 export type ColumnHint = components['schemas']['ColumnHint'];
 export type ColumnType = components['schemas']['ColumnType'];
+export type CreateConversationShareRequest = components['schemas']['CreateConversationShareRequest'];
+export type CreateDocumentShareRequest = components['schemas']['CreateDocumentShareRequest'];
+export type CreateShareRequest = components['schemas']['CreateShareRequest'];
+export type CreateShareResponse = components['schemas']['CreateShareResponse'];
+export type CspReportBody = components['schemas']['CspReportBody'];
+export type DeleteScheduleResponse = components['schemas']['DeleteScheduleResponse'];
+export type EmbedRequest = components['schemas']['EmbedRequest'];
+export type EmbedResponse = components['schemas']['EmbedResponse'];
 export type ErrorResponse = components['schemas']['ErrorResponse'];
 export type ExtractTableRequest = components['schemas']['ExtractTableRequest'];
 export type ExtractTableSource = components['schemas']['ExtractTableSource'];
 export type HealthResponse = components['schemas']['HealthResponse'];
-export type LegacyFastApiError = components['schemas']['LegacyFastApiError'];
+export type ImageGenSkillConfig = components['schemas']['ImageGenSkillConfig'];
+export type MaxCallsSkillConfig = components['schemas']['MaxCallsSkillConfig'];
+export type MemoryExtractRequest = components['schemas']['MemoryExtractRequest'];
+export type MemoryExtractResponse = components['schemas']['MemoryExtractResponse'];
 export type ReadinessChecks = components['schemas']['ReadinessChecks'];
 export type ReadinessResponse = components['schemas']['ReadinessResponse'];
 export type RefreshFileUrlRequest = components['schemas']['RefreshFileUrlRequest'];
 export type RefreshStorageUrlRequest = components['schemas']['RefreshStorageUrlRequest'];
 export type RefreshStorageUrlResponse = components['schemas']['RefreshStorageUrlResponse'];
+export type ResolvedConversationShare = components['schemas']['ResolvedConversationShare'];
+export type ResolvedDocumentShare = components['schemas']['ResolvedDocumentShare'];
+export type ResolvedShare = components['schemas']['ResolvedShare'];
+export type RevokeShareResponse = components['schemas']['RevokeShareResponse'];
+export type ScheduleCreateRequest = components['schemas']['ScheduleCreateRequest'];
+export type ScheduleCron = components['schemas']['ScheduleCron'];
+export type ScheduleListResponse = components['schemas']['ScheduleListResponse'];
+export type ScheduleResponse = components['schemas']['ScheduleResponse'];
+export type ScheduleUpdateRequest = components['schemas']['ScheduleUpdateRequest'];
+export type SharedMessage = components['schemas']['SharedMessage'];
+export type ShareKind = components['schemas']['ShareKind'];
+export type SkillConfig = components['schemas']['SkillConfig'];
 export type TypedColumnHint = components['schemas']['TypedColumnHint'];
+export type ValidationErrorResponse = components['schemas']['ValidationErrorResponse'];
 export type ValidationIssue = components['schemas']['ValidationIssue'];
+export type WebSearchSkillConfig = components['schemas']['WebSearchSkillConfig'];
 export type ResponseBadRequest = components['responses']['BadRequest'];
+export type ResponseConflict = components['responses']['Conflict'];
 export type ResponseForbidden = components['responses']['Forbidden'];
+export type ResponseInternalError = components['responses']['InternalError'];
 export type ResponseNotFound = components['responses']['NotFound'];
 export type ResponsePayloadTooLarge = components['responses']['PayloadTooLarge'];
 export type ResponseRateLimited = components['responses']['RateLimited'];
@@ -405,6 +907,7 @@ export type ResponseServiceUnavailable = components['responses']['ServiceUnavail
 export type ResponseUnauthorized = components['responses']['Unauthorized'];
 export type ResponseUpstreamError = components['responses']['UpstreamError'];
 export type ResponseValidationError = components['responses']['ValidationError'];
+export type ParameterShareToken = components['parameters']['ShareToken'];
 export type $defs = Record<string, never>;
 export interface operations {
     getHealthz: {
@@ -445,6 +948,91 @@ export interface operations {
                     "application/json": components["schemas"]["ReadinessResponse"];
                 };
             };
+        };
+    };
+    reportCspViolation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/csp-report": components["schemas"]["CspReportBody"];
+                "application/json": components["schemas"]["CspReportBody"];
+                "application/reports+json": components["schemas"]["CspReportBody"];
+            };
+        };
+        responses: {
+            /** @description Received (and logged when it held CSP violations). */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            413: components["responses"]["PayloadTooLarge"];
+            /** @description Unsupported `Content-Type` (`code` is `unsupported_content_type`). */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many reports from this client IP (`code` is `rate_limit`). */
+            429: {
+                headers: {
+                    /** @description Seconds until the client may report again. */
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    embedFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmbedRequest"];
+            };
+        };
+        responses: {
+            /** @description Indexed, or skipped with a reason. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmbedResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description The embedder or the database write failed (`code` is `embed_failed`). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     extractTable: {
@@ -537,6 +1125,232 @@ export interface operations {
             404: components["responses"]["NotFound"];
             413: components["responses"]["PayloadTooLarge"];
             422: components["responses"]["ValidationError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    extractMemory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryExtractRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted (extraction is best-effort). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryExtractResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    createShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateShareRequest"];
+            };
+        };
+        responses: {
+            /** @description The new share. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateShareResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The opaque share token returned by `createShare`. */
+                token: components["parameters"]["ShareToken"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The shared content. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResolvedShare"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    revokeShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The opaque share token returned by `createShare`. */
+                token: components["parameters"]["ShareToken"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The share is revoked. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RevokeShareResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listSchedules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's schedules. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleListResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    createSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description The created schedule. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    deleteSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The schedule's id (a UUID). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted (or already gone). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteScheduleResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    updateSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The schedule's id (a UUID). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated schedule. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            500: components["responses"]["InternalError"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };

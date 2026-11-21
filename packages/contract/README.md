@@ -73,7 +73,11 @@ ride on the root `tsc` / `eslint` in the `ci` job.
 - `operationId` is camelCase and unique; it names the generated
   operation types and the conformance cases.
 - Every `/v1` operation is bearer-secured (a Supabase user JWT); only
-  the probes are public (`security: []`). A test enforces this.
+  the probes and the operations listed in `PUBLIC_V1_OPERATIONS`
+  (`tests/spec.test.ts`, each with its reason — `getShare`, the
+  anonymous share-link read, and `reportCspViolation`, which browsers
+  post without credentials) are public (`security: []`). A test
+  enforces this.
 - Error responses reference `components/schemas/ErrorResponse` through
   the shared `components/responses/*`.
 - Field casing follows the wire as it already exists: the refresh-url
@@ -84,12 +88,24 @@ ride on the root `tsc` / `eslint` in the `ci` job.
 ### Errors
 
 `ApiError` (`{ code, message }`, open set of codes — see
-`lib/shared/api-errors.ts`) is the envelope the frontend reads. agent-py
-today still answers with FastAPI's `{ detail: … }` envelope, so
-`ErrorResponse` is `ApiError | LegacyFastApiError` for now. Once agent-py
-installs an exception handler that flattens `detail`, drop
-`LegacyFastApiError` from `ErrorResponse`; until then
-`CONTRACT_STRICT_ERRORS=1` shows what would fail.
+`lib/shared/api-errors.ts`) is the envelope the frontend reads, and the
+only error body the contract allows: `ErrorResponse` is `ApiError`, and
+validation failures (`components/responses/ValidationError`) answer
+`ValidationErrorResponse` — an `ApiError` (`code: invalid_request`) with
+the problems in an optional `issues: ValidationIssue[]`. Objects are
+open, so a route may add fields beside `code` / `message` (e.g. `reason`,
+`status`). The conformance suite checks every 4xx/5xx body against both
+the documented schema and `ApiError` — there is no opt-out.
+
+agent-py produces this envelope for every non-streaming error via the
+exception handlers in `services/agent-py/src/agent_py/error_envelope.py`
+(which also holds the status → `code` table for errors raised without an
+explicit code). Status codes are unchanged; agent-py's request
+validation still answers 422.
+
+**agent-ts** (`services/agent-ts`, frozen) still answers some errors in
+its older shapes and is **not claimed conformant** — only agent-py is
+run against the suite.
 
 ### AG-UI (Phase 2)
 
@@ -151,9 +167,8 @@ it would not replace hand-written cases for auth and lifecycle.)
 | Variable | Meaning |
 |---|---|
 | `CONTRACT_BASE_URL` | Backend origin, e.g. `http://localhost:8765`. Unset → every case is skipped (so `bun run test` stays offline) |
-| `CONTRACT_AUTH_TOKEN` | Optional Supabase user JWT for cases that need a signed-in caller (none yet) |
+| `CONTRACT_AUTH_TOKEN` | Optional Supabase user JWT for cases that need a signed-in caller (`errors.test.ts`; skipped without it) |
 | `CONTRACT_SKIP_OPERATIONS` | Comma-separated `operationId`s the backend does not implement yet |
-| `CONTRACT_STRICT_ERRORS=1` | Validate error bodies against `ApiError` only (rejects the legacy FastAPI envelope) |
 
 Cases today:
 
@@ -165,6 +180,20 @@ Cases today:
   documented error body. Needs no Supabase — only the backend's JWT
   secret configured (without it agent-py answers 503 and the case fails
   with a hint).
+- `errors.test.ts` — with `CONTRACT_AUTH_TOKEN`: every secured operation
+  with a request body, sent `{}`, answers 400/422 with an `ApiError`
+  whose `code` is `invalid_request`. Any token the backend accepts works
+  (agent-py: an HS256 JWT signed with its `SUPABASE_JWT_SECRET`, `role`
+  `authenticated`, a UUID `sub`, `aud` `authenticated`, future `exp`).
+- `share.test.ts` — the public `getShare`: an unknown token answers 404
+  `not_found` with no token, and a bogus `Authorization` header is
+  ignored rather than refused. Path parameters (`{token}`) are filled
+  from `pathParams` in `fixtures.ts`.
+- `security.test.ts` — the public CSP report intake: a well-formed
+  report (`application/csp-report`, `application/reports+json`) → 204
+  with an empty body; malformed JSON → 400 `invalid_request`, an
+  unsupported media type → 415 `unsupported_content_type`, both with the
+  standard `ApiError` body.
 
 ### Running it against agent-py
 

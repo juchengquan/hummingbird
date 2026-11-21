@@ -156,6 +156,43 @@ curl localhost:8080/healthz   # → this service, via the proxy
 - **SSE.** The proxy flushes every chunk (`flush_interval -1`) and does
   not compress, so `/v1/chat` and task event streams arrive unbuffered.
 
+## Error responses
+
+Every non-streaming error is the flat envelope the frontend and the
+contract (`packages/contract/openapi.yaml`, `ApiError`) expect — never
+FastAPI's default `{"detail": ...}`:
+
+```jsonc
+{ "code": "auth", "message": "Invalid token." }                 // 401
+{ "code": "invalid_request", "message": "body.storagePath: Field required",
+  "issues": [{ "loc": ["body", "storagePath"], "msg": "Field required", "type": "missing" }] } // 422
+```
+
+The exception handlers live in `src/agent_py/error_envelope.py`
+(installed by `create_app()`); status codes and exception headers
+(`WWW-Authenticate`, `Retry-After`) pass through unchanged.
+
+- **Raise** `HTTPException(status_code=..., detail={"code": ..., "message": ...})`
+  — the dict is returned flat; extra keys (`reason`, `status`, ...) are
+  kept. Prefer this: pick the `code` the matching Next.js route uses.
+- A **string** `detail` still works: its `code` comes from the status
+  table `STATUS_CODES` in `error_envelope.py` (400/422 `invalid_request`,
+  401 `auth`, 403 `forbidden`, 404 `not_found`, 405
+  `method_not_allowed`, 408/504 `timeout`, 409 `conflict`, 413
+  `payload_too_large`, 415 `unsupported_content_type`, 429 `rate_limit`,
+  500 `unknown`, 502 `provider`, 503 `unavailable`; any other 4xx
+  `invalid_request`, any other 5xx `unknown`).
+- **Request validation** keeps FastAPI's 422, as `invalid_request` with
+  the problems in `issues` (`loc` / `msg` / `type` only — the caller's
+  input is not echoed).
+- An **uncaught exception** is a 500 `{"code": "unknown", "message":
+  "Internal server error."}`; the exception is logged, not echoed.
+- Hand-built responses (the body-size middleware's 413 / 400) use
+  `error_body(code, message)` from the same module.
+
+SSE in-stream `error` events on `/v1/chat` are a separate protocol
+(`docs/API.md`) and are unaffected.
+
 ## Run tests
 
 ```bash
@@ -169,6 +206,22 @@ uv run mypy src             # type check
 CI runs all four on every PR — see `.github/workflows/ci.yml` (job
 `agent-py`).
 
+## Share links (`/v1/share`)
+
+`routers/share.py` (HTTP) + `shares.py` (SQL) — the Python side of
+sharing, mirroring the Next.js routes and `lib/server/share/resolve.ts`.
+Contract: the `sharing` operations in `packages/contract/openapi.yaml`.
+
+| Operation | Auth | What |
+|---|---|---|
+| `POST /v1/share` | bearer | Body `{kind: "conversation", conversationId}` or `{kind: "document", documentId}` → `{token, kind}`. Ownership check + insert in one transaction under the caller's RLS (`store._set_user_context`). Token: 16 random bytes, base64url, 22 chars (same as Next). Foreign / missing target → 404; body cap 16 KiB. |
+| `DELETE /v1/share/{token}` | bearer | Stamps `revoked_at` under the caller's RLS → `{ok: true}`; another user's token and an unknown one are the same 404. |
+| `GET /v1/share/{token}` | **none** | What the share pages render (`ResolvedShare`: title, messages or document body, `createdAt` — no user ids). Reads with the pool's own role (the service-role equivalent), filtering every target read by the share creator's `user_id`. Unknown, revoked, foreign-target, no-DB and read errors are all the same 404 `not_found`. Rate limited: 60 / minute / client IP (in-process). At most 1000 messages (PostgREST's default `max_rows`, which bounds the Next.js resolver). |
+
+All three need `SUPABASE_DB_URL`; without it create / revoke answer 503
+and the public read answers 404 (as the Next.js page does without the
+service-role key).
+
 ## Configuration
 
 | Env var | Required? | What it does |
@@ -180,15 +233,71 @@ CI runs all four on every PR — see `.github/workflows/ci.yml` (job
 | `JOB_LEASE_SECONDS` | No | Default `120`. Lease a claim holds on a `task_jobs` row (`lease_expires_at`, migration 0032). A job whose worker died is reclaimed once it lapses (or reaped as failed, with its task, once `max_attempts` is spent). |
 | `JOB_HEARTBEAT_SECONDS` | No | Default `30` (clamped to a third of the lease). How often an executing job extends its lease. |
 | `SHUTDOWN_GRACE_SECONDS` | No | Default `8`. On shutdown the in-flight job may finish within this window; after it, the job is cancelled and handed back (lease expired on the spot) for the next worker. Keep it under the container stop timeout (Docker's default is 10 s). The stop starts on SIGTERM itself (the server's signal handler is chained), not after uvicorn has drained open SSE streams; the image also runs uvicorn with `--timeout-graceful-shutdown 8` so the lifespan (which closes the DB pool) isn't held past the stop timeout by a chat stream. `/readyz` reports `poller_alive` / `poller_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
+| `SCHEDULER_ENABLED` | No | Default `false`. Run the schedule dispatcher loop (`scheduler.py`) in this process: it fires due `task_schedules` rows exactly like the Vercel Cron's `/api/tasks/jobs/tick`. Needs `SUPABASE_DB_URL`. Safe alongside that cron and on several replicas — see [Scheduled tasks](#scheduled-tasks-replacing-the-vercel-cron). `/readyz` reports `scheduler_alive` / `scheduler_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
+| `SCHEDULER_INTERVAL_SECONDS` | No | Default `60` (the Vercel Cron's cadence). Seconds between dispatcher ticks. |
 | `SUPABASE_URL` | No (reported by `/readyz`) | Phase 2 will use it for things beyond what `SUPABASE_DB_URL` already gives us. |
 | `SERVICE_PORT` | No | Default 8000. |
 | `CORS_ALLOWED_ORIGINS` | No | Default empty (no CORS). Comma-separated exact origins allowed to call the API from a browser on another origin, e.g. `http://localhost:3000` when Next calls agent-py on `:8000`. Not needed behind the same-origin proxy. `*` and non-origin values are ignored; credentialed CORS is never enabled (auth is a bearer JWT). |
 | `TRUSTED_PROXY_HOPS` | No | Default `1`. How many reverse proxies in front of the service append to `X-Forwarded-For`; the rate-limit key is the entry this many places from the right. `0` ignores the header and keys on the socket peer. Pinned to `1` in `docker-compose.yml` (one Caddy hop). |
 | `CLIENT_IP_HEADER` | No | Empty by default. A single-value header a trusted edge overwrites with the client IP (e.g. `cf-connecting-ip`); wins over `X-Forwarded-For` when present. Only set it if the edge overwrites it. Cleared in `docker-compose.yml`. |
+| `EMBEDDINGS_BASE_URL` | No | OpenAI-compatible embedder for `/v1/embed` (`<base>/embeddings`, e.g. `http://localhost:11434/v1`). Same var, precedence and defaults as the Next.js provider. Neither this nor `OLLAMA_BASE_URL` set → embedding is off (`/v1/embed` answers `skipped / not_configured`). Operator config, so it is called without the SSRF guard (a localhost Ollama works). |
+| `EMBEDDINGS_API_KEY` | No | Bearer key for `EMBEDDINGS_BASE_URL`; empty → `OLLAMA_API_KEY` → a placeholder (Ollama ignores auth). |
+| `EMBEDDINGS_MODEL` | No | Default `nomic-embed-text` (768-dim, matching `file_sections.embedding vector(768)`). |
+| `OLLAMA_BASE_URL` / `OLLAMA_API_KEY` | No | Fallback embedder when `EMBEDDINGS_BASE_URL` is unset — the same Ollama host the Next.js app uses. |
+| `MEMORY_EXTRACT_MODEL` | No | Catalog id for `/v1/memory/extract`. Used only when it is an allowed `anthropic/*` entry of `config/models.json`; otherwise (or empty — the Next.js default is `google/gemini-2.5-flash`) `AGENT_DEFAULT_MODEL`. Needs `ANTHROPIC_API_KEY`; without it extraction is skipped (still `{ok: true}`). |
 
 A repo-level `.env` works — `pydantic-settings` looks for `.env` in the
 current working directory. The service shares the same `.env` as the
 Next.js app (same Supabase project, same vars).
+
+## Scheduled tasks (replacing the Vercel Cron)
+
+Recurring runs live in `task_schedules` (a task spec + a cron expression
++ an IANA timezone). agent-py serves their CRUD at
+`/v1/tasks/schedules[/{id}]` (`routers/schedules.py`, the contract's
+`schedules` tag) and can run the dispatcher that fires them
+(`scheduler.py` → `schedules.dispatch_due_schedules`), replacing the
+Vercel Cron that calls `/api/tasks/jobs/tick` every minute
+(`docs/PLAN-frontend-backend-split.md`, Q9).
+
+- **CRUD runs as the caller.** Each query runs in a transaction after
+  `SET LOCAL ROLE authenticated` + `request.jwt.claims`
+  (`store._set_user_context`), so RLS, 0031's workspace-ownership check
+  (→ 403), and 0035's column grants and guard trigger (coarse cron floor,
+  20 enabled schedules per user → 409 `limit_reached`) apply exactly as
+  they do to the Next routes' PostgREST calls.
+- **Same cron semantics as the TS side.** `cron.py` is a port of
+  cron-parser 5.5.0 + the luxon date math it uses — DST quirks
+  included — because both backends write and fire the same rows.
+  `tests/test_cron_parity.py` replays ~1950 cases computed by the TS
+  functions (`lib/server/agent/schedules.parity.test.ts`, which fails if
+  the committed fixture drifts from cron-parser). Not comparable, by
+  nature: `H` (hashed) fields are random per parse on both sides; zones
+  resolve through `zoneinfo` (tzdata, case-insensitive like ICU), so a
+  name only ICU still knows (e.g. `US/Pacific-New`) is rejected here.
+- **Same dispatch as the TS tick.** Up to 500 due rows (earliest
+  `next_run_at` first), a fair batch of at most 50 fires per tick and 5
+  per user, a 4-minute minimum gap since the last fire (deferred, not
+  fired), invalid cron/timezone → the row is disabled, and every fire is
+  claimed first with a guarded `UPDATE … WHERE next_run_at = <value
+  read>`. A fire writes what `fireSchedule` writes — conversation
+  (`Scheduled: <name>`), queued task + checkpoint, `status: queued`
+  event, `start` job, `last_run_task_id` — in one transaction (the TS
+  path writes them one by one, so a failure there can leave a partial
+  run).
+
+**Switching from the Vercel Cron.** Both dispatchers can run at the same
+time: the guarded claim lets exactly one of them fire each occurrence
+(tested with concurrent dispatchers against Postgres, including the TS
+dispatcher racing this one).
+
+1. Set `SCHEDULER_ENABLED=true` (with `SUPABASE_DB_URL`) on one or more
+   agent-py instances and deploy. Look for `lifespan.scheduler.started`,
+   then `scheduler.fired` as schedules come due; `/readyz` shows
+   `scheduler_alive: true`.
+2. Remove the `/api/tasks/jobs/tick` entry from `vercel.json`'s `crons`
+   (and, once nothing calls the route, `CRON_SECRET`). Until then the
+   two simply share the work.
 
 ## Crash recovery and side-effecting tools
 

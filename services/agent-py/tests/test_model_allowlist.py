@@ -236,7 +236,7 @@ def test_chat_rejects_unlisted_model(client: TestClient, model: str) -> None:
             headers=_auth(),
         )
     assert r.status_code == 400
-    detail = r.json()["detail"]
+    detail = r.json()
     assert detail["code"] == "unknown_model"
     assert model in detail["message"]
     assert fake.calls == []

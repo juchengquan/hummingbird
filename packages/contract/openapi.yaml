@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Hummingbird backend contract
-  version: 0.1.0
+  version: 0.2.0
   summary: The frontend <-> backend HTTP contract (spec-first, PLAN-frontend-backend-split.md Q19).
   description: |
     Hand-written source of truth for the HTTP surface every Hummingbird
@@ -33,6 +33,16 @@ tags:
     description: Re-signing Supabase Storage URLs for generated artefacts.
   - name: artifacts
     description: Structured artefacts derived from model output.
+  - name: sharing
+    description: Read-only public share links for a conversation or a document.
+  - name: schedules
+    description: Recurring background-task runs (`task_schedules`) — a saved task spec plus a cron expression and IANA timezone.
+  - name: embeddings
+    description: Chunking and embedding file text into the vector index.
+  - name: memory
+    description: Cross-conversation memory upkeep.
+  - name: security
+    description: Browser security telemetry (CSP violation reports). Public.
 
 security:
   - bearerAuth: []
@@ -189,6 +199,378 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
+  # --- sharing ---------------------------------------------------------------
+  /v1/share:
+    post:
+      operationId: createShare
+      tags: [sharing]
+      summary: Create a share link
+      description: |
+        Mints an opaque share token (128 random bits, base64url without
+        padding — 22 characters) for one of the caller's conversations or
+        documents. The target must be the caller's own (checked under the
+        caller's row-level security): someone else's id, or one that does
+        not exist, answers 404. Mirrors `app/api/share/route.ts`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateShareRequest"
+      responses:
+        "200":
+          description: The new share.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateShareResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/share/{token}:
+    parameters:
+      - $ref: "#/components/parameters/ShareToken"
+    get:
+      operationId: getShare
+      tags: [sharing]
+      summary: Read a shared conversation or document (public)
+      description: |
+        **Public — no bearer token.** The token is the capability: anyone
+        holding it can read what it points at. Returns only what the
+        read-only share pages render — never user ids or other rows. An
+        unknown or revoked token, a share whose target is missing or not
+        owned by the share's creator, and a backend without a database all
+        answer the same 404, so a response reveals nothing beyond "this
+        token resolves". Rate limited per client IP. Mirrors
+        `lib/server/share/resolve.ts` (`resolveShare`).
+      security: []
+      responses:
+        "200":
+          description: The shared content.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResolvedShare"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    delete:
+      operationId: revokeShare
+      tags: [sharing]
+      summary: Revoke a share link
+      description: |
+        Stamps `revoked_at` on the caller's share. Scoped by the caller's
+        row-level security, so a token that does not exist and one that
+        belongs to another user both answer 404 without revealing which.
+        Revoking an already-revoked share succeeds again. Mirrors
+        `app/api/share/[token]/route.ts`.
+      responses:
+        "200":
+          description: The share is revoked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevokeShareResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  # --- end sharing -----------------------------------------------------------
+
+  # --- schedules ------------------------------------------------------------
+  /v1/tasks/schedules:
+    get:
+      operationId: listSchedules
+      tags: [schedules]
+      summary: List the caller's schedules
+      description: |
+        Every schedule the caller owns, newest first (`created_at` desc).
+        Read as the caller under row-level security. Mirrors
+        `GET /api/tasks/schedules`.
+      responses:
+        "200":
+          description: The caller's schedules.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+    post:
+      operationId: createSchedule
+      tags: [schedules]
+      summary: Create a schedule
+      description: |
+        Validates the cron + timezone (parseable; at most 12 fires an hour
+        in the minute field; never two fires within 5 minutes over the next
+        48) and stores the row with its first `nextRunAt`. Written as the
+        caller, so the database also enforces workspace ownership (403) and
+        the 20-enabled-schedules cap (409 `limit_reached`). `timezone`
+        defaults to `UTC`, `enabled` to true. Mirrors
+        `POST /api/tasks/schedules`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleCreateRequest"
+      responses:
+        "201":
+          description: The created schedule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/tasks/schedules/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The schedule's id (a UUID).
+        schema:
+          type: string
+    patch:
+      operationId: updateSchedule
+      tags: [schedules]
+      summary: Update a schedule
+      description: |
+        Partial update: absent fields are left alone, `null` clears a
+        nullable field. A changed `cron` or `timezone` is re-validated and
+        recomputes `nextRunAt`; otherwise `nextRunAt` is kept, so an edit
+        never pulls the next fire earlier. Re-enabling past the per-user cap
+        is 409 `limit_reached`. Mirrors `PATCH /api/tasks/schedules/:id`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleUpdateRequest"
+      responses:
+        "200":
+          description: The updated schedule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+    delete:
+      operationId: deleteSchedule
+      tags: [schedules]
+      summary: Delete a schedule
+      description: |
+        Deletes the caller's schedule. Idempotent: an id the caller does not
+        own (or that does not exist) is also `{ ok: true }`. Mirrors
+        `DELETE /api/tasks/schedules/:id`.
+      responses:
+        "200":
+          description: Deleted (or already gone).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteScheduleResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/embed:
+    post:
+      operationId: embedFile
+      tags: [embeddings]
+      summary: Chunk and embed a file's text into the vector index
+      description: |
+        Splits `text` into overlapping paragraph-aware chunks (the exact
+        algorithm of `lib/server/embeddings/chunk.ts`), embeds them with the
+        backend's configured OpenAI-compatible embedder and writes them to
+        `file_sections` as the caller (RLS). Mirrors `app/api/embed/route.ts`.
+
+        The expected "nothing to do" outcomes are 200 `skipped` answers, not
+        errors: no embedder configured (`not_configured`), blank text
+        (`empty`), the file already has sections and `force` is not set
+        (`already_indexed`, `sections` = the existing count), and the `files`
+        row is not visible to the caller yet (`file_not_found` — the client
+        retries with backoff while its metadata sync catches up). `force`
+        drops the file's sections and rebuilds them. Spends embedder budget.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmbedRequest"
+      responses:
+        "200":
+          description: Indexed, or skipped with a reason.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmbedResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          description: The embedder or the database write failed (`code` is `embed_failed`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/memory/extract:
+    post:
+      operationId: extractMemory
+      tags: [memory]
+      summary: Extract durable facts from a finished chat turn
+      description: |
+        Best-effort, post-turn memory upkeep. Mirrors
+        `app/api/memory/extract/route.ts`: when the caller has
+        `profiles.memory_enabled`, a model distils durable facts from
+        `turnText` and merges them into the caller's `user_memories` (as the
+        caller, RLS). A `tainted` turn — one that read third-party content —
+        is never extracted from. Every well-formed, authenticated request
+        answers `{ ok: true }`, whether or not anything was extracted (memory
+        off, tainted turn, model unavailable or failing, write failure).
+        Spends model budget.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemoryExtractRequest"
+      responses:
+        "200":
+          description: Accepted (extraction is best-effort).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryExtractResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /v1/csp-report:
+    post:
+      operationId: reportCspViolation
+      tags: [security]
+      summary: Receive Content-Security-Policy violation reports
+      description: |
+        Where browsers send CSP violation reports (`report-uri` and
+        `Reporting-Endpoints` / `report-to` in the frontend's policy, when a
+        backend is configured). Mirrors `app/api/csp-report/route.ts`.
+        Public — browsers send no credentials. Reports are attacker-
+        controllable, so the backend logs only an allow-list of fields
+        (truncated, URLs cut to origin + path, share tokens redacted), caps
+        the body, rate-limits per client IP and never echoes input: every
+        answer except the transport-level 413 has an empty body.
+
+        Accepted media types: `application/csp-report` (legacy `report-uri`:
+        `{ "csp-report": { ... } }`), `application/reports+json` (Reporting
+        API: `[{ "type": "csp-violation", "body": { ... } }, ...]`) and
+        `application/json` (either shape). Any well-formed JSON is accepted;
+        shapes that are not CSP reports are ignored.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/csp-report:
+            schema:
+              $ref: "#/components/schemas/CspReportBody"
+          application/reports+json:
+            schema:
+              $ref: "#/components/schemas/CspReportBody"
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CspReportBody"
+      responses:
+        "204":
+          description: Received (and logged when it held CSP violations).
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          description: Unsupported `Content-Type` (`code` is `unsupported_content_type`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many reports from this client IP (`code` is `rate_limit`).
+          headers:
+            Retry-After:
+              description: Seconds until the client may report again.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -200,7 +582,33 @@ components:
         backend requires `role = authenticated`, a UUID `sub`, the configured
         audience and an unexpired `exp`; the anon key is rejected.
 
+  parameters:
+    ShareToken:
+      name: token
+      in: path
+      required: true
+      description: The opaque share token returned by `createShare`.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+        examples: ["q3Jx0dQe2yQb7m3YqH1v8w"]
+
   responses:
+    Conflict:
+      description: |
+        The request conflicts with the resource's state or a per-user limit
+        (`code` is `limit_reached` or `invalid_state`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: The backend failed to complete the operation (`code` is `unknown`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     BadRequest:
       description: The request body failed validation (`code` is `invalid_request`), or named an unknown model (`unknown_model`).
       content:
@@ -231,19 +639,20 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
     PayloadTooLarge:
-      description: The request body exceeds the backend's per-route cap.
+      description: The request body exceeds the backend's per-route cap (`code` is `payload_too_large`).
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
     ValidationError:
       description: |
-        Transitional: FastAPI's own request validation (agent-py) answers 422
-        with `{ detail: [...] }`. Backends should prefer 400 `invalid_request`.
+        The request body failed the backend's schema validation (`code` is
+        `invalid_request`, with the individual problems in `issues`).
+        agent-py answers these with 422; a 400 `invalid_request` means the same.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/ErrorResponse"
+            $ref: "#/components/schemas/ValidationErrorResponse"
     RateLimited:
       description: The caller or the upstream model provider is rate limited (`code` is `rate_limit`).
       content:
@@ -289,27 +698,9 @@ components:
           type: string
       additionalProperties: true
 
-    LegacyFastApiError:
-      type: object
-      description: |
-        Transitional. agent-py currently returns FastAPI's default envelope —
-        `{ detail: <string | ApiError | validation issues> }` — instead of a
-        flat `ApiError`. Accepted so the suite describes today's backend;
-        removed once agent-py flattens its errors (run the conformance suite
-        with `CONTRACT_STRICT_ERRORS=1` to reject it).
-      required: [detail]
-      properties:
-        detail:
-          anyOf:
-            - type: string
-            - $ref: "#/components/schemas/ApiError"
-            - type: array
-              items:
-                $ref: "#/components/schemas/ValidationIssue"
-
     ValidationIssue:
       type: object
-      description: One FastAPI/Pydantic request-validation issue.
+      description: One request-validation issue — where (`loc`), what (`msg`), and its machine `type`.
       required: [loc, msg, type]
       properties:
         loc:
@@ -323,10 +714,22 @@ components:
       additionalProperties: true
 
     ErrorResponse:
-      description: An `ApiError`, or (transitionally) the legacy FastAPI envelope.
-      anyOf:
+      description: |
+        The body of every non-2xx JSON response: an `ApiError`. (The
+        transitional FastAPI `{ detail }` envelope is no longer accepted.)
+      allOf:
         - $ref: "#/components/schemas/ApiError"
-        - $ref: "#/components/schemas/LegacyFastApiError"
+
+    ValidationErrorResponse:
+      description: An `ApiError` (`code` is `invalid_request`) carrying the validation issues found.
+      allOf:
+        - $ref: "#/components/schemas/ApiError"
+        - type: object
+          properties:
+            issues:
+              type: array
+              items:
+                $ref: "#/components/schemas/ValidationIssue"
 
     HealthResponse:
       type: object
@@ -373,6 +776,12 @@ components:
         poller_last_tick_age_seconds:
           type: [number, "null"]
           description: Seconds since the poll loop last finished a tick; null before the first.
+        scheduler_alive:
+          type: [boolean, "null"]
+          description: Null when the schedule dispatcher loop is not enabled; false when it was started and has died.
+        scheduler_last_tick_age_seconds:
+          type: [number, "null"]
+          description: Seconds since the schedule dispatcher last finished a tick; null before the first.
       additionalProperties:
         type: [boolean, number, string, "null"]
 
@@ -561,3 +970,444 @@ components:
         snippet:
           type: string
           maxLength: 1000
+
+    # --- sharing -------------------------------------------------------------
+    ShareKind:
+      type: string
+      enum: [conversation, document]
+      description: What a share points at.
+
+    CreateShareRequest:
+      description: |
+        A conversation share names `conversationId`; a document share names
+        `documentId` (a workspace owns several documents, so the target is
+        one document, not the workspace).
+      oneOf:
+        - $ref: "#/components/schemas/CreateConversationShareRequest"
+        - $ref: "#/components/schemas/CreateDocumentShareRequest"
+      discriminator:
+        propertyName: kind
+        mapping:
+          conversation: "#/components/schemas/CreateConversationShareRequest"
+          document: "#/components/schemas/CreateDocumentShareRequest"
+
+    CreateConversationShareRequest:
+      type: object
+      required: [kind, conversationId]
+      properties:
+        kind:
+          type: string
+          enum: [conversation]
+        conversationId:
+          type: string
+          format: uuid
+
+    CreateDocumentShareRequest:
+      type: object
+      required: [kind, documentId]
+      properties:
+        kind:
+          type: string
+          enum: [document]
+        documentId:
+          type: string
+          format: uuid
+
+    CreateShareResponse:
+      type: object
+      required: [token, kind]
+      properties:
+        token:
+          type: string
+          minLength: 1
+          description: The share token. The share page URL is `/share/<kind>/<token>`.
+        kind:
+          $ref: "#/components/schemas/ShareKind"
+
+    RevokeShareResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+
+    ResolvedShare:
+      description: What a share page renders, by `kind`.
+      oneOf:
+        - $ref: "#/components/schemas/ResolvedConversationShare"
+        - $ref: "#/components/schemas/ResolvedDocumentShare"
+      discriminator:
+        propertyName: kind
+        mapping:
+          conversation: "#/components/schemas/ResolvedConversationShare"
+          document: "#/components/schemas/ResolvedDocumentShare"
+
+    ResolvedConversationShare:
+      type: object
+      required: [kind, conversationTitle, messages, createdAt]
+      properties:
+        kind:
+          type: string
+          enum: [conversation]
+        conversationTitle:
+          type: string
+        messages:
+          type: array
+          description: The conversation's messages in `position` order.
+          items:
+            $ref: "#/components/schemas/SharedMessage"
+        createdAt:
+          type: string
+          format: date-time
+          description: When the share was created.
+
+    ResolvedDocumentShare:
+      type: object
+      required: [kind, documentTitle, documentContent, createdAt]
+      properties:
+        kind:
+          type: string
+          enum: [document]
+        documentTitle:
+          type: string
+          description: The document's title, or `Untitled` when it has none.
+        documentContent:
+          type: string
+          description: The document body (markdown).
+        createdAt:
+          type: string
+          format: date-time
+          description: When the share was created.
+
+    SharedMessage:
+      type: object
+      required: [id, role, content, position]
+      properties:
+        id:
+          type: string
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+        reasoning:
+          type: [string, "null"]
+          description: The model's reasoning text, when it was kept.
+        position:
+          type: integer
+    # --- end sharing ---------------------------------------------------------
+
+    # --- schedules ----------------------------------------------------------
+    ScheduleCron:
+      type: string
+      minLength: 1
+      maxLength: 100
+      pattern: '^\S+\s+\S+\s+\S+\s+\S+\s+\S+$'
+      description: |
+        Five space-separated fields (minute hour day-of-month month
+        day-of-week), evaluated with cron-parser semantics. The backend
+        additionally rejects expressions that cannot be parsed or fire more
+        often than every 5 minutes (400 `invalid_request`).
+      examples: ["0 8 * * *", "*/15 9-17 * * 1-5"]
+
+    ScheduleCreateRequest:
+      type: object
+      required: [workspaceId, name, prompt, cron]
+      properties:
+        workspaceId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: The workspace (owned by the caller) the scheduled runs belong to.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 20000
+        cron:
+          $ref: "#/components/schemas/ScheduleCron"
+        timezone:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: IANA timezone, e.g. `America/Los_Angeles`. Absent means `UTC`.
+        enabled:
+          type: boolean
+          description: Absent means true.
+        model:
+          type: [string, "null"]
+          maxLength: 100
+          description: Model id; null falls back to the workspace / global default at run time.
+        systemPrompt:
+          type: [string, "null"]
+          maxLength: 20000
+        skills:
+          type: array
+          maxItems: 10
+          items:
+            $ref: "#/components/schemas/SkillConfig"
+        maxSteps:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 50
+          description: Step budget per run; null means 25.
+
+    ScheduleUpdateRequest:
+      type: object
+      description: Any subset of the create fields. `null` is accepted only where the create body accepts it.
+      properties:
+        workspaceId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 20000
+        cron:
+          $ref: "#/components/schemas/ScheduleCron"
+        timezone:
+          type: string
+          minLength: 1
+          maxLength: 100
+        enabled:
+          type: boolean
+        model:
+          type: [string, "null"]
+          maxLength: 100
+        systemPrompt:
+          type: [string, "null"]
+          maxLength: 20000
+        skills:
+          type: array
+          maxItems: 10
+          items:
+            $ref: "#/components/schemas/SkillConfig"
+        maxSteps:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 50
+
+    ScheduleResponse:
+      type: object
+      required:
+        - id
+        - workspaceId
+        - name
+        - prompt
+        - cron
+        - timezone
+        - enabled
+        - model
+        - systemPrompt
+        - maxSteps
+        - lastRunAt
+        - lastRunTaskId
+        - nextRunAt
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        workspaceId:
+          type: string
+        name:
+          type: string
+        prompt:
+          type: string
+        cron:
+          type: string
+        timezone:
+          type: string
+        enabled:
+          type: boolean
+        model:
+          type: [string, "null"]
+        systemPrompt:
+          type: [string, "null"]
+        skills:
+          type: array
+          description: Absent when the schedule has no skill list.
+          items:
+            $ref: "#/components/schemas/SkillConfig"
+        maxSteps:
+          type: [integer, "null"]
+        lastRunAt:
+          type: [string, "null"]
+          format: date-time
+        lastRunTaskId:
+          type: [string, "null"]
+          description: The task the last fire created, for deep-linking to its result.
+        nextRunAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ScheduleListResponse:
+      type: object
+      required: [schedules]
+      properties:
+        schedules:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScheduleResponse"
+
+    DeleteScheduleResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          const: true
+
+    SkillConfig:
+      type: object
+      description: A skill enabled for a run, with optional per-skill settings (`ChatRequestSchema.shape.skills` in `lib/shared/api-schemas.ts`).
+      required: [id]
+      properties:
+        id:
+          type: string
+          maxLength: 40
+        webSearchConfig:
+          $ref: "#/components/schemas/WebSearchSkillConfig"
+        webFetchConfig:
+          $ref: "#/components/schemas/MaxCallsSkillConfig"
+        imageGenConfig:
+          $ref: "#/components/schemas/ImageGenSkillConfig"
+        fileSearchConfig:
+          $ref: "#/components/schemas/MaxCallsSkillConfig"
+
+    MaxCallsSkillConfig:
+      type: object
+      properties:
+        maxCalls:
+          type: integer
+          minimum: 1
+          maximum: 50
+
+    WebSearchSkillConfig:
+      type: object
+      properties:
+        maxCalls:
+          type: integer
+          minimum: 1
+          maximum: 50
+        tavily:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            searchDepth:
+              type: string
+              enum: [basic, advanced]
+        brave:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            freshness:
+              type: string
+              enum: [any, pd, pw, pm, py]
+        exa:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            type:
+              type: string
+              enum: [auto, neural, keyword]
+
+    ImageGenSkillConfig:
+      type: object
+      properties:
+        maxCalls:
+          type: integer
+          minimum: 1
+          maximum: 50
+        aspectRatio:
+          type: string
+          enum: ["1:1", "16:9", "9:16", "4:3", "3:4", "2:3", "3:2"]
+
+    EmbedRequest:
+      type: object
+      required: [fileId, text]
+      properties:
+        fileId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Id of the caller's `files` row the sections belong to.
+        text:
+          type: string
+          maxLength: 1200000
+          description: The file's extracted full text.
+        force:
+          type: boolean
+          description: Drop the file's existing sections and rebuild them.
+
+    EmbedResponse:
+      type: object
+      required: [status, sections]
+      properties:
+        status:
+          type: string
+          enum: [indexed, skipped]
+        sections:
+          type: integer
+          minimum: 0
+          description: Chunks written (`indexed`) or already present (`already_indexed`); otherwise 0.
+        reason:
+          type: string
+          enum: [not_configured, empty, already_indexed, file_not_found]
+          description: Why the request was skipped. Absent when `indexed`.
+
+    MemoryExtractRequest:
+      type: object
+      required: [turnText]
+      properties:
+        turnText:
+          type: string
+          minLength: 1
+          maxLength: 50000
+          description: "The finished turn, as `User: ...` / `Assistant: ...` paragraphs."
+        conversationId:
+          type: string
+          maxLength: 64
+          description: Provenance stamped on new facts (`source_conversation_id`).
+        tainted:
+          type: boolean
+          description: The turn read third-party content; nothing is extracted.
+
+    MemoryExtractResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          const: true
+
+    CspReportBody:
+      description: |
+        A legacy `report-uri` object (`{ "csp-report": { ... } }`) or a
+        Reporting-API batch (an array of `{ type, body }` reports; only
+        `type: csp-violation` entries are read, at most 20 per batch). Left
+        open: any JSON value is accepted and unknown shapes are ignored.
+      examples:
+        - csp-report:
+            document-uri: https://app.example.com/dashboard
+            effective-directive: script-src-elem
+            blocked-uri: https://cdn.example.com/x.js
+            disposition: report

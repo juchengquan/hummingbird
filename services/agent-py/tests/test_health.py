@@ -58,6 +58,8 @@ def test_readyz_reports_config_state(monkeypatch: pytest.MonkeyPatch) -> None:
         "db_pool_open": False,
         "poller_alive": None,
         "poller_last_tick_age_seconds": None,
+        "scheduler_alive": None,
+        "scheduler_last_tick_age_seconds": None,
     }
 
 
@@ -81,4 +83,6 @@ def test_readyz_picks_up_configured_envs(monkeypatch: pytest.MonkeyPatch) -> Non
         "db_pool_open": False,
         "poller_alive": None,
         "poller_last_tick_age_seconds": None,
+        "scheduler_alive": None,
+        "scheduler_last_tick_age_seconds": None,
     }

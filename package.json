@@ -23,6 +23,7 @@
     "contract:conformance": "bun test ./packages/contract/conformance",
     "codegen:agent-types": "bash scripts/codegen-agent-types.sh",
     "codegen:agent-types:check": "bash scripts/codegen-agent-types.sh --check",
+    "codegen:agent-py-parity": "bun --conditions react-server scripts/gen-agent-py-parity.ts",
     "check:agent-py": "cd services/agent-py && uv run ruff check . && uv run ruff format --check . && uv run mypy src && uv run pytest",
     "supabase:start": "supabase start",
     "supabase:stop": "supabase stop",

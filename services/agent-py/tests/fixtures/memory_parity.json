@@ -1,0 +1,643 @@
+{
+ "source": "lib/server/memory/prompt.ts + lib/server/memory/merge.ts",
+ "prompts": [
+  {
+   "name": "no existing facts",
+   "turn": "User: I write Rust at work.\n\nAssistant: Noted!",
+   "existing": [],
+   "prompt": "You maintain a durable memory of stable facts about a user from their chats.\nFrom the conversation turn below, extract ONLY durable, stable facts worth\nremembering long-term (role, tech stack, recurring preferences, ongoing\nprojects). Skip ephemeral/task-specific details. Return `facts: []` if the\nturn has nothing durable (this is common).\n\nFor each fact, emit an op: `add` for a new fact, or `update` with the `id`\nof an existing fact it revises/replaces. Do NOT duplicate an existing fact.\n\nExisting facts (id — fact):\n(none)\n\nConversation turn:\nUser: I write Rust at work.\n\nAssistant: Noted!"
+  },
+  {
+   "name": "existing facts",
+   "turn": "User: I switched from Rust to Go.\n\nAssistant: Got it.",
+   "existing": [
+    {
+     "id": "11111111-1111-4111-8111-111111111111",
+     "fact": "Writes Rust at work",
+     "category": "tech"
+    },
+    {
+     "id": "22222222-2222-4222-8222-222222222222",
+     "fact": "Lives in Berlin",
+     "category": null
+    }
+   ],
+   "prompt": "You maintain a durable memory of stable facts about a user from their chats.\nFrom the conversation turn below, extract ONLY durable, stable facts worth\nremembering long-term (role, tech stack, recurring preferences, ongoing\nprojects). Skip ephemeral/task-specific details. Return `facts: []` if the\nturn has nothing durable (this is common).\n\nFor each fact, emit an op: `add` for a new fact, or `update` with the `id`\nof an existing fact it revises/replaces. Do NOT duplicate an existing fact.\n\nExisting facts (id — fact):\n11111111-1111-4111-8111-111111111111 — Writes Rust at work\n22222222-2222-4222-8222-222222222222 — Lives in Berlin\n\nConversation turn:\nUser: I switched from Rust to Go.\n\nAssistant: Got it."
+  },
+  {
+   "name": "unicode + multi-line turn",
+   "turn": "User: 我叫小明 — I prefer *dark mode* 🌙\nand short answers.\n\nAssistant: 好的。",
+   "existing": [
+    {
+     "id": "f-1",
+     "fact": "Prefers concise replies — always",
+     "category": "pref"
+    }
+   ],
+   "prompt": "You maintain a durable memory of stable facts about a user from their chats.\nFrom the conversation turn below, extract ONLY durable, stable facts worth\nremembering long-term (role, tech stack, recurring preferences, ongoing\nprojects). Skip ephemeral/task-specific details. Return `facts: []` if the\nturn has nothing durable (this is common).\n\nFor each fact, emit an op: `add` for a new fact, or `update` with the `id`\nof an existing fact it revises/replaces. Do NOT duplicate an existing fact.\n\nExisting facts (id — fact):\nf-1 — Prefers concise replies — always\n\nConversation turn:\nUser: 我叫小明 — I prefer *dark mode* 🌙\nand short answers.\n\nAssistant: 好的。"
+  }
+ ],
+ "merges": [
+  {
+   "name": "adds and a valid update",
+   "existing": [
+    {
+     "id": "id-0",
+     "fact": "fact 0",
+     "category": null
+    },
+    {
+     "id": "id-1",
+     "fact": "fact 1",
+     "category": null
+    }
+   ],
+   "ops": [
+    {
+     "op": "add",
+     "fact": "Uses Neovim",
+     "category": "tools"
+    },
+    {
+     "op": "update",
+     "id": "id-1",
+     "fact": "fact 1, revised"
+    }
+   ],
+   "plan": {
+    "inserts": [
+     {
+      "fact": "Uses Neovim",
+      "category": "tools"
+     }
+    ],
+    "updates": [
+     {
+      "id": "id-1",
+      "fact": "fact 1, revised",
+      "category": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "update with an unknown or missing id is dropped",
+   "existing": [
+    {
+     "id": "id-0",
+     "fact": "fact 0",
+     "category": null
+    }
+   ],
+   "ops": [
+    {
+     "op": "update",
+     "id": "nope",
+     "fact": "x"
+    },
+    {
+     "op": "update",
+     "fact": "no id"
+    }
+   ],
+   "plan": {
+    "inserts": [],
+    "updates": []
+   }
+  },
+  {
+   "name": "adds stop at the 100-fact cap",
+   "existing": [
+    {
+     "id": "id-0",
+     "fact": "fact 0",
+     "category": null
+    },
+    {
+     "id": "id-1",
+     "fact": "fact 1",
+     "category": null
+    },
+    {
+     "id": "id-2",
+     "fact": "fact 2",
+     "category": null
+    },
+    {
+     "id": "id-3",
+     "fact": "fact 3",
+     "category": null
+    },
+    {
+     "id": "id-4",
+     "fact": "fact 4",
+     "category": null
+    },
+    {
+     "id": "id-5",
+     "fact": "fact 5",
+     "category": null
+    },
+    {
+     "id": "id-6",
+     "fact": "fact 6",
+     "category": null
+    },
+    {
+     "id": "id-7",
+     "fact": "fact 7",
+     "category": null
+    },
+    {
+     "id": "id-8",
+     "fact": "fact 8",
+     "category": null
+    },
+    {
+     "id": "id-9",
+     "fact": "fact 9",
+     "category": null
+    },
+    {
+     "id": "id-10",
+     "fact": "fact 10",
+     "category": null
+    },
+    {
+     "id": "id-11",
+     "fact": "fact 11",
+     "category": null
+    },
+    {
+     "id": "id-12",
+     "fact": "fact 12",
+     "category": null
+    },
+    {
+     "id": "id-13",
+     "fact": "fact 13",
+     "category": null
+    },
+    {
+     "id": "id-14",
+     "fact": "fact 14",
+     "category": null
+    },
+    {
+     "id": "id-15",
+     "fact": "fact 15",
+     "category": null
+    },
+    {
+     "id": "id-16",
+     "fact": "fact 16",
+     "category": null
+    },
+    {
+     "id": "id-17",
+     "fact": "fact 17",
+     "category": null
+    },
+    {
+     "id": "id-18",
+     "fact": "fact 18",
+     "category": null
+    },
+    {
+     "id": "id-19",
+     "fact": "fact 19",
+     "category": null
+    },
+    {
+     "id": "id-20",
+     "fact": "fact 20",
+     "category": null
+    },
+    {
+     "id": "id-21",
+     "fact": "fact 21",
+     "category": null
+    },
+    {
+     "id": "id-22",
+     "fact": "fact 22",
+     "category": null
+    },
+    {
+     "id": "id-23",
+     "fact": "fact 23",
+     "category": null
+    },
+    {
+     "id": "id-24",
+     "fact": "fact 24",
+     "category": null
+    },
+    {
+     "id": "id-25",
+     "fact": "fact 25",
+     "category": null
+    },
+    {
+     "id": "id-26",
+     "fact": "fact 26",
+     "category": null
+    },
+    {
+     "id": "id-27",
+     "fact": "fact 27",
+     "category": null
+    },
+    {
+     "id": "id-28",
+     "fact": "fact 28",
+     "category": null
+    },
+    {
+     "id": "id-29",
+     "fact": "fact 29",
+     "category": null
+    },
+    {
+     "id": "id-30",
+     "fact": "fact 30",
+     "category": null
+    },
+    {
+     "id": "id-31",
+     "fact": "fact 31",
+     "category": null
+    },
+    {
+     "id": "id-32",
+     "fact": "fact 32",
+     "category": null
+    },
+    {
+     "id": "id-33",
+     "fact": "fact 33",
+     "category": null
+    },
+    {
+     "id": "id-34",
+     "fact": "fact 34",
+     "category": null
+    },
+    {
+     "id": "id-35",
+     "fact": "fact 35",
+     "category": null
+    },
+    {
+     "id": "id-36",
+     "fact": "fact 36",
+     "category": null
+    },
+    {
+     "id": "id-37",
+     "fact": "fact 37",
+     "category": null
+    },
+    {
+     "id": "id-38",
+     "fact": "fact 38",
+     "category": null
+    },
+    {
+     "id": "id-39",
+     "fact": "fact 39",
+     "category": null
+    },
+    {
+     "id": "id-40",
+     "fact": "fact 40",
+     "category": null
+    },
+    {
+     "id": "id-41",
+     "fact": "fact 41",
+     "category": null
+    },
+    {
+     "id": "id-42",
+     "fact": "fact 42",
+     "category": null
+    },
+    {
+     "id": "id-43",
+     "fact": "fact 43",
+     "category": null
+    },
+    {
+     "id": "id-44",
+     "fact": "fact 44",
+     "category": null
+    },
+    {
+     "id": "id-45",
+     "fact": "fact 45",
+     "category": null
+    },
+    {
+     "id": "id-46",
+     "fact": "fact 46",
+     "category": null
+    },
+    {
+     "id": "id-47",
+     "fact": "fact 47",
+     "category": null
+    },
+    {
+     "id": "id-48",
+     "fact": "fact 48",
+     "category": null
+    },
+    {
+     "id": "id-49",
+     "fact": "fact 49",
+     "category": null
+    },
+    {
+     "id": "id-50",
+     "fact": "fact 50",
+     "category": null
+    },
+    {
+     "id": "id-51",
+     "fact": "fact 51",
+     "category": null
+    },
+    {
+     "id": "id-52",
+     "fact": "fact 52",
+     "category": null
+    },
+    {
+     "id": "id-53",
+     "fact": "fact 53",
+     "category": null
+    },
+    {
+     "id": "id-54",
+     "fact": "fact 54",
+     "category": null
+    },
+    {
+     "id": "id-55",
+     "fact": "fact 55",
+     "category": null
+    },
+    {
+     "id": "id-56",
+     "fact": "fact 56",
+     "category": null
+    },
+    {
+     "id": "id-57",
+     "fact": "fact 57",
+     "category": null
+    },
+    {
+     "id": "id-58",
+     "fact": "fact 58",
+     "category": null
+    },
+    {
+     "id": "id-59",
+     "fact": "fact 59",
+     "category": null
+    },
+    {
+     "id": "id-60",
+     "fact": "fact 60",
+     "category": null
+    },
+    {
+     "id": "id-61",
+     "fact": "fact 61",
+     "category": null
+    },
+    {
+     "id": "id-62",
+     "fact": "fact 62",
+     "category": null
+    },
+    {
+     "id": "id-63",
+     "fact": "fact 63",
+     "category": null
+    },
+    {
+     "id": "id-64",
+     "fact": "fact 64",
+     "category": null
+    },
+    {
+     "id": "id-65",
+     "fact": "fact 65",
+     "category": null
+    },
+    {
+     "id": "id-66",
+     "fact": "fact 66",
+     "category": null
+    },
+    {
+     "id": "id-67",
+     "fact": "fact 67",
+     "category": null
+    },
+    {
+     "id": "id-68",
+     "fact": "fact 68",
+     "category": null
+    },
+    {
+     "id": "id-69",
+     "fact": "fact 69",
+     "category": null
+    },
+    {
+     "id": "id-70",
+     "fact": "fact 70",
+     "category": null
+    },
+    {
+     "id": "id-71",
+     "fact": "fact 71",
+     "category": null
+    },
+    {
+     "id": "id-72",
+     "fact": "fact 72",
+     "category": null
+    },
+    {
+     "id": "id-73",
+     "fact": "fact 73",
+     "category": null
+    },
+    {
+     "id": "id-74",
+     "fact": "fact 74",
+     "category": null
+    },
+    {
+     "id": "id-75",
+     "fact": "fact 75",
+     "category": null
+    },
+    {
+     "id": "id-76",
+     "fact": "fact 76",
+     "category": null
+    },
+    {
+     "id": "id-77",
+     "fact": "fact 77",
+     "category": null
+    },
+    {
+     "id": "id-78",
+     "fact": "fact 78",
+     "category": null
+    },
+    {
+     "id": "id-79",
+     "fact": "fact 79",
+     "category": null
+    },
+    {
+     "id": "id-80",
+     "fact": "fact 80",
+     "category": null
+    },
+    {
+     "id": "id-81",
+     "fact": "fact 81",
+     "category": null
+    },
+    {
+     "id": "id-82",
+     "fact": "fact 82",
+     "category": null
+    },
+    {
+     "id": "id-83",
+     "fact": "fact 83",
+     "category": null
+    },
+    {
+     "id": "id-84",
+     "fact": "fact 84",
+     "category": null
+    },
+    {
+     "id": "id-85",
+     "fact": "fact 85",
+     "category": null
+    },
+    {
+     "id": "id-86",
+     "fact": "fact 86",
+     "category": null
+    },
+    {
+     "id": "id-87",
+     "fact": "fact 87",
+     "category": null
+    },
+    {
+     "id": "id-88",
+     "fact": "fact 88",
+     "category": null
+    },
+    {
+     "id": "id-89",
+     "fact": "fact 89",
+     "category": null
+    },
+    {
+     "id": "id-90",
+     "fact": "fact 90",
+     "category": null
+    },
+    {
+     "id": "id-91",
+     "fact": "fact 91",
+     "category": null
+    },
+    {
+     "id": "id-92",
+     "fact": "fact 92",
+     "category": null
+    },
+    {
+     "id": "id-93",
+     "fact": "fact 93",
+     "category": null
+    },
+    {
+     "id": "id-94",
+     "fact": "fact 94",
+     "category": null
+    },
+    {
+     "id": "id-95",
+     "fact": "fact 95",
+     "category": null
+    },
+    {
+     "id": "id-96",
+     "fact": "fact 96",
+     "category": null
+    },
+    {
+     "id": "id-97",
+     "fact": "fact 97",
+     "category": null
+    }
+   ],
+   "ops": [
+    {
+     "op": "add",
+     "fact": "a"
+    },
+    {
+     "op": "add",
+     "fact": "b",
+     "category": "c"
+    },
+    {
+     "op": "add",
+     "fact": "c"
+    },
+    {
+     "op": "update",
+     "id": "id-5",
+     "fact": "still updates at the cap"
+    }
+   ],
+   "plan": {
+    "inserts": [
+     {
+      "fact": "a",
+      "category": null
+     },
+     {
+      "fact": "b",
+      "category": "c"
+     }
+    ],
+    "updates": [
+     {
+      "id": "id-5",
+      "fact": "still updates at the cap",
+      "category": null
+     }
+    ]
+   }
+  }
+ ]
+}

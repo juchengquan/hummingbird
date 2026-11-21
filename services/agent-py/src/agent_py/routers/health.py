@@ -10,7 +10,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from .. import __version__, db, poller
+from .. import __version__, db, poller, scheduler
 from ..settings import Settings, get_settings
 
 router = APIRouter(tags=["meta"])
@@ -33,6 +33,10 @@ class ReadinessChecks(BaseModel):
     # Seconds since the loop last finished a tick (None before the
     # first). A tick executing a job lasts as long as that job's chunk.
     poller_last_tick_age_seconds: float | None = None
+    # Same pair for the schedule dispatcher loop (`SCHEDULER_ENABLED`):
+    # None when it isn't running in this process.
+    scheduler_alive: bool | None = None
+    scheduler_last_tick_age_seconds: float | None = None
 
 
 class ReadinessResponse(BaseModel):
@@ -65,13 +69,15 @@ def readyz(
     we get to "Postgres reachable" without a per-request `SELECT 1`).
     Phase 2+ may add a `SELECT 1` if we see false-positive ready.
 
-    Also reports the task poller's liveness: `status` is `degraded` when
-    the poll loop was started and has since died (the HTTP API still
-    works, but no background task will run).
+    Also reports the task poller's and the schedule dispatcher's
+    liveness: `status` is `degraded` when either loop was started and has
+    since died (the HTTP API still works, but no background task — or no
+    scheduled fire — will run).
     """
     alive, tick_age = poller.liveness()
+    sched_alive, sched_tick_age = scheduler.liveness()
     return ReadinessResponse(
-        status="degraded" if alive is False else "ok",
+        status="degraded" if alive is False or sched_alive is False else "ok",
         checks=ReadinessChecks(
             supabase_url_configured=bool(settings.SUPABASE_URL),
             supabase_db_configured=bool(settings.SUPABASE_DB_URL),
@@ -79,5 +85,9 @@ def readyz(
             db_pool_open=db.has_pool(),
             poller_alive=alive,
             poller_last_tick_age_seconds=None if tick_age is None else round(tick_age, 1),
+            scheduler_alive=sched_alive,
+            scheduler_last_tick_age_seconds=None
+            if sched_tick_age is None
+            else round(sched_tick_age, 1),
         ),
     )

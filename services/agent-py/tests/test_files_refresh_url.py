@@ -78,7 +78,7 @@ def test_foreign_uid_path_is_403(client: TestClient) -> None:
             headers=_auth(),
         )
     assert r.status_code == 403
-    assert r.json()["detail"] == {
+    assert r.json() == {
         "code": "forbidden",
         "message": "Storage path does not belong to you.",
     }
@@ -97,7 +97,7 @@ def test_sign_failure_is_404(client: TestClient) -> None:
     with patch.object(files_router, "sign_storage_path", new=AsyncMock(return_value=None)):
         r = client.post(PATH, json={"storagePath": OWN_PATH}, headers=_auth())
     assert r.status_code == 404
-    assert r.json()["detail"] == {
+    assert r.json() == {
         "code": "not_found",
         "message": "Could not re-sign the URL — object may be missing.",
     }
@@ -107,7 +107,7 @@ def test_storage_unconfigured_is_503(client: TestClient) -> None:
     with patch.object(files_router, "is_storage_configured", return_value=False):
         r = client.post(PATH, json={"storagePath": OWN_PATH}, headers=_auth())
     assert r.status_code == 503
-    assert r.json()["detail"] == {"code": "unavailable", "message": "Supabase is not configured."}
+    assert r.json() == {"code": "unavailable", "message": "Supabase is not configured."}
 
 
 @pytest.mark.usefixtures("storage_on")

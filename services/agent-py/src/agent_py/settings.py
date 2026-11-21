@@ -94,6 +94,20 @@ class Settings(BaseSettings):
     10 s stop timeout; raise both together (`stop_grace_period`) to let
     more jobs finish in place."""
 
+    # --- Schedule dispatcher -----------------------------------------------
+    SCHEDULER_ENABLED: bool = False
+    """Run the `task_schedules` dispatcher loop (`agent_py.scheduler`) in
+    this process: every `SCHEDULER_INTERVAL_SECONDS` it fires due
+    schedules exactly like the Vercel Cron's `/api/tasks/jobs/tick`
+    (`dispatchDueSchedules`). Off by default. Safe to run alongside that
+    cron and on several replicas: each occurrence is claimed with a
+    guarded `next_run_at` update, so only one dispatcher fires it. Needs
+    `SUPABASE_DB_URL`."""
+
+    SCHEDULER_INTERVAL_SECONDS: float = 60.0
+    """Seconds between dispatcher ticks. 60 matches the Vercel Cron's
+    one-minute cadence (and the 4-minute minimum gap's one tick of slack)."""
+
     # --- Model providers --------------------------------------------------
     ANTHROPIC_API_KEY: str = ""
     """Anthropic API key — Phase 2b enables real model streaming when set.
@@ -172,6 +186,37 @@ class Settings(BaseSettings):
     warning if either is missing). Cross-family is stronger because a
     model is a poor judge of its own output. See
     `docs/PLAN-citation-verifiability.md` open question #2."""
+
+    # --- Embeddings (`/v1/embed`) ----------------------------------------
+    # Same env vars, precedence and defaults as the Next.js provider
+    # (`lib/server/embeddings/provider.ts`), so one `.env` configures both.
+    EMBEDDINGS_BASE_URL: str = ""
+    """OpenAI-compatible embedder base URL (`<base>/embeddings` is called),
+    e.g. `http://localhost:11434/v1`. Wins over `OLLAMA_BASE_URL`. Neither
+    set → embedding is off and `/v1/embed` answers `skipped /
+    not_configured`."""
+
+    EMBEDDINGS_API_KEY: str = ""
+    """Bearer key for `EMBEDDINGS_BASE_URL`; empty falls back to
+    `OLLAMA_API_KEY`, then to a placeholder (Ollama ignores auth)."""
+
+    EMBEDDINGS_MODEL: str = ""
+    """Embedding model id. Empty → `nomic-embed-text` (768-dim — must match
+    the `vector(768)` column of `file_sections`)."""
+
+    OLLAMA_BASE_URL: str = ""
+    """Fallback embedder base URL when `EMBEDDINGS_BASE_URL` is unset (the
+    Ollama host the Next.js app also uses for `ollama/*` chat models)."""
+
+    OLLAMA_API_KEY: str = ""
+    """Optional key for `OLLAMA_BASE_URL`."""
+
+    # --- Memory extraction (`/v1/memory/extract`) -------------------------
+    MEMORY_EXTRACT_MODEL: str = ""
+    """Catalog id of the memory-extraction model. Used only when it is an
+    allowed `anthropic/*` entry of `config/models.json`; empty or anything
+    else (the Next.js default is `google/gemini-2.5-flash`, which this
+    service cannot call) → `AGENT_DEFAULT_MODEL`."""
 
     # --- Request hardening ------------------------------------------------
     CORS_ALLOWED_ORIGINS: str = ""

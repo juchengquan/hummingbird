@@ -195,14 +195,14 @@ def test_unknown_model_is_400(client: TestClient) -> None:
     fake = _FakeClient()
     r = _post(client, fake, {**BODY, "model": "google/gemini-2.5-flash"})
     assert r.status_code == 400
-    assert r.json()["detail"]["code"] == "unknown_model"
+    assert r.json()["code"] == "unknown_model"
     assert fake.messages.calls == []
 
 
 def test_no_anthropic_key_is_503(client: TestClient) -> None:
     r = _post(client, None, BODY)
     assert r.status_code == 503
-    assert r.json()["detail"]["code"] == "auth"
+    assert r.json()["code"] == "auth"
 
 
 # --- route: generation paths -------------------------------------------
@@ -282,7 +282,7 @@ def test_text_path_invalid_json_is_502(client: TestClient) -> None:
     fake = _FakeClient(RuntimeError("no structured"), _text("not json at all"))
     r = _post(client, fake, BODY)
     assert r.status_code == 502
-    assert r.json()["detail"] == {
+    assert r.json() == {
         "code": "provider",
         "message": "Extraction model did not return valid JSON.",
     }
@@ -292,7 +292,7 @@ def test_text_path_off_schema_is_502(client: TestClient) -> None:
     fake = _FakeClient(RuntimeError("no structured"), _text('{"columns": "nope"}'))
     r = _post(client, fake, BODY)
     assert r.status_code == 502
-    assert r.json()["detail"] == {
+    assert r.json() == {
         "code": "provider",
         "message": "Extraction model output did not match the schema.",
     }
@@ -316,7 +316,7 @@ def test_provider_error_is_categorized(
     fake = _FakeClient(exc, exc)
     r = _post(client, fake, BODY)
     assert r.status_code == status
-    assert r.json()["detail"] == {"code": code, "message": str(exc)}
+    assert r.json() == {"code": code, "message": str(exc)}
 
 
 # --- helpers --------------------------------------------------------------

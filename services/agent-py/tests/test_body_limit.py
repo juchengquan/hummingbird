@@ -12,6 +12,7 @@ Pins:
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 
 import pytest
@@ -75,14 +76,15 @@ async def test_declared_content_length_over_limit_is_413_without_reading() -> No
     mw, seen = _recording_app()
     status, body = await _run(mw, [b"x" * 10], [(b"content-length", b"101")])
     assert status == 413
-    assert b"too large" in body
+    assert json.loads(body) == {"code": "payload_too_large", "message": "Request body too large."}
     assert seen == []
 
 
 async def test_streamed_body_over_limit_is_413_and_crossing_chunk_withheld() -> None:
     mw, seen = _recording_app()
-    status, _ = await _run(mw, [b"a" * 60, b"b" * 60, b"c" * 60], [])
+    status, body = await _run(mw, [b"a" * 60, b"b" * 60, b"c" * 60], [])
     assert status == 413
+    assert json.loads(body)["code"] == "payload_too_large"
     # The app saw the first chunk only — never the one that crossed 100.
     assert seen == [b"a" * 60]
 
@@ -97,8 +99,12 @@ async def test_body_within_limit_passes() -> None:
 
 async def test_malformed_content_length_is_400() -> None:
     mw, seen = _recording_app()
-    status, _ = await _run(mw, [b""], [(b"content-length", b"abc")])
+    status, body = await _run(mw, [b""], [(b"content-length", b"abc")])
     assert status == 400
+    assert json.loads(body) == {
+        "code": "invalid_request",
+        "message": "Invalid Content-Length header.",
+    }
     assert seen == []
 
 
@@ -158,6 +164,7 @@ def test_unauthenticated_chunked_json_over_default_limit_is_413(client: TestClie
         headers={"content-type": "application/json"},
     )
     assert r.status_code == 413
+    assert r.json()["code"] == "payload_too_large"
 
 
 def test_small_unauthenticated_request_still_reaches_auth(client: TestClient) -> None:

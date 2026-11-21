@@ -128,7 +128,8 @@ def test_chat_503_when_no_anthropic_key(client: TestClient) -> None:
     with patch.object(chat_router, "resolve_anthropic_client", return_value=None):
         r = client.post("/v1/chat", json=_valid_body(), headers=_auth())
     assert r.status_code == 503
-    assert "ANTHROPIC_API_KEY" in r.json()["detail"]
+    assert r.json()["code"] == "unavailable"
+    assert "ANTHROPIC_API_KEY" in r.json()["message"]
 
 
 def test_chat_rejects_empty_messages(client: TestClient) -> None:
@@ -512,7 +513,7 @@ def test_chat_429_when_per_ip_limit_exhausted(client: TestClient) -> None:
             },
         )
         assert r.status_code == 429
-        assert r.json()["detail"]["code"] == "rate_limit"
+        assert r.json()["code"] == "rate_limit"
         assert int(r.headers.get("Retry-After", "0")) >= 1
     finally:
         _reset_chat_per_ip_limit_for_test()

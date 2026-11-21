@@ -5,7 +5,9 @@ import { apiClient } from "@/client/api-client"
 /**
  * Best-effort, post-turn extraction trigger.
  *
- * Fires `POST /api/memory/extract` for the just-finished turn and never
+ * Fires `POST /api/memory/extract` (agent-py's `/v1/memory/extract` for
+ * agent-py accounts — `apiClient.memory.extract` picks) for the
+ * just-finished turn and never
  * throws — extraction is opportunistic background work, so any failure
  * (offline, route 5xx, malformed body) is swallowed. The caller does not
  * await this; it's `void`-returned by design so a chat turn never waits
