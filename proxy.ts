@@ -37,7 +37,8 @@ export function proxy(request: NextRequest) {
   if (!headerName) return NextResponse.next()
 
   const nonce = generateNonce()
-  const policy = buildCsp(cspOptionsFromEnv(nonce))
+  const options = cspOptionsFromEnv(nonce)
+  const policy = buildCsp(options)
 
   const requestHeaders = new Headers(request.headers)
   // Drop any client-supplied copies so only ours reach the renderer.
@@ -48,7 +49,7 @@ export function proxy(request: NextRequest) {
 
   const response = NextResponse.next({ request: { headers: requestHeaders } })
   response.headers.set(headerName, policy)
-  response.headers.set("Reporting-Endpoints", reportingEndpointsHeader())
+  response.headers.set("Reporting-Endpoints", reportingEndpointsHeader(options.reportUri))
   return response
 }
 
