@@ -122,43 +122,92 @@ export function translateFrame(payload: string): NormalisedFrame | null {
   if (t === "tool-output-available") {
     const toolCallId = raw.toolCallId
     if (typeof toolCallId !== "string") return null
-    // `output` is a JSON-stringified `{summary, results?}` object per
-    // `lib/server/chat/sse-emitter.ts`. Parse it back so we can pull
-    // the summary + sources strip results.
-    let summary: string | undefined
-    let results:
-      | Array<{ title?: string; url?: string; snippet?: string }>
-      | undefined
-    if (typeof raw.output === "string") {
-      try {
-        const out = JSON.parse(raw.output) as {
-          summary?: unknown
-          results?: unknown
-        }
-        if (typeof out.summary === "string") summary = out.summary
-        if (Array.isArray(out.results)) {
-          results = out.results.filter(
-            (r): r is { title?: string; url?: string; snippet?: string } =>
-              typeof r === "object" && r !== null,
-          )
-        }
-      } catch {
-        // ignore — summary stays undefined and the pill shows "done"
-      }
-    }
-    // The emitter also sends `errorText` on the AI SDK side when
-    // `isError` was true on the source frame. Surface as summary so
-    // the pill shows it.
-    if (typeof raw.errorText === "string" && !summary) summary = raw.errorText
     return {
       type: "tool_result",
       id: toolCallId,
-      summary,
-      results,
+      ...parseToolOutput(raw.output, raw.errorText),
     }
   }
+  if (t.startsWith("data-")) {
+    return translateDataPart(t, (raw as { data?: unknown }).data)
+  }
+  // `finish` of a turn that read third-party content: the server flags
+  // it so post-turn memory auto-extraction skips the turn.
+  if (
+    t === "finish" &&
+    (raw.messageMetadata as { memoryTainted?: unknown } | undefined)?.memoryTainted === true
+  ) {
+    return { type: "memory_tainted" }
+  }
+  // Lifecycle frames the handler doesn't need to act on.
+  if (
+    t === "start" ||
+    t === "start-step" ||
+    t === "text-start" ||
+    t === "text-end" ||
+    t === "reasoning-start" ||
+    t === "reasoning-end" ||
+    t === "finish-step" ||
+    t === "finish"
+  ) {
+    return null
+  }
+
+  // Unknown frame type — ignore.
+  return null
+}
+
+/** A tool result's `{summary, results}`, from the JSON-stringified
+ *  `output` the emitters send (`lib/server/chat/sse-emitter.ts`; the same
+ *  string a runs `TOOL_CALL_RESULT.content` carries, RUN_EVENTS.md § 3.2).
+ *  `errorText` (a failed tool) stands in for a missing summary. */
+export function parseToolOutput(
+  output: unknown,
+  errorText?: unknown,
+): Pick<NormalisedFrame, "summary" | "results"> {
+  let summary: string | undefined
+  let results:
+    | Array<{ title?: string; url?: string; snippet?: string }>
+    | undefined
+  if (typeof output === "string") {
+    try {
+      const out = JSON.parse(output) as {
+        summary?: unknown
+        results?: unknown
+      }
+      if (typeof out.summary === "string") summary = out.summary
+      if (Array.isArray(out.results)) {
+        results = out.results.filter(
+          (r): r is { title?: string; url?: string; snippet?: string } =>
+            typeof r === "object" && r !== null,
+        )
+      }
+    } catch {
+      // ignore — summary stays undefined and the pill shows "done"
+    }
+  }
+  // The emitter also sends `errorText` on the AI SDK side when
+  // `isError` was true on the source frame. Surface as summary so
+  // the pill shows it.
+  if (typeof errorText === "string" && !summary) summary = errorText
+  return { summary, results }
+}
+
+/**
+ * Translate one AI SDK `data-*` part (`type` the frame type, `data` its
+ * payload) into the internal envelope. The per-kind parsers live here so
+ * chat on runs reuses them: a runs `ACTIVITY_SNAPSHOT.content` is exactly
+ * the `data` object of the frame chat sends today (RUN_EVENTS.md § 3.3,
+ * mapped by `lib/client/runs/reducer.ts`). Null for an unknown type or a
+ * malformed payload.
+ */
+export function translateDataPart(
+  type: string,
+  rawData: unknown,
+): NormalisedFrame | null {
+  const t = type
   if (t === "data-tool-image") {
-    const data = raw.data as
+    const data = rawData as
       | { id?: unknown; mode?: unknown; images?: unknown }
       | undefined
     if (!data || typeof data !== "object") return null
@@ -170,7 +219,7 @@ export function translateFrame(payload: string): NormalisedFrame | null {
     }
   }
   if (t === "data-tool-file") {
-    const data = raw.data as
+    const data = rawData as
       | { id?: unknown; files?: unknown }
       | undefined
     if (!data || typeof data !== "object") return null
@@ -181,7 +230,7 @@ export function translateFrame(payload: string): NormalisedFrame | null {
     }
   }
   if (t === "data-code-result") {
-    const data = raw.data as
+    const data = rawData as
       | { id?: unknown; stdout?: unknown; stderr?: unknown; results?: unknown }
       | undefined
     if (!data || typeof data !== "object") return null
@@ -196,7 +245,7 @@ export function translateFrame(payload: string): NormalisedFrame | null {
     }
   }
   if (t === "data-mcp-app") {
-    const data = raw.data as
+    const data = rawData as
       | {
           id?: unknown
           serverId?: unknown
@@ -225,12 +274,12 @@ export function translateFrame(payload: string): NormalisedFrame | null {
     }
   }
   if (t === "data-routed-model") {
-    const data = raw.data as { model?: unknown } | undefined
+    const data = rawData as { model?: unknown } | undefined
     if (!data || typeof data.model !== "string") return null
     return { type: "routed_model", value: data.model }
   }
   if (t === "data-suggestions") {
-    const data = raw.data as { values?: unknown } | undefined
+    const data = rawData as { values?: unknown } | undefined
     if (!data || !Array.isArray(data.values)) return null
     return {
       type: "suggestions",
@@ -238,9 +287,7 @@ export function translateFrame(payload: string): NormalisedFrame | null {
     }
   }
   if (t === "data-verification") {
-    const verification = parseVerificationFrame(
-      (raw as { data?: unknown }).data
-    )
+    const verification = parseVerificationFrame(rawData)
     if (!verification) return null
     return { type: "verification", verification }
   }
@@ -250,7 +297,7 @@ export function translateFrame(payload: string): NormalisedFrame | null {
     // The send-pipeline re-validates with `parsePersistedUiPart` before
     // appending to `Message.uiParts`, so a malformed in-flight payload
     // is still rejected safely. See `docs/PLAN-generative-ui-parts.md`.
-    const data = raw.data as
+    const data = rawData as
       | { id?: unknown; kind?: unknown; props?: unknown }
       | undefined
     if (!data || typeof data !== "object") return null
@@ -262,28 +309,5 @@ export function translateFrame(payload: string): NormalisedFrame | null {
       props: data.props,
     }
   }
-  // `finish` of a turn that read third-party content: the server flags
-  // it so post-turn memory auto-extraction skips the turn.
-  if (
-    t === "finish" &&
-    (raw.messageMetadata as { memoryTainted?: unknown } | undefined)?.memoryTainted === true
-  ) {
-    return { type: "memory_tainted" }
-  }
-  // Lifecycle frames the handler doesn't need to act on.
-  if (
-    t === "start" ||
-    t === "start-step" ||
-    t === "text-start" ||
-    t === "text-end" ||
-    t === "reasoning-start" ||
-    t === "reasoning-end" ||
-    t === "finish-step" ||
-    t === "finish"
-  ) {
-    return null
-  }
-
-  // Unknown frame type — ignore.
   return null
 }

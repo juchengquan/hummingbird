@@ -38,3 +38,21 @@ describe("resolveRemoteBackend", () => {
     expect(await resolveRemoteBackend()).toBeNull()
   })
 })
+
+describe("resolveRunsTarget", () => {
+  test("null unless the runs option is selected", async () => {
+    const { resolveRunsTarget } = await import("./backend-resolver")
+    for (const backend of ["ts", "python", "ts-service"] as const) {
+      useStore.getState().setChatBackend(backend)
+      expect(await resolveRunsTarget()).toBeNull()
+    }
+  })
+
+  test("null while agent-py's URL is unset, even with runs selected", async () => {
+    const { resolveRunsTarget } = await import("./backend-resolver")
+    useStore.getState().setChatBackend("python-runs")
+    expect(await resolveRunsTarget()).toBeNull()
+    // …and the non-chat dispatch for the option degrades exactly as `python`.
+    expect(await resolveRemoteBackend()).toBeNull()
+  })
+})

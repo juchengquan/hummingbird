@@ -215,6 +215,10 @@ class AgUiRunEncoder:
         # The current step's parent message id (what tool calls attach to).
         self._parent: str | None = None
         self._subagents: list[_OpenSubagent] = []
+        # The step whose STEP_STARTED went out without its STEP_FINISHED:
+        # (seq, stepName). A run cancelled or reaped mid-step ends with it
+        # open; `finish` closes it (AG-UI forbids RUN_FINISHED inside one).
+        self._step: tuple[int, str] | None = None
         self._last_result: ResultEvent | None = None
         self._finished = False
 
@@ -250,6 +254,8 @@ class AgUiRunEncoder:
             self._block = None
             self._parent = None
             self._subagents = [s for s in self._subagents if s.seq <= after]
+            if self._step is not None and self._step[0] > after:
+                self._step = None
             if self._last_result is not None and self._last_result.seq > after:
                 self._last_result = None
             out.append({"type": "CUSTOM", "name": CUSTOM_REWIND, "value": {"after": after}})
@@ -264,6 +270,7 @@ class AgUiRunEncoder:
         if status not in _CLOSING_RUN_STATUSES:
             raise ValueError(f"run {run.id} has not ended (status {status})")
         out = self._close_block()
+        out.extend(self._close_scopes())
         self._finished = True
         usage = self._usage()
         if status == "failed":
@@ -284,6 +291,23 @@ class AgUiRunEncoder:
         if usage:
             closing["usage"] = usage
         out.append(closing)
+        return out
+
+    def _close_scopes(self) -> list[AgUiEvent]:
+        """End what a run cancelled or failed mid-step left open — its
+        sub-agents (innermost first), then its step — so the closing event
+        never lands inside one (the `@ag-ui/client` verifier rejects a
+        RUN_FINISHED while a step or sub-agent is active). A cancel settles
+        the row before the harness writes its `step_end` (RUN_EVENTS.md
+        § 6.4), so a stream can end on the row first."""
+        out: list[AgUiEvent] = [
+            {"type": "SUBAGENT_FINISHED", "subagentRunId": s.subagent_run_id}
+            for s in reversed(self._subagents)
+        ]
+        self._subagents = []
+        if self._step is not None:
+            out.append({"type": "STEP_FINISHED", "stepName": self._step[1]})
+            self._step = None
         return out
 
     # --- blocks ----------------------------------------------------------------
@@ -339,9 +363,14 @@ class AgUiRunEncoder:
     def _entry(self, event: TaskEvent) -> list[AgUiEvent]:
         if isinstance(event, StepStartEvent):
             self._parent = None
-            return [{"type": "STEP_STARTED", "stepName": f"step-{event.step}"}]
+            name = f"step-{event.step}"
+            self._step = (event.seq, name)
+            return [{"type": "STEP_STARTED", "stepName": name}]
         if isinstance(event, StepEndEvent):
-            return [{"type": "STEP_FINISHED", "stepName": f"step-{event.step}"}]
+            name = f"step-{event.step}"
+            if self._step is not None and self._step[1] == name:
+                self._step = None
+            return [{"type": "STEP_FINISHED", "stepName": name}]
         if isinstance(event, ToolInputEvent):
             if self._parent is None:
                 self._parent = self._id(event.seq)

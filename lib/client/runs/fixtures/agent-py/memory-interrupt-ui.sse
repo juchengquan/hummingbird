@@ -1,0 +1,19 @@
+data: {"type":"RUN_STARTED","threadId":"425d714c-5ced-4051-9040-cc1266492649","runId":"4d2d0b99-9de8-49ec-be23-509fc4abe1d4"}
+
+id: 1
+data: {"type":"STEP_STARTED","stepName":"step-1"}
+
+id: 2.0
+data: {"type":"TOOL_CALL_START","toolCallId":"c-ui","toolCallName":"renderUI","parentMessageId":"4d2d0b99-9de8-49ec-be23-509fc4abe1d4:2"}
+
+id: 2.1
+data: {"type":"TOOL_CALL_ARGS","toolCallId":"c-ui","delta":"{\"kind\":\"confirm\",\"props\":{\"title\":\"Sure?\"}}"}
+
+id: 2
+data: {"type":"TOOL_CALL_END","toolCallId":"c-ui"}
+
+id: 3
+data: {"type":"STEP_FINISHED","stepName":"step-1"}
+
+data: {"type":"RUN_FINISHED","threadId":"425d714c-5ced-4051-9040-cc1266492649","runId":"4d2d0b99-9de8-49ec-be23-509fc4abe1d4","outcome":{"type":"interrupt","interrupts":[{"id":"c-ui","reason":"ui-part","responseSchema":{"type":"object","required":["uiAnswer"],"properties":{"uiAnswer":{"type":"object"}}},"toolCallId":"c-ui","metadata":{"hummingbird":{"tool":"renderUI","args":{"kind":"confirm","props":{"title":"Sure?"}},"uiKind":"confirm","uiProps":{"title":"Sure?"}}}}]}}
+

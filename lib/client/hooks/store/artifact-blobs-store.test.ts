@@ -118,8 +118,8 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe("v34 migration — artifact blobs", () => {
-  test("STORE_VERSION is 34", () => {
-    expect(STORE_VERSION).toBe(34)
+  test("STORE_VERSION includes the v34 step", () => {
+    expect(STORE_VERSION).toBeGreaterThanOrEqual(34)
   })
 
   test("an exact duplicate of an inline source item is pointed at the item's key; the rest is left for the offload", () => {

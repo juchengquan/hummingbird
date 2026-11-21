@@ -133,8 +133,9 @@ describe("partializeState — frozen persisted shape", () => {
     // message generated images / files → IndexedDB (`hb-blob:` refs in
     // the persisted copy). v34: an image / file artifact's inline
     // `storagePath` → the same IndexedDB store (shared with its source
-    // item). None of them changed the persisted KEY set.
-    expect(STORE_VERSION).toBe(34)
+    // item). v35: `chatBackend` widened to `'python-runs'` ("agent-py
+    // (runs)"). None of them changed the persisted KEY set.
+    expect(STORE_VERSION).toBe(35)
   })
 
   test("v34: artifact references persist only once IndexedDB confirms; inline values verbatim", () => {

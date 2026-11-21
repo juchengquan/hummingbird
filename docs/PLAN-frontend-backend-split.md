@@ -1,6 +1,6 @@
 # Plan: Frontend / backend split
 
-Status: **Waves 1–2 (Phases 0–1) shipped (#294, #295). Wave 3a shipped (#296). Wave 3b in progress.** Decided in a design interview
+Status: **Waves 1–3 (Phases 0–2) shipped (#294–#297). Wave 4a (Phase 3 foundation) in progress.** Decided in a design interview
 on 2026-11-21. Supersedes the open parts of
 [`PLAN-backend-extraction.md`](PLAN-backend-extraction.md), whose Phase 1
 (single `apiClient` + Zod schemas + `docs/API.md`) shipped and is the
@@ -86,6 +86,15 @@ three times. The goals:
 | Q29 | Rejoin reads the event log: readers in the run's own process get events in memory; readers elsewhere poll the log (~250 ms). Postgres LISTEN/NOTIFY only if polling becomes a problem |
 | Q30 | The run event log is a **replay buffer, not the transcript**: text deltas are stored coalesced (flushed every ~100–250 ms), compacted on finish (Q17), and deleted after a retention window while the run row stays. `messages` remains the durable record of a conversation. Partition `run_events` by time only once volume calls for it |
 | Q31 | **Harness state stays outside the contract.** A harness's own persistence (LangGraph checkpointers, Claude Agent SDK sessions) is stored opaquely, keyed by run/thread — in `checkpoint` jsonb or harness-owned tables in their own schema — and never shapes `runs` or the API, so swapping harnesses touches neither the contract nor the frontend |
+| **Frontend switch (Phase 3)** | |
+| Q32 | Chat moves to `/v1/runs` at parity with today's agent-py `/v1/chat` (which already drops attachments, local MCP, code interpreter, citation checks, reasoning effort, memory opt-out, reference images). Catching up with the Next chat route is a **separate backend track** running alongside, and must finish before Phase 5 |
+| Q33 | A fourth backend option, **"agent-py (runs)"**, beside `ts` / `python` / `ts-service` (store migration v35, off by default). Once stable, "agent-py" means runs and the old `/v1/chat` path goes in Phase 5. The switch stays per browser (localStorage) for now |
+| Q34 | Signed-out users may pick the runs option too (anonymous runs with `runToken`); otherwise they stay on the Next route until Phase 5 |
+| Q35 | On runs, `renderUI` and `askUser` **pause the turn** (interrupt) and the answer resumes it (Q24), using the task strip's answer cards. Typing a new message instead cancels the paused run and starts a new one; mini-forms that pre-filled the composer become answer cards |
+| Q36 | **Stop cancels the run on the server**; after a reload the browser rejoins an in-progress run (active run id saved per conversation, as tasks do). A reload replays the run from the start and folds it onto the saved message, because AG-UI's verifier rejects a stream that starts mid-message; reconnects within a live session resume from the cursor. A closed tab no longer stops the answer. An anonymous run's interrupt expires with its ~15-min memory log (resume then fails `invalid_state`) |
+| Q37 | `@ag-ui/client`'s event checks and state handling with **our own transport** (cursor rejoin, `Last-Event-ID`, `X-Run-Token` — `HttpAgent` can't do these). The AG-UI → store step is a pure function tested against agent-py's recorded run streams |
+| Q38 | The tasks panel moves in a later wave, after chat: it needs background answers as new runs, children via `parentRunId`, and cancel through runs first |
+| Q39 | A small Playwright smoke test (browser → agent-py with the stub harness: send, stop, reload + rejoin, answer an interrupt) ships with the chat switch |
 
 ## Run contract (v1)
 
@@ -140,8 +149,10 @@ has shipped behind the existing per-account backend switch.
    in-memory log for anonymous runs; internal event model + AG-UI
    encoder; harness-adapter interface with today's agent loop as the
    first adapter; background tasks become threads of runs.
-3. **Frontend switches** — `@ag-ui/client` hook for chat behind the
-   per-account switch; then the tasks panel onto threads/runs.
+3. **Frontend switches** — `@ag-ui/client` hook for chat behind a new
+   "agent-py (runs)" backend option (Q33); then the tasks panel onto
+   threads/runs (Q38). In parallel, the backend catches up with the Next
+   chat route's features (Q32).
 4. **Editor AI to the backend** (Q23).
 5. **Removal** — all Next API routes, AI/admin keys from the frontend
    env, the old `/v1/chat`, agent-ts's old routes, the server session;
@@ -159,6 +170,9 @@ has shipped behind the existing per-account backend switch.
 | 2 (Phase 1) | **A** flat `{code, message}` error envelope in agent-py (drop the spec's legacy `{detail}` variant) · **B** sharing (create / revoke / public read; share pages read from the backend when one is configured) · **C** schedules CRUD + an env-gated agent-py scheduler loop (safe alongside the Vercel Cron: same guarded `next_run_at` claim) · **D** embed + memory extract + csp-report | Wave 1 merged |
 | 3a (Phase 2) | one agent, sequential: the runs operations in `packages/contract`; the internal-event → AG-UI mapping; the `tasks` migration (Q27) with every old reader limited to background runs; the Python interfaces 3b codes against (event log, encoder, harness adapter, run repository) | Wave 2 merged |
 | 3b (Phase 2) | **A** AG-UI encoder + stream mechanics (seq in SSE `id:`, replay, `gap` + `MESSAGES_SNAPSHOT`, in-memory log for anonymous runs, compaction) · **B** runs API (start with idempotent client `runId`, status, cancel, list, `runToken`) + conformance cases · **C** harness-adapter interface with today's loop as the first adapter; chat emits internal events | Wave 3a merged |
+| 4a (Phase 3) | one agent: the "agent-py (runs)" option + store migration v35; `@ag-ui/client` / `@ag-ui/core`; `lib/client/runs/` — transport (start, rejoin from a cursor, cancel, run-token storage) and the pure AG-UI → store step tested on recorded streams; the interfaces 4b codes against | Wave 3b merged |
+| 4b (Phase 3) | **A** hook into `use-chat-send` (send, Stop → cancel, reload → rejoin, memory taint, sync hold) · **B** chat answer cards + resume (Q35) · **C** Playwright smoke (Q39) · **D** backend catch-up, first slice: image/document attachments, reasoning effort, generated images/files from the native harness | Wave 4a merged |
+| later | the rest of the backend catch-up (Q32); the tasks panel onto runs (Q38) | — |
 
 Each wave merges into one integration branch and ships as one PR
 against `dev`.
@@ -168,6 +182,7 @@ against `dev`.
 - **Supabase** as the platform (Q3).
 - **Same origin** vs a separate API origin (Q21).
 - **A2A** at the backend edge (Q14).
+- **The backend switch** is per browser (Q33); make it a synced account setting.
 - **MCP 2026-07-28** dropped sessions and SSE resumability — check
   `lib/server/mcp/` and agent-py's MCP client against it.
 

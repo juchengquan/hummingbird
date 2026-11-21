@@ -1,0 +1,40 @@
+data: {"type":"RUN_STARTED","threadId":"6b2bd362-c135-470a-8204-df09e42a2fff","runId":"9a916001-3106-46ea-921e-643842ff99d7"}
+
+id: 1
+data: {"type":"STEP_STARTED","stepName":"step-1"}
+
+id: 2.0
+data: {"type":"TEXT_MESSAGE_START","messageId":"9a916001-3106-46ea-921e-643842ff99d7:2","role":"assistant"}
+
+id: 2
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"9a916001-3106-46ea-921e-643842ff99d7:2","delta":"Looking up, then sending."}
+
+id: 3.0
+data: {"type":"TEXT_MESSAGE_END","messageId":"9a916001-3106-46ea-921e-643842ff99d7:2"}
+
+id: 3.1
+data: {"type":"TOOL_CALL_START","toolCallId":"c1","toolCallName":"lookup","parentMessageId":"9a916001-3106-46ea-921e-643842ff99d7:2"}
+
+id: 3.2
+data: {"type":"TOOL_CALL_ARGS","toolCallId":"c1","delta":"{\"q\":\"x\"}"}
+
+id: 3
+data: {"type":"TOOL_CALL_END","toolCallId":"c1"}
+
+id: 4
+data: {"type":"TOOL_CALL_RESULT","messageId":"9a916001-3106-46ea-921e-643842ff99d7:4","toolCallId":"c1","role":"tool","content":"{\"summary\":\"Looked it up\"}","metadata":{"hummingbird":{"toolName":"lookup"}}}
+
+id: 5.0
+data: {"type":"TOOL_CALL_START","toolCallId":"c2","toolCallName":"send","parentMessageId":"9a916001-3106-46ea-921e-643842ff99d7:2"}
+
+id: 5.1
+data: {"type":"TOOL_CALL_ARGS","toolCallId":"c2","delta":"{\"to\":\"bob\"}"}
+
+id: 5
+data: {"type":"TOOL_CALL_END","toolCallId":"c2"}
+
+id: 6
+data: {"type":"STEP_FINISHED","stepName":"step-1"}
+
+data: {"type":"RUN_FINISHED","threadId":"6b2bd362-c135-470a-8204-df09e42a2fff","runId":"9a916001-3106-46ea-921e-643842ff99d7","outcome":{"type":"interrupt","interrupts":[{"id":"c2","reason":"approval","responseSchema":{"type":"object","required":["approved"],"properties":{"approved":{"type":"boolean"},"args":{}}},"toolCallId":"c2","metadata":{"hummingbird":{"tool":"send","args":{"to":"bob"}}}}]}}
+

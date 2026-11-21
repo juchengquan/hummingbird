@@ -137,6 +137,13 @@ export interface MessagesSlice {
   ) => void
   setMessageError: (messageId: string, error: MessageError) => void
   clearMessageError: (messageId: string) => void
+  /** Clear what a model turn wrote onto an assistant message — content,
+   *  reasoning (+ duration), tool calls, generated images / files, code
+   *  results, UI parts, MCP apps, suggestions, verification, routed model
+   *  and error — keeping its id, role, timestamp and position. The
+   *  `RunSink.clear()` of chat on runs (`lib/client/runs/session.ts`): a
+   *  rejoin or a log gap rebuilds the message from the run's replay. */
+  clearMessageOutput: (messageId: string) => void
 }
 
 export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
@@ -389,6 +396,29 @@ export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
     ),
   setMessageError: (messageId, error) =>
     set((state) => updateMessage(state, messageId, (m) => ({ ...m, error }))),
+  clearMessageOutput: (messageId) =>
+    set((state) =>
+      updateMessage(state, messageId, (m) => {
+        const {
+          reasoning: _reasoning,
+          reasoningDurationMs: _duration,
+          toolCalls: _toolCalls,
+          generatedImages: _images,
+          generatedFiles: _files,
+          codeResults: _code,
+          uiParts: _ui,
+          mcpApps: _mcp,
+          suggestions: _suggestions,
+          verification: _verification,
+          routedModel: _routed,
+          error: _error,
+          ...rest
+        } = m
+        void [_reasoning, _duration, _toolCalls, _images, _files, _code, _ui, _mcp]
+        void [_suggestions, _verification, _routed, _error]
+        return { ...rest, content: "" }
+      })
+    ),
   clearMessageError: (messageId) =>
     set((state) =>
       updateMessage(state, messageId, (m) => {

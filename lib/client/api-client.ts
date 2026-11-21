@@ -63,6 +63,14 @@ import { isAuthRequiredError } from "@/shared/api-errors"
 import { resolveBackendBaseUrl } from "@/shared/backend-base-url"
 
 import { narrowToRemoteBody } from "@/client/api/chat-marshalling"
+import {
+  cancelRun,
+  getRun,
+  rejoinRun,
+  resumeRun,
+  startRun,
+} from "@/client/runs/transport"
+import type { ChatBackend } from "@/client/hooks/store/slices/ui"
 import { notifyAuthRequired } from "@/client/auth/auth-required"
 
 /** Optional remote-backend dispatch context — used by non-chat
@@ -72,9 +80,18 @@ import { notifyAuthRequired } from "@/client/auth/auth-required"
  *  default-auto branch via `resolveRemoteBackend()` (separate file
  *  so api-client.ts can stay Zustand-free in unit tests). */
 export interface RemoteDispatch {
-  backend: "python" | "ts-service"
+  backend: Exclude<ChatBackendOption, "ts">
   baseUrl: string
   authToken: string
+}
+
+/** Whether a backend choice is served by agent-py: `'python'` and
+ *  `'python-runs'` ("agent-py (runs)", Q33) differ only in how a chat
+ *  turn is sent — every other call dispatches identically. */
+export function isAgentPyBackend(
+  backend: ChatBackendOption | null | undefined,
+): backend is "python" | "python-runs" {
+  return backend === "python" || backend === "python-runs"
 }
 
 /** Per-call dispatch options for non-chat endpoints. Three states:
@@ -146,7 +163,7 @@ async function agentPyOnlyDispatch(
   option: DispatchOption | undefined,
 ): Promise<DispatchOption> {
   const remote = await resolveDispatch(option)
-  return remote?.backend === "python"
+  return isAgentPyBackend(remote?.backend)
     ? { dispatch: "remote", remote }
     : { dispatch: "in-next" }
 }
@@ -389,7 +406,8 @@ export interface ChatStreamResult {
   error?: { code?: string; message?: string }
 }
 
-export type ChatBackendOption = "ts" | "python" | "ts-service"
+/** The persisted backend choice (`chatBackend` on the UI slice). */
+export type ChatBackendOption = ChatBackend
 
 export interface ChatStreamOptions {
   signal?: AbortSignal
@@ -398,7 +416,9 @@ export interface ChatStreamOptions {
    *  reachable `NEXT_PUBLIC_AGENT_PY_URL` AND an `authToken`.
    *  `'ts-service'` calls the agent-ts service's `/v1/chat`;
    *  requires `NEXT_PUBLIC_AGENT_TS_URL` AND an `authToken`. Any
-   *  prerequisite missing → silently falls through to the TS route. */
+   *  prerequisite missing → silently falls through to the TS route.
+   *  `'python-runs'` is sent exactly as `'python'` here: chat on runs
+   *  goes through `apiClient.runs.*` instead (wave 4b-A), never this. */
   backend?: ChatBackendOption
   /** Supabase session JWT, required when `backend === 'python'` or
    *  `backend === 'ts-service'`. Caller resolves via
@@ -430,7 +450,7 @@ async function chatStream(
   const hasToken = typeof token === "string" && token.length > 0
 
   if (
-    options?.backend === "python" &&
+    isAgentPyBackend(options?.backend) &&
     isAgentPyConfigured() &&
     hasToken
   ) {
@@ -1328,6 +1348,18 @@ async function extractTable(
 export const apiClient = {
   urls: apiUrls,
   chat: { stream: chatStream },
+  /** agent-py's runs API (`/v1/runs`) — chat on runs, "agent-py (runs)"
+   *  (Q33). Transport in `lib/client/runs/transport.ts`; sessions that
+   *  drive it through `@ag-ui/client` into the store are in
+   *  `lib/client/runs/session.ts` (see `lib/client/runs/README.md`).
+   *  Unlike the rest of `apiClient`, these throw `RunsError`. */
+  runs: {
+    start: startRun,
+    rejoin: rejoinRun,
+    status: getRun,
+    cancel: cancelRun,
+    resume: resumeRun,
+  },
   tasks: {
     start: tasksStart,
     resume: tasksResume,

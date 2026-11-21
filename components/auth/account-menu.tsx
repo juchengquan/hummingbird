@@ -23,6 +23,7 @@ import { cn } from "@/shared/utils"
 import { clearAll, estimateUsage } from "@/client/files/local-store"
 import { formatFileSize } from "@/client/file-utils"
 import { isAgentPyConfigured, isAgentTsConfigured } from "@/client/api-client"
+import { RUNS_CHAT_ENABLED } from "@/client/runs/config"
 
 /**
  * Sidebar footer auth + local-mode surface.
@@ -134,6 +135,29 @@ export function AccountMenu() {
     </Button>
   )
 
+  // Signed-out / no-Supabase users may chat on runs too (anonymous
+  // runs, Q34) — the only remote choice they get, since `python` and
+  // `ts-service` need a session. Hidden until chat is wired onto runs.
+  const runsToggleSignedOut =
+    RUNS_CHAT_ENABLED && agentPyAvailable && !collapsed ? (
+      <ToggleRow
+        icon={Bot}
+        label="agent-py (runs)"
+        description={
+          chatBackend === "python-runs"
+            ? "Chat turns run on the agent-py runs API (experimental)"
+            : "Chat turns use the Next.js route (default)"
+        }
+        checked={chatBackend === "python-runs"}
+        onCheckedChange={(v) => setChatBackend(v ? "python-runs" : "ts")}
+        ariaLabel={
+          chatBackend === "python-runs"
+            ? "Switch back to the Next.js chat backend"
+            : "Switch to the agent-py (runs) chat backend"
+        }
+      />
+    ) : null
+
   if (status === "unconfigured") {
     // No Supabase configured at runtime — show a static badge so users know
     // their data isn't being synced anywhere.
@@ -147,6 +171,7 @@ export function AccountMenu() {
           {!collapsed && <span>Local only</span>}
         </div>
         {customInstructionsButton}
+        {runsToggleSignedOut}
         <CustomInstructionsDialog open={ciOpen} onClose={() => setCiOpen(false)} />
       </>
     )
@@ -166,6 +191,7 @@ export function AccountMenu() {
           {!collapsed && <span>Sign in</span>}
         </Button>
         {customInstructionsButton}
+        {runsToggleSignedOut}
         <AuthDialog open={dialogOpen} onOpenChange={setDialogOpen} />
         <CustomInstructionsDialog open={ciOpen} onClose={() => setCiOpen(false)} />
       </>
@@ -331,6 +357,7 @@ export function AccountMenu() {
             onChange={setChatBackend}
             agentPyAvailable={agentPyAvailable}
             agentTsAvailable={agentTsAvailable}
+            runsAvailable={RUNS_CHAT_ENABLED && agentPyAvailable}
           />
         )}
         <div className="border-t my-1" />
@@ -560,25 +587,29 @@ function ToggleRow({
 }
 
 /**
- * Chat-backend picker. Surfaces a 3-way segmented control when both
- * remote services are configured, or a one-row Switch when only one
- * is. The in-Next TS route is always available as the default and
- * shows up under "Next.js".
+ * Chat-backend picker. Surfaces a segmented control when both remote
+ * services are configured (or agent-py plus its "agent-py (runs)"
+ * option, `RUNS_CHAT_ENABLED`), or a one-row Switch when only one is.
+ * The in-Next TS route is always available as the default and shows up
+ * under "Next.js".
  */
 function ChatBackendSelector({
   value,
   onChange,
   agentPyAvailable,
   agentTsAvailable,
+  runsAvailable,
 }: {
   value: ChatBackend
   onChange: (next: ChatBackend) => void
   agentPyAvailable: boolean
   agentTsAvailable: boolean
+  /** "agent-py (runs)" (Q33) — `RUNS_CHAT_ENABLED` and agent-py configured. */
+  runsAvailable: boolean
 }) {
   // When only Python is configured, keep the existing single-Switch
   // shape so the simple deploy stays visually unchanged.
-  if (agentPyAvailable && !agentTsAvailable) {
+  if (agentPyAvailable && !agentTsAvailable && !runsAvailable) {
     return (
       <ToggleRow
         icon={Bot}
@@ -619,7 +650,20 @@ function ChatBackendSelector({
       />
     )
   }
-  // Both remote services configured → segmented picker.
+  // Both remote services configured (or agent-py with its runs option)
+  // → segmented picker.
+  const options: ReadonlyArray<{ id: ChatBackend; label: string; desc: string }> = [
+    { id: "ts", label: "Next.js", desc: "in-process (default)" },
+    ...(agentTsAvailable
+      ? [{ id: "ts-service" as const, label: "TS service", desc: "agent-ts" }]
+      : []),
+    ...(agentPyAvailable
+      ? [{ id: "python" as const, label: "Python", desc: "agent-py" }]
+      : []),
+    ...(runsAvailable
+      ? [{ id: "python-runs" as const, label: "Runs", desc: "agent-py (runs)" }]
+      : []),
+  ]
   return (
     <div
       className={cn(
@@ -636,13 +680,7 @@ function ChatBackendSelector({
         aria-label="Choose which chat backend handles your chat turns"
         className="flex gap-0.5 mt-1 rounded-md border border-[var(--border)] p-0.5"
       >
-        {(
-          [
-            { id: "ts", label: "Next.js", desc: "in-process (default)" },
-            { id: "ts-service", label: "TS service", desc: "agent-ts" },
-            { id: "python", label: "Python", desc: "agent-py" },
-          ] as const
-        ).map((opt) => (
+        {options.map((opt) => (
           <button
             key={opt.id}
             role="radio"

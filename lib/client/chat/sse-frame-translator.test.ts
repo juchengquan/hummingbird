@@ -6,7 +6,7 @@
 
 import { describe, expect, test } from "bun:test"
 
-import { translateFrame } from "./sse-frame-translator"
+import { parseToolOutput, translateDataPart, translateFrame } from "./sse-frame-translator"
 
 describe("translateFrame — AI SDK v5 → normalised shape", () => {
   test("text-delta → text/value", () => {
@@ -346,5 +346,36 @@ describe("translateFrame — lifecycle + edge cases", () => {
       }),
     )
     expect(out?.truncated).toBeUndefined()
+  })
+})
+
+describe("translateDataPart / parseToolOutput — shared with chat on runs", () => {
+  test("a data part translates the same as the full frame", () => {
+    const data = { id: "c1", mode: "t2i", images: [{ id: "i1" }] }
+    expect(translateDataPart("data-tool-image", data)).toEqual(
+      translateFrame(JSON.stringify({ type: "data-tool-image", data })),
+    )
+    expect(translateDataPart("data-suggestions", { values: ["a", 1, "b"] })).toEqual({
+      type: "suggestions",
+      values: ["a", "b"],
+    })
+    expect(translateDataPart("data-routed-model", { model: "m" })).toEqual({
+      type: "routed_model",
+      value: "m",
+    })
+  })
+
+  test("unknown types and malformed payloads are null", () => {
+    expect(translateDataPart("data-nope", {})).toBeNull()
+    expect(translateDataPart("data-ui", { id: 1 })).toBeNull()
+    expect(translateDataPart("data-suggestions", undefined)).toBeNull()
+  })
+
+  test("parseToolOutput reads {summary, results} and falls back to errorText", () => {
+    expect(
+      parseToolOutput(JSON.stringify({ summary: "2 results", results: [{ title: "t" }, 3] })),
+    ).toEqual({ summary: "2 results", results: [{ title: "t" }] })
+    expect(parseToolOutput("not json", "boom")).toEqual({ summary: "boom", results: undefined })
+    expect(parseToolOutput(undefined)).toEqual({ summary: undefined, results: undefined })
   })
 })

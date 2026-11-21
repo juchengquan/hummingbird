@@ -79,6 +79,11 @@ class Gate:
             await asyncio.sleep(0.02)
 
 
+class Boom:
+    """In a `Turn`'s events: the model stream raises here (a provider
+    failure mid-answer)."""
+
+
 def text(t: str) -> SimpleNamespace:
     return SimpleNamespace(
         type="content_block_delta", delta=SimpleNamespace(type="text_delta", text=t)
@@ -119,6 +124,8 @@ class _Stream:
         for e in self._turn.events:
             if isinstance(e, Gate):
                 await e.wait()
+            elif isinstance(e, Boom):
+                raise RuntimeError("model stream broke")
             else:
                 yield e
         yield SimpleNamespace(type="message_delta", usage=SimpleNamespace(output_tokens=7))
@@ -780,6 +787,80 @@ def test_anonymous_run_with_a_run_token(serve: Callable[..., Env]) -> None:
         assert retry.status_code == 200 and retry.headers["x-run-token"] == token
         assert parse_sse(retry.text) == frames
     assert len(env.model.requests) == 1
+
+
+def test_ask_user_choice_interrupt_then_answer(serve: Callable[..., Env]) -> None:
+    env = serve(
+        Turn(
+            [text("Let me ask.")],
+            tools=[
+                tool_use(
+                    "c-ask",
+                    "askUser",
+                    prompt="Which one?",
+                    options=[{"id": "a", "label": "A"}, {"id": "b", "label": "B"}],
+                )
+            ],
+        ),
+        Turn([text("You picked A.")]),
+    )
+    headers = env.auth()
+    first = start_body([user_msg("pick one for me")], model=MODEL)
+    with env.http() as http:
+        r = http.post("/v1/runs", json=first, headers=headers)
+        assert r.status_code == 200, r.text
+        env.save("interrupt-choice", r.text)
+        frames = parse_sse(r.text)
+        check_ids(frames)
+        [interrupt] = frames[-1][1]["outcome"]["interrupts"]
+        assert interrupt["reason"] == "choice" and interrupt["id"] == "c-ask"
+        assert interrupt["message"] == "Which one?"
+        resume = {
+            "threadId": first["threadId"],
+            "runId": str(uuid.uuid4()),
+            "messages": [user_msg("pick one for me")],
+            "forwardedProps": {"model": MODEL, "previousRunId": first["runId"]},
+            "resume": [
+                {"interruptId": "c-ask", "status": "resolved", "payload": {"selection": ["a"]}}
+            ],
+        }
+        r2 = http.post("/v1/runs", json=resume, headers=headers)
+        assert r2.status_code == 200, r2.text
+        env.save("resume-choice", r2.text)
+        resumed = parse_sse(r2.text)
+        check_ids(resumed)
+        assert resumed[-1][1]["outcome"] == {"type": "success"}
+        assert [f[1]["toolCallId"] for f in resumed if f[1]["type"] == "TOOL_CALL_RESULT"] == [
+            "c-ask"
+        ]
+
+
+def test_render_ui_interrupt(serve: Callable[..., Env]) -> None:
+    env = serve(
+        Turn([], tools=[tool_use("c-ui", "renderUI", kind="confirm", props={"title": "Sure?"})])
+    )
+    with env.http() as http:
+        r = http.post("/v1/runs", json=start_body([user_msg("ask me")], model=MODEL))
+        assert r.status_code == 200, r.text
+        env.save("interrupt-ui", r.text)
+        frames = parse_sse(r.text)
+        check_ids(frames)
+        [interrupt] = frames[-1][1]["outcome"]["interrupts"]
+        assert interrupt["reason"] == "ui-part"
+        assert interrupt["metadata"]["hummingbird"]["uiKind"] == "confirm"
+
+
+def test_model_failure_ends_the_stream_with_run_error(serve: Callable[..., Env]) -> None:
+    env = serve(Turn([text("partial "), Boom()]))
+    with env.http() as http:
+        r = http.post("/v1/runs", json=start_body([user_msg("go")], model=MODEL))
+        assert r.status_code == 200, r.text
+        env.save("error", r.text)
+        frames = parse_sse(r.text)
+        check_ids(frames)
+        closing = frames[-1][1]
+        assert closing["type"] == "RUN_ERROR"
+        assert closing["code"] and closing["message"]
 
 
 def test_unknown_model_is_400_without_a_run(serve: Callable[..., Env]) -> None:

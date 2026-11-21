@@ -1,0 +1,61 @@
+data: {"type":"RUN_STARTED","threadId":"11111111-2222-4333-8444-555555555555","runId":"8a6e0804-0000-4000-8000-00000000f907"}
+
+id: 1
+data: {"type":"ACTIVITY_SNAPSHOT","messageId":"8a6e0804-0000-4000-8000-00000000f907:routed_model","activityType":"hummingbird.routed_model","content":{"model":"anthropic/claude-sonnet-4.6"},"replace":true}
+
+id: 2
+data: {"type":"STEP_STARTED","stepName":"step-1"}
+
+id: 3.0
+data: {"type":"REASONING_START","messageId":"8a6e0804-0000-4000-8000-00000000f907:3"}
+
+id: 3.1
+data: {"type":"REASONING_MESSAGE_START","messageId":"8a6e0804-0000-4000-8000-00000000f907:3","role":"reasoning"}
+
+id: 3
+data: {"type":"REASONING_MESSAGE_CONTENT","messageId":"8a6e0804-0000-4000-8000-00000000f907:3","delta":"Look it "}
+
+id: 4
+data: {"type":"REASONING_MESSAGE_CONTENT","messageId":"8a6e0804-0000-4000-8000-00000000f907:3","delta":"up."}
+
+id: 5.0
+data: {"type":"REASONING_MESSAGE_END","messageId":"8a6e0804-0000-4000-8000-00000000f907:3"}
+
+id: 5.1
+data: {"type":"REASONING_END","messageId":"8a6e0804-0000-4000-8000-00000000f907:3"}
+
+id: 5.2
+data: {"type":"TOOL_CALL_START","toolCallId":"tc1","toolCallName":"webSearch","parentMessageId":"8a6e0804-0000-4000-8000-00000000f907:5"}
+
+id: 5.3
+data: {"type":"TOOL_CALL_ARGS","toolCallId":"tc1","delta":"{\"query\":\"sky colour\"}"}
+
+id: 5
+data: {"type":"TOOL_CALL_END","toolCallId":"tc1"}
+
+id: 6
+data: {"type":"TOOL_CALL_RESULT","messageId":"8a6e0804-0000-4000-8000-00000000f907:6","toolCallId":"tc1","role":"tool","content":"{\"summary\":\"1 result\",\"results\":[{\"title\":\"Sky\",\"url\":\"https://sky.example\",\"snippet\":\"It is blue.\"}]}","metadata":{"hummingbird":{"toolName":"webSearch"}}}
+
+id: 7
+data: {"type":"STEP_FINISHED","stepName":"step-1"}
+
+id: 8
+data: {"type":"STEP_STARTED","stepName":"step-2"}
+
+id: 9.0
+data: {"type":"TEXT_MESSAGE_START","messageId":"8a6e0804-0000-4000-8000-00000000f907:9","role":"assistant"}
+
+id: 9
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"8a6e0804-0000-4000-8000-00000000f907:9","delta":"It is "}
+
+id: 10
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"8a6e0804-0000-4000-8000-00000000f907:9","delta":"blue."}
+
+id: 11.0
+data: {"type":"TEXT_MESSAGE_END","messageId":"8a6e0804-0000-4000-8000-00000000f907:9"}
+
+id: 11
+data: {"type":"STEP_FINISHED","stepName":"step-2"}
+
+data: {"type":"RUN_FINISHED","threadId":"11111111-2222-4333-8444-555555555555","runId":"8a6e0804-0000-4000-8000-00000000f907","outcome":{"type":"success"},"result":{"text":"It is blue.","memoryTainted":true}}
+

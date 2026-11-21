@@ -15,23 +15,48 @@ import "client-only"
  * when any prerequisite (configured base URL / signed-in Supabase
  * session) is missing — callers fall through to the in-Next route
  * on null so misconfigured deploys degrade safely.
+ *
+ * `'python-runs'` ("agent-py (runs)", Q33) resolves exactly like
+ * `'python'` here — the non-chat endpoints don't know about runs.
+ * Chat on runs resolves through `resolveRunsTarget()` instead, which
+ * also answers for signed-out users (anonymous runs, Q34).
  */
 
 import {
   AGENT_PY_BASE_URL,
   AGENT_TS_BASE_URL,
+  isAgentPyBackend,
   isAgentPyConfigured,
   isAgentTsConfigured,
   type ChatBackendOption,
 } from "@/client/api-client"
 import { useStore } from "@/client/hooks/use-store"
+import type { RunsTarget } from "@/client/runs/types"
 
 export interface RemoteBackendContext {
-  /** `'python'` → agent-py, `'ts-service'` → agent-ts. Never `'ts'`. */
+  /** `'python'` / `'python-runs'` → agent-py, `'ts-service'` → agent-ts. Never `'ts'`. */
   backend: Exclude<ChatBackendOption, "ts">
   /** `""` when the backend is served on the page's own origin. */
   baseUrl: string
   authToken: string
+}
+
+/** The signed-in Supabase session's access token, or `null` (signed
+ *  out, Supabase unconfigured, or the lookup failed). */
+async function sessionAccessToken(): Promise<
+  { ok: true; token: string | null } | { ok: false }
+> {
+  try {
+    const { getSupabaseBrowserClient } = await import(
+      "@/client/supabase/client"
+    )
+    const supa = getSupabaseBrowserClient()
+    if (!supa) return { ok: true, token: null }
+    const { data } = await supa.auth.getSession()
+    return { ok: true, token: data.session?.access_token ?? null }
+  } catch {
+    return { ok: false }
+  }
 }
 
 /** Read the current backend choice from the store and, if it points
@@ -45,29 +70,34 @@ export async function resolveRemoteBackend(): Promise<RemoteBackendContext | nul
 
   // `""` is a valid base URL (same origin, `NEXT_PUBLIC_AGENT_*_URL=/`),
   // so gate on "configured", not on the prefix being non-empty.
-  const configured =
-    backend === "python" ? isAgentPyConfigured() : isAgentTsConfigured()
+  const agentPy = isAgentPyBackend(backend)
+  const configured = agentPy ? isAgentPyConfigured() : isAgentTsConfigured()
   if (!configured) return null
-  const baseUrl =
-    backend === "python" ? AGENT_PY_BASE_URL : AGENT_TS_BASE_URL
+  const baseUrl = agentPy ? AGENT_PY_BASE_URL : AGENT_TS_BASE_URL
 
-  let authToken: string | null = null
-  try {
-    const { getSupabaseBrowserClient } = await import(
-      "@/client/supabase/client"
-    )
-    const supa = getSupabaseBrowserClient()
-    if (supa) {
-      const { data } = await supa.auth.getSession()
-      authToken = data.session?.access_token ?? null
-    }
-  } catch {
-    // Supabase unconfigured or session lookup failed — fall through
-    // to the in-Next route as a defensive default. Mirrors the chat
-    // pipeline's behaviour.
-    return null
+  // Supabase unconfigured or session lookup failed — fall through
+  // to the in-Next route as a defensive default. Mirrors the chat
+  // pipeline's behaviour.
+  const session = await sessionAccessToken()
+  if (!session.ok || !session.token) return null
+  return { backend, baseUrl, authToken: session.token }
+}
+
+/**
+ * Where a chat turn on runs goes, or `null` when the user did not pick
+ * "agent-py (runs)" or agent-py isn't configured (the caller then
+ * keeps today's path). Unlike `resolveRemoteBackend`, a signed-out
+ * user still gets a target — `authToken: null`, an anonymous run
+ * addressed by its `X-Run-Token` (Q20/Q34) — and so does a failed
+ * session lookup (the run is then anonymous; the backend decides
+ * whether that's allowed, `401 auth_required`).
+ */
+export async function resolveRunsTarget(): Promise<RunsTarget | null> {
+  if (useStore.getState().chatBackend !== "python-runs") return null
+  if (!isAgentPyConfigured()) return null
+  const session = await sessionAccessToken()
+  return {
+    baseUrl: AGENT_PY_BASE_URL,
+    authToken: session.ok ? session.token : null,
   }
-
-  if (!authToken) return null
-  return { backend, baseUrl, authToken }
 }

@@ -29,6 +29,7 @@ docker compose up proxy agent-py      # + Caddy on :8080, same origin (NEXT_PUBL
 bun run codegen:agent-types           # regen lib/shared/agent-py-types.generated.ts
 bun run codegen:agent-types:check     # CI mode — fail if drifted
 bun run check:agent-py                # ruff check + ruff format --check + mypy + pytest (mirrors the agent-py CI job)
+bun run fixtures:runs                 # re-record agent-py run streams for lib/client/runs tests (after changing runs output)
 
 # Frontend↔backend contract (spec-first, docs/PLAN-frontend-backend-split.md)
 bun run contract:gen                  # packages/contract/openapi.yaml → TS types + agent-py Pydantic models
