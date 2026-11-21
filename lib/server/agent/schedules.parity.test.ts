@@ -117,8 +117,11 @@ const DST_ZONES: { tz: string; transitions: string[] }[] = [
   { tz: "Australia/Lord_Howe", transitions: ["2026-10-03T15:30:00Z"] },
   { tz: "America/Santiago", transitions: ["2026-04-05T03:00:00Z", "2026-09-06T04:00:00Z"] },
   { tz: "Pacific/Chatham", transitions: ["2026-04-04T14:00:00Z", "2026-09-26T14:00:00Z"] },
-  { tz: "America/Havana", transitions: ["2026-03-08T05:00:00Z", "2026-11-01T05:00:00Z"] },
-  { tz: "Asia/Gaza", transitions: ["2026-03-27T22:00:00Z", "2026-10-23T22:00:00Z"] },
+  // Not here: zones whose *future* rules change in almost every tzdata
+  // release (America/Havana, Asia/Gaza). The fixture is computed once and
+  // compared on other machines — CI's tz database disagreed with the
+  // generating machine's on Havana's Nov-2026 transition. This test pins the
+  // TS ⇄ Python ports to each other, not one machine's tz database.
 ]
 
 const DST_CRONS = [
