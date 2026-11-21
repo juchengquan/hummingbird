@@ -89,7 +89,8 @@ class CreateDocumentShareRequest(BaseModel):
 
 
 type CreateShareRequest = Annotated[
-    CreateConversationShareRequest | CreateDocumentShareRequest, Field(discriminator="kind")
+    CreateConversationShareRequest | CreateDocumentShareRequest,
+    Field(discriminator="kind"),
 ]
 """
 A conversation share names `conversationId`; a document share names

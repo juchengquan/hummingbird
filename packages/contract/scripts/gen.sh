@@ -97,8 +97,18 @@ case "${MODE}" in
     echo "→ contract outputs are up to date with ${SPEC}." >&2
     ;;
   write | "")
-    generate_into "${ROOT}"
-    for f in "${OUTPUTS[@]}"; do echo "→ Wrote ${f}" >&2; done
+    # Generate outside the repo and copy in, exactly like --check does.
+    # datamodel-codegen's own ruff pass picks its config from the output
+    # path, so generating in place (agent-py's line-length 100) and in a
+    # temp dir (ruff's default 88, which leaves magic trailing commas the
+    # final format keeps) can differ — and then --check reports drift.
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "${tmp}"' EXIT
+    generate_into "${tmp}"
+    for f in "${OUTPUTS[@]}"; do
+      cp "${tmp}/${f}" "${f}"
+      echo "→ Wrote ${f}" >&2
+    done
     ;;
   *)
     echo "usage: $0 [--check]" >&2
