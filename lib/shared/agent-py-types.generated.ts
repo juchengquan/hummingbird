@@ -403,6 +403,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/share": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Share
+         * @description Mint a share token for one of the caller's conversations or
+         *     documents. Same answers as the Next.js route:
+         *
+         *     - the target is missing or not the caller's → 404 `not_found`
+         *       ("Conversation not found" / "Document not found");
+         *     - the insert failed → 500 `unknown` (the DB message is logged, not
+         *       echoed);
+         *     - no DB configured → 503 `unavailable`.
+         */
+        post: operations["create_share_v1_share_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/share/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Share
+         * @description **Public — no auth.** What the read-only share pages render.
+         *
+         *     Every reason a token can't be shown — unknown, revoked, target gone
+         *     or not owned by the share's creator, no database configured, a read
+         *     error — is the same 404 `not_found`, so the answer leaks nothing
+         *     beyond "this token resolves". (The Next.js share pages likewise call
+         *     `notFound()` for all of them, including a missing service-role key.)
+         *     Rate limited per client IP.
+         */
+        get: operations["get_share_v1_share__token__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Revoke Share
+         * @description Revoke the caller's share. RLS (plus an explicit owner filter)
+         *     limits the update to the caller's rows, so another user's token
+         *     matches nothing and answers the same 404 as an unknown one.
+         */
+        delete: operations["revoke_share_v1_share__token__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -583,6 +643,38 @@ export interface components {
             messages: components["schemas"]["SummariseMessage"][];
             /** Model */
             model?: string | null;
+        };
+        /** CreateConversationShareRequest */
+        CreateConversationShareRequest: {
+            /**
+             * Kind
+             * @constant
+             */
+            kind: "conversation";
+            /**
+             * Conversationid
+             * Format: uuid
+             */
+            conversationId: string;
+        };
+        /** CreateDocumentShareRequest */
+        CreateDocumentShareRequest: {
+            /**
+             * Kind
+             * @constant
+             */
+            kind: "document";
+            /**
+             * Documentid
+             * Format: uuid
+             */
+            documentId: string;
+        };
+        /** CreateShareResponse */
+        CreateShareResponse: {
+            /** Token */
+            token: string;
+            kind: components["schemas"]["ShareKind"];
         };
         /** ExtractTableColumnHint */
         ExtractTableColumnHint: {
@@ -813,6 +905,66 @@ export interface components {
         RefreshImageUrlResponse: {
             /** Url */
             url: string;
+        };
+        /** ResolvedConversationShare */
+        ResolvedConversationShare: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "conversation";
+            /** Conversationtitle */
+            conversationTitle: string;
+            /** Messages */
+            messages: components["schemas"]["SharedMessage"][];
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+        };
+        /** ResolvedDocumentShare */
+        ResolvedDocumentShare: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "document";
+            /** Documenttitle */
+            documentTitle: string;
+            /** Documentcontent */
+            documentContent: string;
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+        };
+        /** RevokeShareResponse */
+        RevokeShareResponse: {
+            /**
+             * Ok
+             * @constant
+             */
+            ok: true;
+        };
+        /** @enum {string} */
+        ShareKind: "conversation" | "document";
+        /** SharedMessage */
+        SharedMessage: {
+            /** Id */
+            id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+            /** Content */
+            content: string;
+            /** Reasoning */
+            reasoning?: string | null;
+            /** Position */
+            position: number;
         };
         /** SummariseMessage */
         SummariseMessage: {
@@ -1248,6 +1400,107 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_share_v1_share_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateConversationShareRequest"] | components["schemas"]["CreateDocumentShareRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateShareResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_share_v1_share__token__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The opaque share token. */
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResolvedConversationShare"] | components["schemas"]["ResolvedDocumentShare"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_share_v1_share__token__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                /** @description The opaque share token. */
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RevokeShareResponse"];
                 };
             };
             /** @description Validation Error */
