@@ -9,6 +9,14 @@ import "server-only"
  *
  * `appendEvent` is idempotent on `(task_id, seq)` so a retried emit
  * (or an overlapping replay) is a no-op rather than a duplicate.
+ *
+ * Background runs only. Since migration 0041 a `tasks` row is also an
+ * interactive run of the runs API (`mode = 'interactive'`, executed in
+ * agent-py's API process, never queued — PLAN-frontend-backend-split
+ * Q27/Q28). The task routes built on this module must behave exactly as
+ * before, so every read and update here is scoped to `BACKGROUND`: an
+ * interactive run is invisible to them (404 from the routes, never
+ * reconciled, never listed as a child, never cancelled by a cascade).
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js"
@@ -20,6 +28,9 @@ import { rowsToTaskEvents, taskEventToRow } from "@/shared/agent/persistence"
 
 type DB = SupabaseClient<Database>
 export type TaskRow = Database["public"]["Tables"]["tasks"]["Row"]
+
+/** The only `tasks.mode` the task routes see (migration 0041). */
+const BACKGROUND = "background"
 
 export interface CreateRunInput {
   id: string
@@ -33,6 +44,8 @@ export async function createRun(db: DB, input: CreateRunInput): Promise<void> {
   const { error } = await db.from("tasks").insert({
     id: input.id,
     user_id: input.userId,
+    mode: BACKGROUND,
+    thread_id: input.conversationId,
     conversation_id: input.conversationId,
     goal: input.goal,
     status: "queued",
@@ -53,6 +66,7 @@ export async function getRun(
     .select("*")
     .eq("id", runId)
     .eq("user_id", userId)
+    .eq("mode", BACKGROUND)
     .maybeSingle()
   if (error) throw new Error(`getRun: ${error.message}`)
   return data ?? null
@@ -84,6 +98,7 @@ export async function updateRun(
     .update(row)
     .eq("id", runId)
     .eq("user_id", userId)
+    .eq("mode", BACKGROUND)
   if (error) throw new Error(`updateRun: ${error.message}`)
 }
 
@@ -142,6 +157,7 @@ export async function saveCheckpoint(
     })
     .eq("id", runId)
     .eq("user_id", userId)
+    .eq("mode", BACKGROUND)
   if (error) throw new Error(`saveCheckpoint: ${error.message}`)
 }
 
@@ -192,6 +208,7 @@ export async function appendSyntheticResult(
     .update({ status: opts.status, finished_at: nowIso, updated_at: nowIso })
     .eq("id", runId)
     .eq("user_id", userId)
+    .eq("mode", BACKGROUND)
     .in("status", [...SETTLEABLE_STATUSES])
     .select("id")
   if (error) throw new Error(`appendSyntheticResult: ${error.message}`)
@@ -250,9 +267,12 @@ export async function listTaskChildren(
     .select("id, status, goal")
     .eq("parent_task_id", parentId)
     .eq("user_id", userId)
+    .eq("mode", BACKGROUND)
     .order("created_at", { ascending: true })
   if (error) throw new Error(`listTaskChildren: ${error.message}`)
-  return data ?? []
+  // `goal` is NOT NULL on background rows (0041's tasks_run_shape_check);
+  // the column type is nullable only because interactive runs have none.
+  return (data ?? []).map((c) => ({ ...c, goal: c.goal ?? "" }))
 }
 
 /** Cancel all not-yet-settled children of a cancelled parent task. */
@@ -266,6 +286,7 @@ export async function cancelChildTasks(
     .update({ status: "cancelled", finished_at: new Date().toISOString() })
     .eq("parent_task_id", parentId)
     .eq("user_id", userId)
+    .eq("mode", BACKGROUND)
     .not("status", "in", "(done,failed,cancelled)")
   if (error) throw new Error(`cancelChildTasks: ${error.message}`)
 }
@@ -368,6 +389,7 @@ export async function reconcileStaleRuns(
     .from("tasks")
     .select("id,status,started_at,created_at")
     .eq("user_id", userId)
+    .eq("mode", BACKGROUND)
     .in("status", [...SETTLEABLE_STATUSES])
   if (error) throw new Error(`reconcileStaleRuns: ${error.message}`)
   let failed = 0

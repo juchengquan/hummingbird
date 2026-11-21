@@ -228,6 +228,14 @@ describe("reconcileStaleRuns", () => {
     const { db } = fakeDb({ lastEventAt: null, startedAt: NOW - 10 * MIN, jobs: [] })
     expect(await reconcileStaleRuns(db, USER, 3 * MIN, NOW)).toBe(1)
   })
+
+  test("only reads and settles background runs (interactive runs have their own reaper — 0041)", async () => {
+    const { db, queries } = fakeDb({ lastEventAt: NOW - 10 * MIN, jobs: [] })
+    expect(await reconcileStaleRuns(db, USER, 3 * MIN, NOW)).toBe(1)
+    const taskQueries = queries.filter((q) => q.table === "tasks")
+    expect(taskQueries.map((q) => q.op)).toEqual(["select", "update"])
+    for (const q of taskQueries) expect(q.filters).toContainEqual(["eq", "mode", "background"])
+  })
 })
 
 describe("reconcileStaleRuns — never-started runs (no task worker)", () => {
