@@ -77,7 +77,7 @@ three times. The goals:
 | Q7 | Run lifecycle as specified below: AG-UI events + a run resource modelled on the LangChain Agent Protocol, with our extensions |
 | Q15 | The browser owns the conversation history and sends it with each run (AG-UI `RunAgentInput.messages`); the backend checkpoint covers one run only |
 | Q16 | Anonymous runs keep their event log in backend memory for a short time (~15 min); background runs require sign-in |
-| Q17 | Every event is kept while a run is live; on finish the log is compacted to messages, tool calls/results, interrupts and the result (deltas dropped after ~24 h); background runs keep their compacted log as long as the task exists |
+| Q17 | Every event is kept while a run is live; on finish the log is compacted to messages, tool calls/results, interrupts and the result (deltas dropped after ~24 h); background runs keep their compacted log as long as the task exists. **Until Phase 5 background runs are not compacted**: the old task routes and the tasks panel fold the full log |
 | Q18 | Frontend uses `@ag-ui/client` wrapped in our own hook feeding the Zustand message store — not CopilotKit, not `useChat` + a converter |
 | Q20 | Anonymous runs are addressed with a per-run secret token (`runToken`); the backend enforces anonymous per-IP rate/budget limits (today's `REQUIRE_AUTH_FOR_AI` moves there) |
 | Q24 | Answering an interrupt starts a **new run on the same thread** with `resume[]` (AG-UI semantics). A background "task" is a thread of runs |
@@ -96,7 +96,7 @@ additions are marked ✚.
 
 | Operation | Shape |
 |---|---|
-| Start | `POST /v1/runs` — body is AG-UI `RunAgentInput` (`threadId`, `runId`, `messages`, `tools`, `context`, `state`, `resume`, `forwardedProps`) ✚ plus `mode: interactive \| background`. Interactive → `200` + SSE stream; background → `202 { runId, status }`. **The client mints `runId`** (AG-UI rule); a repeated `runId` is an idempotent retry, not a new run. Anonymous runs also return `runToken` |
+| Start | `POST /v1/runs` — body is AG-UI `RunAgentInput` (`threadId`, `runId`, `messages`, `tools`, `context`, `state`, `resume`, `forwardedProps`); ✚ `mode: interactive \| background` and our other options ride in `forwardedProps`, because `RunAgentInput` is a closed schema (no body means interactive). Interactive → `200` + SSE stream; background → `202 { runId, status }`. **The client mints `runId`** (AG-UI rule); a repeated `runId` is an idempotent retry, not a new run. Anonymous runs also return `runToken` |
 | Rejoin ✚ | `GET /v1/runs/{id}/events?after=<seq>` (SSE). The sequence number rides in the SSE `id:` field (AG-UI consumers ignore it; our hook reads it). Past the compaction point the stream sends a `gap` (`CUSTOM` event) followed by `MESSAGES_SNAPSHOT` |
 | Status | `GET /v1/runs/{id}` → `{ status: queued \| running \| interrupted \| succeeded \| failed \| cancelled, openInterrupts, result, parentRunId }` |
 | Interrupt / resume | Run ends with `RUN_FINISHED { outcome: { type: "interrupt", interrupts: [...] } }`; the answer is a new `POST /v1/runs` on the same thread with `resume[]` covering every open interrupt (Q24) |
