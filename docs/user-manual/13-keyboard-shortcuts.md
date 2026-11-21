@@ -1,5 +1,5 @@
-<!-- pages-for: shortcut:* -->
-<!-- related: components/help-popover.tsx, components/command-palette.tsx -->
+<!-- pages-for: shortcut:*, panel:conversation-find-bar -->
+<!-- related: components/help-popover.tsx, components/command-palette.tsx, components/panels/conversation-find-bar.tsx -->
 
 # Keyboard shortcuts
 
@@ -18,9 +18,34 @@ shows the most-used ones; this page is the complete list.
 | Shortcut | Action |
 |---|---|
 | `Ctrl+K` / `Cmd+K` | Open the command palette |
+| `Ctrl+F` / `Cmd+F` | Find in the open conversation (see below) |
 | `Enter` | Send the chat message |
 | `Shift+Enter` | New line in the chat input |
 | `Esc` | Close dialogs / cancel editing |
+
+## Find in conversation
+
+`Ctrl+F` / `Cmd+F` in an open chat opens a find bar over the messages
+instead of the browser's own find. Every match in the visible message
+text is highlighted; the active one is shown in a stronger colour with a
+`current / total` count.
+
+| Shortcut | Action |
+|---|---|
+| `Enter` | Next match (wraps to the first) |
+| `Shift+Enter` | Previous match (wraps to the last) |
+| `Esc` | Close the find bar and clear the highlights |
+
+- Select text in a message first and the find bar opens with it filled in.
+- Matching ignores case. There's no regex, whole-word or replace.
+- Only text you can see is searched: collapsed reasoning is skipped until
+  you expand it (then type again to re-search).
+- New messages and streaming replies are picked up while the bar is open.
+- Outside the chat view, or in an empty chat, `Ctrl+F` / `Cmd+F` is left
+  to the browser.
+- Browsers without the CSS Custom Highlight API get a simpler version:
+  the bar jumps between whole messages that match and briefly outlines
+  each one, and the count is of messages, not matches.
 
 ## Selection-driven
 

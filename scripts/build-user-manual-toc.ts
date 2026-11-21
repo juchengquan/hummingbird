@@ -46,6 +46,9 @@ const PAGE_MAP: PageMap = {
   // 03-editor.md
   "panel:editor": "03-editor.md",
 
+  // 13-keyboard-shortcuts.md (the ⌘F find bar is documented with its shortcut)
+  "panel:conversation-find-bar": "13-keyboard-shortcuts.md",
+
   // 04-files-and-attachments.md
   "panel:sources": "04-files-and-attachments.md",
 

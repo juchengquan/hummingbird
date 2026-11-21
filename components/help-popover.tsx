@@ -15,6 +15,7 @@ interface Shortcut {
 
 const SHORTCUTS: Shortcut[] = [
   { keys: ["⌘", "K"], label: "Command palette (or Ctrl+K)" },
+  { keys: ["⌘", "F"], label: "Find in conversation (or Ctrl+F)" },
   { keys: ["⏎"], label: "Send message" },
   { keys: ["⇧", "⏎"], label: "New line in input" },
   { keys: ["Esc"], label: "Close dialogs / cancel editing" },

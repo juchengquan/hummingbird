@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-20T18:26:56Z",
+  "generatedAt": "2026-11-21T03:13:23Z",
   "panels": [
     {
       "id": "agents-dialog",
@@ -81,6 +81,11 @@
       "id": "conversation-files-section",
       "title": "Conversation Files Section",
       "sourceFile": "components/panels/conversation-files-section.tsx"
+    },
+    {
+      "id": "conversation-find-bar",
+      "title": "Conversation Find Bar",
+      "sourceFile": "components/panels/conversation-find-bar.tsx"
     },
     {
       "id": "editor",
@@ -680,13 +685,22 @@
     {
       "id": "shortcut-2",
       "keys": [
+        "⌘",
+        "F"
+      ],
+      "label": "Find in conversation (or Ctrl+F)",
+      "sourceFile": "components/help-popover.tsx"
+    },
+    {
+      "id": "shortcut-3",
+      "keys": [
         "⏎"
       ],
       "label": "Send message",
       "sourceFile": "components/help-popover.tsx"
     },
     {
-      "id": "shortcut-3",
+      "id": "shortcut-4",
       "keys": [
         "⇧",
         "⏎"
@@ -695,7 +709,7 @@
       "sourceFile": "components/help-popover.tsx"
     },
     {
-      "id": "shortcut-4",
+      "id": "shortcut-5",
       "keys": [
         "Esc"
       ],

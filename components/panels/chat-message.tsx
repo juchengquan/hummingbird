@@ -392,6 +392,9 @@ function ChatMessageImpl({
             // bubbles are intentionally excluded — selecting your own
             // text and asking the model to explain it would be weird.
             {...(!isUser ? { "data-selection-scope": `message-${message.id}` } : {})}
+            // In-conversation find (⌘F) searches only inside these regions
+            // (FIND_REGION_ATTR in lib/client/find/highlight.ts).
+            data-find-region=""
           >
             {isEditing ? (
               <div className="flex flex-col gap-2">

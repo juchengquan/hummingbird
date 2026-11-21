@@ -1,6 +1,6 @@
 # Hummingbird - User Manual
 
-> Generated TOC. Last inventory: 2026-11-20. Run `bun run docs:user-manual:build` to refresh.
+> Generated TOC. Last inventory: 2026-11-21. Run `bun run docs:user-manual:build` to refresh.
 
 ## Part 1 - Using Hummingbird
 
@@ -37,6 +37,7 @@
 | Code Result | `components/panels/code-result.tsx` | _unmapped_ |
 | Context Meter | `components/panels/context-meter.tsx` | _unmapped_ |
 | Conversation Files Section | `components/panels/conversation-files-section.tsx` | _unmapped_ |
+| Conversation Find Bar | `components/panels/conversation-find-bar.tsx` | [13-keyboard-shortcuts.md](13-keyboard-shortcuts.md) |
 | Editor Panel | `components/panels/editor.tsx` | [03-editor.md](03-editor.md) |
 | Empty Chat Welcome | `components/panels/empty-chat-welcome.tsx` | _unmapped_ |
 | Error Bubble | `components/panels/error-bubble.tsx` | _unmapped_ |
@@ -152,6 +153,7 @@
 | Shortcut | Page |
 |---|---|
 | `⌘`+`K` - Command palette (or Ctrl+K) | [13-keyboard-shortcuts.md](13-keyboard-shortcuts.md) |
+| `⌘`+`F` - Find in conversation (or Ctrl+F) | [13-keyboard-shortcuts.md](13-keyboard-shortcuts.md) |
 | `⏎` - Send message | [13-keyboard-shortcuts.md](13-keyboard-shortcuts.md) |
 | `⇧`+`⏎` - New line in input | [13-keyboard-shortcuts.md](13-keyboard-shortcuts.md) |
 | `Esc` - Close dialogs / cancel editing | [13-keyboard-shortcuts.md](13-keyboard-shortcuts.md) |
