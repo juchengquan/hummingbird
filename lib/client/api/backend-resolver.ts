@@ -20,6 +20,8 @@ import "client-only"
 import {
   AGENT_PY_BASE_URL,
   AGENT_TS_BASE_URL,
+  isAgentPyConfigured,
+  isAgentTsConfigured,
   type ChatBackendOption,
 } from "@/client/api-client"
 import { useStore } from "@/client/hooks/use-store"
@@ -27,6 +29,7 @@ import { useStore } from "@/client/hooks/use-store"
 export interface RemoteBackendContext {
   /** `'python'` → agent-py, `'ts-service'` → agent-ts. Never `'ts'`. */
   backend: Exclude<ChatBackendOption, "ts">
+  /** `""` when the backend is served on the page's own origin. */
   baseUrl: string
   authToken: string
 }
@@ -40,9 +43,13 @@ export async function resolveRemoteBackend(): Promise<RemoteBackendContext | nul
   const backend = useStore.getState().chatBackend
   if (backend === "ts") return null
 
+  // `""` is a valid base URL (same origin, `NEXT_PUBLIC_AGENT_*_URL=/`),
+  // so gate on "configured", not on the prefix being non-empty.
+  const configured =
+    backend === "python" ? isAgentPyConfigured() : isAgentTsConfigured()
+  if (!configured) return null
   const baseUrl =
     backend === "python" ? AGENT_PY_BASE_URL : AGENT_TS_BASE_URL
-  if (!baseUrl) return null
 
   let authToken: string | null = null
   try {

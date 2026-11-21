@@ -51,6 +51,31 @@ Verify the stack: open Studio at <http://localhost:54323>; magic-link
 emails land in the local inbox at <http://localhost:54324> (Mailpit
 with the CLI, Inbucket with docker-compose).
 
+## Same-origin backend (reverse proxy)
+
+The Python backend (`services/agent-py/`) can be served on the **same
+origin** as the frontend, the way a deployment serves them
+(`docs/PLAN-frontend-backend-split.md` Q21). A Caddy proxy on
+<http://localhost:8080> sends `/v1/*`, `/healthz` and `/readyz` to
+agent-py and everything else to the Next dev server:
+
+```bash
+# .env.local
+NEXT_PUBLIC_AGENT_PY_URL=/        # "/" = call /v1/... on the page's own origin
+
+bun dev                            # Next on :3000 (restart after editing NEXT_PUBLIC_*)
+docker compose up proxy agent-py   # Caddy on :8080 + agent-py (reads .env)
+open http://localhost:8080         # use the app through the proxy
+```
+
+Routing lives in [`.docker/proxy/Caddyfile`](.docker/proxy/Caddyfile)
+(SSE flushes immediately; `PROXY_PORT` changes the published port).
+The browser still sends the Supabase JWT as a bearer token, so the
+Python backend option needs a signed-in session, exactly as with a
+separate origin. The other setups keep working: leave the variable
+empty for Next only, or set it to `http://localhost:8000` to call
+agent-py on its own port.
+
 ## Environment variables
 
 See [`.env.example`](.env.example) for the canonical list with
@@ -65,6 +90,7 @@ descriptions. Quick reference:
 | `TAVILY_API_KEY` | Only for web search | Tavily-backed `webSearch` tool |
 | `MCP_ENCRYPTION_KEY` | Only for cloud-mode MCP creds | pgcrypto symmetric key (32+ chars). Generate with `openssl rand -base64 32` |
 | `NEXT_PUBLIC_API_BASE_URL` | Only for split-backend | Points API client at a non-default origin |
+| `NEXT_PUBLIC_AGENT_PY_URL` | Only for the Python backend | agent-py base URL; `/` = same origin behind the proxy |
 
 ## Common scripts
 

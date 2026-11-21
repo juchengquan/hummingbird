@@ -129,6 +129,33 @@ docker run -p 8000:8000 \
 Or use the repo-level `docker-compose.yml` to spin up alongside the
 Next.js dev server (see top-level `CLAUDE.md`).
 
+### Behind the same-origin proxy
+
+`docker compose up proxy agent-py` also starts a Caddy reverse proxy
+on <http://localhost:8080> (`.docker/proxy/Caddyfile`): `/v1/*`,
+`/healthz` and `/readyz` reach this service, everything else reaches
+the Next dev server on the host. Set `NEXT_PUBLIC_AGENT_PY_URL=/` so
+the browser calls `/v1/...` on that origin
+(`docs/PLAN-frontend-backend-split.md` Q21).
+
+```bash
+curl localhost:8080/healthz   # → this service, via the proxy
+```
+
+- **Client IP.** The per-IP rate limits (`rate_limit.py`) key on the
+  `X-Forwarded-For` entry `TRUSTED_PROXY_HOPS` places from the right.
+  Caddy discards any client-sent `X-Forwarded-For` and sets it to the
+  peer it saw, so there is exactly one trusted hop; the compose file
+  pins `TRUSTED_PROXY_HOPS=1` and clears `CLIENT_IP_HEADER` (Caddy
+  passes arbitrary headers through, so a platform header would be
+  client-controlled). A deployment with more proxies in front (a CDN
+  plus Caddy, say) raises the hop count to match.
+- **CORS.** None needed and none configured: the browser sees one
+  origin. The bearer JWT still goes on every request, so moving the
+  service to its own origin later is a configuration change.
+- **SSE.** The proxy flushes every chunk (`flush_interval -1`) and does
+  not compress, so `/v1/chat` and task event streams arrive unbuffered.
+
 ## Run tests
 
 ```bash
@@ -155,6 +182,8 @@ CI runs all four on every PR — see `.github/workflows/ci.yml` (job
 | `SHUTDOWN_GRACE_SECONDS` | No | Default `8`. On shutdown the in-flight job may finish within this window; after it, the job is cancelled and handed back (lease expired on the spot) for the next worker. Keep it under the container stop timeout (Docker's default is 10 s). The stop starts on SIGTERM itself (the server's signal handler is chained), not after uvicorn has drained open SSE streams; the image also runs uvicorn with `--timeout-graceful-shutdown 8` so the lifespan (which closes the DB pool) isn't held past the stop timeout by a chat stream. `/readyz` reports `poller_alive` / `poller_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
 | `SUPABASE_URL` | No (reported by `/readyz`) | Phase 2 will use it for things beyond what `SUPABASE_DB_URL` already gives us. |
 | `SERVICE_PORT` | No | Default 8000. |
+| `TRUSTED_PROXY_HOPS` | No | Default `1`. How many reverse proxies in front of the service append to `X-Forwarded-For`; the rate-limit key is the entry this many places from the right. `0` ignores the header and keys on the socket peer. Pinned to `1` in `docker-compose.yml` (one Caddy hop). |
+| `CLIENT_IP_HEADER` | No | Empty by default. A single-value header a trusted edge overwrites with the client IP (e.g. `cf-connecting-ip`); wins over `X-Forwarded-For` when present. Only set it if the edge overwrites it. Cleared in `docker-compose.yml`. |
 
 A repo-level `.env` works — `pydantic-settings` looks for `.env` in the
 current working directory. The service shares the same `.env` as the

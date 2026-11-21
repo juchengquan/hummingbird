@@ -57,6 +57,7 @@ import {
 
 import { CitationTableSchema, type CitationTable } from "@/shared/artifacts/citation-table"
 import { isAuthRequiredError } from "@/shared/api-errors"
+import { resolveBackendBaseUrl } from "@/shared/backend-base-url"
 
 import { narrowToRemoteBody } from "@/client/api/chat-marshalling"
 import { notifyAuthRequired } from "@/client/auth/auth-required"
@@ -249,24 +250,28 @@ const API_BASE_URL = (
 /**
  * Base URL for the Python agent service (`services/agent-py/`). Set
  * to its origin (e.g. `http://localhost:8000` in dev) to enable the
- * "Chat backend → Python" toggle in the account menu. Empty / unset →
+ * "Chat backend → Python" toggle in the account menu, or to `/` when a
+ * reverse proxy serves agent-py on the frontend's own origin
+ * (`PLAN-frontend-backend-split.md` Q21) — requests then go to
+ * `/v1/...` on the current origin and the prefix is `""`. See
+ * `resolveBackendBaseUrl` (`@/shared/backend-base-url`). Empty / unset →
  * the apiClient ignores the `backend: 'python'` option and falls
  * through to the TS route, so a misconfigured deploy degrades safely.
  *
  * Phase 4-2 of `PLAN-agent-api.md`. Per user policy, both stacks
  * stay live indefinitely — this is the selector wire, not a cutover.
  */
-export const AGENT_PY_BASE_URL = (
-  typeof process !== "undefined" && process.env.NEXT_PUBLIC_AGENT_PY_URL
-    ? process.env.NEXT_PUBLIC_AGENT_PY_URL
-    : ""
-).replace(/\/+$/, "")
+const AGENT_PY = resolveBackendBaseUrl(
+  typeof process !== "undefined" ? process.env.NEXT_PUBLIC_AGENT_PY_URL : undefined
+)
+export const AGENT_PY_BASE_URL = AGENT_PY.baseUrl
 
 /** Whether the Python agent endpoint is reachable as a backend
  *  option. The UI toggle hides itself when this is false so users
- *  don't see a switch that does nothing. */
+ *  don't see a switch that does nothing. Not `AGENT_PY_BASE_URL !== ""`:
+ *  the same-origin value `/` resolves to an empty prefix. */
 export function isAgentPyConfigured(): boolean {
-  return AGENT_PY_BASE_URL.length > 0
+  return AGENT_PY.configured
 }
 
 /**
@@ -281,16 +286,15 @@ export function isAgentPyConfigured(): boolean {
  * stacks coexist — this is the third option on the selector wire,
  * not a replacement for either existing backend.
  */
-export const AGENT_TS_BASE_URL = (
-  typeof process !== "undefined" && process.env.NEXT_PUBLIC_AGENT_TS_URL
-    ? process.env.NEXT_PUBLIC_AGENT_TS_URL
-    : ""
-).replace(/\/+$/, "")
+const AGENT_TS = resolveBackendBaseUrl(
+  typeof process !== "undefined" ? process.env.NEXT_PUBLIC_AGENT_TS_URL : undefined
+)
+export const AGENT_TS_BASE_URL = AGENT_TS.baseUrl
 
 /** Whether the TS agent service endpoint is reachable. Mirrors
  *  `isAgentPyConfigured` — same UI gating semantics. */
 export function isAgentTsConfigured(): boolean {
-  return AGENT_TS_BASE_URL.length > 0
+  return AGENT_TS.configured
 }
 
 function url(path: string): string {
@@ -404,14 +408,14 @@ async function chatStream(
 
   if (
     options?.backend === "python" &&
-    AGENT_PY_BASE_URL.length > 0 &&
+    isAgentPyConfigured() &&
     hasToken
   ) {
     return chatStreamRemote(body, AGENT_PY_BASE_URL, token, options.signal)
   }
   if (
     options?.backend === "ts-service" &&
-    AGENT_TS_BASE_URL.length > 0 &&
+    isAgentTsConfigured() &&
     hasToken
   ) {
     return chatStreamRemote(body, AGENT_TS_BASE_URL, token, options.signal)

@@ -101,7 +101,10 @@ export interface CspPolicyOptions {
   supabaseUrl?: string
   /** Remote backends the browser talks to directly:
    *  `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_AGENT_PY_URL`,
-   *  `NEXT_PUBLIC_AGENT_TS_URL`. Unset / invalid entries are skipped. */
+   *  `NEXT_PUBLIC_AGENT_TS_URL`. Unset / invalid entries are skipped,
+   *  and so is the same-origin value (`/` or a `/path` prefix — the
+   *  backend behind the frontend's reverse proxy): it is not an
+   *  absolute URL, `originOf` returns null, and `'self'` covers it. */
   backendUrls?: ReadonlyArray<string | undefined>
 }
 
