@@ -105,7 +105,7 @@ test("the board switches with a note", async ({ page, tasks }) => {
 
 test("the board with no workspace model still names a model", async ({ page, tasks }) => {
   await openApp(page)
-  await seedBoard(page)
+  await seedBoard(page, "Write the report", null)
   await runCard(page).click()
   await launchedModel(tasks)
 })

@@ -102,7 +102,7 @@ describe("GET /api/tasks/:id/children", () => {
   test("an answered question isn't asked again", async () => {
     const child = children[0]
     mocks.listTaskChildren.mockImplementation(async () => [child])
-    serveEvents(upTo(child.id, 13))
+    serveEvents(upTo(child.id, Infinity))
     const { body } = await getChildren()
     expect(body.children[0].pendingInput ?? null).toBeNull()
   })

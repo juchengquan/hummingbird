@@ -18,6 +18,7 @@ interface StageRow {
   parent_task_id: string | null
   status: string
   goal: string
+  seq: number
 }
 
 const LOGS = JSON.parse(
@@ -32,6 +33,8 @@ export const rootOf = (stage: string): string => LOGS.stages[stage][0].id
 /** The recorded child whose question is of `kind`. */
 export const childOf = (kind: string): string =>
   LOGS.stages["children.asking"].find((row) => row.goal === `Check ${kind}`)!.id
+/** The root's last `seq` at a stage. */
+export const lastSeqOf = (stage: string): number => LOGS.stages[stage][0].seq
 /** One task's recorded events. */
 export const eventsOf = (id: string) => LOGS.events.filter((e) => e.task_id === id)
 
@@ -216,8 +219,9 @@ export async function reportCounts(page: Page) {
 export const pointer = (page: Page): Promise<string | null> =>
   page.evaluate(() => localStorage.getItem("humm.activeTask"))
 
-/** Turn the workspace into a project with one To-do card, then reload. */
-export async function seedBoard(page: Page, title = "Write the report", model?: string) {
+/** Turn the workspace into a project with one To-do card, then reload.
+ *  `model`: the workspace's default (null = none, a launch spec's case). */
+export async function seedBoard(page: Page, title = "Write the report", model: string | null = HAIKU) {
   await page.waitForTimeout(300) // the store's debounced write
   await page.evaluate(
     ({ title, model }) => {

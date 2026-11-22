@@ -3,6 +3,7 @@ import { expect } from "@playwright/test"
 import {
   cardStatus,
   childQuestion,
+  lastSeqOf,
   launch,
   openApp,
   panel,
@@ -32,9 +33,10 @@ test("a running task reloads with its text, plan and step", async ({ page, tasks
   // Past the answered question, mid-step.
   await tasks.stage("questions.choice")
   await tasks.row(id, { status: "running" })
+  const last = lastSeqOf("questions.choice")
   await tasks.events([
-    { task_id: id, seq: 18, step: 2, kind: "approval", payload: { phase: "response", approvalId: "toolu_parent_1", selection: ["blue"] }, created_at: new Date().toISOString() },
-    { task_id: id, seq: 19, step: 2, kind: "status", payload: { status: "running" }, created_at: new Date().toISOString() },
+    { task_id: id, seq: last + 1, step: 2, kind: "approval", payload: { phase: "response", approvalId: "toolu_parent_1", selection: ["blue"] }, created_at: new Date().toISOString() },
+    { task_id: id, seq: last + 2, step: 2, kind: "status", payload: { status: "running" }, created_at: new Date().toISOString() },
   ])
   await expect(panel(page)).toContainText("Running")
   await page.reload()

@@ -115,13 +115,14 @@ export function TaskStrip({
   }
 
   const progress = taskProgress(view, childState)
-  // Not running: a call waiting for the answer (its card shows it), and a
-  // spawn (the sub-agent list shows it; it never gets a `tool_output`).
+  // While the task waits (for the user, or its sub-agents) none of its
+  // calls runs: the asked one has its card, and the turn's later ones
+  // haven't started. A spawn is shown as the sub-agent list.
+  const idle = progress.paused || !!childState?.waiting
   const shownCalls = view.toolCalls.filter(
     (c) =>
       c.status === "done" ||
-      (c.toolCallId !== view.pendingInput?.toolCallId &&
-        !(c.toolName === "spawnSubagent" && view.childRuns.length > 0))
+      (!idle && !(c.toolName === "spawnSubagent" && view.childRuns.length > 0))
   )
   const calls: LiveToolCall[] = shownCalls.map((c) => ({
     id: c.toolCallId,

@@ -4,9 +4,11 @@ import {
   cancelButton,
   cardStatus,
   childQuestion,
+  lastSeqOf,
   launch,
   openApp,
   panel,
+  persisted,
   PHONE,
   pointer,
   rootOf,
@@ -43,9 +45,23 @@ test("a reload while an answer is queued: answering again is a 409, not a second
 })
 
 test("what is typed for one question isn't carried to the next", async ({ page, tasks }) => {
-  await launch(page, tasks, "questions.choice")
-  await panel(page).getByRole("radio", { name: "Blue" }).check()
-  await tasks.stage("questions.input")
+  const id = await launch(page, tasks, "questions.input")
+  await panel(page).getByRole("textbox").fill("The first answer")
+  // Answered elsewhere, and asked again — another question of the same kind.
+  const at = { task_id: id, step: 3, created_at: new Date().toISOString() }
+  const last = lastSeqOf("questions.input")
+  await tasks.events([
+    { ...at, seq: last + 1, kind: "approval", payload: { phase: "response", approvalId: "toolu_parent_2", value: "x" } },
+    { ...at, seq: last + 2, kind: "status", payload: { status: "running" } },
+    {
+      ...at,
+      seq: last + 3,
+      kind: "approval",
+      payload: { phase: "request", approvalId: "toolu_next", toolCallId: "toolu_next", tool: "askUser", requestKind: "input", prompt: "And the subtitle?" },
+    },
+    { ...at, seq: last + 4, kind: "status", payload: { status: "paused" } },
+  ])
+  await expect(panel(page)).toContainText("And the subtitle?")
   await expect(panel(page).getByRole("textbox")).toHaveValue("")
 })
 
@@ -111,8 +127,9 @@ test("a board card settles while the board isn't shown", async ({ page, tasks })
   await seedBoard(page)
   await tasks.fault({ op: "start", delayMs: 600, times: 1 })
   await runCard(page).click()
-  await page.getByRole("button", { name: "Collapse resources sidebar" }).click()
-  await page.getByRole("button", { name: "Toggle Sidebar" }).first().waitFor()
+  // Leaving chat unmounts the board (collapsing the rail only hides it).
+  await page.getByRole("button", { name: "Workspaces", exact: true }).first().click()
+  await expect(runCard(page)).toHaveCount(0)
   await expect.poll(() => pointer(page)).not.toBeNull()
   await tasks.stage("plain.done")
   await expect.poll(() => cardStatus(page)).toBe("done")
@@ -137,8 +154,9 @@ test("phone, panel closed: the chat says a sub-agent needs the user", async ({ p
   await expect(childQuestion(page, "approval")).toBeVisible()
 })
 
-test("a log longer than PostgREST's max_rows replays whole on reload", async ({ page, tasks }) => {
+test("a finished log longer than PostgREST's max_rows delivers its whole text", async ({ page, tasks }) => {
   const id = await launch(page, tasks, "plain.queued")
+  await page.goto("about:blank")
   const at = new Date().toISOString()
   await tasks.events([
     ...Array.from({ length: 2300 }, (_, i) => ({
@@ -150,7 +168,13 @@ test("a log longer than PostgREST's max_rows replays whole on reload", async ({ 
       created_at: at,
     })),
   ])
-  await page.reload()
-  await expect(panel(page)).toContainText("first")
-  await expect(panel(page)).toContainText("last")
+  await tasks.row(id, { status: "done" })
+  await page.goto("/")
+  await expect
+    .poll(async () => {
+      const state = await persisted(page)
+      const message = state.conversations.flatMap((c) => c.messages).find((m) => m.role === "assistant" && m.content.startsWith("first"))
+      return message?.content.endsWith("last") ?? false
+    }, { timeout: 15_000 })
+    .toBe(true)
 })
