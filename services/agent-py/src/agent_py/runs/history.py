@@ -59,6 +59,7 @@ __all__ = [
     "UNANSWERED_TOOL_RESULT",
     "AttachmentRejected",
     "attach_tool_results",
+    "attachment_taint",
     "check_attachments",
     "find_tool_call",
     "last_user_index",
@@ -141,12 +142,40 @@ def system_texts(messages: Iterable[AgUiMessage]) -> list[str]:
     return out
 
 
-def request_taint(messages: Sequence[AgUiMessage]) -> str | None:
-    """Third-party content the history itself puts in context, as a short
+#: `attachment_taint`'s label per `RunAttachment` kind — Next's
+#: `requestTaint` labels (`untrusted-content-policy.ts`): every attachment
+#: kind is content read from outside (a file's extracted text, a fetched
+#: page, an MCP resource).
+_ATTACHMENT_TAINT: Mapping[str, str] = {
+    "file": "an attached file",
+    "inlineFile": "an attached file",
+    "bookmark": "an attached URL bookmark",
+    "mcpResource": "an attached MCP resource",
+}
+
+
+def attachment_taint(kinds: Iterable[str]) -> str | None:
+    """The label of the turn's first attachment, by its `RunAttachment`
+    `kind` (`forwardedProps.attachments`), else None — the attachment half
+    of Next's `requestTaint`."""
+    for kind in kinds:
+        return _ATTACHMENT_TAINT.get(kind, "an attachment")
+    return None
+
+
+def request_taint(
+    messages: Sequence[AgUiMessage], attachment_kinds: Iterable[str] = ()
+) -> str | None:
+    """Third-party content the request itself puts in context, as a short
     label — mirror of `requestTaint` in
-    `lib/server/memory/untrusted-content-policy.ts`: an uploaded image /
+    `lib/server/memory/untrusted-content-policy.ts`: an attachment
+    (`attachment_taint`, checked first as Next does), an uploaded image /
     document in a user message, or any tool result after the latest user
-    message (this turn's tool output, replayed by the client)."""
+    message (this turn's tool output, replayed by the client).
+    `attachment_kinds`: the `kind` of each of the turn's attachments."""
+    label = attachment_taint(attachment_kinds)
+    if label is not None:
+        return label
     last_user = last_user_index(messages)
     for i, m in enumerate(messages):
         role = m.get("role")

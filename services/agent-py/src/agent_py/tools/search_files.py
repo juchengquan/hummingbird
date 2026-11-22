@@ -128,8 +128,9 @@ SEARCH_FILES_INPUT_SCHEMA: dict[str, Any] = {
         "fileId": {
             "type": "string",
             "description": (
-                "ID of the attached file to search. Must be one of the "
-                "files the user has attached to the current chat."
+                "ID of the attached file to search — the `fileId` shown in the "
+                "file's attachment header. Must be one of the files the user "
+                "has attached to the current chat."
             ),
         },
         "query": {
@@ -164,9 +165,10 @@ def build_search_files_tool(context: ToolContext) -> ToolDescriptor:
             "markers. Use this when the user's question references content "
             "that may be in the omitted portion of a file (look for "
             "`[truncated]` or `[Additional files omitted]` markers in the "
-            "attachment block). Only works on files the user has attached "
-            "to the current chat — pick the most likely file rather than "
-            "guessing."
+            "attachment block) or in a RAG-mode attachment, whose text is not "
+            "inlined. Pass the `fileId` from the file's attachment header. "
+            "Only works on files the user has attached to the current chat — "
+            "pick the most likely file rather than guessing."
         ),
         input_schema=SEARCH_FILES_INPUT_SCHEMA,
         execute=execute,

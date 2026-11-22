@@ -131,9 +131,11 @@ from .history import (
     to_anthropic,
 )
 from .hook_types import (
+    TURN_CONTENT_KEY,
     HarnessHooks,
     HookContext,
     Toolset,
+    add_turn_content,
     build_system_prompt,
     build_toolset,
     seed_taint,
@@ -548,11 +550,17 @@ class NativeHarness:
             thinking = None
 
         system = await build_system_prompt(hooks.prompt_sections, run_input, opts, ctx)
+        # Media a prompt section loaded for the turn (a cloud file's image)
+        # goes on the turn's user message; the checkpoint keeps only what
+        # follows it, so a resume loads it again.
+        turn_messages = add_turn_content(
+            prepared.messages, prepared.turn_start - 1, ctx.scratch.get(TURN_CONTENT_KEY)
+        )
         result = await run_turn_loop(
             client=client,
             emitter=emitter,
             model=model.api_id,
-            messages=prepared.messages,
+            messages=turn_messages,
             system=system,
             max_tokens=max(self._max_tokens, thinking.max_tokens) if thinking else self._max_tokens,
             thinking=thinking.thinking if thinking else None,
@@ -578,7 +586,7 @@ class NativeHarness:
             return HarnessResult(Cancelled(usage=usage))
         assert isinstance(outcome, LoopInterrupted)
         checkpoint = _Checkpoint(
-            turn=prepared.messages[prepared.turn_start :],
+            turn=turn_messages[prepared.turn_start :],
             pending=outcome.pending,
             results=outcome.results,
             tainted_by=result.tainted_by,

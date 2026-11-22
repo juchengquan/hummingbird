@@ -12,7 +12,7 @@ hook), and writes its hook in its own module:
 
 | 5b | what | hook | module |
 |---|---|---|---|
-| B | attached-file context (budget, RAG notes with file ids, Q47), MCP resources, bookmarks | a `PromptSection` after `application_context`; a `TaintSeed` after `history_taint` (bookmarks / MCP resources / inline files taint) | `runs/context.py` |
+| B | attached-file context (budget, RAG notes with file ids, Q47), MCP resources, bookmarks | a `PromptSection` after `application_context` (media for the turn via `TURN_CONTENT_KEY`); a `TaintSeed` after `history_taint` (every attachment kind taints); a `ToolContributor` after the skills (`searchFiles` for RAG-mode files) — done | `runs/context.py` |
 | C | memory facts in the prompt (unless `memory_bypass`) | a `PromptSection` | memory module |
 | C | remember / forget tools (unless `memory_bypass`; refuse when `RunToolContext.tainted_by`) | a `ToolContributor` | memory module |
 | C | reference image (`buildRemixNote`, with `imageGen`) | a `PromptSection` | remix module |
@@ -37,6 +37,7 @@ from ..chat_loop import LoopResult
 from ..input_policy import ASK_USER_TOOL_NAME, RENDER_UI_TOOL_NAME
 from ..model_allowlist import resolve_optional_model
 from ..tools import default_tool_registry
+from .context import attachment_context, attachment_context_taint, rag_search_files
 from .harness import RunInput
 from .history import request_taint, system_texts
 from .hook_types import (
@@ -180,7 +181,7 @@ PROMPT_SECTIONS: tuple[PromptSection, ...] = (
     app_system_prompt,
     history_system_texts,
     application_context,
-    # TODO(5b-B): attached-file / MCP-resource / bookmark context (runs/context.py).
+    attachment_context,
     # TODO(5b-C): remembered facts (unless memory_bypass); the remix note.
 )
 TOOL_CONTRIBUTORS: tuple[ToolContributor, ...] = (
@@ -188,10 +189,11 @@ TOOL_CONTRIBUTORS: tuple[ToolContributor, ...] = (
     cloud_mcp_tools,
     # TODO(5b-C): rememberFact / forgetFact (unless memory_bypass).
     # TODO(5b-D): local MCP tools (RunInput.local_mcp_credentials).
+    rag_search_files,
 )
 TAINT_SEEDS: tuple[TaintSeed, ...] = (
     history_taint,
-    # TODO(5b-B): attachments that carry third-party content.
+    attachment_context_taint,
 )
 
 DEFAULT_HOOKS = HarnessHooks(
