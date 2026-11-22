@@ -282,7 +282,16 @@ export interface paths {
          *     running, interrupted or succeeded, a new one is `409
          *     run_already_resumed` (an idempotent retry of that resume, same
          *     `runId`, still replays it); once it has failed or been cancelled,
-         *     the interrupts can be answered again with a new `runId`.
+         *     the interrupts can be answered again with a new `runId`. A
+         *     background resume (Q41) answers a top-level background run and
+         *     starts from that run's saved state plus the answers
+         *     (`RUN_EVENTS.md` § 4.2); a background resume of anything else is
+         *     `409 invalid_state`, and one of a task already answered through
+         *     the old task respond route is `409 run_already_answered`.
+         *
+         *     **Background runs take no `attachments`** (Q49): a background
+         *     start with any is `400 invalid_request`, before anything is
+         *     created.
          *
          *     A `forwardedProps.model` outside the backend's allow-list is `400
          *     unknown_model`, answered before the run exists (as `/v1/chat`):
@@ -628,8 +637,8 @@ export interface components {
          *     `unavailable`, `rate_limit`, `context_window`, `invalid_model`,
          *     `unknown_model`, `provider`, `aborted`, `unknown`. See
          *     `lib/shared/api-errors.ts`. The runs operations add
-         *     `run_id_conflict`, `run_already_resumed` and `invalid_attachment`,
-         *     and use `invalid_state`.
+         *     `run_id_conflict`, `run_already_resumed`, `run_already_answered`
+         *     and `invalid_attachment`, and use `invalid_state`.
          */
         ApiError: {
             /**
@@ -1485,8 +1494,7 @@ export interface components {
             /**
              * @description MCP servers whose tools the run may offer (Q48), cloud
              *     (`workspaceId`) and local (`localMcpServers`) alike. Absent
-             *     means no restriction; an empty list means no MCP tools. Not
-             *     enforced by agent-py yet (Phase 3 catch-up).
+             *     means no restriction; an empty list means no MCP tools.
              */
             allowedMcpServerIds?: string[];
             /**
@@ -1494,7 +1502,8 @@ export interface components {
              *     resources — the way the Next chat route's `attachments`
              *     carries them, but large inputs by reference (Q44): a cloud
              *     file by id, never its text. Rendered into the system prompt
-             *     under one character budget, files first. Accepted but not
+             *     under one character budget, files first. A background run
+             *     refuses them (Q49, `400 invalid_request`). Accepted but not
              *     used by agent-py yet (Phase 3 catch-up); attachments the
              *     model reads directly are still `image` / `document` parts
              *     (see `StartRunRequest`).
@@ -1517,7 +1526,7 @@ export interface components {
              *     agent-py yet (Phase 3 catch-up).
              */
             localMcpServers?: components["schemas"]["LocalMcpServer"][];
-            /** @description Step budget. Absent means 25 (background) or the chat default (interactive). */
+            /** @description Step budget. Absent means 25 (background; 35 with `research`) or the chat default (interactive). */
             maxSteps?: number;
             /**
              * @description The conversation's memory opt-out (the chat body's
@@ -1541,7 +1550,7 @@ export interface components {
              *     Anthropic extended thinking, 2048 / 8192 / 16384 budget
              *     tokens). Ignored for a model that takes no tier
              *     (`supportsReasoningEffort` in the catalog). Absent means the
-             *     provider default (no extended thinking). Interactive runs.
+             *     provider default (no extended thinking).
              * @enum {string}
              */
             reasoningEffort?: "low" | "medium" | "high";
@@ -1558,8 +1567,9 @@ export interface components {
              *     prompt (plan → per-section search → gap pass → a cited
              *     Markdown report), and its citations are verified. Absent
              *     means false. Not called `mode`, which is interactive /
-             *     background. agent-py accepts it but does not act on it yet
-             *     (Phase 3 catch-up).
+             *     background. A background research run's step budget
+             *     defaults to 35. agent-py: background runs (interactive runs
+             *     take only the citation checks, `verifyCitations`).
              */
             research?: boolean;
             skills?: components["schemas"]["SkillConfig"][];
@@ -2862,7 +2872,10 @@ export interface operations {
              *     previous run's interrupts and has not failed or been
              *     cancelled (one live resume per interrupted run, so an
              *     approved tool never runs twice; after a failed or cancelled
-             *     resume, answer again with a new `runId`).
+             *     resume, answer again with a new `runId`);
+             *     `run_already_answered` — the previous run is a background
+             *     task already answered through the old task respond route
+             *     (each paused task is answered one way only, Q41).
              */
             409: {
                 headers: {
