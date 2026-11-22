@@ -49,7 +49,9 @@ ANSWERS: dict[str, dict[str, Any]] = {
     "ui-part": {"ui_answer": {"kind": "confirm", "confirmed": True}, "value": "Yes"},
 }
 KINDS = list(ASKS)
-REPORT = "# Report\n\nThe release is ready [1].\n\n## Sources\n\n1. [Notes](https://example.com/notes)"
+REPORT = (
+    "# Report\n\nThe release is ready [1].\n\n## Sources\n\n1. [Notes](https://example.com/notes)"
+)
 
 
 def _script(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
@@ -251,8 +253,7 @@ async def main() -> None:
         "INSERT INTO public.workspaces (id, user_id, name) VALUES ($1,$2,'ws')", workspace, user
     )
     await pool.execute(
-        "INSERT INTO public.conversations (id, user_id, workspace_id, title) "
-        "VALUES ($1,$2,$3,'c')",
+        "INSERT INTO public.conversations (id, user_id, workspace_id, title) VALUES ($1,$2,$3,'c')",
         conversation,
         user,
         workspace,

@@ -31,11 +31,34 @@ describe("the executor's recorded rows", () => {
     })
   }
 
-  test("an answered call stops running; a declined one isn't shown as run", () => {
+  test("answered calls and a finished spawn stop running", () => {
+    for (const stage of ["questions.done", "children.answered-ui-part"] as const) {
+      const [task] = logs.stages[stage]
+      const view = projectRun(rowsToTaskEvents(rowsOf(task.id) as never))
+      expect(view.toolCalls.filter((call) => call.status === "running")).toEqual([])
+    }
     const [task] = logs.stages["questions.done"]
-    const view = projectRun(rowsToTaskEvents(rowsOf(task.id) as never))
-    expect(view.toolCalls.filter((call) => call.status === "running")).toEqual([])
-    // The rejected webSearch; the three answered questions stay.
-    expect(view.toolCalls.map((call) => call.toolName)).toEqual(["askUser", "askUser", "renderUI"])
+    const [rejected] = projectRun(rowsToTaskEvents(rowsOf(task.id) as never)).toolCalls
+    expect(rejected.summary).toBe("Declined by the user")
+  })
+
+  test("an approved call runs until its output or the next step", () => {
+    const [task] = logs.stages["questions.approval"]
+    const paused = rowsToTaskEvents(rowsOf(task.id, task.seq) as never)
+    const next = { runId: task.id, step: 1, createdAt: paused[0].createdAt }
+    const answered = [
+      ...paused,
+      {
+        ...next,
+        seq: task.seq + 1,
+        kind: "approval" as const,
+        phase: "response" as const,
+        approvalId: "toolu_parent_0",
+        approved: true,
+      },
+    ]
+    expect(projectRun(answered).toolCalls[0].status).toBe("running")
+    const stepped = [...answered, { ...next, seq: task.seq + 2, step: 2, kind: "step_start" as const }]
+    expect(projectRun(stepped).toolCalls[0].status).toBe("done")
   })
 })

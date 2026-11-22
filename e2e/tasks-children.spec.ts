@@ -47,36 +47,36 @@ const ANSWERS: {
 
 for (const [size, viewport] of Object.entries({ desktop: DESKTOP, phone: PHONE })) {
   test.describe(size, () => {
-    for (const { kind, answer, body } of ANSWERS) {
-      test(`a child's ${kind} question is answered on the parent, to the child's id`, async ({ page, tasks }) => {
-        await launch(page, tasks, "children.asking")
-        await page.setViewportSize(viewport)
-
-        await expect(panel(page).getByRole("status")).toContainText("need your answer")
-        const card = childQuestion(page, kind)
-        await card.scrollIntoViewIfNeeded()
-        await answer(card)
-
-        await expect.poll(async () => (await tasks.sent("respond")).length).toBe(1)
-        const [sent] = await tasks.sent("respond")
+    test("each kind of child question is answered on the parent, to that child's id", async ({ page, tasks }) => {
+      await launch(page, tasks, "children.asking")
+      await page.setViewportSize(viewport)
+      await expect(panel(page).getByRole("status")).toContainText("need your answer")
+      for (const [i, { kind, answer, body }] of ANSWERS.entries()) {
+        await answer(childQuestion(page, kind))
+        await expect.poll(async () => (await tasks.sent("respond")).length).toBe(i + 1)
+        const sent = (await tasks.sent("respond"))[i]
         expect(sent.id).toBe(childOf(kind))
         expect(sent.body).toEqual({ requestId: `toolu_child_${kind}`, ...body })
-      })
+      }
+    })
 
-      test(`the child's window answers its ${kind} question too`, async ({ page, tasks }) => {
-        await launch(page, tasks, "children.asking")
-        await page.setViewportSize(viewport)
-
+    test("each child's window answers its question too", async ({ page, tasks }) => {
+      await launch(page, tasks, "children.asking")
+      await page.setViewportSize(viewport)
+      for (const [i, { kind, answer, body }] of ANSWERS.entries()) {
         await panel(page).getByRole("button", { name: new RegExp(`${kind}-helper Check ${kind}$`) }).click()
         const sheet = page.getByRole("dialog", { name: "Subagent run" })
         await answer(sheet)
-
-        await expect.poll(async () => (await tasks.sent("respond")).length).toBe(1)
-        const [sent] = await tasks.sent("respond")
+        await expect.poll(async () => (await tasks.sent("respond")).length).toBe(i + 1)
+        const sent = (await tasks.sent("respond"))[i]
         expect(sent.id).toBe(childOf(kind))
         expect(sent.body).toEqual({ requestId: `toolu_child_${kind}`, ...body })
-      })
-    }
+        // The parent's card took the answer too: one state per question.
+        await page.keyboard.press("Escape")
+        await expect(sheet).toBeHidden()
+        await expect(childQuestion(page, kind)).toContainText("Answer sent")
+      }
+    })
 
     test("the new cards fit the panel", async ({ page, tasks }) => {
       await launch(page, tasks, "children.asking")

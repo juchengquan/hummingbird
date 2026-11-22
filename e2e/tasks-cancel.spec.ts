@@ -88,7 +88,7 @@ for (const status of ["cancelled", "failed", "done"] as const) {
     await expect(panel(page)).toContainText(label)
     await expect.poll(() => pointer(page)).toBeNull()
     const before = (await tasks.sent("stream")).length
-    await page.waitForTimeout(3500)
+    await page.waitForTimeout(2200) // past the 1.5 s reconnect
     expect((await tasks.sent("stream")).length).toBe(before)
   })
 }

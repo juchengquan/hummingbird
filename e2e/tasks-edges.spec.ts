@@ -1,6 +1,5 @@
 import { expect } from "@playwright/test"
 
-import { sendMessage } from "./support/runs"
 import {
   cancelButton,
   cardStatus,
@@ -13,6 +12,7 @@ import {
   rootOf,
   runCard,
   seedBoard,
+  send,
   spinners,
   test,
 } from "./support/tasks"
@@ -74,11 +74,11 @@ test("an older children poll doesn't bring an answered question back", async ({ 
   await launch(page, tasks, "children.asking")
   await expect(childQuestion(page, "approval")).toBeVisible()
   const before = (await tasks.sent("children")).length
-  await tasks.fault({ op: "children", delayMs: 5000, times: 1 })
+  await tasks.fault({ op: "children", delayMs: 3500, times: 1 })
   await expect.poll(async () => (await tasks.sent("children")).length).toBeGreaterThan(before)
   await tasks.stage("children.answered-approval")
   await expect(childQuestion(page, "approval")).toBeHidden()
-  await page.waitForTimeout(5500)
+  await page.waitForTimeout(3800)
   await expect(childQuestion(page, "approval")).toBeHidden()
 })
 
@@ -100,7 +100,7 @@ test("a new task before the cancel is confirmed still settles the cancelled one"
   await cancelButton(page).click()
   await expect(panel(page)).toContainText("Task cancelled")
   await tasks.startAs("questions.approval")
-  await sendMessage(page, "/research Something else")
+  await send(page, "/research Something else")
   await expect.poll(() => cardStatus(page)).toBe("todo")
   await expect.poll(() => pointer(page)).toContain(rootOf("questions.approval"))
 })

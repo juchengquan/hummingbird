@@ -4,7 +4,7 @@ import { backendAcceptsModel, modelsForBackend } from "../lib/shared/backend-mod
 import { CHAT_MODELS } from "../lib/shared/models"
 
 import { createPersona, SERVER } from "./support/persona"
-import { composer, sendMessage } from "./support/runs"
+import { composer } from "./support/runs"
 import {
   DESKTOP,
   NOT_FOR_TASKS,
@@ -14,6 +14,7 @@ import {
   PHONE,
   runCard,
   seedBoard,
+  send,
   sendAsTask,
   taskToggle,
   test,
@@ -47,14 +48,14 @@ for (const chatBackend of ["ts", "python", "ts-service", "python-runs"]) {
       await taskToggle(page).click()
       const labels = modelsForBackend("agent-service").map((m) => m.label)
       expect(await pickerOptions(page)).toEqual(labels)
-      await sendMessage(page, "Write the report")
+      await send(page, "Write the report")
       await launchedModel(tasks)
     })
   }
 
   test(`/research on ${chatBackend} with ${NOT_FOR_TASKS}`, async ({ page, tasks }) => {
     await openApp(page, { chatBackend, chatModel: NOT_FOR_TASKS })
-    await sendMessage(page, "/research Write the report")
+    await send(page, "/research Write the report")
     await launchedModel(tasks)
   })
 }
@@ -87,7 +88,7 @@ for (const [size, viewport] of Object.entries({ desktop: DESKTOP, phone: PHONE }
   test(`${size}: /research switches with a note, and chat keeps its model`, async ({ page, tasks }) => {
     await openApp(page, { chatModel: NOT_FOR_TASKS })
     await page.setViewportSize(viewport)
-    await sendMessage(page, "/research Write the report")
+    await send(page, "/research Write the report")
     await launchedModel(tasks)
     await expect(page.getByText(NOTE)).toBeInViewport()
     await expect.poll(async () => (await persisted(page)).chatModel).toBe(NOT_FOR_TASKS)
@@ -124,7 +125,7 @@ for (const launchAs of ["toggle", "research"] as const) {
       })
       await page.reload()
       await composer(page).waitFor()
-      await sendMessage(page, "/research Write the report")
+      await send(page, "/research Write the report")
     }
     await launchedModel(tasks)
     await expect(page.getByText(NOTE).first()).toBeVisible()

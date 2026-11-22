@@ -227,9 +227,11 @@ export function reduceRun(view: TaskRunView, event: TaskEvent): TaskRunView {
         }
       } else if (event.phase === "response") {
         next.pendingInput = null
-        // The respond path emits no `tool_output` for the call it answers:
-        // it's over now (a declined one never ran).
-        next.toolCalls = resolveAnsweredCall(base.toolCalls, event.approvalId, event.approved)
+        // An answer runs nothing, so its call is over (a respond may emit
+        // no `tool_output` for it). An approved one is executing now.
+        if (event.approved !== true) {
+          next.toolCalls = resolveAnsweredCall(base.toolCalls, event.approvalId, event.approved)
+        }
       }
       return next
     case "handoff": {
@@ -241,10 +243,17 @@ export function reduceRun(view: TaskRunView, event: TaskEvent): TaskRunView {
       ]
       return next
     }
-    // step_start / step_end already handled by the `step` bump above;
+    // step_end is handled by the `step` bump above;
     // compact carries no view state in v1 (the cursor + step
     // advance is enough). Reserved for later.
     case "step_start":
+      // The model is only called again with every call's result in hand:
+      // one still running here (a spawn after its fan-in, an approved call
+      // of a log without its `tool_output`) is over.
+      if (base.toolCalls.some((c) => c.status === "running")) {
+        next.toolCalls = base.toolCalls.map((c) => ({ ...c, status: "done" }))
+      }
+      return next
     case "step_end":
     case "compact":
       return next
@@ -290,7 +299,7 @@ function upsertToolCall(
   return out
 }
 
-/** The gated call an answer closes (its id is the approval's). */
+/** The gated call a non-approving answer closes (its id is the approval's). */
 function resolveAnsweredCall(
   calls: ToolCallView[],
   approvalId: string,
@@ -298,8 +307,7 @@ function resolveAnsweredCall(
 ): ToolCallView[] {
   const call = calls.find((c) => c.toolCallId === approvalId)
   if (call?.status !== "running") return calls
-  if (approved === false) return calls.filter((c) => c !== call)
-  const summary = approved ? "Approved" : "Answered"
+  const summary = approved === false ? "Declined by the user" : "Answered"
   return calls.map((c) => (c === call ? { ...c, status: "done", summary } : c))
 }
 

@@ -6,7 +6,7 @@ import { expect, test as base, type Locator, type Page } from "@playwright/test"
 
 import { STORE_VERSION } from "../../lib/client/hooks/store/migrate"
 
-import { composer, sendMessage } from "./runs"
+import { composer } from "./runs"
 
 export const HAIKU = "anthropic/claude-haiku-4.5"
 export const NOT_FOR_TASKS = "deepseek/deepseek-v4-flash"
@@ -150,10 +150,16 @@ export async function openApp(page: Page, state: Record<string, unknown> = {}): 
 export const taskToggle = (page: Page): Locator =>
   page.getByRole("button", { name: "Task", exact: true })
 
+/** Send with Enter: the note's toast can cover the Send button. */
+export async function send(page: Page, text: string): Promise<void> {
+  await composer(page).fill(text)
+  await composer(page).press("Enter")
+}
+
 export async function sendAsTask(page: Page, text = "Write the report"): Promise<void> {
   const toggle = taskToggle(page)
   if ((await toggle.getAttribute("aria-pressed")) !== "true") await toggle.click()
-  await sendMessage(page, text)
+  await send(page, text)
 }
 
 /** Open the app, launch a task that starts as `stage`, and wait until it is being watched. */

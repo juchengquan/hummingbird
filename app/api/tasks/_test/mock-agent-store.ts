@@ -91,6 +91,13 @@ mock.module("@/server/model-provider", () => ({
 export const mocks = {
   // store
   createRun: mock(async (_db: unknown, _input: unknown) => {}),
+  listTaskChildren: mock(
+    async (
+      _db: unknown,
+      _parentId: string,
+      _userId: string,
+    ): Promise<{ id: string; status: string; goal: string }[]> => [],
+  ),
   getRun: mock(
     async (
       _db: unknown,
@@ -125,13 +132,6 @@ export const mocks = {
       _sinceSeq: number,
     ): Promise<unknown[]> => [],
   ),
-  listTaskChildren: mock(
-    async (
-      _db: unknown,
-      _parentId: string,
-      _userId: string,
-    ): Promise<{ id: string; status: string; goal: string }[]> => [],
-  ),
   cancelChildTasks: mock(
     async (_db: unknown, _parentId: string, _userId: string) => {},
   ),
@@ -160,11 +160,11 @@ mock.module("@/server/agent/store", () => ({
   cancelChildTasks: mocks.cancelChildTasks,
   createRun: mocks.createRun,
   getRun: mocks.getRun,
+  listTaskChildren: mocks.listTaskChildren,
   updateRun: mocks.updateRun,
   saveCheckpoint: mocks.saveCheckpoint,
   appendEvent: mocks.appendEvent,
   listEventsSince: mocks.listEventsSince,
-  listTaskChildren: mocks.listTaskChildren,
   reconcileStaleRuns: mocks.reconcileStaleRuns,
 }))
 
@@ -185,6 +185,8 @@ mock.module("@/server/agent/jobs", () => ({
 export function resetAgentMocks(): void {
   mocks.createRun.mockClear()
   mocks.createRun.mockImplementation(async () => {})
+  mocks.listTaskChildren.mockClear()
+  mocks.listTaskChildren.mockImplementation(async () => [])
   mocks.getRun.mockClear()
   mocks.getRun.mockImplementation(async () => null)
   mocks.updateRun.mockClear()
@@ -195,8 +197,6 @@ export function resetAgentMocks(): void {
   mocks.appendEvent.mockImplementation(async () => {})
   mocks.listEventsSince.mockClear()
   mocks.listEventsSince.mockImplementation(async () => [])
-  mocks.listTaskChildren.mockClear()
-  mocks.listTaskChildren.mockImplementation(async () => [])
   mocks.cancelChildTasks.mockClear()
   mocks.cancelChildTasks.mockImplementation(async () => {})
   mocks.reconcileStaleRuns.mockClear()

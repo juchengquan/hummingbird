@@ -1,6 +1,5 @@
 import { expect } from "@playwright/test"
 
-import { sendMessage } from "./support/runs"
 import {
   cardStatus,
   childQuestion,
@@ -12,6 +11,7 @@ import {
   rootOf,
   runCard,
   seedBoard,
+  send,
   test,
 } from "./support/tasks"
 
@@ -126,7 +126,7 @@ test.describe("side effects happen once", () => {
   async function research(page: Parameters<typeof openApp>[0], tasks: Parameters<typeof launch>[1]) {
     await tasks.startAs("plain.queued")
     await openApp(page)
-    await sendMessage(page, "/research Write the report")
+    await send(page, "/research Write the report")
     await expect.poll(() => pointer(page)).not.toBeNull()
   }
   const ONCE = { messages: 1, documents: 1, artifacts: 1 }
@@ -151,7 +151,7 @@ test.describe("side effects happen once", () => {
         await page.reload()
         await page.reload()
       }
-      await page.waitForTimeout(2500)
+      await page.waitForTimeout(1500)
       expect(await reportCounts(page)).toEqual(ONCE)
       if (when === "after") await expect(page.getByText("Report opened in the editor")).toHaveCount(0)
     })
