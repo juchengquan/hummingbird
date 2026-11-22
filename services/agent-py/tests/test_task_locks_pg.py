@@ -7,7 +7,6 @@ real Postgres."""
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
@@ -154,29 +153,56 @@ async def test_children_ending_together_wake_the_parent_once(world: World) -> No
         assert len(await world.jobs(parent, "continue")) == 1
 
 
-async def test_deleting_the_conversation_races_the_worker_without_deadlock(world: World) -> None:
+async def test_cancel_racing_spawn_leaves_nothing_live(world: World) -> None:
+    world.model.script("Do it", [spawn("s", "one", "two", "three")])
+    watch = Watch(world.pool)
+    for turn in range(40):
+        await world.sql("DELETE FROM public.tasks WHERE user_id = $1", uuid.UUID(world.user))
+        parent = await world.start()
+
+        async def cancel() -> None:
+            await asyncio.sleep(0.001 * turn)
+            await (world.cancel(parent) if turn % 2 else world.cancel_run(parent))
+
+        await asyncio.gather(world.tick(watch), cancel())
+        await world.work()
+        if await world.status(parent) != "done":
+            assert await world.status(parent) == "cancelled", turn
+            for child in await world.children(parent):
+                assert await world.status(child) in ("cancelled", "done"), turn
+        assert locking_errors(watch.errors) == [], turn
+
+
+@pytest.mark.parametrize("what", ["conversations", "workspaces"])
+async def test_deleting_its_home_races_the_worker_without_deadlock(world: World, what: str) -> None:
     world.model.script("Do it", [spawn("s", "one", "two")])
     watch = Watch(world.pool)
     for turn in range(25):
-        thread = uuid.uuid4()
+        workspace, thread = uuid.uuid4(), uuid.uuid4()
+        await world.sql(
+            "INSERT INTO public.workspaces (id, user_id, name) VALUES ($1, $2, 'ws')",
+            workspace,
+            uuid.UUID(world.user),
+        )
         await world.sql(
             "INSERT INTO public.conversations (id, user_id, workspace_id, title) "
             "VALUES ($1, $2, $3, 'c')",
             thread,
             uuid.UUID(world.user),
-            uuid.UUID(world.workspace),
+            workspace,
         )
         world.thread = str(thread)
+        doomed = thread if what == "conversations" else workspace
         await world.start()
 
         async def delete() -> None:
             await asyncio.sleep(0.002 * (turn % 9))
             async with world.as_user() as conn:
-                await conn.execute("DELETE FROM public.conversations WHERE id = $1", thread)
+                await conn.execute(f"DELETE FROM public.{what} WHERE id = $1", doomed)
 
-        with contextlib.suppress(asyncpg.ForeignKeyViolationError):
-            await asyncio.gather(world.tick(watch), delete())
-        assert locking_errors(watch.errors) == []
+        await asyncio.gather(world.tick(watch), delete())
+        await world.work()
+        assert locking_errors(watch.errors) == [], turn
 
 
 async def test_retries_of_one_resume_racing_are_one_run(world: World) -> None:
