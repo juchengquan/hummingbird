@@ -105,6 +105,7 @@ _SQLSTATE_RESPONSES: dict[str, tuple[int, str]] = {
 _RUN_COLUMNS = """
   t.id, t.user_id, t.thread_id, t.mode, t.status, t.created_at, t.updated_at,
   t.started_at, t.finished_at, t.parent_task_id, t.previous_run_id, t.goal,
+  t.max_steps, t.step,
   t.outcome::text AS outcome, t.lease_expires_at,
   COALESCE(t.checkpoint ? 'awaiting_children', false) AS awaiting_children
 """
@@ -550,6 +551,8 @@ def _record(row: asyncpg.Record, fallback: _LogFallback | None) -> RunRecord:
         parent_run_id=None if parent is None else str(parent),
         previous_run_id=None if previous is None else str(previous),
         goal=row["goal"],
+        max_steps=row["max_steps"],
+        step=row["step"],
         open_interrupts=open_interrupts,
         result=result,
         error=error,

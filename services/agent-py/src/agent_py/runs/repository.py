@@ -384,6 +384,8 @@ class InMemoryRunRepository:
                 started_at=now,
                 previous_run_id=spec.previous_run_id,
                 goal=(spec.goal or "")[:2000],
+                max_steps=spec.max_steps,
+                step=0,
             )
             row = _Row(
                 record,
@@ -405,6 +407,8 @@ class InMemoryRunRepository:
                 started_at=now,
                 previous_run_id=spec.previous_run_id,
                 goal=None if spec.goal is None else spec.goal[:2000],
+                max_steps=spec.max_steps or 25,
+                step=0,
                 lease_expires_at=now + timedelta(seconds=lease),
             )
             row = _Row(record, checkpoint=spec.checkpoint, max_steps=spec.max_steps or 25)

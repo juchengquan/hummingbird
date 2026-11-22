@@ -964,6 +964,54 @@ export interface components {
         JsonPatchOperation: components["schemas"]["AddOperation"] | components["schemas"]["RemoveOperation"] | components["schemas"]["ReplaceOperation"] | components["schemas"]["MoveOperation"] | components["schemas"]["CopyOperation"] | components["schemas"]["TestOperation"];
         /** @description A JSON Pointer as defined by RFC 6901. Either the empty string, meaning the whole document, or a sequence of slash-prefixed reference tokens in which a tilde is escaped as ~0 and a slash as ~1. A value with no leading slash, or a tilde followed by anything other than 0 or 1, is not a JSON Pointer. */
         JsonPointer: string;
+        /**
+         * @description One local MCP server's credential, as the browser stores it — the
+         *     Next chat body's `mcpServers[].credentials`. Travels only in
+         *     `RunAgentInput.state["hummingbird.localMcp"]` (`LocalMcpCredentials`).
+         */
+        LocalMcpCredential: {
+            /** @description HTTP headers sent to the server (e.g. `Authorization`). */
+            headers?: {
+                [key: string]: string;
+            };
+            type?: string;
+        };
+        /**
+         * @description The value of `RunAgentInput.state["hummingbird.localMcp"]`: server
+         *     id (a `localMcpServers[].id`) → its credential (Q45). The backend
+         *     never stores or logs it — not in the run row, its checkpoint, the
+         *     event log or an error — and never echoes it; a resume re-sends it.
+         */
+        LocalMcpCredentials: {
+            [key: string]: components["schemas"]["LocalMcpCredential"];
+        };
+        /**
+         * @description A local-mode MCP server (credentials held by the browser) and its
+         *     cached capabilities — the Next chat body's `mcpServers[]` entry
+         *     without `credentials`.
+         */
+        LocalMcpServer: {
+            capabilities?: {
+                tools?: components["schemas"]["LocalMcpTool"][];
+            };
+            id: string;
+            name: string;
+            /** @description Every tool of this server waits for the user's approval. */
+            requiresApproval?: boolean;
+            /** @enum {string} */
+            transport?: "http";
+            /** @description The server's MCP endpoint (HTTP transport). */
+            url: string;
+        };
+        /** @description One tool from a local MCP server's cached tool list; offered as `mcp__<serverId>__<name>`. */
+        LocalMcpTool: {
+            description?: string;
+            /** @description The tool's JSON Schema, forwarded to the model as is. */
+            inputSchema?: unknown;
+            name: string;
+            /** @description The `ui://` resource an MCP App tool renders. */
+            uiResourceUri?: string;
+        };
         MaxCallsSkillConfig: {
             maxCalls?: number;
         };
@@ -1235,10 +1283,18 @@ export interface components {
              * @description When the run ended (`succeeded`, `failed`, `cancelled` or `interrupted`).
              */
             finishedAt: string | null;
+            /**
+             * @description Background-run progress: the task's title
+             *     (`forwardedProps.goal`, else the last user message's text).
+             *     Null for an interactive run.
+             */
+            goal: string | null;
             /** Format: uuid */
             id: string;
             /** @description The highest log `seq` so far (0 before the first event, or after the log was purged). */
             lastSeq: number;
+            /** @description Background-run progress — the step budget. Null for an interactive run. */
+            maxSteps: number | null;
             mode: components["schemas"]["RunMode"];
             /** @description What an `interrupted` run waits for; the same objects as its `RUN_FINISHED` interrupt outcome. Empty in every other status. */
             openInterrupts: components["schemas"]["Interrupt"][];
@@ -1256,6 +1312,11 @@ export interface components {
             /** Format: date-time */
             startedAt: string | null;
             status: components["schemas"]["RunStatus"];
+            /**
+             * @description Background-run progress — the steps taken so far (0 before
+             *     the first). Null for an interactive run.
+             */
+            step: number | null;
             /** Format: uuid */
             threadId: string;
             /** Format: date-time */
@@ -1290,6 +1351,33 @@ export interface components {
             tools?: components["schemas"]["Tool"][];
         };
         /**
+         * @description One source attached to a turn (`RunForwardedProps.attachments`),
+         *     by `kind`. Mirrors the Next chat body's `AttachmentPayloadSchema`
+         *     (`lib/shared/api-schemas.ts`), except that a signed-in user's file
+         *     goes by id (Q44).
+         */
+        RunAttachment: components["schemas"]["RunFileAttachment"] | components["schemas"]["RunInlineFileAttachment"] | components["schemas"]["RunBookmarkAttachment"] | components["schemas"]["RunMcpResourceAttachment"];
+        /**
+         * @description A URL bookmark with the text fetched for it, capped. Third-party
+         *     content: it taints the turn for memory extraction.
+         */
+        RunBookmarkAttachment: {
+            /** @description When the text was fetched (ISO 8601). */
+            fetchedAt?: string;
+            /** @description The bookmark's id, if the client has one. */
+            id?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "bookmark";
+            /** @description The fetched page text (the Next body's `ATTACHMENT_TEXT_MAX`). */
+            text: string;
+            title: string;
+            truncated?: boolean;
+            url: string;
+        };
+        /**
          * @description A replay cursor — an SSE `id` a run stream sent: `<seq>` (after
          *     log entry `seq` entirely) or `<seq>.<k>` (after the k-th AG-UI
          *     event entry `seq` produced). `0` is before the first entry.
@@ -1315,6 +1403,33 @@ export interface components {
             /** @description Token usage accrued before the failure, for a run that completed one or more model calls before dying. Scoped as on RUN_FINISHED: the run's own calls, subagents included. */
             usage?: components["schemas"]["TokenUsage"][];
         } & WithRequired<components["schemas"]["BaseEvent"], "type">;
+        /**
+         * @description A cloud file (a synced `files` row), by id. The backend reads its
+         *     extracted text itself, after checking the caller owns it (its
+         *     Storage / database access bypasses RLS). Signed-in runs only.
+         */
+        RunFileAttachment: {
+            /** @description What extraction made of it (`UploadedFile.extractedKind`, e.g. `pdf`). */
+            extractedKind?: string;
+            /** @description The file's id (`UploadedFile.id`, the `files` row id). */
+            fileId: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "file";
+            mimeType?: string;
+            /** @description The file name, as the user sees it. */
+            name: string;
+            /**
+             * @description `inline` (default): the text goes into the prompt, within
+             *     the attachments budget. `rag`: only a note that the file can
+             *     be searched with `searchFiles` (by its id, Q47).
+             * @enum {string}
+             */
+            retrievalMode?: "inline" | "rag";
+            sizeBytes?: number;
+        };
         /** @description The run was stopped before it completed, by whoever was running it, and did not fail. Neither success nor interrupt: nothing was produced as a result, and nothing is waited for, so the next run on the thread is an ordinary new run rather than a resume. Closed like its siblings: a cancelled run has no interrupts to carry. Named in the schema before 1.0 because an outcome a consumer does not recognise is stripped and read as success — a cancellation added later would reach every 1.0 consumer as a completed run. */
         RunFinishedCancelledOutcome: {
             /**
@@ -1367,10 +1482,50 @@ export interface components {
          *     know, and new keys are additive. Every key is optional.
          */
         RunForwardedProps: {
+            /**
+             * @description MCP servers whose tools the run may offer (Q48), cloud
+             *     (`workspaceId`) and local (`localMcpServers`) alike. Absent
+             *     means no restriction; an empty list means no MCP tools. Not
+             *     enforced by agent-py yet (Phase 3 catch-up).
+             */
+            allowedMcpServerIds?: string[];
+            /**
+             * @description Sources attached to this turn — files, URL bookmarks, MCP
+             *     resources — the way the Next chat route's `attachments`
+             *     carries them, but large inputs by reference (Q44): a cloud
+             *     file by id, never its text. Rendered into the system prompt
+             *     under one character budget, files first. Accepted but not
+             *     used by agent-py yet (Phase 3 catch-up); attachments the
+             *     model reads directly are still `image` / `document` parts
+             *     (see `StartRunRequest`).
+             */
+            attachments?: components["schemas"]["RunAttachment"][];
             /** @description Background runs — the task's title. Absent means the last user message's text. */
             goal?: string;
+            /**
+             * @description The account's "store files locally" preference: generated
+             *     images come back as data URLs instead of being uploaded to
+             *     Storage. Absent means false. Not acted on by agent-py yet.
+             */
+            localFilesOnly?: boolean;
+            /**
+             * @description Local-mode MCP servers (Q42, Q45): servers whose credentials
+             *     live in the browser, with their cached tool list. Interactive
+             *     runs only — a background run refuses them. **No
+             *     credentials here**: they ride in `RunAgentInput.state` under
+             *     `hummingbird.localMcp` (see `StartRunRequest`). Not used by
+             *     agent-py yet (Phase 3 catch-up).
+             */
+            localMcpServers?: components["schemas"]["LocalMcpServer"][];
             /** @description Step budget. Absent means 25 (background) or the chat default (interactive). */
             maxSteps?: number;
+            /**
+             * @description The conversation's memory opt-out (the chat body's
+             *     `memoryBypass`, set from `Conversation.memoryOff`): no
+             *     remembered facts in the prompt and no remember / forget
+             *     tools. Absent means false. Not acted on by agent-py yet.
+             */
+            memoryBypass?: boolean;
             mode?: components["schemas"]["RunMode"];
             /** @description Model id from the backend's allow-list. Absent means the backend's default. */
             model?: string;
@@ -1390,6 +1545,7 @@ export interface components {
              * @enum {string}
              */
             reasoningEffort?: "low" | "medium" | "high";
+            referenceImage?: components["schemas"]["RunReferenceImage"];
             /**
              * @description Tool names that wait for the user's approval before they run
              *     (an `approval` interrupt, RUN_EVENTS.md § 4). Adds to what
@@ -1397,9 +1553,25 @@ export interface components {
              *     marks for approval).
              */
             requireApprovalFor?: string[];
+            /**
+             * @description Research mode (Q46): the run follows the research task
+             *     prompt (plan → per-section search → gap pass → a cited
+             *     Markdown report), and its citations are verified. Absent
+             *     means false. Not called `mode`, which is interactive /
+             *     background. agent-py accepts it but does not act on it yet
+             *     (Phase 3 catch-up).
+             */
+            research?: boolean;
             skills?: components["schemas"]["SkillConfig"][];
             /** @description Extra instructions (workspace / conversation system prompt), prepended to the backend's own. */
             systemPrompt?: string;
+            /**
+             * @description Opt-in citation verification: when the turn produced cited
+             *     claims over retrieved sources, a post-turn verifier pass
+             *     emits a `hummingbird.verification` part. Absent means false.
+             *     Not acted on by agent-py yet.
+             */
+            verifyCitations?: boolean;
             /**
              * @description The caller's workspace the run belongs to (signed-in runs):
              *     scopes `searchFiles` and adds the workspace's cloud MCP
@@ -1426,10 +1598,52 @@ export interface components {
             /** @description The seq the snapshot covers up to (the compacted entry's seq); null when the whole log was purged. */
             resumeAt: number | null;
         };
+        /**
+         * @description A file that exists only in the browser (a signed-out user's, or
+         *     one not synced), sent by value: its extracted `text`, or — for a
+         *     small file with none — its bytes as a `data:` URL. One of the
+         *     two is expected.
+         */
+        RunInlineFileAttachment: {
+            /** @description The file's bytes, base64 in a `data:` URL (about 1 MiB at most). */
+            dataUrl?: string;
+            extractedKind?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "inlineFile";
+            mimeType?: string;
+            name: string;
+            sizeBytes?: number;
+            /** @description The extracted text (the Next body's `FileSummary.text` cap). */
+            text?: string;
+            /** @description The text was cut before sending. */
+            truncated?: boolean;
+        };
         RunList: {
             /** @description Pass back as `pageToken` for the next page; null on the last page. */
             nextPageToken: string | null;
             runs: components["schemas"]["Run"][];
+        };
+        /**
+         * @description A resource of an MCP server, by reference: the backend reads it
+         *     (`resources/read`) from the server named by `serverId` — a cloud
+         *     server of the workspace, or one of `localMcpServers` with its
+         *     credential from `state`.
+         */
+        RunMcpResourceAttachment: {
+            /** @description The cached resource row's id, if the client has one. */
+            id?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "mcpResource";
+            mimeType?: string;
+            name: string;
+            serverId: string;
+            uri: string;
         };
         /**
          * @description `interactive`: runs in the API process that received `startRun`,
@@ -1438,6 +1652,16 @@ export interface components {
          * @enum {string}
          */
         RunMode: "interactive" | "background";
+        /**
+         * @description The reference image for image-to-image generation (the chat
+         *     body's `referenceImage`, set by an image's Remix action): the
+         *     model is told to call `generateImage` with `referenceImageUrl`
+         *     when the user asks for a variation. Only with the `imageGen`
+         *     skill. Not acted on by agent-py yet.
+         */
+        RunReferenceImage: {
+            url: string;
+        };
         /**
          * @description A succeeded run's return value — also `RUN_FINISHED.result` on the
          *     wire. Open; keys are additive.
@@ -1615,6 +1839,17 @@ export interface components {
          *     Anything else — `audio` / `video` parts, `file` (provider handle)
          *     sources, other media types, malformed base64, a part over its
          *     limit, more parts than allowed — is `400 invalid_attachment`.
+         *
+         *     **`state`.** Hummingbird reads one key of AG-UI's `state`:
+         *     `hummingbird.localMcp`, the credentials of the local MCP servers
+         *     listed in `forwardedProps.localMcpServers` (`LocalMcpCredentials`:
+         *     server id → `{type?, headers?}`, Q45). Credentials never go in
+         *     `forwardedProps` (stored with a background run) or a header
+         *     (reverse-proxy access logs record headers). The backend holds them
+         *     only in memory for the run: never in the run row, its checkpoint,
+         *     the event log, a log line or an error, and never echoed in a
+         *     stream. So a resume — a new run — must send them again, and a
+         *     background run never gets them. Other `state` keys are ignored.
          */
         StartRunRequest: components["schemas"]["RunAgentInput"] & {
             forwardedProps?: components["schemas"]["RunForwardedProps"];
@@ -2160,6 +2395,10 @@ export type Interrupt = components['schemas']['Interrupt'];
 export type JsonPatch = components['schemas']['JsonPatch'];
 export type JsonPatchOperation = components['schemas']['JsonPatchOperation'];
 export type JsonPointer = components['schemas']['JsonPointer'];
+export type LocalMcpCredential = components['schemas']['LocalMcpCredential'];
+export type LocalMcpCredentials = components['schemas']['LocalMcpCredentials'];
+export type LocalMcpServer = components['schemas']['LocalMcpServer'];
+export type LocalMcpTool = components['schemas']['LocalMcpTool'];
 export type MaxCallsSkillConfig = components['schemas']['MaxCallsSkillConfig'];
 export type MemoryExtractRequest = components['schemas']['MemoryExtractRequest'];
 export type MemoryExtractResponse = components['schemas']['MemoryExtractResponse'];
@@ -2193,9 +2432,12 @@ export type RevokeShareResponse = components['schemas']['RevokeShareResponse'];
 export type Run = components['schemas']['Run'];
 export type RunAccepted = components['schemas']['RunAccepted'];
 export type RunAgentInput = components['schemas']['RunAgentInput'];
+export type RunAttachment = components['schemas']['RunAttachment'];
+export type RunBookmarkAttachment = components['schemas']['RunBookmarkAttachment'];
 export type RunCursor = components['schemas']['RunCursor'];
 export type RunError = components['schemas']['RunError'];
 export type RunErrorEvent = components['schemas']['RunErrorEvent'];
+export type RunFileAttachment = components['schemas']['RunFileAttachment'];
 export type RunFinishedCancelledOutcome = components['schemas']['RunFinishedCancelledOutcome'];
 export type RunFinishedEvent = components['schemas']['RunFinishedEvent'];
 export type RunFinishedInterruptOutcome = components['schemas']['RunFinishedInterruptOutcome'];
@@ -2203,8 +2445,11 @@ export type RunFinishedOutcome = components['schemas']['RunFinishedOutcome'];
 export type RunFinishedSuccessOutcome = components['schemas']['RunFinishedSuccessOutcome'];
 export type RunForwardedProps = components['schemas']['RunForwardedProps'];
 export type RunGapEventValue = components['schemas']['RunGapEventValue'];
+export type RunInlineFileAttachment = components['schemas']['RunInlineFileAttachment'];
 export type RunList = components['schemas']['RunList'];
+export type RunMcpResourceAttachment = components['schemas']['RunMcpResourceAttachment'];
 export type RunMode = components['schemas']['RunMode'];
+export type RunReferenceImage = components['schemas']['RunReferenceImage'];
 export type RunResult = components['schemas']['RunResult'];
 export type RunRewindEventValue = components['schemas']['RunRewindEventValue'];
 export type RunStartedEvent = components['schemas']['RunStartedEvent'];

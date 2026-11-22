@@ -8,6 +8,8 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
+type AllowedMcpServerId = Annotated[str, Field(max_length=64, min_length=1)]
+
 
 class ApiError(BaseModel):
     """
@@ -155,6 +157,10 @@ class AssistantMessage(BaseMessage):
 class Brave(BaseModel):
     enabled: bool | None = None
     freshness: Literal["any", "pd", "pw", "pm", "py"] | None = None
+
+
+class Capabilities(BaseModel):
+    tools: Annotated[list[LocalMcpTool] | None, Field(max_length=64)] = None
 
 
 class Citation(BaseModel):
@@ -457,6 +463,9 @@ class FunctionCall(BaseModel):
     """
 
 
+type HeadersAdditionalProperty = Annotated[str, Field(max_length=8192)]
+
+
 class HealthResponse(BaseModel):
     status: Literal["ok"]
     service: str
@@ -535,6 +544,70 @@ class Interrupt(Attributable):
     metadata: Metadata | None = None
     """
     Extra information attached to this interrupt.
+    """
+
+
+class LocalMcpCredential(BaseModel):
+    """
+    One local MCP server's credential, as the browser stores it — the
+    Next chat body's `mcpServers[].credentials`. Travels only in
+    `RunAgentInput.state["hummingbird.localMcp"]` (`LocalMcpCredentials`).
+
+    """
+
+    type: Annotated[str | None, Field(max_length=40)] = None
+    headers: Annotated[dict[str, HeadersAdditionalProperty] | None, Field(max_length=32)] = None
+    """
+    HTTP headers sent to the server (e.g. `Authorization`).
+    """
+
+
+type LocalMcpCredentials = Annotated[dict[str, LocalMcpCredential], Field(max_length=8)]
+"""
+The value of `RunAgentInput.state["hummingbird.localMcp"]`: server
+id (a `localMcpServers[].id`) → its credential (Q45). The backend
+never stores or logs it — not in the run row, its checkpoint, the
+event log or an error — and never echoes it; a resume re-sends it.
+
+"""
+
+
+class LocalMcpServer(BaseModel):
+    """
+    A local-mode MCP server (credentials held by the browser) and its
+    cached capabilities — the Next chat body's `mcpServers[]` entry
+    without `credentials`.
+
+    """
+
+    id: Annotated[str, Field(max_length=64, min_length=1)]
+    name: Annotated[str, Field(max_length=200, min_length=1)]
+    url: Annotated[str, Field(max_length=2000, min_length=1)]
+    """
+    The server's MCP endpoint (HTTP transport).
+    """
+    transport: Literal["http"] | None = None
+    requiresApproval: bool | None = None
+    """
+    Every tool of this server waits for the user's approval.
+    """
+    capabilities: Capabilities | None = None
+
+
+class LocalMcpTool(BaseModel):
+    """
+    One tool from a local MCP server's cached tool list; offered as `mcp__<serverId>__<name>`.
+    """
+
+    name: Annotated[str, Field(max_length=200, min_length=1)]
+    description: Annotated[str | None, Field(max_length=2000)] = None
+    inputSchema: Any | None = None
+    """
+    The tool's JSON Schema, forwarded to the model as is.
+    """
+    uiResourceUri: Annotated[str | None, Field(max_length=2000)] = None
+    """
+    The `ui://` resource an MCP App tool renders.
     """
 
 
@@ -785,6 +858,23 @@ class Run(BaseModel):
     """
     The highest log `seq` so far (0 before the first event, or after the log was purged).
     """
+    goal: str | None
+    """
+    Background-run progress: the task's title
+    (`forwardedProps.goal`, else the last user message's text).
+    Null for an interactive run.
+
+    """
+    maxSteps: Annotated[int | None, Field(ge=1)]
+    """
+    Background-run progress — the step budget. Null for an interactive run.
+    """
+    step: Annotated[int | None, Field(ge=0)]
+    """
+    Background-run progress — the steps taken so far (0 before
+    the first). Null for an interactive run.
+
+    """
     createdAt: AwareDatetime
     startedAt: AwareDatetime | None
     finishedAt: AwareDatetime | None
@@ -849,6 +939,31 @@ class RunAgentInput(BaseModel):
     """
 
 
+class RunBookmarkAttachment(BaseModel):
+    """
+    A URL bookmark with the text fetched for it, capped. Third-party
+    content: it taints the turn for memory extraction.
+
+    """
+
+    kind: Literal["bookmark"]
+    id: Annotated[str | None, Field(max_length=64)] = None
+    """
+    The bookmark's id, if the client has one.
+    """
+    url: Annotated[str, Field(max_length=2000, min_length=1)]
+    title: Annotated[str, Field(max_length=500, min_length=1)]
+    text: Annotated[str, Field(max_length=220000)]
+    """
+    The fetched page text (the Next body's `ATTACHMENT_TEXT_MAX`).
+    """
+    truncated: bool | None = None
+    fetchedAt: Annotated[str | None, Field(max_length=64)] = None
+    """
+    When the text was fetched (ISO 8601).
+    """
+
+
 type RunCursor = Annotated[
     str,
     Field(
@@ -874,6 +989,38 @@ class RunError(BaseModel):
     An `ApiError` code: `rate_limit`, `auth`, `context_window`, `provider`, `upstream`, `max_steps`, `no_worker`, `worker_lost`, `unknown`, …
     """
     message: str
+
+
+class RunFileAttachment(BaseModel):
+    """
+    A cloud file (a synced `files` row), by id. The backend reads its
+    extracted text itself, after checking the caller owns it (its
+    Storage / database access bypasses RLS). Signed-in runs only.
+
+    """
+
+    kind: Literal["file"]
+    fileId: Annotated[str, Field(max_length=64, min_length=1)]
+    """
+    The file's id (`UploadedFile.id`, the `files` row id).
+    """
+    name: Annotated[str, Field(max_length=500, min_length=1)]
+    """
+    The file name, as the user sees it.
+    """
+    mimeType: Annotated[str | None, Field(max_length=100)] = None
+    sizeBytes: Annotated[int | None, Field(ge=0)] = None
+    extractedKind: Annotated[str | None, Field(max_length=40)] = None
+    """
+    What extraction made of it (`UploadedFile.extractedKind`, e.g. `pdf`).
+    """
+    retrievalMode: Literal["inline", "rag"] | None = None
+    """
+    `inline` (default): the text goes into the prompt, within
+    the attachments budget. `rag`: only a note that the file can
+    be searched with `searchFiles` (by its id, Q47).
+
+    """
 
 
 class RunForwardedProps(BaseModel):
@@ -937,6 +1084,70 @@ class RunForwardedProps(BaseModel):
     provider default (no extended thinking). Interactive runs.
 
     """
+    research: bool | None = None
+    """
+    Research mode (Q46): the run follows the research task
+    prompt (plan → per-section search → gap pass → a cited
+    Markdown report), and its citations are verified. Absent
+    means false. Not called `mode`, which is interactive /
+    background. agent-py accepts it but does not act on it yet
+    (Phase 3 catch-up).
+
+    """
+    allowedMcpServerIds: Annotated[list[AllowedMcpServerId] | None, Field(max_length=64)] = None
+    """
+    MCP servers whose tools the run may offer (Q48), cloud
+    (`workspaceId`) and local (`localMcpServers`) alike. Absent
+    means no restriction; an empty list means no MCP tools. Not
+    enforced by agent-py yet (Phase 3 catch-up).
+
+    """
+    attachments: Annotated[list[RunAttachment] | None, Field(max_length=40)] = None
+    """
+    Sources attached to this turn — files, URL bookmarks, MCP
+    resources — the way the Next chat route's `attachments`
+    carries them, but large inputs by reference (Q44): a cloud
+    file by id, never its text. Rendered into the system prompt
+    under one character budget, files first. Accepted but not
+    used by agent-py yet (Phase 3 catch-up); attachments the
+    model reads directly are still `image` / `document` parts
+    (see `StartRunRequest`).
+
+    """
+    memoryBypass: bool | None = None
+    """
+    The conversation's memory opt-out (the chat body's
+    `memoryBypass`, set from `Conversation.memoryOff`): no
+    remembered facts in the prompt and no remember / forget
+    tools. Absent means false. Not acted on by agent-py yet.
+
+    """
+    verifyCitations: bool | None = None
+    """
+    Opt-in citation verification: when the turn produced cited
+    claims over retrieved sources, a post-turn verifier pass
+    emits a `hummingbird.verification` part. Absent means false.
+    Not acted on by agent-py yet.
+
+    """
+    referenceImage: RunReferenceImage | None = None
+    localFilesOnly: bool | None = None
+    """
+    The account's "store files locally" preference: generated
+    images come back as data URLs instead of being uploaded to
+    Storage. Absent means false. Not acted on by agent-py yet.
+
+    """
+    localMcpServers: Annotated[list[LocalMcpServer] | None, Field(max_length=8)] = None
+    """
+    Local-mode MCP servers (Q42, Q45): servers whose credentials
+    live in the browser, with their cached tool list. Interactive
+    runs only — a background run refuses them. **No
+    credentials here**: they ride in `RunAgentInput.state` under
+    `hummingbird.localMcp` (see `StartRunRequest`). Not used by
+    agent-py yet (Phase 3 catch-up).
+
+    """
 
 
 class RunGapEventValue(BaseModel):
@@ -960,12 +1171,73 @@ class RunGapEventValue(BaseModel):
     """
 
 
+class RunInlineFileAttachment(BaseModel):
+    """
+    A file that exists only in the browser (a signed-out user's, or
+    one not synced), sent by value: its extracted `text`, or — for a
+    small file with none — its bytes as a `data:` URL. One of the
+    two is expected.
+
+    """
+
+    kind: Literal["inlineFile"]
+    name: Annotated[str, Field(max_length=500, min_length=1)]
+    mimeType: Annotated[str | None, Field(max_length=100)] = None
+    sizeBytes: Annotated[int | None, Field(ge=0)] = None
+    extractedKind: Annotated[str | None, Field(max_length=40)] = None
+    text: Annotated[str | None, Field(max_length=120000)] = None
+    """
+    The extracted text (the Next body's `FileSummary.text` cap).
+    """
+    truncated: bool | None = None
+    """
+    The text was cut before sending.
+    """
+    dataUrl: Annotated[str | None, Field(max_length=1500000, pattern="^data:")] = None
+    """
+    The file's bytes, base64 in a `data:` URL (about 1 MiB at most).
+    """
+
+
 class RunList(BaseModel):
     runs: list[Run]
     nextPageToken: str | None
     """
     Pass back as `pageToken` for the next page; null on the last page.
     """
+
+
+class RunMcpResourceAttachment(BaseModel):
+    """
+    A resource of an MCP server, by reference: the backend reads it
+    (`resources/read`) from the server named by `serverId` — a cloud
+    server of the workspace, or one of `localMcpServers` with its
+    credential from `state`.
+
+    """
+
+    kind: Literal["mcpResource"]
+    id: Annotated[str | None, Field(max_length=64)] = None
+    """
+    The cached resource row's id, if the client has one.
+    """
+    serverId: Annotated[str, Field(max_length=64, min_length=1)]
+    uri: Annotated[str, Field(max_length=2000, min_length=1)]
+    name: Annotated[str, Field(max_length=500, min_length=1)]
+    mimeType: Annotated[str | None, Field(max_length=100)] = None
+
+
+type RunAttachment = Annotated[
+    RunFileAttachment | RunInlineFileAttachment | RunBookmarkAttachment | RunMcpResourceAttachment,
+    Field(discriminator="kind"),
+]
+"""
+One source attached to a turn (`RunForwardedProps.attachments`),
+by `kind`. Mirrors the Next chat body's `AttachmentPayloadSchema`
+(`lib/shared/api-schemas.ts`), except that a signed-in user's file
+goes by id (Q44).
+
+"""
 
 
 type RunMode = Literal["interactive", "background"]
@@ -975,6 +1247,19 @@ streamed to the caller (Q28). `background`: queued for a worker;
 requires sign-in.
 
 """
+
+
+class RunReferenceImage(BaseModel):
+    """
+    The reference image for image-to-image generation (the chat
+    body's `referenceImage`, set by an image's Remix action): the
+    model is told to call `generateImage` with `referenceImageUrl`
+    when the user asks for a variation. Only with the `imageGen`
+    skill. Not acted on by agent-py yet.
+
+    """
+
+    url: Annotated[str, Field(max_length=4000, min_length=1)]
 
 
 class RunResult(BaseModel):
@@ -1188,6 +1473,17 @@ class StartRunRequest(RunAgentInput):
     Anything else — `audio` / `video` parts, `file` (provider handle)
     sources, other media types, malformed base64, a part over its
     limit, more parts than allowed — is `400 invalid_attachment`.
+
+    **`state`.** Hummingbird reads one key of AG-UI's `state`:
+    `hummingbird.localMcp`, the credentials of the local MCP servers
+    listed in `forwardedProps.localMcpServers` (`LocalMcpCredentials`:
+    server id → `{type?, headers?}`, Q45). Credentials never go in
+    `forwardedProps` (stored with a background run) or a header
+    (reverse-proxy access logs record headers). The backend holds them
+    only in memory for the run: never in the run row, its checkpoint,
+    the event log, a log line or an error, and never echoed in a
+    stream. So a resume — a new run — must send them again, and a
+    background run never gets them. Other `state` keys are ignored.
 
     """
 
