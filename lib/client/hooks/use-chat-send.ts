@@ -235,6 +235,14 @@ export function useChatSend(): UseChatSendResult {
           reasoningEffort: modelSupportsReasoningEffort(model)
             ? st.chatReasoningEffort ?? undefined
             : undefined,
+          memoryBypass: conv?.memoryOff || undefined,
+          verifyCitations: st.verifyCitations || undefined,
+          localFilesOnly: st.localFilesOnly || undefined,
+          // TODO(5b-B): the turn's `attachments`. TODO(5b-D):
+          // `localMcpServers` + `localMcpCredentials` (`getLocalCred`) —
+          // re-read here, since nothing keeps the paused run's request
+          // across a reload. The I2I `referenceImage` is per send and is
+          // not re-applied after a reload.
         }
       },
     })
@@ -392,9 +400,12 @@ export function useChatSend(): UseChatSendResult {
       // user message's parts — the attached images' data URLs (as
       // `buildMessages` sends them) and the inline-mode files' extracted
       // text (`runDocumentsFor`, as the file attachments below) — and the
-      // reasoning tier as `/v1/chat` sends it. Not yet sent (Q32, see the
-      // plan's Phase 3 checklist): MCP servers / resources, URL bookmarks,
-      // sandbox files, reference images, the memory opt-out.
+      // reasoning tier as `/v1/chat` sends it. The contract-0.4.0 options
+      // go too where they are at hand (the memory opt-out, citation
+      // checks, `localFilesOnly`, the I2I reference, the persona's MCP
+      // allow-list); agent-py accepts them and acts on them in wave 5b.
+      // Not yet sent (Q32, see the plan's Phase 3 checklist): MCP servers /
+      // resources, URL bookmarks, cloud files by id, sandbox files.
       const runsTarget = RUNS_CHAT_ENABLED
         ? await (
             await import("@/client/api/backend-resolver")
@@ -424,6 +435,16 @@ export function useChatSend(): UseChatSendResult {
             reasoningEffort: modelSupportsReasoningEffort(modelForCall)
               ? useStore.getState().chatReasoningEffort ?? undefined
               : undefined,
+            memoryBypass: conv?.memoryOff || undefined,
+            verifyCitations: useStore.getState().verifyCitations || undefined,
+            localFilesOnly: useStore.getState().localFilesOnly || undefined,
+            referenceImage: options?.referenceImage,
+            allowedMcpServerIds: options?.allowedMcpServerIds,
+            // TODO(5b-B): `attachments` — files (cloud ones by id, Q44),
+            // URL bookmarks, MCP resources, as the `/v1/chat` body's
+            // `attachmentsForRequest` below. TODO(5b-D): `localMcpServers`
+            // (no credentials) + `localMcpCredentials` (`getLocalCred`),
+            // as `mcpServersForRequest` below.
           }),
         })
         return

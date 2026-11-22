@@ -19,9 +19,15 @@ import "client-only"
  *   file's extracted text as a `text/plain` `data` source, its name in
  *   `metadata.name`.
  * - `forwardedProps` — Hummingbird's options (`RunForwardedProps`): model,
- *   the composed system prompt, skills, workspace, reasoning effort, plus
- *   anything the caller adds (e.g. `requireApprovalFor`). `mode` is left
- *   out: absent means interactive.
+ *   the composed system prompt, skills, workspace, reasoning effort, the
+ *   0.4.0 options (research mode, the MCP allow-list, `attachments` by
+ *   reference, the memory opt-out, citation checks, the I2I reference,
+ *   `localFilesOnly`, the local MCP servers), plus anything the caller adds
+ *   (e.g. `requireApprovalFor`). Booleans go only when true (absent means
+ *   false). `mode` is left out: absent means interactive.
+ * - `state` — only `hummingbird.localMcp`: the local MCP servers'
+ *   credentials (Q45), never in `forwardedProps`. agent-py never stores
+ *   them, so a resume must send them again (`localMcpCredentialsOf`).
  * - `threadId` — the conversation (`threadIdFor`), `runId` — freshly
  *   minted unless given (reuse it to retry idempotently).
  *
@@ -32,7 +38,19 @@ import type { ReasoningEffort } from "@/shared/reasoning-effort"
 import { mintRunId, threadIdFor } from "@/shared/runs/ids"
 import type { Message, UploadedFile } from "@/shared/types"
 
-import type { AgUiMessage, RunForwardedProps, SkillConfig, StartRunRequest } from "./types"
+import type {
+  AgUiMessage,
+  LocalMcpCredentials,
+  LocalMcpServer,
+  RunAttachment,
+  RunForwardedProps,
+  RunReferenceImage,
+  SkillConfig,
+  StartRunRequest,
+} from "./types"
+
+/** The `RunAgentInput.state` key holding local MCP credentials (Q45). */
+export const LOCAL_MCP_STATE_KEY = "hummingbird.localMcp"
 
 export interface ChatRunInput {
   /** The store conversation (its id becomes the thread). */
@@ -59,6 +77,26 @@ export interface ChatRunInput {
   /** The chat's reasoning tier (`chatReasoningEffort`); the backend
    *  ignores it for a model that takes none. */
   reasoningEffort?: ReasoningEffort
+  // --- contract 0.4.0 (the Phase 3 catch-up; agent-py acts on them in wave 5b)
+  /** Research mode (Q46). */
+  research?: boolean
+  /** The MCP servers the run may use (Q48); `[]` = none, absent = all. */
+  allowedMcpServerIds?: readonly string[]
+  /** Files (cloud ones by id), bookmarks and MCP resources (Q44). 5b-B. */
+  attachments?: readonly RunAttachment[]
+  /** The conversation's memory opt-out (`Conversation.memoryOff`). */
+  memoryBypass?: boolean
+  /** The account's citation-check toggle. */
+  verifyCitations?: boolean
+  /** The I2I reference of this turn (an image's Remix action). */
+  referenceImage?: RunReferenceImage
+  /** The account's "store files locally" preference. */
+  localFilesOnly?: boolean
+  /** Local-mode MCP servers with their cached tools, no credentials. 5b-D. */
+  localMcpServers?: readonly LocalMcpServer[]
+  /** Their credentials, by server id — sent in `state` only, never kept
+   *  anywhere but the in-flight request. 5b-D. */
+  localMcpCredentials?: LocalMcpCredentials
 }
 
 /** One attached file's extracted text (`UploadedFile.extractedText`). */
@@ -156,6 +194,15 @@ export function utf8ToBase64(text: string): string {
   return btoa(binary)
 }
 
+/** The local MCP credentials a request carries in `state` — what a resume
+ *  re-sends (agent-py keeps none, Q45). */
+export function localMcpCredentialsOf(body: Pick<StartRunRequest, "state">): LocalMcpCredentials | undefined {
+  const state: unknown = body.state
+  if (!state || typeof state !== "object" || Array.isArray(state)) return undefined
+  const creds = (state as Record<string, unknown>)[LOCAL_MCP_STATE_KEY]
+  return creds && typeof creds === "object" && !Array.isArray(creds) ? (creds as LocalMcpCredentials) : undefined
+}
+
 export function buildRunInput(input: ChatRunInput): StartRunRequest {
   const forwardedProps: RunForwardedProps = { ...(input.forwardedProps ?? {}) }
   if (input.model) forwardedProps.model = input.model
@@ -163,6 +210,18 @@ export function buildRunInput(input: ChatRunInput): StartRunRequest {
   if (input.skills && input.skills.length > 0) forwardedProps.skills = [...input.skills]
   if (input.workspaceId) forwardedProps.workspaceId = input.workspaceId
   if (input.reasoningEffort) forwardedProps.reasoningEffort = input.reasoningEffort
+  if (input.research) forwardedProps.research = true
+  if (input.allowedMcpServerIds) forwardedProps.allowedMcpServerIds = [...input.allowedMcpServerIds]
+  if (input.attachments && input.attachments.length > 0) forwardedProps.attachments = [...input.attachments]
+  if (input.memoryBypass) forwardedProps.memoryBypass = true
+  if (input.verifyCitations) forwardedProps.verifyCitations = true
+  if (input.referenceImage) forwardedProps.referenceImage = { url: input.referenceImage.url }
+  if (input.localFilesOnly) forwardedProps.localFilesOnly = true
+  if (input.localMcpServers && input.localMcpServers.length > 0) {
+    forwardedProps.localMcpServers = [...input.localMcpServers]
+  }
+  const creds = input.localMcpCredentials
+  const state = creds && Object.keys(creds).length > 0 ? { [LOCAL_MCP_STATE_KEY]: { ...creds } } : undefined
   return {
     threadId: threadIdFor(input.conversationId),
     runId: input.runId ?? mintRunId(),
@@ -170,6 +229,7 @@ export function buildRunInput(input: ChatRunInput): StartRunRequest {
       images: input.images,
       documents: input.documents,
     }) as StartRunRequest["messages"],
+    ...(state ? { state } : {}),
     ...(Object.keys(forwardedProps).length > 0 ? { forwardedProps } : {}),
   }
 }

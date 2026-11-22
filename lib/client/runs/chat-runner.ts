@@ -36,7 +36,7 @@ import type { PersistedUiPart } from "@/shared/generative-ui/schemas"
 import type { Message } from "@/shared/types"
 
 import * as activeRunStore from "./active-run"
-import type { ChatRunInput } from "./build-input"
+import { localMcpCredentialsOf, type ChatRunInput } from "./build-input"
 import {
   useInterruptedTurns,
   type AnswerOptions,
@@ -610,10 +610,23 @@ export function createChatRunner(deps: ChatRunnerDeps): ChatRunner {
         }
       }
       const history = conv.messages.slice(0, conv.messages.indexOf(message))
+      // The resume is a new run with the paused run's options: its request
+      // when this tab sent it (`bodies` — memory only, dropped when the run
+      // settles), else composed afresh after a reload. Local MCP
+      // credentials ride in `state` (Q45) and agent-py keeps none, so they
+      // are re-sent too: from the in-memory request, or — after a reload —
+      // read again by `composeResumeInput` from where the browser keeps
+      // them. Nothing here persists them: `bodies` is never written to
+      // storage, and the saved pointers (`active-run.ts`, `run-tokens.ts`,
+      // `run-base.ts`) and `InterruptedTurn` carry no request body.
       const previous = bodies.get(turn.runId)
       const input = deps.buildRunInput({
         ...(previous
-          ? { model: turn.model, forwardedProps: previous.forwardedProps }
+          ? {
+              model: turn.model,
+              forwardedProps: previous.forwardedProps,
+              localMcpCredentials: localMcpCredentialsOf(previous),
+            }
           : deps.composeResumeInput(turn, history)),
         conversationId: turn.conversationId,
         history,

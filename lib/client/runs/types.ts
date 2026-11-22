@@ -36,6 +36,16 @@ export type RunStatus = Schemas["RunStatus"]
 /** `RUN_FINISHED.result` of a succeeded run (`text`, `memoryTainted`). */
 export type RunResult = Schemas["RunResult"]
 export type SkillConfig = Schemas["SkillConfig"]
+/** One source attached to a turn (`forwardedProps.attachments`, Q44). */
+export type RunAttachment = Schemas["RunAttachment"]
+/** The I2I reference of a turn (`forwardedProps.referenceImage`). */
+export type RunReferenceImage = Schemas["RunReferenceImage"]
+/** A local-mode MCP server, without its credential (`forwardedProps.localMcpServers`). */
+export type LocalMcpServer = Schemas["LocalMcpServer"]
+/** One local MCP server's credential. */
+export type LocalMcpCredential = Schemas["LocalMcpCredential"]
+/** `state["hummingbird.localMcp"]`: server id → credential (Q45). */
+export type LocalMcpCredentials = Schemas["LocalMcpCredentials"]
 /** A replay cursor: an SSE `id` (`<seq>` or `<seq>.<k>`), `"0"` = start. */
 export type RunCursor = Schemas["RunCursor"]
 
