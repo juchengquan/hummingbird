@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from ..chat_loop import DEFAULT_MAX_STEPS
-from ..model_allowlist import resolve_optional_model
+from ..model_allowlist import AUTO_MODEL_ID, get_model_allowlist, resolve_optional_model
 from ..reasoning_effort import ReasoningEffort, parse_reasoning_effort
 from ..tools import SkillConfigs
 
@@ -351,10 +351,21 @@ def validate_run_options(options: Mapping[str, object]) -> None:
     """Raise `UnknownModelError` (`code = "unknown_model"`) for a model
     outside the allow-list — lets the API answer 400 before creating the
     run, as `/v1/chat` does. The adapter re-checks and fails the run.
+    `auto` passes on an interactive run when the catalog's routing pair
+    is allowed here.
 
     The shapes of the other options are the contract's (`StartRunRequest`
     validation, 422). Checks that depend on the run — local MCP on a
     background run (Q42) — are the router's (`routers/runs.py`)."""
-    # TODO(5b-C): `auto` routing — accept `model: "auto"` here once the
-    # harness's model resolver (`harness_hooks.resolve_model`) routes it.
-    resolve_optional_model(parse_run_options(options).model)
+    model = parse_run_options(options).model
+    # `auto` is routed by the interactive harness's model resolver
+    # (`harness_hooks.resolve_model`) — allowed when the catalog's
+    # routing pair is (both entries `anthropic/*`). The background
+    # executor has no router, so there it stays unknown.
+    if (
+        model == AUTO_MODEL_ID
+        and options.get("mode") != "background"
+        and get_model_allowlist().routing is not None
+    ):
+        return
+    resolve_optional_model(model)
