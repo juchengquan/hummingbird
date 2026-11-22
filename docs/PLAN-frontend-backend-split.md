@@ -1,6 +1,6 @@
 # Plan: Frontend / backend split
 
-Status: **Waves 1–4a (Phases 0–2, Phase 3 foundation) shipped (#294–#298). Wave 4b in progress.** Decided in a design interview
+Status: **Waves 1–4 (Phases 0–2, chat on runs) shipped (#294–#299). Wave 5 (backend catch-up) being planned.** Decided in a design interview
 on 2026-11-21. Supersedes the open parts of
 [`PLAN-backend-extraction.md`](PLAN-backend-extraction.md), whose Phase 1
 (single `apiClient` + Zod schemas + `docs/API.md`) shipped and is the
@@ -96,6 +96,10 @@ three times. The goals:
 | Q38 | The tasks panel moves in a later wave, after chat: it needs background answers as new runs, children via `parentRunId`, and cancel through runs first |
 | Q39 | A small Playwright smoke test (browser → agent-py with the stub harness: send, stop, reload + rejoin, answer an interrupt) ships with the chat switch |
 | Q40 | While an agent service serves chat (`python` / `ts-service` signed in, `python-runs` always), the model picker offers only the models it accepts (the `anthropic/*` allowlist, no Auto), and a selected model it can't run is switched to its default with a visible note — not a 400 on every message, and never silently |
+| Q41 | A background run's answers start the new run from the paused run's checkpoint plus the `resume[]` answers (the Q24 way); the paused run stays `interrupted`. Each paused task is answered one way only: after a runs resume, `/api/tasks/:id/respond` refuses it (409), and a task answered the old way can't be resumed through `/v1/runs` (409). The old route works unchanged until Phase 5 |
+| Q42 | Local MCP credentials go to **interactive** runs only, in a request field agent-py never stores or logs (not `forwardedProps`), re-sent on each resume. Background runs refuse local MCP, as the Next task routes do. agent-py gets `MCP_ALLOW_PRIVATE_HOSTS` with Next's semantics |
+| Q43 | The code interpreter stays Next-only until a short trial shows how microsandbox runs beside agent-py (a separate service agent-py calls over HTTP, or another way); the trial writes findings, not code |
+| Q44 | `/v1/runs` keeps its 16 MB body cap. Large inputs go by reference: cloud files by id (agent-py checks the owner itself — its Storage client bypasses RLS), bookmarks as capped text, inline bytes only for a signed-out user's small files |
 
 ## Run contract (v1)
 
@@ -173,6 +177,14 @@ has shipped behind the existing per-account backend switch.
    - [ ] the per-IP image-generation budget
    - [ ] reasoning effort and the attachment checks in the background
      executor
+   - [ ] background runs on `/v1/runs`: resume carries the answers into
+     the executor (Q41); starts keep `workspaceId`, `requireApprovalFor`,
+     research mode and the allowed MCP servers (all dropped today)
+   - [ ] `auto` model routing, so Auto can return to the agent backends
+   - [ ] MCP Apps
+   - [ ] the per-IP web-tool window
+   - [ ] RAG-mode files: `searchFiles` needs a file id no prompt carries —
+     check whether it works on Next before porting
 4. **Editor AI to the backend** (Q23).
 5. **Removal** — all Next API routes, AI/admin keys from the frontend
    env, the old `/v1/chat`, agent-ts's old routes, the server session;
@@ -192,7 +204,8 @@ has shipped behind the existing per-account backend switch.
 | 3b (Phase 2) | **A** AG-UI encoder + stream mechanics (seq in SSE `id:`, replay, `gap` + `MESSAGES_SNAPSHOT`, in-memory log for anonymous runs, compaction) · **B** runs API (start with idempotent client `runId`, status, cancel, list, `runToken`) + conformance cases · **C** harness-adapter interface with today's loop as the first adapter; chat emits internal events | Wave 3a merged |
 | 4a (Phase 3) | one agent: the "agent-py (runs)" option + store migration v35; `@ag-ui/client` / `@ag-ui/core`; `lib/client/runs/` — transport (start, rejoin from a cursor, cancel, run-token storage) and the pure AG-UI → store step tested on recorded streams; the interfaces 4b codes against | Wave 3b merged |
 | 4b (Phase 3) | **A** hook into `use-chat-send` (send, Stop → cancel, reload → rejoin, memory taint, sync hold) · **B** chat answer cards + resume (Q35) · **C** Playwright smoke (Q39) · **D** backend catch-up, first slice: image/document attachments, reasoning effort, generated images/files from the native harness | Wave 4a merged |
-| later | the rest of the backend catch-up (Q32); the tasks panel onto runs (Q38) | — |
+| 5 (Phase 3) | backend catch-up (Q32, Q41–Q44) — split being planned; plus the Q43 code-interpreter trial (findings only) | Wave 4 merged |
+| 6 (Phase 3) | the tasks panel onto runs (Q38) | Wave 5's background-runs work merged |
 
 Each wave merges into one integration branch and ships as one PR
 against `dev`.
