@@ -32,7 +32,7 @@ import { resolveSkill, type SkillId } from "@/shared/skills/types"
 import { resolveSlash } from "@/shared/slash-resolver"
 import { useSlashCommands } from "@/client/hooks/use-slash-commands"
 import { TASK_MODES, type TaskModeId } from "@/shared/task-modes/registry"
-import { resolveAgent } from "@/shared/agents/resolve"
+import { latestTurnPersona, recordTurnPersona } from "@/shared/agents/turn-persona"
 import { PromptVariableFill } from "@/components/panels/prompt-variable-fill"
 import { SmartPasteChip } from "@/components/chat/smart-paste-chip"
 import { ChatHeader } from "@/components/panels/chat-header"
@@ -522,15 +522,6 @@ export function ChatPanel() {
       activeAgentForCall =
         workspaceAgents.find((a) => a.id === activeAgentId) ?? null
     }
-    if (activeAgentForCall) {
-      const resolved = resolveAgent(activeAgentForCall)
-      forcedSkillIds = [
-        ...(forcedSkillIds ?? []),
-        ...resolved.forcedSkillIds.filter(
-          (s) => !forcedSkillIds?.includes(s as SkillId)
-        ),
-      ] as SkillId[]
-    }
     // `/search ` with no query is a no-op (don't send an empty turn);
     // the user is mid-compose. The send button stays available.
     if (!messageContent) return
@@ -552,6 +543,11 @@ export function ChatPanel() {
       role: "user",
       content: messageContent,
       attachedFileIds: snapshotIds,
+      // The persona's prompt, model, skills and MCP allow-list are applied
+      // from this record by `useChatSend`, on this send and any resend (Q52).
+      ...(activeAgentForCall
+        ? { turnPersona: recordTurnPersona(activeAgentForCall) }
+        : {}),
     })
 
     setInputValue("")
@@ -573,7 +569,6 @@ export function ChatPanel() {
     }
 
     const history = [...messages, userMessage]
-    const agentResolved = activeAgentForCall ? resolveAgent(activeAgentForCall) : null
     chatSendMessage(history, {
       referenceImage: pendingRef ? { url: pendingRef.url } : undefined,
       forcedSkillIds,
@@ -583,15 +578,6 @@ export function ChatPanel() {
       // signal, not the toggle.
       asTask: taskRun.runAsTask || !!taskModeForCall,
       taskMode: taskModeForCall,
-      // Persona overrides for this turn (`PLAN-custom-agents.md`).
-      // Persona modelId beats the chat-input's session-picked model;
-      // persona system prompt is appended after the workspace's;
-      // persona MCP allow-list narrows the MCP server set, both modes
-      // (Phase 2 — server-side enforcement in `loadEffectiveMcpServers`).
-      modelOverride: agentResolved?.modelId,
-      agentSystemPrompt: agentResolved?.systemPrompt,
-      allowedMcpServerIds:
-        agentResolved?.allowedMcpServerIds ?? undefined,
     })
   }
 
@@ -644,15 +630,25 @@ export function ChatPanel() {
    * `confirm`, etc.). Adds the user message + invokes the send
    * pipeline using fresh state at click-time; intentionally skips
    * the keyboard-only knobs (skill mutes, reference image, etc.) —
-   * those are tied to the composer's UI state.
+   * those are tied to the composer's UI state. The answer continues as
+   * the persona of the turn that produced the card (Q52), which needn't
+   * be the latest one.
    */
   const handleSendUserMessageFromUiPart = useCallback(
-    (text: string) => {
+    (text: string, sourceMessageId: string) => {
       const trimmed = text.trim()
       if (!trimmed) return
       const conv = conversations.find((c) => c.id === activeConversationId)
       if (!conv) return
-      const userMessage = addMessage({ role: "user", content: trimmed })
+      const source = conv.messages.findIndex((m) => m.id === sourceMessageId)
+      const turnPersona = latestTurnPersona(
+        source === -1 ? conv.messages : conv.messages.slice(0, source)
+      )
+      const userMessage = addMessage({
+        role: "user",
+        content: trimmed,
+        ...(turnPersona ? { turnPersona } : {}),
+      })
       if (!userMessage) return
       chatSendMessage([...conv.messages, userMessage])
     },

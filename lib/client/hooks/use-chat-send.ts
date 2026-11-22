@@ -67,6 +67,7 @@ import {
   hasSignedInSession,
 } from "@/client/chat/context-sources"
 import { runAttachmentsFor } from "@/client/runs/attachments"
+import { latestTurnPersona, resolveTurnPersona } from "@/shared/agents/turn-persona"
 import { buildRunInput } from "@/client/runs/build-input"
 import { localMcpForRun } from "@/client/runs/local-mcp"
 import { registerChatRunBridge } from "@/client/runs/chat-bridge"
@@ -93,15 +94,6 @@ export interface SendOptions {
   /** Task mode for this turn — `'research'` triggers Deep Research
    *  mode in the worker. Only meaningful when `asTask` is true. */
   taskMode?: "default" | "research"
-  /** Custom-agent system prompt for this turn — appended after the
-   *  workspace's system prompt via `composeSystemPrompts`. See
-   *  `PLAN-custom-agents.md`. */
-  agentSystemPrompt?: string
-  /** Per-turn MCP allow-list — when set, MCP servers are filtered to
-   *  this list server-side (Phase 2 of `PLAN-custom-agents`, Q48): task
-   *  mode, the chat route (`loadEffectiveMcpServers`) and runs alike.
-   *  Absent = no restriction; `[]` = no MCP. */
-  allowedMcpServerIds?: string[]
   /** Route this turn's reply onto a specific conversation rather than
    *  the React-subscribed `activeConversationId`. Needed when the caller
    *  has *just* created a conversation (e.g. a non-destructive edit/
@@ -335,9 +327,20 @@ export function useChatSend(): UseChatSendResult {
   // --- the pipeline (the body that used to be `callChatAPI`) ---
   const callChatAPI = useCallback(
     async (history: Message[], options?: SendOptions) => {
+      // The turn's persona comes from the history, never from the caller
+      // (Q52): the newest user message records it, so every send of that
+      // turn (first, Regenerate, Edit, Retry, the auto-retry below, a
+      // UI card's answer) gets the same prompt, model, skills and MCP
+      // allow-list. `allowedMcpServerIds` filters server-side (Q48) and
+      // here: absent = no restriction, `[]` = no MCP.
+      const persona = resolveTurnPersona(
+        latestTurnPersona(history),
+        useStore.getState().agents
+      )
+      const allowedMcpServerIds = persona.allowedMcpServerIds ?? undefined
       // Read the model freshly so retry-after-model-change works.
       const modelForCall =
-        options?.modelOverride ?? useStore.getState().chatModel
+        options?.modelOverride ?? persona.modelId ?? useStore.getState().chatModel
       const isRetry = options?.isRetry ?? false
       // Capture the conv id at send time so a tab switch mid-stream
       // doesn't move the UI state onto the wrong chat. When the caller
@@ -368,7 +371,7 @@ export function useChatSend(): UseChatSendResult {
           customInstructionsAbout,
           activeWorkspace?.systemPrompt,
           conv?.systemPrompt,
-          options?.agentSystemPrompt ?? ""
+          persona.systemPrompt
         ),
         userSkills,
         activeWorkspaceId
@@ -379,7 +382,7 @@ export function useChatSend(): UseChatSendResult {
       const enabledSkills = resolveEnabledSkills({
         workspace: activeWorkspace,
         conversation: conv,
-        forcedSkillIds: options?.forcedSkillIds,
+        forcedSkillIds: [...(options?.forcedSkillIds ?? []), ...persona.forcedSkillIds],
         mutedSkillIds: options?.mutedSkillIds,
       })
 
@@ -407,9 +410,7 @@ export function useChatSend(): UseChatSendResult {
             ...(options.taskMode && options.taskMode !== "default"
               ? { mode: options.taskMode }
               : {}),
-            ...(options.allowedMcpServerIds
-              ? { allowedMcpServerIds: options.allowedMcpServerIds }
-              : {}),
+            ...(allowedMcpServerIds ? { allowedMcpServerIds } : {}),
           },
           { title: conv?.title }
         )
@@ -469,14 +470,14 @@ export function useChatSend(): UseChatSendResult {
             verifyCitations: useStore.getState().verifyCitations || undefined,
             localFilesOnly: useStore.getState().localFilesOnly || undefined,
             referenceImage: options?.referenceImage,
-            allowedMcpServerIds: options?.allowedMcpServerIds,
+            allowedMcpServerIds,
             // Local MCP servers (Q42/Q45) — the `/v1/chat` body's
             // `mcpServersForRequest` below; credentials go in `state`.
             ...localMcpForRun(
               useStore.getState().mcpServers,
               activeWorkspaceId,
               getLocalCred,
-              { allowedMcpServerIds: options?.allowedMcpServerIds }
+              { allowedMcpServerIds }
             ),
           }),
         })
@@ -545,6 +546,8 @@ export function useChatSend(): UseChatSendResult {
             !s.deletedAt &&
             s.enabled &&
             s.credentialMode === "local" &&
+            // A blocked server's credential never leaves the browser.
+            (!allowedMcpServerIds || allowedMcpServerIds.includes(s.id)) &&
             (s.capabilities?.tools?.length ?? 0) > 0
         )
         .map((s) => ({
@@ -682,7 +685,7 @@ export function useChatSend(): UseChatSendResult {
                 ? mcpServersForRequest
                 : undefined,
             // Q48: the persona's MCP allow-list, filtered server-side.
-            allowedMcpServerIds: options?.allowedMcpServerIds,
+            allowedMcpServerIds,
             attachments:
               attachmentsForRequest.length > 0
                 ? attachmentsForRequest

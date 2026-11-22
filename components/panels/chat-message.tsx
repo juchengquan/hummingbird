@@ -83,7 +83,7 @@ interface ChatMessageProps {
   onPickSuggestion?: (text: string) => void
   /** Generative-UI auto-send: invoked when an interactive UI part
    *  resolves to a follow-up user turn (e.g. a picked `choice`). */
-  onSendUserMessageFromUiPart?: (text: string) => void
+  onSendUserMessageFromUiPart?: (text: string, sourceMessageId: string) => void
   /** Live tool-call pills rendered above the assistant text during a stream. Cleared on `done`. */
   liveToolCalls?: LiveToolCall[]
   /** Resolved by the parent: the PDF this assistant message is citing via `[p.N]` markers. */
@@ -526,7 +526,10 @@ function ChatMessageImpl({
                   <MessageUiParts
                     parts={message.uiParts}
                     hiddenPartIds={uiPartIdsOwnedByTurn(interruptedTurn)}
-                    onSendUserMessage={onSendUserMessageFromUiPart}
+                    onSendUserMessage={
+                      onSendUserMessageFromUiPart &&
+                      ((text) => onSendUserMessageFromUiPart(text, message.id))
+                    }
                   />
                 )}
                 {!isUser && interruptedTurn && (

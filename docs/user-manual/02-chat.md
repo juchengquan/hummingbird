@@ -38,6 +38,10 @@ or click the **+** next to the **Chats** group to start a new one.
   servers it allows offer tools, and one that allows none uses no MCP
   tools at all. Local-mode servers count too: tick them in the persona
   to use them in chat (tasks can't use local-mode servers).
+- A message sent as a persona stays that persona's: Regenerate, Edit,
+  Retry and answering one of its cards use the persona's current
+  prompt, model and skills, and never more MCP servers than it allowed
+  when the message was sent. That limit holds if the persona is deleted.
 - Switching the chat backend (Next.js vs. the Python agent service)
   is a power-user setting - see [Settings & theme](12-settings-and-theme.md).
 - **Questions from the assistant (agent-py (runs) backend).** When the

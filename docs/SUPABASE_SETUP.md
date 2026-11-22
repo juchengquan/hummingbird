@@ -253,6 +253,11 @@ order. Every migration has a unique numeric prefix (CI enforces this via
     job (55000 'run already answered' → agent-py's `409
     run_already_answered`), locking the task row so the two serialise.
     Same signatures. Idempotent.
+- `supabase/migrations/0044_message_turn_persona.sql`
+  - `messages.turn_persona` (nullable JSONB): the persona a user message
+    was sent as, so a resend keeps its MCP allow-list on every device
+    (Q52). Without it messages still sync, but the record stays on the
+    device that sent the turn. Idempotent.
 
 ### Migration 0018 collision (renamed to `0033_message_generated_files.sql`)
 

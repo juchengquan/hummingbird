@@ -667,6 +667,7 @@ export type Database = {
           role: string
           suggestions: string[]
           tool_calls: Json | null
+          turn_persona: Json | null
           user_id: string
         }
         Insert: {
@@ -687,6 +688,7 @@ export type Database = {
           role: string
           suggestions?: string[]
           tool_calls?: Json | null
+          turn_persona?: Json | null
           user_id: string
         }
         Update: {
@@ -707,6 +709,7 @@ export type Database = {
           role?: string
           suggestions?: string[]
           tool_calls?: Json | null
+          turn_persona?: Json | null
           user_id?: string
         }
         Relationships: [
