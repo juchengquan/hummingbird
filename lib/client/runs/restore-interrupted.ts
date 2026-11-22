@@ -82,6 +82,7 @@ async function restoreOne(deps: RestoreDeps, record: ActiveRunRecord): Promise<R
     interrupts,
     anonymous: record.anonymous,
     ...(record.model ? { model: record.model } : {}),
+    ...(record.allowedMcpServerIds ? { allowedMcpServerIds: record.allowedMcpServerIds } : {}),
   })
   return { runId, result: "restored" }
 }

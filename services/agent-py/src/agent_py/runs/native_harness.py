@@ -48,7 +48,8 @@ run as `RunInput.previous_checkpoint` — Q31: opaque, keyed by run):
                  first assistant turn to the one holding the gated calls],
      "pending": [{"toolCallId", "toolName", "args", "client"}],
      "results": [tool_result blocks of that step's calls that did run],
-     "taintedBy": "<first untrusted tool>" | null}
+     "taintedBy": "<first untrusted tool>" | null,
+     "allowedMcpServerIds": ["<server id>"] | null}
 
 The resume run rebuilds the model input as *the browser's history up to
 its last user message* + `turn` + one `tool_result` per call (the
@@ -63,6 +64,11 @@ works the same way (`turn` grows). Without a checkpoint (none stored,
 or an anonymous run's expired) the run falls back to the browser's
 history alone: the gated calls are looked up in its assistant messages
 and earlier tool results are what the browser kept (summaries).
+
+**MCP allow-list on a resume (Q51).** `allowedMcpServerIds` is the list
+the paused run ran with (null: no restriction). A resume runs with that
+list narrowed by its own, so a client that drops or widens the list gets
+nothing more. Without saved state the list is unknown: no MCP.
 
 **Extension points (wave 5a).** The system prompt, the backend tools,
 the turn's memory-taint seed, the model and the succeeded result come
@@ -362,6 +368,8 @@ class _Checkpoint:
     pending: tuple[PendingCall, ...]
     results: tuple[dict[str, Any], ...]
     tainted_by: str | None
+    allowed_mcp_server_ids: tuple[str, ...] | None = None
+    """The run's effective MCP allow-list (Q51; None: no restriction)."""
     client_calls: frozenset[str] = frozenset()
     """Ids of pending calls to client-side tools (answered `{value}`),
     kept so a resume run classifies them even if `tools` is not resent."""
@@ -382,6 +390,9 @@ class _Checkpoint:
             ],
             "results": list(self.results),
             "taintedBy": self.tainted_by,
+            "allowedMcpServerIds": (
+                None if self.allowed_mcp_server_ids is None else list(self.allowed_mcp_server_ids)
+            ),
         }
         # SDK blocks were `model_dump`ed; make sure what is stored is JSON.
         decoded: dict[str, object] = json.loads(json.dumps(raw, default=str))
@@ -433,6 +444,40 @@ class _Checkpoint:
             tainted_by=tainted if isinstance(tainted, str) else None,
             client_calls=frozenset(client_calls),
         )
+
+
+def _paused_allow_list(raw: object) -> tuple[str, ...] | None:
+    """The MCP allow-list saved with the paused run (None: no restriction).
+    Read from the raw state, which holds even when `_Checkpoint.parse` or
+    the resume sets the turn aside. A background run keeps its list in
+    `config`; state from before Q51 has none. No usable state → `()`."""
+    if not isinstance(raw, Mapping):
+        return ()
+    saved: object = raw
+    if raw.get("harness") != HARNESS_NAME:
+        saved = raw.get("config")
+        if not isinstance(saved, Mapping):
+            return ()
+    allowed = saved.get("allowedMcpServerIds")
+    if not isinstance(allowed, list):
+        return None
+    return tuple(s for s in allowed if isinstance(s, str))
+
+
+def _keep_allow_list(run_input: RunInput) -> RunInput:
+    """A resume's options with the paused run's allow-list applied: it may
+    narrow that list, never widen it (Q51). Done on the input itself, so
+    everything that parses the options sees the effective list."""
+    if not run_input.resume:
+        return run_input
+    paused = _paused_allow_list(run_input.previous_checkpoint)
+    if paused is None:
+        return run_input
+    asked = parse_run_options(run_input.options).allowed_mcp_server_ids
+    kept = [s for s in paused if asked is None or s in asked]
+    return dataclasses.replace(
+        run_input, options={**run_input.options, "allowedMcpServerIds": kept}
+    )
 
 
 # --- The adapter ------------------------------------------------------------------------------
@@ -496,6 +541,7 @@ class NativeHarness:
     async def _run(
         self, run_input: RunInput, emitter: RunEmitter, cancel: CancelSignal, meter: UsageMeter
     ) -> HarnessResult:
+        run_input = _keep_allow_list(run_input)
         opts = parse_run_options(run_input.options)
         hooks = self._hooks
         ctx = _hook_context(
@@ -592,6 +638,7 @@ class NativeHarness:
             pending=outcome.pending,
             results=outcome.results,
             tainted_by=result.tainted_by,
+            allowed_mcp_server_ids=opts.allowed_mcp_server_ids,
             client_calls=frozenset(
                 c.tool_call_id for c in outcome.pending if c.tool_name in client_names
             ),

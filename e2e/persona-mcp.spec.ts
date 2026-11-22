@@ -2,12 +2,13 @@ import { expect, test, type Page } from "@playwright/test"
 
 import { STORE_VERSION } from "../lib/client/hooks/store/migrate"
 
-import { composer, steerRuns } from "./support/runs"
+import { composer, isStartRequest, steerRuns } from "./support/runs"
 
 /**
  * Q50: a persona's MCP allow-list filters local-mode servers as well as
  * cloud-mode ones (Q48), so `/personas` must offer both. Driven through
- * the dialog, down to what each chat backend is sent.
+ * the dialog, down to what each chat backend is sent. Q51: a resume from
+ * a page that didn't start the run (reload, other tab) keeps the list.
  */
 
 const SERVER = {
@@ -23,13 +24,24 @@ const SERVER = {
   updatedAt: "2026-01-01T00:00:00.000Z",
 }
 
-/** Open a chat on `chatBackend`, in a workspace with one local-mode server. */
+const CREDENTIAL = "Bearer e2e-local-mcp-credential"
+
+/** Open a chat on `chatBackend`, in a workspace with one local-mode server
+ *  (with a saved credential). Seeds once per browser context, so a reload
+ *  or a second tab sees what the app saved. */
 async function openWithLocalServer(page: Page, chatBackend: "ts" | "python-runs") {
   await page.addInitScript(
-    ({ state, version }) => {
+    ({ state, version, creds }) => {
+      if (localStorage.getItem("e2e-seeded")) return
       localStorage.setItem("hummingbird-storage", JSON.stringify({ state, version }))
+      localStorage.setItem("hummingbird-mcp-creds-v1", JSON.stringify(creds))
+      localStorage.setItem("e2e-seeded", "1")
     },
-    { state: { chatBackend, mcpServers: [SERVER] }, version: STORE_VERSION },
+    {
+      state: { chatBackend, mcpServers: [SERVER] },
+      version: STORE_VERSION,
+      creds: { [SERVER.id]: { type: "bearer", headers: { Authorization: CREDENTIAL } } },
+    },
   )
   await page.goto("/")
   await page.getByRole("button", { name: "New chat" }).click()
@@ -60,7 +72,7 @@ async function sendAsPersona(page: Page) {
 test.describe("persona MCP allow-list", () => {
   test("Next chat: a ticked local server is in the allow-list", async ({ page }) => {
     await page.route("**/api/chat", (route) =>
-      route.fulfill({ status: 500, json: { error: { code: "provider", message: "e2e: not dispatched" } } }),
+      route.fulfill({ status: 500, json: { code: "provider", message: "e2e: not dispatched" } }),
     )
     await openWithLocalServer(page, "ts")
     await createPersona(page, { allowServer: true })
@@ -93,4 +105,45 @@ test.describe("persona MCP allow-list", () => {
     expect(starts[0].forwardedProps?.allowedMcpServerIds).toEqual([])
     expect(starts[0].forwardedProps?.localMcpServers).toBeUndefined()
   })
+
+  for (const answeredFrom of ["after a reload", "in another tab"] as const) {
+    for (const allowServer of [false, true]) {
+      test(`runs: answered ${answeredFrom}, the list holds (${allowServer ? "server ticked" : "empty"})`, async ({
+        page,
+        context,
+      }) => {
+        await steerRuns(page, { outcome: "interrupt" })
+        await openWithLocalServer(page, "python-runs")
+        await createPersona(page, { allowServer })
+        await sendAsPersona(page)
+        await page.getByText("Approve the stub action?").waitFor()
+        // Wait for the turn to be on disk before another page reads it.
+        await expect
+          .poll(() => page.evaluate(() => localStorage.getItem("hummingbird-storage") ?? ""))
+          .toContain("Stub reply to")
+
+        let answering = page
+        if (answeredFrom === "after a reload") await page.reload()
+        else {
+          answering = await context.newPage()
+          await steerRuns(answering, { outcome: "interrupt" })
+          await answering.goto("/")
+        }
+        await answering.getByText("Approve the stub action?").waitFor()
+
+        const resume = answering.waitForRequest(isStartRequest)
+        await answering.getByRole("button", { name: "Approve", exact: true }).click()
+        const request = await resume
+        const sent = request.postDataJSON()
+        expect(sent.forwardedProps.allowedMcpServerIds).toEqual(allowServer ? [SERVER.id] : [])
+        if (allowServer) {
+          expect(sent.forwardedProps.localMcpServers).toMatchObject([{ id: SERVER.id }])
+        } else {
+          expect(sent.forwardedProps.localMcpServers).toBeUndefined()
+          // Never sent, not just ignored by the server.
+          expect(request.postData()).not.toContain(CREDENTIAL)
+        }
+      })
+    }
+  }
 })

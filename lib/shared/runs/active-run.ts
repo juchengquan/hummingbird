@@ -29,6 +29,9 @@ export const ActiveRunSchema = z.object({
   anonymous: z.boolean(),
   /** The model it ran with, so a resume uses the same one. */
   model: z.string().optional(),
+  /** The MCP allow-list it ran with (ids only), so a resume from another
+   *  page keeps it (Q51): `[]` is no MCP, absent is no restriction. */
+  allowedMcpServerIds: z.array(z.string()).optional(),
   /** ISO timestamp of the last update — lets a stale pointer be aged out. */
   updatedAt: z.string().min(1),
 })

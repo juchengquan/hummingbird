@@ -68,6 +68,12 @@ describe("restoreInterruptedTurns", () => {
     expect(h.cleared).toEqual([])
   })
 
+  test("the paused run's MCP allow-list comes back with the turn, [] included (Q51)", async () => {
+    const h = harness({ records: [record({ allowedMcpServerIds: [] })] })
+    await restoreInterruptedTurns(h.deps)
+    expect(h.set[0].allowedMcpServerIds).toEqual([])
+  })
+
   test("running pointers are left to the rejoin path", async () => {
     const h = harness({ records: [record({ status: "running" })] })
     expect(await restoreInterruptedTurns(h.deps)).toEqual([])

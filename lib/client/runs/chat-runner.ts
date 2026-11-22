@@ -48,7 +48,7 @@ import { buildResume, type InterruptAnswer } from "./interrupts"
 import { hasOutput } from "./reducer"
 import * as runBaseStore from "./run-base"
 import type { RunSession, RunSessionOptions } from "./session"
-import type { RunsTarget, StartRunRequest } from "./types"
+import type { RunForwardedProps, RunsTarget, StartRunRequest } from "./types"
 
 type SessionModule = Pick<
   typeof import("./session"),
@@ -154,6 +154,8 @@ interface TurnSpec {
   placeholder: Message
   target: RunsTarget
   model?: string
+  /** The run's MCP allow-list, saved with its pointer and paused turn (Q51). */
+  allowedMcpServerIds?: string[]
   base?: MessageBase
   /** For memory extraction: the turn's user text. */
   userText: string
@@ -166,6 +168,11 @@ interface TurnSpec {
   /** `resume`: the answered generative-UI parts, written when it starts
    *  (already in `base`). */
   answeredUiParts?: readonly PersistedUiPart[]
+}
+
+/** The MCP allow-list a request carries (`[]` included). */
+function allowListOf(body: StartRunRequest): string[] | undefined {
+  return (body.forwardedProps as RunForwardedProps | undefined)?.allowedMcpServerIds
 }
 
 function lastUserText(messages: readonly Message[]): string {
@@ -261,6 +268,7 @@ export function createChatRunner(deps: ChatRunnerDeps): ChatRunner {
           cursor: "0",
           anonymous: !spec.target.authToken,
           ...(spec.model ? { model: spec.model } : {}),
+          ...(spec.allowedMcpServerIds ? { allowedMcpServerIds: spec.allowedMcpServerIds } : {}),
         })
         if (spec.kind === "resume" && spec.previousRunId) {
           // Answered (`chat-bridge.ts`, lifecycle step 3), in this order:
@@ -376,6 +384,7 @@ export function createChatRunner(deps: ChatRunnerDeps): ChatRunner {
                 cursor: done.cursor,
                 anonymous: !spec.target.authToken,
                 ...(spec.model ? { model: spec.model } : {}),
+                ...(spec.allowedMcpServerIds ? { allowedMcpServerIds: spec.allowedMcpServerIds } : {}),
               })
             }
             interrupted().setInterruptedTurn({
@@ -386,6 +395,7 @@ export function createChatRunner(deps: ChatRunnerDeps): ChatRunner {
               interrupts: plan.interrupts,
               anonymous: !spec.target.authToken,
               ...(spec.model ? { model: spec.model } : {}),
+              ...(spec.allowedMcpServerIds ? { allowedMcpServerIds: spec.allowedMcpServerIds } : {}),
             })
             break
           }
@@ -464,6 +474,7 @@ export function createChatRunner(deps: ChatRunnerDeps): ChatRunner {
         placeholder,
         target: req.target,
         model: req.model,
+        allowedMcpServerIds: allowListOf(req.body),
         userText: lastUserText(req.history),
         isRetry: req.isRetry ?? false,
         open: (opts) => mod.startRunSession(req.body, opts),
@@ -568,6 +579,7 @@ export function createChatRunner(deps: ChatRunnerDeps): ChatRunner {
           placeholder: message,
           target,
           model: p.model,
+          allowedMcpServerIds: p.allowedMcpServerIds,
           base: counts ? runBaseStore.baseFromCounts(message, counts) : undefined,
           userText: lastUserText(before),
           isRetry: true,
@@ -618,7 +630,9 @@ export function createChatRunner(deps: ChatRunnerDeps): ChatRunner {
       // read again by `composeResumeInput` from where the browser keeps
       // them. Nothing here persists them: `bodies` is never written to
       // storage, and the saved pointers (`active-run.ts`, `run-tokens.ts`,
-      // `run-base.ts`) and `InterruptedTurn` carry no request body.
+      // `run-base.ts`) and `InterruptedTurn` carry no request body. The one
+      // option they do keep is the MCP allow-list (Q51): ids only, and it
+      // decides which of those credentials may be sent.
       const previous = bodies.get(turn.runId)
       const input = deps.buildRunInput({
         ...(previous
@@ -651,6 +665,7 @@ export function createChatRunner(deps: ChatRunnerDeps): ChatRunner {
         placeholder: message,
         target,
         model: turn.model,
+        allowedMcpServerIds: allowListOf(input),
         // What the resume continues: the paused run's output plus the
         // answered parts (written as it starts) — what a reset restores.
         base: messageBaseOf(runBaseStore.withAnsweredUiParts(message, answeredUiParts)),

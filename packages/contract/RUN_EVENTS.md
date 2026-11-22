@@ -265,6 +265,12 @@ model saw, in full, not the summaries the client holds. Without one
 — the checkpoint goes with it, § 7 — or another harness) the harness
 rebuilds what it can from the client's `messages`.
 
+**MCP allow-list (Q51).** The interrupted run's `allowedMcpServerIds` is
+saved with that state, and it is a ceiling: the resume runs with the ids
+in both that list and its own, whatever the client sends (a list that is
+absent restricts nothing; `[]` allows nothing). When the saved state
+can't be read the ceiling is unknown, so the resume gets no MCP tools.
+
 ### 4.3 What a resume sends again
 
 A resume is a new run, and the backend keeps no input across runs

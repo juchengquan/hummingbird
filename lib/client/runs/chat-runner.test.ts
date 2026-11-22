@@ -563,6 +563,45 @@ describe("interrupt → bridge → resume", () => {
     expect([...reloaded.storage.map.values()].join("\n")).not.toContain(secret)
   })
 
+  test.each([[[]], [["srv-1"]]])(
+    "the paused run's MCP allow-list %j is saved with its pointer and turn (Q51)",
+    async (allowed: string[]) => {
+      const { fetch } = fakeFetch(() => sseResponse(loadFixture("memory-interrupt-choice").body))
+      const h = harness(fetch, { initial: [user("pick one")] })
+      await h.runner.send({
+        conversationId: CONV,
+        history: [user("pick one")],
+        body: { ...interruptedBody, forwardedProps: { allowedMcpServerIds: allowed } },
+        target: SIGNED_IN,
+      })
+      expect(activeRun.loadActiveRun(CONV, h.storage)?.allowedMcpServerIds).toEqual(allowed)
+      expect(h.turns[CONV].allowedMcpServerIds).toEqual(allowed)
+    },
+  )
+
+  test("a run rejoined after a reload keeps its allow-list when it pauses (Q51)", async () => {
+    const { fetch } = fakeFetch(() => sseResponse(loadFixture("memory-interrupt-choice").body))
+    const answer: Message = { id: "a-1", role: "assistant", content: "", timestamp: new Date() }
+    const h = harness(fetch, { initial: [user("pick one"), answer] })
+    activeRun.saveActiveRun(
+      {
+        runId: interruptedBody.runId,
+        threadId: interruptedBody.threadId,
+        conversationId: CONV,
+        messageId: "a-1",
+        status: "running",
+        cursor: "0",
+        anonymous: false,
+        allowedMcpServerIds: [],
+      },
+      h.storage,
+    )
+    await h.runner.rejoinActive()
+    await tick(50)
+    expect(activeRun.loadActiveRun(CONV, h.storage)?.allowedMcpServerIds).toEqual([])
+    expect(h.turns[CONV].allowedMcpServerIds).toEqual([])
+  })
+
   test("a rejected resume (409 run_already_resumed) leaves the turn and the message alone", async () => {
     let phase = "interrupt"
     const { fetch } = fakeFetch(() =>
