@@ -15,6 +15,13 @@ import { formatBytes } from "@/shared/utils"
  * attached references, bookmarks are background context. All kinds
  * share one character budget so a single oversized file can't drown
  * out everything else.
+ *
+ * A cloud file (`summary.id` set) shows its id in its header, and its
+ * RAG note / truncation note tell the model to pass that id to
+ * `searchFiles` (Q47). agent-py's `runs/context.py` is a port of this
+ * module; `render.parity.test.ts` and agent-py's
+ * `tests/test_run_context_render.py` pin both to the same fixture
+ * (`services/agent-py/tests/fixtures/attachments_render.json`).
  */
 
 export type ResolvedAttachment =
@@ -37,6 +44,22 @@ export type ResolvedAttachment =
 
 type AttachmentKind = ResolvedAttachment["kind"]
 
+/** Render options that depend on the turn, not on one attachment. */
+export interface RenderAttachmentsOptions {
+  /** `searchFiles` is offered this turn: a truncated cloud file (one
+   *  with a `summary.id`) then says its full text can be searched. */
+  searchFilesEnabled?: boolean
+}
+
+/**
+ * The note a cloud file's body ends with when its text was cut (at
+ * extraction or to fit the budget) and `searchFiles` is offered (Q47).
+ * agent-py renders the same note (`runs/context.py`).
+ */
+export function searchableNote(fileId: string): string {
+  return `[The full text of this file is searchable: call \`searchFiles\` with fileId "${fileId}".]`
+}
+
 /**
  * Per-kind rendering config. Every kind-specific decision lives in one
  * record entry — adding a fourth kind only requires extending this
@@ -55,6 +78,9 @@ interface KindRenderer {
    *  body (e.g. file with no extracted text — `renderSection` then
    *  drops the item silently). */
   body(item: ResolvedAttachment): string | null
+  /** Optional line appended under a body that was cut (at extraction
+   *  or to fit the budget) — today the cloud file's "searchable" note. */
+  truncatedNote?(item: ResolvedAttachment, opts: RenderAttachmentsOptions): string | null
   /** Optional one-line marker shown instead of the body when the item
    *  failed to resolve (today only MCP uses this). Returning null —
    *  or omitting the function — means "no error marker, render the
@@ -89,7 +115,13 @@ const RENDERERS: Record<AttachmentKind, KindRenderer> = {
     },
     header(item) {
       if (item.kind !== "file") return ""
-      const kindNote = item.summary.kind ? ` (${item.summary.kind})` : ""
+      // A cloud file's id rides in the header (Q47) so the model can
+      // pass it to `searchFiles` — `(pdf, fileId: …)`.
+      const notes = [
+        item.summary.kind,
+        item.summary.id ? `fileId: ${item.summary.id}` : undefined,
+      ].filter(Boolean)
+      const kindNote = notes.length > 0 ? ` (${notes.join(", ")})` : ""
       const truncNote = item.summary.truncated ? " (per-file truncated at extraction)" : ""
       return `--- ${item.summary.name}${kindNote}${truncNote} ---`
     },
@@ -103,15 +135,22 @@ const RENDERERS: Record<AttachmentKind, KindRenderer> = {
       // so the model knows the file exists; only the body is
       // suppressed.
       if (item.summary.retrievalMode === "rag") {
+        const target = item.summary.id
+          ? `\`searchFiles\` with fileId "${item.summary.id}" and relevant query terms`
+          : "`searchFiles` with relevant query terms"
         return (
           "(RAG-mode attachment — body not inlined to save tokens. " +
-          "Call `searchFiles` with relevant query terms to retrieve " +
+          `Call ${target} to retrieve ` +
           "matching sections from this file.)"
         )
       }
       return item.summary.text && item.summary.text.trim().length > 0
         ? item.summary.text
         : null
+    },
+    truncatedNote(item, opts) {
+      if (item.kind !== "file" || !item.summary.id || !opts.searchFilesEnabled) return null
+      return searchableNote(item.summary.id)
     },
     label(item) {
       return item.kind === "file" ? item.summary.name : ""
@@ -180,7 +219,8 @@ const SECTION_ORDER: AttachmentKind[] = ["file", "mcp_resource", "url_bookmark"]
  */
 export function renderAttachmentsPrompt(
   attachments: ResolvedAttachment[],
-  totalBudget: number
+  totalBudget: number,
+  opts: RenderAttachmentsOptions = {}
 ): string | null {
   if (attachments.length === 0) return null
 
@@ -194,7 +234,7 @@ export function renderAttachmentsPrompt(
     const items = grouped.get(kind) ?? []
     if (items.length === 0) continue
     const remaining = Math.max(0, totalBudget - used)
-    const rendered = renderSection(kind, items, remaining)
+    const rendered = renderSection(kind, items, remaining, opts)
     if (rendered.fragment) {
       sections.push(rendered.fragment)
       used += rendered.used
@@ -219,7 +259,8 @@ function groupByKind(
 function renderSection(
   kind: AttachmentKind,
   items: ResolvedAttachment[],
-  budget: number
+  budget: number,
+  opts: RenderAttachmentsOptions
 ): { fragment: string | null; used: number } {
   if (items.length === 0) return { fragment: null, used: 0 }
   const renderer = RENDERERS[kind]
@@ -269,8 +310,16 @@ function renderSection(
     }
     const trimmed = body.slice(0, remaining)
     const overflow = body.length > trimmed.length
+    // A file cut at extraction (`summary.truncated`) or here can point
+    // at `searchFiles`. Not counted against the budget, like the
+    // overflow marker.
+    const cut = overflow || (item.kind === "file" && item.summary.truncated === true)
+    const note = cut ? renderer.truncatedNote?.(item, opts) ?? null : null
     parts.push(
-      `\n\n${header}\n` + trimmed + (overflow ? "\n[truncated to fit overall budget]" : "")
+      `\n\n${header}\n` +
+        trimmed +
+        (overflow ? "\n[truncated to fit overall budget]" : "") +
+        (note ? `\n${note}` : "")
     )
     used += header.length + trimmed.length + 4
   }

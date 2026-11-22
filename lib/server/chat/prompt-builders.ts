@@ -20,6 +20,7 @@ import {
   type SkillRequestEntry,
 } from "@/server/skills/registry"
 import type { SkillId } from "@/shared/skills/types"
+import { TOTAL_ATTACHMENT_BUDGET } from "@/shared/attachments"
 import {
   renderAttachmentsPrompt,
   renderMetaOnlyFilesPrompt,
@@ -30,8 +31,9 @@ import {
  *  prompts inside reasonable token budgets. Per-file truncation already
  *  happens at extraction time (100 KB / file, 128 KB for code); this
  *  is a second pass across the whole attachment set. Sized to fit ~3
- *  medium docs in full before round-robin trimming kicks in. */
-export const TOTAL_ATTACHMENT_BUDGET = 300 * 1024
+ *  medium docs in full before round-robin trimming kicks in. Shared
+ *  with agent-py's renderer and the runs client (`@/shared/attachments`). */
+export { TOTAL_ATTACHMENT_BUDGET }
 
 export interface BuildSystemPromptOptions {
   workspaceSystemPrompt?: string
@@ -89,6 +91,7 @@ export function buildSystemPrompt(opts: BuildSystemPromptOptions): string {
   const attachmentBlock = renderAttachmentsPrompt(
     opts.attachments,
     TOTAL_ATTACHMENT_BUDGET,
+    { searchFilesEnabled: opts.enabledSkillIds.includes("searchFiles" as SkillId) },
   )
 
   // Meta-only files (filename + metadata, no extracted text) get a
