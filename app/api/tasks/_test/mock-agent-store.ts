@@ -125,14 +125,28 @@ export const mocks = {
       _sinceSeq: number,
     ): Promise<unknown[]> => [],
   ),
-  cancelChildTasks: mock(
-    async (_db: unknown, _parentId: string, _userId: string) => {},
+  getQuestionKind: mock(
+    async (
+      _db: unknown,
+      _run: unknown,
+      _userId: string,
+      _requestId: string,
+    ): Promise<string | null> => null,
+  ),
+  appendSyntheticResult: mock(
+    async (
+      _db: unknown,
+      _runId: string,
+      _userId: string,
+      _opts: Record<string, unknown>,
+    ): Promise<boolean> => true,
   ),
   reconcileStaleRuns: mock(
     async (_db: unknown, _userId: string): Promise<number> => 0,
   ),
   // task-writes (RPC-backed run creation, 0034)
   createTaskRun: mock(async (_db: unknown, _input: unknown) => {}),
+  cancelTask: mock(async (_db: unknown, _taskId: string) => {}),
   // jobs
   enqueueStartJob: mock(
     async (_db: unknown, _input: { taskId: string; userId: string }) => {},
@@ -150,7 +164,8 @@ export const mocks = {
 }
 
 mock.module("@/server/agent/store", () => ({
-  cancelChildTasks: mocks.cancelChildTasks,
+  getQuestionKind: mocks.getQuestionKind,
+  appendSyntheticResult: mocks.appendSyntheticResult,
   createRun: mocks.createRun,
   getRun: mocks.getRun,
   updateRun: mocks.updateRun,
@@ -165,6 +180,7 @@ mock.module("@/server/agent/store", () => ({
 mock.module("@/server/agent/task-writes", () => ({
   ...realTaskWrites,
   createTaskRun: mocks.createTaskRun,
+  cancelTask: mocks.cancelTask,
 }))
 
 mock.module("@/server/agent/jobs", () => ({
@@ -187,8 +203,12 @@ export function resetAgentMocks(): void {
   mocks.appendEvent.mockImplementation(async () => {})
   mocks.listEventsSince.mockClear()
   mocks.listEventsSince.mockImplementation(async () => [])
-  mocks.cancelChildTasks.mockClear()
-  mocks.cancelChildTasks.mockImplementation(async () => {})
+  mocks.getQuestionKind.mockClear()
+  mocks.getQuestionKind.mockImplementation(async () => null)
+  mocks.appendSyntheticResult.mockClear()
+  mocks.appendSyntheticResult.mockImplementation(async () => true)
+  mocks.cancelTask.mockClear()
+  mocks.cancelTask.mockImplementation(async () => {})
   mocks.reconcileStaleRuns.mockClear()
   mocks.reconcileStaleRuns.mockImplementation(async () => 0)
   mocks.createTaskRun.mockClear()

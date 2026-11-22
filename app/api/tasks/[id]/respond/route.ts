@@ -4,8 +4,9 @@ import "server-only"
  * `POST /api/tasks/:id/respond` — resolve a HITL pause.
  *
  * After Phase 6 steps 3+4 of `PLAN-agent-task-queue.md` this route is
- * a thin enqueuer: it validates the human's answer, verifies the run
- * is actually paused, enqueues a `respond` job carrying the answer,
+ * a thin enqueuer: it validates the human's answer (an approval needs
+ * a boolean `approved`), verifies the run is actually paused — a child
+ * is answered here too, in place (Q59) — enqueues a `respond` job carrying the answer,
  * bootstraps the worker for a few seconds (so simple respond loops
  * feel synchronous), and returns 202. The worker pairs the answer
  * with the pending tool call in the checkpoint, executes the gated
@@ -21,7 +22,7 @@ import { NextResponse } from "next/server"
 import { categorizeError } from "@/shared/api-errors"
 import { RespondRequestSchema } from "@/shared/api-schemas"
 import { getSupabaseServerClient } from "@/server/supabase/server"
-import { getRun } from "@/server/agent/store"
+import { getQuestionKind, getRun } from "@/server/agent/store"
 import { enqueueRespondJob } from "@/server/agent/jobs"
 import { taskWriteErrorResponse } from "@/server/agent/task-writes"
 import { jsonBodyError, readJsonCapped } from "@/server/read-body-capped"
@@ -97,6 +98,19 @@ export async function POST(
   }
 
   try {
+    if (
+      typeof body.approved !== "boolean" &&
+      (await getQuestionKind(db, run, userId, body.requestId)) === "approval"
+    ) {
+      // Absent never approves; the executor checks again (B13).
+      return NextResponse.json(
+        {
+          code: "invalid_request",
+          message: "An approval needs `approved`: true or false.",
+        },
+        { status: 400 }
+      )
+    }
     await enqueueRespondJob(db, {
       taskId: runId,
       userId,
@@ -116,8 +130,9 @@ export async function POST(
       },
     })
   } catch (error) {
-    // `enqueue_task_job` re-checks the pause under a row lock (0034), so
-    // a run that settled between `getRun` and here is a 409, not a 500.
+    // `enqueue_task_job` re-checks the pause and the question under its
+    // locks (0034, 0045): a run that settled between `getRun` and here, or
+    // a question someone answered first, is a 409, not a 500.
     const { status, code, message } =
       taskWriteErrorResponse(error) ?? categorizeError(error)
     return NextResponse.json({ code, message }, { status })

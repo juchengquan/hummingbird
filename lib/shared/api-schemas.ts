@@ -644,7 +644,9 @@ export const RespondResponseSchema = z.object({
 
 export const RespondRequestSchema = z.object({
   requestId: z.string().min(1),
-  /** `requestKind: "approval"` — required for tool gates. */
+  /** `requestKind: "approval"` — required for tool gates, and only a
+   *  boolean: absent never approves. The route knows the question's kind
+   *  and answers 400 without it; the executor checks again. */
   approved: z.boolean().optional(),
   /** `requestKind: "approval"` — edited args to use instead of what
    *  the model proposed. Server validates before executing. */

@@ -24,7 +24,7 @@ import type { Database, Json } from "@/shared/supabase/types"
 
 import type { RunCheckpoint } from "./checkpoint"
 import { enqueueStartJob } from "./jobs"
-import { appendEvent, createRun, saveCheckpoint } from "./store"
+import { appendEvent, appendSyntheticResult, createRun, saveCheckpoint } from "./store"
 
 type DB = SupabaseClient<Database>
 
@@ -328,6 +328,7 @@ async function fireSchedule(db: DB, row: ScheduleRow): Promise<void> {
     step: 0,
     seq: 1,
     config: {
+      // No default (Q56): without a model the worker fails it "no model".
       model: row.model ?? "",
       workspaceSystemPrompt: row.system_prompt ?? undefined,
       workspaceId: row.workspace_id,
@@ -353,7 +354,17 @@ async function fireSchedule(db: DB, row: ScheduleRow): Promise<void> {
     userId
   )
 
-  await enqueueStartJob(db, { taskId: runId, userId })
+  try {
+    await enqueueStartJob(db, { taskId: runId, userId })
+  } catch (error) {
+    // No queued orphan: nothing would ever run it (B18).
+    await appendSyntheticResult(db, runId, userId, {
+      status: "failed",
+      error: "The scheduled task could not be queued.",
+      from: ["queued"],
+    })
+    throw error
+  }
 
   // Record which task this fire produced so the UI can link to it.
   await db

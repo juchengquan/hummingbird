@@ -52,6 +52,7 @@ function validBody(
   return {
     messages: [{ role: "user", content: "Write a haiku about birds." }],
     conversationId: "conv-1",
+    model: "anthropic/claude-haiku-4.5",
     ...overrides,
   } as TaskRequestInput
 }
@@ -121,6 +122,79 @@ describe("POST /api/tasks — body validation", () => {
   })
 })
 
+describe("POST /api/tasks — a model the worker can't run (Q55)", () => {
+  test.each([
+    ["auto"],
+    ["deepseek/deepseek-v4-flash"],
+    ["claude-sonnet-4-6"],
+    ["anthropic/claude-sonnet-4-5"],
+    ["nobody/nothing"],
+  ])("%s → 400 unknown_model, nothing created", async (model) => {
+    const { POST } = await import("./route")
+    const res = await POST(jsonPost(validBody({ model })))
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { code: string; message: string }
+    expect(body.code).toBe("unknown_model")
+    expect(body.message).toBeTruthy()
+    expect(mocks.createTaskRun).not.toHaveBeenCalled()
+    expect(mocks.appendEvent).not.toHaveBeenCalled()
+    expect(mocks.enqueueStartJob).not.toHaveBeenCalled()
+  })
+
+  test("the resolved default counts too", async () => {
+    const { DEFAULT_CHAT_MODEL } = await import("@/shared/models")
+    const { backendAcceptsModel } = await import("@/shared/backend-models")
+    const { POST } = await import("./route")
+    const res = await POST(jsonPost(validBody({ model: undefined })))
+    expect(res.status).toBe(backendAcceptsModel("agent-service", DEFAULT_CHAT_MODEL) ? 202 : 400)
+    if (res.status === 400) {
+      expect((await res.json()).code).toBe("unknown_model")
+      expect(mocks.createTaskRun).not.toHaveBeenCalled()
+    }
+  })
+
+  test("every accepted model starts", async () => {
+    const { modelsForBackend } = await import("@/shared/backend-models")
+    const { POST } = await import("./route")
+    for (const { id } of modelsForBackend("agent-service")) {
+      expect((await POST(jsonPost(validBody({ model: id })))).status).toBe(202)
+    }
+  })
+})
+
+describe("POST /api/tasks — parts the worker can't give the model (B20)", () => {
+  const parts = (part: unknown) =>
+    validBody({
+      messages: [{ role: "user", content: [{ type: "text", text: "Read" }, part] }],
+    } as Partial<TaskRequestInput>)
+
+  test.each([
+    ["audio", { type: "file", mediaType: "audio/mpeg", data: "AAAA" }],
+    ["no bytes", { type: "file", mediaType: "text/plain", data: "" }],
+    ["not a string", { type: "file", mediaType: "application/pdf", data: { a: 1 } }],
+    ["text by URL", { type: "file", mediaType: "text/plain", data: "https://x.test/a.txt" }],
+    ["not base64", { type: "file", mediaType: "text/plain", data: "hello notes!" }],
+  ])("%s → 400 invalid_attachment, nothing created", async (_name, part) => {
+    const { POST } = await import("./route")
+    const res = await POST(jsonPost(parts(part)))
+    expect(res.status).toBe(400)
+    expect((await res.json()).code).toBe("invalid_attachment")
+    expect(mocks.createTaskRun).not.toHaveBeenCalled()
+  })
+
+  test.each([
+    ["pdf", { type: "file", mediaType: "application/pdf", data: "JVBERi0=" }],
+    ["pdf by URL", { type: "file", mediaType: "application/pdf", data: "https://x.test/a.pdf" }],
+    ["text", { type: "file", mediaType: "text/markdown", data: "aGVsbG8=" }],
+    ["text data URI", { type: "file", mediaType: "text/plain", data: "data:text/plain,hi%20you" }],
+    ["image file", { type: "file", mediaType: "image/png", data: "cG5n" }],
+    ["image", { type: "image", image: "data:image/png;base64,cG5n" }],
+  ])("%s → accepted", async (_name, part) => {
+    const { POST } = await import("./route")
+    expect((await POST(jsonPost(parts(part)))).status).toBe(202)
+  })
+})
+
 describe("POST /api/tasks — happy path", () => {
   test("returns 202 + runId; runs the persistence chain in order", async () => {
     const { POST } = await import("./route")
@@ -167,7 +241,7 @@ describe("POST /api/tasks — happy path", () => {
   test("persists the request shape onto the initial checkpoint", async () => {
     const { POST } = await import("./route")
     const reqBody = validBody({
-      model: "anthropic/claude-sonnet-4-5",
+      model: "anthropic/claude-sonnet-4.6",
       workspaceId: "ws-A",
       workspaceSystemPrompt: "Speak in haiku.",
       maxSteps: 12,
@@ -192,7 +266,7 @@ describe("POST /api/tasks — happy path", () => {
     expect(checkpoint.messages).toEqual(reqBody.messages)
     expect(checkpoint.step).toBe(0)
     expect(checkpoint.seq).toBe(1)
-    expect(checkpoint.config.model).toBe("anthropic/claude-sonnet-4-5")
+    expect(checkpoint.config.model).toBe("anthropic/claude-sonnet-4.6")
     expect(checkpoint.config.workspaceId).toBe("ws-A")
     expect(checkpoint.config.workspaceSystemPrompt).toBe("Speak in haiku.")
     expect(checkpoint.config.maxSteps).toBe(12)
@@ -285,6 +359,12 @@ describe("POST /api/tasks — store failures map to typed responses", () => {
     const res = await POST(jsonPost(validBody()))
     expect(res.status).toBe(409)
     expect(((await res.json()) as { code: string }).code).toBe("limit_reached")
+    // No queued orphan (B18): the run just created is settled failed, and
+    // only while still queued.
+    expect(mocks.appendSyntheticResult).toHaveBeenCalledTimes(1)
+    const [, failedRun, , opts] = mocks.appendSyntheticResult.mock.calls[0]
+    expect(failedRun).toBe((mocks.createTaskRun.mock.calls[0][1] as { id: string }).id)
+    expect(opts).toMatchObject({ status: "failed", from: ["queued"] })
   })
 
   test("enqueueStartJob throw surfaces an error response", async () => {

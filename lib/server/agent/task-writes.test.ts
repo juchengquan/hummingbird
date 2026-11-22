@@ -7,6 +7,7 @@ import type { RunCheckpoint } from "./checkpoint"
 import { enqueueRespondJob, enqueueStartJob } from "./jobs"
 import {
   TaskWriteError,
+  cancelTask,
   createTaskRun,
   enqueueTaskJob,
   taskWriteErrorResponse,
@@ -34,6 +35,21 @@ const checkpoint: RunCheckpoint = {
   seq: 1,
   config: { model: "anthropic/claude-sonnet-4.6", skills: [], maxSteps: 12 },
 }
+
+describe("cancelTask", () => {
+  test("calls cancel_task with the task alone (the owner is the caller's JWT)", async () => {
+    const { db, calls } = fakeDb({ data: null, error: null })
+    await cancelTask(db, "run-1")
+    expect(calls).toEqual([{ fn: "cancel_task", args: { p_task_id: "run-1" } }])
+  })
+
+  test("an RPC error keeps its SQLSTATE", async () => {
+    const { db } = fakeDb({ data: null, error: { message: "task not found", code: "P0002" } })
+    const error = await cancelTask(db, "run-1").catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(TaskWriteError)
+    expect(taskWriteErrorResponse(error)?.status).toBe(404)
+  })
+})
 
 describe("createTaskRun", () => {
   test("calls create_task_run with the run + checkpoint", async () => {

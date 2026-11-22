@@ -209,6 +209,81 @@ describe("dispatchDueSchedules — minimum-gap throttle", () => {
   })
 })
 
+describe("dispatchDueSchedules — a fire", () => {
+  const dueRow = {
+    id: "s-1",
+    user_id: "u-1",
+    workspace_id: "ws-1",
+    name: "Morning",
+    prompt: "Report",
+    cron: "0 8 * * *",
+    timezone: "UTC",
+    model: null,
+    system_prompt: null,
+    skills: null,
+    max_steps: null,
+    last_run_at: null,
+    next_run_at: new Date(Date.now() - 1_000).toISOString(),
+  }
+
+  function fireDb(enqueueError: { message: string; code: string } | null) {
+    const updates: Array<{ table: string; patch: Record<string, unknown>; filters: unknown[][] }> = []
+    const db = {
+      from(table: string) {
+        const read = {
+          eq: () => read,
+          lte: () => read,
+          order: () => read,
+          limit: () => read,
+          maybeSingle: () => read,
+          then: (resolve: (v: unknown) => void) =>
+            resolve({ data: table === "task_schedules" ? [dueRow] : null, error: null }),
+        }
+        return {
+          select: () => read,
+          insert: async () => ({ error: null }),
+          upsert: async () => ({ error: null }),
+          update(patch: Record<string, unknown>) {
+            const entry = { table, patch, filters: [] as unknown[][] }
+            updates.push(entry)
+            const chain = {
+              eq(...f: unknown[]) {
+                entry.filters.push(f)
+                return chain
+              },
+              in(...f: unknown[]) {
+                entry.filters.push(f)
+                return chain
+              },
+              select: () => chain,
+              maybeSingle: () => chain,
+              then: (resolve: (v: unknown) => void) =>
+                resolve({ data: [{ id: "row" }], error: null }),
+            }
+            return chain
+          },
+        }
+      },
+      rpc: async () => ({ data: enqueueError ? null : "job-1", error: enqueueError }),
+    }
+    return { db: db as unknown as Parameters<typeof dispatchDueSchedules>[0], updates }
+  }
+
+  test("no model is given no default: the worker fails it with \"no model\" (Q56)", async () => {
+    const { db, updates } = fireDb(null)
+    await dispatchDueSchedules(db)
+    const saved = updates.find((u) => u.table === "tasks" && "checkpoint" in u.patch)
+    expect((saved?.patch.checkpoint as { config: { model: string } }).config.model).toBe("")
+  })
+
+  test("a failed enqueue leaves no queued orphan (B18)", async () => {
+    const { db, updates } = fireDb({ message: "too many queued jobs", code: "54000" })
+    await dispatchDueSchedules(db)
+    const settled = updates.find((u) => u.table === "tasks" && u.patch.status === "failed")
+    expect(settled?.filters).toContainEqual(["status", ["queued"]])
+  })
+})
+
 describe("scheduleSkills", () => {
   test("unset (what the editor saves) keeps every skill the executor runs", () => {
     expect(scheduleSkills(null)).toEqual([

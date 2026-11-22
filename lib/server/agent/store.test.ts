@@ -3,6 +3,8 @@ import { describe, expect, test } from "bun:test"
 import {
   DEFAULT_NO_WORKER_TIMEOUT_MS,
   NO_WORKER_ERROR,
+  appendSyntheticResult,
+  getQuestionKind,
   noWorkerTimeoutMs,
   reconcileStaleRuns,
 } from "./store"
@@ -315,6 +317,60 @@ describe("reconcileStaleRuns — never-started runs (no task worker)", () => {
       jobs: [{ status: "queued", lease_expires_at: null, attempts: 0, max_attempts: 3 }],
     })
     expect(await reconcileStaleRuns(db, USER, 3 * MIN, NOW, 10 * MIN)).toBe(0)
+  })
+})
+
+describe("appendSyntheticResult", () => {
+  test("`from` narrows what it may settle: a run a worker took is left alone", async () => {
+    const { db, queries } = fakeDb({ lastEventAt: null, updatedRows: 0 })
+    const settled = await appendSyntheticResult(db, RUN, USER, { status: "failed", from: ["queued"] })
+    expect(settled).toBe(false)
+    const update = queries.find((q) => q.op === "update")
+    expect(update?.filters).toContainEqual(["in", "status", ["queued"]])
+    expect(queries.some((q) => q.op === "upsert")).toBe(false)
+  })
+})
+
+describe("getQuestionKind", () => {
+  const interrupt = (id: string, reason?: string) => ({
+    id: RUN,
+    outcome: { type: "interrupt", interrupts: [{ id, ...(reason ? { reason } : {}) }] },
+  })
+
+  /** A client whose only surface is the approval-entry read. */
+  function logDb(payload: unknown) {
+    const filters: unknown[][] = []
+    const q = {
+      select: () => q,
+      eq: (...f: unknown[]) => {
+        filters.push(f)
+        return q
+      },
+      order: () => q,
+      limit: () => q,
+      maybeSingle: async () => ({ data: payload === null ? null : { payload }, error: null }),
+    }
+    return { db: { from: () => q } as never, filters }
+  }
+
+  test("from the row's open interrupts, without reading the log", async () => {
+    const db = { from: () => expect.unreachable() } as never
+    expect(await getQuestionKind(db, interrupt("q", "choice") as never, USER, "q")).toBe("choice")
+    expect(await getQuestionKind(db, interrupt("q") as never, USER, "q")).toBe("approval")
+    expect(await getQuestionKind(db, interrupt("other") as never, USER, "q")).toBeNull()
+  })
+
+  test("a row paused before 0045: from the request entry", async () => {
+    const { db, filters } = logDb({ phase: "request", approvalId: "q", requestKind: "input" })
+    expect(await getQuestionKind(db, { id: RUN, outcome: null } as never, USER, "q")).toBe("input")
+    expect(filters).toContainEqual(["user_id", USER])
+    expect(filters).toContainEqual(["payload->>approvalId", "q"])
+    const bare = logDb({ phase: "request", approvalId: "q" })
+    expect(await getQuestionKind(bare.db, { id: RUN, outcome: null } as never, USER, "q")).toBe(
+      "approval"
+    )
+    const none = logDb(null)
+    expect(await getQuestionKind(none.db, { id: RUN, outcome: null } as never, USER, "q")).toBeNull()
   })
 })
 
