@@ -100,8 +100,24 @@ class ToolError(Exception):
 ToolExecuteFn = Callable[[dict[str, Any]], Awaitable[ToolInvocationResult]]
 
 
-def _always(_kind: str) -> bool:
-    return True
+@dataclass(frozen=True)
+class BudgetVerdict:
+    """What `RunToolContext.consume_budget` answers: whether the unit was
+    taken, and when to retry if not. Truthy when allowed, so
+    `if not ctx.consume_budget(kind)` reads naturally."""
+
+    allowed: bool
+    retry_after_sec: int = 0
+
+    def __bool__(self) -> bool:
+        return self.allowed
+
+
+_ALLOWED = BudgetVerdict(allowed=True)
+
+
+def _always(_kind: str) -> BudgetVerdict:
+    return _ALLOWED
 
 
 @dataclass(frozen=True)
@@ -122,11 +138,13 @@ class RunToolContext:
     local_files_only: bool = False
     """`forwardedProps.localFilesOnly`: return generated files as data
     URLs, never upload them to Storage."""
-    consume_budget: Callable[[str], bool] = _always
-    """Take one unit of the caller's per-IP budget `kind` (e.g.
-    `"imageGen"`, `"webTool"`); False means over the limit — the tool
-    should refuse with a `ToolError`. Always True until wave 5b-C wires
-    the limiter (`NativeHarness(consume_budget=…)`)."""
+    consume_budget: Callable[[str], BudgetVerdict] = _always
+    """Take one unit of the caller's per-IP budget `kind` (`"imageGen"`,
+    or `"webTool"` for webSearch / webFetch / searchFiles, as the Next
+    chat route buckets them); a falsy verdict means over the limit — the
+    tool refuses with a `ToolError` naming `retry_after_sec`. The native
+    harness wires the limiter (`rate_limit.ToolBudgets`); the default
+    allows everything (tests, `/v1/chat`)."""
     tainted_by: str | None = None
     """The first untrusted tool (or other third-party content) in the
     turn before this call, else None — memory tools refuse to write
