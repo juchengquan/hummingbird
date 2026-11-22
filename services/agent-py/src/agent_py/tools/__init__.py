@@ -15,6 +15,8 @@ the SDK doesn't invoke tools for us.
 """
 
 from .registry import (
+    McpAppPayload,
+    RunToolContext,
     SkillConfigs,
     ToolContext,
     ToolDescriptor,
@@ -25,6 +27,8 @@ from .registry import (
 )
 
 __all__ = [
+    "McpAppPayload",
+    "RunToolContext",
     "SkillConfigs",
     "ToolContext",
     "ToolDescriptor",
