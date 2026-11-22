@@ -118,6 +118,8 @@ async def test_default_hooks_are_the_registered_lists() -> None:
     assert [f.__name__ for f in DEFAULT_HOOKS.tool_contributors] == [
         "skill_tools",
         "cloud_mcp_tools",
+        "memory_tools",
+        "citation_sources",
     ]
     assert [f.__name__ for f in DEFAULT_HOOKS.taint_seeds] == ["history_taint"]
 
@@ -297,7 +299,7 @@ async def test_the_default_budget_allows_and_resumed_approvals_get_the_context()
     assert isinstance(r2.outcome, Succeeded)
     (ctx,) = seen
     assert ctx.client_key == "198.51.100.2" and ctx.run_id == "run-2"
-    assert ctx.consume_budget("anything") is True
+    assert ctx.consume_budget("anything")
 
 
 # --- mcp_app --------------------------------------------------------------------------------

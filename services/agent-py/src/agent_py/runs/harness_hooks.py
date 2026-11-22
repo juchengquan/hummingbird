@@ -34,11 +34,16 @@ from collections.abc import Mapping, Sequence
 import structlog
 
 from ..chat_loop import LoopResult
+from ..events import RoutedModelEvent
 from ..input_policy import ASK_USER_TOOL_NAME, RENDER_UI_TOOL_NAME
-from ..model_allowlist import resolve_optional_model
+from ..model_allowlist import AUTO_MODEL_ID, get_model_allowlist, resolve_optional_model
+from ..routing import RouteSignals, route_model
 from ..tools import default_tool_registry
+from ..tools.image_gen import remix_note_section
+from ..tools.memory import memory_prompt_section, memory_tools
+from ..verify_client import citation_sources, verify_turn
 from .harness import RunInput
-from .history import request_taint, system_texts
+from .history import last_user_index, last_user_text, request_taint, system_texts
 from .hook_types import (
     HarnessHooks,
     HookContext,
@@ -161,16 +166,50 @@ def history_taint(
 # --- Model, result -------------------------------------------------------------------
 
 
-async def resolve_model(_ri: RunInput, opts: RunOptions, _ctx: HookContext) -> ResolvedModel:
+async def resolve_model(ri: RunInput, opts: RunOptions, ctx: HookContext) -> ResolvedModel:
     """The allow-listed model the run asked for, else the service default
-    (`UnknownModelError` otherwise)."""
+    (`UnknownModelError` otherwise). `auto` is routed (`routing.route_model`,
+    the Next chat route's smart routing) between the catalog's routing
+    pair and reported as a `routed_model` part; without an allowed pair
+    it is an unknown model.
+
+    The route signals are the Next route's, read from the history up to
+    its last user message — on a resume too, so the resumed turn routes
+    as the turn it continues did: that message's text, whether the run
+    carries attachments, the number of user / assistant messages."""
+    if opts.model == AUTO_MODEL_ID:
+        pair = get_model_allowlist().routing
+        if pair is not None:
+            history = ri.messages[: last_user_index(ri.messages) + 1]
+            decision = route_model(
+                RouteSignals(
+                    text=last_user_text(history),
+                    has_attachments=bool(opts.attachments),
+                    message_count=sum(1 for m in history if m.get("role") in ("user", "assistant")),
+                ),
+                pair,
+            )
+            logger.info(
+                "native_harness.routed",
+                run_id=ri.run_id,
+                model=decision.model_id,
+                tier=decision.tier,
+                reason=decision.reason,
+            )
+            await ctx.emitter.emit(RoutedModelEvent, model=decision.model_id)
+            return ResolvedModel(
+                catalog_id=decision.model_id, api_id=resolve_optional_model(decision.model_id)
+            )
     return ResolvedModel(catalog_id=opts.model, api_id=resolve_optional_model(opts.model))
 
 
 async def succeeded_result(
-    _ri: RunInput, _opts: RunOptions, _ctx: HookContext, result: LoopResult
+    ri: RunInput, opts: RunOptions, ctx: HookContext, result: LoopResult
 ) -> RunResultData:
-    """The turn's text and whether it read third-party content."""
+    """The turn's text and whether it read third-party content — after the
+    citation check when the run asked for one (`verify_client.verify_turn`
+    emits the `verification` part)."""
+    await verify_turn(ri, opts, ctx, result)
     return RunResultData(text=result.text or None, memory_tainted=result.tainted_by is not None)
 
 
@@ -181,12 +220,14 @@ PROMPT_SECTIONS: tuple[PromptSection, ...] = (
     history_system_texts,
     application_context,
     # TODO(5b-B): attached-file / MCP-resource / bookmark context (runs/context.py).
-    # TODO(5b-C): remembered facts (unless memory_bypass); the remix note.
+    memory_prompt_section,
+    remix_note_section,
 )
 TOOL_CONTRIBUTORS: tuple[ToolContributor, ...] = (
     skill_tools,
     cloud_mcp_tools,
-    # TODO(5b-C): rememberFact / forgetFact (unless memory_bypass).
+    memory_tools,
+    citation_sources,
     # TODO(5b-D): local MCP tools (RunInput.local_mcp_credentials).
 )
 TAINT_SEEDS: tuple[TaintSeed, ...] = (
@@ -198,6 +239,6 @@ DEFAULT_HOOKS = HarnessHooks(
     prompt_sections=PROMPT_SECTIONS,
     tool_contributors=TOOL_CONTRIBUTORS,
     taint_seeds=TAINT_SEEDS,
-    resolve_model=resolve_model,  # TODO(5b-C): `auto` routing.
-    post_success=succeeded_result,  # TODO(5b-C): citation checks (verify_citations).
+    resolve_model=resolve_model,
+    post_success=succeeded_result,
 )
