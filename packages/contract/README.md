@@ -293,7 +293,9 @@ without / with a bad credential — `startRun`'s fixture is a
   `forwardedProps.model` → 400 `unknown_model` with no run left behind
   (`getRun` 404); a user message part the backend cannot give the model
   (an `audio` part, an unsupported image type, malformed base64) → 400
-  `invalid_attachment`, likewise with no run; a malformed 0.4.0 run
+  `invalid_attachment`, likewise with no run, and so is an anonymous
+  `file` attachment (a cloud file by id) or an `inlineFile` whose
+  `dataUrl` is not an image / PDF / text file (0.4.1); a malformed 0.4.0 run
   option (`research`, `allowedMcpServerIds`, an `attachments[]` entry of
   each kind, `referenceImage`, `localMcpServers[]`) → 422
   `invalid_request`; anonymous background start → 401 `auth_required`.

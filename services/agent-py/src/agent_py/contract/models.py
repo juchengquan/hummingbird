@@ -994,8 +994,11 @@ class RunError(BaseModel):
 class RunFileAttachment(BaseModel):
     """
     A cloud file (a synced `files` row), by id. The backend reads its
-    extracted text itself, after checking the caller owns it (its
-    Storage / database access bypasses RLS). Signed-in runs only.
+    extracted text (and an image's stored data URL) itself, after
+    checking the caller owns it (its Storage / database access bypasses
+    RLS); a row it cannot read as the caller's renders as the name
+    only. Signed-in runs only: on an anonymous run, or a backend with
+    no database, it is `400 invalid_attachment`.
 
     """
 
@@ -1108,10 +1111,13 @@ class RunForwardedProps(BaseModel):
     resources — the way the Next chat route's `attachments`
     carries them, but large inputs by reference (Q44): a cloud
     file by id, never its text. Rendered into the system prompt
-    under one character budget, files first. Accepted but not
-    used by agent-py yet (Phase 3 catch-up); attachments the
-    model reads directly are still `image` / `document` parts
-    (see `StartRunRequest`).
+    under one character budget, files first, as the Next chat
+    route renders them; a cloud file's header carries its id, and
+    a RAG-mode file is a note to call `searchFiles` with it (Q47).
+    Every attachment marks the turn as reading third-party content
+    (`RunResult.memoryTainted`). Interactive runs only (Q49). One
+    the run cannot give the model is `400 invalid_attachment`
+    (see `RunFileAttachment`, `RunInlineFileAttachment`).
 
     """
     memoryBypass: bool | None = None
@@ -1176,7 +1182,9 @@ class RunInlineFileAttachment(BaseModel):
     A file that exists only in the browser (a signed-out user's, or
     one not synced), sent by value: its extracted `text`, or — for a
     small file with none — its bytes as a `data:` URL. One of the
-    two is expected.
+    two is expected. A `dataUrl` follows the media rules of
+    `StartRunRequest` (an image, a PDF or a text file within their
+    limits), else `400 invalid_attachment`.
 
     """
 
