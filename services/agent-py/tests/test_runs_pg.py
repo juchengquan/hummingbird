@@ -621,10 +621,10 @@ def test_routes_with_a_database(
 def test_local_mcp_credentials_never_reach_postgres(
     monkeypatch: pytest.MonkeyPatch, seeded_sync: tuple[str, str]
 ) -> None:
-    """Q45: a signed-in interactive run and a background start, each with
-    local MCP credentials in `state`: no `tasks` / `task_events` /
-    `task_jobs` column holds them (`test_run_credentials.py` covers the
-    in-memory stores and the logs)."""
+    """Q45: a signed-in interactive run with local MCP credentials in
+    `state`: no `tasks` / `task_events` / `task_jobs` column holds them; a
+    background start carrying them is refused (Q42) before any row exists
+    (`test_run_credentials.py` covers the in-memory stores and the logs)."""
     user, conv = seeded_sync
     secret = "sk-pg-local-mcp-NEVER-STORE-55d1"
     state = {"hummingbird.localMcp": {"srv-1": {"headers": {"Authorization": secret}}}}
@@ -653,7 +653,8 @@ def test_local_mcp_credentials_never_reach_postgres(
                 "runId": _id(),
                 "forwardedProps": {"mode": "background", "maxSteps": 2, "goal": "g"},
             }
-            assert client.post("/v1/runs", json=background, headers=headers).status_code == 202
+            refused = client.post("/v1/runs", json=background, headers=headers)
+            assert refused.status_code == 400 and secret not in refused.text
 
             async def dump() -> str:
                 ids = [uuid.UUID(interactive["runId"]), uuid.UUID(background["runId"])]
@@ -678,8 +679,7 @@ def test_local_mcp_credentials_never_reach_postgres(
                 return "\n".join(row["j"] for row in rows)
 
             stored = client.portal.call(dump)
-            assert interactive["runId"] in stored and background["runId"] in stored
+            assert interactive["runId"] in stored and background["runId"] not in stored
             assert secret not in stored
-            client.post(f"/v1/runs/{background['runId']}/cancel", headers=headers)
         finally:
             client.portal.call(pool.close)

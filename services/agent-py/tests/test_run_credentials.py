@@ -279,7 +279,11 @@ def test_signed_in_run_stores_no_credentials(make_client: Any) -> None:
     assert _leaks(logs) == []
 
 
-def test_background_start_stores_no_credentials(make_client: Any) -> None:
+def test_background_start_with_credentials_is_refused_and_stores_nothing(
+    make_client: Any,
+) -> None:
+    """Q42: a background start carrying local MCP (servers or only the
+    credentials in `state`) is `400 invalid_request` before any row."""
     thread = str(uuid.uuid4())
     store = _SignedInStore(conversations={USER: {thread}})
     services = _services(_Model(), signed_in_store=store)
@@ -287,9 +291,10 @@ def test_background_start_stores_no_credentials(make_client: Any) -> None:
     body = _body(threadId=thread, fp={"mode": "background", "goal": "g"})
     with structlog.testing.capture_logs() as logs:
         r = client.post("/v1/runs", json=body, headers=_auth())
-    assert r.status_code == 202, r.text
-    checkpoint = store.checkpoint_of(body["runId"])
-    assert checkpoint is not None and checkpoint["messages"]
+    assert r.status_code == 400, r.text
+    assert r.json()["code"] == "invalid_request"
+    assert CRED_SECRET not in r.text and TYPE_SECRET not in r.text
+    assert body["runId"] not in store._rows
     assert _leaks(store) == []
     assert _leaks(services.pg_log) == []
     assert _leaks(logs) == []

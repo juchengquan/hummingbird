@@ -61,6 +61,7 @@ from ..runs.access import (
     mint_run_token,
     require_auth_for_ai,
 )
+from ..runs.credentials import split_state
 from ..runs.history import AttachmentRejected, check_attachments, last_user_text
 from ..runs.model import ContractStatus, RunCursor, RunMode, RunOwner, RunRecord, run_to_contract
 from ..runs.native_harness import validate_run_options
@@ -87,6 +88,14 @@ from ..runs.run_input import (
 from ..runs.stream import CursorOutOfRange
 from ..runs.wiring import RunServices, get_run_services
 from ..settings import Settings, get_settings
+
+#: Q42 — the Next task route's message, verbatim (`app/api/tasks/route.ts`;
+#: "async task mode" is a background run, "the chat route" an interactive one).
+LOCAL_MCP_BACKGROUND_REFUSAL = (
+    "Local-mode MCP servers aren't supported in async task mode. "
+    "Connect the server as a cloud-mode workspace MCP, or use the "
+    "chat route for this workflow."
+)
 
 router = APIRouter(tags=["runs"])
 logger = structlog.get_logger(__name__)
@@ -281,12 +290,12 @@ async def start_run(
     anonymous = caller.user_id is None
     if anonymous and mode == "background":
         _raise(401, "auth_required", "Sign in to start background runs.")
-    # TODO(5b-D): Q42 — a background run refuses local MCP, as the Next
-    # task routes do: `forwardedProps.localMcpServers` non-empty (or
-    # credentials in `state["hummingbird.localMcp"]`) with
-    # `mode: background` → 400 `invalid_request`, before anything is
-    # created. (Credentials never reach a background run anyway:
+    # Q42: a background run refuses local MCP, as the Next task route
+    # does — the worker has no way to use browser-held credentials. Before
+    # anything is created. (Credentials would never reach it anyway:
     # `background_checkpoint` reads only `messages` + `forwardedProps`.)
+    if mode == "background" and (fp.localMcpServers or split_state(body.state)[1]):
+        _raise(400, "invalid_request", LOCAL_MCP_BACKGROUND_REFUSAL)
 
     client_key = rate_limit_key(request)
     refusal = services.limits.check_start(
