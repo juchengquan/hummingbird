@@ -6,6 +6,7 @@ import {
   dispatchDueSchedules,
   nextRunFromCron,
   pickFairBatch,
+  scheduleSkills,
   validateScheduleCron,
 } from "./schedules"
 
@@ -205,5 +206,21 @@ describe("dispatchDueSchedules — minimum-gap throttle", () => {
     )
     // Guarded on the row we read, so a racing tick can't double-defer.
     expect(updates[0].filters).toContainEqual(["next_run_at", dueRow.next_run_at])
+  })
+})
+
+describe("scheduleSkills", () => {
+  test("unset (what the editor saves) keeps every skill the executor runs", () => {
+    expect(scheduleSkills(null)).toEqual([
+      { id: "webSearch" },
+      { id: "webFetch" },
+      { id: "searchFiles" },
+      { id: "imageGen" },
+    ])
+  })
+
+  test("an explicit choice is kept, including none", () => {
+    expect(scheduleSkills([])).toEqual([])
+    expect(scheduleSkills([{ id: "webSearch" }])).toEqual([{ id: "webSearch" }])
   })
 })

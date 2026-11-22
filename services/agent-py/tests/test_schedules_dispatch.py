@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from agent_py import schedules
+from agent_py import executor, schedules
 from agent_py.schedules import DueSchedule, build_checkpoint, dispatch_due_schedules, js_slice
 
 NOW = datetime(2026, 11, 21, 8, 0, 30, 123456, tzinfo=UTC)
@@ -211,7 +211,17 @@ def test_checkpoint_matches_fire_schedule() -> None:
         "messages": [{"role": "user", "content": "do the thing"}],
         "step": 0,
         "seq": 1,
-        "config": {"model": "", "workspaceId": "w1", "skills": [], "maxSteps": 25},
+        "config": {
+            "model": "",
+            "workspaceId": "w1",
+            "skills": [
+                {"id": "webSearch"},
+                {"id": "webFetch"},
+                {"id": "searchFiles"},
+                {"id": "imageGen"},
+            ],
+            "maxSteps": 25,
+        },
     }
     row = _row(1, model="anthropic/x", system_prompt="", skills=[{"id": "webSearch"}])
     cp = build_checkpoint(row, 7)
@@ -223,6 +233,15 @@ def test_checkpoint_matches_fire_schedule() -> None:
         "maxSteps": 7,
     }
     json.dumps(cp)
+
+
+def test_a_schedule_without_a_skill_choice_keeps_every_skill_tool() -> None:
+    # The schedule editor never sets `skills`, and the executor offers only
+    # `config.skills`: unset must not turn into "none".
+    unset, _ = executor._skills_from(build_checkpoint(_row(skills=None), 25))
+    assert unset == executor._ALL_SKILL_TOOL_NAMES
+    none, _ = executor._skills_from(build_checkpoint(_row(skills=[]), 25))
+    assert none == frozenset()
 
 
 def test_js_slice_counts_utf16_units() -> None:

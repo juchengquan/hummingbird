@@ -265,6 +265,29 @@ export async function dispatchDueSchedules(db: DB): Promise<number> {
   return fired
 }
 
+/** What a schedule runs with when it never chose: every skill agent-py's
+ *  executor has a tool for (each still needs its provider configured). */
+const UNSET_SCHEDULE_SKILLS: NonNullable<RunCheckpoint["config"]["skills"]> = [
+  { id: "webSearch" },
+  { id: "webFetch" },
+  { id: "searchFiles" },
+  { id: "imageGen" },
+]
+
+/**
+ * A schedule's `config.skills`. The executor offers only the skills listed
+ * there, and the schedule editor doesn't set any, so unset (`null`) is
+ * spelled out as all of them; an explicit `[]` stays none. Mirrored by
+ * agent-py's `schedules.schedule_skills`.
+ */
+export function scheduleSkills(
+  skills: Json | null
+): NonNullable<RunCheckpoint["config"]["skills"]> {
+  return skills === null
+    ? UNSET_SCHEDULE_SKILLS
+    : (skills as NonNullable<RunCheckpoint["config"]["skills"]>)
+}
+
 /**
  * Set up a fresh run from a schedule row: create the conversation row
  * (the worker authors the result Message into it), write the initial
@@ -308,7 +331,7 @@ async function fireSchedule(db: DB, row: ScheduleRow): Promise<void> {
       model: row.model ?? "",
       workspaceSystemPrompt: row.system_prompt ?? undefined,
       workspaceId: row.workspace_id,
-      skills: (row.skills as RunCheckpoint["config"]["skills"]) ?? [],
+      skills: scheduleSkills(row.skills),
       maxSteps,
     },
   }
