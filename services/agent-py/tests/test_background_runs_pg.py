@@ -2,7 +2,7 @@
 
 Opt-in like `test_runs_pg.py`: set `AGENT_PY_TEST_DB_URL` to a disposable
 database with the Supabase migrations applied (through 0043). Skipped
-otherwise — CI has no database.
+otherwise; `bun run test:db` and the `agent-py-db` CI job set it.
 
 * 0043 — each paused task is answered one way only (Q41): a runs resume
   after a `respond` job → `create_run` 55000 → `409 run_already_answered`;

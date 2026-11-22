@@ -29,6 +29,7 @@ docker compose up agent-py            # run service in container
 docker compose up proxy agent-py      # + Caddy on :8080, same origin (NEXT_PUBLIC_AGENT_PY_URL=/; README "Same-origin backend")
 bun run codegen:agent-types           # regen lib/shared/agent-py-types.generated.ts
 bun run codegen:agent-types:check     # CI mode — fail if drifted
+bun run test:db                       # agent-py suite on a throwaway Postgres with every migration (needs Docker; mirrors the agent-py-db CI job) — run it for any change to SQL, migrations, the executor or runs
 bun run check:agent-py                # ruff check + ruff format --check + mypy + pytest (mirrors the agent-py CI job)
 bun run fixtures:runs                 # re-record agent-py run streams for lib/client/runs tests (after changing runs output)
 

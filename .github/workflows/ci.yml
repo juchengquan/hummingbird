@@ -113,6 +113,31 @@ jobs:
       - name: Test (pytest)
         run: uv run pytest
 
+  # agent-py against a real Postgres with every migration applied
+  # (docs/PLAN-frontend-backend-split.md Q54): the run / task SQL, races
+  # and RLS that the `agent-py` job can only skip. Also the one place CI
+  # proves the migrations apply, in order, to an empty database.
+  # Same script locally: `bun run test:db`.
+  agent-py-db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.5.4"
+          enable-cache: true
+
+      - name: Sync dependencies
+        working-directory: services/agent-py
+        run: uv sync --frozen
+
+      - name: Test against Postgres
+        run: bash scripts/test-db.sh -rs
+
   # TS twin of the Python agent service (services/agent-ts/).
   # See docs/PLAN-agent-ts.md. Same gate shape as agent-py: a
   # typecheck + a test run. Runs in parallel with the main CI job
