@@ -90,10 +90,10 @@ export interface SendOptions {
    *  workspace's system prompt via `composeSystemPrompts`. See
    *  `PLAN-custom-agents.md`. */
   agentSystemPrompt?: string
-  /** Per-turn MCP allow-list — when set, cloud-mode MCP servers are
-   *  filtered to this list server-side (Phase 2 of `PLAN-custom-agents`).
-   *  Passed through to task mode; the inline chat stream relies on the
-   *  server-side filter in `loadEffectiveMcpServers`. */
+  /** Per-turn MCP allow-list — when set, MCP servers are filtered to
+   *  this list server-side (Phase 2 of `PLAN-custom-agents`, Q48): task
+   *  mode, the chat route (`loadEffectiveMcpServers`) and runs alike.
+   *  Absent = no restriction; `[]` = no MCP. */
   allowedMcpServerIds?: string[]
   /** Route this turn's reply onto a specific conversation rather than
    *  the React-subscribed `activeConversationId`. Needed when the caller
@@ -671,6 +671,8 @@ export function useChatSend(): UseChatSendResult {
               mcpServersForRequest.length > 0
                 ? mcpServersForRequest
                 : undefined,
+            // Q48: the persona's MCP allow-list, filtered server-side.
+            allowedMcpServerIds: options?.allowedMcpServerIds,
             attachments:
               attachmentsForRequest.length > 0
                 ? attachmentsForRequest
