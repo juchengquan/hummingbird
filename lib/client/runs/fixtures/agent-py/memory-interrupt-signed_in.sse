@@ -1,19 +1,19 @@
-data: {"type":"RUN_STARTED","threadId":"bec5267e-e7b5-4e21-bc50-016319cad2f9","runId":"3a803a53-887b-4915-ae9e-e70592e240d2"}
+data: {"type":"RUN_STARTED","threadId":"dd9f195b-011f-478c-9d22-d0a70634c798","runId":"1df8df81-f4e3-4efe-8848-57942d7184bf"}
 
 id: 1
 data: {"type":"STEP_STARTED","stepName":"step-1"}
 
 id: 2.0
-data: {"type":"TEXT_MESSAGE_START","messageId":"3a803a53-887b-4915-ae9e-e70592e240d2:2","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_START","messageId":"1df8df81-f4e3-4efe-8848-57942d7184bf:2","role":"assistant"}
 
 id: 2
-data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"3a803a53-887b-4915-ae9e-e70592e240d2:2","delta":"Looking up, then sending."}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"1df8df81-f4e3-4efe-8848-57942d7184bf:2","delta":"Looking up, then sending."}
 
 id: 3.0
-data: {"type":"TEXT_MESSAGE_END","messageId":"3a803a53-887b-4915-ae9e-e70592e240d2:2"}
+data: {"type":"TEXT_MESSAGE_END","messageId":"1df8df81-f4e3-4efe-8848-57942d7184bf:2"}
 
 id: 3.1
-data: {"type":"TOOL_CALL_START","toolCallId":"c1","toolCallName":"lookup","parentMessageId":"3a803a53-887b-4915-ae9e-e70592e240d2:2"}
+data: {"type":"TOOL_CALL_START","toolCallId":"c1","toolCallName":"lookup","parentMessageId":"1df8df81-f4e3-4efe-8848-57942d7184bf:2"}
 
 id: 3.2
 data: {"type":"TOOL_CALL_ARGS","toolCallId":"c1","delta":"{\"q\":\"x\"}"}
@@ -22,10 +22,10 @@ id: 3
 data: {"type":"TOOL_CALL_END","toolCallId":"c1"}
 
 id: 4
-data: {"type":"TOOL_CALL_RESULT","messageId":"3a803a53-887b-4915-ae9e-e70592e240d2:4","toolCallId":"c1","role":"tool","content":"{\"summary\":\"Looked it up\"}","metadata":{"hummingbird":{"toolName":"lookup"}}}
+data: {"type":"TOOL_CALL_RESULT","messageId":"1df8df81-f4e3-4efe-8848-57942d7184bf:4","toolCallId":"c1","role":"tool","content":"{\"summary\":\"Looked it up\"}","metadata":{"hummingbird":{"toolName":"lookup"}}}
 
 id: 5.0
-data: {"type":"TOOL_CALL_START","toolCallId":"c2","toolCallName":"send","parentMessageId":"3a803a53-887b-4915-ae9e-e70592e240d2:2"}
+data: {"type":"TOOL_CALL_START","toolCallId":"c2","toolCallName":"send","parentMessageId":"1df8df81-f4e3-4efe-8848-57942d7184bf:2"}
 
 id: 5.1
 data: {"type":"TOOL_CALL_ARGS","toolCallId":"c2","delta":"{\"to\":\"bob\"}"}
@@ -39,5 +39,5 @@ data: {"type":"STEP_FINISHED","stepName":"step-1"}
 id: 7
 data: {"type":"CUSTOM","name":"hummingbird.interrupt_pending","value":{"id":"c2","reason":"approval","responseSchema":{"type":"object","required":["approved"],"properties":{"approved":{"type":"boolean"},"args":{}}},"toolCallId":"c2","metadata":{"hummingbird":{"tool":"send","args":{"to":"bob"}}}}}
 
-data: {"type":"RUN_FINISHED","threadId":"bec5267e-e7b5-4e21-bc50-016319cad2f9","runId":"3a803a53-887b-4915-ae9e-e70592e240d2","outcome":{"type":"interrupt","interrupts":[{"id":"c2","reason":"approval","responseSchema":{"type":"object","required":["approved"],"properties":{"approved":{"type":"boolean"},"args":{}}},"toolCallId":"c2","metadata":{"hummingbird":{"tool":"send","args":{"to":"bob"}}}}]}}
+data: {"type":"RUN_FINISHED","threadId":"dd9f195b-011f-478c-9d22-d0a70634c798","runId":"1df8df81-f4e3-4efe-8848-57942d7184bf","outcome":{"type":"interrupt","interrupts":[{"id":"c2","reason":"approval","responseSchema":{"type":"object","required":["approved"],"properties":{"approved":{"type":"boolean"},"args":{}}},"toolCallId":"c2","metadata":{"hummingbird":{"tool":"send","args":{"to":"bob"}}}}]}}
 

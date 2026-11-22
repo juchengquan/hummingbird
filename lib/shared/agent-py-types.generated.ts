@@ -1748,7 +1748,7 @@ export interface components {
          *     body's `referenceImage`, set by an image's Remix action): the
          *     model is told to call `generateImage` with `referenceImageUrl`
          *     when the user asks for a variation. Only with the `imageGen`
-         *     skill. Not acted on by agent-py yet.
+         *     skill.
          */
         RunReferenceImage: {
             /** Url */

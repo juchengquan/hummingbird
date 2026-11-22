@@ -1,19 +1,19 @@
-data: {"type":"RUN_STARTED","threadId":"99cf4d92-f291-41bc-801e-e5434f9799a5","runId":"3f8931f1-7b84-4714-857f-e86a492aa063"}
+data: {"type":"RUN_STARTED","threadId":"a3a600f1-4a1d-400a-8aab-cf3ceb3142b4","runId":"93636408-07e8-463e-bd96-5969bbe5da9a"}
 
 id: 1
 data: {"type":"STEP_STARTED","stepName":"step-1"}
 
 id: 2.0
-data: {"type":"TEXT_MESSAGE_START","messageId":"3f8931f1-7b84-4714-857f-e86a492aa063:2","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_START","messageId":"93636408-07e8-463e-bd96-5969bbe5da9a:2","role":"assistant"}
 
 id: 2
-data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"3f8931f1-7b84-4714-857f-e86a492aa063:2","delta":"Let me check."}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"93636408-07e8-463e-bd96-5969bbe5da9a:2","delta":"Let me check."}
 
 id: 3.0
-data: {"type":"TEXT_MESSAGE_END","messageId":"3f8931f1-7b84-4714-857f-e86a492aa063:2"}
+data: {"type":"TEXT_MESSAGE_END","messageId":"93636408-07e8-463e-bd96-5969bbe5da9a:2"}
 
 id: 3.1
-data: {"type":"TOOL_CALL_START","toolCallId":"c1","toolCallName":"lookup","parentMessageId":"3f8931f1-7b84-4714-857f-e86a492aa063:2"}
+data: {"type":"TOOL_CALL_START","toolCallId":"c1","toolCallName":"lookup","parentMessageId":"93636408-07e8-463e-bd96-5969bbe5da9a:2"}
 
 id: 3.2
 data: {"type":"TOOL_CALL_ARGS","toolCallId":"c1","delta":"{\"q\":\"x\"}"}
@@ -22,7 +22,7 @@ id: 3
 data: {"type":"TOOL_CALL_END","toolCallId":"c1"}
 
 id: 4
-data: {"type":"TOOL_CALL_RESULT","messageId":"3f8931f1-7b84-4714-857f-e86a492aa063:4","toolCallId":"c1","role":"tool","content":"{\"summary\":\"Looked it up\"}","metadata":{"hummingbird":{"toolName":"lookup"}}}
+data: {"type":"TOOL_CALL_RESULT","messageId":"93636408-07e8-463e-bd96-5969bbe5da9a:4","toolCallId":"c1","role":"tool","content":"{\"summary\":\"Looked it up\"}","metadata":{"hummingbird":{"toolName":"lookup"}}}
 
 id: 5
 data: {"type":"STEP_FINISHED","stepName":"step-1"}
@@ -31,16 +31,16 @@ id: 6
 data: {"type":"STEP_STARTED","stepName":"step-2"}
 
 id: 7.0
-data: {"type":"TEXT_MESSAGE_START","messageId":"3f8931f1-7b84-4714-857f-e86a492aa063:7","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_START","messageId":"93636408-07e8-463e-bd96-5969bbe5da9a:7","role":"assistant"}
 
 id: 7
-data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"3f8931f1-7b84-4714-857f-e86a492aa063:7","delta":"It is done."}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"93636408-07e8-463e-bd96-5969bbe5da9a:7","delta":"It is done."}
 
 id: 8.0
-data: {"type":"TEXT_MESSAGE_END","messageId":"3f8931f1-7b84-4714-857f-e86a492aa063:7"}
+data: {"type":"TEXT_MESSAGE_END","messageId":"93636408-07e8-463e-bd96-5969bbe5da9a:7"}
 
 id: 8
 data: {"type":"STEP_FINISHED","stepName":"step-2"}
 
-data: {"type":"RUN_FINISHED","threadId":"99cf4d92-f291-41bc-801e-e5434f9799a5","runId":"3f8931f1-7b84-4714-857f-e86a492aa063","outcome":{"type":"success"},"result":{"text":"Let me check.It is done.","memoryTainted":true},"usage":[{"provider":"anthropic","model":"claude-sonnet-4-6","inputTokens":22,"outputTokens":14,"totalTokens":36}]}
+data: {"type":"RUN_FINISHED","threadId":"a3a600f1-4a1d-400a-8aab-cf3ceb3142b4","runId":"93636408-07e8-463e-bd96-5969bbe5da9a","outcome":{"type":"success"},"result":{"text":"Let me check.It is done.","memoryTainted":true},"usage":[{"provider":"anthropic","model":"claude-sonnet-4-6","inputTokens":22,"outputTokens":14,"totalTokens":36}]}
 
