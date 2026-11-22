@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-21T14:33:59Z",
+  "generatedAt": "2026-11-22T02:59:22Z",
   "panels": [
     {
       "id": "agents-dialog",
@@ -536,7 +536,7 @@
     },
     {
       "id": "MCP_ALLOW_PRIVATE_HOSTS",
-      "description": "MCP private-host opt-in — optional, default off. Every MCP server URL (local-mode request bodies, cloud-mode rows, saves) is SSRF-checked and must resolve to a public address. Set to `true` to also allow loopback / RFC 1918 / `.local`-style hosts — e.g. an MCP server on `http://localhost:3001/mcp` during single-user local dev. Link-local and cloud-metadata addresses (169.254.169.254 etc.) stay blocked even then. Do NOT enable on a shared/hosted deployment: any user could then point the server at your internal network. Honoured by Next.js and services/agent-ts alike.",
+      "description": "MCP private-host opt-in — optional, default off. Every MCP server URL (local-mode request bodies, cloud-mode rows, saves) is SSRF-checked and must resolve to a public address. Set to `true` to also allow loopback / RFC 1918 / `.local`-style hosts — e.g. an MCP server on `http://localhost:3001/mcp` during single-user local dev. Link-local and cloud-metadata addresses (169.254.169.254 etc.) stay blocked even then. Do NOT enable on a shared/hosted deployment: any user could then point the server at your internal network. Honoured by Next.js, services/agent-ts and services/agent-py alike (agent-py: only `true` enables it; a value other than `true` / `false` / empty stops it at boot).",
       "required": true,
       "sourceFile": ".env.example"
     },

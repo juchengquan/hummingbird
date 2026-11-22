@@ -171,7 +171,9 @@ has shipped behind the existing per-account backend switch.
      files, and the meta notes for RAG-mode files ("available via
      `searchFiles`") instead of dropping them
    - [ ] MCP resources and URL bookmarks as attachments
-   - [ ] local MCP servers (browser-held credentials)
+   - [x] local MCP servers (browser-held credentials) — wave 5b-D:
+     `runs/local_mcp.py` (interactive runs; background refused, Q42),
+     `MCP_ALLOW_PRIVATE_HOSTS` in agent-py
    - [ ] code interpreter — `runCode`, `sandboxFiles`, `code_result`
      parts (generated files have no producer on runs until then)
    - [ ] reference image for image generation
@@ -186,7 +188,8 @@ has shipped behind the existing per-account backend switch.
      the executor (Q41); starts keep `workspaceId`, `requireApprovalFor`,
      research mode and the allowed MCP servers (all dropped today)
    - [ ] `auto` model routing, so Auto can return to the agent backends
-   - [ ] MCP Apps
+   - [x] MCP Apps — wave 5b-D (`mcp_tools.build_mcp_tool`, cloud and
+     local servers)
    - [ ] the per-IP web-tool window
    - [ ] RAG-mode files: `searchFiles` needs a file id no prompt carries —
      check whether it works on Next before porting

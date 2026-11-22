@@ -327,6 +327,7 @@ days; background logs and checkpoints untouched).
 | `EMBEDDINGS_MODEL` | No | Default `nomic-embed-text` (768-dim, matching `file_sections.embedding vector(768)`). |
 | `OLLAMA_BASE_URL` / `OLLAMA_API_KEY` | No | Fallback embedder when `EMBEDDINGS_BASE_URL` is unset — the same Ollama host the Next.js app uses. |
 | `MEMORY_EXTRACT_MODEL` | No | Catalog id for `/v1/memory/extract`. Used only when it is an allowed `anthropic/*` entry of `config/models.json`; otherwise (or empty — the Next.js default is `google/gemini-2.5-flash`) `AGENT_DEFAULT_MODEL`. Needs `ANTHROPIC_API_KEY`; without it extraction is skipped (still `{ok: true}`). |
+| `MCP_ALLOW_PRIVATE_HOSTS` | No | Default off. `true` lets MCP traffic — the `/v1/mcp/*` proxy and save check, cloud and local MCP tools on runs — reach loopback / RFC 1918 / `.local`-style hosts (a dev MCP server on `localhost`), checked again at connect time. Link-local and cloud-metadata addresses (169.254.0.0/16, fe80::/10, `metadata.google.internal`, …) stay blocked; bookmarks and `webFetch` stay public-only. Next.js semantics: only the exact value `true` enables it; any value other than `true` / `false` / empty stops the service at boot. Never enable on a shared deployment. |
 
 A repo-level `.env` works — `pydantic-settings` looks for `.env` in the
 current working directory. The service shares the same `.env` as the

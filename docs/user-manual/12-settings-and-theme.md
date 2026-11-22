@@ -52,8 +52,11 @@ Click your avatar or initial at the bottom of the left sidebar.
     the answer pauses until you reply; typing a new message instead
     cancels the paused one. Also offered to signed-out users (shows
     when `NEXT_PUBLIC_AGENT_PY_URL` is set). It sends attached images
-    and text/PDF documents and the reasoning-effort setting, but not
-    MCP servers, the code interpreter or reference images yet. Every
+    and text/PDF documents, the reasoning-effort setting and the
+    workspace's local-mode MCP servers (their credentials go with each
+    answer and the server never stores them; MCP App panels render as
+    on `ts`), but not MCP resources, the code interpreter or reference
+    images yet. Every
     other request (summaries, embeds, sharing, …) goes exactly where
     `python` sends it.
 - **Models per backend.** The agent services (`python` and `ts-service`
