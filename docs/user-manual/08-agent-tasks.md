@@ -4,20 +4,49 @@
 # Agent tasks
 
 ## What it is
-Long-running agent runs (a task that takes more than one model turn to
-complete). The Tasks panel on the right rail and the dedicated Tasks
-sidebar entry both show the live state.
+A long-running agent run: work that takes more than one model turn and
+carries on in the background. It runs on the deployment's agent service,
+needs a signed-in account, and doesn't depend on which chat backend you
+picked.
 
 ## How to open it
-- The **Tasks** entry in the left sidebar.
-- The right-rail **project** tab in the chat view.
+- **Task** in the chat header: while it is on, the next message starts a
+  task instead of a chat reply.
+- `/research <goal>` starts a research task, with or without the toggle.
+- **Run as task** on a card of a project workspace's board.
+
+The Tasks panel opens beside the chat. One task is shown at a time; the
+line above the message box opens the panel again.
 
 ## What you can do
-- Start an agent run by sending a message that the model escalates to
-  a task (or by using a project-mode workspace).
-- Watch progress: status, plan, step-by-step events, tool calls.
-- Cancel a running task from the Tasks panel.
-- Inspect a completed run's full event log from the task detail.
+- Watch progress: status, step, plan, tool calls, sub-agents and text.
+- **Answer a question.** A task that needs you pauses and shows a card:
+  approve a tool call, pick an option, type an answer or fill in an
+  interactive card. Several questions come one after another.
+- **Answer a sub-agent.** When a sub-agent needs you, the task says so
+  and shows that question, named after the sub-agent. Several can ask at
+  once; answer them in any order. The sub-agent's own window (click it in
+  the list) has the same card. The task continues when all sub-agents
+  have finished.
+- **Skip a sub-agent** from the list or its window. The task carries on
+  with the others.
+- **Cancel** the task at any point, also while it waits for you or for
+  its sub-agents. That cancels its sub-agents too, and its question
+  doesn't come back.
+- Find the result as a message in the conversation it started in. A
+  research report also becomes a document and an artifact; a board card
+  moves to Done and links its result (or back to To-do when the task
+  failed or was cancelled).
+
+## Models
+Tasks run only models the agent service can run (the Anthropic models in
+the model list), and not **Auto**.
+- With **Task** on, the model picker lists only those. A selected model
+  that can't run tasks is switched, with a note; pick again after turning
+  **Task** off to chat with another model.
+- `/research`, the board and a persona or workspace model have no picker
+  at that moment: that one task is started with a model that can run, and
+  a note says which. Chat keeps the model you had.
 
 ## Event kinds
 The run is an append-only log of typed events:
@@ -36,11 +65,21 @@ The run is an append-only log of typed events:
 - `result` - the run's final assistant message.
 
 ## Tips & gotchas
-- Tasks are durable. Closing the browser does not stop a running
-  task - it picks up where it left off when you reopen.
-- The Python agent service and the Next.js route are both live; the
-  Tasks panel surfaces runs from either backend.
+- Closing the browser does not stop a task. When you open the app again
+  in the same browser it rebuilds the task, question included, however
+  long it has been waiting. A task that finished meanwhile delivers its
+  result then, once.
+- The result message is written by the browser that watches the task.
+  Another browser or device doesn't follow the task or get the message
+  until the watching one has written and synced it.
+- If a question says it was answered elsewhere, another tab or device
+  answered first, or the task has moved on. An answer that isn't picked
+  up within a minute can be given again.
+- Tasks can't use local-mode MCP servers, only cloud-mode ones.
+- "No task worker available" means the deployment's agent service isn't
+  running tasks.
 
 ## Related
-- [Settings & theme](12-settings-and-theme.md) (the chat-backend toggle)
-- [Canvas](09-canvas.md)
+- [Schedules](15-schedules.md)
+- [Skills & tools](07-skills-and-tools.md)
+- [Environment variables](21-environment-variables.md)
