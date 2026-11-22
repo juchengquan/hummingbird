@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_AGENT_MODEL = "anthropic/claude-haiku-4.5"
@@ -152,6 +153,29 @@ class Settings(BaseSettings):
     treats every cloud-mode MCP cred as if the row didn't exist, so
     those servers are silently skipped — matches the TS path's
     `getMcpEncryptionKey()` guard."""
+
+    MCP_ALLOW_PRIVATE_HOSTS: bool = False
+    """Let MCP traffic reach private hosts — loopback, RFC 1918, ULA,
+    `.local`-style names — for a dev MCP server on the same machine.
+    Next.js's `MCP_ALLOW_PRIVATE_HOSTS` (`lib/server/mcp/outbound.ts`):
+    only the exact value `true` turns it on; unset / empty / `false` is
+    off, and any other value fails the service at boot rather than being
+    guessed at. Covers every MCP egress path (`mcp_client`, the proxy and
+    the upsert URL check, local and cloud MCP tools); bookmarks and
+    `webFetch` stay public-only. Link-local and cloud-metadata addresses
+    (169.254.0.0/16, fe80::/10, `metadata.google.internal`, …) stay
+    blocked regardless. Never enable on a shared deployment."""
+
+    @field_validator("MCP_ALLOW_PRIVATE_HOSTS", mode="before")
+    @classmethod
+    def _strict_mcp_allow_private_hosts(cls, value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None or value == "" or value == "false":
+            return False
+        if value == "true":
+            return True
+        raise ValueError("MCP_ALLOW_PRIVATE_HOSTS must be `true` or `false`")
 
     # --- Image generation -------------------------------------------------
     MINIMAX_CN_API_KEY: str = ""
