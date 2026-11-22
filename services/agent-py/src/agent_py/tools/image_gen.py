@@ -13,10 +13,23 @@ Differences from the TS port (documented for posterity):
     later). Minimax URLs are typically valid for a few hours — enough
     for the current turn — and Phase 3d-2 will swap in Supabase
     Storage signed URLs without changing the tool's interface.
-  - **Per-IP cross-turn rate limit** is not ported. The TS path
-    plumbs an IP-bucket consumer; the Python service doesn't see the
-    HTTP origin (it runs in the background after the chat route
-    enqueues the task), so a per-IP bucket isn't meaningful here.
+  - **Per-IP cross-turn rate limit.** On interactive runs
+    (`run_execute`) each call first takes one unit of the caller's
+    per-IP image budget (`RunToolContext.consume_budget("imageGen")`,
+    `MINIMAX_IMAGE_RATE_LIMIT_PER_MINUTE`, default 5 — the Next route's
+    `chatImageGenLimit`) and is refused with Next's text over it.
+    Background runs (`execute`) have no client IP and no such limit.
+  - **Persistence on interactive runs** (`run_execute`) is the TS
+    route's: a Storage signed URL when signed in and `localFilesOnly`
+    is off, else (anonymous, `localFilesOnly`, a failed upload) a data
+    URL (`image_storage.persist_or_inline_image`). The model's text
+    keeps the Minimax URL for a data-URL image (megabytes of base64
+    are no use to it). Background runs keep the Storage-or-Minimax-URL
+    path below.
+  - **Reference image** (`forwardedProps.referenceImage`): the run's
+    prompt gets `build_remix_note` (TS `buildRemixNote`) telling the
+    model to pass the URL as `referenceImageUrl` — the TS route's only
+    channel for it too.
   - **Per-turn soft cap** (`maxCalls`) ports as a closure-held
     counter on a per-build basis. The Anthropic SDK doesn't expose
     per-step tool-call counts cleanly, so the count lives on the
@@ -34,7 +47,7 @@ Differences from the TS port (documented for posterity):
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import structlog
@@ -44,10 +57,23 @@ from ..image_storage import (
     PersistError,
     is_storage_configured,
     persist_generated_image,
+    persist_or_inline_image,
 )
+from ..rate_limit import IMAGE_GEN_BUDGET
 from ..settings import get_settings
 from .minimax_image_client import MinimaxImage, minimax_generate_image
-from .registry import ToolContext, ToolDescriptor, ToolError, ToolInvocationResult
+from .registry import (
+    RunToolContext,
+    ToolContext,
+    ToolDescriptor,
+    ToolError,
+    ToolInvocationResult,
+)
+
+if TYPE_CHECKING:
+    from ..runs.harness import RunInput
+    from ..runs.hook_types import HookContext
+    from ..runs.options import RunOptions
 
 logger = structlog.get_logger(__name__)
 
@@ -188,6 +214,72 @@ async def _persist_or_passthrough(
     return out
 
 
+async def _persist_or_inline(
+    *,
+    run_ctx: RunToolContext,
+    images: list[MinimaxImage],
+    prompt: str,
+) -> tuple[list[dict[str, object]], list[str]]:
+    """Interactive runs: each image as the TS route persists it (Storage
+    when signed in and `localFilesOnly` is off, else a data URL), plus
+    the URL the model's text names — the stored URL, or the Minimax URL
+    for a data-URL image. A failed download keeps the Minimax URL."""
+    import time
+    import uuid
+
+    records: list[dict[str, object]] = []
+    model_urls: list[str] = []
+    for idx, img in enumerate(images):
+        image_id = f"{int(time.time() * 1000)}-{idx}-{uuid.uuid4().hex[:8]}"
+        result = await persist_or_inline_image(
+            img.url,
+            user_id=run_ctx.user_id,
+            image_id=image_id,
+            local_files_only=run_ctx.local_files_only,
+            format_hint=img.format,
+        )
+        if isinstance(result, PersistedImage):
+            url, storage_path, fmt = result.url, result.storage_path, result.format
+        else:
+            logger.warning(
+                "image_gen.persist_failed_falling_back",
+                image_id=image_id,
+                code=result.code,
+                error=result.message,
+            )
+            url, storage_path, fmt = img.url, None, img.format
+        record: dict[str, object] = {"url": url}
+        if storage_path:
+            record["storagePath"] = storage_path
+        record.update(width=img.width, height=img.height, format=fmt, prompt=prompt)
+        records.append(record)
+        model_urls.append(img.url if url.startswith("data:") else url)
+    return records, model_urls
+
+
+def build_remix_note(reference_url: str | None, image_gen_enabled: bool) -> str | None:
+    """TS `buildRemixNote` (`lib/server/chat/prompt-builders.ts`): the
+    system-prompt line telling the model to use the user's pinned
+    reference image for image-to-image — None without a reference or
+    without the imageGen skill (a reference without the tool would just
+    be confusing context)."""
+    if not reference_url or not image_gen_enabled:
+        return None
+    return (
+        "The user attached a reference image for image-to-image generation. "
+        "When they ask for an image variation, edit, or remix, call "
+        f'`generateImage` with `referenceImageUrl: "{reference_url}"` (i2i mode). '
+        "If they ask for an unrelated new image instead, ignore the reference."
+    )
+
+
+def remix_note_section(_ri: RunInput, opts: RunOptions, _ctx: HookContext) -> str | None:
+    """`PromptSection`: `build_remix_note` for the run's
+    `forwardedProps.referenceImage` and `imageGen` skill."""
+    ref = opts.reference_image
+    return build_remix_note(ref.url if ref else None, "imageGen" in opts.skill_ids)
+
+
 def _build_text(prompt: str, mode: str, urls: list[str]) -> str:
     """The model-facing tool result. One numbered line per URL so the
     model can cite them; the URLs themselves render inline in the
@@ -275,6 +367,14 @@ def build_image_gen_tool(
     cap = max(1, max_calls_per_turn)
 
     async def execute(args: dict[str, Any]) -> ToolInvocationResult:
+        return await generate(args, None)
+
+    async def run_execute(args: dict[str, Any], run_ctx: RunToolContext) -> ToolInvocationResult:
+        return await generate(args, run_ctx)
+
+    async def generate(
+        args: dict[str, Any], run_ctx: RunToolContext | None
+    ) -> ToolInvocationResult:
         prompt = args.get("prompt")
         if not isinstance(prompt, str) or not prompt.strip():
             raise ToolError("generateImage: missing or empty `prompt`.")
@@ -305,6 +405,16 @@ def build_image_gen_tool(
             reference_image_url = candidate
 
         mode = "i2i" if reference_image_url else "t2i"
+
+        # Per-IP cross-turn gate first (interactive runs), as the TS
+        # path checks it before its per-turn cap.
+        if run_ctx is not None:
+            budget = run_ctx.consume_budget(IMAGE_GEN_BUDGET)
+            if not budget:
+                raise ToolError(
+                    "Image generation rate limit exceeded for this IP. "
+                    f"Retry in {budget.retry_after_sec}s."
+                )
 
         # Per-turn cap — counted before the upstream call so a refused
         # call doesn't consume budget. Mirrors the TS path's
@@ -348,12 +458,17 @@ def build_image_gen_tool(
         # failures fall back to the raw Minimax URL so the model still
         # gets *something* — the user-facing degradation is "URL
         # expires in hours instead of a year" rather than a tool error.
-        images = await _persist_or_passthrough(
-            user_id=context.user_id if context else None,
-            images=list(result.images),
-            prompt=prompt,
-        )
-        urls = [str(img["url"]) for img in images]
+        if run_ctx is not None:
+            images, urls = await _persist_or_inline(
+                run_ctx=run_ctx, images=list(result.images), prompt=prompt
+            )
+        else:
+            images = await _persist_or_passthrough(
+                user_id=context.user_id if context else None,
+                images=list(result.images),
+                prompt=prompt,
+            )
+            urls = [str(img["url"]) for img in images]
         text = _build_text(prompt, mode, urls)
         summary = f"{len(urls)} image{'s' if len(urls) != 1 else ''} ({mode})"
         # The images also reach the user as a `tool_image` part (the
@@ -378,6 +493,7 @@ def build_image_gen_tool(
         ),
         input_schema=IMAGE_GEN_INPUT_SCHEMA,
         execute=execute,
+        run_execute=run_execute,
     )
 
 
@@ -390,5 +506,7 @@ __all__ = [
     "MAX_PROMPT_CHARS",
     "MAX_REFERENCE_URL_CHARS",
     "build_image_gen_tool",
+    "build_remix_note",
     "is_image_gen_configured",
+    "remix_note_section",
 ]
