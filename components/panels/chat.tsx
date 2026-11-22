@@ -586,7 +586,7 @@ export function ChatPanel() {
       // Persona overrides for this turn (`PLAN-custom-agents.md`).
       // Persona modelId beats the chat-input's session-picked model;
       // persona system prompt is appended after the workspace's;
-      // persona MCP allow-list narrows the cloud-mode server set
+      // persona MCP allow-list narrows the MCP server set, both modes
       // (Phase 2 — server-side enforcement in `loadEffectiveMcpServers`).
       modelOverride: agentResolved?.modelId,
       agentSystemPrompt: agentResolved?.systemPrompt,

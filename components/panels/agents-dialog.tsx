@@ -220,16 +220,14 @@ function AgentForm({
     () => new Set(initial?.allowedMcpServerIds ?? [])
   )
 
-  // Workspace's cloud-mode MCP servers — the universe a persona can
-  // allow. Local-mode is excluded because tasks can't use it (per #85).
+  // The workspace's MCP servers, both credential modes: the allow-list
+  // filters both (Q48), so both must be pickable (Q50). Tasks can't use
+  // local-mode ones (per #85), so those are marked.
   const allMcpServers = useStore((s) => s.mcpServers)
   const workspaceMcpServers = useMemo(
     () =>
       allMcpServers.filter(
-        (m) =>
-          m.workspaceId === workspaceId &&
-          !m.deletedAt &&
-          m.credentialMode === "cloud"
+        (m) => m.workspaceId === workspaceId && !m.deletedAt
       ),
     [allMcpServers, workspaceId]
   )
@@ -331,8 +329,8 @@ function AgentForm({
         label="Allowed MCP servers"
         hint={
           workspaceMcpServers.length === 0
-            ? "No cloud-mode MCP servers in this workspace. Add one in Settings → MCP first."
-            : "Cloud-mode MCP servers this persona can call. Empty = no MCP for this persona's turns."
+            ? "No MCP servers in this workspace. Add one in Settings → MCP first."
+            : "MCP servers this persona can call. Empty = no MCP for this persona's turns."
         }
       >
         <div className="flex flex-wrap gap-2">
@@ -351,6 +349,11 @@ function AgentForm({
                 }
               >
                 {m.name}
+                {m.credentialMode === "local" ? (
+                  <span className="ml-1 text-[var(--muted-foreground)]">
+                    (local, not available in tasks)
+                  </span>
+                ) : null}
               </button>
             )
           })}
