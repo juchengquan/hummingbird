@@ -299,6 +299,19 @@ class Settings(BaseSettings):
     RUNS_ANONYMOUS_MAX_CONCURRENT: int = 3
     """Live anonymous runs per client IP at once."""
 
+    WEB_TOOL_RATE_LIMIT_PER_MINUTE: int = 20
+    """Per-IP cap on interactive runs' outbound tool calls — webSearch,
+    webFetch and searchFiles share one 60 s window, counted per call (the
+    Next chat route's fixed `chatWebToolLimit`, 20). agent-py only; the
+    Next route's 20 is not configurable."""
+
+    MINIMAX_IMAGE_RATE_LIMIT_PER_MINUTE: str = ""
+    """Per-IP cap on interactive runs' `generateImage` calls per minute —
+    the same variable as the Next chat route, read the same way: not a
+    positive number (or empty) → 5, otherwise floored and capped at 60
+    (`rate_limit.image_gen_per_minute`). A string so a value Next
+    tolerates never fails this service's boot."""
+
     # --- Request hardening ------------------------------------------------
     CORS_ALLOWED_ORIGINS: str = ""
     """Comma-separated exact origins (scheme://host[:port]) allowed to

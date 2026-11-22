@@ -5,6 +5,9 @@
  * agent-ts) accept only the `anthropic/*` allowlist and answer anything
  * else with 400 `unknown_model`, so on them the picker offers only those
  * models and a model they don't accept is switched to their default.
+ * agent-py's runs API (`/v1/runs`) also routes `auto` when the catalog's
+ * routing pair is on that allowlist (wave 5b-C); its `/v1/chat` and
+ * agent-ts don't.
  */
 
 import {
@@ -13,14 +16,26 @@ import {
   CHAT_MODELS,
   DEFAULT_CHAT_MODEL,
   ROUTING_AVAILABLE,
+  ROUTING_CONFIG,
   type ChatModel,
 } from "./models"
 
-/** `"any"`: the Next.js routes. `"agent-service"`: agent-py / agent-ts. */
-export type ModelBackendKind = "any" | "agent-service"
+/** `"any"`: the Next.js routes. `"agent-service"`: agent-py's `/v1/chat`
+ *  and agent-ts. `"agent-runs"`: agent-py's runs API — the same models,
+ *  plus `auto` when {@link RUNS_ROUTING_AVAILABLE}. */
+export type ModelBackendKind = "any" | "agent-service" | "agent-runs"
+
+/** Whether agent-py's runs route `auto`: the catalog has a routing pair
+ *  and both of its models are on the agent-service allowlist (agent-py's
+ *  `ModelAllowlist.routing`). */
+export const RUNS_ROUTING_AVAILABLE: boolean =
+  ROUTING_CONFIG !== null &&
+  ANTHROPIC_SERVICE_MODELS.has(ROUTING_CONFIG.strong) &&
+  ANTHROPIC_SERVICE_MODELS.has(ROUTING_CONFIG.weak)
 
 export function backendAcceptsModel(kind: ModelBackendKind, id: string): boolean {
-  if (kind === "any") return id === AUTO_MODEL_ID ? ROUTING_AVAILABLE : CHAT_MODELS.some((m) => m.id === id)
+  if (id === AUTO_MODEL_ID) return autoAvailableForBackend(kind)
+  if (kind === "any") return CHAT_MODELS.some((m) => m.id === id)
   return ANTHROPIC_SERVICE_MODELS.has(id)
 }
 
@@ -29,9 +44,12 @@ export function modelsForBackend(kind: ModelBackendKind): ChatModel[] {
   return kind === "any" ? CHAT_MODELS : CHAT_MODELS.filter((m) => ANTHROPIC_SERVICE_MODELS.has(m.id))
 }
 
-/** Whether the smart-routing `auto` entry is offered (Next.js resolves it). */
+/** Whether the smart-routing `auto` entry is offered: the Next.js routes
+ *  and agent-py's runs resolve it; agent-py's `/v1/chat` and agent-ts don't. */
 export function autoAvailableForBackend(kind: ModelBackendKind): boolean {
-  return kind === "any" && ROUTING_AVAILABLE
+  if (kind === "any") return ROUTING_AVAILABLE
+  if (kind === "agent-runs") return RUNS_ROUTING_AVAILABLE
+  return false
 }
 
 /**
@@ -66,7 +84,7 @@ export function resolveModelBackend(
 ): ModelBackend {
   switch (chatBackend) {
     case "python-runs":
-      return configured.agentPy ? { kind: "agent-service", name: "agent-py" } : NEXT_ROUTES
+      return configured.agentPy ? { kind: "agent-runs", name: "agent-py" } : NEXT_ROUTES
     case "python":
       return configured.agentPy && signedIn ? { kind: "agent-service", name: "agent-py" } : NEXT_ROUTES
     case "ts-service":

@@ -317,6 +317,8 @@ days; background logs and checkpoints untouched).
 | `RUNS_MEMORY_TTL_SECONDS` / `RUNS_MEMORY_MAX_RUNS` | No | Defaults `900` / `2000`. How long an in-memory run is kept after it ends; how many runs memory holds at once (past it, starts answer 503). |
 | `RUNS_RATE_PER_MINUTE` | No | Default `30`. Run starts per client IP per minute, every caller. |
 | `RUNS_ANONYMOUS_RATE_PER_MINUTE` / `RUNS_ANONYMOUS_DAILY_BUDGET` / `RUNS_ANONYMOUS_MAX_CONCURRENT` | No | Defaults `10` / `200` / `3`. Anonymous starts per IP per minute, per rolling 24 h, and live anonymous runs per IP. |
+| `MINIMAX_IMAGE_RATE_LIMIT_PER_MINUTE` | No | Default `5`. Per-IP `generateImage` calls per minute on interactive runs (signed in or not, keyed on the client IP), refused with the Next route's text past it. Same variable and parsing as the Next chat route: not a positive number → `5`, floored, capped at `60`. |
+| `WEB_TOOL_RATE_LIMIT_PER_MINUTE` | No | Default `20` (the Next chat route's fixed window). Per-IP webSearch + webFetch + searchFiles calls per minute on interactive runs, one shared window. |
 | `SUPABASE_URL` | No (reported by `/readyz`) | Phase 2 will use it for things beyond what `SUPABASE_DB_URL` already gives us. |
 | `SERVICE_PORT` | No | Default 8000. |
 | `CORS_ALLOWED_ORIGINS` | No | Default empty (no CORS). Comma-separated exact origins allowed to call the API from a browser on another origin, e.g. `http://localhost:3000` when Next calls agent-py on `:8000`. Not needed behind the same-origin proxy. `*` and non-origin values are ignored; credentialed CORS is never enabled (auth is a bearer JWT). |

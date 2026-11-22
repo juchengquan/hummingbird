@@ -12,31 +12,56 @@ keys keep their `executor.` prefix (dashboards key on them).
 Callers pass where the Anthropic fallback client comes from
 (`anthropic_client`, e.g. `executor._resolve_anthropic_client`), so this
 module depends on neither the executor nor the harness.
+
+**Interactive runs** (`forwardedProps.verifyCitations`, the Next chat
+route's post-turn pass): `citation_sources` — a tool contributor — wraps
+the run's web-search tool so each call's results are recorded, in the
+cumulative order the model cites by (the Next route's `gatheredSources`:
+web-search results only); `verify_turn` — called by the harness's
+post-success hook — runs the verifier over the turn's text and those
+sources and emits the verdicts as a `verification` part. Same gates as
+Next (answer text and at least one source; never on a failed or
+cancelled turn) plus this service's `VERIFY_MODEL`. Sources are those of
+this run's own tool calls: a resume run does not see the search results
+of the run it continues.
 """
 
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 import os
 from collections.abc import Callable
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import structlog
 
 from . import verify
 from .settings import get_settings
+from .tools.registry import RunToolContext, ToolDescriptor, ToolInvocationResult
+
+if TYPE_CHECKING:
+    from .chat_loop import LoopResult
+    from .runs.harness import RunInput
+    from .runs.hook_types import HookContext, ToolsetDraft
+    from .runs.options import RunOptions
 
 logger = structlog.get_logger(__name__)
 
 __all__ = [
     "VERIFY_MAX_TOKENS",
+    "WEB_SEARCH_TOOL_NAMES",
     "AnthropicClientSource",
     "AnthropicVerifierClient",
     "GoogleVerifierClient",
     "VerifierClient",
+    "citation_sources",
     "make_anthropic_verifier_client",
     "make_google_verifier_client",
     "resolve_verifier_client",
+    "settings_anthropic_client",
     "verify_citations",
+    "verify_turn",
     "warn_once",
     "warned_keys",
 ]
@@ -239,3 +264,100 @@ async def verify_citations(
         run_verifier=run,
     )
     return result.to_payload() if result is not None else None
+
+
+# --- Interactive runs (`forwardedProps.verifyCitations`) ---------------------------
+
+#: The tools whose results the verifier checks citations against — the
+#: Next route's `isWebSearchToolName` (its Sources-strip tools).
+WEB_SEARCH_TOOL_NAMES: frozenset[str] = frozenset({"webSearch"})
+
+_SOURCES_KEY = "verify.sources"
+
+
+def _recording(descriptor: ToolDescriptor, sink: list[tuple[str, str, str]]) -> ToolDescriptor:
+    """`descriptor`, recording each successful call's `source_results`."""
+    original_execute = descriptor.execute
+    original_run_execute = descriptor.run_execute
+
+    def record(result: ToolInvocationResult) -> ToolInvocationResult:
+        sink.extend((r.title, r.url, r.snippet) for r in result.source_results or [])
+        return result
+
+    async def execute(args: dict[str, Any]) -> ToolInvocationResult:
+        return record(await original_execute(args))
+
+    async def run_execute(args: dict[str, Any], ctx: RunToolContext) -> ToolInvocationResult:
+        if original_run_execute is not None:
+            return record(await original_run_execute(args, ctx))
+        return record(await original_execute(args))
+
+    return dataclasses.replace(descriptor, execute=execute, run_execute=run_execute)
+
+
+def citation_sources(
+    _ri: RunInput, opts: RunOptions, ctx: HookContext, draft: ToolsetDraft
+) -> None:
+    """`ToolContributor` (after the skill tools): with `verifyCitations`,
+    record the web-search results of the run for `verify_turn`."""
+    if not opts.verify_citations:
+        return
+    sink: list[tuple[str, str, str]] = []
+    ctx.scratch[_SOURCES_KEY] = sink
+    for name in WEB_SEARCH_TOOL_NAMES & draft.tools.keys():
+        draft.tools[name] = _recording(draft.tools[name], sink)
+
+
+def settings_anthropic_client() -> Any:
+    """An `AsyncAnthropic` from `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL`,
+    or None without a key — the verifier's same-family fallback."""
+    settings = get_settings()
+    api_key = settings.ANTHROPIC_API_KEY.strip()
+    if not api_key:
+        return None
+    from anthropic import AsyncAnthropic
+
+    base_url = settings.ANTHROPIC_BASE_URL.strip()
+    if base_url:
+        return AsyncAnthropic(api_key=api_key, base_url=base_url)
+    return AsyncAnthropic(api_key=api_key)
+
+
+async def verify_turn(
+    _ri: RunInput, opts: RunOptions, ctx: HookContext, result: LoopResult
+) -> dict[str, object] | None:
+    """After a succeeded turn: with `verifyCitations`, an answer and at
+    least one recorded source, run the verifier and emit its verdicts as
+    a `verification` part (`VerificationEvent`); returns the payload, or
+    None when nothing ran / the verifier had nothing to say. Advisory:
+    every failure is None, and a cancel abandons it."""
+    from .chat_loop import CancelRequested, race_cancel
+    from .events import VerificationEvent
+
+    if not opts.verify_citations or ctx.cancel.is_set():
+        return None
+    raw = ctx.scratch.get(_SOURCES_KEY)
+    sources = list(raw) if isinstance(raw, list) else []
+    if not result.text.strip() or not sources:
+        return None
+    waiter = asyncio.ensure_future(ctx.cancel.wait())
+    try:
+        payload = await race_cancel(
+            verify_citations(
+                text=result.text,
+                sources=sources,
+                anthropic_client=settings_anthropic_client,
+            ),
+            waiter,
+        )
+    except CancelRequested:
+        return None
+    except Exception as exc:
+        logger.warning("verify.turn_failed", error=str(exc)[:300])
+        return None
+    finally:
+        waiter.cancel()
+    if payload is None:
+        return None
+    await ctx.emitter.emit(VerificationEvent, verification=payload)
+    return payload

@@ -176,21 +176,21 @@ has shipped behind the existing per-account backend switch.
      `MCP_ALLOW_PRIVATE_HOSTS` in agent-py
    - [ ] code interpreter — `runCode`, `sandboxFiles`, `code_result`
      parts (generated files have no producer on runs until then)
-   - [ ] reference image for image generation
-   - [ ] `localFilesOnly` for generated images
-   - [ ] citation checks
-   - [ ] memory — the per-conversation opt-out, facts in the prompt, the
+   - [x] reference image for image generation
+   - [x] `localFilesOnly` for generated images
+   - [x] citation checks
+   - [x] memory — the per-conversation opt-out, facts in the prompt, the
      remember / forget tools
-   - [ ] the per-IP image-generation budget
+   - [x] the per-IP image-generation budget
    - [ ] reasoning effort and the attachment checks in the background
      executor
    - [ ] background runs on `/v1/runs`: resume carries the answers into
      the executor (Q41); starts keep `workspaceId`, `requireApprovalFor`,
      research mode and the allowed MCP servers (all dropped today)
-   - [ ] `auto` model routing, so Auto can return to the agent backends
+   - [x] `auto` model routing, so Auto can return to the agent backends
    - [x] MCP Apps — wave 5b-D (`mcp_tools.build_mcp_tool`, cloud and
      local servers)
-   - [ ] the per-IP web-tool window
+   - [x] the per-IP web-tool window
    - [ ] RAG-mode files: `searchFiles` needs a file id no prompt carries —
      check whether it works on Next before porting
 4. **Editor AI to the backend** (Q23).

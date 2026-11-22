@@ -15,6 +15,11 @@ on-with-error.
 `source_results` on the ToolInvocationResult is populated so the
 client's Sources rail renders the hits as clickable cards (same as
 the TS path).
+
+On interactive runs (`run_execute`) each call first takes one unit of
+the caller's per-IP web-tool window (`RunToolContext.consume_budget`,
+shared with webFetch + searchFiles — the Next route's
+`chatWebToolLimit`); over it, the call is refused with Next's text.
 """
 
 from __future__ import annotations
@@ -24,8 +29,9 @@ from typing import Any
 import httpx
 
 from ..events import ToolCallResult
+from ..rate_limit import WEB_TOOL_BUDGET
 from ..settings import get_settings
-from .registry import ToolDescriptor, ToolError, ToolInvocationResult
+from .registry import RunToolContext, ToolDescriptor, ToolError, ToolInvocationResult
 
 # Tavily's search endpoint. Stable since 2024; same URL the TS path uses.
 TAVILY_ENDPOINT = "https://api.tavily.com/search"
@@ -135,6 +141,18 @@ async def _execute(args: dict[str, Any]) -> ToolInvocationResult:
         return await _execute_with_client(args, client=client, api_key=api_key)
 
 
+async def _run_execute(args: dict[str, Any], ctx: RunToolContext) -> ToolInvocationResult:
+    """Interactive runs: the per-IP web-tool window first (shared with
+    webFetch + searchFiles), with the Next route's refusal text."""
+    budget = ctx.consume_budget(WEB_TOOL_BUDGET)
+    if not budget:
+        raise ToolError(
+            f"webSearch rate limit exceeded for this IP. Retry in {budget.retry_after_sec}s. "
+            "The chat route caps outbound web tools (webSearch + webFetch combined) per minute."
+        )
+    return await _execute(args)
+
+
 WEB_SEARCH_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -168,6 +186,7 @@ def build_web_search_tool() -> ToolDescriptor:
         ),
         input_schema=WEB_SEARCH_INPUT_SCHEMA,
         execute=_execute,
+        run_execute=_run_execute,
     )
 
 

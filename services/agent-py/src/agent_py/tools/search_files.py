@@ -33,7 +33,14 @@ from typing import Any
 import structlog
 
 from .. import store
-from .registry import ToolContext, ToolDescriptor, ToolError, ToolInvocationResult
+from ..rate_limit import WEB_TOOL_BUDGET
+from .registry import (
+    RunToolContext,
+    ToolContext,
+    ToolDescriptor,
+    ToolError,
+    ToolInvocationResult,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -155,6 +162,18 @@ def build_search_files_tool(context: ToolContext) -> ToolDescriptor:
     async def execute(args: dict[str, Any]) -> ToolInvocationResult:
         return await _execute(args, context=context)
 
+    async def run_execute(args: dict[str, Any], ctx: RunToolContext) -> ToolInvocationResult:
+        # Interactive runs: the per-IP web-tool window first — the Next
+        # chat route gives searchFiles the same bucket as the web tools.
+        budget = ctx.consume_budget(WEB_TOOL_BUDGET)
+        if not budget:
+            raise ToolError(
+                f"searchFiles rate limit exceeded for this IP. Retry in "
+                f"{budget.retry_after_sec}s. The chat route shares this bucket across "
+                "webSearch, webFetch, and searchFiles."
+            )
+        return await _execute(args, context=context)
+
     return ToolDescriptor(
         name="searchFiles",
         description=(
@@ -170,6 +189,7 @@ def build_search_files_tool(context: ToolContext) -> ToolDescriptor:
         ),
         input_schema=SEARCH_FILES_INPUT_SCHEMA,
         execute=execute,
+        run_execute=run_execute,
     )
 
 

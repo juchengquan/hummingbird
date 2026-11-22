@@ -13,6 +13,12 @@ Next.js routes return. agent-ts applies the same rule via
 The allowlist + the configured default model are loaded and validated
 once, at app construction (`create_app`), so a missing catalog or a
 default outside the list fails boot instead of the first request.
+
+The catalog's `routing` pair (`{strong, weak}`, the `auto` option's two
+models — `lib/shared/models.ts` `ROUTING_CONFIG`) is kept as
+`ModelAllowlist.routing` when both ids are on the allowlist; otherwise
+`auto` is unavailable here (`routing` None) — a non-Anthropic pair is
+fine for the Next routes, so it does not fail boot.
 """
 
 from __future__ import annotations
@@ -52,6 +58,19 @@ class UnknownModelError(ValueError):
         return {"code": self.code, "message": str(self)}
 
 
+#: The smart-routing sentinel (`AUTO_MODEL_ID` in `lib/shared/models.ts`).
+AUTO_MODEL_ID = "auto"
+
+
+@dataclass(frozen=True)
+class RoutingPair:
+    """`config/models.json` `routing`: the catalog ids `auto` picks
+    between (`routing.route_model`)."""
+
+    strong: str
+    weak: str
+
+
 @dataclass(frozen=True)
 class ModelAllowlist:
     api_ids: Mapping[str, str]
@@ -68,6 +87,10 @@ class ModelAllowlist:
     """Catalog ids flagged `supportsReasoningEffort` — the flag
     `modelSupportsReasoningEffort` in `lib/shared/models.ts` reads (the
     models that take a thinking budget)."""
+
+    routing: RoutingPair | None = None
+    """The `auto` pair when both of its ids are allowed here, else None
+    (`auto` is then an unknown model on this service)."""
 
     def supports_reasoning_effort(self, model_id: str | None) -> bool:
         """Whether the catalog flags `model_id` (absent / empty → the
@@ -136,7 +159,20 @@ def parse_allowlist(raw: Any, *, default_model: str, source: str = "models.json"
         default_model=default_model,
         structured_output=frozenset(structured),
         reasoning_effort=frozenset(reasoning),
+        routing=_routing_pair(raw.get("routing"), api_ids),
     )
+
+
+def _routing_pair(raw: object, api_ids: Mapping[str, str]) -> RoutingPair | None:
+    """The catalog's `routing` pair when both ids are on the allowlist."""
+    if not isinstance(raw, dict):
+        return None
+    strong, weak = raw.get("strong"), raw.get("weak")
+    if not isinstance(strong, str) or not isinstance(weak, str):
+        return None
+    if strong not in api_ids or weak not in api_ids:
+        return None
+    return RoutingPair(strong=strong, weak=weak)
 
 
 def find_models_config(start: Path | None = None) -> Path | None:
@@ -193,8 +229,10 @@ def default_api_model_id() -> str:
 
 __all__ = [
     "ANTHROPIC_PREFIX",
+    "AUTO_MODEL_ID",
     "ModelAllowlist",
     "ModelConfigError",
+    "RoutingPair",
     "UnknownModelError",
     "default_api_model_id",
     "find_models_config",

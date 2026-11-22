@@ -117,9 +117,10 @@ from ..events import InputRequestOption, SuggestionsEvent
 from ..input_policy import request_kind_for
 from ..model_allowlist import UnknownModelError
 from ..providers.anthropic_provider import AsyncAnthropicClient, _make_tool_result_block
+from ..rate_limit import ToolBudgets
 from ..reasoning_effort import thinking_params
 from ..settings import Settings
-from ..tools import RunToolContext, ToolContext, ToolDescriptor, ToolError
+from ..tools import BudgetVerdict, RunToolContext, ToolContext, ToolDescriptor, ToolError
 from .harness import CancelSignal, HarnessResult, ResumeAnswer, RunInput
 from .harness_hooks import DEFAULT_HOOKS, HITL_TOOLS, SKILL_TOOLS
 from .history import (
@@ -183,9 +184,10 @@ ToolsetBuilder = Callable[[RunInput], Awaitable[Toolset]]
 """Replaces the whole tool lookup (tests); the default is the hooks'
 tool contributors (`harness_hooks.TOOL_CONTRIBUTORS`)."""
 PoolProvider = Callable[[], Any]
-BudgetPolicy = Callable[[str | None, str], bool]
-"""`(client_key, kind) -> allowed` — takes one unit of the caller's
-per-IP budget `kind`; becomes each run's `RunToolContext.consume_budget`."""
+BudgetPolicy = Callable[[str | None, str], BudgetVerdict]
+"""`(client_key, kind) -> verdict` — takes one unit of the caller's
+per-IP budget `kind`; becomes each run's `RunToolContext.consume_budget`
+(`rate_limit.ToolBudgets` by default)."""
 
 
 def _default_pool() -> Any:
@@ -222,7 +224,7 @@ def _hook_context(
     )
     if budget is not None:
 
-        def consume(kind: str) -> bool:
+        def consume(kind: str) -> BudgetVerdict:
             return budget(client_key, kind)
 
         run_tools = dataclasses.replace(run_tools, consume_budget=consume)
@@ -841,14 +843,17 @@ def build_native_harness(
     `build_tools`: replaces the hooks' tool contributors (tests).
     `hooks`: the extension points (`harness_hooks.DEFAULT_HOOKS`).
     `consume_budget`: the per-IP tool budgets (`RunToolContext.consume_budget`);
-    default — unlimited.
+    default — `rate_limit.ToolBudgets` from `settings` (web tools 20/min,
+    `generateImage` `MINIMAX_IMAGE_RATE_LIMIT_PER_MINUTE`, per client key).
     `suggestions`: generate follow-up chips after an answer."""
     factory: ClientFactory = (
         (lambda: client) if client is not None else _client_from_settings(settings)
     )
-    # TODO(5b-C): the per-IP image-generation and web-tool budgets (the
-    # Next chat route's `chatImageGenLimit` / `chatWebToolLimit`) — pass a
-    # `consume_budget` built from `settings` here.
+    if consume_budget is None:
+        # The Next chat route's `chatWebToolLimit` / `chatImageGenLimit`:
+        # one set of windows per harness, i.e. per process (`wiring.py`
+        # builds one harness).
+        consume_budget = ToolBudgets.from_settings(settings)
     return NativeHarness(
         client_factory=factory,
         build_tools=build_tools,
