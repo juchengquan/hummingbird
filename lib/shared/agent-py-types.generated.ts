@@ -695,6 +695,7 @@ export interface components {
             };
             metadata?: components["schemas"]["Metadata"] | null;
         };
+        AllowedMcpServerId: string;
         /**
          * AssistantMessage
          * @description A message from the agent. Content is optional because a turn may consist only of tool calls.
@@ -770,6 +771,11 @@ export interface components {
             enabled?: boolean | null;
             /** Freshness */
             freshness?: ("any" | "pd" | "pw" | "pm" | "py") | null;
+        };
+        /** Capabilities */
+        Capabilities: {
+            /** Tools */
+            tools?: components["schemas"]["LocalMcpTool"][] | null;
         };
         /**
          * ChatMessageRequest
@@ -1212,6 +1218,39 @@ export interface components {
             expiresAt?: string | null;
             metadata?: components["schemas"]["Metadata"] | null;
         };
+        /**
+         * LocalMcpServer
+         * @description A local-mode MCP server (credentials held by the browser) and its
+         *     cached capabilities — the Next chat body's `mcpServers[]` entry
+         *     without `credentials`.
+         */
+        LocalMcpServer: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Url */
+            url: string;
+            /** Transport */
+            transport?: "http" | null;
+            /** Requiresapproval */
+            requiresApproval?: boolean | null;
+            capabilities?: components["schemas"]["Capabilities"] | null;
+        };
+        /**
+         * LocalMcpTool
+         * @description One tool from a local MCP server's cached tool list; offered as `mcp__<serverId>__<name>`.
+         */
+        LocalMcpTool: {
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /** Inputschema */
+            inputSchema?: unknown | null;
+            /** Uiresourceuri */
+            uiResourceUri?: string | null;
+        };
         /** MaxCallsSkillConfig */
         MaxCallsSkillConfig: {
             /** Maxcalls */
@@ -1502,6 +1541,12 @@ export interface components {
             error: components["schemas"]["RunError"] | null;
             /** Lastseq */
             lastSeq: number;
+            /** Goal */
+            goal: string | null;
+            /** Maxsteps */
+            maxSteps: number | null;
+            /** Step */
+            step: number | null;
             /**
              * Createdat
              * Format: date-time
@@ -1526,6 +1571,31 @@ export interface components {
             runId: string;
             status: components["schemas"]["RunStatus"];
         };
+        RunAttachment: components["schemas"]["RunFileAttachment"] | components["schemas"]["RunInlineFileAttachment"] | components["schemas"]["RunBookmarkAttachment"] | components["schemas"]["RunMcpResourceAttachment"];
+        /**
+         * RunBookmarkAttachment
+         * @description A URL bookmark with the text fetched for it, capped. Third-party
+         *     content: it taints the turn for memory extraction.
+         */
+        RunBookmarkAttachment: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "bookmark";
+            /** Id */
+            id?: string | null;
+            /** Url */
+            url: string;
+            /** Title */
+            title: string;
+            /** Text */
+            text: string;
+            /** Truncated */
+            truncated?: boolean | null;
+            /** Fetchedat */
+            fetchedAt?: string | null;
+        };
         /**
          * RunError
          * @description Why a run failed — also `RUN_ERROR`'s `code` / `message`.
@@ -1535,6 +1605,31 @@ export interface components {
             code: string;
             /** Message */
             message: string;
+        };
+        /**
+         * RunFileAttachment
+         * @description A cloud file (a synced `files` row), by id. The backend reads its
+         *     extracted text itself, after checking the caller owns it (its
+         *     Storage / database access bypasses RLS). Signed-in runs only.
+         */
+        RunFileAttachment: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "file";
+            /** Fileid */
+            fileId: string;
+            /** Name */
+            name: string;
+            /** Mimetype */
+            mimeType?: string | null;
+            /** Sizebytes */
+            sizeBytes?: number | null;
+            /** Extractedkind */
+            extractedKind?: string | null;
+            /** Retrievalmode */
+            retrievalMode?: ("inline" | "rag") | null;
         };
         /**
          * RunForwardedProps
@@ -1563,8 +1658,51 @@ export interface components {
             workspaceId?: string | null;
             /** Reasoningeffort */
             reasoningEffort?: ("low" | "medium" | "high") | null;
+            /** Research */
+            research?: boolean | null;
+            /** Allowedmcpserverids */
+            allowedMcpServerIds?: components["schemas"]["AllowedMcpServerId"][] | null;
+            /** Attachments */
+            attachments?: components["schemas"]["RunAttachment"][] | null;
+            /** Memorybypass */
+            memoryBypass?: boolean | null;
+            /** Verifycitations */
+            verifyCitations?: boolean | null;
+            referenceImage?: components["schemas"]["RunReferenceImage"] | null;
+            /** Localfilesonly */
+            localFilesOnly?: boolean | null;
+            /** Localmcpservers */
+            localMcpServers?: components["schemas"]["LocalMcpServer"][] | null;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * RunInlineFileAttachment
+         * @description A file that exists only in the browser (a signed-out user's, or
+         *     one not synced), sent by value: its extracted `text`, or — for a
+         *     small file with none — its bytes as a `data:` URL. One of the
+         *     two is expected.
+         */
+        RunInlineFileAttachment: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "inlineFile";
+            /** Name */
+            name: string;
+            /** Mimetype */
+            mimeType?: string | null;
+            /** Sizebytes */
+            sizeBytes?: number | null;
+            /** Extractedkind */
+            extractedKind?: string | null;
+            /** Text */
+            text?: string | null;
+            /** Truncated */
+            truncated?: boolean | null;
+            /** Dataurl */
+            dataUrl?: string | null;
         };
         /** RunList */
         RunList: {
@@ -1573,8 +1711,44 @@ export interface components {
             /** Nextpagetoken */
             nextPageToken: string | null;
         };
+        /**
+         * RunMcpResourceAttachment
+         * @description A resource of an MCP server, by reference: the backend reads it
+         *     (`resources/read`) from the server named by `serverId` — a cloud
+         *     server of the workspace, or one of `localMcpServers` with its
+         *     credential from `state`.
+         */
+        RunMcpResourceAttachment: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "mcpResource";
+            /** Id */
+            id?: string | null;
+            /** Serverid */
+            serverId: string;
+            /** Uri */
+            uri: string;
+            /** Name */
+            name: string;
+            /** Mimetype */
+            mimeType?: string | null;
+        };
         /** @enum {string} */
         RunMode: "interactive" | "background";
+        /**
+         * RunReferenceImage
+         * @description The reference image for image-to-image generation (the chat
+         *     body's `referenceImage`, set by an image's Remix action): the
+         *     model is told to call `generateImage` with `referenceImageUrl`
+         *     when the user asks for a variation. Only with the `imageGen`
+         *     skill. Not acted on by agent-py yet.
+         */
+        RunReferenceImage: {
+            /** Url */
+            url: string;
+        };
         /**
          * RunResult
          * @description A succeeded run's return value — also `RUN_FINISHED.result` on the
@@ -1701,6 +1875,17 @@ export interface components {
          *     Anything else — `audio` / `video` parts, `file` (provider handle)
          *     sources, other media types, malformed base64, a part over its
          *     limit, more parts than allowed — is `400 invalid_attachment`.
+         *
+         *     **`state`.** Hummingbird reads one key of AG-UI's `state`:
+         *     `hummingbird.localMcp`, the credentials of the local MCP servers
+         *     listed in `forwardedProps.localMcpServers` (`LocalMcpCredentials`:
+         *     server id → `{type?, headers?}`, Q45). Credentials never go in
+         *     `forwardedProps` (stored with a background run) or a header
+         *     (reverse-proxy access logs record headers). The backend holds them
+         *     only in memory for the run: never in the run row, its checkpoint,
+         *     the event log, a log line or an error, and never echoed in a
+         *     stream. So a resume — a new run — must send them again, and a
+         *     background run never gets them. Other `state` keys are ignored.
          */
         StartRunRequest: {
             threadId: components["schemas"]["UuidString"];
