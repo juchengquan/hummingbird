@@ -20,7 +20,8 @@ const runStatusSchema = z.enum([
 export const ActiveTaskSchema = z.object({
   runId: z.string().min(1),
   conversationId: z.string().min(1),
-  /** Highest `seq` folded — the reconnect cursor. */
+  /** Written as 0 and not read: a reload replays the whole log (the view
+   *  it folds into is empty). Kept for older clients' pointers. */
   cursor: z.number().int().nonnegative(),
   status: runStatusSchema,
   /** Conversation title, for the finish-while-away notification. */
@@ -30,7 +31,7 @@ export const ActiveTaskSchema = z.object({
    *  fires the editor auto-handoff on settle. Older pointers without
    *  this field parse as `undefined` → treated as default mode. */
   mode: z.enum(["default", "research"]).optional(),
-  /** ISO timestamp of the last update — lets a stale pointer be aged out. */
+  /** ISO timestamp of the save. The pointer doesn't age out. */
   updatedAt: z.string().min(1),
 })
 

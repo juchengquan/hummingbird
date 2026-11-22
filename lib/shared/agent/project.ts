@@ -251,6 +251,16 @@ export function reduceRun(view: TaskRunView, event: TaskEvent): TaskRunView {
   }
 }
 
+/**
+ * Whether an event pushed out of band (Realtime) may be folded now: only
+ * the one right after the cursor. `reduceRun` drops everything at or
+ * before its cursor, so folding a later event would lose what the ordered
+ * replay — which starts at 0 — hasn't delivered yet.
+ */
+export function isNextEvent(view: TaskRunView, event: TaskEvent): boolean {
+  return event.seq === view.cursor + 1
+}
+
 /** Fold a whole log into a view. Sorts by `seq` defensively and
  *  de-dups, so out-of-order or overlapping replay windows are safe. */
 export function projectRun(events: TaskEvent[]): TaskRunView {
