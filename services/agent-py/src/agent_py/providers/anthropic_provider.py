@@ -160,9 +160,12 @@ def make_anthropic_step_fn(config: AnthropicStepConfig) -> RunStepFn:
         kwargs: dict[str, Any] = {
             "model": config.model,
             "max_tokens": config.max_tokens,
-            "system": config.system,
-            "messages": config.messages,
+            "messages": sendable_messages(config.messages),
         }
+        # Omitted, never null: the API takes a string or blocks (a task
+        # without a workspace prompt has none).
+        if config.system:
+            kwargs["system"] = config.system
         if tools_param is not None:
             kwargs["tools"] = tools_param
         if config.thinking is not None and _turn_can_think(config.messages):
@@ -375,6 +378,29 @@ def _coerce_content_blocks(final_message: Any) -> list[dict[str, Any]]:
             continue
         blocks.append(dict(item.__dict__))
     return blocks
+
+
+def sendable_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`messages` as the Messages API takes them.
+
+    Assistant turns are kept as `model_dump()`s of the SDK's response
+    blocks, whose fields aren't all request params: `parsed_output` (the
+    SDK's `__api_exclude__`, which it only applies to model objects, not
+    to dicts) and optional ones dumped as null. Done on send, so turns
+    already saved in checkpoints are covered too."""
+    out: list[dict[str, Any]] = []
+    for message in messages:
+        content = message.get("content")
+        if message.get("role") == "assistant" and isinstance(content, list):
+            content = [
+                {k: v for k, v in block.items() if v is not None and k != "parsed_output"}
+                if isinstance(block, dict)
+                else block
+                for block in content
+            ]
+            message = {**message, "content": content}
+        out.append(message)
+    return out
 
 
 def _block_type(block: dict[str, Any]) -> str | None:

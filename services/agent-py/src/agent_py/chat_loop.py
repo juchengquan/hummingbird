@@ -52,6 +52,7 @@ from .providers.anthropic_provider import (
     AsyncAnthropicClient,
     _coerce_content_blocks,
     _make_tool_result_block,
+    sendable_messages,
 )
 from .tools import (
     McpAppPayload,
@@ -619,7 +620,7 @@ async def run_turn_loop(
             kwargs: dict[str, Any] = {
                 "model": model,
                 "max_tokens": max_tokens,
-                "messages": messages,
+                "messages": sendable_messages(messages),
             }
             if system:
                 kwargs["system"] = system
