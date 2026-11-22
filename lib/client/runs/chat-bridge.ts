@@ -57,6 +57,9 @@ export interface InterruptedTurn {
   /** Signed out when it started: the resume presents the run's `X-Run-Token`. */
   anonymous: boolean
   model?: string
+  /** The paused run's MCP allow-list (Q51): `[]` is no MCP, absent is no
+   *  restriction. */
+  allowedMcpServerIds?: string[]
 }
 
 export type AnswerResult =

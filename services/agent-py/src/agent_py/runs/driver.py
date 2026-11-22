@@ -342,7 +342,8 @@ async def _with_previous_checkpoint(
     try:
         checkpoint = await repo.load_checkpoint(run.owner, previous)
     except Exception as exc:
-        # The harness falls back to the browser's history.
+        # The harness falls back to the browser's history, without MCP
+        # (Q51: the paused run's allow-list is unknown).
         logger.warning("runs.driver.checkpoint_load_failed", run_id=run.id, error=str(exc))
         return run_input
     if checkpoint is None:

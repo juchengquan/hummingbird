@@ -1,6 +1,6 @@
 # Plan: Frontend / backend split
 
-Status: **Waves 1–4 (Phases 0–2, chat on runs) shipped (#294–#299). Wave 5 (backend catch-up) in review.** Decided in a design interview
+Status: **Waves 1–5 (Phases 0–2, chat on runs, backend catch-up) shipped (#294–#300).** Decided in a design interview
 on 2026-11-21. Supersedes the open parts of
 [`PLAN-backend-extraction.md`](PLAN-backend-extraction.md), whose Phase 1
 (single `apiClient` + Zod schemas + `docs/API.md`) shipped and is the
@@ -105,6 +105,8 @@ three times. The goals:
 | Q47 | The rendered file header carries the file id for cloud files, on Next and runs, so `searchFiles` can be called (RAG mode can't work without it today) |
 | Q48 | The per-task allowed MCP servers list is enforced everywhere it applies: agent-py background and interactive runs, and Next's chat route (nothing reads it today) |
 | Q49 | Background runs on `/v1/runs` refuse `attachments` (400 `invalid_request`) like local MCP — the Next task routes take none and the wave-6 tasks panel sends none; lifted when a need appears, never silently ignored |
+| Q50 | The persona MCP picker lists local-mode servers too, marked as not available in tasks: the allow-list filters both modes (Q48) and an empty list stays "no MCP", so personas made before this tick their local servers once |
+| Q51 | A resume keeps the paused run's MCP allow-list on both sides: the browser saves it (ids only) with the run pointer, so blocked servers and their credentials aren't sent from a reload or another tab; agent-py saves it with the paused run and lets a resume narrow it, never widen it (no saved state → no MCP) |
 
 ## Run contract (v1)
 

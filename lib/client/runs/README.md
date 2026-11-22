@@ -281,6 +281,9 @@ run (a rejoin after a reload) restores the paused run's output first
   credentials again (agent-py keeps neither): `chat-runner.ts` takes them
   from the in-memory request it sent, or `composeResumeInput` re-reads
   them after a reload. Credentials are never persisted client-side.
+  The paused run's MCP allow-list is (Q51, ids only): it goes pointer →
+  `InterruptedTurn` → `composeResumeInput`, which filters the servers and
+  credentials by it. agent-py holds a resume to it as well.
   agent-py continues the turn from the interrupted run's stored checkpoint
   (Q31). Without it — an anonymous run past its ~15 min memory TTL — the
   text-only history carries no tool calls, so the resume fails

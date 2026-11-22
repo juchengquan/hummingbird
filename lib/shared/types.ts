@@ -843,8 +843,9 @@ export interface Agent {
    *  cascade inheritance — the user picks exactly which skills are
    *  available. */
   allowedSkillIds: string[]
-  /** MCP server ids (cloud-mode) the persona is allowed to call. Empty
-   *  array = no MCP for this persona; present = only those servers.
+  /** MCP server ids (cloud- and local-mode) the persona is allowed to
+   *  call. Empty array = no MCP for this persona; present = only those
+   *  servers.
    *  Enforced server-side in `loadEffectiveMcpServers`. (Phase 2.) */
   allowedMcpServerIds: string[]
   /** Optional Lucide icon name. UI defaults to a generic icon. */

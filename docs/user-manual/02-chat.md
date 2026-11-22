@@ -36,7 +36,8 @@ or click the **+** next to the **Chats** group to start a new one.
 - A persona that limits its MCP servers (`/personas`) limits them in
   its replies and tasks (Next.js and agent-py (runs) backends): only the
   servers it allows offer tools, and one that allows none uses no MCP
-  tools at all.
+  tools at all. Local-mode servers count too: tick them in the persona
+  to use them in chat (tasks can't use local-mode servers).
 - Switching the chat backend (Next.js vs. the Python agent service)
   is a power-user setting - see [Settings & theme](12-settings-and-theme.md).
 - **Questions from the assistant (agent-py (runs) backend).** When the

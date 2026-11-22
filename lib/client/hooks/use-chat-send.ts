@@ -216,8 +216,9 @@ export function useChatSend(): UseChatSendResult {
       },
       extractMemory: extractAfterTurn,
       memoryEnabled: () => useStore.getState().memoryEnabled,
-      // A resume after a reload (the paused run's request is gone):
-      // composed like a send's, minus the per-turn persona / forced skills.
+      // A resume after a reload or from another tab (the paused run's
+      // request isn't here): composed like a send's, with the paused run's
+      // MCP allow-list (Q51), minus the persona's prompt / forced skills.
       composeResumeInput: (turn) => {
         const st = useStore.getState()
         const conv = st.conversations.find((c) => c.id === turn.conversationId)
@@ -239,6 +240,7 @@ export function useChatSend(): UseChatSendResult {
           ),
           skills: resolveEnabledSkills({ workspace, conversation: conv }),
           workspaceId: workspaceId || undefined,
+          allowedMcpServerIds: turn.allowedMcpServerIds,
           reasoningEffort: modelSupportsReasoningEffort(model)
             ? st.chatReasoningEffort ?? undefined
             : undefined,
@@ -262,7 +264,9 @@ export function useChatSend(): UseChatSendResult {
           // The local MCP servers + their credentials, re-read for the same
           // reason (Q45). The I2I `referenceImage` is per send and is not
           // re-applied after a reload.
-          ...localMcpForRun(st.mcpServers, workspaceId, getLocalCred),
+          ...localMcpForRun(st.mcpServers, workspaceId, getLocalCred, {
+            allowedMcpServerIds: turn.allowedMcpServerIds,
+          }),
         }
       },
     })
