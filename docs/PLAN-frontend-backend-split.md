@@ -262,28 +262,28 @@ Read from the code at #302; the first twelve were also checked by hand.
 
 **Wave 5c, backend**
 
-- A UI schedule has no model, so the executor runs its stub and reports done.
-- The default model (and every non-Anthropic one, and `auto`) fails in the worker.
-- With several tool calls where one is gated (or a spawn), the others never get results.
-- A respond without `approved` runs the gated tool.
-- Cancelling a child skips the join barrier, so the parent waits forever.
-- A pause write can overwrite a cancel.
-- A failed resume frees the slot, so an approved tool can run twice.
-- The 0043 marker is per task, so a second question is blocked forever.
-- `create_run` resumes a run cancelled after the API's check.
-- A run reads `queued` while it executes.
-- Omitting `mode` skips the child / background resume checks.
-- A background resume can't narrow the MCP allow-list (Q51).
-- After an answer, a spawn settles "done" with no children and no result.
-- An empty spawn hangs the parent; a spawn bypasses `requireApprovalFor`.
-- Superseded questions stay in `openInterrupts` after a reclaim.
-- A gate changed while paused makes even Decline fail.
-- A failed enqueue leaves a queued orphan that holds the resume slot.
-- The respond path doesn't bind the tool ledger.
-- Background runs drop `document` parts that the API accepted.
-- A second spawn round re-feeds the first round's children.
-- Cancel and settle take their row locks in opposite orders.
-- An interrupted background run has no `finishedAt`.
+- A UI schedule has no model, so the executor runs its stub and reports done. *(fixed, 5c-A)*
+- The default model (and every non-Anthropic one, and `auto`) fails in the worker. *(fixed, 5c-A)*
+- With several tool calls where one is gated (or a spawn), the others never get results. *(fixed, 5c-A)*
+- A respond without `approved` runs the gated tool. *(fixed, 5c-A)*
+- Cancelling a child skips the join barrier, so the parent waits forever. *(fixed, 5c-A)*
+- A pause write can overwrite a cancel. *(fixed, 5c-A)*
+- A failed resume frees the slot, so an approved tool can run twice. *(fixed, 5c-A)*
+- The 0043 marker is per task, so a second question is blocked forever. *(fixed, 5c-A)*
+- `create_run` resumes a run cancelled after the API's check. *(fixed, 5c-A)*
+- A run reads `queued` while it executes. *(fixed, 5c-A)*
+- Omitting `mode` skips the child / background resume checks. *(fixed, 5c-A)*
+- A background resume can't narrow the MCP allow-list (Q51). *(fixed, 5c-A)*
+- After an answer, a spawn settles "done" with no children and no result. *(fixed, 5c-A)*
+- An empty spawn hangs the parent; a spawn bypasses `requireApprovalFor`. *(fixed, 5c-A)*
+- Superseded questions stay in `openInterrupts` after a reclaim. *(fixed, 5c-A)*
+- A gate changed while paused makes even Decline fail. *(fixed, 5c-A)*
+- A failed enqueue leaves a queued orphan that holds the resume slot. *(fixed, 5c-A)*
+- The respond path doesn't bind the tool ledger. *(fixed, 5c-A)*
+- Background runs drop `document` parts that the API accepted. *(fixed, 5c-A)*
+- A second spawn round re-feeds the first round's children. *(fixed, 5c-A)*
+- Cancel and settle take their row locks in opposite orders. *(fixed, 5c-A)*
+- An interrupted background run has no `finishedAt`. *(fixed, 5c-A)*
 
 **Wave 5c, frontend**
 
