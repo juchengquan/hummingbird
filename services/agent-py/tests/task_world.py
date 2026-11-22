@@ -232,20 +232,13 @@ class World:
 
     @asynccontextmanager
     async def as_user(self, user: str | None = None) -> AsyncIterator[asyncpg.Connection]:
-        conn = await asyncpg.connect(DB_URL)
-        try:
-            async with conn.transaction():
-                await store._set_user_context(conn, user_id=user or self.user)
-                yield conn
-        finally:
-            await conn.close()
+        async with self.pool.acquire() as conn, conn.transaction():
+            await store._set_user_context(conn, user_id=user or self.user)
+            yield conn
 
     async def sql(self, query: str, *args: Any) -> list[Any]:
-        conn = await asyncpg.connect(DB_URL)
-        try:
+        async with self.pool.acquire() as conn:
             return list(await conn.fetch(query, *args))
-        finally:
-            await conn.close()
 
     async def task(self, task_id: str) -> dict[str, Any]:
         [row] = await self.sql("SELECT * FROM public.tasks WHERE id = $1", uuid.UUID(task_id))
