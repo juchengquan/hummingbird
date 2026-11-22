@@ -7,8 +7,9 @@ redirects, connect-time address pinning, streamed body cap, overall
 deadline — the same path the bookmark fetcher uses), strip HTML
 script/style/markup, return the first ~12k chars of text plus the
 document's `<title>` for the UI pill. No per-turn budget yet (the TS
-side has one; we can layer it on when we wire the skill cascade for
-Python — that's Phase 3 work).
+side has one). On interactive runs (`run_execute`) each call takes one
+unit of the caller's per-IP web-tool window first (the Next route's
+`chatWebToolLimit`, shared with webSearch + searchFiles).
 
 Pure-ish: the only side effect is the HTTP call; everything else is
 string munging. Tests use httpx's `MockTransport` so they stay
@@ -23,7 +24,8 @@ from typing import Any
 import httpx
 
 from ..outbound_http import OutboundFetchError, build_outbound_client, safe_get
-from .registry import ToolDescriptor, ToolError, ToolInvocationResult
+from ..rate_limit import WEB_TOOL_BUDGET
+from .registry import RunToolContext, ToolDescriptor, ToolError, ToolInvocationResult
 
 # Cap the text we feed back to the model. The TS side caps at ~12k
 # chars too; deeper than that and the surrounding context window
@@ -144,6 +146,18 @@ async def _execute(args: dict[str, Any]) -> ToolInvocationResult:
         return await _execute_with_client(args, client=client)
 
 
+async def _run_execute(args: dict[str, Any], ctx: RunToolContext) -> ToolInvocationResult:
+    """Interactive runs: the per-IP web-tool window first (shared with
+    webSearch + searchFiles), with the Next route's refusal text."""
+    budget = ctx.consume_budget(WEB_TOOL_BUDGET)
+    if not budget:
+        raise ToolError(
+            f"webFetch rate limit exceeded for this IP. Retry in {budget.retry_after_sec}s. "
+            "The chat route caps outbound web tools (webSearch + webFetch combined) per minute."
+        )
+    return await _execute(args)
+
+
 WEB_FETCH_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -171,6 +185,7 @@ def build_web_fetch_tool() -> ToolDescriptor:
         ),
         input_schema=WEB_FETCH_INPUT_SCHEMA,
         execute=_execute,
+        run_execute=_run_execute,
     )
 
 

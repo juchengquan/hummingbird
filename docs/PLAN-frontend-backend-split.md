@@ -1,6 +1,6 @@
 # Plan: Frontend / backend split
 
-Status: **Waves 1–4a (Phases 0–2, Phase 3 foundation) shipped (#294–#298). Wave 4b in progress.** Decided in a design interview
+Status: **Waves 1–4 (Phases 0–2, chat on runs) shipped (#294–#299). Wave 5 (backend catch-up) in review.** Decided in a design interview
 on 2026-11-21. Supersedes the open parts of
 [`PLAN-backend-extraction.md`](PLAN-backend-extraction.md), whose Phase 1
 (single `apiClient` + Zod schemas + `docs/API.md`) shipped and is the
@@ -96,6 +96,15 @@ three times. The goals:
 | Q38 | The tasks panel moves in a later wave, after chat: it needs background answers as new runs, children via `parentRunId`, and cancel through runs first |
 | Q39 | A small Playwright smoke test (browser → agent-py with the stub harness: send, stop, reload + rejoin, answer an interrupt) ships with the chat switch |
 | Q40 | While an agent service serves chat (`python` / `ts-service` signed in, `python-runs` always), the model picker offers only the models it accepts (the `anthropic/*` allowlist, no Auto), and a selected model it can't run is switched to its default with a visible note — not a 400 on every message, and never silently |
+| Q41 | A background run's answers start the new run from the paused run's checkpoint plus the `resume[]` answers (the Q24 way); the paused run stays `interrupted`. Each paused task is answered one way only: after a runs resume, `/api/tasks/:id/respond` refuses it (409), and a task answered the old way can't be resumed through `/v1/runs` (409). The old route works unchanged until Phase 5 |
+| Q42 | Local MCP credentials go to **interactive** runs only, in a request field agent-py never stores or logs (not `forwardedProps`), re-sent on each resume. Background runs refuse local MCP, as the Next task routes do. agent-py gets `MCP_ALLOW_PRIVATE_HOSTS` with Next's semantics |
+| Q43 | The code interpreter stays Next-only until a short trial shows how microsandbox runs beside agent-py (a separate service agent-py calls over HTTP, or another way); the trial writes findings, not code |
+| Q44 | `/v1/runs` keeps its 16 MB body cap. Large inputs go by reference: cloud files by id (agent-py checks the owner itself — its Storage client bypasses RLS), bookmarks as capped text, inline bytes only for a signed-out user's small files |
+| Q45 | Local MCP credentials ride in AG-UI `state` (`hummingbird.localMcp`), never a header (Caddy access logs record custom headers); the server list without credentials goes in `forwardedProps`. agent-py holds them in a `repr=False` field and a test checks they never reach `tasks` rows or logs |
+| Q46 | Research mode is a `research: true` run option (`mode` already means interactive / background) and agent-py gets the research task prompt Next's `buildTaskSystemPrompt` had — fixing research tasks on the old route too, which share the executor |
+| Q47 | The rendered file header carries the file id for cloud files, on Next and runs, so `searchFiles` can be called (RAG mode can't work without it today) |
+| Q48 | The per-task allowed MCP servers list is enforced everywhere it applies: agent-py background and interactive runs, and Next's chat route (nothing reads it today) |
+| Q49 | Background runs on `/v1/runs` refuse `attachments` (400 `invalid_request`) like local MCP — the Next task routes take none and the wave-6 tasks panel sends none; lifted when a need appears, never silently ignored |
 
 ## Run contract (v1)
 
@@ -158,21 +167,39 @@ has shipped behind the existing per-account backend switch.
    **Backend catch-up (Q32).** Wave 4b-D sent image / document
    attachments, reasoning effort and generated images (`tool_image`) on
    runs. Still to do before Phase 5:
-   - [ ] attached-file context as Next builds it — the text budget across
+   - [x] attached-file context as Next builds it — the text budget across
      files, and the meta notes for RAG-mode files ("available via
-     `searchFiles`") instead of dropping them
-   - [ ] MCP resources and URL bookmarks as attachments
-   - [ ] local MCP servers (browser-held credentials)
+     `searchFiles`") instead of dropping them (5b-B: `runs/context.py`,
+     pinned to Next's renderer by a shared fixture; signed-in files go by
+     id, images included, Q44)
+   - [x] MCP resources and URL bookmarks as attachments (5b-B; every
+     attachment taints the turn)
+   - [x] local MCP servers (browser-held credentials) — wave 5b-D:
+     `runs/local_mcp.py` (interactive runs; background refused, Q42),
+     `MCP_ALLOW_PRIVATE_HOSTS` in agent-py
    - [ ] code interpreter — `runCode`, `sandboxFiles`, `code_result`
      parts (generated files have no producer on runs until then)
-   - [ ] reference image for image generation
-   - [ ] `localFilesOnly` for generated images
-   - [ ] citation checks
-   - [ ] memory — the per-conversation opt-out, facts in the prompt, the
+   - [x] reference image for image generation
+   - [x] `localFilesOnly` for generated images
+   - [x] citation checks
+   - [x] memory — the per-conversation opt-out, facts in the prompt, the
      remember / forget tools
-   - [ ] the per-IP image-generation budget
-   - [ ] reasoning effort and the attachment checks in the background
-     executor
+   - [x] the per-IP image-generation budget
+   - [x] reasoning effort and the attachment checks in the background
+     executor (5b-A: `reasoningEffort` → extended thinking; a background
+     start refuses `attachments`, Q49, and its message parts go through
+     the same `check_attachments` as an interactive one)
+   - [x] background runs on `/v1/runs`: resume carries the answers into
+     the executor (Q41, 0043); starts keep `workspaceId`, `requireApprovalFor`,
+     research mode and the allowed MCP servers (5b-A)
+   - [x] `auto` model routing, so Auto can return to the agent backends
+   - [x] MCP Apps — wave 5b-D (`mcp_tools.build_mcp_tool`, cloud and
+     local servers)
+   - [x] the per-IP web-tool window
+   - [x] RAG-mode files: `searchFiles` needs a file id no prompt carries —
+     check whether it works on Next before porting (it didn't: Q47 — the
+     header now says `fileId: …` on Next and runs, and the RAG / truncation
+     notes name it)
 4. **Editor AI to the backend** (Q23).
 5. **Removal** — all Next API routes, AI/admin keys from the frontend
    env, the old `/v1/chat`, agent-ts's old routes, the server session;
@@ -192,10 +219,28 @@ has shipped behind the existing per-account backend switch.
 | 3b (Phase 2) | **A** AG-UI encoder + stream mechanics (seq in SSE `id:`, replay, `gap` + `MESSAGES_SNAPSHOT`, in-memory log for anonymous runs, compaction) · **B** runs API (start with idempotent client `runId`, status, cancel, list, `runToken`) + conformance cases · **C** harness-adapter interface with today's loop as the first adapter; chat emits internal events | Wave 3a merged |
 | 4a (Phase 3) | one agent: the "agent-py (runs)" option + store migration v35; `@ag-ui/client` / `@ag-ui/core`; `lib/client/runs/` — transport (start, rejoin from a cursor, cancel, run-token storage) and the pure AG-UI → store step tested on recorded streams; the interfaces 4b codes against | Wave 3b merged |
 | 4b (Phase 3) | **A** hook into `use-chat-send` (send, Stop → cancel, reload → rejoin, memory taint, sync hold) · **B** chat answer cards + resume (Q35) · **C** Playwright smoke (Q39) · **D** backend catch-up, first slice: image/document attachments, reasoning effort, generated images/files from the native harness | Wave 4a merged |
-| later | the rest of the backend catch-up (Q32); the tasks panel onto runs (Q38) | — |
+| 5a (Phase 3) | one agent, the seams: every new run option in the contract (0.4.0) and through agent-py's run input; prompt-section and toolset-contributor hooks in the native harness; a per-run context slot that works for anonymous runs; `mcp_app` on tool results; the citation verifier client in a shared module; the matching `build-input.ts` fields passed on send and resume. Plus the Q43 trial findings ([`TRIAL-code-interpreter-on-agent-py.md`](TRIAL-code-interpreter-on-agent-py.md)) | Wave 4 merged |
+| 5b (Phase 3) | **A** background runs (Q41 resume + 0043 mutual exclusion, start parity, research mode Q46, the Q49 refusal, skills / reasoning effort in the executor, Q48, Run progress fields, early pending question) · **B** context on runs (file budget + notes with ids Q47, MCP resources, bookmarks as taint, cloud files by id Q44) · **C** memory, citation checks, reference image, `localFilesOnly`, per-IP limits, `auto` · **D** local MCP (Q42/Q45), `MCP_ALLOW_PRIVATE_HOSTS`, MCP Apps | 5a |
+| 6 (Phase 3) | the tasks panel onto runs (Q38) | Wave 5's background-runs work merged |
 
 Each wave merges into one integration branch and ships as one PR
 against `dev`.
+
+**Wave 5b hooks (left by 5a).** Contract 0.4.0's run options are parsed
+into `RunOptions` (`services/agent-py/src/agent_py/runs/options.py`);
+local MCP credentials arrive in `RunInput.local_mcp_credentials`
+(`runs/credentials.py`). Each workstream plugs into the native harness
+by adding entries to `runs/harness_hooks.py` (its docstring has the
+table): **B** a prompt section + taint seed in `runs/context.py`; **C**
+prompt sections (memory, remix) and a tool contributor (remember /
+forget), the `resolve_model` hook (`auto`), the `post_success` hook
+(citations, over `verify_client.py`), and the per-IP budgets through
+`NativeHarness(consume_budget=…)` → `RunToolContext.consume_budget`;
+**D** a tool contributor for local MCP and `ToolInvocationResult.mcp_app`
+for MCP Apps; **A** the background executor (`run_input.background_checkpoint`
+already carries `allowedMcpServerIds` and `reasoningEffort`). The exact
+spots are marked `TODO(5b-A|B|C|D)`; the client side passes the new
+fields through `lib/client/runs/build-input.ts` on send and resume.
 
 ## Revisit later
 

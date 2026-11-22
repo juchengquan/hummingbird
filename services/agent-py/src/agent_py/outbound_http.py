@@ -24,6 +24,11 @@ closes the DNS-rebinding window between `validate_outbound_url`'s
 lookup and the connect. The client also sets `trust_env=False` so an
 `HTTP(S)_PROXY` env var can't route requests around the guard.
 
+Every entry point takes an `OutboundUrlPolicy` (default: public only)
+and applies it at both checks — the per-hop validation and the connect.
+Only MCP traffic passes a relaxed one (`MCP_ALLOW_PRIVATE_HOSTS`);
+bookmarks and `webFetch` stay public-only, as on Next.
+
 Tests inject a client backed by `httpx.MockTransport`; that bypasses
 the connect-time guard (no sockets), but the per-hop
 `validate_outbound_url` checks still run.
@@ -42,7 +47,13 @@ from urllib.parse import urljoin
 import httpcore
 import httpx
 
-from .url_validate import ValidationOk, resolve_public_addresses, validate_outbound_url
+from .url_validate import (
+    PUBLIC_ONLY,
+    OutboundUrlPolicy,
+    ValidationOk,
+    resolve_public_addresses,
+    validate_outbound_url,
+)
 
 OutboundErrorCode = Literal[
     "validation",
@@ -90,10 +101,12 @@ class OutboundResponse:
 
 class _SsrfGuardBackend(httpcore.AsyncNetworkBackend):
     """Network backend that validates the resolved address at connect
-    time and dials the IP literal it validated."""
+    time and dials the IP literal it validated — under `policy`, the
+    same one the URL was validated with."""
 
-    def __init__(self) -> None:
+    def __init__(self, policy: OutboundUrlPolicy = PUBLIC_ONLY) -> None:
         self._inner = httpcore.AnyIOBackend()
+        self.policy = policy
 
     async def connect_tcp(
         self,
@@ -103,7 +116,7 @@ class _SsrfGuardBackend(httpcore.AsyncNetworkBackend):
         local_address: str | None = None,
         socket_options: typing.Iterable[httpcore.SOCKET_OPTION] | None = None,
     ) -> httpcore.AsyncNetworkStream:
-        resolved = await resolve_public_addresses(host)
+        resolved = await resolve_public_addresses(host, self.policy)
         if not isinstance(resolved, list):
             raise BlockedAddressError(resolved.message)
         last_exc: Exception | None = None
@@ -140,11 +153,11 @@ class _GuardedTransport(httpx.AsyncHTTPTransport):
     the guard backend. `_pool` is the only attribute
     `handle_async_request` uses."""
 
-    def __init__(self) -> None:
+    def __init__(self, policy: OutboundUrlPolicy = PUBLIC_ONLY) -> None:
         super().__init__(trust_env=False)
         self._pool = httpcore.AsyncConnectionPool(
             ssl_context=httpx.create_ssl_context(trust_env=False),
-            network_backend=_SsrfGuardBackend(),
+            network_backend=_SsrfGuardBackend(policy),
         )
 
 
@@ -159,8 +172,10 @@ def build_guarded_client(
     headers: dict[str, str] | None = None,
     timeout: httpx.Timeout | float | None = None,
     auth: httpx.Auth | None = None,
+    policy: OutboundUrlPolicy = PUBLIC_ONLY,
 ) -> httpx.AsyncClient:
-    """An `httpx.AsyncClient` that can only reach public addresses:
+    """An `httpx.AsyncClient` that can only reach public addresses (or,
+    under a relaxed `policy`, any but link-local / metadata ones):
     every connection dials through `_SsrfGuardBackend` (resolve →
     reject private → dial the validated IP), redirects are never
     followed (a 3xx can't bounce the request to an internal host), and
@@ -170,7 +185,7 @@ def build_guarded_client(
     client hands it to the MCP SDK as its `httpx_client_factory`, so the
     SDK's POST / SSE GET / DELETE requests are all guarded."""
     return httpx.AsyncClient(
-        transport=_GuardedTransport(),
+        transport=_GuardedTransport(policy),
         timeout=timeout if timeout is not None else 30.0,
         headers=headers,
         auth=auth,
@@ -191,8 +206,10 @@ async def safe_get(
     on_oversize: Literal["error", "truncate"] = "error",
     max_redirects: int = DEFAULT_MAX_REDIRECTS,
     check_headers: Callable[[httpx.Response], Exception | None] | None = None,
+    policy: OutboundUrlPolicy = PUBLIC_ONLY,
 ) -> OutboundResponse:
-    """GET `raw_url` with per-hop SSRF validation and a streamed body
+    """GET `raw_url` with per-hop SSRF validation (under `policy`, which
+    must match the client's — `build_guarded_client(policy=…)`) and a streamed body
     cap. Raises `OutboundFetchError` on any validation / network /
     size / redirect failure; returns the final response otherwise
     (including 4xx/5xx — the caller decides what an error status means).
@@ -209,6 +226,7 @@ async def safe_get(
                 on_oversize=on_oversize,
                 max_redirects=max_redirects,
                 check_headers=check_headers,
+                policy=policy,
             )
     except TimeoutError as exc:
         raise OutboundFetchError("timeout", f"Fetch timed out after {total_timeout_s}s") from exc
@@ -222,11 +240,12 @@ async def _safe_get_inner(
     on_oversize: Literal["error", "truncate"],
     max_redirects: int,
     check_headers: Callable[[httpx.Response], Exception | None] | None,
+    policy: OutboundUrlPolicy,
 ) -> OutboundResponse:
     current_url = raw_url
     redirects_remaining = max_redirects
     while True:
-        validation = await validate_outbound_url(current_url)
+        validation = await validate_outbound_url(current_url, policy)
         if not isinstance(validation, ValidationOk):
             raise OutboundFetchError("validation", validation.message)
 

@@ -1,19 +1,19 @@
-data: {"type":"RUN_STARTED","threadId":"510218a0-3891-4545-8b8a-186e066bad34","runId":"d771c98c-c3ff-4fdb-b816-58eea8d53011"}
+data: {"type":"RUN_STARTED","threadId":"37de4528-ff94-4007-a4b6-ae69d9cd3c4d","runId":"ca407e2d-d550-4fe7-8b8d-747e5da54d31"}
 
 id: 1
 data: {"type":"STEP_STARTED","stepName":"step-1"}
 
 id: 2.0
-data: {"type":"TEXT_MESSAGE_START","messageId":"d771c98c-c3ff-4fdb-b816-58eea8d53011:2","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_START","messageId":"ca407e2d-d550-4fe7-8b8d-747e5da54d31:2","role":"assistant"}
 
 id: 2
-data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"d771c98c-c3ff-4fdb-b816-58eea8d53011:2","delta":"partial answer"}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"ca407e2d-d550-4fe7-8b8d-747e5da54d31:2","delta":"partial answer"}
 
 id: 3.0
-data: {"type":"TEXT_MESSAGE_END","messageId":"d771c98c-c3ff-4fdb-b816-58eea8d53011:2"}
+data: {"type":"TEXT_MESSAGE_END","messageId":"ca407e2d-d550-4fe7-8b8d-747e5da54d31:2"}
 
 id: 3
 data: {"type":"STEP_FINISHED","stepName":"step-1"}
 
-data: {"type":"RUN_FINISHED","threadId":"510218a0-3891-4545-8b8a-186e066bad34","runId":"d771c98c-c3ff-4fdb-b816-58eea8d53011","outcome":{"type":"cancelled"}}
+data: {"type":"RUN_FINISHED","threadId":"37de4528-ff94-4007-a4b6-ae69d9cd3c4d","runId":"ca407e2d-d550-4fe7-8b8d-747e5da54d31","outcome":{"type":"cancelled"}}
 

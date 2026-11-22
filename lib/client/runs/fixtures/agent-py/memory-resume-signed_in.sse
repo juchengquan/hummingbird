@@ -1,10 +1,10 @@
-data: {"type":"RUN_STARTED","threadId":"71687dd8-2fb7-474d-af1d-cd78eb213aec","runId":"9f78075e-778b-40fc-be2f-f932b9cfd25f"}
+data: {"type":"RUN_STARTED","threadId":"dd9f195b-011f-478c-9d22-d0a70634c798","runId":"c1c4fe82-c623-4cc1-8af2-8fd4ed9a19dd"}
 
 id: 1
 data: {"type":"STEP_STARTED","stepName":"step-1"}
 
 id: 2
-data: {"type":"TOOL_CALL_RESULT","messageId":"9f78075e-778b-40fc-be2f-f932b9cfd25f:2","toolCallId":"c2","role":"tool","content":"{\"summary\":\"Sent\"}","metadata":{"hummingbird":{"toolName":"send"}}}
+data: {"type":"TOOL_CALL_RESULT","messageId":"c1c4fe82-c623-4cc1-8af2-8fd4ed9a19dd:2","toolCallId":"c2","role":"tool","content":"{\"summary\":\"Sent\"}","metadata":{"hummingbird":{"toolName":"send"}}}
 
 id: 3
 data: {"type":"STEP_FINISHED","stepName":"step-1"}
@@ -13,16 +13,16 @@ id: 4
 data: {"type":"STEP_STARTED","stepName":"step-2"}
 
 id: 5.0
-data: {"type":"TEXT_MESSAGE_START","messageId":"9f78075e-778b-40fc-be2f-f932b9cfd25f:5","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_START","messageId":"c1c4fe82-c623-4cc1-8af2-8fd4ed9a19dd:5","role":"assistant"}
 
 id: 5
-data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"9f78075e-778b-40fc-be2f-f932b9cfd25f:5","delta":"Sent it."}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"c1c4fe82-c623-4cc1-8af2-8fd4ed9a19dd:5","delta":"Sent it."}
 
 id: 6.0
-data: {"type":"TEXT_MESSAGE_END","messageId":"9f78075e-778b-40fc-be2f-f932b9cfd25f:5"}
+data: {"type":"TEXT_MESSAGE_END","messageId":"c1c4fe82-c623-4cc1-8af2-8fd4ed9a19dd:5"}
 
 id: 6
 data: {"type":"STEP_FINISHED","stepName":"step-2"}
 
-data: {"type":"RUN_FINISHED","threadId":"71687dd8-2fb7-474d-af1d-cd78eb213aec","runId":"9f78075e-778b-40fc-be2f-f932b9cfd25f","outcome":{"type":"success"},"result":{"text":"Sent it.","memoryTainted":true},"usage":[{"provider":"anthropic","model":"claude-sonnet-4-6","inputTokens":11,"outputTokens":7,"totalTokens":18}]}
+data: {"type":"RUN_FINISHED","threadId":"dd9f195b-011f-478c-9d22-d0a70634c798","runId":"c1c4fe82-c623-4cc1-8af2-8fd4ed9a19dd","outcome":{"type":"success"},"result":{"text":"Sent it.","memoryTainted":true},"usage":[{"provider":"anthropic","model":"claude-sonnet-4-6","inputTokens":11,"outputTokens":7,"totalTokens":18}]}
 

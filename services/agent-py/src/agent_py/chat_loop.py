@@ -30,6 +30,7 @@ asked for input do not.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import re
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
@@ -38,14 +39,27 @@ from typing import Any, Literal, Protocol
 import structlog
 
 from .emitter import RunEmitter
-from .events import TokenUsage, ToolCallResult, ToolFileEvent, ToolImageEvent, ToolImageMode
+from .events import (
+    McpAppEvent,
+    TokenUsage,
+    ToolCallResult,
+    ToolFileEvent,
+    ToolImageEvent,
+    ToolImageMode,
+)
 from .input_policy import pauses_for_input
 from .providers.anthropic_provider import (
     AsyncAnthropicClient,
     _coerce_content_blocks,
     _make_tool_result_block,
 )
-from .tools import ToolDescriptor, ToolError, tool_to_anthropic_param
+from .tools import (
+    McpAppPayload,
+    RunToolContext,
+    ToolDescriptor,
+    ToolError,
+    tool_to_anthropic_param,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -444,19 +458,29 @@ class ToolRun:
     images: tuple[dict[str, object], ...] = ()
     image_mode: ToolImageMode = "t2i"
     files: tuple[dict[str, object], ...] = ()
+    mcp_app: McpAppPayload | None = None
 
 
 async def execute_tool(
-    descriptor: ToolDescriptor | None, name: str, args: dict[str, Any]
+    descriptor: ToolDescriptor | None,
+    name: str,
+    args: dict[str, Any],
+    run_context: RunToolContext | None = None,
 ) -> ToolRun:
     """Run one tool. Per-tool failure modes (unknown tool, `ToolError`,
     unexpected exception) become an `is_error` result so the turn keeps
-    moving — the model gets to retry, switch tools or give up."""
+    moving — the model gets to retry, switch tools or give up.
+
+    A tool with `run_execute` gets the run-scoped `run_context` (an empty
+    `RunToolContext()` when none is given — it is always present)."""
     if descriptor is None:
         msg = f"unknown tool: {name}"
         return ToolRun(msg, msg, True)
     try:
-        result = await descriptor.execute(dict(args))
+        if descriptor.run_execute is not None:
+            result = await descriptor.run_execute(dict(args), run_context or RunToolContext())
+        else:
+            result = await descriptor.execute(dict(args))
     except ToolError as exc:
         return ToolRun(str(exc), str(exc), True)
     except Exception as exc:
@@ -471,6 +495,7 @@ async def execute_tool(
         images=result.images,
         image_mode=result.image_mode,
         files=result.files,
+        mcp_app=result.mcp_app,
     )
 
 
@@ -480,7 +505,8 @@ async def emit_tool_run(
     """`step_error` (on failure) + `tool_output` for a finished call,
     then the images / files it produced as one `tool_image` /
     `tool_file` part each (the Next route's `maybeEmitImageFrame`: after
-    the tool result, ids `<toolCallId>-<i>`)."""
+    the tool result, ids `<toolCallId>-<i>`), then its MCP App as one
+    `mcp_app` part (the Next route's `data-mcp-app` after the result)."""
     if run.is_error:
         await emitter.step_error(run.summary, will_retry=True)
     await emitter.tool_output(
@@ -508,6 +534,15 @@ async def emit_tool_run(
             ToolFileEvent,
             tool_call_id=tool_call_id,
             files=tuple({"id": f"{tool_call_id}-file-{i}", **f} for i, f in enumerate(run.files)),
+        )
+    if run.mcp_app is not None:
+        await emitter.emit(
+            McpAppEvent,
+            tool_call_id=tool_call_id,
+            server_id=run.mcp_app.server_id,
+            html=run.mcp_app.html,
+            resource_uri=run.mcp_app.resource_uri,
+            truncated=run.mcp_app.truncated,
         )
 
 
@@ -538,6 +573,7 @@ async def run_turn_loop(
     tainted_by: str | None = None,
     usage: UsageMeter | None = None,
     thinking: dict[str, Any] | None = None,
+    run_context: RunToolContext | None = None,
 ) -> LoopResult:
     """Run model calls + tool executions until the model answers, calls a
     gated tool, fails, is cancelled or runs out of steps. `messages`
@@ -552,12 +588,16 @@ async def run_turn_loop(
     `reasoning_effort.thinking_params`) is sent on every call when given;
     the assistant turns appended to `messages` keep their (signed)
     thinking blocks, as tool use with thinking requires.
+
+    `run_context` (the run-scoped `RunToolContext`) goes to every tool
+    call, with `tainted_by` set to the turn's taint at that call.
     """
     tools_param = [tool_to_anthropic_param(t) for t in tools] if tools else None
     tools_by_name = {t.name: t for t in tools}
     meter = usage if usage is not None else UsageMeter()
     text_parts: list[str] = []
     executed: list[str] = []
+    base_context = run_context if run_context is not None else RunToolContext()
     waiter = asyncio.ensure_future(cancel.wait()) if cancel is not None else None
 
     def done(outcome: LoopOutcome, *, step_open: bool = False) -> LoopResult:
@@ -642,8 +682,10 @@ async def run_turn_loop(
                     pending.append(PendingCall(tool_call_id, tool_name, args))
                     continue
                 try:
+                    call_context = dataclasses.replace(base_context, tainted_by=tainted_by)
                     run = await race_cancel(
-                        execute_tool(tools_by_name.get(tool_name), tool_name, args), waiter
+                        execute_tool(tools_by_name.get(tool_name), tool_name, args, call_context),
+                        waiter,
                     )
                 except CancelRequested:
                     return done(LoopCancelled(), step_open=True)

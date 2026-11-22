@@ -21,18 +21,19 @@ Differences from the TS port:
     There's no equivalent of cookie auth available to a background
     worker.
 
-  - **Anonymous fallback.** The TS path drops to a `data:` URL when
-    no Supabase session is available. The Python path is symmetric:
-    if `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` aren't configured
-    OR the upload / sign call fails, the caller treats it as "no
-    persistence" and surfaces the original Minimax URL inline. Phase
-    3d-1's behaviour is the failure-mode floor.
+  - **Data-URL fallback (interactive runs).** `persist_or_inline_image`
+    is the TS `persistGeneratedImages` per image: download once, then
+    upload to Storage when there is a user, Storage is configured and
+    `localFilesOnly` is off; otherwise — or when the upload / sign
+    fails — return `data:<mime>;base64,…` so the image survives the
+    Minimax URL's expiry. Anonymous runs and `localFilesOnly` runs
+    always get data URLs. A failed *download* is a `PersistError`; the
+    caller keeps the Minimax URL then (TS drops that image).
 
-  - **`localFilesOnly` opt-out.** Not ported — the Python service
-    runs server-side per-user and doesn't see a "Store files locally"
-    UI preference. If that preference matters in flight, the chat
-    route should refuse to enqueue the `generateImage` request in
-    the first place.
+  - **Background runs** (`persist_generated_image`) keep the earlier
+    floor: no Storage → the caller surfaces the original Minimax URL
+    (no data URLs in the task's event log), and there is no
+    `localFilesOnly` there (the preference is a per-request option).
 
 Per-image caps mirror the TS path:
   - Download timeout: 10 seconds.
@@ -42,6 +43,7 @@ Per-image caps mirror the TS path:
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import quote
@@ -238,6 +240,145 @@ async def persist_generated_image(
             await client.aclose()
 
 
+@dataclass(frozen=True)
+class DownloadedImage:
+    body: bytes
+    mime: str
+
+
+async def download_image(
+    url: str, *, format_hint: str = "png", client: httpx.AsyncClient | None = None
+) -> DownloadedImage | PersistError:
+    """GET a Minimax-hosted image (10 s, 4 MB cap). The MIME type is the
+    response's `Content-Type`, else `image/<format_hint>`."""
+    own_client = client is None
+    if client is None:
+        client = httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT_S)
+    try:
+        try:
+            response = await client.get(url, follow_redirects=True)
+        except httpx.HTTPError as exc:
+            logger.warning("image_storage.download_failed", url=url, error=str(exc))
+            return PersistError(code="download", message=str(exc))
+        if response.status_code >= 400:
+            return PersistError(
+                code="download", message=f"Minimax image fetch HTTP {response.status_code}"
+            )
+        body = response.content
+        if len(body) > MAX_BYTES_PER_IMAGE:
+            return PersistError(
+                code="too_large",
+                message=f"image is {len(body)} bytes (cap {MAX_BYTES_PER_IMAGE})",
+            )
+        mime = (
+            response.headers.get("content-type", "").split(";")[0].strip()
+            or f"image/{format_hint or 'png'}"
+        )
+        return DownloadedImage(body=body, mime=mime)
+    finally:
+        if own_client:
+            await client.aclose()
+
+
+def inline_image(image: DownloadedImage, *, format_hint: str = "png") -> PersistedImage:
+    """The TS data-URL fallback: `data:<mime>;base64,<bytes>`."""
+    encoded = base64.b64encode(image.body).decode("ascii")
+    return PersistedImage(
+        url=f"data:{image.mime};base64,{encoded}",
+        format=_mime_to_ext(image.mime, fallback=format_hint or "png"),
+    )
+
+
+async def persist_or_inline_image(
+    minimax_url: str,
+    *,
+    user_id: str | None,
+    image_id: str,
+    local_files_only: bool = False,
+    format_hint: str = "png",
+    client: httpx.AsyncClient | None = None,
+) -> PersistResult:
+    """Interactive runs' persistence (TS `persistGeneratedImages`, one
+    image): download, then a Storage signed URL when `user_id` is set,
+    Storage is configured and `local_files_only` is off — else, or when
+    the upload / sign fails, a data URL. `PersistError` only when the
+    download itself fails."""
+    downloaded = await download_image(minimax_url, format_hint=format_hint, client=client)
+    if isinstance(downloaded, PersistError):
+        return downloaded
+    if user_id and not local_files_only and is_storage_configured():
+        uploaded = await _upload_and_sign(
+            downloaded, user_id=user_id, image_id=image_id, format_hint=format_hint, client=client
+        )
+        if isinstance(uploaded, PersistedImage):
+            return uploaded
+        logger.warning(
+            "image_storage.upload_failed_inlining",
+            image_id=image_id,
+            code=uploaded.code,
+            error=uploaded.message,
+        )
+    return inline_image(downloaded, format_hint=format_hint)
+
+
+async def _upload_and_sign(
+    image: DownloadedImage,
+    *,
+    user_id: str,
+    image_id: str,
+    format_hint: str,
+    client: httpx.AsyncClient | None,
+) -> PersistResult:
+    """Upload downloaded bytes to `user-files/<user_id>/generated/` and
+    mint the 1-year signed URL (the second half of
+    `persist_generated_image`)."""
+    settings = get_settings()
+    base = settings.SUPABASE_URL.rstrip("/")
+    service_key = settings.SUPABASE_SERVICE_ROLE_KEY.strip()
+    ext = _mime_to_ext(image.mime, fallback=format_hint or "png")
+    path = f"{user_id}/generated/{image_id}.{ext}"
+    auth = {"Authorization": f"Bearer {service_key}", "apikey": service_key}
+    own_client = client is None
+    if client is None:
+        client = httpx.AsyncClient(timeout=UPLOAD_TIMEOUT_S)
+    try:
+        try:
+            up = await client.post(
+                f"{base}/storage/v1/object/{STORAGE_BUCKET}/{path}",
+                content=image.body,
+                headers={**auth, "Content-Type": image.mime, "x-upsert": "true"},
+                timeout=UPLOAD_TIMEOUT_S,
+            )
+        except httpx.HTTPError as exc:
+            return PersistError(code="upload", message=str(exc))
+        if up.status_code >= 400:
+            return PersistError(code="upload", message=f"Storage upload HTTP {up.status_code}")
+        try:
+            sg = await client.post(
+                f"{base}/storage/v1/object/sign/{STORAGE_BUCKET}/{path}",
+                json={"expiresIn": SIGNED_URL_TTL_SECONDS},
+                headers=auth,
+                timeout=UPLOAD_TIMEOUT_S,
+            )
+        except httpx.HTTPError as exc:
+            return PersistError(code="sign", message=str(exc))
+        if sg.status_code >= 400:
+            return PersistError(code="sign", message=f"Sign URL HTTP {sg.status_code}")
+        try:
+            payload = sg.json()
+        except Exception as exc:
+            return PersistError(code="sign", message=f"sign response not JSON: {exc}")
+        signed = payload.get("signedURL") if isinstance(payload, dict) else None
+        if not isinstance(signed, str) or not signed:
+            return PersistError(code="sign", message="sign response missing signedURL")
+        if signed.startswith("/"):
+            signed = f"{base}/storage/v1{signed}"
+        return PersistedImage(url=signed, storage_path=path, format=ext)
+    finally:
+        if own_client:
+            await client.aclose()
+
+
 def _mime_to_ext(mime: str, *, fallback: str) -> str:
     """Map an `image/foo` content-type to its file extension, with
     `jpeg`→`jpg` normalisation matching the TS helper."""
@@ -330,10 +471,14 @@ __all__ = [
     "MAX_BYTES_PER_IMAGE",
     "SIGNED_URL_TTL_SECONDS",
     "STORAGE_BUCKET",
+    "DownloadedImage",
     "PersistError",
     "PersistResult",
     "PersistedImage",
+    "download_image",
+    "inline_image",
     "is_storage_configured",
     "persist_generated_image",
+    "persist_or_inline_image",
     "sign_storage_path",
 ]

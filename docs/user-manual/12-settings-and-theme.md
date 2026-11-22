@@ -51,17 +51,24 @@ Click your avatar or initial at the bottom of the left sidebar.
     assistant needs your input mid-answer (an approval or a question),
     the answer pauses until you reply; typing a new message instead
     cancels the paused one. Also offered to signed-out users (shows
-    when `NEXT_PUBLIC_AGENT_PY_URL` is set). It sends attached images
-    and text/PDF documents and the reasoning-effort setting, but not
-    MCP servers, the code interpreter or reference images yet. Every
+    when `NEXT_PUBLIC_AGENT_PY_URL` is set). Attached files, MCP
+    resources and URL bookmarks reach the model as they do on the
+    default backend (signed in, files go by reference — the server reads
+    your synced copy, including RAG-mode files through file search), and
+    so do the reasoning-effort setting, reference images and the
+    workspace's local-mode MCP servers (their credentials go with each
+    answer and the server never stores them; MCP App panels render as
+    on `ts`). The code interpreter is not available yet. Every
     other request (summaries, embeds, sharing, …) goes exactly where
     `python` sends it.
 - **Models per backend.** The agent services (`python` and `ts-service`
   when signed in, `python-runs` always) only run the Anthropic models,
-  so while one of them serves chat the model picker lists just those
-  (no Auto), and a model they can't run is switched to one they can,
-  with a note saying so. Switching back to `ts` brings the full list
-  back.
+  so while one of them serves chat the model picker lists just those,
+  and a model they can't run is switched to one they can, with a note
+  saying so. Auto is offered on `python-runs` (it routes each message
+  between the two Anthropic models of the routing pair, and the reply
+  shows which one it used) but not on `python` or `ts-service`.
+  Switching back to `ts` brings the full list back.
 
 ## Tips & gotchas
 - The Chat backend toggle is only visible when the corresponding

@@ -232,7 +232,7 @@ wiring seam: stores, event logs, encoder, harness, stream, driver).
 
 | Operation | Auth | What |
 |---|---|---|
-| `POST /v1/runs` | bearer or none | Body: AG-UI `RunAgentInput`, options in `forwardedProps`. Interactive (default) → `200` SSE, executed in this process by `runs/driver.py`; background → `202 {runId, status}`: `create_run` + `status: queued` (seq 1) + `enqueue_task_job('start')`, then the poller runs it. Client-minted `runId`: the owner's repeat (same thread + mode) replays; any other use of a taken id → `409 run_id_conflict`. `resume[]` must answer exactly the open interrupts of `forwardedProps.previousRunId` (else `409 invalid_state`); one live resume per interrupted run (0042 — a second is `409 run_already_resumed` until the first fails or is cancelled). Anonymous: interactive only, `X-Run-Token` in the response. |
+| `POST /v1/runs` | bearer or none | Body: AG-UI `RunAgentInput`, options in `forwardedProps`. Interactive (default) → `200` SSE, executed in this process by `runs/driver.py`; background → `202 {runId, status}`: `create_run` + `status: queued` (seq 1) + `enqueue_task_job('start')`, then the poller runs it. Client-minted `runId`: the owner's repeat (same thread + mode) replays; any other use of a taken id → `409 run_id_conflict`. `resume[]` must answer exactly the open interrupts of `forwardedProps.previousRunId` (else `409 invalid_state`); one live resume per interrupted run (0042 — a second is `409 run_already_resumed` until the first fails or is cancelled). A background resume (Q41) answers a top-level background run: the new run's checkpoint is the paused run's plus the answers, which the executor applies in its first step (`resume_answers.py`); a task answered through the old respond route is `409 run_already_answered` (0043). A background start keeps `workspaceId`, `requireApprovalFor`, research mode (35 steps by default; the research prompt, `task_prompt.py`) and `allowedMcpServerIds` in `config`, and refuses `attachments` (Q49, `400 invalid_request`). Anonymous: interactive only, `X-Run-Token` in the response. |
 | `GET /v1/runs` | bearer | The caller's runs, newest first, `threadId` / repeated `status` / `parentRunId` / `mode` filters, keyset token paging. |
 | `GET /v1/runs/{id}` | bearer or `X-Run-Token` | The `Run` resource. Missing / foreign / wrong token → the same 404. |
 | `GET /v1/runs/{id}/events` | bearer or `X-Run-Token` | Replay after `after` / `Last-Event-ID`, then live, then the closing event (from the row). Malformed or out-of-range cursor → 400. |
@@ -281,7 +281,17 @@ harness is `runs/native_harness.py` — today's chat loop
 An interrupted run stores its harness checkpoint with its outcome
 (`tasks.checkpoint` / memory); the run that resumes it reads it as its
 own owner and continues the turn with the full tool results. Unknown
-`forwardedProps.model` → `400 unknown_model` before any row exists. The
+`forwardedProps.model` → `400 unknown_model` before any row exists.
+`forwardedProps` are parsed by `runs/options.py` (`RunOptions`; the
+contract-0.4.0 options are typed there but not acted on until wave 5b),
+and local MCP credentials are taken out of `state["hummingbird.localMcp"]`
+into `RunInput.local_mcp_credentials` (`runs/credentials.py`: memory
+only, never stored or logged). The native harness is assembled from
+hooks — system prompt sections, tool contributors, taint seeds, the
+model resolver, the post-success step (`runs/hook_types.py`), registered
+in `runs/harness_hooks.py` — and every tool call gets the run-scoped
+`RunToolContext` (client key, per-IP budget, `localFilesOnly`), anonymous
+runs included. The citation verifier client is `verify_client.py`. The
 maintenance loop also runs `runs/compaction.py`'s retention sweep every
 10 min when a database is configured (compact ended interactive logs
 after 24 h, purge them — and the run's stored checkpoint — after 30
@@ -307,6 +317,8 @@ days; background logs and checkpoints untouched).
 | `RUNS_MEMORY_TTL_SECONDS` / `RUNS_MEMORY_MAX_RUNS` | No | Defaults `900` / `2000`. How long an in-memory run is kept after it ends; how many runs memory holds at once (past it, starts answer 503). |
 | `RUNS_RATE_PER_MINUTE` | No | Default `30`. Run starts per client IP per minute, every caller. |
 | `RUNS_ANONYMOUS_RATE_PER_MINUTE` / `RUNS_ANONYMOUS_DAILY_BUDGET` / `RUNS_ANONYMOUS_MAX_CONCURRENT` | No | Defaults `10` / `200` / `3`. Anonymous starts per IP per minute, per rolling 24 h, and live anonymous runs per IP. |
+| `MINIMAX_IMAGE_RATE_LIMIT_PER_MINUTE` | No | Default `5`. Per-IP `generateImage` calls per minute on interactive runs (signed in or not, keyed on the client IP), refused with the Next route's text past it. Same variable and parsing as the Next chat route: not a positive number → `5`, floored, capped at `60`. |
+| `WEB_TOOL_RATE_LIMIT_PER_MINUTE` | No | Default `20` (the Next chat route's fixed window). Per-IP webSearch + webFetch + searchFiles calls per minute on interactive runs, one shared window. |
 | `SUPABASE_URL` | No (reported by `/readyz`) | Phase 2 will use it for things beyond what `SUPABASE_DB_URL` already gives us. |
 | `SERVICE_PORT` | No | Default 8000. |
 | `CORS_ALLOWED_ORIGINS` | No | Default empty (no CORS). Comma-separated exact origins allowed to call the API from a browser on another origin, e.g. `http://localhost:3000` when Next calls agent-py on `:8000`. Not needed behind the same-origin proxy. `*` and non-origin values are ignored; credentialed CORS is never enabled (auth is a bearer JWT). |
@@ -317,6 +329,7 @@ days; background logs and checkpoints untouched).
 | `EMBEDDINGS_MODEL` | No | Default `nomic-embed-text` (768-dim, matching `file_sections.embedding vector(768)`). |
 | `OLLAMA_BASE_URL` / `OLLAMA_API_KEY` | No | Fallback embedder when `EMBEDDINGS_BASE_URL` is unset — the same Ollama host the Next.js app uses. |
 | `MEMORY_EXTRACT_MODEL` | No | Catalog id for `/v1/memory/extract`. Used only when it is an allowed `anthropic/*` entry of `config/models.json`; otherwise (or empty — the Next.js default is `google/gemini-2.5-flash`) `AGENT_DEFAULT_MODEL`. Needs `ANTHROPIC_API_KEY`; without it extraction is skipped (still `{ok: true}`). |
+| `MCP_ALLOW_PRIVATE_HOSTS` | No | Default off. `true` lets MCP traffic — the `/v1/mcp/*` proxy and save check, cloud and local MCP tools on runs — reach loopback / RFC 1918 / `.local`-style hosts (a dev MCP server on `localhost`), checked again at connect time. Link-local and cloud-metadata addresses (169.254.0.0/16, fe80::/10, `metadata.google.internal`, …) stay blocked; bookmarks and `webFetch` stay public-only. Next.js semantics: only the exact value `true` enables it; any value other than `true` / `false` / empty stops the service at boot. Never enable on a shared deployment. |
 
 A repo-level `.env` works — `pydantic-settings` looks for `.env` in the
 current working directory. The service shares the same `.env` as the

@@ -144,7 +144,17 @@ async def test_dispatch_writes_what_fire_schedule_writes(
         "messages": [{"role": "user", "content": "Summarise the news"}],
         "step": 0,
         "seq": 1,
-        "config": {"model": "anthropic/x", "workspaceId": str(ws), "skills": [], "maxSteps": 7},
+        "config": {
+            "model": "anthropic/x",
+            "workspaceId": str(ws),
+            "skills": [
+                {"id": "webSearch"},
+                {"id": "webFetch"},
+                {"id": "searchFiles"},
+                {"id": "imageGen"},
+            ],
+            "maxSteps": 7,
+        },
     }
     assert (event["task_id"], event["seq"], event["step"], event["kind"]) == (
         task["id"],

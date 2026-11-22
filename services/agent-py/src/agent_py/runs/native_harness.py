@@ -64,6 +64,16 @@ or an anonymous run's expired) the run falls back to the browser's
 history alone: the gated calls are looked up in its assistant messages
 and earlier tool results are what the browser kept (summaries).
 
+**Extension points (wave 5a).** The system prompt, the backend tools,
+the turn's memory-taint seed, the model and the succeeded result come
+from hooks (`HarnessHooks`, `hook_types.py`), registered in order in
+`harness_hooks.DEFAULT_HOOKS` — which reproduces the harness as it was.
+Each run gets one `HookContext` (emitter, cancel, usage meter, the
+user-scoped `ToolContext` when signed in with a database, and the
+always-present `RunToolContext` the loop hands to every tool — client
+key, per-IP budget, `localFilesOnly`, taint so far). Wave 5b's
+workstreams add hooks there; see `harness_hooks.py`.
+
 **Cancel.** `cancel` is checked before every model call and raced
 against the provider stream, every tool execution and the suggestions
 call: the operation in flight is abandoned (the provider stream closed)
@@ -75,17 +85,18 @@ returning, so every `STEP_STARTED` has its `STEP_FINISHED`.
 
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 import json
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import structlog
 
 from ..chat import generate_suggestions
 from ..chat_loop import (
-    DEFAULT_MAX_STEPS,
     DEFAULT_MAX_TOKENS,
     TRUSTED_TOOLS,
     CancelRequested,
@@ -103,31 +114,41 @@ from ..chat_loop import (
 )
 from ..emitter import RunEmitter
 from ..events import InputRequestOption, SuggestionsEvent
-from ..input_policy import ASK_USER_TOOL_NAME, RENDER_UI_TOOL_NAME, request_kind_for
-from ..model_allowlist import UnknownModelError, resolve_optional_model
+from ..input_policy import request_kind_for
+from ..model_allowlist import UnknownModelError
 from ..providers.anthropic_provider import AsyncAnthropicClient, _make_tool_result_block
-from ..reasoning_effort import ReasoningEffort, parse_reasoning_effort, thinking_params
+from ..rate_limit import ToolBudgets
+from ..reasoning_effort import thinking_params
 from ..settings import Settings
-from ..tools import SkillConfigs, ToolContext, ToolDescriptor, ToolError, default_tool_registry
+from ..tools import BudgetVerdict, RunToolContext, ToolContext, ToolDescriptor, ToolError
 from .harness import CancelSignal, HarnessResult, ResumeAnswer, RunInput
+from .harness_hooks import DEFAULT_HOOKS, HITL_TOOLS, SKILL_TOOLS
 from .history import (
     attach_tool_results,
     find_tool_call,
     last_user_index,
     last_user_text,
     normalize,
-    request_taint,
-    system_texts,
     to_anthropic,
+)
+from .hook_types import (
+    TURN_CONTENT_KEY,
+    HarnessHooks,
+    HookContext,
+    Toolset,
+    add_turn_content,
+    build_system_prompt,
+    build_toolset,
+    seed_taint,
 )
 from .model import (
     Cancelled,
     Failed,
     Interrupted,
     PendingInterrupt,
-    RunResultData,
     Succeeded,
 )
+from .options import RunOptions, parse_run_options, validate_run_options
 
 logger = structlog.get_logger(__name__)
 
@@ -136,6 +157,7 @@ __all__ = [
     "HARNESS_NAME",
     "HITL_TOOLS",
     "SKILL_TOOLS",
+    "BudgetPolicy",
     "NativeHarness",
     "RunOptions",
     "Toolset",
@@ -149,19 +171,7 @@ __all__ = [
 HARNESS_NAME = "loop-v1"
 CHECKPOINT_VERSION = 1
 
-#: `forwardedProps.skills[].id` → the backend tool it offers.
-SKILL_TOOLS: Mapping[str, str] = {
-    "webSearch": "webSearch",
-    "webFetch": "webFetch",
-    "imageGen": "generateImage",
-    "searchFiles": "searchFiles",
-}
-
-#: Offered on every run; they always wait for the user (no execute path).
-HITL_TOOLS: frozenset[str] = frozenset({ASK_USER_TOOL_NAME, RENDER_UI_TOOL_NAME})
-
 _TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-_MAX_STEPS_CAP = 50
 
 DECLINED_APPROVAL = (
     "User declined to run this action. Consider an alternative or ask the user how to proceed."
@@ -169,96 +179,17 @@ DECLINED_APPROVAL = (
 DECLINED_ANSWER = "The user declined to answer."
 
 
-# --- Options --------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class RunOptions:
-    """`forwardedProps`, parsed leniently (the API validated the
-    contract's keys; unknown keys are ignored)."""
-
-    model: str | None = None
-    system_prompt: str | None = None
-    skill_ids: tuple[str, ...] = ()
-    skill_configs: SkillConfigs = field(default_factory=SkillConfigs)
-    max_steps: int = DEFAULT_MAX_STEPS
-    require_approval_for: frozenset[str] = frozenset()
-    workspace_id: str | None = None
-    reasoning_effort: ReasoningEffort | None = None
-
-
-def _str(value: object, *, max_len: int | None = None) -> str | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    return value if max_len is None else value[:max_len]
-
-
-def parse_run_options(options: Mapping[str, object]) -> RunOptions:
-    skill_ids: list[str] = []
-    web_search: dict[str, Any] | None = None
-    web_fetch: dict[str, Any] | None = None
-    image_gen: dict[str, Any] | None = None
-    raw_skills = options.get("skills")
-    for entry in raw_skills if isinstance(raw_skills, list) else []:
-        if not isinstance(entry, Mapping):
-            continue
-        skill_id = _str(entry.get("id"))
-        if skill_id is not None:
-            skill_ids.append(skill_id)
-        for key, setter in (
-            ("webSearchConfig", "web_search"),
-            ("webFetchConfig", "web_fetch"),
-            ("imageGenConfig", "image_gen"),
-        ):
-            cfg = entry.get(key)
-            if isinstance(cfg, dict) and cfg:
-                if setter == "web_search":
-                    web_search = cfg
-                elif setter == "web_fetch":
-                    web_fetch = cfg
-                else:
-                    image_gen = cfg
-    max_steps = options.get("maxSteps")
-    gated = options.get("requireApprovalFor")
-    return RunOptions(
-        model=_str(options.get("model")),
-        system_prompt=_str(options.get("systemPrompt")),
-        skill_ids=tuple(skill_ids),
-        skill_configs=SkillConfigs(web_search=web_search, web_fetch=web_fetch, image_gen=image_gen),
-        max_steps=(
-            min(max_steps, _MAX_STEPS_CAP)
-            if isinstance(max_steps, int) and not isinstance(max_steps, bool) and max_steps >= 1
-            else DEFAULT_MAX_STEPS
-        ),
-        require_approval_for=frozenset(
-            g for g in (gated if isinstance(gated, list) else []) if isinstance(g, str) and g
-        ),
-        workspace_id=_str(options.get("workspaceId"), max_len=64),
-        reasoning_effort=parse_reasoning_effort(options.get("reasoningEffort")),
-    )
-
-
-def validate_run_options(options: Mapping[str, object]) -> None:
-    """Raise `UnknownModelError` (`code = "unknown_model"`) for a model
-    outside the allow-list — lets the API answer 400 before creating the
-    run, as `/v1/chat` does. The adapter re-checks and fails the run."""
-    resolve_optional_model(parse_run_options(options).model)
-
-
 # --- Tools ------------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class Toolset:
-    """The backend tools a run may call, and which of them wait for
-    approval because their server says so (MCP)."""
-
-    tools: Mapping[str, ToolDescriptor]
-    gated: frozenset[str] = frozenset()
-
-
 ToolsetBuilder = Callable[[RunInput], Awaitable[Toolset]]
+"""Replaces the whole tool lookup (tests); the default is the hooks'
+tool contributors (`harness_hooks.TOOL_CONTRIBUTORS`)."""
 PoolProvider = Callable[[], Any]
+BudgetPolicy = Callable[[str | None, str], BudgetVerdict]
+"""`(client_key, kind) -> verdict` — takes one unit of the caller's
+per-IP budget `kind`; becomes each run's `RunToolContext.consume_budget`
+(`rate_limit.ToolBudgets` by default)."""
 
 
 def _default_pool() -> Any:
@@ -267,43 +198,71 @@ def _default_pool() -> Any:
     return db.get_pool() if db.has_pool() else None
 
 
+def _hook_context(
+    run_input: RunInput,
+    opts: RunOptions,
+    *,
+    emitter: RunEmitter,
+    cancel: CancelSignal,
+    usage: UsageMeter,
+    pool_provider: PoolProvider,
+    budget: BudgetPolicy | None,
+) -> HookContext:
+    """The per-run `HookContext`: a user-scoped `ToolContext` for a
+    signed-in run with a DB pool, and the run-scoped `RunToolContext`
+    every run gets."""
+    pool = pool_provider() if run_input.user_id else None
+    tool_context = (
+        ToolContext(pool=pool, user_id=run_input.user_id, workspace_id=opts.workspace_id)
+        if pool is not None and run_input.user_id
+        else None
+    )
+    client_key = run_input.client_key
+    run_tools = RunToolContext(
+        run_id=run_input.run_id,
+        user_id=run_input.user_id,
+        client_key=client_key,
+        local_files_only=opts.local_files_only,
+    )
+    if budget is not None:
+
+        def consume(kind: str) -> BudgetVerdict:
+            return budget(client_key, kind)
+
+        run_tools = dataclasses.replace(run_tools, consume_budget=consume)
+    return HookContext(
+        emitter=emitter,
+        cancel=cancel,
+        usage=usage,
+        pool=pool,
+        tool_context=tool_context,
+        run_tools=run_tools,
+    )
+
+
+async def _discard(_event: object) -> None:
+    return None
+
+
 def default_toolset_builder(pool_provider: PoolProvider = _default_pool) -> ToolsetBuilder:
-    """The skills the run asked for (`SKILL_TOOLS`) + `HITL_TOOLS`, built
-    by `default_tool_registry`; for a signed-in run with a DB pool also
-    the user-scoped tools (`searchFiles`) and, with a `workspaceId`, the
-    workspace's cloud MCP tools (discovery failures are logged and
-    skipped, as on `/v1/chat`)."""
+    """The default hooks' tools as a standalone `ToolsetBuilder`: the
+    skills the run asked for (`SKILL_TOOLS`) + `HITL_TOOLS`; for a
+    signed-in run with a DB pool also the user-scoped tools
+    (`searchFiles`) and, with a `workspaceId`, the workspace's cloud MCP
+    tools (`harness_hooks.TOOL_CONTRIBUTORS`)."""
 
     async def build(run_input: RunInput) -> Toolset:
         opts = parse_run_options(run_input.options)
-        pool = pool_provider() if run_input.user_id else None
-        context = (
-            ToolContext(pool=pool, user_id=run_input.user_id, workspace_id=opts.workspace_id)
-            if pool is not None and run_input.user_id
-            else None
+        ctx = _hook_context(
+            run_input,
+            opts,
+            emitter=RunEmitter(run_id=run_input.run_id, sink=_discard),
+            cancel=asyncio.Event(),
+            usage=UsageMeter(),
+            pool_provider=pool_provider,
+            budget=None,
         )
-        registry = default_tool_registry(context=context, skill_configs=opts.skill_configs)
-        wanted = {SKILL_TOOLS[s] for s in opts.skill_ids if s in SKILL_TOOLS} | HITL_TOOLS
-        tools = {name: d for name, d in registry.items() if name in wanted}
-        gated: set[str] = set()
-        if context is not None and context.workspace_id:
-            from ..mcp_tools import extend_registry_with_mcp
-
-            try:
-                await extend_registry_with_mcp(
-                    tools,
-                    pool=context.pool,
-                    user_id=context.user_id,
-                    workspace_id=context.workspace_id,
-                    gated_out=gated,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "native_harness.mcp_discovery_failed",
-                    run_id=run_input.run_id,
-                    error=str(exc),
-                )
-        return Toolset(tools=tools, gated=frozenset(gated))
+        return await build_toolset(DEFAULT_HOOKS.tool_contributors, run_input, opts, ctx)
 
     return build
 
@@ -499,13 +458,19 @@ class NativeHarness:
         self,
         *,
         client_factory: ClientFactory,
-        build_tools: ToolsetBuilder,
+        build_tools: ToolsetBuilder | None = None,
+        hooks: HarnessHooks = DEFAULT_HOOKS,
+        pool_provider: PoolProvider = _default_pool,
+        consume_budget: BudgetPolicy | None = None,
         suggestions: bool = True,
         max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> None:
         self._client_factory = client_factory
         self._client: AsyncAnthropicClient | None = None
         self._build_tools = build_tools
+        self._hooks = hooks
+        self._pool_provider = pool_provider
+        self._budget = consume_budget
         self._suggestions = suggestions
         self._max_tokens = max_tokens
 
@@ -532,8 +497,18 @@ class NativeHarness:
         self, run_input: RunInput, emitter: RunEmitter, cancel: CancelSignal, meter: UsageMeter
     ) -> HarnessResult:
         opts = parse_run_options(run_input.options)
+        hooks = self._hooks
+        ctx = _hook_context(
+            run_input,
+            opts,
+            emitter=emitter,
+            cancel=cancel,
+            usage=meter,
+            pool_provider=self._pool_provider,
+            budget=self._budget,
+        )
         try:
-            model = resolve_optional_model(opts.model)
+            model = await hooks.resolve_model(run_input, opts, ctx)
         except UnknownModelError as exc:
             return HarnessResult(Failed(exc.code, str(exc)))
         client = self._resolve_client()
@@ -544,37 +519,51 @@ class NativeHarness:
         if cancel.is_set():
             return HarnessResult(Cancelled())
 
-        toolset = await self._build_tools(run_input)
+        toolset = (
+            await self._build_tools(run_input)
+            if self._build_tools is not None
+            else await build_toolset(hooks.tool_contributors, run_input, opts, ctx)
+        )
         tools = dict(toolset.tools)
         client_tools = _client_tools(run_input.tools, set(tools))
         tools.update(client_tools)
         client_names = frozenset(client_tools)
         gated = HITL_TOOLS | opts.require_approval_for | toolset.gated | client_names
 
+        def taint_of(messages: Sequence[Mapping[str, object]]) -> str | None:
+            return seed_taint(hooks.taint_seeds, run_input, opts, ctx, messages)
+
         history = run_input.messages
         if run_input.resume:
             prepared = await self._prepare_resume(
-                run_input, emitter, cancel, tools, client_names, gated
+                run_input, emitter, cancel, tools, client_names, gated, taint_of, ctx.run_tools
             )
             if isinstance(prepared, HarnessResult):
                 return prepared
         else:
             messages = normalize(to_anthropic(history))
-            prepared = _Prepared(messages, len(messages), request_taint(history))
+            prepared = _Prepared(messages, len(messages), taint_of(history))
 
         async def on_answer(text: str) -> None:
             await self._suggest(client, history, text, emitter, cancel, meter)
 
-        thinking = thinking_params(opts.model, opts.reasoning_effort)
+        thinking = thinking_params(model.catalog_id, opts.reasoning_effort)
         if thinking is not None and not _turn_can_think(prepared.messages):
             thinking = None
 
+        system = await build_system_prompt(hooks.prompt_sections, run_input, opts, ctx)
+        # Media a prompt section loaded for the turn (a cloud file's image)
+        # goes on the turn's user message; the checkpoint keeps only what
+        # follows it, so a resume loads it again.
+        turn_messages = add_turn_content(
+            prepared.messages, prepared.turn_start - 1, ctx.scratch.get(TURN_CONTENT_KEY)
+        )
         result = await run_turn_loop(
             client=client,
             emitter=emitter,
-            model=model,
-            messages=prepared.messages,
-            system=_system_prompt(opts, run_input),
+            model=model.api_id,
+            messages=turn_messages,
+            system=system,
             max_tokens=max(self._max_tokens, thinking.max_tokens) if thinking else self._max_tokens,
             thinking=thinking.thinking if thinking else None,
             tools=list(tools.values()),
@@ -584,27 +573,22 @@ class NativeHarness:
             on_answer=on_answer if self._suggestions else None,
             tainted_by=prepared.tainted_by,
             usage=meter,
+            run_context=ctx.run_tools,
         )
         if result.step_open:
             await emitter.end_step()
-        usage = meter.totals()
         outcome = result.outcome
         if isinstance(outcome, LoopSucceeded):
-            return HarnessResult(
-                Succeeded(
-                    RunResultData(
-                        text=result.text or None, memory_tainted=result.tainted_by is not None
-                    ),
-                    usage=usage,
-                )
-            )
+            data = await hooks.post_success(run_input, opts, ctx, result)
+            return HarnessResult(Succeeded(data, usage=meter.totals()))
+        usage = meter.totals()
         if isinstance(outcome, LoopFailed):
             return HarnessResult(Failed(outcome.code, outcome.message, usage=usage))
         if isinstance(outcome, LoopCancelled):
             return HarnessResult(Cancelled(usage=usage))
         assert isinstance(outcome, LoopInterrupted)
         checkpoint = _Checkpoint(
-            turn=prepared.messages[prepared.turn_start :],
+            turn=turn_messages[prepared.turn_start :],
             pending=outcome.pending,
             results=outcome.results,
             tainted_by=result.tainted_by,
@@ -625,6 +609,8 @@ class NativeHarness:
         tools: Mapping[str, ToolDescriptor],
         client_names: frozenset[str],
         gated: frozenset[str],
+        taint_of: Callable[[Sequence[Mapping[str, object]]], str | None],
+        run_tools: RunToolContext,
     ) -> _Prepared | HarnessResult:
         history = run_input.messages
         before = history[: last_user_index(history) + 1]
@@ -640,7 +626,7 @@ class NativeHarness:
         if state is not None:
             pending = list(state.pending)
             client_calls = set(state.client_calls)
-            tainted = state.tainted_by or request_taint(before)
+            tainted = state.tainted_by or taint_of(before)
         else:
             # No stored state: the calls come from the browser's history,
             # so only one that waits for an answer in this run's own
@@ -659,7 +645,7 @@ class NativeHarness:
                     )
                 pending.append(PendingCall(answer.interrupt_id, found[0], found[1]))
             client_calls = {c.tool_call_id for c in pending if c.tool_name in client_names}
-            tainted = request_taint(history)
+            tainted = taint_of(history)
 
         answers = {a.interrupt_id: a for a in run_input.resume}
         results: list[dict[str, Any]] = []
@@ -674,6 +660,7 @@ class NativeHarness:
                         tools,
                         call.tool_call_id in client_calls,
                         waiter,
+                        dataclasses.replace(run_tools, tainted_by=tainted),
                     )
                 except CancelRequested:
                     await emitter.end_step()
@@ -708,6 +695,7 @@ class NativeHarness:
         tools: Mapping[str, ToolDescriptor],
         client_call: bool,
         waiter: Any,
+        run_context: RunToolContext,
     ) -> tuple[ToolRun, bool]:
         """The tool result for one answered interrupt, and whether a tool
         actually ran to produce it (which may taint the turn)."""
@@ -730,7 +718,9 @@ class NativeHarness:
                 return ToolRun(text, text, True), False
             override = p.get("args")
             args = dict(override) if isinstance(override, dict) else call.args
-            run = await race_cancel(execute_tool(descriptor, call.tool_name, args), waiter)
+            run = await race_cancel(
+                execute_tool(descriptor, call.tool_name, args, run_context), waiter
+            )
             return run, True
         if not resolved:
             return ToolRun(DECLINED_ANSWER, DECLINED_ANSWER, False), False
@@ -823,21 +813,6 @@ def _list(value: object) -> list[object]:
     return value if isinstance(value, list) else []
 
 
-def _system_prompt(opts: RunOptions, run_input: RunInput) -> str | None:
-    parts: list[str] = []
-    if opts.system_prompt:
-        parts.append(opts.system_prompt)
-    parts.extend(system_texts(run_input.messages))
-    context_lines = [
-        f"- {c.get('description')}: {c.get('value')}"
-        for c in run_input.context
-        if isinstance(c.get("description"), str) and isinstance(c.get("value"), str)
-    ]
-    if context_lines:
-        parts.append("Context from the application:\n" + "\n".join(context_lines))
-    return "\n\n".join(parts) or None
-
-
 # --- Factory ----------------------------------------------------------------------------
 
 
@@ -862,6 +837,8 @@ def build_native_harness(
     client: AsyncAnthropicClient | None = None,
     pool_provider: PoolProvider | None = None,
     build_tools: ToolsetBuilder | None = None,
+    hooks: HarnessHooks | None = None,
+    consume_budget: BudgetPolicy | None = None,
     suggestions: bool = True,
 ) -> NativeHarness:
     """The native adapter for interactive runs.
@@ -871,13 +848,25 @@ def build_native_harness(
     on first use (unset key → each run fails `unavailable`).
     `pool_provider`: returns the asyncpg pool for the user-scoped tools,
     or None; default — the lifespan pool (`db.get_pool()`) when open.
-    `build_tools`: replaces the whole tool lookup (tests).
+    `build_tools`: replaces the hooks' tool contributors (tests).
+    `hooks`: the extension points (`harness_hooks.DEFAULT_HOOKS`).
+    `consume_budget`: the per-IP tool budgets (`RunToolContext.consume_budget`);
+    default — `rate_limit.ToolBudgets` from `settings` (web tools 20/min,
+    `generateImage` `MINIMAX_IMAGE_RATE_LIMIT_PER_MINUTE`, per client key).
     `suggestions`: generate follow-up chips after an answer."""
     factory: ClientFactory = (
         (lambda: client) if client is not None else _client_from_settings(settings)
     )
+    if consume_budget is None:
+        # The Next chat route's `chatWebToolLimit` / `chatImageGenLimit`:
+        # one set of windows per harness, i.e. per process (`wiring.py`
+        # builds one harness).
+        consume_budget = ToolBudgets.from_settings(settings)
     return NativeHarness(
         client_factory=factory,
-        build_tools=build_tools or default_toolset_builder(pool_provider or _default_pool),
+        build_tools=build_tools,
+        hooks=hooks or DEFAULT_HOOKS,
+        pool_provider=pool_provider or _default_pool,
+        consume_budget=consume_budget,
         suggestions=suggestions,
     )

@@ -30,16 +30,16 @@ import os
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
 import asyncpg
 import structlog
 
-from . import jobs, lease, store, tool_ledger, verify
+from . import jobs, lease, resume_answers, store, tool_ledger, verify, verify_client
 from .aggregate import aggregate_child_results
 from .barrier import settle_task_terminal
 from .emitter import EventSink, RunEmitter
-from .events import TaskEvent, TokenEvent, ToolOutputEvent
+from .events import StepEndEvent, TaskEvent, TokenEvent, ToolOutputEvent
 from .input_policy import (
     ALWAYS_GATED_TOOL_NAMES,
     request_kind_for,
@@ -52,6 +52,7 @@ from .providers.anthropic_provider import (
     execute_tool_call,
     make_anthropic_step_fn,
 )
+from .reasoning_effort import parse_reasoning_effort, thinking_params
 from .runner import (
     AgentLoopResult,
     PendingInputDescriptor,
@@ -61,9 +62,11 @@ from .runner import (
     SpawnSpec,
     run_agent_loop,
 )
+from .runs.harness_hooks import SKILL_TOOLS
 from .settings import get_settings
+from .task_prompt import RESEARCH_MODE, build_research_system_prompt
 from .tools import ToolContext, default_tool_registry
-from .tools.registry import ToolDescriptor
+from .tools.registry import SkillConfigs, ToolDescriptor
 from .tools.spawn_subagent import MAX_CHILDREN, SPAWN_SUBAGENT_TOOL_NAME
 
 logger = structlog.get_logger(__name__)
@@ -408,14 +411,64 @@ class _RunTools:
     approved tool on the respond path resolves against the same
     registry the model saw when it called it."""
 
-    context: ToolContext
+    context: ToolContext | None
     extra_tools: dict[str, ToolDescriptor]
     mcp_gated: set[str]
+    skill_tool_names: frozenset[str] = frozenset()
+    """The skill tools the run chose (`config.skills`, see `_skills_from`)."""
+    skill_configs: SkillConfigs | None = None
 
     def registry(self) -> dict[str, ToolDescriptor]:
-        out = default_tool_registry(context=self.context)
+        out = {
+            name: d
+            for name, d in default_tool_registry(
+                context=self.context, skill_configs=self.skill_configs
+            ).items()
+            if name not in _ALL_SKILL_TOOL_NAMES or name in self.skill_tool_names
+        }
         out.update(self.extra_tools)
         return out
+
+
+_ALL_SKILL_TOOL_NAMES: frozenset[str] = frozenset(SKILL_TOOLS.values())
+"""Registry tools a run offers only when it chose their skill; every
+other built-in (`askUser`, `renderUI`, `spawnSubagent`) is always on."""
+
+
+def _skills_from(checkpoint: dict[str, Any]) -> tuple[frozenset[str], SkillConfigs]:
+    """`config.skills` → (the skill tools the run offers, their per-skill
+    settings). As Next's task worker did: only the chosen skills
+    (`[{id, webSearchConfig?, …}]`, the chat body's `skills`) — absent or
+    malformed means none. Unknown ids are ignored."""
+    cfg = checkpoint.get("config")
+    raw = cfg.get("skills") if isinstance(cfg, dict) else None
+    names: set[str] = set()
+    configs: dict[str, dict[str, Any]] = {}
+    for entry in raw if isinstance(raw, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        tool = SKILL_TOOLS.get(str(entry.get("id")))
+        if tool is not None:
+            names.add(tool)
+        for key in ("webSearchConfig", "webFetchConfig", "imageGenConfig"):
+            value = entry.get(key)
+            if isinstance(value, dict) and value:
+                configs[key] = value
+    return frozenset(names), SkillConfigs(
+        web_search=configs.get("webSearchConfig"),
+        web_fetch=configs.get("webFetchConfig"),
+        image_gen=configs.get("imageGenConfig"),
+    )
+
+
+def _allowed_mcp_server_ids_from(checkpoint: dict[str, Any]) -> tuple[str, ...] | None:
+    """`config.allowedMcpServerIds` (Q48): None (absent) → every enabled
+    cloud server of the workspace; a list → only those (`[]` → none)."""
+    cfg = checkpoint.get("config")
+    raw = cfg.get("allowedMcpServerIds") if isinstance(cfg, dict) else None
+    if not isinstance(raw, list):
+        return None
+    return tuple(dict.fromkeys(s for s in raw if isinstance(s, str) and s))
 
 
 async def _build_run_tools(
@@ -430,10 +483,15 @@ async def _build_run_tools(
     `searchFiles`) and cloud-mode MCP discovery (`extend_registry_with_mcp`)
     knows which workspace to enumerate. Absent → `workspace_id` stays
     None and MCP tools are skipped entirely. The TS checkpoint always
-    writes `workspaceId`; a missing field is the test/dev path."""
+    writes `workspaceId`; a missing field is the test/dev path.
+
+    The skill tools are the ones `config.skills` chose (`_skills_from`),
+    and the cloud MCP servers those `config.allowedMcpServerIds` allows
+    (Q48, `_allowed_mcp_server_ids_from`)."""
     cfg = checkpoint.get("config")
     workspace_id = _str_or_none(cfg.get("workspaceId")) if isinstance(cfg, dict) else None
     context = ToolContext(pool=pool, user_id=user_id, workspace_id=workspace_id)
+    skill_tool_names, skill_configs = _skills_from(checkpoint)
     extra_tools: dict[str, ToolDescriptor] = {}
     mcp_gated: set[str] = set()
     if discover_mcp and workspace_id:
@@ -443,8 +501,15 @@ async def _build_run_tools(
             user_id=user_id,
             workspace_id=workspace_id,
             gated_out=mcp_gated,
+            allowed_server_ids=_allowed_mcp_server_ids_from(checkpoint),
         )
-    return _RunTools(context=context, extra_tools=extra_tools, mcp_gated=mcp_gated)
+    return _RunTools(
+        context=context,
+        extra_tools=extra_tools,
+        mcp_gated=mcp_gated,
+        skill_tool_names=skill_tool_names,
+        skill_configs=skill_configs,
+    )
 
 
 async def _run_chunk_inner(
@@ -543,6 +608,7 @@ async def _run_chunk_inner(
         elif isinstance(event, ToolOutputEvent) and event.results:
             verify_sources.extend((r.title, r.url, r.snippet) for r in event.results)
         await db_sink(event)
+        await _record_progress(pool, event, user_id=payload.user_id)
 
     emitter = RunEmitter(
         run_id=payload.run_id,
@@ -628,12 +694,7 @@ async def _run_chunk_inner(
         )
         if make_step_fn is None:
             step_fn = _default_make_step_fn(
-                payload,
-                checkpoint,
-                live_messages,
-                run_tools.context,
-                extra_tools=run_tools.extra_tools or None,
-                extra_gated_tool_names=run_tools.mcp_gated or None,
+                payload, checkpoint, live_messages, run_tools.context, run_tools=run_tools
             )
         else:
             step_fn = make_step_fn(payload, checkpoint, live_messages, run_tools.context)
@@ -667,6 +728,36 @@ async def _run_chunk_inner(
 
         ledger = tool_ledger.ToolLedger(save=save_inflight, gated_tool_names=gated_names)
 
+        # A runs-API resume (Q41): this run's checkpoint is the paused
+        # run's plus the answers (`resume_answers.RESUME_KEY`). Answer the
+        # interrupts in a step of their own, then carry on from there. A
+        # reclaimed attempt that got past an approved tool's start saved a
+        # checkpoint without the answers (`step > 0` → `resume`), so the
+        # in-flight handling below finishes it instead.
+        answers = None if resume else resume_answers.parse_resume(checkpoint)
+        if answers is not None:
+            pairs = _resume_calls(live_messages, answers, gated_names)
+            if resumed_from_seq is not None:
+                await emitter.status("running", resumed_from_seq=resumed_from_seq, restarted=True)
+                resumed_from_seq = None
+            else:
+                await emitter.status("running")
+            with tool_ledger.bound(ledger):
+                await _apply_resume_answers(
+                    emitter=emitter,
+                    live_messages=live_messages,
+                    pairs=pairs,
+                    registry=run_tools.registry(),
+                )
+            checkpoint.pop(resume_answers.RESUME_KEY, None)
+            lease.check_current()
+            await store.save_checkpoint(
+                pool,
+                run_id=payload.run_id,
+                user_id=payload.user_id,
+                checkpoint=_build_checkpoint(checkpoint, live_messages, emitter),
+            )
+
         # A resumed checkpoint can end in an assistant turn whose tool
         # calls have no results: the dead attempt saved its suspend
         # checkpoint but never got the task row to `paused`, or it died
@@ -684,7 +775,20 @@ async def _run_chunk_inner(
                     restarted=emitter.step == 0,
                 )
                 resumed_from_seq = None
-            gated_call = next((c for c in unanswered if c["tool_name"] in gated_names), None)
+            # A gated call the execution record says was approved and
+            # started (or finished) is not waiting on anyone: it is
+            # completed below like any in-flight call, never asked again.
+            record = tool_ledger.read_record(checkpoint)
+            gated_call = next(
+                (
+                    c
+                    for c in unanswered
+                    if c["tool_name"] in gated_names
+                    and c["tool_call_id"] not in record.started
+                    and c["tool_call_id"] not in record.results
+                ),
+                None,
+            )
             if gated_call is not None:
                 return await _resuspend_on_unanswered_call(
                     pool,
@@ -1092,162 +1196,6 @@ def _resolve_anthropic_client() -> AsyncAnthropicClient | None:
     return _anthropic_client
 
 
-# Citation-verification cap — the verifier returns a small JSON object, so
-# a tight budget is plenty.
-_VERIFY_MAX_TOKENS = 800
-
-# Process-local set of warning keys already fired by `_warn_once`.
-# Reset in the test fixture (`test_cross_family_verifier._reset_warn_once`).
-_warned_keys: set[str] = set()
-
-
-def _warn_once(key: str, **fields: object) -> None:
-    """Log a structlog warning the first time `key` is seen in this
-    process. Keeps a startup-time misconfig (e.g. the cross-family
-    provider being unavailable) from spamming the log on every research
-    run."""
-    if key in _warned_keys:
-        return
-    _warned_keys.add(key)
-    logger.warning(key, **fields)
-
-
-class _VerifierClient(Protocol):
-    """The narrow surface `_maybe_verify` needs from a verifier: one
-    non-streaming completion call returning concatenated text. Both the
-    Anthropic and Google wrappers satisfy this structurally."""
-
-    async def messages_create(
-        self, *, model: str, max_tokens: int, messages: list[dict[str, object]]
-    ) -> str: ...
-
-
-class _AnthropicVerifierClient:
-    """The legacy same-family path. Wraps the same `AsyncAnthropic` the
-    run used, exposing the small `_VerifierClient` surface."""
-
-    def __init__(self, client: Any) -> None:
-        self._client = client
-
-    async def messages_create(
-        self, *, model: str, max_tokens: int, messages: list[dict[str, object]]
-    ) -> str:
-        resp = await self._client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            messages=messages,
-        )
-        parts: list[str] = []
-        for block in getattr(resp, "content", None) or []:
-            text = getattr(block, "text", None)
-            if isinstance(text, str):
-                parts.append(text)
-        return "".join(parts)
-
-
-class _GoogleVerifierClient:
-    """Cross-family path via the google-generativeai SDK. Returns the
-    joined text parts of a `generate_content_async` call. The caller-side
-    prompt already requests strict JSON."""
-
-    def __init__(self, model: Any) -> None:
-        self._model = model
-
-    async def messages_create(
-        self, *, model: str, max_tokens: int, messages: list[dict[str, object]]
-    ) -> str:
-        target = self._model
-        if getattr(target, "model_name", model) != model:
-            # The factory built with VERIFY_MODEL; rebuild if the call
-            # site asks for a different model. Uncommon.
-            target = _build_google_model(model)
-        user_text = "\n\n".join(
-            str(m.get("content", "")) if isinstance(m, dict) else str(m) for m in messages
-        )
-        resp = await target.generate_content_async(user_text)
-        parts: list[str] = []
-        for cand in getattr(resp, "candidates", None) or []:
-            content = getattr(cand, "content", None)
-            for part in getattr(content, "parts", None) or []:
-                text = getattr(part, "text", None)
-                if isinstance(text, str):
-                    parts.append(text)
-        return "".join(parts)
-
-
-def _build_google_model(model: str) -> Any:
-    """Build a `google.generativeai.GenerativeModel`. Caller is expected
-    to have called `genai.configure(api_key=...)` first."""
-    import google.generativeai as genai  # local import; optional dep
-
-    # The SDK ships types but doesn't re-export these at the top level.
-    return genai.GenerativeModel(model)  # type: ignore[attr-defined]
-
-
-def _make_google_verifier_client() -> _GoogleVerifierClient | None:
-    """Build the Google cross-family verifier client. Returns None if
-    `GOOGLE_API_KEY` (or `GEMINI_API_KEY`) is unset OR the
-    `google-generativeai` SDK isn't installed — caller logs a one-shot
-    warning and falls back to the Anthropic path."""
-    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        return None
-    try:
-        import google.generativeai as genai
-    except ImportError:
-        return None
-    genai.configure(api_key=api_key)  # type: ignore[attr-defined]
-    settings = get_settings()
-    model = _build_google_model(settings.VERIFY_MODEL.strip() or "gemini-2.0-flash")
-    return _GoogleVerifierClient(model)
-
-
-def _make_anthropic_verifier_client() -> _AnthropicVerifierClient | None:
-    """The legacy same-family Anthropic path. Returns None when no
-    Anthropic client is configured (same condition that gates the live
-    model call)."""
-    client = _resolve_anthropic_client()
-    if client is None:
-        return None
-    return _AnthropicVerifierClient(client)
-
-
-def _resolve_verifier_client(*, answerer_provider: str) -> _VerifierClient | None:
-    """Cross-family by default. Returns the configured provider's client,
-    or the Anthropic fallback when the cross-family provider is missing.
-    `_warn_once` keeps the same-family / unavailable warnings from
-    spamming the log on every research run."""
-    settings = get_settings()
-    verifier_provider = settings.VERIFY_PROVIDER.strip().lower()
-    if not verifier_provider:
-        return None
-    same_family = verifier_provider == answerer_provider
-    client: _VerifierClient | None
-    if verifier_provider == "google":
-        client = _make_google_verifier_client()
-        if client is None:
-            _warn_once(
-                "executor.verifier_google_unavailable",
-                recommendation=(
-                    "set GOOGLE_API_KEY to enable cross-family "
-                    "verification; falling back to Anthropic"
-                ),
-            )
-    elif verifier_provider == "anthropic":
-        client = _make_anthropic_verifier_client()
-    else:
-        return None
-    if same_family and client is not None:
-        _warn_once(
-            "executor.verifier_same_family",
-            answerer_provider=answerer_provider,
-            recommendation=(
-                "set VERIFY_PROVIDER to a different family for stronger cross-checking"
-            ),
-        )
-    return client or _make_anthropic_verifier_client()  # safe fallback
-
-
 async def _maybe_verify(
     *,
     mode: str | None,
@@ -1256,38 +1204,18 @@ async def _maybe_verify(
     answerer_provider: str = "anthropic",
 ) -> dict[str, object] | None:
     """Run the citation verifier for a research run, returning the wire
-    payload for the `result` event (or None). Gated on research mode + a
-    configured `VERIFY_MODEL` + a resolvable verifier client;
-    `verify_answer` handles the no-claims / no-sources / failure → None
-    cases.
-
-    Cross-family by default: `_resolve_verifier_client` picks a different
-    provider family than the answerer (a model is a weak judge of its own
-    output), falling back to the answerer's family with a one-shot
-    warning when the cross-family provider is unavailable."""
+    payload for the `result` event (or None). Gated on research mode;
+    the rest (`VERIFY_MODEL`, the cross-family client) is
+    `verify_client.verify_citations`, falling back to the run's own
+    Anthropic client."""
     if mode != "research":
         return None
-    settings = get_settings()
-    model = settings.VERIFY_MODEL.strip()
-    if not model:
-        return None
-    client = _resolve_verifier_client(answerer_provider=answerer_provider)
-    if client is None:
-        return None
-
-    async def run(prompt: str) -> str:
-        return await client.messages_create(
-            model=model,
-            max_tokens=_VERIFY_MAX_TOKENS,
-            messages=[{"role": "user", "content": prompt}],
-        )
-
-    result = await verify.verify_answer(
-        text,
-        verify.gather_sources(sources),
-        run_verifier=run,
+    return await verify_client.verify_citations(
+        text=text,
+        sources=sources,
+        answerer_provider=answerer_provider,
+        anthropic_client=_resolve_anthropic_client,
     )
-    return result.to_payload() if result is not None else None
 
 
 def _default_make_step_fn(
@@ -1296,8 +1224,7 @@ def _default_make_step_fn(
     messages: list[dict[str, Any]],
     context: ToolContext | None = None,
     *,
-    extra_tools: dict[str, ToolDescriptor] | None = None,
-    extra_gated_tool_names: set[str] | None = None,
+    run_tools: _RunTools | None = None,
 ) -> RunStepFn:
     """Default step-fn picker.
 
@@ -1311,24 +1238,29 @@ def _default_make_step_fn(
     runs, and the runner's yield path reads from it to persist the
     checkpoint. Passing it in keeps the chunk-runner authoritative.
 
-    `context` (Phase 3c-2) carries the asyncpg pool + user_id for
-    tools that reach external systems on the user's behalf (currently
-    just `searchFiles`). None = registry omits those tools — fine
-    for tests / dev with no DB.
+    `run_tools` is the run's tool set (`_build_run_tools`): the skill
+    tools `config.skills` chose, the always-on built-ins and the allowed
+    cloud MCP tools, plus the MCP tools their server gates. Without it
+    (tests) the tools are built from `checkpoint` and `context`, with no
+    MCP discovery.
 
-    `extra_tools` (Phase 3f-2) is the pre-discovered cloud-mode MCP
-    tool set — the chunk-runner builds it via `extend_registry_with_mcp`
-    before calling us. Kwarg-only so existing `MakeStepFn` callers
-    (tests) don't need to know it exists.
+    The system prompt is the workspace prompt (`workspaceSystemPrompt`),
+    or — for a research run (`config.mode == "research"`, Q46) — the
+    research task prompt after it (`task_prompt`). `config.reasoningEffort`
+    turns on extended thinking as the native harness does
+    (`reasoning_effort.thinking_params`; a model without tiers ignores it).
     """
     client = _resolve_anthropic_client()
-    model = _str_or_none(checkpoint.get("config", {}).get("model"))
+    cfg = checkpoint.get("config")
+    cfg = cfg if isinstance(cfg, dict) else {}
+    catalog_model = _str_or_none(cfg.get("model"))
+    model = catalog_model
     if model:
         # Allowlist re-check: `tasks.checkpoint` is owner-writable under
         # RLS. Catalog id → Anthropic API id; unknown → UnknownModelError,
         # which fails the run (both call sites are inside the run guard).
         model = resolve_api_model_id(model)
-    system = _str_or_none(checkpoint.get("config", {}).get("workspaceSystemPrompt"))
+    workspace_prompt = _str_or_none(cfg.get("workspaceSystemPrompt"))
 
     if client is None or not model or not messages:
         logger.info(
@@ -1340,24 +1272,30 @@ def _default_make_step_fn(
         )
         return _stub_step_fn
 
-    # Phase 2b-2: wire the default tool registry into every real
-    # Anthropic run. The model may ignore tools entirely (in which
-    # case the step settles on first call, identical to Phase 2b-1
-    # behaviour) or call any of them. A future config flag on
-    # `checkpoint.config` can narrow the visible set per run.
-    tools_dict = default_tool_registry(context=context)
-    if extra_tools:
-        tools_dict.update(extra_tools)
+    if run_tools is None:
+        skill_tool_names, skill_configs = _skills_from(checkpoint)
+        run_tools = _RunTools(
+            context=context,
+            extra_tools={},
+            mcp_gated=set(),
+            skill_tool_names=skill_tool_names,
+            skill_configs=skill_configs,
+        )
+    tools_dict = run_tools.registry()
     tools = list(tools_dict.values())
+
+    system = workspace_prompt
+    if _str_or_none(cfg.get("mode")) == RESEARCH_MODE:
+        system = build_research_system_prompt(
+            workspace_prompt, files_enabled="searchFiles" in tools_dict
+        )
 
     # Phase 3b: read the run's gated-tool allow-list. Names match
     # `tools[].name` (skill names + prefixed MCP tool names). When
     # the model calls one of these the step fn captures it as a
     # `pending_input` instead of executing — the runner suspends and
     # the executor emits an approval request.
-    gated = _gated_tools_from(checkpoint)
-    if extra_gated_tool_names:
-        gated = gated | extra_gated_tool_names
+    gated = _gated_tools_from(checkpoint) | run_tools.mcp_gated
 
     return make_anthropic_step_fn(
         AnthropicStepConfig(
@@ -1367,6 +1305,9 @@ def _default_make_step_fn(
             messages=messages,
             tools=tools,
             gated_tool_names=gated,
+            thinking=thinking_params(
+                catalog_model, parse_reasoning_effort(cfg.get("reasoningEffort"))
+            ),
         )
     )
 
@@ -1640,6 +1581,7 @@ async def _run_respond_inner(
         # No event may be written once this worker's job lease is gone.
         lease.check_current()
         await db_sink(event)
+        await _record_progress(pool, event, user_id=payload.user_id)
 
     emitter = RunEmitter(
         run_id=payload.run_id,
@@ -1691,12 +1633,7 @@ async def _run_respond_inner(
 
         if make_step_fn is None:
             step_fn = _default_make_step_fn(
-                start_payload,
-                checkpoint,
-                live_messages,
-                run_tools.context,
-                extra_tools=run_tools.extra_tools or None,
-                extra_gated_tool_names=run_tools.mcp_gated or None,
+                start_payload, checkpoint, live_messages, run_tools.context, run_tools=run_tools
             )
         else:
             step_fn = make_step_fn(start_payload, checkpoint, live_messages, run_tools.context)
@@ -2008,6 +1945,83 @@ async def _complete_inflight_turn(
     await emitter.end_step()
 
 
+def _resume_calls(
+    messages: list[dict[str, Any]],
+    answers: tuple[resume_answers.StoredAnswer, ...],
+    gated: frozenset[str],
+) -> list[tuple[dict[str, Any], resume_answers.StoredAnswer]]:
+    """Pair each stored answer with the tool call it answers. Raises
+    `ValueError` (the run fails, freeing the resume slot) when a call is
+    not open in the checkpoint or not one this run gates — an "approval"
+    of a call the run never paused on would run a tool on the client's
+    say-so alone (the respond path's same check)."""
+    pairs: list[tuple[dict[str, Any], resume_answers.StoredAnswer]] = []
+    for answer in answers:
+        call = _find_pending_tool_call(messages, answer.interrupt_id)
+        if call is None:
+            raise ValueError(
+                f"resume: tool call {answer.interrupt_id} is not open in the paused run"
+            )
+        if call["tool_name"] not in gated:
+            raise ValueError(
+                f"resume: tool call {answer.interrupt_id} ({call['tool_name']}) "
+                "is not awaiting user input"
+            )
+        pairs.append((call, answer))
+    return pairs
+
+
+async def _apply_resume_answers(
+    *,
+    emitter: RunEmitter,
+    live_messages: list[dict[str, Any]],
+    pairs: list[tuple[dict[str, Any], resume_answers.StoredAnswer]],
+    registry: dict[str, ToolDescriptor],
+) -> None:
+    """One step answering the paused run's interrupts (RUN_EVENTS.md
+    § 4.2, as the native harness's resume): a `tool_output` per call —
+    the approved tool's result (run through `execute_tool_call`, so the
+    bound ledger records it as the side effect it is), or the declined /
+    answer text — and their `tool_result`s as one user turn."""
+    await emitter.start_step()
+    results: list[dict[str, Any]] = []
+    for call, answer in pairs:
+        tool_call_id, tool_name = call["tool_call_id"], call["tool_name"]
+        kind = request_kind_for(tool_name, call["args"])
+        args = resume_answers.approved_args(kind, answer, call["args"])
+        if args is not None:
+            await execute_tool_call(
+                emitter,
+                registry.get(tool_name),
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                args=args,
+                results=results,
+            )
+            continue
+        text = resume_answers.answer_text(kind, answer)
+        await emitter.tool_output(
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            summary="Declined by the user" if kind == "approval" else text[:200],
+            output=text,
+        )
+        results.append({"type": "tool_result", "tool_use_id": tool_call_id, "content": text})
+    live_messages.append({"role": "user", "content": results})
+    await emitter.end_step()
+
+
+async def _record_progress(pool: asyncpg.Pool, event: TaskEvent, *, user_id: str) -> None:
+    """Keep `tasks.step` current (the runs API's `Run.step`): written at
+    each step's end. Best-effort — progress, not run state."""
+    if not isinstance(event, StepEndEvent):
+        return
+    try:
+        await store.update_run(pool, run_id=event.run_id, user_id=user_id, step=event.step)
+    except Exception as exc:
+        logger.warning("executor.step_progress_failed", run_id=event.run_id, error=str(exc))
+
+
 async def _build_tool_result_text(
     *,
     request_kind: str,
@@ -2308,6 +2322,18 @@ def _translate_block(block: Any) -> dict[str, Any] | None:
 
     if block_type == "reasoning":
         return {"type": "redacted_thinking", "data": _REDACTED_THINKING_SENTINEL}
+
+    # Extended-thinking blocks this executor saved (a run with a
+    # reasoning tier): kept verbatim, signature included — Anthropic
+    # needs them back to continue a tool-use turn with thinking on.
+    if block_type == "thinking" and isinstance(block.get("signature"), str):
+        return {
+            "type": "thinking",
+            "thinking": block.get("thinking", ""),
+            "signature": block["signature"],
+        }
+    if block_type == "redacted_thinking" and isinstance(block.get("data"), str):
+        return {"type": "redacted_thinking", "data": block["data"]}
 
     _warn_unknown_block_kind(block_type)
     return None

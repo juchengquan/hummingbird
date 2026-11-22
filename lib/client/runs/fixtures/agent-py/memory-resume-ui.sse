@@ -1,10 +1,10 @@
-data: {"type":"RUN_STARTED","threadId":"9195e900-c5e5-4826-bdcf-6e14688218a6","runId":"48b7d24a-944e-4a03-8832-d54a229871bc"}
+data: {"type":"RUN_STARTED","threadId":"99b1c2a5-2727-48dd-a3d1-dfcd421f1699","runId":"f5b10e52-2629-4155-9e3d-bb381eb66b36"}
 
 id: 1
 data: {"type":"STEP_STARTED","stepName":"step-1"}
 
 id: 2
-data: {"type":"TOOL_CALL_RESULT","messageId":"48b7d24a-944e-4a03-8832-d54a229871bc:2","toolCallId":"c-ui","role":"tool","content":"{\"summary\":\"Yes\"}","metadata":{"hummingbird":{"toolName":"renderUI"}}}
+data: {"type":"TOOL_CALL_RESULT","messageId":"f5b10e52-2629-4155-9e3d-bb381eb66b36:2","toolCallId":"c-ui","role":"tool","content":"{\"summary\":\"Yes\"}","metadata":{"hummingbird":{"toolName":"renderUI"}}}
 
 id: 3
 data: {"type":"STEP_FINISHED","stepName":"step-1"}
@@ -13,16 +13,16 @@ id: 4
 data: {"type":"STEP_STARTED","stepName":"step-2"}
 
 id: 5.0
-data: {"type":"TEXT_MESSAGE_START","messageId":"48b7d24a-944e-4a03-8832-d54a229871bc:5","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_START","messageId":"f5b10e52-2629-4155-9e3d-bb381eb66b36:5","role":"assistant"}
 
 id: 5
-data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"48b7d24a-944e-4a03-8832-d54a229871bc:5","delta":"Done."}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"f5b10e52-2629-4155-9e3d-bb381eb66b36:5","delta":"Done."}
 
 id: 6.0
-data: {"type":"TEXT_MESSAGE_END","messageId":"48b7d24a-944e-4a03-8832-d54a229871bc:5"}
+data: {"type":"TEXT_MESSAGE_END","messageId":"f5b10e52-2629-4155-9e3d-bb381eb66b36:5"}
 
 id: 6
 data: {"type":"STEP_FINISHED","stepName":"step-2"}
 
-data: {"type":"RUN_FINISHED","threadId":"9195e900-c5e5-4826-bdcf-6e14688218a6","runId":"48b7d24a-944e-4a03-8832-d54a229871bc","outcome":{"type":"success"},"result":{"text":"Done."},"usage":[{"provider":"anthropic","model":"claude-sonnet-4-6","inputTokens":11,"outputTokens":7,"totalTokens":18}]}
+data: {"type":"RUN_FINISHED","threadId":"99b1c2a5-2727-48dd-a3d1-dfcd421f1699","runId":"f5b10e52-2629-4155-9e3d-bb381eb66b36","outcome":{"type":"success"},"result":{"text":"Done."},"usage":[{"provider":"anthropic","model":"claude-sonnet-4-6","inputTokens":11,"outputTokens":7,"totalTokens":18}]}
 

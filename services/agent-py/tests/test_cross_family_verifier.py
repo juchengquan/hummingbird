@@ -1,5 +1,5 @@
-"""Tests for the cross-family verifier policy and the
-_maybe_verify path that uses it."""
+"""Tests for the cross-family verifier policy (`verify_client`) and the
+executor's `_maybe_verify` path that uses it."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 from structlog.testing import capture_logs
 
-from agent_py import executor
+from agent_py import executor, verify_client
 
 
 # Sentinel "client" returned by the patched factory. Distinct id
@@ -20,11 +20,14 @@ class _SentinelClient:
     calls: list[tuple[str, int, list[dict[str, object]]]]
 
 
+def _none() -> None:
+    return None
+
+
 @pytest.fixture(autouse=True)
 def _reset_warn_once() -> None:
-    """`_warn_once` is module-level state; clear it between tests."""
-    if hasattr(executor, "_warned_keys"):
-        executor._warned_keys.clear()
+    """`warn_once` is module-level state; clear it between tests."""
+    verify_client.warned_keys.clear()
 
 
 def test_resolve_verifier_client_picks_cross_family(monkeypatch) -> None:
@@ -37,13 +40,15 @@ def test_resolve_verifier_client_picks_cross_family(monkeypatch) -> None:
     google = _SentinelClient(family="google", calls=[])
     anthropic = _SentinelClient(family="anthropic", calls=[])
 
-    monkeypatch.setattr(executor, "get_settings", lambda: settings)
-    monkeypatch.setattr(executor, "_make_google_verifier_client", lambda: google)
-    monkeypatch.setattr(executor, "_make_anthropic_verifier_client", lambda: anthropic)
+    monkeypatch.setattr(verify_client, "get_settings", lambda: settings)
+    monkeypatch.setattr(verify_client, "make_google_verifier_client", lambda: google)
+    monkeypatch.setattr(verify_client, "make_anthropic_verifier_client", lambda _src: anthropic)
 
-    out = executor._resolve_verifier_client(answerer_provider="anthropic")
+    out = verify_client.resolve_verifier_client(
+        answerer_provider="anthropic", anthropic_client=_none
+    )
     assert out is google
-    assert not executor._warned_keys  # no warning fired
+    assert not verify_client.warned_keys  # no warning fired
 
 
 def test_resolve_verifier_client_falls_back_with_warning(monkeypatch) -> None:
@@ -57,13 +62,17 @@ def test_resolve_verifier_client_falls_back_with_warning(monkeypatch) -> None:
 
     anthropic = _SentinelClient(family="anthropic", calls=[])
 
-    monkeypatch.setattr(executor, "get_settings", lambda: settings)
-    monkeypatch.setattr(executor, "_make_google_verifier_client", lambda: None)
-    monkeypatch.setattr(executor, "_make_anthropic_verifier_client", lambda: anthropic)
+    monkeypatch.setattr(verify_client, "get_settings", lambda: settings)
+    monkeypatch.setattr(verify_client, "make_google_verifier_client", lambda: None)
+    monkeypatch.setattr(verify_client, "make_anthropic_verifier_client", lambda _src: anthropic)
 
     with capture_logs() as logs:
-        out1 = executor._resolve_verifier_client(answerer_provider="anthropic")
-        out2 = executor._resolve_verifier_client(answerer_provider="anthropic")
+        out1 = verify_client.resolve_verifier_client(
+            answerer_provider="anthropic", anthropic_client=_none
+        )
+        out2 = verify_client.resolve_verifier_client(
+            answerer_provider="anthropic", anthropic_client=_none
+        )
 
     assert out1 is anthropic
     assert out2 is anthropic
@@ -81,13 +90,13 @@ def test_resolve_verifier_client_warns_once_on_same_family(monkeypatch) -> None:
 
     anthropic = _SentinelClient(family="anthropic", calls=[])
 
-    monkeypatch.setattr(executor, "get_settings", lambda: settings)
-    monkeypatch.setattr(executor, "_make_anthropic_verifier_client", lambda: anthropic)
+    monkeypatch.setattr(verify_client, "get_settings", lambda: settings)
+    monkeypatch.setattr(verify_client, "make_anthropic_verifier_client", lambda _src: anthropic)
 
     with capture_logs() as logs:
-        executor._resolve_verifier_client(answerer_provider="anthropic")
-        executor._resolve_verifier_client(answerer_provider="anthropic")
-        executor._resolve_verifier_client(answerer_provider="anthropic")
+        verify_client.resolve_verifier_client(answerer_provider="anthropic", anthropic_client=_none)
+        verify_client.resolve_verifier_client(answerer_provider="anthropic", anthropic_client=_none)
+        verify_client.resolve_verifier_client(answerer_provider="anthropic", anthropic_client=_none)
 
     matches = [log for log in logs if log.get("event") == "executor.verifier_same_family"]
     assert len(matches) == 1
@@ -108,8 +117,8 @@ async def test_maybe_verify_uses_cross_family(monkeypatch) -> None:
     # Bind the protocol to our sentinel
     object.__setattr__(client, "messages_create", fake_create)
 
-    monkeypatch.setattr(executor, "get_settings", lambda: settings)
-    monkeypatch.setattr(executor, "_resolve_verifier_client", lambda **_: client)
+    monkeypatch.setattr(verify_client, "get_settings", lambda: settings)
+    monkeypatch.setattr(verify_client, "resolve_verifier_client", lambda **_: client)
 
     out = await executor._maybe_verify(
         mode="research",
@@ -123,4 +132,15 @@ async def test_maybe_verify_uses_cross_family(monkeypatch) -> None:
     assert out is None
     assert len(client.calls) == 1
     assert client.calls[0][0] == "gemini-2.0-flash"
-    assert client.calls[0][1] == executor._VERIFY_MAX_TOKENS
+    assert client.calls[0][1] == verify_client.VERIFY_MAX_TOKENS
+
+
+async def test_maybe_verify_is_research_only(monkeypatch) -> None:
+    """Outside research mode the executor never reaches the verifier."""
+
+    async def boom(**_: object) -> None:
+        raise AssertionError("verifier called")
+
+    monkeypatch.setattr(verify_client, "verify_citations", boom)
+    out = await executor._maybe_verify(mode=None, text="X [1].", sources=[("A", "https://a", "s")])
+    assert out is None

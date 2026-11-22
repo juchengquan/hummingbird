@@ -436,9 +436,12 @@ export async function POST(req: NextRequest) {
   // their cred decrypted via the SECURITY DEFINER RPC. Tool name is
   // prefixed `mcp__<serverId>__<toolName>` so model logs carry
   // provenance and tools from different servers don't collide.
+  // `allowedMcpServerIds` (Q48): the persona's allow-list — absent means
+  // every enabled server, `[]` none.
   const mcpServers = await loadEffectiveMcpServers(
     body.workspaceId,
-    body.mcpServers
+    body.mcpServers,
+    { allowedServerIds: body.allowedMcpServerIds }
   )
   const mcpToolNames: string[] = []
   // MCP Apps: tool-name → the server + ui:// resource it renders. Only

@@ -12,3 +12,7 @@ openapi.yaml:
   no-unused-components:
     - "#/components/schemas/RunGapEventValue"
     - "#/components/schemas/RunRewindEventValue"
+    # The value of `RunAgentInput.state["hummingbird.localMcp"]` (Q45).
+    # AG-UI's `state` is untyped, so no operation can reference it; it is
+    # generated into the TS / Python types the client and agent-py use.
+    - "#/components/schemas/LocalMcpCredentials"

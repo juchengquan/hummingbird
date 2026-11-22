@@ -24,7 +24,8 @@ session.ts ── HummingbirdRunAgent (agent.ts, @ag-ui/client: enforce → veri
 | `errors.ts` | `RunsError`; `messageErrorFor(code)` → chat's `MessageError` |
 | `run-tokens.ts` | anonymous runs' `X-Run-Token`, per run, in localStorage |
 | `active-run.ts` | per-conversation active-run pointer (codec: `lib/shared/runs/active-run.ts`) |
-| `build-input.ts` | `buildRunInput(chat inputs)` → `RunAgentInput` |
+| `build-input.ts` | `buildRunInput(chat inputs)` → `RunAgentInput`: options in `forwardedProps` (contract 0.4.0 adds `research`, `allowedMcpServerIds`, `attachments`, `memoryBypass`, `verifyCitations`, `referenceImage`, `localFilesOnly`, `localMcpServers`), local MCP credentials in `state["hummingbird.localMcp"]` only; `localMcpCredentialsOf(body)` for a resume |
+| `attachments.ts` | `runAttachmentsFor(sources)` → `forwardedProps.attachments` (5b-B): signed in, files by id (no text, no image data — agent-py reads the `files` row); anonymous, `inlineFile` with the text; MCP resources by reference; bookmarks with their text — clipped to the backend's attachment budget, at most 40 |
 | `interrupts.ts` | `PendingInterrupt`, `InterruptAnswer`, `buildResume` |
 | `chat-bridge.ts` | the 4b-A ↔ 4b-B seam: `useInterruptedTurns` (ephemeral paused turns) + `registerChatRunBridge` / `getChatRunBridge` (`answerInterrupts`), and the answered turn's lifecycle |
 | `interrupt-answers.ts` | 4b-B, pure: interrupt → card question, card answer → `InterruptAnswer`, `submitTurnAnswers` (via the bridge), failure classes, answered ui parts |
@@ -209,19 +210,21 @@ run (a rejoin after a reload) restores the paused run's output first
    model: modelForCall, systemPrompt: workspaceSystemPrompt, skills:
    enabledSkills, workspaceId: activeWorkspaceId || undefined })`, then
    `const session = (await import("@/client/runs/session")).startRunSession(body, { target, sink, onStarted, onCursor })`.
-   **Attachments and reasoning effort are sent** (wave 4b-D): `images`
-   (the attached image files' data URLs, `getFileImageDataUrls` — what
-   `/v1/chat` puts on the last user turn), `documents`
-   (`runDocumentsFor(attachedFiles, conv.fileRetrievalModes)`: inline-mode
-   files' extracted text + `truncated`; RAG-mode and text-less files are
-   left to `searchFiles`) and `reasoningEffort`
+   **Attachments and reasoning effort are sent** (wave 4b-D, 5b-B): the
+   attached files, MCP resources and URL bookmarks as
+   `forwardedProps.attachments` (`runAttachmentsFor`, `attachments.ts` —
+   agent-py renders them into the system prompt as the Next route does,
+   file ids and all, Q47); an anonymous run's attached images as `images`
+   (data URLs, `getFileImageDataUrls`, on the newest user message as AG-UI
+   `image` parts — a signed-in run's go by id); and `reasoningEffort`
    (`modelSupportsReasoningEffort(model) ? chatReasoningEffort : undefined`,
-   as `/v1/chat`). They ride on the newest user message as AG-UI
-   `image` / `document` parts; one the backend can't give the model is
+   as `/v1/chat`). An attachment the backend can't give the model is
    `400 invalid_attachment` before the run exists — the "Attachment can't
-   be sent" bubble (Retry re-reads the chat's attachments). Still not sent
-   (Q32; the plan's Phase 3 checklist): MCP servers / resources, URL
-   bookmarks, sandbox files, reference images, the memory opt-out. The
+   be sent" bubble (Retry re-reads the chat's attachments). On a resume
+   the attachments ride again in the paused request's `forwardedProps`; after
+   a reload `composeResumeInput` rebuilds them from the conversation's
+   current selection. Still not sent (Q32; the plan's Phase 3 checklist):
+   sandbox files. The
    contract caps `systemPrompt` at 20 000 chars and `skills` at 10 — `422`
    past them.
    Parts can arrive before any text (`routed_model` is a run's first
@@ -274,6 +277,10 @@ run (a rejoin after a reload) restores the paused run's output first
   `runId`, same thread. Every open interrupt needs an answer
   (`buildResume` throws otherwise; an expired one can only be cancelled).
   Anonymous: the previous run's token is presented automatically.
+  The resume carries the paused request's `forwardedProps` and local MCP
+  credentials again (agent-py keeps neither): `chat-runner.ts` takes them
+  from the in-memory request it sent, or `composeResumeInput` re-reads
+  them after a reload. Credentials are never persisted client-side.
   agent-py continues the turn from the interrupted run's stored checkpoint
   (Q31). Without it — an anonymous run past its ~15 min memory TTL — the
   text-only history carries no tool calls, so the resume fails

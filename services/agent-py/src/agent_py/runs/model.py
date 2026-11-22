@@ -300,6 +300,10 @@ class RunRecord:
     parent_run_id: str | None = None
     previous_run_id: str | None = None
     goal: str | None = None
+    max_steps: int | None = None
+    """The step budget (`tasks.max_steps`)."""
+    step: int | None = None
+    """Steps taken so far (`tasks.step`) — background-run progress."""
     open_interrupts: tuple[dict[str, object], ...] = ()
     result: dict[str, object] | None = None
     error: dict[str, object] | None = None
@@ -323,8 +327,11 @@ def _iso(dt: datetime | None) -> str | None:
 def run_to_contract(run: RunRecord, *, last_seq: int) -> dict[str, object]:
     """The contract's `Run` resource. `last_seq` comes from the event log
     (`RunEventLog.last_seq`). Applies the status ↔ result / error /
-    openInterrupts rule: only the field matching the status is filled."""
+    openInterrupts rule: only the field matching the status is filled.
+    `goal` / `maxSteps` / `step` are background-run progress, null for an
+    interactive run."""
     status = run.status
+    background = run.mode == "background"
     return {
         "id": run.id,
         "threadId": run.thread_id,
@@ -336,6 +343,9 @@ def run_to_contract(run: RunRecord, *, last_seq: int) -> dict[str, object]:
         "result": (run.result or {}) if status == "succeeded" else None,
         "error": run.error if status == "failed" else None,
         "lastSeq": last_seq,
+        "goal": run.goal if background else None,
+        "maxSteps": run.max_steps if background else None,
+        "step": run.step if background else None,
         "createdAt": _iso(run.created_at),
         "startedAt": _iso(run.started_at),
         "finishedAt": _iso(run.finished_at),

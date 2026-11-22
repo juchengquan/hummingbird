@@ -61,7 +61,14 @@ import type { SkillId } from "@/shared/skills/types"
 import type { Message, MessageError, MessageErrorCode } from "@/shared/types"
 import { toISO } from "@/shared/utils"
 import { abortStreamsOfDeletedConversations } from "@/client/chat/abort-deleted-streams"
-import { buildRunInput, runDocumentsFor } from "@/client/runs/build-input"
+import {
+  attachedMcpResources,
+  attachedUrlBookmarks,
+  hasSignedInSession,
+} from "@/client/chat/context-sources"
+import { runAttachmentsFor } from "@/client/runs/attachments"
+import { buildRunInput } from "@/client/runs/build-input"
+import { localMcpForRun } from "@/client/runs/local-mcp"
 import { registerChatRunBridge } from "@/client/runs/chat-bridge"
 import { createChatRunner, type ChatRunner } from "@/client/runs/chat-runner"
 import { RUNS_CHAT_ENABLED } from "@/client/runs/config"
@@ -90,10 +97,10 @@ export interface SendOptions {
    *  workspace's system prompt via `composeSystemPrompts`. See
    *  `PLAN-custom-agents.md`. */
   agentSystemPrompt?: string
-  /** Per-turn MCP allow-list — when set, cloud-mode MCP servers are
-   *  filtered to this list server-side (Phase 2 of `PLAN-custom-agents`).
-   *  Passed through to task mode; the inline chat stream relies on the
-   *  server-side filter in `loadEffectiveMcpServers`. */
+  /** Per-turn MCP allow-list — when set, MCP servers are filtered to
+   *  this list server-side (Phase 2 of `PLAN-custom-agents`, Q48): task
+   *  mode, the chat route (`loadEffectiveMcpServers`) and runs alike.
+   *  Absent = no restriction; `[]` = no MCP. */
   allowedMcpServerIds?: string[]
   /** Route this turn's reply onto a specific conversation rather than
    *  the React-subscribed `activeConversationId`. Needed when the caller
@@ -235,6 +242,27 @@ export function useChatSend(): UseChatSendResult {
           reasoningEffort: modelSupportsReasoningEffort(model)
             ? st.chatReasoningEffort ?? undefined
             : undefined,
+          memoryBypass: conv?.memoryOff || undefined,
+          verifyCitations: st.verifyCitations || undefined,
+          localFilesOnly: st.localFilesOnly || undefined,
+          // The conversation's sources as they are now (nothing keeps the
+          // paused run's request across a reload) — what a send would
+          // attach. Signed in → files by id, images included.
+          attachments: runAttachmentsFor({
+            files: buildAttachments({
+              conversation: conv,
+              files: st.files,
+              conversationFiles: st.conversationFiles,
+            }).attachedFiles,
+            retrievalModes: conv?.fileRetrievalModes,
+            mcpResources: attachedMcpResources(conv, st),
+            bookmarks: attachedUrlBookmarks(conv, st),
+            cloud: !turn.anonymous,
+          }),
+          // The local MCP servers + their credentials, re-read for the same
+          // reason (Q45). The I2I `referenceImage` is per send and is not
+          // re-applied after a reload.
+          ...localMcpForRun(st.mcpServers, workspaceId, getLocalCred),
         }
       },
     })
@@ -388,13 +416,18 @@ export function useChatSend(): UseChatSendResult {
       // `resolveRunsTarget()` is `null` unless that option is selected and
       // agent-py configured — then the path below runs exactly as before.
       // Signed-out users get a target too (anonymous runs, Q34), so no
-      // `authToken` / mock fallback here. Attachments go as the newest
-      // user message's parts — the attached images' data URLs (as
-      // `buildMessages` sends them) and the inline-mode files' extracted
-      // text (`runDocumentsFor`, as the file attachments below) — and the
-      // reasoning tier as `/v1/chat` sends it. Not yet sent (Q32, see the
-      // plan's Phase 3 checklist): MCP servers / resources, URL bookmarks,
-      // sandbox files, reference images, the memory opt-out.
+      // `authToken` / mock fallback here. An anonymous run's attached
+      // images go as the newest user message's parts (their data URLs, as
+      // `buildMessages` sends them), and the reasoning tier as `/v1/chat`
+      // sends it. The contract-0.4.0 options
+      // go too where they are at hand (the memory opt-out, citation
+      // checks, `localFilesOnly`, the I2I reference, the persona's MCP
+      // allow-list, the local MCP servers with their credentials in
+      // `state`). Files, MCP resources and URL bookmarks go as
+      // `attachments` (`runAttachmentsFor`): a signed-in run's files by
+      // id — their images too, so no image data is sent for them (Q44) —
+      // and an anonymous run's by value. Not yet sent (Q32, see the plan's
+      // Phase 3 checklist): sandbox files.
       const runsTarget = RUNS_CHAT_ENABLED
         ? await (
             await import("@/client/api/backend-resolver")
@@ -416,14 +449,31 @@ export function useChatSend(): UseChatSendResult {
             systemPrompt: workspaceSystemPrompt,
             skills: enabledSkills,
             workspaceId: activeWorkspaceId || undefined,
-            images: attachedImageUrls,
-            documents: runDocumentsFor(
-              attachedFiles,
-              conv?.fileRetrievalModes
-            ),
+            // Signed in: the image files go by id (`attachments`).
+            images: runsTarget.authToken ? [] : attachedImageUrls,
+            attachments: runAttachmentsFor({
+              files: attachedFiles,
+              retrievalModes: conv?.fileRetrievalModes,
+              mcpResources: attachedMcpResources(conv, useStore.getState()),
+              bookmarks: attachedUrlBookmarks(conv, useStore.getState()),
+              cloud: runsTarget.authToken !== null,
+            }),
             reasoningEffort: modelSupportsReasoningEffort(modelForCall)
               ? useStore.getState().chatReasoningEffort ?? undefined
               : undefined,
+            memoryBypass: conv?.memoryOff || undefined,
+            verifyCitations: useStore.getState().verifyCitations || undefined,
+            localFilesOnly: useStore.getState().localFilesOnly || undefined,
+            referenceImage: options?.referenceImage,
+            allowedMcpServerIds: options?.allowedMcpServerIds,
+            // Local MCP servers (Q42/Q45) — the `/v1/chat` body's
+            // `mcpServersForRequest` below; credentials go in `state`.
+            ...localMcpForRun(
+              useStore.getState().mcpServers,
+              activeWorkspaceId,
+              getLocalCred,
+              { allowedMcpServerIds: options?.allowedMcpServerIds }
+            ),
           }),
         })
         return
@@ -509,11 +559,16 @@ export function useChatSend(): UseChatSendResult {
       const attachmentsForRequest: ChatRequestInput["attachments"] = []
 
       const retrievalModes = conv?.fileRetrievalModes ?? {}
+      // Signed in → the files are synced rows the server can search: send
+      // their ids (Q47; `searchFiles` takes a `fileId`).
+      const cloudFiles =
+        attachedFiles.length > 0 && (await hasSignedInSession())
       for (const file of attachedFiles) {
         const mode = retrievalModes[file.id] ?? "inline"
         attachmentsForRequest.push({
           kind: "file",
           summary: {
+            ...(cloudFiles ? { id: file.id } : {}),
             name: file.name,
             size: file.size,
             type: file.type,
@@ -535,21 +590,7 @@ export function useChatSend(): UseChatSendResult {
         })
       }
 
-      const mcpResourcesById = new Map(
-        mcpStore.mcpResources.map((r) => [r.id, r])
-      )
-      const workspaceMcpIds = conv?.selectedMcpResourceIds ?? []
-      const privateMcpIds = conv
-        ? mcpStore.conversationMcpResources
-            .filter((cmr) => cmr.conversationId === conv.id)
-            .map((cmr) => cmr.resourceId)
-        : []
-      const attachedMcpResourceIds = [
-        ...new Set([...workspaceMcpIds, ...privateMcpIds]),
-      ]
-      for (const id of attachedMcpResourceIds) {
-        const resource = mcpResourcesById.get(id)
-        if (!resource || resource.deletedAt) continue
+      for (const resource of attachedMcpResources(conv, mcpStore)) {
         attachmentsForRequest.push({
           kind: "mcp_resource",
           ref: {
@@ -562,21 +603,7 @@ export function useChatSend(): UseChatSendResult {
         })
       }
 
-      const urlBookmarksById = new Map(
-        mcpStore.urlBookmarks.map((b) => [b.id, b])
-      )
-      const workspaceUrlIds = conv?.selectedUrlBookmarkIds ?? []
-      const privateUrlIds = conv
-        ? mcpStore.conversationUrlBookmarks
-            .filter((cub) => cub.conversationId === conv.id)
-            .map((cub) => cub.bookmarkId)
-        : []
-      const attachedUrlBookmarkIds = [
-        ...new Set([...workspaceUrlIds, ...privateUrlIds]),
-      ]
-      for (const id of attachedUrlBookmarkIds) {
-        const bookmark = urlBookmarksById.get(id)
-        if (!bookmark || bookmark.deletedAt) continue
+      for (const bookmark of attachedUrlBookmarks(conv, mcpStore)) {
         attachmentsForRequest.push({
           kind: "url_bookmark",
           bookmark: {
@@ -650,6 +677,8 @@ export function useChatSend(): UseChatSendResult {
               mcpServersForRequest.length > 0
                 ? mcpServersForRequest
                 : undefined,
+            // Q48: the persona's MCP allow-list, filtered server-side.
+            allowedMcpServerIds: options?.allowedMcpServerIds,
             attachments:
               attachmentsForRequest.length > 0
                 ? attachmentsForRequest

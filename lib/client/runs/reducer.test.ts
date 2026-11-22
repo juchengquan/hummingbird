@@ -11,6 +11,7 @@ import { fixtureNames, loadFixture, messageOf, ModelSink, type ModelMessage } fr
 import {
   framesFromView,
   hasOutput,
+  INTERRUPT_PENDING_EVENT,
   initialRunTurnState,
   reduceRunEvent,
   reduceRunEvents,
@@ -325,6 +326,24 @@ describe("reducer edges", () => {
     )
   })
 
+  test("the interrupt_pending notice is recorded nowhere; RUN_FINISHED carries the interrupt", () => {
+    // A recorded interrupted stream announces the interrupt before the
+    // closing event, with the same object the outcome carries.
+    const events = loadFixture("memory-interrupt-signed_in").items.map((i) => i.event)
+    const at = events.findIndex((e) => e.type === "CUSTOM" && (e as { name?: string }).name === INTERRUPT_PENDING_EVENT)
+    const closing = events.findIndex((e) => e.type === "RUN_FINISHED")
+    expect(at).toBeGreaterThan(-1)
+    expect(at).toBeLessThan(closing)
+    const pending = (events[at] as unknown as { value: unknown }).value
+    const outcome = (events[closing] as unknown as { outcome: { interrupts: unknown[] } }).outcome
+    expect(outcome.interrupts).toEqual([pending])
+
+    const before = reduceRunEvents(events.slice(0, at)).state
+    const step = reduceRunEvent(before, events[at]!)
+    expect(step.ops).toEqual([])
+    expect(step.state).toBe(before)
+  })
+
   test("replacing an appended part resets the message; a set part re-applies", () => {
     const content = { id: "c1", stdout: "1", stderr: "", results: [] }
     const snap = (c: unknown, type = "hummingbird.code_result", id = "r:code_result:c1") => ({
@@ -342,6 +361,21 @@ describe("reducer edges", () => {
     const s2 = snap({ values: ["b"] }, "hummingbird.suggestions", "r:suggestions")
     ;({ ops } = reduceRunEvents([s1, s2] as never, state))
     expect(ops.map((o) => o.type)).toEqual(["frame", "frame"])
+  })
+
+  test("an MCP App part (wave 5b-D) becomes the mcp_app frame the chat renders", () => {
+    const content = { id: "c2", serverId: "srv-2", html: "<h1>panel</h1>", resourceUri: "ui://fake/panel" }
+    const { ops } = reduceRunEvents([
+      started,
+      {
+        type: "ACTIVITY_SNAPSHOT",
+        messageId: "r:mcp_app:c2",
+        activityType: "hummingbird.mcp_app",
+        content,
+        replace: true,
+      },
+    ] as never)
+    expect(ops).toEqual([{ type: "frame", frame: { type: "mcp_app", ...content } }])
   })
 
   test("hasOutput: plan / routed-model / suggestions alone are no answer", () => {

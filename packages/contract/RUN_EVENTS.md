@@ -116,7 +116,7 @@ The parent message id is reset to none by every `step_start`.
 | `step_error` | `CUSTOM hb.step_error { message, willRetry }` | non-fatal |
 | `handoff` `enter` | `SUBAGENT_STARTED { subagentRunId, name: agent, metadata?: { hummingbird: { subgoal } } }` | the pinned schema's `SUBAGENT_STARTED` has no `description`, so the subgoal rides in the event's `metadata` (only when set). Today every sub-agent is a separate background run (`parentRunId`), so nothing is attributed to it inline |
 | `handoff` `exit` | `SUBAGENT_FINISHED { subagentRunId }` | `subagentRunId`: by `child_task_id`; without one, the most recent unmatched `enter` of the same `agent`. An `exit` matching no `enter` encodes to nothing |
-| `approval` `request` | — | the interrupt is reported by the closing `RUN_FINISHED` (§ 4) |
+| `approval` `request` | `CUSTOM hb.interrupt_pending` | the question as it is raised: the value is the AG-UI `Interrupt` built from the entry (§ 4.1), the same object the closing `RUN_FINISHED` (and `Run.openInterrupts`) carries. The closing event stays the authority on what is open (§ 4) |
 | `approval` `response` | `CUSTOM hb.interrupt_resolved { interruptId: approvalId, payload }` | `payload` as in § 4.2. Only legacy in-place resumes write these into the same run's log; a Q24 resume run's answers are its request's `resume[]`, and what they produced shows as its `TOOL_CALL_RESULT`s (§ 4.2) |
 | `compact` | `CUSTOM hb.context_compacted { summary? }` | model-context compaction, not log compaction |
 | part kinds (§ 3.3) | `ACTIVITY_SNAPSHOT { messageId, activityType, content, replace: true }` | |
@@ -168,6 +168,7 @@ namespaced `hummingbird.`; a consumer ignores names it does not know.
 | `hummingbird.gap` | `RunGapEventValue` (`openapi.yaml`) `{ after, resumeAt, reason }` | the cursor points before retained events (§ 6.3); always followed by `MESSAGES_SNAPSHOT` |
 | `hummingbird.rewind` | `RunRewindEventValue` `{ after }` | a resume marker (§ 6.5) |
 | `hummingbird.step_error` | `{ message, willRetry }` | non-fatal step failure |
+| `hummingbird.interrupt_pending` | an AG-UI `Interrupt` (§ 4.1) | a question raised mid-run (§ 3.2), before the run's row is `interrupted`. A background run may wait on it for hours: a client following one (the tasks panel) can show the question as it lands. Compaction drops it (§ 7, like every `approval` entry); a client that only answers what `RUN_FINISHED` reports (chat) may ignore it |
 | `hummingbird.interrupt_resolved` | `{ interruptId, payload }` | legacy in-place answer (§ 3.2) |
 | `hummingbird.context_compacted` | `{ summary? }` (key omitted when absent) | model-context compaction |
 
@@ -240,6 +241,21 @@ both start. A resume that failed or was cancelled frees the slot: the
 interrupts can be answered again with a new `runId`. A retry of the
 resume itself (same `runId`) is the usual idempotent replay.
 
+**Background runs (Q41).** A resume of a background run is a background
+run (`forwardedProps.mode: "background"`); it answers a top-level
+background run only (a sub-agent run is answered in place through its
+task — its parent waits on that row — so resuming one is `409
+invalid_state`, as is resuming an interactive run as a background one).
+It starts from the interrupted run's saved checkpoint — its model
+messages and its setup: model, skills, workspace, approvals, research
+mode, MCP allow-list; the resume's own `forwardedProps` do not change
+it, only its `maxSteps` sets the new run's budget — with the answers
+applied in the new run's first step, exactly as above. Each paused task
+is answered one way only while the old task routes live: a run answered
+through `POST /api/tasks/:id/respond` can't be resumed (`409
+run_already_answered`), and `respond` refuses a task a live resume
+answers (`409 invalid_state`) — migration 0043.
+
 **What the model continues from (Q31).** The interrupted run stores its
 harness state with its outcome (`tasks.checkpoint`, or the memory
 store's copy for a run without a database); the resume run reads it
@@ -248,6 +264,20 @@ model saw, in full, not the summaries the client holds. Without one
 (an anonymous run past its TTL, an interactive run whose log was purged
 — the checkpoint goes with it, § 7 — or another harness) the harness
 rebuilds what it can from the client's `messages`.
+
+### 4.3 What a resume sends again
+
+A resume is a new run, and the backend keeps no input across runs
+(Q15): the client sends the history, the same `forwardedProps` as the
+interrupted run (plus `previousRunId`) and — if the run used local MCP
+servers — their credentials again in `state["hummingbird.localMcp"]`
+(`LocalMcpCredentials`, Q45). Those credentials are the one secret a run
+input carries: the backend holds them in memory for the run only, never
+in the run row, its checkpoint, the event log, a log line or an error,
+and never echoes them in a stream (agent-py: `runs/credentials.py`,
+pinned by `tests/test_run_credentials.py`). They are never sent in
+`forwardedProps` (stored with a background run) or a header (proxy
+access logs record headers); a background run refuses local MCP (Q42).
 
 ## 5. Results, errors and usage
 

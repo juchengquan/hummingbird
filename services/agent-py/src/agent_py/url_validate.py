@@ -13,6 +13,13 @@ to bare-domain input (`example.com` → `https://example.com`) and
 canonicalises the hostname + path so dedup checks compare the same
 shape. Mirrors the TS `normalizeUrl` exported alongside.
 
+`OutboundUrlPolicy` relaxes pass 2 (and the textual blocklist) for
+private hosts — MCP only, when the operator sets
+`MCP_ALLOW_PRIVATE_HOSTS=true` (`mcp_client.mcp_outbound_policy`), as
+`OutboundUrlPolicy` in the TS file. Link-local addresses
+(169.254.0.0/16, fe80::/10 — the cloud metadata endpoint) and the named
+metadata hosts stay blocked under every policy.
+
 Treat every reject as a security boundary — when in doubt, deny.
 """
 
@@ -56,6 +63,37 @@ BLOCKED_EXACT_HOSTS: frozenset[str] = frozenset(
         "metadata.azure.com",
     }
 )
+
+
+#: Blocked under every policy — `ALWAYS_BLOCKED_HOSTS` in the TS file.
+ALWAYS_BLOCKED_HOSTS: frozenset[str] = frozenset(
+    {
+        "metadata.google.internal",
+        "metadata.azure.com",
+        "metadata",
+    }
+)
+
+
+@dataclass(frozen=True)
+class OutboundUrlPolicy:
+    """Per-call relaxation of the private-host rules (`OutboundUrlPolicy`
+    in `lib/server/url/validate.ts`). The default is the strict
+    public-internet-only posture every fetcher uses.
+
+    `allow_private_hosts` lets loopback / RFC 1918 / ULA / `.local`-style
+    hosts through — MCP traffic only, when the operator opts in with
+    `MCP_ALLOW_PRIVATE_HOSTS=true` (a dev MCP server on `localhost`).
+    Even then link-local (169.254.0.0/16, fe80::/10, which covers the
+    169.254.169.254 metadata endpoint), AWS's IPv6 IMDS address and the
+    named metadata hosts stay blocked: no legitimate MCP server lives
+    there, and they are the most valuable SSRF target."""
+
+    allow_private_hosts: bool = False
+
+
+PUBLIC_ONLY = OutboundUrlPolicy()
+"""The default policy: public addresses only."""
 
 
 @dataclass(frozen=True)
@@ -135,11 +173,13 @@ def _has_scheme(raw: str) -> bool:
     return bool(_NON_URL_SCHEME_RE.match(raw))
 
 
-async def validate_outbound_url(raw_url: str) -> ValidationResult:
+async def validate_outbound_url(
+    raw_url: str, policy: OutboundUrlPolicy = PUBLIC_ONLY
+) -> ValidationResult:
     """Two-pass URL validation. Returns `ValidationOk(url)` with the
     canonical form on success, or `ValidationError(code, message)`
     on rejection. Caller treats every error as a 4xx user-facing
-    failure."""
+    failure. `policy` relaxes the private-host rules (MCP only)."""
     try:
         parsed = urlparse(raw_url)
         if not parsed.netloc:
@@ -154,44 +194,60 @@ async def validate_outbound_url(raw_url: str) -> ValidationResult:
             message=f"Only http(s) URLs are allowed; got {scheme}:",
         )
 
-    host_lower = (parsed.hostname or "").lower()
+    try:
+        hostname = parsed.hostname
+    except ValueError:
+        return ValidationError(code="invalid_url", message="URL is not parseable")
+    host_lower = (hostname or "").lower()
     if not host_lower:
         return ValidationError(code="invalid_url", message="URL has no hostname")
+    # A trailing root dot (`localhost.`, `metadata.google.internal.`)
+    # must not dodge the textual blocklists.
+    host_match = host_lower[:-1] if host_lower.endswith(".") else host_lower
 
-    if host_lower in BLOCKED_EXACT_HOSTS:
+    if host_match in ALWAYS_BLOCKED_HOSTS:
         return ValidationError(
             code="blocked_host",
-            message=f"Hostname {host_lower!r} is blocked",
+            message=f"Hostname {host_match!r} is blocked",
         )
-    for suffix in BLOCKED_HOST_SUFFIXES:
-        if host_lower == suffix.lstrip(".") or host_lower.endswith(suffix):
+    if not policy.allow_private_hosts:
+        if host_match in BLOCKED_EXACT_HOSTS:
             return ValidationError(
                 code="blocked_host",
-                message=f"Hostnames ending in {suffix!r} are blocked",
+                message=f"Hostname {host_match!r} is blocked",
             )
+        for suffix in BLOCKED_HOST_SUFFIXES:
+            if host_match == suffix.lstrip(".") or host_match.endswith(suffix):
+                return ValidationError(
+                    code="blocked_host",
+                    message=f"Hostnames ending in {suffix!r} are blocked",
+                )
 
-    resolved = await resolve_public_addresses(host_lower)
+    resolved = await resolve_public_addresses(host_lower, policy)
     if isinstance(resolved, ValidationError):
         return resolved
     return ValidationOk(url=raw_url)
 
 
-async def resolve_public_addresses(host: str) -> list[str] | ValidationError:
+async def resolve_public_addresses(
+    host: str, policy: OutboundUrlPolicy = PUBLIC_ONLY
+) -> list[str] | ValidationError:
     """Resolve `host` (hostname or IP literal) and return its addresses
-    iff EVERY one is public. Any private / loopback / link-local / ...
-    address → `ValidationError` (DNS rebinding defence — `evil.com`
-    could resolve to 127.0.0.1).
+    iff EVERY one is allowed under `policy` (public only by default).
+    Any disallowed address → `ValidationError` (DNS rebinding defence —
+    `evil.com` could resolve to 127.0.0.1).
 
     Used twice per outbound request: by `validate_outbound_url` before
     the request, and by `outbound_http`'s network backend at socket
     connect time, so the address actually dialled is the one checked
-    (closes the TOCTOU window between validation and connect)."""
+    (closes the TOCTOU window between validation and connect) — with
+    the same policy both times."""
     host_lower = host.lower()
 
     # If the hostname is already a literal IP, check it directly.
     ip_literal = _try_ip(host_lower)
     if ip_literal is not None:
-        if _is_private_ip(ip_literal):
+        if not is_address_allowed(ip_literal, policy):
             return ValidationError(
                 code="private_address",
                 message=f"Address {ip_literal} is in a private range",
@@ -221,7 +277,7 @@ async def resolve_public_addresses(host: str) -> list[str] | ValidationError:
                 code="private_address",
                 message=f"Hostname {host_lower!r} resolved to unparseable {addr!r}",
             )
-        if _is_private_ip(ip):
+        if not is_address_allowed(ip, policy):
             return ValidationError(
                 code="private_address",
                 message=(f"Hostname {host_lower!r} resolves to private address {addr}"),
@@ -229,6 +285,34 @@ async def resolve_public_addresses(host: str) -> list[str] | ValidationError:
         if ip not in out:
             out.append(ip)
     return out
+
+
+def is_address_allowed(addr: str, policy: OutboundUrlPolicy = PUBLIC_ONLY) -> bool:
+    """Whether a numeric address may be connected to under `policy`
+    (`isAddressAllowed` in the TS file): never an always-blocked one
+    (link-local, metadata), any other under `allow_private_hosts`, else
+    only a public one."""
+    if _is_always_blocked_ip(addr):
+        return False
+    if policy.allow_private_hosts:
+        return True
+    return not _is_private_ip(addr)
+
+
+def _is_always_blocked_ip(addr: str) -> bool:
+    """Addresses no outbound request may reach under any policy:
+    link-local (169.254.0.0/16 — the cloud metadata endpoint — and
+    fe80::/10, plain or IPv4-mapped) and AWS's IPv6 IMDS address
+    `fd00:ec2::254`. Unparseable input is denied."""
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return True
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            return ip.ipv4_mapped.is_link_local
+        return ip.is_link_local or ip == ipaddress.IPv6Address("fd00:ec2::254")
+    return ip.is_link_local
 
 
 def _try_ip(value: str) -> str | None:
@@ -299,11 +383,15 @@ async def _async_getaddrinfo(hostname: str) -> list[str]:
 
 __all__ = [
     "ALLOWED_SCHEMES",
+    "ALWAYS_BLOCKED_HOSTS",
     "BLOCKED_EXACT_HOSTS",
     "BLOCKED_HOST_SUFFIXES",
+    "PUBLIC_ONLY",
+    "OutboundUrlPolicy",
     "ValidationError",
     "ValidationOk",
     "ValidationResult",
+    "is_address_allowed",
     "normalize_url",
     "resolve_public_addresses",
     "validate_outbound_url",

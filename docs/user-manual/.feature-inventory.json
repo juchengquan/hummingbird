@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-21T14:33:59Z",
+  "generatedAt": "2026-11-22T03:18:32Z",
   "panels": [
     {
       "id": "agents-dialog",
@@ -536,7 +536,7 @@
     },
     {
       "id": "MCP_ALLOW_PRIVATE_HOSTS",
-      "description": "MCP private-host opt-in — optional, default off. Every MCP server URL (local-mode request bodies, cloud-mode rows, saves) is SSRF-checked and must resolve to a public address. Set to `true` to also allow loopback / RFC 1918 / `.local`-style hosts — e.g. an MCP server on `http://localhost:3001/mcp` during single-user local dev. Link-local and cloud-metadata addresses (169.254.169.254 etc.) stay blocked even then. Do NOT enable on a shared/hosted deployment: any user could then point the server at your internal network. Honoured by Next.js and services/agent-ts alike.",
+      "description": "MCP private-host opt-in — optional, default off. Every MCP server URL (local-mode request bodies, cloud-mode rows, saves) is SSRF-checked and must resolve to a public address. Set to `true` to also allow loopback / RFC 1918 / `.local`-style hosts — e.g. an MCP server on `http://localhost:3001/mcp` during single-user local dev. Link-local and cloud-metadata addresses (169.254.169.254 etc.) stay blocked even then. Do NOT enable on a shared/hosted deployment: any user could then point the server at your internal network. Honoured by Next.js, services/agent-ts and services/agent-py alike (agent-py: only `true` enables it; a value other than `true` / `false` / empty stops it at boot).",
       "required": true,
       "sourceFile": ".env.example"
     },
@@ -566,7 +566,7 @@
     },
     {
       "id": "MINIMAX_IMAGE_RATE_LIMIT_PER_MINUTE",
-      "description": "Image generation — optional. When MINIMAX_CN_API_KEY above is set, the chat route exposes a `generateImage` tool that calls Minimax's documented `/v1/image_generation` endpoint. The endpoint host is derived from MINIMAX_CN_BASE_URL's origin (image and chat share a host on Minimax — chat lives at `/anthropic/v1/messages`, image at `/v1/image_generation`). When MINIMAX_CN_BASE_URL is unset, the client falls back to the default `https://api.minimaxi.com` endpoint. Supports text-to-image and image-to-image (when the model includes a `referenceImageUrl`). Each call costs ~1–3¢ depending on aspect ratio + count, so the per-IP rate limit below defaults tight. Raise for trusted deployments behind auth; lower if you're seeing abuse.",
+      "description": "Image generation — optional. When MINIMAX_CN_API_KEY above is set, the chat route exposes a `generateImage` tool that calls Minimax's documented `/v1/image_generation` endpoint. The endpoint host is derived from MINIMAX_CN_BASE_URL's origin (image and chat share a host on Minimax — chat lives at `/anthropic/v1/messages`, image at `/v1/image_generation`). When MINIMAX_CN_BASE_URL is unset, the client falls back to the default `https://api.minimaxi.com` endpoint. Supports text-to-image and image-to-image (when the model includes a `referenceImageUrl`). Each call costs ~1–3¢ depending on aspect ratio + count, so the per-IP rate limit below defaults tight. Raise for trusted deployments behind auth; lower if you're seeing abuse. The agent service (agent-py) reads the same variable, the same way, for `generateImage` on interactive runs (`/v1/runs`).",
       "required": false,
       "sourceFile": ".env.example"
     },

@@ -31,7 +31,12 @@ import httpx
 import structlog
 
 from .outbound_http import build_guarded_client
-from .url_validate import ValidationError, ValidationOk, validate_outbound_url
+from .url_validate import (
+    OutboundUrlPolicy,
+    ValidationError,
+    ValidationOk,
+    validate_outbound_url,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -50,13 +55,27 @@ class McpUrlBlockedError(Exception):
         self.validation = validation
 
 
-async def validate_mcp_url(url: str) -> str:
+def mcp_outbound_policy() -> OutboundUrlPolicy:
+    """The SSRF policy for MCP endpoints (`mcpOutboundPolicy` in
+    `lib/server/mcp/outbound.ts`): private hosts only when the operator
+    set `MCP_ALLOW_PRIVATE_HOSTS=true`; link-local / metadata addresses
+    never (`url_validate.OutboundUrlPolicy`). Read per call, so a test
+    that swaps the settings sees it."""
+    from .settings import get_settings
+
+    return OutboundUrlPolicy(allow_private_hosts=get_settings().MCP_ALLOW_PRIVATE_HOSTS)
+
+
+async def validate_mcp_url(url: str, policy: OutboundUrlPolicy | None = None) -> str:
     """Return the validated URL, or raise `McpUrlBlockedError`.
 
     Every MCP URL is untrusted — a request body (local mode), a
     `mcp_servers` row (cloud mode: user-editable under RLS) or an
-    upsert — so it is checked at every use, not only at save time."""
-    validation = await validate_outbound_url(url)
+    upsert — so it is checked at every use, not only at save time.
+    `policy` defaults to `mcp_outbound_policy()`."""
+    validation = await validate_outbound_url(
+        url, policy if policy is not None else mcp_outbound_policy()
+    )
     if not isinstance(validation, ValidationOk):
         raise McpUrlBlockedError(validation)
     return validation.url
@@ -77,6 +96,30 @@ def mcp_http_client_factory(
     return build_guarded_client(headers=headers, timeout=timeout, auth=auth)
 
 
+def _private_hosts_http_client_factory(
+    headers: dict[str, str] | None = None,
+    timeout: httpx.Timeout | None = None,
+    auth: httpx.Auth | None = None,
+) -> httpx.AsyncClient:
+    """`mcp_http_client_factory` under `MCP_ALLOW_PRIVATE_HOSTS`: the
+    connect-time check admits private addresses, never link-local /
+    metadata ones."""
+    return build_guarded_client(
+        headers=headers,
+        timeout=timeout,
+        auth=auth,
+        policy=OutboundUrlPolicy(allow_private_hosts=True),
+    )
+
+
+def mcp_http_client_factory_for(policy: OutboundUrlPolicy) -> Any:
+    """The SDK client factory whose connect-time check applies `policy`
+    — the same one the URL was validated with."""
+    if policy.allow_private_hosts:
+        return _private_hosts_http_client_factory
+    return mcp_http_client_factory
+
+
 @dataclass(frozen=True)
 class McpEndpoint:
     """The subset of `McpServer` (TS shape) that the wrapper actually
@@ -95,6 +138,10 @@ class McpToolDescriptor:
     name: str
     description: str | None = None
     input_schema: dict[str, Any] | None = None
+    ui_resource_uri: str | None = None
+    """MCP Apps (ext-apps): the `ui://` resource the tool renders a panel
+    from — the tool's `_meta.ui.resourceUri` at discovery, cached as
+    `uiResourceUri`. None for ordinary tools."""
 
 
 @dataclass(frozen=True)
@@ -153,6 +200,7 @@ class McpResourceContent:
 async def _open_session(
     endpoint: McpEndpoint,
     credentials: dict[str, Any] | None,
+    policy: OutboundUrlPolicy | None = None,
 ) -> Any:
     """Open a fresh MCP session over streamable-HTTP and yield the
     initialized `ClientSession`. The function is split out as a
@@ -162,7 +210,8 @@ async def _open_session(
 
     The URL is re-validated here (SSRF gate) and the SDK's HTTP client
     is the guarded one (`mcp_http_client_factory`), whichever caller —
-    proxy, `/v1/chat`, the task executor — opened the session.
+    proxy, `/v1/chat`, the task executor, a run — opened the session,
+    both under `policy` (default `mcp_outbound_policy()`).
 
     Headers from `credentials["headers"]` are forwarded to the upstream
     MCP server after `_headers_from` drops hop-by-hop / framing / proxy
@@ -174,13 +223,14 @@ async def _open_session(
     from mcp import ClientSession
     from mcp.client.streamable_http import streamablehttp_client
 
-    url = await validate_mcp_url(endpoint.url)
+    effective = policy if policy is not None else mcp_outbound_policy()
+    url = await validate_mcp_url(endpoint.url, effective)
     headers = _headers_from(credentials)
     async with (
         streamablehttp_client(
             url,
             headers=headers,
-            httpx_client_factory=mcp_http_client_factory,
+            httpx_client_factory=mcp_http_client_factory_for(effective),
         ) as (read, write, _),
         ClientSession(read, write) as session,
     ):
@@ -261,6 +311,8 @@ def _headers_from(credentials: dict[str, Any] | None) -> dict[str, str] | None:
 async def discover(
     endpoint: McpEndpoint,
     credentials: dict[str, Any] | None = None,
+    *,
+    policy: OutboundUrlPolicy | None = None,
 ) -> McpCapabilities:
     """Run the MCP capability handshake and list every capability the
     server advertises. Mirrors `discover()` in `client.ts`.
@@ -271,7 +323,7 @@ async def discover(
     are best-effort because some early servers advertise the capability
     but error on `prompts/list`.
     """
-    async with _open_session(endpoint, credentials) as session:
+    async with _open_session(endpoint, credentials, policy) as session:
         caps = _server_capabilities(session)
 
         tools: list[McpToolDescriptor] | None = None
@@ -290,6 +342,7 @@ async def discover(
                     name=t.name,
                     description=getattr(t, "description", None),
                     input_schema=getattr(t, "inputSchema", None),
+                    ui_resource_uri=_ui_resource_uri(t),
                 )
                 for t in res.tools
             ]
@@ -332,13 +385,15 @@ async def call_tool(
     credentials: dict[str, Any] | None,
     tool_name: str,
     arguments: dict[str, Any] | None,
+    *,
+    policy: OutboundUrlPolicy | None = None,
 ) -> McpToolResult:
     """Invoke a tool on the MCP server. Concatenates text + embedded-
     resource text parts of the SDK's `content` response. Mirrors
     `callTool()` in `client.ts` — including the `isError` flag pass-
     through so the caller can decide whether to surface the error or
     retry."""
-    async with _open_session(endpoint, credentials) as session:
+    async with _open_session(endpoint, credentials, policy) as session:
         result = await session.call_tool(tool_name, arguments or {})
 
         parts: list[str] = []
@@ -364,12 +419,14 @@ async def read_resource(
     endpoint: McpEndpoint,
     credentials: dict[str, Any] | None,
     uri: str,
+    *,
+    policy: OutboundUrlPolicy | None = None,
 ) -> McpResourceContent:
     """Read a resource by URI. Returns the first content item's text +
     mime_type, mirroring `readResource()` in `client.ts`. Binary
     resources lose `text` and the caller has to fall back to fetching
     the bytes some other way (not currently exercised)."""
-    async with _open_session(endpoint, credentials) as session:
+    async with _open_session(endpoint, credentials, policy) as session:
         result = await session.read_resource(uri)
         contents = getattr(result, "contents", None) or []
         first = contents[0] if contents else None
@@ -382,6 +439,17 @@ async def read_resource(
 
 
 # --- internal helpers -----------------------------------------------------
+
+
+def _ui_resource_uri(tool: Any) -> str | None:
+    """`_meta.ui.resourceUri` of a listed tool (MCP Apps), read
+    defensively like the TS `discover` — the extension is optional."""
+    meta = getattr(tool, "meta", None)
+    if meta is None:
+        meta = getattr(tool, "_meta", None)
+    ui = meta.get("ui") if isinstance(meta, dict) else None
+    uri = ui.get("resourceUri") if isinstance(ui, dict) else None
+    return uri if isinstance(uri, str) and uri else None
 
 
 def _server_capabilities(session: Any) -> dict[str, Any]:
@@ -422,6 +490,8 @@ __all__ = [
     "call_tool",
     "discover",
     "mcp_http_client_factory",
+    "mcp_http_client_factory_for",
+    "mcp_outbound_policy",
     "read_resource",
     "validate_mcp_url",
 ]

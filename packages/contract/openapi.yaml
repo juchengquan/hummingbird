@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Hummingbird backend contract
-  version: 0.3.4
+  version: 0.4.1
   summary: The frontend <-> backend HTTP contract (spec-first, PLAN-frontend-backend-split.md Q19).
   description: |
     Hand-written source of truth for the HTTP surface every Hummingbird
@@ -635,7 +635,16 @@ paths:
         running, interrupted or succeeded, a new one is `409
         run_already_resumed` (an idempotent retry of that resume, same
         `runId`, still replays it); once it has failed or been cancelled,
-        the interrupts can be answered again with a new `runId`.
+        the interrupts can be answered again with a new `runId`. A
+        background resume (Q41) answers a top-level background run and
+        starts from that run's saved state plus the answers
+        (`RUN_EVENTS.md` § 4.2); a background resume of anything else is
+        `409 invalid_state`, and one of a task already answered through
+        the old task respond route is `409 run_already_answered`.
+
+        **Background runs take no `attachments`** (Q49): a background
+        start with any is `400 invalid_request`, before anything is
+        created.
 
         A `forwardedProps.model` outside the backend's allow-list is `400
         unknown_model`, answered before the run exists (as `/v1/chat`):
@@ -724,7 +733,10 @@ paths:
             previous run's interrupts and has not failed or been
             cancelled (one live resume per interrupted run, so an
             approved tool never runs twice; after a failed or cancelled
-            resume, answer again with a new `runId`).
+            resume, answer again with a new `runId`);
+            `run_already_answered` — the previous run is a background
+            task already answered through the old task respond route
+            (each paused task is answered one way only, Q41).
           content:
             application/json:
               schema:
@@ -1082,8 +1094,8 @@ components:
         `unavailable`, `rate_limit`, `context_window`, `invalid_model`,
         `unknown_model`, `provider`, `aborted`, `unknown`. See
         `lib/shared/api-errors.ts`. The runs operations add
-        `run_id_conflict`, `run_already_resumed` and `invalid_attachment`,
-        and use `invalid_state`.
+        `run_id_conflict`, `run_already_resumed`, `run_already_answered`
+        and `invalid_attachment`, and use `invalid_state`.
       required: [code, message]
       properties:
         code:
@@ -1885,7 +1897,7 @@ components:
           type: integer
           minimum: 1
           maximum: 50
-          description: Step budget. Absent means 25 (background) or the chat default (interactive).
+          description: Step budget. Absent means 25 (background; 35 with `research`) or the chat default (interactive).
         requireApprovalFor:
           type: array
           maxItems: 64
@@ -1914,8 +1926,345 @@ components:
             Anthropic extended thinking, 2048 / 8192 / 16384 budget
             tokens). Ignored for a model that takes no tier
             (`supportsReasoningEffort` in the catalog). Absent means the
-            provider default (no extended thinking). Interactive runs.
+            provider default (no extended thinking).
+        research:
+          type: boolean
+          description: |
+            Research mode (Q46): the run follows the research task
+            prompt (plan → per-section search → gap pass → a cited
+            Markdown report), and its citations are verified. Absent
+            means false. Not called `mode`, which is interactive /
+            background. A background research run's step budget
+            defaults to 35. agent-py: background runs (interactive runs
+            take only the citation checks, `verifyCitations`).
+        allowedMcpServerIds:
+          type: array
+          maxItems: 64
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+          description: |
+            MCP servers whose tools the run may offer (Q48), cloud
+            (`workspaceId`) and local (`localMcpServers`) alike. Absent
+            means no restriction; an empty list means no MCP tools.
+        attachments:
+          type: array
+          maxItems: 40
+          items:
+            $ref: "#/components/schemas/RunAttachment"
+          description: |
+            Sources attached to this turn — files, URL bookmarks, MCP
+            resources — the way the Next chat route's `attachments`
+            carries them, but large inputs by reference (Q44): a cloud
+            file by id, never its text. Rendered into the system prompt
+            under one character budget, files first, as the Next chat
+            route renders them; a cloud file's header carries its id, and
+            a RAG-mode file is a note to call `searchFiles` with it (Q47).
+            Every attachment marks the turn as reading third-party content
+            (`RunResult.memoryTainted`). Interactive runs only: a
+            background run refuses them (Q49, `400 invalid_request`). One
+            the run cannot give the model is `400 invalid_attachment`
+            (see `RunFileAttachment`, `RunInlineFileAttachment`).
+        memoryBypass:
+          type: boolean
+          description: |
+            The conversation's memory opt-out (the chat body's
+            `memoryBypass`, set from `Conversation.memoryOff`): no
+            remembered facts in the prompt and no remember / forget
+            tools. Absent means false.
+        verifyCitations:
+          type: boolean
+          description: |
+            Opt-in citation verification: when the turn produced cited
+            claims over retrieved sources, a post-turn verifier pass
+            emits a `hummingbird.verification` part (agent-py: when
+            `VERIFY_MODEL` is set). Absent means false.
+        referenceImage:
+          $ref: "#/components/schemas/RunReferenceImage"
+        localFilesOnly:
+          type: boolean
+          description: |
+            The account's "store files locally" preference: generated
+            images come back as data URLs instead of being uploaded to
+            Storage. Absent means false.
+        localMcpServers:
+          type: array
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/LocalMcpServer"
+          description: |
+            Local-mode MCP servers (Q42, Q45): servers whose credentials
+            live in the browser, with their cached tool list. Interactive
+            runs only — a background run refuses them. **No
+            credentials here**: they ride in `RunAgentInput.state` under
+            `hummingbird.localMcp` (see `StartRunRequest`).
       additionalProperties: true
+
+    RunAttachment:
+      description: |
+        One source attached to a turn (`RunForwardedProps.attachments`),
+        by `kind`. Mirrors the Next chat body's `AttachmentPayloadSchema`
+        (`lib/shared/api-schemas.ts`), except that a signed-in user's file
+        goes by id (Q44).
+      oneOf:
+        - $ref: "#/components/schemas/RunFileAttachment"
+        - $ref: "#/components/schemas/RunInlineFileAttachment"
+        - $ref: "#/components/schemas/RunBookmarkAttachment"
+        - $ref: "#/components/schemas/RunMcpResourceAttachment"
+      discriminator:
+        propertyName: kind
+        mapping:
+          file: "#/components/schemas/RunFileAttachment"
+          inlineFile: "#/components/schemas/RunInlineFileAttachment"
+          bookmark: "#/components/schemas/RunBookmarkAttachment"
+          mcpResource: "#/components/schemas/RunMcpResourceAttachment"
+
+    RunFileAttachment:
+      type: object
+      description: |
+        A cloud file (a synced `files` row), by id. The backend reads its
+        extracted text (and an image's stored data URL) itself, after
+        checking the caller owns it (its Storage / database access bypasses
+        RLS); a row it cannot read as the caller's renders as the name
+        only. Signed-in runs only: on an anonymous run, or a backend with
+        no database, it is `400 invalid_attachment`.
+      required: [kind, fileId, name]
+      properties:
+        kind:
+          type: string
+          enum: [file]
+        fileId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: The file's id (`UploadedFile.id`, the `files` row id).
+        name:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: The file name, as the user sees it.
+        mimeType:
+          type: string
+          maxLength: 100
+        sizeBytes:
+          type: integer
+          minimum: 0
+        extractedKind:
+          type: string
+          maxLength: 40
+          description: What extraction made of it (`UploadedFile.extractedKind`, e.g. `pdf`).
+        retrievalMode:
+          type: string
+          enum: [inline, rag]
+          description: |
+            `inline` (default): the text goes into the prompt, within
+            the attachments budget. `rag`: only a note that the file can
+            be searched with `searchFiles` (by its id, Q47).
+
+    RunInlineFileAttachment:
+      type: object
+      description: |
+        A file that exists only in the browser (a signed-out user's, or
+        one not synced), sent by value: its extracted `text`, or — for a
+        small file with none — its bytes as a `data:` URL. One of the
+        two is expected. A `dataUrl` follows the media rules of
+        `StartRunRequest` (an image, a PDF or a text file within their
+        limits), else `400 invalid_attachment`.
+      required: [kind, name]
+      properties:
+        kind:
+          type: string
+          enum: [inlineFile]
+        name:
+          type: string
+          minLength: 1
+          maxLength: 500
+        mimeType:
+          type: string
+          maxLength: 100
+        sizeBytes:
+          type: integer
+          minimum: 0
+        extractedKind:
+          type: string
+          maxLength: 40
+        text:
+          type: string
+          maxLength: 120000
+          description: The extracted text (the Next body's `FileSummary.text` cap).
+        truncated:
+          type: boolean
+          description: The text was cut before sending.
+        dataUrl:
+          type: string
+          maxLength: 1500000
+          pattern: "^data:"
+          description: The file's bytes, base64 in a `data:` URL (about 1 MiB at most).
+
+    RunBookmarkAttachment:
+      type: object
+      description: |
+        A URL bookmark with the text fetched for it, capped. Third-party
+        content: it taints the turn for memory extraction.
+      required: [kind, url, title, text]
+      properties:
+        kind:
+          type: string
+          enum: [bookmark]
+        id:
+          type: string
+          maxLength: 64
+          description: The bookmark's id, if the client has one.
+        url:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        title:
+          type: string
+          minLength: 1
+          maxLength: 500
+        text:
+          type: string
+          maxLength: 220000
+          description: The fetched page text (the Next body's `ATTACHMENT_TEXT_MAX`).
+        truncated:
+          type: boolean
+        fetchedAt:
+          type: string
+          maxLength: 64
+          description: When the text was fetched (ISO 8601).
+
+    RunMcpResourceAttachment:
+      type: object
+      description: |
+        A resource of an MCP server, by reference: the backend reads it
+        (`resources/read`) from the server named by `serverId` — a cloud
+        server of the workspace, or one of `localMcpServers` with its
+        credential from `state`.
+      required: [kind, serverId, uri, name]
+      properties:
+        kind:
+          type: string
+          enum: [mcpResource]
+        id:
+          type: string
+          maxLength: 64
+          description: The cached resource row's id, if the client has one.
+        serverId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        uri:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        name:
+          type: string
+          minLength: 1
+          maxLength: 500
+        mimeType:
+          type: string
+          maxLength: 100
+
+    RunReferenceImage:
+      type: object
+      description: |
+        The reference image for image-to-image generation (the chat
+        body's `referenceImage`, set by an image's Remix action): the
+        model is told to call `generateImage` with `referenceImageUrl`
+        when the user asks for a variation. Only with the `imageGen`
+        skill.
+      required: [url]
+      properties:
+        url:
+          type: string
+          minLength: 1
+          maxLength: 4000
+
+    LocalMcpServer:
+      type: object
+      description: |
+        A local-mode MCP server (credentials held by the browser) and its
+        cached capabilities — the Next chat body's `mcpServers[]` entry
+        without `credentials`.
+      required: [id, name, url]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        url:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: The server's MCP endpoint (HTTP transport).
+        transport:
+          type: string
+          enum: [http]
+        requiresApproval:
+          type: boolean
+          description: Every tool of this server waits for the user's approval.
+        capabilities:
+          type: object
+          properties:
+            tools:
+              type: array
+              maxItems: 64
+              items:
+                $ref: "#/components/schemas/LocalMcpTool"
+
+    LocalMcpTool:
+      type: object
+      description: One tool from a local MCP server's cached tool list; offered as `mcp__<serverId>__<name>`.
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 2000
+        inputSchema:
+          description: The tool's JSON Schema, forwarded to the model as is.
+        uiResourceUri:
+          type: string
+          maxLength: 2000
+          description: The `ui://` resource an MCP App tool renders.
+
+    LocalMcpCredential:
+      type: object
+      description: |
+        One local MCP server's credential, as the browser stores it — the
+        Next chat body's `mcpServers[].credentials`. Travels only in
+        `RunAgentInput.state["hummingbird.localMcp"]` (`LocalMcpCredentials`).
+      properties:
+        type:
+          type: string
+          maxLength: 40
+        headers:
+          type: object
+          maxProperties: 32
+          additionalProperties:
+            type: string
+            maxLength: 8192
+          description: HTTP headers sent to the server (e.g. `Authorization`).
+
+    LocalMcpCredentials:
+      type: object
+      description: |
+        The value of `RunAgentInput.state["hummingbird.localMcp"]`: server
+        id (a `localMcpServers[].id`) → its credential (Q45). The backend
+        never stores or logs it — not in the run row, its checkpoint, the
+        event log or an error — and never echoes it; a resume re-sends it.
+      maxProperties: 8
+      additionalProperties:
+        $ref: "#/components/schemas/LocalMcpCredential"
 
     StartRunRequest:
       description: |
@@ -1949,6 +2298,17 @@ components:
         Anything else — `audio` / `video` parts, `file` (provider handle)
         sources, other media types, malformed base64, a part over its
         limit, more parts than allowed — is `400 invalid_attachment`.
+
+        **`state`.** Hummingbird reads one key of AG-UI's `state`:
+        `hummingbird.localMcp`, the credentials of the local MCP servers
+        listed in `forwardedProps.localMcpServers` (`LocalMcpCredentials`:
+        server id → `{type?, headers?}`, Q45). Credentials never go in
+        `forwardedProps` (stored with a background run) or a header
+        (reverse-proxy access logs record headers). The backend holds them
+        only in memory for the run: never in the run row, its checkpoint,
+        the event log, a log line or an error, and never echoed in a
+        stream. So a resume — a new run — must send them again, and a
+        background run never gets them. Other `state` keys are ignored.
       allOf:
         - $ref: "./agui/1.0/schema.json#/$defs/RunAgentInput"
         - type: object
@@ -2027,6 +2387,9 @@ components:
         - result
         - error
         - lastSeq
+        - goal
+        - maxSteps
+        - step
         - createdAt
         - startedAt
         - finishedAt
@@ -2067,6 +2430,22 @@ components:
           type: integer
           minimum: 0
           description: The highest log `seq` so far (0 before the first event, or after the log was purged).
+        goal:
+          type: [string, "null"]
+          description: |
+            Background-run progress: the task's title
+            (`forwardedProps.goal`, else the last user message's text).
+            Null for an interactive run.
+        maxSteps:
+          type: [integer, "null"]
+          minimum: 1
+          description: Background-run progress — the step budget. Null for an interactive run.
+        step:
+          type: [integer, "null"]
+          minimum: 0
+          description: |
+            Background-run progress — the steps taken so far (0 before
+            the first). Null for an interactive run.
         createdAt:
           type: string
           format: date-time

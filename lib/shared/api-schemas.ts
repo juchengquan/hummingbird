@@ -53,6 +53,12 @@ export const FileSummarySchema = z.object({
    *  so the user doesn't have to remember to tick the skill. See
    *  `docs/PLAN-cross-product-inspirations.md` item #6. */
   retrievalMode: z.enum(["inline", "rag"]).optional(),
+  /** The cloud file's id (`UploadedFile.id`, the `files` row id) — sent
+   *  only for a signed-in user's file, whose row the server can search.
+   *  Rendered in the file's header (`fileId: …`) and its RAG / truncation
+   *  notes so the model can call `searchFiles` (Q47). Absent for a
+   *  browser-only file: there is nothing to search. */
+  id: z.string().max(64).optional(),
 })
 
 export const McpResourceRefSchema = z.object({
@@ -272,6 +278,11 @@ export const ChatRequestSchema = z.object({
    *  `kind: 'mcp_resource'` are the **resources** whose content the
    *  model reads. */
   mcpServers: z.array(McpRequestServerSchema).max(8).optional(),
+  /** The persona's MCP allow-list for this turn (Q48, `PLAN-custom-agents`
+   *  Phase 2): when set, only the servers it names — cloud-mode rows and
+   *  `mcpServers` alike — offer tools; `[]` means no MCP. Absent means no
+   *  restriction (no persona, or one that does not restrict). */
+  allowedMcpServerIds: z.array(z.string().max(64)).max(64).optional(),
   /** Everything attached to this turn — files, MCP resources, URL
    *  bookmarks — in one discriminated array. Workspace-ticked +
    *  conversation-pinned, de-duped client-side, tombstones filtered.

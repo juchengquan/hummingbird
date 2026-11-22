@@ -1,12 +1,20 @@
-/** `buildRunInput` — attachments and reasoning effort (wave 4b-D). The
- *  text-only history and the base options are covered in
+/** `buildRunInput` — attachments and reasoning effort (wave 4b-D), the
+ *  contract-0.4.0 options and local MCP credentials in `state` (wave 5a).
+ *  The text-only history and the base options are covered in
  *  `support.test.ts`. */
 
 import { describe, expect, test } from "bun:test"
 
 import type { Message } from "@/shared/types"
 
-import { buildRunInput, runDocumentsFor, toRunMessages, utf8ToBase64 } from "./build-input"
+import {
+  buildRunInput,
+  LOCAL_MCP_STATE_KEY,
+  localMcpCredentialsOf,
+  toRunMessages,
+  utf8ToBase64,
+} from "./build-input"
+import type { StartRunRequest } from "./types"
 
 const msg = (id: string, role: Message["role"], content: string): Message => ({
   id,
@@ -111,21 +119,91 @@ describe("buildRunInput — new options", () => {
   })
 })
 
-describe("runDocumentsFor", () => {
-  test("inline files with text become documents; RAG-mode and text-less files are skipped", () => {
-    const docs = runDocumentsFor(
-      [
-        { id: "a", name: "a.txt", extractedText: "alpha" },
-        { id: "b", name: "b.pdf", extractedText: "beta", extractionTruncated: true },
-        { id: "c", name: "c.pdf", extractedText: "gamma" },
-        { id: "d", name: "d.png" },
-        { id: "e", name: "e.txt", extractedText: "" },
+describe("buildRunInput — contract 0.4.0 options (wave 5a)", () => {
+  const history = [msg("u1", "user", "hi")]
+
+  test("every option maps onto its forwardedProps key; credentials go in state only", () => {
+    const creds = { "srv-1": { type: "bearer", headers: { Authorization: "Bearer s3cret" } } }
+    const input = buildRunInput({
+      conversationId: "c1",
+      history,
+      runId: "r1",
+      research: true,
+      allowedMcpServerIds: ["srv-1"],
+      attachments: [
+        { kind: "file", fileId: "f1", name: "a.pdf", retrievalMode: "rag" },
+        { kind: "bookmark", url: "https://x", title: "X", text: "page" },
       ],
-      { c: "rag" },
-    )
-    expect(docs).toEqual([
-      { name: "a.txt", text: "alpha" },
-      { name: "b.pdf", text: "beta", truncated: true },
-    ])
+      memoryBypass: true,
+      verifyCitations: true,
+      referenceImage: { url: "https://img/1.png" },
+      localFilesOnly: true,
+      localMcpServers: [{ id: "srv-1", name: "Local", url: "http://localhost:9/mcp", transport: "http" }],
+      localMcpCredentials: creds,
+    })
+    expect(input.forwardedProps).toEqual({
+      research: true,
+      allowedMcpServerIds: ["srv-1"],
+      attachments: [
+        { kind: "file", fileId: "f1", name: "a.pdf", retrievalMode: "rag" },
+        { kind: "bookmark", url: "https://x", title: "X", text: "page" },
+      ],
+      memoryBypass: true,
+      verifyCitations: true,
+      referenceImage: { url: "https://img/1.png" },
+      localFilesOnly: true,
+      localMcpServers: [{ id: "srv-1", name: "Local", url: "http://localhost:9/mcp", transport: "http" }],
+    })
+    expect(input.state).toEqual({ [LOCAL_MCP_STATE_KEY]: creds })
+    expect(JSON.stringify(input.forwardedProps)).not.toContain("s3cret")
+    expect(localMcpCredentialsOf(input)).toEqual(creds)
+  })
+
+  test("false / empty options are left out; an empty allow-list is kept (no MCP at all)", () => {
+    const input = buildRunInput({
+      conversationId: "c1",
+      history,
+      runId: "r1",
+      research: false,
+      memoryBypass: false,
+      verifyCitations: false,
+      localFilesOnly: false,
+      attachments: [],
+      localMcpServers: [],
+      localMcpCredentials: {},
+      allowedMcpServerIds: [],
+    })
+    expect(input.forwardedProps).toEqual({ allowedMcpServerIds: [] })
+    expect(input.state).toBeUndefined()
+    expect(localMcpCredentialsOf(input)).toBeUndefined()
+  })
+
+  test("a resume rebuilt from the previous request keeps its options and re-sends the credentials", () => {
+    const creds = { "srv-1": { headers: { Authorization: "k" } } }
+    const first = buildRunInput({
+      conversationId: "c1",
+      history,
+      runId: "r1",
+      memoryBypass: true,
+      localMcpServers: [{ id: "srv-1", name: "Local", url: "http://localhost:9/mcp" }],
+      localMcpCredentials: creds,
+    })
+    const resume = buildRunInput({
+      conversationId: "c1",
+      history,
+      runId: "r2",
+      forwardedProps: first.forwardedProps,
+      localMcpCredentials: localMcpCredentialsOf(first),
+    })
+    expect(resume.forwardedProps).toEqual(first.forwardedProps)
+    expect(resume.state).toEqual(first.state)
+  })
+
+  test("localMcpCredentialsOf ignores other state shapes", () => {
+    const of = (state: unknown) => localMcpCredentialsOf({ state } as Pick<StartRunRequest, "state">)
+    expect(of(undefined)).toBeUndefined()
+    expect(of([1])).toBeUndefined()
+    expect(of({ other: 1 })).toBeUndefined()
+    expect(of({ [LOCAL_MCP_STATE_KEY]: "x" })).toBeUndefined()
   })
 })

@@ -19,6 +19,7 @@ import "client-only"
  * | `ACTIVITY_SNAPSHOT` | `frame` of the matching `data-*` part via `translateDataPart` (content = today's `data`); `plan` / `artifact_ref` have no chat frame and are only kept in the view. A replacement of an already-applied append-only part becomes a `reset` |
  * | `CUSTOM hummingbird.gap` + `MESSAGES_SNAPSHOT` | `reset` — the message's run output is replaced by the snapshot's frames |
  * | `CUSTOM hummingbird.rewind` | `rewind { after }` — a background worker resumed from a checkpoint; the session restarts the stream if it showed events past `after` (interactive runs never rewind) |
+ * | `CUSTOM hummingbird.interrupt_pending` | nothing — chat answers interrupts from `RUN_FINISHED`, which carries the same `Interrupt`s; the early notice is for the tasks panel (wave 6) |
  * | `RUN_FINISHED` / `RUN_ERROR` | `finished` with the `RunOutcome` (success + `memoryTainted` / interrupt / cancelled / error) |
  * | everything else (`STEP_*`, `SUBAGENT_*`, other `CUSTOM`s, unknown types) | nothing |
  *
@@ -125,6 +126,9 @@ const SET_ACTIVITY_TYPES: ReadonlySet<string> = new Set([
 
 export const GAP_EVENT = "hummingbird.gap"
 export const REWIND_EVENT = "hummingbird.rewind"
+/** A question raised mid-run (RUN_EVENTS.md § 3.4); its value is the
+ *  AG-UI `Interrupt` the closing `RUN_FINISHED` repeats. */
+export const INTERRUPT_PENDING_EVENT = "hummingbird.interrupt_pending"
 
 const EMPTY_VIEW: RunTurnView = { text: "", reasoning: "", toolCalls: [], activities: [] }
 
@@ -403,6 +407,8 @@ export function reduceRunEvent(state: RunTurnState, event: AgUiEvent): Step {
         const after = (e.value as { after?: unknown } | null)?.after
         return { state, ops: [{ type: "rewind", after: typeof after === "number" ? after : 0 }] }
       }
+      // INTERRUPT_PENDING_EVENT: deliberately nothing — the interrupt is
+      // taken from RUN_FINISHED, so the turn's outcome has one source.
       return { state, ops: [] }
     }
 

@@ -486,13 +486,25 @@ async def dispatch_due_schedules(store: ScheduleStore, *, now: datetime | None =
     return fired
 
 
+_UNSET_SCHEDULE_SKILLS: Final = ("webSearch", "webFetch", "searchFiles", "imageGen")
+
+
+def schedule_skills(skills: object) -> object:
+    """A schedule's `config.skills` (`scheduleSkills` in TS). The executor
+    offers only the skills listed there and the schedule editor doesn't set
+    any, so unset is spelled out as all of them; `[]` stays none."""
+    if skills is None:
+        return [{"id": skill} for skill in _UNSET_SCHEDULE_SKILLS]
+    return skills
+
+
 def build_checkpoint(row: DueSchedule, max_steps: int) -> dict[str, object]:
     """The initial run checkpoint `fireSchedule` writes."""
     config: dict[str, object] = {"model": row.model if row.model is not None else ""}
     if row.system_prompt is not None:
         config["workspaceSystemPrompt"] = row.system_prompt
     config["workspaceId"] = row.workspace_id
-    config["skills"] = row.skills if row.skills is not None else []
+    config["skills"] = schedule_skills(row.skills)
     config["maxSteps"] = max_steps
     return {
         "messages": [{"role": "user", "content": row.prompt}],

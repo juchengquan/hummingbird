@@ -135,6 +135,13 @@ Things worth knowing when changing them:
   in `forwardedProps` (`RunForwardedProps`, open). The narrowing uses a
   UUID `pattern`, not `format: uuid`, so the generated Pydantic subclass
   keeps AG-UI's `str` fields (mypy rejects a `UUID` override).
+- **`state` carries one Hummingbird key** (0.4.0): `hummingbird.localMcp`,
+  the local MCP servers' credentials (`LocalMcpCredentials`, Q45) —
+  never `forwardedProps` or a header. AG-UI's `state` is untyped, so the
+  schema is referenced by no operation (exempt from
+  `no-unused-components`) and generated for both sides all the same.
+  The backend never stores, logs or echoes it; a resume re-sends it
+  (`RUN_EVENTS.md` § 4.3).
 - **Anchors.** Every AG-UI definition carries a `$anchor`; Redocly's
   dereference inlines a definition everywhere it is used, so one schema
   can hold the same anchor twice, which Ajv rejects. `loadSpec()`
@@ -286,8 +293,12 @@ without / with a bad credential — `startRun`'s fixture is a
   `forwardedProps.model` → 400 `unknown_model` with no run left behind
   (`getRun` 404); a user message part the backend cannot give the model
   (an `audio` part, an unsupported image type, malformed base64) → 400
-  `invalid_attachment`, likewise with no run; anonymous background start
-  → 401 `auth_required`.
+  `invalid_attachment`, likewise with no run, and so is an anonymous
+  `file` attachment (a cloud file by id) or an `inlineFile` whose
+  `dataUrl` is not an image / PDF / text file (0.4.1); a malformed 0.4.0 run
+  option (`research`, `allowedMcpServerIds`, an `attachments[]` entry of
+  each kind, `referenceImage`, `localMcpServers[]`) → 422
+  `invalid_request`; anonymous background start → 401 `auth_required`.
 - **credentials**: `getRun` / `streamRunEvents` / `cancelRun` with no
   credential or a malformed `X-Run-Token` → 401; `listRuns` with only a
   run token → 401; an unknown run → one identical 404 body from all three
@@ -297,7 +308,10 @@ without / with a bad credential — `startRun`'s fixture is a
   a valid AG-UI `Event`; `RUN_STARTED` first (matching ids, no SSE id);
   `RUN_FINISHED` / `RUN_ERROR` last (no id); every other event bar a
   `gap` carries a strictly increasing `RunCursor` id. A failed run ends
-  with `RUN_ERROR` whose code matches `Run.error`.
+  with `RUN_ERROR` whose code matches `Run.error`. An interactive run's
+  `goal` / `maxSteps` / `step` are null. Every 0.4.0 run option is
+  accepted, with local MCP credentials in `state`, and the credential
+  appears in neither the stream nor the run resource.
 - **idempotency** (stub): the same body again (anonymous: with its run
   token) replays the identical stream; a taken `runId` — anonymous
   without its token, on another thread, from a signed-in user, the
@@ -326,7 +340,8 @@ without / with a bad credential — `startRun`'s fixture is a
 - **background** (token): a thread the caller does not own → 404 (or 503
   `unavailable` on a backend without a store for background runs); with
   `CONTRACT_THREAD_ID`: 202 `RunAccepted` + `Location`, the retry → 202,
-  `getRun` `queued` / `running`, another thread → 409, then cancelled.
+  `getRun` `queued` / `running` with its `goal` and `maxSteps`, another
+  thread → 409, then cancelled.
 - **compacted replay** (`CONTRACT_COMPACTED_RUN_ID`): `RUN_STARTED`,
   `CUSTOM hummingbird.gap` (valid `RunGapEventValue`),
   `MESSAGES_SNAPSHOT`, …, the closing event.

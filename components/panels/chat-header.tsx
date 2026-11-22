@@ -435,8 +435,9 @@ export function ChatHeader({
             </SelectTrigger>
             <SelectContent align="end">
               {/* Smart routing — picks the cheapest capable model per
-                  message. Shown only when a routing pair is configured.
-                  See docs/PLAN-model-routing.md. */}
+                  message. Shown only when a routing pair is configured
+                  and the serving backend routes it (the Next.js routes,
+                  agent-py's runs). See docs/PLAN-model-routing.md. */}
               {autoAvailableForBackend(modelBackend) && (
                 <SelectGroup>
                   <SelectItem value={AUTO_MODEL_ID}>Auto</SelectItem>

@@ -15,12 +15,20 @@ outputs use it, fetch-shaped don't).
 to reach external systems on the user's behalf — today just the
 asyncpg pool + the user_id (for RLS impersonation in `searchFiles`).
 Tools that don't need it ignore it; tools that do close over it via
-their `build_*_tool(context)` factory."""
+their `build_*_tool(context)` factory. It exists only for signed-in runs
+with a database.
+
+`RunToolContext` (wave 5a) is the run-scoped context that is always
+there — anonymous runs included: the caller's `client_key`, a
+`consume_budget(kind)` callback for per-IP tool budgets, the
+`local_files_only` preference and the turn's memory taint so far. The
+interactive loop (`chat_loop.execute_tool`) hands it to every tool that
+declares `run_execute`; other tools keep their plain `execute`."""
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from ..events import ToolCallResult
@@ -52,6 +60,23 @@ class ToolInvocationResult:
     """Files the tool produced (`{name, sizeBytes, mimeType, url,
     storagePath?}` each), emitted as one `tool_file` part with ids
     `<toolCallId>-file-<i>` when absent."""
+    mcp_app: McpAppPayload | None = None
+    """An MCP App the tool renders (its `ui://` resource, read), emitted
+    as one `mcp_app` part after the tool result (`McpAppEvent`,
+    `hummingbird.mcp_app`). Set by MCP tools whose descriptor declares a
+    `uiResourceUri` (wave 5b-D); None for every other tool."""
+
+
+@dataclass(frozen=True)
+class McpAppPayload:
+    """What `McpAppEvent` carries besides the tool call id: the server, the
+    bundled HTML (capped by the producer — `truncated` then says so) and
+    the `ui://` resource it was read from (lets the client refresh it)."""
+
+    server_id: str
+    html: str = field(repr=False)
+    resource_uri: str | None = None
+    truncated: bool = False
 
 
 @dataclass(frozen=True)
@@ -76,6 +101,60 @@ ToolExecuteFn = Callable[[dict[str, Any]], Awaitable[ToolInvocationResult]]
 
 
 @dataclass(frozen=True)
+class BudgetVerdict:
+    """What `RunToolContext.consume_budget` answers: whether the unit was
+    taken, and when to retry if not. Truthy when allowed, so
+    `if not ctx.consume_budget(kind)` reads naturally."""
+
+    allowed: bool
+    retry_after_sec: int = 0
+
+    def __bool__(self) -> bool:
+        return self.allowed
+
+
+_ALLOWED = BudgetVerdict(allowed=True)
+
+
+def _always(_kind: str) -> BudgetVerdict:
+    return _ALLOWED
+
+
+@dataclass(frozen=True)
+class RunToolContext:
+    """Run-scoped state for tools, present on every interactive run —
+    signed in or anonymous (unlike `ToolContext`, which needs a database
+    and a user). The native harness builds one per run
+    (`hook_types.HookContext.run_tools`) and the loop hands it to each
+    call, with `tainted_by` as it stands at that call. Defaults describe a
+    run with no limits and no caller (tests, `/v1/chat`)."""
+
+    run_id: str | None = None
+    user_id: str | None = None
+    """None for an anonymous run."""
+    client_key: str | None = None
+    """The caller's rate-limit key (client IP behind the trusted
+    proxies, `rate_limit.rate_limit_key`); what per-IP budgets count."""
+    local_files_only: bool = False
+    """`forwardedProps.localFilesOnly`: return generated files as data
+    URLs, never upload them to Storage."""
+    consume_budget: Callable[[str], BudgetVerdict] = _always
+    """Take one unit of the caller's per-IP budget `kind` (`"imageGen"`,
+    or `"webTool"` for webSearch / webFetch / searchFiles, as the Next
+    chat route buckets them); a falsy verdict means over the limit — the
+    tool refuses with a `ToolError` naming `retry_after_sec`. The native
+    harness wires the limiter (`rate_limit.ToolBudgets`); the default
+    allows everything (tests, `/v1/chat`)."""
+    tainted_by: str | None = None
+    """The first untrusted tool (or other third-party content) in the
+    turn before this call, else None — memory tools refuse to write
+    when set."""
+
+
+RunToolExecuteFn = Callable[[dict[str, Any], RunToolContext], Awaitable[ToolInvocationResult]]
+
+
+@dataclass(frozen=True)
 class ToolDescriptor:
     """One tool the agent can call. Matches Anthropic's tool wire
     format on the `name` / `description` / `input_schema` fields so
@@ -91,6 +170,11 @@ class ToolDescriptor:
     # interrupted — see `agent_py.tool_ledger`. Every MCP tool sets it;
     # the built-in tools are read-only.
     side_effecting: bool = False
+    run_execute: RunToolExecuteFn | None = None
+    """Called instead of `execute`, with the run's `RunToolContext`, by
+    the interactive loop (`chat_loop.execute_tool`). The background
+    executor still calls `execute`, so a tool that sets this keeps
+    `execute` working too (with no budget, no client key)."""
 
 
 def tool_to_anthropic_param(tool: ToolDescriptor) -> dict[str, Any]:

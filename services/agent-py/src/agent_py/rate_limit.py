@@ -22,11 +22,19 @@ from dataclasses import dataclass
 
 from fastapi import Request
 
-from .settings import get_settings
+from .settings import Settings, get_settings
+from .tools.registry import BudgetVerdict
 
 __all__ = [
+    "DEFAULT_IMAGE_GEN_PER_MINUTE",
+    "IMAGE_GEN_BUDGET",
+    "MAX_IMAGE_GEN_PER_MINUTE",
+    "WEB_TOOL_BUDGET",
+    "WEB_TOOL_PER_MINUTE",
     "RateLimitVerdict",
     "SlidingWindow",
+    "ToolBudgets",
+    "image_gen_per_minute",
     "rate_limit_key",
 ]
 
@@ -114,6 +122,64 @@ class SlidingWindow:
 
 def _now_ms() -> float:
     return time.monotonic() * 1000.0
+
+
+# --- Per-IP tool budgets (the Next chat route's `chatWebToolLimit` /
+# `chatImageGenLimit`) -------------------------------------------------------
+
+#: Budget kinds a tool passes to `RunToolContext.consume_budget`.
+WEB_TOOL_BUDGET = "webTool"
+"""webSearch + webFetch + searchFiles, one shared bucket — as the Next
+chat route gives every non-image skill `consumeWebToolBudget`."""
+IMAGE_GEN_BUDGET = "imageGen"
+
+#: The Next route's fixed web-tool window: 20 outbound ops per IP per minute.
+WEB_TOOL_PER_MINUTE = 20
+DEFAULT_IMAGE_GEN_PER_MINUTE = 5
+MAX_IMAGE_GEN_PER_MINUTE = 60
+
+
+def image_gen_per_minute(raw: str) -> int:
+    """`MINIMAX_IMAGE_RATE_LIMIT_PER_MINUTE`, read as the Next route reads
+    it: not a positive number → 5; otherwise floored and capped at 60."""
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_IMAGE_GEN_PER_MINUTE
+    if not math.isfinite(value) or value <= 0:
+        return DEFAULT_IMAGE_GEN_PER_MINUTE
+    return max(1, min(math.floor(value), MAX_IMAGE_GEN_PER_MINUTE))
+
+
+class ToolBudgets:
+    """The per-IP tool budgets of interactive runs, one sliding window per
+    kind (60 s): `WEB_TOOL_BUDGET` (`web_tool_per_minute`, Next's 20) and
+    `IMAGE_GEN_BUDGET` (`image_gen_per_minute`). Counted per tool
+    invocation, keyed on the run's `client_key` for every caller — the
+    Next route keys signed-in users on their IP too. An unknown kind is
+    not limited. Call the instance: `budgets(client_key, kind)`."""
+
+    def __init__(self, *, web_tool_per_minute: int, image_gen_per_minute: int) -> None:
+        self._windows: dict[str, SlidingWindow] = {
+            WEB_TOOL_BUDGET: SlidingWindow(window_ms=60_000, max=max(1, web_tool_per_minute)),
+            IMAGE_GEN_BUDGET: SlidingWindow(window_ms=60_000, max=max(1, image_gen_per_minute)),
+        }
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> ToolBudgets:
+        return cls(
+            web_tool_per_minute=settings.WEB_TOOL_RATE_LIMIT_PER_MINUTE,
+            image_gen_per_minute=image_gen_per_minute(settings.MINIMAX_IMAGE_RATE_LIMIT_PER_MINUTE),
+        )
+
+    def __call__(self, client_key: str | None, kind: str) -> BudgetVerdict:
+        window = self._windows.get(kind)
+        if window is None:
+            return BudgetVerdict(allowed=True)
+        # No key (never on an interactive run — the router always sets
+        # one) shares `rate_limit_key`'s last-resort bucket.
+        verdict = window.consume(client_key or "default")
+        return BudgetVerdict(allowed=verdict.allowed, retry_after_sec=verdict.retry_after_sec)
 
 
 def rate_limit_key(

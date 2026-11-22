@@ -237,6 +237,47 @@ describe.skipIf(!env.baseUrl)(`conformance: runs @ ${env.baseUrl}`, () => {
       }
     })
 
+    test("an anonymous cloud file, or an inline file's unusable bytes → 400 invalid_attachment", async () => {
+      const bad: Json[] = [
+        { kind: "file", fileId: "00000000-0000-4000-8000-000000000000", name: "a.pdf" },
+        { kind: "inlineFile", name: "a.wav", dataUrl: "data:audio/wav;base64,AAAA" },
+      ]
+      for (const attachment of bad) {
+        const body = runBody()
+        body.forwardedProps = { attachments: [attachment] }
+        const ex = await call(op("startRun"), { body })
+        expect([attachment, ex.status]).toEqual([attachment, 400])
+        contract.assertConforms("startRun", ex)
+        expect(code(ex)).toBe("invalid_attachment")
+        expect(ex.headers.get("x-run-token")).toBeNull()
+      }
+    })
+
+    test("malformed 0.4.0 run options → 422 invalid_request, and no run exists", async () => {
+      const bad: Json[] = [
+        { research: "maybe" },
+        { allowedMcpServerIds: "github" },
+        { allowedMcpServerIds: [""] },
+        { attachments: [{ kind: "conformance-unknown" }] },
+        { attachments: [{ kind: "file", name: "a.pdf" }] },
+        { attachments: [{ kind: "inlineFile", name: "a.txt", dataUrl: "https://not-a-data-url" }] },
+        { attachments: [{ kind: "bookmark", url: "https://example.com", title: "t" }] },
+        { attachments: [{ kind: "mcpResource", serverId: "s1", name: "r" }] },
+        { referenceImage: { url: "" } },
+        { localMcpServers: [{ id: "s1" }] },
+        { localMcpServers: [{ id: "s1", name: "S", url: "https://mcp.example", transport: "stdio" }] },
+      ]
+      for (const props of bad) {
+        const body = runBody()
+        body.forwardedProps = props
+        const ex = await call(op("startRun"), { body })
+        expect([props, ex.status]).toEqual([props, 422])
+        contract.assertConforms("startRun", ex)
+        expect(code(ex)).toBe("invalid_request")
+        expect(ex.headers.get("x-run-token")).toBeNull()
+      }
+    })
+
     test("anonymous background start → 401 auth_required", async () => {
       const ex = await call(op("startRun"), { body: runBody({ mode: "background" }) })
       expect(ex.status).toBe(401)
@@ -306,6 +347,44 @@ describe.skipIf(!env.baseUrl)(`conformance: runs @ ${env.baseUrl}`, () => {
         const run = await getRun(runId, { runToken: token! })
         expect(run).toMatchObject({ id: runId, threadId, mode: "interactive", status: "succeeded" })
         expect(run.lastSeq as number).toBeGreaterThan(0)
+        // Background-run progress is null on an interactive run.
+        expect(run).toMatchObject({ goal: null, maxSteps: null, step: null })
+      },
+      TIMEOUT,
+    )
+
+    test(
+      "every 0.4.0 run option is accepted (a backend may not act on all of them yet)",
+      async () => {
+        const body = runBody()
+        body.forwardedProps = {
+          research: false,
+          allowedMcpServerIds: [],
+          attachments: [
+            { kind: "inlineFile", name: "notes.txt", mimeType: "text/plain", text: "Conformance notes." },
+            { kind: "bookmark", url: "https://example.com/", title: "Example", text: "Example page." },
+          ],
+          memoryBypass: true,
+          verifyCitations: false,
+          localFilesOnly: true,
+          referenceImage: { url: "https://example.com/ref.png" },
+          localMcpServers: [
+            { id: "conformance-mcp", name: "Conformance", url: "https://mcp.example.com/mcp", transport: "http" },
+          ],
+        }
+        // Credentials ride in `state` (Q45), never in forwardedProps.
+        body.state = {
+          "hummingbird.localMcp": {
+            "conformance-mcp": { type: "bearer", headers: { Authorization: "Bearer conformance-secret" } },
+          },
+        }
+        const ex = await callSse(op("startRun"), { body })
+        const { runId, threadId } = body as { runId: string; threadId: string }
+        assertRunStream(ex, { runId, threadId })
+        expect(ex.text).not.toContain("conformance-secret")
+        const run = await getRun(runId, { runToken: ex.headers.get("x-run-token")! })
+        expect(run.status).toBe("succeeded")
+        expect(JSON.stringify(run)).not.toContain("conformance-secret")
       },
       TIMEOUT,
     )
@@ -610,6 +689,28 @@ describe.skipIf(!env.baseUrl)(`conformance: runs @ ${env.baseUrl}`, () => {
     )
 
     test(
+      "an interrupt is announced as raised: CUSTOM hummingbird.interrupt_pending before RUN_FINISHED, the same Interrupt",
+      async () => {
+        const first = await startInteractive({ conformance: { outcome: "interrupt" } })
+        const { events } = assertRunStream(first.ex, first)
+        const closing = events.at(-1) as Json
+        const interrupts = (closing.outcome as { interrupts: Json[] }).interrupts
+        const pending = events.filter((e) => e.type === "CUSTOM" && e.name === "hummingbird.interrupt_pending")
+        expect(pending.map((e) => e.value)).toEqual(interrupts)
+        // On replay too (the log entry, not the live tail, produces it).
+        const replay = await callSse(op("streamRunEvents"), {
+          headers: { "x-run-token": first.ex.headers.get("x-run-token")! },
+          pathParams: { runId: first.runId },
+        })
+        const replayed = replay.messages.map((m) => JSON.parse(m.data) as AgUiEvent)
+        const at = replayed.findIndex((e) => e.type === "CUSTOM" && e.name === "hummingbird.interrupt_pending")
+        expect(at).toBeGreaterThan(-1)
+        expect(at).toBeLessThan(replayed.findIndex((e) => e.type === "RUN_FINISHED"))
+      },
+      TIMEOUT,
+    )
+
+    test(
       "one live resume per interrupted run: a second → 409 run_already_resumed; a failed one frees the slot",
       async () => {
         const threadId = randomUUID()
@@ -760,6 +861,19 @@ describe.skipIf(!env.baseUrl)(`conformance: runs @ ${env.baseUrl}`, () => {
   // --- background runs ---------------------------------------------------------------
 
   describe.skipIf(!env.authToken)("background runs", () => {
+    test("attachments → 400 invalid_request (Q49), before anything is created", async () => {
+      const body = runBody({ mode: "background" })
+      ;(body.forwardedProps as Json).attachments = [
+        { kind: "bookmark", url: "https://example.com", title: "Example", text: "Hello." },
+      ]
+      const ex = await call(op("startRun"), { body, token: env.authToken })
+      expect(ex.status).toBe(400)
+      contract.assertConforms("startRun", ex)
+      expect(code(ex)).toBe("invalid_request")
+      const run = await call(op("getRun"), { token: env.authToken, pathParams: { runId: body.runId as string } })
+      expect(run.status).toBe(404)
+    })
+
     test("a thread the caller does not own → 404 not_found (503 unavailable without a store)", async () => {
       const ex = await call(op("startRun"), { body: runBody({ mode: "background" }), token: env.authToken })
       contract.assertConforms("startRun", ex)
@@ -794,6 +908,8 @@ describe.skipIf(!env.baseUrl)(`conformance: runs @ ${env.baseUrl}`, () => {
         const run = await getRun(runId, { token: env.authToken })
         expect(run.mode).toBe("background")
         expect(["queued", "running"]).toContain(run.status as string)
+        expect(run).toMatchObject({ goal: "Conformance probe", maxSteps: 1 })
+        expect(run.step as number).toBeGreaterThanOrEqual(0)
         const conflict = await call(op("startRun"), {
           body: { ...body, threadId: randomUUID() },
           token: env.authToken,

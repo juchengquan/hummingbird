@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from ..auth import get_current_user
 from ..db import get_pool, has_pool
-from ..mcp_client import McpEndpoint, McpUrlBlockedError
+from ..mcp_client import McpEndpoint, McpUrlBlockedError, mcp_outbound_policy
 from ..mcp_client import call_tool as mcp_call_tool
 from ..mcp_client import discover as mcp_discover
 from ..mcp_client import read_resource as mcp_read_resource
@@ -137,8 +137,9 @@ async def mcp_server_upsert(
     # Anti-SSRF: reject unsafe endpoints at save time so a blocked URL
     # never lands in `mcp_servers` (same check as the Next.js / agent-ts
     # upsert routes). Rows stay editable under RLS, so every use site —
-    # proxy, `/v1/chat`, the task executor — re-validates as well.
-    url_check = await validate_outbound_url(body.url)
+    # proxy, `/v1/chat`, the task executor — re-validates as well. MCP's
+    # policy: private hosts only under `MCP_ALLOW_PRIVATE_HOSTS=true`.
+    url_check = await validate_outbound_url(body.url, mcp_outbound_policy())
     if not isinstance(url_check, ValidationOk):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -263,8 +264,9 @@ async def mcp_proxy(
 
     # SSRF gate on whichever URL we're about to call. The proxy runs
     # server-side, so a body URL like http://169.254.169.254/ would
-    # otherwise reach the service's own network.
-    validation = await validate_outbound_url(server_url)
+    # otherwise reach the service's own network. (`MCP_ALLOW_PRIVATE_HOSTS`
+    # relaxes it for private hosts; link-local / metadata stay blocked.)
+    validation = await validate_outbound_url(server_url, mcp_outbound_policy())
     if not isinstance(validation, ValidationOk):
         # Only the reason code goes back: `validation.message` can name
         # the private address a hostname resolved to (internal DNS
@@ -291,6 +293,13 @@ async def mcp_proxy(
                                 "name": t.name,
                                 "description": t.description,
                                 "inputSchema": t.input_schema,
+                                # MCP Apps: only on tools that declare one,
+                                # as the Next proxy's discovery.
+                                **(
+                                    {"uiResourceUri": t.ui_resource_uri}
+                                    if t.ui_resource_uri
+                                    else {}
+                                ),
                             }
                             for t in caps.tools
                         ]

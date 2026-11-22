@@ -60,6 +60,7 @@ from .repository import (
     DEFAULT_LEASE_SECONDS,
     CreateResult,
     InvalidPageToken,
+    PreviousRunAlreadyAnswered,
     PreviousRunAlreadyResumed,
     PreviousRunNotFound,
     RunFilter,
@@ -105,6 +106,7 @@ _SQLSTATE_RESPONSES: dict[str, tuple[int, str]] = {
 _RUN_COLUMNS = """
   t.id, t.user_id, t.thread_id, t.mode, t.status, t.created_at, t.updated_at,
   t.started_at, t.finished_at, t.parent_task_id, t.previous_run_id, t.goal,
+  t.max_steps, t.step,
   t.outcome::text AS outcome, t.lease_expires_at,
   COALESCE(t.checkpoint ? 'awaiting_children', false) AS awaiting_children
 """
@@ -286,6 +288,9 @@ class PgRunRepository:
                 raise ThreadNotFound() from None
             if state == "22023":
                 raise ValueError(message) from None
+            if state == "55000" and "already answered" in message:
+                # 0043: the previous run has a `respond` job.
+                raise PreviousRunAlreadyAnswered() from None
             raise
         if row is None or record is None:  # pragma: no cover — the RPC always answers
             raise RuntimeError("create_run returned no row")
@@ -550,6 +555,8 @@ def _record(row: asyncpg.Record, fallback: _LogFallback | None) -> RunRecord:
         parent_run_id=None if parent is None else str(parent),
         previous_run_id=None if previous is None else str(previous),
         goal=row["goal"],
+        max_steps=row["max_steps"],
+        step=row["step"],
         open_interrupts=open_interrupts,
         result=result,
         error=error,
