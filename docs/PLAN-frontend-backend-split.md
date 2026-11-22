@@ -215,6 +215,22 @@ has shipped behind the existing per-account backend switch.
 Each wave merges into one integration branch and ships as one PR
 against `dev`.
 
+**Wave 5b hooks (left by 5a).** Contract 0.4.0's run options are parsed
+into `RunOptions` (`services/agent-py/src/agent_py/runs/options.py`);
+local MCP credentials arrive in `RunInput.local_mcp_credentials`
+(`runs/credentials.py`). Each workstream plugs into the native harness
+by adding entries to `runs/harness_hooks.py` (its docstring has the
+table): **B** a prompt section + taint seed in `runs/context.py`; **C**
+prompt sections (memory, remix) and a tool contributor (remember /
+forget), the `resolve_model` hook (`auto`), the `post_success` hook
+(citations, over `verify_client.py`), and the per-IP budgets through
+`NativeHarness(consume_budget=…)` → `RunToolContext.consume_budget`;
+**D** a tool contributor for local MCP and `ToolInvocationResult.mcp_app`
+for MCP Apps; **A** the background executor (`run_input.background_checkpoint`
+already carries `allowedMcpServerIds` and `reasoningEffort`). The exact
+spots are marked `TODO(5b-A|B|C|D)`; the client side passes the new
+fields through `lib/client/runs/build-input.ts` on send and resume.
+
 ## Revisit later
 
 - **Supabase** as the platform (Q3).

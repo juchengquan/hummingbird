@@ -180,17 +180,24 @@ PROMPT_SECTIONS: tuple[PromptSection, ...] = (
     app_system_prompt,
     history_system_texts,
     application_context,
+    # TODO(5b-B): attached-file / MCP-resource / bookmark context (runs/context.py).
+    # TODO(5b-C): remembered facts (unless memory_bypass); the remix note.
 )
 TOOL_CONTRIBUTORS: tuple[ToolContributor, ...] = (
     skill_tools,
     cloud_mcp_tools,
+    # TODO(5b-C): rememberFact / forgetFact (unless memory_bypass).
+    # TODO(5b-D): local MCP tools (RunInput.local_mcp_credentials).
 )
-TAINT_SEEDS: tuple[TaintSeed, ...] = (history_taint,)
+TAINT_SEEDS: tuple[TaintSeed, ...] = (
+    history_taint,
+    # TODO(5b-B): attachments that carry third-party content.
+)
 
 DEFAULT_HOOKS = HarnessHooks(
     prompt_sections=PROMPT_SECTIONS,
     tool_contributors=TOOL_CONTRIBUTORS,
     taint_seeds=TAINT_SEEDS,
-    resolve_model=resolve_model,
-    post_success=succeeded_result,
+    resolve_model=resolve_model,  # TODO(5b-C): `auto` routing.
+    post_success=succeeded_result,  # TODO(5b-C): citation checks (verify_citations).
 )

@@ -24,7 +24,7 @@ session.ts ── HummingbirdRunAgent (agent.ts, @ag-ui/client: enforce → veri
 | `errors.ts` | `RunsError`; `messageErrorFor(code)` → chat's `MessageError` |
 | `run-tokens.ts` | anonymous runs' `X-Run-Token`, per run, in localStorage |
 | `active-run.ts` | per-conversation active-run pointer (codec: `lib/shared/runs/active-run.ts`) |
-| `build-input.ts` | `buildRunInput(chat inputs)` → `RunAgentInput` |
+| `build-input.ts` | `buildRunInput(chat inputs)` → `RunAgentInput`: options in `forwardedProps` (contract 0.4.0 adds `research`, `allowedMcpServerIds`, `attachments`, `memoryBypass`, `verifyCitations`, `referenceImage`, `localFilesOnly`, `localMcpServers`), local MCP credentials in `state["hummingbird.localMcp"]` only; `localMcpCredentialsOf(body)` for a resume |
 | `interrupts.ts` | `PendingInterrupt`, `InterruptAnswer`, `buildResume` |
 | `chat-bridge.ts` | the 4b-A ↔ 4b-B seam: `useInterruptedTurns` (ephemeral paused turns) + `registerChatRunBridge` / `getChatRunBridge` (`answerInterrupts`), and the answered turn's lifecycle |
 | `interrupt-answers.ts` | 4b-B, pure: interrupt → card question, card answer → `InterruptAnswer`, `submitTurnAnswers` (via the bridge), failure classes, answered ui parts |
@@ -274,6 +274,10 @@ run (a rejoin after a reload) restores the paused run's output first
   `runId`, same thread. Every open interrupt needs an answer
   (`buildResume` throws otherwise; an expired one can only be cancelled).
   Anonymous: the previous run's token is presented automatically.
+  The resume carries the paused request's `forwardedProps` and local MCP
+  credentials again (agent-py keeps neither): `chat-runner.ts` takes them
+  from the in-memory request it sent, or `composeResumeInput` re-reads
+  them after a reload. Credentials are never persisted client-side.
   agent-py continues the turn from the interrupted run's stored checkpoint
   (Q31). Without it — an anonymous run past its ~15 min memory TTL — the
   text-only history carries no tool calls, so the resume fails

@@ -249,6 +249,20 @@ model saw, in full, not the summaries the client holds. Without one
 — the checkpoint goes with it, § 7 — or another harness) the harness
 rebuilds what it can from the client's `messages`.
 
+### 4.3 What a resume sends again
+
+A resume is a new run, and the backend keeps no input across runs
+(Q15): the client sends the history, the same `forwardedProps` as the
+interrupted run (plus `previousRunId`) and — if the run used local MCP
+servers — their credentials again in `state["hummingbird.localMcp"]`
+(`LocalMcpCredentials`, Q45). Those credentials are the one secret a run
+input carries: the backend holds them in memory for the run only, never
+in the run row, its checkpoint, the event log, a log line or an error,
+and never echoes them in a stream (agent-py: `runs/credentials.py`,
+pinned by `tests/test_run_credentials.py`). They are never sent in
+`forwardedProps` (stored with a background run) or a header (proxy
+access logs record headers); a background run refuses local MCP (Q42).
+
 ## 5. Results, errors and usage
 
 The closing event's data comes from the run row, falling back to the

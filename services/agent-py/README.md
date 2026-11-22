@@ -281,7 +281,17 @@ harness is `runs/native_harness.py` — today's chat loop
 An interrupted run stores its harness checkpoint with its outcome
 (`tasks.checkpoint` / memory); the run that resumes it reads it as its
 own owner and continues the turn with the full tool results. Unknown
-`forwardedProps.model` → `400 unknown_model` before any row exists. The
+`forwardedProps.model` → `400 unknown_model` before any row exists.
+`forwardedProps` are parsed by `runs/options.py` (`RunOptions`; the
+contract-0.4.0 options are typed there but not acted on until wave 5b),
+and local MCP credentials are taken out of `state["hummingbird.localMcp"]`
+into `RunInput.local_mcp_credentials` (`runs/credentials.py`: memory
+only, never stored or logged). The native harness is assembled from
+hooks — system prompt sections, tool contributors, taint seeds, the
+model resolver, the post-success step (`runs/hook_types.py`), registered
+in `runs/harness_hooks.py` — and every tool call gets the run-scoped
+`RunToolContext` (client key, per-IP budget, `localFilesOnly`), anonymous
+runs included. The citation verifier client is `verify_client.py`. The
 maintenance loop also runs `runs/compaction.py`'s retention sweep every
 10 min when a database is configured (compact ended interactive logs
 after 24 h, purge them — and the run's stored checkpoint — after 30
