@@ -39,6 +39,7 @@ import {
   prepareArtifactRowForUpload,
   prepareMessageRowForUpload,
 } from "@/client/messages/message-blobs"
+import { isMissingTurnPersonaColumn, withoutTurnPersona } from "./turn-persona-column"
 
 const STORAGE_KEY = "hummingbird-sync-queue"
 const MAX_BACKOFF_MS = 60_000
@@ -347,10 +348,17 @@ async function runOp(op: SyncOp): Promise<OpResult> {
       // The resolve awaited: re-check the session (sign-out / user switch).
       if (!client || !userId || op.ownerUserId !== userId) return "retry"
       const row = { ...prepared, user_id: userId }
-      const { error } = await client
-        .from(op.target)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .upsert(row as any, { onConflict: "id" })
+      const db = client
+      const write = (values: typeof row) =>
+        db
+          .from(op.target)
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .upsert(values as any, { onConflict: "id" })
+      let { error } = await write(row)
+      if (op.target === "messages" && isMissingTurnPersonaColumn(error)) {
+        console.warn("[sync] messages.turn_persona is missing: apply migration 0044")
+        ;({ error } = await write(withoutTurnPersona(row)))
+      }
       if (error) return classifyUpsert(error.code)
       return "ok"
     }

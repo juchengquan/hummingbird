@@ -552,6 +552,20 @@ export interface Message {
    * original conversation.
    */
   recapMessageIds?: string[]
+  /**
+   * User messages only: the persona the turn was sent as (Q52), so a
+   * resend keeps its prompt, model, skills and MCP allow-list. Written
+   * once. Absent = no persona, or a message from before it was recorded.
+   * See `lib/shared/agents/turn-persona.ts`.
+   */
+  turnPersona?: TurnPersona
+}
+
+/** The persona a user message was sent as, with its MCP allow-list then. */
+export interface TurnPersona {
+  agentId: string
+  /** `[]` = no MCP. */
+  allowedMcpServerIds: string[]
 }
 
 export interface GeneratedImage {

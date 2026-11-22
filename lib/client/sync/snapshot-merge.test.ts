@@ -55,6 +55,7 @@ function fullMessage(id = "m1"): Required<Message> {
     compressed: true,
     kind: "recap",
     recapMessageIds: ["m0"],
+    turnPersona: { agentId: "a1", allowedMcpServerIds: ["s1"] },
   }
 }
 
@@ -342,6 +343,15 @@ describe("mergeCloudSnapshot: pending ops", () => {
     })
     expect(merged.conversations[0].title).toBe("local edit")
     expect(merged.conversations[0].messages[0].content).toBe("local msg")
+  })
+
+  test("a cloud row without the turn's persona doesn't erase it (Q52)", () => {
+    // A database before 0044, or a row an older client wrote.
+    const turnPersona = { agentId: "a1", allowedMcpServerIds: [] }
+    const local = emptySnapshot({ conversations: [conv("c1", { messages: [msg("m1", { turnPersona })] })] })
+    const cloud = emptySnapshot({ conversations: [conv("c1", { messages: [msg("m1")] })] })
+    const merged = mergeCloudSnapshot(local, cloud, { pendingOps: [] })
+    expect(merged.conversations[0].messages[0].turnPersona).toEqual(turnPersona)
   })
 
   test("header and messages merge independently", () => {

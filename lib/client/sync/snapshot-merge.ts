@@ -110,7 +110,13 @@ export const MESSAGE_SYNCED_KEYS = [
   "compressed",
   "kind",
   "recapMessageIds",
+  "turnPersona",
 ] as const satisfies readonly (keyof Message)[]
+
+/** Synced, but written once, so the local value is as good as the cloud's
+ *  and must survive a cloud row without it (a database before 0044, a row
+ *  an older client wrote): losing `turnPersona` lifts an MCP restriction. */
+const MESSAGE_WRITE_ONCE_KEYS = ["turnPersona"] as const satisfies readonly (keyof Message)[]
 
 export const MESSAGE_LOCAL_ONLY_KEYS = [
   "verification",
@@ -418,7 +424,10 @@ export function mergeCloudSnapshot(
     ahead && l
       ? l
       : keepLocal
-        ? withLocalBlobItems(withLocalOnly(c, l, MESSAGE_LOCAL_ONLY_KEYS), l)
+        ? withLocalBlobItems(
+            withLocalOnly(c, l, [...MESSAGE_LOCAL_ONLY_KEYS, ...MESSAGE_WRITE_ONCE_KEYS]),
+            l
+          )
         : c
 
   // Header and messages are merged independently: a pending header

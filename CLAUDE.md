@@ -177,7 +177,7 @@ SQL lives under `supabase/migrations/` as numbered files applied in order (`0001
 `0037_validate_artifacts_kind_check.sql`, `0038_mcp_pgcrypto_schema.sql`,
 `0039_mcp_upsert_foreign_id.sql`, `0040_task_worker_liveness.sql`,
 `0041_runs_on_tasks.sql`, `0042_one_live_resume.sql`,
-`0043_answer_once.sql`) — see `docs/SUPABASE_SETUP.md`
+`0043_answer_once.sql`, `0044_message_turn_persona.sql`) — see `docs/SUPABASE_SETUP.md`
 for the hosted-cloud run order, or `docs/SUPABASE_LOCAL.md` for the
 local Supabase CLI path (Docker-based, no cloud account needed). For
 verifying the file full-text retrieval pipeline end-to-end after

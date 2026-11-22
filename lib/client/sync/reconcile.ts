@@ -13,6 +13,7 @@ import "client-only"
  * pure data layer (no React, no UI).
  */
 
+import { parseTurnPersona } from "@/shared/agents/turn-persona"
 import type {
   Artifact,
   ArtifactVersion,
@@ -53,6 +54,7 @@ import { useStore } from "@/client/hooks/use-store"
 import { heldConversationIds } from "@/client/hooks/store/slices/chat"
 import { setSyncSnapshot } from "@/client/hooks/use-sync"
 import { mergeCloudSnapshot, type MergeOptions } from "@/client/sync/snapshot-merge"
+import { isMissingTurnPersonaColumn, withoutTurnPersona } from "./turn-persona-column"
 
 /**
  * Per-entity table-write helper for `bulkUploadLocalState`. Skips the
@@ -72,8 +74,13 @@ async function uploadRows<R>(
   rows: R[]
 ): Promise<{ ok: boolean; error?: string }> {
   if (rows.length === 0) return { ok: true }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await client.from(table as any).upsert(rows as never)
+  const write = (values: R[]) =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    client.from(table as any).upsert(values as never)
+  let { error } = await write(rows)
+  if (table === "messages" && isMissingTurnPersonaColumn(error)) {
+    ;({ error } = await write(rows.map(withoutTurnPersona)))
+  }
   if (error) return { ok: false, error: `${table}: ${error.message}` }
   return { ok: true }
 }
@@ -416,6 +423,9 @@ export async function fetchCloudSnapshot(
       if (m.recap_message_ids && m.recap_message_ids.length > 0) {
         msg.recapMessageIds = m.recap_message_ids
       }
+      // JSONB column from 0044 (absent on a database without it).
+      const turnPersona = parseTurnPersona(m.turn_persona)
+      if (turnPersona) msg.turnPersona = turnPersona
       // JSONB column from migration 0010. Hydrate only when it actually
       // carries an array — defensive against any future row that has
       // the column set to a non-array JSON value.
@@ -835,6 +845,7 @@ export async function bulkUploadLocalState(
     recap_message_ids: string[]
     generated_images: Json
     generated_files: Json
+    turn_persona?: Json
     created_at: string
   }> = []
   for (const c of snapshot.conversations) {
@@ -860,6 +871,8 @@ export async function bulkUploadLocalState(
         // queue's flush (store v33, `client/messages/message-blobs.ts`).
         generated_images: canonicalGeneratedItemsJson(m.id, m.generatedImages),
         generated_files: canonicalGeneratedItemsJson(m.id, m.generatedFiles),
+        // Only when set, as in `diffConversationMessages`.
+        ...(m.turnPersona ? { turn_persona: m.turnPersona as unknown as Json } : {}),
         created_at: new Date(m.timestamp).toISOString(),
       })
     })

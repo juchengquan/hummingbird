@@ -23,6 +23,7 @@ import "client-only"
  *   foreign keys defined in migration 0001/0002.
  */
 
+import { sameTurnPersona } from "@/shared/agents/turn-persona"
 import type {
   Artifact,
   ArtifactVersion,
@@ -359,6 +360,10 @@ export function diffConversationMessages(
           // JSONB: array of {id, name, sizeBytes, mimeType, url, storagePath}.
           // Null when no files on this message.
           generated_files: canonicalGeneratedItemsJson(m.id, m.generatedFiles),
+          // JSONB {agentId, allowedMcpServerIds} (0044). Only when set: it
+          // is written once, so a row without it never has one to clear,
+          // and a database without 0044 still takes every other message.
+          ...(m.turnPersona ? { turn_persona: m.turnPersona as unknown as Json } : {}),
           created_at: toISO(m.timestamp),
         },
       })
@@ -391,6 +396,7 @@ function messageEquals(a: Message, b: Message): boolean {
     (a.compressed ?? false) === (b.compressed ?? false) &&
     (a.kind ?? null) === (b.kind ?? null) &&
     sameStringArray(a.recapMessageIds ?? [], b.recapMessageIds ?? []) &&
+    sameTurnPersona(a.turnPersona, b.turnPersona) &&
     // Same JSON.stringify trick as `error` / `toolCalls`, over the
     // CANONICAL item lists (inline `data:` URL → its `hb-blob:`
     // reference): an item stripped to its reference after the IndexedDB
