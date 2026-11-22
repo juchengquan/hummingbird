@@ -180,11 +180,13 @@ has shipped behind the existing per-account backend switch.
    - [ ] memory — the per-conversation opt-out, facts in the prompt, the
      remember / forget tools
    - [ ] the per-IP image-generation budget
-   - [ ] reasoning effort and the attachment checks in the background
-     executor
-   - [ ] background runs on `/v1/runs`: resume carries the answers into
-     the executor (Q41); starts keep `workspaceId`, `requireApprovalFor`,
-     research mode and the allowed MCP servers (all dropped today)
+   - [x] reasoning effort and the attachment checks in the background
+     executor (5b-A: `reasoningEffort` → extended thinking; a background
+     start refuses `attachments`, Q49, and its message parts go through
+     the same `check_attachments` as an interactive one)
+   - [x] background runs on `/v1/runs`: resume carries the answers into
+     the executor (Q41, 0043); starts keep `workspaceId`, `requireApprovalFor`,
+     research mode and the allowed MCP servers (5b-A)
    - [ ] `auto` model routing, so Auto can return to the agent backends
    - [ ] MCP Apps
    - [ ] the per-IP web-tool window

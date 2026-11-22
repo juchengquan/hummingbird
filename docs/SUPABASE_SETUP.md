@@ -245,6 +245,14 @@ order. Every migration has a unique numeric prefix (CI enforces this via
     `cancelled`, and `create_run` raising 23505 'run already resumed'
     (constraint `tasks_one_live_resume`) for a second one — agent-py
     answers `409 run_already_resumed`. Idempotent.
+- `supabase/migrations/0043_answer_once.sql`
+  - A paused background task is answered one way only (Q41):
+    `enqueue_task_job` refuses a `respond` job (55000 → the Next route's
+    409) while a runs-API resume of the task is not failed / cancelled,
+    and `create_run` refuses a resume of a task that has a `respond`
+    job (55000 'run already answered' → agent-py's `409
+    run_already_answered`), locking the task row so the two serialise.
+    Same signatures. Idempotent.
 
 ### Migration 0018 collision (renamed to `0033_message_generated_files.sql`)
 
