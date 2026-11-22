@@ -11,6 +11,7 @@ import { fixtureNames, loadFixture, messageOf, ModelSink, type ModelMessage } fr
 import {
   framesFromView,
   hasOutput,
+  INTERRUPT_PENDING_EVENT,
   initialRunTurnState,
   reduceRunEvent,
   reduceRunEvents,
@@ -323,6 +324,24 @@ describe("reducer edges", () => {
     expect(reduceRunEvent(s, { type: "CUSTOM", name: "hummingbird.step_error", value: {} } as never).ops).toEqual(
       [],
     )
+  })
+
+  test("the interrupt_pending notice is recorded nowhere; RUN_FINISHED carries the interrupt", () => {
+    // A recorded interrupted stream announces the interrupt before the
+    // closing event, with the same object the outcome carries.
+    const events = loadFixture("memory-interrupt-signed_in").items.map((i) => i.event)
+    const at = events.findIndex((e) => e.type === "CUSTOM" && (e as { name?: string }).name === INTERRUPT_PENDING_EVENT)
+    const closing = events.findIndex((e) => e.type === "RUN_FINISHED")
+    expect(at).toBeGreaterThan(-1)
+    expect(at).toBeLessThan(closing)
+    const pending = (events[at] as unknown as { value: unknown }).value
+    const outcome = (events[closing] as unknown as { outcome: { interrupts: unknown[] } }).outcome
+    expect(outcome.interrupts).toEqual([pending])
+
+    const before = reduceRunEvents(events.slice(0, at)).state
+    const step = reduceRunEvent(before, events[at]!)
+    expect(step.ops).toEqual([])
+    expect(step.state).toBe(before)
   })
 
   test("replacing an appended part resets the message; a set part re-applies", () => {

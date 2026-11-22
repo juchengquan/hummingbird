@@ -1,19 +1,19 @@
-data: {"type":"RUN_STARTED","threadId":"da5ce8fd-42b9-4014-bcc6-492baff69d09","runId":"586d7afe-e6b4-4efd-853f-3d09d039e0cb"}
+data: {"type":"RUN_STARTED","threadId":"384e810a-6757-41ed-9727-1c32a3d2f698","runId":"dd48acc9-66e7-4cdb-ab76-6348d25875c9"}
 
 id: 1
 data: {"type":"STEP_STARTED","stepName":"step-1"}
 
 id: 2.0
-data: {"type":"TEXT_MESSAGE_START","messageId":"586d7afe-e6b4-4efd-853f-3d09d039e0cb:2","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_START","messageId":"dd48acc9-66e7-4cdb-ab76-6348d25875c9:2","role":"assistant"}
 
 id: 2
-data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"586d7afe-e6b4-4efd-853f-3d09d039e0cb:2","delta":"Let me ask."}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"dd48acc9-66e7-4cdb-ab76-6348d25875c9:2","delta":"Let me ask."}
 
 id: 3.0
-data: {"type":"TEXT_MESSAGE_END","messageId":"586d7afe-e6b4-4efd-853f-3d09d039e0cb:2"}
+data: {"type":"TEXT_MESSAGE_END","messageId":"dd48acc9-66e7-4cdb-ab76-6348d25875c9:2"}
 
 id: 3.1
-data: {"type":"TOOL_CALL_START","toolCallId":"c-ask","toolCallName":"askUser","parentMessageId":"586d7afe-e6b4-4efd-853f-3d09d039e0cb:2"}
+data: {"type":"TOOL_CALL_START","toolCallId":"c-ask","toolCallName":"askUser","parentMessageId":"dd48acc9-66e7-4cdb-ab76-6348d25875c9:2"}
 
 id: 3.2
 data: {"type":"TOOL_CALL_ARGS","toolCallId":"c-ask","delta":"{\"prompt\":\"Which one?\",\"options\":[{\"id\":\"a\",\"label\":\"A\"},{\"id\":\"b\",\"label\":\"B\"}]}"}
@@ -24,5 +24,8 @@ data: {"type":"TOOL_CALL_END","toolCallId":"c-ask"}
 id: 4
 data: {"type":"STEP_FINISHED","stepName":"step-1"}
 
-data: {"type":"RUN_FINISHED","threadId":"da5ce8fd-42b9-4014-bcc6-492baff69d09","runId":"586d7afe-e6b4-4efd-853f-3d09d039e0cb","outcome":{"type":"interrupt","interrupts":[{"id":"c-ask","reason":"choice","responseSchema":{"type":"object","required":["selection"],"properties":{"selection":{"type":"array","items":{"type":"string"}}}},"message":"Which one?","toolCallId":"c-ask","metadata":{"hummingbird":{"tool":"askUser","args":{"prompt":"Which one?","options":[{"id":"a","label":"A"},{"id":"b","label":"B"}]},"options":[{"id":"a","label":"A"},{"id":"b","label":"B"}]}}}]}}
+id: 5
+data: {"type":"CUSTOM","name":"hummingbird.interrupt_pending","value":{"id":"c-ask","reason":"choice","responseSchema":{"type":"object","required":["selection"],"properties":{"selection":{"type":"array","items":{"type":"string"}}}},"message":"Which one?","toolCallId":"c-ask","metadata":{"hummingbird":{"tool":"askUser","args":{"prompt":"Which one?","options":[{"id":"a","label":"A"},{"id":"b","label":"B"}]},"options":[{"id":"a","label":"A"},{"id":"b","label":"B"}]}}}}
+
+data: {"type":"RUN_FINISHED","threadId":"384e810a-6757-41ed-9727-1c32a3d2f698","runId":"dd48acc9-66e7-4cdb-ab76-6348d25875c9","outcome":{"type":"interrupt","interrupts":[{"id":"c-ask","reason":"choice","responseSchema":{"type":"object","required":["selection"],"properties":{"selection":{"type":"array","items":{"type":"string"}}}},"message":"Which one?","toolCallId":"c-ask","metadata":{"hummingbird":{"tool":"askUser","args":{"prompt":"Which one?","options":[{"id":"a","label":"A"},{"id":"b","label":"B"}]},"options":[{"id":"a","label":"A"},{"id":"b","label":"B"}]}}}]}}
 

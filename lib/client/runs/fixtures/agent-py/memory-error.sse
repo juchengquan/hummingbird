@@ -1,16 +1,16 @@
-data: {"type":"RUN_STARTED","threadId":"22a82dfb-862d-4fab-aed5-57f3a6630680","runId":"576173ed-59d4-4d3c-bab8-1b547197e22b"}
+data: {"type":"RUN_STARTED","threadId":"f9f045fe-b70f-4647-9449-f79fbb292ed7","runId":"0e133c28-1375-4fbc-be54-9d4f7e8f92d9"}
 
 id: 1
 data: {"type":"STEP_STARTED","stepName":"step-1"}
 
 id: 2.0
-data: {"type":"TEXT_MESSAGE_START","messageId":"576173ed-59d4-4d3c-bab8-1b547197e22b:2","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_START","messageId":"0e133c28-1375-4fbc-be54-9d4f7e8f92d9:2","role":"assistant"}
 
 id: 2
-data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"576173ed-59d4-4d3c-bab8-1b547197e22b:2","delta":"partial "}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"0e133c28-1375-4fbc-be54-9d4f7e8f92d9:2","delta":"partial "}
 
 id: 3.0
-data: {"type":"TEXT_MESSAGE_END","messageId":"576173ed-59d4-4d3c-bab8-1b547197e22b:2"}
+data: {"type":"TEXT_MESSAGE_END","messageId":"0e133c28-1375-4fbc-be54-9d4f7e8f92d9:2"}
 
 id: 3
 data: {"type":"STEP_FINISHED","stepName":"step-1"}
