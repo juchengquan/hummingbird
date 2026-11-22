@@ -26,4 +26,5 @@ def test_done_but_empty_text_is_treated_as_failure_block() -> None:
 
 
 def test_empty_list_returns_empty_string() -> None:
-    assert aggregate_child_results([]) == ""
+    # A parent must never resume on an empty tool_result (wave 5c, B9).
+    assert aggregate_child_results([]) == "No subagent ran."

@@ -83,7 +83,11 @@ class FakePgRepo(InMemoryRunRepository):
         # 0043's refusal in `create_run`.
         if spec.previous_run_id in self.answered_the_old_way:
             raise PreviousRunAlreadyAnswered()
-        return await super().create(owner, spec)
+        result = await super().create(owner, spec)
+        if result.created and spec.mode == "background":
+            # Postgres queues the start job in the create's transaction.
+            self.enqueued.append(spec.run_id)
+        return result
 
     def set_parent(self, run_id: str, parent_id: str) -> None:
         row = self._rows[run_id]
@@ -238,6 +242,7 @@ async def _paused_background(repo: FakePgRepo, **kw: Any) -> str:
             checkpoint={"messages": PAUSED_MESSAGES, "config": PAUSED_CONFIG},
         ),
     )
+    repo.enqueued.clear()  # the seeded run's own start job
     await repo.mark_running(run_id)
     await repo.settle(
         run_id,

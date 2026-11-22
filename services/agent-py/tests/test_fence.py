@@ -7,7 +7,8 @@ slow statement). Pins:
   - the acquire is bounded;
   - the lease is re-checked AFTER the acquire;
   - with a fencing token the write runs in a transaction that first
-    locks the job row `FOR SHARE` at our `attempts` — a reclaim blocks
+    calls `private.fence_task_job` (0045: the task locks in their order,
+    then the job row `FOR SHARE` at our `attempts`) — a reclaim blocks
     on it, and a claim already gone raises `LeaseLostError`;
   - the executor's run-state writes go through it;
   - a reclaimed run whose max-seq probe fails abandons the attempt
@@ -17,6 +18,7 @@ slow statement). Pins:
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -27,6 +29,12 @@ from agent_py.lease import JobLease, LeaseLostError
 
 from .test_pipeline_correctness import _norm, _pool, _RecordingConn
 
+M0045 = (
+    Path(__file__).resolve().parents[3]
+    / "supabase"
+    / "migrations"
+    / "0045_background_tasks_correct.sql"
+)
 JOB_ID = str(uuid.uuid4())
 RUN_ID = str(uuid.uuid4())
 USER_ID = str(uuid.uuid4())
@@ -63,7 +71,7 @@ async def test_lease_rechecked_after_the_acquire() -> None:
 
 @pytest.mark.asyncio
 async def test_fenced_write_locks_the_job_row_in_its_transaction() -> None:
-    conn = _RecordingConn(fetchrow=[{"?column?": 1}])
+    conn = _RecordingConn(fetchrow=[{"held": True}])
     job_lease = JobLease(job_id=JOB_ID, lease_seconds=60, attempts=2)
     with lease.bound(job_lease):
         async with fence.fenced_connection(_pool(conn)) as c:
@@ -71,8 +79,10 @@ async def test_fenced_write_locks_the_job_row_in_its_transaction() -> None:
     kinds = [k for k, _ in conn.calls]
     assert kinds == ["txn_begin", "fetchrow", "execute", "txn_end"]
     sql, *args = conn.calls[1][1]
-    assert "FOR SHARE" in _norm(sql)
-    assert "attempts = $2" in sql and "status = 'running'" in sql
+    assert "private.fence_task_job($1, $2)" in _norm(sql)
+    body = M0045.read_text().split("function private.fence_task_job(")[1].split("$$;")[0]
+    body = _norm(body)
+    assert "j.attempts = p_attempts and j.status = 'running' for share" in body
     assert args == [uuid.UUID(JOB_ID), 2]
     # The write itself ran inside the fence's transaction.
     assert conn.calls[2][1][-1] is True
@@ -80,7 +90,7 @@ async def test_fenced_write_locks_the_job_row_in_its_transaction() -> None:
 
 @pytest.mark.asyncio
 async def test_claim_gone_raises_and_latches_the_lease() -> None:
-    conn = _RecordingConn(fetchrow=[None])
+    conn = _RecordingConn(fetchrow=[{"held": False}])
     job_lease = JobLease(job_id=JOB_ID, lease_seconds=60, attempts=2)
     with lease.bound(job_lease), pytest.raises(LeaseLostError):
         async with fence.fenced_connection(_pool(conn)) as c:

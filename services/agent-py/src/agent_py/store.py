@@ -29,7 +29,7 @@ from typing import Literal, cast, get_args
 import asyncpg
 import structlog
 
-from . import events
+from . import events, jobs
 from .events import TaskEvent, event_to_row_payload
 from .fence import fenced_connection
 
@@ -42,10 +42,11 @@ async def update_run(
     status: str | None = None,
     step: int | None = None,
     finished: bool = False,
-) -> None:
-    """Patch a `tasks` row. Only the fields explicitly passed get
+) -> bool:
+    """Patch a live `tasks` row. Only the fields explicitly passed get
     written — partial updates are intentional so the executor can
-    bump just `step` between steps without touching status."""
+    bump just `step` between steps without touching status. An ended
+    row is left alone (terminal is final): False."""
     sets: list[str] = ["updated_at = now()"]
     args: list[object] = []
     if status is not None:
@@ -61,10 +62,11 @@ async def update_run(
     sql = (
         "UPDATE public.tasks "
         f"SET {', '.join(sets)} "
-        f"WHERE id = ${len(args) - 1} AND user_id = ${len(args)};"
+        f"WHERE id = ${len(args) - 1} AND user_id = ${len(args)} "
+        "AND status NOT IN ('done', 'failed', 'cancelled');"
     )
     async with fenced_connection(pool) as conn:
-        await conn.execute(sql, *args)
+        return bool(await conn.execute(sql, *args) != "UPDATE 0")
 
 
 _APPEND_EVENT_SQL = """
@@ -84,17 +86,20 @@ async def append_event(
     `(task_id, seq)` unique constraint and is silently ignored,
     matching the TS path's `onConflict: 'task_id,seq', ignoreDuplicates: true`.
     """
-    payload = event_to_row_payload(event)
     async with fenced_connection(pool) as conn:
-        await conn.execute(
-            _APPEND_EVENT_SQL,
-            _coerce_uuid(event.run_id),
-            _coerce_uuid(user_id),
-            event.seq,
-            event.step,
-            event.kind,
-            json.dumps(payload),
-        )
+        await _insert_event(conn, event, _coerce_uuid(user_id))
+
+
+async def _insert_event(conn: asyncpg.Connection, event: TaskEvent, user_id: uuid.UUID) -> None:
+    await conn.execute(
+        _APPEND_EVENT_SQL,
+        _coerce_uuid(event.run_id),
+        user_id,
+        event.seq,
+        event.step,
+        event.kind,
+        json.dumps(event_to_row_payload(event)),
+    )
 
 
 _log = structlog.get_logger(__name__)
@@ -559,8 +564,10 @@ async def max_event_seq(
 
 _CLAIM_PAUSED_FOR_RESPOND_SQL = """
 UPDATE public.tasks
-SET status = 'running', updated_at = now()
+SET status = 'running', outcome = NULL, finished_at = NULL, updated_at = now()
 WHERE id = $1 AND user_id = $2 AND status = 'paused'
+  AND private.task_waits_on(id, $3)
+  AND NOT private.question_held_by_resume(id, $3)
 RETURNING id;
 """
 
@@ -570,8 +577,12 @@ async def claim_paused_for_respond(
     *,
     run_id: str,
     user_id: str,
+    question: str,
 ) -> bool:
-    """Atomically flip a paused run to `running` for a `respond` job.
+    """Atomically flip a run paused on `question` to `running` for a
+    `respond` job. This is the durable record that the answer is being
+    applied, before any side effect: the run no longer waits on the
+    question (0045), so nothing can answer it again.
 
     Returns True iff THIS call made the transition. A duplicate respond
     (double-click, retried POST, two workers) finds the row already
@@ -583,6 +594,7 @@ async def claim_paused_for_respond(
             _CLAIM_PAUSED_FOR_RESPOND_SQL,
             _coerce_uuid(run_id),
             _coerce_uuid(user_id),
+            question,
         )
     return row is not None
 
@@ -628,9 +640,10 @@ async def is_run_cancelled(
     run_id: str,
     user_id: str,
 ) -> bool:
-    """Cheap status probe the runner polls between steps. A probe
-    failure (DB blip, RLS reject) returns False — the run keeps
-    going. The TS path makes the same call."""
+    """Cheap probe the runner polls between steps: did the run end under
+    us (cancelled, or failed by the reconciler / the owner)? A probe
+    failure (DB blip, RLS reject) returns False — the run keeps going,
+    and every write re-checks."""
     try:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
@@ -640,7 +653,7 @@ async def is_run_cancelled(
             )
     except Exception:
         return False
-    return bool(row and row["status"] == "cancelled")
+    return bool(row and row["status"] in events.TERMINAL_STATUSES)
 
 
 _LOAD_CHECKPOINT_SQL = """
@@ -695,7 +708,8 @@ _SAVE_CHECKPOINT_SQL = """
 UPDATE public.tasks
 SET checkpoint = $3::jsonb,
     updated_at = now()
-WHERE id = $1 AND user_id = $2;
+WHERE id = $1 AND user_id = $2
+  AND status NOT IN ('done', 'failed', 'cancelled');
 """
 
 
@@ -705,8 +719,8 @@ async def save_checkpoint(
     run_id: str,
     user_id: str,
     checkpoint: dict[str, object],
-) -> None:
-    """Overwrite the `tasks.checkpoint` jsonb column with the executor's
+) -> bool:
+    """Overwrite a live run's `tasks.checkpoint` jsonb column with the executor's
     current state. Phase 3a uses this on the chunk-break path
     (`AgentLoopResult.kind == "yielded"`): we persist `messages` +
     `step` + `seq` + the same `config` we loaded, then enqueue a
@@ -714,14 +728,140 @@ async def save_checkpoint(
 
     Same shape as `RunCheckpoint` in `lib/server/agent/checkpoint.ts`
     so a Python-written checkpoint is loadable by the TS worker
-    (defence in depth — flag flip should never strand a run mid-loop)."""
+    (defence in depth — flag flip should never strand a run mid-loop).
+
+    False: the run has ended (cancelled under us). Nothing was written,
+    and the caller must not act any further."""
     async with fenced_connection(pool) as conn:
-        await conn.execute(
+        result = await conn.execute(
             _SAVE_CHECKPOINT_SQL,
             _coerce_uuid(run_id),
             _coerce_uuid(user_id),
             json.dumps(checkpoint),
         )
+    return bool(result != "UPDATE 0")
+
+
+_START_RUNNING_SQL = """
+UPDATE public.tasks
+SET status = 'running', updated_at = now()
+WHERE id = $1 AND user_id = $2 AND status = 'queued'
+RETURNING status;
+"""
+
+
+async def start_running(pool: asyncpg.Pool, *, run_id: str, user_id: str) -> str | None:
+    """`queued` → `running` as a worker starts executing (a run reads
+    `queued` only until it is claimed); returns the status the run has
+    now, None when there is no such run."""
+    async with fenced_connection(pool) as conn:
+        row = await conn.fetchrow(_START_RUNNING_SQL, _coerce_uuid(run_id), _coerce_uuid(user_id))
+        if row is None:
+            row = await conn.fetchrow(
+                _OWNED_TASK_STATUS_SQL, _coerce_uuid(run_id), _coerce_uuid(user_id)
+            )
+    return str(row["status"]) if row is not None else None
+
+
+_MARK_APPLIED_SQL = """
+UPDATE public.tasks
+SET answers_applied_at = COALESCE(answers_applied_at, now()), updated_at = now()
+WHERE id = $1 AND user_id = $2 AND status IN ('queued', 'running')
+RETURNING id;
+"""
+
+
+async def mark_answers_applied(pool: asyncpg.Pool, *, run_id: str, user_id: str) -> bool:
+    """A resume run commits to its answers — before any side effect (Q57).
+    From here the questions can never be answered again, whatever becomes
+    of the run. False: the run has ended; apply nothing."""
+    async with fenced_connection(pool) as conn:
+        row = await conn.fetchrow(_MARK_APPLIED_SQL, _coerce_uuid(run_id), _coerce_uuid(user_id))
+    return row is not None
+
+
+_COMMIT_PAUSE_SQL = """
+UPDATE public.tasks
+SET status = 'paused', checkpoint = $3::jsonb, outcome = $4::jsonb,
+    finished_at = now(), updated_at = now()
+WHERE id = $1 AND user_id = $2 AND status IN ('queued', 'running')
+RETURNING id;
+"""
+
+
+async def commit_pause(
+    pool: asyncpg.Pool,
+    *,
+    run_id: str,
+    user_id: str,
+    checkpoint: dict[str, object],
+    outcome: dict[str, object],
+    pause_events: list[TaskEvent],
+) -> bool:
+    """Pause on a question in ONE transaction: the checkpoint, `paused`
+    with its open interrupts and `finished_at`, and the request entries.
+    False — nothing written, so no answerable question — when the run
+    ended first (a cancel won)."""
+    run_uuid, user_uuid = _coerce_uuid(run_id), _coerce_uuid(user_id)
+    async with fenced_connection(pool) as conn, conn.transaction():
+        row = await conn.fetchrow(
+            _COMMIT_PAUSE_SQL, run_uuid, user_uuid, json.dumps(checkpoint), json.dumps(outcome)
+        )
+        if row is None:
+            return False
+        for event in pause_events:
+            await _insert_event(conn, event, user_uuid)
+    return True
+
+
+_COMMIT_YIELD_SQL = """
+UPDATE public.tasks
+SET checkpoint = $3::jsonb, updated_at = now()
+WHERE id = $1 AND user_id = $2 AND status IN ('queued', 'running')
+RETURNING id;
+"""
+
+
+async def commit_yield(
+    pool: asyncpg.Pool, *, run_id: str, user_id: str, checkpoint: dict[str, object]
+) -> bool:
+    """End a chunk: the checkpoint and the `continue` job in one
+    transaction. False when the run ended first."""
+    run_uuid, user_uuid = _coerce_uuid(run_id), _coerce_uuid(user_id)
+    async with fenced_connection(pool) as conn, conn.transaction():
+        row = await conn.fetchrow(_COMMIT_YIELD_SQL, run_uuid, user_uuid, json.dumps(checkpoint))
+        if row is None:
+            return False
+        await conn.execute(
+            jobs.ENQUEUE_CONTINUE_SQL, run_uuid, user_uuid, "continue", json.dumps({})
+        )
+    return True
+
+
+_OPEN_QUESTION_SQL = """
+SELECT e.payload->>'approvalId' AS id
+FROM public.task_events e
+WHERE e.task_id = $1 AND e.user_id = $2 AND e.kind = 'approval'
+  AND e.payload->>'phase' = 'request'
+  AND NOT EXISTS (
+    SELECT 1 FROM public.task_events a
+    WHERE a.task_id = e.task_id AND a.user_id = e.user_id AND a.kind = 'approval'
+      AND a.seq > e.seq
+      AND a.payload->>'phase' = 'response'
+      AND a.payload->>'approvalId' = e.payload->>'approvalId')
+ORDER BY e.seq DESC
+LIMIT 1;
+"""
+
+
+async def load_open_question(pool: asyncpg.Pool, *, run_id: str, user_id: str) -> str | None:
+    """The question a run paused before 0045 waits on: its log's newest
+    request that no later response answers (`private.task_waits_on`)."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(_OPEN_QUESTION_SQL, _coerce_uuid(run_id), _coerce_uuid(user_id))
+    if row is None or row["id"] is None:
+        return None
+    return str(row["id"])
 
 
 def _coerce_uuid(value: str) -> uuid.UUID:
@@ -837,6 +977,8 @@ class ChildSpawn:
     checkpoint: dict[str, object]
 
 
+LOCK_TASK_SCOPE_SQL = "SELECT private.lock_task_scope($1, $2);"
+
 # Parent first: flip to `paused` with the absolute barrier count and the
 # `awaiting_children` checkpoint — unless it settled (cancelled) under us.
 _SPAWN_PARENT_SQL = """
@@ -844,6 +986,8 @@ UPDATE public.tasks
 SET status = 'paused',
     pending_children = $3,
     checkpoint = $4::jsonb,
+    outcome = NULL,
+    finished_at = NULL,
     updated_at = now()
 WHERE id = $1 AND user_id = $2
   AND status NOT IN ('done', 'failed', 'cancelled')
@@ -869,6 +1013,7 @@ async def commit_spawn(
     conversation_id: str,
     children: list[ChildSpawn],
     checkpoint: dict[str, object],
+    spawn_events: list[TaskEvent] | None = None,
 ) -> bool:
     """Fan out in ONE transaction: the parent goes `paused` with
     `pending_children = len(children)` and its `awaiting_children`
@@ -883,11 +1028,15 @@ async def commit_spawn(
     `awaiting_children`). Children's jobs are invisible to workers until
     the commit.
 
-    Returns False — and creates nothing — when the parent already
-    settled (e.g. cancelled while this chunk ran)."""
+    Returns False — and creates nothing, announces nothing — when the
+    parent already settled (e.g. cancelled while this chunk ran).
+    `spawn_events` (the handoffs) commit with it."""
     parent_uuid = _coerce_uuid(parent_task_id)
     user_uuid = _coerce_uuid(user_id)
     async with fenced_connection(pool) as conn, conn.transaction():
+        # 0045's lock order: conversation, user, then the task rows — so a
+        # cancel either sees these children or stops this spawn.
+        await conn.execute(LOCK_TASK_SCOPE_SQL, user_uuid, parent_uuid)
         parent = await conn.fetchrow(
             _SPAWN_PARENT_SQL,
             parent_uuid,
@@ -910,12 +1059,14 @@ async def commit_spawn(
                 json.dumps(child.checkpoint),
             )
             await conn.execute(_SPAWN_CHILD_JOB_SQL, child_uuid, user_uuid)
+        for event in spawn_events or ():
+            await _insert_event(conn, event, user_uuid)
     return True
 
 
 _CLAIM_PAUSED_FOR_FAN_IN_SQL = """
 UPDATE public.tasks
-SET status = 'running', updated_at = now()
+SET status = 'running', outcome = NULL, finished_at = NULL, updated_at = now()
 WHERE id = $1 AND user_id = $2 AND status = 'paused' AND pending_children <= 0
 RETURNING id;
 """
@@ -1030,9 +1181,19 @@ def _final_text_from_result_rows(raw: object) -> str:
 
 
 async def load_child_results(
-    pool: asyncpg.Pool, *, parent_task_id: str, user_id: str
+    pool: asyncpg.Pool,
+    *,
+    parent_task_id: str,
+    user_id: str,
+    children: list[dict[str, object]] | None = None,
 ) -> list[ChildResult]:
-    """Read all child tasks for a parent and map them to ChildResult.
+    """Read one spawn round's children and map them to ChildResult.
+
+    `children` is the round as the parent's checkpoint names it
+    (`awaiting_children.children`: `{id, personaSlug, subgoal}`): the
+    results come in its order, and a child that is gone (deleted) is
+    reported with status `deleted`. Without it (no such list), every
+    child of the parent.
 
     Reads the subagent metadata (personaSlug / subgoal) from each
     child's `tasks.checkpoint.subagent` jsonb key, and the final text
@@ -1047,8 +1208,24 @@ async def load_child_results(
         rows = await conn.fetch(
             _LOAD_CHILD_RESULTS_SQL, _coerce_uuid(parent_task_id), _coerce_uuid(user_id)
         )
+    selected: list[tuple[asyncpg.Record | None, dict[str, object]]]
+    if children is None:
+        selected = [(row, {}) for row in rows]
+    else:
+        by_id = {str(row["id"]): row for row in rows}
+        selected = [(by_id.get(str(child.get("id"))), child) for child in children]
     out: list[ChildResult] = []
-    for row in rows:
+    for row, named in selected:
+        if row is None:
+            out.append(
+                ChildResult(
+                    persona_slug=str(named.get("personaSlug") or ""),
+                    subgoal=str(named.get("subgoal") or ""),
+                    status="deleted",
+                    final_text="",
+                )
+            )
+            continue
         cp = _as_dict(row["checkpoint"])
         # subagent metadata is nested under checkpoint["subagent"]
         meta = _as_dict(cp.get("subagent")) if cp else None

@@ -26,7 +26,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agent_py import executor, jobs, lease, poller, store, tool_ledger, verify
+from agent_py import executor, jobs, lease, poller, store, verify
 from agent_py.emitter import RunEmitter
 from agent_py.events import (
     ApprovalEvent,
@@ -48,6 +48,7 @@ from agent_py.providers.anthropic_provider import AnthropicStepConfig, make_anth
 from agent_py.runner import RunStepContext, RunStepFn, RunStepOutcome
 from agent_py.tools.registry import ToolDescriptor, ToolInvocationResult
 
+from .executor_fakes import fake_settle
 from .test_anthropic_provider import _FakeClient
 from .test_job_lease import JOB_ID, RUN_ID, USER_ID, _job, _live_settings, _state
 
@@ -227,6 +228,11 @@ async def test_heartbeat_errors_past_the_lease_deadline_cancel_the_run() -> None
     assert job_lease.lost_reason == "heartbeat_failing_past_expiry"
 
 
+def saved_at(calls: list[str]) -> bool:
+    assert calls == [], "saved after the lease was lost"
+    return True
+
+
 @pytest.mark.asyncio
 async def test_lost_lease_stops_the_step_before_the_next_tool() -> None:
     """The heartbeat flags the takeover while tool `a` runs: tool `b`
@@ -253,7 +259,9 @@ async def test_lost_lease_stops_the_step_before_the_next_tool() -> None:
     checkpoint = {"messages": [{"role": "user", "content": "go"}], "step": 0, "seq": 1}
     with (
         _db(checkpoint, max_seq=1, sink=sink),
-        patch.object(store, "save_checkpoint", new=AsyncMock()) as save,
+        patch.object(
+            store, "save_checkpoint", new=AsyncMock(side_effect=lambda *_a, **_k: saved_at(calls))
+        ) as save,
         patch.object(store, "update_run", new=AsyncMock()) as update,
         patch("agent_py.executor.settle_task_terminal", new=AsyncMock()) as settle,
         lease.bound(job_lease),
@@ -264,11 +272,13 @@ async def test_lost_lease_stops_the_step_before_the_next_tool() -> None:
         )
 
     assert calls == ["a"]
-    # The last event written is tool `a`'s input; its output (and
+    # The last events written are the turn's inputs; `a`'s output (and
     # everything after) was refused.
-    assert isinstance(collected[-1], ToolInputEvent) and collected[-1].tool_call_id == "tu_a"
+    assert isinstance(collected[-1], ToolInputEvent)
+    assert [e.tool_call_id for e in collected if isinstance(e, ToolInputEvent)] == ["tu_a", "tu_b"]
     assert not any(isinstance(e, ToolOutputEvent | ResultEvent) for e in collected)
-    save.assert_not_called()
+    # Only the turn's record, saved while the lease held (before `a` ran).
+    assert save.await_count == 1
     update.assert_not_called()
     settle.assert_not_called()
 
@@ -494,7 +504,7 @@ async def _run_continue(*, reclaimed: bool) -> tuple[list[TaskEvent], ExecutorOu
         _db(_continue_checkpoint(), max_seq=8, sink=sink),
         patch.object(store, "load_run_events", new=AsyncMock(side_effect=load_log)),
         patch.object(store, "update_run", new=AsyncMock()),
-        patch("agent_py.executor.settle_task_terminal", new=AsyncMock()),
+        patch("agent_py.executor.settle_task_terminal", new=fake_settle(collected)),
     ):
         outcome = await executor.execute_continue(
             MagicMock(),
@@ -736,8 +746,8 @@ async def test_interrupted_respond_reapplies_an_unpersisted_answer() -> None:
     # persisted (second save).
     assert calls == ["danger"]
     record = save.await_args_list[0].kwargs["checkpoint"]["inflight_tools"]
-    assert record == {"started": ["tu_1"], "results": []}
-    saved = save.await_args_list[1].kwargs["checkpoint"]["messages"][-1]["content"][0]
+    assert (record["started"], record["results"]) == (["tu_1"], [])
+    saved = save.await_args_list[2].kwargs["checkpoint"]["messages"][-1]["content"][0]
     assert (saved["tool_use_id"], saved["content"]) == ("tu_1", "danger ran")
     # Opens with a resume marker from the paused checkpoint (seq 8), then
     # re-emits the answer.
@@ -749,8 +759,8 @@ async def test_interrupted_respond_reapplies_an_unpersisted_answer() -> None:
     assert settle.await_args.kwargs["status"] == "done"
     # The interim checkpoint (answer applied) is saved AFTER the marker,
     # so its seq covers it: a reclaim from it drops only what follows.
-    interim = save.await_args_list[1].kwargs["checkpoint"]
-    assert interim["seq"] >= marker.seq
+    for saved_then in save.await_args_list:
+        assert saved_then.kwargs["checkpoint"]["seq"] >= marker.seq
 
 
 @pytest.mark.asyncio
@@ -765,9 +775,11 @@ async def test_interrupted_respond_emits_the_marker_before_the_interim_save() ->
         order.append(f"event:{event.kind}")
         collected.append(event)
 
+    saved_seqs: list[int] = []
+
     async def save(*_a: Any, **kw: Any) -> None:
-        if tool_ledger.INFLIGHT_KEY not in kw["checkpoint"]:
-            order.append(f"save:seq={kw['checkpoint']['seq']}")
+        order.append("save")
+        saved_seqs.append(kw["checkpoint"]["seq"])
 
     with (
         _db(_paused_checkpoint(answered=False), max_seq=10, sink=sink),
@@ -783,7 +795,11 @@ async def test_interrupted_respond_emits_the_marker_before_the_interim_save() ->
             MagicMock(), _respond_payload(), make_step_fn=_done_step_fn(), resume_interrupted=True
         )
     assert order[0] == "event:status"
-    assert order[1] == "save:seq=11"
+    marker = collected[0]
+    assert isinstance(marker, StatusEvent) and marker.resumed_from_seq == 8
+    # Every save follows the marker and the answer's entry, and covers both.
+    assert order.index("save") > order.index("event:approval")
+    assert saved_seqs and min(saved_seqs) > marker.seq == 11
 
 
 @pytest.mark.asyncio
@@ -830,9 +846,7 @@ async def test_interrupted_respond_that_cannot_resume_settles_the_task_failed() 
     collected, sink = _list_sink()
     with (
         _db(_paused_checkpoint(answered=False), max_seq=10, sink=sink),
-        patch(
-            "agent_py.executor.settle_task_terminal", new=AsyncMock(return_value=MagicMock())
-        ) as settle,
+        patch("agent_py.executor.settle_task_terminal", new=fake_settle(collected)) as settle,
     ):
         outcome = await executor.execute_respond(
             MagicMock(), _respond_payload("tu_missing"), resume_interrupted=True

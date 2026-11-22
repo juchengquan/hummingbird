@@ -39,6 +39,8 @@ from agent_py.runner import (
 )
 from agent_py.tools import ToolError, default_tool_registry
 
+from .executor_fakes import fake_pause, fake_settle
+
 # --- Tool descriptors ------------------------------------------------------
 
 
@@ -197,6 +199,7 @@ async def _drive_suspend(
         patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=False)),
         patch.object(store, "update_run", new=AsyncMock()),
         patch.object(store, "save_checkpoint", new=AsyncMock()),
+        patch.object(store, "commit_pause", new=fake_pause(collected)),
         patch("agent_py.executor._make_db_sink", return_value=sink),
     ):
         await executor.execute_start(pool, payload, make_step_fn=make_step)
@@ -335,10 +338,12 @@ async def _drive_respond(
         patch.object(store, "update_run", new=AsyncMock()),
         patch.object(store, "save_checkpoint", new=AsyncMock()) as save_checkpoint,
         patch("agent_py.executor._make_db_sink", return_value=sink),
+        patch("agent_py.executor.settle_task_terminal", new=fake_settle(collected)),
     ):
         await executor.execute_respond(pool, payload, make_step_fn=make)
 
-    saved = save_checkpoint.await_args_list[0].kwargs["checkpoint"]
+    # The last save: the completed turn (the first one records the answer).
+    saved = save_checkpoint.await_args_list[-1].kwargs["checkpoint"]
     return saved, collected
 
 

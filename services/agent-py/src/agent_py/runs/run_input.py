@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .. import tool_ledger
 from ..contract import models
 from ..resume_answers import RESUME_KEY, StoredAnswer, resume_block
 from .credentials import split_state
@@ -131,12 +132,26 @@ class ResumeInvalid(Exception):
 
 
 def check_resume(previous: RunRecord | None, body: models.StartRunRequest) -> None:
-    """Raises `ResumeMismatch` unless `previous` is the caller's run on the
-    same thread, `interrupted`, and `resume[]` answers exactly its open
+    """Raises `ResumeMismatch` unless `previous` is the caller's top-level
+    run on the same thread, in the resume's own mode (absent = interactive),
+    `interrupted`, and `resume[]` answers exactly its open
     interrupts (each once); `ResumeInvalid` when a `resolved` answer's
     payload does not fit its interrupt's `responseSchema`."""
     if previous is None or previous.thread_id != body.threadId:
         raise ResumeMismatch("The previous run is not one of yours on this thread.")
+    if previous.parent_run_id is not None:
+        # The join barrier waits on that very row (Q59).
+        raise ResumeMismatch(
+            "A sub-agent run is answered through its task, not resumed as a new run."
+        )
+    mode = forwarded_props(body).mode or "interactive"
+    if previous.mode != mode:
+        raise ResumeMismatch(
+            "A background run can only resume a background run."
+            if mode == "background"
+            else "An interactive run can only resume an interactive run "
+            '(send `mode: "background"` to resume a background one).'
+        )
     if previous.status != "interrupted":
         raise ResumeMismatch(f"The previous run is {previous.status}, not interrupted.")
     open_by_id = {str(i.get("id")): i for i in previous.open_interrupts}
@@ -204,10 +219,14 @@ def resume_checkpoint(
     """Q41: a background resume's start state — the paused run's
     `messages` and `config` (what the model saw, in full, and the run's
     setup: model, skills, workspace, approvals, research mode, MCP
-    allow-list), plus the `resume[]` answers under `RESUME_KEY` for the
+    allow-list), the rest of the paused tool turn (`tool_ledger`: the
+    sibling calls' results, the questions still to ask — the answered
+    ones among them, which the caller checked against the open
+    interrupts), plus the `resume[]` answers under `RESUME_KEY` for the
     executor to apply. The resume request's own `forwardedProps` do not
     change the setup (the client re-sends the same ones, RUN_EVENTS.md
-    § 4.3); only its `maxSteps` sets the new run's budget.
+    § 4.3) except that `allowedMcpServerIds` may narrow the saved list,
+    never widen it (Q51); its `maxSteps` sets the new run's budget.
 
     Raises `ResumeMismatch` when the paused run has no usable checkpoint
     or is waiting on its sub-agent runs (not on the user)."""
@@ -227,8 +246,30 @@ def resume_checkpoint(
         )
         for r in body.resume or ()
     ]
+    record = tool_ledger.read_record(dict(previous))
     return {
         "messages": list(messages),
-        "config": dict(config),
+        "config": _narrowed(config, forwarded_props(body).allowedMcpServerIds),
+        tool_ledger.INFLIGHT_KEY: tool_ledger.record_payload(
+            sorted(record.started),
+            list(record.results.values()),
+            ask=sorted(record.ask | {a.interrupt_id for a in answers}),
+            spawn=record.spawn,
+            classified=record.classified,
+        ),
         RESUME_KEY: resume_block(previous_run_id, answers),
     }
+
+
+def _narrowed(config: dict[str, Any], asked: list[Any] | None) -> dict[str, Any]:
+    """Q51: the saved allow-list intersected with the resume's. Absent
+    restricts nothing on either side; `[]` allows nothing."""
+    out = dict(config)
+    if asked is None:
+        return out
+    wanted = list(dict.fromkeys(str(i) for i in asked))
+    saved = config.get("allowedMcpServerIds")
+    out["allowedMcpServerIds"] = (
+        [i for i in saved if i in wanted] if isinstance(saved, list) else wanted
+    )
+    return out

@@ -26,7 +26,8 @@ Status transitions (`tasks.status`; the contract status is derived, see
     mark_running: queued → running                          (background worker)
     settle:       queued | running → done | failed | cancelled | paused
                   (paused = Interrupted; writes `outcome`, `finished_at`)
-    cancel:       queued | running | paused → cancelled     (owner; idempotent)
+    cancel:       queued | running | paused → cancelled     (owner; idempotent;
+                                                              background: the whole task, Q60)
     reap_expired: running (interactive, lease lapsed) → failed `worker_lost`
 
 The background-only transitions the existing executor makes (paused →
@@ -65,6 +66,7 @@ __all__ = [
     "PreviousRunAlreadyAnswered",
     "PreviousRunAlreadyResumed",
     "PreviousRunNotFound",
+    "PreviousRunNotWaiting",
     "RunFilter",
     "RunIdConflict",
     "RunPage",
@@ -94,17 +96,26 @@ class PreviousRunNotFound(Exception):
     (API: 409 `invalid_state`)."""
 
 
+class PreviousRunNotWaiting(Exception):
+    """`previous_run_id` can't be resumed by this run, re-checked with the
+    insert: it isn't paused (cancelled meanwhile, Q60), doesn't wait on
+    these questions, has the other mode or is a sub-agent run (Q59)
+    (API: 409 `invalid_state`)."""
+
+
 class PreviousRunAlreadyResumed(Exception):
-    """Another run already answers `previous_run_id` and has not failed or
-    been cancelled — one live resume per interrupted run (0042's
-    `tasks_one_live_resume`), so an approved tool cannot run twice
+    """Another run already answers `previous_run_id`: one that has not
+    failed or been cancelled (0042's `tasks_one_live_resume`), or — a
+    background run — one that applied the answer before it failed (Q57,
+    0045) — so an approved tool cannot run twice
     (API: 409 `run_already_resumed`)."""
 
 
 class PreviousRunAlreadyAnswered(Exception):
-    """`previous_run_id` was answered through the old
-    `/api/tasks/:id/respond` (it has a `respond` job, 0043) — each paused
-    task is answered one way only, Q41 (API: 409 `run_already_answered`)."""
+    """One of the questions is being answered through the old
+    `/api/tasks/:id/respond` (a queued or running `respond` job for it,
+    0045) — each question is answered once, Q58
+    (API: 409 `run_already_answered`)."""
 
 
 class InvalidPageToken(Exception):
@@ -176,13 +187,16 @@ class RunRepository(Protocol):
         conversations (`ThreadNotFound`); `max_steps` and `checkpoint` are
         required (`ValueError`). Created `queued`; the caller then appends
         `status: queued` as seq 1 and enqueues the `start` job
-        (`enqueue_task_job`). Interactive: created `running` with a lease;
+        (`enqueue_task_job`) — Postgres does both in the create's own
+        transaction. Interactive: created `running` with a lease;
         an anonymous owner may only create interactive runs (`ValueError`).
         `previous_run_id`, when set, must be the owner's run on the same
         thread (`PreviousRunNotFound`), and no other run that is not
         `failed` / `cancelled` may have it as its previous run
-        (`PreviousRunAlreadyResumed`) — checked atomically with the
-        insert, so two concurrent resumes cannot both be created."""
+        (`PreviousRunAlreadyResumed`), and it must still be paused, in
+        the same mode and top-level (`PreviousRunNotWaiting`) — checked
+        atomically with the insert, so two concurrent resumes cannot both
+        be created and a cancel can't be raced."""
         ...
 
     async def get(self, owner: RunOwner, run_id: str) -> RunRecord | None:
@@ -362,6 +376,12 @@ class InMemoryRunRepository:
                 for row in self._rows.values()
             ):
                 raise PreviousRunAlreadyResumed()
+            if (
+                prev.record.internal_status != "paused"
+                or prev.record.mode != spec.mode
+                or prev.record.parent_run_id is not None
+            ):
+                raise PreviousRunNotWaiting("previous run is not waiting on these answers")
 
         now = self._clock()
         if spec.mode == "background":

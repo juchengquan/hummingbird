@@ -61,15 +61,17 @@ async def test_commit_spawn_is_one_transaction_parent_first() -> None:
     )
     assert ok is True
     kinds = [k for k, _ in conn.calls]
-    # Everything inside one transaction, the parent update first.
+    # Everything inside one transaction: the lock, then the parent first.
     assert kinds[0] == "txn_begin" and kinds[-1] == "txn_end"
-    assert kinds[1] == "fetchrow"
-    parent_sql = _norm(conn.calls[1][1][0])
+    assert kinds[1:3] == ["execute", "fetchrow"]
+    assert "private.lock_task_scope" in conn.calls[1][1][0]
+    parent_sql = _norm(conn.calls[2][1][0])
     assert "SET status = 'paused'" in parent_sql
     assert "pending_children = $3" in parent_sql
     assert "status NOT IN ('done', 'failed', 'cancelled')" in parent_sql
-    assert conn.calls[1][1][3] == 2  # absolute count = len(children)
-    executes = [args for k, args in conn.calls if k == "execute"]
+    assert conn.calls[2][1][3] == 2  # absolute count = len(children)
+    assert conn.calls[1][1][-1] is True, "lock outside the transaction"
+    executes = [args for k, args in conn.calls if k == "execute"][1:]
     assert len(executes) == 4  # child row + start job, per child
     assert all(args[-1] is True for args in executes), "write outside the transaction"
     assert "INSERT INTO public.tasks" in executes[0][0]
@@ -91,7 +93,8 @@ async def test_commit_spawn_on_a_settled_parent_creates_nothing() -> None:
         checkpoint={},
     )
     assert ok is False
-    assert not [k for k, _ in conn.calls if k == "execute"]
+    executed = [args[0] for k, args in conn.calls if k == "execute"]
+    assert len(executed) == 1 and "private.lock_task_scope" in executed[0]
 
 
 @pytest.mark.asyncio

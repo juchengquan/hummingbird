@@ -32,6 +32,8 @@ from agent_py.runner import (
     run_agent_loop,
 )
 
+from .executor_fakes import fake_settle
+
 # --- Runner: should_yield -----------------------------------------------
 
 
@@ -294,9 +296,9 @@ async def test_execute_start_resets_step_but_not_seq() -> None:
 
 @pytest.mark.asyncio
 async def test_yielded_chunk_saves_checkpoint_and_enqueues_continue() -> None:
-    """When the runner returns `kind='yielded'`, the executor saves a
+    """When the runner returns `kind='yielded'`, the executor commits a
     fresh checkpoint (with current messages + emitter seq/step) and
-    enqueues another `continue` job."""
+    another `continue` job, in one transaction (`store.commit_yield`)."""
     pool = MagicMock()
     payload = executor.StartActionPayload(
         run_id="22222222-2222-2222-2222-222222222222",
@@ -333,19 +335,23 @@ async def test_yielded_chunk_saves_checkpoint_and_enqueues_continue() -> None:
         patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=False)),
         patch.object(store, "update_run", new=AsyncMock()) as update_run,
         patch.object(store, "save_checkpoint", new=AsyncMock()) as save_checkpoint,
+        patch.object(store, "commit_yield", new=AsyncMock(return_value=True)) as commit,
         patch.object(jobs, "enqueue_continue_job", new=AsyncMock()) as enqueue,
     ):
         outcome = await executor.execute_continue(pool, payload, make_step_fn=make)
 
     assert outcome.settled is True
-    # Yielded path: save_checkpoint + enqueue_continue_job called.
-    save_checkpoint.assert_awaited_once()
-    enqueue.assert_awaited_once_with(pool, task_id=payload.run_id, user_id=payload.user_id)
+    # Yielded path: the checkpoint + continue job commit, nothing beside it.
+    commit.assert_awaited_once()
+    assert commit.await_args.kwargs["run_id"] == payload.run_id
+    assert commit.await_args.kwargs["user_id"] == payload.user_id
+    save_checkpoint.assert_not_called()
+    enqueue.assert_not_called()
     # The `tasks` row is NOT marked `done` on yield (the run isn't
     # over yet; it's just chunking).
     update_run.assert_not_called()
 
-    saved_kwargs = save_checkpoint.await_args.kwargs
+    saved_kwargs = commit.await_args.kwargs
     saved = saved_kwargs["checkpoint"]
     # Checkpoint shape mirrors `RunCheckpoint`.
     assert set(saved.keys()) == {"messages", "step", "seq", "config"}
@@ -465,7 +471,7 @@ async def test_execute_continue_reaggregates_verification_from_event_log() -> No
             executor, "_maybe_verify", new=AsyncMock(return_value=verify_payload)
         ) as maybe_verify,
         patch("agent_py.executor._make_db_sink", return_value=sink),
-        patch("agent_py.executor.settle_task_terminal", new=AsyncMock(return_value=MagicMock())),
+        patch("agent_py.executor.settle_task_terminal", new=fake_settle(collected)),
     ):
         outcome = await executor.execute_continue(pool, payload, make_step_fn=make_step)
 

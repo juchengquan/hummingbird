@@ -55,7 +55,16 @@ _INPUT_SCHEMA: dict[str, Any] = {
 }
 
 
-async def _spawn_execute_fallback(_args: dict[str, Any]) -> ToolInvocationResult:
+SPAWN_ARGS_ERROR = (
+    "spawnSubagent needs `tasks`: a non-empty list of {personaSlug, subgoal}, "
+    "both non-empty strings. No subagent was started."
+)
+
+
+async def _spawn_execute_fallback(args: dict[str, Any]) -> ToolInvocationResult:
+    if not parse_spawn_specs(args):
+        # An empty or malformed spawn just runs, and tells the model.
+        raise ToolError(SPAWN_ARGS_ERROR)
     raise ToolError("spawnSubagent must be handled by the executor (fan-out), not executed inline.")
 
 

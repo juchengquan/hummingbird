@@ -26,7 +26,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agent_py import jobs, store
+from agent_py import events, jobs, store
+from agent_py import settings as settings_module
 from agent_py.executor import (
     ExecutorOutcome,
     MakeStepFn,
@@ -37,6 +38,8 @@ from agent_py.executor import (
 from agent_py.runner import RunStepContext, RunStepFn, RunStepOutcome, SpawnDescriptor, SpawnSpec
 from agent_py.store import ChildResult
 from agent_py.tools.spawn_subagent import MAX_CHILDREN
+
+from .executor_fakes import fake_settle
 
 RUN_ID = "11111111-1111-1111-1111-111111111111"
 USER_ID = "22222222-2222-2222-2222-222222222222"
@@ -60,9 +63,21 @@ def _patch_store(load: dict | None = None):
     )
 
 
+@pytest.fixture
+def stub_model(monkeypatch: pytest.MonkeyPatch) -> dict:
+    """The stub step fn: only behind its explicit test setting (Q55),
+    and still with a model and messages."""
+    monkeypatch.setenv("WORKER_STUB_MODEL", "true")
+    settings_module.get_settings.cache_clear()
+    return {
+        "messages": [{"role": "user", "content": "go"}],
+        "config": {"model": "anthropic/claude-haiku-4.5"},
+    }
+
+
 @pytest.mark.asyncio
 async def test_happy_path_settles_and_updates_task(
-    payload: StartActionPayload,
+    payload: StartActionPayload, stub_model: dict
 ) -> None:
     pool = MagicMock()
     with (
@@ -70,7 +85,7 @@ async def test_happy_path_settles_and_updates_task(
         patch.object(store, "append_event", new=AsyncMock()) as append,
         patch.object(store, "update_run", new=AsyncMock()),
         patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=False)),
-        patch.object(store, "load_checkpoint", new=AsyncMock(return_value=None)),
+        patch.object(store, "load_checkpoint", new=AsyncMock(return_value=stub_model)),
         patch(
             "agent_py.executor.settle_task_terminal", new=AsyncMock(return_value=MagicMock())
         ) as settle,
@@ -91,17 +106,20 @@ async def test_happy_path_settles_and_updates_task(
 
 @pytest.mark.asyncio
 async def test_cancellation_returns_cancelled_terminal(
-    payload: StartActionPayload,
+    payload: StartActionPayload, stub_model: dict
 ) -> None:
-    """Out-of-band cancel between steps → executor emits `status:
-    cancelled` and settles via the barrier."""
+    """Out-of-band cancel between steps → executor writes `status:
+    cancelled`. The cancel already settled the row (and the barrier is
+    the database's), so the worker settles nothing over it."""
     pool = MagicMock()
     with (
         patch.object(store, "set_task_handler", new=AsyncMock()),
-        patch.object(store, "append_event", new=AsyncMock()),
+        patch.object(store, "append_event", new=AsyncMock()) as append,
         patch.object(store, "update_run", new=AsyncMock()),
+        patch.object(store, "start_running", new=AsyncMock(return_value="running")),
+        patch.object(store, "load_owned_task_status", new=AsyncMock(return_value="cancelled")),
         patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=True)),
-        patch.object(store, "load_checkpoint", new=AsyncMock(return_value=None)),
+        patch.object(store, "load_checkpoint", new=AsyncMock(return_value=stub_model)),
         patch(
             "agent_py.executor.settle_task_terminal", new=AsyncMock(return_value=MagicMock())
         ) as settle,
@@ -109,9 +127,10 @@ async def test_cancellation_returns_cancelled_terminal(
         outcome = await execute_start(pool, payload)
     # `settled=True` because the cancel landed cleanly (not a fault).
     assert outcome.settled is True
-    settle.assert_awaited_once()
-    assert settle.await_args.kwargs["task_id"] == RUN_ID
-    assert settle.await_args.kwargs["status"] == "cancelled"
+    settle.assert_not_awaited()
+    last = append.await_args.args[1]
+    assert isinstance(last, events.StatusEvent) and last.status == "cancelled"
+    assert last.run_id == RUN_ID
 
 
 @pytest.mark.asyncio
@@ -173,12 +192,14 @@ async def test_step_fn_returning_done_settles_after_one_step(
         patch.object(store, "update_run", new=AsyncMock()),
         patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=False)),
         patch.object(store, "load_checkpoint", new=AsyncMock(return_value=None)),
-        patch("agent_py.executor.settle_task_terminal", new=AsyncMock(return_value=MagicMock())),
+        patch("agent_py.executor.settle_task_terminal", new=fake_settle(settled_with := [])),
     ):
         outcome = await execute_start(pool, payload, make_step_fn=make_immediate)
     assert outcome.settled is True
-    # Order: status:running, step_start, step_end, result.
-    assert persisted == ["status", "step_start", "step_end", "result"]
+    # Order: status:running, step_start, step_end, then the result with
+    # the settle (one transaction).
+    assert persisted == ["status", "step_start", "step_end"]
+    assert [e.kind for e in settled_with] == ["result"]
 
 
 @pytest.mark.asyncio
@@ -312,7 +333,8 @@ async def test_fanout_happy_path(payload: StartActionPayload) -> None:
 
     # Handoffs name the committed child ids, and the checkpoint's seq
     # covers them.
-    handoffs = [e for e in appended if e.kind == "handoff"]
+    assert not [e for e in appended if e.kind == "handoff"], "announced before the commit"
+    handoffs = [e for e in kw["spawn_events"] if e.kind == "handoff"]
     assert [h.child_task_id for h in handoffs] == [c.id for c in children]
     assert saved_checkpoint["seq"] >= max(h.seq for h in handoffs)
 
@@ -352,15 +374,24 @@ async def test_fanout_on_a_settled_parent_creates_nothing(payload: StartActionPa
 @pytest.mark.asyncio
 async def test_fanout_depth_cap(payload: StartActionPayload) -> None:
     """When this task is itself a child (load_parent_task_id returns a
-    non-null uuid), spawning is rejected: no create_child_task, a
-    continue job IS enqueued, save_checkpoint is called, and the
-    outcome is settled=True."""
+    non-null uuid), spawning is rejected: no children, the call gets its
+    error result (saved, with the rest of the turn) and the loop carries
+    on in the same chunk — no job, no model step on an unpaired history."""
     pool = MagicMock()
     descriptor = SpawnDescriptor(
         tool_call_id="call-depth",
         tasks=[SpawnSpec(persona_slug="g1", subgoal="nested")],
     )
-    _, make_step = _make_spawn_step_fn(descriptor)
+    seen: list[list[dict]] = []
+
+    def make_step(_p: object, _c: dict, messages: list, _ctx: object = None) -> RunStepFn:
+        async def step(ctx: RunStepContext) -> RunStepOutcome:
+            seen.append(list(messages))
+            if len(seen) == 1:
+                return RunStepOutcome(done=False, spawn=descriptor)
+            return RunStepOutcome(done=True)
+
+        return step
 
     PARENT_ID = "pppppppp-pppp-pppp-pppp-pppppppppppp"
     checkpoint = {
@@ -380,16 +411,19 @@ async def test_fanout_depth_cap(payload: StartActionPayload) -> None:
         patch.object(store, "update_run", new=AsyncMock()),
         patch.object(store, "commit_spawn", new=AsyncMock()) as commit,
         patch.object(jobs, "enqueue_continue_job", new=AsyncMock()) as enqueue_cont,
+        patch("agent_py.executor.settle_task_terminal", new=fake_settle([])) as settle,
     ):
         outcome = await execute_start(pool, payload, make_step_fn=make_step)
 
     assert outcome == ExecutorOutcome(settled=True)
     # No children created, no start jobs enqueued.
     commit.assert_not_awaited()
-    # A continue job was enqueued so the parent can proceed.
-    enqueue_cont.assert_awaited_once_with(pool, task_id=RUN_ID, user_id=USER_ID)
-    # Checkpoint was saved (carries the rejection tool_result in messages).
-    save_cp.assert_awaited_once()
+    enqueue_cont.assert_not_awaited()
+    # The task proceeded with the rejection as the call's one result.
+    [block] = seen[1][-1]["content"]
+    assert block["tool_use_id"] == "call-depth" and "depth limit" in block["content"]
+    assert save_cp.await_args.kwargs["checkpoint"]["messages"][-1]["content"] == [block]
+    settle.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -514,7 +548,13 @@ async def test_fan_in_injects_aggregated_tool_result_on_continue(
     assert outcome == ExecutorOutcome(settled=True)
 
     # load_child_results was called for this parent run.
-    load_child_results_mock.assert_awaited_once_with(pool, parent_task_id=RUN_ID, user_id=USER_ID)
+    load_child_results_mock.assert_awaited_once_with(
+        pool,
+        parent_task_id=RUN_ID,
+        user_id=USER_ID,
+        # Only this round's children (wave 5c, B23).
+        children=[{"id": "c1", "personaSlug": "r", "subgoal": "g"}],
+    )
 
     # The step fn saw a tool_result message for call-1.
     assert len(captured_messages) == 1
