@@ -344,6 +344,21 @@ describe("reducer edges", () => {
     expect(ops.map((o) => o.type)).toEqual(["frame", "frame"])
   })
 
+  test("an MCP App part (wave 5b-D) becomes the mcp_app frame the chat renders", () => {
+    const content = { id: "c2", serverId: "srv-2", html: "<h1>panel</h1>", resourceUri: "ui://fake/panel" }
+    const { ops } = reduceRunEvents([
+      started,
+      {
+        type: "ACTIVITY_SNAPSHOT",
+        messageId: "r:mcp_app:c2",
+        activityType: "hummingbird.mcp_app",
+        content,
+        replace: true,
+      },
+    ] as never)
+    expect(ops).toEqual([{ type: "frame", frame: { type: "mcp_app", ...content } }])
+  })
+
   test("hasOutput: plan / routed-model / suggestions alone are no answer", () => {
     const part = (activityType: string, content: unknown) => ({
       type: "ACTIVITY_SNAPSHOT",

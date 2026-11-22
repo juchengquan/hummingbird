@@ -62,6 +62,7 @@ import type { Message, MessageError, MessageErrorCode } from "@/shared/types"
 import { toISO } from "@/shared/utils"
 import { abortStreamsOfDeletedConversations } from "@/client/chat/abort-deleted-streams"
 import { buildRunInput, runDocumentsFor } from "@/client/runs/build-input"
+import { localMcpForRun } from "@/client/runs/local-mcp"
 import { registerChatRunBridge } from "@/client/runs/chat-bridge"
 import { createChatRunner, type ChatRunner } from "@/client/runs/chat-runner"
 import { RUNS_CHAT_ENABLED } from "@/client/runs/config"
@@ -238,11 +239,11 @@ export function useChatSend(): UseChatSendResult {
           memoryBypass: conv?.memoryOff || undefined,
           verifyCitations: st.verifyCitations || undefined,
           localFilesOnly: st.localFilesOnly || undefined,
-          // TODO(5b-B): the turn's `attachments`. TODO(5b-D):
-          // `localMcpServers` + `localMcpCredentials` (`getLocalCred`) —
-          // re-read here, since nothing keeps the paused run's request
-          // across a reload. The I2I `referenceImage` is per send and is
-          // not re-applied after a reload.
+          // The local MCP servers + their credentials, re-read: nothing
+          // keeps the paused run's request across a reload (Q45).
+          ...localMcpForRun(st.mcpServers, workspaceId, getLocalCred),
+          // TODO(5b-B): the turn's `attachments`. The I2I `referenceImage`
+          // is per send and is not re-applied after a reload.
         }
       },
     })
@@ -403,8 +404,9 @@ export function useChatSend(): UseChatSendResult {
       // reasoning tier as `/v1/chat` sends it. The contract-0.4.0 options
       // go too where they are at hand (the memory opt-out, citation
       // checks, `localFilesOnly`, the I2I reference, the persona's MCP
-      // allow-list); agent-py accepts them and acts on them in wave 5b.
-      // Not yet sent (Q32, see the plan's Phase 3 checklist): MCP servers /
+      // allow-list, the local MCP servers with their credentials in
+      // `state`); agent-py accepts them and acts on them in wave 5b.
+      // Not yet sent (Q32, see the plan's Phase 3 checklist): MCP
       // resources, URL bookmarks, cloud files by id, sandbox files.
       const runsTarget = RUNS_CHAT_ENABLED
         ? await (
@@ -440,11 +442,17 @@ export function useChatSend(): UseChatSendResult {
             localFilesOnly: useStore.getState().localFilesOnly || undefined,
             referenceImage: options?.referenceImage,
             allowedMcpServerIds: options?.allowedMcpServerIds,
+            // Local MCP servers (Q42/Q45) — the `/v1/chat` body's
+            // `mcpServersForRequest` below; credentials go in `state`.
+            ...localMcpForRun(
+              useStore.getState().mcpServers,
+              activeWorkspaceId,
+              getLocalCred,
+              { allowedMcpServerIds: options?.allowedMcpServerIds }
+            ),
             // TODO(5b-B): `attachments` — files (cloud ones by id, Q44),
             // URL bookmarks, MCP resources, as the `/v1/chat` body's
-            // `attachmentsForRequest` below. TODO(5b-D): `localMcpServers`
-            // (no credentials) + `localMcpCredentials` (`getLocalCred`),
-            // as `mcpServersForRequest` below.
+            // `attachmentsForRequest` below.
           }),
         })
         return

@@ -11,6 +11,7 @@ import type { PersistedUiPart, UiAnswer } from "@/shared/generative-ui/schemas"
 import type { Message, MessageError } from "@/shared/types"
 
 import { buildRunInput } from "./build-input"
+import { localMcpForRun } from "./local-mcp"
 import type { InterruptedTurn } from "./chat-bridge"
 import { createChatRunner, type ChatRunnerDeps, type ChatRunnerStore } from "./chat-runner"
 import { fakeFetch, loadFixture, memoryStorage, sseResponse, type FakeCall } from "./fixtures"
@@ -509,6 +510,57 @@ describe("interrupt → bridge → resume", () => {
     })
     expect(JSON.stringify((calls.at(-1)!.body as StartRunRequest).forwardedProps)).not.toContain(secret)
     expect([...h.storage.map.values()].join("\n")).not.toContain(secret)
+  })
+
+  test("after a reload the resume rebuilds the local MCP servers and credentials (composeResumeInput)", async () => {
+    const secret = "Bearer sk-local-mcp-after-reload"
+    const { h } = await interrupted()
+    // A reload: a new runner (no request in memory) over the persisted messages.
+    const calls: FakeCall[] = []
+    const { fetch } = fakeFetch((call) => {
+      calls.push(call)
+      return sseResponse(loadFixture("memory-resume-choice").body)
+    })
+    const reloaded = harness(fetch, {
+      initial: h.fake.conversation.messages,
+      deps: {
+        buildRunInput: buildFixed,
+        composeResumeInput: (turn) => ({
+          model: turn.model,
+          ...localMcpForRun(
+            [
+              {
+                id: "srv-1",
+                workspaceId: "ws",
+                name: "Local",
+                url: "http://localhost:9/mcp",
+                transport: "http",
+                credentialMode: "local",
+                enabled: true,
+                requiresApproval: true,
+                capabilities: { tools: [{ name: "whoami" }] },
+                createdAt: new Date(0),
+                updatedAt: new Date(0),
+              },
+            ],
+            "ws",
+            () => ({ headers: { Authorization: secret } }),
+          ),
+        }),
+      },
+    })
+    const result = await reloaded.runner.answerInterrupts(h.turns[CONV], { "c-ask": { selection: ["a"] } })
+    expect(result).toEqual({ ok: true })
+    const sent = calls.at(-1)!.body as StartRunRequest
+    expect(sent).toMatchObject({
+      state: { "hummingbird.localMcp": { "srv-1": { headers: { Authorization: secret } } } },
+      forwardedProps: {
+        localMcpServers: [{ id: "srv-1", requiresApproval: true, capabilities: { tools: [{ name: "whoami" }] } }],
+        previousRunId: interruptedBody.runId,
+      },
+    })
+    expect(JSON.stringify(sent.forwardedProps)).not.toContain(secret)
+    expect([...reloaded.storage.map.values()].join("\n")).not.toContain(secret)
   })
 
   test("a rejected resume (409 run_already_resumed) leaves the turn and the message alone", async () => {
