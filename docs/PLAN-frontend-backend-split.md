@@ -104,6 +104,7 @@ three times. The goals:
 | Q46 | Research mode is a `research: true` run option (`mode` already means interactive / background) and agent-py gets the research task prompt Next's `buildTaskSystemPrompt` had — fixing research tasks on the old route too, which share the executor |
 | Q47 | The rendered file header carries the file id for cloud files, on Next and runs, so `searchFiles` can be called (RAG mode can't work without it today) |
 | Q48 | The per-task allowed MCP servers list is enforced everywhere it applies: agent-py background and interactive runs, and Next's chat route (nothing reads it today) |
+| Q49 | Background runs on `/v1/runs` refuse `attachments` (400 `invalid_request`) like local MCP — the Next task routes take none and the wave-6 tasks panel sends none; lifted when a need appears, never silently ignored |
 
 ## Run contract (v1)
 
@@ -209,7 +210,7 @@ has shipped behind the existing per-account backend switch.
 | 4a (Phase 3) | one agent: the "agent-py (runs)" option + store migration v35; `@ag-ui/client` / `@ag-ui/core`; `lib/client/runs/` — transport (start, rejoin from a cursor, cancel, run-token storage) and the pure AG-UI → store step tested on recorded streams; the interfaces 4b codes against | Wave 3b merged |
 | 4b (Phase 3) | **A** hook into `use-chat-send` (send, Stop → cancel, reload → rejoin, memory taint, sync hold) · **B** chat answer cards + resume (Q35) · **C** Playwright smoke (Q39) · **D** backend catch-up, first slice: image/document attachments, reasoning effort, generated images/files from the native harness | Wave 4a merged |
 | 5a (Phase 3) | one agent, the seams: every new run option in the contract (0.4.0) and through agent-py's run input; prompt-section and toolset-contributor hooks in the native harness; a per-run context slot that works for anonymous runs; `mcp_app` on tool results; the citation verifier client in a shared module; the matching `build-input.ts` fields passed on send and resume. Plus the Q43 trial findings ([`TRIAL-code-interpreter-on-agent-py.md`](TRIAL-code-interpreter-on-agent-py.md)) | Wave 4 merged |
-| 5b (Phase 3) | **A** background runs (Q41 resume + 0043 mutual exclusion, start parity, research mode Q46, skills / reasoning effort in the executor, Q48, Run progress fields, early pending question) · **B** context on runs (file budget + notes with ids Q47, MCP resources, bookmarks as taint, cloud files by id Q44) · **C** memory, citation checks, reference image, `localFilesOnly`, per-IP limits, `auto` · **D** local MCP (Q42/Q45), `MCP_ALLOW_PRIVATE_HOSTS`, MCP Apps | 5a |
+| 5b (Phase 3) | **A** background runs (Q41 resume + 0043 mutual exclusion, start parity, research mode Q46, the Q49 refusal, skills / reasoning effort in the executor, Q48, Run progress fields, early pending question) · **B** context on runs (file budget + notes with ids Q47, MCP resources, bookmarks as taint, cloud files by id Q44) · **C** memory, citation checks, reference image, `localFilesOnly`, per-IP limits, `auto` · **D** local MCP (Q42/Q45), `MCP_ALLOW_PRIVATE_HOSTS`, MCP Apps | 5a |
 | 6 (Phase 3) | the tasks panel onto runs (Q38) | Wave 5's background-runs work merged |
 
 Each wave merges into one integration branch and ships as one PR
