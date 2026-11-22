@@ -40,7 +40,7 @@ export function WorkspaceDetailSheet({ workspaceId, onClose }: WorkspaceDetailSh
     <Sheet open={true} onOpenChange={(o) => { if (!o) onClose() }}>
       <SheetContent
         side="right"
-        className="w-[480px] sm:max-w-[90vw] p-0 gap-0 flex flex-col"
+        className="w-[480px] max-w-full sm:max-w-[90vw] p-0 gap-0 flex flex-col"
       >
         <WorkspaceDetailBody workspace={workspace} />
       </SheetContent>
