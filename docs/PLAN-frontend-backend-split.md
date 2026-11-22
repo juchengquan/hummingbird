@@ -167,10 +167,13 @@ has shipped behind the existing per-account backend switch.
    **Backend catch-up (Q32).** Wave 4b-D sent image / document
    attachments, reasoning effort and generated images (`tool_image`) on
    runs. Still to do before Phase 5:
-   - [ ] attached-file context as Next builds it — the text budget across
+   - [x] attached-file context as Next builds it — the text budget across
      files, and the meta notes for RAG-mode files ("available via
-     `searchFiles`") instead of dropping them
-   - [ ] MCP resources and URL bookmarks as attachments
+     `searchFiles`") instead of dropping them (5b-B: `runs/context.py`,
+     pinned to Next's renderer by a shared fixture; signed-in files go by
+     id, images included, Q44)
+   - [x] MCP resources and URL bookmarks as attachments (5b-B; every
+     attachment taints the turn)
    - [ ] local MCP servers (browser-held credentials)
    - [ ] code interpreter — `runCode`, `sandboxFiles`, `code_result`
      parts (generated files have no producer on runs until then)
@@ -188,8 +191,10 @@ has shipped behind the existing per-account backend switch.
    - [ ] `auto` model routing, so Auto can return to the agent backends
    - [ ] MCP Apps
    - [ ] the per-IP web-tool window
-   - [ ] RAG-mode files: `searchFiles` needs a file id no prompt carries —
-     check whether it works on Next before porting
+   - [x] RAG-mode files: `searchFiles` needs a file id no prompt carries —
+     check whether it works on Next before porting (it didn't: Q47 — the
+     header now says `fileId: …` on Next and runs, and the RAG / truncation
+     notes name it)
 4. **Editor AI to the backend** (Q23).
 5. **Removal** — all Next API routes, AI/admin keys from the frontend
    env, the old `/v1/chat`, agent-ts's old routes, the server session;
