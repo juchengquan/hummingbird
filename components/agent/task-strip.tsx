@@ -219,7 +219,6 @@ export function TaskStrip({
       {view.text ? (
         <MarkdownPreview content={view.text} className="!p-0" />
       ) : null}
-
     </div>
   )
 }
