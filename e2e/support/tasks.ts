@@ -172,6 +172,7 @@ export async function launch(page: Page, tasks: TasksBackend, stage: string): Pr
   await sendAsTask(page)
   await expect.poll(async () => (await tasks.sent("stream")).length).toBeGreaterThan(0)
   await expect(panel(page)).toContainText(/Step \d|Task (finished|failed|cancelled)/)
+  await waitSaved(page)
   return rootOf(stage)
 }
 
@@ -202,12 +203,20 @@ export async function persisted(page: Page): Promise<{
   return page.evaluate(() => JSON.parse(localStorage.getItem("hummingbird-storage") ?? "{}").state)
 }
 
+/** Wait for the store's debounced write of the sent message: a second tab
+ *  opened before it starts from a store without the conversation. */
+export async function waitSaved(page: Page, text = "Write the report"): Promise<void> {
+  await expect
+    .poll(async () => JSON.stringify((await persisted(page))?.conversations ?? []))
+    .toContain(text)
+}
+
 /** Assistant messages with exactly the recorded report. */
 export async function reportCounts(page: Page) {
   const state = await persisted(page)
   const isReport = (content: string) => content.includes("The release is ready")
   return {
-    messages: state.conversations
+    messages: (state.conversations ?? [])
       .flatMap((c) => c.messages)
       .filter((m) => m.role === "assistant" && isReport(m.content)).length,
     documents: (state.documents ?? []).filter((d) => isReport(d.content)).length,

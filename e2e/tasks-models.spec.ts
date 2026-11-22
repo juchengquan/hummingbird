@@ -156,6 +156,7 @@ test("a 400 on the board reverts the card and says why", async ({ page, tasks })
 
 test("a tab in Task mode doesn't undo another tab's pick for chat", async ({ page, context, tasks }) => {
   await openApp(page)
+  await page.waitForTimeout(300) // the store's debounced write, for the other tab
   await taskToggle(page).click()
   // The user leaves this tab (headless pages all report focus).
   await page.evaluate(() => {

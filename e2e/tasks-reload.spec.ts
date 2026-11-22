@@ -11,6 +11,7 @@ import {
   reportCounts,
   rootOf,
   runCard,
+  waitSaved,
   seedBoard,
   send,
   test,
@@ -130,6 +131,7 @@ test.describe("side effects happen once", () => {
     await openApp(page)
     await send(page, "/research Write the report")
     await expect.poll(() => pointer(page)).not.toBeNull()
+    await waitSaved(page)
   }
   const ONCE = { messages: 1, documents: 1, artifacts: 1 }
 
