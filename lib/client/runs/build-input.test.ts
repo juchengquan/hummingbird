@@ -11,7 +11,6 @@ import {
   buildRunInput,
   LOCAL_MCP_STATE_KEY,
   localMcpCredentialsOf,
-  runDocumentsFor,
   toRunMessages,
   utf8ToBase64,
 } from "./build-input"
@@ -206,24 +205,5 @@ describe("buildRunInput — contract 0.4.0 options (wave 5a)", () => {
     expect(of([1])).toBeUndefined()
     expect(of({ other: 1 })).toBeUndefined()
     expect(of({ [LOCAL_MCP_STATE_KEY]: "x" })).toBeUndefined()
-  })
-})
-
-describe("runDocumentsFor", () => {
-  test("inline files with text become documents; RAG-mode and text-less files are skipped", () => {
-    const docs = runDocumentsFor(
-      [
-        { id: "a", name: "a.txt", extractedText: "alpha" },
-        { id: "b", name: "b.pdf", extractedText: "beta", extractionTruncated: true },
-        { id: "c", name: "c.pdf", extractedText: "gamma" },
-        { id: "d", name: "d.png" },
-        { id: "e", name: "e.txt", extractedText: "" },
-      ],
-      { c: "rag" },
-    )
-    expect(docs).toEqual([
-      { name: "a.txt", text: "alpha" },
-      { name: "b.pdf", text: "beta", truncated: true },
-    ])
   })
 })

@@ -36,7 +36,7 @@ import "client-only"
 
 import type { ReasoningEffort } from "@/shared/reasoning-effort"
 import { mintRunId, threadIdFor } from "@/shared/runs/ids"
-import type { Message, UploadedFile } from "@/shared/types"
+import type { Message } from "@/shared/types"
 
 import type {
   AgUiMessage,
@@ -70,9 +70,9 @@ export interface ChatRunInput {
    *  (`getFileImageDataUrls(attachedImageFiles)`, as `/v1/chat` sends
    *  them) or `https:` URLs. */
   images?: readonly string[]
-  /** Text documents attached to this turn — the inline-mode attached
-   *  files' extracted text (RAG-mode files and files without text are not
-   *  sent; the model reaches those through `searchFiles`). */
+  /** Text documents for the newest user message. Chat sends its attached
+   *  files as `attachments` instead (`runAttachmentsFor`, rendered into
+   *  the system prompt under one budget, as the Next route does). */
   documents?: readonly RunDocument[]
   /** The chat's reasoning tier (`chatReasoningEffort`); the backend
    *  ignores it for a model that takes none. */
@@ -82,7 +82,8 @@ export interface ChatRunInput {
   research?: boolean
   /** The MCP servers the run may use (Q48); `[]` = none, absent = all. */
   allowedMcpServerIds?: readonly string[]
-  /** Files (cloud ones by id), bookmarks and MCP resources (Q44). 5b-B. */
+  /** Files (cloud ones by id), bookmarks and MCP resources (Q44) —
+   *  `runAttachmentsFor` (`attachments.ts`). */
   attachments?: readonly RunAttachment[]
   /** The conversation's memory opt-out (`Conversation.memoryOff`). */
   memoryBypass?: boolean
@@ -106,25 +107,6 @@ export interface RunDocument {
   text: string
   /** `UploadedFile.extractionTruncated`: the model is told the text was cut. */
   truncated?: boolean
-}
-
-/**
- * The turn's attached files as `RunDocument`s, the way `/v1/chat` builds
- * its file attachments (`use-chat-send`): an inline-mode file sends its
- * extracted text (and `truncated`); a RAG-mode file (`retrievalModes[id]
- * === "rag"`) and a file without extracted text send nothing — the model
- * reaches those through `searchFiles`.
- */
-export function runDocumentsFor(
-  files: readonly Pick<UploadedFile, "id" | "name" | "extractedText" | "extractionTruncated">[],
-  retrievalModes: Readonly<Record<string, "rag">> = {},
-): RunDocument[] {
-  const out: RunDocument[] = []
-  for (const f of files) {
-    if (retrievalModes[f.id] === "rag" || !f.extractedText) continue
-    out.push({ name: f.name, text: f.extractedText, ...(f.extractionTruncated ? { truncated: true } : {}) })
-  }
-  return out
 }
 
 /** What the newest user message carries besides its text. */

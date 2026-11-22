@@ -51,9 +51,12 @@ Click your avatar or initial at the bottom of the left sidebar.
     assistant needs your input mid-answer (an approval or a question),
     the answer pauses until you reply; typing a new message instead
     cancels the paused one. Also offered to signed-out users (shows
-    when `NEXT_PUBLIC_AGENT_PY_URL` is set). It sends attached images
-    and text/PDF documents and the reasoning-effort setting, but not
-    MCP servers, the code interpreter or reference images yet. Every
+    when `NEXT_PUBLIC_AGENT_PY_URL` is set). Attached files, MCP
+    resources and URL bookmarks reach the model as they do on the
+    default backend (signed in, files go by reference — the server reads
+    your synced copy, including RAG-mode files through file search), and
+    so does the reasoning-effort setting; MCP servers, the code
+    interpreter and reference images are not sent yet. Every
     other request (summaries, embeds, sharing, …) goes exactly where
     `python` sends it.
 - **Models per backend.** The agent services (`python` and `ts-service`
