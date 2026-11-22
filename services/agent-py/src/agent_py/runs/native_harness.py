@@ -453,11 +453,9 @@ def _paused_allow_list(raw: object) -> tuple[str, ...] | None:
     `config`; state from before Q51 has none. No usable state → `()`."""
     if not isinstance(raw, Mapping):
         return ()
-    saved: object = raw
-    if raw.get("harness") != HARNESS_NAME:
-        saved = raw.get("config")
-        if not isinstance(saved, Mapping):
-            return ()
+    saved = raw if raw.get("harness") == HARNESS_NAME else raw.get("config")
+    if not isinstance(saved, Mapping):
+        return ()
     allowed = saved.get("allowedMcpServerIds")
     if not isinstance(allowed, list):
         return None
