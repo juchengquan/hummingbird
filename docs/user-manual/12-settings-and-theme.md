@@ -58,10 +58,12 @@ Click your avatar or initial at the bottom of the left sidebar.
     `python` sends it.
 - **Models per backend.** The agent services (`python` and `ts-service`
   when signed in, `python-runs` always) only run the Anthropic models,
-  so while one of them serves chat the model picker lists just those
-  (no Auto), and a model they can't run is switched to one they can,
-  with a note saying so. Switching back to `ts` brings the full list
-  back.
+  so while one of them serves chat the model picker lists just those,
+  and a model they can't run is switched to one they can, with a note
+  saying so. Auto is offered on `python-runs` (it routes each message
+  between the two Anthropic models of the routing pair, and the reply
+  shows which one it used) but not on `python` or `ts-service`.
+  Switching back to `ts` brings the full list back.
 
 ## Tips & gotchas
 - The Chat backend toggle is only visible when the corresponding

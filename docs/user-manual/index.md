@@ -1,6 +1,6 @@
 # Hummingbird - User Manual
 
-> Generated TOC. Last inventory: 2026-11-21. Run `bun run docs:user-manual:build` to refresh.
+> Generated TOC. Last inventory: 2026-11-22. Run `bun run docs:user-manual:build` to refresh.
 
 ## Part 1 - Using Hummingbird
 
