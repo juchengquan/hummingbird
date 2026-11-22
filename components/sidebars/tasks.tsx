@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback } from "react"
-import { X } from "lucide-react"
+import { Loader2, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -18,7 +18,7 @@ const CONTENT_WIDTH_CLASS = "w-[272px]"
  * The live control room for long-running tasks. Opens when a task is
  * launched (`startTask`) and renders the active run's full `TaskRunView`
  * via `TaskStrip` — status + step counter, plan, tool pills, streaming
- * text, Cancel. Collapses to zero width when closed; reopened from the
+ * text, questions, Cancel. Collapses to zero width when closed; reopened from the
  * inline pointer in the chat thread.
  *
  * v1 shows the single active run. A list of past runs (the sketch in
@@ -32,7 +32,7 @@ export function TasksSidebar() {
     (s) => s.appendToActiveDocumentOrCreate
   )
   const activeWorkspaceId = useStore((s) => s.activeWorkspaceId)
-  const { view, runId, isRunning, error, cancel, respond, runMode } =
+  const { view, runId, isRunning, isCancelling, error, childRuns, cancel, refresh, runMode } =
     useTaskRunContext()
 
   // Research-mode tasks produce a Markdown report — Phase 1 hands it
@@ -54,7 +54,11 @@ export function TasksSidebar() {
     runMode === "research" ? handleOpenInEditor : undefined
 
   return (
-    <aside data-state={open ? "expanded" : "collapsed"} className="h-full flex">
+    // Opaque and above the chat: on a phone the chat's header overflows into it.
+    <aside
+      data-state={open ? "expanded" : "collapsed"}
+      className="relative z-10 h-full flex shrink-0 bg-[var(--background)]"
+    >
       <div
         className={cn(
           "h-full min-h-0 overflow-hidden transition-[width] duration-200 ease-out",
@@ -82,12 +86,23 @@ export function TasksSidebar() {
                 view={view}
                 isRunning={isRunning}
                 runId={runId}
+                childState={childRuns}
                 error={error}
+                cancelling={isCancelling}
                 onCancel={cancel}
-                onRespond={respond}
+                onStale={refresh}
                 onOpenInEditor={onOpenInEditor}
                 openInEditorLabel="Open report in editor"
               />
+            ) : isRunning ? (
+              <p className="flex items-center gap-1.5 text-xs text-[var(--muted-foreground)]">
+                <Loader2 size={12} className="animate-spin" />
+                Starting the task…
+              </p>
+            ) : error ? (
+              <p role="alert" className="text-xs text-[var(--destructive)] break-words">
+                Couldn&apos;t start the task: {error}
+              </p>
             ) : (
               <p className="text-xs text-[var(--muted-foreground)]">
                 No task running. Toggle “Run as task” in the chat header,

@@ -30,4 +30,12 @@ describe("the executor's recorded rows", () => {
       }
     })
   }
+
+  test("an answered call stops running; a declined one isn't shown as run", () => {
+    const [task] = logs.stages["questions.done"]
+    const view = projectRun(rowsToTaskEvents(rowsOf(task.id) as never))
+    expect(view.toolCalls.filter((call) => call.status === "running")).toEqual([])
+    // The rejected webSearch; the three answered questions stay.
+    expect(view.toolCalls.map((call) => call.toolName)).toEqual(["askUser", "askUser", "renderUI"])
+  })
 })

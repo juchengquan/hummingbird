@@ -14,6 +14,10 @@ describe("subagentPillLabel", () => {
     expect(subagentPillLabel("unknown", statuses)).toBe("queued")
   })
 
+  test("a cancelled child reads skipped", () => {
+    expect(subagentPillLabel("c1", { c1: "cancelled" })).toBe("skipped")
+  })
+
   test("returns 'queued' for empty statuses map", () => {
     expect(subagentPillLabel("c1", {})).toBe("queued")
   })

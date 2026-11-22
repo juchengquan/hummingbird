@@ -6,6 +6,10 @@ import "client-only"
  * can reconnect (resume-on-reload). The record shape + validation live
  * in the shared codec; this file is the browser I/O around it. Single
  * slot — v1 runs one task at a time.
+ *
+ * It doesn't age out: a task may wait days for its user, and only the
+ * server knows whether it still does. The watch replays the run and the
+ * pointer is cleared once the run has ended (or is gone).
  */
 
 import {
@@ -16,10 +20,6 @@ import {
 
 const STORAGE_KEY = "humm.activeTask"
 
-/** A stale pointer (producer died, tab closed for a long time) is aged
- *  out so we don't try to resume a run that finished hours ago. */
-const MAX_AGE_MS = 60 * 60_000
-
 export function saveActiveTask(record: ActiveTaskRecord): void {
   try {
     localStorage.setItem(STORAGE_KEY, serializeActiveTask(record))
@@ -29,24 +29,20 @@ export function saveActiveTask(record: ActiveTaskRecord): void {
 }
 
 export function loadActiveTask(): ActiveTaskRecord | null {
-  let raw: string | null = null
   try {
-    raw = localStorage.getItem(STORAGE_KEY)
+    return parseActiveTask(localStorage.getItem(STORAGE_KEY))
   } catch {
     return null
   }
-  const record = parseActiveTask(raw)
-  if (!record) return null
-  if (Date.now() - new Date(record.updatedAt).getTime() > MAX_AGE_MS) {
-    clearActiveTask()
-    return null
-  }
-  return record
 }
 
-export function clearActiveTask(): void {
+/** Clear the pointer if it is `runId`'s — another tab may have started a
+ *  newer task since. */
+export function clearActiveTask(runId: string): void {
   try {
-    localStorage.removeItem(STORAGE_KEY)
+    if (parseActiveTask(localStorage.getItem(STORAGE_KEY))?.runId === runId) {
+      localStorage.removeItem(STORAGE_KEY)
+    }
   } catch {
     // ignore
   }

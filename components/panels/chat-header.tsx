@@ -93,8 +93,9 @@ import {
 interface ChatHeaderProps {
   /** Current model id. */
   chatModel: string
-  /** Which models the serving backend accepts (Q40): the agent services
-   *  take only the `anthropic/*` allowlist and no `auto`. */
+  /** Which models the serving backend accepts (Q40) — in Task mode, the
+   *  task worker's (Q55): the agent services take only the `anthropic/*`
+   *  allowlist and no `auto`. */
   modelBackend: ModelBackendKind
   /** Called when the user picks a model from the header's model select.
    *  Owned by ChatPanel so it can chain a retry on the pending-error case. */

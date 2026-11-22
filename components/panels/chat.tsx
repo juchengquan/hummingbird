@@ -39,7 +39,7 @@ import { ChatHeader } from "@/components/panels/chat-header"
 import { ChatMessage } from "@/components/panels/chat-message"
 import { EmptyChatWelcome } from "@/components/panels/empty-chat-welcome"
 import { SelectionTrigger } from "@/components/selection/selection-trigger"
-import { ChevronDown, Square, ArrowUp, Repeat2, X, Loader2, ChevronRight } from "lucide-react"
+import { ChevronDown, Square, ArrowUp, Repeat2, X, Loader2, ChevronRight, Pause } from "lucide-react"
 import { processSelectedFiles } from "@/client/file-utils"
 import { runExtraction } from "@/client/extract"
 import { persistFile } from "@/client/files/persist"
@@ -55,6 +55,8 @@ import type { Agent } from "@/shared/types"
 import { forkTargetForEdit, forkTargetForRegenerate } from "@/shared/branches/fork-target"
 import { useRestoreInterruptedTurns } from "@/client/runs/use-restore-interrupted-turns"
 import { useModelBackend, useModelBackendGuard } from "@/client/hooks/use-model-backend"
+import { TASK_MODEL_BACKEND } from "@/shared/backend-models"
+import { taskProgress } from "@/client/agent/task-progress"
 
 export function ChatPanel() {
   const addMessage = useStore((state) => state.addMessage)
@@ -104,9 +106,15 @@ export function ChatPanel() {
   const hydrated = useHydrated()
   // Chat on runs: rebuild paused turns' answer cards after a reload (Q35).
   useRestoreInterruptedTurns(hydrated)
-  // Only offer / keep models the serving backend accepts (Q40).
+  // Long-running task mode. The provider owns the active run; this
+  // panel reads `runAsTask` / `isRunning` for the header toggle. The
+  // send hook holds its own ref for `startTask` (see useChatSend).
+  const taskRun = useTaskRunContext()
+  // Only offer / keep models the serving backend accepts (Q40) — in Task
+  // mode, those the task worker runs (Q55), on every chat backend.
   const modelBackend = useModelBackend()
-  useModelBackendGuard(modelBackend, hydrated)
+  const pickerBackend = taskRun.runAsTask ? TASK_MODEL_BACKEND : modelBackend
+  useModelBackendGuard(pickerBackend, hydrated)
   const [inputValue, setInputValue] = useState("")
   // Send pipeline lives in its own hook (see lib/client/hooks/use-chat-send).
   // The hook owns the abort-controller map, the streaming-conv-ids Set,
@@ -263,11 +271,6 @@ export function ChatPanel() {
   // its own pace. Identity-stable when nothing changes — no extra
   // renders triggered.
   const deferredMessages = useDeferredValue(messages)
-
-  // Long-running task mode. The provider owns the active run; this
-  // panel reads `runAsTask` / `isRunning` for the header toggle. The
-  // send hook holds its own ref for `startTask` (see useChatSend).
-  const taskRun = useTaskRunContext()
 
   // SelectionTrigger needs the conversation slice up to (and including)
   // the message the selection lives in. We resolve the scope attribute
@@ -796,13 +799,15 @@ export function ChatPanel() {
     )
   }
 
+  const taskState = taskProgress(taskRun.view, taskRun.childRuns)
+
   return (
     <div className="flex h-full">
       {/* Messages column */}
       <div className="flex flex-col flex-1 min-w-0 min-h-0 relative">
         <ChatHeader
           chatModel={chatModel}
-          modelBackend={modelBackend.kind}
+          modelBackend={pickerBackend.kind}
           onModelPick={handleModelPick}
           modelPickerOpen={modelPickerOpen}
           onModelPickerOpenChange={(open) => {
@@ -925,12 +930,13 @@ export function ChatPanel() {
             className="hidden"
             onChange={(e) => handleFileSelected(e.target.files)}
           />
-          {/* Inline task pointer — while a task launched from this
-              conversation is running, show a one-line status that opens
-              the Tasks panel. The full live surface lives in the panel.
+          {/* Inline task pointer — until a task launched from this
+              conversation ends, show a one-line status that opens the
+              Tasks panel. The full live surface lives in the panel.
               "Queued" appears in the brief window after POST 202 while
               the worker is being picked up; "Running · step N/M" once
-              the loop is actually advancing. */}
+              the loop is actually advancing; it says so when the task
+              waits on the user or on its sub-agents. */}
           {taskRun.isRunning &&
             taskRun.runConversationId === activeConversationId && (
               <button
@@ -938,15 +944,13 @@ export function ChatPanel() {
                 onClick={() => setTasksPanelOpen(true)}
                 className="max-w-3xl mx-auto mb-2 w-full pointer-events-auto flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs text-[var(--muted-foreground)] hover:bg-[var(--secondary)] transition-colors"
               >
-                <Loader2 size={12} className="animate-spin text-[var(--primary)]" />
-                <span>
-                  {taskRun.view.status === "queued"
-                    ? "Task queued · waiting for worker"
-                    : `Task running · step ${taskRun.view.step}${
-                        taskRun.view.maxSteps ? ` / ${taskRun.view.maxSteps}` : ""
-                      }`}
-                </span>
-                <span className="ml-auto flex items-center gap-0.5 text-[var(--foreground)]">
+                {taskState.paused ? (
+                  <Pause size={12} className="shrink-0 text-[var(--primary)]" />
+                ) : (
+                  <Loader2 size={12} className="shrink-0 animate-spin text-[var(--primary)]" />
+                )}
+                <span className="min-w-0 truncate">{taskState.pointer}</span>
+                <span className="ml-auto flex shrink-0 items-center gap-0.5 text-[var(--foreground)]">
                   View <ChevronRight size={12} />
                 </span>
               </button>

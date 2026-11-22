@@ -397,7 +397,9 @@ export function useChatSend(): UseChatSendResult {
       const buildMessages = () =>
         buildTransmittedMessages(history, attachedImageUrls)
 
-      // Task mode: hand off to the shared task runner (Tasks panel).
+      // Task mode: hand off to the shared task runner (Tasks panel). It
+      // switches a model the worker can't run — a persona's, `auto`, the
+      // chat's own — for this launch, with a note (Q55).
       if (options?.asTask) {
         taskRunRef.current.startTask(
           {

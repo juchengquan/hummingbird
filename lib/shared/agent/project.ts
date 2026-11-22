@@ -227,6 +227,9 @@ export function reduceRun(view: TaskRunView, event: TaskEvent): TaskRunView {
         }
       } else if (event.phase === "response") {
         next.pendingInput = null
+        // The respond path emits no `tool_output` for the call it answers:
+        // it's over now (a declined one never ran).
+        next.toolCalls = resolveAnsweredCall(base.toolCalls, event.approvalId, event.approved)
       }
       return next
     case "handoff": {
@@ -285,6 +288,19 @@ function upsertToolCall(
   const out = calls.slice()
   out[idx] = merged
   return out
+}
+
+/** The gated call an answer closes (its id is the approval's). */
+function resolveAnsweredCall(
+  calls: ToolCallView[],
+  approvalId: string,
+  approved: boolean | undefined
+): ToolCallView[] {
+  const call = calls.find((c) => c.toolCallId === approvalId)
+  if (call?.status !== "running") return calls
+  if (approved === false) return calls.filter((c) => c !== call)
+  const summary = approved ? "Approved" : "Answered"
+  return calls.map((c) => (c === call ? { ...c, status: "done", summary } : c))
 }
 
 function resolveToolCall(
