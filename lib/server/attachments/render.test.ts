@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test"
 import {
   renderAttachmentsPrompt,
   renderMetaOnlyFilesPrompt,
+  searchableNote,
+  type ResolvedAttachment,
 } from "./render"
 
 describe("renderAttachmentsPrompt", () => {
@@ -160,6 +162,40 @@ describe("renderAttachmentsPrompt", () => {
     expect(out).toContain("hello inline")
     expect(out).toContain("searchFiles")
     expect(out).not.toContain("should not appear")
+  })
+})
+
+describe("renderAttachmentsPrompt — cloud file ids (Q47)", () => {
+  const id = "8f14e45f-ceea-4e7a-9b1c-2d3e4f5a6b7c"
+
+  test("the header carries the id; the RAG note tells the model to pass it to searchFiles", () => {
+    const out = renderAttachmentsPrompt(
+      [{ kind: "file", summary: { id, name: "huge.pdf", size: 1, type: "application/pdf", kind: "pdf", retrievalMode: "rag" } }],
+      10_000,
+      { searchFilesEnabled: true },
+    )
+    expect(out).toContain(`--- huge.pdf (pdf, fileId: ${id}) ---`)
+    expect(out).toContain(`Call \`searchFiles\` with fileId "${id}"`)
+  })
+
+  test("a truncated cloud file says it is searchable — only when searchFiles is offered, never for a local file", () => {
+    const files: ResolvedAttachment[] = [
+      { kind: "file", summary: { id, name: "a.txt", size: 1, type: "text/plain", text: "x", truncated: true } },
+      { kind: "file", summary: { name: "b.txt", size: 1, type: "text/plain", text: "y", truncated: true } },
+    ]
+    const on = renderAttachmentsPrompt(files, 10_000, { searchFilesEnabled: true })!
+    expect(on).toContain(searchableNote(id))
+    expect(on.match(/is searchable/g)).toHaveLength(1)
+    expect(renderAttachmentsPrompt(files, 10_000)).not.toContain("is searchable")
+  })
+
+  test("a whole cloud file gets no searchable note", () => {
+    const out = renderAttachmentsPrompt(
+      [{ kind: "file", summary: { id, name: "a.txt", size: 1, type: "text/plain", text: "all" } }],
+      10_000,
+      { searchFilesEnabled: true },
+    )
+    expect(out).not.toContain("is searchable")
   })
 })
 

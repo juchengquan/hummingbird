@@ -49,6 +49,7 @@ import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from .. import db
 from ..auth import get_current_user
 from ..contract import models
 from ..events import StatusEvent
@@ -61,6 +62,7 @@ from ..runs.access import (
     mint_run_token,
     require_auth_for_ai,
 )
+from ..runs.context import check_attachment_input
 from ..runs.credentials import split_state
 from ..runs.history import AttachmentRejected, check_attachments, last_user_text
 from ..runs.model import ContractStatus, RunCursor, RunMode, RunOwner, RunRecord, run_to_contract
@@ -326,6 +328,13 @@ async def start_run(
     # type, over a size or count limit): `400 invalid_attachment`.
     try:
         check_attachments([m.model_dump(mode="json", exclude_none=True) for m in body.messages])
+        # `forwardedProps.attachments`: a cloud file needs a signed-in run
+        # with a database; an inline file's bytes follow the media rules.
+        check_attachment_input(
+            fp.model_dump(mode="json", exclude_none=True),
+            signed_in=not anonymous,
+            database=db.has_pool(),
+        )
     except AttachmentRejected as exc:
         _raise(400, exc.code, str(exc))
 

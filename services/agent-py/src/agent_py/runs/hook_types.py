@@ -36,6 +36,7 @@ from .model import RunResultData
 from .options import RunOptions
 
 __all__ = [
+    "TURN_CONTENT_KEY",
     "HarnessHooks",
     "HookContext",
     "ModelResolver",
@@ -46,6 +47,7 @@ __all__ = [
     "ToolContributor",
     "Toolset",
     "ToolsetDraft",
+    "add_turn_content",
     "build_system_prompt",
     "build_toolset",
     "seed_taint",
@@ -71,7 +73,39 @@ class HookContext:
     """Run-scoped tool state, always set (anonymous runs too): client key,
     per-IP budget, `localFilesOnly`. The loop hands it to every tool."""
     scratch: dict[str, object] = field(default_factory=dict)
-    """Free for hooks: values one hook computes for another."""
+    """Free for hooks: values one hook computes for another. One key is
+    read by the harness itself: `TURN_CONTENT_KEY`."""
+
+
+#: `HookContext.scratch` key: Anthropic content blocks (images, documents)
+#: a prompt section loaded for the turn — e.g. a cloud file's image read
+#: from its `files` row (`runs/context.py`). The harness puts them at the
+#: start of the newest user message, after every prompt section has run
+#: (`add_turn_content`). A list of dicts; absent = none.
+TURN_CONTENT_KEY = "turn_content"
+
+
+def add_turn_content(
+    messages: list[dict[str, Any]], user_index: int, blocks: object
+) -> list[dict[str, Any]]:
+    """`messages` with `blocks` (see `TURN_CONTENT_KEY`) before the content
+    of `messages[user_index]` — the turn's user message. Unchanged when
+    there are no blocks or that message is not the user's. Copies the one
+    message it changes."""
+    if not isinstance(blocks, list) or not blocks:
+        return messages
+    if not 0 <= user_index < len(messages) or messages[user_index].get("role") != "user":
+        return messages
+    target = messages[user_index]
+    content = target.get("content")
+    existing: list[Any] = (
+        list(content)
+        if isinstance(content, list)
+        else ([{"type": "text", "text": content}] if isinstance(content, str) and content else [])
+    )
+    out = list(messages)
+    out[user_index] = {**target, "content": [*blocks, *existing]}
+    return out
 
 
 @dataclass(frozen=True)

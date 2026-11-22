@@ -12,7 +12,7 @@ hook), and writes its hook in its own module:
 
 | 5b | what | hook | module |
 |---|---|---|---|
-| B | attached-file context (budget, RAG notes with file ids, Q47), MCP resources, bookmarks | a `PromptSection` after `application_context`; a `TaintSeed` after `history_taint` (bookmarks / MCP resources / inline files taint) | `runs/context.py` |
+| B | attached-file context (budget, RAG notes with file ids, Q47), MCP resources, bookmarks | a `PromptSection` after `application_context` (media for the turn via `TURN_CONTENT_KEY`); a `TaintSeed` after `history_taint` (every attachment kind taints); a `ToolContributor` after the skills (`searchFiles` for RAG-mode files) — done | `runs/context.py` |
 | C | memory facts in the prompt (unless `memory_bypass`) | a `PromptSection` | memory module |
 | C | remember / forget tools (unless `memory_bypass`; refuse when `RunToolContext.tainted_by`) | a `ToolContributor` | memory module |
 | C | reference image (`buildRemixNote`, with `imageGen`) | a `PromptSection` | remix module |
@@ -42,6 +42,7 @@ from ..tools import default_tool_registry
 from ..tools.image_gen import remix_note_section
 from ..tools.memory import memory_prompt_section, memory_tools
 from ..verify_client import citation_sources, verify_turn
+from .context import attachment_context, attachment_context_taint, rag_search_files
 from .harness import RunInput
 from .history import last_user_index, last_user_text, request_taint, system_texts
 from .hook_types import (
@@ -220,7 +221,7 @@ PROMPT_SECTIONS: tuple[PromptSection, ...] = (
     app_system_prompt,
     history_system_texts,
     application_context,
-    # TODO(5b-B): attached-file / MCP-resource / bookmark context (runs/context.py).
+    attachment_context,
     memory_prompt_section,
     remix_note_section,
 )
@@ -228,12 +229,13 @@ TOOL_CONTRIBUTORS: tuple[ToolContributor, ...] = (
     skill_tools,
     cloud_mcp_tools,
     local_mcp_tools,
+    rag_search_files,
     memory_tools,
     citation_sources,
 )
 TAINT_SEEDS: tuple[TaintSeed, ...] = (
     history_taint,
-    # TODO(5b-B): attachments that carry third-party content.
+    attachment_context_taint,
 )
 
 DEFAULT_HOOKS = HarnessHooks(

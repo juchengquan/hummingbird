@@ -237,6 +237,22 @@ describe.skipIf(!env.baseUrl)(`conformance: runs @ ${env.baseUrl}`, () => {
       }
     })
 
+    test("an anonymous cloud file, or an inline file's unusable bytes → 400 invalid_attachment", async () => {
+      const bad: Json[] = [
+        { kind: "file", fileId: "00000000-0000-4000-8000-000000000000", name: "a.pdf" },
+        { kind: "inlineFile", name: "a.wav", dataUrl: "data:audio/wav;base64,AAAA" },
+      ]
+      for (const attachment of bad) {
+        const body = runBody()
+        body.forwardedProps = { attachments: [attachment] }
+        const ex = await call(op("startRun"), { body })
+        expect([attachment, ex.status]).toEqual([attachment, 400])
+        contract.assertConforms("startRun", ex)
+        expect(code(ex)).toBe("invalid_attachment")
+        expect(ex.headers.get("x-run-token")).toBeNull()
+      }
+    })
+
     test("malformed 0.4.0 run options → 422 invalid_request, and no run exists", async () => {
       const bad: Json[] = [
         { research: "maybe" },

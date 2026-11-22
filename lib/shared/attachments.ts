@@ -26,3 +26,10 @@ export type AttachmentKind = AttachmentPayload['kind']
 export type FileSummary = z.infer<typeof FileSummarySchema>
 export type McpResourceRef = z.infer<typeof McpResourceRefSchema>
 export type UrlBookmarkRef = z.infer<typeof UrlBookmarkRefSchema>
+
+/** Soft cap on the combined attachment text one system prompt carries
+ *  (characters, across files, MCP resources and bookmarks). The Next
+ *  chat route (`lib/server/chat/prompt-builders.ts`) and agent-py
+ *  (`runs/context.py`) render under it; a turn on runs clips what it
+ *  sends to it (`lib/client/runs/attachments.ts`). */
+export const TOTAL_ATTACHMENT_BUDGET = 300 * 1024

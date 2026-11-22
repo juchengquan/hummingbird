@@ -119,10 +119,14 @@ async def test_default_hooks_are_the_registered_lists() -> None:
         "skill_tools",
         "cloud_mcp_tools",
         "local_mcp_tools",
+        "rag_search_files",
         "memory_tools",
         "citation_sources",
     ]
-    assert [f.__name__ for f in DEFAULT_HOOKS.taint_seeds] == ["history_taint"]
+    assert [f.__name__ for f in DEFAULT_HOOKS.taint_seeds] == [
+        "history_taint",
+        "attachment_context_taint",
+    ]
 
 
 # --- a workstream's hooks plug in without touching the harness ---------------------------------
@@ -178,7 +182,9 @@ async def test_added_hooks_extend_the_prompt_tools_taint_model_and_result() -> N
     result, _ = await _run(model, inp, hooks=hooks, pool_provider=lambda: None)
     request = model.requests[0]
     assert request["model"] == "routed-model" and seen["model"] == "auto"
-    assert request["system"] == "Base.\n\nReference image: x"
+    # The bookmark renders through 5b-B's `attachment_context` section.
+    assert request["system"].startswith("Base.\n\nThe user has saved these web pages")
+    assert request["system"].endswith("--- B (https://b) ---\nt\n\nReference image: x")
     assert {t["name"] for t in request["tools"]} == {
         "webFetch",
         "askUser",
