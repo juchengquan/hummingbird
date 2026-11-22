@@ -1,6 +1,6 @@
 # Plan: Frontend / backend split
 
-Status: **Waves 1–4 (Phases 0–2, chat on runs) shipped (#294–#299). Wave 5 (backend catch-up) being planned.** Decided in a design interview
+Status: **Waves 1–4 (Phases 0–2, chat on runs) shipped (#294–#299). Wave 5 (backend catch-up) in review.** Decided in a design interview
 on 2026-11-21. Supersedes the open parts of
 [`PLAN-backend-extraction.md`](PLAN-backend-extraction.md), whose Phase 1
 (single `apiClient` + Zod schemas + `docs/API.md`) shipped and is the
