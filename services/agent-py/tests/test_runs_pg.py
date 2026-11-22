@@ -616,3 +616,70 @@ def test_routes_with_a_database(
             assert cancelled.status_code == 200 and cancelled.json()["status"] == "cancelled"
         finally:
             client.portal.call(pool.close)
+
+
+def test_local_mcp_credentials_never_reach_postgres(
+    monkeypatch: pytest.MonkeyPatch, seeded_sync: tuple[str, str]
+) -> None:
+    """Q45: a signed-in interactive run and a background start, each with
+    local MCP credentials in `state`: no `tasks` / `task_events` /
+    `task_jobs` column holds them (`test_run_credentials.py` covers the
+    in-memory stores and the logs)."""
+    user, conv = seeded_sync
+    secret = "sk-pg-local-mcp-NEVER-STORE-55d1"
+    state = {"hummingbird.localMcp": {"srv-1": {"headers": {"Authorization": secret}}}}
+    servers = [{"id": "srv-1", "name": "Local", "url": "http://localhost:9/mcp"}]
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", SECRET)
+    app = create_app(enable_poller=False)
+    with TestClient(app) as client:
+        assert client.portal is not None
+        pool = client.portal.call(lambda: asyncpg.create_pool(DB_URL, min_size=1, max_size=4))
+        settings = Settings(SUPABASE_JWT_SECRET=SECRET, RUNS_STUB_HARNESS=True)
+        services = wiring.build_run_services(settings, pool)
+        app.dependency_overrides[wiring.get_run_services] = lambda: services
+        try:
+            headers = _auth(user)
+            interactive = {
+                "threadId": conv,
+                "runId": _id(),
+                "messages": [{"id": "m", "role": "user", "content": "hi"}],
+                "state": state,
+                "forwardedProps": {"localMcpServers": servers},
+            }
+            r = client.post("/v1/runs", json=interactive, headers=headers)
+            assert r.status_code == 200 and secret not in r.text
+            background = {
+                **interactive,
+                "runId": _id(),
+                "forwardedProps": {"mode": "background", "maxSteps": 2, "goal": "g"},
+            }
+            assert client.post("/v1/runs", json=background, headers=headers).status_code == 202
+
+            async def dump() -> str:
+                ids = [uuid.UUID(interactive["runId"]), uuid.UUID(background["runId"])]
+                async with pool.acquire() as conn:
+                    rows = [
+                        *await conn.fetch(
+                            "SELECT to_jsonb(t)::text AS j FROM public.tasks t "
+                            "WHERE id = ANY($1::uuid[])",
+                            ids,
+                        ),
+                        *await conn.fetch(
+                            "SELECT to_jsonb(e)::text AS j FROM public.task_events e "
+                            "WHERE task_id = ANY($1::uuid[])",
+                            ids,
+                        ),
+                        *await conn.fetch(
+                            "SELECT to_jsonb(j)::text AS j FROM public.task_jobs j "
+                            "WHERE task_id = ANY($1::uuid[])",
+                            ids,
+                        ),
+                    ]
+                return "\n".join(row["j"] for row in rows)
+
+            stored = client.portal.call(dump)
+            assert interactive["runId"] in stored and background["runId"] in stored
+            assert secret not in stored
+            client.post(f"/v1/runs/{background['runId']}/cancel", headers=headers)
+        finally:
+            client.portal.call(pool.close)

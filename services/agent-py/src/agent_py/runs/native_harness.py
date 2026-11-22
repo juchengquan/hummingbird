@@ -78,14 +78,13 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import structlog
 
 from ..chat import generate_suggestions
 from ..chat_loop import (
-    DEFAULT_MAX_STEPS,
     DEFAULT_MAX_TOKENS,
     TRUSTED_TOOLS,
     CancelRequested,
@@ -106,9 +105,9 @@ from ..events import InputRequestOption, SuggestionsEvent
 from ..input_policy import ASK_USER_TOOL_NAME, RENDER_UI_TOOL_NAME, request_kind_for
 from ..model_allowlist import UnknownModelError, resolve_optional_model
 from ..providers.anthropic_provider import AsyncAnthropicClient, _make_tool_result_block
-from ..reasoning_effort import ReasoningEffort, parse_reasoning_effort, thinking_params
+from ..reasoning_effort import thinking_params
 from ..settings import Settings
-from ..tools import SkillConfigs, ToolContext, ToolDescriptor, ToolError, default_tool_registry
+from ..tools import ToolContext, ToolDescriptor, ToolError, default_tool_registry
 from .harness import CancelSignal, HarnessResult, ResumeAnswer, RunInput
 from .history import (
     attach_tool_results,
@@ -128,6 +127,7 @@ from .model import (
     RunResultData,
     Succeeded,
 )
+from .options import RunOptions, parse_run_options, validate_run_options
 
 logger = structlog.get_logger(__name__)
 
@@ -161,88 +161,11 @@ SKILL_TOOLS: Mapping[str, str] = {
 HITL_TOOLS: frozenset[str] = frozenset({ASK_USER_TOOL_NAME, RENDER_UI_TOOL_NAME})
 
 _TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-_MAX_STEPS_CAP = 50
 
 DECLINED_APPROVAL = (
     "User declined to run this action. Consider an alternative or ask the user how to proceed."
 )
 DECLINED_ANSWER = "The user declined to answer."
-
-
-# --- Options --------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class RunOptions:
-    """`forwardedProps`, parsed leniently (the API validated the
-    contract's keys; unknown keys are ignored)."""
-
-    model: str | None = None
-    system_prompt: str | None = None
-    skill_ids: tuple[str, ...] = ()
-    skill_configs: SkillConfigs = field(default_factory=SkillConfigs)
-    max_steps: int = DEFAULT_MAX_STEPS
-    require_approval_for: frozenset[str] = frozenset()
-    workspace_id: str | None = None
-    reasoning_effort: ReasoningEffort | None = None
-
-
-def _str(value: object, *, max_len: int | None = None) -> str | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    return value if max_len is None else value[:max_len]
-
-
-def parse_run_options(options: Mapping[str, object]) -> RunOptions:
-    skill_ids: list[str] = []
-    web_search: dict[str, Any] | None = None
-    web_fetch: dict[str, Any] | None = None
-    image_gen: dict[str, Any] | None = None
-    raw_skills = options.get("skills")
-    for entry in raw_skills if isinstance(raw_skills, list) else []:
-        if not isinstance(entry, Mapping):
-            continue
-        skill_id = _str(entry.get("id"))
-        if skill_id is not None:
-            skill_ids.append(skill_id)
-        for key, setter in (
-            ("webSearchConfig", "web_search"),
-            ("webFetchConfig", "web_fetch"),
-            ("imageGenConfig", "image_gen"),
-        ):
-            cfg = entry.get(key)
-            if isinstance(cfg, dict) and cfg:
-                if setter == "web_search":
-                    web_search = cfg
-                elif setter == "web_fetch":
-                    web_fetch = cfg
-                else:
-                    image_gen = cfg
-    max_steps = options.get("maxSteps")
-    gated = options.get("requireApprovalFor")
-    return RunOptions(
-        model=_str(options.get("model")),
-        system_prompt=_str(options.get("systemPrompt")),
-        skill_ids=tuple(skill_ids),
-        skill_configs=SkillConfigs(web_search=web_search, web_fetch=web_fetch, image_gen=image_gen),
-        max_steps=(
-            min(max_steps, _MAX_STEPS_CAP)
-            if isinstance(max_steps, int) and not isinstance(max_steps, bool) and max_steps >= 1
-            else DEFAULT_MAX_STEPS
-        ),
-        require_approval_for=frozenset(
-            g for g in (gated if isinstance(gated, list) else []) if isinstance(g, str) and g
-        ),
-        workspace_id=_str(options.get("workspaceId"), max_len=64),
-        reasoning_effort=parse_reasoning_effort(options.get("reasoningEffort")),
-    )
-
-
-def validate_run_options(options: Mapping[str, object]) -> None:
-    """Raise `UnknownModelError` (`code = "unknown_model"`) for a model
-    outside the allow-list — lets the API answer 400 before creating the
-    run, as `/v1/chat` does. The adapter re-checks and fails the run."""
-    resolve_optional_model(parse_run_options(options).model)
 
 
 # --- Tools ------------------------------------------------------------------------------

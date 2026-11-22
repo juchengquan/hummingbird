@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..contract import models
+from .credentials import split_state
 from .harness import ResumeAnswer, RunInput
 from .history import last_user_text, normalize, system_texts, to_anthropic
 from .model import RunMode, RunRecord
@@ -55,8 +56,13 @@ def build_run_input(
     mode: RunMode,
     user_id: str | None,
     previous_run_id: str | None,
+    client_key: str | None = None,
 ) -> RunInput:
+    """The harness input of an interactive run. Local MCP credentials are
+    taken out of `state` here (`runs.credentials.split_state`), so the
+    rest of the input never holds them."""
     fp = forwarded_props(body)
+    state, local_mcp_credentials = split_state(body.state)
     return RunInput(
         run_id=body.runId,
         thread_id=body.threadId,
@@ -66,9 +72,11 @@ def build_run_input(
         options=_dump(fp),
         tools=tuple(_dump(t) for t in body.tools or ()),
         context=tuple(_dump(c) for c in body.context or ()),
-        state=body.state,
+        state=state,
         resume=resume_answers(body),
         previous_run_id=previous_run_id,
+        client_key=client_key,
+        local_mcp_credentials=local_mcp_credentials,
     )
 
 
@@ -135,7 +143,12 @@ def background_checkpoint(
     model messages via `runs.history` (user text / images / documents,
     assistant text + tool calls, tool results; reasoning and activity
     messages dropped); `system` / `developer` text joins
-    `forwardedProps.systemPrompt` as the run's system prompt."""
+    `forwardedProps.systemPrompt` as the run's system prompt.
+
+    Built from `messages` and `forwardedProps` only — never `state`, so
+    local MCP credentials (Q45) cannot reach `tasks.checkpoint`. Options
+    the executor does not read yet ride along for wave 5b-A:
+    `allowedMcpServerIds` (Q48) and `reasoningEffort`."""
     agui = [_dump(m) for m in body.messages]
     messages: list[dict[str, Any]] = normalize(to_anthropic(agui))
     fp = forwarded_props(body)
@@ -145,4 +158,14 @@ def background_checkpoint(
         config["workspaceSystemPrompt"] = system
     if fp.skills:
         config["skills"] = [_dump(s) for s in fp.skills]
+    if fp.allowedMcpServerIds is not None:
+        config["allowedMcpServerIds"] = list(dict.fromkeys(fp.allowedMcpServerIds))
+    if fp.reasoningEffort is not None:
+        config["reasoningEffort"] = fp.reasoningEffort
+    # TODO(5b-A): start parity with the Next task route — carry
+    # `workspaceId`, `requireApprovalFor` and research mode (as
+    # `config.mode = "research"`, the key the executor reads) here. Each
+    # switches executor behaviour the moment it is written (cloud MCP
+    # tools, approval gates, the research prompt + citation checks), so
+    # they land with 5b-A's executor work, not in 5a.
     return {"messages": messages, "config": config}

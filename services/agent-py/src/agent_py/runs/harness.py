@@ -38,11 +38,12 @@ in its own tables and may ignore both.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
 from ..emitter import RunEmitter
+from .credentials import LocalMcpCredential
 from .model import Cancelled, RunMode, RunOutcome, Succeeded
 
 __all__ = [
@@ -93,6 +94,8 @@ class RunInput:
     """Client-side AG-UI `Tool`s."""
     context: tuple[dict[str, object], ...] = ()
     state: object | None = None
+    """AG-UI `state`, minus `hummingbird.localMcp` (taken out into
+    `local_mcp_credentials` before the input is built)."""
     resume: tuple[ResumeAnswer, ...] = ()
     previous_run_id: str | None = None
     parent_run_id: str | None = None
@@ -105,6 +108,17 @@ class RunInput:
     outcome (its `tasks.checkpoint`, or the anonymous store's copy) — what
     the answers continue from (Q31). None when that run stored none; an
     adapter then rebuilds what it can from `messages`."""
+    client_key: str | None = None
+    """The caller's rate-limit key (`rate_limit.rate_limit_key`: the
+    client IP behind the trusted proxies) — what per-IP tool budgets
+    count against, for anonymous and signed-in runs alike. None when the
+    run was not started over HTTP (tests, background executor)."""
+    local_mcp_credentials: Mapping[str, LocalMcpCredential] = field(
+        default_factory=dict, repr=False, compare=False
+    )
+    """Local MCP server id → credential, from `state["hummingbird.localMcp"]`
+    (Q45, `runs.credentials`). Interactive runs only; in memory only —
+    never stored, logged or emitted, so not in the repr either."""
 
 
 class CancelSignal(Protocol):

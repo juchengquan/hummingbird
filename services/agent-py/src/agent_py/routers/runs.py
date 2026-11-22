@@ -281,6 +281,12 @@ async def start_run(
     anonymous = caller.user_id is None
     if anonymous and mode == "background":
         _raise(401, "auth_required", "Sign in to start background runs.")
+    # TODO(5b-D): Q42 — a background run refuses local MCP, as the Next
+    # task routes do: `forwardedProps.localMcpServers` non-empty (or
+    # credentials in `state["hummingbird.localMcp"]`) with
+    # `mode: background` → 400 `invalid_request`, before anything is
+    # created. (Credentials never reach a background run anyway:
+    # `background_checkpoint` reads only `messages` + `forwardedProps`.)
 
     client_key = rate_limit_key(request)
     refusal = services.limits.check_start(
@@ -352,6 +358,13 @@ async def start_run(
     else:
         if resume:
             previous_run_id = str(fp.previousRunId)
+            # TODO(5b-A): Q41 — a background resume must start from the
+            # paused run's checkpoint plus the `resume[]` answers (today
+            # it gets a fresh `background_checkpoint` from the browser's
+            # history, below), and the old `/api/tasks/:id/respond` must
+            # refuse a run answered here (0043 mutual exclusion).
+            # TODO(5b-D): a resume re-sends the local MCP credentials in
+            # `state` (Q45) — `build_run_input` takes them out again.
             try:
                 check_resume(await repo.get(owner, previous_run_id), body)
             except ResumeMismatch as exc:
@@ -410,7 +423,11 @@ async def start_run(
         services.driver.start(
             run=run,
             run_input=build_run_input(
-                body, mode="interactive", user_id=caller.user_id, previous_run_id=previous_run_id
+                body,
+                mode="interactive",
+                user_id=caller.user_id,
+                previous_run_id=previous_run_id,
+                client_key=client_key,
             ),
             repo=repo,
             log=log,
