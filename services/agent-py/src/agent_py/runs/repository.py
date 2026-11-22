@@ -62,6 +62,7 @@ __all__ = [
     "CreateResult",
     "InMemoryRunRepository",
     "InvalidPageToken",
+    "PreviousRunAlreadyAnswered",
     "PreviousRunAlreadyResumed",
     "PreviousRunNotFound",
     "RunFilter",
@@ -98,6 +99,12 @@ class PreviousRunAlreadyResumed(Exception):
     been cancelled — one live resume per interrupted run (0042's
     `tasks_one_live_resume`), so an approved tool cannot run twice
     (API: 409 `run_already_resumed`)."""
+
+
+class PreviousRunAlreadyAnswered(Exception):
+    """`previous_run_id` was answered through the old
+    `/api/tasks/:id/respond` (it has a `respond` job, 0043) — each paused
+    task is answered one way only, Q41 (API: 409 `run_already_answered`)."""
 
 
 class InvalidPageToken(Exception):

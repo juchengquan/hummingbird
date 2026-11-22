@@ -278,6 +278,11 @@ export const ChatRequestSchema = z.object({
    *  `kind: 'mcp_resource'` are the **resources** whose content the
    *  model reads. */
   mcpServers: z.array(McpRequestServerSchema).max(8).optional(),
+  /** The persona's MCP allow-list for this turn (Q48, `PLAN-custom-agents`
+   *  Phase 2): when set, only the servers it names — cloud-mode rows and
+   *  `mcpServers` alike — offer tools; `[]` means no MCP. Absent means no
+   *  restriction (no persona, or one that does not restrict). */
+  allowedMcpServerIds: z.array(z.string().max(64)).max(64).optional(),
   /** Everything attached to this turn — files, MCP resources, URL
    *  bookmarks — in one discriminated array. Workspace-ticked +
    *  conversation-pinned, de-duped client-side, tombstones filtered.

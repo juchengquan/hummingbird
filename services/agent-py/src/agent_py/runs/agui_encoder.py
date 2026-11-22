@@ -46,11 +46,12 @@ from ..events import (
     resume_discard_range,
 )
 from .encoder import AgUiEvent
-from .model import RunRecord
+from .model import PendingInterrupt, RunRecord
 
 __all__ = [
     "CUSTOM_CONTEXT_COMPACTED",
     "CUSTOM_GAP",
+    "CUSTOM_INTERRUPT_PENDING",
     "CUSTOM_INTERRUPT_RESOLVED",
     "CUSTOM_REWIND",
     "CUSTOM_STEP_ERROR",
@@ -66,6 +67,7 @@ CUSTOM_GAP = "hummingbird.gap"
 CUSTOM_REWIND = "hummingbird.rewind"
 CUSTOM_STEP_ERROR = "hummingbird.step_error"
 CUSTOM_INTERRUPT_RESOLVED = "hummingbird.interrupt_resolved"
+CUSTOM_INTERRUPT_PENDING = "hummingbird.interrupt_pending"
 CUSTOM_CONTEXT_COMPACTED = "hummingbird.context_compacted"
 
 _CLOSING_RUN_STATUSES = ("succeeded", "failed", "cancelled", "interrupted")
@@ -414,7 +416,11 @@ class AgUiRunEncoder:
             return self._handoff(event)
         if isinstance(event, ApprovalEvent):
             if event.phase != "response":
-                return []
+                # The question as it is raised — a background run may wait
+                # on it for hours before its row is `paused` and the
+                # closing event carries it (RUN_EVENTS.md § 3.4).
+                interrupt = PendingInterrupt.from_approval(event).to_agui()
+                return [{"type": "CUSTOM", "name": CUSTOM_INTERRUPT_PENDING, "value": interrupt}]
             return [
                 {
                     "type": "CUSTOM",

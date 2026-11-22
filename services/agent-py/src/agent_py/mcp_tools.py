@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -123,15 +123,24 @@ async def load_workspace_cloud_servers(
     *,
     user_id: str,
     workspace_id: str,
+    allowed_server_ids: Collection[str] | None = None,
 ) -> list[CloudMcpServerRow]:
     """Fetch enabled cloud-mode MCP servers for `workspace_id`, scoped
     by per-user RLS via `SET LOCAL ROLE authenticated` +
     `request.jwt.claims` (same pattern as `searchFiles` Phase 3c-2).
 
+    `allowed_server_ids` is the run's allow-list (Q48,
+    `allowedMcpServerIds`): None → every enabled server; otherwise only
+    the servers it names (empty → none, without a query) — as Next's
+    `loadEffectiveMcpServers(…, {allowedServerIds})`.
+
     Returns an empty list on RLS reject / DB error rather than raising —
     callers treat MCP as best-effort so a transient blip doesn't tank
     the whole run.
     """
+    allow = None if allowed_server_ids is None else frozenset(allowed_server_ids)
+    if allow is not None and not allow:
+        return []
     try:
         async with pool.acquire() as conn, conn.transaction():
             await store._set_user_context(conn, user_id=user_id)
@@ -146,6 +155,8 @@ async def load_workspace_cloud_servers(
 
     out: list[CloudMcpServerRow] = []
     for row in rows:
+        if allow is not None and row["id"] not in allow:
+            continue
         out.append(
             CloudMcpServerRow(
                 id=row["id"],
@@ -425,6 +436,7 @@ async def discover_mcp_tools_for_workspace(
     workspace_id: str,
     encryption_key: str | None = None,
     gated_out: set[str] | None = None,
+    allowed_server_ids: Collection[str] | None = None,
 ) -> dict[str, ToolDescriptor]:
     """Load every cloud-mode server in the workspace + bridge every
     cached tool into a `ToolDescriptor`, ready to merge into the
@@ -439,8 +451,16 @@ async def discover_mcp_tools_for_workspace(
     provided, tool names for servers with `requires_approval=True` are
     added to it so the executor can gate those tools without a second
     pass over the server list.
+
+    `allowed_server_ids` — the run's allow-list (Q48), see
+    `load_workspace_cloud_servers`.
     """
-    servers = await load_workspace_cloud_servers(pool, user_id=user_id, workspace_id=workspace_id)
+    servers = await load_workspace_cloud_servers(
+        pool,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        allowed_server_ids=allowed_server_ids,
+    )
     if gated_out is not None:
         gated_out.update(gated_tool_names_for(servers))
     if not servers:
@@ -477,19 +497,23 @@ async def extend_registry_with_mcp(
     workspace_id: str,
     encryption_key: str | None = None,
     gated_out: set[str] | None = None,
+    allowed_server_ids: Collection[str] | None = None,
 ) -> dict[str, ToolDescriptor]:
     """Mutate `registry` in place, adding `mcp__<server>__<tool>`
     entries for every cloud-mode MCP tool the workspace exposes.
     Returns the same registry for chaining.
 
     `gated_out` (optional) is forwarded to `discover_mcp_tools_for_workspace`
-    so the executor can collect server-policy gate names in one pass."""
+    so the executor can collect server-policy gate names in one pass.
+    `allowed_server_ids` (Q48): None → every enabled server; a collection
+    → only those (empty → none)."""
     mcp_tools = await discover_mcp_tools_for_workspace(
         pool,
         user_id=user_id,
         workspace_id=workspace_id,
         encryption_key=encryption_key,
         gated_out=gated_out,
+        allowed_server_ids=allowed_server_ids,
     )
     registry.update(mcp_tools)
     return registry

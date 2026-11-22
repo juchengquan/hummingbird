@@ -32,6 +32,7 @@ from .. import lease, tool_ledger
 from ..coalescer import make_token_coalescer
 from ..emitter import RunEmitter
 from ..input_policy import pauses_for_input
+from ..reasoning_effort import ThinkingParams
 from ..runner import (
     PendingInputDescriptor,
     RunStepContext,
@@ -128,6 +129,10 @@ class AnthropicStepConfig:
     # route + the always-gated `askUser` tool name when it lands.
     gated_tool_names: set[str] = field(default_factory=set)
     max_tokens: int = DEFAULT_MAX_TOKENS
+    # Extended thinking for the run's reasoning tier
+    # (`reasoning_effort.thinking_params`), sent on every call that may
+    # think (`_turn_can_think`) with `max_tokens` raised to fit it.
+    thinking: ThinkingParams | None = None
 
 
 def make_anthropic_step_fn(config: AnthropicStepConfig) -> RunStepFn:
@@ -153,22 +158,18 @@ def make_anthropic_step_fn(config: AnthropicStepConfig) -> RunStepFn:
 
         coalescer = make_token_coalescer(emit_token)
 
-        stream_ctx = (
-            config.client.messages.stream(
-                model=config.model,
-                max_tokens=config.max_tokens,
-                system=config.system,
-                messages=config.messages,
-                tools=tools_param,
-            )
-            if tools_param is not None
-            else config.client.messages.stream(
-                model=config.model,
-                max_tokens=config.max_tokens,
-                system=config.system,
-                messages=config.messages,
-            )
-        )
+        kwargs: dict[str, Any] = {
+            "model": config.model,
+            "max_tokens": config.max_tokens,
+            "system": config.system,
+            "messages": config.messages,
+        }
+        if tools_param is not None:
+            kwargs["tools"] = tools_param
+        if config.thinking is not None and _turn_can_think(config.messages):
+            kwargs["thinking"] = config.thinking.thinking
+            kwargs["max_tokens"] = max(config.max_tokens, config.thinking.max_tokens)
+        stream_ctx = config.client.messages.stream(**kwargs)
 
         try:
             async with stream_ctx as stream:
@@ -355,6 +356,30 @@ async def execute_tool_call(
 
 
 # --- helpers -------------------------------------------------------------
+
+
+_THINKING_BLOCKS = frozenset({"thinking", "redacted_thinking"})
+
+
+def _turn_can_think(messages: list[dict[str, Any]]) -> bool:
+    """Whether a call on `messages` may enable extended thinking — the
+    native harness's rule (`runs/native_harness._turn_can_think`): with
+    thinking on, Anthropic requires every assistant turn continuing the
+    current tool-use turn to open with a thinking block. A fresh turn
+    always can; a continued one only if its assistant turns thought."""
+    for m in reversed(messages):
+        content = m.get("content")
+        blocks = content if isinstance(content, list) else []
+        if m.get("role") == "user":
+            if isinstance(content, str) or any(
+                isinstance(b, dict) and b.get("type") != "tool_result" for b in blocks
+            ):
+                return True
+            continue
+        first = blocks[0] if blocks else None
+        if not isinstance(first, dict) or first.get("type") not in _THINKING_BLOCKS:
+            return False
+    return True
 
 
 def _coerce_content_blocks(final_message: Any) -> list[dict[str, Any]]:

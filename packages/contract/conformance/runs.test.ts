@@ -689,6 +689,28 @@ describe.skipIf(!env.baseUrl)(`conformance: runs @ ${env.baseUrl}`, () => {
     )
 
     test(
+      "an interrupt is announced as raised: CUSTOM hummingbird.interrupt_pending before RUN_FINISHED, the same Interrupt",
+      async () => {
+        const first = await startInteractive({ conformance: { outcome: "interrupt" } })
+        const { events } = assertRunStream(first.ex, first)
+        const closing = events.at(-1) as Json
+        const interrupts = (closing.outcome as { interrupts: Json[] }).interrupts
+        const pending = events.filter((e) => e.type === "CUSTOM" && e.name === "hummingbird.interrupt_pending")
+        expect(pending.map((e) => e.value)).toEqual(interrupts)
+        // On replay too (the log entry, not the live tail, produces it).
+        const replay = await callSse(op("streamRunEvents"), {
+          headers: { "x-run-token": first.ex.headers.get("x-run-token")! },
+          pathParams: { runId: first.runId },
+        })
+        const replayed = replay.messages.map((m) => JSON.parse(m.data) as AgUiEvent)
+        const at = replayed.findIndex((e) => e.type === "CUSTOM" && e.name === "hummingbird.interrupt_pending")
+        expect(at).toBeGreaterThan(-1)
+        expect(at).toBeLessThan(replayed.findIndex((e) => e.type === "RUN_FINISHED"))
+      },
+      TIMEOUT,
+    )
+
+    test(
       "one live resume per interrupted run: a second → 409 run_already_resumed; a failed one frees the slot",
       async () => {
         const threadId = randomUUID()
@@ -839,6 +861,19 @@ describe.skipIf(!env.baseUrl)(`conformance: runs @ ${env.baseUrl}`, () => {
   // --- background runs ---------------------------------------------------------------
 
   describe.skipIf(!env.authToken)("background runs", () => {
+    test("attachments → 400 invalid_request (Q49), before anything is created", async () => {
+      const body = runBody({ mode: "background" })
+      ;(body.forwardedProps as Json).attachments = [
+        { kind: "bookmark", url: "https://example.com", title: "Example", text: "Hello." },
+      ]
+      const ex = await call(op("startRun"), { body, token: env.authToken })
+      expect(ex.status).toBe(400)
+      contract.assertConforms("startRun", ex)
+      expect(code(ex)).toBe("invalid_request")
+      const run = await call(op("getRun"), { token: env.authToken, pathParams: { runId: body.runId as string } })
+      expect(run.status).toBe(404)
+    })
+
     test("a thread the caller does not own → 404 not_found (503 unavailable without a store)", async () => {
       const ex = await call(op("startRun"), { body: runBody({ mode: "background" }), token: env.authToken })
       contract.assertConforms("startRun", ex)

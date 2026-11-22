@@ -60,6 +60,7 @@ from .repository import (
     DEFAULT_LEASE_SECONDS,
     CreateResult,
     InvalidPageToken,
+    PreviousRunAlreadyAnswered,
     PreviousRunAlreadyResumed,
     PreviousRunNotFound,
     RunFilter,
@@ -287,6 +288,9 @@ class PgRunRepository:
                 raise ThreadNotFound() from None
             if state == "22023":
                 raise ValueError(message) from None
+            if state == "55000" and "already answered" in message:
+                # 0043: the previous run has a `respond` job.
+                raise PreviousRunAlreadyAnswered() from None
             raise
         if row is None or record is None:  # pragma: no cover — the RPC always answers
             raise RuntimeError("create_run returned no row")

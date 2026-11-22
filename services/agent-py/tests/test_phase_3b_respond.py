@@ -176,9 +176,10 @@ async def test_executor_suspend_saves_checkpoint_and_emits_approval() -> None:
     # The assistant turn with the pending tool_use was preserved.
     assert any(m.get("role") == "assistant" for m in saved["messages"])
 
-    # `update_run` was called with status="paused".
-    update_run.assert_awaited_once()
-    assert update_run.await_args.kwargs["status"] == "paused"
+    # `update_run` was called once with status="paused" (the others are
+    # the per-step progress writes, `step` only).
+    status_writes = [c for c in update_run.await_args_list if c.kwargs.get("status")]
+    assert [c.kwargs["status"] for c in status_writes] == ["paused"]
 
     # Approval-request event was emitted with the right tool info.
     approval_requests = [

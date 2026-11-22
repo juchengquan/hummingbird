@@ -382,7 +382,24 @@ def test_custom_events() -> None:
         {"interruptId": "ap3", "payload": {"value": "v"}},
         {"interruptId": "ap4", "payload": {"uiAnswer": {"k": 1}}},
     ]
-    assert got[7] == []  # a request is reported by the closing event
+    # A request is announced as it is raised (and reported again by the
+    # closing event): the same AG-UI `Interrupt` object.
+    assert got[7] == [
+        {
+            "type": "CUSTOM",
+            "name": "hummingbird.interrupt_pending",
+            "value": {
+                "id": "ap5",
+                "reason": "approval",
+                "responseSchema": {
+                    "type": "object",
+                    "required": ["approved"],
+                    "properties": {"approved": {"type": "boolean"}, "args": {}},
+                },
+                "metadata": {"hummingbird": {"tool": "t"}},
+            },
+        }
+    ]
 
 
 def test_statuses_encode_to_nothing() -> None:

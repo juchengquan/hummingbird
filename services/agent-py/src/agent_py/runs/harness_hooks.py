@@ -20,11 +20,13 @@ hook), and writes its hook in its own module:
 | C | `auto` model routing | replace `resolve_model` (and accept `auto` in `options.validate_run_options`) | routing module |
 | C | citation checks (`verify_citations`; `verify_client.py`) | replace `post_success` (emit `VerificationEvent`) | verify module |
 | D | local MCP tools (credentials: `RunInput.local_mcp_credentials`) | a `ToolContributor` after `cloud_mcp_tools` (`draft.gated` for `requiresApproval`) | `runs/local_mcp.py` |
-| A, D | `allowedMcpServerIds` (Q48) | filter in `cloud_mcp_tools` and D's contributor | — |
+| A, D | `allowedMcpServerIds` (Q48) | filter in `cloud_mcp_tools` (5b-A) and `local_mcp_tools` (5b-D) | — |
 | D | MCP Apps | set `ToolInvocationResult.mcp_app` in the MCP tool; the loop emits it | `mcp_tools.py` |
 
-Background runs (5b-A) do not go through this harness yet: they run in
-`executor.py` from `tasks.checkpoint`.
+Background runs do not go through this harness: they run in
+`executor.py` from `tasks.checkpoint` (5b-A gave the executor the same
+skills filter, reasoning effort and `allowedMcpServerIds` rules, and
+the research prompt, `task_prompt.py`).
 """
 
 from __future__ import annotations
@@ -126,15 +128,17 @@ def skill_tools(ri: RunInput, opts: RunOptions, ctx: HookContext, draft: Toolset
 
 
 async def cloud_mcp_tools(
-    ri: RunInput, _opts: RunOptions, ctx: HookContext, draft: ToolsetDraft
+    ri: RunInput, opts: RunOptions, ctx: HookContext, draft: ToolsetDraft
 ) -> None:
     """The workspace's cloud MCP tools (signed-in runs with a
     `workspaceId`); servers marked for approval gate their tools.
-    Discovery failures are logged and skipped, as on `/v1/chat`."""
-    # TODO(5b-A/5b-D): Q48 — keep only the servers in
-    # `opts.allowed_mcp_server_ids` when it is not None.
+    Discovery failures are logged and skipped, as on `/v1/chat`.
+    `allowedMcpServerIds` (Q48) keeps only the servers it names when set
+    (`[]` → no cloud MCP tools; absent → every enabled server)."""
     context = ctx.tool_context
     if context is None or not context.workspace_id:
+        return
+    if opts.allowed_mcp_server_ids is not None and not opts.allowed_mcp_server_ids:
         return
     from ..mcp_tools import extend_registry_with_mcp
 
@@ -145,6 +149,7 @@ async def cloud_mcp_tools(
             user_id=context.user_id,
             workspace_id=context.workspace_id,
             gated_out=draft.gated,
+            allowed_server_ids=opts.allowed_mcp_server_ids,
         )
     except Exception as exc:
         logger.warning("native_harness.mcp_discovery_failed", run_id=ri.run_id, error=str(exc))

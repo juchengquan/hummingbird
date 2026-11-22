@@ -33,6 +33,10 @@ or click the **+** next to the **Chats** group to start a new one.
 - Some skills (web search, image generation) require their own API
   keys in the deployment's `.env`. If a skill toggle is greyed out,
   ask the self-hoster to enable the key.
+- A persona that limits its MCP servers (`/personas`) limits them in
+  its replies and tasks (Next.js and agent-py (runs) backends): only the
+  servers it allows offer tools, and one that allows none uses no MCP
+  tools at all.
 - Switching the chat backend (Next.js vs. the Python agent service)
   is a power-user setting - see [Settings & theme](12-settings-and-theme.md).
 - **Questions from the assistant (agent-py (runs) backend).** When the

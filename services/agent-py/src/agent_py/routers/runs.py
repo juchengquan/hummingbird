@@ -69,6 +69,7 @@ from ..runs.model import ContractStatus, RunCursor, RunMode, RunOwner, RunRecord
 from ..runs.native_harness import validate_run_options
 from ..runs.repository import (
     InvalidPageToken,
+    PreviousRunAlreadyAnswered,
     PreviousRunAlreadyResumed,
     PreviousRunNotFound,
     RunFilter,
@@ -83,9 +84,11 @@ from ..runs.run_input import (
     ResumeInvalid,
     ResumeMismatch,
     background_checkpoint,
+    background_max_steps,
     build_run_input,
     check_resume,
     forwarded_props,
+    resume_checkpoint,
 )
 from ..runs.stream import CursorOutOfRange
 from ..runs.wiring import RunServices, get_run_services
@@ -108,6 +111,7 @@ AUTH_REQUIRED_MESSAGE = "Sign in to use AI features on this server."
 _RUN_NOT_FOUND = "Run not found."
 _RUN_ID_CONFLICT = "This runId is already in use."
 _RUN_ALREADY_RESUMED = "Another run already answers this run's interrupts."
+_RUN_ALREADY_ANSWERED = "This run was already answered through the task respond route."
 
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
@@ -298,6 +302,10 @@ async def start_run(
     # `background_checkpoint` reads only `messages` + `forwardedProps`.)
     if mode == "background" and (fp.localMcpServers or split_state(body.state)[1]):
         _raise(400, "invalid_request", LOCAL_MCP_BACKGROUND_REFUSAL)
+    # Q49: nor attachments — the Next task routes take none, so a
+    # background run refuses them rather than silently dropping them.
+    if mode == "background" and fp.attachments:
+        _raise(400, "invalid_request", "Background runs do not take attachments.")
 
     client_key = rate_limit_key(request)
     refusal = services.limits.check_start(
@@ -374,33 +382,38 @@ async def start_run(
         assert existing is not None
         run = existing
     else:
+        previous: RunRecord | None = None
         if resume:
             previous_run_id = str(fp.previousRunId)
-            # TODO(5b-A): Q41 — a background resume must start from the
-            # paused run's checkpoint plus the `resume[]` answers (today
-            # it gets a fresh `background_checkpoint` from the browser's
-            # history, below), and the old `/api/tasks/:id/respond` must
-            # refuse a run answered here (0043 mutual exclusion).
-            # TODO(5b-D): a resume re-sends the local MCP credentials in
-            # `state` (Q45) — `build_run_input` takes them out again.
+            previous = await repo.get(owner, previous_run_id)
             try:
-                check_resume(await repo.get(owner, previous_run_id), body)
+                check_resume(previous, body)
             except ResumeMismatch as exc:
                 _raise(409, "invalid_state", str(exc))
             except ResumeInvalid as exc:
                 _raise(400, "invalid_request", str(exc))
         if mode == "background":
-            max_steps = fp.maxSteps or DEFAULT_BACKGROUND_MAX_STEPS
             model = fp.model or settings.AGENT_DEFAULT_MODEL
             messages = [m.model_dump(mode="json") for m in body.messages]
+            if previous is not None:
+                # Q41: the new run starts from the paused run's checkpoint
+                # plus the answers; the paused run stays `interrupted`.
+                checkpoint, max_steps = await _background_resume(
+                    services, owner, previous, body, fp.maxSteps
+                )
+            else:
+                max_steps = background_max_steps(fp)
+                checkpoint = background_checkpoint(body, model=model, max_steps=max_steps)
             spec = RunSpec(
                 run_id=body.runId,
                 thread_id=body.threadId,
                 mode="background",
-                goal=(fp.goal or last_user_text(messages))[:2000],
+                goal=(fp.goal or (previous.goal if previous else None) or last_user_text(messages))[
+                    :2000
+                ],
                 previous_run_id=previous_run_id,
                 max_steps=max_steps,
-                checkpoint=background_checkpoint(body, model=model, max_steps=max_steps),
+                checkpoint=checkpoint,
             )
         else:
             spec = RunSpec(
@@ -421,6 +434,8 @@ async def start_run(
             _raise(409, "invalid_state", "The previous run is not one of yours on this thread.")
         except PreviousRunAlreadyResumed:
             _raise(409, "run_already_resumed", _RUN_ALREADY_RESUMED)
+        except PreviousRunAlreadyAnswered:
+            _raise(409, "run_already_answered", _RUN_ALREADY_ANSWERED)
         except MemoryStoreFull:
             _raise(503, "unavailable", "Too many runs in progress on this server. Retry shortly.")
         except ValueError as exc:
@@ -454,6 +469,41 @@ async def start_run(
     if token is not None:
         headers[RUN_TOKEN_HEADER] = token
     return await _sse_response(_event_stream(services, owner, run, None), headers=headers)
+
+
+async def _background_resume(
+    services: RunServices,
+    owner: RunOwner,
+    previous: RunRecord,
+    body: models.StartRunRequest,
+    max_steps: int | None,
+) -> tuple[dict[str, object], int]:
+    """A background resume's checkpoint and step budget (Q41): the paused
+    run's saved checkpoint plus the answers (`resume_checkpoint`); the
+    budget is `maxSteps`, else the paused run's. Only a top-level
+    background run is resumed this way — a sub-agent run's parent waits
+    on that very row (the join barrier), so it is answered in place
+    through the task respond route."""
+    if previous.mode != "background":
+        _raise(409, "invalid_state", "A background run can only resume a background run.")
+    if previous.parent_run_id is not None:
+        _raise(
+            409,
+            "invalid_state",
+            "A sub-agent run is answered through its task, not resumed as a new run.",
+        )
+    saved = await services.repo_for(owner).load_checkpoint(owner, previous.id)
+    try:
+        checkpoint = resume_checkpoint(saved, body, previous_run_id=previous.id)
+    except ResumeMismatch as exc:
+        _raise(409, "invalid_state", str(exc))
+    if max_steps is not None:
+        return checkpoint, max_steps
+    cfg = checkpoint.get("config")
+    raw = cfg.get("maxSteps") if isinstance(cfg, dict) else None
+    if isinstance(raw, int) and not isinstance(raw, bool) and 1 <= raw <= 50:
+        return checkpoint, raw
+    return checkpoint, previous.max_steps or DEFAULT_BACKGROUND_MAX_STEPS
 
 
 async def _queue_background(services: RunServices, owner: RunOwner, run: RunRecord) -> None:

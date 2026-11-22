@@ -22,8 +22,8 @@ class ApiError(BaseModel):
     `unavailable`, `rate_limit`, `context_window`, `invalid_model`,
     `unknown_model`, `provider`, `aborted`, `unknown`. See
     `lib/shared/api-errors.ts`. The runs operations add
-    `run_id_conflict`, `run_already_resumed` and `invalid_attachment`,
-    and use `invalid_state`.
+    `run_id_conflict`, `run_already_resumed`, `run_already_answered`
+    and `invalid_attachment`, and use `invalid_state`.
 
     """
 
@@ -1060,7 +1060,7 @@ class RunForwardedProps(BaseModel):
     """
     maxSteps: Annotated[int | None, Field(ge=1, le=50)] = None
     """
-    Step budget. Absent means 25 (background) or the chat default (interactive).
+    Step budget. Absent means 25 (background; 35 with `research`) or the chat default (interactive).
     """
     requireApprovalFor: Annotated[list[RequireApprovalForItem] | None, Field(max_length=64)] = None
     """
@@ -1084,7 +1084,7 @@ class RunForwardedProps(BaseModel):
     Anthropic extended thinking, 2048 / 8192 / 16384 budget
     tokens). Ignored for a model that takes no tier
     (`supportsReasoningEffort` in the catalog). Absent means the
-    provider default (no extended thinking). Interactive runs.
+    provider default (no extended thinking).
 
     """
     research: bool | None = None
@@ -1093,16 +1093,16 @@ class RunForwardedProps(BaseModel):
     prompt (plan → per-section search → gap pass → a cited
     Markdown report), and its citations are verified. Absent
     means false. Not called `mode`, which is interactive /
-    background. agent-py accepts it but does not act on it yet
-    (Phase 3 catch-up).
+    background. A background research run's step budget
+    defaults to 35. agent-py: background runs (interactive runs
+    take only the citation checks, `verifyCitations`).
 
     """
     allowedMcpServerIds: Annotated[list[AllowedMcpServerId] | None, Field(max_length=64)] = None
     """
     MCP servers whose tools the run may offer (Q48), cloud
     (`workspaceId`) and local (`localMcpServers`) alike. Absent
-    means no restriction; an empty list means no MCP tools. Not
-    enforced by agent-py yet (Phase 3 catch-up).
+    means no restriction; an empty list means no MCP tools.
 
     """
     attachments: Annotated[list[RunAttachment] | None, Field(max_length=40)] = None
@@ -1115,7 +1115,8 @@ class RunForwardedProps(BaseModel):
     route renders them; a cloud file's header carries its id, and
     a RAG-mode file is a note to call `searchFiles` with it (Q47).
     Every attachment marks the turn as reading third-party content
-    (`RunResult.memoryTainted`). Interactive runs only (Q49). One
+    (`RunResult.memoryTainted`). Interactive runs only: a
+    background run refuses them (Q49, `400 invalid_request`). One
     the run cannot give the model is `400 invalid_attachment`
     (see `RunFileAttachment`, `RunInlineFileAttachment`).
 
@@ -1125,15 +1126,15 @@ class RunForwardedProps(BaseModel):
     The conversation's memory opt-out (the chat body's
     `memoryBypass`, set from `Conversation.memoryOff`): no
     remembered facts in the prompt and no remember / forget
-    tools. Absent means false. Not acted on by agent-py yet.
+    tools. Absent means false.
 
     """
     verifyCitations: bool | None = None
     """
     Opt-in citation verification: when the turn produced cited
     claims over retrieved sources, a post-turn verifier pass
-    emits a `hummingbird.verification` part. Absent means false.
-    Not acted on by agent-py yet.
+    emits a `hummingbird.verification` part (agent-py: when
+    `VERIFY_MODEL` is set). Absent means false.
 
     """
     referenceImage: RunReferenceImage | None = None
@@ -1141,7 +1142,7 @@ class RunForwardedProps(BaseModel):
     """
     The account's "store files locally" preference: generated
     images come back as data URLs instead of being uploaded to
-    Storage. Absent means false. Not acted on by agent-py yet.
+    Storage. Absent means false.
 
     """
     localMcpServers: Annotated[list[LocalMcpServer] | None, Field(max_length=8)] = None
@@ -1150,8 +1151,7 @@ class RunForwardedProps(BaseModel):
     live in the browser, with their cached tool list. Interactive
     runs only — a background run refuses them. **No
     credentials here**: they ride in `RunAgentInput.state` under
-    `hummingbird.localMcp` (see `StartRunRequest`). Not used by
-    agent-py yet (Phase 3 catch-up).
+    `hummingbird.localMcp` (see `StartRunRequest`).
 
     """
 
@@ -1263,7 +1263,7 @@ class RunReferenceImage(BaseModel):
     body's `referenceImage`, set by an image's Remix action): the
     model is told to call `generateImage` with `referenceImageUrl`
     when the user asks for a variation. Only with the `imageGen`
-    skill. Not acted on by agent-py yet.
+    skill.
 
     """
 
