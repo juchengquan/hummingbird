@@ -76,7 +76,8 @@ groups them by purpose and explains when each is needed.
 
 | Variable | Effect |
 |---|---|
-| `ANTHROPIC_API_KEY` | Read by the Python agent service's Phase 2b+ executor for direct Anthropic calls. Without it, the executor uses the Phase 2a stub. |
+| `ANTHROPIC_API_KEY` | Read by the Python agent service for direct Anthropic calls. Without it, every run and background task fails with a message saying so. |
+| `WORKER_STUB_MODEL` | Tests only. `true` makes the Python agent service answer background tasks with canned text, without a model. Leave empty: anything other than `true`, `false` or empty stops the service at startup. |
 | `ANTHROPIC_BASE_URL` | Override the Anthropic base URL. Useful for self-hosted gateways. |
 | `AGENT_DEFAULT_MODEL` | Model the agent services (Python + TypeScript) use when a request names none, and for follow-up suggestions. Default `anthropic/claude-haiku-4.5`. The agent services only accept the `anthropic/*` models in `config/models.json`; picking any other model with an agent backend selected returns an "unknown model" error. |
 | `MODELS_CONFIG_PATH` | Python agent service only: where to read `config/models.json` from. Leave empty outside Docker. |

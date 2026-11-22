@@ -137,6 +137,7 @@
 | `VERIFY_MODEL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `VERIFY_PROVIDER` | no | [21-environment-variables.md](21-environment-variables.md) |
 | `VISION_MODEL` | yes | [21-environment-variables.md](21-environment-variables.md) |
+| `WORKER_STUB_MODEL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 
 ### Settings
 

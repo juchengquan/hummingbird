@@ -178,7 +178,8 @@ SQL lives under `supabase/migrations/` as numbered files applied in order (`0001
 `0037_validate_artifacts_kind_check.sql`, `0038_mcp_pgcrypto_schema.sql`,
 `0039_mcp_upsert_foreign_id.sql`, `0040_task_worker_liveness.sql`,
 `0041_runs_on_tasks.sql`, `0042_one_live_resume.sql`,
-`0043_answer_once.sql`, `0044_message_turn_persona.sql`) — see `docs/SUPABASE_SETUP.md`
+`0043_answer_once.sql`, `0044_message_turn_persona.sql`,
+`0045_background_tasks_correct.sql`) — see `docs/SUPABASE_SETUP.md`
 for the hosted-cloud run order, or `docs/SUPABASE_LOCAL.md` for the
 local Supabase CLI path (Docker-based, no cloud account needed). For
 verifying the file full-text retrieval pipeline end-to-end after
@@ -217,10 +218,19 @@ are created with the `create_run` RPC (idempotent on the client-minted
 id). One live resume per interrupted run (0042): the unique partial
 index `tasks_one_live_resume` on `previous_run_id` (rows not `failed` /
 `cancelled`), surfaced by `create_run` as 23505 with that constraint
-name → `409 run_already_resumed`. Each paused task is answered one way
-only (0043, Q41): a runs-API resume refuses a task with a `respond` job
-(`409 run_already_answered`) and `enqueue_task_job` refuses a `respond`
-while a live resume answers it. **Every old task surface only sees `mode = 'background'`** — a new
+name → `409 run_already_resumed`. Each **question** (paused task +
+question id) has one winner (0045, Q57/Q58): a runs-API resume refuses a
+question a queued / running `respond` job holds (`409
+run_already_answered`), `enqueue_task_job` refuses a `respond` to a
+question a resume holds or the task doesn't wait on, and a background
+resume that set `answers_applied_at` (written before any side effect)
+holds it forever. **Background invariants (0045):** terminal is final (a
+trigger); cancel = `cancel_task` = the whole task, a child is only
+skipped (Q60); the sub-agent barrier is the `tasks_ended` /
+`tasks_deleted` triggers, never a worker's decrement; every multi-row
+writer locks in one order — conversation key share →
+`private.lock_user_tasks` → task rows → job row. Migrate before deploying
+agent-py, with no older agent-py running. **Every old task surface only sees `mode = 'background'`** — a new
 reader of `tasks` for the task routes must filter on it too (see
 `lib/server/agent/store.ts`).
 

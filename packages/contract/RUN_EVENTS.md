@@ -49,19 +49,29 @@ One status per run, derived from the run row; three vocabularies:
 
 - **Open interrupts** of a run: `tasks.outcome.interrupts` when
   `outcome.type = "interrupt"` (written by the backend when the run is
-  interrupted, migration 0041); for rows without `outcome` (written by
-  the pre-0041 executor), every `approval` entry with `phase: request`
-  whose `approvalId` has no later `phase: response` entry, built as in
-  § 4.
+  interrupted, migration 0041 — by the background worker since 0045, in
+  the same transaction as the pause). For a background row paused
+  without `outcome` (before 0045): the newest `approval` entry with
+  `phase: request` whose `approvalId` has no later `phase: response`
+  entry, built as in § 4. That worker asked one question at a time, so
+  older unanswered requests are ones a dead attempt left, not live.
 - `interrupted` is an end state for that run: answering it starts a
   **new** run (Q24) whose `forwardedProps.previousRunId` is this one.
-  Rows the legacy respond route resumed in place (`paused` → `running`
-  on the same row) are still read correctly, because the closing event
+  Rows the legacy respond route resumes in place (`paused` → `running`
+  on the same row, clearing `outcome` and `finishedAt`; a sub-agent's
+  question is only answered this way, Q59) are still read correctly,
+  because the closing event
   is built from the row status at the moment the stream ends (§ 6), not
   from the `status: paused` entry.
 - `finishedAt` is set for `succeeded`, `failed`, `cancelled` and
-  `interrupted`.
-- Background runs only reach `queued`. Interactive runs are created
+  `interrupted` (null for a parent waiting on its sub-agents).
+- `succeeded`, `failed` and `cancelled` are final: no write moves a run
+  out of them. The entries that end a background chunk (the question
+  with `status: paused`, the `result`) commit with the row, so one that
+  loses to a cancel writes neither — and a cancelled run's log may hold
+  no terminal entry at all.
+- A background run is `queued` only until a worker starts executing
+  it, then `running`. Only background runs reach `queued`. Interactive runs are created
   `running` (0041 `create_run`).
 
 ## 2. Ids
@@ -168,7 +178,7 @@ namespaced `hummingbird.`; a consumer ignores names it does not know.
 | `hummingbird.gap` | `RunGapEventValue` (`openapi.yaml`) `{ after, resumeAt, reason }` | the cursor points before retained events (§ 6.3); always followed by `MESSAGES_SNAPSHOT` |
 | `hummingbird.rewind` | `RunRewindEventValue` `{ after }` | a resume marker (§ 6.5) |
 | `hummingbird.step_error` | `{ message, willRetry }` | non-fatal step failure |
-| `hummingbird.interrupt_pending` | an AG-UI `Interrupt` (§ 4.1) | a question raised mid-run (§ 3.2), before the run's row is `interrupted`. A background run may wait on it for hours: a client following one (the tasks panel) can show the question as it lands. Compaction drops it (§ 7, like every `approval` entry); a client that only answers what `RUN_FINISHED` reports (chat) may ignore it |
+| `hummingbird.interrupt_pending` | an AG-UI `Interrupt` (§ 4.1) | a question raised mid-run (§ 3.2), ahead of the closing event. A background run may wait on it for hours: a client following one (the tasks panel) can show the question as it lands. Compaction drops it (§ 7, like every `approval` entry); a client that only answers what `RUN_FINISHED` reports (chat) may ignore it |
 | `hummingbird.interrupt_resolved` | `{ interruptId, payload }` | legacy in-place answer (§ 3.2) |
 | `hummingbird.context_compacted` | `{ summary? }` (key omitted when absent) | model-context compaction |
 
@@ -237,24 +247,50 @@ two answers would both continue the same turn, and an approved tool
 would run twice. The rule is enforced where runs are stored
 (`tasks_one_live_resume`, migration 0042; the memory store applies the
 same rule), so two concurrent requests to different processes cannot
-both start. A resume that failed or was cancelled frees the slot: the
-interrupts can be answered again with a new `runId`. A retry of the
-resume itself (same `runId`) is the usual idempotent replay.
+both start; the same write re-checks that the interrupted run still
+waits (a cancel that came first is `409 invalid_state`). An
+**interactive** resume that failed or was cancelled frees the slot: the
+interrupts can be answered again with a new `runId`. A **background**
+one frees it only if it never applied the answers (Q57): applying is
+recorded before any side effect (`tasks.answers_applied_at`, migration
+0045), a doubtful crash counts as applied, and an applied answer is `409
+run_already_resumed` from then on — the task has failed, "run again" is
+a new task. A retry of the resume itself (same `runId`) is the usual
+idempotent replay.
 
 **Background runs (Q41).** A resume of a background run is a background
 run (`forwardedProps.mode: "background"`); it answers a top-level
 background run only (a sub-agent run is answered in place through its
 task — its parent waits on that row — so resuming one is `409
-invalid_state`, as is resuming an interactive run as a background one).
-It starts from the interrupted run's saved checkpoint — its model
-messages and its setup: model, skills, workspace, approvals, research
-mode, MCP allow-list; the resume's own `forwardedProps` do not change
-it, only its `maxSteps` sets the new run's budget — with the answers
-applied in the new run's first step, exactly as above. Each paused task
-is answered one way only while the old task routes live: a run answered
-through `POST /api/tasks/:id/respond` can't be resumed (`409
-run_already_answered`), and `respond` refuses a task a live resume
-answers (`409 invalid_state`) — migration 0043.
+invalid_state` whatever the `mode`, as is any resume across modes, an
+absent `mode` being interactive). It starts from the interrupted run's
+saved checkpoint — its model messages, the rest of its tool turn and
+its setup: model (which must still be one the worker runs, `400
+unknown_model`), skills, workspace, approvals, research mode, MCP
+allow-list. The resume's own `forwardedProps` change that setup in two
+ways only: `maxSteps` sets the new run's budget and `allowedMcpServerIds`
+narrows the saved list (Q51, below). The answers are applied in the new
+run's first step, exactly as above.
+
+A background run has one open interrupt at a time. When the model made
+several gated calls in one turn (a gated `spawnSubagent` too), they are
+asked one after another: each answer ends in the next question with no
+model call between, and the model is called once every call of the turn
+has its one result.
+
+Each question (a paused run + an interrupt id) is answered once while
+the old task routes live (Q58, migration 0045), and a task's questions
+may each be answered either way: a question being answered through `POST
+/api/tasks/:id/respond` can't be resumed (`409 run_already_answered`; it
+blocks nothing if that respond fails before applying), and `respond`
+refuses a question a resume holds, one already answered, or one the run
+doesn't wait on (`409 invalid_state`). Declining always works; approving
+a tool that is gone gives the call an error result.
+
+**Cancel (Q60).** Cancelling a background run cancels the task: every run
+before and after it in the chain of answers, and their sub-agent runs.
+The questions don't reopen. A sub-agent run is cancelled alone; its
+parent continues, and is told it was skipped.
 
 **What the model continues from (Q31).** The interrupted run stores its
 harness state with its outcome (`tasks.checkpoint`, or the memory
@@ -266,7 +302,8 @@ model saw, in full, not the summaries the client holds. Without one
 rebuilds what it can from the client's `messages`.
 
 **MCP allow-list (Q51).** The interrupted run's `allowedMcpServerIds` is
-saved with that state, and it is a ceiling: the resume runs with the ids
+saved with that state, and it is a ceiling, for interactive and
+background resumes alike: the resume runs with the ids
 in both that list and its own, whatever the client sends (a list that is
 absent restricts nothing; `[]` allows nothing). When the saved state
 can't be read the ceiling is unknown, so the resume gets no MCP tools.
