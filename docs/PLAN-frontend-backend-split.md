@@ -100,6 +100,10 @@ three times. The goals:
 | Q42 | Local MCP credentials go to **interactive** runs only, in a request field agent-py never stores or logs (not `forwardedProps`), re-sent on each resume. Background runs refuse local MCP, as the Next task routes do. agent-py gets `MCP_ALLOW_PRIVATE_HOSTS` with Next's semantics |
 | Q43 | The code interpreter stays Next-only until a short trial shows how microsandbox runs beside agent-py (a separate service agent-py calls over HTTP, or another way); the trial writes findings, not code |
 | Q44 | `/v1/runs` keeps its 16 MB body cap. Large inputs go by reference: cloud files by id (agent-py checks the owner itself — its Storage client bypasses RLS), bookmarks as capped text, inline bytes only for a signed-out user's small files |
+| Q45 | Local MCP credentials ride in AG-UI `state` (`hummingbird.localMcp`), never a header (Caddy access logs record custom headers); the server list without credentials goes in `forwardedProps`. agent-py holds them in a `repr=False` field and a test checks they never reach `tasks` rows or logs |
+| Q46 | Research mode is a `research: true` run option (`mode` already means interactive / background) and agent-py gets the research task prompt Next's `buildTaskSystemPrompt` had — fixing research tasks on the old route too, which share the executor |
+| Q47 | The rendered file header carries the file id for cloud files, on Next and runs, so `searchFiles` can be called (RAG mode can't work without it today) |
+| Q48 | The per-task allowed MCP servers list is enforced everywhere it applies: agent-py background and interactive runs, and Next's chat route (nothing reads it today) |
 
 ## Run contract (v1)
 
@@ -204,7 +208,8 @@ has shipped behind the existing per-account backend switch.
 | 3b (Phase 2) | **A** AG-UI encoder + stream mechanics (seq in SSE `id:`, replay, `gap` + `MESSAGES_SNAPSHOT`, in-memory log for anonymous runs, compaction) · **B** runs API (start with idempotent client `runId`, status, cancel, list, `runToken`) + conformance cases · **C** harness-adapter interface with today's loop as the first adapter; chat emits internal events | Wave 3a merged |
 | 4a (Phase 3) | one agent: the "agent-py (runs)" option + store migration v35; `@ag-ui/client` / `@ag-ui/core`; `lib/client/runs/` — transport (start, rejoin from a cursor, cancel, run-token storage) and the pure AG-UI → store step tested on recorded streams; the interfaces 4b codes against | Wave 3b merged |
 | 4b (Phase 3) | **A** hook into `use-chat-send` (send, Stop → cancel, reload → rejoin, memory taint, sync hold) · **B** chat answer cards + resume (Q35) · **C** Playwright smoke (Q39) · **D** backend catch-up, first slice: image/document attachments, reasoning effort, generated images/files from the native harness | Wave 4a merged |
-| 5 (Phase 3) | backend catch-up (Q32, Q41–Q44) — split being planned; plus the Q43 code-interpreter trial (findings only) | Wave 4 merged |
+| 5a (Phase 3) | one agent, the seams: every new run option in the contract (0.4.0) and through agent-py's run input; prompt-section and toolset-contributor hooks in the native harness; a per-run context slot that works for anonymous runs; `mcp_app` on tool results; the citation verifier client in a shared module; the matching `build-input.ts` fields passed on send and resume. Plus the Q43 trial findings ([`TRIAL-code-interpreter-on-agent-py.md`](TRIAL-code-interpreter-on-agent-py.md)) | Wave 4 merged |
+| 5b (Phase 3) | **A** background runs (Q41 resume + 0043 mutual exclusion, start parity, research mode Q46, skills / reasoning effort in the executor, Q48, Run progress fields, early pending question) · **B** context on runs (file budget + notes with ids Q47, MCP resources, bookmarks as taint, cloud files by id Q44) · **C** memory, citation checks, reference image, `localFilesOnly`, per-IP limits, `auto` · **D** local MCP (Q42/Q45), `MCP_ALLOW_PRIVATE_HOSTS`, MCP Apps | 5a |
 | 6 (Phase 3) | the tasks panel onto runs (Q38) | Wave 5's background-runs work merged |
 
 Each wave merges into one integration branch and ships as one PR
