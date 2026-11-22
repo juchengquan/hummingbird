@@ -95,6 +95,7 @@ async def _default_sleep(seconds: float) -> None:
 
 def _respond_payload_from_job(job: ClaimedJob) -> executor.RespondActionPayload | None:
     """Parse a `respond` job's payload into a typed RespondActionPayload.
+    `approved` is kept only as a boolean — absent never approves.
 
     The TS route writes `{requestId, approved?, selection?, value?,
     uiAnswer?, args?}` into `task_jobs.payload`. Missing `requestId`
@@ -617,7 +618,10 @@ def reclaim_decision(action: str, state: JobTaskState) -> tuple[ReclaimAction, s
       - task terminal → the run finished; nothing to do.
       - start/continue superseded by a later job for the task → the
         attempt got as far as yielding / pausing; the later job owns the
-        run now. Re-running would fork it.
+        run now. Re-running would fork it. A respond on a running task
+        likewise: a later job means its answer was applied and the run
+        moved on, so resuming here could ask the next question again over
+        the answer that won it.
       - task paused → it is legitimately waiting: on the user (only the
         respond job may proceed, through the normal paused → running
         gate) or on its subagents (only the barrier's `continue`, once
@@ -665,6 +669,8 @@ def reclaim_decision(action: str, state: JobTaskState) -> tuple[ReclaimAction, s
             return "recover", "paused_without_pending_children"
         return "skip", "task_paused"
     if action == "respond":
+        if state.superseded:
+            return "skip", "superseded_by_later_job"
         if state.has_other_live_job:
             return "skip", "run_driven_by_another_job"
         return "continue", "resume_interrupted_respond"

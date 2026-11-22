@@ -181,8 +181,9 @@ class RespondActionPayload:
     One of `approved` / `selection` / `value` / `ui_answer` is set
     based on the pending input's request kind (approval / choice /
     input / ui-part). All fields besides `request_id` are optional so
-    a malformed job payload doesn't crash the executor —
-    `_build_tool_result_text` falls back to a "no answer" message.
+    a malformed job payload doesn't crash the executor: a question
+    falls back to a "no answer" message, and an approval without a
+    boolean `approved` is refused before the claim (never approved).
 
     `ui_answer` carries the structured answer from the generative-UI
     resolver (commit 3b of PLAN-generative-ui-parts). The back-compat
@@ -1396,7 +1397,7 @@ def _resolve_anthropic_client() -> AsyncAnthropicClient | None:
     if _anthropic_client is not None:
         return _anthropic_client
     settings = get_settings()
-    api_key = settings.ANTHROPIC_API_KEY
+    api_key = settings.ANTHROPIC_API_KEY.strip()
     if not api_key:
         return None
     # Real SDK import — only paid for when configured. Tests that

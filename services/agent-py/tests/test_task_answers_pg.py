@@ -395,3 +395,32 @@ async def test_the_rpc_refuses_a_cross_mode_resume(world: World) -> None:
             )
 
     assert await sqlstate_of(create()) == "55000"
+
+
+async def test_an_older_reclaimed_respond_never_drops_the_winners_answer(world: World) -> None:
+    """Two workers died: one after it paused on q2 (before settling its
+    q1 job), one after it claimed q2. Reclaiming the older job first must
+    not ask q2 again over the answer that won it."""
+    world.model.script("Do it", [use("q1", SEND, n=1), use("q2", SEND, n=2)])
+    task = await world.start()
+    await world.work()
+    await world.respond(task, "q1", approved=True)
+    await world.work()
+    await world.respond(task, "q2", approved=True)
+    older, newer = await world.jobs(task, "respond")
+    await world.sql(
+        "UPDATE public.tasks SET status = 'running', outcome = NULL WHERE id = $1",
+        uuid.UUID(task),
+    )
+    await world.sql(
+        "UPDATE public.task_jobs SET status = 'running', finished_at = NULL, attempts = 1, "
+        "lease_expires_at = now() - interval '1 second' WHERE id = ANY($1::uuid[])",
+        [older["id"], newer["id"]],
+    )
+    logged = len(await world.events(task))
+    await world.tick()  # reclaims the older job
+    assert len(await world.events(task)) == logged, "the older job drove a run it lost"
+    assert await world.status(task) == "running", "q2 was asked again over its answer"
+    await world.work()
+    assert await world.status(task) == "done"
+    assert (world.count(SEND, n=1), world.count(SEND, n=2)) == (1, 1)
