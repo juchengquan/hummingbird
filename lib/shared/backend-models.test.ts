@@ -8,6 +8,7 @@ import {
   defaultModelForBackend,
   modelsForBackend,
   pickFallbackModel,
+  RUNS_ROUTING_AVAILABLE,
 } from "./backend-models"
 import {
   ANTHROPIC_SERVICE_MODELS,
@@ -15,6 +16,7 @@ import {
   CHAT_MODELS,
   DEFAULT_CHAT_MODEL,
   ROUTING_AVAILABLE,
+  ROUTING_CONFIG,
 } from "./models"
 
 describe("backend models (Q40)", () => {
@@ -38,6 +40,23 @@ describe("backend models (Q40)", () => {
     expect(autoAvailableForBackend("agent-service")).toBe(false)
   })
 
+  test("agent-py's runs take the same models, plus auto when the routing pair is anthropic/*", () => {
+    expect(modelsForBackend("agent-runs")).toEqual(modelsForBackend("agent-service"))
+    for (const m of CHAT_MODELS) {
+      expect(backendAcceptsModel("agent-runs", m.id)).toBe(ANTHROPIC_SERVICE_MODELS.has(m.id))
+    }
+    const expected =
+      ROUTING_CONFIG !== null &&
+      ANTHROPIC_SERVICE_MODELS.has(ROUTING_CONFIG.strong) &&
+      ANTHROPIC_SERVICE_MODELS.has(ROUTING_CONFIG.weak)
+    expect(RUNS_ROUTING_AVAILABLE).toBe(expected)
+    expect(autoAvailableForBackend("agent-runs")).toBe(expected)
+    expect(backendAcceptsModel("agent-runs", AUTO_MODEL_ID)).toBe(expected)
+    // The repo catalog routes between two Anthropic models.
+    expect(RUNS_ROUTING_AVAILABLE).toBe(true)
+    expect(defaultModelForBackend("agent-runs")).toBe(defaultModelForBackend("agent-service"))
+  })
+
   test("the agent-service default is accepted there", () => {
     const fallback = defaultModelForBackend("agent-service")
     expect(fallback).not.toBeNull()
@@ -51,9 +70,9 @@ const both = { agentPy: true, agentTs: true }
 const none = { agentPy: false, agentTs: false }
 
 describe("resolveModelBackend (Q40)", () => {
-  test("the runs option reaches agent-py signed in or out", () => {
-    expect(resolveModelBackend("python-runs", false, both)).toEqual({ kind: "agent-service", name: "agent-py" })
-    expect(resolveModelBackend("python-runs", true, both)).toEqual({ kind: "agent-service", name: "agent-py" })
+  test("the runs option reaches agent-py's runs signed in or out", () => {
+    expect(resolveModelBackend("python-runs", false, both)).toEqual({ kind: "agent-runs", name: "agent-py" })
+    expect(resolveModelBackend("python-runs", true, both)).toEqual({ kind: "agent-runs", name: "agent-py" })
   })
 
   test("python / ts-service reach their service only when signed in", () => {
@@ -84,6 +103,15 @@ describe("modelSwitchFor (Q40)", () => {
     expect(modelSwitchFor(agentPy, AUTO_MODEL_ID)).not.toBeNull()
   })
 
+  test("auto stays on agent-py's runs (it routes it) but not on its /v1/chat", () => {
+    const runs = { kind: "agent-runs", name: "agent-py" } as const
+    expect(modelSwitchFor(runs, AUTO_MODEL_ID)).toBeNull()
+    expect(modelSwitchFor(agentPy, AUTO_MODEL_ID)).not.toBeNull()
+    const to = modelSwitchFor(runs, nonAnthropic.id)
+    expect(to).not.toBeNull()
+    expect(ANTHROPIC_SERVICE_MODELS.has(to!)).toBe(true)
+  })
+
   test("an accepted model stays, and the Next.js routes never switch a catalog model", () => {
     expect(modelSwitchFor(agentPy, anthropic.id)).toBeNull()
     for (const m of CHAT_MODELS) expect(modelSwitchFor(next, m.id)).toBeNull()
@@ -106,5 +134,9 @@ describe("pickFallbackModel (Q40)", () => {
       }
     }
     expect(pickFallbackModel(undefined, "agent-service")).not.toBeNull()
+    for (const m of CHAT_MODELS) {
+      const pick = pickFallbackModel(m.id, "agent-runs")
+      if (pick) expect(ANTHROPIC_SERVICE_MODELS.has(pick.id)).toBe(true)
+    }
   })
 })
