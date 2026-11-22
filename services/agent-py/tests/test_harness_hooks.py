@@ -118,6 +118,7 @@ async def test_default_hooks_are_the_registered_lists() -> None:
     assert [f.__name__ for f in DEFAULT_HOOKS.tool_contributors] == [
         "skill_tools",
         "cloud_mcp_tools",
+        "local_mcp_tools",
     ]
     assert [f.__name__ for f in DEFAULT_HOOKS.taint_seeds] == ["history_taint"]
 

@@ -19,7 +19,7 @@ hook), and writes its hook in its own module:
 | C | `localFilesOnly`, per-IP image / web-tool budgets | `RunToolContext.local_files_only` / `consume_budget` (wire `NativeHarness(consume_budget=…)`) | `native_harness.build_native_harness` |
 | C | `auto` model routing | replace `resolve_model` (and accept `auto` in `options.validate_run_options`) | routing module |
 | C | citation checks (`verify_citations`; `verify_client.py`) | replace `post_success` (emit `VerificationEvent`) | verify module |
-| D | local MCP tools (credentials: `RunInput.local_mcp_credentials`) | a `ToolContributor` after `cloud_mcp_tools` (`draft.gated` for `requiresApproval`) | local MCP module |
+| D | local MCP tools (credentials: `RunInput.local_mcp_credentials`) | a `ToolContributor` after `cloud_mcp_tools` (`draft.gated` for `requiresApproval`) | `runs/local_mcp.py` |
 | A, D | `allowedMcpServerIds` (Q48) | filter in `cloud_mcp_tools` and D's contributor | — |
 | D | MCP Apps | set `ToolInvocationResult.mcp_app` in the MCP tool; the loop emits it | `mcp_tools.py` |
 
@@ -48,6 +48,7 @@ from .hook_types import (
     ToolContributor,
     ToolsetDraft,
 )
+from .local_mcp import local_mcp_tools
 from .model import RunResultData
 from .options import RunOptions
 
@@ -187,7 +188,7 @@ TOOL_CONTRIBUTORS: tuple[ToolContributor, ...] = (
     skill_tools,
     cloud_mcp_tools,
     # TODO(5b-C): rememberFact / forgetFact (unless memory_bypass).
-    # TODO(5b-D): local MCP tools (RunInput.local_mcp_credentials).
+    local_mcp_tools,
 )
 TAINT_SEEDS: tuple[TaintSeed, ...] = (
     history_taint,

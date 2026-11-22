@@ -19,16 +19,27 @@ Pipeline:
      executor after `default_tool_registry()` so the model sees the
      full tool set.
 
-Local-mode MCP servers aren't ported — the Python service runs
-background after the chat route enqueues, so it never sees the
-client-supplied `bodyServers` array the TS `loadEffectiveMcpServers`
-merges in. Cloud-mode covers the durable case.
+Local-mode servers (credentials held by the browser) reach interactive
+runs only — `runs/local_mcp.py` builds their tools with the same
+`build_mcp_tool` from `forwardedProps.localMcpServers` + the credentials
+in the run's `state` (Q42, Q45).
+
+**MCP Apps.** A tool whose descriptor declares a `uiResourceUri` reads
+that `ui://` resource after it ran and returns it as
+`ToolInvocationResult.mcp_app` (capped at `MCP_APP_MAX_BYTES`, else a
+truncated placeholder) — the Next chat route's `data-mcp-app` frame.
+
+**Credentials** go to the server as headers and nowhere else: whatever
+comes back from it (tool text, an error, the App's HTML, an exception
+logged) passes `credential_redactor` first, so a server or SDK echoing
+a header value doesn't put it in a log, a tool result or the event log.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -47,8 +58,12 @@ from .mcp_client import (
 from .mcp_client import (
     call_tool as mcp_call_tool,
 )
+from .mcp_client import (
+    read_resource as mcp_read_resource,
+)
 from .mcp_credentials import fetch_decrypted_credentials
-from .tools.registry import ToolDescriptor, ToolError, ToolInvocationResult
+from .tools.registry import McpAppPayload, ToolDescriptor, ToolError, ToolInvocationResult
+from .url_validate import OutboundUrlPolicy
 
 logger = structlog.get_logger(__name__)
 
@@ -165,18 +180,64 @@ def _decode_jsonb(raw: Any) -> dict[str, Any] | None:
 # (blocked URL, connect / TLS / HTTP error). Deliberately detail-free.
 _GENERIC_CALL_ERROR = 'MCP tool "{tool}" failed: the MCP server request did not succeed.'
 
+#: Cap on an MCP App's `ui://` bundle — `MCP_APP_MAX_BYTES` in the Next
+#: chat route (it counts UTF-16 units; this counts UTF-8 bytes, the same
+#: for ASCII). Over it, the App is a truncated placeholder.
+MCP_APP_MAX_BYTES = 512_000
+#: The placeholder HTML of an oversized App (the client renders a "UI too
+#: large" stub from `truncated`; non-empty for a client that ignores it).
+MCP_APP_TRUNCATED_HTML = "<!-- truncated -->"
+
+_REDACTED = "[redacted]"
+_MIN_SECRET_LEN = 8
+
+
+def credential_redactor(credentials: Mapping[str, Any] | None) -> Callable[[str], str]:
+    """A function that blanks the credential's header values out of a
+    string — for everything that comes back from an MCP server or its
+    SDK (a server may echo the request's headers in an error). Values
+    shorter than 8 characters are left alone (they can't be told apart
+    from ordinary text, and aren't secrets worth the name); a
+    `<scheme> <token>` value (`Bearer …`) is blanked whole and by its
+    token alone."""
+    secrets: set[str] = set()
+    raw = credentials.get("headers") if credentials else None
+    if isinstance(raw, Mapping):
+        for value in raw.values():
+            if not isinstance(value, str):
+                continue
+            for candidate in (value, value.partition(" ")[2]):
+                candidate = candidate.strip()
+                if len(candidate) >= _MIN_SECRET_LEN:
+                    secrets.add(candidate)
+    ordered = sorted(secrets, key=len, reverse=True)
+
+    def redact(text: str) -> str:
+        for secret in ordered:
+            if secret in text:
+                text = text.replace(secret, _REDACTED)
+        return text
+
+    return redact
+
 
 def build_mcp_tool(
     *,
     endpoint: McpEndpoint,
     credentials: dict[str, Any] | None,
     descriptor: McpToolDescriptorIR,
+    policy: OutboundUrlPolicy | None = None,
 ) -> ToolDescriptor:
     """Wrap a single MCP tool descriptor as a `ToolDescriptor` the
     agent's registry can hand to the Anthropic SDK. The execute
     closure opens a fresh MCP session per call (`call_tool` does this
     internally), forwards the args, and surfaces `is_error` as a
     `ToolError` so the model sees a structured failure.
+
+    `policy` is the SSRF policy of the call (default: the MCP one,
+    `mcp_client.mcp_outbound_policy`, read per call). A descriptor with
+    `ui_resource_uri` also reads that resource after a successful call
+    and returns it as the result's `mcp_app` (MCP Apps).
 
     Input-schema fallback: MCP servers may omit `inputSchema` for
     parameter-less tools — substitute an empty-object schema so the
@@ -191,10 +252,13 @@ def build_mcp_tool(
     description = descriptor.description or (
         f'MCP tool from "{endpoint.name}" (no description provided).'
     )
+    redact = credential_redactor(credentials)
 
     async def execute(args: dict[str, Any]) -> ToolInvocationResult:
         try:
-            result = await mcp_call_tool(endpoint, credentials, descriptor.name, args)
+            result = await mcp_call_tool(
+                endpoint, credentials, descriptor.name, args, policy=policy
+            )
         except Exception as exc:
             # Log the detail, never hand it to the model: the SDK embeds
             # upstream response bodies / connect errors in its messages,
@@ -204,16 +268,23 @@ def build_mcp_tool(
                 server=endpoint.id,
                 tool=descriptor.name,
                 error_type=type(exc).__name__,
-                error=str(exc),
+                error=redact(str(exc)),
             )
-            raise ToolError(_GENERIC_CALL_ERROR.format(tool=descriptor.name)) from exc
+            raise ToolError(_GENERIC_CALL_ERROR.format(tool=descriptor.name)) from None
 
         if result.is_error:
-            raise ToolError(result.text or f'MCP tool "{descriptor.name}" returned an error')
+            raise ToolError(
+                redact(result.text) or f'MCP tool "{descriptor.name}" returned an error'
+            )
         # MCP tools are free-text shaped; mirror webFetch's summary
         # style ("<server> · <tool>") so UI pills stay short.
         summary = f"{endpoint.name} · {descriptor.name}"
-        return ToolInvocationResult(text=result.text, summary=summary)
+        app = (
+            await _read_mcp_app(endpoint, credentials, descriptor.ui_resource_uri, policy, redact)
+            if descriptor.ui_resource_uri
+            else None
+        )
+        return ToolInvocationResult(text=redact(result.text), summary=summary, mcp_app=app)
 
     return ToolDescriptor(
         name=mcp_tool_name(endpoint.id, descriptor.name),
@@ -223,6 +294,42 @@ def build_mcp_tool(
         # An arbitrary third-party action — assume it has side effects.
         side_effecting=True,
     )
+
+
+async def _read_mcp_app(
+    endpoint: McpEndpoint,
+    credentials: dict[str, Any] | None,
+    uri: str,
+    policy: OutboundUrlPolicy | None,
+    redact: Callable[[str], str],
+) -> McpAppPayload | None:
+    """The tool's MCP App: its `ui://` resource, read after the tool ran
+    (the Next chat route's `readResource` → `data-mcp-app`). Over
+    `MCP_APP_MAX_BYTES` → the truncated placeholder; no text → none. A
+    failed read is logged and yields no App — the tool's text result
+    already stands, so a missing panel must not fail the call."""
+    try:
+        res = await mcp_read_resource(endpoint, credentials, uri, policy=policy)
+    except Exception as exc:
+        logger.warning(
+            "mcp_tools.app_read_failed",
+            server=endpoint.id,
+            uri=uri,
+            error_type=type(exc).__name__,
+            error=redact(str(exc)),
+        )
+        return None
+    html = res.text
+    if not html:
+        return None
+    if len(html.encode("utf-8")) > MCP_APP_MAX_BYTES:
+        return McpAppPayload(
+            server_id=endpoint.id,
+            html=MCP_APP_TRUNCATED_HTML,
+            resource_uri=uri,
+            truncated=True,
+        )
+    return McpAppPayload(server_id=endpoint.id, html=redact(html), resource_uri=uri)
 
 
 # --- Discovery + registry integration --------------------------------------
@@ -249,11 +356,15 @@ def _tools_from_capabilities(caps: dict[str, Any] | None) -> list[McpToolDescrip
         description = description_raw if isinstance(description_raw, str) else None
         schema_raw = entry.get("inputSchema")
         schema = schema_raw if isinstance(schema_raw, dict) else None
+        # MCP Apps: the `ui://` resource the tool renders (cached at
+        # discovery from `_meta.ui.resourceUri`).
+        ui_raw = entry.get("uiResourceUri")
         out.append(
             McpToolDescriptorIR(
                 name=name,
                 description=description,
                 input_schema=schema,
+                ui_resource_uri=ui_raw if isinstance(ui_raw, str) and ui_raw else None,
             )
         )
     return out
@@ -385,8 +496,11 @@ async def extend_registry_with_mcp(
 
 
 __all__ = [
+    "MCP_APP_MAX_BYTES",
+    "MCP_APP_TRUNCATED_HTML",
     "CloudMcpServerRow",
     "build_mcp_tool",
+    "credential_redactor",
     "discover_mcp_tools_for_workspace",
     "extend_registry_with_mcp",
     "gated_tool_names_for",
