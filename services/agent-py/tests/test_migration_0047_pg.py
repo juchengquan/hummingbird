@@ -301,8 +301,13 @@ async def test_upgrade_from_0046_fills_every_shape_and_is_idempotent(db: Db) -> 
     assert await db.root(theirs) == theirs
     assert (await db.row(research))["research"] is True
     assert (await db.row(p0))["research"] is False
-    for task in (research, r2):
-        assert (await db.row(task))["result_delivered_at"] is None
+    # Tasks that ended before 0047 count as delivered (their results were
+    # written by the old path), so the first browser after wave 6 writes
+    # nothing old. Only roots of background tasks whose current run ended.
+    for task in (research, p0, x2, crossed):
+        assert (await db.row(task))["result_delivered_at"] is not None, task
+    for task in (r1, r2, child, dead, x0, interactive, theirs):
+        assert (await db.row(task))["result_delivered_at"] is None, task
     for task, updated in updated_before.items():
         assert (await db.row(task))["updated_at"] == updated, "backfill leaves updated_at"
 
@@ -315,9 +320,14 @@ async def test_upgrade_from_0046_fills_every_shape_and_is_idempotent(db: Db) -> 
     await db.conn.execute(
         "UPDATE public.task_schedules SET enabled = true WHERE id = $1", uuid.UUID(null_model)
     )
+    # A task that ends after 0047 is delivered by a browser, never by a re-run.
+    later = await db.task("done", minutes_ago=1)
+    await db.conn.execute("UPDATE public.tasks SET root_run_id = id WHERE id = $1", uuid.UUID(later))
+    first = await _snapshot(db)
     await db.conn.execute(M0047.read_text())
     assert await _snapshot(db) == first
     assert await _enabled(db, null_model)
+    assert (await db.row(later))["result_delivered_at"] is None
 
 
 # --- Identity at insert ---------------------------------------------------------------

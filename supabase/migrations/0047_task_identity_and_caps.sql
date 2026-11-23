@@ -45,10 +45,11 @@
 --                         else `previous_run_id`, to the first row with
 --                         neither; a chain broken by a deleted row roots at
 --                         its earliest row still reachable. `research` from
---                         its checkpoint. `result_delivered_at` stays NULL:
---                         every finished task reads as undelivered, so the
---                         first browser that opens after wave 6 ships
---                         writes each finished task's result once (Q70).
+--                         its checkpoint. `result_delivered_at` is set on
+--                         a background root whose current run has ended
+--                         (the old path delivered it), so the first browser
+--                         after wave 6 writes nothing old; a task still
+--                         live delivers once when it ends (Q70, §5b).
 --                         No status, outcome, checkpoint or `updated_at`
 --                         changes; no job is written.
 --   enabled schedules     with no model (`model IS NULL`: every schedule the
@@ -170,6 +171,13 @@ update public.tasks t
  where not t.research
    and t.checkpoint #>> '{config,mode}' = 'research';
 
+-- The rows that exist before 0047 (none has a root yet; on a re-run, none
+-- is without one): §5b marks the ended ones delivered.
+create temp table if not exists _0047_preexisting (id uuid primary key);
+insert into _0047_preexisting
+select t.id from public.tasks t where t.root_run_id is null
+on conflict do nothing;
+
 do $$
 declare
   v_rows integer;
@@ -258,6 +266,29 @@ comment on function public.task_run_is_current(public.tasks) is
   'Whether this run is its task''s current run (Q75, 0047): a root, or a resume that holds the question (live, done, or ended after applying), with no resume of it that holds. Sub-agent runs: always. Read-only, the caller''s rights.';
 comment on function public.task_current_run_id(public.tasks) is
   'The id of the current run of this run''s task (Q75, 0047); the run itself for a sub-agent run. Read-only, the caller''s rights.';
+
+-- ---------------------------------------------------------------------------
+-- 5b. Tasks that ended before 0047 count as delivered (Q70, Q77)
+-- ---------------------------------------------------------------------------
+-- Their results were written by the old path already; without this, the
+-- first browser after wave 6 would write every finished task in history
+-- into its conversation again. Background roots only, whose current run
+-- has ended; one still live delivers once when it ends. A re-run marks
+-- nothing (no row is pre-existing then).
+update public.tasks t
+   set result_delivered_at = coalesce(t.finished_at, t.updated_at)
+  from _0047_preexisting p
+ where p.id = t.id
+   and t.mode = 'background'
+   and t.parent_task_id is null
+   and t.root_run_id = t.id
+   and t.result_delivered_at is null
+   and exists (
+     select 1 from public.tasks c
+      where c.id = public.task_current_run_id(t)
+        and c.status in ('done', 'failed', 'cancelled'));
+
+drop table _0047_preexisting;
 
 -- ---------------------------------------------------------------------------
 -- 6. Caps (Q72, Q79)
