@@ -37,6 +37,17 @@ export interface MessagesSlice {
     message: Omit<Message, "id" | "timestamp">,
     conversationId?: string
   ) => Message
+  /** Append a message under a given id (a finished task's result, whose id
+   *  is derived from the task — Q70, `resultIdsFor`), idempotently: when a
+   *  message with that id already exists anywhere it is returned as is and
+   *  nothing is written. Returns `null` — writing nothing — when the
+   *  conversation isn't in the store (never delivered into a deleted one,
+   *  survey bug 21). Never falls back to the active conversation. */
+  addMessageWithId: (
+    id: string,
+    message: Omit<Message, "id" | "timestamp">,
+    conversationId: string
+  ) => Message | null
   deleteMessage: (messageId: string) => void
   updateMessage: (messageId: string, content: string) => void
   /** Replace a slice of messages with a synthetic `kind: 'recap'`
@@ -146,7 +157,23 @@ export interface MessagesSlice {
   clearMessageOutput: (messageId: string) => void
 }
 
-export const createMessagesSlice: SliceCreator<MessagesSlice> = (set) => ({
+export const createMessagesSlice: SliceCreator<MessagesSlice> = (set, get) => ({
+  addMessageWithId: (id, message, conversationId) => {
+    for (const c of get().conversations) {
+      const existing = c.messages.find((m) => m.id === id)
+      if (existing) return existing
+    }
+    if (!get().conversations.some((c) => c.id === conversationId)) return null
+    const newMessage: Message = { ...message, id, timestamp: new Date() }
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === conversationId
+          ? { ...c, messages: [...c.messages, newMessage], updatedAt: new Date() }
+          : c
+      ),
+    }))
+    return newMessage
+  },
   addMessage: (message, conversationId) => {
     const newMessage: Message = {
       ...message,

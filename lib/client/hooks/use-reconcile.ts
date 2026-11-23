@@ -40,6 +40,7 @@ import "client-only"
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useSyncEnabled } from "@/client/hooks/use-sync-enabled"
+import { useStore } from "@/client/hooks/use-store"
 import { getDefaultConversations } from "@/client/hooks/store/slices/conversations"
 import { ensureSyncableIds } from "@/client/sync/syncable-ids"
 import { getDefaultWorkspaces } from "@/client/hooks/store/slices/workspaces"
@@ -142,6 +143,34 @@ async function silentPull(
   })
   setLocalDataOwner(userId)
   return "ok"
+}
+
+let pullInFlight: Promise<"ok" | "cancelled" | "failed" | "deferred" | "unavailable"> | null = null
+
+/**
+ * Pull the signed-in user's cloud state now, outside the load / sign-in /
+ * `online` moments — the tasks panel needs it to deliver a task into a
+ * conversation the server created (a scheduled task's, Q73) that this
+ * browser hasn't pulled yet. Same rules as the silent pull (local edits
+ * queued first, pending ops win), so it is safe at any time; concurrent
+ * calls share one pull. `"unavailable"` when there is nothing to pull
+ * from: no Supabase client, local-only mode, or a user this browser
+ * hasn't reconciled (the reconcile prompt decides first).
+ */
+export function pullCloudNow(
+  userId: string
+): Promise<"ok" | "cancelled" | "failed" | "deferred" | "unavailable"> {
+  if (pullInFlight) return pullInFlight
+  const client = getSupabaseBrowserClient()
+  if (!client || useStore.getState().localOnlyMode || !hasReconciled(userId)) {
+    return Promise.resolve("unavailable")
+  }
+  pullInFlight = silentPull(client, userId, () => false)
+    .catch(() => "failed" as const)
+    .finally(() => {
+      pullInFlight = null
+    })
+  return pullInFlight
 }
 
 // ---------- hook -----------------------------------------------------------
