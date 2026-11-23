@@ -40,9 +40,9 @@ const sent = async (op?: string): Promise<Sent[]> => {
 }
 
 const test = base.extend({
-  page: async ({ page }, use) => {
+  page: async ({ page }, provide) => {
     await control("reset")
-    await use(page)
+    await provide(page)
   },
 })
 

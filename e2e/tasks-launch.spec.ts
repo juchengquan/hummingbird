@@ -153,7 +153,7 @@ test.describe("the cap and sign-in gate every launch point", () => {
     await open(page, { availability: { ok: false, reason: "signed_out" } })
     await expect(taskToggle(page)).toHaveCount(0)
     await send(page, "/research tea")
-    await expect(page.getByText("Sign in to run tasks.")).toBeVisible()
+    await expect(page.getByText("Sign in to run tasks.", { exact: true })).toBeVisible()
     expect(await calls(page, "launch")).toHaveLength(0)
   })
 })
@@ -238,6 +238,9 @@ function seededTurn(reply: "ok" | "error") {
         createdAt: now,
         updatedAt: now,
         pinned: false,
+        systemPrompt: "",
+        selectedFileIds: [],
+        fileRetrievalModes: {},
         messages: [
           { id: "m-user", role: "user", content: "the history of tea", timestamp: now, taskTurn: { mode: "research" } },
           reply === "ok"
@@ -263,7 +266,7 @@ const RESENDS: { name: string; reply: "ok" | "error"; run: (page: Page) => Promi
     run: async (page) => {
       await page.getByRole("button", { name: "Edit message" }).last().click({ force: true })
       const box = page.locator("textarea").filter({ hasText: "the history of tea" }).first()
-      await box.fill("the history of green tea")
+      await box.fill("the history of tea in Japan")
       await box.press("Enter")
     },
   },
