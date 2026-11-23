@@ -1,6 +1,6 @@
 # Plan: Frontend / backend split
 
-Status: **Waves 1–5 (Phases 0–2, chat on runs, backend catch-up) shipped (#294–#302). Wave 5c (background executor correctness) in progress; wave 6 waits on it.** Decided in a design interview
+Status: **Waves 1–5 (Phases 0–2, chat on runs, backend catch-up) shipped (#294–#302). Wave 5c (background executor correctness, #303–#305) shipped. Wave 6 (tasks panel onto runs) being planned.** Decided in a design interview
 on 2026-11-21. Supersedes the open parts of
 [`PLAN-backend-extraction.md`](PLAN-backend-extraction.md), whose Phase 1
 (single `apiClient` + Zod schemas + `docs/API.md`) shipped and is the
@@ -124,6 +124,12 @@ three times. The goals:
 | Q66 | Watching a task reads its status alone, not the whole row (checkpoint included), and polls every 5 s while it is paused on a question |
 | Q67 | A task whose model it can't run falls back to Haiku (agent-py's own default), not Sonnet |
 | Q68 | Scoping the saved task pointer to the signed-in account waits for wave 6 |
+| Q69 | The tasks panel lists all the user's tasks across conversations, the ones that need an answer first, several running at once (capped by Q72). The API grows a task identity: the root run, its current (latest) run, research or not |
+| Q70 | Whichever browser opens next writes a finished task's result into its conversation, with an id derived from the task so a second write is a no-op, and the server marks the task delivered. The result is the whole answer across the task's runs, not the last run's text |
+| Q71 | A task takes images in its message (Q49 corrected), doesn't tell the model to search files it has no id for (until Q49 is lifted for cloud files), honours "store files locally", and never offers Auto |
+| Q72 | At most 5 active (queued or running) top-level tasks per user, refused before anything is created; sub-agents count against their parent: 5 per spawn, 20 per task |
+| Q73 | Schedules: a new schedule gets Haiku (Q67), shown in the editor; existing enabled ones are paused until their owner re-enables them; results appear in the list and go into the schedule's conversation (Q69, Q70); all the workspace's cloud MCP servers, servers needing approval pause the task. Per-schedule server choice later |
+| Q74 | A browser notification when a task needs an answer, fails or finishes: once each, hidden tabs only |
 
 ## Run contract (v1)
 
@@ -242,7 +248,7 @@ has shipped behind the existing per-account backend switch.
 | 5a (Phase 3) | one agent, the seams: every new run option in the contract (0.4.0) and through agent-py's run input; prompt-section and toolset-contributor hooks in the native harness; a per-run context slot that works for anonymous runs; `mcp_app` on tool results; the citation verifier client in a shared module; the matching `build-input.ts` fields passed on send and resume. Plus the Q43 trial findings ([`TRIAL-code-interpreter-on-agent-py.md`](TRIAL-code-interpreter-on-agent-py.md)) | Wave 4 merged |
 | 5b (Phase 3) | **A** background runs (Q41 resume + 0043 mutual exclusion, start parity, research mode Q46, the Q49 refusal, skills / reasoning effort in the executor, Q48, Run progress fields, early pending question) · **B** context on runs (file budget + notes with ids Q47, MCP resources, bookmarks as taint, cloud files by id Q44) · **C** memory, citation checks, reference image, `localFilesOnly`, per-IP limits, `auto` · **D** local MCP (Q42/Q45), `MCP_ALLOW_PRIVATE_HOSTS`, MCP Apps | 5a |
 | 5c (Phase 3) | the database CI job, then **A** backend (migration 0045; executor, provider, barrier, both cancel paths, runs router; Q55–Q60, background Q51) · **B** frontend (child answer card, reload, cancel, task models, schedule notice). Ends with an end-to-end check: Postgres, the real worker and a scripted model server, driven through the UI | Wave 5 merged |
-| 6 (Phase 3) | the tasks panel onto runs (Q38) | Wave 5c merged |
+| 6 (Phase 3) | the tasks panel onto runs (Q38, Q59 children's answers on runs, Q61, Q69–Q74); also: a Stop just before an ordinary chat tool call is honoured, background runs use `run_answer_applied` | Wave 5c merged (#303–#305) |
 
 Each wave merges into one integration branch and ships as one PR
 against `dev`.
