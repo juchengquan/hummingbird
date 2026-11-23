@@ -308,6 +308,10 @@ class PgRunRepository:
                 raise ThreadNotFound() from None
             if state == "22023":
                 raise ValueError(message) from None
+            if state == "54000":
+                # 0047 (Q79): a sixth active task — `409 limit_reached`,
+                # nothing created.
+                _raise_write_error(exc)
             if state == "55000":
                 if "already answered" in message:
                     # 0045: a `respond` job holds one of the questions.
