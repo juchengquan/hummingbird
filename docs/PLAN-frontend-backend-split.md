@@ -130,6 +130,14 @@ three times. The goals:
 | Q72 | At most 5 active (queued or running) top-level tasks per user, refused before anything is created; sub-agents count against their parent: 5 per spawn, 20 per task |
 | Q73 | Schedules: a new schedule gets Haiku (Q67), shown in the editor; existing enabled ones are paused until their owner re-enables them; results appear in the list and go into the schedule's conversation (Q69, Q70); all the workspace's cloud MCP servers, servers needing approval pause the task. Per-schedule server choice later |
 | Q74 | A browser notification when a task needs an answer, fails or finishes: once each, hidden tabs only |
+| Q75 | Each run stores its root task (`root_run_id`); a task's current run is computed in SQL: the newest successor that holds the question (live, done, or ended after applying). A resume that failed before applying is a dead branch: the question shows again, with the failure as a note |
+| Q76 | The runs panel lists and drives every task, old-path and scheduled ones included; "stays on its path" (Q61) governs only the browser that launched it |
+| Q77 | Delivery is marked in `tasks.result_delivered_at` (no FK), set through `POST /v1/runs/{root}/delivered` after the browser wrote the message and sync drained. Failed / cancelled tasks write no message. The message, research document and artifact get ids derived from the task |
+| Q78 | The whole-answer text and its citation check are built on the server when a task settles, across the task's runs |
+| Q79 | The 5-task cap counts a parent waiting on sub-agents, never an answer (resumes are exempt); the old `create_task_run` is capped too under the same lock; a schedule fire at the cap creates the task already failed `limit_reached`; the error is 409 `limit_reached` |
+| Q80 | Re-enabling a schedule with no model sets Haiku and shows it; one conversation per fire; the contract's "null falls back to the default" text is corrected |
+| Q81 | A task that hits its step limit delivers what it has with a visible "stopped at the step limit" note; a spawn on the last step still uses its children's results |
+| Q82 | A real-stack browser job in CI (GoTrue, PostgREST, Next, the worker, a scripted model): on PRs touching tasks / runs and nightly; required after two green weeks |
 
 ## Run contract (v1)
 
