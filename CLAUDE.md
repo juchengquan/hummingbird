@@ -380,11 +380,13 @@ walking up from the package, or via `MODELS_CONFIG_PATH`. Adding an
 `anthropicModelId` too. Details: `services/README.md` § Model allowlist.
 
 **Runs API (`/v1/runs`, Phase 2 of `docs/PLAN-frontend-backend-split.md`).**
-Five endpoints in `routers/runs.py`: `POST /v1/runs` (start — AG-UI
+Seven endpoints in `routers/runs.py`: `POST /v1/runs` (start — AG-UI
 `RunAgentInput`, options in `forwardedProps`; interactive → `200` AG-UI
 SSE, background → `202`), `GET /v1/runs` (list), `GET /v1/runs/{id}`,
 `GET /v1/runs/{id}/events` (rejoin from a `<seq>` / `<seq>.<k>` cursor),
-`POST /v1/runs/{id}/cancel`. The run model lives in
+`POST /v1/runs/{id}/cancel`, and for tasks (wave 6) `POST
+/v1/runs/{id}/answers` (a sub-agent run answered in place, Q59) and
+`POST /v1/runs/{id}/delivered` (Q77). The run model lives in
 `services/agent-py/src/agent_py/runs/` — `wiring.py` builds every service
 (stores, event logs, encoder, stream, harness, driver) and is the one
 place to swap an implementation; a run is a `tasks` row (0041) for a
