@@ -19,7 +19,6 @@ const RECONNECT_MS = 1500
 const RECONNECT_MAX_MS = 15_000
 
 const TASK_GONE = "This task no longer exists, or belongs to another account."
-const SIGNED_OUT = "Sign in again to follow this task."
 
 /**
  * What a failed read of the task's stream means (survey bug 6):
@@ -27,13 +26,12 @@ const SIGNED_OUT = "Sign in again to follow this task."
  *   this browser) or deleted. The watch ends; nothing is settled — settling
  *   it as cancelled moved its board card and wrote the delivered mark, so
  *   its owner never got the result here.
- * - `signed_out` — 401: the session ended. The watch ends instead of
- *   retrying forever; the pointer stays for when its user signs in again.
- * - `retry` — anything else (a network error, a 5xx): read again.
+ * - `retry` — anything else, a 401 included: read again with a back-off.
+ *   A 401 keeps the pointer and the watch, so it comes back once the user
+ *   signs in again (pinned by `e2e/tasks-edges.spec.ts`, "signed out").
  */
-export function watchFailure(status: number, code: string | undefined): "gone" | "signed_out" | "retry" {
+export function watchFailure(status: number, code: string | undefined): "gone" | "retry" {
   if (status === 404 && (code === "not_found" || code === undefined)) return "gone"
-  if (status === 401) return "signed_out"
   return "retry"
 }
 
@@ -169,9 +167,9 @@ export function useTaskRun(options?: UseTaskRunOptions): UseTaskRunResult {
             if (res.ok && res.body) body = res.body
             else {
               const failure = watchFailure(res.status, res.error?.code)
-              if (failure !== "retry") {
-                stopWatching(failure === "gone" ? TASK_GONE : SIGNED_OUT)
-                if (failure === "gone") optsRef.current?.onGone?.(id)
+              if (failure === "gone") {
+                stopWatching(TASK_GONE)
+                optsRef.current?.onGone?.(id)
                 return
               }
               problem = res.error?.message ?? `Couldn't read the task (HTTP ${res.status}).`
