@@ -9,6 +9,7 @@ response. Lifecycle of one run:
 
     created (repo.create — row `running`, leased)
       → previous run's checkpoint → RunInput.previous_checkpoint (resume)
+      → RunInput.apply_answers (resume): repo.mark_answers_applied
       → harness.run(run_input, emitter, cancel)    progress → log
       → emitter.aclose()                             buffered deltas get their seq
       → terminal entries from the outcome (harness.py's table)
@@ -30,6 +31,14 @@ or the memory store's copy). A resume run (`resume[]` + previous run)
 gets it back as `RunInput.previous_checkpoint`, read as the run's own
 owner — RLS for a signed-in owner, the run token's runs for an anonymous
 one — so a run never continues from someone else's state.
+
+**Applying answers (Q63).** A resume run's harness calls
+`RunInput.apply_answers` right before its answers take effect; the
+driver's implementation stamps the run (`repo.mark_answers_applied`) so
+the question it answers stays closed however the run ends — a failure,
+a Stop, a reap. When the row is no longer live (a cancel or a reap won)
+it answers False and treats the run as stopped by someone else, so the
+log follows the row.
 
 **Ordering.** Terminal entries are appended *before* the row settles, so
 a stream that ends on the row (RUN_EVENTS.md § 6.4) has already seen
@@ -205,6 +214,8 @@ class RunDriver:
             checkpoint: dict[str, object] | None = None
             try:
                 run_input = await _with_previous_checkpoint(run_input, run, repo)
+                if run_input.resume:
+                    run_input = replace(run_input, apply_answers=_applier(active, repo))
                 result = await harness.run(run_input, emitter, active.cancel)
                 if isinstance(result.outcome, Yielded):
                     logger.error("runs.driver.interactive_yield", run_id=run.id)
@@ -327,6 +338,19 @@ class RunDriver:
         for task in tasks:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
+
+
+def _applier(active: _Active, repo: RunRepository) -> Callable[[], Awaitable[bool]]:
+    """`RunInput.apply_answers` for `active`'s run (Q63)."""
+
+    async def apply_answers() -> bool:
+        if await repo.mark_answers_applied(active.run.id):
+            return True
+        logger.info("runs.driver.apply_refused", run_id=active.run.id)
+        active.stop("lease_lost")
+        return False
+
+    return apply_answers
 
 
 async def _with_previous_checkpoint(

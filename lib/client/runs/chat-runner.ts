@@ -44,6 +44,7 @@ import {
   type InterruptedTurn,
 } from "./chat-bridge"
 import { createThrottle, planRunOutcome, pointerActionFor, type RunTurnKind } from "./chat-outcome"
+import { RUN_ANSWER_APPLIED } from "./errors"
 import { buildResume, type InterruptAnswer } from "./interrupts"
 import { hasOutput } from "./reducer"
 import * as runBaseStore from "./run-base"
@@ -403,6 +404,23 @@ export function createChatRunner(deps: ChatRunnerDeps): ChatRunner {
             bodies.delete(session.runId)
             result = { ok: false, error: plan.error, code: plan.code }
             break
+          case "answer-applied": {
+            // Q63: an earlier resume applied these answers and ended, so
+            // the paused turn can't be answered again. Its cards and
+            // pointer go (another tab's, or a reload, would offer a dead
+            // question); the bubble's Retry sends the turn again.
+            const paused = spec.previousRunId
+            if (paused) {
+              interrupted().clearInterruptedTurn(conv, paused)
+              pointers.clearActiveRun(conv, paused)
+              bases.clearRunBase(paused)
+              bodies.delete(paused)
+            }
+            bodies.delete(session.runId)
+            s.setMessageError(messageId, plan.error)
+            result = { ok: false, error: plan.error, code: RUN_ANSWER_APPLIED }
+            break
+          }
           case "retry":
             // No reopen (not a send) or superseded: surface it as an error.
             if (done.outcome?.type === "error") s.setMessageError(messageId, done.outcome.error)

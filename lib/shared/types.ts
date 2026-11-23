@@ -418,6 +418,10 @@ export type MessageErrorCode =
   | 'invalid_attachment'
   | 'provider'
   | 'network'
+  /** Chat on runs (Q63): an earlier resume applied the answer to this
+   *  turn's question and then ended, so it can't be answered again
+   *  (409 `run_answer_applied`) — the turn is sent again instead. */
+  | 'answer_applied'
   | 'unknown'
 
 export interface MessageError {

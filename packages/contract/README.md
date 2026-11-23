@@ -332,7 +332,11 @@ without / with a bad credential — `startRun`'s fixture is a
   equal to `Run.openInterrupts`; a `resume[]` that misses, over-covers or
   is on another thread → 409 `invalid_state`; an exact one starts a run
   that succeeds with `previousRunId` set, and the interrupted run stays
-  `interrupted`.
+  `interrupted`. One live resume at a time (a second → 409
+  `run_already_resumed`); a resume that failed before applying the
+  answers frees them, one that failed after → 409 `run_answer_applied`
+  with the run still `interrupted` (Q63, Q64; the stub's
+  `failBeforeApplying` knob picks which).
 - **list** (stub + token): newest first, `pageSize=1` walk with
   `nextPageToken` (no duplicates or gaps), `status` (repeated), `mode`,
   `parentRunId` filters, `pageSize` 0 / 101 → 422, garbage or

@@ -63,6 +63,19 @@ describe("planRunOutcome", () => {
     expect(planRunOutcome({ ...base, turn: "resume", started: true, outcome: error("upstream") }).kind).toBe("error")
   })
 
+  test("a resume refused as already applied → answer-applied, its own bubble (Q63)", () => {
+    const plan = planRunOutcome({
+      ...base,
+      turn: "resume",
+      started: false,
+      outcome: error("run_answer_applied"),
+    })
+    expect(plan).toEqual({ kind: "answer-applied", error: { code: "answer_applied", model: "m" } })
+    expect(pointerActionFor(plan)).toBe("keep")
+    // Only a resume that never started: a send's error stays an error.
+    expect(planRunOutcome({ ...base, outcome: error("run_answer_applied") }).kind).toBe("error")
+  })
+
   test("cancelled → drop the placeholder only for a send without output", () => {
     const c: RunOutcome = { type: "cancelled" }
     expect(planRunOutcome({ ...base, outcome: c, hasOutput: false })).toEqual({ kind: "cancelled", dropPlaceholder: true })

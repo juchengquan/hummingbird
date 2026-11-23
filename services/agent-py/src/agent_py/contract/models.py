@@ -22,8 +22,9 @@ class ApiError(BaseModel):
     `unavailable`, `rate_limit`, `context_window`, `invalid_model`,
     `unknown_model`, `provider`, `aborted`, `unknown`. See
     `lib/shared/api-errors.ts`. The runs operations add
-    `run_id_conflict`, `run_already_resumed`, `run_already_answered`
-    and `invalid_attachment`, and use `invalid_state`.
+    `run_id_conflict`, `run_already_resumed`, `run_already_answered`,
+    `run_answer_applied` and `invalid_attachment`, and use
+    `invalid_state`.
 
     """
 

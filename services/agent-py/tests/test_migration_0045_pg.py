@@ -31,6 +31,8 @@ M0043 = MIGRATIONS / "0043_answer_once.sql"
 M0045 = MIGRATIONS / "0045_background_tasks_correct.sql"
 
 ROLLBACK = """
+drop trigger if exists tasks_interactive_resume_deleted on public.tasks;
+drop function if exists private.tasks_interactive_resume_deleted();
 drop trigger if exists tasks_terminal_is_final on public.tasks;
 drop trigger if exists tasks_ended on public.tasks;
 drop trigger if exists tasks_deleted on public.tasks;

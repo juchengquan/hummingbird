@@ -9,6 +9,7 @@ import "client-only"
 import { shouldAutoRetry } from "@/client/chat/auto-retry-decision"
 import type { MessageError } from "@/shared/types"
 
+import { RUN_ANSWER_APPLIED } from "./errors"
 import type { PendingInterrupt } from "./interrupts"
 import type { RunOutcome } from "./reducer"
 
@@ -42,6 +43,12 @@ export type RunOutcomePlan =
    *  `invalid_state`, …): no bubble, the paused turn stays — the answer
    *  card reports `error` / `code`. */
   | { kind: "rejected"; error: MessageError; code: string }
+  /** A resume refused because an earlier resume of the same paused run
+   *  applied the answers and then ended (409 `run_answer_applied`, Q63):
+   *  the question can't be answered again. The paused turn's cards and
+   *  pointer go, and the message gets the bubble whose Retry sends the
+   *  turn again as a new message. */
+  | { kind: "answer-applied"; error: MessageError }
 
 export interface RunOutcomeInputs {
   outcome: RunOutcome | null
@@ -81,6 +88,11 @@ export function planRunOutcome(i: RunOutcomeInputs): RunOutcomePlan {
     case "error": {
       if (i.turn === "rejoin" && outcome.code === "not_found") return { kind: "forgotten" }
       if (i.turn === "resume" && !i.started) {
+        if (outcome.code === RUN_ANSWER_APPLIED) {
+          const error: MessageError = { code: "answer_applied" }
+          if (outcome.error.status) error.status = outcome.error.status
+          return { kind: "answer-applied", error: withModel(error, i.model) }
+        }
         return { kind: "rejected", error: withModel(outcome.error, i.model), code: outcome.code }
       }
       if (
@@ -101,6 +113,9 @@ export function pointerActionFor(plan: RunOutcomePlan): "keep" | "interrupted" |
     case "detached":
     case "retry":
     case "rejected":
+    // The resume never started: its own run has no pointer. The paused
+    // run's pointer is dropped by the runner, which knows its id.
+    case "answer-applied":
       return "keep"
     case "interrupt":
       return "interrupted"

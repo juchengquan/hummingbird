@@ -15,6 +15,9 @@ import "client-only"
  *
  * - `run_already_resumed` → "answered elsewhere"; the run is re-read, and
  *   a run that moved on loses its card + pointer.
+ * - `run_answer_applied` (Q63) → an earlier answer was acted on and its
+ *   run ended: the runner drops the turn (these cards go) and puts the
+ *   "already acted on" bubble on the message, whose Retry resends it.
  * - `invalid_state` → "this question expired", with an offer to resend
  *   the user's message.
  * - any other failure → inline error; Retry resends the same answers.
@@ -195,6 +198,8 @@ function TurnCards({ turn, onResend }: InterruptedTurnCardsProps) {
           <span>This question was already answered in another tab or window.</span>
         ) : phase.kind === "expired" ? (
           <span>This question expired before it was answered.</span>
+        ) : phase.kind === "applied" ? (
+          <span>This answer was already acted on, so it can&apos;t be sent again.</span>
         ) : null}
       </div>
 
@@ -210,7 +215,7 @@ function TurnCards({ turn, onResend }: InterruptedTurnCardsProps) {
         </div>
       ) : null}
 
-      {phase.type === "failed" && phase.kind === "expired" ? (
+      {phase.type === "failed" && (phase.kind === "expired" || phase.kind === "applied") ? (
         <div className="flex flex-wrap items-center gap-1.5">
           {onResend ? (
             <Button

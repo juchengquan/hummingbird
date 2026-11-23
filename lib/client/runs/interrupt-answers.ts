@@ -118,6 +118,10 @@ export function describeDraft(question: AnswerQuestion | null, draft: DraftAnswe
 export type AnswerFailure =
   /** `409 run_already_resumed`: another tab / device answered first. */
   | { kind: "answered-elsewhere" }
+  /** `409 run_answer_applied` (Q63): an earlier answer was applied and its
+   *  run ended — the question is dead. The runner has already dropped
+   *  the turn (these cards unmount) and put the bubble on the message. */
+  | { kind: "applied" }
   /** `409 invalid_state`: the run can't be resumed any more (an anonymous
    *  run past its memory TTL) — offer to resend the user's message. */
   | { kind: "expired" }
@@ -126,6 +130,7 @@ export type AnswerFailure =
 
 export function classifyAnswerFailure(result: Extract<AnswerResult, { ok: false }>): AnswerFailure {
   if (result.code === "run_already_resumed") return { kind: "answered-elsewhere" }
+  if (result.code === "run_answer_applied") return { kind: "applied" }
   if (result.code === "invalid_state") return { kind: "expired" }
   return { kind: "error", message: answerErrorText(result.error) }
 }
@@ -140,6 +145,7 @@ const ERROR_TEXT: Record<string, string> = {
   invalid_attachment: "An attached file or image can't be sent to the model.",
   provider: "The model provider returned an error.",
   network: "Network error — check your connection.",
+  answer_applied: "This answer was already acted on — send your message again.",
   unknown: "Something went wrong.",
 }
 

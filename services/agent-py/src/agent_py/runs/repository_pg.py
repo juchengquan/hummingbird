@@ -64,6 +64,7 @@ from .repository import (
     InvalidPageToken,
     PreviousRunAlreadyAnswered,
     PreviousRunAlreadyResumed,
+    PreviousRunAnswerApplied,
     PreviousRunNotFound,
     PreviousRunNotWaiting,
     RunFilter,
@@ -118,6 +119,10 @@ _LIVE = ("queued", "running")
 
 _ONE_LIVE_RESUME = "tasks_one_live_resume"
 """0042's unique index: one live resume per interrupted run."""
+
+_ANSWER_APPLIED = "tasks_answer_applied"
+"""0046's `create_run` refusal (Q63): an interactive resume of this run
+applied its answers and then ended."""
 
 # A row the contract calls `interrupted` (RUN_EVENTS.md § 1), in SQL.
 _INTERRUPTED_SQL = (
@@ -291,8 +296,11 @@ class PgRunRepository:
             state = _sqlstate(exc)
             message = str(getattr(exc, "message", "") or exc)
             if state == "23505":
-                if getattr(exc, "constraint_name", None) == _ONE_LIVE_RESUME:
+                constraint = getattr(exc, "constraint_name", None)
+                if constraint == _ONE_LIVE_RESUME:
                     raise PreviousRunAlreadyResumed() from None
+                if constraint == _ANSWER_APPLIED:
+                    raise PreviousRunAnswerApplied() from None
                 raise RunIdConflict() from None
             if state == "P0002":
                 if "previous" in message:
@@ -429,6 +437,28 @@ class PgRunRepository:
             row = await conn.fetchrow(
                 "UPDATE public.tasks SET status = 'running', updated_at = now() "
                 "WHERE id = $1 AND status = 'queued' RETURNING id",
+                _uuid(run_id),
+            )
+        return row is not None
+
+    async def mark_answers_applied(self, run_id: str) -> bool:
+        """0046: the column the background executor writes (0045), for a
+        live interactive run, as the DSN role — under the user's task lock
+        (`private.lock_user_tasks`, 0045's lock order), which `create_run`
+        holds while it checks a second resume: the stamp can't land
+        between that check and its insert."""
+        async with self._as_system() as conn, conn.transaction():
+            user_id = await conn.fetchval(
+                "SELECT user_id FROM public.tasks WHERE id = $1", _uuid(run_id)
+            )
+            if user_id is None:
+                return False
+            await conn.execute("SELECT private.lock_user_tasks($1)", user_id)
+            row = await conn.fetchrow(
+                "UPDATE public.tasks "
+                "SET answers_applied_at = COALESCE(answers_applied_at, now()), updated_at = now() "
+                "WHERE id = $1 AND mode = 'interactive' AND status IN ('queued', 'running') "
+                "RETURNING id",
                 _uuid(run_id),
             )
         return row is not None

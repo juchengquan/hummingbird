@@ -273,6 +273,25 @@ order. Every migration has a unique numeric prefix (CI enforces this via
     ended sub-agents fail ("run it again"; migrating never starts a model
     call, Q62), never-queued runs older than an hour fail.
   - **Rollback:** the statements in the file's header.
+- `supabase/migrations/0046_chat_answer_once.sql`
+  - Chat on runs answers a question once (Q63): agent-py stamps an
+    interactive resume's `answers_applied_at` before its answers take
+    effect, and `create_run` refuses a later resume of the same paused
+    run once that resume has ended (23505, constraint
+    `tasks_answer_applied` → agent-py's `409 run_answer_applied`). A
+    resume that ended before applying still frees the question. Deleting
+    an applied interactive resume fails the run it answered. Background
+    runs are untouched. Same `create_run` signature. Idempotent.
+  - **Deploy order:** stop every agent-py → apply 0046 → start the new
+    agent-py → deploy Next. An older agent-py against it maps the refusal
+    to `409 run_id_conflict` and doesn't stamp its own resumes, so don't
+    run one past it; an older Next app shows the refusal as an unknown
+    error (nothing runs twice).
+  - **Existing rows:** an interactive resume of a still-paused
+    interactive run counts as applied unless its log shows its harness
+    never started (entries all `status` / `result`); one with no log left
+    (purged) counts as applied. No status or other column changes.
+  - **Rollback:** the statements in the file's header.
 
 ### Migration 0018 collision (renamed to `0033_message_generated_files.sql`)
 

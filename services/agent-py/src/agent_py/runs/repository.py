@@ -30,6 +30,10 @@ Status transitions (`tasks.status`; the contract status is derived, see
                                                               background: the whole task, Q60)
     reap_expired: running (interactive, lease lapsed) → failed `worker_lost`
 
+`mark_answers_applied` changes no status: it stamps a live interactive
+resume as having applied its answers (Q63), which keeps the question it
+answers closed whatever becomes of the run.
+
 The background-only transitions the existing executor makes (paused →
 running for a legacy respond or a fan-in; the barrier's counters) stay
 in `store.py` / `barrier.py` and are not part of this interface.
@@ -65,6 +69,7 @@ __all__ = [
     "InvalidPageToken",
     "PreviousRunAlreadyAnswered",
     "PreviousRunAlreadyResumed",
+    "PreviousRunAnswerApplied",
     "PreviousRunNotFound",
     "PreviousRunNotWaiting",
     "RunFilter",
@@ -109,6 +114,13 @@ class PreviousRunAlreadyResumed(Exception):
     background run — one that applied the answer before it failed (Q57,
     0045) — so an approved tool cannot run twice
     (API: 409 `run_already_resumed`)."""
+
+
+class PreviousRunAnswerApplied(Exception):
+    """An interactive resume of `previous_run_id` applied its answers (an
+    approved tool may have run) and then failed or was cancelled (Q63,
+    0046): the question can't be answered again — the turn is sent again
+    as a new message instead (API: 409 `run_answer_applied`)."""
 
 
 class PreviousRunAlreadyAnswered(Exception):
@@ -196,7 +208,9 @@ class RunRepository(Protocol):
         (`PreviousRunAlreadyResumed`), and it must still be paused, in
         the same mode and top-level (`PreviousRunNotWaiting`) — checked
         atomically with the insert, so two concurrent resumes cannot both
-        be created and a cancel can't be raced."""
+        be created and a cancel can't be raced. An interactive resume
+        whose earlier resume applied the answers and then ended is
+        `PreviousRunAnswerApplied` (Q63)."""
         ...
 
     async def get(self, owner: RunOwner, run_id: str) -> RunRecord | None:
@@ -240,6 +254,14 @@ class RunRepository(Protocol):
     async def mark_running(self, run_id: str) -> bool:
         """`queued` → `running` (a background worker picking it up). False
         when the run is not `queued`."""
+        ...
+
+    async def mark_answers_applied(self, run_id: str) -> bool:
+        """A live interactive resume commits to its answers, durably,
+        before any of them takes effect (Q63, `tasks.answers_applied_at`):
+        from then on the question it answers can't be answered again,
+        however the run ends. Idempotent. False when the run is no longer
+        live (cancelled or reaped first): apply nothing."""
         ...
 
     async def settle(
@@ -287,6 +309,7 @@ class _Row:
     checkpoint: dict[str, object] | None = None
     outcome: dict[str, object] | None = None
     max_steps: int = 25
+    answers_applied_at: datetime | None = None
     extra: dict[str, object] = field(default_factory=dict)
 
 
@@ -382,6 +405,15 @@ class InMemoryRunRepository:
                 or prev.record.parent_run_id is not None
             ):
                 raise PreviousRunNotWaiting("previous run is not waiting on these answers")
+            # 0046 (Q63): an interactive resume that applied the answers
+            # and then ended keeps the question closed.
+            if spec.mode == "interactive" and any(
+                row.record.previous_run_id == spec.previous_run_id
+                and row.answers_applied_at is not None
+                and row.record.internal_status in ("failed", "cancelled")
+                for row in self._rows.values()
+            ):
+                raise PreviousRunAnswerApplied()
 
         now = self._clock()
         if spec.mode == "background":
@@ -501,6 +533,18 @@ class InMemoryRunRepository:
         if row is None or row.record.internal_status != "queued":
             return False
         self._set(row, internal_status="running")
+        return True
+
+    async def mark_answers_applied(self, run_id: str) -> bool:
+        row = self._rows.get(run_id)
+        if (
+            row is None
+            or row.record.mode != "interactive"
+            or row.record.internal_status not in ("queued", "running")
+        ):
+            return False
+        if row.answers_applied_at is None:
+            row.answers_applied_at = self._clock()
         return True
 
     async def settle(

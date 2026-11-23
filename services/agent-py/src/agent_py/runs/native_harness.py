@@ -59,7 +59,10 @@ the history before it stays the browser's. Answers: an approved
 `approval` runs the tool (with `payload.args` when given), a declined or
 cancelled one tells the model the user declined; `choice` / `input` /
 `ui-part` / client-tool answers become the result text. Their
-`tool_output`s are emitted in a step of their own. A chain of interrupts
+`tool_output`s are emitted in a step of their own. Before the first one
+takes effect, and after every check that can refuse them, the run
+records that it applies them (`RunInput.apply_answers`, Q63): the
+question then stays answered however the run ends. A chain of interrupts
 works the same way (`turn` grows). Without a checkpoint (none stored,
 or an anonymous run's expired) the run falls back to the browser's
 history alone: the gated calls are looked up in its assistant messages
@@ -490,6 +493,10 @@ class _Prepared:
 
 ClientFactory = Callable[[], AsyncAnthropicClient | None]
 
+APPLY_FAILED_MESSAGE = (
+    "The answer could not be recorded, so nothing was done with it. Try answering again."
+)
+
 
 class NativeHarness:
     """`HarnessAdapter` over `chat_loop.run_turn_loop` (see the module
@@ -692,12 +699,34 @@ class NativeHarness:
             client_calls = {c.tool_call_id for c in pending if c.tool_name in client_names}
             tainted = taint_of(history)
 
+        # Every check that can refuse the answers is behind us: record that
+        # they are applied before the first one takes effect (Q63), so a
+        # run that then fails, is stopped or dies can't have them applied
+        # — an approved tool run — a second time.
+        if cancel.is_set():
+            return HarnessResult(Cancelled())
+        if run_input.apply_answers is not None:
+            try:
+                applying = await run_input.apply_answers()
+            except Exception as exc:
+                logger.warning(
+                    "native_harness.apply_answers_failed", run_id=run_input.run_id, error=str(exc)
+                )
+                return HarnessResult(Failed("unknown", APPLY_FAILED_MESSAGE))
+            if not applying:
+                return HarnessResult(Cancelled())
+
         answers = {a.interrupt_id: a for a in run_input.resume}
         results: list[dict[str, Any]] = []
         await emitter.start_step()
         waiter = _cancel_waiter(cancel)
         try:
             for call in pending:
+                # A fresh waiter task hasn't seen a Stop that came before
+                # it was scheduled: check the signal itself first.
+                if cancel.is_set():
+                    await emitter.end_step()
+                    return HarnessResult(Cancelled())
                 try:
                     run, ran = await self._answer(
                         call,

@@ -23,6 +23,7 @@ const ERROR_TITLES: Record<string, string> = {
   invalid_attachment: "Attachment can't be sent",
   provider: "Provider error",
   network: "Network error",
+  answer_applied: "This answer was already acted on",
   unknown: "Something went wrong",
 }
 
@@ -33,6 +34,8 @@ const ERROR_HINTS: Record<string, string> = {
   unknown_model:
     "This model isn't available on this server — pick another model or add your own gateway key.",
   invalid_attachment: INVALID_ATTACHMENT_MESSAGE,
+  answer_applied:
+    "An earlier try used this answer before it stopped, so the question can't be answered again. Retry sends your message again.",
 }
 
 const RATE_LIMIT_COOLDOWN_S = 30
@@ -73,6 +76,8 @@ interface ErrorBubbleProps {
  *   - `provider`        → Retry + Try {fallback} + Change model
  *   - `network`         → Retry (no "Change model" since the network is
  *                          the issue, not the model)
+ *   - `answer_applied`  → Retry (sends the turn again — its question
+ *                          can't be answered twice, Q63) + Dismiss
  *   - `unknown`         → Retry + Change model + Dismiss
  *
  * The Details disclosure shows error code / HTTP / model so the user
@@ -195,6 +200,7 @@ export function ErrorBubble({
         {onChangeModel &&
           error.code !== "network" &&
           error.code !== "invalid_attachment" &&
+          error.code !== "answer_applied" &&
           !authRequired && (
           <Button
             size="sm"

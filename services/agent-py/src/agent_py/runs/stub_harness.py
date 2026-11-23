@@ -9,7 +9,8 @@ an open `RunForwardedProps` key that every other harness ignores:
       "outcome": "succeed" | "fail" | "interrupt",   # default "succeed"
       "interrupt": "approval" | "ui-part",            # default "approval"
       "steps": 1..20,                                 # default 1
-      "stepDelayMs": 0..10000                         # default 0
+      "stepDelayMs": 0..10000,                        # default 0
+      "failBeforeApplying": true | false              # default false
     }
 
 * `succeed` — `steps` steps, each one `step_start`, one `token`,
@@ -19,9 +20,15 @@ an open `RunForwardedProps` key that every other harness ignores:
   interrupt (id `<runId>:approve`), or with `"interrupt": "ui-part"` one
   `renderUI` confirm part (id `<runId>:ui`, props `{prompt: "Confirm the
   stub action?"}`). A run that answers it (`resume[]`) succeeds, saying
-  how each interrupt was answered.
+  how each interrupt was answered — after recording, as the native
+  harness does, that it applies the answers (`RunInput.apply_answers`,
+  Q63), so a resume steered to `fail` closes the question.
 * `stepDelayMs` — a pause after each step (cancellable), so a run stays
   live long enough to cancel it or to rejoin it mid-flight.
+* `failBeforeApplying` — a resume fails at once, before it applies its
+  answers (as when no model can be called), so the interrupts stay
+  answerable. A resume steered to `fail` without it fails after
+  applying them, which closes them for good (Q63).
 """
 
 from __future__ import annotations
@@ -65,6 +72,15 @@ class StubHarness:
         steps = _int(cfg.get("steps"), 1, 1, _MAX_STEPS)
         delay = _int(cfg.get("stepDelayMs"), 0, 0, _MAX_DELAY_MS) / 1000
 
+        if run_input.resume and cfg.get("failBeforeApplying") is True:
+            return HarnessResult(
+                Failed("provider", "Stub harness failure before applying (requested).")
+            )
+        if run_input.resume and run_input.apply_answers is not None:
+            if cancel.is_set():
+                return HarnessResult(Cancelled())
+            if not await run_input.apply_answers():
+                return HarnessResult(Cancelled())
         if run_input.resume:
             first = "Resumed: " + ", ".join(
                 f"{a.interrupt_id}={a.status}" for a in run_input.resume

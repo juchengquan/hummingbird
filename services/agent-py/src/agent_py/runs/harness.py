@@ -47,6 +47,7 @@ from .credentials import LocalMcpCredential
 from .model import Cancelled, RunMode, RunOutcome, Succeeded
 
 __all__ = [
+    "ApplyAnswers",
     "CancelSignal",
     "HarnessAdapter",
     "HarnessOutcome",
@@ -70,6 +71,10 @@ class ResumeAnswer:
     payload: object | None = None
     """`{approved, args?}` | `{selection}` | `{value}` | `{uiAnswer}`;
     None for `cancelled`."""
+
+
+ApplyAnswers = Callable[[], Awaitable[bool]]
+"""`RunInput.apply_answers`: record that a resume applies its answers."""
 
 
 @dataclass(frozen=True)
@@ -119,6 +124,16 @@ class RunInput:
     """Local MCP server id → credential, from `state["hummingbird.localMcp"]`
     (Q45, `runs.credentials`). Interactive runs only; in memory only —
     never stored, logged or emitted, so not in the repr either."""
+    apply_answers: ApplyAnswers | None = field(default=None, repr=False, compare=False)
+    """On an interactive resume (set by the driver; Q63): call once, after
+    every check that can refuse the answers and right before the first of
+    them takes effect — a tool runs, or the model sees an answer. It
+    records durably that the answers are applied, so the question can't
+    be answered again however the run ends. True: go on. False: the run
+    already ended (cancelled, reaped) — apply nothing and return
+    `Cancelled()`. Raises: apply nothing and fail the run (whether it was
+    recorded is unknown; recorded or not, nothing ran). None: nothing to
+    record (not a resume, or a harness test)."""
 
 
 class CancelSignal(Protocol):

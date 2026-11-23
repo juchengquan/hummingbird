@@ -118,7 +118,7 @@ three times. The goals:
 | Q60 | Cancel means the whole task, on old and new paths: its chain of answers and its children, and the question doesn't reopen. Cancelling one child skips it and the parent continues |
 | Q61 | Tasks use runs only while "agent-py (runs)" is selected, and each task stays on the path it started on. Before that is a default, check token signing: agent-py accepts HS256 only |
 | Q62 | Migrating 0045 never starts a model call: a parent left waiting on ended sub-agents fails ("run it again") |
-| Q63 | Q57 extends to chat on runs (an applied interactive answer can't be given again), as a small PR after 5c |
+| Q63 | Q57 extends to chat on runs (an applied interactive answer can't be given again), as a small PR after 5c *(done: migration 0046; agent-py stamps a chat resume before its answers take effect, in Postgres and the memory store; a later answer is `409 run_answer_applied` and the client drops the card and asks to resend)* |
 | Q64 | After an applied answer fails, the paused run stays as it is (a second answer is a 409); wave 6 shows the chain's last run |
 | Q65 | A short smoke test against the real Anthropic API before 5c merges; the fakes accepted requests the API refuses |
 | Q66 | Watching a task reads its status alone, not the whole row (checkpoint included), and polls every 5 s while it is paused on a question |

@@ -216,6 +216,9 @@ describe("classifyAnswerFailure", () => {
   test("run_already_resumed → answered elsewhere", () => {
     expect(classifyAnswerFailure(err("run_already_resumed"))).toEqual({ kind: "answered-elsewhere" })
   })
+  test("run_answer_applied → applied (the question is dead, Q63)", () => {
+    expect(classifyAnswerFailure(err("run_answer_applied"))).toEqual({ kind: "applied" })
+  })
   test("invalid_state → expired (offer to resend)", () => {
     expect(classifyAnswerFailure(err("invalid_state"))).toEqual({ kind: "expired" })
   })
