@@ -6,20 +6,25 @@ a scripted model (`task_world`). Each test names the brief item it proves.
 
 from __future__ import annotations
 
+import json
+import uuid
 from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 import pytest
 import pytest_asyncio
 
-from agent_py import image_storage, runner
+from agent_py import executor, image_storage, runner, schedules, store, verify, verify_client
 from agent_py import settings as settings_module
+from agent_py.events import TaskEvent, ToolCallResult
 from agent_py.image_storage import DownloadedImage, PersistedImage
 from agent_py.providers import anthropic_provider
 from agent_py.resume_answers import DECLINED_ANSWER, DECLINED_APPROVAL
+from agent_py.runs.agui_encoder import AgUiRunEncoder
 from agent_py.runs.in_place import respond_job_payload
 from agent_py.tools import image_gen as image_gen_module
 from agent_py.tools.minimax_image_client import MinimaxImage, MinimaxImageSuccess
+from agent_py.tools.registry import ToolDescriptor, ToolInvocationResult
 
 from .task_world import (
     MODEL,
@@ -316,3 +321,332 @@ async def test_the_extra_step_after_a_last_step_spawn_starts_no_more_children(
     assert len(await world.children(task)) == 1
     result = (await world.task(task))["outcome"]["result"]
     assert result["stoppedAt"] == "max_steps"
+
+
+# --- Q78: the whole answer, across the task's runs ---------------------------------------------
+
+
+async def test_answer_resume_done_gives_the_whole_text_once(world: World) -> None:
+    world.model.script(
+        "Do it",
+        [say("Let me check the colour first. "), ask("q1", "Which colour?")],
+        [say("Painted it blue.")],
+    )
+    response, p0 = await world.post_run(_background(world))
+    assert response.status_code == 202, response.text
+    await world.work()
+    response, r1 = await world.resume(p0, {"q1": {"value": "blue"}})
+    assert response.status_code == 202, response.text
+    await world.work()
+
+    whole = "Let me check the colour first.\n\nPainted it blue."
+    assert (await world.task(r1))["outcome"] == {"type": "success", "result": {"text": whole}}
+    assert (await world.run(r1))["result"]["text"] == whole
+    [entry] = await world.events(r1, "result")
+    assert entry["finalText"] == whole
+
+
+async def test_a_dead_branch_is_not_part_of_the_whole_text(world: World) -> None:
+    world.model.script(
+        "Do it",
+        [say("Before the question. "), ask("q1")],
+        [say("After the answer.")],
+    )
+    response, p0 = await world.post_run(_background(world))
+    await world.work()
+    # A resume that fails before applying its answer: a dead branch (Q75).
+    world.key = False
+    response, dead = await world.resume(p0, {"q1": {"value": "x"}})
+    assert response.status_code == 202, response.text
+    await world.work()
+    assert await world.status(dead) == "failed"
+    world.key = True
+    response, r2 = await world.resume(p0, {"q1": {"value": "y"}})
+    assert response.status_code == 202, response.text
+    await world.work()
+
+    assert (await world.run(r2))["result"]["text"] == "Before the question.\n\nAfter the answer."
+
+
+@pytest.fixture
+def verifier(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
+    """A verifier model that finds every claim supported by what it cites."""
+    monkeypatch.setenv("VERIFY_MODEL", "verifier-model")
+    settings_module.get_settings.cache_clear()
+    prompts: list[str] = []
+
+    class Client:
+        async def messages_create(self, *, model: str, max_tokens: int, messages: Any) -> str:
+            prompt = str(messages[0]["content"])
+            prompts.append(prompt)
+            claims = verify.extract_cited_claims(prompt.split("CLAIMS:\n", 1)[1].split("\n\n")[0])
+            return json.dumps(
+                {
+                    "checks": [
+                        {"claim": i + 1, "status": "supported", "sourceIds": ["x"]}
+                        for i in range(len(claims))
+                    ]
+                }
+            )
+
+    monkeypatch.setattr(verify_client, "resolve_verifier_client", lambda **_: Client())
+    yield prompts
+    monkeypatch.undo()
+    settings_module.get_settings.cache_clear()
+
+
+async def test_a_research_report_is_numbered_and_verified_over_the_whole_text(
+    world: World, verifier: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    discover = world.discover
+
+    async def with_search(out: dict[str, ToolDescriptor], **kwargs: Any) -> None:
+        await discover(out, **kwargs)
+
+        async def search(args: dict[str, Any]) -> ToolInvocationResult:
+            q = str(args["q"])
+            return ToolInvocationResult(
+                text=f"result {q}",
+                summary="1 result",
+                source_results=[
+                    ToolCallResult(
+                        title=f"Source {q}", url=f"https://{q}.test", snippet=f"fact {q}"
+                    )
+                ],
+            )
+
+        out["search"] = ToolDescriptor(
+            name="search", description="search", input_schema={"type": "object"}, execute=search
+        )
+
+    monkeypatch.setattr(executor, "extend_registry_with_mcp", with_search)
+    world.model.script(
+        "Do it",
+        [use("w1", "search", q="alpha")],
+        [say("Alpha is true [1]. "), ask("q1", "Go on?")],
+        [use("w2", "search", q="beta")],
+        [say("Beta is true [2].")],
+    )
+    response, p0 = await world.post_run(_background(world, research=True))
+    assert response.status_code == 202, response.text
+    await world.work()
+    response, r1 = await world.resume(p0, {"q1": {"value": "yes"}})
+    assert response.status_code == 202, response.text
+    await world.work()
+
+    whole = "Alpha is true [1].\n\nBeta is true [2]."
+    assert (await world.run(r1))["result"]["text"] == whole
+    [prompt] = verifier
+    assert "[1] Source alpha (https://alpha.test)" in prompt
+    assert "[2] Source beta (https://beta.test)" in prompt
+    assert "1. Alpha is true [1]." in prompt and "2. Beta is true [2]." in prompt
+    [entry] = await world.events(r1, "result")
+    checks = entry["verification"]["checks"]
+    assert [c["claim"] for c in checks] == ["Alpha is true [1].", "Beta is true [2]."]
+    assert entry["verification"]["summary"]["supported"] == 2
+
+
+# --- Q72: at most 20 sub-agents per task -------------------------------------------------------
+
+
+async def test_the_21st_sub_agent_is_refused_and_the_task_still_finishes(world: World) -> None:
+    rounds = [[spawn(f"s{r}", *(f"child-{r}-{i}" for i in range(5)))] for r in range(4)]
+    world.model.script(
+        "Do it",
+        *rounds,
+        [spawn("s4", "child-21")],
+        [say("Finished with twenty.")],
+    )
+    task = await world.start(maxSteps=10)
+    await world.work(limit=200)
+
+    assert len(await world.children(task)) == 20
+    assert await world.status(task) == "done"
+    parent_calls = [c for c in world.model.calls if c["messages"][0]["content"] == "Do it"]
+    refused = result_of(parent_calls[-1]["messages"], "s4")
+    assert refused["is_error"] is True
+    assert "at most 20 sub-agents" in refused["content"]
+    assert "started 20" in refused["content"]
+    assert (await world.task(task))["outcome"]["result"]["text"] == "Finished with twenty."
+
+
+async def test_the_cap_holds_under_the_lock_when_the_pre_check_is_passed(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A spawn whose unlocked pre-check read a stale count: the lock decides.
+    async def stale(*_: Any, **__: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(store, "task_child_count", stale)
+    rounds = [[spawn(f"s{r}", *(f"child-{r}-{i}" for i in range(5)))] for r in range(4)]
+    world.model.script("Do it", *rounds, [spawn("s4", "child-21")], [say("Done.")])
+    task = await world.start(maxSteps=10)
+    await world.work(limit=200)
+
+    assert await world.status(task) == "done"
+    assert len(await world.children(task)) == 20
+    parent_calls = [c for c in world.model.calls if c["messages"][0]["content"] == "Do it"]
+    assert "at most 20 sub-agents" in result_of(parent_calls[-1]["messages"], "s4")["content"]
+
+
+# --- a spawn is visible as it happens (the seam's finding) -------------------------------------
+
+
+def _agui(run_id: str, entries: list[TaskEvent]) -> list[dict[str, Any]]:
+    encoder = AgUiRunEncoder(run_id)
+    return [e for entry in entries for e in encoder.encode(entry)]
+
+
+async def _log(world: World, task_id: str) -> list[TaskEvent]:
+    return await store.load_run_events(world.pool, run_id=task_id, user_id=world.user)
+
+
+async def test_a_spawn_gets_its_result_when_its_children_exist(world: World) -> None:
+    world.model.script("Do it", [spawn("s", "child-a", "child-b")], [say("Both done.")])
+    parent = await world.start()
+    await world.tick()  # the parent's start only: its children are queued
+
+    assert await world.status(parent) == "paused"
+    assert [await world.status(c) for c in await world.children(parent)] == ["queued", "queued"]
+    events = _agui(parent, await _log(world, parent))
+    [result] = [e for e in events if e["type"] == "TOOL_CALL_RESULT"]
+    assert result["toolCallId"] == "s"
+    assert "Started 2 sub-agents" in result["content"]
+    started = [i for i, e in enumerate(events) if e["type"] == "SUBAGENT_STARTED"]
+    assert len(started) == 2
+
+
+async def test_each_childs_end_shows_on_its_parent_when_it_settles(world: World) -> None:
+    world.model.script("Do it", [spawn("s", "child-asks", "child-works")], [say("Both done.")])
+    world.model.script("child-asks", [ask("q1")], [say("asked")])
+    parent = await world.start()
+    await world.work()
+    asks, works = await world.children(parent)
+    # One child done, one waiting on the user: the parent still waits.
+    assert await world.status(works) == "done"
+    assert await world.status(asks) == "paused"
+    assert await world.status(parent) == "paused"
+
+    events = _agui(parent, await _log(world, parent))
+    finished = [e["subagentRunId"] for e in events if e["type"] == "SUBAGENT_FINISHED"]
+    assert finished == [works]
+
+    # Cancelling the other child alone (Q60) ends it on the parent too.
+    await world.cancel(asks)
+    events = _agui(parent, await _log(world, parent))
+    finished = [e["subagentRunId"] for e in events if e["type"] == "SUBAGENT_FINISHED"]
+    assert finished == [works, asks]
+
+    await world.work()
+    assert await world.status(parent) == "done"
+    # The fan-in seeded past the exit entries: no seq was taken twice.
+    seqs = [e["seq"] for e in await world.events(parent)]
+    assert seqs == sorted(set(seqs))
+    assert (await world.task(parent))["checkpoint"]["seq"] >= max(seqs) - 10
+
+
+# --- Q73 / Q79 / Q80: schedules ----------------------------------------------------------------
+
+
+async def _create_schedule(world: World, prompt: str, **body: Any) -> dict[str, Any]:
+    response = await world.http.post(
+        "/v1/tasks/schedules",
+        json={
+            "workspaceId": world.workspace,
+            "name": "Digest",
+            "prompt": prompt,
+            "cron": "0 8 * * *",
+            **body,
+        },
+        headers=world.headers(),
+    )
+    assert response.status_code == 201, response.text
+    schedule: dict[str, Any] = response.json()
+    return schedule
+
+
+async def _fire(world: World, schedule_id: str) -> str:
+    await world.sql(
+        "UPDATE public.task_schedules SET next_run_at = now() - interval '1 minute', "
+        "last_run_at = NULL WHERE id = $1",
+        uuid.UUID(schedule_id),
+    )
+    assert await schedules.dispatch_due_schedules(schedules.PgScheduleStore(world.pool)) >= 1
+    [row] = await world.sql(
+        "SELECT last_run_task_id FROM public.task_schedules WHERE id = $1", uuid.UUID(schedule_id)
+    )
+    return str(row["last_run_task_id"])
+
+
+async def test_a_schedule_saved_without_a_model_fires_with_haiku(world: World) -> None:
+    schedule = await _create_schedule(world, "Morning news")
+    assert schedule["model"] == "anthropic/claude-haiku-4.5"
+    world.model.script("Morning news", [say("Here is the news.")])
+
+    task = await _fire(world, schedule["id"])
+    await world.work()
+
+    row = await world.task(task)
+    assert row["checkpoint"]["config"]["model"] == "anthropic/claude-haiku-4.5"
+    assert row["status"] == "done"
+    assert row["outcome"]["result"]["text"] == "Here is the news."
+    assert world.model.calls[-1]["model"] == "claude-haiku-4-5"
+    # One conversation per fire (Q80).
+    again = await _fire(world, schedule["id"])
+    assert (await world.task(again))["conversation_id"] != row["conversation_id"]
+
+
+async def test_re_enabling_a_schedule_without_a_model_sets_haiku(world: World) -> None:
+    schedule = await _create_schedule(world, "Paused one", enabled=False)
+    # As 0047 left the editor's schedules: paused, with no model.
+    await world.sql(
+        "UPDATE public.task_schedules SET model = NULL WHERE id = $1", uuid.UUID(schedule["id"])
+    )
+    response = await world.http.patch(
+        f"/v1/tasks/schedules/{schedule['id']}", json={"enabled": True}, headers=world.headers()
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["model"] == "anthropic/claude-haiku-4.5"
+    # Clearing the model of an enabled schedule keeps it runnable too.
+    response = await world.http.patch(
+        f"/v1/tasks/schedules/{schedule['id']}", json={"model": None}, headers=world.headers()
+    )
+    assert response.json()["model"] == "anthropic/claude-haiku-4.5"
+
+
+async def test_a_schedule_firing_at_the_task_cap_creates_its_task_failed(world: World) -> None:
+    for i in range(5):
+        world.model.script(f"busy {i}", [ask(f"q{i}")])
+        await world.start(f"busy {i}")
+    await world.work()
+    schedule = await _create_schedule(world, "One too many")
+
+    task = await _fire(world, schedule["id"])
+
+    row = await world.task(task)
+    assert row["status"] == "failed"
+    assert row["outcome"]["type"] == "error" and row["outcome"]["code"] == "limit_reached"
+    assert await world.jobs(task) == []
+    assert (await world.run(task))["error"]["code"] == "limit_reached"
+    await world.work()
+    assert not any(c["messages"][0]["content"] == "One too many" for c in world.model.calls)
+
+
+async def test_a_schedule_whose_workspace_has_an_approval_server_pauses_for_it(
+    world: World,
+) -> None:
+    schedule = await _create_schedule(world, "Send the digest")
+    world.model.script("Send the digest", [use("c1", SEND, to="team")], [say("Sent.")])
+
+    task = await _fire(world, schedule["id"])
+    await world.work()
+
+    assert world.count(SEND) == 0
+    row = await world.task(task)
+    assert row["status"] == "paused"
+    [interrupt] = row["outcome"]["interrupts"]
+    assert interrupt["reason"] == "approval" and interrupt["toolCallId"] == "c1"
+    await world.respond(task, "c1", approved=True)
+    await world.work()
+    assert world.count(SEND) == 1
+    assert await world.status(task) == "done"

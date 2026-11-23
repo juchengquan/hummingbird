@@ -28,6 +28,26 @@ def _max_children() -> int:
 
 MAX_CHILDREN = _max_children()
 
+MAX_TASK_CHILDREN = 20
+"""Sub-agent runs one task may start, over all its spawns and every run
+of its chain (Q72): `store.commit_spawn` counts them
+(`private.task_child_count`, 0047) under the user's task lock."""
+
+
+def task_child_cap_error(started: int) -> str:
+    """The error `tool_result` of a spawn past `MAX_TASK_CHILDREN`."""
+    left = max(0, MAX_TASK_CHILDREN - started)
+    more = (
+        f"at most {left} more can be started — ask for fewer."
+        if left
+        else "no more can be started — continue without sub-agents."
+    )
+    return (
+        f"No sub-agent was started: a task may start at most {MAX_TASK_CHILDREN} "
+        f"sub-agents and this one has started {started}, so {more}"
+    )
+
+
 _DESCRIPTION = (
     "Decompose this goal into specialist subagents, each pinned to a "
     "subgoal. They run in parallel; you resume with their results. Use "

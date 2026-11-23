@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import dataclasses
 import json
 import os
 import uuid
@@ -93,9 +94,11 @@ from .tools import ToolContext, default_tool_registry
 from .tools.registry import SkillConfigs, ToolDescriptor
 from .tools.spawn_subagent import (
     MAX_CHILDREN,
+    MAX_TASK_CHILDREN,
     SPAWN_ARGS_ERROR,
     SPAWN_SUBAGENT_TOOL_NAME,
     parse_spawn_specs,
+    task_child_cap_error,
 )
 
 logger = structlog.get_logger(__name__)
@@ -787,6 +790,20 @@ async def _run_chunk_inner(
         if not resume:
             resume = _int_or(checkpoint.get("step"), 0) > 0
         resumed_from_seq = _int_or(checkpoint.get("seq"), 0)
+        if resume and isinstance(checkpoint.get("awaiting_children"), dict):
+            # A fan-in that died before its claim moved the checkpoint past
+            # the sub-agents' exit entries (0048): they are not the dead
+            # attempt's, so the marker must not rewind them.
+            try:
+                resumed_from_seq = max(
+                    resumed_from_seq,
+                    await store.max_exit_handoff_seq(
+                        pool, run_id=payload.run_id, user_id=payload.user_id
+                    ),
+                )
+            except Exception:
+                lease.abandon_current("exit_seq_probe_failed_on_reclaim")
+                raise
         logger.warning(
             "executor.reclaimed_run",
             run_id=payload.run_id,
@@ -804,7 +821,9 @@ async def _run_chunk_inner(
         run_id=payload.run_id,
         user_id=payload.user_id,
         checkpoint=checkpoint,
-        reclaimed=reclaimed,
+        # A fan-in's log holds its sub-agents' `handoff` `exit` entries past
+        # the checkpoint (0048): the checkpoint's seq would collide with them.
+        reclaimed=reclaimed or (resume and isinstance(checkpoint.get("awaiting_children"), dict)),
     )
     sink = _RunSink(pool, user_id=payload.user_id)
     emitter = RunEmitter(
@@ -1091,11 +1110,21 @@ def _settle_hooks(run: _Run) -> tuple[FinalizeFn, FinalTextFn]:
     """The pre-settle hooks: citation verification (research runs only,
     advisory + non-blocking) and the final text.
 
-    A resumed run (`continue`, respond) re-aggregates the report text +
+    Both are over the **whole task** (Q78): the text of every run on the
+    task's line (`store.load_task_line` — the root and each resume that
+    holds its question, dead branches excluded) before this one, then
+    this run's, so the text before a question is not lost; and the
+    sources in that same order, so the `[N]` the model cites across the
+    runs — it saw every earlier run's tool results — are numbered once
+    and verified against the whole text. The result is this run's
+    `result.finalText` (`tasks.outcome.result.text`, `Run.result.text`,
+    a parent's fan-in).
+
+    A resumed run (`continue`, respond) re-aggregates its own text +
     sources from the full `task_events` log: the per-chunk in-memory
     accumulators only hold THIS chunk's slice. The DB is the source of
     truth for a multi-chunk run; one read of it per settle, shared."""
-    cache: list[TaskEvent] | None = None
+    cache: verify.AggregatedInputs | None = None
     cfg = run.checkpoint.get("config")
     run_mode = _str_or_none(cfg.get("mode")) if isinstance(cfg, dict) else None
     # Answerer provider is "anthropic" for every agent-py run today
@@ -1105,15 +1134,35 @@ def _settle_hooks(run: _Run) -> tuple[FinalizeFn, FinalTextFn]:
     answerer_provider = "anthropic"
     run_id, user_id = run.payload.run_id, run.payload.user_id
 
-    async def text_and_sources() -> tuple[str, list[tuple[str, str, str]]]:
-        nonlocal cache
+    async def own_inputs() -> verify.AggregatedInputs:
         if not run.resume:
             # Fast path: single-chunk run, the in-memory accumulators
             # are complete, so skip the DB round-trip.
-            return "".join(run.sink.text), list(run.sink.sources)
+            return verify.AggregatedInputs(
+                text="".join(run.sink.text),
+                sources=[
+                    verify.RetrievedSource(id=str(i + 1), title=t, url=u, snippet=sn)
+                    for i, (t, u, sn) in enumerate(run.sink.sources)
+                ],
+            )
+        events = await store.load_run_events(run.pool, run_id=run_id, user_id=user_id)
+        return verify.aggregate_from_events(events)
+
+    async def whole() -> verify.AggregatedInputs:
+        nonlocal cache
         if cache is None:
-            cache = await store.load_run_events(run.pool, run_id=run_id, user_id=user_id)
-        inputs = verify.aggregate_from_events(cache)
+            line = await store.load_task_line(run.pool, run_id=run_id, user_id=user_id)
+            parts = [
+                verify.aggregate_from_events(
+                    await store.load_run_events(run.pool, run_id=earlier, user_id=user_id)
+                )
+                for earlier in line
+            ]
+            cache = _join_inputs([*parts, await own_inputs()])
+        return cache
+
+    async def text_and_sources() -> tuple[str, list[tuple[str, str, str]]]:
+        inputs = await whole()
         return inputs.text, [(s.title, s.url or "", s.snippet) for s in inputs.sources]
 
     async def finalize() -> dict[str, object] | None:
@@ -1132,7 +1181,7 @@ def _settle_hooks(run: _Run) -> tuple[FinalizeFn, FinalTextFn]:
         )
 
     async def final_text() -> str | None:
-        # The run's accumulated assistant text → `result.finalText`,
+        # The task's accumulated assistant text → `result.finalText`,
         # which the subagent fan-in reads off each child's result row.
         try:
             text, _ = await text_and_sources()
@@ -1142,6 +1191,20 @@ def _settle_hooks(run: _Run) -> tuple[FinalizeFn, FinalTextFn]:
         return text or None
 
     return finalize, final_text
+
+
+def _join_inputs(parts: list[verify.AggregatedInputs]) -> verify.AggregatedInputs:
+    """The runs of a task's line as one answer (Q78): their texts in order
+    — a lone run's verbatim, several joined by a blank line where a
+    question came between them — and their sources numbered on, as the
+    model cites them."""
+    texts = [p.text for p in parts if p.text.strip()]
+    text = texts[0] if len(texts) == 1 else "\n\n".join(t.strip() for t in texts)
+    sources = [
+        dataclasses.replace(source, id=str(i + 1))
+        for i, source in enumerate(s for p in parts for s in p.sources)
+    ]
+    return verify.AggregatedInputs(text=text, sources=sources)
 
 
 def _ensure_open_call(run: _Run, call_id: str, name: str, args: dict[str, Any]) -> None:
@@ -1305,11 +1368,14 @@ async def _spawn(run: _Run, call: ToolCall) -> bool:
         # (parent_task_id non-null) receives a rejection tool_result so
         # the model can continue without subagents.
         refusal = _spawn_rejection_tool_result(call.id)
+    else:
+        # Q72's 20 per task, checked here so the refusal lands in the step;
+        # `commit_spawn` checks it again under the lock.
+        started = await store.task_child_count(pool, task_id=run_id)
+        if started + len(specs) > MAX_TASK_CHILDREN:
+            refusal = _child_cap_refusal(call.id, started)
     if refusal is not None:
-        await run.emitter.tool_output(
-            tool_call_id=call.id, tool_name=call.name, summary=refusal["content"]
-        )
-        await run.ledger.record_finished(refusal)
+        await _refuse_spawn(run, call, refusal)
         return False
 
     await run.close_step()
@@ -1338,6 +1404,15 @@ async def _spawn(run: _Run, call: ToolCall) -> bool:
             children_meta.append(
                 {"id": child_id, "personaSlug": spec.persona_slug, "subgoal": spec.subgoal}
             )
+        # The call's result as the user sees it, once its children exist
+        # (committed with them): the pill stops spinning; each child's end
+        # follows as its own `handoff` `exit` (0048). The model's result is
+        # the fan-in, when they have all ended.
+        await run.emitter.tool_output(
+            tool_call_id=call.id,
+            tool_name=call.name,
+            summary=_spawned_summary(specs),
+        )
 
     # Built after the handoffs so its `seq` covers them.
     next_checkpoint = run.build_checkpoint()
@@ -1346,15 +1421,21 @@ async def _spawn(run: _Run, call: ToolCall) -> bool:
     # Counter + checkpoint + `paused` + children + their start
     # jobs in ONE transaction: no child can run (let alone
     # settle and hit the barrier) before the parent is ready.
-    committed = await store.commit_spawn(
-        pool,
-        parent_task_id=run_id,
-        user_id=user_id,
-        conversation_id=conversation_id,
-        children=children,
-        checkpoint=next_checkpoint,
-        spawn_events=held,
-    )
+    try:
+        committed = await store.commit_spawn(
+            pool,
+            parent_task_id=run_id,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            children=children,
+            checkpoint=next_checkpoint,
+            spawn_events=held,
+            max_task_children=MAX_TASK_CHILDREN,
+        )
+    except store.ChildCapReached as exc:
+        # Passed between the check above and the lock: nothing was written.
+        await _refuse_spawn(run, call, _child_cap_refusal(call.id, exc.started))
+        return False
     if not committed:
         logger.warning("executor.spawn_parent_settled", run_id=run_id)
         raise _RunOver
@@ -1378,7 +1459,8 @@ async def _seed_seq(
 
     A failed probe falls back to the checkpoint value on a normal run
     (only the route's / this worker's own events can follow it). On a
-    reclaim it does NOT: the dead attempt wrote past the checkpoint, so
+    reclaim, or a fan-in (its sub-agents' exit entries follow it), it
+    does NOT: the dead attempt wrote past the checkpoint, so
     seeding there would reuse its seqs — the resume marker itself would
     collide and be dropped (`ON CONFLICT DO NOTHING`), leaving its
     partial output un-superseded. The attempt is abandoned instead
@@ -2503,6 +2585,29 @@ def _build_checkpoint(
         # A child's label: the parent's fan-in reads it.
         out["subagent"] = original["subagent"]
     return out
+
+
+def _spawned_summary(specs: list[SpawnSpec]) -> str:
+    n = len(specs)
+    text = f"Started {n} sub-agent{'s' if n != 1 else ''}: " + "; ".join(s.subgoal for s in specs)
+    return text if len(text) <= 300 else text[:299] + "…"
+
+
+async def _refuse_spawn(run: _Run, call: ToolCall, refusal: dict[str, Any]) -> None:
+    """A refused spawn's result: the model reads why and carries on."""
+    await run.emitter.tool_output(
+        tool_call_id=call.id, tool_name=call.name, summary=refusal["content"]
+    )
+    await run.ledger.record_finished(refusal)
+
+
+def _child_cap_refusal(tool_call_id: str, started: int) -> dict[str, Any]:
+    return {
+        "type": "tool_result",
+        "tool_use_id": tool_call_id,
+        "content": task_child_cap_error(started),
+        "is_error": True,
+    }
 
 
 def _spawn_rejection_tool_result(tool_call_id: str) -> dict[str, Any]:
