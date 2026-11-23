@@ -297,6 +297,13 @@ Read from the code at #302; the first twelve were also checked by hand.
   terminal event is reconnected to forever. *(fixed, 5c-B)*
 - Task launches offer models the worker can't run. *(fixed, 5c-B)*
 
+**Found while checking 5c end to end (not 5c's)**
+
+- A fresh browser's default workspace has the id `"default"`, not a uuid,
+  so its first upload after sign-in fails (`22P02`) and the sync queue
+  drops the ops: that browser's data never syncs, and tasks (which need a
+  synced conversation) can't start. Separate PR.
+
 **Wave 6**
 
 - Realtime arriving ahead of the replay drops events.
