@@ -200,6 +200,11 @@ class RespondActionPayload:
     value: str | None = None
     ui_answer: dict[str, Any] | None = None
     args: dict[str, Any] | None = None
+    cancelled: bool = False
+    """`cancelled: true` (an in-place answer's cancelled resume entry,
+    `runs/in_place.py`): a decline — an approval is not approved, any
+    other question reads "the user declined to answer" — exactly as a
+    cancelled entry of a runs resume."""
 
 
 async def execute_respond(
@@ -1717,6 +1722,7 @@ async def _run_respond_inner(
     if (
         request_kind == "approval"
         and not resume_interrupted
+        and not payload.cancelled
         and not isinstance(payload.approved, bool)
     ):
         # Absent never approves (and is no decline either): still answerable.
@@ -1856,7 +1862,7 @@ async def _run_respond_inner(
     # first save, so a checkpoint that holds the answer covers the entry.
     await emitter.input_response(
         approval_id=question,
-        approved=payload.approved,
+        approved=False if payload.cancelled and request_kind == "approval" else payload.approved,
         selection=payload.selection,
         value=payload.value,
         ui_answer=payload.ui_answer,
@@ -1875,7 +1881,12 @@ async def _run_respond_inner(
 def _answer_of(payload: RespondActionPayload) -> resume_answers.StoredAnswer:
     """A respond's answer in the runs resume's shape, so both ways tell
     the model the same thing. Not `uiAnswer`: the old route's clients send
-    its formatted text as `value` / `selection`."""
+    its formatted text as `value` / `selection`. `cancelled` is a decline
+    whatever else the payload says."""
+    if payload.cancelled:
+        return resume_answers.StoredAnswer(
+            interrupt_id=payload.request_id, status="cancelled", payload=None
+        )
     fields: dict[str, Any] = {
         "approved": payload.approved,
         "args": payload.args,
