@@ -317,6 +317,40 @@ class Settings(BaseSettings):
     RUNS_ANONYMOUS_MAX_CONCURRENT: int = 3
     """Live anonymous runs per client IP at once."""
 
+    RUNS_RECONCILE_ENABLED: bool = True
+    """Run the no-worker reconciler (`agent_py.runs.reconcile`, wave 6) in
+    this process when `SUPABASE_DB_URL` is set: a background task still
+    `queued`, never picked up, after `TASK_NO_WORKER_TIMEOUT_MINUTES` —
+    while no worker executed anything in that window — fails "No task
+    worker available", as Next's `reconcileStaleRuns` does when its task
+    stream route is opened. Safe on several replicas (each failure is a
+    guarded update)."""
+
+    RUNS_RECONCILE_INTERVAL_SECONDS: float = 60.0
+    """Seconds between no-worker reconciler passes."""
+
+    TASK_NO_WORKER_TIMEOUT_MINUTES: float = 10.0
+    """How long a never-started background task may wait for a worker —
+    the variable Next reads (`noWorkerTimeoutMs`), read the same way: a
+    positive number of minutes, anything else (empty, not a number, ≤ 0)
+    the default 10."""
+
+    @field_validator("TASK_NO_WORKER_TIMEOUT_MINUTES", mode="before")
+    @classmethod
+    def _lenient_no_worker_timeout(cls, value: object) -> float:
+        try:
+            minutes = float(str(value).strip()) if value is not None else 0.0
+        except ValueError:
+            return 10.0
+        return minutes if minutes > 0 and minutes != float("inf") else 10.0
+
+    DB_POOL_MAX_SIZE: int = 10
+    """Connections in agent-py's Postgres pool, shared by the task poller,
+    the schedule dispatcher, the reconciler and every runs request and
+    stream (an idle stream holds none between its polls). Was a fixed 4
+    (wave 6, survey bug 18). Keep it under the database's connection
+    limit across every replica."""
+
     WEB_TOOL_RATE_LIMIT_PER_MINUTE: int = 20
     """Per-IP cap on interactive runs' outbound tool calls — webSearch,
     webFetch and searchFiles share one 60 s window, counted per call (the
