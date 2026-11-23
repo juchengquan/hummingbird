@@ -456,6 +456,37 @@ async def main():
             (r.status_code, r.text[-300:]),
         )
 
+    async def cap():
+        """Q72/Q79: five active tasks, the sixth refused before anything exists; answers still work."""
+        waiting = [await begin("seq", f"cap{i}") for i in range(5)]
+        questions = [await question(t) for t in waiting]
+        before = await db.fetchval("select count(*) from public.tasks")
+        sixth = await start("quick", "cap6")
+        check(
+            "cap: a sixth active task is refused",
+            sixth.status_code == 409 and sixth.json().get("code") == "limit_reached",
+            (sixth.status_code, sixth.text[:160]),
+        )
+        check(
+            "cap: nothing created", before == await db.fetchval("select count(*) from public.tasks")
+        )
+        answer = await respond(waiting[0], questions[0], approved=False)
+        check(
+            "cap: an answer is never refused",
+            answer.status_code == 202,
+            (answer.status_code, answer.text[:160]),
+        )
+        for t in waiting:
+            await cancel(t)
+        after = await start("quick", "cap7")
+        check(
+            "cap: room again once they end",
+            after.status_code == 202,
+            (after.status_code, after.text[:160]),
+        )
+        if after.status_code == 202:
+            await wait(after.json()["runId"], ENDED)
+
     for case in (
         models,
         schedule,
@@ -471,6 +502,7 @@ async def main():
         child_skip,
         parent_cancel,
         respawn,
+        cap,
     ):
         try:
             await case()
