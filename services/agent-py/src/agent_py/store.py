@@ -224,6 +224,7 @@ def event_from_row_payload(
             )
             if isinstance(merged.get("usage"), list)
             else (),
+            stopped_at=_opt_str(merged.get("stoppedAt")),
         )
     if kind == "step_start":
         return events.StepStartEvent(run_id="", seq=seq, step=step, created_at=created_at)

@@ -365,6 +365,7 @@ class RunEmitter:
         error_code: str | None = None,
         memory_tainted: bool = False,
         usage: tuple[TokenUsage, ...] = (),
+        stopped_at: str | None = None,
     ) -> None:
         """Emit the terminal `result` event. Latches the emitter so
         nothing further is sent — call exactly once at the end of a
@@ -385,6 +386,7 @@ class RunEmitter:
                 error_code=error_code,
                 memory_tainted=memory_tainted,
                 usage=usage,
+                stopped_at=stopped_at,
             )
         )
         self._settled = True
