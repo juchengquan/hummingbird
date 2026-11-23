@@ -71,6 +71,7 @@ from ..runs.repository import (
     InvalidPageToken,
     PreviousRunAlreadyAnswered,
     PreviousRunAlreadyResumed,
+    PreviousRunAnswerApplied,
     PreviousRunNotFound,
     PreviousRunNotWaiting,
     RunFilter,
@@ -113,6 +114,10 @@ _RUN_NOT_FOUND = "Run not found."
 _RUN_ID_CONFLICT = "This runId is already in use."
 _RUN_ALREADY_RESUMED = "Another run already answers this run's interrupts."
 _RUN_ALREADY_ANSWERED = "This question was already answered through the task respond route."
+_RUN_ANSWER_APPLIED = (
+    "An earlier answer to this question was already acted on before its run ended, "
+    "so it can't be answered again. Send the message again instead."
+)
 _RUN_NOT_WAITING = "The previous run is no longer waiting on these answers."
 
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
@@ -438,6 +443,8 @@ async def start_run(
             _raise(409, "run_already_resumed", _RUN_ALREADY_RESUMED)
         except PreviousRunAlreadyAnswered:
             _raise(409, "run_already_answered", _RUN_ALREADY_ANSWERED)
+        except PreviousRunAnswerApplied:
+            _raise(409, "run_answer_applied", _RUN_ANSWER_APPLIED)
         except PreviousRunNotWaiting:
             _raise(409, "invalid_state", _RUN_NOT_WAITING)
         except RunWriteError as exc:

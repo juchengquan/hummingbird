@@ -435,3 +435,195 @@ async def test_racing_resumes_run_the_tool_once(world: ChatWorld) -> None:
         if response.status_code == 409:
             assert response.json()["code"] == "run_already_resumed"
     assert world.count() == 1
+
+
+# --- around the stamp: every await between "applied" and the tool --------------------
+
+
+class Died(BaseException):
+    """The process is gone: nothing after this point runs."""
+
+
+def stamp_hook(
+    world: ChatWorld,
+    *,
+    before: Callable[[], Awaitable[None]] | None = None,
+    after: Callable[[], Awaitable[None]] | None = None,
+) -> None:
+    """Wrap the store's `mark_answers_applied` (the stamp) with code that
+    runs just before / just after it."""
+    repo = world.services.pg_repo if world.backend == "postgres" else world.services.memory_repo
+    assert repo is not None
+    real = repo.mark_answers_applied
+
+    async def mark(run_id: str) -> bool:
+        if before is not None:
+            await before()
+        ok = await real(run_id)
+        if after is not None:
+            await after()
+        return ok
+
+    repo.mark_answers_applied = mark  # type: ignore[method-assign]
+
+
+async def _wait_until_not_local(world: ChatWorld, run_id: str) -> None:
+    for _ in range(200):
+        if not world.services.driver.is_local(run_id):
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("the run is still executing")
+
+
+async def test_a_stop_right_after_the_stamp_runs_nothing_and_keeps_the_question_closed(
+    world: ChatWorld,
+) -> None:
+    paused = await world.start()
+    resume = str(uuid.uuid4())
+
+    async def stop() -> None:
+        await world.cancel(resume)
+
+    stamp_hook(world, after=stop)
+    response, _ = await world.resume(paused, run_id=resume)
+    assert response.status_code == 200
+    assert await world.status(resume) == "cancelled" and world.count() == 0
+    applied_refusal((await world.resume(paused))[0])
+    assert world.count() == 0
+
+
+@pytest.mark.parametrize("where", ["after the stamp", "logging the answer step"])
+async def test_a_crash_after_the_stamp_keeps_the_question_closed(
+    world: ChatWorld, where: str
+) -> None:
+    paused = await world.start()
+    resume = str(uuid.uuid4())
+
+    async def die() -> None:
+        raise Died
+
+    if where == "after the stamp":
+        stamp_hook(world, after=die)
+    else:
+        log = world.services.log_for(
+            world.services.memory_repo._rows[paused].record.owner
+            if world.backend == "memory"
+            else _owner(world)
+        )
+        real_append = log.append
+
+        async def append(event: Any) -> int:
+            if event.run_id == resume and event.kind == "step_start":
+                raise Died
+            return await real_append(event)
+
+        log.append = append  # type: ignore[method-assign]
+    post = asyncio.create_task(world.resume(paused, run_id=resume))
+    await asyncio.sleep(0.05)
+    await _wait_until_not_local(world, resume)
+    if where != "after the stamp":
+        log.append = real_append  # type: ignore[method-assign]
+    await world.expire_and_reap(resume)
+    response, _ = await asyncio.wait_for(post, timeout=10)
+    assert response.status_code == 200
+    assert (await world.run(resume))["status"] == "failed" and world.count() == 0
+    applied_refusal((await world.resume(paused))[0])
+    assert world.count() == 0
+
+
+def _owner(world: ChatWorld) -> Any:
+    from agent_py.runs.model import RunOwner
+
+    assert world.user is not None
+    return RunOwner.user(world.user)
+
+
+async def test_a_stamp_whose_reply_was_lost_counts_as_applied(world: ChatWorld) -> None:
+    paused = await world.start()
+
+    async def lost() -> None:
+        raise ConnectionError("connection reset after the commit")
+
+    stamp_hook(world, after=lost)
+    response, resume = await world.resume(paused)
+    assert response.status_code == 200
+    run = await world.run(resume)
+    assert run["status"] == "failed" and world.count() == 0
+    applied_refusal((await world.resume(paused))[0])
+
+
+async def test_a_stamp_that_was_never_written_frees_the_question(world: ChatWorld) -> None:
+    paused = await world.start()
+    calls = 0
+
+    async def down() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ConnectionError("database unreachable")
+
+    stamp_hook(world, before=down)
+    response, first = await world.resume(paused)
+    assert response.status_code == 200
+    assert await world.status(first) == "failed" and world.count() == 0
+    again, second = await world.resume(paused)
+    assert again.status_code == 200, again.text
+    assert await world.status(second) == "succeeded" and world.count() == 1
+
+
+async def test_a_stop_that_beat_the_stamp_frees_the_question(world: ChatWorld) -> None:
+    paused = await world.start()
+    first = str(uuid.uuid4())
+    stopped = False
+
+    async def stop_first() -> None:
+        nonlocal stopped
+        if not stopped:
+            stopped = True
+            await world.cancel(first)
+
+    stamp_hook(world, before=stop_first)
+    response, _ = await world.resume(paused, run_id=first)
+    assert response.status_code == 200
+    assert await world.status(first) == "cancelled" and world.count() == 0
+    again, second = await world.resume(paused)
+    assert again.status_code == 200, again.text
+    assert await world.status(second) == "succeeded" and world.count() == 1
+
+
+async def test_racing_answers_after_an_applied_failure_are_all_refused(world: ChatWorld) -> None:
+    paused = await world.start()
+    world.model.script[1] = [Turn([], boom=True)]
+    response, resume = await world.resume(paused)
+    assert response.status_code == 200 and await world.status(resume) == "failed"
+    results = await asyncio.gather(*(world.resume(paused) for _ in range(4)))
+    for again, _ in results:
+        applied_refusal(again)
+    assert world.count() == 1
+
+
+@pytest.mark.skipif(not DB_URL, reason="AGENT_PY_TEST_DB_URL not set")
+async def test_the_stamp_waits_for_a_resume_being_created(world: ChatWorld) -> None:
+    """`create_run` checks for an applied resume and inserts under the
+    user's task lock; the stamp takes it too, so it can't land between."""
+    if world.backend != "postgres":
+        pytest.skip("Postgres only")
+    from agent_py.runs.repository import RunSpec
+
+    paused = await world.start()
+    repo = world.services.pg_repo
+    assert repo is not None and world.user is not None
+    live = str(uuid.uuid4())
+    await repo.create(
+        _owner(world),
+        RunSpec(run_id=live, thread_id=world.thread, mode="interactive", previous_run_id=paused),
+    )
+    async with world.pool.acquire() as conn:
+        tx = conn.transaction()
+        await tx.start()
+        await conn.execute("SELECT private.lock_user_tasks($1)", uuid.UUID(world.user))
+        stamp = asyncio.create_task(repo.mark_answers_applied(live))
+        await asyncio.sleep(0.3)
+        assert not stamp.done(), "the stamp did not wait for the user's task lock"
+        await tx.commit()
+    assert await asyncio.wait_for(stamp, timeout=5) is True
