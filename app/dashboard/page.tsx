@@ -28,6 +28,8 @@ import { staleCredentialFingerprints } from "@/client/mcp/local-creds"
 import { useReconcile } from "@/client/hooks/use-reconcile"
 import { ReconcileDialog } from "@/components/auth/reconcile-dialog"
 import { TaskRunProvider } from "@/client/agent/task-run-context"
+import { TasksProvider } from "@/client/runs/tasks/context"
+import { useTasksValue } from "@/components/agent/tasks/use-tasks-value"
 import { AgentImportListener } from "@/components/agent-import-listener"
 import { SkillImportListener } from "@/components/skill-import-listener"
 
@@ -133,6 +135,10 @@ function ReconcileMount() {
 function DashboardShell() {
   const sidebarWidth = useStore((state) => state.sidebarWidth)
   const sidebarCollapsed = useStore((state) => state.sidebarCollapsed)
+  // Tasks on runs (wave 6, Q69): every surface that shows or launches a
+  // task reads this; off runs it says `not_runs` and the old path
+  // (`TaskRunProvider`) drives them (Q61).
+  const tasks = useTasksValue()
 
   return (
     <SidebarProvider
@@ -148,9 +154,11 @@ function DashboardShell() {
       <AppSidebar />
       <AgentImportListener />
       <SkillImportListener />
-      <TaskRunProvider>
-        <MainArea />
-      </TaskRunProvider>
+      <TasksProvider value={tasks}>
+        <TaskRunProvider>
+          <MainArea />
+        </TaskRunProvider>
+      </TasksProvider>
       <CommandPalette />
       <ChildRunModalHost />
       <PdfViewerHost />

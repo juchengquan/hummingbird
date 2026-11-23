@@ -38,6 +38,10 @@ const NEXT_ENV: Record<string, string> = {
   NEXT_PUBLIC_API_BASE_URL: "",
   REQUIRE_AUTH_FOR_AI: "",
   NEXT_TELEMETRY_DISABLED: "1",
+  // The runs task UI's specs (`tasks-list` / `tasks-launch`) swap in the
+  // in-page fake tasks interface (`components/agent/tasks/e2e-fake.ts`)
+  // when they ask for it; no other build carries it.
+  NEXT_PUBLIC_E2E_TASKS_FAKE: "1",
 }
 
 const AGENT_PY_ENV: Record<string, string> = {
@@ -64,6 +68,9 @@ const AGENT_PY_ENV: Record<string, string> = {
 export default defineConfig({
   testDir: "./e2e",
   testMatch: "**/*.spec.ts",
+  // Wave 6's wire specs need the real tasks provider and their own build
+  // (a faked Supabase origin baked in): `e2e/tasks-wire.config.ts`.
+  testIgnore: ["**/tasks-wire.spec.ts"],
   outputDir: "./test-results/e2e",
   timeout: 30_000,
   expect: { timeout: 10_000 },

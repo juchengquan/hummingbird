@@ -189,6 +189,44 @@ async function control(req: Request): Promise<Response> {
   return Response.json({ ok: true })
 }
 
+/** The schedules routes as agent-py / Next answer them since Q73 / Q80:
+ *  a schedule saved without a model, or re-enabled without one, gets the
+ *  default task model (Haiku). */
+const DEFAULT_TASK_MODEL = "anthropic/claude-haiku-4.5"
+function scheduleRoute(method: string, id: string | undefined, body: Record<string, unknown> | undefined): Response {
+  const now = new Date().toISOString()
+  if (method === "GET") return Response.json({ schedules })
+  if (method === "POST") {
+    const created = {
+      id: crypto.randomUUID(),
+      timezone: "UTC",
+      enabled: true,
+      systemPrompt: null,
+      skills: undefined,
+      maxSteps: null,
+      lastRunAt: null,
+      lastRunTaskId: null,
+      nextRunAt: now,
+      createdAt: now,
+      updatedAt: now,
+      ...body,
+      model: (body?.model as string | null | undefined) ?? DEFAULT_TASK_MODEL,
+    }
+    schedules = [...schedules, created]
+    return Response.json(created, { status: 201 })
+  }
+  const found = schedules.find((s) => s.id === id)
+  if (!found) return refuse(404, "not_found", "Schedule not found.")
+  if (method === "DELETE") {
+    schedules = schedules.filter((s) => s !== found)
+    return new Response(null, { status: 204 })
+  }
+  const next: Row = { ...found, ...body, updatedAt: now }
+  if (next.enabled && !next.model) next.model = DEFAULT_TASK_MODEL
+  schedules = schedules.map((s) => (s === found ? next : s))
+  return Response.json(next)
+}
+
 async function handle(req: Request): Promise<Response> {
   const url = new URL(req.url)
   if (url.pathname === "/__control") return control(req)
@@ -218,7 +256,7 @@ async function handle(req: Request): Promise<Response> {
     return response
   }
 
-  if (op === "schedules") return late(Response.json({ schedules }))
+  if (op === "schedules") return late(scheduleRoute(req.method, action, body))
   if (!signedIn) return refuse(401, "auth", "Unauthorized.")
 
   if (op === "start") {

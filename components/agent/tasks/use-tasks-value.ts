@@ -1,0 +1,78 @@
+"use client"
+import "client-only"
+
+/**
+ * The `TasksContextValue` the dashboard hands to `TasksProvider`.
+ *
+ * - Until wave 6-C's `useTasksController()` (`lib/client/runs/tasks/
+ *   controller.ts`) is wired in here, the value is `PLACEHOLDER_TASKS`:
+ *   `not_runs`, so every surface keeps the old single-task path (Q61).
+ *   Integration: replace `useRealTasks` with `useTasksController`.
+ * - E2E builds (`NEXT_PUBLIC_E2E_TASKS_FAKE=1`, set only by
+ *   `playwright.config.ts`) can swap in the in-page fake (`./e2e-fake`)
+ *   when a spec asks for it. Any other build folds the flag to `false`,
+ *   drops `useE2eTasks` and with it the fake's dynamic import.
+ */
+
+import { useEffect, useState, useSyncExternalStore } from "react"
+
+import type { TasksContextValue } from "@/client/runs/tasks/types"
+
+import type { FakeTasks } from "./e2e-fake"
+
+/** Whether this build may load the e2e fake. Off unless the build set it. */
+export function e2eTasksFakeAllowed(flag: string | undefined): boolean {
+  return flag === "1"
+}
+
+const E2E_FAKE_BUILD = e2eTasksFakeAllowed(process.env.NEXT_PUBLIC_E2E_TASKS_FAKE)
+
+const refuse = async () =>
+  ({ ok: false, code: "not_runs", message: "Tasks don't run on agent-py (runs) here." }) as const
+
+/** Tasks off runs: the old path drives them (`TaskRunProvider`). */
+export const PLACEHOLDER_TASKS: TasksContextValue = {
+  availability: { ok: false, reason: "not_runs" },
+  tasks: [],
+  listError: null,
+  activeCount: 0,
+  activeLimit: 5,
+  getTask: () => null,
+  subscribeTask: () => () => {},
+  launch: refuse,
+  answer: refuse,
+  cancel: async () => {},
+  skipChild: async () => {},
+  refresh: () => {},
+  runAsTask: false,
+  setRunAsTask: () => {},
+}
+
+function useRealTasks(): TasksContextValue {
+  return PLACEHOLDER_TASKS
+}
+
+const NO_FAKE = {
+  subscribe: () => () => {},
+  getValue: () => null,
+}
+
+function useE2eTasks(): TasksContextValue {
+  const real = useRealTasks()
+  const [fake, setFake] = useState<FakeTasks | null>(null)
+  useEffect(() => {
+    if (!window.__HUMM_E2E_TASKS__) return
+    let cancelled = false
+    void import("./e2e-fake").then(({ createFakeTasks }) => {
+      if (!cancelled) setFake(createFakeTasks())
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  const source = fake ?? NO_FAKE
+  const value = useSyncExternalStore(source.subscribe, source.getValue, () => null)
+  return value ?? real
+}
+
+export const useTasksValue: () => TasksContextValue = E2E_FAKE_BUILD ? useE2eTasks : useRealTasks
