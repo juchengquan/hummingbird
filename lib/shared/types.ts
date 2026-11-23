@@ -563,6 +563,19 @@ export interface Message {
    * See `lib/shared/agents/turn-persona.ts`.
    */
   turnPersona?: TurnPersona
+  /**
+   * User messages only: the turn was launched as a task (bug 4 of the
+   * wave 6 survey), so Edit, Regenerate, Retry and a card's answer resend
+   * it as a task with the same mode. Local to this browser (not synced):
+   * on another device a resend is a chat turn. See
+   * `lib/shared/agent/task-turn.ts`.
+   */
+  taskTurn?: TaskTurn
+}
+
+/** A user message launched as a task, and in which mode. */
+export interface TaskTurn {
+  mode: "default" | "research"
 }
 
 /** The persona a user message was sent as, with its MCP allow-list then. */
