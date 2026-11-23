@@ -183,6 +183,18 @@ _RUN_COLUMNS = f"""
 
 _LIVE = ("queued", "running")
 
+# 0045's `question_held_by_respond`, for any of these questions.
+_RESPOND_HELD_SQL = (
+    "SELECT EXISTS (SELECT 1 FROM public.task_jobs j WHERE j.task_id = $1 "
+    "AND j.action = 'respond' AND j.status IN ('queued', 'running') "
+    "AND j.payload->>'requestId' = ANY($2::text[]))"
+)
+
+
+def _question_ids(resume: Sequence[Mapping[str, object]]) -> list[str]:
+    return [str(e.get("interruptId")) for e in resume if isinstance(e.get("interruptId"), str)]
+
+
 _ONE_LIVE_RESUME = "tasks_one_live_resume"
 """0042's unique index: one live resume per interrupted run."""
 
@@ -521,6 +533,10 @@ class PgRunRepository:
                         "A top-level run is answered by a new run: startRun with previousRunId."
                     )
                 if run.status != "interrupted":
+                    # A worker already picked up an answer to it (the run
+                    # is `running` while it applies it): answered, not gone.
+                    if await conn.fetchval(_RESPOND_HELD_SQL, _uuid(run_id), _question_ids(resume)):
+                        raise QuestionAlreadyAnswered()
                     raise RunNotAnswerable(f"The run is {run.status}, not waiting on a question.")
                 problem = answer_problem(run.open_interrupts, resume)
                 if problem is not None:

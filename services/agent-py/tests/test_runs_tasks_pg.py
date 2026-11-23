@@ -372,6 +372,28 @@ async def test_an_answer_through_the_old_route_holds_the_question(world: World) 
     assert world.count(SEND) == 1
 
 
+async def test_an_answer_a_worker_is_applying_is_already_answered(world: World) -> None:
+    _, child = await asking_child(world)
+    first = await answer(world, child, [approve()])
+    assert first.status_code == 202
+    # A worker claimed the respond job: the run reads `running` meanwhile.
+    await world.sql(
+        "UPDATE public.task_jobs SET status = 'running', lease_expires_at = now() + "
+        "interval '1 minute' WHERE task_id = $1 AND action = 'respond'",
+        uuid.UUID(child),
+    )
+    await world.sql("UPDATE public.tasks SET status = 'running' WHERE id = $1", uuid.UUID(child))
+    again = await answer(world, child, [approve()])
+    assert (again.status_code, again.json()["code"]) == (409, "run_already_answered")
+    # Once the run ended, it is no longer waiting at all.
+    await world.sql(
+        "UPDATE public.task_jobs SET status = 'done' WHERE task_id = $1", uuid.UUID(child)
+    )
+    await world.sql("UPDATE public.tasks SET status = 'done' WHERE id = $1", uuid.UUID(child))
+    ended = await answer(world, child, [approve()])
+    assert (ended.status_code, ended.json()["code"]) == (409, "invalid_state")
+
+
 async def test_two_answers_to_one_question_have_one_winner(world: World) -> None:
     _, child = await asking_child(world)
     responses = await asyncio.gather(*(answer(world, child, [approve()]) for _ in range(5)))
