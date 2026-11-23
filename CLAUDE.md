@@ -32,6 +32,7 @@ bun run codegen:agent-types:check     # CI mode — fail if drifted
 bun run test:db                       # agent-py suite on a throwaway Postgres with every migration (needs Docker; mirrors the agent-py-db CI job) — run it for any change to SQL, migrations, the executor or runs
 bun run check:agent-py                # ruff check + ruff format --check + mypy + pytest (mirrors the agent-py CI job)
 bun run fixtures:runs                 # re-record agent-py run streams for lib/client/runs tests (after changing runs output)
+bun run fixtures:runs --background    # …and the background-run set (real executor on a throwaway Postgres; needs Docker)
 
 # Frontend↔backend contract (spec-first, docs/PLAN-frontend-backend-split.md)
 bun run contract:gen                  # packages/contract/openapi.yaml → TS types + agent-py Pydantic models
