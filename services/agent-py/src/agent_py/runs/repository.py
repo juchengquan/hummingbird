@@ -599,7 +599,8 @@ class InMemoryRunRepository:
         def key(r: RunRecord) -> tuple[str, str]:
             return (r.created_at.isoformat(), r.id)
 
-        runs = sorted((self._view(row) for row in self._rows.values()), key=key, reverse=True)
+        index = self._index(owner)
+        runs = sorted((self._view(row, index) for row in index.rows), key=key, reverse=True)
         runs = [r for r in runs if matches(r) and (after is None or key(r) < after)]
         page = runs[:page_size]
         token = None
@@ -647,7 +648,7 @@ class InMemoryRunRepository:
         ):
             raise RunNotDeliverable("Not a task's root run: mark its rootRunId.")
         if "delivered_at" not in row.extra:
-            current = self._rows.get(self._current_of(row) or rec.id)
+            current = self._rows.get(self._index(owner).current_of(row) or rec.id)
             status = None if current is None else current.record.internal_status
             if status not in ("done", "failed", "cancelled"):
                 raise RunNotDeliverable("The task has not ended.")
@@ -657,60 +658,23 @@ class InMemoryRunRepository:
 
     # -- task fields (0047's functions, over the rows) --
 
-    def _holds(self, row: _Row) -> bool:
-        """`task_run_is_current`'s first half: on its task's line — a root
-        (or a sub-agent run), or a resume that holds the question."""
-        rec = row.record
-        return (
-            rec.previous_run_id is None
-            or rec.internal_status not in ("failed", "cancelled")
-            or row.answers_applied_at is not None
-        )
+    def _index(self, owner: RunOwner) -> _TaskIndex:
+        """The owner's rows by previous run, parent and root (a run's
+        chain and sub-agent runs are all its owner's)."""
+        return _TaskIndex([row for row in self._rows.values() if row.record.owner == owner])
 
-    def _is_current(self, row: _Row) -> bool:
-        rec = row.record
-        return self._holds(row) and not any(
-            other.record.previous_run_id == rec.id
-            and other.record.owner == rec.owner
-            and self._holds(other)
-            for other in self._rows.values()
-        )
-
-    def _current_of(self, row: _Row) -> str | None:
-        """`task_current_run_id`: None when `row` is current itself."""
-        rec = row.record
-        if rec.parent_run_id is not None or self._is_current(row):
-            return None
-        root = rec.root_run_id or rec.id
-        line = [
-            other.record
-            for other in self._rows.values()
-            if other.record.owner == rec.owner
-            and (other.record.root_run_id or other.record.id) == root
-            and other.record.parent_run_id is None
-            and self._is_current(other)
-        ]
-        if not line:
-            return None
-        return max(line, key=lambda r: (r.created_at, r.id)).id
-
-    def _view(self, row: _Row) -> RunRecord:
+    def _view(self, row: _Row, index: _TaskIndex | None = None) -> RunRecord:
         """The stored record with its task fields as of now."""
+        idx = index if index is not None else self._index(row.record.owner)
         rec = row.record
         root = self._rows.get(rec.root_run_id or rec.id)
         delivered = (
             root is not None and root.record.owner == rec.owner and "delivered_at" in root.extra
         )
-        asking = sum(
-            1
-            for other in self._rows.values()
-            if other.record.parent_run_id == rec.id
-            and other.record.owner == rec.owner
-            and other.record.status == "interrupted"
-        )
+        asking = sum(1 for c in idx.children(rec.id) if c.record.status == "interrupted")
         return replace(
             rec,
-            current_run_id=self._current_of(row),
+            current_run_id=idx.current_of(row),
             delivered=delivered,
             children_asking=asking,
         )
@@ -779,6 +743,58 @@ class InMemoryRunRepository:
             self._apply_outcome(row, Failed("worker_lost", self.WORKER_LOST_MESSAGE))
             for row in expired
         ]
+
+
+class _TaskIndex:
+    """0047's current-run rule (`task_run_is_current` /
+    `task_current_run_id`) over one owner's in-memory rows."""
+
+    def __init__(self, rows: list[_Row]) -> None:
+        self.rows = rows
+        self._by_previous: dict[str, list[_Row]] = {}
+        self._by_parent: dict[str, list[_Row]] = {}
+        self._top_by_root: dict[str, list[_Row]] = {}
+        for row in rows:
+            rec = row.record
+            if rec.previous_run_id is not None:
+                self._by_previous.setdefault(rec.previous_run_id, []).append(row)
+            if rec.parent_run_id is not None:
+                self._by_parent.setdefault(rec.parent_run_id, []).append(row)
+            else:
+                self._top_by_root.setdefault(rec.root_run_id or rec.id, []).append(row)
+
+    def children(self, run_id: str) -> list[_Row]:
+        return self._by_parent.get(run_id, [])
+
+    @staticmethod
+    def _holds(row: _Row) -> bool:
+        """On its task's line: a root (or a sub-agent run), or a resume
+        that holds the question (live, done, or ended after applying)."""
+        rec = row.record
+        return (
+            rec.previous_run_id is None
+            or rec.internal_status not in ("failed", "cancelled")
+            or row.answers_applied_at is not None
+        )
+
+    def is_current(self, row: _Row) -> bool:
+        return self._holds(row) and not any(
+            self._holds(r) for r in self._by_previous.get(row.record.id, [])
+        )
+
+    def current_of(self, row: _Row) -> str | None:
+        """None when `row` is its task's current run, else that run's id."""
+        rec = row.record
+        if rec.parent_run_id is not None or self.is_current(row):
+            return None
+        line = [
+            r.record
+            for r in self._top_by_root.get(rec.root_run_id or rec.id, [])
+            if self.is_current(r)
+        ]
+        if not line:
+            return None
+        return max(line, key=lambda r: (r.created_at, r.id)).id
 
 
 def _root_of(previous: RunRecord | None, run_id: str) -> str:
