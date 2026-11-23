@@ -227,6 +227,11 @@ export function reduceRun(view: TaskRunView, event: TaskEvent): TaskRunView {
         }
       } else if (event.phase === "response") {
         next.pendingInput = null
+        // An answer runs nothing, so its call is over (a respond may emit
+        // no `tool_output` for it). An approved one is executing now.
+        if (event.approved !== true) {
+          next.toolCalls = resolveAnsweredCall(base.toolCalls, event.approvalId, event.approved)
+        }
       }
       return next
     case "handoff": {
@@ -238,10 +243,17 @@ export function reduceRun(view: TaskRunView, event: TaskEvent): TaskRunView {
       ]
       return next
     }
-    // step_start / step_end already handled by the `step` bump above;
+    // step_end is handled by the `step` bump above;
     // compact carries no view state in v1 (the cursor + step
     // advance is enough). Reserved for later.
     case "step_start":
+      // The model is only called again with every call's result in hand:
+      // one still running here (a spawn after its fan-in, an approved call
+      // of a log without its `tool_output`) is over.
+      if (base.toolCalls.some((c) => c.status === "running")) {
+        next.toolCalls = base.toolCalls.map((c) => ({ ...c, status: "done" }))
+      }
+      return next
     case "step_end":
     case "compact":
       return next
@@ -249,6 +261,16 @@ export function reduceRun(view: TaskRunView, event: TaskEvent): TaskRunView {
       // Unknown/future kind — cursor already advanced; ignore payload.
       return next
   }
+}
+
+/**
+ * Whether an event pushed out of band (Realtime) may be folded now: only
+ * the one right after the cursor. `reduceRun` drops everything at or
+ * before its cursor, so folding a later event would lose what the ordered
+ * replay — which starts at 0 — hasn't delivered yet.
+ */
+export function isNextEvent(view: TaskRunView, event: TaskEvent): boolean {
+  return event.seq === view.cursor + 1
 }
 
 /** Fold a whole log into a view. Sorts by `seq` defensively and
@@ -275,6 +297,18 @@ function upsertToolCall(
   const out = calls.slice()
   out[idx] = merged
   return out
+}
+
+/** The gated call a non-approving answer closes (its id is the approval's). */
+function resolveAnsweredCall(
+  calls: ToolCallView[],
+  approvalId: string,
+  approved: boolean | undefined
+): ToolCallView[] {
+  const call = calls.find((c) => c.toolCallId === approvalId)
+  if (call?.status !== "running") return calls
+  const summary = approved === false ? "Declined by the user" : "Answered"
+  return calls.map((c) => (c === call ? { ...c, status: "done", summary } : c))
 }
 
 function resolveToolCall(

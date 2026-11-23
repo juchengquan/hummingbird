@@ -9,6 +9,7 @@ import {
   modelsForBackend,
   pickFallbackModel,
   RUNS_ROUTING_AVAILABLE,
+  taskModelFor,
 } from "./backend-models"
 import {
   ANTHROPIC_SERVICE_MODELS,
@@ -138,5 +139,30 @@ describe("pickFallbackModel (Q40)", () => {
       const pick = pickFallbackModel(m.id, "agent-runs")
       if (pick) expect(ANTHROPIC_SERVICE_MODELS.has(pick.id)).toBe(true)
     }
+  })
+})
+
+describe("taskModelFor (Q55)", () => {
+  test("keeps exactly the models the task worker runs", () => {
+    for (const { id } of CHAT_MODELS) {
+      const { model, switchedFrom } = taskModelFor(id)
+      expect(backendAcceptsModel("agent-service", model!)).toBe(true)
+      if (ANTHROPIC_SERVICE_MODELS.has(id)) {
+        expect({ model, switchedFrom }).toEqual({ model: id, switchedFrom: null })
+      } else {
+        expect(switchedFrom).toBe(id)
+      }
+    }
+  })
+
+  test("auto, an unknown id and no model at all are switched", () => {
+    const fallback = defaultModelForBackend("agent-service")
+    expect(taskModelFor(AUTO_MODEL_ID)).toEqual({ model: fallback, switchedFrom: AUTO_MODEL_ID })
+    expect(taskModelFor("claude-sonnet-4-6")).toEqual({
+      model: fallback,
+      switchedFrom: "claude-sonnet-4-6",
+    })
+    // Absent reads as the route's default, which the worker can't run.
+    for (const absent of [undefined, null, ""]) expect(taskModelFor(absent).model).toBe(fallback)
   })
 })

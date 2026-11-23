@@ -2,7 +2,7 @@
 
 import "client-only"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useMemo, useState } from "react"
 import {
   DndContext,
   DragOverlay,
@@ -26,6 +26,7 @@ import {
   EyeOff,
   ExternalLink,
   Loader2,
+  Pause,
   Play,
   Plus,
   Sparkles,
@@ -39,6 +40,7 @@ import {
   useWorkspaceProjectTasks,
 } from "@/client/hooks/use-store"
 import { useTaskRunContext } from "@/client/agent/task-run-context"
+import { taskProgress } from "@/client/agent/task-progress"
 import { apiClient, isAuthRequiredResult } from "@/client/api-client"
 import { downloadAsFile, safeFilename } from "@/client/export"
 import {
@@ -69,6 +71,8 @@ interface CardRunInfo {
    *  arrived — matched against `task.id` so the spinner shows instantly. */
   pendingCardId: string | null
   running: boolean
+  /** It waits for the user: no spinner, say what it waits for. */
+  waitingForYou: string | null
   step: number
   maxSteps: number | null
 }
@@ -92,8 +96,6 @@ export function ProjectTasksPanel() {
   const tasks = useWorkspaceProjectTasks()
   const createProjectTask = useStore((s) => s.createProjectTask)
   const moveProjectTask = useStore((s) => s.moveProjectTask)
-  const updateProjectTask = useStore((s) => s.updateProjectTask)
-  const createArtifact = useStore((s) => s.createArtifact)
   const createConversation = useStore((s) => s.createConversation)
   const appendToActiveDocumentOrCreate = useStore(
     (s) => s.appendToActiveDocumentOrCreate
@@ -112,85 +114,14 @@ export function ProjectTasksPanel() {
   // Phase 5 quick-filter — hides the Done column to focus on what's
   // left. Lightweight (local) since it's a transient view preference.
   const [hideDone, setHideDone] = useState(false)
-  // Phase 4 "Run as task". The card optimistically moved to In progress
-  // while its runId is still pending (startTask is fire-and-forget; the
-  // runId arrives a beat later on the first stream event).
-  const [pendingCardId, setPendingCardId] = useState<string | null>(null)
-  // Guards the terminal-edge handler so a card is settled once per run
-  // even though `view` updates on every token. Holds the last runId we
-  // already settled.
-  const settledRunRef = useRef<string | null>(null)
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   )
 
-  // Stamp the runId onto the launched card once it arrives (so the card
-  // re-attaches to the run across reloads via `taskId`), or revert the
-  // optimistic move if the start failed before producing a runId.
+  // The run id's stamp, a failed start's revert and the card's settle are
+  // the provider's (`startTask`, `settleTask`): this panel is often unmounted.
   const runId = taskRun.runId
-  const runError = taskRun.error
-  useEffect(() => {
-    if (!pendingCardId) return
-    if (runId) {
-      updateProjectTask(pendingCardId, { taskId: runId })
-      setPendingCardId(null)
-    } else if (runError) {
-      moveProjectTask(pendingCardId, "todo", 0)
-      setPendingCardId(null)
-      toast.error("Couldn't start the task.")
-    }
-  }, [pendingCardId, runId, runError, updateProjectTask, moveProjectTask])
-
-  // Observe the active run's status and drive its card: on `done`, move
-  // it to Done and link the result as a markdown artifact; on
-  // `failed`/`cancelled`, move it back to To-do. Keyed by runId so a
-  // resumed-on-reload run (whose card is matched by `taskId`) settles
-  // correctly too.
-  const status = taskRun.view.status
-  const resultText = taskRun.view.resultText
-  const streamedText = taskRun.view.text
-  useEffect(() => {
-    if (!runId) return
-    if (status !== "done" && status !== "failed" && status !== "cancelled") {
-      return
-    }
-    if (settledRunRef.current === runId) return
-    const card = useStore.getState().projectTasks.find((t) => t.taskId === runId)
-    if (!card) return
-    settledRunRef.current = runId
-
-    if (status === "done") {
-      if (!card.artifactId) {
-        const text = (resultText ?? streamedText).trim()
-        const convId =
-          taskRun.runConversationId ?? useStore.getState().activeConversationId
-        if (text && convId) {
-          const artifact = createArtifact({
-            conversationId: convId,
-            kind: "markdown",
-            title: card.title,
-            content: text,
-          })
-          updateProjectTask(card.id, { artifactId: artifact.id })
-        }
-      }
-      moveProjectTask(card.id, "done", 0)
-    } else {
-      moveProjectTask(card.id, "todo", 0)
-      if (status === "failed") {
-        toast.error("Task failed — card moved back to To-do.")
-      }
-    }
-  }, [
-    runId,
-    status,
-    resultText,
-    streamedText,
-    taskRun.runConversationId,
-    createArtifact,
-    updateProjectTask,
-    moveProjectTask,
-  ])
+  const pendingCardId = taskRun.launchingCardId
 
   // Launch a long-running task for a card: workspace system prompt +
   // skills cascade + the card title as the goal. The result lands as an
@@ -244,10 +175,8 @@ export function ProjectTasksPanel() {
         ? { allowedMcpServerIds: resolved.allowedMcpServerIds }
         : {}),
     }
-    settledRunRef.current = null
-    setPendingCardId(card.id)
     moveProjectTask(card.id, "in_progress", 0)
-    taskRun.startTask(body, { title: card.title })
+    taskRun.startTask(body, { title: card.title, projectTaskId: card.id })
   }
 
   // Send a card's linked artifact to the editor (Phase 4 deliverable
@@ -266,10 +195,12 @@ export function ProjectTasksPanel() {
     toast.success("Sent result to editor")
   }
 
+  const taskState = taskProgress(taskRun.view, taskRun.childRuns)
   const run: CardRunInfo = {
     activeRunId: runId,
     pendingCardId,
     running: taskRun.isRunning,
+    waitingForYou: taskState.paused ? taskState.label : null,
     step: taskRun.view.step,
     maxSteps: taskRun.view.maxSteps,
   }
@@ -715,9 +646,15 @@ function CardShell({
 
       {isRunning && (
         <div className="mt-1 flex items-center gap-1.5 text-[10px] text-[var(--muted-foreground)]">
-          <Loader2 size={11} className="animate-spin" />
+          {run?.waitingForYou ? (
+            <Pause size={11} />
+          ) : (
+            <Loader2 size={11} className="animate-spin" />
+          )}
           <span className="tabular-nums">
-            {run && run.maxSteps
+            {run?.waitingForYou
+              ? run.waitingForYou
+              : run && run.maxSteps
               ? `Step ${run.step}/${run.maxSteps}`
               : run && run.step > 0
                 ? `Step ${run.step}`

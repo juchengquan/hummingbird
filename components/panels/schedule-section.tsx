@@ -23,8 +23,9 @@ import type {
  *
  * Scope of v1: a flat list with a tiny inline editor. No skill picker
  * / model override UI yet — those fields exist server-side and can be
- * driven via the API today; the visual editor is a Phase 5-style
- * follow-up. Filling the gaps would mostly be a couple of `<Select>`s.
+ * driven via the API today. A schedule without a model fails when due
+ * (Q56), so the list and the editor say so; until results are visible
+ * (wave 6) the editor deliberately offers no model.
  */
 export function ScheduleSection({ workspaceId }: { workspaceId: string }) {
   const [schedules, setSchedules] = useState<ScheduleResponse[]>([])
@@ -89,7 +90,8 @@ export function ScheduleSection({ workspaceId }: { workspaceId: string }) {
             <p className="text-[11px] text-[var(--muted-foreground)]">Loading…</p>
           ) : schedules.length === 0 ? (
             <p className="text-[11px] text-[var(--muted-foreground)]">
-              No schedules yet. Add one to run a saved prompt on a cron.
+              No schedules yet. One added here has no model, so it
+              doesn&apos;t run yet.
             </p>
           ) : (
             schedules.map((s) => (
@@ -155,6 +157,7 @@ function ScheduleRow({
             ({schedule.timezone})
           </span>
         </p>
+        {schedule.model ? null : <NoModelNote />}
       </div>
       <Button
         size="icon-xs"
@@ -299,6 +302,7 @@ function ScheduleEditor({
       <p className="text-[10px] text-[var(--muted-foreground)]">
         Five-field cron, e.g. <code>0 8 * * *</code> = every day at 08:00 in the given timezone.
       </p>
+      {schedule?.model ? null : <NoModelNote />}
       <div className="flex items-center gap-2 pt-1">
         <Button size="xs" onClick={submit} disabled={busy}>
           {schedule ? "Save" : "Create"}
@@ -308,6 +312,15 @@ function ScheduleEditor({
         </Button>
       </div>
     </div>
+  )
+}
+
+/** Q56: said plainly, since creating one still succeeds. */
+function NoModelNote() {
+  return (
+    <p className="text-[10px] leading-snug text-amber-600 dark:text-amber-500">
+      No model: this schedule doesn&apos;t run yet. It fails when due.
+    </p>
   )
 }
 

@@ -291,11 +291,11 @@ Read from the code at #302; the first twelve were also checked by hand.
 
 **Wave 5c, frontend**
 
-- A child's question has no answer card.
-- A reload loses a paused task's question, plan and children.
+- A child's question has no answer card. *(fixed, 5c-B; the wire codec also dropped every `ui-part` question)*
+- A reload loses a paused task's question, plan and children. *(fixed, 5c-B: replay from 0; Realtime waits for the replay, side effects run once per browser)*
 - Cancel leaves the task showing Running, and a run ended without a
-  terminal event is reconnected to forever.
-- Task launches offer models the worker can't run.
+  terminal event is reconnected to forever. *(fixed, 5c-B)*
+- Task launches offer models the worker can't run. *(fixed, 5c-B)*
 
 **Wave 6**
 

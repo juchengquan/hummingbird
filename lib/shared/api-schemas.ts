@@ -830,13 +830,31 @@ export type ExtractTableRequestInput = z.infer<typeof ExtractTableRequestSchema>
 
 // --- /api/tasks/[id]/children -----------------------------------------------
 // List child subagent tasks spawned by a parent run. Returns status + goal
-// for each child so the task strip can render per-child status pills.
+// for each child so the task strip can render per-child status pills, and
+// a paused child's open question so the parent can show it (Q59).
 
 export const TaskChildSchema = z.object({
   id: z.string(),
   status: z.string(),
   goal: z.string(),
+  /** `PendingInput` of `@/shared/agent/project`. */
+  pendingInput: z
+    .object({
+      requestId: z.string(),
+      kind: z.enum(["approval", "choice", "input", "ui-part"]),
+      tool: z.string().optional(),
+      toolCallId: z.string().optional(),
+      args: z.unknown().optional(),
+      prompt: z.string().optional(),
+      options: z.array(z.object({ id: z.string(), label: z.string() })).optional(),
+      multi: z.boolean().optional(),
+      uiKind: z.string().optional(),
+      uiProps: z.unknown().optional(),
+    })
+    .nullish(),
 })
+
+export type TaskChild = z.infer<typeof TaskChildSchema>
 
 export const TaskChildrenResponseSchema = z.object({
   children: z.array(TaskChildSchema),

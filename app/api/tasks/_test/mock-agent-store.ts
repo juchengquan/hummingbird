@@ -88,6 +88,13 @@ mock.module("@/server/model-provider", () => ({
 export const mocks = {
   // store
   createRun: mock(async (_db: unknown, _input: unknown) => {}),
+  listTaskChildren: mock(
+    async (
+      _db: unknown,
+      _parentId: string,
+      _userId: string,
+    ): Promise<{ id: string; status: string; goal: string }[]> => [],
+  ),
   getRun: mock(
     async (
       _db: unknown,
@@ -165,6 +172,7 @@ mock.module("@/server/agent/store", () => ({
   appendSyntheticResult: mocks.appendSyntheticResult,
   createRun: mocks.createRun,
   getRun: mocks.getRun,
+  listTaskChildren: mocks.listTaskChildren,
   updateRun: mocks.updateRun,
   saveCheckpoint: mocks.saveCheckpoint,
   appendEvent: mocks.appendEvent,
@@ -190,6 +198,8 @@ mock.module("@/server/agent/jobs", () => ({
 export function resetAgentMocks(): void {
   mocks.createRun.mockClear()
   mocks.createRun.mockImplementation(async () => {})
+  mocks.listTaskChildren.mockClear()
+  mocks.listTaskChildren.mockImplementation(async () => [])
   mocks.getRun.mockClear()
   mocks.getRun.mockImplementation(async () => null)
   mocks.updateRun.mockClear()
