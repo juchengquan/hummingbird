@@ -25,7 +25,10 @@ import "client-only"
  *    `not_on_runs`, `network`): `answerInterrupts` resolves `{ ok: false,
  *    code }`; the turn, its cards and the message are untouched and the
  *    cards show the failure (answered elsewhere / expired → resend /
- *    retry).
+ *    retry). Except `run_answer_applied` (Q63: an earlier resume applied
+ *    these answers and then ended): the question is dead, so the turn and
+ *    the paused run's pointer are dropped and the message gets the
+ *    `answer_applied` bubble, whose Retry sends the turn again.
  * 3. **The resume run started** (its `RUN_STARTED`): in this order, the
  *    answered generative-UI parts (`AnswerOptions.uiParts`) are written to
  *    the message — inert, as `/api/chat`'s answered parts — the resume's

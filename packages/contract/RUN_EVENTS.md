@@ -248,15 +248,27 @@ would run twice. The rule is enforced where runs are stored
 (`tasks_one_live_resume`, migration 0042; the memory store applies the
 same rule), so two concurrent requests to different processes cannot
 both start; the same write re-checks that the interrupted run still
-waits (a cancel that came first is `409 invalid_state`). An
-**interactive** resume that failed or was cancelled frees the slot: the
-interrupts can be answered again with a new `runId`. A **background**
-one frees it only if it never applied the answers (Q57): applying is
-recorded before any side effect (`tasks.answers_applied_at`, migration
-0045), a doubtful crash counts as applied, and an applied answer is `409
-run_already_resumed` from then on — the task has failed, "run again" is
-a new task. A retry of the resume itself (same `runId`) is the usual
-idempotent replay.
+waits (a cancel that came first is `409 invalid_state`).
+
+**Answered once (Q57, Q63).** A resume that failed or was cancelled
+frees the slot only if it never applied the answers. Applying is
+recorded before any side effect — before an approved tool runs or the
+model sees an answer, after every check that can refuse the answers
+(`tasks.answers_applied_at`: migration 0045 for background runs, 0046
+for interactive ones; the memory store keeps the same stamp) — and a
+doubtful crash counts as applied. So:
+
+| the resume that answered | a new answer to the same interrupts |
+|---|---|
+| live, interrupted again or succeeded | `409 run_already_resumed` |
+| failed / cancelled before applying (no model, unknown model, a Stop that came first) | accepted (a new `runId`) |
+| **interactive**, failed / cancelled / reaped after applying | `409 run_answer_applied` — the interrupted run stays `interrupted` (Q64); the client drops the question and the turn is sent again as a new message |
+| **background**, failed / cancelled after applying | `409 run_already_resumed` — the task has failed, "run again" is a new task |
+
+Deleting an interactive resume that applied its answers fails the run it
+answered (`invalid_state`) rather than reopening the question, as
+deleting a background one does (0045). A retry of the resume itself
+(same `runId`) is the usual idempotent replay.
 
 **Background runs (Q41).** A resume of a background run is a background
 run (`forwardedProps.mode: "background"`); it answers a top-level

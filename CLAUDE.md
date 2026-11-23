@@ -179,7 +179,7 @@ SQL lives under `supabase/migrations/` as numbered files applied in order (`0001
 `0039_mcp_upsert_foreign_id.sql`, `0040_task_worker_liveness.sql`,
 `0041_runs_on_tasks.sql`, `0042_one_live_resume.sql`,
 `0043_answer_once.sql`, `0044_message_turn_persona.sql`,
-`0045_background_tasks_correct.sql`) — see `docs/SUPABASE_SETUP.md`
+`0045_background_tasks_correct.sql`, `0046_chat_answer_once.sql`) — see `docs/SUPABASE_SETUP.md`
 for the hosted-cloud run order, or `docs/SUPABASE_LOCAL.md` for the
 local Supabase CLI path (Docker-based, no cloud account needed). For
 verifying the file full-text retrieval pipeline end-to-end after
@@ -224,7 +224,11 @@ question a queued / running `respond` job holds (`409
 run_already_answered`), `enqueue_task_job` refuses a `respond` to a
 question a resume holds or the task doesn't wait on, and a background
 resume that set `answers_applied_at` (written before any side effect)
-holds it forever. **Background invariants (0045):** terminal is final (a
+holds it forever. So does an interactive (chat) one (0046, Q63): agent-py
+stamps it before its answers take effect, under the user's task lock, and
+`create_run` answers a later resume 23505 constraint
+`tasks_answer_applied` → `409 run_answer_applied` once it has ended (the
+paused run stays `interrupted`, Q64). **Background invariants (0045):** terminal is final (a
 trigger); cancel = `cancel_task` = the whole task, a child is only
 skipped (Q60); the sub-agent barrier is the `tasks_ended` /
 `tasks_deleted` triggers, never a worker's decrement; every multi-row

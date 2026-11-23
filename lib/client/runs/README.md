@@ -117,7 +117,9 @@ interrupted), on a 404, or after an hour.
 
 Error codes worth handling: `409 run_id_conflict` (never expected: run ids
 are fresh UUIDv4s), `409 run_already_resumed` (someone answered first —
-refresh with `status`), `409 invalid_state` (stale interrupts), `429
+refresh with `status`), `409 run_answer_applied` (an earlier resume applied
+these answers and ended: the question is dead, send the turn again — Q63),
+`409 invalid_state` (stale interrupts), `429
 rate_limit`, `401 auth_required`, `400 invalid_attachment` (an attachment
 the backend can't give the model), `400 unknown_model` (only `anthropic/*`
 models with an `anthropicModelId` are allowed, as on `/v1/chat`), `404`
@@ -184,7 +186,10 @@ bridge's `answerInterrupts` resolves `{ ok: false, error, code }` only
 when the resume run never started (`run_already_resumed`,
 `invalid_state`, `invalid_answers` — an unanswered / expired interrupt
 caught before sending —, `busy`, `not_found`, `not_on_runs`, `network`);
-the message and the paused turn are then untouched. Once the resume run
+the message and the paused turn are then untouched — except for
+`run_answer_applied` (Q63), where the turn and the paused run's pointer
+are dropped and the message gets the `answer_applied` bubble, whose Retry
+sends the turn again. Once the resume run
 started — the answered generative-UI parts written, the base saved, the
 turn cleared, in that order — its outcome is handled like a send's (an
 error is the message's bubble) and it resolves `{ ok: true }`. A reset of a resume
@@ -296,6 +301,8 @@ run (a rejoin after a reload) restores the paused run's output first
 - Typing a new message while interrupted (Q35): `apiClient.runs.cancel(
   previousRunId, { target })`, `clearActiveRun`, then send normally.
 - `409 run_already_resumed` → another tab answered: re-read `status`.
+- `409 run_answer_applied` → an earlier answer was acted on and its run
+  ended (Q63): drop the turn + pointer, bubble on the message.
 
 ### Built (4b-B)
 
@@ -319,6 +326,8 @@ run (a rejoin after a reload) restores the paused run's output first
   run is re-read and a run that moved on / 404 loses card + pointer;
   `invalid_state` → "expired" + **Resend message** (= the error bubble's
   retry: delete the paused message and resend the history before it);
+  `run_answer_applied` → the runner drops the turn (the cards go) and the
+  message shows "This answer was already acted on" with Retry (Q63);
   others → inline error + Retry. An interrupt past `expiresAt` (or of an
   unknown reason) can only be dismissed (`{ cancelled: true }`). No bridge
   → disabled with a hint, sent once it registers.
