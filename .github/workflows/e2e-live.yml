@@ -1,0 +1,115 @@
+# The real-stack tests (e2e-live/README.md, Q82 of
+# docs/PLAN-frontend-backend-split.md): Supabase's Postgres, GoTrue and
+# PostgREST, agent-py with its worker, a production Next build, a scripted
+# model. On PRs that touch tasks or runs, nightly, and by hand. Not a
+# required check yet: required after two green weeks (Q82).
+
+name: e2e-live
+
+on:
+  pull_request:
+    paths:
+      - "app/api/tasks/**"
+      - "components/agent/**"
+      - "components/sidebars/tasks.tsx"
+      - "components/panels/chat*.tsx"
+      - "components/panels/project-tasks-panel.tsx"
+      - "components/panels/schedule-section.tsx"
+      - "lib/client/agent/**"
+      - "lib/client/runs/**"
+      - "lib/client/sync/**"
+      - "lib/client/hooks/use-task-run.ts"
+      - "lib/client/hooks/use-chat-send.ts"
+      - "lib/client/hooks/use-reconcile.ts"
+      - "lib/server/agent/**"
+      - "lib/shared/agent/**"
+      - "lib/shared/runs/**"
+      - "services/agent-py/**"
+      - "supabase/migrations/**"
+      - "packages/contract/**"
+      - "e2e-live/**"
+      - ".github/workflows/e2e-live.yml"
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-live-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Cache bun install
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            node_modules
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.5.4"
+          enable-cache: true
+
+      - name: Install bun deps
+        run: bun install --frozen-lockfile
+
+      - name: Sync agent-py deps
+        working-directory: services/agent-py
+        run: uv sync --frozen
+
+      - name: Pull the Supabase images
+        run: |
+          for image in postgres:17.12.0.000 gotrue:v2.198.0 postgrest:v16.5; do
+            docker pull --quiet "public.ecr.aws/supabase/$image" &
+          done
+          wait
+
+      - name: Playwright version
+        id: playwright
+        run: echo "version=$(jq -r '.devDependencies["@playwright/test"]' package.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium-shell
+
+      - name: Install Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: bunx playwright install --with-deps --only-shell chromium
+
+      - name: Install Chromium system deps (cached browser)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: bunx playwright install-deps chromium
+
+      - name: Real-stack tests
+        run: bun run test:e2e:live
+
+      - name: Upload logs, report and traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-live
+          path: |
+            test-results/live/
+            test-results/live-e2e/
+            playwright-report/live/
+          retention-days: 7
