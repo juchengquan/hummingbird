@@ -41,6 +41,7 @@ import "client-only"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useSyncEnabled } from "@/client/hooks/use-sync-enabled"
 import { getDefaultConversations } from "@/client/hooks/store/slices/conversations"
+import { ensureSyncableIds } from "@/client/sync/syncable-ids"
 import { getDefaultWorkspaces } from "@/client/hooks/store/slices/workspaces"
 import {
   getSupabaseBrowserClient,
@@ -185,6 +186,10 @@ export function useReconcile(): ReconcileState {
     }
 
     let cancelled = false
+    // First-run scaffolding ids ("default", "demo-1") aren't uuids and the
+    // cloud refuses them: give every row one before anything is read for
+    // an upload or merged with the cloud.
+    ensureSyncableIds()
 
     // ---- already-reconciled user: silent pull, skip the prompt --------
     if (hasReconciled(userId)) {
@@ -286,6 +291,8 @@ export function useReconcile(): ReconcileState {
         setLocalFromOtherAccount(false)
       }
       const uploadLocal = async () => {
+        // The "discard local" path below starts from the scaffolding again.
+        ensureSyncableIds()
         const result = await bulkUploadLocalState(
           client,
           userId,
