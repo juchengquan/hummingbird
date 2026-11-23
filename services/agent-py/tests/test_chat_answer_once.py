@@ -627,3 +627,48 @@ async def test_the_stamp_waits_for_a_resume_being_created(world: ChatWorld) -> N
         assert not stamp.done(), "the stamp did not wait for the user's task lock"
         await tx.commit()
     assert await asyncio.wait_for(stamp, timeout=5) is True
+
+
+# --- the stub harness (conformance, e2e) ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("steering", "applied", "status"),
+    [
+        ({}, True, "succeeded"),
+        ({"outcome": "fail"}, True, "failed"),
+        ({"outcome": "fail", "failBeforeApplying": True}, False, "failed"),
+    ],
+)
+async def test_the_stub_applies_a_resume_unless_told_to_fail_before(
+    steering: dict[str, Any], applied: bool, status: str
+) -> None:
+    from agent_py.emitter import RunEmitter
+    from agent_py.runs.harness import ResumeAnswer
+    from agent_py.runs.model import Failed, Succeeded
+    from agent_py.runs.stub_harness import StubHarness
+
+    calls: list[str] = []
+
+    async def apply_answers() -> bool:
+        calls.append("applied")
+        return True
+
+    async def sink(_event: Any) -> None:
+        return None
+
+    run_input = RunInput(
+        run_id="r2",
+        thread_id="t",
+        mode="interactive",
+        user_id=None,
+        messages=(),
+        options={"conformance": steering},
+        resume=(ResumeAnswer("r1:approve", "resolved", {"approved": True}),),
+        previous_run_id="r1",
+        apply_answers=apply_answers,
+    )
+    result = await StubHarness().run(run_input, RunEmitter(run_id="r2", sink=sink), asyncio.Event())
+    assert calls == (["applied"] if applied else [])
+    expected = Succeeded if status == "succeeded" else Failed
+    assert isinstance(result.outcome, expected)

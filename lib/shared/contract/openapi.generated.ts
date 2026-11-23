@@ -283,11 +283,14 @@ export interface paths {
          *     interrupted run has at most one live resume: while another run
          *     answering it is running, interrupted or succeeded, a new one is
          *     `409 run_already_resumed` (an idempotent retry of that resume,
-         *     same `runId`, still replays it). An interactive resume that
-         *     failed or was cancelled frees the interrupts: answer again with a
-         *     new `runId`. A background one frees them only if it never applied
-         *     the answers (Q57): once it has, a tool may have run, so the
-         *     answer stays `409 run_already_resumed` and the task is over. A
+         *     same `runId`, still replays it). A resume that failed or was
+         *     cancelled frees the interrupts only if it never applied the
+         *     answers (Q57, Q63): once it has, a tool may have run. An
+         *     interactive one then answers `409 run_answer_applied` — the
+         *     interrupted run stays `interrupted` (Q64), and the turn is sent
+         *     again as a new message; a background one `409
+         *     run_already_resumed`, and the task is over. A resume that ended
+         *     before applying frees them: answer again with a new `runId`. A
          *     background resume (Q41) starts from the paused run's saved state
          *     plus the answers (`RUN_EVENTS.md` § 4.2); a question being
          *     answered through the old task respond route is `409
@@ -653,8 +656,9 @@ export interface components {
          *     `unavailable`, `rate_limit`, `context_window`, `invalid_model`,
          *     `unknown_model`, `provider`, `aborted`, `unknown`. See
          *     `lib/shared/api-errors.ts`. The runs operations add
-         *     `run_id_conflict`, `run_already_resumed`, `run_already_answered`
-         *     and `invalid_attachment`, and use `invalid_state`.
+         *     `run_id_conflict`, `run_already_resumed`, `run_already_answered`,
+         *     `run_answer_applied` and `invalid_attachment`, and use
+         *     `invalid_state`.
          */
         ApiError: {
             /**
@@ -2900,6 +2904,11 @@ export interface operations {
              *     previous run's interrupts: it has not failed or been
              *     cancelled, or it is a background run that had applied the
              *     answers (Q57), so an approved tool never runs twice;
+             *     `run_answer_applied` — an interactive run that answered the
+             *     previous run's interrupts applied the answers (an approved
+             *     tool may have run) and then failed or was cancelled (Q63):
+             *     they can't be answered again, send the turn again as a new
+             *     message instead;
              *     `run_already_answered` — the question of a background run is
              *     being answered through the old task respond route (each
              *     question is answered once, Q58);

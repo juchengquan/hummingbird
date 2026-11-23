@@ -8,8 +8,10 @@
  * (`CONTRACT_RUNS_STUB=1`; agent-py: `RUNS_STUB_HARNESS=true`). The stub
  * is steered per run through `forwardedProps.conformance`:
  * `{ outcome?: "succeed" | "fail" | "interrupt", steps?: 1..20,
- *    stepDelayMs?: 0..10000 }` — an interrupted stub run raises one
- * `approval` interrupt; a run answering it succeeds.
+ *    stepDelayMs?: 0..10000, failBeforeApplying?: boolean }` — an
+ * interrupted stub run raises one `approval` interrupt; a run answering
+ * it succeeds, or with `outcome: "fail"` fails after applying the answers
+ * (with `failBeforeApplying`, before).
  *
  * Signed-in cases need `CONTRACT_AUTH_TOKEN`; cross-user cases also
  * `CONTRACT_AUTH_TOKEN_2`; the background 202 case `CONTRACT_THREAD_ID`
@@ -41,7 +43,12 @@ interface RunBodyOptions {
   runId?: string
   threadId?: string
   mode?: "interactive" | "background"
-  conformance?: { outcome?: "succeed" | "fail" | "interrupt"; steps?: number; stepDelayMs?: number }
+  conformance?: {
+    outcome?: "succeed" | "fail" | "interrupt"
+    steps?: number
+    stepDelayMs?: number
+    failBeforeApplying?: boolean
+  }
   resume?: Json[]
   previousRunId?: string
   model?: string
@@ -711,7 +718,7 @@ describe.skipIf(!env.baseUrl)(`conformance: runs @ ${env.baseUrl}`, () => {
     )
 
     test(
-      "one live resume per interrupted run: a second → 409 run_already_resumed; a failed one frees the slot",
+      "one live resume per interrupted run: a second → 409 run_already_resumed; one that failed before applying frees the slot",
       async () => {
         const threadId = randomUUID()
         const first = await startInteractive({ threadId, conformance: { outcome: "interrupt" } })
@@ -722,8 +729,9 @@ describe.skipIf(!env.baseUrl)(`conformance: runs @ ${env.baseUrl}`, () => {
         const resume = (extra: RunBodyOptions = {}) =>
           startInteractive({ threadId, runToken: token, previousRunId: first.runId, resume: answers, ...extra })
 
-        // A resume that fails does not count: the interrupts can be answered again.
-        const failed = await resume({ conformance: { outcome: "fail" } })
+        // A resume that fails before applying the answers does not count:
+        // the interrupts can be answered again.
+        const failed = await resume({ conformance: { outcome: "fail", failBeforeApplying: true } })
         expect(assertRunStream(failed.ex, failed).events.at(-1)).toMatchObject({ type: "RUN_ERROR" })
         expect((await getRun(failed.runId, { runToken: token })).status).toBe("failed")
 
@@ -747,6 +755,44 @@ describe.skipIf(!env.baseUrl)(`conformance: runs @ ${env.baseUrl}`, () => {
         const retry = await callSse(op("startRun"), { body: answer.body, headers: { "x-run-token": token } })
         expect(retry.status).toBe(200)
         expect(retry.text).toBe(answer.ex.text)
+      },
+      TIMEOUT,
+    )
+
+    test(
+      "a resume that failed after applying the answers → 409 run_answer_applied; the run stays interrupted (Q63, Q64)",
+      async () => {
+        const threadId = randomUUID()
+        const first = await startInteractive({ threadId, conformance: { outcome: "interrupt" } })
+        const closing = assertRunStream(first.ex, first).events.at(-1) as Json
+        const interrupts = (closing.outcome as { interrupts: Json[] }).interrupts
+        const token = first.ex.headers.get("x-run-token")!
+        const answers = interrupts.map((i) => ({ interruptId: i.id, status: "resolved", payload: { approved: true } }))
+
+        // The stub applies the answers, then fails (a model error after the tool ran).
+        const failed = await startInteractive({
+          threadId,
+          runToken: token,
+          previousRunId: first.runId,
+          resume: answers,
+          conformance: { outcome: "fail" },
+        })
+        expect(assertRunStream(failed.ex, failed).events.at(-1)).toMatchObject({ type: "RUN_ERROR" })
+        expect((await getRun(failed.runId, { runToken: token })).status).toBe("failed")
+
+        const again = runBody({ threadId, previousRunId: first.runId, resume: answers })
+        const second = await call(op("startRun"), { headers: { "x-run-token": token }, body: again })
+        expect(second.status).toBe(409)
+        contract.assertConforms("startRun", second)
+        expect(code(second)).toBe("run_answer_applied")
+        const missing = await call(op("getRun"), {
+          headers: { "x-run-token": token },
+          pathParams: { runId: again.runId as string },
+        })
+        expect(missing.status).toBe(404)
+        const paused = await getRun(first.runId, { runToken: token })
+        expect(paused.status).toBe("interrupted")
+        expect((paused.openInterrupts as Json[]).map((i) => i.id)).toEqual(interrupts.map((i) => i.id))
       },
       TIMEOUT,
     )
