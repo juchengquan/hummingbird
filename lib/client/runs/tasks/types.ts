@@ -127,6 +127,10 @@ export interface TaskSummary {
   delivered: boolean
   /** A succeeded task's result (the whole answer across its runs, Q78). */
   result: RunResult | null
+  /** A succeeded task that stopped at its step limit and delivered what it
+   *  had (Q81, `RunResult.stoppedAt`): show the "stopped at the step
+   *  limit" note. Null otherwise. */
+  stoppedAt: "max_steps" | null
   /** A failed task's error. */
   error: TaskError | null
   /** A resume that failed or was cancelled before applying its answer
