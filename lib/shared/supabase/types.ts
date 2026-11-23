@@ -1109,6 +1109,7 @@ export type Database = {
         Row: {
           answered_question_ids: string[] | null
           answers_applied_at: string | null
+          awaiting_children: boolean | null
           checkpoint: Json | null
           conversation_id: string | null
           created_at: string
@@ -1137,6 +1138,7 @@ export type Database = {
         Insert: {
           answered_question_ids?: string[] | null
           answers_applied_at?: string | null
+          awaiting_children?: never
           checkpoint?: Json | null
           conversation_id?: string | null
           created_at?: string
@@ -1165,6 +1167,7 @@ export type Database = {
         Update: {
           answered_question_ids?: string[] | null
           answers_applied_at?: string | null
+          awaiting_children?: never
           checkpoint?: Json | null
           conversation_id?: string | null
           created_at?: string
@@ -1530,9 +1533,28 @@ export type Database = {
         }
         Returns: string
       }
+      task_current_run_id_by: {
+        Args: {
+          p_id: string
+          p_parent_task_id: string
+          p_root_run_id: string
+          p_user_id: string
+        }
+        Returns: string
+      }
       task_run_is_current: {
         Args: {
           t: Database["public"]["Tables"]["tasks"]["Row"]
+        }
+        Returns: boolean
+      }
+      task_run_is_current_by: {
+        Args: {
+          p_answers_applied_at: string
+          p_id: string
+          p_previous_run_id: string
+          p_status: string
+          p_user_id: string
         }
         Returns: boolean
       }
