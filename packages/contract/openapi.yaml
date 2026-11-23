@@ -1050,7 +1050,6 @@ paths:
       - $ref: "#/components/parameters/RunId"
     post:
       operationId: answerRun
-      x-planned: wave-6
       tags: [runs]
       summary: Answer a sub-agent run's question in place
       description: |
@@ -1127,7 +1126,6 @@ paths:
       - $ref: "#/components/parameters/RunId"
     post:
       operationId: markRunDelivered
-      x-planned: wave-6
       tags: [runs]
       summary: Mark a finished task's result delivered
       description: |

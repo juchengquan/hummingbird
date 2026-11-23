@@ -1,7 +1,8 @@
 """The wave-6 seam (contract 0.5.0) without a database: the `Run` task
 fields with their defaults, the in-place answer's job payload, the
-`listRuns` task filters and the two planned operations, which answer
-`501 not_implemented` until wave 6-A implements them."""
+`listRuns` task filters and the two operations wave 6-A implemented
+(`answerRun`, `markRunDelivered`) on the in-memory store. Their Postgres
+behaviour: `test_runs_tasks_pg.py`."""
 
 from __future__ import annotations
 
@@ -192,13 +193,15 @@ def _interrupted() -> Interrupted:
     return Interrupted((PendingInterrupt(id="q", request_kind="input"),))
 
 
-def test_the_planned_operations_answer_501(client: TestClient) -> None:
+def test_the_operations_need_a_signed_in_caller_and_a_run(client: TestClient) -> None:
+    # (Until wave 6-A these answered 501 not_implemented.)
     run = "00000000-0000-4000-8000-0000000000cc"
     body = {"resume": [{"interruptId": "q", "status": "cancelled"}]}
     answered = client.post(f"/v1/runs/{run}/answers", json=body, headers=_auth())
-    assert answered.status_code == 501 and answered.json()["code"] == "not_implemented"
+    assert answered.status_code == 404 and answered.json()["code"] == "not_found"
     delivered = client.post(f"/v1/runs/{run}/delivered", headers=_auth())
-    assert delivered.status_code == 501 and delivered.json()["code"] == "not_implemented"
+    assert delivered.status_code == 404 and delivered.json()["code"] == "not_found"
+    assert client.post("/v1/runs/not-a-uuid/delivered", headers=_auth()).status_code == 404
     # Signed-in callers only.
     assert client.post(f"/v1/runs/{run}/answers", json=body).status_code == 401
     assert client.post(f"/v1/runs/{run}/delivered").status_code == 401
@@ -213,7 +216,58 @@ def test_the_planned_operations_answer_501(client: TestClient) -> None:
     "query",
     ["topLevel=true", "current=false", f"rootRunId={THREAD}", "delivered=false"],
 )
-def test_list_task_filters_answer_501_until_implemented(client: TestClient, query: str) -> None:
+def test_list_task_filters_are_served(client: TestClient, query: str) -> None:
+    # (Until wave 6-A these answered 501 not_implemented.)
     listed = client.get(f"/v1/runs?mode=background&{query}", headers=_auth())
-    assert listed.status_code == 501, listed.text
-    assert client.get("/v1/runs?mode=background", headers=_auth()).status_code == 200
+    assert listed.status_code == 200, listed.text
+    assert listed.json() == {"runs": [], "nextPageToken": None}
+
+
+async def test_the_memory_store_serves_the_task_fields_and_filters() -> None:
+    repo = InMemoryRunRepository(conversations={USER: {THREAD}})
+    owner = RunOwner.user(USER)
+
+    async def start(previous: str | None = None) -> str:
+        made = await repo.create(
+            owner,
+            RunSpec(
+                run_id=str(uuid.uuid4()),
+                thread_id=THREAD,
+                mode="background",
+                goal="g",
+                previous_run_id=previous,
+                max_steps=3,
+                checkpoint={"messages": [], "config": {}},
+            ),
+        )
+        return made.run.id
+
+    first = await start()
+    await repo.settle(first, _interrupted())
+    resume = await start(first)
+    paused = await repo.get(owner, first)
+    assert paused is not None and paused.current_run_id == resume
+
+    async def listed(**kw: Any) -> set[str]:
+        page = await repo.list_runs(owner, RunFilter(**kw))
+        return {r.id for r in page.runs}
+
+    assert await listed(current=True) == {resume}
+    assert await listed(current=False) == {first}
+    assert await listed(root_run_id=first) == {first, resume}
+    assert await listed(top_level=False) == set()
+
+    from agent_py.runs.model import Succeeded
+    from agent_py.runs.repository import RunNotDeliverable
+
+    with pytest.raises(RunNotDeliverable):
+        await repo.mark_delivered(owner, first)  # its task has not ended
+    await repo.mark_running(resume)
+    await repo.settle(resume, Succeeded())
+    with pytest.raises(RunNotDeliverable):
+        await repo.mark_delivered(owner, resume)  # not the root
+    marked = await repo.mark_delivered(owner, first)
+    assert marked is not None and marked.delivered
+    assert (await repo.get(owner, resume)).delivered  # type: ignore[union-attr]
+    assert await listed(delivered=False) == set()
+    assert await repo.mark_delivered(RunOwner.user(str(uuid.uuid4())), first) is None

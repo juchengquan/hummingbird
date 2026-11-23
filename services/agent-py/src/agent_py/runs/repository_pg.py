@@ -21,14 +21,27 @@ orphan and holds no resume slot. `cancel` is the `cancel_task` RPC
 (0045), the one the Next route calls: for a background run the whole
 task (Q60), an interactive run alone.
 
-**Rows written before 0041** (no `outcome`): a `done` / `failed` /
-`paused` row's result, error and open interrupts are rebuilt from its
-log (`result` and `approval` entries) per RUN_EVENTS.md §§ 1 and 5: a
+**Rows without an `outcome`** (written before 0041, or a background
+settle before the worker wrote one): a `done` / `failed` row's result
+and error, and the open interrupts of a `paused` row that is not waiting
+on its sub-agents, are rebuilt from its log (`result` and `approval`
+entries) per RUN_EVENTS.md §§ 1 and 5 — one query for a whole page: a
 paused one waits on its newest unanswered request only, which
-supersedes any a dead attempt left (`private.task_waits_on`, the same rule). The
-`status` filter of `list_runs` approximates that rebuild in SQL: a
-pre-0041 `paused` row that is not waiting on sub-agents
-(`checkpoint.awaiting_children`) counts as `interrupted`.
+supersedes any a dead attempt left (`private.task_waits_on`, the same
+rule). A row with an `outcome`, and a parent waiting on its sub-agents,
+never read their log. The `status` filter of `list_runs` approximates
+that rebuild in SQL: a `paused` row without an outcome that is not
+waiting on sub-agents counts as `interrupted`.
+
+**Reading is cheap** (wave 6, survey bugs 8, 9; Q66): one statement per
+row read or list page — `_RUN_COLUMNS` carries the task fields (0047's current run,
+the root's delivery mark,
+the children asking, a pending `respond` job) and the log's last `seq`,
+each an index lookup; "waiting on sub-agents" is 0048's
+`tasks.awaiting_children`, never `checkpoint ? …`, and "current" is
+0048's `task_run_is_current_by` / `task_current_run_id_by` over columns,
+never 0047's row-typed functions: either would fetch the whole TOASTed
+checkpoint.
 """
 
 from __future__ import annotations
@@ -45,6 +58,7 @@ import structlog
 
 from .. import events, store
 from ..events import ApprovalEvent, ResultEvent
+from .in_place import answer_problem, respond_job_payload
 from .model import (
     ContractStatus,
     Failed,
@@ -60,6 +74,7 @@ from .model import (
 )
 from .repository import (
     DEFAULT_LEASE_SECONDS,
+    AnswerInvalid,
     CreateResult,
     InvalidPageToken,
     PreviousRunAlreadyAnswered,
@@ -67,8 +82,11 @@ from .repository import (
     PreviousRunAnswerApplied,
     PreviousRunNotFound,
     PreviousRunNotWaiting,
+    QuestionAlreadyAnswered,
     RunFilter,
     RunIdConflict,
+    RunNotAnswerable,
+    RunNotDeliverable,
     RunPage,
     RunSpec,
     ThreadNotFound,
@@ -76,7 +94,7 @@ from .repository import (
     _encode_token,
 )
 
-__all__ = ["PgRunRepository", "RunWriteError"]
+__all__ = ["JOB_QUEUE_FULL_MESSAGE", "TASK_CAP_MESSAGE", "PgRunRepository", "RunWriteError"]
 
 logger = structlog.get_logger(__name__)
 
@@ -84,6 +102,16 @@ _ACQUIRE_TIMEOUT_S = 10.0
 
 WORKER_LOST_MESSAGE = "The run's process stopped unexpectedly."
 NO_WORKER_MESSAGE = "No task worker available."
+
+TASK_CAP_MESSAGE = "5 tasks are already active. Finish or cancel one, then start this one again."
+"""`startRun`'s `409 limit_reached` at the task cap (Q72, Q79: 0047's
+`create_run` raises 54000)."""
+
+JOB_QUEUE_FULL_MESSAGE = (
+    "Too many queued jobs (20 per user). Wait for some to start, then try again."
+)
+"""`409 limit_reached` when `enqueue_task_job` refuses a job past 20
+queued for the user (54000, 0034)."""
 
 
 class RunWriteError(Exception):
@@ -107,13 +135,50 @@ _SQLSTATE_RESPONSES: dict[str, tuple[int, str]] = {
     "54000": (409, "limit_reached"),
 }
 
-_RUN_COLUMNS = """
+# A paused child asking a question (RUN_EVENTS.md § 1), as `c`.
+_CHILD_ASKS_SQL = (
+    "c.status = 'paused' AND (COALESCE(c.outcome->>'type' = 'interrupt', false) "
+    "OR (c.outcome IS NULL AND NOT c.awaiting_children))"
+)
+
+# 0047's "current run" by columns (0048): passing the row `t` to
+# `task_run_is_current(t)` would make Postgres fetch its checkpoint.
+_IS_CURRENT_SQL = (
+    "public.task_run_is_current_by(t.id, t.user_id, t.previous_run_id, t.status, "
+    "t.answers_applied_at)"
+)
+_CURRENT_RUN_ID_SQL = (
+    "public.task_current_run_id_by(t.id, t.user_id, t.parent_task_id, t.root_run_id)"
+)
+
+# The task's root carries the delivery mark (0047, Q77).
+_DELIVERED_SQL = (
+    "EXISTS (SELECT 1 FROM public.tasks r WHERE r.id = COALESCE(t.root_run_id, t.id) "
+    "AND r.user_id = t.user_id AND r.result_delivered_at IS NOT NULL)"
+)
+
+# Every column a run read needs, in one statement (no checkpoint, no
+# per-row query). `awaiting_children` is 0048's generated column. The last
+# seq is `ORDER BY … LIMIT 1`, not `MAX`: under RLS the planner may answer
+# a correlated `MAX` by reading every entry of the task.
+_RUN_COLUMNS = f"""
   t.id, t.user_id, t.thread_id, t.mode, t.status, t.created_at, t.updated_at,
   t.started_at, t.finished_at, t.parent_task_id, t.previous_run_id, t.goal,
   t.max_steps, t.step,
   t.outcome::text AS outcome, t.lease_expires_at,
-  COALESCE(t.checkpoint ? 'awaiting_children', false) AS awaiting_children,
-  t.root_run_id, t.research
+  t.awaiting_children,
+  t.root_run_id, t.research,
+  CASE WHEN {_IS_CURRENT_SQL} THEN NULL ELSE {_CURRENT_RUN_ID_SQL} END AS current_run_id,
+  {_DELIVERED_SQL} AS delivered,
+  (SELECT count(*) FROM public.tasks c
+    WHERE c.parent_task_id = t.id AND c.user_id = t.user_id
+      AND {_CHILD_ASKS_SQL})::integer AS children_asking,
+  (t.status = 'paused' AND EXISTS (
+    SELECT 1 FROM public.task_jobs j
+     WHERE j.task_id = t.id AND j.action = 'respond'
+       AND j.status IN ('queued', 'running'))) AS answer_pending,
+  COALESCE((SELECT e.seq FROM public.task_events e
+             WHERE e.task_id = t.id ORDER BY e.seq DESC LIMIT 1), 0) AS last_seq
 """
 
 _LIVE = ("queued", "running")
@@ -126,9 +191,11 @@ _ANSWER_APPLIED = "tasks_answer_applied"
 applied its answers and then ended."""
 
 # A row the contract calls `interrupted` (RUN_EVENTS.md § 1), in SQL.
+# NULL-safe: a paused row with no outcome must read false, not NULL, for
+# `NOT` (the `running` filter) to list a parent waiting on sub-agents.
 _INTERRUPTED_SQL = (
-    "(t.status = 'paused' AND (t.outcome->>'type' = 'interrupt' "
-    "OR (t.outcome IS NULL AND NOT COALESCE(t.checkpoint ? 'awaiting_children', false))))"
+    "(t.status = 'paused' AND (COALESCE(t.outcome->>'type' = 'interrupt', false) "
+    "OR (t.outcome IS NULL AND NOT t.awaiting_children)))"
 )
 _STATUS_SQL: dict[ContractStatus, str] = {
     "queued": "t.status = 'queued'",
@@ -158,12 +225,16 @@ def _sqlstate(exc: BaseException) -> str | None:
     return state if isinstance(state, str) else None
 
 
-def _raise_write_error(exc: asyncpg.PostgresError) -> NoReturn:
+def _raise_write_error(exc: asyncpg.PostgresError, *, limit_message: str | None = None) -> NoReturn:
+    """Map a deliberate refusal; `limit_message` replaces the database's
+    text for 54000 (which cap it was depends on the call)."""
     state = _sqlstate(exc)
     mapped = _SQLSTATE_RESPONSES.get(state or "")
     if mapped is None:
         raise exc
     message = str(getattr(exc, "message", "") or exc) or "Request rejected."
+    if state == "54000" and limit_message is not None:
+        message = limit_message
     raise RunWriteError(state, mapped[0], mapped[1], message) from None
 
 
@@ -233,7 +304,11 @@ class PgRunRepository:
         needs_log = [
             r["id"]
             for r in rows
-            if r["outcome"] is None and r["status"] in ("done", "failed", "paused")
+            if r["outcome"] is None
+            and (
+                r["status"] in ("done", "failed")
+                or (r["status"] == "paused" and not r["awaiting_children"])
+            )
         ]
         fallbacks: dict[str, _LogFallback] = {}
         if needs_log:
@@ -312,7 +387,7 @@ class PgRunRepository:
             if state == "54000":
                 # 0047 (Q79): a sixth active task — `409 limit_reached`,
                 # nothing created.
-                _raise_write_error(exc)
+                _raise_write_error(exc, limit_message=TASK_CAP_MESSAGE)
             if state == "55000":
                 if "already answered" in message:
                     # 0045: a `respond` job holds one of the questions.
@@ -340,7 +415,7 @@ class PgRunRepository:
                 "SELECT public.enqueue_task_job($1, 'start', '{}'::jsonb)", _uuid(run_id)
             )
         except asyncpg.PostgresError as exc:
-            _raise_write_error(exc)
+            _raise_write_error(exc, limit_message=JOB_QUEUE_FULL_MESSAGE)
 
     async def get(self, owner: RunOwner, run_id: str) -> RunRecord | None:
         if owner.user_id is None:
@@ -358,8 +433,6 @@ class PgRunRepository:
     ) -> RunPage:
         if not 1 <= page_size <= 100:
             raise ValueError("page_size must be between 1 and 100")
-        if filt.has_task_filters:
-            raise NotImplementedError("listRuns task filters: wave 6-A")
         after: tuple[datetime, str] | None = None
         if page_token is not None:
             created_raw, last_id = _decode_token(page_token, filt.fingerprint())
@@ -385,6 +458,15 @@ class PgRunRepository:
             where.append(f"t.mode = {param(filt.mode)}")
         if filt.statuses:
             where.append("(" + " OR ".join(_STATUS_SQL[s] for s in sorted(filt.statuses)) + ")")
+        # Task filters (0.5.0): None filters nothing, False the other set.
+        if filt.top_level is not None:
+            where.append(f"t.parent_task_id IS {'' if filt.top_level else 'NOT '}NULL")
+        if filt.current is not None:
+            where.append(f"{'' if filt.current else 'NOT '}{_IS_CURRENT_SQL}")
+        if filt.root_run_id is not None:
+            where.append(f"t.root_run_id = {param(_uuid(filt.root_run_id))}")
+        if filt.delivered is not None:
+            where.append(f"{'' if filt.delivered else 'NOT '}{_DELIVERED_SQL}")
         if after is not None:
             created_p = param(after[0])
             id_p = param(_uuid(after[1]))
@@ -418,14 +500,74 @@ class PgRunRepository:
     async def answer_in_place(
         self, owner: RunOwner, run_id: str, resume: Sequence[Mapping[str, object]]
     ) -> RunRecord | None:
-        """Wave 6-A: `enqueue_task_job(run, 'respond', in_place.respond_job_payload(e))`
-        as the user, 55000 / 54000 mapped (see the Protocol)."""
-        raise NotImplementedError("answerRun: wave 6-A")
+        """One transaction as the user: read the run, check it is a
+        sub-agent run waiting on exactly these questions with answers that
+        fit (`in_place.answer_problem`), then one `respond` job per entry
+        through `enqueue_task_job` (0045: under the user's task lock it
+        re-checks that the run waits on the question and that no answer
+        holds it, and the 20-queued-jobs cap) — all or none. Its 55000s
+        map to `QuestionAlreadyAnswered` (an answer holds the question)
+        or `RunNotAnswerable` (not waiting on it: cancelled, ended, moved
+        on), 54000 to `RunWriteError` `limit_reached`."""
+        if owner.user_id is None:
+            return None
+        try:
+            async with self._as_user(owner.user_id) as conn:
+                run = await self._load(conn, run_id, owner.user_id)
+                if run is None:
+                    return None
+                if run.parent_run_id is None:
+                    raise RunNotAnswerable(
+                        "A top-level run is answered by a new run: startRun with previousRunId."
+                    )
+                if run.status != "interrupted":
+                    raise RunNotAnswerable(f"The run is {run.status}, not waiting on a question.")
+                problem = answer_problem(run.open_interrupts, resume)
+                if problem is not None:
+                    raise AnswerInvalid(problem)
+                for entry in resume:
+                    await conn.fetchval(
+                        "SELECT public.enqueue_task_job($1, 'respond', $2::jsonb)",
+                        _uuid(run_id),
+                        json.dumps(respond_job_payload(entry)),
+                    )
+                return await self._load(conn, run_id, owner.user_id)
+        except asyncpg.PostgresError as exc:
+            state = _sqlstate(exc)
+            message = str(getattr(exc, "message", "") or exc)
+            if state == "P0002":
+                return None
+            if state == "55000":
+                if "already answered" in message:
+                    raise QuestionAlreadyAnswered() from None
+                raise RunNotAnswerable("The run is no longer waiting on that question.") from None
+            if state == "22023":
+                raise AnswerInvalid(message) from None
+            _raise_write_error(exc, limit_message=JOB_QUEUE_FULL_MESSAGE)
 
     async def mark_delivered(self, owner: RunOwner, run_id: str) -> RunRecord | None:
-        """Wave 6-A: `public.mark_task_delivered($1)` as the user (0047): P0002 →
-        None, 55000 → `RunNotDeliverable`."""
-        raise NotImplementedError("markRunDelivered: wave 6-A")
+        """`public.mark_task_delivered` as the user (0047): it checks the
+        owner on the database's own `auth.uid()`, that the run is a task's
+        root and its current run ended, and keeps the first mark.
+        P0002 → None, 55000 → `RunNotDeliverable`."""
+        if owner.user_id is None:
+            return None
+        try:
+            async with self._as_user(owner.user_id) as conn:
+                await conn.fetchval("SELECT public.mark_task_delivered($1)", _uuid(run_id))
+                return await self._load(conn, run_id, owner.user_id)
+        except asyncpg.PostgresError as exc:
+            state = _sqlstate(exc)
+            if state == "P0002":
+                return None
+            if state == "55000":
+                message = str(getattr(exc, "message", "") or exc)
+                if "not ended" in message:
+                    raise RunNotDeliverable("The task has not ended.") from None
+                raise RunNotDeliverable(
+                    "Not a task's root run: mark its rootRunId (background runs only)."
+                ) from None
+            raise
 
     async def enqueue_start(self, owner: RunOwner, run_id: str) -> None:
         """Enqueue a background run's `start` job as the user
@@ -441,7 +583,7 @@ class PgRunRepository:
                     "SELECT public.enqueue_task_job($1, 'start', '{}'::jsonb)", _uuid(run_id)
                 )
         except asyncpg.PostgresError as exc:
-            _raise_write_error(exc)
+            _raise_write_error(exc, limit_message=JOB_QUEUE_FULL_MESSAGE)
 
     # -- system --
 
@@ -614,4 +756,9 @@ def _record(row: asyncpg.Record, fallback: _LogFallback | None) -> RunRecord:
         lease_expires_at=row["lease_expires_at"],
         root_run_id=None if root is None else str(root),
         research=bool(row["research"]),
+        current_run_id=None if row["current_run_id"] is None else str(row["current_run_id"]),
+        delivered=bool(row["delivered"]),
+        children_asking=int(row["children_asking"] or 0),
+        answer_pending=bool(row["answer_pending"]),
+        last_seq=int(row["last_seq"] or 0),
     )
