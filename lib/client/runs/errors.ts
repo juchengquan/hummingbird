@@ -24,6 +24,8 @@ export type RunsErrorKind = "http" | "network" | "aborted" | "protocol"
 /** Wire codes the runs operations add to `ApiError` (`openapi.yaml`). */
 export const RUN_ID_CONFLICT = "run_id_conflict"
 export const RUN_ALREADY_RESUMED = "run_already_resumed"
+/** A resume whose question an earlier resume already applied (Q63). */
+export const RUN_ANSWER_APPLIED = "run_answer_applied"
 export const INVALID_STATE = "invalid_state"
 export const INVALID_ATTACHMENT = "invalid_attachment"
 
@@ -75,11 +77,13 @@ const ALIASES: Readonly<Record<string, MessageErrorCode>> = {
   // The model provider failed or is unreachable / unconfigured.
   upstream: "provider",
   unavailable: "provider",
+  // The question is dead: the bubble's Retry sends the turn again (Q63).
+  run_answer_applied: "answer_applied",
 }
 
 /**
  * Map a wire error code (a non-2xx `ApiError.code`, or `RUN_ERROR.code`)
- * onto a `MessageError`. Unknown codes — `run_id_conflict`,
+ * onto a `MessageError`. `run_answer_applied` is `answer_applied`. Unknown codes — `run_id_conflict`,
  * `run_already_resumed`, `invalid_state`, `not_found`, `limit_reached`,
  * `max_steps`, `worker_lost`, … — become `unknown` with the server's
  * message as `detail`. A 429 is always `rate_limit`, a bare 401 `auth`.

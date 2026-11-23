@@ -624,6 +624,32 @@ describe("interrupt → bridge → resume", () => {
     expect(h.fake.state.streaming.has(CONV)).toBe(false)
   })
 
+  test("a resume refused with 409 run_answer_applied drops the dead turn and shows why (Q63)", async () => {
+    let phase = "interrupt"
+    const { fetch } = fakeFetch(() =>
+      phase === "interrupt"
+        ? sseResponse(loadFixture("memory-interrupt-choice").body)
+        : new Response(JSON.stringify({ code: "run_answer_applied", message: "already acted on" }), {
+            status: 409,
+          }),
+    )
+    const { h } = await interrupted(fetch)
+    phase = "resume"
+    const turn = h.turns[CONV]
+    const result = await h.runner.answerInterrupts(turn, { "c-ask": { selection: ["a"] } })
+    expect(result).toMatchObject({ ok: false, code: "run_answer_applied", error: { code: "answer_applied" } })
+    // The cards can't be answered any more: the turn and the paused run's
+    // pointer are gone (a reload won't restore them either).
+    expect(h.turns[CONV]).toBeUndefined()
+    expect(activeRun.loadActiveRun(CONV, h.storage)).toBeNull()
+    // The message keeps what the paused run wrote and gets the bubble whose
+    // Retry sends the turn again.
+    const answer = h.fake.conversation.messages[1]
+    expect(answer.content).toBe("Let me ask.")
+    expect(answer.error).toEqual({ code: "answer_applied", status: 409, model: "anthropic/claude-haiku-4.5" })
+    expect(h.fake.state.streaming.has(CONV)).toBe(false)
+  })
+
   test("an unanswered interrupt is refused before anything is sent", async () => {
     const { h, calls } = await interrupted()
     const before = calls.length

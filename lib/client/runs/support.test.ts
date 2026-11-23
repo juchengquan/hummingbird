@@ -51,6 +51,7 @@ describe("errors", () => {
     expect(messageErrorFor("rate_limit")).toEqual({ code: "rate_limit" })
     expect(messageErrorFor("upstream", { detail: "x" })).toEqual({ code: "provider", detail: "x" })
     expect(messageErrorFor("unavailable", { status: 503 })).toEqual({ code: "provider", status: 503 })
+    expect(messageErrorFor("run_answer_applied", { status: 409 })).toEqual({ code: "answer_applied", status: 409 })
     expect(messageErrorFor("run_id_conflict", { status: 409 })).toEqual({ code: "unknown", status: 409 })
     expect(messageErrorFor(undefined, { status: 429 })).toEqual({ code: "rate_limit", status: 429 })
     expect(messageErrorFor(undefined, { status: 401 })).toEqual({ code: "auth", status: 401 })
