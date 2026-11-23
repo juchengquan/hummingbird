@@ -418,6 +418,69 @@ async def main():
             (a.status_code, a.text, st, await effects("ca")),
         )
 
+    async def child_answer_runs():
+        """Wave 6-A: a child answered in place through `/v1/runs` (Q59), its
+        task's fields on the way, then delivered (Q77)."""
+        t = await begin("spawn", "car")
+        kid, q = await asking_child(t)
+        parent = (await http.get(f"{PYAPI}/v1/runs/{t}", headers=api)).json()
+        check(
+            "runs child: the parent reads running with a child asking",
+            (parent.get("status"), parent.get("childrenAsking")) == ("running", 1),
+            str(parent)[:300],
+        )
+        bad = await http.post(
+            f"{PYAPI}/v1/runs/{kid}/answers",
+            headers=api,
+            json={"resume": [{"interruptId": "nope", "status": "cancelled"}]},
+        )
+        a = await http.post(
+            f"{PYAPI}/v1/runs/{kid}/answers",
+            headers=api,
+            json={
+                "resume": [{"interruptId": q, "status": "resolved", "payload": {"value": "this"}}]
+            },
+        )
+        again = await http.post(
+            f"{PYAPI}/v1/runs/{kid}/answers",
+            headers=api,
+            json={
+                "resume": [{"interruptId": q, "status": "resolved", "payload": {"value": "this"}}]
+            },
+        )
+        check(
+            "runs child: a wrong answer 400, the answer 202 pending, a second 409",
+            (bad.status_code, a.status_code, again.status_code) == (400, 202, 409)
+            and a.json().get("answerPending") is True
+            and again.json().get("code") in ("run_already_answered", "invalid_state"),
+            (bad.status_code, a.text[:200], again.text[:200]),
+        )
+        st = await wait(t, ENDED)
+        check(
+            "runs child: answered in place, parent done, the tool ran once",
+            st == "done" and await effects("car") == {"beside": 1},
+            (st, await effects("car")),
+        )
+        d1 = await http.post(f"{PYAPI}/v1/runs/{t}/delivered", headers=api)
+        d2 = await http.post(f"{PYAPI}/v1/runs/{t}/delivered", headers=api)
+        undelivered = await http.get(
+            f"{PYAPI}/v1/runs",
+            headers=api,
+            params={
+                "mode": "background",
+                "topLevel": "true",
+                "current": "true",
+                "delivered": "false",
+            },
+        )
+        check(
+            "runs deliver: 200 twice, no longer listed undelivered",
+            (d1.status_code, d2.status_code) == (200, 200)
+            and d1.json().get("delivered") is True
+            and t not in {r["id"] for r in undelivered.json().get("runs", [])},
+            (d1.text[:200], undelivered.text[:200]),
+        )
+
     async def child_skip():
         for via in ("next", "runs"):
             t = await begin("spawn", "cs" + via)
@@ -499,6 +562,7 @@ async def main():
         running_cancel,
         cancel_chain,
         child_answer,
+        child_answer_runs,
         child_skip,
         parent_cancel,
         respawn,
