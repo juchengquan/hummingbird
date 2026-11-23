@@ -6,8 +6,10 @@ import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { TaskStrip } from "@/components/agent/task-strip"
+import { TaskList } from "@/components/agent/tasks/task-list"
 import { useStore } from "@/client/hooks/use-store"
 import { useTaskRunContext } from "@/client/agent/task-run-context"
+import { useTasks } from "@/client/runs/tasks/context"
 import { cn } from "@/shared/utils"
 
 // Match the resources rail's content width so the chat column reflows
@@ -21,13 +23,14 @@ const CONTENT_WIDTH_CLASS = "w-[272px]"
  * text, questions, Cancel. Collapses to zero width when closed; reopened from the
  * inline pointer in the chat thread.
  *
- * v1 shows the single active run. A list of past runs (the sketch in
- * `PLAN-agent-tasks-followups.md`) needs a `tasks` list endpoint and is
- * a follow-up.
+ * On "agent-py (runs)" (Q61, Q69) it lists every task of the user
+ * (`TaskList`); otherwise it shows the old path's single active run.
  */
 export function TasksSidebar() {
   const open = useStore((s) => s.tasksPanelOpen)
   const setOpen = useStore((s) => s.setTasksPanelOpen)
+  const { availability } = useTasks()
+  const onRuns = availability.ok || availability.reason === "signed_out"
   const appendToActiveDocumentOrCreate = useStore(
     (s) => s.appendToActiveDocumentOrCreate
   )
@@ -81,7 +84,9 @@ export function TasksSidebar() {
             </Button>
           </header>
           <div className="flex-1 min-h-0 overflow-auto p-3">
-            {runId ? (
+            {onRuns ? (
+              <TaskList />
+            ) : runId ? (
               <TaskStrip
                 view={view}
                 isRunning={isRunning}
