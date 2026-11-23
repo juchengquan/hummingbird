@@ -21,6 +21,12 @@ import { cn } from "@/shared/utils"
 import { ResourcesSidebar } from "@/components/sidebars/resources"
 import { TasksSidebar } from "@/components/sidebars/tasks"
 import { useTaskRunContext } from "@/client/agent/task-run-context"
+import { ensureTaskNotificationPermission } from "@/client/agent/notify"
+import { useTasks } from "@/client/runs/tasks/context"
+import { useTaskFocus } from "@/components/agent/tasks/focus"
+import { launchesOnRuns, preLaunchRefusal } from "@/components/agent/tasks/launch"
+import { isActivePhase, pointerLabel } from "@/components/agent/tasks/phase"
+import { latestTaskTurn, resendAs } from "@/shared/agent/task-turn"
 import { ContextPicker } from "@/components/chat/context-picker"
 import { SlashAutocomplete } from "@/components/panels/slash-autocomplete"
 import { SlashHelpDialog } from "@/components/panels/slash-help-dialog"
@@ -110,10 +116,28 @@ export function ChatPanel() {
   // panel reads `runAsTask` / `isRunning` for the header toggle. The
   // send hook holds its own ref for `startTask` (see useChatSend).
   const taskRun = useTaskRunContext()
+  // On "agent-py (runs)" the tasks interface launches and lists tasks
+  // (wave 6); otherwise the old path above does (Q61). Background runs
+  // need sign-in: signed out, the Task toggle is hidden (bug 20).
+  const tasks = useTasks()
+  const onRuns = launchesOnRuns(tasks)
+  const tasksSignedOut =
+    tasks.availability.ok === false && tasks.availability.reason === "signed_out"
+  const runAsTask = onRuns ? tasks.runAsTask && !tasksSignedOut : taskRun.runAsTask
+  const setTasksRunAsTask = tasks.setRunAsTask
+  const setRunAsTask = useCallback(
+    (v: boolean) => {
+      setTasksRunAsTask(v)
+      // Asked on the gesture that opts in (Q74), as the old path does.
+      if (v) void ensureTaskNotificationPermission()
+    },
+    [setTasksRunAsTask]
+  )
+  const onRunAsTaskChange = onRuns ? setRunAsTask : taskRun.setRunAsTask
   // Only offer / keep models the serving backend accepts (Q40) — in Task
   // mode, those the task worker runs (Q55), on every chat backend.
   const modelBackend = useModelBackend()
-  const pickerBackend = taskRun.runAsTask ? TASK_MODEL_BACKEND : modelBackend
+  const pickerBackend = runAsTask ? TASK_MODEL_BACKEND : modelBackend
   useModelBackendGuard(pickerBackend, hydrated)
   const [inputValue, setInputValue] = useState("")
   // Send pipeline lives in its own hook (see lib/client/hooks/use-chat-send).
@@ -480,12 +504,6 @@ export function ChatPanel() {
 
   const handleSendMessage = () => {
     if (!inputValue.trim() || isStreaming) return
-    // v1 runs a single task at a time — block a second launch while one
-    // is in flight (the panel shows the active run + a Cancel button).
-    if (taskRun.runAsTask && taskRun.isRunning) {
-      toast.error("A task is already running. Cancel it first.")
-      return
-    }
 
     const trimmed = inputValue.trim()
     // Resolve a leading `/` directive. A **command** runs now and does
@@ -519,6 +537,24 @@ export function ChatPanel() {
     } else {
       messageContent = trimmed
     }
+    // A task launch — the toggle, or `/research <goal>` whatever the
+    // toggle says. On runs the cap (Q72) and sign-in gate it, `/research`
+    // included (bug 1); on the old path one task runs at a time, and
+    // that now holds for `/research` too.
+    const launchingTask = runAsTask || !!taskModeForCall
+    if (launchingTask) {
+      if (onRuns) {
+        const refused = preLaunchRefusal(tasks)
+        if (refused) {
+          toast.error(refused.text)
+          return
+        }
+      } else if (taskRun.isRunning) {
+        toast.error("A task is already running. Cancel it first.")
+        return
+      }
+      if (taskModeForCall) void ensureTaskNotificationPermission()
+    }
     // If no /<persona> for this turn but a persona is pinned via the
     // chat-header (`activeAgentId`), apply the pinned recipe.
     if (!activeAgentForCall && activeAgentId) {
@@ -546,6 +582,10 @@ export function ChatPanel() {
       role: "user",
       content: messageContent,
       attachedFileIds: snapshotIds,
+      // A resend of this turn goes as a task again, in this mode (bug 4).
+      ...(launchingTask
+        ? { taskTurn: { mode: taskModeForCall === "research" ? "research" : "default" } as const }
+        : {}),
       // The persona's prompt, model, skills and MCP allow-list are applied
       // from this record by `useChatSend`, on this send and any resend (Q52).
       ...(activeAgentForCall
@@ -579,7 +619,7 @@ export function ChatPanel() {
       // `/research <goal>` forces task mode on for this turn even if
       // the chat-input toggle is off — the mode is the meaningful
       // signal, not the toggle.
-      asTask: taskRun.runAsTask || !!taskModeForCall,
+      asTask: launchingTask,
       taskMode: taskModeForCall,
     })
   }
@@ -621,7 +661,8 @@ export function ChatPanel() {
       // the send pipeline's React-subscribed `activeConversationId` /
       // `conversations` haven't re-rendered yet, so without this the
       // streamed reply would land on the SOURCE conversation.
-      chatSendMessage(newHistory, { targetConversationId: fork.id })
+      // A task turn is resent as a task, in its mode (bug 4).
+      chatSendMessage(newHistory, { targetConversationId: fork.id, ...resendAs(newHistory) })
       toast.success("Edited — original kept as a branch")
     },
     [activeConversationId, messages, forkConversation, updateMessage, chatSendMessage]
@@ -644,16 +685,19 @@ export function ChatPanel() {
       const conv = conversations.find((c) => c.id === activeConversationId)
       if (!conv) return
       const source = conv.messages.findIndex((m) => m.id === sourceMessageId)
-      const turnPersona = latestTurnPersona(
-        source === -1 ? conv.messages : conv.messages.slice(0, source)
-      )
+      const before = source === -1 ? conv.messages : conv.messages.slice(0, source)
+      const turnPersona = latestTurnPersona(before)
+      // The answer to a task turn's card goes as a task too (bug 4).
+      const taskTurn = latestTaskTurn(before)
       const userMessage = addMessage({
         role: "user",
         content: trimmed,
         ...(turnPersona ? { turnPersona } : {}),
+        ...(taskTurn ? { taskTurn } : {}),
       })
       if (!userMessage) return
-      chatSendMessage([...conv.messages, userMessage])
+      const history = [...conv.messages, userMessage]
+      chatSendMessage(history, resendAs(history))
     },
     [conversations, activeConversationId, addMessage, chatSendMessage],
   )
@@ -670,7 +714,10 @@ export function ChatPanel() {
       // Explicit target — see the note in `handleEditUserMessage`: the
       // store points at the fork, but the send pipeline's subscribed
       // active id is still the source until the next render.
-      chatSendMessage(fork.messages, { targetConversationId: fork.id })
+      chatSendMessage(fork.messages, {
+        targetConversationId: fork.id,
+        ...resendAs(fork.messages),
+      })
       toast.success("Regenerated — previous kept as a branch")
     },
     [activeConversationId, messages, forkConversation, chatSendMessage]
@@ -695,7 +742,11 @@ export function ChatPanel() {
       if (idx === -1) return
       const newHistory = conv.messages.slice(0, idx)
       deleteMessage(messageId)
-      chatSendMessage(newHistory, modelOverride ? { modelOverride } : undefined)
+      const as = resendAs(newHistory)
+      chatSendMessage(
+        newHistory,
+        modelOverride || as.asTask ? { ...(modelOverride ? { modelOverride } : {}), ...as } : undefined
+      )
     },
     [conversations, activeConversationId, deleteMessage, chatSendMessage]
   )
@@ -819,8 +870,18 @@ export function ChatPanel() {
           }}
           chatReasoningEffort={chatReasoningEffort}
           onReasoningEffortPick={setChatReasoningEffort}
-          runAsTask={taskRun.runAsTask}
-          onRunAsTaskChange={taskRun.setRunAsTask}
+          runAsTask={runAsTask}
+          onRunAsTaskChange={onRunAsTaskChange}
+          showTaskToggle={!tasksSignedOut}
+          tasksButton={
+            onRuns && !tasksSignedOut
+              ? {
+                  needsAnswer: (tasks.tasks ?? []).filter((t) => t.phase === "needs_answer")
+                    .length,
+                  onClick: () => useStore.getState().toggleTasksPanel(),
+                }
+              : undefined
+          }
         />
         <div className="flex-1 min-h-0 overflow-hidden relative">
           {/* Find bar floats over the top of the messages, under the header. */}
@@ -937,7 +998,35 @@ export function ChatPanel() {
               the worker is being picked up; "Running · step N/M" once
               the loop is actually advancing; it says so when the task
               waits on the user or on its sub-agents. */}
-          {taskRun.isRunning &&
+          {onRuns
+            ? (tasks.tasks ?? [])
+                .filter(
+                  (t) => t.conversationId === activeConversationId && isActivePhase(t.phase)
+                )
+                .map((t) => (
+                  <button
+                    key={t.rootRunId}
+                    type="button"
+                    onClick={() => {
+                      useTaskFocus.getState().focus(t.rootRunId)
+                      setTasksPanelOpen(true)
+                    }}
+                    className="max-w-3xl mx-auto mb-2 w-full pointer-events-auto flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs text-[var(--muted-foreground)] hover:bg-[var(--secondary)] transition-colors"
+                  >
+                    {t.phase === "needs_answer" || t.phase === "answer_sent" ? (
+                      <Pause size={12} className="shrink-0 text-[var(--primary)]" />
+                    ) : (
+                      <Loader2 size={12} className="shrink-0 animate-spin text-[var(--primary)]" />
+                    )}
+                    <span className="min-w-0 truncate">{pointerLabel(t)}</span>
+                    <span className="ml-auto flex shrink-0 items-center gap-0.5 text-[var(--foreground)]">
+                      View <ChevronRight size={12} />
+                    </span>
+                  </button>
+                ))
+            : null}
+          {!onRuns &&
+            taskRun.isRunning &&
             taskRun.runConversationId === activeConversationId && (
               <button
                 type="button"

@@ -618,6 +618,10 @@ export const TaskRequestSchema = z.object({
    *  here are loaded server-side. `undefined` / omission means "no
    *  restriction" (cascade through workspace defaults). */
   allowedMcpServerIds: z.array(z.string().max(64)).max(64).optional(),
+  /** "Store files locally" (Q71): files the task makes (generated
+   *  images) stay out of cloud Storage. Runs only (`forwardedProps.
+   *  localFilesOnly`); the old `/api/tasks` path ignores it. */
+  localFilesOnly: z.boolean().optional(),
 })
 
 // --- /api/tasks/:id/respond -------------------------------------------------
