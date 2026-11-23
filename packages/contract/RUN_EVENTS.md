@@ -125,8 +125,8 @@ The parent message id is reset to none by every `step_start`.
 | `tool_input` | `TOOL_CALL_START { toolCallId, toolCallName: toolName, parentMessageId }`, `TOOL_CALL_ARGS { toolCallId, delta: JSON(args) }`, `TOOL_CALL_END { toolCallId }` | `parentMessageId` = the step's parent message id; when none, set it to `"R:s"` first (a tool-only assistant message). `JSON()` is compact JSON (`separators=(",", ":")`), keys in insertion order, non-ASCII characters not escaped — byte for byte `JSON.stringify` |
 | `tool_output` | `TOOL_CALL_RESULT { messageId: "R:s", toolCallId, role: "tool", content, metadata: { "hummingbird": { "toolName", "isError"? } } }` | `content` = `JSON({ "summary": summary, "results": results })`, `results` omitted when absent — the exact string chat's `tool-output-available.output` carries today. `isError: true` only when the tool failed (then `summary` is the error text) |
 | `step_error` | `CUSTOM hb.step_error { message, willRetry }` | non-fatal |
-| `handoff` `enter` | `SUBAGENT_STARTED { subagentRunId, name: agent, metadata?: { hummingbird: { subgoal } } }` | the pinned schema's `SUBAGENT_STARTED` has no `description`, so the subgoal rides in the event's `metadata` (only when set). Today every sub-agent is a separate background run (`parentRunId`), so nothing is attributed to it inline |
-| `handoff` `exit` | `SUBAGENT_FINISHED { subagentRunId }` | `subagentRunId`: by `child_task_id`; without one, the most recent unmatched `enter` of the same `agent`. An `exit` matching no `enter` encodes to nothing |
+| `handoff` `enter` | `SUBAGENT_STARTED { subagentRunId, name: agent, metadata?: { hummingbird: { subgoal } } }` | the pinned schema's `SUBAGENT_STARTED` has no `description`, so the subgoal rides in the event's `metadata` (only when set). Today every sub-agent is a separate background run (`parentRunId`), so nothing is attributed to it inline. A background spawn writes its `enter`s with the spawn call's `tool_output` (`TOOL_CALL_RESULT`, "Started N sub-agents: …") once the sub-agent runs exist; the model's own result for the call is their fan-in, which the parent's log does not repeat |
+| `handoff` `exit` | `SUBAGENT_FINISHED { subagentRunId }` | `subagentRunId`: by `child_task_id`; without one, the most recent unmatched `enter` of the same `agent`. An `exit` matching no `enter` encodes to nothing. On a background parent the `exit` is written when the sub-agent run **ends** — whatever ends it (the worker, its own cancel, the reconciler; migration 0048's `tasks_ended` trigger) — while the parent waits on it, so `SUBAGENT_FINISHED` reaches the parent's stream as it happens, not only at its closing events |
 | `approval` `request` | `CUSTOM hb.interrupt_pending` | the question as it is raised: the value is the AG-UI `Interrupt` built from the entry (§ 4.1), the same object the closing `RUN_FINISHED` (and `Run.openInterrupts`) carries. The closing event stays the authority on what is open (§ 4) |
 | `approval` `response` | `CUSTOM hb.interrupt_resolved { interruptId: approvalId, payload }` | `payload` as in § 4.2. Only legacy in-place resumes write these into the same run's log; a Q24 resume run's answers are its request's `resume[]`, and what they produced shows as its `TOOL_CALL_RESULT`s (§ 4.2) |
 | `compact` | `CUSTOM hb.context_compacted { summary? }` | model-context compaction, not log compaction |
@@ -413,7 +413,9 @@ creates its run already `failed` with `error.code` `limit_reached`.
 ## 5. Results, errors and usage
 
 The closing event's data comes from the run row, falling back to the
-log for pre-0041 rows (`outcome` null):
+log for rows without `outcome` (pre-0041 rows, and background runs
+settled before wave 6 — since then every background settle writes
+`outcome` with the transition, from its terminal `result` entry):
 
 - `RUN_FINISHED.result` (succeeded) = `tasks.outcome.result` (a
   `RunResult`), else built from the `result` entry: `{ text: finalText,
@@ -429,6 +431,26 @@ log for pre-0041 rows (`outcome` null):
   entry" is the last one encoded that no later resume marker
   superseded.
 - `Run.result` / `Run.error` carry the same objects.
+- **A background task's result is its whole answer (Q78).** When a
+  background run settles `done`, `result.text` (and the `result` entry's
+  `finalText`) is the text of every run on its task's line (§ 4.5: the
+  root and each resume that holds the question, oldest first, dead
+  branches left out), joined by a blank line where a question came
+  between them — a run alone keeps its text verbatim. A research run's
+  sources are numbered over the same runs in the same order (the `[N]`
+  the model cites) and its verification checks the whole text. A
+  sub-agent run is answered in place, so its own log is its whole
+  answer.
+- **`result.stoppedAt: "max_steps"` (Q81).** A background run that ran
+  out of steps settles `succeeded` with what it has: its text ends with
+  a visible note ("_Stopped at the step limit (N steps), so this answer
+  may be incomplete._", a `token` entry after the last step) and its
+  `result` entry, `tasks.outcome.result` and `Run.result` carry
+  `stoppedAt: "max_steps"`. A step that stops at the model's output
+  limit is never an answer: the next step continues it. A run resumed
+  with results it waited for — its sub-agents' fan-in, or an in-place
+  answer — gets one model call past its limit to read them; that call
+  starts no more sub-agents.
 
 ## 6. Streams
 

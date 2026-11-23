@@ -1865,7 +1865,20 @@ export interface components {
              *     means false.
              */
             memoryTainted?: boolean;
-            /** @description The run's final assistant text, when it produced one. */
+            /**
+             * @description Why the answer may be incomplete. `max_steps`: a background
+             *     task stopped at its step limit and delivers what it has (Q81);
+             *     `text` then ends with a visible "stopped at the step limit"
+             *     note. Absent for a run that finished on its own.
+             * @enum {string}
+             */
+            stoppedAt?: "max_steps";
+            /**
+             * @description The run's final assistant text, when it produced one. For a
+             *     background task's run, the whole answer across its runs (the
+             *     root and each resume that answered it, Q78), not this run's
+             *     text alone.
+             */
             text?: string;
         } & {
             [key: string]: unknown;
