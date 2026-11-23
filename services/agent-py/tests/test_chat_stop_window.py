@@ -35,9 +35,7 @@ class _Stream:
         return nothing()
 
     async def get_final_message(self) -> dict[str, Any]:
-        return {
-            "content": [{"type": "tool_use", "id": "t1", "name": "send", "input": {"to": "x"}}]
-        }
+        return {"content": [{"type": "tool_use", "id": "t1", "name": "send", "input": {"to": "x"}}]}
 
 
 class _Client:

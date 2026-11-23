@@ -21,8 +21,9 @@ from agent_py.events import (
     StepEndEvent,
     StepStartEvent,
     TaskEvent,
+    TokenEvent,
 )
-from agent_py.runner import RunStepContext, RunStepOutcome, run_agent_loop
+from agent_py.runner import RunStepContext, RunStepOutcome, run_agent_loop, step_limit_note
 
 
 class _Capture:
@@ -86,7 +87,7 @@ async def test_loop_iterates_until_done() -> None:
 @pytest.mark.asyncio
 async def test_loop_settles_at_max_steps_without_done() -> None:
     """A model that never declares done still settles cleanly — the
-    accumulated tokens are the answer. Matches the TS path."""
+    accumulated tokens are the answer, with the step-limit note (Q81)."""
     sink = _Capture()
     em = RunEmitter(run_id="r", sink=sink)
 
@@ -99,6 +100,10 @@ async def test_loop_settles_at_max_steps_without_done() -> None:
     assert result.kind == "settled"
     assert em.step == 2
     assert isinstance(sink.events[-1], ResultEvent)
+    # Q81: what it has, with a visible note and the flag.
+    assert sink.events[-1].stopped_at == "max_steps"
+    assert isinstance(sink.events[-2], TokenEvent)
+    assert sink.events[-2].text == step_limit_note(2)
 
 
 @pytest.mark.asyncio

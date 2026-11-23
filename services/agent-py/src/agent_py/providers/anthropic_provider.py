@@ -207,7 +207,9 @@ def make_anthropic_step_fn(config: AnthropicStepConfig) -> RunStepFn:
             # in it may be cut too — none runs; the model calls it again.
             # The next step continues the text.
             kept = [b for b in content_blocks if _block_type(b) != "tool_use"]
-            logger.warning("anthropic_step.max_tokens", dropped_calls=len(content_blocks) - len(kept))
+            logger.warning(
+                "anthropic_step.max_tokens", dropped_calls=len(content_blocks) - len(kept)
+            )
             if kept:
                 config.messages.append({"role": "assistant", "content": kept})
             config.messages.append(

@@ -692,6 +692,8 @@ class _Run:
         self.tools = tools
         self.resume = resume
         self.resumed_from_seq = resumed_from_seq
+        self.max_steps: int | None = None
+        """The run's step limit, once `_drive` read it."""
         self.gated = frozenset(_gated_tools_from(checkpoint) | tools.mcp_gated)
         self.registry = tools.registry()
         # Execution record for the tool turn (see `tool_ledger`): each save
@@ -959,18 +961,32 @@ async def _run_chunk_inner(
             checkpoint.pop(resume_answers.RESUME_KEY, None)
             await run.save()
 
-        return await _drive(run, step_fn, deadline_s, resolve=in_turn)
+        # A fan-in brings results the model asked for and hasn't seen:
+        # a spawn on the last step still gets them used (Q81).
+        return await _drive(run, step_fn, deadline_s, resolve=in_turn, grace=fan_in is not None)
 
 
 async def _drive(
-    run: _Run, step_fn: RunStepFn, deadline_s: float | None, *, resolve: bool
+    run: _Run,
+    step_fn: RunStepFn,
+    deadline_s: float | None,
+    *,
+    resolve: bool,
+    grace: bool = False,
 ) -> ExecutorOutcome:
     """The loop every action shares: finish the open tool turn (pause on
     its next question, fan out its next spawn, or complete it), call the
-    model, and end the chunk one of the five ways (`AgentLoopResult`)."""
+    model, and end the chunk one of the five ways (`AgentLoopResult`).
+
+    `grace`: this chunk resumes with results the model waited for — its
+    sub-agents' (a fan-in) or the user's answer (a respond). Asked for on
+    the run's last step, they would otherwise never be read: the run gets
+    one model call past its limit to use them (Q81). A spawn on that extra
+    step is refused (`_spawn`), so it never chains."""
     pool, emitter = run.pool, run.emitter
     run_id, user_id = run.payload.run_id, run.payload.user_id
     max_steps = _max_steps_from(run.checkpoint, run.payload.max_steps)
+    run.max_steps = max_steps
 
     async def is_cancelled() -> bool:
         return await store.is_run_cancelled(pool, run_id=run_id, user_id=user_id)
@@ -995,9 +1011,12 @@ async def _drive(
                     return ExecutorOutcome(settled=True)
                 continue
 
+        limit = max(max_steps, emitter.step + 1) if grace else max_steps
+        grace = False
         result: AgentLoopResult = await run_agent_loop(
             emitter=emitter,
-            max_steps=max_steps,
+            max_steps=limit,
+            step_limit=max_steps,
             run_step=step_fn,
             is_cancelled=is_cancelled,
             should_yield=should_yield,
@@ -1272,6 +1291,15 @@ async def _spawn(run: _Run, call: ToolCall) -> bool:
             "content": SPAWN_ARGS_ERROR,
             "is_error": True,
         }
+    elif run.max_steps is not None and run.emitter.step > run.max_steps:
+        # The extra step a fan-in or an answer gets past the limit (Q81,
+        # `_drive`) uses results; it never starts more sub-agents.
+        refusal = {
+            "type": "tool_result",
+            "tool_use_id": call.id,
+            "content": SPAWN_STEP_LIMIT_ERROR,
+            "is_error": True,
+        }
     elif await store.load_parent_task_id(pool, run_id=run_id, user_id=user_id) is not None:
         # Depth cap: only top-level tasks may spawn children. A child task
         # (parent_task_id non-null) receives a rejection tool_result so
@@ -1455,6 +1483,9 @@ async def _maybe_verify(
     )
 
 
+SPAWN_STEP_LIMIT_ERROR = (
+    "No sub-agent was started: this task is at its step limit. Answer with what you have."
+)
 NO_KEY_ERROR = "ANTHROPIC_API_KEY is not configured on the agent service, so this task can't run."
 NO_MODEL_ERROR = "This task has no model. Choose a model and run it again."
 NO_MESSAGES_ERROR = "This task has no messages to send to the model."
@@ -1881,7 +1912,7 @@ async def _run_respond_inner(
             await _answer_interrupted(run, call)
         else:
             await _apply_answer(run, call, _answer_of(payload))
-        return await _drive(run, step_fn, deadline_s, resolve=True)
+        return await _drive(run, step_fn, deadline_s, resolve=True, grace=True)
 
 
 def _answer_of(payload: RespondActionPayload) -> resume_answers.StoredAnswer:

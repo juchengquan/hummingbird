@@ -153,6 +153,17 @@ FinalizeFn = Callable[[], Awaitable[dict[str, object] | None]]
 #: reads `finalText` off the child's `result` row) finally sees a value.
 FinalTextFn = Callable[[], Awaitable[str | None]]
 
+STOPPED_AT_MAX_STEPS = "max_steps"
+"""`RunResult.stoppedAt` of a run that ran out of steps (Q81)."""
+
+
+def step_limit_note(limit: int) -> str:
+    """The visible note a run that ran out of steps ends its text with (Q81)."""
+    return (
+        f"\n\n_Stopped at the step limit ({limit} step{'s' if limit != 1 else ''}), "
+        "so this answer may be incomplete._"
+    )
+
 
 async def run_agent_loop(
     *,
@@ -164,6 +175,7 @@ async def run_agent_loop(
     finalize: FinalizeFn | None = None,
     final_text: FinalTextFn | None = None,
     resumed_from_seq: int | None = None,
+    step_limit: int | None = None,
 ) -> AgentLoopResult:
     """Drive a run to completion or a chunk-break point. Emits exactly
     one terminal event (`status: cancelled` or `result: done|failed`)
@@ -192,6 +204,13 @@ async def run_agent_loop(
     see `StatusEvent.resumed_from_seq`. At step 0 (a from-scratch
     restart) it is the run's initial `status: running`, also flagged
     `restarted` for legacy readers.
+
+    A run that reaches `max_steps` without an answer still settles `done`
+    with what it has (Q81), but says so: its text ends with
+    `step_limit_note` and its result carries `stoppedAt: "max_steps"`.
+    `step_limit` is the limit the note names (the run's configured one,
+    when the executor let a run over it by one step to use results it
+    waited for); default `max_steps`.
 
     Before every step the bound job lease is checked
     (`lease.check_current()`): a worker whose claim was taken over stops
@@ -245,10 +264,10 @@ async def run_agent_loop(
             await _settle(emitter, finalize, final_text)
             return AgentLoopResult(kind="settled")
 
-    # Hit the step cap without a final answer. Settle anyway —
-    # mirrors the TS path; the model's accumulated text is the
-    # answer.
-    await _settle(emitter, finalize, final_text)
+    # Hit the step cap without a final answer: deliver what it has, with
+    # a visible note in the text and the flag on the result (Q81).
+    await emitter.token(step_limit_note(step_limit if step_limit is not None else max_steps))
+    await _settle(emitter, finalize, final_text, stopped_at=STOPPED_AT_MAX_STEPS)
     return AgentLoopResult(kind="settled")
 
 
@@ -256,10 +275,12 @@ async def _settle(
     emitter: RunEmitter,
     finalize: FinalizeFn | None,
     final_text: FinalTextFn | None,
+    *,
+    stopped_at: str | None = None,
 ) -> None:
     """Run the optional finalize hook, resolve the final text, then emit
     the terminal `result: done`. The hooks' failures are the hooks'
     concern (they return None) — settling never blocks on them."""
     verification = await finalize() if finalize is not None else None
     text = await final_text() if final_text is not None else None
-    await emitter.result("done", final_text=text, verification=verification)
+    await emitter.result("done", final_text=text, verification=verification, stopped_at=stopped_at)

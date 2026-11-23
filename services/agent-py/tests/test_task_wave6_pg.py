@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 import pytest_asyncio
 
-from agent_py import image_storage
+from agent_py import image_storage, runner
 from agent_py import settings as settings_module
 from agent_py.image_storage import DownloadedImage, PersistedImage
 from agent_py.providers import anthropic_provider
@@ -23,6 +23,7 @@ from agent_py.tools.minimax_image_client import MinimaxImage, MinimaxImageSucces
 
 from .task_world import (
     MODEL,
+    READ,
     SEND,
     Reply,
     World,
@@ -254,3 +255,64 @@ async def test_a_reply_cut_at_max_tokens_is_continued_not_settled(world: World) 
         "role": "user",
         "content": [{"type": "text", "text": anthropic_provider.MAX_TOKENS_CONTINUE}],
     }
+
+
+# --- Q81: the step limit -----------------------------------------------------------------------
+
+
+async def test_a_task_at_its_step_limit_delivers_what_it_has_and_says_so(world: World) -> None:
+    world.model.script(
+        "Do it",
+        [say("Found part one. "), use("r1", READ, q="1")],
+        [say("Found part two. "), use("r2", READ, q="2")],
+    )
+    task = await world.start(maxSteps=2)
+    await world.work()
+
+    assert await world.status(task) == "done"
+    result = (await world.task(task))["outcome"]["result"]
+    assert result["stoppedAt"] == "max_steps"
+    assert result["text"].startswith("Found part one. Found part two. ")
+    assert result["text"].endswith(runner.step_limit_note(2))
+    assert "step limit" in result["text"]
+    assert (await world.run(task))["result"]["stoppedAt"] == "max_steps"
+    [entry] = await world.events(task, "result")
+    assert entry["stoppedAt"] == "max_steps"
+
+
+async def test_a_spawn_on_the_last_step_still_uses_its_childrens_results(world: World) -> None:
+    world.model.script(
+        "Do it",
+        [use("r1", READ, q="1")],
+        [spawn("s", "child-a")],
+        [say("Final answer using: the child's finding.")],
+    )
+    world.model.script("child-a", [say("the child's finding")])
+    task = await world.start(maxSteps=2)
+    await world.work()
+
+    assert await world.status(task) == "done"
+    result = (await world.task(task))["outcome"]["result"]
+    assert result["text"] == "Final answer using: the child's finding."
+    assert "stoppedAt" not in result
+    parent_calls = [c for c in world.model.calls if c["messages"][0]["content"] == "Do it"]
+    assert len(parent_calls) == 3
+    assert "the child's finding" in str(result_of(parent_calls[-1]["messages"], "s")["content"])
+
+
+async def test_the_extra_step_after_a_last_step_spawn_starts_no_more_children(
+    world: World,
+) -> None:
+    world.model.script(
+        "Do it",
+        [spawn("s1", "child-a")],
+        [spawn("s2", "child-b")],
+    )
+    world.model.script("child-a", [say("a")])
+    task = await world.start(maxSteps=1)
+    await world.work()
+
+    assert await world.status(task) == "done"
+    assert len(await world.children(task)) == 1
+    result = (await world.task(task))["outcome"]["result"]
+    assert result["stoppedAt"] == "max_steps"
