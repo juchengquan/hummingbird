@@ -37,7 +37,16 @@ session.ts ── HummingbirdRunAgent (agent.ts, @ag-ui/client: enforce → veri
 | `chat-outcome.ts` | `planRunOutcome` (outcome → what chat does), `pointerActionFor`, the cursor throttle — pure |
 | `run-base.ts` | a resume run's **base** (what the paused run wrote), saved as sizes per run so a reload's reset restores it |
 | `fixtures/` | recorded agent-py streams + a store-message model (tests only) |
-| `tasks/` | wave 6: the tasks interface (`types.ts`: `TaskSummary`, `TaskView`, `TasksContextValue`, the per-user pointers) and its React plumbing (`context.tsx`: `TasksProvider`, `useTasks`, `useTaskView`); wave 6-C implements it |
+| `background.ts` | wave 6: background runs — `startBackgroundRun` / `resumeBackgroundRun` (`202`), `listRuns` (the task filters), `answerRun` (a sub-agent's question in place, Q59), `markRunDelivered` (Q77) = `apiClient.runs.{startBackground,resumeBackground,list,answer,markDelivered}` |
+| `tasks/` | wave 6: the tasks interface (`types.ts`: `TaskSummary`, `TaskView`, `TasksContextValue`, the per-user pointers) and its React plumbing (`context.tsx`: `TasksProvider`, `useTasks`, `useTaskView`) |
+| `tasks/controller.ts` | wave 6-C: `useTasksController()` → the real `TasksContextValue` (the dashboard hands it to `TasksProvider`); `TasksController`: the list poll (~5 s while the panel is open / a task is active / one is watched, else 60 s), launching (run id kept in `humm.tasks.<userId>` before the POST, idempotent retry), answers (a resume, or `answerRun` in place; `run_already_resumed` → follow the current run), cancel, delivery, notifications |
+| `tasks/chain.ts` | the pure chain fold: a task's runs' AG-UI streams → one `TaskRunView` (steps, text, tools, plan, sub-agents, `interrupt_pending`, step errors, rewind) |
+| `tasks/watch.ts` | following one task: its chain's line from the root to the current run, streamed in order, then the current run live |
+| `tasks/summary.ts` | `Run` → `TaskSummary` (phase, questions, `stoppedAt`), the list order |
+| `tasks/launch-input.ts` | `TaskRequestInput` → a background `StartRunRequest` (images as message parts, no attachments / local MCP, research, allow-list, `localFilesOnly`) |
+| `tasks/deliver.ts` | writing a finished task's result once across tabs and browsers (derived ids, its own conversation and workspace, a pull first for a scheduled one), then `markRunDelivered` after the sync drain |
+| `tasks/notify.ts` | Q74 notifications: once per event across tabs, hidden tabs only, a tag per task |
+| `tasks/pointers.ts` | `humm.tasks.<userId>`: launching records, delivered and notified marks |
 
 Ids: `lib/shared/runs/ids.ts` (`mintRunId`, `threadIdFor(conversationId)`,
 `resultIdsFor(userId, rootRunId)` — a finished task's message / document /
@@ -112,7 +121,10 @@ interface RunStream extends AsyncIterable<{ event: AgUiEvent; cursor: RunCursor 
 }
 ```
 
-Auth: `Authorization: Bearer` when signed in; otherwise the run's
+Auth: `Authorization: Bearer` when signed in — read again for every
+request through `RunsTarget.getAuthToken` (so a long stream or watch
+outlives the token it started with), and refreshed once after a `401`
+(survey bug 19); otherwise the run's
 `X-Run-Token` — saved from the start response, presented on a retry
 (same `runId`), on a resume (the previous run's token), and on
 status / cancel / rejoin; dropped when the run ends for good (kept while
