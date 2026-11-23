@@ -115,6 +115,8 @@ def result_of(messages: list[dict[str, Any]], call_id: str) -> dict[str, Any]:
 class Reply:
     blocks: list[dict[str, Any]]
     before: Callable[[], Awaitable[None]] | None = None
+    stop_reason: str | None = None
+    """The final message's `stop_reason` when set (e.g. `max_tokens`)."""
 
 
 class _Stream:
@@ -139,7 +141,10 @@ class _Stream:
         return deltas()
 
     async def get_final_message(self) -> dict[str, Any]:
-        return {"content": copy.deepcopy(self._reply.blocks)}
+        out: dict[str, Any] = {"content": copy.deepcopy(self._reply.blocks)}
+        if self._reply.stop_reason is not None:
+            out["stop_reason"] = self._reply.stop_reason
+        return out
 
 
 class ScriptedModel:

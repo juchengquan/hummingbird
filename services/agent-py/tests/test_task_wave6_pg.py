@@ -15,12 +15,25 @@ import pytest_asyncio
 from agent_py import image_storage
 from agent_py import settings as settings_module
 from agent_py.image_storage import DownloadedImage, PersistedImage
+from agent_py.providers import anthropic_provider
 from agent_py.resume_answers import DECLINED_ANSWER, DECLINED_APPROVAL
 from agent_py.runs.in_place import respond_job_payload
 from agent_py.tools import image_gen as image_gen_module
 from agent_py.tools.minimax_image_client import MinimaxImage, MinimaxImageSuccess
 
-from .task_world import MODEL, SEND, World, ask, open_world, pg_only, result_of, say, spawn, use
+from .task_world import (
+    MODEL,
+    SEND,
+    Reply,
+    World,
+    ask,
+    open_world,
+    pg_only,
+    result_of,
+    say,
+    spawn,
+    use,
+)
 
 pytestmark = [pg_only, pytest.mark.asyncio]
 
@@ -217,3 +230,27 @@ async def test_local_files_only_keeps_a_background_image_out_of_storage(
         "type": "image",
         "source": {"type": "base64", "media_type": "image/png", "data": PNG_B64},
     } in first_turn
+
+
+# --- output per step (bug 13) ------------------------------------------------------------------
+
+
+async def test_a_reply_cut_at_max_tokens_is_continued_not_settled(world: World) -> None:
+    world.model.script(
+        "Do it",
+        Reply([say("The long report, part one, cut mid-sen")], stop_reason="max_tokens"),
+        [say("tence. Part two.")],
+    )
+    task = await world.start()
+    await world.work()
+
+    assert await world.status(task) == "done"
+    assert (await world.task(task))["outcome"]["result"] == {
+        "text": "The long report, part one, cut mid-sentence. Part two."
+    }
+    first, second = world.model.calls
+    assert first["max_tokens"] >= 16_000
+    assert second["messages"][-1] == {
+        "role": "user",
+        "content": [{"type": "text", "text": anthropic_provider.MAX_TOKENS_CONTINUE}],
+    }
