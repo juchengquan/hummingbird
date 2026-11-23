@@ -112,3 +112,17 @@ describe("old-path settle", () => {
     expect(new Set(shown.map((n) => n.tag)).size).toBe(2)
   })
 })
+
+describe("old-path launch guard (bug 1)", () => {
+  test("a second launch waits while a task runs here or in another tab", async () => {
+    const { oldPathLaunchBlocked } = await import("./task-run-context")
+    expect(oldPathLaunchBlocked(true, null, "r1")).toContain("already running")
+    // Another tab's task: the user's pointer names another run.
+    expect(oldPathLaunchBlocked(false, { runId: "r2", status: "queued" }, "r1")).toContain("another tab")
+    expect(oldPathLaunchBlocked(false, { runId: "r2", status: "queued" }, null)).toContain("another tab")
+    // This tab's own (cancelled, not yet cleared) pointer, or an ended one.
+    expect(oldPathLaunchBlocked(false, { runId: "r1", status: "queued" }, "r1")).toBeNull()
+    expect(oldPathLaunchBlocked(false, { runId: "r2", status: "done" }, null)).toBeNull()
+    expect(oldPathLaunchBlocked(false, null, null)).toBeNull()
+  })
+})
