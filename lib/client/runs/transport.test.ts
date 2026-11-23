@@ -191,6 +191,76 @@ describe("reconnect", () => {
   })
 })
 
+describe("auth refresh (bug 19)", () => {
+  const full = loadFixture("memory-rejoin-full")
+  const frames = full.body.split("\n\n").filter(Boolean).map((f) => `${f}\n\n`)
+  const cut = 3
+
+  test("a reconnect answered 401 asks for a fresh token and retries with it", async () => {
+    const rejoined = loadFixture("memory-rejoin-after-2.0").body
+    let token = "old-jwt"
+    const asked: boolean[] = []
+    const target: RunsTarget = {
+      baseUrl: "https://agent.example",
+      authToken: "old-jwt",
+      getAuthToken: async (refresh) => {
+        asked.push(Boolean(refresh))
+        if (refresh) token = "new-jwt"
+        return token
+      },
+    }
+    const { fetch, calls } = fakeFetch((c, i) => {
+      if (i === 0) return sseResponse(frames.slice(0, cut).join(""))
+      if (c.headers.Authorization !== "Bearer new-jwt") {
+        return new Response(JSON.stringify({ code: "auth", message: "expired" }), { status: 401 })
+      }
+      return sseResponse(rejoined)
+    })
+    const stream = await startRun(BODY, { target, fetch, reconnectDelayMs: 1 })
+    const items = await drain(stream)
+    expect(items.map((i) => i.type)).toEqual(full.items.map((i) => i.event.type))
+    expect(calls.map((c) => c.headers.Authorization)).toEqual([
+      "Bearer old-jwt",
+      "Bearer old-jwt",
+      "Bearer new-jwt",
+    ])
+    expect(asked).toContain(true)
+  })
+
+  test("each request reads the current token, not the one the target was resolved with", async () => {
+    let token = "jwt-1"
+    const target: RunsTarget = {
+      baseUrl: "https://agent.example",
+      authToken: "jwt-0",
+      getAuthToken: async () => token,
+    }
+    const { fetch, calls } = fakeFetch(() => runJson("running"))
+    await getRun(RUN, { target, fetch })
+    token = "jwt-2"
+    await cancelRun(RUN, { target, fetch })
+    expect(calls.map((c) => c.headers.Authorization)).toEqual(["Bearer jwt-1", "Bearer jwt-2"])
+  })
+
+  test("a second 401 after the refresh surfaces (no retry loop)", async () => {
+    let refreshes = 0
+    const target: RunsTarget = {
+      baseUrl: "https://agent.example",
+      authToken: "jwt",
+      getAuthToken: async (refresh) => {
+        if (refresh) refreshes += 1
+        return "jwt"
+      },
+    }
+    const { fetch, calls } = fakeFetch(
+      () => new Response(JSON.stringify({ code: "auth", message: "no" }), { status: 401 }),
+    )
+    const err = await getRun(RUN, { target, fetch }).catch((e: unknown) => e)
+    expect(err).toMatchObject({ kind: "http", status: 401 })
+    expect(refreshes).toBe(1)
+    expect(calls).toHaveLength(2)
+  })
+})
+
 describe("rejoinRun / getRun / cancelRun", () => {
   test("rejoin sends the cursor as ?after= and Last-Event-ID, with the stored token", async () => {
     const tokens = memoryStorage()
