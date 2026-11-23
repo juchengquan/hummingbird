@@ -27,6 +27,11 @@ const nextConfig: NextConfig = {
   // so it never clobbers a normal build. tsconfig.json already lists
   // `.next-e2e/types`, so that build leaves it untouched.
   distDir: process.env.NEXT_DIST_DIR || ".next",
+  // Always defined, so the bundler inlines it and folds the e2e-only fake
+  // tasks interface out of every build that doesn't set it to "1"
+  // (components/agent/tasks/use-tasks-value.ts; scripts/audit-bundle.sh
+  // checks). Next inlines only the NEXT_PUBLIC_* vars that are set.
+  env: { NEXT_PUBLIC_E2E_TASKS_FAKE: process.env.NEXT_PUBLIC_E2E_TASKS_FAKE ?? "" },
   // pdf-parse v2 wraps pdfjs-dist, which dynamically imports its worker
   // (`pdf.worker.mjs`) relative to its own package location at runtime.
   // Bundling those modules through Turbopack breaks the worker resolution

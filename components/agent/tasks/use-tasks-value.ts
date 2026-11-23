@@ -25,8 +25,6 @@ export function e2eTasksFakeAllowed(flag: string | undefined): boolean {
   return flag === "1"
 }
 
-const E2E_FAKE_BUILD = e2eTasksFakeAllowed(process.env.NEXT_PUBLIC_E2E_TASKS_FAKE)
-
 const refuse = async () =>
   ({ ok: false, code: "not_runs", message: "Tasks don't run on agent-py (runs) here." }) as const
 
@@ -61,6 +59,9 @@ function useE2eTasks(): TasksContextValue {
   const real = useRealTasks()
   const [fake, setFake] = useState<FakeTasks | null>(null)
   useEffect(() => {
+    // Written out (not `e2eTasksFakeAllowed`) so the bundler folds it and
+    // drops the import below from every build without the flag.
+    if (process.env.NEXT_PUBLIC_E2E_TASKS_FAKE !== "1") return
     if (!window.__HUMM_E2E_TASKS__) return
     let cancelled = false
     void import("./e2e-fake").then(({ createFakeTasks }) => {
@@ -75,4 +76,5 @@ function useE2eTasks(): TasksContextValue {
   return value ?? real
 }
 
-export const useTasksValue: () => TasksContextValue = E2E_FAKE_BUILD ? useE2eTasks : useRealTasks
+export const useTasksValue: () => TasksContextValue =
+  process.env.NEXT_PUBLIC_E2E_TASKS_FAKE === "1" ? useE2eTasks : useRealTasks
