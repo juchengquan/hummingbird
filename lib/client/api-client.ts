@@ -1299,18 +1299,19 @@ async function urlFetchBookmark(
 
 /**
  * Fetch the child subagent tasks for a parent run. Returns the children
- * array (id, status, goal) on success; resolves to `[]` on any failure
- * so the task strip degrades gracefully when the endpoint is unavailable.
+ * array (id, status, goal, and a paused child's open question) on success;
+ * `null` on any failure, so a failed poll keeps the questions shown
+ * rather than reading as "no children".
  */
 async function taskChildren(
   id: string
-): Promise<TaskChildrenResponse["children"]> {
+): Promise<TaskChildrenResponse["children"] | null> {
   try {
     const res = await fetch(apiUrls.taskChildren(id))
-    if (!res.ok) return []
+    if (!res.ok) return null
     return TaskChildrenResponseSchema.parse(await res.json()).children
   } catch {
-    return []
+    return null
   }
 }
 

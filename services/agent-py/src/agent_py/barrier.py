@@ -1,16 +1,13 @@
-"""Subagent join barrier.
+"""Settle a task terminal — the worker's half of the join barrier.
 
-When a child task settles, transition it to terminal exactly once,
-decrement its parent's `pending_children`, and re-enqueue the parent's
-`continue` job when the counter reaches zero — but only if the parent is
-still live (never resurrect a cancelled/finished orchestrator). All three
-steps run in one transaction so the decrement and the zero-check are
-race-free. Idempotent against job retries: the terminal transition's
-`WHERE status NOT IN (terminal)` clause fires at most once per task, so
-the decrement fires at most once.
-
-PR-1 ships this module standalone (proven with mocked pools); PR-2 wires
-the executor/settlement path to call it.
+The barrier itself is the database's (migration 0045, `tasks_ended` /
+`tasks_deleted` → `private.settle_barrier`): whatever ends a child — this
+settle, a cancel, the reconciler, the owner's update or delete — recounts
+its parent's live children exactly once and queues the parent's
+`continue` when the last one ended. So the worker only makes the
+transition, at most once (`WHERE status NOT IN (terminal)`), with the
+run's terminal event in the same transaction: a settle that loses to a
+cancel writes neither.
 """
 
 from __future__ import annotations
@@ -21,8 +18,9 @@ from dataclasses import dataclass
 
 import asyncpg
 
+from agent_py import store
+from agent_py.events import TaskEvent, event_to_row_payload
 from agent_py.fence import fenced_connection
-from agent_py.jobs import ENQUEUE_CONTINUE_SQL
 
 _TERMINAL = ("done", "failed", "cancelled")
 
@@ -33,11 +31,19 @@ WHERE id = $1 AND user_id = $3 AND status NOT IN ('done', 'failed', 'cancelled')
 RETURNING parent_task_id;
 """
 
-_DECREMENT_SQL = """
-UPDATE public.tasks
-SET pending_children = pending_children - 1, updated_at = now()
-WHERE id = $1 AND user_id = $2
-RETURNING pending_children, status;
+# The event's own seq, or past the log's end when someone else took it
+# (the row lock just taken keeps other fenced appends out).
+_TERMINAL_EVENT_SQL = """
+INSERT INTO public.task_events (task_id, user_id, seq, step, kind, payload)
+VALUES (
+    $1, $2,
+    GREATEST(
+        $3::integer,
+        (SELECT COALESCE(MAX(e.seq), 0) + 1 FROM public.task_events e WHERE e.task_id = $1)
+    ),
+    $4, $5, $6::jsonb
+)
+ON CONFLICT (task_id, seq) DO NOTHING;
 """
 
 
@@ -48,8 +54,6 @@ class SettleResult:
 
     transitioned: bool
     parent_task_id: str | None
-    parent_remaining: int | None
-    reenqueued_parent: bool
 
 
 async def settle_task_terminal(
@@ -58,14 +62,15 @@ async def settle_task_terminal(
     task_id: str,
     user_id: str,
     status: str,
+    event: TaskEvent | None = None,
 ) -> SettleResult:
-    """Move `task_id` to terminal `status`, settle its parent's barrier.
+    """Move `task_id` to terminal `status` and write `event`, its
+    terminal log entry, if — and only if — this call made the transition.
 
-    `status` must be one of 'done' | 'failed' | 'cancelled'.
-
-    Both the transition and the parent decrement are `user_id`-scoped
-    (defence in depth — the worker pool bypasses RLS), so a job carrying
-    a mismatched user can never settle or decrement another user's task.
+    `status` must be one of 'done' | 'failed' | 'cancelled'. The
+    transition is `user_id`-scoped (defence in depth — the worker pool
+    bypasses RLS), so a job carrying a mismatched user can never settle
+    another user's task.
     """
     if status not in _TERMINAL:
         raise ValueError(f"settle_task_terminal: status must be terminal, got {status!r}")
@@ -74,42 +79,22 @@ async def settle_task_terminal(
     user_uuid = uuid.UUID(user_id)
 
     async with fenced_connection(pool) as conn, conn.transaction():
+        # 0045's lock order: the trigger goes on to the parent's row.
+        await conn.execute(store.LOCK_TASK_SCOPE_SQL, user_uuid, task_uuid)
         row = await conn.fetchrow(_TRANSITION_SQL, task_uuid, status, user_uuid)
         if row is None:
-            return SettleResult(
-                transitioned=False,
-                parent_task_id=None,
-                parent_remaining=None,
-                reenqueued_parent=False,
-            )
-
-        parent = row["parent_task_id"]
-        if parent is None:
-            return SettleResult(
-                transitioned=True,
-                parent_task_id=None,
-                parent_remaining=None,
-                reenqueued_parent=False,
-            )
-
-        dec = await conn.fetchrow(_DECREMENT_SQL, parent, user_uuid)
-        remaining: int | None = dec["pending_children"] if dec else None
-        parent_status = dec["status"] if dec else None
-
-        reenqueued = False
-        if remaining == 0 and parent_status not in _TERMINAL:
+            return SettleResult(transitioned=False, parent_task_id=None)
+        if event is not None:
             await conn.execute(
-                ENQUEUE_CONTINUE_SQL,
-                parent,
+                _TERMINAL_EVENT_SQL,
+                task_uuid,
                 user_uuid,
-                "continue",
-                json.dumps({}),
+                event.seq,
+                event.step,
+                event.kind,
+                json.dumps(event_to_row_payload(event)),
             )
-            reenqueued = True
-
+        parent = row["parent_task_id"]
         return SettleResult(
-            transitioned=True,
-            parent_task_id=str(parent),
-            parent_remaining=remaining,
-            reenqueued_parent=reenqueued,
+            transitioned=True, parent_task_id=None if parent is None else str(parent)
         )

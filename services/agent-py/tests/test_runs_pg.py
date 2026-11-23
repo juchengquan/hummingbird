@@ -40,6 +40,7 @@ from agent_py.runs.model import (
 from agent_py.runs.repository import (
     InvalidPageToken,
     PreviousRunNotFound,
+    PreviousRunNotWaiting,
     RunFilter,
     RunIdConflict,
     RunSpec,
@@ -187,7 +188,7 @@ async def test_create_background_needs_an_owned_conversation(
     checkpoint = json.loads((await _row(pool, created.run.id))["checkpoint"])
     assert (checkpoint["step"], checkpoint["seq"], checkpoint["config"]["maxSteps"]) == (0, 1, 3)
 
-    await repo.enqueue_start(me, created.run.id)
+    # The create queued it, in its own transaction (0045, B18).
     async with pool.acquire() as conn:
         jobs = await conn.fetch(
             "SELECT action, status FROM public.task_jobs WHERE task_id = $1",
@@ -214,6 +215,9 @@ async def test_previous_run_must_be_mine_on_the_thread(
         await repo.create(me, _interactive(_id(), previous_run_id=prev.id))
     with pytest.raises(PreviousRunNotFound):
         await repo.create(RunOwner.user(bob), _interactive(thread, previous_run_id=prev.id))
+    with pytest.raises(PreviousRunNotWaiting):  # still running (0045, B16)
+        await repo.create(me, _interactive(thread, previous_run_id=prev.id))
+    assert await repo.settle(prev.id, Interrupted((PendingInterrupt(id="q", tool="send"),)))
     nxt = (await repo.create(me, _interactive(thread, previous_run_id=prev.id))).run
     assert nxt.previous_run_id == prev.id
 

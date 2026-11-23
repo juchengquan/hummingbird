@@ -318,8 +318,11 @@ async def test_tampered_checkpoint_model_fails_run_before_anthropic() -> None:
     assert settle.await_args is not None
     assert settle.await_args.kwargs["status"] == "failed"
     # A terminal `result: failed` event carries the error to the UI.
-    kinds = [call.args[1].kind for call in append.await_args_list if len(call.args) > 1]
-    assert "result" in kinds
+    event = settle.await_args.kwargs["event"]
+    assert event.kind == "result" and "claude-opus-4-8" in event.error
+    assert event.error_code == "unknown_model"
+    # The settle wrote it, in its transaction: nothing separately.
+    assert "result" not in [call.args[1].kind for call in append.await_args_list]
 
 
 def test_checkpoint_model_is_mapped_for_the_step_fn() -> None:

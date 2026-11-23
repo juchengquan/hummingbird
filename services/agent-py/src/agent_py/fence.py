@@ -14,8 +14,10 @@ makes while a lease is bound:
   2. the lease is re-checked AFTER the acquire;
   3. when the lease carries its fencing token (`JobLease.attempts`, the
      claim's `task_jobs.attempts`), the write runs in a transaction that
-     first takes `FOR SHARE` on the job row — still `running` at our
-     `attempts`. A reclaim (`UPDATE … attempts = attempts + 1`) blocks
+     first calls `private.fence_task_job` (migration 0045): it takes the
+     task locks in their one order — conversation, user, task row — and
+     then `FOR SHARE` on the job row, still `running` at our `attempts`.
+     A reclaim (`UPDATE … attempts = attempts + 1`) blocks
      on that lock until the write commits, so it can never interleave;
      a claim that is already gone matches no row → `LeaseLostError`.
 
@@ -36,11 +38,7 @@ from . import lease
 # Upper bound on waiting for a pooled connection.
 ACQUIRE_TIMEOUT_S = 10.0
 
-_FENCE_SQL = """
-SELECT 1 FROM public.task_jobs
-WHERE id = $1 AND attempts = $2 AND status = 'running'
-FOR SHARE;
-"""
+_FENCE_SQL = "SELECT private.fence_task_job($1, $2) AS held;"
 
 
 @asynccontextmanager
@@ -59,7 +57,7 @@ async def fenced_connection(pool: asyncpg.Pool) -> AsyncIterator[asyncpg.Connect
             return
         async with conn.transaction():
             row = await conn.fetchrow(_FENCE_SQL, uuid.UUID(job_lease.job_id), job_lease.attempts)
-            if row is None:
+            if row is None or not row["held"]:
                 job_lease.mark_lost("db_fence_claim_gone")
                 raise lease.LeaseLostError(job_lease.job_id, "db_fence_claim_gone")
             yield conn

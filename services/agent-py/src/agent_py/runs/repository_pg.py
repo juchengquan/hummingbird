@@ -15,14 +15,17 @@ Two kinds of access, as `repository.RunRepository` describes:
   `exists`) run as the DSN role, like the workers: users cannot write
   `outcome` / `lease_expires_at` (0034/0041).
 
-`cancel` does both in one transaction: the status flip (and 0034's
-child cascade, as the Next cancel route does) as the user — the guard
-trigger allows exactly live → `cancelled` — then `RESET ROLE` and the
-`outcome` / lease columns as the DSN role.
+`create` of a background run is one transaction: the row, its `status:
+queued` entry and its `start` job — a refused enqueue leaves no queued
+orphan and holds no resume slot. `cancel` is the `cancel_task` RPC
+(0045), the one the Next route calls: for a background run the whole
+task (Q60), an interactive run alone.
 
 **Rows written before 0041** (no `outcome`): a `done` / `failed` /
 `paused` row's result, error and open interrupts are rebuilt from its
-log (`result` and `approval` entries) per RUN_EVENTS.md §§ 1 and 5. The
+log (`result` and `approval` entries) per RUN_EVENTS.md §§ 1 and 5: a
+paused one waits on its newest unanswered request only, which
+supersedes any a dead attempt left (`private.task_waits_on`, the same rule). The
 `status` filter of `list_runs` approximates that rebuild in SQL: a
 pre-0041 `paused` row that is not waiting on sub-agents
 (`checkpoint.awaiting_children`) counts as `interrupted`.
@@ -35,7 +38,7 @@ import uuid
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 import asyncpg
 import structlog
@@ -43,7 +46,6 @@ import structlog
 from .. import events, store
 from ..events import ApprovalEvent, ResultEvent
 from .model import (
-    Cancelled,
     ContractStatus,
     Failed,
     InternalStatus,
@@ -63,6 +65,7 @@ from .repository import (
     PreviousRunAlreadyAnswered,
     PreviousRunAlreadyResumed,
     PreviousRunNotFound,
+    PreviousRunNotWaiting,
     RunFilter,
     RunIdConflict,
     RunPage,
@@ -149,6 +152,15 @@ def _sqlstate(exc: BaseException) -> str | None:
     return state if isinstance(state, str) else None
 
 
+def _raise_write_error(exc: asyncpg.PostgresError) -> NoReturn:
+    state = _sqlstate(exc)
+    mapped = _SQLSTATE_RESPONSES.get(state or "")
+    if mapped is None:
+        raise exc
+    message = str(getattr(exc, "message", "") or exc) or "Request rejected."
+    raise RunWriteError(state, mapped[0], mapped[1], message) from None
+
+
 def _status_for(outcome: RunOutcome) -> InternalStatus:
     if isinstance(outcome, Succeeded):
         return "done"
@@ -165,23 +177,21 @@ class _LogFallback:
     def __init__(self) -> None:
         self.result: ResultEvent | None = None
         self.requests: dict[str, ApprovalEvent] = {}
-        self.answered: set[str] = set()
 
     def add(self, event: events.TaskEvent) -> None:
         if isinstance(event, ResultEvent):
             self.result = event
         elif isinstance(event, ApprovalEvent):
+            self.requests.pop(event.approval_id, None)
             if event.phase == "request":
                 self.requests[event.approval_id] = event
-            else:
-                self.answered.add(event.approval_id)
 
     def open_interrupts(self) -> tuple[dict[str, object], ...]:
-        return tuple(
-            PendingInterrupt.from_approval(ev).to_agui()
-            for approval_id, ev in self.requests.items()
-            if approval_id not in self.answered
-        )
+        # The executor asks one question at a time: only the newest is live.
+        if not self.requests:
+            return ()
+        newest = list(self.requests.values())[-1]
+        return (PendingInterrupt.from_approval(newest).to_agui(),)
 
 
 class PgRunRepository:
@@ -274,6 +284,8 @@ class PgRunRepository:
                     None if spec.checkpoint is None else json.dumps(spec.checkpoint),
                     lease,
                 )
+                if spec.mode == "background" and row is not None and row["created"]:
+                    await self._queue(conn, spec.run_id, owner.user_id)
                 record = await self._load(conn, spec.run_id, owner.user_id)
         except asyncpg.PostgresError as exc:
             state = _sqlstate(exc)
@@ -288,13 +300,34 @@ class PgRunRepository:
                 raise ThreadNotFound() from None
             if state == "22023":
                 raise ValueError(message) from None
-            if state == "55000" and "already answered" in message:
-                # 0043: the previous run has a `respond` job.
-                raise PreviousRunAlreadyAnswered() from None
+            if state == "55000":
+                if "already answered" in message:
+                    # 0045: a `respond` job holds one of the questions.
+                    raise PreviousRunAlreadyAnswered() from None
+                if "previous run" in message:
+                    raise PreviousRunNotWaiting(message) from None
             raise
         if row is None or record is None:  # pragma: no cover — the RPC always answers
             raise RuntimeError("create_run returned no row")
         return CreateResult(record, created=bool(row["created"]))
+
+    async def _queue(self, conn: asyncpg.Connection, run_id: str, user_id: str) -> None:
+        """What the Next task route does after `create_task_run`, inside
+        the create's transaction: `status: queued` as seq 1 (as the user,
+        like the route; the worker continues at seq 2), then the `start`
+        job. A refusal (`RunWriteError`) rolls the run back with it."""
+        await conn.execute(
+            "INSERT INTO public.task_events (task_id, user_id, seq, step, kind, payload) "
+            "VALUES ($1, $2, 1, 0, 'status', '{\"status\": \"queued\"}'::jsonb)",
+            _uuid(run_id),
+            _uuid(user_id),
+        )
+        try:
+            await conn.fetchval(
+                "SELECT public.enqueue_task_job($1, 'start', '{}'::jsonb)", _uuid(run_id)
+            )
+        except asyncpg.PostgresError as exc:
+            _raise_write_error(exc)
 
     async def get(self, owner: RunOwner, run_id: str) -> RunRecord | None:
         if owner.user_id is None:
@@ -358,41 +391,14 @@ class PgRunRepository:
     async def cancel(self, owner: RunOwner, run_id: str) -> RunRecord | None:
         if owner.user_id is None:
             return None
-        run_uuid, user_uuid = _uuid(run_id), _uuid(owner.user_id)
-        async with self._as_user(owner.user_id) as conn:
-            status = await conn.fetchval(
-                "SELECT t.status FROM public.tasks t WHERE t.id = $1 AND t.user_id = $2 FOR UPDATE",
-                run_uuid,
-                user_uuid,
-            )
-            if status is None:
+        try:
+            async with self._as_user(owner.user_id) as conn:
+                await conn.execute("SELECT public.cancel_task($1)", _uuid(run_id))
+                return await self._load(conn, run_id, owner.user_id)
+        except asyncpg.PostgresError as exc:
+            if _sqlstate(exc) == "P0002":
                 return None
-            if status in ("queued", "running", "paused"):
-                # As the user: 0034's grant + guard allow exactly this.
-                await conn.execute(
-                    "UPDATE public.tasks SET status = 'cancelled', finished_at = now(), "
-                    "updated_at = now() WHERE id = $1 AND user_id = $2",
-                    run_uuid,
-                    user_uuid,
-                )
-                # The Next cancel route's `cancelChildTasks`.
-                await conn.execute(
-                    "UPDATE public.tasks SET status = 'cancelled', finished_at = now(), "
-                    "updated_at = now() WHERE parent_task_id = $1 AND user_id = $2 "
-                    "AND mode = 'background' AND status IN ('queued', 'running', 'paused')",
-                    run_uuid,
-                    user_uuid,
-                )
-                # The columns users cannot write, as the DSN role.
-                await conn.execute("RESET ROLE")
-                await conn.execute(
-                    "UPDATE public.tasks SET outcome = $3::jsonb, lease_expires_at = NULL "
-                    "WHERE id = $1 AND user_id = $2",
-                    run_uuid,
-                    user_uuid,
-                    json.dumps(outcome_to_json(Cancelled())),
-                )
-            return await self._load(conn, run_id, owner.user_id)
+            raise
 
     async def enqueue_start(self, owner: RunOwner, run_id: str) -> None:
         """Enqueue a background run's `start` job as the user
@@ -408,12 +414,7 @@ class PgRunRepository:
                     "SELECT public.enqueue_task_job($1, 'start', '{}'::jsonb)", _uuid(run_id)
                 )
         except asyncpg.PostgresError as exc:
-            state = _sqlstate(exc)
-            mapped = _SQLSTATE_RESPONSES.get(state or "")
-            if mapped is None:
-                raise
-            message = str(getattr(exc, "message", "") or exc) or "Request rejected."
-            raise RunWriteError(state, mapped[0], mapped[1], message) from None
+            _raise_write_error(exc)
 
     # -- system --
 

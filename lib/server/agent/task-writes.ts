@@ -10,8 +10,10 @@ import "server-only"
  *
  *   - `create_task_run`  — new queued run + its initial checkpoint.
  *   - `enqueue_task_job` — new queued job (user callers: `start` on a
- *     queued, never-started task; `respond` on a paused one; the
- *     service-role client may also enqueue for any task).
+ *     queued, never-started task; `respond` with the one answer to the
+ *     question a paused one waits on, 0045; the service-role client may
+ *     also enqueue for any task).
+ *   - `cancel_task` — cancel the whole task, or skip one child (0045).
  *
  * Errors carry the Postgres SQLSTATE so routes can answer with a
  * meaningful status (`taskWriteErrorResponse`) instead of a blanket 500.
@@ -39,7 +41,7 @@ export class TaskWriteError extends Error {
 }
 
 /** SQLSTATEs the task RPCs / guard triggers raise on purpose (0034,
- *  0035) → the HTTP answer a route should give. Anything else is left
+ *  0035, 0045) → the HTTP answer a route should give. Anything else is left
  *  to the route's generic error categorisation. */
 const SQLSTATE_RESPONSES: Record<string, { status: number; code: string }> = {
   "42501": { status: 403, code: "forbidden" },
@@ -95,6 +97,16 @@ export async function createTaskRun(db: DB, input: CreateTaskRunInput): Promise<
   })
   if (error) {
     throw new TaskWriteError(`createTaskRun: ${error.message}`, error.code)
+  }
+}
+
+/** Cancel through `cancel_task` (0045, Q60): a top-level task with its
+ *  whole chain of answers and their children, a child alone (its parent
+ *  continues). Idempotent; P0002 when it isn't the caller's. */
+export async function cancelTask(db: DB, taskId: string): Promise<void> {
+  const { error } = await db.rpc("cancel_task", { p_task_id: taskId })
+  if (error) {
+    throw new TaskWriteError(`cancel task: ${error.message}`, error.code)
   }
 }
 

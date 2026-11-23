@@ -9,6 +9,8 @@ import {
   modelsForBackend,
   pickFallbackModel,
   RUNS_ROUTING_AVAILABLE,
+  TASK_FALLBACK_MODEL,
+  taskModelFor,
 } from "./backend-models"
 import {
   ANTHROPIC_SERVICE_MODELS,
@@ -138,5 +140,37 @@ describe("pickFallbackModel (Q40)", () => {
       const pick = pickFallbackModel(m.id, "agent-runs")
       if (pick) expect(ANTHROPIC_SERVICE_MODELS.has(pick.id)).toBe(true)
     }
+  })
+})
+
+describe("taskModelFor (Q55)", () => {
+  test("falls back to Haiku, agent-py's own default (Q67)", () => {
+    expect(taskModelFor("deepseek/deepseek-v4-flash")).toEqual({
+      model: "anthropic/claude-haiku-4.5",
+      switchedFrom: "deepseek/deepseek-v4-flash",
+    })
+  })
+
+  test("keeps exactly the models the task worker runs", () => {
+    for (const { id } of CHAT_MODELS) {
+      const { model, switchedFrom } = taskModelFor(id)
+      expect(backendAcceptsModel("agent-service", model!)).toBe(true)
+      if (ANTHROPIC_SERVICE_MODELS.has(id)) {
+        expect({ model, switchedFrom }).toEqual({ model: id, switchedFrom: null })
+      } else {
+        expect(switchedFrom).toBe(id)
+      }
+    }
+  })
+
+  test("auto, an unknown id and no model at all are switched", () => {
+    const fallback = TASK_FALLBACK_MODEL
+    expect(taskModelFor(AUTO_MODEL_ID)).toEqual({ model: fallback, switchedFrom: AUTO_MODEL_ID })
+    expect(taskModelFor("claude-sonnet-4-6")).toEqual({
+      model: fallback,
+      switchedFrom: "claude-sonnet-4-6",
+    })
+    // Absent reads as the route's default, which the worker can't run.
+    for (const absent of [undefined, null, ""]) expect(taskModelFor(absent).model).toBe(fallback)
   })
 })

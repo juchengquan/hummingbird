@@ -1,7 +1,5 @@
 "use client"
 
-import { useEffect, useState } from "react"
-
 import {
   Ban,
   CheckCircle2,
@@ -20,37 +18,34 @@ import {
   ToolCallStrip,
   type LiveToolCall,
 } from "@/components/skills/tool-call-strip"
-import { apiClient } from "@/client/api-client"
+import type { ChildRuns } from "@/client/agent/use-child-runs"
+import { openChildRunViewer } from "@/client/agent/child-run-viewer/types"
+import { taskProgress } from "@/client/agent/task-progress"
 import { isTerminalStatus, type RunStatus } from "@/shared/agent/events"
 import type { PlanItem } from "@/shared/agent/events"
-import type { ChildRunRef, PendingInput, TaskRunView } from "@/shared/agent/project"
-import type { RespondRequestInput } from "@/shared/api-schemas"
-import {
-  questionFromPendingInput,
-  respondBodyForCardAnswer,
-  type CardAnswer,
-} from "@/shared/agent/answer-cards"
+import type { ChildRunRef, TaskRunView } from "@/shared/agent/project"
 import { cn } from "@/shared/utils"
 
-import { openChildRunViewer } from "@/client/agent/child-run-viewer/types"
-
-import { AnswerCard } from "./interrupt-cards/answer-cards"
 import { subagentPillLabel } from "./subagent-pill-label"
+import { TaskQuestion } from "./task-question"
 
 interface TaskStripProps {
   view: TaskRunView
-  /** True while the client stream is open. */
+  /** True until the task ends (also while it waits, or reconnects). */
   isRunning: boolean
-  /** The id of the active run — used to poll child subagent statuses.
-   *  Passed from `TasksSidebar` (which holds it from `useTaskRunContext`). */
+  /** The id of the run — where its question's answer goes. */
   runId?: string | null
+  /** Its sub-agents' rows and questions (a top-level task's). */
+  childState?: ChildRuns
+  /** This is a sub-agent's run: cancelling it skips it (Q60). */
+  subagent?: boolean
   /** Transport-level error (network / HTTP), shown alongside the run's
    *  own `view.fatalError`. */
   error?: string | null
   onCancel?: () => void
-  /** Called when the human answers a `view.pendingInput`. The caller
-   *  is responsible for hitting the respond endpoint. */
-  onRespond?: (body: RespondRequestInput) => void | Promise<void>
+  cancelling?: boolean
+  /** An answer found the question closed: re-read the run. */
+  onStale?: () => void
   /** Optional "Open in editor" affordance for settled tasks whose
    *  output is a document (research mode — `PLAN-deep-research.md`).
    *  Rendered only when the run settles `done` AND a `resultText`
@@ -73,30 +68,16 @@ export function TaskStrip({
   view,
   isRunning,
   runId,
+  childState,
+  subagent,
   error,
   onCancel,
-  onRespond,
+  cancelling,
+  onStale,
   onOpenInEditor,
   openInEditorLabel = "Open in editor",
   className,
 }: TaskStripProps) {
-  const [childStatuses, setChildStatuses] = useState<Record<string, string>>({})
-  useEffect(() => {
-    if (!isRunning || !runId || view.childRuns.length === 0) return
-    let active = true
-    const load = async () => {
-      const rows = await apiClient.tasks.listTaskChildren(runId)
-      if (!active) return
-      setChildStatuses(Object.fromEntries(rows.map((r) => [r.id, r.status])))
-    }
-    void load()
-    const timer = setInterval(load, 2000)
-    return () => {
-      active = false
-      clearInterval(timer)
-    }
-  }, [isRunning, runId, view.childRuns.length])
-
   const terminal = isTerminalStatus(view.status)
   const errMsg = error ?? view.fatalError
   const canOpenInEditor =
@@ -109,14 +90,14 @@ export function TaskStrip({
     return (
       <div
         className={cn(
-          "flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--muted)]/30 px-3 py-1.5 text-xs text-[var(--muted-foreground)]",
+          "flex flex-wrap items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--muted)]/30 px-3 py-1.5 text-xs text-[var(--muted-foreground)]",
           className
         )}
       >
         <StatusIcon status={view.status} />
-        <span>{terminalSummary(view)}</span>
+        <span>{terminalSummary(view, subagent)}</span>
         {errMsg ? (
-          <span className="text-[var(--destructive)] truncate">· {errMsg}</span>
+          <span className="min-w-0 break-words text-[var(--destructive)]">· {errMsg}</span>
         ) : null}
         {canOpenInEditor ? (
           <Button
@@ -133,7 +114,17 @@ export function TaskStrip({
     )
   }
 
-  const calls: LiveToolCall[] = view.toolCalls.map((c) => ({
+  const progress = taskProgress(view, childState)
+  // While the task waits (for the user, or its sub-agents) none of its
+  // calls runs: the asked one has its card, and the turn's later ones
+  // haven't started. A spawn is shown as the sub-agent list.
+  const idle = progress.paused || !!childState?.waiting
+  const shownCalls = view.toolCalls.filter(
+    (c) =>
+      c.status === "done" ||
+      (!idle && !(c.toolName === "spawnSubagent" && view.childRuns.length > 0))
+  )
+  const calls: LiveToolCall[] = shownCalls.map((c) => ({
     id: c.toolCallId,
     name: c.toolName,
     argsLabel: argLabel(c.args),
@@ -149,34 +140,63 @@ export function TaskStrip({
         className
       )}
     >
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-xs font-medium">
-          <StatusIcon status={view.status} />
-          <span>{statusLabel(view.status)}</span>
-          <span className="text-[var(--muted-foreground)]">
-            · Step {view.step}
-            {view.maxSteps ? ` / ${view.maxSteps}` : ""}
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-start gap-1.5 text-xs font-medium">
+          <span className="mt-px shrink-0">
+            <StatusIcon status={progress.paused ? "paused" : view.status} />
           </span>
+          <p className="min-w-0 break-words">
+            <span role="status">{progress.label}</span>{" "}
+            <span className="text-[var(--muted-foreground)]">
+              · Step {view.step}
+              {view.maxSteps ? ` / ${view.maxSteps}` : ""}
+            </span>
+          </p>
         </div>
         {isRunning && onCancel ? (
-          <Button size="xs" variant="ghost" onClick={onCancel}>
+          <Button
+            size="xs"
+            variant="ghost"
+            className="shrink-0"
+            // A question's own "Cancel" (a confirm card) can sit right below.
+            aria-label={subagent ? "Skip" : "Cancel task"}
+            title={subagent ? "Skip this sub-agent" : "Cancel the task and its sub-agents"}
+            disabled={cancelling}
+            onClick={onCancel}
+          >
             <X />
-            Cancel
+            {subagent ? "Skip" : "Cancel"}
           </Button>
         ) : null}
       </div>
 
-      {view.pendingInput && onRespond ? (
-        <InputRequestCard input={view.pendingInput} onRespond={onRespond} />
+      {/* Up here, not under the text: a failed cancel or watch must be seen. */}
+      {errMsg ? (
+        <p role="alert" className="break-words text-xs text-[var(--destructive)]">
+          {errMsg}
+        </p>
+      ) : null}
+
+      {view.pendingInput && runId ? (
+        <TaskQuestion
+          key={`${runId}:${view.pendingInput.requestId}`}
+          runId={runId}
+          input={view.pendingInput}
+          onStale={onStale}
+        />
+      ) : null}
+
+      {childState?.asking.length ? (
+        <ChildQuestions childRuns={view.childRuns} childState={childState} />
       ) : null}
 
       {view.plan.length > 0 ? <PlanList items={view.plan} /> : null}
 
       {view.childRuns.length > 0 ? (
-        <SubagentGroup childRuns={view.childRuns} statuses={childStatuses} />
+        <SubagentGroup childRuns={view.childRuns} childState={childState} />
       ) : null}
 
-      {calls.length > 0 ? <ToolCallStrip calls={calls} /> : null}
+      {calls.length > 0 ? <ToolCallStrip calls={calls} className="[&>span]:max-w-full" /> : null}
 
       {view.lastStepError ? (
         <p className="text-[11px] text-[var(--muted-foreground)]">
@@ -199,80 +219,97 @@ export function TaskStrip({
       {view.text ? (
         <MarkdownPreview content={view.text} className="!p-0" />
       ) : null}
-
-      {errMsg ? (
-        <p className="text-xs text-[var(--destructive)]">{errMsg}</p>
-      ) : null}
     </div>
   )
 }
 
-/** The answer card shown when the run is paused on a pending input —
- *  approval, choice, input or a generative-UI part. The cards are shared
- *  with chat on runs (`components/agent/interrupt-cards/`); the answer
- *  goes to `/api/tasks/:id/respond` as it always has
- *  (`respondBodyForCardAnswer`). */
-function InputRequestCard({
-  input,
-  onRespond,
+/** The sub-agents' questions, on their parent (Q59). Each answer goes
+ *  to the child's own id. */
+function ChildQuestions({
+  childRuns,
+  childState,
 }: {
-  input: PendingInput
-  onRespond: (body: RespondRequestInput) => void | Promise<void>
+  childRuns: ChildRunRef[]
+  childState: ChildRuns
 }) {
-  const [busy, setBusy] = useState(false)
-  const submit = async (answer: CardAnswer) => {
-    if (busy) return
-    setBusy(true)
-    try {
-      await onRespond(respondBodyForCardAnswer(input.requestId, answer))
-    } finally {
-      setBusy(false)
-    }
-  }
-  const handleAnswer = (answer: CardAnswer) => {
-    // A generative-UI answer is sent without the busy state, as before.
-    if ("uiAnswer" in answer) {
-      void onRespond(respondBodyForCardAnswer(input.requestId, answer))
-      return
-    }
-    void submit(answer)
-  }
   return (
-    <AnswerCard
-      question={questionFromPendingInput(input)}
-      busy={busy}
-      onAnswer={handleAnswer}
-    />
+    <div className="space-y-2">
+      {childState.asking.map((child) => {
+        const ref = childRuns.find((c) => c.childTaskId === child.id)
+        const input = child.pendingInput
+        if (!input) return null
+        return (
+          <div
+            key={`${child.id}:${input.requestId}`}
+            role="group"
+            aria-label={`Question from sub-agent ${ref?.agent ?? child.goal}`}
+            className="min-w-0 space-y-1"
+          >
+            <p className="break-words text-xs text-[var(--muted-foreground)]">
+              <span className="font-medium text-[var(--foreground)]">
+                {ref?.agent ?? "Sub-agent"}
+              </span>{" "}
+              asks · {ref?.subgoal || child.goal}
+            </p>
+            <TaskQuestion runId={child.id} input={input} onStale={childState.refresh} />
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
 function SubagentGroup({
   childRuns,
-  statuses,
+  childState,
 }: {
   childRuns: ChildRunRef[]
-  statuses: Record<string, string>
+  childState?: ChildRuns
 }) {
+  const rows = childState?.rows ?? []
+  const statuses = Object.fromEntries(rows.map((r) => [r.id, r.status]))
   return (
     <ul className="space-y-0.5 text-xs">
       <li className="flex items-center gap-1.5 text-[var(--muted-foreground)] font-medium">
         Spawned {childRuns.length} subagent{childRuns.length === 1 ? "" : "s"}
       </li>
-      {childRuns.map((c) => (
-        <li key={c.childTaskId}>
-          <button
-            type="button"
-            onClick={() => openChildRunViewer({ childTaskId: c.childTaskId })}
-            className="flex w-full items-center gap-1.5 rounded-sm px-1 py-0.5 text-left hover:bg-[var(--muted)]"
-          >
-            <span className="rounded-sm bg-[var(--muted)] px-1 py-0.5 text-[10px] leading-none text-[var(--muted-foreground)]">
-              {subagentPillLabel(c.childTaskId, statuses)}
-            </span>
-            <span className="font-medium">{c.agent}</span>
-            <span className="text-[var(--muted-foreground)] truncate">{c.subgoal}</span>
-          </button>
+      {childState?.stale ? (
+        <li className="text-[var(--destructive)]">
+          Couldn&apos;t refresh the sub-agents. Retrying…
         </li>
-      ))}
+      ) : null}
+      {childRuns.map((c) => {
+        const status = statuses[c.childTaskId]
+        const canSkip = !!status && !isTerminalStatus(status as RunStatus)
+        return (
+          <li key={c.childTaskId} className="flex min-w-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={() => openChildRunViewer({ childTaskId: c.childTaskId })}
+              className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 py-0.5 text-left hover:bg-[var(--muted)]"
+            >
+              <span className="shrink-0 rounded-sm bg-[var(--muted)] px-1 py-0.5 text-[10px] leading-none text-[var(--muted-foreground)]">
+                {subagentPillLabel(c.childTaskId, statuses)}
+              </span>{" "}
+              <span className="min-w-0 truncate font-medium">{c.agent}</span>{" "}
+              <span className="min-w-0 truncate text-[var(--muted-foreground)]">{c.subgoal}</span>
+            </button>
+            {canSkip && childState ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                className="shrink-0"
+                disabled={childState.skipping.has(c.childTaskId)}
+                aria-label={`Skip sub-agent ${c.agent}`}
+                title="Skip this sub-agent; the task carries on"
+                onClick={() => void childState.skip(c.childTaskId)}
+              >
+                Skip
+              </Button>
+            ) : null}
+          </li>
+        )
+      })}
     </ul>
   )
 }
@@ -321,25 +358,9 @@ function StatusIcon({ status }: { status: RunStatus }) {
   }
 }
 
-function statusLabel(status: RunStatus): string {
-  switch (status) {
-    case "queued":
-      return "Queued"
-    case "running":
-      return "Running"
-    case "paused":
-      return "Paused"
-    case "done":
-      return "Done"
-    case "failed":
-      return "Failed"
-    case "cancelled":
-      return "Cancelled"
-  }
-}
-
-function terminalSummary(view: TaskRunView): string {
+function terminalSummary(view: TaskRunView, subagent?: boolean): string {
   const steps = `${view.step} step${view.step === 1 ? "" : "s"}`
+  if (subagent && view.status === "cancelled") return `Sub-agent skipped · ${steps}`
   switch (view.status) {
     case "done":
       return `Task finished · ${steps}`

@@ -35,6 +35,7 @@ from agent_py.runs import (
     InvalidPageToken,
     PendingInterrupt,
     PreviousRunNotFound,
+    PreviousRunNotWaiting,
     RecordingEncoder,
     RunCursor,
     RunFilter,
@@ -468,6 +469,13 @@ async def test_create_resume_checks_previous_run() -> None:
             B,
             RunSpec(run_id=_rid(3), thread_id=THREAD, mode="interactive", previous_run_id=_rid(1)),
         )
+    # Only a run still paused on its question is resumed (0045, B16).
+    with pytest.raises(PreviousRunNotWaiting):
+        await repo.create(
+            A,
+            RunSpec(run_id=_rid(4), thread_id=THREAD, mode="interactive", previous_run_id=_rid(1)),
+        )
+    await repo.settle(_rid(1), Interrupted((PendingInterrupt(id="q"),)))
     ok = await repo.create(
         A, RunSpec(run_id=_rid(4), thread_id=THREAD, mode="interactive", previous_run_id=_rid(1))
     )

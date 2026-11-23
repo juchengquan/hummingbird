@@ -16,7 +16,8 @@ import "server-only"
  * Q27/Q28). The task routes built on this module must behave exactly as
  * before, so every read and update here is scoped to `BACKGROUND`: an
  * interactive run is invisible to them (404 from the routes, never
- * reconciled, never listed as a child, never cancelled by a cascade).
+ * reconciled, never listed as a child, never cancelled by a cascade —
+ * `cancel_task`'s tree is background runs only).
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js"
@@ -70,6 +71,24 @@ export async function getRun(
     .maybeSingle()
   if (error) throw new Error(`getRun: ${error.message}`)
   return data ?? null
+}
+
+/** A run's status alone: what a watcher polls (Q66). The whole row carries
+ *  the checkpoint, which can be large. Null when it doesn't exist. */
+export async function getRunStatus(
+  db: DB,
+  runId: string,
+  userId: string
+): Promise<RunStatus | null> {
+  const { data, error } = await db
+    .from("tasks")
+    .select("status")
+    .eq("id", runId)
+    .eq("user_id", userId)
+    .eq("mode", BACKGROUND)
+    .maybeSingle()
+  if (error) throw new Error(`getRunStatus: ${error.message}`)
+  return (data?.status as RunStatus | undefined) ?? null
 }
 
 export interface UpdateRunPatch {
@@ -189,7 +208,8 @@ const SETTLEABLE_STATUSES = ["queued", "running"] as const
  * Settle an orphaned run (the producer died without a terminal event)
  * and append its terminal `result` event out-of-band.
  *
- * The status flip is conditional on the run still being queued/running,
+ * The status flip is conditional on the run still being queued/running
+ * (or `from`, narrower: a failed enqueue settles only a still queued run),
  * so a run that settled concurrently (or was cancelled) is never
  * overwritten — and only when the flip actually happened is the event
  * appended, so it can't gain a stray second `result`. Seq follows the
@@ -200,7 +220,11 @@ export async function appendSyntheticResult(
   db: DB,
   runId: string,
   userId: string,
-  opts: { status: "done" | "failed"; error?: string }
+  opts: {
+    status: "done" | "failed"
+    error?: string
+    from?: readonly (typeof SETTLEABLE_STATUSES)[number][]
+  }
 ): Promise<boolean> {
   const nowIso = new Date().toISOString()
   const { data, error } = await db
@@ -209,7 +233,7 @@ export async function appendSyntheticResult(
     .eq("id", runId)
     .eq("user_id", userId)
     .eq("mode", BACKGROUND)
-    .in("status", [...SETTLEABLE_STATUSES])
+    .in("status", [...(opts.from ?? SETTLEABLE_STATUSES)])
     .select("id")
   if (error) throw new Error(`appendSyntheticResult: ${error.message}`)
   if (!data || data.length === 0) return false
@@ -275,20 +299,47 @@ export async function listTaskChildren(
   return (data ?? []).map((c) => ({ ...c, goal: c.goal ?? "" }))
 }
 
-/** Cancel all not-yet-settled children of a cancelled parent task. */
-export async function cancelChildTasks(
+const QUESTION_KINDS = ["approval", "choice", "input", "ui-part"] as const
+export type QuestionKind = (typeof QUESTION_KINDS)[number]
+
+function questionKind(raw: unknown): QuestionKind {
+  return QUESTION_KINDS.find((kind) => kind === raw) ?? "approval"
+}
+
+/**
+ * What kind of question `requestId` is on a paused run: from the row's
+ * open interrupts (`outcome`, written with the pause), or for a run
+ * paused before 0045 from its request entry in the log. Null when the
+ * run doesn't ask it (`enqueue_task_job` then refuses the answer).
+ */
+export async function getQuestionKind(
   db: DB,
-  parentId: string,
-  userId: string
-): Promise<void> {
-  const { error } = await db
-    .from("tasks")
-    .update({ status: "cancelled", finished_at: new Date().toISOString() })
-    .eq("parent_task_id", parentId)
+  run: Pick<TaskRow, "id" | "outcome">,
+  userId: string,
+  requestId: string
+): Promise<QuestionKind | null> {
+  const outcome = run.outcome as {
+    type?: unknown
+    interrupts?: Array<{ id?: unknown; reason?: unknown }>
+  } | null
+  if (outcome?.type === "interrupt" && Array.isArray(outcome.interrupts)) {
+    const open = outcome.interrupts.find((interrupt) => interrupt?.id === requestId)
+    return open ? questionKind(open.reason) : null
+  }
+  const { data, error } = await db
+    .from("task_events")
+    .select("payload")
+    .eq("task_id", run.id)
     .eq("user_id", userId)
-    .eq("mode", BACKGROUND)
-    .not("status", "in", "(done,failed,cancelled)")
-  if (error) throw new Error(`cancelChildTasks: ${error.message}`)
+    .eq("kind", "approval")
+    .eq("payload->>phase", "request")
+    .eq("payload->>approvalId", requestId)
+    .order("seq", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw new Error(`getQuestionKind: ${error.message}`)
+  if (!data) return null
+  return questionKind((data.payload as { requestKind?: unknown } | null)?.requestKind)
 }
 
 /**

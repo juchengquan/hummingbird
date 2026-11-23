@@ -36,6 +36,8 @@ from agent_py.resume_answers import DECLINED_ANSWER, DECLINED_APPROVAL, RESUME_K
 from agent_py.runner import RunStepContext, RunStepFn, RunStepOutcome
 from agent_py.tools.registry import ToolDescriptor, ToolInvocationResult
 
+from .executor_fakes import fake_settle
+
 RUN_ID = "44444444-4444-4444-4444-444444444444"
 USER_ID = "55555555-5555-5555-5555-555555555555"
 PAYLOAD = executor.StartActionPayload(run_id=RUN_ID, user_id=USER_ID)
@@ -79,7 +81,7 @@ class _Harness:
         self.events: list[TaskEvent] = []
         self.save = AsyncMock()
         self.update_run = AsyncMock()
-        self.settle = AsyncMock(return_value=MagicMock())
+        self.settle = fake_settle(self.events)
 
     @contextlib.contextmanager
     def patched(self, checkpoint: dict[str, Any], run_tools: Any | None = None) -> Iterator[None]:
@@ -167,8 +169,10 @@ async def test_ask_user_answer_becomes_the_tool_result_then_the_run_continues() 
     # A Q24 resume writes no in-place `approval: response` entry.
     assert not h.of(ApprovalEvent)
     assert h.of(ResultEvent)[0].status == "done"
-    # The answers are saved into the checkpoint, without the resume block.
-    saved = h.save.await_args_list[0].kwargs["checkpoint"]
+    # The answers are saved into the checkpoint, without the resume block:
+    # first with the turn's record, then as the completed turn.
+    assert RESUME_KEY not in h.save.await_args_list[0].kwargs["checkpoint"]
+    saved = h.save.await_args_list[-1].kwargs["checkpoint"]
     assert RESUME_KEY not in saved and saved["step"] == 1
     assert _last_user_results(saved["messages"])[0]["content"] == "blue"
     assert h.settle.await_args.kwargs["status"] == "done"

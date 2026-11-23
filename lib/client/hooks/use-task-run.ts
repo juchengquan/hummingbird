@@ -1,385 +1,306 @@
-"use client"
 import "client-only"
 
 import { useCallback, useEffect, useRef, useState } from "react"
 
-import { apiClient } from "@/client/api-client"
-import {
-  clearActiveTask,
-  saveActiveTask,
-} from "@/client/agent/active-task"
-import { notifyTaskFinished } from "@/client/agent/notify"
+import { apiClient, type TaskEnqueueResult } from "@/client/api-client"
 import { subscribeTaskEvents } from "@/client/agent/realtime"
-import {
-  isTerminalEvent,
-  isTerminalStatus,
-  type TaskEvent,
-} from "@/shared/agent/events"
+import { isTerminalEvent, isTerminalStatus, type TaskEvent } from "@/shared/agent/events"
 import {
   EMPTY_RUN_VIEW,
+  isNextEvent,
   reduceRun,
   type TaskRunView,
 } from "@/shared/agent/project"
 import { decodeTaskEventStream } from "@/shared/agent/stream"
-import type {
-  RespondRequestInput,
-  TaskRequestInput,
-} from "@/shared/api-schemas"
+import type { TaskRequestInput } from "@/shared/api-schemas"
+
+/** Pause before re-opening a stream that closed; grows while opens fail. */
+const RECONNECT_MS = 1500
+const RECONNECT_MAX_MS = 15_000
+
+const TASK_GONE = "This task no longer exists, or belongs to another account."
 
 export interface UseTaskRunOptions {
-  /** When set, persist a resume pointer for this conversation as the run
-   *  streams and clear it on settle — enables resume-on-reload. */
-  conversationId?: string
-  /** Conversation title carried into the resume pointer + notification. */
-  title?: string
-  /** Fire a browser notification when the run settles while the tab is
-   *  hidden. Permission must be requested separately. */
-  notifyOnFinish?: boolean
-  /** Task mode (`PLAN-deep-research.md`). Persisted in the resume
-   *  pointer so a reload-resume can branch on it (research-mode
-   *  auto-handoff into the editor on settle). */
-  mode?: "default" | "research"
+  /** The run ended: once per watched run, with its final view. A reload
+   *  replays the log, so this fires again then — the caller makes what it
+   *  does idempotent (`settleTask`). */
+  onSettled?: (runId: string, view: TaskRunView) => void
 }
 
 export interface UseTaskRunResult {
   /** The folded projection of the event log so far. */
   view: TaskRunView
-  /** The run id once the first event arrives (start) or set (resume). */
+  /** The run id once the start is accepted, or set (resume). */
   runId: string | null
-  /** True while a stream is open. */
+  /** True from the launch until the task ends — also while it waits on
+   *  the user or its sub-agents, and between reconnects. */
   isRunning: boolean
-  /** Transport-level error (network / HTTP), distinct from the run's own
+  /** A cancel request is on its way. */
+  isCancelling: boolean
+  /** A failed start, watch or cancel; distinct from the run's own
    *  `view.fatalError` which comes from a `result: failed` event. */
   error: string | null
-  /** Start a new task and stream it. */
-  start: (body: TaskRequestInput) => Promise<void>
-  /** Reconnect to an existing run, replaying from `cursor` then tailing. */
-  resume: (runId: string, cursor?: number) => Promise<void>
-  /** Request cancellation and close the local stream. */
+  /** Start a new task and watch it. Resolves with the route's answer;
+   *  `null` when another start or resume replaced this one first. */
+  start: (body: TaskRequestInput) => Promise<TaskEnqueueResult | null>
+  /** Watch an existing run from the start of its log. */
+  resume: (runId: string) => void
+  /** Cancel the run (a child: skip it). */
   cancel: () => Promise<void>
-  /** Resolve a HITL pending input and consume the continuation stream. */
-  respond: (runId: string, body: RespondRequestInput) => Promise<void>
-  /** Drop all state and abort any open stream. */
-  reset: () => void
+  /** Re-read the run now. */
+  refresh: () => void
 }
 
 /**
- * Drives one long-running task on the client: opens the `/api/tasks`
- * (or resume) stream, decodes `data-agent-event` parts, and folds them
- * through `reduceRun` into a live `TaskRunView`. The fold runs against
- * a ref so a reconnect can continue from the current cursor without a
- * stale closure. One run at a time — `start`/`resume` abort the prior.
+ * Drives one long-running task on the client: folds the `/api/tasks/:id/
+ * stream` events through `reduceRun` into a live `TaskRunView`, and keeps
+ * watching until the task ends. A paused task is watched too (it may be
+ * answered or cancelled elsewhere); a closed or failed stream is re-opened
+ * from the cursor. A watch always begins at seq 0, so a reload rebuilds
+ * the whole view. One run at a time — `start`/`resume` drop the prior.
  */
 export function useTaskRun(options?: UseTaskRunOptions): UseTaskRunResult {
   const [view, setView] = useState<TaskRunView>(EMPTY_RUN_VIEW)
   const [runId, setRunId] = useState<string | null>(null)
-  const [isRunning, setIsRunning] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [isStarting, setIsStarting] = useState(false)
+  const [isCancelling, setIsCancelling] = useState(false)
+  const [watchError, setWatchError] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
   const viewRef = useRef<TaskRunView>(EMPTY_RUN_VIEW)
   const runIdRef = useRef<string | null>(null)
+  const endedRef = useRef(false)
+  /** The cancel was accepted; the stream hasn't confirmed how the run ended yet. */
+  const cancelledRef = useRef(false)
+  const cancellingRef = useRef(false)
   // Latest options without re-creating the stream callbacks each render.
   const optsRef = useRef(options)
   useEffect(() => {
     optsRef.current = options
   })
-  // Abort the in-flight stream on unmount. The `consume()` loop checks
-  // the aborted signal and runs its realtime-unsubscribe `finally`, and
-  // the auto-reconnect loop short-circuits — so a standalone consumer
-  // that unmounts mid-run (e.g. the child-run drill-in Sheet) doesn't
-  // leak the SSE fetch + reconnect loop. The root TaskRunProvider never
-  // unmounts during a session, so this is a no-op there.
+  // Stop watching on unmount (e.g. the child-run drill-in Sheet).
   useEffect(() => {
     return () => {
       abortRef.current?.abort()
     }
   }, [])
 
-  // Last (status, step) we wrote to the resume pointer, so token-only
-  // updates don't hammer localStorage.
-  const persistedRef = useRef<{ status: string; step: number } | null>(null)
-
-  /** Fold one event into the view + side-effect (active-task pointer,
-   *  finish notification). Both the SSE stream decoder and the
-   *  Realtime subscription call this — `reduceRun` is idempotent by
-   *  `seq`, so a duplicate delivery (event arrived on both paths) is a
-   *  no-op on the second one. */
-  const foldEvent = useCallback((event: TaskEvent) => {
-    if (!runIdRef.current && event.runId) {
-      runIdRef.current = event.runId
-      setRunId(event.runId)
-    }
-    const next = reduceRun(viewRef.current, event)
-    if (next === viewRef.current) return
-    viewRef.current = next
-    setView(next)
-
-    const opts = optsRef.current
-    const id = runIdRef.current
-    if (opts?.conversationId && id) {
-      if (isTerminalStatus(next.status)) {
-        clearActiveTask()
-        persistedRef.current = null
-        if (opts.notifyOnFinish && next.status === "done") {
-          notifyTaskFinished(next, { title: opts.title })
-        }
-      } else if (
-        persistedRef.current?.status !== next.status ||
-        persistedRef.current?.step !== next.step
-      ) {
-        persistedRef.current = { status: next.status, step: next.step }
-        saveActiveTask({
-          runId: id,
-          conversationId: opts.conversationId,
-          cursor: next.cursor,
-          status: next.status,
-          title: opts.title,
-          ...(opts.mode && opts.mode !== "default" ? { mode: opts.mode } : {}),
-          updatedAt: new Date().toISOString(),
-        })
-      }
-    }
+  const settle = useCallback((id: string, ended: TaskRunView) => {
+    endedRef.current = true
+    cancelledRef.current = false
+    abortRef.current?.abort()
+    viewRef.current = ended
+    setView(ended)
+    setWatchError(null)
+    setActionError(null)
+    optsRef.current?.onSettled?.(id, ended)
   }, [])
 
-  /** One stream worth of events — used directly by the outer `consume`
-   *  and by the auto-reconnect loop. Kept above its caller so the
-   *  useCallback exhaustive-deps check stays clean. */
-  const consumeOnce = useCallback(
-    async (body: ReadableStream<Uint8Array>) => {
-      for await (const event of decodeTaskEventStream(body)) {
-        foldEvent(event)
-      }
+  /** Fold one event. The stream and Realtime both call this — `reduceRun`
+   *  is idempotent by `seq`, so a duplicate delivery is a no-op. */
+  const fold = useCallback(
+    (id: string, event: TaskEvent) => {
+      const next = reduceRun(viewRef.current, event)
+      if (next === viewRef.current) return
+      if (isTerminalStatus(next.status)) return settle(id, next)
+      viewRef.current = next
+      setView(cancelledRef.current ? asCancelled(next) : next)
     },
-    [foldEvent]
+    [settle]
   )
 
-  const consume = useCallback(
-    async (body: ReadableStream<Uint8Array>) => {
-      // Realtime live tail in parallel with the SSE replay. The worker
-      // writes into `task_events`; the subscription pushes those rows
-      // to the browser within ~100ms instead of the resume endpoint's
-      // 1s poll. Idempotent against the poll-tail (reduceRun drops
-      // events with `seq <= cursor`), so running both is safe and
-      // serves as resilience if Realtime hiccups.
-      //
-      // Realtime pushes rows the moment they're inserted, unchecked — so
-      // a terminal event is NOT folded from it: a dead worker's `result`
-      // (written before it could settle the task, then superseded by its
-      // reclaimed re-run's resume marker) would otherwise settle the view
-      // early. Terminal events arrive via the resume stream instead,
-      // which only sends one once the task row confirms it
-      // (`gateLiveTailBatch`).
-      const id = runIdRef.current
-      const unsubscribeRealtime = id
-        ? subscribeTaskEvents(id, {
-            onEvent: (event) => {
-              if (!isTerminalEvent(event)) foldEvent(event)
-            },
-          })
-        : null
-
+  const follow = useCallback(
+    async (id: string, signal: AbortSignal) => {
+      // Realtime pushes rows as they're inserted, ahead of the replay and
+      // unchecked, so it folds only the event right after the cursor (a
+      // later one would make the fold drop what the replay hasn't sent
+      // yet) and never a terminal one (a dead worker's `result` can be
+      // superseded — the stream sends one only once the task row confirms
+      // it, `gateLiveTailBatch`).
+      const unsubscribe = subscribeTaskEvents(id, {
+        onEvent: (event) => {
+          if (signal.aborted || isTerminalEvent(event)) return
+          if (isNextEvent(viewRef.current, event)) fold(id, event)
+        },
+      })
       try {
-        await consumeOnce(body)
-        // Auto-reconnect on a non-terminal close. With Realtime
-        // present, this is mostly the fallback for anonymous mode or a
-        // Realtime hiccup — the subscription typically delivers new
-        // events first and the resume call returns nothing fresh. We
-        // bail when the run settles, the user pauses for HITL, the
-        // user cancels, or nothing was streamed at all (preventing a
-        // tight reconnect loop on a genuinely broken endpoint).
-        while (
-          !abortRef.current?.signal.aborted &&
-          viewRef.current.cursor > 0 &&
-          !isStableStatus(viewRef.current.status) &&
-          runIdRef.current
-        ) {
-          await new Promise<void>((resolve) => {
-            // `{ once: true }` only detaches the listener when abort
-            // fires; on the (normal) timeout path we must remove it
-            // ourselves or every 1.5s poll leaks one onto the signal.
-            const signal = abortRef.current?.signal
-            const onAbort = () => {
-              clearTimeout(t)
-              resolve()
+        let failures = 0
+        while (!signal.aborted) {
+          const openedAt = Date.now()
+          const openedFrom = viewRef.current.cursor
+          let problem: string | null = null
+          let body: ReadableStream<Uint8Array> | null = null
+          try {
+            const res = await apiClient.tasks.resume(id, { cursor: openedFrom, signal })
+            if (signal.aborted) return
+            if (res.ok && res.body) body = res.body
+            else if (res.status === 404 && res.error?.code === "not_found") {
+              settle(id, { ...asCancelled(viewRef.current), fatalError: TASK_GONE })
+              return
+            } else {
+              problem = res.error?.message ?? `Couldn't read the task (HTTP ${res.status}).`
             }
-            const t = setTimeout(() => {
-              signal?.removeEventListener("abort", onAbort)
-              resolve()
-            }, 1500)
-            signal?.addEventListener("abort", onAbort, { once: true })
-          })
-          if (abortRef.current?.signal.aborted) break
-          const liveId = runIdRef.current
-          if (!liveId) break
-          const next = await apiClient.tasks.resume(liveId, {
-            cursor: viewRef.current.cursor,
-            signal: abortRef.current?.signal,
-          })
-          if (!next.ok || !next.body) break
-          await consumeOnce(next.body)
+          } catch {
+            problem = "Couldn't reach the server."
+          }
+          if (body) {
+            setWatchError(null)
+            try {
+              for await (const event of decodeTaskEventStream(body)) {
+                if (signal.aborted) break
+                fold(id, event)
+              }
+            } catch {
+              // The connection dropped mid-stream: re-open from the cursor.
+            }
+          }
+          if (signal.aborted) return
+          if (cancelledRef.current) {
+            // The cancel was accepted and the read that followed named no
+            // other outcome.
+            settle(id, asCancelled(viewRef.current))
+            return
+          }
+          const gotNothing =
+            viewRef.current.cursor === openedFrom && Date.now() - openedAt < RECONNECT_MS
+          failures = problem || gotNothing ? failures + 1 : 0
+          if (problem) setWatchError(`${problem} Retrying…`)
+          await wait(Math.min(RECONNECT_MS * 2 ** Math.max(0, failures - 1), RECONNECT_MAX_MS), signal)
         }
       } finally {
-        unsubscribeRealtime?.()
+        unsubscribe?.()
       }
     },
-    [consumeOnce, foldEvent]
+    [fold, settle]
+  )
+
+  /** (Re)open the watch from the current cursor. */
+  const watch = useCallback(
+    (id: string) => {
+      abortRef.current?.abort()
+      const controller = new AbortController()
+      abortRef.current = controller
+      void follow(id, controller.signal)
+    },
+    [follow]
+  )
+
+  /** Point the hook at another run (or none yet). */
+  const switchTo = useCallback(
+    (id: string | null) => {
+      const previous = runIdRef.current
+      if (previous && cancelledRef.current) settle(previous, asCancelled(viewRef.current))
+      abortRef.current?.abort()
+      viewRef.current = EMPTY_RUN_VIEW
+      runIdRef.current = id
+      endedRef.current = false
+      cancelledRef.current = false
+      cancellingRef.current = false
+      setView(EMPTY_RUN_VIEW)
+      setRunId(id)
+      setIsCancelling(false)
+      setWatchError(null)
+      setActionError(null)
+    },
+    [settle]
   )
 
   const start = useCallback(
     async (body: TaskRequestInput) => {
-      abortRef.current?.abort()
+      switchTo(null)
       const controller = new AbortController()
       abortRef.current = controller
-      viewRef.current = EMPTY_RUN_VIEW
-      runIdRef.current = null
-      persistedRef.current = null
-      setView(EMPTY_RUN_VIEW)
-      setRunId(null)
-      setError(null)
-      setIsRunning(true)
+      setIsStarting(true)
+      let res: TaskEnqueueResult
       try {
-        // POST enqueues the start job and returns `{ runId }`. The
-        // worker writes events into `task_events`; we open the resume
-        // stream to watch them as they're produced.
-        const enq = await apiClient.tasks.start(body, {
-          signal: controller.signal,
-        })
-        if (!enq.ok || !enq.runId) {
-          setError(enq.error?.message ?? `Task failed (HTTP ${enq.status}).`)
-          return
-        }
-        runIdRef.current = enq.runId
-        setRunId(enq.runId)
-        const stream = await apiClient.tasks.resume(enq.runId, {
-          cursor: 0,
-          signal: controller.signal,
-        })
-        if (!stream.ok || !stream.body) {
-          setError(
-            stream.error?.message ?? `Resume failed (HTTP ${stream.status}).`
-          )
-          return
-        }
-        await consume(stream.body)
-      } catch (err) {
-        if (!controller.signal.aborted) {
-          setError(err instanceof Error ? err.message : "Task stream failed.")
-        }
-      } finally {
-        if (abortRef.current === controller) setIsRunning(false)
+        // POST enqueues the start job and returns `{ runId }`; the worker
+        // writes the events the stream then serves.
+        res = await apiClient.tasks.start(body, { signal: controller.signal })
+      } catch {
+        res = { ok: false, status: 0, error: { message: "Couldn't reach the server." } }
       }
+      if (controller.signal.aborted) return null
+      setIsStarting(false)
+      if (!res.ok || !res.runId) {
+        setActionError(res.error?.message ?? `Task failed (HTTP ${res.status}).`)
+        return res
+      }
+      runIdRef.current = res.runId
+      setRunId(res.runId)
+      watch(res.runId)
+      return res
     },
-    [consume]
+    [switchTo, watch]
   )
 
   const resume = useCallback(
-    async (id: string, cursor = 0) => {
-      abortRef.current?.abort()
-      const controller = new AbortController()
-      abortRef.current = controller
-      runIdRef.current = id
-      persistedRef.current = null
-      setRunId(id)
-      setError(null)
-      setIsRunning(true)
-      try {
-        const result = await apiClient.tasks.resume(id, {
-          cursor,
-          signal: controller.signal,
-        })
-        if (!result.ok || !result.body) {
-          setError(
-            result.error?.message ?? `Resume failed (HTTP ${result.status}).`
-          )
-          return
-        }
-        await consume(result.body)
-      } catch (err) {
-        if (!controller.signal.aborted) {
-          setError(err instanceof Error ? err.message : "Resume stream failed.")
-        }
-      } finally {
-        if (abortRef.current === controller) setIsRunning(false)
-      }
+    (id: string) => {
+      switchTo(id)
+      setIsStarting(false)
+      watch(id)
     },
-    [consume]
+    [switchTo, watch]
   )
+
+  const refresh = useCallback(() => {
+    if (runIdRef.current && !endedRef.current) watch(runIdRef.current)
+  }, [watch])
 
   const cancel = useCallback(async () => {
     const id = runIdRef.current
-    abortRef.current?.abort()
-    setIsRunning(false)
-    if (id) await apiClient.tasks.cancel(id)
-  }, [])
+    if (!id || endedRef.current || cancellingRef.current) return
+    cancellingRef.current = true
+    setIsCancelling(true)
+    setActionError(null)
+    let failure: string | null = null
+    try {
+      const res = await apiClient.tasks.cancel(id)
+      if (!res.ok) failure = res.error?.message ?? `HTTP ${res.status}.`
+    } catch {
+      failure = "Couldn't reach the server."
+    }
+    if (runIdRef.current !== id) return // replaced meanwhile
+    cancellingRef.current = false
+    setIsCancelling(false)
+    if (endedRef.current) return
+    if (failure) {
+      setActionError(`Couldn't cancel: ${failure}`)
+      return
+    }
+    // Cancelled at once. The re-read confirms it, or names the outcome the
+    // cancel lost to (it's an idempotent 200 on a finished task too).
+    cancelledRef.current = true
+    setView(asCancelled(viewRef.current))
+    watch(id)
+  }, [watch])
 
-  const respond = useCallback(
-    async (id: string, body: RespondRequestInput) => {
-      abortRef.current?.abort()
-      const controller = new AbortController()
-      abortRef.current = controller
-      runIdRef.current = id
-      persistedRef.current = null
-      setRunId(id)
-      setError(null)
-      setIsRunning(true)
-      try {
-        // POST enqueues the respond job and returns 202 — the worker
-        // injects the human's answer and continues the loop. We open
-        // the resume stream from the current cursor so the panel sees
-        // the continuation's events as they're persisted.
-        const enq = await apiClient.tasks.respond(id, body, {
-          signal: controller.signal,
-        })
-        if (!enq.ok) {
-          setError(
-            enq.error?.message ?? `Respond failed (HTTP ${enq.status}).`
-          )
-          return
-        }
-        const stream = await apiClient.tasks.resume(id, {
-          cursor: viewRef.current.cursor,
-          signal: controller.signal,
-        })
-        if (!stream.ok || !stream.body) {
-          setError(
-            stream.error?.message ?? `Resume failed (HTTP ${stream.status}).`
-          )
-          return
-        }
-        await consume(stream.body)
-      } catch (err) {
-        if (!controller.signal.aborted) {
-          setError(
-            err instanceof Error ? err.message : "Respond stream failed."
-          )
-        }
-      } finally {
-        if (abortRef.current === controller) setIsRunning(false)
-      }
-    },
-    [consume]
-  )
-
-  const reset = useCallback(() => {
-    abortRef.current?.abort()
-    abortRef.current = null
-    viewRef.current = EMPTY_RUN_VIEW
-    runIdRef.current = null
-    persistedRef.current = null
-    setView(EMPTY_RUN_VIEW)
-    setRunId(null)
-    setError(null)
-    setIsRunning(false)
-  }, [])
-
-  return { view, runId, isRunning, error, start, resume, cancel, respond, reset }
+  return {
+    view,
+    runId,
+    isRunning: isStarting || (runId !== null && !isTerminalStatus(view.status)),
+    isCancelling,
+    error: actionError ?? watchError,
+    start,
+    resume,
+    cancel,
+    refresh,
+  }
 }
 
-/** Statuses where the auto-reconnect loop should stop — terminal
- *  outcomes plus `paused` (HITL takes over via `respond`). Anything
- *  else (`queued` / `running`) signals the worker is still cooking,
- *  so we open a fresh stream and keep watching. */
-function isStableStatus(status: TaskRunView["status"]): boolean {
-  return status === "paused" || isTerminalStatus(status)
+function asCancelled(view: TaskRunView): TaskRunView {
+  return { ...view, status: "cancelled", pendingInput: null }
+}
+
+function wait(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve()
+    const done = () => {
+      clearTimeout(timer)
+      signal.removeEventListener("abort", done)
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+    signal.addEventListener("abort", done, { once: true })
+  })
 }

@@ -7,7 +7,9 @@ Python implementation of the Hummingbird agent service.
 - **Phase 2a (this build)**: live mode + per-user feature flag +
   executor that drives the agent loop end-to-end. Step fn is a stub
   emitting a canned event stream — proves the executor pattern;
-  real model + tools land in Phase 2b.
+  real model + tools land in Phase 2b. (Since: the real model and
+  tools. The stub is no fallback any more — see
+  [Background tasks](#background-tasks-wave-5c).)
 
 See [`docs/PLAN-agent-api.md`](../../docs/PLAN-agent-api.md) for the
 full phased plan.
@@ -232,7 +234,7 @@ wiring seam: stores, event logs, encoder, harness, stream, driver).
 
 | Operation | Auth | What |
 |---|---|---|
-| `POST /v1/runs` | bearer or none | Body: AG-UI `RunAgentInput`, options in `forwardedProps`. Interactive (default) → `200` SSE, executed in this process by `runs/driver.py`; background → `202 {runId, status}`: `create_run` + `status: queued` (seq 1) + `enqueue_task_job('start')`, then the poller runs it. Client-minted `runId`: the owner's repeat (same thread + mode) replays; any other use of a taken id → `409 run_id_conflict`. `resume[]` must answer exactly the open interrupts of `forwardedProps.previousRunId` (else `409 invalid_state`); one live resume per interrupted run (0042 — a second is `409 run_already_resumed` until the first fails or is cancelled). A background resume (Q41) answers a top-level background run: the new run's checkpoint is the paused run's plus the answers, which the executor applies in its first step (`resume_answers.py`); a task answered through the old respond route is `409 run_already_answered` (0043). A background start keeps `workspaceId`, `requireApprovalFor`, research mode (35 steps by default; the research prompt, `task_prompt.py`) and `allowedMcpServerIds` in `config`, and refuses `attachments` (Q49, `400 invalid_request`). Anonymous: interactive only, `X-Run-Token` in the response. |
+| `POST /v1/runs` | bearer or none | Body: AG-UI `RunAgentInput`, options in `forwardedProps`. Interactive (default) → `200` SSE, executed in this process by `runs/driver.py`; background → `202 {runId, status}`: `create_run` + `status: queued` (seq 1) + `enqueue_task_job('start')` in one transaction, then the poller runs it. Client-minted `runId`: the owner's repeat (same thread + mode) replays; any other use of a taken id → `409 run_id_conflict`. `resume[]` must answer exactly the open interrupts of `forwardedProps.previousRunId` (else `409 invalid_state`); one live resume per interrupted run (0042 — a second is `409 run_already_resumed` until the first fails or is cancelled). A background resume (Q41) answers a top-level background run: the new run's checkpoint is the paused run's plus the answers, which the executor applies in its first step (`resume_answers.py`); a question being answered through the old respond route is `409 run_already_answered` (per question, 0045); one whose answer an earlier resume applied stays `409 run_already_resumed` (Q57). A background resume may narrow `allowedMcpServerIds` (Q51). A failed enqueue creates no run. A background start keeps `workspaceId`, `requireApprovalFor`, research mode (35 steps by default; the research prompt, `task_prompt.py`) and `allowedMcpServerIds` in `config`, and refuses `attachments` (Q49, `400 invalid_request`). Anonymous: interactive only, `X-Run-Token` in the response. |
 | `GET /v1/runs` | bearer | The caller's runs, newest first, `threadId` / repeated `status` / `parentRunId` / `mode` filters, keyset token paging. |
 | `GET /v1/runs/{id}` | bearer or `X-Run-Token` | The `Run` resource. Missing / foreign / wrong token → the same 404. |
 | `GET /v1/runs/{id}/events` | bearer or `X-Run-Token` | Replay after `after` / `Last-Event-ID`, then live, then the closing event (from the row). Malformed or out-of-range cursor → 400. |
@@ -297,6 +299,36 @@ maintenance loop also runs `runs/compaction.py`'s retention sweep every
 after 24 h, purge them — and the run's stored checkpoint — after 30
 days; background logs and checkpoints untouched).
 
+## Background tasks (wave 5c)
+
+The rules the executor and migration 0045 keep (decisions Q55–Q60 of
+`docs/PLAN-frontend-backend-split.md`; 0045 must be applied before this
+service is deployed, with no older agent-py still running):
+
+- **Success is never faked.** No key, no model (a schedule without one
+  fails with "no model") or no messages fails the task, on start,
+  continue, respond, resume and fan-in, before any tool runs. An
+  attachment the model can't take fails it too.
+- **One result per call** (`tool_turn.py`). Ungated calls run once and
+  their results are checkpointed (`tool_ledger.py`); gated calls, a gated
+  `spawnSubagent` too, are asked one after another; spawns fan out last;
+  only then is the model called again. Start, continue, respond and a
+  runs resume share that loop (`executor._drive`).
+- **One effect per approval.** An answer is applied durably before any
+  side effect — a respond by claiming the question, a resume by
+  `answers_applied_at` — and a doubtful crash counts as applied. A tool
+  that was cut off is reported "outcome unknown", never re-run.
+- **Terminal is final.** Pause, yield, spawn and settle are each one
+  transaction with their log entries, refused for an ended run; a run
+  cancelled under the worker stops at its next write or step. A tool
+  already started when the cancel lands can't be recalled.
+- **One lock order**: conversation key share → the user's task lock →
+  task rows → job row (`fence.py` takes it for every worker write).
+
+`bun run test:db` pins all of it on a real Postgres
+(`tests/test_task_*_pg.py`; the fault sweeps in
+`tests/test_task_sweeps_pg.py`).
+
 ## Configuration
 
 | Env var | Required? | What it does |
@@ -305,6 +337,7 @@ days; background logs and checkpoints untouched).
 | `SUPABASE_DB_URL` | Yes to enable the poller | Direct Postgres connection string. Must be the **direct** connection (`db.<project>.supabase.co:5432`), NOT the pooler (`*.pooler.supabase.com:6543`) — `FOR UPDATE SKIP LOCKED` needs an open transaction. Empty → poller no-ops. |
 | `WORKER_DRY_RUN` | No | Default `true` (claim + log + release only). Set `false` in every deployment that should run tasks — agent-py is the only executor. |
 | `POLL_INTERVAL_SECONDS` | No | Default `5.0`. |
+| `WORKER_STUB_MODEL` | No | **Tests only.** Default off. `true` executes background tasks on a model-free stub that answers canned text. Strict (`true` / `false` / empty; anything else fails boot). Off, a task without a key, model or messages fails — nothing falls back to the stub. |
 | `JOB_LEASE_SECONDS` | No | Default `120`. Lease a claim holds on a `task_jobs` row (`lease_expires_at`, migration 0032). A job whose worker died is reclaimed once it lapses (or reaped as failed, with its task, once `max_attempts` is spent). |
 | `JOB_HEARTBEAT_SECONDS` | No | Default `30` (clamped to a third of the lease). How often an executing job extends its lease. |
 | `SHUTDOWN_GRACE_SECONDS` | No | Default `8`. On shutdown the in-flight job may finish within this window; after it, the job is cancelled and handed back (lease expired on the spot) for the next worker. Keep it under the container stop timeout (Docker's default is 10 s). The stop starts on SIGTERM itself (the server's signal handler is chained), not after uvicorn has drained open SSE streams; the image also runs uvicorn with `--timeout-graceful-shutdown 8` so the lifespan (which closes the DB pool) isn't held past the stop timeout by a chat stream. `/readyz` reports `poller_alive` / `poller_last_tick_age_seconds` and turns `status: degraded` if the loop died. |

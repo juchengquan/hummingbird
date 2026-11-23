@@ -1107,6 +1107,8 @@ export type Database = {
       }
       tasks: {
         Row: {
+          answered_question_ids: string[] | null
+          answers_applied_at: string | null
           checkpoint: Json | null
           conversation_id: string | null
           created_at: string
@@ -1130,6 +1132,8 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          answered_question_ids?: string[] | null
+          answers_applied_at?: string | null
           checkpoint?: Json | null
           conversation_id?: string | null
           created_at?: string
@@ -1153,6 +1157,8 @@ export type Database = {
           user_id: string
         }
         Update: {
+          answered_question_ids?: string[] | null
+          answers_applied_at?: string | null
           checkpoint?: Json | null
           conversation_id?: string | null
           created_at?: string
@@ -1408,6 +1414,12 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      cancel_task: {
+        Args: {
+          p_task_id: string
+        }
+        Returns: undefined
+      }
       create_run: {
         Args: {
           p_checkpoint?: Json

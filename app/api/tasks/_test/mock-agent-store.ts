@@ -59,13 +59,8 @@ export const signedOut = () => ({
 
 // --- model-provider --------------------------------------------------------
 
-/** The route uses `selectModel` as a fail-fast guard before persisting a
- *  run. In CI / dev with no API key configured the real call throws
- *  `ProviderUnavailableError` → the route returns 401, which would mask
- *  every happy-path assertion. The stub returns a benign sentinel; the
- *  `ProviderUnavailableError` class is re-exported so the route's
- *  `instanceof` check still matches when a test wants to exercise the
- *  401 path. */
+/** Next itself has no provider configured here (no AI Gateway key): the
+ *  task routes must not need one, as agent-py's worker calls the model. */
 class ProviderUnavailableError extends Error {
   constructor(message: string) {
     super(message)
@@ -75,7 +70,9 @@ class ProviderUnavailableError extends Error {
 
 mock.module("@/server/model-provider", () => ({
   ProviderUnavailableError,
-  selectModel: () => ({ stub: true }),
+  selectModel: (modelId: string) => {
+    throw new ProviderUnavailableError(`no provider configured for model "${modelId}"`)
+  },
 }))
 
 // --- Agent store + jobs (union of symbols every route uses) ----------------
@@ -91,6 +88,13 @@ mock.module("@/server/model-provider", () => ({
 export const mocks = {
   // store
   createRun: mock(async (_db: unknown, _input: unknown) => {}),
+  listTaskChildren: mock(
+    async (
+      _db: unknown,
+      _parentId: string,
+      _userId: string,
+    ): Promise<{ id: string; status: string; goal: string }[]> => [],
+  ),
   getRun: mock(
     async (
       _db: unknown,
@@ -125,14 +129,33 @@ export const mocks = {
       _sinceSeq: number,
     ): Promise<unknown[]> => [],
   ),
-  cancelChildTasks: mock(
-    async (_db: unknown, _parentId: string, _userId: string) => {},
+  /** Defaults to the `getRun` mock's status, so a test sets one row. */
+  getRunStatus: mock(
+    async (db: unknown, id: string, userId: string): Promise<string | null> =>
+      ((await mocks.getRun(db, id, userId)) as { status?: string } | null)?.status ?? null,
+  ),
+  getQuestionKind: mock(
+    async (
+      _db: unknown,
+      _run: unknown,
+      _userId: string,
+      _requestId: string,
+    ): Promise<string | null> => null,
+  ),
+  appendSyntheticResult: mock(
+    async (
+      _db: unknown,
+      _runId: string,
+      _userId: string,
+      _opts: Record<string, unknown>,
+    ): Promise<boolean> => true,
   ),
   reconcileStaleRuns: mock(
     async (_db: unknown, _userId: string): Promise<number> => 0,
   ),
   // task-writes (RPC-backed run creation, 0034)
   createTaskRun: mock(async (_db: unknown, _input: unknown) => {}),
+  cancelTask: mock(async (_db: unknown, _taskId: string) => {}),
   // jobs
   enqueueStartJob: mock(
     async (_db: unknown, _input: { taskId: string; userId: string }) => {},
@@ -150,9 +173,12 @@ export const mocks = {
 }
 
 mock.module("@/server/agent/store", () => ({
-  cancelChildTasks: mocks.cancelChildTasks,
+  getQuestionKind: mocks.getQuestionKind,
+  getRunStatus: mocks.getRunStatus,
+  appendSyntheticResult: mocks.appendSyntheticResult,
   createRun: mocks.createRun,
   getRun: mocks.getRun,
+  listTaskChildren: mocks.listTaskChildren,
   updateRun: mocks.updateRun,
   saveCheckpoint: mocks.saveCheckpoint,
   appendEvent: mocks.appendEvent,
@@ -165,6 +191,7 @@ mock.module("@/server/agent/store", () => ({
 mock.module("@/server/agent/task-writes", () => ({
   ...realTaskWrites,
   createTaskRun: mocks.createTaskRun,
+  cancelTask: mocks.cancelTask,
 }))
 
 mock.module("@/server/agent/jobs", () => ({
@@ -177,6 +204,8 @@ mock.module("@/server/agent/jobs", () => ({
 export function resetAgentMocks(): void {
   mocks.createRun.mockClear()
   mocks.createRun.mockImplementation(async () => {})
+  mocks.listTaskChildren.mockClear()
+  mocks.listTaskChildren.mockImplementation(async () => [])
   mocks.getRun.mockClear()
   mocks.getRun.mockImplementation(async () => null)
   mocks.updateRun.mockClear()
@@ -187,8 +216,17 @@ export function resetAgentMocks(): void {
   mocks.appendEvent.mockImplementation(async () => {})
   mocks.listEventsSince.mockClear()
   mocks.listEventsSince.mockImplementation(async () => [])
-  mocks.cancelChildTasks.mockClear()
-  mocks.cancelChildTasks.mockImplementation(async () => {})
+  mocks.getRunStatus.mockClear()
+  mocks.getRunStatus.mockImplementation(
+    async (db: unknown, id: string, userId: string) =>
+      ((await mocks.getRun(db, id, userId)) as { status?: string } | null)?.status ?? null,
+  )
+  mocks.getQuestionKind.mockClear()
+  mocks.getQuestionKind.mockImplementation(async () => null)
+  mocks.appendSyntheticResult.mockClear()
+  mocks.appendSyntheticResult.mockImplementation(async () => true)
+  mocks.cancelTask.mockClear()
+  mocks.cancelTask.mockImplementation(async () => {})
   mocks.reconcileStaleRuns.mockClear()
   mocks.reconcileStaleRuns.mockImplementation(async () => 0)
   mocks.createTaskRun.mockClear()

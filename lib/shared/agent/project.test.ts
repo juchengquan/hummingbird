@@ -7,7 +7,7 @@ import {
   LEGACY_RESTART_RESUMED_FROM_SEQ,
   resumeDiscardRange,
 } from "./events"
-import { EMPTY_RUN_VIEW, projectRun, reduceRun } from "./project"
+import { EMPTY_RUN_VIEW, isNextEvent, projectRun, reduceRun } from "./project"
 
 // Terse event builders — every event needs runId/seq/step/createdAt.
 let SEQ = 0
@@ -407,5 +407,17 @@ describe("dropSupersededEvents / resumeDiscardRange", () => {
       ev({ kind: "token", text: "b" }, 5, 1),
     ]
     expect(dropSupersededEvents(log).map((e) => e.seq)).toEqual([1, 2, 4, 5])
+  })
+})
+
+describe("isNextEvent — Realtime beside a replay from 0", () => {
+  test("a pushed event ahead of the replay waits; the next one is folded", () => {
+    const events = [1, 2, 3].map((seq) => ev({ kind: "token", text: `${seq}` }, seq))
+    let view = EMPTY_RUN_VIEW
+    expect(isNextEvent(view, events[2])).toBe(false)
+    expect(isNextEvent(view, events[0])).toBe(true)
+    for (const event of events) view = reduceRun(view, event)
+    expect(view.text).toBe("123")
+    expect(isNextEvent(view, events[2])).toBe(false)
   })
 })

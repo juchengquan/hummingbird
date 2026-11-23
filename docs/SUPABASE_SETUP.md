@@ -252,12 +252,27 @@ order. Every migration has a unique numeric prefix (CI enforces this via
     and `create_run` refuses a resume of a task that has a `respond`
     job (55000 'run already answered' → agent-py's `409
     run_already_answered`), locking the task row so the two serialise.
-    Same signatures. Idempotent.
+    Same signatures. Idempotent. (0045 makes both checks per question.)
 - `supabase/migrations/0044_message_turn_persona.sql`
   - `messages.turn_persona` (nullable JSONB): the persona a user message
     was sent as, so a resend keeps its MCP allow-list on every device
     (Q52). Without it messages still sync, but the record stays on the
     device that sent the turn. Idempotent.
+- `supabase/migrations/0045_background_tasks_correct.sql`
+  - Background tasks made correct (wave 5c, Q55–Q60): terminal is final,
+    one winner per question (`tasks.answered_question_ids`,
+    `tasks.answers_applied_at`), cancel as the whole task (`cancel_task`
+    RPC), the sub-agent barrier in triggers, one lock order. Idempotent.
+  - **Deploy order:** stop every agent-py → apply 0045 → start the new
+    agent-py → deploy Next. An older agent-py must not run against it
+    (it would also count the barrier down); an older Next app may. The
+    new agent-py and Next app both need it.
+  - **Existing rows** are repaired once (the file's header says what
+    happens to each): tasks stuck on a second question work again, a
+    cancel a pause overwrote is cancelled again, parents left waiting on
+    ended sub-agents fail ("run it again"; migrating never starts a model
+    call, Q62), never-queued runs older than an hour fail.
+  - **Rollback:** the statements in the file's header.
 
 ### Migration 0018 collision (renamed to `0033_message_generated_files.sql`)
 

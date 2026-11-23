@@ -112,3 +112,109 @@ describe("GET /api/tasks/:id/stream — terminal confirmation", () => {
     expect(sinces).toEqual([0, 1])
   })
 })
+
+describe("GET /api/tasks/:id/stream — a row that ended without saying so (B32)", () => {
+  const queued = ev(1, { kind: "status", status: "queued" })
+  const ends = (events: TaskEvent[]) =>
+    events.map((e) => (e.kind === "status" || e.kind === "result" ? `${e.kind}:${e.status}` : e.kind))
+
+  for (const [status, terminal] of [
+    ["cancelled", "status:cancelled"],
+    ["failed", "result:failed"],
+    ["done", "result:done"],
+  ] as const) {
+    test(`a ${status} row with no terminal event ends the stream as ${status}`, async () => {
+      mocks.getRun.mockImplementation(async () => ({ id: RUN_ID, status }))
+      serveLog([queued])
+      const { GET } = await import("./route")
+      const events = await readStream(await GET(get(), { params }))
+      expect(ends(events)).toEqual(["status:queued", terminal])
+      expect(events[1].seq).toBe(2)
+    })
+  }
+
+  test("cancelled while watched", async () => {
+    let reads = 0
+    mocks.getRun.mockImplementation(async () => ({
+      id: RUN_ID,
+      status: ++reads > 2 ? "cancelled" : "running",
+    }))
+    serveLog([queued, ev(2, { kind: "token", text: "partial" })])
+    const { GET } = await import("./route")
+    const events = await readStream(await GET(get(), { params }))
+    expect(ends(events)).toEqual(["status:queued", "token", "status:cancelled"])
+  })
+
+  test("reconnecting at the end of an ended log still says how it ended", async () => {
+    mocks.getRun.mockImplementation(async () => ({ id: RUN_ID, status: "cancelled" }))
+    serveLog([queued])
+    const { GET } = await import("./route")
+    const req = new NextRequest(get().url, { headers: { "last-event-id": "1" } })
+    const events = await readStream(await GET(req, { params }))
+    expect(ends(events)).toEqual(["status:cancelled"])
+  })
+
+  test("the row wins over a result a cancel beat", async () => {
+    mocks.getRun.mockImplementation(async () => ({ id: RUN_ID, status: "cancelled" }))
+    serveLog([queued, ev(2, { kind: "result", status: "done", finalText: "late" })])
+    const { GET } = await import("./route")
+    const events = await readStream(await GET(get(), { params }))
+    expect(ends(events)).toEqual(["status:queued", "status:cancelled"])
+  })
+
+  test("a pause written after the cancel doesn't leave the run paused", async () => {
+    mocks.getRun.mockImplementation(async () => ({ id: RUN_ID, status: "cancelled" }))
+    serveLog([queued, ev(2, { kind: "status", status: "paused" })])
+    const { GET } = await import("./route")
+    const events = await readStream(await GET(get(), { params }))
+    expect(ends(events).at(-1)).toBe("status:cancelled")
+  })
+
+  test("a row deleted while watched ends the stream, claiming no outcome", async () => {
+    let reads = 0
+    mocks.getRun.mockImplementation(async () => (++reads > 1 ? null : { id: RUN_ID, status: "running" }))
+    serveLog([queued])
+    const { GET } = await import("./route")
+    const events = await readStream(await GET(get(), { params }))
+    // The client's reconnect gets the 404 that says it's gone.
+    expect(ends(events)).toEqual(["status:queued"])
+  })
+})
+
+describe("GET /api/tasks/:id/stream — replay from 0 (B14)", () => {
+  test("a finished log longer than PostgREST's max_rows is replayed whole", async () => {
+    mocks.getRun.mockImplementation(async () => ({ id: RUN_ID, status: "done" }))
+    const log: TaskEvent[] = Array.from({ length: 2500 }, (_, i) =>
+      ev(i + 1, { kind: "token", text: "x" })
+    )
+    log.push(ev(2501, { kind: "result", status: "done" }))
+    mocks.listEventsSince.mockImplementation(async (_db, _id, _user, since) =>
+      log.filter((e) => e.seq > since).slice(0, 1000)
+    )
+    const { GET } = await import("./route")
+    const events = await readStream(await GET(get(), { params }))
+    expect(events).toHaveLength(2501)
+    expect(events.at(-1)?.kind).toBe("result")
+  })
+})
+
+describe("GET /api/tasks/:id/stream — watching a paused task (Q66)", () => {
+  test("polls the status alone, every 5 s while paused", async () => {
+    mocks.getRun.mockImplementation(async () => ({ id: RUN_ID, status: "paused", step: 1 }))
+    mocks.getRunStatus.mockImplementation(async () => "paused")
+    serveLog([ev(1, { kind: "status", status: "queued" }), ev(2, { kind: "status", status: "paused" })])
+    const { GET } = await import("./route")
+    const controller = new AbortController()
+    const req = new NextRequest(get().url, { signal: controller.signal })
+    const res = await GET(req, { params })
+    const reading = readStream(res)
+    await new Promise((resolve) => setTimeout(resolve, 2500))
+    controller.abort()
+    await reading.catch(() => {})
+    // One whole-row read to start; after that the status only, and not
+    // once a second.
+    expect(mocks.getRun.mock.calls.length).toBe(1)
+    expect(mocks.getRunStatus.mock.calls.length).toBeLessThanOrEqual(1)
+  })
+})
+

@@ -3,12 +3,12 @@ import "client-only"
 
 /**
  * Shares one long-running task across the chat panel (launch + inline
- * pointer) and the Tasks panel (the live control room), so both render
- * the same `TaskRunView`. v1 drives a single run at a time
- * (`useTaskRun`); the result of a run started here lands back in its
- * conversation as a normal assistant `Message` on settle — matching how
- * chat authors messages client-side (the app is local-first + push
- * sync, so a server-side insert would fight the sync model).
+ * pointer), the project board and the Tasks panel (the live control
+ * room), so all render the same `TaskRunView`. v1 drives a single run at
+ * a time (`useTaskRun`); what its end does in this browser — the result
+ * `Message` (the app is local-first + push sync, so a server-side insert
+ * would fight the sync model), the research hand-off, the board card, the
+ * notification — is `settleTask`, once per run.
  *
  * Mount once near the dashboard root, above both consumers.
  */
@@ -24,27 +24,38 @@ import {
 } from "react"
 import { toast } from "sonner"
 
-import { loadActiveTask } from "@/client/agent/active-task"
+import { clearActiveTask, loadActiveTask, saveActiveTask } from "@/client/agent/active-task"
 import { ensureTaskNotificationPermission } from "@/client/agent/notify"
-import { useStore } from "@/client/hooks/use-store"
+import { settleTask, type TaskMeta } from "@/client/agent/settle-task"
+import { useChildRuns, type ChildRuns } from "@/client/agent/use-child-runs"
+import { modelSwitchNote } from "@/client/hooks/use-model-backend"
+import { useHydrated, useStore } from "@/client/hooks/use-store"
 import { useTaskRun } from "@/client/hooks/use-task-run"
-import { formatResearchCitations } from "@/shared/agent/citation-formatter"
-import { isTerminalStatus, type RunStatus } from "@/shared/agent/events"
+import { isTerminalStatus } from "@/shared/agent/events"
 import type { TaskRunView } from "@/shared/agent/project"
-import { deriveResearchReportTitle } from "@/shared/agent/research-report"
-import type {
-  RespondRequestInput,
-  TaskRequestInput,
-} from "@/shared/api-schemas"
+import type { TaskRequestInput } from "@/shared/api-schemas"
+import { TASK_MODEL_BACKEND, taskModelFor } from "@/shared/backend-models"
+
+interface StartTaskOptions {
+  title?: string
+  /** The board card this launches: it carries the run id, and goes back
+   *  to To-do when the start fails. */
+  projectTaskId?: string
+}
 
 interface TaskRunContextValue {
   view: TaskRunView
   runId: string | null
   isRunning: boolean
+  isCancelling: boolean
   error: string | null
+  /** The active run's sub-agents, and their open questions. */
+  childRuns: ChildRuns
   /** The conversation the active run belongs to (for the inline pointer
    *  in the thread). Null when no run has started this session. */
   runConversationId: string | null
+  /** The board card whose launch the server hasn't accepted yet. */
+  launchingCardId: string | null
   /** The chat-input "Run as task" mode toggle. */
   runAsTask: boolean
   setRunAsTask: (v: boolean) => void
@@ -53,195 +64,135 @@ interface TaskRunContextValue {
    *  editor" button) can branch without reading the server checkpoint.
    *  `null` until a run starts. */
   runMode: "default" | "research" | null
-  /** Launch a task: records its conversation, opens the panel, streams. */
-  startTask: (body: TaskRequestInput, opts?: { title?: string }) => void
+  /** Launch a task: switches a model the worker can't run (Q55), records
+   *  the conversation, opens the panel, watches. */
+  startTask: (body: TaskRequestInput, opts?: StartTaskOptions) => void
   cancel: () => Promise<void>
-  /** Resolve a HITL pending input on the active paused run. */
-  respond: (body: RespondRequestInput) => Promise<void>
+  /** Re-read the active run. */
+  refresh: () => void
 }
 
 const TaskRunContext = createContext<TaskRunContextValue | null>(null)
 
 export function TaskRunProvider({ children }: { children: ReactNode }) {
-  const addMessage = useStore((s) => s.addMessage)
   const setTasksPanelOpen = useStore((s) => s.setTasksPanelOpen)
-  // Research-mode auto-handoff (Phase 2). The settled report lands in
-  // a fresh workspace document AND a markdown artifact, so the user
-  // sees the same content in both the editor panel + the workspace
-  // artifacts list. The Phase 1 "Open report in editor" button on the
-  // Tasks strip remains as a manual re-apply.
-  const createDocument = useStore((s) => s.createDocument)
-  const setDocumentContent = useStore((s) => s.setDocumentContent)
-  const setActiveDocument = useStore((s) => s.setActiveDocument)
-  const createArtifact = useStore((s) => s.createArtifact)
-  const activeWorkspaceIdRef = useRef<string | null>(null)
-  const activeWorkspaceIdLive = useStore((s) => s.activeWorkspaceId)
-  useEffect(() => {
-    activeWorkspaceIdRef.current = activeWorkspaceIdLive
-  }, [activeWorkspaceIdLive])
+  const hydrated = useHydrated()
 
   const [runAsTask, setRunAsTask] = useState(false)
   const [runConversationId, setRunConversationId] = useState<string | null>(null)
-  const [runTitle, setRunTitle] = useState<string | undefined>(undefined)
   const [runMode, setRunMode] = useState<"default" | "research" | null>(null)
+  const [launchingCardId, setLaunchingCardId] = useState<string | null>(null)
 
-  // Hook options are read at fold time via the hook's own ref, so
-  // passing the latest run conversation/title here is enough for the
-  // resume pointer + finish notification to target the right run.
+  // By run id: a run can settle after the next one has been launched.
+  const metaRef = useRef(new Map<string, TaskMeta>())
   const run = useTaskRun({
-    conversationId: runConversationId ?? undefined,
-    title: runTitle,
-    notifyOnFinish: true,
-    mode: runMode ?? undefined,
+    onSettled: (runId, view) => {
+      const meta = metaRef.current.get(runId)
+      if (meta) void settleTask(runId, view, meta)
+    },
   })
-
-  // Author the result Message exactly once, on the running→done edge,
-  // and only for a run launched here this session (so a future
-  // resume-on-reload fold doesn't double-author an already-synced
-  // message). The conversation is captured at launch, not read live, so
-  // switching conversations mid-run still lands the answer in the right
-  // thread.
-  //
-  // Research mode (Phase 2): on the same done edge, also hand the
-  // report off to the editor — create a dedicated workspace document
-  // titled from the report's first heading, set it active so the
-  // editor snaps to it, and register a `kind: 'markdown'` artifact
-  // linked back to the just-authored message.
-  const prevStatusRef = useRef<RunStatus | null>(null)
-  const runConvRef = useRef<string | null>(null)
-  const runModeRef = useRef<"default" | "research" | null>(null)
-  const status = run.view.status
-  useEffect(() => {
-    const prev = prevStatusRef.current
-    prevStatusRef.current = status
-    if (prev === "done" || status !== "done") return
-    const convId = runConvRef.current
-    if (!convId) return
-    const rawText = (run.view.resultText ?? run.view.text).trim()
-    if (!rawText) return
-    // Research-mode reports go through the citation formatter
-    // (`PLAN-deep-research.md` §Phase 4): inline `[N]` markers get
-    // remapped to canonical first-appearance order and the `## Sources`
-    // block is deduped. Pass-through (returns input unchanged) for any
-    // markdown without a `## Sources` block, so the same call is safe
-    // for default-mode results too.
-    const text =
-      runModeRef.current === "research"
-        ? formatResearchCitations(rawText)
-        : rawText
-    // Carry citation-verification verdicts (research runs) onto the
-    // settled Message so the existing `MessageVerification` renders the
-    // confidence chip + flagged claims. Absent for non-research / when
-    // verification didn't run. See `docs/PLAN-citation-verifiability.md`.
-    const verification = run.view.verification ?? undefined
-    const msg = addMessage(
-      { role: "assistant", content: text, ...(verification ? { verification } : {}) },
-      convId
-    )
-
-    if (runModeRef.current !== "research") return
-    const workspaceId = activeWorkspaceIdRef.current
-    if (!workspaceId) return
-    const title = deriveResearchReportTitle(text, runConvRef.current ?? undefined)
-    // Create a fresh doc per report rather than appending to the
-    // active one — keeps each research run as its own deliverable so
-    // a workspace can accumulate a library of reports. The Phase 1
-    // manual button still appends-or-creates if the user wants the
-    // mixed-content behaviour.
-    const doc = createDocument(workspaceId, title)
-    setDocumentContent(doc.id, text)
-    setActiveDocument(doc.id)
-    createArtifact({
-      conversationId: convId,
-      messageId: msg.id,
-      kind: "markdown",
-      title,
-      content: text,
-    })
-    toast.success("Report opened in the editor")
-  }, [
-    status,
-    run.view.resultText,
-    run.view.text,
-    run.view.verification,
-    addMessage,
-    createDocument,
-    setDocumentContent,
-    setActiveDocument,
-    createArtifact,
-  ])
+  const { start, resume } = run
+  const childRuns = useChildRuns(run.runId, run.isRunning, run.view.childRuns.length)
 
   const startTask = useCallback(
-    (body: TaskRequestInput, opts?: { title?: string }) => {
-      const mode = body.mode ?? "default"
-      runConvRef.current = body.conversationId
-      runModeRef.current = mode
-      prevStatusRef.current = null
-      setRunConversationId(body.conversationId)
-      setRunTitle(opts?.title)
-      setRunMode(mode)
+    (body: TaskRequestInput, opts?: StartTaskOptions) => {
+      const cardId = opts?.projectTaskId
+      const revertCard = () => {
+        if (cardId) useStore.getState().moveProjectTask(cardId, "todo", 0)
+      }
+      // Every launch passes here, whatever picked the model: the toggle,
+      // `/research`, the board, a persona or a workspace (Q55).
+      const { model, switchedFrom } = taskModelFor(body.model)
+      if (!model) {
+        toast.error("No configured model can run tasks.")
+        revertCard()
+        return
+      }
+      if (switchedFrom) toast.info(modelSwitchNote(TASK_MODEL_BACKEND, switchedFrom, model))
+
+      const meta: TaskMeta = {
+        conversationId: body.conversationId,
+        title: opts?.title,
+        mode: body.mode ?? "default",
+      }
+      setRunConversationId(meta.conversationId)
+      setRunMode(meta.mode)
+      setLaunchingCardId(cardId ?? null)
       setTasksPanelOpen(true)
-      void run.start(body)
+
+      void start({ ...body, model }).then((res) => {
+        if (cardId) setLaunchingCardId((id) => (id === cardId ? null : id))
+        if (!res?.ok || !res.runId) {
+          revertCard()
+          if (res) {
+            toast.error(`Couldn't start the task: ${res.error?.message ?? `HTTP ${res.status}.`}`)
+          }
+          return
+        }
+        metaRef.current.set(res.runId, meta)
+        saveActiveTask({
+          runId: res.runId,
+          conversationId: meta.conversationId,
+          cursor: 0,
+          status: "queued",
+          title: meta.title,
+          ...(meta.mode !== "default" ? { mode: meta.mode } : {}),
+          updatedAt: new Date().toISOString(),
+        })
+        if (cardId) useStore.getState().updateProjectTask(cardId, { taskId: res.runId })
+      })
     },
-    [run, setTasksPanelOpen]
+    [start, setTasksPanelOpen]
   )
 
   // Notification permission is best requested on a user gesture — ask
   // when the user opts into task mode (a settled task fires a
-  // finish-while-away notification; see useTaskRun's notifyOnFinish).
+  // finish-while-away notification; see `settleTask`).
   const handleSetRunAsTask = useCallback((v: boolean) => {
     setRunAsTask(v)
     if (v) void ensureTaskNotificationPermission()
   }, [])
 
-  // Resume-on-reload: if a run was still active when the tab closed
-  // (its localStorage pointer survives), reconnect and re-attach the
-  // panel. The resume endpoint reconciles dead runs on reconnect, so a
-  // run that died while away replays its synthetic failure and settles.
-  // Runs once on mount; `run.resume` is reached via a ref so this
-  // doesn't re-fire as the hook re-renders.
-  const runRef = useRef(run)
+  // Resume-on-reload: watch the saved run again, from the start of its log
+  // (the view is empty; `settleTask` keeps the replay from repeating side
+  // effects, which is also why this waits for the store to hydrate). The
+  // stream reconciles dead runs when it opens, so a run that died while
+  // away replays its synthetic failure and settles.
   useEffect(() => {
-    runRef.current = run
-  })
-  const resumedRef = useRef(false)
-  useEffect(() => {
-    if (resumedRef.current) return
-    resumedRef.current = true
+    if (!hydrated) return
     const pointer = loadActiveTask()
-    if (!pointer || isTerminalStatus(pointer.status)) return
-    const resumedMode = pointer.mode ?? "default"
-    runConvRef.current = pointer.conversationId
-    runModeRef.current = resumedMode
-    prevStatusRef.current = null
+    if (!pointer) return
+    if (isTerminalStatus(pointer.status)) {
+      clearActiveTask(pointer.runId)
+      return
+    }
+    const mode = pointer.mode ?? "default"
+    metaRef.current.set(pointer.runId, {
+      conversationId: pointer.conversationId,
+      title: pointer.title,
+      mode,
+    })
     setRunConversationId(pointer.conversationId)
-    setRunTitle(pointer.title)
-    setRunMode(resumedMode)
+    setRunMode(mode)
     setTasksPanelOpen(true)
-    void runRef.current.resume(pointer.runId, pointer.cursor)
-  }, [setTasksPanelOpen])
-
-  const respond = useCallback(
-    async (body: RespondRequestInput) => {
-      const id = run.runId
-      if (!id) return
-      await run.respond(id, body)
-    },
-    [run]
-  )
+    resume(pointer.runId)
+  }, [hydrated, resume, setTasksPanelOpen])
 
   const value: TaskRunContextValue = {
     view: run.view,
     runId: run.runId,
     isRunning: run.isRunning,
+    isCancelling: run.isCancelling,
     error: run.error,
+    childRuns,
     runConversationId,
+    launchingCardId,
     runAsTask,
     setRunAsTask: handleSetRunAsTask,
     runMode,
     startTask,
     cancel: run.cancel,
-    respond,
+    refresh: run.refresh,
   }
 
   return (

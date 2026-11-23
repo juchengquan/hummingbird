@@ -1,8 +1,9 @@
 /**
  * Route-handler integration tests for `POST /api/tasks/:id/cancel` —
- * small-followups #8. Covers: auth gates, 404 on missing run, idempotent
- * no-op on already-terminal runs (don't double-write `cancelled`), and
- * the happy-path status-flip wired through `updateRun`.
+ * small-followups #8. Covers: auth gates, 404 on missing run, and the
+ * cancel itself: one `cancel_task` RPC (0045, Q60) whatever the row's
+ * status — it is the whole task, and a row that ended can have a live
+ * resume after it — idempotent, with no status write of the route's own.
  */
 
 import { beforeEach, describe, expect, test } from "bun:test"
@@ -43,7 +44,7 @@ describe("POST /api/tasks/:id/cancel — gates", () => {
     const { POST } = await import("./route")
     const res = await POST(post(), { params })
     expect(res.status).toBe(503)
-    expect(mocks.updateRun).not.toHaveBeenCalled()
+    expect(mocks.cancelTask).not.toHaveBeenCalled()
   })
 
   test("401 when not signed in", async () => {
@@ -51,7 +52,7 @@ describe("POST /api/tasks/:id/cancel — gates", () => {
     const { POST } = await import("./route")
     const res = await POST(post(), { params })
     expect(res.status).toBe(401)
-    expect(mocks.updateRun).not.toHaveBeenCalled()
+    expect(mocks.cancelTask).not.toHaveBeenCalled()
   })
 
   test("404 when the run doesn't exist", async () => {
@@ -60,47 +61,22 @@ describe("POST /api/tasks/:id/cancel — gates", () => {
     const res = await POST(post(), { params })
     expect(res.status).toBe(404)
     expect((await res.json()).code).toBe("not_found")
-    expect(mocks.updateRun).not.toHaveBeenCalled()
+    expect(mocks.cancelTask).not.toHaveBeenCalled()
   })
 })
 
 describe("POST /api/tasks/:id/cancel — state behaviour", () => {
-  test.each([["queued"], ["running"], ["paused"]])(
-    "non-terminal status (%s) → updateRun called with cancelled + finished",
+  test.each([["queued"], ["running"], ["paused"], ["done"], ["failed"], ["cancelled"]])(
+    "status %s → 200 through cancel_task (the whole task), no status write here",
     async (status) => {
-      mocks.getRun.mockImplementation(async () => ({
-        id: RUN_ID,
-        status,
-      }))
+      mocks.getRun.mockImplementation(async () => ({ id: RUN_ID, status }))
       const { POST } = await import("./route")
       const res = await POST(post(), { params })
       expect(res.status).toBe(200)
       expect((await res.json()).ok).toBe(true)
-      expect(mocks.updateRun).toHaveBeenCalledTimes(1)
-      const patch = mocks.updateRun.mock.calls[0][3] as {
-        status: string
-        finished: boolean
-      }
-      expect(patch.status).toBe("cancelled")
-      expect(patch.finished).toBe(true)
-    },
-  )
-
-  test.each([["done"], ["failed"], ["cancelled"]])(
-    "terminal status (%s) → idempotent no-op (no double-write)",
-    async (status) => {
-      // The runner could land its own terminal between the cancel
-      // intent and this check. Writing `cancelled` over `done` would
-      // mis-categorise the run; the route leaves the row alone and
-      // still returns 200 so the client UX is consistent.
-      mocks.getRun.mockImplementation(async () => ({
-        id: RUN_ID,
-        status,
-      }))
-      const { POST } = await import("./route")
-      const res = await POST(post(), { params })
-      expect(res.status).toBe(200)
-      expect((await res.json()).ok).toBe(true)
+      expect(mocks.cancelTask).toHaveBeenCalledTimes(1)
+      expect(mocks.cancelTask.mock.calls[0][1]).toBe(RUN_ID)
+      // The RPC leaves an ended row as it is, so nothing is double-written.
       expect(mocks.updateRun).not.toHaveBeenCalled()
     },
   )
@@ -110,25 +86,24 @@ describe("POST /api/tasks/:id/cancel — state behaviour", () => {
     await POST(post(), { params })
     expect(mocks.getRun.mock.calls[0][1]).toBe(RUN_ID)
     expect(mocks.getRun.mock.calls[0][2]).toBe(USER_ID)
-    expect(mocks.updateRun.mock.calls[0][1]).toBe(RUN_ID)
-    expect(mocks.updateRun.mock.calls[0][2]).toBe(USER_ID)
   })
 
-  test("non-terminal parent → cancelChildTasks called with parentId + userId", async () => {
+  test("a child is cancelled the same way (the RPC skips it)", async () => {
+    mocks.getRun.mockImplementation(async () => ({
+      id: RUN_ID,
+      status: "paused",
+      parent_task_id: "44444444-4444-4444-4444-444444444444",
+    }))
     const { POST } = await import("./route")
     const res = await POST(post(), { params })
     expect(res.status).toBe(200)
-    expect(mocks.cancelChildTasks).toHaveBeenCalledTimes(1)
-    expect(mocks.cancelChildTasks.mock.calls[0][1]).toBe(RUN_ID)
-    expect(mocks.cancelChildTasks.mock.calls[0][2]).toBe(USER_ID)
+    expect(mocks.cancelTask.mock.calls[0][1]).toBe(RUN_ID)
   })
 
-  test("already-terminal parent → cancelChildTasks NOT called", async () => {
-    mocks.getRun.mockImplementation(async () => ({ id: RUN_ID, status: "done" }))
+  test("idempotent: cancelling twice is 200 twice", async () => {
     const { POST } = await import("./route")
-    const res = await POST(post(), { params })
-    expect(res.status).toBe(200)
-    expect(mocks.cancelChildTasks).not.toHaveBeenCalled()
+    expect((await POST(post(), { params })).status).toBe(200)
+    expect((await POST(post(), { params })).status).toBe(200)
   })
 })
 
@@ -141,17 +116,28 @@ describe("POST /api/tasks/:id/cancel — store failures", () => {
     const res = await POST(post(), { params })
     expect(res.status).toBeGreaterThanOrEqual(400)
     expect(res.status).not.toBe(200)
-    expect(mocks.updateRun).not.toHaveBeenCalled()
+    expect(mocks.cancelTask).not.toHaveBeenCalled()
   })
 
-  test("updateRun throw → categorised error response", async () => {
-    mocks.updateRun.mockImplementation(async () => {
+  test("cancel_task throw → categorised error response", async () => {
+    mocks.cancelTask.mockImplementation(async () => {
       throw new Error("update failed")
     })
     const { POST } = await import("./route")
     const res = await POST(post(), { params })
     expect(res.status).toBeGreaterThanOrEqual(400)
     expect(res.status).not.toBe(200)
+  })
+
+  test("deleted meanwhile (P0002) → 404", async () => {
+    const { TaskWriteError } = await import("@/server/agent/task-writes")
+    mocks.cancelTask.mockImplementation(async () => {
+      throw new TaskWriteError("cancel task: task not found", "P0002")
+    })
+    const { POST } = await import("./route")
+    const res = await POST(post(), { params })
+    expect(res.status).toBe(404)
+    expect((await res.json()).code).toBe("not_found")
   })
 })
 

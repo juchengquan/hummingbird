@@ -8,7 +8,9 @@ the timestamp, then hands the event to a sink callback (typically
 
 Two invariants the consumer can rely on:
 
-  1. **Monotonic seq.** Every emit bumps the counter by 1. No gaps.
+  1. **Monotonic seq.** Every emit bumps the counter by 1. The log can
+     still have gaps: the entries of a pause / settle that lost to a
+     cancel are never written.
   2. **Settle-once.** The first terminal event (`status: cancelled` or
      `result: done|failed`) latches the emitter — subsequent emits are
      dropped silently. This is what makes the loop safe against late

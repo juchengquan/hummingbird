@@ -1,6 +1,6 @@
 # Plan: Frontend / backend split
 
-Status: **Waves 1–5 (Phases 0–2, chat on runs, backend catch-up) shipped (#294–#300).** Decided in a design interview
+Status: **Waves 1–5 (Phases 0–2, chat on runs, backend catch-up) shipped (#294–#302). Wave 5c (background executor correctness) in progress; wave 6 waits on it.** Decided in a design interview
 on 2026-11-21. Supersedes the open parts of
 [`PLAN-backend-extraction.md`](PLAN-backend-extraction.md), whose Phase 1
 (single `apiClient` + Zod schemas + `docs/API.md`) shipped and is the
@@ -96,18 +96,34 @@ three times. The goals:
 | Q38 | The tasks panel moves in a later wave, after chat: it needs background answers as new runs, children via `parentRunId`, and cancel through runs first |
 | Q39 | A small Playwright smoke test (browser → agent-py with the stub harness: send, stop, reload + rejoin, answer an interrupt) ships with the chat switch |
 | Q40 | While an agent service serves chat (`python` / `ts-service` signed in, `python-runs` always), the model picker offers only the models it accepts (the `anthropic/*` allowlist, no Auto), and a selected model it can't run is switched to its default with a visible note — not a 400 on every message, and never silently |
-| Q41 | A background run's answers start the new run from the paused run's checkpoint plus the `resume[]` answers (the Q24 way); the paused run stays `interrupted`. Each paused task is answered one way only: after a runs resume, `/api/tasks/:id/respond` refuses it (409), and a task answered the old way can't be resumed through `/v1/runs` (409). The old route works unchanged until Phase 5 |
+| Q41 | A background run's answers start the new run from the paused run's checkpoint plus the `resume[]` answers (the Q24 way); the paused run stays `interrupted`. Each paused task is answered one way only: after a runs resume, `/api/tasks/:id/respond` refuses it (409), and a task answered the old way can't be resumed through `/v1/runs` (409). The old route works unchanged until Phase 5 **Amended by Q57–Q60:** as shipped, a failed resume could repeat an approved tool and the per-task marker blocked a task's second question |
 | Q42 | Local MCP credentials go to **interactive** runs only, in a request field agent-py never stores or logs (not `forwardedProps`), re-sent on each resume. Background runs refuse local MCP, as the Next task routes do. agent-py gets `MCP_ALLOW_PRIVATE_HOSTS` with Next's semantics |
 | Q43 | The code interpreter stays Next-only until a short trial shows how microsandbox runs beside agent-py (a separate service agent-py calls over HTTP, or another way); the trial writes findings, not code |
 | Q44 | `/v1/runs` keeps its 16 MB body cap. Large inputs go by reference: cloud files by id (agent-py checks the owner itself — its Storage client bypasses RLS), bookmarks as capped text, inline bytes only for a signed-out user's small files |
 | Q45 | Local MCP credentials ride in AG-UI `state` (`hummingbird.localMcp`), never a header (Caddy access logs record custom headers); the server list without credentials goes in `forwardedProps`. agent-py holds them in a `repr=False` field and a test checks they never reach `tasks` rows or logs |
-| Q46 | Research mode is a `research: true` run option (`mode` already means interactive / background) and agent-py gets the research task prompt Next's `buildTaskSystemPrompt` had — fixing research tasks on the old route too, which share the executor |
+| Q46 | Research mode is a `research: true` run option (`mode` already means interactive / background) and agent-py gets the research task prompt Next's `buildTaskSystemPrompt` had — fixing research tasks on the old route too, which share the executor **As shipped** this only helps with an Anthropic model picked: the default model fails in the worker (Q55), and background prompts carry no file id for `searchFiles` |
 | Q47 | The rendered file header carries the file id for cloud files, on Next and runs, so `searchFiles` can be called (RAG mode can't work without it today) |
 | Q48 | The per-task allowed MCP servers list is enforced everywhere it applies: agent-py background and interactive runs, and Next's chat route (nothing reads it today) |
-| Q49 | Background runs on `/v1/runs` refuse `attachments` (400 `invalid_request`) like local MCP — the Next task routes take none and the wave-6 tasks panel sends none; lifted when a need appears, never silently ignored |
+| Q49 | Background runs on `/v1/runs` refuse `attachments` (400 `invalid_request`) like local MCP — the Next task routes take none and the wave-6 tasks panel sends none; lifted when a need appears, never silently ignored **Correction:** the task routes do take images, as message parts; only `attachments` are refused |
 | Q50 | The persona MCP picker lists local-mode servers too, marked as not available in tasks: the allow-list filters both modes (Q48) and an empty list stays "no MCP", so personas made before this tick their local servers once |
-| Q51 | A resume keeps the paused run's MCP allow-list on both sides: the browser saves it (ids only) with the run pointer, so blocked servers and their credentials aren't sent from a reload or another tab; agent-py saves it with the paused run and lets a resume narrow it, never widen it (no saved state → no MCP) |
+| Q51 | A resume keeps the paused run's MCP allow-list on both sides: the browser saves it (ids only) with the run pointer, so blocked servers and their credentials aren't sent from a reload or another tab; agent-py saves it with the paused run and lets a resume narrow it, never widen it (no saved state → no MCP) **As shipped** this held for interactive runs only: a background resume ignored a narrower list (fixed in 5c) |
 | Q52 | A user message records its persona's id and MCP allow-list (`messages.turn_persona`, 0044), and the send pipeline takes the persona from the history, never from the caller: every resend uses the persona's current prompt, model and skills with the saved list as a ceiling, which holds if the persona is deleted or absent on this device |
+| Q53 | The background executor is fixed before the tasks panel moves, as wave 5c; every bug gets a test that fails first on a real database or a scripted model server |
+| Q54 | CI runs agent-py's Postgres tests against a real database (`bun run test:db`, job `agent-py-db`), to be required for merge |
+| Q55 | Tasks take only models they can run: the UI offers those (no Auto) and switches with a note (as Q40), the server answers 400 before creating the task, and no key / no model fails the task. The stub step fn needs an explicit test setting; success is never faked |
+| Q56 | Schedules don't suddenly go live: in 5c one without a model fails with "no model"; in wave 6, once results are visible, new schedules get a default model and existing ones are paused until their owner re-enables them |
+| Q57 | A background run's question can be answered again only if the failed / cancelled resume never applied the answer; otherwise the task shows failed ("run again" is a new task) and the approved tool is never replayed |
+| Q58 | "Answered the old way" is per question (the question's id), not per task |
+| Q59 | A sub-agent's question is answered in place and shown on the parent task: a named exception to Q24, children only. 5c fixes the card and the old route; wave 6 adds the runs endpoint |
+| Q60 | Cancel means the whole task, on old and new paths: its chain of answers and its children, and the question doesn't reopen. Cancelling one child skips it and the parent continues |
+| Q61 | Tasks use runs only while "agent-py (runs)" is selected, and each task stays on the path it started on. Before that is a default, check token signing: agent-py accepts HS256 only |
+| Q62 | Migrating 0045 never starts a model call: a parent left waiting on ended sub-agents fails ("run it again") |
+| Q63 | Q57 extends to chat on runs (an applied interactive answer can't be given again), as a small PR after 5c |
+| Q64 | After an applied answer fails, the paused run stays as it is (a second answer is a 409); wave 6 shows the chain's last run |
+| Q65 | A short smoke test against the real Anthropic API before 5c merges; the fakes accepted requests the API refuses |
+| Q66 | Watching a task reads its status alone, not the whole row (checkpoint included), and polls every 5 s while it is paused on a question |
+| Q67 | A task whose model it can't run falls back to Haiku (agent-py's own default), not Sonnet |
+| Q68 | Scoping the saved task pointer to the signed-in account waits for wave 6 |
 
 ## Run contract (v1)
 
@@ -192,9 +208,10 @@ has shipped behind the existing per-account backend switch.
      executor (5b-A: `reasoningEffort` → extended thinking; a background
      start refuses `attachments`, Q49, and its message parts go through
      the same `check_attachments` as an interactive one)
-   - [x] background runs on `/v1/runs`: resume carries the answers into
+   - [ ] background runs on `/v1/runs`: resume carries the answers into
      the executor (Q41, 0043); starts keep `workspaceId`, `requireApprovalFor`,
-     research mode and the allowed MCP servers (5b-A)
+     research mode and the allowed MCP servers (shipped in 5b-A; unsafe
+     until 5c, see "Background executor bugs")
    - [x] `auto` model routing, so Auto can return to the agent backends
    - [x] MCP Apps — wave 5b-D (`mcp_tools.build_mcp_tool`, cloud and
      local servers)
@@ -224,7 +241,8 @@ has shipped behind the existing per-account backend switch.
 | 4b (Phase 3) | **A** hook into `use-chat-send` (send, Stop → cancel, reload → rejoin, memory taint, sync hold) · **B** chat answer cards + resume (Q35) · **C** Playwright smoke (Q39) · **D** backend catch-up, first slice: image/document attachments, reasoning effort, generated images/files from the native harness | Wave 4a merged |
 | 5a (Phase 3) | one agent, the seams: every new run option in the contract (0.4.0) and through agent-py's run input; prompt-section and toolset-contributor hooks in the native harness; a per-run context slot that works for anonymous runs; `mcp_app` on tool results; the citation verifier client in a shared module; the matching `build-input.ts` fields passed on send and resume. Plus the Q43 trial findings ([`TRIAL-code-interpreter-on-agent-py.md`](TRIAL-code-interpreter-on-agent-py.md)) | Wave 4 merged |
 | 5b (Phase 3) | **A** background runs (Q41 resume + 0043 mutual exclusion, start parity, research mode Q46, the Q49 refusal, skills / reasoning effort in the executor, Q48, Run progress fields, early pending question) · **B** context on runs (file budget + notes with ids Q47, MCP resources, bookmarks as taint, cloud files by id Q44) · **C** memory, citation checks, reference image, `localFilesOnly`, per-IP limits, `auto` · **D** local MCP (Q42/Q45), `MCP_ALLOW_PRIVATE_HOSTS`, MCP Apps | 5a |
-| 6 (Phase 3) | the tasks panel onto runs (Q38) | Wave 5's background-runs work merged |
+| 5c (Phase 3) | the database CI job, then **A** backend (migration 0045; executor, provider, barrier, both cancel paths, runs router; Q55–Q60, background Q51) · **B** frontend (child answer card, reload, cancel, task models, schedule notice). Ends with an end-to-end check: Postgres, the real worker and a scripted model server, driven through the UI | Wave 5 merged |
+| 6 (Phase 3) | the tasks panel onto runs (Q38) | Wave 5c merged |
 
 Each wave merges into one integration branch and ships as one PR
 against `dev`.
@@ -244,6 +262,67 @@ for MCP Apps; **A** the background executor (`run_input.background_checkpoint`
 already carries `allowedMcpServerIds` and `reasoningEffort`). The exact
 spots are marked `TODO(5b-A|B|C|D)`; the client side passes the new
 fields through `lib/client/runs/build-input.ts` on send and resume.
+
+## Background executor bugs (wave 6 survey, 2026-11-22)
+
+Read from the code at #302; the first twelve were also checked by hand.
+
+**Wave 5c, backend**
+
+- A UI schedule has no model, so the executor runs its stub and reports done. *(fixed, 5c-A)*
+- The default model (and every non-Anthropic one, and `auto`) fails in the worker. *(fixed, 5c-A)*
+- With several tool calls where one is gated (or a spawn), the others never get results. *(fixed, 5c-A)*
+- A respond without `approved` runs the gated tool. *(fixed, 5c-A)*
+- Cancelling a child skips the join barrier, so the parent waits forever. *(fixed, 5c-A)*
+- A pause write can overwrite a cancel. *(fixed, 5c-A)*
+- A failed resume frees the slot, so an approved tool can run twice. *(fixed, 5c-A)*
+- The 0043 marker is per task, so a second question is blocked forever. *(fixed, 5c-A)*
+- `create_run` resumes a run cancelled after the API's check. *(fixed, 5c-A)*
+- A run reads `queued` while it executes. *(fixed, 5c-A)*
+- Omitting `mode` skips the child / background resume checks. *(fixed, 5c-A)*
+- A background resume can't narrow the MCP allow-list (Q51). *(fixed, 5c-A)*
+- After an answer, a spawn settles "done" with no children and no result. *(fixed, 5c-A)*
+- An empty spawn hangs the parent; a spawn bypasses `requireApprovalFor`. *(fixed, 5c-A)*
+- Superseded questions stay in `openInterrupts` after a reclaim. *(fixed, 5c-A)*
+- A gate changed while paused makes even Decline fail. *(fixed, 5c-A)*
+- A failed enqueue leaves a queued orphan that holds the resume slot. *(fixed, 5c-A)*
+- The respond path doesn't bind the tool ledger. *(fixed, 5c-A)*
+- Background runs drop `document` parts that the API accepted. *(fixed, 5c-A)*
+- A second spawn round re-feeds the first round's children. *(fixed, 5c-A)*
+- Cancel and settle take their row locks in opposite orders. *(fixed, 5c-A)*
+- An interrupted background run has no `finishedAt`. *(fixed, 5c-A)*
+
+**Wave 5c, frontend**
+
+- A child's question has no answer card. *(fixed, 5c-B; the wire codec also dropped every `ui-part` question)*
+- A reload loses a paused task's question, plan and children. *(fixed, 5c-B: replay from 0; Realtime waits for the replay, side effects run once per browser)*
+- Cancel leaves the task showing Running, and a run ended without a
+  terminal event is reconnected to forever. *(fixed, 5c-B)*
+- Task launches offer models the worker can't run. *(fixed, 5c-B)*
+
+**Found while checking 5c end to end (not 5c's)**
+
+- A fresh browser's default workspace has the id `"default"`, not a uuid,
+  so its first upload after sign-in fails (`22P02`) and the sync queue
+  drops the ops: that browser's data never syncs, and tasks (which need a
+  synced conversation) can't start. Separate PR.
+
+**Wave 6**
+
+- Realtime arriving ahead of the replay drops events.
+- Two tabs both write the result; the single saved pointer is clobbered.
+- A second launch orphans the running task.
+- A research result lands in the workspace active when it finishes.
+- Scheduled results never reach their conversation.
+- Background prompts carry no file id for `searchFiles`.
+- Resending a task turn makes it a chat turn.
+- A 4096-token step cuts a report and reports done.
+- A long watch dies on an expired token; idle watchers can starve the pool of 4.
+- A board task can start before its conversation has synced.
+- A parent spawning on its last step ignores the children's results.
+- No stale / no-worker reconciler for runs.
+- To settle with one live model call: whether resent `parsed_output` /
+  null `system` payloads are rejected.
 
 ## Revisit later
 

@@ -34,7 +34,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agent_py import barrier, db, executor, feature_flag, jobs, poller, store
+from agent_py import barrier, db, executor, feature_flag, jobs, poller, store, tool_turn
 from agent_py.events import ApprovalEvent, ResultEvent, StatusEvent, TaskEvent, TokenEvent
 from agent_py.jobs import ClaimedJob
 from agent_py.runner import (
@@ -46,6 +46,8 @@ from agent_py.runner import (
 )
 from agent_py.settings import Settings
 from agent_py.tools.registry import ToolDescriptor, ToolInvocationResult
+
+from .executor_fakes import fake_pause, fake_settle
 
 RUN_ID = "22222222-2222-2222-2222-222222222222"
 USER_ID = "33333333-3333-3333-3333-333333333333"
@@ -109,6 +111,9 @@ def _pool(conn: _RecordingConn) -> MagicMock:
     return pool
 
 
+M0045 = REPO_ROOT / "supabase" / "migrations" / "0045_background_tasks_correct.sql"
+
+
 def _norm(sql: str) -> str:
     return " ".join(sql.split())
 
@@ -152,7 +157,7 @@ async def test_set_task_handler_failure_does_not_fail_the_run() -> None:
         patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=False)),
         patch.object(store, "update_run", new=AsyncMock()),
         patch("agent_py.executor._make_db_sink", return_value=sink),
-        patch("agent_py.executor.settle_task_terminal", new=AsyncMock()) as settle,
+        patch("agent_py.executor.settle_task_terminal", new=fake_settle(collected)) as settle,
     ):
         outcome = await executor.execute_start(
             MagicMock(),
@@ -310,7 +315,7 @@ async def test_suspend_checkpoint_seq_covers_approval_and_paused() -> None:
         patch.object(store, "set_task_handler", new=AsyncMock()),
         patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=False)),
         patch.object(store, "update_run", new=AsyncMock()),
-        patch.object(store, "save_checkpoint", new=AsyncMock()) as save_checkpoint,
+        patch.object(store, "commit_pause", new=fake_pause(collected)) as commit,
         patch("agent_py.executor._make_db_sink", return_value=sink),
     ):
         await executor.execute_start(
@@ -319,7 +324,7 @@ async def test_suspend_checkpoint_seq_covers_approval_and_paused() -> None:
             make_step_fn=_suspending_make_step("tu_1", "danger"),
         )
 
-    saved_seq = save_checkpoint.await_args.kwargs["checkpoint"]["seq"]
+    saved_seq = commit.await_args.kwargs["checkpoint"]["seq"]
     paused = [e for e in collected if isinstance(e, StatusEvent) and e.status == "paused"]
     assert len(paused) == 1
     assert saved_seq == paused[0].seq == max(e.seq for e in collected)
@@ -368,7 +373,7 @@ async def test_start_result_carries_accumulated_text_for_fan_in() -> None:
         patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=False)),
         patch.object(store, "update_run", new=AsyncMock()),
         patch("agent_py.executor._make_db_sink", return_value=sink),
-        patch("agent_py.executor.settle_task_terminal", new=AsyncMock()),
+        patch("agent_py.executor.settle_task_terminal", new=fake_settle(collected)),
     ):
         await executor.execute_start(
             MagicMock(),
@@ -405,7 +410,7 @@ async def test_continue_result_text_spans_earlier_chunks() -> None:
         patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=False)),
         patch.object(store, "update_run", new=AsyncMock()),
         patch("agent_py.executor._make_db_sink", return_value=sink),
-        patch("agent_py.executor.settle_task_terminal", new=AsyncMock()),
+        patch("agent_py.executor.settle_task_terminal", new=fake_settle(collected)),
     ):
         await executor.execute_continue(
             MagicMock(),
@@ -542,22 +547,28 @@ async def test_respond_claims_then_executes_once() -> None:
 async def test_claim_paused_for_respond_sql_is_atomic_and_scoped() -> None:
     conn = _RecordingConn(fetchrow=[None])
     assert (
-        await store.claim_paused_for_respond(_pool(conn), run_id=RUN_ID, user_id=USER_ID) is False
+        await store.claim_paused_for_respond(
+            _pool(conn), run_id=RUN_ID, user_id=USER_ID, question="tu_1"
+        )
+        is False
     )
     _, (sql, *args) = conn.calls[0]
     flat = _norm(sql)
     assert "SET status = 'running'" in flat
     assert "WHERE id = $1 AND user_id = $2 AND status = 'paused'" in flat
     assert "RETURNING id" in flat
-    assert args == [uuid.UUID(RUN_ID), uuid.UUID(USER_ID)]
+    # …and only for the question it waits on (Q58).
+    assert "private.task_waits_on(id, $3)" in flat
+    assert args == [uuid.UUID(RUN_ID), uuid.UUID(USER_ID), "tu_1"]
 
 
-def test_find_pending_tool_call_skips_answered_calls() -> None:
+def test_open_turn_skips_answered_calls() -> None:
     answered = executor._messages_from(_paused_checkpoint(answered=True))
-    assert executor._find_pending_tool_call(answered, "tu_1") is None
+    assert tool_turn.open_turn(answered) == []
+    assert executor._tool_call_answered(answered, "tu_1")
     pending = executor._messages_from(_paused_checkpoint(answered=False))
-    found = executor._find_pending_tool_call(pending, "tu_1")
-    assert found is not None and found["tool_name"] == "danger"
+    [found] = tool_turn.open_turn(pending)
+    assert (found.id, found.name) == ("tu_1", "danger")
 
 
 # --- 6. user scoping + ownership -------------------------------------------
@@ -566,13 +577,15 @@ def test_find_pending_tool_call_skips_answered_calls() -> None:
 @pytest.mark.asyncio
 async def test_settle_task_terminal_is_user_scoped() -> None:
     parent = uuid.uuid4()
-    conn = _RecordingConn(
-        fetchrow=[{"parent_task_id": parent}, {"pending_children": 1, "status": "paused"}]
-    )
+    conn = _RecordingConn(fetchrow=[{"parent_task_id": parent}])
     await barrier.settle_task_terminal(_pool(conn), task_id=RUN_ID, user_id=USER_ID, status="done")
-    (_, (t_sql, *t_args)), (_, (d_sql, *d_args)) = conn.calls[1:3]
+    (_, (l_sql, *l_args)), (_, (t_sql, *t_args)) = conn.calls[1:3]
+    assert "private.lock_task_scope($1, $2)" in l_sql
+    assert l_args[:2] == [uuid.UUID(USER_ID), uuid.UUID(RUN_ID)]
     assert "user_id = $3" in t_sql and t_args == [uuid.UUID(RUN_ID), "done", uuid.UUID(USER_ID)]
-    assert "user_id = $2" in d_sql and d_args == [parent, uuid.UUID(USER_ID)]
+    # The parent's decrement is the database's, scoped to the same user.
+    sql = " ".join(M0045.read_text().split())
+    assert "where t.id = p_parent_id and t.user_id = p_user_id" in sql
 
 
 @pytest.mark.asyncio

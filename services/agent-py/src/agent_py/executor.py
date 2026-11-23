@@ -5,17 +5,22 @@ here; this module:
 
   1. Stamps `tasks.metadata.handler = 'python'` for postmortem audit.
   2. Loads the run's checkpoint (model / system / messages) and
-     builds the step fn — Anthropic streaming when configured,
-     stub when not.
+     builds the step fn — Anthropic streaming.
   3. Builds a `RunEmitter` whose sink persists into `task_events`.
   4. Calls `run_agent_loop` with the step fn.
   5. Updates the `tasks` row to terminal status when the loop settles.
 
 Phase 2a shipped the executor pattern with a stub step fn that emits
 two canned tokens. Phase 2b-1 (this PR) wires `make_anthropic_step_fn`
-in as the default when `ANTHROPIC_API_KEY` is set — text-only
-streaming, no tools yet. Tools land in Phase 2b-2; HITL pause /
+in as the default — text-only streaming, no tools yet. Tools land in Phase 2b-2; HITL pause /
 resume land in Phase 3.
+
+Wave 5c: start, continue, respond and a runs resume share one loop
+(`_drive`) over one rule per tool turn (`tool_turn`): every call gets
+exactly one result. The stub is gone as a fallback (Q55): no key, no
+model or no messages fails the task; only `WORKER_STUB_MODEL` runs it.
+Every write that ends a chunk is one transaction that refuses an ended
+run, with the entries announcing it (terminal is final).
 
 The seam is `make_step_fn` — a `Callable[[StartActionPayload, dict],
 RunStepFn]` so tests can swap a fake without touching the live
@@ -25,27 +30,41 @@ Anthropic SDK or the checkpoint loader.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import os
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
+from urllib.parse import unquote_to_bytes
 
 import asyncpg
 import structlog
 
-from . import jobs, lease, resume_answers, store, tool_ledger, verify, verify_client
+from . import jobs, lease, resume_answers, store, tool_ledger, tool_turn, verify, verify_client
 from .aggregate import aggregate_child_results
 from .barrier import settle_task_terminal
-from .emitter import EventSink, RunEmitter
-from .events import StepEndEvent, TaskEvent, TokenEvent, ToolOutputEvent
+from .emitter import EventSink, RunEmitter, _now_iso
+from .events import (
+    ApprovalEvent,
+    ResultEvent,
+    RunStatus,
+    StatusEvent,
+    StepEndEvent,
+    TaskEvent,
+    TokenEvent,
+    ToolOutputEvent,
+    is_terminal_status,
+)
 from .input_policy import (
     ALWAYS_GATED_TOOL_NAMES,
     request_kind_for,
 )
 from .mcp_tools import extend_registry_with_mcp
-from .model_allowlist import resolve_api_model_id
+from .model_allowlist import UnknownModelError, resolve_api_model_id
 from .providers.anthropic_provider import (
     AnthropicStepConfig,
     AsyncAnthropicClient,
@@ -55,6 +74,8 @@ from .providers.anthropic_provider import (
 from .reasoning_effort import parse_reasoning_effort, thinking_params
 from .runner import (
     AgentLoopResult,
+    FinalizeFn,
+    FinalTextFn,
     PendingInputDescriptor,
     RunStepContext,
     RunStepFn,
@@ -63,11 +84,19 @@ from .runner import (
     run_agent_loop,
 )
 from .runs.harness_hooks import SKILL_TOOLS
+from .runs.history import IMAGE_MEDIA_TYPES
+from .runs.model import Interrupted, PendingInterrupt, outcome_to_json
 from .settings import get_settings
 from .task_prompt import RESEARCH_MODE, build_research_system_prompt
+from .tool_turn import ToolCall
 from .tools import ToolContext, default_tool_registry
 from .tools.registry import SkillConfigs, ToolDescriptor
-from .tools.spawn_subagent import MAX_CHILDREN, SPAWN_SUBAGENT_TOOL_NAME
+from .tools.spawn_subagent import (
+    MAX_CHILDREN,
+    SPAWN_ARGS_ERROR,
+    SPAWN_SUBAGENT_TOOL_NAME,
+    parse_spawn_specs,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -152,8 +181,9 @@ class RespondActionPayload:
     One of `approved` / `selection` / `value` / `ui_answer` is set
     based on the pending input's request kind (approval / choice /
     input / ui-part). All fields besides `request_id` are optional so
-    a malformed job payload doesn't crash the executor —
-    `_build_tool_result_text` falls back to a "no answer" message.
+    a malformed job payload doesn't crash the executor: a question
+    falls back to a "no answer" message, and an approval without a
+    boolean `approved` is refused before the claim (never approved).
 
     `ui_answer` carries the structured answer from the generative-UI
     resolver (commit 3b of PLAN-generative-ui-parts). The back-compat
@@ -247,16 +277,35 @@ async def execute_continue(
     )
 
 
+class RunSetupError(Exception):
+    """The run can't be executed as it is (no key, no model, no messages,
+    an input the model can't take): it fails with this message — success
+    is never faked (Q55)."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class _RunOver(BaseException):
+    """The run ended under this worker (cancelled, reconciled, deleted):
+    terminal is final, so it stops without another write or side effect.
+    A `BaseException`, like `LeaseLostError`, so the tool loop's broad
+    handlers can't turn it into a tool error."""
+
+
 @dataclass
 class _RunGuard:
     """Mutable breadcrumbs the `_run_*_inner` bodies leave for their
     outer guard: the emitter once it exists (so a failure event follows
     the run's seq) and whether the run's task row has been taken over
     by this job (so an escaped error settles it failed instead of
-    stranding it)."""
+    stranding it). `claiming`: the paused → running claim was sent and
+    its answer never came back."""
 
     emitter: RunEmitter | None = None
     owns_task: bool = True
+    claiming: bool = False
 
 
 async def _run_chunk(
@@ -267,12 +316,13 @@ async def _run_chunk(
     resume: bool,
     reclaimed: bool = False,
 ) -> ExecutorOutcome:
-    """Outer guard for `_run_chunk_inner`: anything raised before (or
-    outside) the inner body's own `try` — checkpoint load, seq probe,
-    fan-in child-result load — still settles the run failed with a
-    terminal event instead of leaving the task `running` behind a
-    failed job. `CancelledError` is deliberately not caught: the poller
-    hands a cancelled job back to the queue and the task stays live."""
+    """Outer guard for `_run_chunk_inner`: anything raised — checkpoint
+    load, seq probe, fan-in child-result load, setup, the loop — settles
+    the run failed with a terminal event instead of leaving the task
+    `running` behind a failed job. A run that ended under the worker
+    (`_RunOver`) is a clean stop. `CancelledError` is deliberately not
+    caught: the poller hands a cancelled job back to the queue and the
+    task stays live."""
     guard = _RunGuard()
     try:
         return await _run_chunk_inner(
@@ -283,9 +333,12 @@ async def _run_chunk(
             reclaimed=reclaimed,
             guard=guard,
         )
+    except _RunOver:
+        await _stop_ended_run(pool, payload.run_id, payload.user_id, guard.emitter)
+        return ExecutorOutcome(settled=True)
     except Exception as exc:
         logger.error(
-            "executor.failed_outside_loop",
+            "executor.failed",
             run_id=payload.run_id,
             user_id=payload.user_id,
             error=str(exc),
@@ -296,8 +349,41 @@ async def _run_chunk(
             user_id=payload.user_id,
             emitter=guard.emitter,
             error=str(exc),
+            error_code=_error_code(exc),
         )
         return ExecutorOutcome(settled=False, error=str(exc))
+
+
+def _error_code(exc: BaseException) -> str | None:
+    if isinstance(exc, RunSetupError | UnknownModelError):
+        return exc.code
+    return None
+
+
+async def _stop_ended_run(
+    pool: asyncpg.Pool, run_id: str, user_id: str, emitter: RunEmitter | None
+) -> None:
+    """The run ended under this worker. A cancel gets its `status:
+    cancelled` entry (the cancel itself writes none); nothing else is
+    written."""
+    if emitter is None:
+        return
+    try:
+        if await store.load_owned_task_status(pool, task_id=run_id, user_id=user_id) != "cancelled":
+            return
+        await store.append_event(
+            pool,
+            StatusEvent(
+                run_id=run_id,
+                seq=emitter.seq + 1,
+                step=emitter.step,
+                created_at=_now_iso(),
+                status="cancelled",
+            ),
+            user_id=user_id,
+        )
+    except Exception as exc:
+        logger.warning("executor.cancelled_event_failed", run_id=run_id, error=str(exc))
 
 
 async def _fail_run(
@@ -307,27 +393,36 @@ async def _fail_run(
     user_id: str,
     emitter: RunEmitter | None,
     error: str,
+    error_code: str | None = None,
 ) -> None:
-    """Best-effort: emit `result: failed` (if the run hasn't settled)
-    and settle the task failed via the barrier. With no emitter yet,
-    build one seeded past the run's highest seq so the event can't
-    collide with (and be dropped as) an existing one. A worker whose
-    job lease is gone settles nothing (`LeaseLostError` propagates)."""
+    """Best-effort: settle the task failed, with its `result: failed` in
+    the same transaction — so a run that already ended (a cancel won)
+    gets neither. With no emitter yet the event is seeded past the run's
+    highest seq so it can't collide with (and be dropped as) an existing
+    one. A worker whose job lease is gone settles nothing
+    (`LeaseLostError` propagates)."""
     lease.check_current()
+    seq = step = 0
+    if emitter is not None:
+        seq, step = emitter.seq, emitter.step
+    else:
+        try:
+            seq = await store.max_event_seq(pool, run_id=run_id, user_id=user_id)
+        except Exception as exc:
+            logger.warning("executor.fail_seq_failed", run_id=run_id, error=str(exc))
+    event = ResultEvent(
+        run_id=run_id,
+        seq=seq + 1,
+        step=step,
+        created_at=_now_iso(),
+        status="failed",
+        error=error,
+        error_code=error_code,
+    )
     try:
-        if emitter is None:
-            start_seq = await store.max_event_seq(pool, run_id=run_id, user_id=user_id)
-            emitter = RunEmitter(
-                run_id=run_id,
-                sink=_make_db_sink(pool, user_id=user_id),
-                start_seq=start_seq,
-            )
-        if not emitter.settled:
-            await emitter.result("failed", error=error)
-    except Exception as exc:
-        logger.warning("executor.fail_event_failed", run_id=run_id, error=str(exc))
-    try:
-        await settle_task_terminal(pool, task_id=run_id, user_id=user_id, status="failed")
+        await settle_task_terminal(
+            pool, task_id=run_id, user_id=user_id, status="failed", event=event
+        )
     except Exception as exc:
         # The job is still marked failed by the poller; the TS stale-run
         # reconciler fails a task with no live job as a last resort.
@@ -354,28 +449,28 @@ async def settle_stranded_task(
         is already settled), and
       - no OTHER job for the task is queued or holds a live lease.
 
-    Settles via the join barrier first (so a child decrements its
-    parent), then appends the terminal `result: failed` at the run's
-    next seq — only when the transition actually happened, so a run
-    that settled concurrently never gets a stray second result.
-    Returns True iff the task was settled here."""
+    The terminal `result: failed` goes at the run's next seq in the
+    settle's own transaction, so a run that settled concurrently never
+    gets a stray second result. Returns True iff the task was settled
+    here."""
     state = await jobs.load_job_task_state(pool, task_id=task_id, user_id=user_id, job_id=job_id)
     if state is None or state.task_status not in _SETTLEABLE_STRANDED:
         return False
     if state.has_other_live_job:
         return False
-    settled = await settle_task_terminal(pool, task_id=task_id, user_id=user_id, status="failed")
-    if not settled.transitioned:
-        return False
-    start_seq = await store.max_event_seq(pool, run_id=task_id, user_id=user_id)
-    emitter = RunEmitter(
+    seq = await store.max_event_seq(pool, run_id=task_id, user_id=user_id)
+    event = ResultEvent(
         run_id=task_id,
-        sink=_make_db_sink(pool, user_id=user_id),
-        start_seq=start_seq,
-        start_step=state.step,
+        seq=seq + 1,
+        step=state.step,
+        created_at=_now_iso(),
+        status="failed",
+        error=error,
     )
-    await emitter.result("failed", error=error)
-    return True
+    settled = await settle_task_terminal(
+        pool, task_id=task_id, user_id=user_id, status="failed", event=event
+    )
+    return settled.transitioned
 
 
 async def recover_stranded_paused_run(
@@ -399,7 +494,9 @@ async def recover_stranded_paused_run(
     checkpoint = await store.load_checkpoint(pool, run_id=task_id, user_id=user_id)
     if checkpoint is None or isinstance(checkpoint.get("awaiting_children"), dict):
         return False
-    if _unanswered_last_turn_calls(_messages_from(checkpoint)):
+    messages = _messages_from(checkpoint)
+    tool_turn.take_partial_results(messages)
+    if tool_turn.open_turn(messages):
         return False
     lease.check_current()
     return await store.claim_paused_for_fan_in(pool, run_id=task_id, user_id=user_id)
@@ -512,6 +609,122 @@ async def _build_run_tools(
     )
 
 
+class _RunSink:
+    """Where a run's events go. Progress is appended as it is emitted.
+    The entries that end a chunk commit with the row instead, so a chunk
+    that loses to a cancel announces nothing: the terminal one is kept in
+    `terminal` for the settle, a pause's and a spawn's are collected by
+    `holding()` for their commit.
+
+    Also taps what the citation finalize hook needs: the assembled report
+    text + web-search sources, in the cumulative order the model cites by
+    (`[1]`, `[2]`, …). Per chunk, so only complete when the run settles in
+    its first chunk; a later one re-reads the log."""
+
+    def __init__(self, pool: asyncpg.Pool, *, user_id: str) -> None:
+        self._pool = pool
+        self._user_id = user_id
+        self._db = _make_db_sink(pool, user_id=user_id)
+        self._held: list[TaskEvent] | None = None
+        self.terminal: TaskEvent | None = None
+        self.text: list[str] = []
+        self.sources: list[tuple[str, str, str]] = []
+
+    @contextmanager
+    def holding(self) -> Iterator[list[TaskEvent]]:
+        self._held = []
+        try:
+            yield self._held
+        finally:
+            self._held = None
+
+    async def __call__(self, event: TaskEvent) -> None:
+        # No event may be written once this worker's job lease is gone.
+        lease.check_current()
+        if isinstance(event, TokenEvent) and event.channel == "text":
+            self.text.append(event.text)
+        elif isinstance(event, ToolOutputEvent) and event.results:
+            self.sources.extend((r.title, r.url, r.snippet) for r in event.results)
+        if isinstance(event, ResultEvent) or (
+            isinstance(event, StatusEvent) and event.status == "cancelled"
+        ):
+            self.terminal = event
+        elif self._held is not None:
+            self._held.append(event)
+        else:
+            await self._db(event)
+            await _record_progress(self._pool, event, user_id=self._user_id)
+
+
+class _Run:
+    """One job's execution of a run — what start, continue, respond and a
+    runs resume share once their own opening is done."""
+
+    def __init__(
+        self,
+        pool: asyncpg.Pool,
+        *,
+        payload: StartActionPayload,
+        checkpoint: dict[str, Any],
+        messages: list[dict[str, Any]],
+        emitter: RunEmitter,
+        sink: _RunSink,
+        tools: _RunTools,
+        resume: bool,
+        resumed_from_seq: int | None,
+    ) -> None:
+        self.pool = pool
+        self.payload = payload
+        self.checkpoint = checkpoint
+        self.messages = messages
+        self.emitter = emitter
+        self.sink = sink
+        self.tools = tools
+        self.resume = resume
+        self.resumed_from_seq = resumed_from_seq
+        self.gated = frozenset(_gated_tools_from(checkpoint) | tools.mcp_gated)
+        self.registry = tools.registry()
+        # Execution record for the tool turn (see `tool_ledger`): each save
+        # is a checkpoint at the run's current position plus the record, so
+        # a reclaim resumes mid-turn instead of re-asking the model (which
+        # could re-issue — and re-run — the same call).
+        self.ledger = tool_ledger.ToolLedger(save=self._save_record, gated_tool_names=self.gated)
+
+    async def _save_record(self, _record: dict[str, Any]) -> None:
+        await self.save()
+
+    def build_checkpoint(self) -> dict[str, object]:
+        out = _build_checkpoint(self.checkpoint, self.messages, self.emitter)
+        if not self.ledger.empty:
+            out[tool_ledger.INFLIGHT_KEY] = self.ledger.payload()
+        return out
+
+    async def save(self) -> None:
+        lease.check_current()
+        saved = await store.save_checkpoint(
+            self.pool,
+            run_id=self.payload.run_id,
+            user_id=self.payload.user_id,
+            checkpoint=self.build_checkpoint(),
+        )
+        if saved is False:
+            raise _RunOver
+
+    async def open_marker(self) -> None:
+        """A reclaimed run's resume marker, before anything else it emits."""
+        if self.resumed_from_seq is None:
+            return
+        await self.emitter.status(
+            "running", resumed_from_seq=self.resumed_from_seq, restarted=self.emitter.step == 0
+        )
+        self.resumed_from_seq = None
+
+    async def close_step(self) -> None:
+        if self.ledger.step_open:
+            await self.emitter.end_step()
+            self.ledger.step_open = False
+
+
 async def _run_chunk_inner(
     pool: asyncpg.Pool,
     *,
@@ -526,16 +739,15 @@ async def _run_chunk_inner(
     The contract the poller depends on:
       - On settle (`done`) → returns `ExecutorOutcome(settled=True)`.
         The `tasks` row is `status='done'`, `finished_at` set.
-      - On cancel detected between steps → same outcome (the cancel
-        landed cleanly, no need to mark the job failed).
+      - The run ended under the worker (cancel) → same outcome (the
+        cancel landed cleanly, no need to mark the job failed), nothing
+        written over it.
       - On yield (time budget exhausted) → returns
         `ExecutorOutcome(settled=True)` too, BUT the `tasks` row is
         left `running`; the executor has already saved the
         checkpoint and enqueued a `continue` job that picks up.
-      - On model / tool / DB error → returns
-        `ExecutorOutcome(settled=False, error=...)`. The poller
-        marks the job failed; the row gets a synthetic
-        `result: failed` event.
+      - On setup / model / tool / DB error → raises; `_run_chunk` settles
+        the run failed and the poller marks the job failed.
 
     `resume=True` seeds the emitter at the checkpoint's saved
     `seq` / `step` so a re-tail picks up monotonically. `resume=False`
@@ -582,41 +794,24 @@ async def _run_chunk_inner(
         checkpoint=checkpoint,
         reclaimed=reclaimed,
     )
-    start_step = _int_or(checkpoint.get("step"), 0) if resume else 0
-
-    # Tap the sink to accumulate the assembled report text + web-search
-    # sources as events flow, so the citation finalize hook (research
-    # runs) can verify before the terminal `result` latches the emitter.
-    # Only token(text) + tool_output(results) feed it; everything else
-    # passes through to the DB sink. Web-search results arrive in the
-    # cumulative order the model cites by (`[1]`, `[2]`, …).
-    #
-    # This accumulator is per-chunk, so it's only complete when the run
-    # settles in THIS chunk — which is why verification runs on the
-    # `execute_start` path only (a run that yields and finishes in a later
-    # `continue` chunk simply gets no verification). See verify_answer's
-    # no-op guards + `docs/PLAN-citation-verifiability.md`.
-    verify_text_parts: list[str] = []
-    verify_sources: list[tuple[str, str, str]] = []
-    db_sink = _make_db_sink(pool, user_id=payload.user_id)
-
-    async def sink(event: TaskEvent) -> None:
-        # No event may be written once this worker's job lease is gone.
-        lease.check_current()
-        if isinstance(event, TokenEvent) and event.channel == "text":
-            verify_text_parts.append(event.text)
-        elif isinstance(event, ToolOutputEvent) and event.results:
-            verify_sources.extend((r.title, r.url, r.snippet) for r in event.results)
-        await db_sink(event)
-        await _record_progress(pool, event, user_id=payload.user_id)
-
+    sink = _RunSink(pool, user_id=payload.user_id)
     emitter = RunEmitter(
         run_id=payload.run_id,
         sink=sink,
         start_seq=start_seq,
-        start_step=start_step,
+        start_step=_int_or(checkpoint.get("step"), 0) if resume else 0,
     )
     guard.emitter = emitter
+
+    awaiting = checkpoint.get("awaiting_children") if resume else None
+    lease.check_current()
+    status = await store.start_running(pool, run_id=payload.run_id, user_id=payload.user_id)
+    if status is None or is_terminal_status(cast("RunStatus", status)):
+        raise _RunOver
+    if status == "paused" and not isinstance(awaiting, dict):
+        # Waiting on the user: only their answer resumes it.
+        logger.warning("executor.paused_on_question", run_id=payload.run_id)
+        return ExecutorOutcome(settled=True)
 
     # Track the mutable message history the step fn appends to —
     # `_default_make_step_fn` builds it from the checkpoint and hands
@@ -624,400 +819,210 @@ async def _run_chunk_inner(
     # mutates in place when tools are called. On yield we need to read
     # the current state to persist; the closure captures it here so we
     # don't have to plumb a getter through the step-fn factory.
-    live_messages: list[dict[str, Any]] = _messages_from(checkpoint)
+    messages = _messages_from(checkpoint)
+    answers = None if resume else resume_answers.parse_resume(checkpoint)
+    # A resumed checkpoint can end in an assistant turn whose calls wait
+    # for results (a pause, a spawn, a turn a dead attempt was executing);
+    # so does a runs-API resume's, the paused run's.
+    in_turn = resume or answers is not None
+    partial = tool_turn.take_partial_results(messages) if in_turn else []
 
     # Fan-in resume: when the checkpoint carries `awaiting_children`
-    # (written by the spawned path in Task 7), this is the parent's
-    # `continue` job fired by the barrier after all children settled.
-    # Load + aggregate the child results and inject them as a
-    # `tool_result` user turn for the original spawn `tool_call_id`,
-    # then strip the marker so it doesn't re-trigger on a later chunk.
-    # This is the only resume path that carries `awaiting_children`; a
-    # fresh `start` checkpoint never has it, so the guard is sufficient.
-    if resume:
-        awaiting = checkpoint.get("awaiting_children")
-        if isinstance(awaiting, dict):
-            # The parent is `paused` on its children: flip it back to
-            # `running` (only once they all settled) BEFORE resuming. Left
-            # `paused` while it runs, a worker death in any later chunk
-            # would be reclaimed as "waiting on the user / children" and
-            # skipped — stranding the task `paused` forever, since the
-            # checkpoint below no longer carries `awaiting_children`.
-            lease.check_current()
-            if not await store.claim_paused_for_fan_in(
-                pool, run_id=payload.run_id, user_id=payload.user_id
-            ):
-                status = await store.load_owned_task_status(
-                    pool, task_id=payload.run_id, user_id=payload.user_id
+    # (written with the spawn), this is the parent's `continue` job fired
+    # by the barrier after all children settled. Load + aggregate that
+    # round's results as the spawn call's `tool_result`, and drop the
+    # marker so it doesn't re-trigger on a later chunk.
+    fan_in: dict[str, Any] | None = None
+    if isinstance(awaiting, dict):
+        # The parent is `paused` on its children: flip it back to
+        # `running` (only once they all settled) BEFORE resuming. Left
+        # `paused` while it runs, a worker death in any later chunk
+        # would be reclaimed as "waiting on the user / children" and
+        # skipped — stranding the task `paused` forever, since the
+        # checkpoint below no longer carries `awaiting_children`.
+        lease.check_current()
+        if not await store.claim_paused_for_fan_in(
+            pool, run_id=payload.run_id, user_id=payload.user_id
+        ):
+            status = await store.load_owned_task_status(
+                pool, task_id=payload.run_id, user_id=payload.user_id
+            )
+            if status != "running":
+                # Children still pending (a stray `continue`), or the
+                # run settled / was cancelled meanwhile: nothing to do.
+                # `running` means a dead attempt already flipped it.
+                logger.warning(
+                    "executor.fan_in_not_ready",
+                    run_id=payload.run_id,
+                    task_status=status,
                 )
-                if status != "running":
-                    # Children still pending (a stray `continue`), or the
-                    # run settled / was cancelled meanwhile: nothing to do.
-                    # `running` means a dead attempt already flipped it.
-                    logger.warning(
-                        "executor.fan_in_not_ready",
-                        run_id=payload.run_id,
-                        task_status=status,
-                    )
-                    return ExecutorOutcome(settled=True)
-            tool_call_id = str(awaiting.get("tool_call_id") or "")
-            child_results = await store.load_child_results(
-                pool, parent_task_id=payload.run_id, user_id=payload.user_id
-            )
-            tool_result_text = aggregate_child_results(child_results)
-            live_messages.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tool_call_id,
-                            "content": tool_result_text,
-                        }
-                    ],
-                }
-            )
-            checkpoint = {k: v for k, v in checkpoint.items() if k != "awaiting_children"}
-
-    try:
-        await _stamp_handler(pool, run_id=payload.run_id, user_id=payload.user_id)
-
-        cfg = checkpoint.get("config")
-        # Custom `make_step_fn` overrides (tests) skip MCP discovery —
-        # they don't go through `_default_make_step_fn`, so injecting
-        # extra tools wouldn't reach them anyway.
-        run_tools = await _build_run_tools(
+                return ExecutorOutcome(settled=True)
+        named = awaiting.get("children")
+        child_results = await store.load_child_results(
             pool,
+            parent_task_id=payload.run_id,
             user_id=payload.user_id,
-            checkpoint=checkpoint,
-            discover_mcp=make_step_fn is None,
+            children=[c for c in named if isinstance(c, dict)] if isinstance(named, list) else None,
         )
-        if make_step_fn is None:
-            step_fn = _default_make_step_fn(
-                payload, checkpoint, live_messages, run_tools.context, run_tools=run_tools
-            )
+        fan_in = {
+            "type": "tool_result",
+            "tool_use_id": str(awaiting.get("tool_call_id") or ""),
+            "content": aggregate_child_results(child_results),
+        }
+        checkpoint = {k: v for k, v in checkpoint.items() if k != "awaiting_children"}
+
+    await _stamp_handler(pool, run_id=payload.run_id, user_id=payload.user_id)
+
+    # Custom `make_step_fn` overrides (tests) skip MCP discovery —
+    # they don't go through `_default_make_step_fn`, so injecting
+    # extra tools wouldn't reach them anyway.
+    tools = await _build_run_tools(
+        pool,
+        user_id=payload.user_id,
+        checkpoint=checkpoint,
+        discover_mcp=make_step_fn is None,
+    )
+    # Before any effect: a run that can't call its model fails here, so a
+    # resume that fails this way never applied its answers (Q57).
+    if make_step_fn is None:
+        step_fn = _default_make_step_fn(
+            payload, checkpoint, messages, tools.context, run_tools=tools
+        )
+    else:
+        step_fn = make_step_fn(payload, checkpoint, messages, tools.context)
+
+    run = _Run(
+        pool,
+        payload=payload,
+        checkpoint=checkpoint,
+        messages=messages,
+        emitter=emitter,
+        sink=sink,
+        tools=tools,
+        resume=resume,
+        resumed_from_seq=resumed_from_seq,
+    )
+    if in_turn:
+        run.ledger.reset(tool_ledger.read_record(checkpoint))
+        for block in partial:
+            run.ledger.answer(block)
+    if fan_in is not None:
+        calls = tool_turn.open_turn(messages)
+        if any(call.id == fan_in["tool_use_id"] for call in calls):
+            if not run.ledger.classified:
+                # Saved before 5c: the turn's other calls never ran, and
+                # none of its other spawns exists.
+                run.ledger.ask, run.ledger.spawn = tool_turn.classify(
+                    [c for c in calls if c.id not in run.ledger.results], run.gated
+                )
+            run.ledger.answer(fan_in)
         else:
-            step_fn = make_step_fn(payload, checkpoint, live_messages, run_tools.context)
-        max_steps = _max_steps_from(checkpoint, payload.max_steps)
+            messages.append({"role": "user", "content": [fan_in]})
 
-        async def is_cancelled() -> bool:
-            return await store.is_run_cancelled(
-                pool,
-                run_id=payload.run_id,
-                user_id=payload.user_id,
-            )
-
+    with tool_ledger.bound(run.ledger):
         deadline_s = _chunk_deadline_s()
-
-        def should_yield() -> bool:
-            return deadline_s is not None and asyncio.get_event_loop().time() > deadline_s
-
-        # Execution record for side-effecting tools (see `tool_ledger`):
-        # each save is a checkpoint at the run's current position plus the
-        # record, so a reclaim resumes mid-turn instead of re-asking the
-        # model (which could re-issue — and re-run — the same call).
-        gated_names = frozenset(_gated_tools_from(checkpoint) | run_tools.mcp_gated)
-
-        async def save_inflight(record: dict[str, Any]) -> None:
-            lease.check_current()
-            marked = _build_checkpoint(checkpoint, live_messages, emitter)
-            marked[tool_ledger.INFLIGHT_KEY] = record
-            await store.save_checkpoint(
-                pool, run_id=payload.run_id, user_id=payload.user_id, checkpoint=marked
-            )
-
-        ledger = tool_ledger.ToolLedger(save=save_inflight, gated_tool_names=gated_names)
-
         # A runs-API resume (Q41): this run's checkpoint is the paused
         # run's plus the answers (`resume_answers.RESUME_KEY`). Answer the
         # interrupts in a step of their own, then carry on from there. A
         # reclaimed attempt that got past an approved tool's start saved a
         # checkpoint without the answers (`step > 0` → `resume`), so the
-        # in-flight handling below finishes it instead.
-        answers = None if resume else resume_answers.parse_resume(checkpoint)
+        # turn resolution finishes it instead.
         if answers is not None:
-            pairs = _resume_calls(live_messages, answers, gated_names)
-            if resumed_from_seq is not None:
-                await emitter.status("running", resumed_from_seq=resumed_from_seq, restarted=True)
-                resumed_from_seq = None
+            pairs = _resume_calls(run, answers)
+            lease.check_current()
+            if not await store.mark_answers_applied(
+                pool, run_id=payload.run_id, user_id=payload.user_id
+            ):
+                raise _RunOver
+            if run.resumed_from_seq is not None:
+                await emitter.status(
+                    "running", resumed_from_seq=run.resumed_from_seq, restarted=True
+                )
+                run.resumed_from_seq = None
             else:
                 await emitter.status("running")
-            with tool_ledger.bound(ledger):
-                await _apply_resume_answers(
-                    emitter=emitter,
-                    live_messages=live_messages,
-                    pairs=pairs,
-                    registry=run_tools.registry(),
-                )
+            await emitter.start_step()
+            run.ledger.step_open = True
+            for call, answer in pairs:
+                await _apply_answer(run, call, answer)
+            await run.close_step()
             checkpoint.pop(resume_answers.RESUME_KEY, None)
-            lease.check_current()
-            await store.save_checkpoint(
-                pool,
-                run_id=payload.run_id,
-                user_id=payload.user_id,
-                checkpoint=_build_checkpoint(checkpoint, live_messages, emitter),
-            )
+            await run.save()
 
-        # A resumed checkpoint can end in an assistant turn whose tool
-        # calls have no results: the dead attempt saved its suspend
-        # checkpoint but never got the task row to `paused`, or it died
-        # mid-way through executing the turn's tools. Never let the model
-        # step past those calls — re-pause on a gated one, else finish the
-        # turn without re-running anything that may already have acted.
-        unanswered = _unanswered_last_turn_calls(live_messages) if resume else []
-        if unanswered:
-            if resumed_from_seq is not None:
-                # The resume marker opens the recovered run, before the
-                # re-emitted request / the completed turn's tool events.
-                await emitter.status(
-                    "running",
-                    resumed_from_seq=resumed_from_seq,
-                    restarted=emitter.step == 0,
-                )
-                resumed_from_seq = None
-            # A gated call the execution record says was approved and
-            # started (or finished) is not waiting on anyone: it is
-            # completed below like any in-flight call, never asked again.
-            record = tool_ledger.read_record(checkpoint)
-            gated_call = next(
-                (
-                    c
-                    for c in unanswered
-                    if c["tool_name"] in gated_names
-                    and c["tool_call_id"] not in record.started
-                    and c["tool_call_id"] not in record.results
-                ),
-                None,
-            )
-            if gated_call is not None:
-                return await _resuspend_on_unanswered_call(
-                    pool,
-                    payload=payload,
-                    checkpoint=checkpoint,
-                    live_messages=live_messages,
-                    emitter=emitter,
-                    call=gated_call,
-                )
-            with tool_ledger.bound(ledger):
-                await _complete_inflight_turn(
-                    emitter=emitter,
-                    live_messages=live_messages,
-                    calls=unanswered,
-                    record=tool_ledger.read_record(checkpoint),
-                    registry=run_tools.registry(),
-                )
-            lease.check_current()
-            await store.save_checkpoint(
-                pool,
-                run_id=payload.run_id,
-                user_id=payload.user_id,
-                checkpoint=_build_checkpoint(checkpoint, live_messages, emitter),
-            )
+        return await _drive(run, step_fn, deadline_s, resolve=in_turn)
 
-        # Citation verification (research runs only). Runs at settle, just
-        # before the terminal `result`, over the accumulated report text +
-        # web-search sources. Advisory + non-blocking — `_maybe_verify`
-        # swallows its own failures and returns None.
-        #
-        # `resume` (a `continue` chunk after a yield) re-aggregates the
-        # report text + sources from the full `task_events` log: the
-        # per-chunk in-memory accumulators only hold THIS chunk's slice,
-        # so they're complete only when the run settles in the first
-        # chunk. The DB is the source of truth for a multi-chunk run.
-        run_mode = _str_or_none(cfg.get("mode")) if isinstance(cfg, dict) else None
-        # Answerer provider is "anthropic" for every agent-py run today
-        # (the only model family the executor wires). When agent-ts goes
-        # live, read this from `cfg.get("provider", "anthropic")` so the
-        # cross-family verifier picks a genuinely different family.
-        answerer_provider = "anthropic"
 
-        # One DB read of the full event log per settle, shared by the
-        # verifier and the final-text hook.
-        full_events_cache: list[TaskEvent] | None = None
+async def _drive(
+    run: _Run, step_fn: RunStepFn, deadline_s: float | None, *, resolve: bool
+) -> ExecutorOutcome:
+    """The loop every action shares: finish the open tool turn (pause on
+    its next question, fan out its next spawn, or complete it), call the
+    model, and end the chunk one of the five ways (`AgentLoopResult`)."""
+    pool, emitter = run.pool, run.emitter
+    run_id, user_id = run.payload.run_id, run.payload.user_id
+    max_steps = _max_steps_from(run.checkpoint, run.payload.max_steps)
 
-        async def run_text_and_sources() -> tuple[str, list[tuple[str, str, str]]]:
-            nonlocal full_events_cache
-            if not resume:
-                # Fast path: single-chunk run, the in-memory accumulators
-                # are complete, so skip the DB round-trip.
-                return "".join(verify_text_parts), list(verify_sources)
-            if full_events_cache is None:
-                full_events_cache = await store.load_run_events(
-                    pool,
-                    run_id=payload.run_id,
-                    user_id=payload.user_id,
-                )
-            inputs = verify.aggregate_from_events(full_events_cache)
-            return inputs.text, [(s.title, s.url or "", s.snippet) for s in inputs.sources]
+    async def is_cancelled() -> bool:
+        return await store.is_run_cancelled(pool, run_id=run_id, user_id=user_id)
 
-        async def finalize() -> dict[str, object] | None:
-            # Verification is advisory — an event-log read failure skips
-            # it rather than failing an otherwise-finished run.
-            try:
-                text, sources = await run_text_and_sources()
-            except Exception as exc:
-                logger.warning(
-                    "executor.verify_inputs_failed", run_id=payload.run_id, error=str(exc)
-                )
-                return None
-            return await _maybe_verify(
-                mode=run_mode,
-                text=text,
-                sources=sources,
-                answerer_provider=answerer_provider,
-            )
+    def should_yield() -> bool:
+        return deadline_s is not None and asyncio.get_event_loop().time() > deadline_s
 
-        async def final_text() -> str | None:
-            # The run's accumulated assistant text → `result.finalText`,
-            # which the subagent fan-in reads off each child's result row.
-            try:
-                text, _ = await run_text_and_sources()
-            except Exception as exc:
-                logger.warning("executor.final_text_failed", run_id=payload.run_id, error=str(exc))
-                return None
-            return text or None
+    finalize, final_text = _settle_hooks(run)
 
-        with tool_ledger.bound(ledger):
-            result: AgentLoopResult = await run_agent_loop(
-                emitter=emitter,
-                max_steps=max_steps,
-                run_step=step_fn,
-                is_cancelled=is_cancelled,
-                should_yield=should_yield,
-                finalize=finalize,
-                final_text=final_text,
-                resumed_from_seq=resumed_from_seq,
-            )
+    while True:
+        if resolve:
+            stop = await _resolve_turn(run)
+            if stop is not None:
+                if stop.id in run.ledger.ask:
+                    # Suspend path (Phase 3b): the call waits for the user.
+                    # A `respond` action, or a runs resume, answers it.
+                    await _pause(run, stop)
+                    return ExecutorOutcome(settled=True)
+                # Spawn path (PR-2 fan-out). Refused (depth) → the call got
+                # its error result: carry on with the rest of the turn.
+                if await _spawn(run, stop):
+                    return ExecutorOutcome(settled=True)
+                continue
+
+        result: AgentLoopResult = await run_agent_loop(
+            emitter=emitter,
+            max_steps=max_steps,
+            run_step=step_fn,
+            is_cancelled=is_cancelled,
+            should_yield=should_yield,
+            finalize=finalize,
+            final_text=final_text,
+            resumed_from_seq=run.resumed_from_seq,
+        )
+        run.resumed_from_seq = None
+        # The loop closes the step it opened.
+        run.ledger.step_open = False
         # Every branch below writes run state (checkpoint, task status,
         # follow-up jobs) — none of it may happen without the lease.
         lease.check_current()
 
-        # Suspend path (Phase 3b): the step fn detected a gated tool
-        # call and stopped before running it. Persist the latest state
-        # (including the assistant turn with the pending tool_use),
-        # emit `approval: request` + `status: paused`, update the
-        # `tasks` row to paused. The poller marks the job done; a
-        # `respond` action arrives later and resumes the loop with the
-        # user's answer appended as a tool_result.
         if result.kind == "suspended":
             assert result.pending_input is not None
             pending = result.pending_input
-            # Emit BEFORE saving the checkpoint so the saved `seq` covers
-            # the approval request + `status: paused`; otherwise the
-            # respond resumes from a stale seq and its first events
-            # collide (and are dropped). The row only flips to `paused`
-            # (which gates the respond route) after the save.
-            await _emit_pending_input_request(emitter, pending)
-            await emitter.status("paused")
-            next_checkpoint = _build_checkpoint(checkpoint, live_messages, emitter)
-            await store.save_checkpoint(
-                pool,
-                run_id=payload.run_id,
-                user_id=payload.user_id,
-                checkpoint=next_checkpoint,
-            )
-            await store.update_run(
-                pool,
-                run_id=payload.run_id,
-                user_id=payload.user_id,
-                status="paused",
-            )
-            logger.info(
-                "executor.suspended",
-                run_id=payload.run_id,
-                tool=pending.tool,
-                tool_call_id=pending.tool_call_id,
-            )
-            return ExecutorOutcome(settled=True)
+            _ensure_open_call(run, pending.tool_call_id, pending.tool, dict(pending.args or {}))
+            run.ledger.ask.add(pending.tool_call_id)
+            resolve = True
+            continue
 
-        # Spawn path (PR-2 fan-out): the step fn captured a
-        # `spawnSubagent` call. Create child task rows, set the barrier
-        # counter, checkpoint the parent as awaiting, and yield —
-        # the parent resumes when the barrier fires (all children done).
         if result.kind == "spawned":
             assert result.spawn is not None
-            spawn = result.spawn
-
-            # Depth cap: only top-level tasks may spawn children.
-            # A child task (parent_task_id non-null) receives a
-            # rejection tool_result so the model can continue without
-            # subagents.
-            parent_of_self = await store.load_parent_task_id(
-                pool, run_id=payload.run_id, user_id=payload.user_id
-            )
-            if parent_of_self is not None:
-                live_messages.append(_spawn_rejection_tool_result(spawn.tool_call_id))
-                await store.save_checkpoint(
-                    pool,
-                    run_id=payload.run_id,
-                    user_id=payload.user_id,
-                    checkpoint=_build_checkpoint(checkpoint, live_messages, emitter),
-                )
-                await jobs.enqueue_continue_job(
-                    pool, task_id=payload.run_id, user_id=payload.user_id
-                )
-                return ExecutorOutcome(settled=True)
-
-            # Breadth clamp: never create more than MAX_CHILDREN.
-            specs = spawn.tasks[:MAX_CHILDREN]
-            conversation_id = await store.load_conversation_id(
-                pool, run_id=payload.run_id, user_id=payload.user_id
-            )
-            # Child ids are minted here so the handoff events can name
-            # them; the rows themselves are written by `commit_spawn`
-            # below, in one transaction with the parent's barrier state.
-            children: list[store.ChildSpawn] = []
-            children_meta: list[dict[str, str]] = []
-            for spec in specs:
-                child_id = str(uuid.uuid4())
-                children.append(
-                    store.ChildSpawn(
-                        id=child_id,
-                        goal=spec.subgoal,
-                        checkpoint=_child_checkpoint(checkpoint, spec),
-                    )
-                )
-                await emitter.handoff(
-                    agent=spec.persona_slug,
-                    phase="enter",
-                    child_task_id=child_id,
-                    subgoal=spec.subgoal,
-                )
-                children_meta.append(
-                    {
-                        "id": child_id,
-                        "personaSlug": spec.persona_slug,
-                        "subgoal": spec.subgoal,
-                    }
-                )
-
-            # Saved after the handoffs so its `seq` covers them.
-            next_checkpoint = _build_checkpoint(checkpoint, live_messages, emitter)
-            next_checkpoint["awaiting_children"] = {
-                "tool_call_id": spawn.tool_call_id,
-                "children": children_meta,
+            spec_args = {
+                "tasks": [
+                    {"personaSlug": t.persona_slug, "subgoal": t.subgoal}
+                    for t in result.spawn.tasks
+                ]
             }
-            lease.check_current()
-            # Counter + checkpoint + `paused` + children + their start
-            # jobs in ONE transaction: no child can run (let alone
-            # settle and hit the barrier) before the parent is ready.
-            committed = await store.commit_spawn(
-                pool,
-                parent_task_id=payload.run_id,
-                user_id=payload.user_id,
-                conversation_id=conversation_id,
-                children=children,
-                checkpoint=next_checkpoint,
-            )
-            if not committed:
-                logger.warning("executor.spawn_parent_settled", run_id=payload.run_id)
-                return ExecutorOutcome(settled=True)
-            logger.info(
-                "executor.spawned",
-                run_id=payload.run_id,
-                children=len(specs),
-            )
-            return ExecutorOutcome(settled=True)
+            call_id = result.spawn.tool_call_id
+            _ensure_open_call(run, call_id, SPAWN_SUBAGENT_TOOL_NAME, spec_args)
+            run.ledger.spawn[call_id] = spec_args
+            resolve = True
+            continue
 
         # Yield path: persist the latest state + enqueue a continue
         # job so another chunk picks up. The task row stays `running`
@@ -1025,76 +1030,298 @@ async def _run_chunk_inner(
         # because the chunk completed cleanly — there's just more work
         # to do on a later one.
         if result.kind == "yielded":
-            next_checkpoint = _build_checkpoint(checkpoint, live_messages, emitter)
-            await store.save_checkpoint(
-                pool,
-                run_id=payload.run_id,
-                user_id=payload.user_id,
-                checkpoint=next_checkpoint,
-            )
-            await jobs.enqueue_continue_job(
-                pool,
-                task_id=payload.run_id,
-                user_id=payload.user_id,
-            )
+            if not await store.commit_yield(
+                pool, run_id=run_id, user_id=user_id, checkpoint=run.build_checkpoint()
+            ):
+                raise _RunOver
             logger.info(
                 "executor.yielded",
-                run_id=payload.run_id,
+                run_id=run_id,
                 step=emitter.step,
                 seq=emitter.seq,
             )
             return ExecutorOutcome(settled=True)
 
-        # Reflect terminal status into the `tasks` row via the join
-        # barrier so a child settling decrements its parent's counter
-        # and re-enqueues the parent's `continue` when it reaches zero.
-        # The emitter already wrote the terminal event; this is just
-        # the table state the UI reads when it doesn't want to fold events.
         if result.kind == "cancelled":
-            await settle_task_terminal(
-                pool,
-                task_id=payload.run_id,
-                user_id=payload.user_id,
-                status="cancelled",
-            )
-        else:
-            # Persist the final step count before the terminal settle
-            # (settle_task_terminal does not write `step`).
-            await store.update_run(
-                pool,
-                run_id=payload.run_id,
-                user_id=payload.user_id,
-                step=emitter.step,
-            )
-            await settle_task_terminal(
-                pool,
-                task_id=payload.run_id,
-                user_id=payload.user_id,
-                status="done",
-            )
+            raise _RunOver
+
+        # Reflect terminal status into the `tasks` row, with the terminal
+        # event, through the join barrier so a child settling wakes its
+        # parent. Persist the final step count before the terminal settle
+        # (settle_task_terminal does not write `step`).
+        await store.update_run(pool, run_id=run_id, user_id=user_id, step=emitter.step)
+        settled = await settle_task_terminal(
+            pool, task_id=run_id, user_id=user_id, status="done", event=run.sink.terminal
+        )
+        if not settled.transitioned:
+            raise _RunOver
         return ExecutorOutcome(settled=True)
 
-    except Exception as exc:
-        # Anything that escapes the loop is a fault in the executor
-        # plumbing itself (the loop's own errors emit `result:
-        # failed` via the step fn). Settle the row failed via the
-        # barrier so a failed child decrements its parent, then emit a
-        # synthetic terminal event so the UI doesn't show a stuck
-        # `running`.
-        logger.error(
-            "executor.failed",
-            run_id=payload.run_id,
-            user_id=payload.user_id,
-            error=str(exc),
+
+def _settle_hooks(run: _Run) -> tuple[FinalizeFn, FinalTextFn]:
+    """The pre-settle hooks: citation verification (research runs only,
+    advisory + non-blocking) and the final text.
+
+    A resumed run (`continue`, respond) re-aggregates the report text +
+    sources from the full `task_events` log: the per-chunk in-memory
+    accumulators only hold THIS chunk's slice. The DB is the source of
+    truth for a multi-chunk run; one read of it per settle, shared."""
+    cache: list[TaskEvent] | None = None
+    cfg = run.checkpoint.get("config")
+    run_mode = _str_or_none(cfg.get("mode")) if isinstance(cfg, dict) else None
+    # Answerer provider is "anthropic" for every agent-py run today
+    # (the only model family the executor wires). When agent-ts goes
+    # live, read this from `cfg.get("provider", "anthropic")` so the
+    # cross-family verifier picks a genuinely different family.
+    answerer_provider = "anthropic"
+    run_id, user_id = run.payload.run_id, run.payload.user_id
+
+    async def text_and_sources() -> tuple[str, list[tuple[str, str, str]]]:
+        nonlocal cache
+        if not run.resume:
+            # Fast path: single-chunk run, the in-memory accumulators
+            # are complete, so skip the DB round-trip.
+            return "".join(run.sink.text), list(run.sink.sources)
+        if cache is None:
+            cache = await store.load_run_events(run.pool, run_id=run_id, user_id=user_id)
+        inputs = verify.aggregate_from_events(cache)
+        return inputs.text, [(s.title, s.url or "", s.snippet) for s in inputs.sources]
+
+    async def finalize() -> dict[str, object] | None:
+        # Verification is advisory — an event-log read failure skips
+        # it rather than failing an otherwise-finished run.
+        try:
+            text, sources = await text_and_sources()
+        except Exception as exc:
+            logger.warning("executor.verify_inputs_failed", run_id=run_id, error=str(exc))
+            return None
+        return await _maybe_verify(
+            mode=run_mode,
+            text=text,
+            sources=sources,
+            answerer_provider=answerer_provider,
         )
-        await _fail_run(
-            pool,
-            run_id=payload.run_id,
-            user_id=payload.user_id,
-            emitter=emitter,
-            error=str(exc),
+
+    async def final_text() -> str | None:
+        # The run's accumulated assistant text → `result.finalText`,
+        # which the subagent fan-in reads off each child's result row.
+        try:
+            text, _ = await text_and_sources()
+        except Exception as exc:
+            logger.warning("executor.final_text_failed", run_id=run_id, error=str(exc))
+            return None
+        return text or None
+
+    return finalize, final_text
+
+
+def _ensure_open_call(run: _Run, call_id: str, name: str, args: dict[str, Any]) -> None:
+    """A step fn that stopped on a call leaves it in the history's last
+    assistant turn; one that didn't record it there gets it added, so the
+    result has a call to pair with."""
+    if any(call.id == call_id for call in tool_turn.open_turn(run.messages)):
+        return
+    run.messages.append(
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": call_id, "name": name, "input": args}],
+        }
+    )
+
+
+async def _resolve_turn(run: _Run) -> ToolCall | None:
+    """Finish the open tool turn as far as it goes without the user or
+    sub-agents (`tool_turn`):
+
+      - a call with a result → reuse it (it already ran);
+      - a call recorded as started without a result (a side-effecting
+        tool cut off mid-execution) → NOT re-run; the model gets
+        `interrupted_tool_result` and decides how to verify;
+      - a spawn of a record saved before 5c (children may already
+        exist) → same;
+      - a call that waits for the user, or a spawn → left for the caller;
+      - anything else → run it now, under the bound ledger like any call.
+
+    Returns the next question, else the next spawn, else None once the
+    results are one user turn and the model may be called again."""
+    calls = tool_turn.open_turn(run.messages)
+    if not calls:
+        return None
+    ledger = run.ledger
+    await run.open_marker()
+    unanswered = [call for call in calls if call.id not in ledger.results]
+    # A gate only ever adds a question: what was asked stays asked.
+    gated_now, _ = tool_turn.classify(unanswered, run.gated)
+    for call in unanswered:
+        if call.id in gated_now and call.id not in ledger.started and call.id not in ledger.spawn:
+            ledger.ask.add(call.id)
+
+    for call in unanswered:
+        if call.id in ledger.started or (
+            not ledger.classified
+            and call.name == SPAWN_SUBAGENT_TOOL_NAME
+            and call.id not in ledger.ask
+            and call.id not in ledger.spawn
+        ):
+            await _answer_interrupted(run, call)
+            continue
+        if call.id in ledger.ask or call.id in ledger.spawn:
+            continue
+        if not ledger.classified:
+            # Saved before 5c: its `tool_input` may never have been written.
+            await run.emitter.tool_input(
+                tool_call_id=call.id, tool_name=call.name, args=dict(call.args)
+            )
+        await execute_tool_call(
+            run.emitter,
+            run.registry.get(call.name),
+            tool_call_id=call.id,
+            tool_name=call.name,
+            args=call.args,
+            results=[],
         )
-        return ExecutorOutcome(settled=False, error=str(exc))
+
+    for call in calls:
+        if call.id in ledger.ask:
+            return call
+    for call in calls:
+        if call.id in ledger.spawn:
+            # An approval may have edited the arguments.
+            return ToolCall(call.id, call.name, ledger.spawn[call.id])
+
+    await run.close_step()
+    run.messages.append(
+        {"role": "user", "content": tool_turn.ordered_results(calls, ledger.results)}
+    )
+    ledger.reset()
+    await run.save()
+    return None
+
+
+async def _answer_interrupted(run: _Run, call: ToolCall) -> None:
+    logger.warning("executor.reclaimed_tool_interrupted", tool=call.name, tool_call_id=call.id)
+    await run.emitter.step_error(
+        f'"{call.name}" was interrupted while running and its outcome is '
+        "unknown; it was not run again.",
+        will_retry=False,
+    )
+    await run.emitter.tool_output(
+        tool_call_id=call.id,
+        tool_name=call.name,
+        summary=tool_ledger.INTERRUPTED_TOOL_SUMMARY,
+    )
+    await run.ledger.record_finished(tool_ledger.interrupted_tool_result(call.id))
+
+
+async def _pause(run: _Run, call: ToolCall) -> None:
+    """Pause on one question, atomically: the request + `status: paused`
+    entries, the checkpoint (the turn's results so far with it, its `seq`
+    covering the entries) and the row with its open interrupt and
+    `finished_at`. Losing to a cancel leaves no answerable question."""
+    await run.close_step()
+    with run.sink.holding() as held:
+        await _emit_pending_input_request(
+            run.emitter,
+            PendingInputDescriptor(tool_call_id=call.id, tool=call.name, args=dict(call.args)),
+        )
+        await run.emitter.status("paused")
+    interrupts = tuple(
+        PendingInterrupt.from_approval(e) for e in held if isinstance(e, ApprovalEvent)
+    )
+    lease.check_current()
+    if not await store.commit_pause(
+        run.pool,
+        run_id=run.payload.run_id,
+        user_id=run.payload.user_id,
+        checkpoint=run.build_checkpoint(),
+        outcome=outcome_to_json(Interrupted(interrupts)),
+        pause_events=held,
+    ):
+        raise _RunOver
+    logger.info(
+        "executor.suspended",
+        run_id=run.payload.run_id,
+        tool=call.name,
+        tool_call_id=call.id,
+    )
+
+
+async def _spawn(run: _Run, call: ToolCall) -> bool:
+    """Fan out one `spawnSubagent` call: the child rows, the barrier
+    counter, the parent checkpointed as awaiting, all in one transaction.
+    False: refused — the call got an error result instead."""
+    pool, run_id, user_id = run.pool, run.payload.run_id, run.payload.user_id
+    # Breadth clamp: never create more than MAX_CHILDREN.
+    specs = parse_spawn_specs(call.args)[:MAX_CHILDREN]
+    refusal: dict[str, Any] | None = None
+    if not specs:
+        # Nothing to wait on: a parent must never pause on zero children.
+        refusal = {
+            "type": "tool_result",
+            "tool_use_id": call.id,
+            "content": SPAWN_ARGS_ERROR,
+            "is_error": True,
+        }
+    elif await store.load_parent_task_id(pool, run_id=run_id, user_id=user_id) is not None:
+        # Depth cap: only top-level tasks may spawn children. A child task
+        # (parent_task_id non-null) receives a rejection tool_result so
+        # the model can continue without subagents.
+        refusal = _spawn_rejection_tool_result(call.id)
+    if refusal is not None:
+        await run.emitter.tool_output(
+            tool_call_id=call.id, tool_name=call.name, summary=refusal["content"]
+        )
+        await run.ledger.record_finished(refusal)
+        return False
+
+    await run.close_step()
+    conversation_id = await store.load_conversation_id(pool, run_id=run_id, user_id=user_id)
+    # Child ids are minted here so the handoff events can name
+    # them; the rows themselves are written by `commit_spawn`
+    # below, in one transaction with the parent's barrier state.
+    children: list[store.ChildSpawn] = []
+    children_meta: list[dict[str, str]] = []
+    with run.sink.holding() as held:
+        for spec in specs:
+            child_id = str(uuid.uuid4())
+            children.append(
+                store.ChildSpawn(
+                    id=child_id,
+                    goal=spec.subgoal,
+                    checkpoint=_child_checkpoint(run.checkpoint, spec),
+                )
+            )
+            await run.emitter.handoff(
+                agent=spec.persona_slug,
+                phase="enter",
+                child_task_id=child_id,
+                subgoal=spec.subgoal,
+            )
+            children_meta.append(
+                {"id": child_id, "personaSlug": spec.persona_slug, "subgoal": spec.subgoal}
+            )
+
+    # Built after the handoffs so its `seq` covers them.
+    next_checkpoint = run.build_checkpoint()
+    next_checkpoint["awaiting_children"] = {"tool_call_id": call.id, "children": children_meta}
+    lease.check_current()
+    # Counter + checkpoint + `paused` + children + their start
+    # jobs in ONE transaction: no child can run (let alone
+    # settle and hit the barrier) before the parent is ready.
+    committed = await store.commit_spawn(
+        pool,
+        parent_task_id=run_id,
+        user_id=user_id,
+        conversation_id=conversation_id,
+        children=children,
+        checkpoint=next_checkpoint,
+        spawn_events=held,
+    )
+    if not committed:
+        logger.warning("executor.spawn_parent_settled", run_id=run_id)
+        raise _RunOver
+    logger.info("executor.spawned", run_id=run_id, children=len(specs))
+    return True
 
 
 # --- internals -------------------------------------------------------------
@@ -1170,7 +1397,7 @@ def _resolve_anthropic_client() -> AsyncAnthropicClient | None:
     if _anthropic_client is not None:
         return _anthropic_client
     settings = get_settings()
-    api_key = settings.ANTHROPIC_API_KEY
+    api_key = settings.ANTHROPIC_API_KEY.strip()
     if not api_key:
         return None
     # Real SDK import — only paid for when configured. Tests that
@@ -1218,6 +1445,11 @@ async def _maybe_verify(
     )
 
 
+NO_KEY_ERROR = "ANTHROPIC_API_KEY is not configured on the agent service, so this task can't run."
+NO_MODEL_ERROR = "This task has no model. Choose a model and run it again."
+NO_MESSAGES_ERROR = "This task has no messages to send to the model."
+
+
 def _default_make_step_fn(
     payload: StartActionPayload,
     checkpoint: dict[str, Any],
@@ -1226,12 +1458,10 @@ def _default_make_step_fn(
     *,
     run_tools: _RunTools | None = None,
 ) -> RunStepFn:
-    """Default step-fn picker.
-
-    Phase 2b-1 strategy: prefer Anthropic streaming when configured;
-    fall back to the Phase 2a stub when the API key is unset OR the
-    checkpoint is incomplete (no model / no messages). The stub keeps
-    development + CI runnable without any provider credentials.
+    """The run's step fn: Anthropic streaming. Raises (the run fails, Q55)
+    without a model the worker can run, without messages, with an input
+    the model can't be given, or without a key — checked before any tool
+    runs. The stub only runs under `WORKER_STUB_MODEL` (tests).
 
     `messages` is the live, mutable list the chunk-runner owns — the
     Anthropic step appends assistant + tool_result turns to it as it
@@ -1250,27 +1480,30 @@ def _default_make_step_fn(
     turns on extended thinking as the native harness does
     (`reasoning_effort.thinking_params`; a model without tiers ignores it).
     """
-    client = _resolve_anthropic_client()
     cfg = checkpoint.get("config")
     cfg = cfg if isinstance(cfg, dict) else {}
     catalog_model = _str_or_none(cfg.get("model"))
-    model = catalog_model
-    if model:
-        # Allowlist re-check: `tasks.checkpoint` is owner-writable under
-        # RLS. Catalog id → Anthropic API id; unknown → UnknownModelError,
-        # which fails the run (both call sites are inside the run guard).
-        model = resolve_api_model_id(model)
-    workspace_prompt = _str_or_none(cfg.get("workspaceSystemPrompt"))
-
-    if client is None or not model or not messages:
-        logger.info(
-            "executor.using_stub_step_fn",
-            run_id=payload.run_id,
-            reason=(
-                "no_api_key" if client is None else ("no_model" if not model else "no_messages")
-            ),
+    if not catalog_model:
+        raise RunSetupError("invalid_request", NO_MODEL_ERROR)
+    # Allowlist re-check: `tasks.checkpoint` is owner-writable under
+    # RLS. Catalog id → Anthropic API id; unknown → UnknownModelError,
+    # which fails the run (both call sites are inside the run guard).
+    model = resolve_api_model_id(catalog_model)
+    if not messages:
+        raise RunSetupError("invalid_request", NO_MESSAGES_ERROR)
+    unusable = _unusable_part(checkpoint)
+    if unusable is not None:
+        raise RunSetupError(
+            "invalid_attachment",
+            f"An attached {unusable} part can't be given to the model, so the task was not run.",
         )
+    if get_settings().WORKER_STUB_MODEL:
+        logger.warning("executor.using_stub_step_fn", run_id=payload.run_id)
         return _stub_step_fn
+    client = _resolve_anthropic_client()
+    if client is None:
+        raise RunSetupError("unavailable", NO_KEY_ERROR)
+    workspace_prompt = _str_or_none(cfg.get("workspaceSystemPrompt"))
 
     if run_tools is None:
         skill_tool_names, skill_configs = _skills_from(checkpoint)
@@ -1336,14 +1569,18 @@ async def _run_respond(
     """Outer guard for `_run_respond_inner` — same contract as
     `_run_chunk`'s, except that a failure BEFORE the atomic
     paused → running claim leaves the task alone: it is still paused
-    on the user, who can respond again. A resumed interrupted respond
-    owns the (already `running`) task from the start."""
+    on the user, who can respond again (the answer was never applied). A
+    resumed interrupted respond owns the (already `running`) task from
+    the start."""
     guard = _RunGuard(owns_task=resume_interrupted)
     try:
         return await _run_respond_inner(pool, payload, make_step_fn, guard, resume_interrupted)
+    except _RunOver:
+        await _stop_ended_run(pool, payload.run_id, payload.user_id, guard.emitter)
+        return ExecutorOutcome(settled=True)
     except Exception as exc:
         logger.error(
-            "executor.respond.failed_outside_loop",
+            "executor.respond.failed",
             run_id=payload.run_id,
             user_id=payload.user_id,
             claimed=guard.owns_task,
@@ -1356,7 +1593,20 @@ async def _run_respond(
                 user_id=payload.user_id,
                 emitter=guard.emitter,
                 error=str(exc),
+                error_code=_error_code(exc),
             )
+        elif guard.claiming:
+            # The claim may have committed before its answer was lost: a
+            # task left `running` is settled, a still paused one is left.
+            job_lease = lease.current()
+            if job_lease is not None:
+                await settle_stranded_task(
+                    pool,
+                    task_id=payload.run_id,
+                    user_id=payload.user_id,
+                    job_id=job_lease.job_id,
+                    error=str(exc),
+                )
         return ExecutorOutcome(settled=False, error=str(exc))
 
 
@@ -1367,10 +1617,8 @@ async def _run_respond_inner(
     guard: _RunGuard,
     resume_interrupted: bool = False,
 ) -> ExecutorOutcome:
-    """Implementation of `execute_respond`. Kept separate from
-    `_run_chunk` because the pre-loop setup is different — we have
-    to find the pending tool call and append its result before the
-    loop resumes."""
+    """Implementation of `execute_respond`: find the question, claim it,
+    apply the answer, then the loop every action shares (`_drive`)."""
 
     async def reject(error: str) -> ExecutorOutcome:
         # Before the paused claim the task is still waiting on the user
@@ -1386,10 +1634,7 @@ async def _run_respond_inner(
             )
         return ExecutorOutcome(settled=False, error=error)
 
-    start_payload = StartActionPayload(
-        run_id=payload.run_id,
-        user_id=payload.user_id,
-    )
+    start_payload = StartActionPayload(run_id=payload.run_id, user_id=payload.user_id)
     checkpoint = await store.load_checkpoint(
         pool,
         run_id=payload.run_id,
@@ -1403,6 +1648,47 @@ async def _run_respond_inner(
         )
         return await reject("respond: no checkpoint for run")
 
+    question = payload.request_id
+    messages = _messages_from(checkpoint)
+    partial = tool_turn.take_partial_results(messages)
+    record = tool_ledger.read_record(checkpoint)
+    settled_calls = set(record.results) | set(record.spawn)  # answered, or an approved spawn
+    settled_calls.update(str(block.get("tool_use_id")) for block in partial)
+    call = next(
+        (
+            c
+            for c in tool_turn.open_turn(messages)
+            if c.id == question and c.id not in settled_calls
+        ),
+        None,
+    )
+    if call is None and (question in settled_calls or _tool_call_answered(messages, question)):
+        if resume_interrupted:
+            # The dead attempt persisted the answer before dying — the run
+            # just needs to carry on from its checkpoint.
+            logger.warning(
+                "executor.respond.resume_from_checkpoint",
+                run_id=payload.run_id,
+                request_id=question,
+            )
+            return await _run_chunk(
+                pool,
+                payload=start_payload,
+                make_step_fn=make_step_fn,
+                resume=True,
+                reclaimed=True,
+            )
+        # Duplicate respond for a call that already has its tool_result
+        # (double-click, retried POST, or a run that has since
+        # re-suspended on a different call). Re-running it would
+        # re-execute an approved tool — settle the job as a no-op.
+        logger.warning(
+            "executor.respond.already_answered",
+            run_id=payload.run_id,
+            request_id=question,
+        )
+        return ExecutorOutcome(settled=True)
+
     # A parent paused on its subagents is `paused` too, and its pending
     # `spawnSubagent` tool_use has no tool_result until the fan-in — so
     # without this a user could "respond" to it with that call's id,
@@ -1412,45 +1698,29 @@ async def _run_respond_inner(
         logger.error(
             "executor.respond.awaiting_children",
             run_id=payload.run_id,
-            request_id=payload.request_id,
+            request_id=question,
         )
         return await reject("respond: run is waiting on its subagents, not on user input")
 
-    live_messages = _messages_from(checkpoint)
-    if resume_interrupted and _tool_call_answered(live_messages, payload.request_id):
-        # The dead attempt persisted the answer before dying — the run
-        # just needs to carry on from its checkpoint.
-        logger.warning(
-            "executor.respond.resume_from_checkpoint",
-            run_id=payload.run_id,
-            request_id=payload.request_id,
-        )
-        return await _run_chunk(
-            pool,
-            payload=StartActionPayload(run_id=payload.run_id, user_id=payload.user_id),
-            make_step_fn=make_step_fn,
-            resume=True,
-            reclaimed=True,
-        )
-    if _tool_call_answered(live_messages, payload.request_id):
-        # Duplicate respond for a call that already has its tool_result
-        # (double-click, retried POST, or a run that has since
-        # re-suspended on a different call). Re-running it would
-        # re-execute an approved tool — settle the job as a no-op.
-        logger.warning(
-            "executor.respond.already_answered",
-            run_id=payload.run_id,
-            request_id=payload.request_id,
-        )
-        return ExecutorOutcome(settled=True)
-    pending = _find_pending_tool_call(live_messages, payload.request_id)
-    if pending is None:
+    if call is None:
         logger.error(
             "executor.respond.pending_not_found",
             run_id=payload.run_id,
-            request_id=payload.request_id,
+            request_id=question,
         )
-        return await reject(f"respond: pending tool call {payload.request_id} not found")
+        return await reject(f"respond: pending tool call {question} not found")
+
+    # The request kind, from the tool name + args: the classifier the
+    # suspend path uses, so the respond side never disagrees with what
+    # the user actually saw.
+    request_kind = request_kind_for(call.name, call.args)
+    if (
+        request_kind == "approval"
+        and not resume_interrupted
+        and not isinstance(payload.approved, bool)
+    ):
+        # Absent never approves (and is no decline either): still answerable.
+        return await reject("respond: an approval needs `approved`: true or false")
 
     # Same tool set (workspace-scoped context + cloud-mode MCP tools) the
     # start/continue path gave the model, so an approved MCP tool or
@@ -1467,18 +1737,27 @@ async def _run_respond_inner(
     # unanswered tool_use for a tool that isn't approval-gated (e.g.
     # `spawnSubagent`, or a sibling call in the same assistant turn) is
     # not awaiting the user — "approving" it would execute a tool the
-    # run never asked permission for.
-    gated = _gated_tools_from(checkpoint) | run_tools.mcp_gated
-    if pending["tool_name"] not in gated:
+    # run never asked permission for. What was asked is on record — the
+    # checkpoint's, or the log's for a run paused before 5c — because the
+    # gates may have changed since (a Decline must still work).
+    if (
+        not resume_interrupted
+        and question not in record.ask
+        and call.name not in (_gated_tools_from(checkpoint) | run_tools.mcp_gated)
+        and (
+            record.classified
+            or question
+            != await store.load_open_question(pool, run_id=payload.run_id, user_id=payload.user_id)
+        )
+    ):
         logger.error(
             "executor.respond.not_gated",
             run_id=payload.run_id,
-            request_id=payload.request_id,
-            tool=pending["tool_name"],
+            request_id=question,
+            tool=call.name,
         )
         return await reject(
-            f"respond: tool call {payload.request_id} ({pending['tool_name']}) "
-            "is not awaiting user input"
+            f"respond: tool call {question} ({call.name}) is not awaiting user input"
         )
 
     # Seeded before the gate and before an approved tool runs: on a
@@ -1492,310 +1771,122 @@ async def _run_respond_inner(
         reclaimed=resume_interrupted,
     )
 
-    # Atomic paused → running gate. Only one respond per pause gets past
-    # this; a duplicate racing us (or a run cancelled while paused) sees
-    # no row and settles as a no-op — before any tool executes. A resumed
-    # interrupted respond already went through it on the dead attempt.
+    # Atomic paused → running gate, and the durable record that this
+    # answer is being applied, before any side effect: the task stops
+    # waiting on the question (0045). Only one respond per question gets
+    # past this; a duplicate racing us (or a run cancelled while paused)
+    # sees no row and settles as a no-op — before any tool executes. A
+    # resumed interrupted respond already went through it on the dead
+    # attempt.
     lease.check_current()
     if resume_interrupted:
         logger.warning(
             "executor.respond.reapply_answer",
             run_id=payload.run_id,
-            request_id=payload.request_id,
+            request_id=question,
         )
     else:
+        guard.claiming = True
         claimed = await store.claim_paused_for_respond(
-            pool, run_id=payload.run_id, user_id=payload.user_id
+            pool, run_id=payload.run_id, user_id=payload.user_id, question=question
         )
+        guard.claiming = False
         if not claimed:
             logger.warning(
                 "executor.respond.not_paused",
                 run_id=payload.run_id,
-                request_id=payload.request_id,
+                request_id=question,
             )
             return ExecutorOutcome(settled=True)
     # From here the task is `running` on our account — any escaped error
     # must settle it (see `_run_respond`).
     guard.owns_task = True
 
-    # Classify the request kind from the pending tool name + args.
-    # `approval` is the binary gate (any other gated tool); `choice`
-    # / `input` come off `askUser`'s args shape; `ui-part` is
-    # `renderUI`. The classifier is the single source of truth — same
-    # one the suspend path uses — so the respond side never disagrees
-    # with what the user actually saw.
-    request_kind = request_kind_for(pending["tool_name"], pending["args"])
-    final_args = payload.args if payload.args is not None else pending["args"]
+    sink = _RunSink(pool, user_id=payload.user_id)
+    emitter = RunEmitter(
+        run_id=payload.run_id,
+        sink=sink,
+        start_seq=start_seq,
+        start_step=_int_or(checkpoint.get("step"), 0),
+    )
+    guard.emitter = emitter
+
+    # Before the approved tool runs: no key / model fails the task (Q55).
+    if make_step_fn is None:
+        step_fn = _default_make_step_fn(
+            start_payload, checkpoint, messages, run_tools.context, run_tools=run_tools
+        )
+    else:
+        step_fn = make_step_fn(start_payload, checkpoint, messages, run_tools.context)
+
+    run = _Run(
+        pool,
+        payload=start_payload,
+        checkpoint=checkpoint,
+        messages=messages,
+        emitter=emitter,
+        sink=sink,
+        tools=run_tools,
+        resume=True,
+        resumed_from_seq=None,
+    )
+    run.ledger.reset(record)
+    for block in partial:
+        run.ledger.answer(block)
+    run.ledger.ask.add(question)
 
     # An approved tool is side-effecting by definition (the user gated
     # it). The execution record is saved before it runs; a reclaimed
     # respond that finds it — the dead attempt started the tool but never
     # persisted its result — must not run it again (`tool_ledger`).
-    runs_tool = request_kind == "approval" and payload.approved is not False
-    interrupted = (
-        resume_interrupted
-        and runs_tool
-        and pending["tool_call_id"] in tool_ledger.read_record(checkpoint).started
+    interrupted = resume_interrupted and request_kind == "approval" and question in record.started
+
+    if resume_interrupted:
+        # Reclaimed: open with a resume marker so consumers drop
+        # anything the dead attempt wrote past the paused checkpoint.
+        # Emitted BEFORE the first checkpoint save so the saved
+        # `seq` covers it: were this attempt to die after the save but
+        # before the marker, the next reclaim would resume from the
+        # saved checkpoint (answer already applied) with a marker
+        # at ITS seq — and the first dead attempt's events between
+        # the paused checkpoint and that seq would never be dropped.
+        await emitter.status("running", resumed_from_seq=_int_or(checkpoint.get("seq"), 0))
+    await _stamp_handler(pool, run_id=payload.run_id, user_id=payload.user_id)
+    # input_response clears pending_input on the projection. Before the
+    # first save, so a checkpoint that holds the answer covers the entry.
+    await emitter.input_response(
+        approval_id=question,
+        approved=payload.approved,
+        selection=payload.selection,
+        value=payload.value,
+        ui_answer=payload.ui_answer,
     )
+    await emitter.status("running")
 
-    async def record_started() -> None:
-        lease.check_current()
-        marked = dict(checkpoint)
-        marked[tool_ledger.INFLIGHT_KEY] = tool_ledger.record_payload([pending["tool_call_id"]], [])
-        await store.save_checkpoint(
-            pool, run_id=payload.run_id, user_id=payload.user_id, checkpoint=marked
-        )
-
-    if interrupted:
-        logger.warning(
-            "executor.respond.approved_tool_interrupted",
-            run_id=payload.run_id,
-            request_id=payload.request_id,
-            tool=pending["tool_name"],
-        )
-        result_block = tool_ledger.interrupted_tool_result(pending["tool_call_id"])
-    else:
-        tool_result_text = await _build_tool_result_text(
-            request_kind=request_kind,
-            tool_name=pending["tool_name"],
-            approved=payload.approved,
-            selection=payload.selection,
-            value=payload.value,
-            final_args=final_args,
-            registry=run_tools.registry(),
-            before_execute=record_started,
-        )
-        result_block = {
-            "type": "tool_result",
-            "tool_use_id": pending["tool_call_id"],
-            "content": tool_result_text,
-        }
-
-    # Append the user turn carrying the tool_result.
-    live_messages.append({"role": "user", "content": [result_block]})
-
-    start_step = _int_or(checkpoint.get("step"), 0)
-    db_sink = _make_db_sink(pool, user_id=payload.user_id)
-
-    async def sink(event: TaskEvent) -> None:
-        # No event may be written once this worker's job lease is gone.
-        lease.check_current()
-        await db_sink(event)
-        await _record_progress(pool, event, user_id=payload.user_id)
-
-    emitter = RunEmitter(
-        run_id=payload.run_id,
-        sink=sink,
-        start_seq=start_seq,
-        start_step=start_step,
-    )
-    guard.emitter = emitter
-
-    try:
-        if resume_interrupted:
-            # Reclaimed: open with a resume marker so consumers drop
-            # anything the dead attempt wrote past the paused checkpoint.
-            # Emitted BEFORE the interim checkpoint save so the saved
-            # `seq` covers it: were this attempt to die after the save but
-            # before the marker, the next reclaim would resume from the
-            # interim checkpoint (answer already applied) with a marker
-            # at ITS seq — and the first dead attempt's events between
-            # the paused checkpoint and that seq would never be dropped.
-            await emitter.status("running", resumed_from_seq=_int_or(checkpoint.get("seq"), 0))
-        # Persist BEFORE emitting the rest so a crash between emit + save
-        # can't lose the appended tool_result. Mirrors the TS path. Inside
-        # the `try` so a failed save settles the (already-claimed, now
-        # `running`) task failed instead of stranding it.
-        interim_checkpoint = _build_checkpoint(checkpoint, live_messages, emitter)
-        await store.save_checkpoint(
-            pool,
-            run_id=payload.run_id,
-            user_id=payload.user_id,
-            checkpoint=interim_checkpoint,
-        )
-        await _stamp_handler(pool, run_id=payload.run_id, user_id=payload.user_id)
-        # Emit input_response (clears pending_input on the projection)
-        # then status:running before stepping again.
-        await emitter.input_response(
-            approval_id=payload.request_id,
-            approved=payload.approved,
-            selection=payload.selection,
-            value=payload.value,
-            ui_answer=payload.ui_answer,
-        )
-        if interrupted:
-            await emitter.step_error(
-                f'"{pending["tool_name"]}" was interrupted while running and its '
-                "outcome is unknown; it was not run again.",
-                will_retry=False,
-            )
-        await emitter.status("running")
-
-        if make_step_fn is None:
-            step_fn = _default_make_step_fn(
-                start_payload, checkpoint, live_messages, run_tools.context, run_tools=run_tools
-            )
-        else:
-            step_fn = make_step_fn(start_payload, checkpoint, live_messages, run_tools.context)
-        max_steps = _max_steps_from(checkpoint, start_payload.max_steps)
-
-        async def is_cancelled() -> bool:
-            return await store.is_run_cancelled(
-                pool,
-                run_id=payload.run_id,
-                user_id=payload.user_id,
-            )
-
+    with tool_ledger.bound(run.ledger):
         deadline_s = _chunk_deadline_s()
-
-        def should_yield() -> bool:
-            return deadline_s is not None and asyncio.get_event_loop().time() > deadline_s
-
-        async def final_text() -> str | None:
-            # A respond is always a resume — the full run text lives in
-            # the event log (every event is persisted before this runs).
-            try:
-                events_log = await store.load_run_events(
-                    pool, run_id=payload.run_id, user_id=payload.user_id
-                )
-            except Exception as exc:
-                logger.warning("executor.final_text_failed", run_id=payload.run_id, error=str(exc))
-                return None
-            return verify.aggregate_from_events(events_log).text or None
-
-        result: AgentLoopResult = await run_agent_loop(
-            emitter=emitter,
-            max_steps=max_steps,
-            run_step=step_fn,
-            is_cancelled=is_cancelled,
-            should_yield=should_yield,
-            final_text=final_text,
-        )
-        # As in `_run_chunk_inner`: no run-state writes without the lease.
-        lease.check_current()
-
-        if result.kind == "suspended":
-            # Re-suspended (the user's answer unblocked the model and
-            # it called another gated tool). Same handling as the
-            # original suspend path in `_run_chunk`.
-            assert result.pending_input is not None
-            re_pending = result.pending_input
-            # Emit first so the saved checkpoint's `seq` covers them —
-            # see the matching comment in `_run_chunk`.
-            await _emit_pending_input_request(emitter, re_pending)
-            await emitter.status("paused")
-            next_checkpoint = _build_checkpoint(checkpoint, live_messages, emitter)
-            await store.save_checkpoint(
-                pool,
-                run_id=payload.run_id,
-                user_id=payload.user_id,
-                checkpoint=next_checkpoint,
-            )
-            await store.update_run(
-                pool,
-                run_id=payload.run_id,
-                user_id=payload.user_id,
-                status="paused",
-            )
-            return ExecutorOutcome(settled=True)
-
-        if result.kind == "yielded":
-            next_checkpoint = _build_checkpoint(checkpoint, live_messages, emitter)
-            await store.save_checkpoint(
-                pool,
-                run_id=payload.run_id,
-                user_id=payload.user_id,
-                checkpoint=next_checkpoint,
-            )
-            await jobs.enqueue_continue_job(
-                pool,
-                task_id=payload.run_id,
-                user_id=payload.user_id,
-            )
-            return ExecutorOutcome(settled=True)
-
-        if result.kind == "cancelled":
-            await settle_task_terminal(
-                pool,
-                task_id=payload.run_id,
-                user_id=payload.user_id,
-                status="cancelled",
-            )
+        if interrupted:
+            await _answer_interrupted(run, call)
         else:
-            # Persist the final step count before the terminal settle
-            # (settle_task_terminal does not write `step`).
-            await store.update_run(
-                pool,
-                run_id=payload.run_id,
-                user_id=payload.user_id,
-                step=emitter.step,
-            )
-            await settle_task_terminal(
-                pool,
-                task_id=payload.run_id,
-                user_id=payload.user_id,
-                status="done",
-            )
-        return ExecutorOutcome(settled=True)
-
-    except Exception as exc:
-        logger.error(
-            "executor.respond.failed",
-            run_id=payload.run_id,
-            user_id=payload.user_id,
-            error=str(exc),
-        )
-        await _fail_run(
-            pool,
-            run_id=payload.run_id,
-            user_id=payload.user_id,
-            emitter=emitter,
-            error=str(exc),
-        )
-        return ExecutorOutcome(settled=False, error=str(exc))
+            await _apply_answer(run, call, _answer_of(payload))
+        return await _drive(run, step_fn, deadline_s, resolve=True)
 
 
-def _find_pending_tool_call(
-    messages: list[dict[str, Any]],
-    request_id: str,
-) -> dict[str, Any] | None:
-    """Walk the messages back-to-front looking for an assistant turn
-    that contains a `tool_use` block with id == request_id. Returns
-    `{tool_call_id, tool_name, args}` or None.
-
-    Mirrors `findPendingToolCall` in `lib/server/agent/worker.ts`.
-    Back-to-front so we find the most recent unmatched call first;
-    a tool_use only "matches" until a tool_result with the same id
-    is appended, so by the time `respond` runs there should be
-    exactly one unmatched call (the one the user is responding to).
-
-    A call that already has a matching `tool_result` is NOT pending —
-    returning it would let a duplicate respond re-execute an approved
-    tool."""
-    if _tool_call_answered(messages, request_id):
-        return None
-    for entry in reversed(messages):
-        if entry.get("role") != "assistant":
-            continue
-        content = entry.get("content")
-        if not isinstance(content, list):
-            continue
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            if block.get("type") != "tool_use":
-                continue
-            if block.get("id") != request_id:
-                continue
-            args = block.get("input")
-            if not isinstance(args, dict):
-                args = {}
-            return {
-                "tool_call_id": str(block.get("id") or ""),
-                "tool_name": str(block.get("name") or ""),
-                "args": dict(args),
-            }
-    return None
+def _answer_of(payload: RespondActionPayload) -> resume_answers.StoredAnswer:
+    """A respond's answer in the runs resume's shape, so both ways tell
+    the model the same thing. Not `uiAnswer`: the old route's clients send
+    its formatted text as `value` / `selection`."""
+    fields: dict[str, Any] = {
+        "approved": payload.approved,
+        "args": payload.args,
+        "selection": payload.selection,
+        "value": payload.value,
+    }
+    return resume_answers.StoredAnswer(
+        interrupt_id=payload.request_id,
+        status="resolved",
+        payload={key: value for key, value in fields.items() if value is not None},
+    )
 
 
 def _tool_call_answered(messages: list[dict[str, Any]], tool_call_id: str) -> bool:
@@ -1818,197 +1909,67 @@ def _tool_call_answered(messages: list[dict[str, Any]], tool_call_id: str) -> bo
     return False
 
 
-def _unanswered_last_turn_calls(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The tool calls of the history's final assistant turn that have no
-    `tool_result` yet, in call order (`{tool_call_id, tool_name, args}`).
-    Empty unless the history ENDS in that assistant turn — a resumable
-    checkpoint only does that when it was saved with calls outstanding
-    (a suspend, or a mid-turn execution record — see `tool_ledger`)."""
-    if not messages or messages[-1].get("role") != "assistant":
-        return []
-    content = messages[-1].get("content")
-    if not isinstance(content, list):
-        return []
-    out: list[dict[str, Any]] = []
-    for block in content:
-        if not isinstance(block, dict) or block.get("type") != "tool_use":
-            continue
-        tool_call_id = str(block.get("id") or "")
-        if not tool_call_id or _tool_call_answered(messages, tool_call_id):
-            continue
-        args = block.get("input")
-        out.append(
-            {
-                "tool_call_id": tool_call_id,
-                "tool_name": str(block.get("name") or ""),
-                "args": dict(args) if isinstance(args, dict) else {},
-            }
-        )
-    return out
-
-
-async def _resuspend_on_unanswered_call(
-    pool: asyncpg.Pool,
-    *,
-    payload: StartActionPayload,
-    checkpoint: dict[str, Any],
-    live_messages: list[dict[str, Any]],
-    emitter: RunEmitter,
-    call: dict[str, Any],
-) -> ExecutorOutcome:
-    """Reclaimed run whose checkpoint is suspended on an approval-gated
-    call nobody answered: the dead attempt saved the suspend checkpoint
-    but died before the task row reached `paused` (and possibly before
-    the request / `status: paused` were emitted). Pause again — same
-    writes, same order as the original suspend path — rather than let
-    the model step past the call."""
-    logger.warning(
-        "executor.reclaimed_resuspend",
-        run_id=payload.run_id,
-        tool=call["tool_name"],
-        tool_call_id=call["tool_call_id"],
-    )
-    await _emit_pending_input_request(
-        emitter,
-        PendingInputDescriptor(
-            tool_call_id=call["tool_call_id"], tool=call["tool_name"], args=call["args"]
-        ),
-    )
-    await emitter.status("paused")
-    lease.check_current()
-    await store.save_checkpoint(
-        pool,
-        run_id=payload.run_id,
-        user_id=payload.user_id,
-        checkpoint=_build_checkpoint(checkpoint, live_messages, emitter),
-    )
-    await store.update_run(pool, run_id=payload.run_id, user_id=payload.user_id, status="paused")
-    return ExecutorOutcome(settled=True)
-
-
-async def _complete_inflight_turn(
-    *,
-    emitter: RunEmitter,
-    live_messages: list[dict[str, Any]],
-    calls: list[dict[str, Any]],
-    record: tool_ledger.InflightRecord,
-    registry: dict[str, ToolDescriptor],
-) -> None:
-    """Finish the tool turn a dead attempt was executing (its checkpoint
-    ends in the assistant turn, see `tool_ledger`), then close the step:
-
-      - a call with a recorded result → reuse it (it already ran);
-      - a call recorded as started without a result (a side-effecting
-        tool cut off mid-execution) → NOT re-run; the model gets
-        `interrupted_tool_result` and decides how to verify;
-      - a `spawnSubagent` call (children may already exist) → same;
-      - anything else (read-only, or side-effecting but never started)
-        → run it now, under the bound ledger like any tool call."""
-    results: list[dict[str, Any]] = []
-    for call in calls:
-        tool_call_id = call["tool_call_id"]
-        tool_name = call["tool_name"]
-        recorded = record.results.get(tool_call_id)
-        if recorded is not None:
-            results.append(recorded)
-            continue
-        if tool_call_id in record.started or tool_name == SPAWN_SUBAGENT_TOOL_NAME:
-            logger.warning(
-                "executor.reclaimed_tool_interrupted",
-                tool=tool_name,
-                tool_call_id=tool_call_id,
-            )
-            await emitter.step_error(
-                f'"{tool_name}" was interrupted while running and its outcome is '
-                "unknown; it was not run again.",
-                will_retry=False,
-            )
-            await emitter.tool_output(
-                tool_call_id=tool_call_id,
-                tool_name=tool_name,
-                summary=tool_ledger.INTERRUPTED_TOOL_SUMMARY,
-            )
-            results.append(tool_ledger.interrupted_tool_result(tool_call_id))
-            continue
-        await emitter.tool_input(
-            tool_call_id=tool_call_id, tool_name=tool_name, args=dict(call["args"])
-        )
-        await execute_tool_call(
-            emitter,
-            registry.get(tool_name),
-            tool_call_id=tool_call_id,
-            tool_name=tool_name,
-            args=call["args"],
-            results=results,
-        )
-    live_messages.append({"role": "user", "content": results})
-    await emitter.end_step()
-
-
 def _resume_calls(
-    messages: list[dict[str, Any]],
-    answers: tuple[resume_answers.StoredAnswer, ...],
-    gated: frozenset[str],
-) -> list[tuple[dict[str, Any], resume_answers.StoredAnswer]]:
+    run: _Run, answers: tuple[resume_answers.StoredAnswer, ...]
+) -> list[tuple[ToolCall, resume_answers.StoredAnswer]]:
     """Pair each stored answer with the tool call it answers. Raises
-    `ValueError` (the run fails, freeing the resume slot) when a call is
-    not open in the checkpoint or not one this run gates — an "approval"
-    of a call the run never paused on would run a tool on the client's
-    say-so alone (the respond path's same check)."""
-    pairs: list[tuple[dict[str, Any], resume_answers.StoredAnswer]] = []
+    `ValueError` (the run fails before applying anything, freeing the
+    question) when a call is not open in the checkpoint or not one the
+    paused run asked — an "approval" of a call the run never paused on
+    would run a tool on the client's say-so alone (the respond path's
+    same check). Asked: on record (`resume_checkpoint` records the
+    validated questions), or gated here (older checkpoints)."""
+    by_id = {c.id: c for c in tool_turn.open_turn(run.messages) if c.id not in run.ledger.results}
+    pairs: list[tuple[ToolCall, resume_answers.StoredAnswer]] = []
     for answer in answers:
-        call = _find_pending_tool_call(messages, answer.interrupt_id)
+        call = by_id.get(answer.interrupt_id)
         if call is None:
             raise ValueError(
                 f"resume: tool call {answer.interrupt_id} is not open in the paused run"
             )
-        if call["tool_name"] not in gated:
+        if call.id not in run.ledger.ask and call.name not in run.gated:
             raise ValueError(
-                f"resume: tool call {answer.interrupt_id} ({call['tool_name']}) "
-                "is not awaiting user input"
+                f"resume: tool call {answer.interrupt_id} ({call.name}) is not awaiting user input"
             )
         pairs.append((call, answer))
     return pairs
 
 
-async def _apply_resume_answers(
-    *,
-    emitter: RunEmitter,
-    live_messages: list[dict[str, Any]],
-    pairs: list[tuple[dict[str, Any], resume_answers.StoredAnswer]],
-    registry: dict[str, ToolDescriptor],
-) -> None:
-    """One step answering the paused run's interrupts (RUN_EVENTS.md
-    § 4.2, as the native harness's resume): a `tool_output` per call —
-    the approved tool's result (run through `execute_tool_call`, so the
-    bound ledger records it as the side effect it is), or the declined /
-    answer text — and their `tool_result`s as one user turn."""
-    await emitter.start_step()
-    results: list[dict[str, Any]] = []
-    for call, answer in pairs:
-        tool_call_id, tool_name = call["tool_call_id"], call["tool_name"]
-        kind = request_kind_for(tool_name, call["args"])
-        args = resume_answers.approved_args(kind, answer, call["args"])
-        if args is not None:
-            await execute_tool_call(
-                emitter,
-                registry.get(tool_name),
-                tool_call_id=tool_call_id,
-                tool_name=tool_name,
-                args=args,
-                results=results,
-            )
-            continue
-        text = resume_answers.answer_text(kind, answer)
-        await emitter.tool_output(
-            tool_call_id=tool_call_id,
-            tool_name=tool_name,
-            summary="Declined by the user" if kind == "approval" else text[:200],
-            output=text,
+async def _apply_answer(run: _Run, call: ToolCall, answer: resume_answers.StoredAnswer) -> None:
+    """One answered question (RUN_EVENTS.md § 4.2, as the native harness's
+    resume): the approved tool's result (run through `execute_tool_call`,
+    recorded as the side effect it is; one that is gone answers with a
+    clear error), an approved spawn (fanned out by `_drive`), or the
+    declined / answer text — which runs nothing, so it works whatever
+    changed while paused. Only a boolean `approved: true` approves."""
+    kind = request_kind_for(call.name, call.args)
+    args = resume_answers.approved_args(kind, answer, call.args)
+    if args is not None:
+        if call.name == SPAWN_SUBAGENT_TOOL_NAME and parse_spawn_specs(args):
+            run.ledger.ask.discard(call.id)
+            run.ledger.spawn[call.id] = args
+            await run.save()
+            return
+        await execute_tool_call(
+            run.emitter,
+            run.registry.get(call.name),
+            tool_call_id=call.id,
+            tool_name=call.name,
+            args=args,
+            results=[],
+            approved=True,
         )
-        results.append({"type": "tool_result", "tool_use_id": tool_call_id, "content": text})
-    live_messages.append({"role": "user", "content": results})
-    await emitter.end_step()
+        return
+    text = resume_answers.answer_text(kind, answer)
+    await run.emitter.tool_output(
+        tool_call_id=call.id,
+        tool_name=call.name,
+        summary="Declined by the user" if kind == "approval" else text[:200],
+        output=text,
+    )
+    await run.ledger.record_finished(
+        {"type": "tool_result", "tool_use_id": call.id, "content": text}
+    )
 
 
 async def _record_progress(pool: asyncpg.Pool, event: TaskEvent, *, user_id: str) -> None:
@@ -2020,74 +1981,6 @@ async def _record_progress(pool: asyncpg.Pool, event: TaskEvent, *, user_id: str
         await store.update_run(pool, run_id=event.run_id, user_id=user_id, step=event.step)
     except Exception as exc:
         logger.warning("executor.step_progress_failed", run_id=event.run_id, error=str(exc))
-
-
-async def _build_tool_result_text(
-    *,
-    request_kind: str,
-    tool_name: str,
-    approved: bool | None,
-    selection: list[str] | None,
-    value: str | None,
-    final_args: Any,
-    registry: dict[str, ToolDescriptor],
-    before_execute: Callable[[], Awaitable[None]] | None = None,
-) -> str:
-    """Build the text fed back to the model as the `tool_result.content`.
-
-    Mirrors `buildToolResult` in `lib/server/agent/worker.ts` shape:
-      - approval rejected → "User declined ..."
-      - approval approved → execute the matching tool from `registry`
-        (the run's full tool set — see `_RunTools.registry`);
-        placeholder when it isn't there. `before_execute` runs right
-        before the tool does (the respond path records the execution
-        there — see `tool_ledger`)
-      - choice → "User selected: <ids>" or "(no selection)"
-      - input → the raw value or "(no value)" """
-    if request_kind == "approval":
-        if approved is False:
-            return (
-                "User declined to run this action. "
-                "Consider an alternative or ask the user how to proceed."
-            )
-        descriptor = registry.get(tool_name)
-        if descriptor is None:
-            return (
-                f'(Approved, but the tool "{tool_name}" is not registered '
-                "for this run — it may have been removed since the run paused.)"
-            )
-        if before_execute is not None:
-            await before_execute()
-        # Last gate before the approved tool's side effect.
-        lease.check_current()
-        try:
-            args = final_args if isinstance(final_args, dict) else {}
-            result = await descriptor.execute(args)
-            return result.text
-        except Exception as exc:
-            return f"Tool error: {exc}"
-    if request_kind == "choice":
-        sel = selection or []
-        if not sel:
-            return "(User submitted no selection.)"
-        return f"User selected: {', '.join(sel)}"
-    if request_kind == "ui-part":
-        # The client's `respondBodyForUiAnswer` shim populates
-        # `value` with the formatted text (or `selection` for a
-        # `choice` answer) so the runner doesn't have to re-port
-        # `formatAnswerForChat`. Prefer the formatted text; fall back
-        # to the joined selection; finally a neutral marker so the
-        # model still gets a parseable tool_result.
-        if isinstance(value, str) and value:
-            return value
-        sel = selection or []
-        if sel:
-            return ", ".join(sel)
-        return "(User submitted no answer.)"
-    # input
-    if isinstance(value, str) and value:
-        return value
-    return "(User submitted no value.)"
 
 
 async def _emit_pending_input_request(
@@ -2158,13 +2051,11 @@ async def _emit_pending_input_request(
 
 
 async def _stub_step_fn(ctx: RunStepContext) -> RunStepOutcome:
-    """Canned step — emits two tokens of placeholder text and
-    declares the step done. Used in dev / CI when no Anthropic key is
-    configured AND when a checkpoint is missing fields. Phase 2b-2
-    extends the default factory to also wire tools; the stub stays
-    as the no-credential fallback."""
-    await ctx.emitter.token("Phase 2a stub: ")
-    await ctx.emitter.token("(set ANTHROPIC_API_KEY to enable real model streaming)")
+    """Canned step — emits two tokens of placeholder text and declares
+    the step done. Only under `WORKER_STUB_MODEL` (tests), never as a
+    fallback: success is never faked (Q55)."""
+    await ctx.emitter.token("Stub model: ")
+    await ctx.emitter.token("(WORKER_STUB_MODEL is on; no model was called)")
     return RunStepOutcome(done=True)
 
 
@@ -2302,6 +2193,10 @@ def _translate_block(block: Any) -> dict[str, Any] | None:
     if block_type == "file":
         return _translate_file_block(block)
 
+    # Already Anthropic's (`runs.history`, or a checkpoint this saved).
+    if block_type == "document" and isinstance(block.get("source"), dict):
+        return dict(block)
+
     if block_type == "tool-call":
         return _translate_tool_call_block(block)
 
@@ -2358,23 +2253,64 @@ def _translate_image_block(block: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _translate_file_block(block: dict[str, Any]) -> dict[str, Any] | None:
-    """AI SDK {type:'file', ...} → Anthropic {type:'document', source:...}
-    for PDF mediaType only. Non-PDF mediaType drops with a warn-once."""
+    """AI SDK {type:'file', ...} → Anthropic: a PDF (base64, `data:` or
+    URL) or `text/*` (inline; sent as a text source) → `document`, an
+    image type → `image`. Anything else drops with a warn-once; a task
+    that starts with such a part fails instead (`_unusable_part`)."""
     media_type = block.get("mediaType")
-    if media_type != "application/pdf":
+    data = block.get("data")
+    if not isinstance(media_type, str) or not (
+        media_type == "application/pdf"
+        or media_type in IMAGE_MEDIA_TYPES
+        or media_type.startswith("text/")
+    ):
         _warn_unknown_block_kind(f"file:mediaType={media_type}")
         return None
-    data = block.get("data")
-    if isinstance(data, str):
-        if data.startswith("data:"):
-            head, _, payload = data.partition(",")
-            mt = head.split(";", 1)[0].removeprefix("data:") or "application/pdf"
-            return {
-                "type": "document",
-                "source": {"type": "base64", "media_type": mt, "data": payload},
-            }
-        return {"type": "document", "source": {"type": "url", "url": data}}
-    _warn_unknown_block_kind("file:non-string-data")
+    if not isinstance(data, str) or not data:
+        _warn_unknown_block_kind("file:non-string-data")
+        return None
+    inline = not data.startswith(("https://", "http://"))
+    payload, encoded = data, True
+    mt = media_type
+    if data.startswith("data:"):
+        head, _, payload = data.partition(",")
+        mt = head.split(";", 1)[0].removeprefix("data:") or media_type
+        encoded = head.endswith(";base64")
+    if media_type.startswith("text/"):
+        if not inline:
+            _warn_unknown_block_kind("file:text-url")
+            return None
+        try:
+            raw = base64.b64decode(payload, validate=True) if encoded else unquote_to_bytes(payload)
+            text = raw.decode("utf-8")
+        except (binascii.Error, ValueError):
+            _warn_unknown_block_kind("file:text-undecodable")
+            return None
+        if not text:
+            return None
+        return {
+            "type": "document",
+            "source": {"type": "text", "media_type": "text/plain", "data": text},
+        }
+    kind = "document" if media_type == "application/pdf" else "image"
+    if not inline:
+        return {"type": kind, "source": {"type": "url", "url": data}}
+    return {"type": kind, "source": {"type": "base64", "media_type": mt, "data": payload}}
+
+
+def _unusable_part(checkpoint: dict[str, Any]) -> str | None:
+    """An attachment the history holds that can't reach the model (its
+    media type, else its kind) — never dropped silently (B20)."""
+    raw = checkpoint.get("messages")
+    for message in raw if isinstance(raw, list) else []:
+        content = message.get("content") if isinstance(message, dict) else None
+        for part in content if isinstance(content, list) else []:
+            if (
+                isinstance(part, dict)
+                and part.get("type") in ("file", "image", "document")
+                and _translate_block(part) is None
+            ):
+                return str(part.get("mediaType") or part["type"])
     return None
 
 
@@ -2509,29 +2445,28 @@ def _build_checkpoint(
     block (model / system / skills / maxSteps / mode / …); on a yield
     we keep it identical — the next chunk runs with the same setup."""
     cfg = original.get("config")
-    return {
+    out: dict[str, object] = {
         "messages": list(messages),
         "step": emitter.step,
         "seq": emitter.seq,
         "config": cfg if isinstance(cfg, dict) else {},
     }
+    if isinstance(original.get("subagent"), dict):
+        # A child's label: the parent's fan-in reads it.
+        out["subagent"] = original["subagent"]
+    return out
 
 
 def _spawn_rejection_tool_result(tool_call_id: str) -> dict[str, Any]:
-    """A synthetic user turn that tells the model spawning was rejected
+    """The `tool_result` that tells the model spawning was rejected
     (depth limit). The model continues the run without subagents."""
     return {
-        "role": "user",
-        "content": [
-            {
-                "type": "tool_result",
-                "tool_use_id": tool_call_id,
-                "content": (
-                    "Subagent spawning is not available here (depth limit reached). "
-                    "Continue without subagents."
-                ),
-            }
-        ],
+        "type": "tool_result",
+        "tool_use_id": tool_call_id,
+        "content": (
+            "Subagent spawning is not available here (depth limit reached). "
+            "Continue without subagents."
+        ),
     }
 
 

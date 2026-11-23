@@ -95,6 +95,24 @@ class Settings(BaseSettings):
     10 s stop timeout; raise both together (`stop_grace_period`) to let
     more jobs finish in place."""
 
+    WORKER_STUB_MODEL: bool = False
+    """Tests only: execute background tasks with a model-free stub that
+    answers canned text (Q55 — success is never faked otherwise). Exactly
+    `true` turns it on; unset / empty / `false` is off; any other value
+    fails the service at boot. A task without a model or messages still
+    fails. Never set it in a deployment."""
+
+    @field_validator("WORKER_STUB_MODEL", mode="before")
+    @classmethod
+    def _strict_worker_stub_model(cls, value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None or value == "" or value == "false":
+            return False
+        if value == "true":
+            return True
+        raise ValueError("WORKER_STUB_MODEL must be `true` or `false`")
+
     # --- Schedule dispatcher -----------------------------------------------
     SCHEDULER_ENABLED: bool = False
     """Run the `task_schedules` dispatcher loop (`agent_py.scheduler`) in
@@ -111,9 +129,9 @@ class Settings(BaseSettings):
 
     # --- Model providers --------------------------------------------------
     ANTHROPIC_API_KEY: str = ""
-    """Anthropic API key — Phase 2b enables real model streaming when set.
-    Empty falls back to the Phase 2a stub step fn so the executor stays
-    runnable in development without a live key."""
+    """Anthropic API key — the model provider of every run. Empty: a run
+    fails with a clear message, interactive and background alike (Q55);
+    nothing falls back to canned output."""
 
     ANTHROPIC_BASE_URL: str = ""
     """Optional override for the Anthropic API base URL. Empty = SDK default
@@ -121,7 +139,7 @@ class Settings(BaseSettings):
     compatible endpoint — proxy, self-hosted gateway, or a region-specific
     upstream (e.g. Minimax's `/anthropic/v1` host). Mirrors the TS side's
     `MINIMAX_CN_BASE_URL` override pattern. Has no effect when
-    `ANTHROPIC_API_KEY` is empty (the stub step fn doesn't reach a network)."""
+    `ANTHROPIC_API_KEY` is empty."""
 
     # --- Model allowlist --------------------------------------------------
     MODELS_CONFIG_PATH: str = ""

@@ -143,7 +143,7 @@ export const TaskEventSchema: z.ZodType<TaskEvent> = z.discriminatedUnion(
       kind: z.literal("approval"),
       approvalId: z.string(),
       phase: z.enum(["request", "response"]),
-      requestKind: z.enum(["approval", "choice", "input"]).optional(),
+      requestKind: z.enum(["approval", "choice", "input", "ui-part"]).optional(),
       tool: z.string().optional(),
       toolCallId: z.string().optional(),
       args: z.unknown().optional(),
@@ -152,9 +152,12 @@ export const TaskEventSchema: z.ZodType<TaskEvent> = z.discriminatedUnion(
         .array(z.object({ id: z.string(), label: z.string() }))
         .optional(),
       multi: z.boolean().optional(),
+      uiKind: z.string().optional(),
+      uiProps: z.unknown().optional(),
       approved: z.boolean().optional(),
       selection: z.array(z.string()).optional(),
       value: z.string().optional(),
+      uiAnswer: z.unknown().optional(),
     }),
     z.object({
       ...base,

@@ -1,11 +1,12 @@
 """Background runs on `/v1/runs` against a real Postgres (wave 5b-A).
 
 Opt-in like `test_runs_pg.py`: set `AGENT_PY_TEST_DB_URL` to a disposable
-database with the Supabase migrations applied (through 0043). Skipped
-otherwise — CI has no database.
+database with the Supabase migrations applied (through 0045). Skipped
+otherwise; `bun run test:db` and the `agent-py-db` CI job set it.
 
-* 0043 — each paused task is answered one way only (Q41): a runs resume
-  after a `respond` job → `create_run` 55000 → `409 run_already_answered`;
+* 0043 / 0045 — each question is answered once (Q41, Q58): a runs resume
+  while a `respond` job holds it → `create_run` 55000 → `409
+  run_already_answered`;
   a `respond` after a live resume → `enqueue_task_job` 55000.
 * Q41 end to end — a background run pauses on `askUser` (the executor
   with a scripted step fn), its stream announces the question before
@@ -34,7 +35,11 @@ from agent_py.main import create_app
 from agent_py.runner import PendingInputDescriptor, RunStepContext, RunStepFn, RunStepOutcome
 from agent_py.runs import wiring
 from agent_py.runs.model import RunOwner
-from agent_py.runs.repository import PreviousRunAlreadyAnswered, RunSpec
+from agent_py.runs.repository import (
+    PreviousRunAlreadyAnswered,
+    PreviousRunNotWaiting,
+    RunSpec,
+)
 from agent_py.runs.repository_pg import PgRunRepository
 from agent_py.settings import Settings
 
@@ -293,9 +298,18 @@ async def _paused_task(pool: asyncpg.Pool, user: str, conv: str) -> str:
     )
     async with pool.acquire() as conn:
         await conn.execute(
-            "UPDATE public.tasks SET status = 'paused' WHERE id = $1", uuid.UUID(run_id)
+            "UPDATE public.tasks SET status = 'paused', outcome = $2::jsonb WHERE id = $1",
+            uuid.UUID(run_id),
+            json.dumps({"type": "interrupt", "interrupts": [{"id": "call-ask"}]}),
         )
     return run_id
+
+
+ANSWERS: dict[str, object] = {
+    "messages": [],
+    "config": {},
+    "resume": {"answers": [{"interruptId": "call-ask", "status": "cancelled"}]},
+}
 
 
 def test_respond_first_then_runs_resume_is_refused(seeded: tuple[str, str]) -> None:
@@ -316,11 +330,11 @@ def test_respond_first_then_runs_resume_is_refused(seeded: tuple[str, str]) -> N
                         goal="g",
                         max_steps=3,
                         previous_run_id=task,
-                        checkpoint={"messages": [], "config": {}},
+                        checkpoint=ANSWERS,
                     ),
                 )
-            # An interactive resume of it is refused the same way.
-            with pytest.raises(PreviousRunAlreadyAnswered):
+            # An interactive resume of it is refused too: another mode (B11).
+            with pytest.raises(PreviousRunNotWaiting):
                 await PgRunRepository(pool).create(
                     RunOwner.user(user),
                     RunSpec(run_id=_id(), thread_id=conv, mode="interactive", previous_run_id=task),
@@ -350,14 +364,15 @@ def test_runs_resume_then_respond_is_refused_until_the_resume_fails(
                     goal="g",
                     max_steps=3,
                     previous_run_id=task,
-                    checkpoint={"messages": [], "config": {}},
+                    checkpoint=ANSWERS,
                 ),
             )
             with pytest.raises(asyncpg.PostgresError) as refused:
                 await _as_user_enqueue_respond(user, task)
             assert refused.value.sqlstate == "55000"
             assert "already answered" in str(refused.value)
-            # A resume that failed frees the task (as it frees 0042's slot).
+            # A resume that failed before applying its answers frees the
+            # question (Q57; as it frees 0042's slot).
             async with pool.acquire() as conn:
                 await conn.execute(
                     "UPDATE public.tasks SET status = 'failed' WHERE id = $1",

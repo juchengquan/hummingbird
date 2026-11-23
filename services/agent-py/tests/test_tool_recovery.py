@@ -1,8 +1,8 @@
 """Reclaimed runs never silently re-run a side-effecting tool, and never
 step past an unanswered approval-gated call.
 
-  1. A side-effecting tool is bracketed by an execution record in the
-     checkpoint (`tool_ledger`); read-only tools write nothing.
+  1. A turn is recorded before its calls run and after each result
+     (`tool_ledger`); only a side-effecting tool is marked started.
   2. A reclaimed run whose checkpoint records a side-effecting tool as
      started-but-unfinished does NOT re-run it: the model gets an
      "interrupted, outcome unknown" result. Recorded results are reused;
@@ -39,6 +39,7 @@ from agent_py.providers.anthropic_provider import AnthropicStepConfig, make_anth
 from agent_py.runner import RunStepContext, RunStepFn, RunStepOutcome
 from agent_py.tools.registry import ToolDescriptor, ToolInvocationResult
 
+from .executor_fakes import fake_pause, fake_settle
 from .test_anthropic_provider import _FakeClient
 from .test_job_lease import RUN_ID, USER_ID
 
@@ -115,13 +116,15 @@ def _db(
     max_seq: int,
     sink: Any,
     registry: dict[str, ToolDescriptor] | None = None,
+    collected: list[TaskEvent] | None = None,
 ) -> Iterator[dict[str, AsyncMock]]:
     """Patch every DB edge the executor touches; yields the write mocks."""
     mocks = {
         "save_checkpoint": AsyncMock(),
         "update_run": AsyncMock(),
         "claim_paused_for_respond": AsyncMock(return_value=True),
-        "settle": AsyncMock(return_value=MagicMock()),
+        "settle": fake_settle([] if collected is None else collected),
+        "commit_pause": fake_pause([] if collected is None else collected),
     }
     with ExitStack() as stack:
         for p in (
@@ -133,6 +136,7 @@ def _db(
             patch.object(store, "save_checkpoint", new=mocks["save_checkpoint"]),
             patch.object(store, "update_run", new=mocks["update_run"]),
             patch.object(store, "claim_paused_for_respond", new=mocks["claim_paused_for_respond"]),
+            patch.object(store, "commit_pause", new=mocks["commit_pause"]),
             patch("agent_py.executor.settle_task_terminal", new=mocks["settle"]),
             patch("agent_py.executor._make_db_sink", return_value=sink),
         ):
@@ -170,24 +174,26 @@ async def test_side_effecting_tool_is_bracketed_by_an_execution_record() -> None
 
     assert outcome.settled is True
     assert calls == ["read", "write"]
-    started, finished = _saved(db["save_checkpoint"])
+    turn, read_done, started, finished = _saved(db["save_checkpoint"])
+    assert turn["inflight_tools"]["classified"] is True
+    assert (turn["inflight_tools"]["started"], turn["inflight_tools"]["results"]) == ([], [])
+    assert read_done["inflight_tools"]["results"] == [_result("tu_r", "read ran")]
     # Before `write` ran: the turn's assistant message is the last one,
     # `read`'s result is already in, `write` is marked started.
     assert started["messages"][-1]["role"] == "assistant"
-    assert started["inflight_tools"] == {
-        "started": ["tu_w"],
-        "results": [_result("tu_r", "read ran")],
-    }
-    assert finished["inflight_tools"] == {
-        "started": [],
-        "results": [_result("tu_r", "read ran"), _result("tu_w", "write ran")],
-    }
+    record = started["inflight_tools"]
+    assert (record["started"], record["results"]) == (["tu_w"], [_result("tu_r", "read ran")])
+    record = finished["inflight_tools"]
+    assert (record["started"], record["results"]) == (
+        [],
+        [_result("tu_r", "read ran"), _result("tu_w", "write ran")],
+    )
     # The record's seq covers the tool's output, so a resume keeps it.
     assert finished["seq"] > started["seq"]
 
 
 @pytest.mark.asyncio
-async def test_read_only_tools_write_no_record() -> None:
+async def test_read_only_tools_are_recorded_finished_but_never_started() -> None:
     calls: list[str] = []
     client = _FakeClient(deltas=[], final_content_seq=[[_tool_use("tu_r", "read")], []])
     _, sink = _list_sink()
@@ -200,7 +206,11 @@ async def test_read_only_tools_write_no_record() -> None:
         )
     assert outcome.settled is True
     assert calls == ["read"]
-    db["save_checkpoint"].assert_not_called()
+    # Marked only a side effect's start; every result is kept, so a
+    # finished call never runs again (wave 5c).
+    records = [cp["inflight_tools"] for cp in _saved(db["save_checkpoint"])]
+    assert [r["started"] for r in records] == [[], []]
+    assert [r["results"] for r in records] == [[], [_result("tu_r", "read ran")]]
 
 
 @pytest.mark.asyncio
@@ -247,7 +257,7 @@ async def test_crash_mid_side_effecting_tool_is_not_rerun_on_reclaim() -> None:
             ),
         )
     assert calls == ["write"]
-    (dead_checkpoint,) = _saved(db["save_checkpoint"])
+    (_turn, dead_checkpoint) = _saved(db["save_checkpoint"])
     assert dead_checkpoint["inflight_tools"]["started"] == ["tu_w"]
 
     # Reclaim against what the dead attempt persisted.
@@ -284,7 +294,7 @@ async def test_crash_mid_side_effecting_tool_is_not_rerun_on_reclaim() -> None:
     assert out.summary == tool_ledger.INTERRUPTED_TOOL_SUMMARY
     assert out.step == dead_checkpoint["step"]
     # The completed turn is checkpointed without the record.
-    completed = _saved(db2["save_checkpoint"])[0]
+    completed = _saved(db2["save_checkpoint"])[-1]
     assert "inflight_tools" not in completed
     assert db2["settle"].await_args.kwargs["status"] == "done"
 
@@ -342,9 +352,10 @@ async def test_reclaim_reuses_recorded_results_and_reruns_read_only_calls() -> N
     # `post` ran under the ledger: record before, result after, then the
     # completed turn's plain checkpoint.
     saves = _saved(db["save_checkpoint"])
-    assert saves[0]["inflight_tools"]["started"] == ["tu_p"]
-    assert saves[1]["inflight_tools"]["started"] == []
-    assert "inflight_tools" not in saves[2]
+    post = next(i for i, cp in enumerate(saves) if cp["inflight_tools"]["started"] == ["tu_p"])
+    assert calls.index("post") == 1
+    assert saves[post + 1]["inflight_tools"]["started"] == []
+    assert "inflight_tools" not in saves[post + 2]
     inputs = [e.tool_call_id for e in collected if isinstance(e, ToolInputEvent)]
     assert inputs == ["tu_r", "tu_p"]
 
@@ -415,7 +426,7 @@ async def test_reclaimed_respond_does_not_rerun_a_started_approved_tool() -> Non
     db["claim_paused_for_respond"].assert_not_called()
     interrupted = tool_ledger.interrupted_tool_result("tu_1")
     assert seen[0][-1] == {"role": "user", "content": [interrupted]}
-    persisted = _saved(db["save_checkpoint"])[0]
+    persisted = _saved(db["save_checkpoint"])[-1]
     assert persisted["messages"][-1]["content"] == [interrupted]
     assert "inflight_tools" not in persisted
     errors = [e for e in collected if isinstance(e, StepErrorEvent)]
@@ -450,11 +461,12 @@ async def test_first_respond_records_the_approved_tool_before_running_it() -> No
             make_step_fn=_done_step_fn([]),
         )
     assert outcome.settled is True
-    assert order == ["record", "execute", "persist"]
+    # Started, run, its result recorded, the completed turn.
+    assert order == ["record", "execute", "record", "persist"]
 
 
 @pytest.mark.asyncio
-async def test_declined_respond_writes_no_record() -> None:
+async def test_declined_respond_records_no_side_effect() -> None:
     calls: list[str] = []
     _, sink = _list_sink()
     with _db(
@@ -468,7 +480,9 @@ async def test_declined_respond_writes_no_record() -> None:
             make_step_fn=_done_step_fn([]),
         )
     assert calls == []
-    assert all("inflight_tools" not in cp for cp in _saved(db["save_checkpoint"]))
+    saves = _saved(db["save_checkpoint"])
+    assert all(not cp.get("inflight_tools", {}).get("started") for cp in saves)
+    assert "inflight_tools" not in saves[-1]
 
 
 # --- 4. reclaimed suspend checkpoint -------------------------------------------
@@ -483,7 +497,11 @@ async def test_reclaimed_start_on_a_suspend_checkpoint_pauses_again() -> None:
     collected, sink = _list_sink()
     seen: list[list[dict[str, Any]]] = []
     with _db(
-        _paused_on("danger"), max_seq=8, sink=sink, registry={"danger": _tool("danger", calls)}
+        _paused_on("danger"),
+        max_seq=8,
+        sink=sink,
+        registry={"danger": _tool("danger", calls)},
+        collected=collected,
     ) as db:
         outcome = await executor.execute_start(
             MagicMock(),
@@ -505,11 +523,11 @@ async def test_reclaimed_start_on_a_suspend_checkpoint_pauses_again() -> None:
         "danger",
     )
     assert isinstance(paused, StatusEvent) and paused.status == "paused"
-    saved = _saved(db["save_checkpoint"])[-1]
+    saved = db["commit_pause"].await_args.kwargs["checkpoint"]
     assert saved["seq"] == paused.seq
     assert saved["messages"][-1]["content"] == [_tool_use("tu_1", "danger")]
-    db["update_run"].assert_awaited_once()
-    assert db["update_run"].await_args.kwargs["status"] == "paused"
+    db["commit_pause"].assert_awaited_once()
+    db["update_run"].assert_not_called()
     db["settle"].assert_not_called()
     assert not any(isinstance(e, ResultEvent) for e in collected)
 
@@ -519,7 +537,7 @@ async def test_reclaimed_continue_on_an_ask_user_checkpoint_pauses_again() -> No
     collected, sink = _list_sink()
     checkpoint = _paused_on("askUser")
     checkpoint["messages"][-1]["content"][0]["input"] = {"prompt": "Which one?"}
-    with _db(checkpoint, max_seq=8, sink=sink) as db:
+    with _db(checkpoint, max_seq=8, sink=sink, collected=collected) as db:
         await executor.execute_continue(
             MagicMock(),
             StartActionPayload(run_id=RUN_ID, user_id=USER_ID),
@@ -528,7 +546,7 @@ async def test_reclaimed_continue_on_an_ask_user_checkpoint_pauses_again() -> No
         )
     requests = [e for e in collected if isinstance(e, ApprovalEvent)]
     assert [(r.request_kind, r.prompt) for r in requests] == [("input", "Which one?")]
-    assert db["update_run"].await_args.kwargs["status"] == "paused"
+    db["commit_pause"].assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -542,7 +560,7 @@ async def test_reclaimed_respond_whose_run_resuspended_pauses_again() -> None:
         {"role": "user", "content": [_result("tu_1", "did it")]},
         {"role": "assistant", "content": [_tool_use("tu_2", "danger")]},
     ]
-    with _db(checkpoint, max_seq=14, sink=sink) as db:
+    with _db(checkpoint, max_seq=14, sink=sink, collected=collected) as db:
         outcome = await executor.execute_respond(
             MagicMock(),
             executor.RespondActionPayload(
@@ -554,4 +572,4 @@ async def test_reclaimed_respond_whose_run_resuspended_pauses_again() -> None:
     assert outcome.settled is True
     requests = [e for e in collected if isinstance(e, ApprovalEvent)]
     assert [(r.phase, r.approval_id) for r in requests] == [("request", "tu_2")]
-    assert db["update_run"].await_args.kwargs["status"] == "paused"
+    db["commit_pause"].assert_awaited_once()

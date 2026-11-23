@@ -1102,7 +1102,9 @@ class RunForwardedProps(BaseModel):
     """
     MCP servers whose tools the run may offer (Q48), cloud
     (`workspaceId`) and local (`localMcpServers`) alike. Absent
-    means no restriction; an empty list means no MCP tools.
+    means no restriction; an empty list means no MCP tools. On a
+    resume, interactive or background, it can only narrow the
+    paused run's list (Q51); absent keeps that list.
 
     """
     attachments: Annotated[list[RunAttachment] | None, Field(max_length=40)] = None
@@ -1312,7 +1314,9 @@ A run's lifecycle. `queued` (background, not picked up yet) →
 `running` → one of the four ends: `succeeded`, `failed`,
 `cancelled`, or `interrupted` (waiting for answers to its open
 interrupts — which a **new** run answers, Q24; an interrupted run
-itself never runs again). A background run waiting on its own
+runs again only when the old task respond route answers it in
+place, as a sub-agent's question always is, Q59). `queued` ends
+when a worker starts executing. A background run waiting on its own
 sub-agent runs is still `running`. Mapping to the internal status
 and `tasks.status`: `RUN_EVENTS.md` § Status.
 

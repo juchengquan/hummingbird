@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Hummingbird backend contract
-  version: 0.4.1
+  version: 0.4.2
   summary: The frontend <-> backend HTTP contract (spec-first, PLAN-frontend-backend-split.md Q19).
   description: |
     Hand-written source of truth for the HTTP surface every Hummingbird
@@ -628,23 +628,32 @@ paths:
         run (one `ResumeEntry` per interrupt id; `payload` per
         `RUN_EVENTS.md` § Interrupts). `forwardedProps.previousRunId`
         names the interrupted run; it must be the caller's, on the same
-        thread, `interrupted`, and `resume[]` must cover exactly its open
-        interrupts — otherwise `409 invalid_state`. A `resume[]` without
-        `previousRunId` is `400 invalid_request`. An interrupted run has
-        at most one live resume: while another run answering it is
-        running, interrupted or succeeded, a new one is `409
-        run_already_resumed` (an idempotent retry of that resume, same
-        `runId`, still replays it); once it has failed or been cancelled,
-        the interrupts can be answered again with a new `runId`. A
-        background resume (Q41) answers a top-level background run and
-        starts from that run's saved state plus the answers
-        (`RUN_EVENTS.md` § 4.2); a background resume of anything else is
-        `409 invalid_state`, and one of a task already answered through
-        the old task respond route is `409 run_already_answered`.
+        thread, in the same `mode` (absent is `interactive`), not a
+        sub-agent run, `interrupted`, and `resume[]` must cover exactly
+        its open interrupts — otherwise `409 invalid_state`, also when
+        that stops being true before the run is created (a cancel).
+        A `resume[]` without `previousRunId` is `400 invalid_request`. An
+        interrupted run has at most one live resume: while another run
+        answering it is running, interrupted or succeeded, a new one is
+        `409 run_already_resumed` (an idempotent retry of that resume,
+        same `runId`, still replays it). An interactive resume that
+        failed or was cancelled frees the interrupts: answer again with a
+        new `runId`. A background one frees them only if it never applied
+        the answers (Q57): once it has, a tool may have run, so the
+        answer stays `409 run_already_resumed` and the task is over. A
+        background resume (Q41) starts from the paused run's saved state
+        plus the answers (`RUN_EVENTS.md` § 4.2); a question being
+        answered through the old task respond route is `409
+        run_already_answered` (per question, Q58). A background run whose
+        `start` job can't be queued (`409 limit_reached`) is not created.
 
         **Background runs take no `attachments`** (Q49): a background
         start with any is `400 invalid_request`, before anything is
         created.
+
+        A model a background run can't run is refused the same way (Q55):
+        `auto`, anything outside the allow-list, and on a resume the
+        paused run's saved one.
 
         A `forwardedProps.model` outside the backend's allow-list is `400
         unknown_model`, answered before the run exists (as `/v1/chat`):
@@ -727,16 +736,18 @@ paths:
             `run_id_conflict` — the `runId` is taken and this request is
             not an idempotent retry of it (identical body in every case);
             `invalid_state` — a resume that does not match the previous
-            run (not the caller's, another thread, not `interrupted`, or
-            `resume[]` not covering exactly its open interrupts);
+            run (not the caller's, another thread, another mode, a
+            sub-agent run, not `interrupted`, or `resume[]` not covering
+            exactly its open interrupts);
             `run_already_resumed` — another run already answers the
-            previous run's interrupts and has not failed or been
-            cancelled (one live resume per interrupted run, so an
-            approved tool never runs twice; after a failed or cancelled
-            resume, answer again with a new `runId`);
-            `run_already_answered` — the previous run is a background
-            task already answered through the old task respond route
-            (each paused task is answered one way only, Q41).
+            previous run's interrupts: it has not failed or been
+            cancelled, or it is a background run that had applied the
+            answers (Q57), so an approved tool never runs twice;
+            `run_already_answered` — the question of a background run is
+            being answered through the old task respond route (each
+            question is answered once, Q58);
+            `limit_reached` — the background run could not be queued, and
+            was not created.
           content:
             application/json:
               schema:
@@ -935,7 +946,14 @@ paths:
       tags: [runs]
       summary: Cancel a run
       description: |
-        Idempotent. A `queued`, `running` or `interrupted` run becomes
+        Idempotent. A background run stands for its task (Q60): cancelling
+        any run of its chain of answers cancels every run before and after
+        it and their sub-agent runs, and the questions don't reopen — also
+        when the run named has itself ended. Cancelling a sub-agent run
+        cancels it alone: its parent continues without it. An interactive
+        run is cancelled alone.
+
+        A `queued`, `running` or `interrupted` run becomes
         `cancelled` (an interrupted run's open interrupts are abandoned),
         and its stream closes with `RUN_FINISHED { outcome: { type:
         "cancelled" } }`; a run that already ended is left as it is. Either
@@ -1837,7 +1855,9 @@ components:
         `running` → one of the four ends: `succeeded`, `failed`,
         `cancelled`, or `interrupted` (waiting for answers to its open
         interrupts — which a **new** run answers, Q24; an interrupted run
-        itself never runs again). A background run waiting on its own
+        runs again only when the old task respond route answers it in
+        place, as a sub-agent's question always is, Q59). `queued` ends
+        when a worker starts executing. A background run waiting on its own
         sub-agent runs is still `running`. Mapping to the internal status
         and `tasks.status`: `RUN_EVENTS.md` § Status.
 
@@ -1947,7 +1967,9 @@ components:
           description: |
             MCP servers whose tools the run may offer (Q48), cloud
             (`workspaceId`) and local (`localMcpServers`) alike. Absent
-            means no restriction; an empty list means no MCP tools.
+            means no restriction; an empty list means no MCP tools. On a
+            resume, interactive or background, it can only narrow the
+            paused run's list (Q51); absent keeps that list.
         attachments:
           type: array
           maxItems: 40

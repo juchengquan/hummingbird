@@ -32,12 +32,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agent_py import db, executor, feature_flag, jobs, poller, store
-from agent_py.barrier import SettleResult
 from agent_py.events import ResultEvent, TaskEvent
 from agent_py.executor import ExecutorOutcome
 from agent_py.jobs import ClaimedJob, JobTaskState, ReapedJob
 from agent_py.main import stop_poller
 from agent_py.settings import Settings
+
+from .executor_fakes import fake_settle
 
 JOB_ID = "11111111-1111-1111-1111-111111111111"
 RUN_ID = "22222222-2222-2222-2222-222222222222"
@@ -513,7 +514,7 @@ async def test_stranded_task_is_settled_failed_with_a_terminal_event() -> None:
         patch.object(store, "max_event_seq", new=AsyncMock(return_value=17)),
         patch(
             "agent_py.executor.settle_task_terminal",
-            new=AsyncMock(return_value=SettleResult(True, None, None, False)),
+            new=fake_settle(collected),
         ) as settle,
         patch("agent_py.executor._make_db_sink", return_value=sink),
     ):
@@ -556,8 +557,9 @@ async def test_stranded_settle_emits_nothing_when_the_run_settled_concurrently()
         patch.object(jobs, "load_job_task_state", new=AsyncMock(return_value=_state())),
         patch(
             "agent_py.executor.settle_task_terminal",
-            new=AsyncMock(return_value=SettleResult(False, None, None, False)),
+            new=fake_settle(collected, transitioned=False),
         ),
+        patch.object(store, "max_event_seq", new=AsyncMock(return_value=0)),
         patch("agent_py.executor._make_db_sink", return_value=sink),
     ):
         ok = await executor.settle_stranded_task(
@@ -576,9 +578,7 @@ async def test_checkpoint_load_failure_settles_the_run_failed() -> None:
     with (
         patch.object(store, "load_checkpoint", new=AsyncMock(side_effect=OSError("db down"))),
         patch.object(store, "max_event_seq", new=AsyncMock(return_value=1)),
-        patch(
-            "agent_py.executor.settle_task_terminal", new=AsyncMock(return_value=MagicMock())
-        ) as settle,
+        patch("agent_py.executor.settle_task_terminal", new=fake_settle(collected)) as settle,
         patch("agent_py.executor._make_db_sink", return_value=sink),
     ):
         outcome = await executor.execute_start(
@@ -605,9 +605,7 @@ async def test_child_results_load_failure_settles_the_parent_failed() -> None:
         patch.object(store, "load_checkpoint", new=AsyncMock(return_value=checkpoint)),
         patch.object(store, "max_event_seq", new=AsyncMock(return_value=9)),
         patch.object(store, "load_child_results", new=AsyncMock(side_effect=OSError("boom"))),
-        patch(
-            "agent_py.executor.settle_task_terminal", new=AsyncMock(return_value=MagicMock())
-        ) as settle,
+        patch("agent_py.executor.settle_task_terminal", new=fake_settle(collected)) as settle,
         patch("agent_py.executor._make_db_sink", return_value=sink),
     ):
         outcome = await executor.execute_continue(
@@ -657,9 +655,10 @@ async def test_respond_failure_after_the_paused_claim_settles_the_task_failed() 
         # event; what matters is the settle.
         patch.object(store, "max_event_seq", new=AsyncMock(side_effect=OSError("db down"))),
         patch(
-            "agent_py.executor._build_tool_result_text",
+            "agent_py.executor._apply_answer",
             new=AsyncMock(side_effect=RuntimeError("tool blew up")),
         ),
+        patch.object(store, "set_task_handler", new=AsyncMock()),
         patch(
             "agent_py.executor.settle_task_terminal", new=AsyncMock(return_value=MagicMock())
         ) as settle,
@@ -670,6 +669,8 @@ async def test_respond_failure_after_the_paused_claim_settles_the_task_failed() 
             executor.RespondActionPayload(
                 run_id=RUN_ID, user_id=USER_ID, request_id="tu_1", approved=True
             ),
+            # Setup comes before the tool (Q55): give it a model step.
+            make_step_fn=lambda *_a: AsyncMock(),
         )
     assert outcome.settled is False
     assert "tool blew up" in (outcome.error or "")
@@ -879,9 +880,11 @@ async def test_respond_executes_an_approved_mcp_tool_with_the_workspace_context(
     assert calls == [{"id": 7}]
     # First save: the execution record, before the approved tool ran.
     record = save_checkpoint.await_args_list[0].kwargs["checkpoint"]
-    assert record["inflight_tools"] == {"started": ["tu_1"], "results": []}
+    assert record["inflight_tools"]["started"] == ["tu_1"]
+    assert record["inflight_tools"]["results"] == []
     assert record["messages"] == checkpoint["messages"]
-    saved = save_checkpoint.await_args_list[1].kwargs["checkpoint"]
+    # Then the result (in the record), then the completed turn.
+    saved = save_checkpoint.await_args_list[2].kwargs["checkpoint"]
     assert saved["messages"][-1]["content"][0]["content"] == "crm updated"
     assert "inflight_tools" not in saved
     assert seen_contexts[0].workspace_id == "ws_1"

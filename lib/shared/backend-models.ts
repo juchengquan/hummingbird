@@ -7,7 +7,8 @@
  * models and a model they don't accept is switched to their default.
  * agent-py's runs API (`/v1/runs`) also routes `auto` when the catalog's
  * routing pair is on that allowlist (wave 5b-C); its `/v1/chat` and
- * agent-ts don't.
+ * agent-ts don't. Background tasks run in agent-py's worker whatever
+ * serves chat, so they take the agent-service models (Q55).
  */
 
 import {
@@ -99,6 +100,30 @@ export function modelSwitchFor(backend: ModelBackend, model: string): string | n
   if (backendAcceptsModel(backend.kind, model)) return null
   const fallback = defaultModelForBackend(backend.kind)
   return fallback && fallback !== model ? fallback : null
+}
+
+/** The task worker, as a backend for the picker and its switch note (Q55). */
+export const TASK_MODEL_BACKEND: ModelBackend = { kind: "agent-service", name: "tasks" }
+
+/** What a task falls back to (Q67): agent-py's own default, the cheap one. */
+export const TASK_FALLBACK_MODEL = "anthropic/claude-haiku-4.5"
+
+/**
+ * The model to launch a task with, when `requested` was asked for (absent
+ * = the catalog default, as `POST /api/tasks` reads it): itself, or the
+ * fallback with what it was switched from, to say so. `model` is null only
+ * when the catalog has nothing the worker runs.
+ */
+export function taskModelFor(requested: string | null | undefined): {
+  model: string | null
+  switchedFrom: string | null
+} {
+  const asked = requested || DEFAULT_CHAT_MODEL
+  if (backendAcceptsModel(TASK_MODEL_BACKEND.kind, asked)) return { model: asked, switchedFrom: null }
+  const fallback = backendAcceptsModel(TASK_MODEL_BACKEND.kind, TASK_FALLBACK_MODEL)
+    ? TASK_FALLBACK_MODEL
+    : defaultModelForBackend(TASK_MODEL_BACKEND.kind)
+  return { model: fallback, switchedFrom: asked }
 }
 
 /**

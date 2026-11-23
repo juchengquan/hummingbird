@@ -53,7 +53,7 @@ from .. import db
 from ..auth import get_current_user
 from ..contract import models
 from ..events import StatusEvent
-from ..model_allowlist import UnknownModelError
+from ..model_allowlist import UnknownModelError, resolve_api_model_id
 from ..rate_limit import rate_limit_key
 from ..runs.access import (
     RUN_TOKEN_HEADER,
@@ -72,6 +72,7 @@ from ..runs.repository import (
     PreviousRunAlreadyAnswered,
     PreviousRunAlreadyResumed,
     PreviousRunNotFound,
+    PreviousRunNotWaiting,
     RunFilter,
     RunIdConflict,
     RunSpec,
@@ -111,7 +112,8 @@ AUTH_REQUIRED_MESSAGE = "Sign in to use AI features on this server."
 _RUN_NOT_FOUND = "Run not found."
 _RUN_ID_CONFLICT = "This runId is already in use."
 _RUN_ALREADY_RESUMED = "Another run already answers this run's interrupts."
-_RUN_ALREADY_ANSWERED = "This run was already answered through the task respond route."
+_RUN_ALREADY_ANSWERED = "This question was already answered through the task respond route."
+_RUN_NOT_WAITING = "The previous run is no longer waiting on these answers."
 
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
@@ -436,6 +438,11 @@ async def start_run(
             _raise(409, "run_already_resumed", _RUN_ALREADY_RESUMED)
         except PreviousRunAlreadyAnswered:
             _raise(409, "run_already_answered", _RUN_ALREADY_ANSWERED)
+        except PreviousRunNotWaiting:
+            _raise(409, "invalid_state", _RUN_NOT_WAITING)
+        except RunWriteError as exc:
+            # A refused enqueue: the create rolled back with it.
+            _raise(exc.status, exc.code, exc.message)
         except MemoryStoreFull:
             _raise(503, "unavailable", "Too many runs in progress on this server. Retry shortly.")
         except ValueError as exc:
@@ -444,7 +451,7 @@ async def start_run(
 
     headers = {"Location": _location(run.id)}
     if mode == "background":
-        if run.internal_status == "queued":
+        if not created and run.internal_status == "queued":
             await _queue_background(services, owner, run)
         return JSONResponse(
             {"runId": run.id, "status": run.status}, status_code=202, headers=headers
@@ -480,26 +487,22 @@ async def _background_resume(
 ) -> tuple[dict[str, object], int]:
     """A background resume's checkpoint and step budget (Q41): the paused
     run's saved checkpoint plus the answers (`resume_checkpoint`); the
-    budget is `maxSteps`, else the paused run's. Only a top-level
-    background run is resumed this way — a sub-agent run's parent waits
-    on that very row (the join barrier), so it is answered in place
-    through the task respond route."""
-    if previous.mode != "background":
-        _raise(409, "invalid_state", "A background run can only resume a background run.")
-    if previous.parent_run_id is not None:
-        _raise(
-            409,
-            "invalid_state",
-            "A sub-agent run is answered through its task, not resumed as a new run.",
-        )
+    budget is `maxSteps`, else the paused run's. `check_resume` let only
+    a top-level background run through. Its saved model must be one the
+    worker can run: `400 unknown_model` before anything is created (Q55)."""
     saved = await services.repo_for(owner).load_checkpoint(owner, previous.id)
     try:
         checkpoint = resume_checkpoint(saved, body, previous_run_id=previous.id)
     except ResumeMismatch as exc:
         _raise(409, "invalid_state", str(exc))
+    cfg = checkpoint.get("config")
+    model = cfg.get("model") if isinstance(cfg, dict) else None
+    try:
+        resolve_api_model_id(model if isinstance(model, str) else "")
+    except UnknownModelError as exc:
+        raise HTTPException(status_code=400, detail=exc.to_detail()) from exc
     if max_steps is not None:
         return checkpoint, max_steps
-    cfg = checkpoint.get("config")
     raw = cfg.get("maxSteps") if isinstance(cfg, dict) else None
     if isinstance(raw, int) and not isinstance(raw, bool) and 1 <= raw <= 50:
         return checkpoint, raw
@@ -507,12 +510,11 @@ async def _background_resume(
 
 
 async def _queue_background(services: RunServices, owner: RunOwner, run: RunRecord) -> None:
-    """What the Next task route does after `create_task_run`: a
-    `status: queued` entry as seq 1 (the worker continues at seq 2), then
-    the `start` job. Re-done on an idempotent retry of a still-queued run
-    (both steps are idempotent: the entry by seq, the job by
-    `enqueue_task_job` refusing a second `start` with 55000), so a first
-    request that died between create and enqueue does not strand it."""
+    """An idempotent retry of a still-queued run re-does what creating it
+    did (`PgRunRepository.create`: the `status: queued` entry as seq 1
+    and the `start` job) — both idempotent: the entry by seq, the job by
+    `enqueue_task_job` refusing a second `start` with 55000 — so a run
+    created before that was one transaction is not left stranded."""
     assert services.pg_repo is not None
     try:
         await services.log_for(owner).append(

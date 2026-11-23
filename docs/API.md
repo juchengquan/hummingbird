@@ -472,13 +472,33 @@ body is the AI SDK UI message stream (SSE `data:` frames); every
   confirms it, the route holds that event back (does not send it, and
   re-reads it next poll). If a resume marker supersedes it, it is never
   sent. See `gateLiveTailBatch` in `lib/shared/agent/events.ts`.
-- **End of stream.** The stream closes after a confirmed terminal
-  event; or one poll after the row turned terminal with no terminal
-  event in the log (orphaned run); or after a 5-minute wall-clock cap
-  (the client reconnects with its cursor while the run is still live).
+- **The row has the last word.** A row that turned terminal with no
+  terminal event in the log (cancelled, reconciled, orphaned), or with
+  one that says otherwise (a cancel that beat the result), ends the
+  stream with a terminal event for the row's status: `status:
+  cancelled`, or `result` `done` / `failed`. It is made by this route
+  (`seq` = the last one + 1) and not written to the log; a disagreeing
+  terminal event isn't sent.
+- **End of stream.** The stream closes after a terminal event (one poll
+  after the row turned `done` / `failed` with none in the log, at once
+  for `cancelled`); when the row is deleted (no event: the next connect
+  is `404 not_found`); or after a 5-minute wall-clock cap. The client
+  reconnects with its cursor until the run has ended — also while it is
+  paused. A new watch (a reload) replays from 0.
 - **Realtime.** The client also subscribes to `task_events` inserts via
-  Supabase Realtime for lower latency, but folds only non-terminal
-  events from it — terminal events come from this route, confirmed.
+  Supabase Realtime for lower latency, but folds only a non-terminal
+  event that is the next one after its cursor (the replay may be behind)
+  — terminal events come from this route, confirmed.
+
+---
+
+## `GET /api/tasks/:id/children`
+
+`{ children: [{ id, status, goal, pendingInput? }] }`
+(`TaskChildrenResponseSchema`). `pendingInput` is set for a `paused`
+child: the question it waits on, in the fold's `PendingInput` shape. The
+client shows it on the parent task and answers it with
+`POST /api/tasks/:childId/respond` (Q59).
 
 ---
 

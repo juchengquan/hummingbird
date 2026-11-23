@@ -1,8 +1,8 @@
 """0043 (Q41 mutual exclusion) without a database: the SQL text.
 
 The behaviour is pinned against Postgres in `test_background_runs_pg.py`
-(opt-in, `AGENT_PY_TEST_DB_URL`); CI has no database, so this checks the
-migration keeps both signatures and carries both refusals.
+(`bun run test:db`, CI job `agent-py-db`); this checks, without one,
+that the migration keeps both signatures and carries both refusals.
 """
 
 from __future__ import annotations

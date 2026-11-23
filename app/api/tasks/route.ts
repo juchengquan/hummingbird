@@ -21,18 +21,19 @@ import type { ModelMessage } from "ai"
 import { NextResponse } from "next/server"
 
 import { DEFAULT_CHAT_MODEL } from "@/shared/models"
-import {
-  ProviderUnavailableError,
-  selectModel,
-} from "@/server/model-provider"
+import { backendAcceptsModel } from "@/shared/backend-models"
 import { categorizeError } from "@/shared/api-errors"
-import { CHAT_BODY_MAX, TaskRequestSchema } from "@/shared/api-schemas"
+import {
+  CHAT_BODY_MAX,
+  TaskRequestSchema,
+  type TaskRequestInput,
+} from "@/shared/api-schemas"
 import type { SkillId } from "@/shared/skills/types"
 import type { SkillRequestEntry } from "@/server/skills/registry"
 import { getSupabaseServerClient } from "@/server/supabase/server"
 import type { TaskEvent } from "@/shared/agent/events"
 import type { RunCheckpoint } from "@/server/agent/checkpoint"
-import { appendEvent } from "@/server/agent/store"
+import { appendEvent, appendSyntheticResult } from "@/server/agent/store"
 import { enqueueStartJob } from "@/server/agent/jobs"
 import { createTaskRun, taskWriteErrorResponse } from "@/server/agent/task-writes"
 import { jsonBodyError, readJsonCapped } from "@/server/read-body-capped"
@@ -62,6 +63,31 @@ function lastUserText(messages: ModelMessage[]): string {
     return ""
   }
   return ""
+}
+
+/** The image types the worker can give the model (agent-py's
+ *  `IMAGE_MEDIA_TYPES`). */
+const IMAGE_FILE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"])
+const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
+
+/** The media type of the first file part the worker can't give the model
+ *  (agent-py's `_translate_file_block`), else null. Such a task is
+ *  refused: nothing attached is dropped silently (B20). */
+function unusableFilePart(messages: TaskRequestInput["messages"]): string | null {
+  for (const { content } of messages) {
+    if (typeof content === "string") continue
+    for (const part of content) {
+      if (part.type !== "file") continue
+      const { mediaType, data } = part
+      if (typeof data !== "string" || !data) return mediaType
+      if (mediaType === "application/pdf" || IMAGE_FILE_TYPES.has(mediaType)) continue
+      if (!mediaType.startsWith("text/") || /^https?:\/\//.test(data)) return mediaType
+      const comma = data.startsWith("data:") ? data.indexOf(",") : -1
+      const encoded = comma < 0 || data.slice(0, comma).endsWith(";base64")
+      if (encoded && !BASE64.test(data.slice(comma + 1))) return mediaType
+    }
+  }
+  return null
 }
 
 export async function POST(req: NextRequest) {
@@ -101,20 +127,32 @@ export async function POST(req: NextRequest) {
     mode === "research" ? RESEARCH_DEFAULT_MAX_STEPS : DEFAULT_MAX_STEPS
   const maxSteps = Math.min(body.maxSteps ?? defaultMaxForMode, MAX_MAX_STEPS)
 
-  // Fail fast on a misconfigured provider — the worker would otherwise
-  // fail the job after the route has already returned 202.
-  try {
-    selectModel(modelId)
-  } catch (error) {
-    if (error instanceof ProviderUnavailableError) {
-      return NextResponse.json(
-        { code: "auth", message: error.message },
-        { status: 401 }
-      )
-    }
-    const { status, code, message } = categorizeError(error)
-    return NextResponse.json({ code, message }, { status })
+  // The worker runs the agent-service models only (Q55): anything else,
+  // the resolved default and Auto included, is refused before anything
+  // is created — it could only fail after the 202.
+  if (!backendAcceptsModel("agent-service", modelId)) {
+    return NextResponse.json(
+      {
+        code: "unknown_model",
+        message: `Tasks can't run the model "${modelId}". Choose one of the Anthropic models.`,
+      },
+      { status: 400 }
+    )
   }
+  const unusable = unusableFilePart(body.messages)
+  if (unusable !== null) {
+    return NextResponse.json(
+      {
+        code: "invalid_attachment",
+        message: `A task can't take this ${unusable} attachment: use an image, a PDF or inline text.`,
+      },
+      { status: 400 }
+    )
+  }
+
+  // No Next-side provider check: agent-py's worker calls the model with
+  // its own key (an AI Gateway key here is neither needed nor used), and
+  // the model is checked against what the worker runs above.
 
   // Local-mode MCP creds (`body.mcpServers`) live in the browser; the
   // background worker has no way to use them. Cloud-mode MCP works as
@@ -213,6 +251,17 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     const { status, code, message } =
       taskWriteErrorResponse(error) ?? categorizeError(error)
+    // No queued orphan (B18). Only while still queued: after an ambiguous
+    // failure the job may exist and a worker may already run it.
+    try {
+      await appendSyntheticResult(db, runId, userId, {
+        status: "failed",
+        error: message,
+        from: ["queued"],
+      })
+    } catch (settleError) {
+      console.error("[tasks] fail-unqueued:", settleError)
+    }
     return NextResponse.json({ code, message }, { status })
   }
 

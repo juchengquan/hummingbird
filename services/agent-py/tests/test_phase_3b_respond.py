@@ -4,9 +4,9 @@ Two flows:
 
   - **Suspend**: the step fn detects a gated tool call, captures it
     as `pending_input`, returns without executing. The runner returns
-    `kind="suspended"` carrying the descriptor. The executor saves
-    a fresh checkpoint, emits `approval: request` + `status: paused`,
-    and updates the `tasks` row to paused.
+    `kind="suspended"` carrying the descriptor. The executor commits,
+    in one transaction (`store.commit_pause`), a fresh checkpoint, the
+    `approval: request` + `status: paused` entries and the paused row.
 
   - **Respond**: the next job arrives with `{requestId, approved?,
     selection?, value?}`. The executor loads the checkpoint, finds
@@ -41,6 +41,8 @@ from agent_py.runner import (
     RunStepOutcome,
     run_agent_loop,
 )
+
+from .executor_fakes import fake_pause
 
 # --- Runner: suspended kind --------------------------------------------
 
@@ -166,20 +168,21 @@ async def test_executor_suspend_saves_checkpoint_and_emits_approval() -> None:
         patch.object(store, "is_run_cancelled", new=AsyncMock(return_value=False)),
         patch.object(store, "update_run", new=AsyncMock()) as update_run,
         patch.object(store, "save_checkpoint", new=AsyncMock()) as save_checkpoint,
+        patch.object(store, "commit_pause", new=fake_pause(collected)) as commit,
         patch("agent_py.executor._make_db_sink", return_value=sink),
     ):
         outcome = await executor.execute_start(pool, payload, make_step_fn=make_step)
 
     assert outcome.settled is True
-    save_checkpoint.assert_awaited_once()
-    saved = save_checkpoint.await_args.kwargs["checkpoint"]
+    commit.assert_awaited_once()
+    save_checkpoint.assert_not_called()
+    saved = commit.await_args.kwargs["checkpoint"]
     # The assistant turn with the pending tool_use was preserved.
     assert any(m.get("role") == "assistant" for m in saved["messages"])
 
-    # `update_run` was called once with status="paused" (the others are
-    # the per-step progress writes, `step` only).
-    status_writes = [c for c in update_run.await_args_list if c.kwargs.get("status")]
-    assert [c.kwargs["status"] for c in status_writes] == ["paused"]
+    # The pause is that commit; `update_run` only writes per-step progress.
+    assert not [c for c in update_run.await_args_list if c.kwargs.get("status")]
+    assert commit.await_args.kwargs["outcome"]["type"] == "interrupt"
 
     # Approval-request event was emitted with the right tool info.
     approval_requests = [
@@ -270,10 +273,10 @@ async def test_respond_with_approved_false_appends_decline_message() -> None:
         outcome = await executor.execute_respond(pool, payload, make_step_fn=make)
 
     assert outcome.settled is True
-    # Checkpoint saved at least once (the interim save with the
-    # appended tool_result, before the resume loop).
+    # Checkpoint saved at least once: the answer, then the completed turn
+    # with the tool_result, both before the resume loop.
     save_checkpoint.assert_awaited()
-    saved = save_checkpoint.await_args_list[0].kwargs["checkpoint"]
+    saved = save_checkpoint.await_args_list[-1].kwargs["checkpoint"]
     # The user turn carries the tool_result with the decline message.
     user_turns = [m for m in saved["messages"] if m.get("role") == "user"]
     last_user = user_turns[-1]
@@ -335,11 +338,11 @@ async def test_respond_with_approved_unknown_tool_feeds_placeholder() -> None:
         outcome = await executor.execute_respond(pool, payload, make_step_fn=make)
 
     assert outcome.settled is True
-    saved = save_checkpoint.await_args_list[0].kwargs["checkpoint"]
+    saved = save_checkpoint.await_args_list[-1].kwargs["checkpoint"]
     tool_result = [m for m in saved["messages"] if m.get("role") == "user"][-1]["content"][0]
     assert tool_result["type"] == "tool_result"
-    # Placeholder message for unknown / unported tool.
-    assert "Phase 3f" in tool_result["content"] or "not registered" in tool_result["content"]
+    # A clear error for a tool that isn't there (B17).
+    assert "not available" in tool_result["content"] and tool_result["is_error"] is True
 
 
 @pytest.mark.asyncio

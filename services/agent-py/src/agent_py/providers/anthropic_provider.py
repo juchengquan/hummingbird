@@ -28,10 +28,9 @@ from typing import Any, Protocol
 
 import structlog
 
-from .. import lease, tool_ledger
+from .. import lease, tool_ledger, tool_turn
 from ..coalescer import make_token_coalescer
 from ..emitter import RunEmitter
-from ..input_policy import pauses_for_input
 from ..reasoning_effort import ThinkingParams
 from ..runner import (
     PendingInputDescriptor,
@@ -45,7 +44,7 @@ from ..tools import (
     ToolError,
     tool_to_anthropic_param,
 )
-from ..tools.spawn_subagent import SPAWN_SUBAGENT_TOOL_NAME, parse_spawn_specs
+from ..tools.spawn_subagent import parse_spawn_specs
 
 logger = structlog.get_logger(__name__)
 
@@ -161,9 +160,12 @@ def make_anthropic_step_fn(config: AnthropicStepConfig) -> RunStepFn:
         kwargs: dict[str, Any] = {
             "model": config.model,
             "max_tokens": config.max_tokens,
-            "system": config.system,
-            "messages": config.messages,
+            "messages": sendable_messages(config.messages),
         }
+        # Omitted, never null: the API takes a string or blocks (a task
+        # without a workspace prompt has none).
+        if config.system:
+            kwargs["system"] = config.system
         if tools_param is not None:
             kwargs["tools"] = tools_param
         if config.thinking is not None and _turn_can_think(config.messages):
@@ -196,90 +198,56 @@ def make_anthropic_step_fn(config: AnthropicStepConfig) -> RunStepFn:
             config.messages.append({"role": "assistant", "content": content_blocks})
             return RunStepOutcome(done=True)
 
-        # Tools requested. Check for a spawnSubagent call first — if
-        # the model called it, we capture the spawn descriptor and
-        # return without executing (the executor fans out children).
-        # The assistant turn is appended so the eventual tool_result
-        # on resume (aggregated child results) pairs correctly.
-        for block in tool_use_blocks:
-            tool_name = _block_field(block, "name") or ""
-            if tool_name == SPAWN_SUBAGENT_TOOL_NAME:
-                tool_call_id = _block_field(block, "id") or ""
-                args = _block_field(block, "input") or {}
-                if not isinstance(args, dict):
-                    args = {}
-                await ctx.emitter.tool_input(
-                    tool_call_id=tool_call_id,
-                    tool_name=tool_name,
-                    args=dict(args),
-                )
-                config.messages.append({"role": "assistant", "content": content_blocks})
-                return RunStepOutcome(
-                    done=False,
-                    spawn=SpawnDescriptor(
-                        tool_call_id=tool_call_id,
-                        tasks=parse_spawn_specs(args),
-                    ),
-                )
+        # Tools requested. Every call gets exactly one result (`tool_turn`):
+        # the ungated ones run now — each once, whatever else the turn
+        # holds — and their results wait in the ledger (checkpointed, so a
+        # pause or a crash keeps them) for the calls that need the user or
+        # sub-agents. The turn is saved before any call runs: a worker
+        # death never asks the model for it again, and a run cancelled
+        # during the model call runs nothing.
+        config.messages.append({"role": "assistant", "content": content_blocks})
+        calls = tool_turn.calls_of(tool_use_blocks)
+        ask, spawns = tool_turn.classify(calls, config.gated_tool_names)
+        for call in calls:
+            await ctx.emitter.tool_input(
+                tool_call_id=call.id, tool_name=call.name, args=dict(call.args)
+            )
+        ledger = tool_ledger.current()
+        if ledger is not None:
+            await ledger.record_turn(ask=ask, spawn=spawns)
 
-        # Check for any gated tool — if the model called one, we
-        # suspend the run for human approval rather than executing
-        # anything in this step. The assistant turn still gets
-        # appended (Anthropic requires it to precede the eventual
-        # tool_result on resume), but no tool_result is written
-        # until the `respond` action appends one.
-        for block in tool_use_blocks:
-            tool_name = _block_field(block, "name") or ""
-            args = _block_field(block, "input") or {}
-            if not isinstance(args, dict):
-                args = {}
-            if pauses_for_input(tool_name, args, config.gated_tool_names):
-                tool_call_id = _block_field(block, "id") or ""
-                # Emit a tool_input event for the UI even though the
-                # tool didn't actually run — the strip shows "Tool X
-                # is awaiting approval".
-                await ctx.emitter.tool_input(
-                    tool_call_id=tool_call_id,
-                    tool_name=tool_name,
-                    args=dict(args),
-                )
-                config.messages.append({"role": "assistant", "content": content_blocks})
+        ran: list[dict[str, Any]] = []
+        for call in calls:
+            if call.id in ask or call.id in spawns:
+                continue
+            await execute_tool_call(
+                ctx.emitter,
+                tools_by_name.get(call.name),
+                tool_call_id=call.id,
+                tool_name=call.name,
+                args=call.args,
+                results=ran,
+            )
+
+        # The questions first, one at a time in call order, then the spawns.
+        for call in calls:
+            if call.id in ask:
                 return RunStepOutcome(
                     done=False,
                     pending_input=PendingInputDescriptor(
-                        tool_call_id=tool_call_id,
-                        tool=tool_name,
-                        args=dict(args),
+                        tool_call_id=call.id, tool=call.name, args=dict(call.args)
                     ),
                 )
+        for call in calls:
+            if call.id in spawns:
+                return RunStepOutcome(
+                    done=False,
+                    spawn=SpawnDescriptor(tool_call_id=call.id, tasks=parse_spawn_specs(call.args)),
+                )
 
-        # No gated tool — execute everything, append result, loop.
-        config.messages.append({"role": "assistant", "content": content_blocks})
-
-        tool_result_blocks: list[dict[str, Any]] = []
-        for block in tool_use_blocks:
-            tool_call_id = _block_field(block, "id") or ""
-            tool_name = _block_field(block, "name") or ""
-            args = _block_field(block, "input") or {}
-            if not isinstance(args, dict):
-                args = {}
-
-            await ctx.emitter.tool_input(
-                tool_call_id=tool_call_id,
-                tool_name=tool_name,
-                args=dict(args),
-            )
-
-            await execute_tool_call(
-                ctx.emitter,
-                tools_by_name.get(tool_name),
-                tool_call_id=tool_call_id,
-                tool_name=tool_name,
-                args=args,
-                results=tool_result_blocks,
-            )
-
-        config.messages.append({"role": "user", "content": tool_result_blocks})
+        config.messages.append({"role": "user", "content": ran})
+        if ledger is not None:
+            ledger.reset()
 
         # Model still needs to respond after seeing the tool results.
         # The runner's loop will call us again.
@@ -299,27 +267,35 @@ async def execute_tool_call(
     tool_name: str,
     args: dict[str, Any],
     results: list[dict[str, Any]],
+    approved: bool = False,
 ) -> None:
     """Run one tool call: emit its `tool_output` (plus a `step_error`
     on failure) and append its `tool_result` block to `results`.
 
-    A side-effecting tool (see `tool_ledger`) is bracketed by the bound
-    ledger's execution record — `record_started` before it runs,
-    `record_finished` once its result is in `results` — so a worker that
-    dies mid-execution leaves a checkpoint saying so, and the reclaimed
-    run does not run it again. Shared by the step fn and the executor's
-    completion of a reclaimed in-flight turn."""
+    With a bound ledger every result is checkpointed (`record_finished`),
+    so a finished call never runs again. A side-effecting tool (see
+    `tool_ledger`; `approved`: the user approved this very call, which
+    makes it one whatever the gates say now) is also marked before it
+    runs (`record_started`) — so a worker that dies mid-execution leaves a
+    checkpoint saying so, and the reclaimed run does not run it again.
+    Shared by the step fn and the executor's turn resolution."""
+    ledger = tool_ledger.current()
     if descriptor is None:
-        msg = f"unknown tool: {tool_name}"
+        msg = (
+            f'Approved, but the tool "{tool_name}" is not available for this run any more; '
+            "it did not run."
+            if approved
+            else f"unknown tool: {tool_name}"
+        )
         await emitter.step_error(msg, will_retry=True)
         await emitter.tool_output(tool_call_id=tool_call_id, tool_name=tool_name, summary=msg)
         results.append(_make_tool_result_block(tool_call_id, msg, is_error=True))
+        if ledger is not None:
+            await ledger.record_finished(results[-1])
         return
 
-    ledger = tool_ledger.current()
-    guarded = ledger is not None and ledger.is_side_effecting(tool_name, descriptor)
-    if ledger is not None and guarded:
-        await ledger.record_started(tool_call_id, results)
+    if ledger is not None and (approved or ledger.is_side_effecting(tool_name, descriptor)):
+        await ledger.record_started(tool_call_id)
 
     # Last gate before a side effect: a worker whose job lease was
     # taken over must not run the tool (the new owner will).
@@ -351,8 +327,8 @@ async def execute_tool_call(
         )
         results.append(_make_tool_result_block(tool_call_id, result.text, is_error=False))
 
-    if ledger is not None and guarded:
-        await ledger.record_finished(results)
+    if ledger is not None:
+        await ledger.record_finished(results[-1])
 
 
 # --- helpers -------------------------------------------------------------
@@ -404,13 +380,32 @@ def _coerce_content_blocks(final_message: Any) -> list[dict[str, Any]]:
     return blocks
 
 
+def sendable_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`messages` as the Messages API takes them.
+
+    Assistant turns are kept as `model_dump()`s of the SDK's response
+    blocks, whose fields aren't all request params: `parsed_output` (the
+    SDK's `__api_exclude__`, which it only applies to model objects, not
+    to dicts) and optional ones dumped as null. Done on send, so turns
+    already saved in checkpoints are covered too."""
+    out: list[dict[str, Any]] = []
+    for message in messages:
+        content = message.get("content")
+        if message.get("role") == "assistant" and isinstance(content, list):
+            content = [
+                {k: v for k, v in block.items() if v is not None and k != "parsed_output"}
+                if isinstance(block, dict)
+                else block
+                for block in content
+            ]
+            message = {**message, "content": content}
+        out.append(message)
+    return out
+
+
 def _block_type(block: dict[str, Any]) -> str | None:
     val = block.get("type")
     return val if isinstance(val, str) else None
-
-
-def _block_field(block: dict[str, Any], key: str) -> Any:
-    return block.get(key)
 
 
 def _make_tool_result_block(

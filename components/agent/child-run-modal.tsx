@@ -2,9 +2,9 @@
 
 /**
  * Child-run drill-in (subagent orchestration PR-3b). A right-side Sheet
- * that tails one child subagent task's run, read-only. Opened from the
- * task strip's SubagentGroup via `openChildRunViewer`. Mirrors the
- * text/pdf viewer Host + Sheet pattern.
+ * that tails one child subagent task's run, answers its question (Q59)
+ * and skips it (Q60). Opened from the task strip's SubagentGroup via
+ * `openChildRunViewer`. Mirrors the text/pdf viewer Host + Sheet pattern.
  */
 
 import { useEffect } from "react"
@@ -36,10 +36,10 @@ function ChildRunView({
   onClose: () => void
 }) {
   const run = useTaskRun()
+  const { resume } = run
   useEffect(() => {
-    void run.resume(childTaskId, 0)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [childTaskId])
+    resume(childTaskId)
+  }, [childTaskId, resume])
 
   return (
     <Sheet open={true} onOpenChange={(o) => { if (!o) onClose() }}>
@@ -56,6 +56,10 @@ function ChildRunView({
             runId={run.runId}
             isRunning={run.isRunning}
             error={run.error}
+            subagent
+            cancelling={run.isCancelling}
+            onCancel={run.cancel}
+            onStale={run.refresh}
           />
         </div>
       </SheetContent>

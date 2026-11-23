@@ -259,6 +259,71 @@ describe("POST /api/tasks/:id/respond — payload shapes per requestKind", () =>
   })
 })
 
+describe("POST /api/tasks/:id/respond — an approval needs a boolean (B13)", () => {
+  beforeEach(() => {
+    mocks.getQuestionKind.mockImplementation(async () => "approval")
+  })
+
+  test.each([
+    ["absent", {}],
+    ["a selection instead", { selection: ["yes"] }],
+    ["a value instead", { value: "yes" }],
+    ['the string "true"', { approved: "true" }],
+    ["1", { approved: 1 }],
+    ["null", { approved: null }],
+  ])("%s → 400, nothing enqueued", async (_name, answer) => {
+    const { POST } = await import("./route")
+    const res = await POST(jsonPost({ requestId: "tu_1", ...answer }), { params })
+    expect(res.status).toBe(400)
+    expect((await res.json()).code).toBe("invalid_request")
+    expect(mocks.enqueueRespondJob).not.toHaveBeenCalled()
+  })
+
+  test("the kind looked up is that question's", async () => {
+    const { POST } = await import("./route")
+    await POST(jsonPost(validBody({})), { params })
+    expect(mocks.getQuestionKind.mock.calls[0][3]).toBe("tu_1")
+  })
+
+  test.each([[true], [false]])("approved=%s → 202", async (approved) => {
+    const { POST } = await import("./route")
+    const res = await POST(jsonPost(validBody({ approved })), { params })
+    expect(res.status).toBe(202)
+  })
+
+  test.each([["choice"], ["input"], ["ui-part"]])("a %s needs no `approved`", async (kind) => {
+    mocks.getQuestionKind.mockImplementation(async () => kind)
+    const { POST } = await import("./route")
+    const res = await POST(jsonPost(validBody({ value: "x" })), { params })
+    expect(res.status).toBe(202)
+  })
+})
+
+describe("POST /api/tasks/:id/respond — a child and a second answer", () => {
+  test("a child is answered in place", async () => {
+    mocks.getRun.mockImplementation(async () => ({
+      ...pausedRun(),
+      parent_task_id: "44444444-4444-4444-4444-444444444444",
+    }))
+    const { POST } = await import("./route")
+    const res = await POST(jsonPost(validBody({ approved: true })), { params })
+    expect(res.status).toBe(202)
+  })
+
+  test("a second answer to one question → 409 {code, message}", async () => {
+    const { TaskWriteError } = await import("@/server/agent/task-writes")
+    mocks.enqueueRespondJob.mockImplementation(async () => {
+      throw new TaskWriteError("enqueue respond: question already answered", "55000")
+    })
+    const { POST } = await import("./route")
+    const res = await POST(jsonPost(validBody({ approved: true })), { params })
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { code: string; message: string }
+    expect(body.code).toBe("invalid_state")
+    expect(body.message).toMatch(/already answered/)
+  })
+})
+
 describe("POST /api/tasks/:id/respond — store / queue failures", () => {
   test("enqueueRespondJob throw → typed error response", async () => {
     mocks.enqueueRespondJob.mockImplementation(async () => {

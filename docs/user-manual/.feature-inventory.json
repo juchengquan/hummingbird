@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-22T03:18:32Z",
+  "generatedAt": "2026-11-22T16:30:55Z",
   "panels": [
     {
       "id": "agents-dialog",
@@ -464,13 +464,13 @@
     },
     {
       "id": "ANTHROPIC_API_KEY",
-      "description": "Anthropic API key — read by the Python agent service (Phase 2b-1+). When set, the executor uses the real `messages.stream` against Anthropic for any `start` job on a flagged user. Empty → the executor falls back to the Phase 2a stub step fn (two canned tokens), so the service stays runnable in dev without a live key. The Next.js side talks to Anthropic via the Vercel AI Gateway today and doesn't read this directly.",
+      "description": "Anthropic API key — read by the Python agent service (Phase 2b-1+). The executor uses `messages.stream` against Anthropic for every task. Empty → every run fails with a message saying so, background tasks included (nothing falls back to canned output). The Next.js side talks to Anthropic via the Vercel AI Gateway today and doesn't read this directly.",
       "required": true,
       "sourceFile": ".env.example"
     },
     {
       "id": "ANTHROPIC_BASE_URL",
-      "description": "Optional Anthropic base-URL override. Empty → SDK default (https://api.anthropic.com). Set to point the Python service's `AsyncAnthropic` client at any Anthropic-compatible endpoint: - a proxy or self-hosted gateway, - a region-specific upstream (Minimax's `/anthropic/v1` host, etc.), - a local model serving the Anthropic messages API. Mirrors the TS side's `MINIMAX_CN_BASE_URL` override pattern. Has no effect when `ANTHROPIC_API_KEY` is empty (the stub doesn't network).",
+      "description": "Optional Anthropic base-URL override. Empty → SDK default (https://api.anthropic.com). Set to point the Python service's `AsyncAnthropic` client at any Anthropic-compatible endpoint: - a proxy or self-hosted gateway, - a region-specific upstream (Minimax's `/anthropic/v1` host, etc.), - a local model serving the Anthropic messages API. Mirrors the TS side's `MINIMAX_CN_BASE_URL` override pattern. Has no effect when `ANTHROPIC_API_KEY` is empty.",
       "required": true,
       "sourceFile": ".env.example"
     },
@@ -675,6 +675,12 @@
     {
       "id": "VISION_MODEL",
       "description": "Vision document extraction (optional). Picks the vision-capable model used to transcribe layout-rich / scanned PDFs (render pages → image → markdown tables/captions) on top of the text-only pass. Must name a model flagged `supportsVision` in config/models.json. Unset → the first `supportsVision` model in the registry is used; if none is flagged, the vision pass is skipped entirely (text-only extraction). See docs/PLAN-multimodal-docs.md. Example: `anthropic/claude-sonnet-4.6`.",
+      "required": true,
+      "sourceFile": ".env.example"
+    },
+    {
+      "id": "WORKER_STUB_MODEL",
+      "description": "Tests only (agent-py). `true` runs background tasks on a model-free stub that answers canned text; empty / `false` is off, any other value fails the service at boot. Never set it in a deployment.",
       "required": true,
       "sourceFile": ".env.example"
     }
