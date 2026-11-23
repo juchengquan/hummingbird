@@ -682,7 +682,9 @@ export interface paths {
         /**
          * Answer Run
          * @description `answerRun` — a sub-agent run's question answered in place (Q59,
-         *     RUN_EVENTS.md § 4.4). Wave 6-A: `RunRepository.answer_in_place`.
+         *     RUN_EVENTS.md § 4.4): the answer is queued as the run's `respond` job
+         *     (`RunRepository.answer_in_place`) and the run comes back still
+         *     `interrupted`, `answerPending: true`, until a worker picks it up.
          */
         post: operations["answer_run_v1_runs__run_id__answers_post"];
         delete?: never;
@@ -702,8 +704,9 @@ export interface paths {
         put?: never;
         /**
          * Mark Run Delivered
-         * @description `markRunDelivered` — a finished task's result was written (Q77).
-         *     Wave 6-A: `RunRepository.mark_delivered`.
+         * @description `markRunDelivered` — a finished task's result was written into its
+         *     conversation (Q70, Q77): `RunRepository.mark_delivered` on the task's
+         *     root, idempotent.
          */
         post: operations["mark_run_delivered_v1_runs__run_id__delivered_post"];
         delete?: never;
