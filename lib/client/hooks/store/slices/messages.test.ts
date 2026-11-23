@@ -84,3 +84,41 @@ describe("clearMessageOutput", () => {
     expect(got).toEqual({ id: msg.id, role: "assistant", content: "", timestamp: msg.timestamp })
   })
 })
+
+describe("addMessageWithId (a task's result, Q70)", () => {
+  test("writes under the given id into the named conversation, once", () => {
+    const conv = useStore.getState().createConversation()
+    const id = "5d2c8a2e-0000-5000-8000-000000000001"
+    const first = useStore.getState().addMessageWithId(id, { role: "assistant", content: "Result" }, conv.id)
+    const again = useStore.getState().addMessageWithId(id, { role: "assistant", content: "Other" }, conv.id)
+    expect(first?.id).toBe(id)
+    expect(again).toBe(first)
+    const messages = useStore.getState().conversations.find((c) => c.id === conv.id)!.messages
+    expect(messages.filter((m) => m.id === id).map((m) => m.content)).toEqual(["Result"])
+  })
+
+  test("a conversation that isn't there gets nothing (no fallback to the active one)", () => {
+    const active = useStore.getState().createConversation()
+    useStore.getState().setActiveConversation(active.id)
+    const before = useStore.getState().conversations.find((c) => c.id === active.id)!.messages.length
+    const out = useStore
+      .getState()
+      .addMessageWithId("5d2c8a2e-0000-5000-8000-000000000002", { role: "assistant", content: "x" }, "deleted-conv")
+    expect(out).toBeNull()
+    expect(useStore.getState().conversations.find((c) => c.id === active.id)!.messages.length).toBe(before)
+  })
+})
+
+describe("createDocumentWithId / createArtifactWithId", () => {
+  test("idempotent on the id", () => {
+    const conv = useStore.getState().createConversation()
+    const s = useStore.getState()
+    const doc = s.createDocumentWithId("doc-derived-1", conv.workspaceId, "Report", "body")
+    expect(useStore.getState().createDocumentWithId("doc-derived-1", conv.workspaceId, "Other", "x")).toBe(doc)
+    expect(useStore.getState().documents.filter((d) => d.id === "doc-derived-1")).toHaveLength(1)
+    const art = s.createArtifactWithId("art-derived-1", { conversationId: conv.id, kind: "markdown", title: "R", content: "b" })
+    expect(art.workspaceId).toBe(conv.workspaceId)
+    expect(useStore.getState().createArtifactWithId("art-derived-1", { conversationId: conv.id, kind: "markdown", content: "c" })).toBe(art)
+    expect(useStore.getState().artifacts.filter((a) => a.id === "art-derived-1")).toHaveLength(1)
+  })
+})
