@@ -1,0 +1,11 @@
+{
+  "scenario": "step-error",
+  "runs": {
+    "run": {
+      "runId": "ad87b5cc-9406-4d8f-8e1f-addc9118e9c0",
+      "parentRole": null,
+      "previousRole": null,
+      "status": "succeeded"
+    }
+  }
+}

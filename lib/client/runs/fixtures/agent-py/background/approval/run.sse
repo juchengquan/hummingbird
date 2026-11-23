@@ -1,0 +1,22 @@
+data: {"type":"RUN_STARTED","threadId":"a32226bd-df05-457e-9a65-0212a1a5a2dd","runId":"e319f8e5-c596-449a-9697-cf6b9d141981"}
+
+id: 3
+data: {"type":"STEP_STARTED","stepName":"step-1"}
+
+id: 4.0
+data: {"type":"TOOL_CALL_START","toolCallId":"send-1","toolCallName":"mcp__s1__send","parentMessageId":"e319f8e5-c596-449a-9697-cf6b9d141981:4"}
+
+id: 4.1
+data: {"type":"TOOL_CALL_ARGS","toolCallId":"send-1","delta":"{\"to\":\"team\"}"}
+
+id: 4
+data: {"type":"TOOL_CALL_END","toolCallId":"send-1"}
+
+id: 5
+data: {"type":"STEP_FINISHED","stepName":"step-1"}
+
+id: 6
+data: {"type":"CUSTOM","name":"hummingbird.interrupt_pending","value":{"id":"send-1","reason":"approval","responseSchema":{"type":"object","required":["approved"],"properties":{"approved":{"type":"boolean"},"args":{}}},"toolCallId":"send-1","metadata":{"hummingbird":{"tool":"mcp__s1__send","args":{"to":"team"}}}}}
+
+data: {"type":"RUN_FINISHED","threadId":"a32226bd-df05-457e-9a65-0212a1a5a2dd","runId":"e319f8e5-c596-449a-9697-cf6b9d141981","outcome":{"type":"interrupt","interrupts":[{"id":"send-1","reason":"approval","metadata":{"hummingbird":{"args":{"to":"team"},"tool":"mcp__s1__send"}},"toolCallId":"send-1","responseSchema":{"type":"object","required":["approved"],"properties":{"args":{},"approved":{"type":"boolean"}}}}]}}
+
