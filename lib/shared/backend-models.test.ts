@@ -9,6 +9,7 @@ import {
   modelsForBackend,
   pickFallbackModel,
   RUNS_ROUTING_AVAILABLE,
+  TASK_FALLBACK_MODEL,
   taskModelFor,
 } from "./backend-models"
 import {
@@ -143,6 +144,13 @@ describe("pickFallbackModel (Q40)", () => {
 })
 
 describe("taskModelFor (Q55)", () => {
+  test("falls back to Haiku, agent-py's own default (Q67)", () => {
+    expect(taskModelFor("deepseek/deepseek-v4-flash")).toEqual({
+      model: "anthropic/claude-haiku-4.5",
+      switchedFrom: "deepseek/deepseek-v4-flash",
+    })
+  })
+
   test("keeps exactly the models the task worker runs", () => {
     for (const { id } of CHAT_MODELS) {
       const { model, switchedFrom } = taskModelFor(id)
@@ -156,7 +164,7 @@ describe("taskModelFor (Q55)", () => {
   })
 
   test("auto, an unknown id and no model at all are switched", () => {
-    const fallback = defaultModelForBackend("agent-service")
+    const fallback = TASK_FALLBACK_MODEL
     expect(taskModelFor(AUTO_MODEL_ID)).toEqual({ model: fallback, switchedFrom: AUTO_MODEL_ID })
     expect(taskModelFor("claude-sonnet-4-6")).toEqual({
       model: fallback,

@@ -105,6 +105,9 @@ export function modelSwitchFor(backend: ModelBackend, model: string): string | n
 /** The task worker, as a backend for the picker and its switch note (Q55). */
 export const TASK_MODEL_BACKEND: ModelBackend = { kind: "agent-service", name: "tasks" }
 
+/** What a task falls back to (Q67): agent-py's own default, the cheap one. */
+export const TASK_FALLBACK_MODEL = "anthropic/claude-haiku-4.5"
+
 /**
  * The model to launch a task with, when `requested` was asked for (absent
  * = the catalog default, as `POST /api/tasks` reads it): itself, or the
@@ -117,7 +120,10 @@ export function taskModelFor(requested: string | null | undefined): {
 } {
   const asked = requested || DEFAULT_CHAT_MODEL
   if (backendAcceptsModel(TASK_MODEL_BACKEND.kind, asked)) return { model: asked, switchedFrom: null }
-  return { model: defaultModelForBackend(TASK_MODEL_BACKEND.kind), switchedFrom: asked }
+  const fallback = backendAcceptsModel(TASK_MODEL_BACKEND.kind, TASK_FALLBACK_MODEL)
+    ? TASK_FALLBACK_MODEL
+    : defaultModelForBackend(TASK_MODEL_BACKEND.kind)
+  return { model: fallback, switchedFrom: asked }
 }
 
 /**

@@ -6,7 +6,7 @@ import { createUIMessageStream, createUIMessageStreamResponse } from "ai"
 import { NextResponse } from "next/server"
 
 import { getSupabaseServerClient } from "@/server/supabase/server"
-import { getRun, listEventsSince, reconcileStaleRuns } from "@/server/agent/store"
+import { getRun, getRunStatus, listEventsSince, reconcileStaleRuns } from "@/server/agent/store"
 import {
   gateLiveTailBatch,
   isTerminalEvent,
@@ -22,6 +22,8 @@ import { toDataPart } from "@/shared/agent/wire"
 // writing a terminal event) — or a terminal event whose task row never
 // turns terminal — can't hold the connection open forever.
 const POLL_MS = 1000
+/** A paused task waits for a person (Q66): poll it less. */
+const PAUSED_POLL_MS = 5000
 const MAX_WALL_MS = 5 * 60_000
 // A read this long may have been cut at PostgREST's `max_rows` (1000 by
 // default, and dropped rows make a page shorter): read on before judging
@@ -152,7 +154,7 @@ export async function GET(
       let step = run.step ?? 0
       /** The previous poll saw the row terminal; this one drains and ends. */
       let ended: RunStatus | undefined
-      const rowStatus = async () => (await getRun(db, id, userId))?.status as RunStatus | undefined
+      const rowStatus = async () => (await getRunStatus(db, id, userId)) ?? undefined
       while (true) {
         const events = await readEventsSince(db, id, userId, cursor)
         let status = ended
@@ -196,7 +198,7 @@ export async function GET(
           // row. A cancel has nothing to wait for.
           if (latest === "cancelled") continue
         }
-        await delay(POLL_MS, req.signal)
+        await delay(latest === "paused" ? PAUSED_POLL_MS : POLL_MS, req.signal)
       }
     },
   })

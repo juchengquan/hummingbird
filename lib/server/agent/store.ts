@@ -73,6 +73,24 @@ export async function getRun(
   return data ?? null
 }
 
+/** A run's status alone: what a watcher polls (Q66). The whole row carries
+ *  the checkpoint, which can be large. Null when it doesn't exist. */
+export async function getRunStatus(
+  db: DB,
+  runId: string,
+  userId: string
+): Promise<RunStatus | null> {
+  const { data, error } = await db
+    .from("tasks")
+    .select("status")
+    .eq("id", runId)
+    .eq("user_id", userId)
+    .eq("mode", BACKGROUND)
+    .maybeSingle()
+  if (error) throw new Error(`getRunStatus: ${error.message}`)
+  return (data?.status as RunStatus | undefined) ?? null
+}
+
 export interface UpdateRunPatch {
   status?: RunStatus
   step?: number

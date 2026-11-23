@@ -129,6 +129,11 @@ export const mocks = {
       _sinceSeq: number,
     ): Promise<unknown[]> => [],
   ),
+  /** Defaults to the `getRun` mock's status, so a test sets one row. */
+  getRunStatus: mock(
+    async (db: unknown, id: string, userId: string): Promise<string | null> =>
+      ((await mocks.getRun(db, id, userId)) as { status?: string } | null)?.status ?? null,
+  ),
   getQuestionKind: mock(
     async (
       _db: unknown,
@@ -169,6 +174,7 @@ export const mocks = {
 
 mock.module("@/server/agent/store", () => ({
   getQuestionKind: mocks.getQuestionKind,
+  getRunStatus: mocks.getRunStatus,
   appendSyntheticResult: mocks.appendSyntheticResult,
   createRun: mocks.createRun,
   getRun: mocks.getRun,
@@ -210,6 +216,11 @@ export function resetAgentMocks(): void {
   mocks.appendEvent.mockImplementation(async () => {})
   mocks.listEventsSince.mockClear()
   mocks.listEventsSince.mockImplementation(async () => [])
+  mocks.getRunStatus.mockClear()
+  mocks.getRunStatus.mockImplementation(
+    async (db: unknown, id: string, userId: string) =>
+      ((await mocks.getRun(db, id, userId)) as { status?: string } | null)?.status ?? null,
+  )
   mocks.getQuestionKind.mockClear()
   mocks.getQuestionKind.mockImplementation(async () => null)
   mocks.appendSyntheticResult.mockClear()

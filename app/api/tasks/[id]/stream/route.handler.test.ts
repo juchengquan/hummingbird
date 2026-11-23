@@ -197,3 +197,24 @@ describe("GET /api/tasks/:id/stream — replay from 0 (B14)", () => {
     expect(events.at(-1)?.kind).toBe("result")
   })
 })
+
+describe("GET /api/tasks/:id/stream — watching a paused task (Q66)", () => {
+  test("polls the status alone, every 5 s while paused", async () => {
+    mocks.getRun.mockImplementation(async () => ({ id: RUN_ID, status: "paused", step: 1 }))
+    mocks.getRunStatus.mockImplementation(async () => "paused")
+    serveLog([ev(1, { kind: "status", status: "queued" }), ev(2, { kind: "status", status: "paused" })])
+    const { GET } = await import("./route")
+    const controller = new AbortController()
+    const req = new NextRequest(get().url, { signal: controller.signal })
+    const res = await GET(req, { params })
+    const reading = readStream(res)
+    await new Promise((resolve) => setTimeout(resolve, 2500))
+    controller.abort()
+    await reading.catch(() => {})
+    // One whole-row read to start; after that the status only, and not
+    // once a second.
+    expect(mocks.getRun.mock.calls.length).toBe(1)
+    expect(mocks.getRunStatus.mock.calls.length).toBeLessThanOrEqual(1)
+  })
+})
+

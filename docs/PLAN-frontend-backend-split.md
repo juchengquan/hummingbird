@@ -121,6 +121,9 @@ three times. The goals:
 | Q63 | Q57 extends to chat on runs (an applied interactive answer can't be given again), as a small PR after 5c |
 | Q64 | After an applied answer fails, the paused run stays as it is (a second answer is a 409); wave 6 shows the chain's last run |
 | Q65 | A short smoke test against the real Anthropic API before 5c merges; the fakes accepted requests the API refuses |
+| Q66 | Watching a task reads its status alone, not the whole row (checkpoint included), and polls every 5 s while it is paused on a question |
+| Q67 | A task whose model it can't run falls back to Haiku (agent-py's own default), not Sonnet |
+| Q68 | Scoping the saved task pointer to the signed-in account waits for wave 6 |
 
 ## Run contract (v1)
 
