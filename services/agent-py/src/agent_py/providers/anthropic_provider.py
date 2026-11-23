@@ -31,6 +31,7 @@ import structlog
 from .. import lease, tool_ledger, tool_turn
 from ..coalescer import make_token_coalescer
 from ..emitter import RunEmitter
+from ..events import ToolImageEvent
 from ..reasoning_effort import ThinkingParams
 from ..runner import (
     PendingInputDescriptor,
@@ -325,6 +326,19 @@ async def execute_tool_call(
             summary=result.summary,
             results=result.source_results,
         )
+        if result.images:
+            # The images reach the user as a `tool_image` part, as on an
+            # interactive run (`chat_loop.emit_tool_run`) — the only place a
+            # data URL (`localFilesOnly`, Q71) can go.
+            await emitter.emit(
+                ToolImageEvent,
+                tool_call_id=tool_call_id,
+                mode=result.image_mode,
+                images=tuple(
+                    {"id": f"{tool_call_id}-{i}", **img, "mode": result.image_mode}
+                    for i, img in enumerate(result.images)
+                ),
+            )
         results.append(_make_tool_result_block(tool_call_id, result.text, is_error=False))
 
     if ledger is not None:

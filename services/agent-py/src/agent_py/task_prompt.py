@@ -74,19 +74,38 @@ _STEP_2E_WITH_TOOL = (
 )
 _STEP_2E_WITHOUT_TOOL = "   e. Move on to the next sub-question.\n"
 
-_RESEARCH_LOOP_TAIL = (
+_STEP_3_FILES = (
     "3. Gap pass. Re-read your notes. Identify sub-questions that are "
     "under-supported (only one source, contradictions, key claim "
     "unanchored). For each, run one targeted `webSearch` + `webFetch` "
     "(or `searchFiles` against a relevant file) to fill the gap. Update "
     "notes in place.\n"
-    "4. Synthesize. Write the final report as Markdown with:\n"
-    "   - A short executive summary (3–5 sentences).\n"
-    "   - One `##` section per sub-question, in plan order, headed by "
-    "the sub-question.\n"
-    "   - Inline `[N]` markers tying every non-trivial claim to a source.\n"
-    "   - A `## Sources` section at the end listing each source as "
-    "`[N] Title — URL` (or `[N] file: <name>` for attached files).\n\n"
+)
+_STEP_3_WEB_ONLY = (
+    "3. Gap pass. Re-read your notes. Identify sub-questions that are "
+    "under-supported (only one source, contradictions, key claim "
+    "unanchored). For each, run one targeted `webSearch` + `webFetch` "
+    "to fill the gap. Update notes in place.\n"
+)
+
+
+def _step_4(*, files_enabled: bool) -> str:
+    return (
+        "4. Synthesize. Write the final report as Markdown with:\n"
+        "   - A short executive summary (3–5 sentences).\n"
+        "   - One `##` section per sub-question, in plan order, headed by "
+        "the sub-question.\n"
+        "   - Inline `[N]` markers tying every non-trivial claim to a source.\n"
+        "   - A `## Sources` section at the end listing each source as "
+        + (
+            "`[N] Title — URL` (or `[N] file: <name>` for attached files).\n\n"
+            if files_enabled
+            else "`[N] Title — URL`.\n\n"
+        )
+    )
+
+
+_RESEARCH_LOOP_TAIL = (
     "Constraints:\n"
     "- Do not pad. If a sub-question was empty, say so and move on.\n"
     "- Prefer recent (≤ 24 months) sources except for definitional context.\n"
@@ -107,6 +126,8 @@ def _research_loop(*, files_enabled: bool, plan_tool: bool) -> str:
         + (_STEP_2B_FILES_FIRST if files_enabled else _STEP_2B_WEB_ONLY)
         + _STEP_2CD
         + (_STEP_2E_WITH_TOOL if plan_tool else _STEP_2E_WITHOUT_TOOL)
+        + (_STEP_3_FILES if files_enabled else _STEP_3_WEB_ONLY)
+        + _step_4(files_enabled=files_enabled)
         + _RESEARCH_LOOP_TAIL
     )
 

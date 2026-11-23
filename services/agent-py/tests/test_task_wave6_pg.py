@@ -6,15 +6,21 @@ a scripted model (`task_world`). Each test names the brief item it proves.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
+from typing import Any
 
 import pytest
 import pytest_asyncio
 
+from agent_py import image_storage
+from agent_py import settings as settings_module
+from agent_py.image_storage import DownloadedImage, PersistedImage
 from agent_py.resume_answers import DECLINED_ANSWER, DECLINED_APPROVAL
 from agent_py.runs.in_place import respond_job_payload
+from agent_py.tools import image_gen as image_gen_module
+from agent_py.tools.minimax_image_client import MinimaxImage, MinimaxImageSuccess
 
-from .task_world import SEND, World, ask, open_world, pg_only, result_of, say, spawn, use
+from .task_world import MODEL, SEND, World, ask, open_world, pg_only, result_of, say, spawn, use
 
 pytestmark = [pg_only, pytest.mark.asyncio]
 
@@ -114,3 +120,100 @@ async def test_a_cancelled_in_place_answer_declines_a_childs_question(world: Wor
     assert await world.status(parent) == "done"
     child_calls = [c for c in world.model.calls if c["messages"][0]["content"] == "child-ask"]
     assert result_of(child_calls[-1]["messages"], "q1")["content"] == DECLINED_ANSWER
+
+
+# --- Q71: inputs ------------------------------------------------------------------------------
+
+PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+
+
+def _background(world: World, **props: Any) -> dict[str, Any]:
+    return {
+        "mode": "background",
+        "model": MODEL,
+        "goal": "Do it",
+        "workspaceId": world.workspace,
+        **props,
+    }
+
+
+async def test_a_background_research_prompt_never_asks_for_searchfiles(world: World) -> None:
+    world.model.script("Do it", [say("# Report")])
+    skills = [{"id": "searchFiles"}, {"id": "webSearch"}]
+    response, run = await world.post_run(_background(world, research=True, skills=skills))
+    assert response.status_code == 202, response.text
+    await world.work()
+
+    [call] = world.model.calls
+    assert "You are a research agent" in call["system"]
+    assert "searchFiles" not in call["system"]
+    # The tool itself is still offered (its prompt line waits for Q49).
+    assert "searchFiles" in [t["name"] for t in call["tools"]]
+    assert await world.status(run) == "done"
+
+
+@pytest.fixture
+def images(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, list[Any]]]:
+    """Minimax and the image download faked; Storage configured, so a run
+    that may upload would."""
+    monkeypatch.setenv("MINIMAX_CN_API_KEY", "k")
+    monkeypatch.setenv("SUPABASE_URL", "https://proj.supabase.test")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service")
+    settings_module.get_settings.cache_clear()
+    calls: dict[str, list[Any]] = {"uploaded": [], "generated": []}
+
+    async def generate(**kwargs: Any) -> MinimaxImageSuccess:
+        calls["generated"].append(kwargs)
+        return MinimaxImageSuccess(images=[MinimaxImage(url="https://m.test/cat.png")])
+
+    async def download(url: str, **_: Any) -> DownloadedImage:
+        return DownloadedImage(body=b"\x89PNG-bytes", mime="image/png")
+
+    async def upload(*args: Any, **kwargs: Any) -> PersistedImage:
+        calls["uploaded"].append(kwargs)
+        return PersistedImage(url="https://signed.test/cat.png", storage_path="p", format="png")
+
+    monkeypatch.setattr(image_gen_module, "minimax_generate_image", generate)
+    monkeypatch.setattr(image_storage, "download_image", download)
+    monkeypatch.setattr(image_storage, "_upload_and_sign", upload)
+    monkeypatch.setattr(image_gen_module, "persist_generated_image", upload)
+    yield calls
+    monkeypatch.undo()
+    settings_module.get_settings.cache_clear()
+
+
+async def test_local_files_only_keeps_a_background_image_out_of_storage(
+    world: World, images: dict[str, list[Any]]
+) -> None:
+    world.model.script(
+        "Draw a cat", [use("g1", "generateImage", prompt="a cat")], [say("Here it is.")]
+    )
+    message = {
+        "id": "m",
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "Draw a cat"},
+            {
+                "type": "image",
+                "source": {"type": "data", "value": PNG_B64, "mimeType": "image/png"},
+            },
+        ],
+    }
+    response, run = await world.post_run(
+        _background(world, localFilesOnly=True, skills=[{"id": "imageGen"}]),
+        messages=[message],
+    )
+    assert response.status_code == 202, response.text
+    await world.work()
+
+    assert await world.status(run) == "done"
+    assert images["generated"] and images["uploaded"] == []
+    assert (await world.task(run))["checkpoint"]["config"]["localFilesOnly"] is True
+    [part] = await world.events(run, "tool_image")
+    assert part["images"][0]["url"].startswith("data:image/png;base64,")
+    # Images in the message still reach the model (Q71).
+    first_turn = world.model.calls[0]["messages"][0]["content"]
+    assert {
+        "type": "image",
+        "source": {"type": "base64", "media_type": "image/png", "data": PNG_B64},
+    } in first_turn

@@ -592,7 +592,12 @@ async def _build_run_tools(
     (Q48, `_allowed_mcp_server_ids_from`)."""
     cfg = checkpoint.get("config")
     workspace_id = _str_or_none(cfg.get("workspaceId")) if isinstance(cfg, dict) else None
-    context = ToolContext(pool=pool, user_id=user_id, workspace_id=workspace_id)
+    context = ToolContext(
+        pool=pool,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        local_files_only=isinstance(cfg, dict) and cfg.get("localFilesOnly") is True,
+    )
     skill_tool_names, skill_configs = _skills_from(checkpoint)
     extra_tools: dict[str, ToolDescriptor] = {}
     mcp_gated: set[str] = set()
@@ -1524,9 +1529,10 @@ def _default_make_step_fn(
 
     system = workspace_prompt
     if _str_or_none(cfg.get("mode")) == RESEARCH_MODE:
-        system = build_research_system_prompt(
-            workspace_prompt, files_enabled="searchFiles" in tools_dict
-        )
+        # Q71: no background run carries a file id, so the prompt never
+        # tells the model to call `searchFiles({fileId})` — until Q49 is
+        # lifted for cloud files. The tool itself stays offered.
+        system = build_research_system_prompt(workspace_prompt, files_enabled=False)
 
     # Phase 3b: read the run's gated-tool allow-list. Names match
     # `tools[].name` (skill names + prefixed MCP tool names). When

@@ -185,7 +185,7 @@ def background_checkpoint(
     `workspaceId` (cloud MCP + `searchFiles`), `requireApprovalFor`,
     `mode` (`"research"` for `research: true`, else `"default"`),
     `allowedMcpServerIds` when set (Q48), `skills`, plus
-    `reasoningEffort`.
+    `reasoningEffort` and `localFilesOnly` (Q71).
 
     Built from `messages` and `forwardedProps` only — never `state`, so
     local MCP credentials (Q45) cannot reach `tasks.checkpoint`."""
@@ -210,6 +210,10 @@ def background_checkpoint(
         config["allowedMcpServerIds"] = list(dict.fromkeys(str(i) for i in fp.allowedMcpServerIds))
     if fp.reasoningEffort is not None:
         config["reasoningEffort"] = fp.reasoningEffort
+    if fp.localFilesOnly:
+        # Q71: generated files stay out of Storage (the tool context's
+        # `local_files_only`, `executor._build_run_tools`).
+        config["localFilesOnly"] = True
     return {"messages": messages, "config": config}
 
 
