@@ -97,6 +97,25 @@ describe("POST /api/tasks/schedules — cron frequency", () => {
   })
 })
 
+describe("POST /api/tasks/schedules — model (Q73)", () => {
+  test("no model given → Haiku is stored", async () => {
+    const { client, inserted } = clientWithInsert({ data: row, error: null })
+    supabaseClient.value = client
+    const { POST } = await import("./route")
+    const res = await POST(post({ ...base, cron: "0 8 * * *" }))
+    expect(res.status).toBe(201)
+    expect((inserted[0] as { model: string }).model).toBe("anthropic/claude-haiku-4.5")
+  })
+
+  test("a chosen model is kept", async () => {
+    const { client, inserted } = clientWithInsert({ data: row, error: null })
+    supabaseClient.value = client
+    const { POST } = await import("./route")
+    await POST(post({ ...base, cron: "0 8 * * *", model: "anthropic/claude-sonnet-4.6" }))
+    expect((inserted[0] as { model: string }).model).toBe("anthropic/claude-sonnet-4.6")
+  })
+})
+
 describe("POST /api/tasks/schedules — guard-trigger errors", () => {
   test("per-user cap (54000) → 409 limit_reached", async () => {
     const { client } = clientWithInsert({

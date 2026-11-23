@@ -19,7 +19,7 @@ import {
   ScheduleResponseSchema,
 } from "@/shared/api-schemas"
 import { getSupabaseServerClient } from "@/server/supabase/server"
-import { validateScheduleCron } from "@/server/agent/schedules"
+import { scheduleModelOnSave, validateScheduleCron } from "@/server/agent/schedules"
 import { taskWriteErrorResponse } from "@/server/agent/task-writes"
 import { rowToSchedule } from "@/server/agent/schedule-codec"
 import type { Database, Json } from "@/shared/supabase/types"
@@ -110,7 +110,8 @@ export async function POST(req: NextRequest) {
     cron: body.cron,
     timezone,
     enabled: body.enabled ?? true,
-    model: body.model ?? null,
+    // Haiku when none is given (Q73): the editor sends none.
+    model: scheduleModelOnSave(body.model, true),
     system_prompt: body.systemPrompt ?? null,
     skills: (body.skills ?? null) as Json | null,
     max_steps: body.maxSteps ?? null,

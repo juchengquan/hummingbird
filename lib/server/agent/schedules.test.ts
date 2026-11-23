@@ -226,8 +226,9 @@ describe("dispatchDueSchedules — a fire", () => {
     next_run_at: new Date(Date.now() - 1_000).toISOString(),
   }
 
-  function fireDb(enqueueError: { message: string; code: string } | null) {
+  function fireDb(rpcError: { message: string; code: string } | null) {
     const updates: Array<{ table: string; patch: Record<string, unknown>; filters: unknown[][] }> = []
+    const rpcs: Array<{ fn: string; args: Record<string, unknown> }> = []
     const db = {
       from(table: string) {
         const read = {
@@ -264,23 +265,34 @@ describe("dispatchDueSchedules — a fire", () => {
           },
         }
       },
-      rpc: async () => ({ data: enqueueError ? null : "job-1", error: enqueueError }),
+      rpc: async (fn: string, args: Record<string, unknown>) => {
+        rpcs.push({ fn, args })
+        return { data: rpcError ? null : "queued", error: rpcError }
+      },
     }
-    return { db: db as unknown as Parameters<typeof dispatchDueSchedules>[0], updates }
+    return { db: db as unknown as Parameters<typeof dispatchDueSchedules>[0], updates, rpcs }
   }
 
-  test("no model is given no default: the worker fails it with \"no model\" (Q56)", async () => {
-    const { db, updates } = fireDb(null)
-    await dispatchDueSchedules(db)
-    const saved = updates.find((u) => u.table === "tasks" && "checkpoint" in u.patch)
-    expect((saved?.patch.checkpoint as { config: { model: string } }).config.model).toBe("")
+  test("the task is created through create_scheduled_task (0047, Q79)", async () => {
+    const { db, rpcs, updates } = fireDb(null)
+    expect(await dispatchDueSchedules(db)).toBe(1)
+    const [call] = rpcs
+    expect(call.fn).toBe("create_scheduled_task")
+    expect(call.args.p_goal).toBe("Report")
+    expect(call.args.p_max_steps).toBe(25)
+    // No default at fire time (Q56): a schedule without a model fails "no
+    // model"; the routes store Haiku when it is saved (Q73).
+    expect((call.args.p_checkpoint as { config: { model: string } }).config.model).toBe("")
+    const stamp = updates.find((u) => u.table === "task_schedules" && "last_run_task_id" in u.patch)
+    expect(stamp?.patch.last_run_task_id).toBe(call.args.p_id)
   })
 
-  test("a failed enqueue leaves no queued orphan (B18)", async () => {
-    const { db, updates } = fireDb({ message: "too many queued jobs", code: "54000" })
-    await dispatchDueSchedules(db)
-    const settled = updates.find((u) => u.table === "tasks" && u.patch.status === "failed")
-    expect(settled?.filters).toContainEqual(["status", ["queued"]])
+  test("a refused create stamps no task on the schedule", async () => {
+    const { db, updates } = fireDb({ message: "invalid checkpoint", code: "22023" })
+    expect(await dispatchDueSchedules(db)).toBe(0)
+    expect(
+      updates.find((u) => u.table === "task_schedules" && "last_run_task_id" in u.patch)
+    ).toBeUndefined()
   })
 })
 
