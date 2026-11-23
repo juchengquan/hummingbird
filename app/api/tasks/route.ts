@@ -22,10 +22,6 @@ import { NextResponse } from "next/server"
 
 import { DEFAULT_CHAT_MODEL } from "@/shared/models"
 import { backendAcceptsModel } from "@/shared/backend-models"
-import {
-  ProviderUnavailableError,
-  selectModel,
-} from "@/server/model-provider"
 import { categorizeError } from "@/shared/api-errors"
 import {
   CHAT_BODY_MAX,
@@ -154,20 +150,9 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // Fail fast on a misconfigured provider — the worker would otherwise
-  // fail the job after the route has already returned 202.
-  try {
-    selectModel(modelId)
-  } catch (error) {
-    if (error instanceof ProviderUnavailableError) {
-      return NextResponse.json(
-        { code: "auth", message: error.message },
-        { status: 401 }
-      )
-    }
-    const { status, code, message } = categorizeError(error)
-    return NextResponse.json({ code, message }, { status })
-  }
+  // No Next-side provider check: agent-py's worker calls the model with
+  // its own key (an AI Gateway key here is neither needed nor used), and
+  // the model is checked against what the worker runs above.
 
   // Local-mode MCP creds (`body.mcpServers`) live in the browser; the
   // background worker has no way to use them. Cloud-mode MCP works as

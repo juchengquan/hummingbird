@@ -59,13 +59,8 @@ export const signedOut = () => ({
 
 // --- model-provider --------------------------------------------------------
 
-/** The route uses `selectModel` as a fail-fast guard before persisting a
- *  run. In CI / dev with no API key configured the real call throws
- *  `ProviderUnavailableError` → the route returns 401, which would mask
- *  every happy-path assertion. The stub returns a benign sentinel; the
- *  `ProviderUnavailableError` class is re-exported so the route's
- *  `instanceof` check still matches when a test wants to exercise the
- *  401 path. */
+/** Next itself has no provider configured here (no AI Gateway key): the
+ *  task routes must not need one, as agent-py's worker calls the model. */
 class ProviderUnavailableError extends Error {
   constructor(message: string) {
     super(message)
@@ -75,7 +70,9 @@ class ProviderUnavailableError extends Error {
 
 mock.module("@/server/model-provider", () => ({
   ProviderUnavailableError,
-  selectModel: () => ({ stub: true }),
+  selectModel: (modelId: string) => {
+    throw new ProviderUnavailableError(`no provider configured for model "${modelId}"`)
+  },
 }))
 
 // --- Agent store + jobs (union of symbols every route uses) ----------------

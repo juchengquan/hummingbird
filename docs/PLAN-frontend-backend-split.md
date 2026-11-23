@@ -117,6 +117,10 @@ three times. The goals:
 | Q59 | A sub-agent's question is answered in place and shown on the parent task: a named exception to Q24, children only. 5c fixes the card and the old route; wave 6 adds the runs endpoint |
 | Q60 | Cancel means the whole task, on old and new paths: its chain of answers and its children, and the question doesn't reopen. Cancelling one child skips it and the parent continues |
 | Q61 | Tasks use runs only while "agent-py (runs)" is selected, and each task stays on the path it started on. Before that is a default, check token signing: agent-py accepts HS256 only |
+| Q62 | Migrating 0045 never starts a model call: a parent left waiting on ended sub-agents fails ("run it again") |
+| Q63 | Q57 extends to chat on runs (an applied interactive answer can't be given again), as a small PR after 5c |
+| Q64 | After an applied answer fails, the paused run stays as it is (a second answer is a 409); wave 6 shows the chain's last run |
+| Q65 | A short smoke test against the real Anthropic API before 5c merges; the fakes accepted requests the API refuses |
 
 ## Run contract (v1)
 

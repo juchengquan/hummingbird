@@ -340,9 +340,10 @@ async def test_waiting_parents(old: Old) -> None:
     row = await old.row(working)
     assert (row["status"], row["pending_children"], row["finished_at"]) == ("paused", 2, None)
     assert await jobs(working) == []
+    # Q62: migrating never starts a model call, however recently it moved.
     row = await old.row(recent)
-    assert (row["status"], row["pending_children"]) == ("paused", 0)
-    assert await jobs(recent) == ["continue"]
+    assert (row["status"], row["pending_children"]) == ("failed", 0)
+    assert await jobs(recent) == []
     assert await old.status(stale) == "failed" and await jobs(stale) == []
     assert await old.status(resuming) == "paused" and await jobs(resuming) == ["continue"]
 

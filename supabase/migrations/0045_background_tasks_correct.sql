@@ -46,9 +46,8 @@
 --   live resume of a cancelled run, live child of an ended parent
 --                          cancelled.
 --   waiting parent         its counter is recounted. With no live child
---                          and no job: continued if it moved in the last
---                          hour, failed if older (as 0036: nothing dead
---                          for weeks starts spending on deploy).
+--                          and no job: failed, "run it again" (Q62:
+--                          migrating never starts a model call).
 --   queued, never queued a job, older than an hour
 --                          failed (an orphan of a failed enqueue).
 --   queued, start job claimed
@@ -912,7 +911,6 @@ do $$
 declare
   v_parent record;
   v_live integer;
-  v_moved timestamptz;
 begin
   for v_parent in
     select t.id, t.user_id, t.updated_at
@@ -921,9 +919,8 @@ begin
        and t.status = 'paused'
        and t.checkpoint ? 'awaiting_children'
   loop
-    select count(*) filter (where c.status in ('queued', 'running', 'paused')),
-           greatest(v_parent.updated_at, max(c.finished_at), max(c.updated_at))
-      into v_live, v_moved
+    select count(*) filter (where c.status in ('queued', 'running', 'paused'))
+      into v_live
       from public.tasks c
      where c.parent_task_id = v_parent.id and c.user_id = v_parent.user_id;
     update public.tasks t
@@ -933,19 +930,14 @@ begin
       select 1 from public.task_jobs j
        where j.task_id = v_parent.id and j.status in ('queued', 'running')
     ) then
-      if v_moved >= now() - interval '1 hour' then
-        insert into public.task_jobs (task_id, user_id, action, payload, status, scheduled_at)
-        values (v_parent.id, v_parent.user_id, 'continue', '{}'::jsonb, 'queued', now());
-      else
-        update public.tasks t
-           set status = 'failed',
-               outcome = jsonb_build_object(
-                 'type', 'error',
-                 'code', 'worker_lost',
-                 'message', 'The task stopped while waiting for its sub-agents. Run it again.'
-               )
-         where t.id = v_parent.id;
-      end if;
+      update public.tasks t
+         set status = 'failed',
+             outcome = jsonb_build_object(
+               'type', 'error',
+               'code', 'worker_lost',
+               'message', 'The task stopped while waiting for its sub-agents. Run it again.'
+             )
+       where t.id = v_parent.id;
     end if;
   end loop;
 end;

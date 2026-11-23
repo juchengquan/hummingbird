@@ -270,8 +270,8 @@ order. Every migration has a unique numeric prefix (CI enforces this via
   - **Existing rows** are repaired once (the file's header says what
     happens to each): tasks stuck on a second question work again, a
     cancel a pause overwrote is cancelled again, parents left waiting on
-    ended sub-agents continue if they moved in the last hour and fail
-    otherwise, never-queued runs older than an hour fail.
+    ended sub-agents fail ("run it again"; migrating never starts a model
+    call, Q62), never-queued runs older than an hour fail.
   - **Rollback:** the statements in the file's header.
 
 ### Migration 0018 collision (renamed to `0033_message_generated_files.sql`)
