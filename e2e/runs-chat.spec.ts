@@ -11,6 +11,7 @@ import {
   isStartRequest,
   openChat,
   type RunsLog,
+  type StartRunBody,
   sendMessage,
   steerRuns,
   stopButton,
@@ -123,6 +124,70 @@ test.describe("chat on /v1/runs", () => {
     await expect(page.getByText("Approve the stub action?")).toBeHidden()
     await expect(assistantBubbles(page)).toHaveCount(1)
     await expect(page.getByText(ERROR_TITLE)).toHaveCount(0)
+  })
+
+  test("an answer a failed resume already applied can't be given again (Q63)", async ({ page, browser }) => {
+    // The resume applies the answer, then fails (a model error after the tool ran).
+    const steering = { outcome: "interrupt" } as const
+    const resume = { outcome: "fail" } as const
+    await steerRuns(page, steering, { resume })
+    await openChat(page)
+    await sendMessage(page, "applied smoke")
+    await page.getByText("Approve the stub action?").waitFor()
+    // The paused turn (message, pointer, run token) is on disk.
+    await expect
+      .poll(() => page.evaluate(() => localStorage.getItem("hummingbird-storage") ?? ""))
+      .toContain("Stub reply to: applied smoke")
+    const saved = await page.evaluate(() => JSON.stringify({ ...localStorage }))
+
+    // Another browser holding the same run shows the same question. (A
+    // second tab of this browser would not keep it: cross-tab sync brings
+    // over the failed answer's bubble, which replaces the cards.)
+    const elsewhere = await browser.newContext()
+    try {
+      const other = await elsewhere.newPage()
+      await other.addInitScript((items) => {
+        if (localStorage.getItem("e2e-cloned")) return
+        for (const [key, value] of Object.entries(JSON.parse(items) as Record<string, string>)) {
+          localStorage.setItem(key, value)
+        }
+        localStorage.setItem("e2e-cloned", "1")
+      }, saved)
+      const otherLog = await steerRuns(other, steering, { resume })
+      await other.goto("/")
+      await other.getByText("Approve the stub action?").waitFor()
+
+      // This tab answers: applied, then the run fails.
+      const first = page.waitForResponse((r) => isStartRequest(r.request()))
+      await page.getByRole("button", { name: "Approve", exact: true }).click()
+      expect((await first).status()).toBe(200)
+      await expect(page.getByText("Provider error")).toBeVisible()
+
+      // The other browser's answer is refused: its card goes, and the bubble says why.
+      const refused = other.waitForResponse((r) => isStartRequest(r.request()))
+      await other.getByRole("button", { name: "Approve", exact: true }).click()
+      const response = await refused
+      expect(response.status()).toBe(409)
+      expect(((await response.json()) as { code: string }).code).toBe("run_answer_applied")
+      await expect(other.getByText("Approve the stub action?")).toBeHidden()
+      await expect(other.getByText("This answer was already acted on")).toBeVisible()
+      await expect(other.getByRole("button", { name: "Approve", exact: true })).toHaveCount(0)
+      // Nothing restores it on a reload.
+      await other.reload()
+      await expect(other.getByText("This answer was already acted on")).toBeVisible()
+      await expect(other.getByText("Approve the stub action?")).toBeHidden()
+
+      // Its Retry sends the turn again as a new message: a new run, not a resume.
+      const resend = other.waitForRequest(isStartRequest)
+      await other.getByRole("button", { name: "Retry" }).click()
+      const again = (await resend).postDataJSON() as StartRunBody
+      expect(again.resume ?? []).toHaveLength(0)
+      expect(again.forwardedProps?.previousRunId).toBeUndefined()
+      expect(again.messages.at(-1)).toMatchObject({ role: "user", content: "applied smoke" })
+      await expect.poll(() => otherLog.starts.at(-1)?.runId).toBe(again.runId)
+    } finally {
+      await elsewhere.close()
+    }
   })
 })
 

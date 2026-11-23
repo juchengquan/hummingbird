@@ -26,6 +26,9 @@ export interface StubSteering {
   outcome?: "succeed" | "fail" | "interrupt"
   steps?: number
   stepDelayMs?: number
+  /** A resume fails before applying its answers (they stay answerable);
+   *  without it a resume steered to `fail` fails after applying them (Q63). */
+  failBeforeApplying?: boolean
 }
 
 /**
@@ -76,9 +79,14 @@ export interface RunsLog {
  * (the app's default model isn't on agent-py's `anthropic/*` allow-list →
  * `400 unknown_model`; the stub doesn't use a model anyway). A resume
  * (`resume[]` present) is steered to `succeed`, so answering an interrupt
- * doesn't interrupt again. Routes survive reloads.
+ * doesn't interrupt again — or to `opts.resume` when given. Routes
+ * survive reloads.
  */
-export async function steerRuns(page: Page, steering: StubSteering): Promise<RunsLog> {
+export async function steerRuns(
+  page: Page,
+  steering: StubSteering,
+  opts: { resume?: StubSteering } = {},
+): Promise<RunsLog> {
   const log: RunsLog = { starts: [], tokens: new Map() }
   await page.route(`${AGENT_PY_ORIGIN}/v1/runs`, async (route) => {
     const request = route.request()
@@ -86,7 +94,9 @@ export async function steerRuns(page: Page, steering: StubSteering): Promise<Run
     const body = request.postDataJSON() as StartRunBody
     const forwardedProps = { ...(body.forwardedProps ?? {}) }
     delete forwardedProps.model
-    forwardedProps.conformance = body.resume?.length ? { ...steering, outcome: "succeed" } : steering
+    forwardedProps.conformance = body.resume?.length
+      ? (opts.resume ?? { ...steering, outcome: "succeed" })
+      : steering
     const rewritten = { ...body, forwardedProps }
     log.starts.push(rewritten)
     await route.continue({ postData: JSON.stringify(rewritten) })
@@ -134,7 +144,7 @@ export const assistantBubbles = (page: Page): Locator => page.locator('[data-sel
 
 /** The titles ErrorBubble can show (components/panels/error-bubble.tsx). */
 export const ERROR_TITLE =
-  /Authentication failed|Sign in required|Rate limited|Conversation too long|Model unavailable|Model not available on this server|Attachment can't be sent|Provider error|Network error|Something went wrong/
+  /Authentication failed|Sign in required|Rate limited|Conversation too long|Model unavailable|Model not available on this server|Attachment can't be sent|Provider error|Network error|This answer was already acted on|Something went wrong/
 
 export async function sendMessage(page: Page, text: string): Promise<void> {
   await composer(page).fill(text)
