@@ -11,6 +11,12 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/shared/utils"
+import { CHAT_MODELS } from "@/shared/models"
+import {
+  modelsForBackend,
+  TASK_FALLBACK_MODEL,
+  TASK_MODEL_BACKEND,
+} from "@/shared/backend-models"
 import type {
   ScheduleCreateInput,
   ScheduleResponse,
@@ -21,11 +27,11 @@ import type {
  * morning"). Sits inside the WorkspaceDetailSheet under the existing
  * MCP section. Step 7 of `PLAN-agent-task-queue.md`.
  *
- * Scope of v1: a flat list with a tiny inline editor. No skill picker
- * / model override UI yet — those fields exist server-side and can be
- * driven via the API today. A schedule without a model fails when due
- * (Q56), so the list and the editor say so; until results are visible
- * (wave 6) the editor deliberately offers no model.
+ * A flat list with a tiny inline editor. The editor shows the model a
+ * schedule runs on and offers the models tasks can run (Q73): Haiku by
+ * default (Q67), as the server gives a schedule saved without one.
+ * Schedules that had no model were paused by migration 0047; the list
+ * says so, and resuming one gives it Haiku (Q80). No skill picker yet.
  */
 export function ScheduleSection({ workspaceId }: { workspaceId: string }) {
   const [schedules, setSchedules] = useState<ScheduleResponse[]>([])
@@ -90,8 +96,8 @@ export function ScheduleSection({ workspaceId }: { workspaceId: string }) {
             <p className="text-[11px] text-[var(--muted-foreground)]">Loading…</p>
           ) : schedules.length === 0 ? (
             <p className="text-[11px] text-[var(--muted-foreground)]">
-              No schedules yet. One added here has no model, so it
-              doesn&apos;t run yet.
+              No schedules yet. Each run is a task: its result goes into a
+              new conversation and shows in the Tasks panel.
             </p>
           ) : (
             schedules.map((s) => (
@@ -126,6 +132,12 @@ function ScheduleRow({
         enabled: !schedule.enabled,
       })
       if (!res.ok) toast.error(res.error.message ?? "Couldn't update schedule.")
+      else if (!schedule.enabled && !schedule.model) {
+        // Q80: resuming a model-less schedule gives it the default.
+        toast.success(
+          `Resumed. It runs on ${modelLabel(res.schedule.model ?? TASK_FALLBACK_MODEL)}.`
+        )
+      }
       await onRefresh()
     } finally {
       setBusy(false)
@@ -157,7 +169,11 @@ function ScheduleRow({
             ({schedule.timezone})
           </span>
         </p>
-        {schedule.model ? null : <NoModelNote />}
+        <p className="text-[10px] text-[var(--muted-foreground)]">
+          {schedule.model ? modelLabel(schedule.model) : "No model"}
+          {schedule.enabled ? null : " · Paused"}
+        </p>
+        {!schedule.enabled && !schedule.model ? <PausedNoModelNote /> : null}
       </div>
       <Button
         size="icon-xs"
@@ -209,6 +225,9 @@ function ScheduleEditor({
   const [timezone, setTimezone] = useState(
     schedule?.timezone ?? guessLocalTimezone()
   )
+  // A model-less schedule is shown — and saved — with the default.
+  const [model, setModel] = useState(schedule?.model ?? TASK_FALLBACK_MODEL)
+  const taskModels = modelsForBackend(TASK_MODEL_BACKEND.kind)
   const [busy, setBusy] = useState(false)
 
   const submit = async () => {
@@ -224,8 +243,9 @@ function ScheduleEditor({
         prompt: prompt.trim(),
         cron: cron.trim(),
         timezone: timezone.trim() || "UTC",
-        // skills / model / systemPrompt / maxSteps inherit from
-        // workspace defaults until the editor exposes them.
+        model,
+        // skills / systemPrompt / maxSteps: the server's defaults until
+        // the editor exposes them.
         skills: undefined,
       }
       const res = schedule
@@ -302,7 +322,37 @@ function ScheduleEditor({
       <p className="text-[10px] text-[var(--muted-foreground)]">
         Five-field cron, e.g. <code>0 8 * * *</code> = every day at 08:00 in the given timezone.
       </p>
-      {schedule?.model ? null : <NoModelNote />}
+      <div>
+        <label
+          htmlFor={`schedule-model-${schedule?.id ?? "new"}`}
+          className="text-[10px] uppercase tracking-wide text-[var(--muted-foreground)]"
+        >
+          Model
+        </label>
+        <select
+          id={`schedule-model-${schedule?.id ?? "new"}`}
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          className="mt-0.5 block w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-1 text-xs"
+        >
+          {/* A saved model tasks can no longer run is kept visible, not swapped silently. */}
+          {taskModels.some((m) => m.id === model) ? null : (
+            <option value={model}>{modelLabel(model)}</option>
+          )}
+          {taskModels.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      {schedule && !schedule.model ? (
+        <p className="text-[10px] leading-snug text-amber-600 dark:text-amber-500">
+          This schedule had no model{schedule.enabled ? "" : " and is paused"}. Saving
+          gives it {modelLabel(model)}
+          {schedule.enabled ? "" : "; resume it from the list to run it again"}.
+        </p>
+      ) : null}
       <div className="flex items-center gap-2 pt-1">
         <Button size="xs" onClick={submit} disabled={busy}>
           {schedule ? "Save" : "Create"}
@@ -315,13 +365,17 @@ function ScheduleEditor({
   )
 }
 
-/** Q56: said plainly, since creating one still succeeds. */
-function NoModelNote() {
+/** Q73/Q80: migration 0047 paused schedules without a model. */
+function PausedNoModelNote() {
   return (
     <p className="text-[10px] leading-snug text-amber-600 dark:text-amber-500">
-      No model: this schedule doesn&apos;t run yet. It fails when due.
+      Paused because it had no model. Resume it to run it on {modelLabel(TASK_FALLBACK_MODEL)}.
     </p>
   )
+}
+
+function modelLabel(id: string): string {
+  return CHAT_MODELS.find((m) => m.id === id)?.label ?? id
 }
 
 /** Best-effort guess at the user's IANA timezone from the browser. */
