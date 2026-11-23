@@ -1,0 +1,11 @@
+{
+  "scenario": "rewind",
+  "runs": {
+    "run": {
+      "runId": "e5fe89f8-9d17-491a-92a9-c8189931167c",
+      "parentRole": null,
+      "previousRole": null,
+      "status": "succeeded"
+    }
+  }
+}

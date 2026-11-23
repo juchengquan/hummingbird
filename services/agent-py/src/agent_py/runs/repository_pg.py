@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, NoReturn, cast
@@ -112,7 +112,8 @@ _RUN_COLUMNS = """
   t.started_at, t.finished_at, t.parent_task_id, t.previous_run_id, t.goal,
   t.max_steps, t.step,
   t.outcome::text AS outcome, t.lease_expires_at,
-  COALESCE(t.checkpoint ? 'awaiting_children', false) AS awaiting_children
+  COALESCE(t.checkpoint ? 'awaiting_children', false) AS awaiting_children,
+  t.root_run_id, t.research
 """
 
 _LIVE = ("queued", "running")
@@ -308,6 +309,10 @@ class PgRunRepository:
                 raise ThreadNotFound() from None
             if state == "22023":
                 raise ValueError(message) from None
+            if state == "54000":
+                # 0047 (Q79): a sixth active task — `409 limit_reached`,
+                # nothing created.
+                _raise_write_error(exc)
             if state == "55000":
                 if "already answered" in message:
                     # 0045: a `respond` job holds one of the questions.
@@ -353,6 +358,8 @@ class PgRunRepository:
     ) -> RunPage:
         if not 1 <= page_size <= 100:
             raise ValueError("page_size must be between 1 and 100")
+        if filt.has_task_filters:
+            raise NotImplementedError("listRuns task filters: wave 6-A")
         after: tuple[datetime, str] | None = None
         if page_token is not None:
             created_raw, last_id = _decode_token(page_token, filt.fingerprint())
@@ -407,6 +414,18 @@ class PgRunRepository:
             if _sqlstate(exc) == "P0002":
                 return None
             raise
+
+    async def answer_in_place(
+        self, owner: RunOwner, run_id: str, resume: Sequence[Mapping[str, object]]
+    ) -> RunRecord | None:
+        """Wave 6-A: `enqueue_task_job(run, 'respond', in_place.respond_job_payload(e))`
+        as the user, 55000 / 54000 mapped (see the Protocol)."""
+        raise NotImplementedError("answerRun: wave 6-A")
+
+    async def mark_delivered(self, owner: RunOwner, run_id: str) -> RunRecord | None:
+        """Wave 6-A: `public.mark_task_delivered($1)` as the user (0047): P0002 →
+        None, 55000 → `RunNotDeliverable`."""
+        raise NotImplementedError("markRunDelivered: wave 6-A")
 
     async def enqueue_start(self, owner: RunOwner, run_id: str) -> None:
         """Enqueue a background run's `start` job as the user
@@ -573,6 +592,7 @@ def _record(row: asyncpg.Record, fallback: _LogFallback | None) -> RunRecord:
 
     parent = row["parent_task_id"]
     previous = row["previous_run_id"]
+    root = row["root_run_id"]
     return RunRecord(
         id=str(row["id"]),
         owner=RunOwner.user(str(row["user_id"])),
@@ -592,4 +612,6 @@ def _record(row: asyncpg.Record, fallback: _LogFallback | None) -> RunRecord:
         result=result,
         error=error,
         lease_expires_at=row["lease_expires_at"],
+        root_run_id=None if root is None else str(root),
+        research=bool(row["research"]),
     )

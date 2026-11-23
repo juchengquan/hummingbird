@@ -1,0 +1,28 @@
+data: {"type":"RUN_STARTED","threadId":"4738a0ca-220f-43ff-b1c6-a75aa9265be1","runId":"1a98532e-3088-498a-bb65-711ea5eacdce"}
+
+id: 3
+data: {"type":"STEP_STARTED","stepName":"step-1"}
+
+id: 4
+data: {"type":"TOOL_CALL_RESULT","messageId":"1a98532e-3088-498a-bb65-711ea5eacdce:4","toolCallId":"q","role":"tool","content":"{\"summary\":\"blue\"}","metadata":{"hummingbird":{"toolName":"askUser"}}}
+
+id: 5
+data: {"type":"STEP_FINISHED","stepName":"step-1"}
+
+id: 6
+data: {"type":"STEP_STARTED","stepName":"step-2"}
+
+id: 7.0
+data: {"type":"TEXT_MESSAGE_START","messageId":"1a98532e-3088-498a-bb65-711ea5eacdce:7","role":"assistant"}
+
+id: 7
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"1a98532e-3088-498a-bb65-711ea5eacdce:7","delta":"Painted it blue."}
+
+id: 8.0
+data: {"type":"TEXT_MESSAGE_END","messageId":"1a98532e-3088-498a-bb65-711ea5eacdce:7"}
+
+id: 8
+data: {"type":"STEP_FINISHED","stepName":"step-2"}
+
+data: {"type":"RUN_FINISHED","threadId":"4738a0ca-220f-43ff-b1c6-a75aa9265be1","runId":"1a98532e-3088-498a-bb65-711ea5eacdce","outcome":{"type":"success"},"result":{"text":"Painted it blue."}}
+

@@ -29,7 +29,10 @@ const RUN_TOKEN_OPERATIONS = new Set(["getRun", "streamRunEvents", "cancelRun"])
 /** Specified but not implemented yet (`x-planned`), so the conformance
  *  suite skips them. Implementing one means deleting its marker in
  *  openapi.yaml AND its entry here — this list makes that deliberate. */
-const PLANNED_OPERATIONS: Record<string, string> = {}
+const PLANNED_OPERATIONS: Record<string, string> = {
+  answerRun: "wave-6",
+  markRunDelivered: "wave-6",
+}
 
 describe("contract: openapi.yaml", () => {
   let contract: Contract

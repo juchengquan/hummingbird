@@ -4,7 +4,7 @@
 into the AG-UI 1.0 events of the runs operations (`startRun`,
 `streamRunEvents` in [`openapi.yaml`](openapi.yaml)), what each run status
 means, how a stream is replayed from a cursor, and what log compaction
-keeps. Decisions: Q8, Q13, Q16, Q17, Q24, Q27–Q31 of
+keeps. Decisions: Q8, Q13, Q16, Q17, Q24, Q27–Q31, Q59, Q69, Q75, Q77, Q79 of
 [`docs/PLAN-frontend-backend-split.md`](../../docs/PLAN-frontend-backend-split.md).
 Wave 3b-A implements the encoder and the stream mechanics from this
 page; a second backend (Q11) implements the same page.
@@ -57,12 +57,13 @@ One status per run, derived from the run row; three vocabularies:
   older unanswered requests are ones a dead attempt left, not live.
 - `interrupted` is an end state for that run: answering it starts a
   **new** run (Q24) whose `forwardedProps.previousRunId` is this one.
-  Rows the legacy respond route resumes in place (`paused` → `running`
-  on the same row, clearing `outcome` and `finishedAt`; a sub-agent's
-  question is only answered this way, Q59) are still read correctly,
-  because the closing event
-  is built from the row status at the moment the stream ends (§ 6), not
-  from the `status: paused` entry.
+  The one exception is a sub-agent run, answered in place (Q59, § 4.4):
+  `answerRun` (or the legacy respond route) moves the same row `paused`
+  → `running`, clearing `outcome` and `finishedAt`. Such rows are read
+  correctly, because the closing event is built from the row status at
+  the moment the stream ends (§ 6), not from the `status: paused` entry;
+  a client watching the run follows it again after answering (its
+  stream closed at the interrupt).
 - `finishedAt` is set for `succeeded`, `failed`, `cancelled` and
   `interrupted` (null for a parent waiting on its sub-agents).
 - `succeeded`, `failed` and `cancelled` are final: no write moves a run
@@ -263,7 +264,7 @@ doubtful crash counts as applied. So:
 | live, interrupted again or succeeded | `409 run_already_resumed` |
 | failed / cancelled before applying (no model, unknown model, a Stop that came first) | accepted (a new `runId`) |
 | **interactive**, failed / cancelled / reaped after applying | `409 run_answer_applied` — the interrupted run stays `interrupted` (Q64); the client drops the question and the turn is sent again as a new message |
-| **background**, failed / cancelled after applying | `409 run_already_resumed` — the task has failed, "run again" is a new task |
+| **background**, failed / cancelled after applying | `409 run_answer_applied` (contract 0.5.0, migration 0047; `run_already_resumed` before) — the task has failed, its current run (§ 4.5) says how; "run again" is a new task |
 
 Deleting an interactive resume that applied its answers fails the run it
 answered (`invalid_state`) rather than reopening the question, as
@@ -333,6 +334,81 @@ and never echoes them in a stream (agent-py: `runs/credentials.py`,
 pinned by `tests/test_run_credentials.py`). They are never sent in
 `forwardedProps` (stored with a background run) or a header (proxy
 access logs record headers); a background run refuses local MCP (Q42).
+
+### 4.4 Sub-agent runs: answered in place (Q59)
+
+**A named exception to Q24.** A sub-agent run (`parentRunId` set) is
+never answered by a new run — its parent waits on that very row (the
+join barrier counts its live children), so a resume would leave the
+parent waiting on a run nobody continues. `startRun` with a sub-agent
+run as `previousRunId` is `409 invalid_state`. Its question is answered
+**in place** with `answerRun` (`POST /v1/runs/{runId}/answers`, body
+`{ resume: ResumeEntry[] }`, one entry per open interrupt, `payload` as
+in § 4.2):
+
+- The answer is queued for a worker (a `respond` job, the one the
+  legacy `/api/tasks/:id/respond` route writes) and the call answers
+  `202` with the run as it stands: still `interrupted`, `answerPending:
+  true`. A client shows the question as answered from then on.
+- When a worker picks it up the same run goes `paused` → `running`
+  (§ 1): its log continues after the question with a
+  `hb.interrupt_resolved` for the answer, then the tool's result and the
+  rest of the run. Its earlier stream closed at the interrupt; a client
+  follows it again from the cursor it had.
+- Each question is answered once (Q58), whichever route answers it: a
+  second answer is `409 run_already_answered`; a run no longer waiting
+  on that question (cancelled — a sub-agent run is cancelled alone,
+  Q60 — or ended) is `409 invalid_state`. `status: cancelled` declines,
+  as in a resume. An approval's `payload` needs a boolean `approved`
+  (`400 invalid_request` otherwise; absent never approves).
+- The parent reads `running` meanwhile; its `childrenAsking` counts its
+  sub-agent runs waiting on an answer (§ 4.5), and a client lists them
+  with `listRuns?parentRunId=<run>`.
+
+### 4.5 Tasks: root, current run, delivery (Q69, Q75, Q77)
+
+A **task** is a top-level background run (its root), every run that
+answered it (`previousRunId`, a chain) and every sub-agent run any of
+them spawned. Each run's `Run.rootRunId` names its task's root (stored:
+`tasks.root_run_id`, migration 0047 — it survives deleting a run of the
+chain). Interactive runs get the same fields for a chat turn and its
+answers.
+
+**Current run.** A run *holds* its task's question when it answered it
+and is live, succeeded, or failed / was cancelled **after** applying
+the answers (§ 4.2). The task's current run is the newest of its root
+and its holding runs; it carries the task's status, question, progress
+and result, and its `currentRunId` is null. Every other run of the
+chain names it in `currentRunId`:
+
+| chain | current run | the others |
+|---|---|---|
+| `P0` interrupted, unanswered | `P0` | — |
+| `P0` interrupted → `R1` queued / running / succeeded / interrupted | `R1` | `P0.currentRunId = R1`: its question is closed |
+| `P0` interrupted → `R1` failed before applying | `P0` (the question is open again) | `R1.currentRunId = P0`: a dead branch — shown as a note on the reopened question |
+| `P0` → `R1` failed after applying | `R1` (the task has failed) | `P0.currentRunId = R1` |
+
+A sub-agent run is answered in place (§ 4.4), so it is always its own
+current run. `listRuns?mode=background&topLevel=true&current=true` is
+one row per task. SQL: `public.task_run_is_current(tasks)` and
+`public.task_current_run_id(tasks)` (0047).
+
+**Progress is per run.** `step` and `maxSteps` restart in every run of a
+chain (a resume starts at step 0); a task's text, plan and tool calls
+are the fold of its chain's streams in order — each resume stream opens
+with the `TOOL_CALL_RESULT` of the answer it applied (§ 4.2). Sub-agent
+runs belong to the run that spawned them (`parentRunId`).
+
+**Delivery.** A finished task's result is written into its conversation
+by the browser that opens next, under ids derived from the task's root,
+then marked with `markRunDelivered` on the root (Q70, Q77): every run of
+the task then reads `delivered: true`. A failed or cancelled task
+writes no message.
+
+**At most 5 active tasks** (Q72, Q79): a task counts while its current
+run is `queued`, `running` or `interrupted`; a new task past that is
+`409 limit_reached` (answers never are), and a schedule firing past it
+creates its run already `failed` with `error.code` `limit_reached`.
 
 ## 5. Results, errors and usage
 

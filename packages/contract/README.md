@@ -117,7 +117,8 @@ run against the suite.
 ### AG-UI and the runs operations (Phase 2)
 
 The runs operations (tag `runs`: `startRun`, `listRuns`, `getRun`,
-`streamRunEvents`, `cancelRun`) reference the vendored schema by JSON
+`streamRunEvents`, `cancelRun`, and from 0.5.0 `answerRun` and
+`markRunDelivered`) reference the vendored schema by JSON
 pointer, relative to `openapi.yaml` — `RunAgentInput`, `Interrupt`, and
 `Event` for the `text/event-stream` responses. How the backend's
 internal events become AG-UI events, what each status means, the
@@ -165,8 +166,9 @@ Things worth knowing when changing them:
 ### Planned operations (`x-planned`)
 
 An operation can be specified before any backend implements it: it
-carries `x-planned: <wave>` (none does today — the runs operations
-carried `wave-3b` until agent-py implemented them). The
+carries `x-planned: <wave>` (today `answerRun` and `markRunDelivered`,
+`wave-6`; the runs operations carried `wave-3b` until agent-py
+implemented them). The
 conformance suite skips planned operations (`Operation.planned` in
 `conformance/harness.ts`), so a backend is held to everything else with
 `CONTRACT_SKIP_OPERATIONS` unset — "strict" conformance. Planned

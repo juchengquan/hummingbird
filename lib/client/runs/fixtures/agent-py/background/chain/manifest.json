@@ -1,0 +1,17 @@
+{
+  "scenario": "chain",
+  "runs": {
+    "p0": {
+      "runId": "ed1dd9d3-5174-424b-bb5b-761266c3c9fa",
+      "parentRole": null,
+      "previousRole": null,
+      "status": "interrupted"
+    },
+    "r1": {
+      "runId": "1a98532e-3088-498a-bb65-711ea5eacdce",
+      "parentRole": null,
+      "previousRole": "p0",
+      "status": "succeeded"
+    }
+  }
+}

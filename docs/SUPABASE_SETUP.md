@@ -292,6 +292,32 @@ order. Every migration has a unique numeric prefix (CI enforces this via
     never started (entries all `status` / `result`); one with no log left
     (purged) counts as applied. No status or other column changes.
   - **Rollback:** the statements in the file's header.
+- `supabase/migrations/0047_task_identity_and_caps.sql`
+  - A task's identity, delivery mark and cap (wave 6: Q69, Q72, Q73,
+    Q75, Q77, Q79). New `tasks` columns `root_run_id` (no FK; filled for
+    every insert by the `tasks_identity` trigger), `research` and
+    `result_delivered_at` (users can't write it; `mark_task_delivered`
+    RPC); `task_run_is_current` / `task_current_run_id` (a task's current
+    run); at most 5 active top-level tasks per user in `create_run` and
+    `create_task_run` (54000 → `409 limit_reached`; answers exempt);
+    `create_scheduled_task` for schedule fires (creates the task already
+    failed `limit_reached` at the cap); a background answer a failed
+    resume had applied is refused with constraint `tasks_answer_applied`
+    (`409 run_answer_applied`). Same `create_run` / `create_task_run`
+    signatures. Idempotent.
+  - **Deploy order:** stop every agent-py → apply 0047 → start the new
+    agent-py → deploy Next. An older agent-py answers the cap with a 500
+    instead of `409 limit_reached`, and an older schedule dispatcher
+    still inserts past the cap.
+  - **Existing rows:** `root_run_id` is backfilled by walking
+    `parent_task_id` / `previous_run_id` (a chain broken by a deleted run
+    roots at its earliest reachable run), `research` from each
+    checkpoint; no status, outcome or `updated_at` changes, nothing is
+    marked delivered. **Every enabled schedule without a model is paused
+    once** (`enabled = false`, Q73) — a re-run doesn't pause it again.
+    A user who already has 5 or more active tasks can't start another
+    until fewer are active.
+  - **Rollback:** the statements in the file's header.
 
 ### Migration 0018 collision (renamed to `0033_message_generated_files.sql`)
 

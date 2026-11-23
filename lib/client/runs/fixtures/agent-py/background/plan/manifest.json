@@ -1,0 +1,11 @@
+{
+  "scenario": "plan",
+  "runs": {
+    "run": {
+      "runId": "239f6d3a-31e1-4e6e-8938-9acef2b67005",
+      "parentRole": null,
+      "previousRole": null,
+      "status": "succeeded"
+    }
+  }
+}

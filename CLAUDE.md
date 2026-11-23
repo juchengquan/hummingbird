@@ -32,6 +32,7 @@ bun run codegen:agent-types:check     # CI mode — fail if drifted
 bun run test:db                       # agent-py suite on a throwaway Postgres with every migration (needs Docker; mirrors the agent-py-db CI job) — run it for any change to SQL, migrations, the executor or runs
 bun run check:agent-py                # ruff check + ruff format --check + mypy + pytest (mirrors the agent-py CI job)
 bun run fixtures:runs                 # re-record agent-py run streams for lib/client/runs tests (after changing runs output)
+bun run fixtures:runs --background    # …and the background-run set (real executor on a throwaway Postgres; needs Docker)
 
 # Frontend↔backend contract (spec-first, docs/PLAN-frontend-backend-split.md)
 bun run contract:gen                  # packages/contract/openapi.yaml → TS types + agent-py Pydantic models
@@ -179,7 +180,8 @@ SQL lives under `supabase/migrations/` as numbered files applied in order (`0001
 `0039_mcp_upsert_foreign_id.sql`, `0040_task_worker_liveness.sql`,
 `0041_runs_on_tasks.sql`, `0042_one_live_resume.sql`,
 `0043_answer_once.sql`, `0044_message_turn_persona.sql`,
-`0045_background_tasks_correct.sql`, `0046_chat_answer_once.sql`) — see `docs/SUPABASE_SETUP.md`
+`0045_background_tasks_correct.sql`, `0046_chat_answer_once.sql`,
+`0047_task_identity_and_caps.sql`) — see `docs/SUPABASE_SETUP.md`
 for the hosted-cloud run order, or `docs/SUPABASE_LOCAL.md` for the
 local Supabase CLI path (Docker-based, no cloud account needed). For
 verifying the file full-text retrieval pipeline end-to-end after
@@ -218,7 +220,16 @@ are created with the `create_run` RPC (idempotent on the client-minted
 id). One live resume per interrupted run (0042): the unique partial
 index `tasks_one_live_resume` on `previous_run_id` (rows not `failed` /
 `cancelled`), surfaced by `create_run` as 23505 with that constraint
-name → `409 run_already_resumed`. Each **question** (paused task +
+name → `409 run_already_resumed`. **Task identity (0047):** every row
+has `root_run_id` (its task's first run: a resume's root is its previous
+run's, a sub-agent's its parent's; set by the `tasks_identity` insert
+trigger, no FK), `research`, and — on a root — `result_delivered_at`
+(written only through `mark_task_delivered`). A task's current run is
+`public.task_run_is_current(t)` / `public.task_current_run_id(t)` (Q75).
+At most 5 active top-level tasks per user: `create_run` /
+`create_task_run` raise 54000 (`409 limit_reached`), resumes exempt;
+schedule fires go through `create_scheduled_task`, which creates the
+task already failed at the cap. Each **question** (paused task +
 question id) has one winner (0045, Q57/Q58): a runs-API resume refuses a
 question a queued / running `respond` job holds (`409
 run_already_answered`), `enqueue_task_job` refuses a `respond` to a

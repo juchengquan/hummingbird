@@ -12,7 +12,7 @@ import "client-only"
 
 import type { BaseEvent, Interrupt, Message, ResumeEntry } from "@ag-ui/core"
 
-import type { components } from "@/shared/contract/openapi.generated"
+import type { components, operations } from "@/shared/contract/openapi.generated"
 
 type Schemas = components["schemas"]
 
@@ -30,8 +30,19 @@ export interface RunsTarget {
 export type StartRunRequest = Schemas["StartRunRequest"]
 /** Hummingbird's options in `RunAgentInput.forwardedProps`. */
 export type RunForwardedProps = Schemas["RunForwardedProps"]
-/** The run resource (`GET /v1/runs/{id}`, `POST …/cancel`). */
+/** The run resource (`GET /v1/runs/{id}`, `POST …/cancel`). Contract
+ *  0.5.0 adds the task fields: `rootRunId`, `currentRunId`, `research`,
+ *  `delivered`, `childrenAsking`, `answerPending` (RUN_EVENTS.md § 4.5). */
 export type Run = Schemas["Run"]
+/** One page of `GET /v1/runs`. */
+export type RunList = Schemas["RunList"]
+/** `GET /v1/runs` query: `threadId`, `status[]`, `parentRunId`, `mode`, the
+ *  0.5.0 task filters `topLevel` / `current` / `rootRunId` / `delivered`
+ *  (absent: no filter; `false`: the opposite set), `pageSize`, `pageToken`. */
+export type ListRunsQuery = NonNullable<operations["listRuns"]["parameters"]["query"]>
+/** `POST /v1/runs/{id}/answers` body — a sub-agent run's question answered
+ *  in place (`answerRun`, Q59, RUN_EVENTS.md § 4.4). */
+export type AnswerRunRequest = Schemas["AnswerRunRequest"]
 export type RunStatus = Schemas["RunStatus"]
 /** `RUN_FINISHED.result` of a succeeded run (`text`, `memoryTainted`). */
 export type RunResult = Schemas["RunResult"]

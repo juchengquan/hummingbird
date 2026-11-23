@@ -1,7 +1,11 @@
 """`/v1/runs` — the runs API (PLAN-frontend-backend-split Phase 2, Q7).
 
-The five operations of `packages/contract/openapi.yaml` (tag `runs`):
-`startRun`, `listRuns`, `getRun`, `streamRunEvents`, `cancelRun`. Events
+The operations of `packages/contract/openapi.yaml` (tag `runs`):
+`startRun`, `listRuns`, `getRun`, `streamRunEvents`, `cancelRun`, and —
+specified in contract 0.5.0, `x-planned: wave-6`, answering `501
+not_implemented` until wave 6-A — `answerRun` and `markRunDelivered`
+(as are `listRuns`' task filters `topLevel` / `current` / `rootRunId` /
+`delivered`). Events
 are AG-UI 1.0 per `packages/contract/RUN_EVENTS.md`. Every service this
 router uses comes from `runs.wiring.RunServices` (the wiring seam).
 
@@ -133,6 +137,11 @@ def _raise(
 
 def _not_found() -> NoReturn:
     _raise(404, "not_found", _RUN_NOT_FOUND)
+
+
+def _not_implemented() -> NoReturn:
+    """Specified in contract 0.5.0, implemented by wave 6-A."""
+    _raise(501, "not_implemented", "Not implemented on this server yet.")
 
 
 def _run_id_conflict() -> NoReturn:
@@ -554,6 +563,10 @@ async def list_runs(
     status: Annotated[list[ContractStatus] | None, Query()] = None,
     parent_run_id: Annotated[uuid.UUID | None, Query(alias="parentRunId")] = None,
     mode: Annotated[Literal["interactive", "background"] | None, Query()] = None,
+    top_level: Annotated[bool | None, Query(alias="topLevel")] = None,
+    current: Annotated[bool | None, Query()] = None,
+    root_run_id: Annotated[uuid.UUID | None, Query(alias="rootRunId")] = None,
+    delivered: Annotated[bool | None, Query()] = None,
     page_size: Annotated[int, Query(alias="pageSize", ge=1, le=100)] = 20,
     page_token: Annotated[
         str | None, Query(alias="pageToken", min_length=1, max_length=512)
@@ -565,6 +578,10 @@ async def list_runs(
         statuses=frozenset(status or ()),
         parent_run_id=None if parent_run_id is None else str(parent_run_id),
         mode=mode,
+        top_level=top_level,
+        current=current,
+        root_run_id=None if root_run_id is None else str(root_run_id),
+        delivered=delivered,
     )
     try:
         page = await services.repo_for(owner).list_runs(
@@ -572,6 +589,8 @@ async def list_runs(
         )
     except InvalidPageToken:
         _raise(400, "invalid_request", "Invalid pageToken for these filters.")
+    except NotImplementedError:
+        _not_implemented()
     runs = [await _run_json(services, owner, run) for run in page.runs]
     return JSONResponse({"runs": runs, "nextPageToken": page.next_page_token})
 
@@ -643,3 +662,39 @@ async def cancel_run(
         # This process: stop it now. Elsewhere: its heartbeat finds out.
         services.driver.signal_cancel(run.id)
     return JSONResponse(await _run_json(services, owner, run))
+
+
+# --- POST /v1/runs/{runId}/answers (0.5.0, x-planned: wave-6) ------------------------
+
+
+@router.post(
+    "/v1/runs/{run_id}/answers",
+    status_code=202,
+    responses={202: {"model": models.Run}},
+    response_class=JSONResponse,
+)
+async def answer_run(
+    run_id: str,
+    body: models.AnswerRunRequest,
+    claims: Annotated[dict[str, object], Depends(get_current_user)],
+) -> JSONResponse:
+    """`answerRun` — a sub-agent run's question answered in place (Q59,
+    RUN_EVENTS.md § 4.4). Wave 6-A: `RunRepository.answer_in_place`."""
+    _not_implemented()
+
+
+# --- POST /v1/runs/{runId}/delivered (0.5.0, x-planned: wave-6) ----------------------
+
+
+@router.post(
+    "/v1/runs/{run_id}/delivered",
+    responses={200: {"model": models.Run}},
+    response_class=JSONResponse,
+)
+async def mark_run_delivered(
+    run_id: str,
+    claims: Annotated[dict[str, object], Depends(get_current_user)],
+) -> JSONResponse:
+    """`markRunDelivered` — a finished task's result was written (Q77).
+    Wave 6-A: `RunRepository.mark_delivered`."""
+    _not_implemented()

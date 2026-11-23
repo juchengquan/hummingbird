@@ -37,8 +37,11 @@ session.ts ── HummingbirdRunAgent (agent.ts, @ag-ui/client: enforce → veri
 | `chat-outcome.ts` | `planRunOutcome` (outcome → what chat does), `pointerActionFor`, the cursor throttle — pure |
 | `run-base.ts` | a resume run's **base** (what the paused run wrote), saved as sizes per run so a reload's reset restores it |
 | `fixtures/` | recorded agent-py streams + a store-message model (tests only) |
+| `tasks/` | wave 6: the tasks interface (`types.ts`: `TaskSummary`, `TaskView`, `TasksContextValue`, the per-user pointers) and its React plumbing (`context.tsx`: `TasksProvider`, `useTasks`, `useTaskView`); wave 6-C implements it |
 
-Ids: `lib/shared/runs/ids.ts` (`mintRunId`, `threadIdFor(conversationId)`),
+Ids: `lib/shared/runs/ids.ts` (`mintRunId`, `threadIdFor(conversationId)`,
+`resultIdsFor(userId, rootRunId)` — a finished task's message / document /
+artifact ids, Q70),
 cursors: `lib/shared/runs/cursor.ts`.
 
 ## How `@ag-ui/client` is used, and why
@@ -380,3 +383,14 @@ from `services/agent-py/tests/test_runs_e2e.py` (the real app over HTTP),
 stream over crafted logs: reasoning, every part, gap, purge, rewind,
 failures). Re-record after changing agent-py's runs output;
 `reducer.test.ts` fails if a recorded stream has no case.
+
+`fixtures/agent-py/background/<scenario>/` are background tasks (wave 6),
+recorded by `bun run fixtures:runs --background` from
+`services/agent-py/tests/test_runs_background_fixtures_pg.py`: real tasks
+run by the poller and executor over a scripted model on a throwaway
+Postgres, one `<role>.sse` per run plus a `manifest.json` (role → run id,
+parent / previous role, status). Scenarios: `spawn` (two sub-agents, one
+asks and is answered in place), `approval`, `plan`, `step-error`,
+`rewind` (a reclaimed worker), `chain` (P0 → R1). Loaded with
+`loadBackgroundScenario` / `loadBackgroundFixture`;
+`background-fixtures.test.ts` checks the set is whole.

@@ -42,6 +42,51 @@ export function loadFixture(name: string): RecordedStream {
   return { name, body, items }
 }
 
+// --- Background runs (wave 6) -------------------------------------------------------
+
+const BACKGROUND_DIR = join(DIR, "background")
+
+/** One run of a recorded background scenario (`manifest.json`). */
+export interface BackgroundRunRole {
+  runId: string
+  /** The role of the run that spawned it (a sub-agent run), else null. */
+  parentRole: string | null
+  /** The role of the run it answered (a resume), else null. */
+  previousRole: string | null
+  /** Its contract status when recorded. */
+  status: string
+}
+
+export interface BackgroundScenario {
+  scenario: string
+  /** role → run; each role has `<role>.sse`. The same run may be recorded
+   *  twice under two roles (e.g. `child-asks-paused`, then `child-asks`). */
+  runs: Record<string, BackgroundRunRole>
+}
+
+/** The recorded background scenarios (`bun run fixtures:runs --background`,
+ *  `services/agent-py/tests/test_runs_background_fixtures_pg.py`). */
+export function backgroundScenarioNames(): string[] {
+  return readdirSync(BACKGROUND_DIR, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => d.name)
+    .sort()
+}
+
+export function loadBackgroundScenario(scenario: string): BackgroundScenario {
+  return JSON.parse(readFileSync(join(BACKGROUND_DIR, scenario, "manifest.json"), "utf8")) as BackgroundScenario
+}
+
+/** One run's stream in a background scenario. */
+export function loadBackgroundFixture(scenario: string, role: string): RecordedStream {
+  const body = readFileSync(join(BACKGROUND_DIR, scenario, `${role}.sse`), "utf8")
+  const items = parseSseBody(body).map((m) => ({
+    cursor: m.id ?? null,
+    event: JSON.parse(m.data) as AgUiEvent,
+  }))
+  return { name: `${scenario}/${role}`, body, items }
+}
+
 /** What an assistant message holds after frames are applied — the store
  *  fields `use-chat-send` writes, with the same per-frame semantics
  *  (append text / reasoning; the tool-call buffer; parts appended, or set

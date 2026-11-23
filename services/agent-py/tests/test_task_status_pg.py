@@ -300,8 +300,16 @@ async def test_cancel_racing_resume_leaves_nothing_live(world: World) -> None:
 
 
 async def fill_queue(world: World) -> None:
-    for _ in range(20):
-        await world.start()
+    """20 queued jobs for the user (`enqueue_task_job`'s cap), on one task:
+    starting 20 tasks would stop at the 5-active-task cap first (0047)."""
+    task = await world.start()
+    for _ in range(19):
+        await world.sql(
+            "INSERT INTO public.task_jobs (task_id, user_id, action, payload, status) "
+            "VALUES ($1, $2, 'continue', '{}'::jsonb, 'queued')",
+            uuid.UUID(task),
+            uuid.UUID(world.user),
+        )
 
 
 async def test_a_failed_enqueue_leaves_no_orphan(world: World) -> None:

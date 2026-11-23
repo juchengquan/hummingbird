@@ -308,6 +308,24 @@ class RunRecord:
     result: dict[str, object] | None = None
     error: dict[str, object] | None = None
     lease_expires_at: datetime | None = None
+    # --- Task identity (contract 0.5.0, migration 0047; RUN_EVENTS.md § 4.5).
+    # Wave 6-A fills these cheaply in the repositories (no checkpoint read,
+    # no per-row query); until then they keep these defaults.
+    root_run_id: str | None = None
+    """The task's root run (`tasks.root_run_id`); None reads as `id`."""
+    current_run_id: str | None = None
+    """None when this run is its task's current run
+    (`public.task_run_is_current`); else the task's current run
+    (`public.task_current_run_id`)."""
+    research: bool = False
+    """`tasks.research` (Q46)."""
+    delivered: bool = False
+    """The task's root has `result_delivered_at` (Q77)."""
+    children_asking: int = 0
+    """Live sub-agent runs of this run paused on a question."""
+    answer_pending: bool = False
+    """A `respond` job for this run is queued or running while the run is
+    still `paused` (an in-place answer not picked up yet, Q59)."""
 
     @property
     def status(self) -> ContractStatus:
@@ -329,7 +347,9 @@ def run_to_contract(run: RunRecord, *, last_seq: int) -> dict[str, object]:
     (`RunEventLog.last_seq`). Applies the status ↔ result / error /
     openInterrupts rule: only the field matching the status is filled.
     `goal` / `maxSteps` / `step` are background-run progress, null for an
-    interactive run."""
+    interactive run. The task fields (0.5.0) come from the record as the
+    repository read it; `delivered` is a background-run notion, so false
+    for an interactive run."""
     status = run.status
     background = run.mode == "background"
     return {
@@ -350,6 +370,12 @@ def run_to_contract(run: RunRecord, *, last_seq: int) -> dict[str, object]:
         "startedAt": _iso(run.started_at),
         "finishedAt": _iso(run.finished_at),
         "updatedAt": _iso(run.updated_at),
+        "rootRunId": run.root_run_id or run.id,
+        "currentRunId": run.current_run_id,
+        "research": run.research,
+        "delivered": run.delivered if background else False,
+        "childrenAsking": run.children_asking,
+        "answerPending": run.answer_pending if status == "interrupted" else False,
     }
 
 
