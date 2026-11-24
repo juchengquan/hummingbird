@@ -7,6 +7,7 @@ import { expect, test as base, type Locator, type Page } from "@playwright/test"
 import { STORE_VERSION } from "../../lib/client/hooks/store/migrate"
 
 import { composer } from "./runs"
+import { USER_ID, signIn } from "./tasks-session"
 
 export const HAIKU = "anthropic/claude-haiku-4.5"
 export const NOT_FOR_TASKS = "deepseek/deepseek-v4-flash"
@@ -135,15 +136,23 @@ export const test = base.extend<{ tasks: TasksBackend }, { tasksOrigin: string }
 
 // --- the app ------------------------------------------------------------
 
-/** A new chat, with `state` in the persisted store (seeded once per context). */
-export async function openApp(page: Page, state: Record<string, unknown> = {}): Promise<void> {
+/** A new chat, with `state` in the persisted store (seeded once per context).
+ *  Signed in (tasks need it, bug 20) unless `signedIn: false`. */
+export async function openApp(
+  page: Page,
+  state: Record<string, unknown> = {},
+  { signedIn = true }: { signedIn?: boolean } = {},
+): Promise<void> {
+  if (signedIn) await signIn(page.context())
   await page.addInitScript(
     ({ seed, version }) => {
       if (localStorage.getItem("e2e-seeded")) return
       localStorage.setItem("hummingbird-storage", JSON.stringify({ state: seed, version }))
       localStorage.setItem("e2e-seeded", "1")
     },
-    { seed: { chatBackend: "ts", chatModel: HAIKU, ...state }, version: STORE_VERSION },
+    // Signed in with sync off ("local only"): the fake Supabase keeps no
+    // rows, so a sync pull would empty the store these specs seed.
+    { seed: { chatBackend: "ts", chatModel: HAIKU, localOnlyMode: signedIn, ...state }, version: STORE_VERSION },
   )
   await page.goto("/")
   await page.getByRole("button", { name: "New chat" }).click()
@@ -224,9 +233,17 @@ export async function reportCounts(page: Page) {
   }
 }
 
+/** The old path's pointer key: per user when signed in (Q68), the unkeyed
+ *  slot otherwise. Specs are signed in as `USER_ID` unless they opt out. */
+const POINTER_KEYS = [`humm.activeTask.${USER_ID}`, "humm.activeTask"]
+
 /** The saved pointer of the task being watched. */
 export const pointer = (page: Page): Promise<string | null> =>
-  page.evaluate(() => localStorage.getItem("humm.activeTask"))
+  page.evaluate((keys) => keys.map((k) => localStorage.getItem(k)).find((v) => v !== null) ?? null, POINTER_KEYS)
+
+/** Write the pointer back where the app reads it (the signed-in user's key). */
+export const setPointer = (page: Page, value: string): Promise<void> =>
+  page.evaluate(([key, v]) => localStorage.setItem(key, v), [POINTER_KEYS[0], value] as const)
 
 /** Turn the workspace into a project with one To-do card, then reload.
  *  `model`: the workspace's default (null = none, a launch spec's case). */

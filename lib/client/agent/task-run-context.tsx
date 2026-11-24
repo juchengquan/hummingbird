@@ -25,13 +25,15 @@ import {
 import { toast } from "sonner"
 
 import { clearActiveTask, loadActiveTask, saveActiveTask } from "@/client/agent/active-task"
-import { ensureTaskNotificationPermission } from "@/client/agent/notify"
+import { ensureTaskNotificationPermission, notifyTaskNeedsAnswer } from "@/client/agent/notify"
 import { settleTask, type TaskMeta } from "@/client/agent/settle-task"
 import { useChildRuns, type ChildRuns } from "@/client/agent/use-child-runs"
+import { useAuth } from "@/client/hooks/use-auth"
 import { modelSwitchNote } from "@/client/hooks/use-model-backend"
 import { useHydrated, useStore } from "@/client/hooks/use-store"
 import { useTaskRun } from "@/client/hooks/use-task-run"
 import { isTerminalStatus } from "@/shared/agent/events"
+import type { ActiveTaskRecord } from "@/shared/agent/active-task"
 import type { TaskRunView } from "@/shared/agent/project"
 import type { TaskRequestInput } from "@/shared/api-schemas"
 import { TASK_MODEL_BACKEND, taskModelFor } from "@/shared/backend-models"
@@ -54,6 +56,8 @@ interface TaskRunContextValue {
   /** The conversation the active run belongs to (for the inline pointer
    *  in the thread). Null when no run has started this session. */
   runConversationId: string | null
+  /** The active run's title (its goal), for the panel's heading. */
+  runTitle: string | null
   /** The board card whose launch the server hasn't accepted yet. */
   launchingCardId: string | null
   /** The chat-input "Run as task" mode toggle. */
@@ -74,12 +78,42 @@ interface TaskRunContextValue {
 
 const TaskRunContext = createContext<TaskRunContextValue | null>(null)
 
+/**
+ * Why a new old-path launch must wait, or null (survey bug 1): this path
+ * follows one task at a time, so a second launch — `/research` skipped the
+ * chat's guard, another tab didn't see it — stopped watching the first,
+ * whose result was then never delivered in this browser. Another tab's
+ * task shows as the user's saved pointer naming another run.
+ */
+export function oldPathLaunchBlocked(
+  runningHere: boolean,
+  pointer: Pick<ActiveTaskRecord, "runId" | "status"> | null,
+  watchedRunId: string | null
+): string | null {
+  if (runningHere) return "A task is already running. Wait for it to finish, or cancel it."
+  if (pointer && !isTerminalStatus(pointer.status) && pointer.runId !== watchedRunId) {
+    return "A task is already running in another tab."
+  }
+  return null
+}
+
 export function TaskRunProvider({ children }: { children: ReactNode }) {
   const setTasksPanelOpen = useStore((s) => s.setTasksPanelOpen)
   const hydrated = useHydrated()
+  // The pointer and the derived result ids are the signed-in user's
+  // (survey bug 6, Q70): null signed out or without Supabase, undefined
+  // while the session is still being read.
+  const { status: authStatus, user } = useAuth()
+  const userId: string | null | undefined =
+    authStatus === "loading" ? undefined : authStatus === "signed-in" ? (user?.id ?? null) : null
+  const userIdRef = useRef(userId)
+  useEffect(() => {
+    userIdRef.current = userId
+  }, [userId])
 
   const [runAsTask, setRunAsTask] = useState(false)
   const [runConversationId, setRunConversationId] = useState<string | null>(null)
+  const [runTitle, setRunTitle] = useState<string | null>(null)
   const [runMode, setRunMode] = useState<"default" | "research" | null>(null)
   const [launchingCardId, setLaunchingCardId] = useState<string | null>(null)
 
@@ -90,8 +124,19 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
       const meta = metaRef.current.get(runId)
       if (meta) void settleTask(runId, view, meta)
     },
+    // Not this account's (or deleted): forget the pointer, settle nothing.
+    onGone: (runId) => {
+      const meta = metaRef.current.get(runId)
+      if (meta) clearActiveTask(runId, meta.userId)
+    },
   })
   const { start, resume } = run
+  const isRunningRef = useRef(run.isRunning)
+  const runIdRef = useRef(run.runId)
+  useEffect(() => {
+    isRunningRef.current = run.isRunning
+    runIdRef.current = run.runId
+  }, [run.isRunning, run.runId])
   const childRuns = useChildRuns(run.runId, run.isRunning, run.view.childRuns.length)
 
   const startTask = useCallback(
@@ -99,6 +144,13 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
       const cardId = opts?.projectTaskId
       const revertCard = () => {
         if (cardId) useStore.getState().moveProjectTask(cardId, "todo", 0)
+      }
+      const userId = userIdRef.current ?? null
+      const blocked = oldPathLaunchBlocked(isRunningRef.current, loadActiveTask(userId), runIdRef.current)
+      if (blocked) {
+        toast.error(blocked)
+        revertCard()
+        return
       }
       // Every launch passes here, whatever picked the model: the toggle,
       // `/research`, the board, a persona or a workspace (Q55).
@@ -114,8 +166,10 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
         conversationId: body.conversationId,
         title: opts?.title,
         mode: body.mode ?? "default",
+        userId,
       }
       setRunConversationId(meta.conversationId)
+      setRunTitle(meta.title ?? null)
       setRunMode(meta.mode)
       setLaunchingCardId(cardId ?? null)
       setTasksPanelOpen(true)
@@ -138,7 +192,7 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
           title: meta.title,
           ...(meta.mode !== "default" ? { mode: meta.mode } : {}),
           updatedAt: new Date().toISOString(),
-        })
+        }, userId)
         if (cardId) useStore.getState().updateProjectTask(cardId, { taskId: res.runId })
       })
     },
@@ -159,11 +213,11 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
   // stream reconciles dead runs when it opens, so a run that died while
   // away replays its synthetic failure and settles.
   useEffect(() => {
-    if (!hydrated) return
-    const pointer = loadActiveTask()
+    if (!hydrated || userId === undefined) return
+    const pointer = loadActiveTask(userId)
     if (!pointer) return
     if (isTerminalStatus(pointer.status)) {
-      clearActiveTask(pointer.runId)
+      clearActiveTask(pointer.runId, userId)
       return
     }
     const mode = pointer.mode ?? "default"
@@ -171,12 +225,36 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
       conversationId: pointer.conversationId,
       title: pointer.title,
       mode,
+      userId,
     })
     setRunConversationId(pointer.conversationId)
+    setRunTitle(pointer.title ?? null)
     setRunMode(mode)
     setTasksPanelOpen(true)
     resume(pointer.runId)
-  }, [hydrated, resume, setTasksPanelOpen])
+  }, [hydrated, userId, resume, setTasksPanelOpen])
+
+  // A question for the user — the task's own or a sub-agent's — notifies a
+  // hidden tab, once per question (Q74, survey bug 3).
+  const pending = run.view.pendingInput
+  const watchedRunId = run.runId
+  useEffect(() => {
+    if (!watchedRunId || !pending) return
+    const title = metaRef.current.get(watchedRunId)?.title
+    notifyTaskNeedsAnswer(watchedRunId, pending.requestId, { title, prompt: pending.prompt })
+  }, [watchedRunId, pending])
+  useEffect(() => {
+    if (!watchedRunId) return
+    const title = metaRef.current.get(watchedRunId)?.title
+    for (const child of childRuns.asking) {
+      if (child.pendingInput) {
+        notifyTaskNeedsAnswer(child.id, child.pendingInput.requestId, {
+          title,
+          prompt: child.pendingInput.prompt,
+        })
+      }
+    }
+  }, [watchedRunId, childRuns.asking])
 
   const value: TaskRunContextValue = {
     view: run.view,
@@ -186,6 +264,7 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
     error: run.error,
     childRuns,
     runConversationId,
+    runTitle,
     launchingCardId,
     runAsTask,
     setRunAsTask: handleSetRunAsTask,

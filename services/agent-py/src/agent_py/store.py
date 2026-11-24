@@ -224,6 +224,7 @@ def event_from_row_payload(
             )
             if isinstance(merged.get("usage"), list)
             else (),
+            stopped_at=_opt_str(merged.get("stoppedAt")),
         )
     if kind == "step_start":
         return events.StepStartEvent(run_id="", seq=seq, step=step, created_at=created_at)
@@ -445,6 +446,38 @@ def _resumed_from_seq(raw: object) -> int | None:
     if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
         return None
     return raw
+
+
+# The runs before `$1` on its task's line (Q75, Q78; RUN_EVENTS.md § 4.5):
+# the top-level runs of its root that hold the task's question — the root,
+# and every resume that is live, done or ended after applying its answers
+# (0047's `task_run_is_current` rule). A resume that failed or was cancelled
+# before applying is a dead branch, never on the line. By `root_run_id`, so
+# a deleted middle run doesn't cut the line short. Oldest first.
+_TASK_LINE_SQL = """
+SELECT t.id
+FROM public.tasks r
+JOIN public.tasks t
+  ON t.user_id = r.user_id
+ AND t.root_run_id = COALESCE(r.root_run_id, r.id)
+ AND t.parent_task_id IS NULL
+ AND t.id <> r.id
+ AND (t.created_at, t.id) < (r.created_at, r.id)
+WHERE r.id = $1 AND r.user_id = $2 AND r.parent_task_id IS NULL
+  AND (t.previous_run_id IS NULL
+       OR t.status NOT IN ('failed', 'cancelled')
+       OR t.answers_applied_at IS NOT NULL)
+ORDER BY t.created_at, t.id;
+"""
+
+
+async def load_task_line(pool: asyncpg.Pool, *, run_id: str, user_id: str) -> list[str]:
+    """The ids of the runs before `run_id` on its task's line, oldest
+    first (`_TASK_LINE_SQL`); `[]` for a task's only run or a sub-agent
+    run (answered in place: its own log is its whole answer)."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(_TASK_LINE_SQL, _coerce_uuid(run_id), _coerce_uuid(user_id))
+    return [str(r["id"]) for r in rows]
 
 
 async def load_run_events(
@@ -979,6 +1012,28 @@ class ChildSpawn:
 
 LOCK_TASK_SCOPE_SQL = "SELECT private.lock_task_scope($1, $2);"
 
+_TASK_CHILD_COUNT_SQL = "SELECT private.task_child_count($1);"
+
+
+class ChildCapReached(Exception):
+    """`commit_spawn` refused: the task already has `started` sub-agent
+    runs, and this spawn would take it past `cap` (Q72). Nothing was
+    written."""
+
+    def __init__(self, started: int, cap: int) -> None:
+        super().__init__(f"task has {started} sub-agent runs (cap {cap})")
+        self.started = started
+        self.cap = cap
+
+
+async def task_child_count(pool: asyncpg.Pool, *, task_id: str) -> int:
+    """Sub-agent runs `task_id`'s task has started, over every run of its
+    chain (`private.task_child_count`, 0047). Unlocked: a pre-check;
+    `commit_spawn` counts again under the lock."""
+    async with pool.acquire() as conn:
+        return int(await conn.fetchval(_TASK_CHILD_COUNT_SQL, _coerce_uuid(task_id)) or 0)
+
+
 # Parent first: flip to `paused` with the absolute barrier count and the
 # `awaiting_children` checkpoint — unless it settled (cancelled) under us.
 _SPAWN_PARENT_SQL = """
@@ -1014,6 +1069,7 @@ async def commit_spawn(
     children: list[ChildSpawn],
     checkpoint: dict[str, object],
     spawn_events: list[TaskEvent] | None = None,
+    max_task_children: int | None = None,
 ) -> bool:
     """Fan out in ONE transaction: the parent goes `paused` with
     `pending_children = len(children)` and its `awaiting_children`
@@ -1030,13 +1086,23 @@ async def commit_spawn(
 
     Returns False — and creates nothing, announces nothing — when the
     parent already settled (e.g. cancelled while this chunk ran).
-    `spawn_events` (the handoffs) commit with it."""
+    `spawn_events` (the handoffs) commit with it.
+
+    `max_task_children` (Q72): the task's sub-agent runs so far
+    (`private.task_child_count`, every run of its chain) are counted under
+    the user's task lock — which every writer of children holds — and a
+    spawn that would pass the cap raises `ChildCapReached`, writing
+    nothing."""
     parent_uuid = _coerce_uuid(parent_task_id)
     user_uuid = _coerce_uuid(user_id)
     async with fenced_connection(pool) as conn, conn.transaction():
         # 0045's lock order: conversation, user, then the task rows — so a
         # cancel either sees these children or stops this spawn.
         await conn.execute(LOCK_TASK_SCOPE_SQL, user_uuid, parent_uuid)
+        if max_task_children is not None:
+            started = int(await conn.fetchval(_TASK_CHILD_COUNT_SQL, parent_uuid) or 0)
+            if started + len(children) > max_task_children:
+                raise ChildCapReached(started, max_task_children)
         parent = await conn.fetchrow(
             _SPAWN_PARENT_SQL,
             parent_uuid,
@@ -1064,12 +1130,41 @@ async def commit_spawn(
     return True
 
 
+# The checkpoint's `seq` moves past its sub-agent runs' `handoff` `exit`
+# entries, written to the parent's log while it waited (0049): they are the
+# run's own, not a dead attempt's, so a reclaim's resume marker
+# (`resumedFromSeq` = the checkpoint's seq) must not rewind them. Only those:
+# anything else past the checkpoint is a dead attempt's, and stays rewound.
 _CLAIM_PAUSED_FOR_FAN_IN_SQL = """
-UPDATE public.tasks
-SET status = 'running', outcome = NULL, finished_at = NULL, updated_at = now()
-WHERE id = $1 AND user_id = $2 AND status = 'paused' AND pending_children <= 0
-RETURNING id;
+UPDATE public.tasks t
+SET status = 'running', outcome = NULL, finished_at = NULL, updated_at = now(),
+    checkpoint = CASE
+      WHEN jsonb_typeof(t.checkpoint) = 'object' THEN jsonb_set(
+        t.checkpoint, '{seq}', to_jsonb(GREATEST(
+          CASE WHEN jsonb_typeof(t.checkpoint -> 'seq') = 'number'
+               THEN (t.checkpoint ->> 'seq')::numeric::integer ELSE 0 END,
+          (SELECT COALESCE(MAX(e.seq), 0) FROM public.task_events e
+            WHERE e.task_id = t.id AND e.kind = 'handoff' AND e.payload ->> 'phase' = 'exit')
+        )))
+      ELSE t.checkpoint
+    END
+WHERE t.id = $1 AND t.user_id = $2 AND t.status = 'paused' AND t.pending_children <= 0
+RETURNING t.id;
 """
+
+
+_MAX_EXIT_SEQ_SQL = """
+SELECT COALESCE(MAX(e.seq), 0) FROM public.task_events e
+WHERE e.task_id = $1 AND e.user_id = $2 AND e.kind = 'handoff' AND e.payload ->> 'phase' = 'exit';
+"""
+
+
+async def max_exit_handoff_seq(pool: asyncpg.Pool, *, run_id: str, user_id: str) -> int:
+    """The last `handoff` `exit` entry of a parent's log (0049: written as
+    its sub-agent runs end, never by a worker); 0 without one."""
+    async with pool.acquire() as conn:
+        value = await conn.fetchval(_MAX_EXIT_SEQ_SQL, _coerce_uuid(run_id), _coerce_uuid(user_id))
+    return int(value or 0)
 
 
 async def claim_paused_for_fan_in(

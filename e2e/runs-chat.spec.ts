@@ -112,7 +112,8 @@ test.describe("chat on /v1/runs", () => {
     await page.getByRole("button", { name: "Approve", exact: true }).click()
     await resume
 
-    expect(starts).toHaveLength(2)
+    // The route handler records the start after the request event fires.
+    await expect.poll(() => starts.length).toBe(2)
     const second = starts[1]
     expect(second.runId).not.toBe(first.runId)
     expect(second.threadId).toBe(first.threadId)

@@ -31,6 +31,7 @@ import structlog
 from .. import lease, tool_ledger, tool_turn
 from ..coalescer import make_token_coalescer
 from ..emitter import RunEmitter
+from ..events import ToolImageEvent
 from ..reasoning_effort import ThinkingParams
 from ..runner import (
     PendingInputDescriptor,
@@ -96,7 +97,19 @@ class AsyncAnthropicClient(Protocol):
 
 # --- Public API ----------------------------------------------------------
 
-DEFAULT_MAX_TOKENS = 4096
+DEFAULT_MAX_TOKENS = 16_000
+"""Output tokens per background step (wave 6, bug 13: 4096 cut long
+reports). Every model the worker runs (`config/models.json`'s
+`anthropic/*`: Sonnet 4.6, Haiku 4.5) takes at least 64k, and the call
+streams, so a high ceiling costs nothing until it is used. An answer cut
+at it anyway is continued (`MAX_TOKENS_CONTINUE`), never settled."""
+
+MAX_TOKENS_CONTINUE = (
+    "Your previous reply was cut off by the output limit. Continue exactly "
+    "where it stopped — don't repeat anything, don't start over."
+)
+"""The user turn after an answer cut at `max_tokens`: the next step
+writes the rest, and the run's text (every step's tokens) reads as one."""
 
 
 @dataclass(frozen=False)
@@ -189,6 +202,20 @@ def make_anthropic_step_fn(config: AnthropicStepConfig) -> RunStepFn:
         # tell us which tools to invoke; `text` blocks are already
         # streamed via `text_stream` above so we don't re-emit them.
         content_blocks = _coerce_content_blocks(final_message)
+        if _stop_reason(final_message) == "max_tokens":
+            # Cut at the output limit: never an answer (bug 13). A tool call
+            # in it may be cut too — none runs; the model calls it again.
+            # The next step continues the text.
+            kept = [b for b in content_blocks if _block_type(b) != "tool_use"]
+            logger.warning(
+                "anthropic_step.max_tokens", dropped_calls=len(content_blocks) - len(kept)
+            )
+            if kept:
+                config.messages.append({"role": "assistant", "content": kept})
+            config.messages.append(
+                {"role": "user", "content": [{"type": "text", "text": MAX_TOKENS_CONTINUE}]}
+            )
+            return RunStepOutcome(done=False)
         tool_use_blocks = [b for b in content_blocks if _block_type(b) == "tool_use"]
 
         if not tool_use_blocks:
@@ -325,6 +352,19 @@ async def execute_tool_call(
             summary=result.summary,
             results=result.source_results,
         )
+        if result.images:
+            # The images reach the user as a `tool_image` part, as on an
+            # interactive run (`chat_loop.emit_tool_run`) — the only place a
+            # data URL (`localFilesOnly`, Q71) can go.
+            await emitter.emit(
+                ToolImageEvent,
+                tool_call_id=tool_call_id,
+                mode=result.image_mode,
+                images=tuple(
+                    {"id": f"{tool_call_id}-{i}", **img, "mode": result.image_mode}
+                    for i, img in enumerate(result.images)
+                ),
+            )
         results.append(_make_tool_result_block(tool_call_id, result.text, is_error=False))
 
     if ledger is not None:
@@ -403,6 +443,14 @@ def sendable_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def _stop_reason(final_message: Any) -> str | None:
+    """`final_message.stop_reason` (an SDK model, or a fake's dict)."""
+    value = getattr(final_message, "stop_reason", None)
+    if value is None and isinstance(final_message, dict):
+        value = final_message.get("stop_reason")
+    return value if isinstance(value, str) else None
+
+
 def _block_type(block: dict[str, Any]) -> str | None:
     val = block.get("type")
     return val if isinstance(val, str) else None
@@ -430,6 +478,7 @@ def _make_tool_result_block(
 
 __all__ = [
     "DEFAULT_MAX_TOKENS",
+    "MAX_TOKENS_CONTINUE",
     "AnthropicStepConfig",
     "AsyncAnthropicClient",
     "execute_tool_call",

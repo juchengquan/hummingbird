@@ -33,7 +33,6 @@ from typing import Any, Final, Protocol
 import asyncpg
 import structlog
 
-from . import jobs
 from .cron import JS_WHITESPACE_CLASS, js_split_whitespace, next_run_from_cron, parse_cron
 
 logger = structlog.get_logger(__name__)
@@ -354,6 +353,44 @@ TICK_MAX_FIRES_PER_USER: Final = 5
 DEFAULT_MAX_STEPS: Final = 25
 """`row.max_steps ?? 25` in `fireSchedule`."""
 
+SCHEDULE_DEFAULT_MODEL: Final = "anthropic/claude-haiku-4.5"
+"""The model a schedule saved without one gets (Q67, Q73, Q80):
+`SCHEDULE_DEFAULT_MODEL` in `lib/server/agent/schedules.ts`. Nothing picks
+one at fire time — a fire without a model fails "no model" (Q56)."""
+
+
+def schedule_model_on_save(model: str | None, *, enabled: bool) -> str | None:
+    """The `model` a create or update stores (`scheduleModelOnSave` in TS):
+    the given one, else Haiku for a schedule that is (or stays, or becomes)
+    enabled — creating one, or re-enabling one, that has no model. A
+    disabled schedule may keep none (it never fires)."""
+    if model is None and enabled:
+        return SCHEDULE_DEFAULT_MODEL
+    return model
+
+
+@dataclass(frozen=True)
+class ScheduledFire:
+    """What one fire writes (`scheduledFireFor` in TS): the conversation's
+    title, then `public.create_scheduled_task`'s goal, step budget and
+    checkpoint (0047). Both dispatchers build it the same way; the parity
+    fixture `tests/fixtures/schedule_fire_parity.json` pins it."""
+
+    conversation_title: str
+    goal: str
+    max_steps: int
+    checkpoint: dict[str, object]
+
+
+def scheduled_fire_for(row: DueSchedule) -> ScheduledFire:
+    max_steps = row.max_steps if row.max_steps is not None else DEFAULT_MAX_STEPS
+    return ScheduledFire(
+        conversation_title=f"Scheduled: {row.name}",
+        goal=js_slice(row.prompt, 2000),
+        max_steps=max_steps,
+        checkpoint=build_checkpoint(row, max_steps),
+    )
+
 
 @dataclass(frozen=True)
 class DueSchedule:
@@ -561,23 +598,11 @@ INSERT INTO public.conversations (id, user_id, workspace_id, title)
 VALUES ($1, $2, $3, $4);
 """
 
-# `createRun` in lib/server/agent/store.ts.
+# The task, its checkpoint, the `status: queued` entry and the `start` job
+# under the user's task lock — or, past 5 active tasks (Q79), the task
+# already `failed` (`limit_reached`) with no job (0047).
 _FIRE_TASK_SQL = """
-INSERT INTO public.tasks (id, user_id, conversation_id, goal, status, step, max_steps, started_at)
-VALUES ($1, $2, $3, $4, 'queued', 0, $5, $6);
-"""
-
-# `saveCheckpoint`.
-_FIRE_CHECKPOINT_SQL = """
-UPDATE public.tasks SET checkpoint = $3::jsonb, updated_at = $4
-WHERE id = $1 AND user_id = $2;
-"""
-
-# `appendEvent` of the synthetic `status: queued` event.
-_FIRE_EVENT_SQL = """
-INSERT INTO public.task_events (task_id, user_id, seq, step, kind, payload, created_at)
-VALUES ($1, $2, 1, 0, 'status', $3::jsonb, $4)
-ON CONFLICT (task_id, seq) DO NOTHING;
+SELECT public.create_scheduled_task($1, $2, $3, $4, $5, $6::jsonb);
 """
 
 _SET_LAST_RUN_TASK_SQL = """
@@ -649,45 +674,33 @@ class PgScheduleStore:
         return claimed is not None
 
     async def fire(self, row: DueSchedule, *, run_id: str, conversation_id: str) -> None:
-        """Conversation + task + checkpoint + `status: queued` event + the
-        `start` job, as `fireSchedule` writes them — but in one
-        transaction, so a failure leaves no half-created run behind."""
-        max_steps = row.max_steps if row.max_steps is not None else DEFAULT_MAX_STEPS
+        """One conversation per fire (Q80), then the task through
+        `public.create_scheduled_task` (0047, as `fireSchedule` does): the
+        task, checkpoint, `status: queued` entry and `start` job — or, at
+        the 5-task cap (Q79), the task already failed `limit_reached`, so
+        the fire still shows in the task list. One transaction, so a
+        failure leaves no half-created run behind."""
+        fire = scheduled_fire_for(row)
         user = _uuid(row.user_id)
-        run = _uuid(run_id)
         async with self._pool.acquire() as conn, conn.transaction():
             await conn.execute(
                 _FIRE_CONVERSATION_SQL,
                 _uuid(conversation_id),
                 user,
                 _uuid(row.workspace_id),
-                f"Scheduled: {row.name}",
+                fire.conversation_title,
             )
-            await conn.execute(
+            status = await conn.fetchval(
                 _FIRE_TASK_SQL,
-                run,
+                _uuid(run_id),
                 user,
                 _uuid(conversation_id),
-                js_slice(row.prompt, 2000),
-                max_steps,
-                datetime.now(UTC),
+                fire.goal,
+                fire.max_steps,
+                json.dumps(fire.checkpoint),
             )
-            await conn.execute(
-                _FIRE_CHECKPOINT_SQL,
-                run,
-                user,
-                json.dumps(build_checkpoint(row, max_steps)),
-                datetime.now(UTC),
-            )
-            await conn.execute(
-                _FIRE_EVENT_SQL,
-                run,
-                user,
-                json.dumps({"status": "queued", "maxSteps": max_steps}),
-                datetime.now(UTC),
-            )
-            # Same row `enqueue_task_job` writes for the service role.
-            await conn.execute(jobs.ENQUEUE_CONTINUE_SQL, run, user, "start", "{}")
+        if status != "queued":
+            logger.info("schedules.fire_at_task_cap", schedule_id=row.id, run_id=run_id)
 
     async def set_last_run_task(self, row: DueSchedule, *, run_id: str) -> None:
         async with self._pool.acquire() as conn:

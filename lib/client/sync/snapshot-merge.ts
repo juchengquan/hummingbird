@@ -124,6 +124,7 @@ export const MESSAGE_LOCAL_ONLY_KEYS = [
   "uiParts",
   "routedModel",
   "mcpApps",
+  "taskTurn",
 ] as const satisfies readonly (keyof Message)[]
 
 /** Resolves to `true` only when `Keys` covers every key of `T`. */

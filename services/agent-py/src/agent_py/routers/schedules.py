@@ -44,6 +44,7 @@ from ..schedules import (
     ScheduleBodyError,
     parse_schedule_body,
     row_to_schedule,
+    schedule_model_on_save,
     truncate_to_ms,
     validate_schedule_cron,
 )
@@ -203,7 +204,8 @@ async def create_schedule(
                 body["cron"],
                 timezone,
                 body.get("enabled", True),
-                body.get("model"),
+                # Haiku when none is given (Q73): the editor sends none.
+                schedule_model_on_save(body.get("model"), enabled=True),
                 body.get("systemPrompt"),
                 _skills_json(body.get("skills")),
                 body.get("maxSteps"),
@@ -279,9 +281,16 @@ async def update_schedule(
 
     assign("updated_at", _now())
     for key, column, cast in _PATCH_COLUMNS:
-        if key in patch:
+        if key in patch and key != "model":
             value = _skills_json(patch[key]) if key == "skills" else patch[key]
             assign(column, value, cast)
+    # An enabled schedule always has a model (Q80): re-enabling one that
+    # has none — or clearing the model of an enabled one — stores Haiku.
+    model = patch["model"] if "model" in patch else current["model"]
+    enabled = patch["enabled"] if "enabled" in patch else current["enabled"]
+    saved_model = schedule_model_on_save(model, enabled=bool(enabled))
+    if "model" in patch or saved_model != current["model"]:
+        assign("model", saved_model)
 
     # Recompute `next_run_at` only when cron / timezone actually change, so
     # an edit never pulls the next fire earlier.

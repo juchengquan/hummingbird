@@ -11,6 +11,17 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 type AllowedMcpServerId = Annotated[str, Field(max_length=64, min_length=1)]
 
 
+class AnswerRunRequest(BaseModel):
+    """
+    The answers to a sub-agent run's open interrupts (`answerRun`):
+    one AG-UI `ResumeEntry` per interrupt, as in a resume's
+    `RunAgentInput.resume`.
+
+    """
+
+    resume: Annotated[list[ResumeEntry], Field(max_length=16, min_length=1)]
+
+
 class ApiError(BaseModel):
     """
     The error envelope every backend returns on a non-2xx JSON response:
@@ -883,6 +894,60 @@ class Run(BaseModel):
     When the run ended (`succeeded`, `failed`, `cancelled` or `interrupted`).
     """
     updatedAt: AwareDatetime
+    rootRunId: UUID
+    """
+    The task this run belongs to (0.5.0, Q69, Q75): its first run.
+    A run that answered another (`previousRunId`) has that run's
+    root, a sub-agent run its parent's; any other run is its own
+    root (`rootRunId` = `id`). Interactive runs too: a chat turn
+    and its answers.
+
+    """
+    currentRunId: UUID | None
+    """
+    Null when this run is its task's **current run** (Q75): the
+    newest run of the task that holds its question — the root, or
+    a run that answered it and is live, succeeded, or ended
+    *after* applying the answers. Otherwise the id of the task's
+    current run, which carries the task's status: set on an
+    `interrupted` run a later run answered (follow it — the
+    question is closed), and on a resume that failed or was
+    cancelled before applying (a dead branch: its root's question
+    is open again, with this failure as a note). A sub-agent run
+    is answered in place (Q59), so it is always its own current
+    run.
+
+    """
+    research: bool
+    """
+    A research run (`forwardedProps.research`, Q46); a resume has
+    its previous run's. False for interactive runs.
+
+    """
+    delivered: bool
+    """
+    The task's result was marked delivered (`markRunDelivered`,
+    Q77) — read from the task's root, so every run of the task
+    agrees. False for interactive runs.
+
+    """
+    childrenAsking: Annotated[int, Field(ge=0)]
+    """
+    How many of this run's sub-agent runs are `interrupted`,
+    waiting on an answer (`answerRun`, Q59): one whose answer was
+    accepted and not yet picked up (its `answerPending` is true)
+    no longer counts — the question is answered. The parent
+    itself reads `running` meanwhile.
+
+    """
+    answerPending: bool
+    """
+    An answer to this `interrupted` run was accepted and is
+    queued, not yet picked up by a worker (`answerRun`, or the old
+    task respond route): show the question as answered. False
+    otherwise.
+
+    """
 
 
 class RunAccepted(BaseModel):
@@ -1285,13 +1350,32 @@ class RunResult(BaseModel):
     )
     text: str | None = None
     """
-    The run's final assistant text, when it produced one.
+    The run's final assistant text, when it produced one. For a
+    background task's run, the whole answer across its runs (the
+    root and each resume that answered it, Q78), not this run's
+    text alone.
+
     """
     memoryTainted: bool | None = None
     """
     The run read third-party content (web, file, MCP or sandbox
     tools), so post-turn memory extraction must skip it. Absent
     means false.
+
+    """
+    stoppedAt: Literal["max_steps"] | None = None
+    """
+    Why the answer may be incomplete. `max_steps`: a background
+    task stopped at its step limit and delivers what it has (Q81);
+    `text` then ends with a visible "stopped at the step limit"
+    note. Absent for a run that finished on its own.
+
+    """
+    verification: dict[str, Any] | None = None
+    """
+    A research run's citation check over `text` (Q78): the same
+    object as its `hummingbird.verification` activity's content
+    (`{ checks, summary }`). Absent when no check ran.
 
     """
 
@@ -1315,8 +1399,9 @@ A run's lifecycle. `queued` (background, not picked up yet) →
 `running` → one of the four ends: `succeeded`, `failed`,
 `cancelled`, or `interrupted` (waiting for answers to its open
 interrupts — which a **new** run answers, Q24; an interrupted run
-runs again only when the old task respond route answers it in
-place, as a sub-agent's question always is, Q59). `queued` ends
+runs again only when it is answered in place: a sub-agent run's
+question always is, through `answerRun` or the old task respond
+route, Q59). `queued` ends
 when a worker starts executing. A background run waiting on its own
 sub-agent runs is still `running`. Mapping to the internal status
 and `tasks.status`: `RUN_EVENTS.md` § Status.
@@ -1351,7 +1436,14 @@ class ScheduleCreateRequest(BaseModel):
     """
     model: Annotated[str | None, Field(max_length=100)] = None
     """
-    Model id; null falls back to the workspace / global default at run time.
+    Model id. Nothing picks one at run time: a schedule that fires
+    without a model fails "no model" (Q56). So a schedule created
+    without one — or re-enabled while it has none (the update's
+    `enabled: true`) — is given the backend's default task model
+    (Haiku, Q67) when it is saved, and the response shows it
+    (Q73, Q80). Schedules that had none were paused by migration
+    0047 until their owners re-enable them.
+
     """
     systemPrompt: Annotated[str | None, Field(max_length=20000)] = None
     skills: Annotated[list[SkillConfig] | None, Field(max_length=10)] = None

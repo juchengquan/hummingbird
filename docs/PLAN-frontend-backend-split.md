@@ -1,6 +1,6 @@
 # Plan: Frontend / backend split
 
-Status: **Waves 1–5 (Phases 0–2, chat on runs, backend catch-up) shipped (#294–#302). Wave 5c (background executor correctness) in progress; wave 6 waits on it.** Decided in a design interview
+Status: **Waves 1–5 (Phases 0–2, chat on runs, backend catch-up) shipped (#294–#302). Wave 5c (background executor correctness, #303–#305) shipped. Wave 6 (tasks panel onto runs) being planned.** Decided in a design interview
 on 2026-11-21. Supersedes the open parts of
 [`PLAN-backend-extraction.md`](PLAN-backend-extraction.md), whose Phase 1
 (single `apiClient` + Zod schemas + `docs/API.md`) shipped and is the
@@ -124,6 +124,23 @@ three times. The goals:
 | Q66 | Watching a task reads its status alone, not the whole row (checkpoint included), and polls every 5 s while it is paused on a question |
 | Q67 | A task whose model it can't run falls back to Haiku (agent-py's own default), not Sonnet |
 | Q68 | Scoping the saved task pointer to the signed-in account waits for wave 6 |
+| Q69 | The tasks panel lists all the user's tasks across conversations, the ones that need an answer first, several running at once (capped by Q72). The API grows a task identity: the root run, its current (latest) run, research or not |
+| Q70 | Whichever browser opens next writes a finished task's result into its conversation, with an id derived from the task so a second write is a no-op, and the server marks the task delivered. The result is the whole answer across the task's runs, not the last run's text |
+| Q71 | A task takes images in its message (Q49 corrected), doesn't tell the model to search files it has no id for (until Q49 is lifted for cloud files), honours "store files locally", and never offers Auto |
+| Q72 | At most 5 active (queued, running, or paused on a question; amended at the seam, since resumes are exempt) top-level tasks per user, refused before anything is created; sub-agents count against their parent: 5 per spawn, 20 per task |
+| Q73 | Schedules: a new schedule gets Haiku (Q67), shown in the editor; existing enabled ones are paused until their owner re-enables them; results appear in the list and go into the schedule's conversation (Q69, Q70); all the workspace's cloud MCP servers, servers needing approval pause the task. Per-schedule server choice later |
+| Q74 | A browser notification when a task needs an answer, fails or finishes: once each, hidden tabs only |
+| Q75 | Each run stores its root task (`root_run_id`); a task's current run is computed in SQL: the newest successor that holds the question (live, done, or ended after applying). A resume that failed before applying is a dead branch: the question shows again, with the failure as a note |
+| Q76 | The runs panel lists and drives every task, old-path and scheduled ones included; "stays on its path" (Q61) governs only the browser that launched it |
+| Q77 | Delivery is marked in `tasks.result_delivered_at` (no FK), set through `POST /v1/runs/{root}/delivered` after the browser wrote the message and sync drained. Failed / cancelled tasks write no message. The message, research document and artifact get ids derived from the task |
+| Q78 | The whole-answer text and its citation check are built on the server when a task settles, across the task's runs |
+| Q79 | The 5-task cap counts a parent waiting on sub-agents, never an answer (resumes are exempt); the old `create_task_run` is capped too under the same lock; a schedule fire at the cap creates the task already failed `limit_reached`; the error is 409 `limit_reached` |
+| Q80 | Re-enabling a schedule with no model sets Haiku and shows it; one conversation per fire; the contract's "null falls back to the default" text is corrected |
+| Q81 | A task that hits its step limit delivers what it has with a visible "stopped at the step limit" note; a spawn on the last step still uses its children's results |
+| Q82 | A real-stack browser job in CI (GoTrue, PostgREST, Next, the worker, a scripted model): on PRs touching tasks / runs and nightly; required after two green weeks |
+| Q83 | A message's "this was a task turn" marker (`Message.taskTurn`) stays local: on another device Edit / Regenerate / Retry of it is a chat turn. A synced column can come later |
+| Q84 | Tasks need sign-in on both paths: the Task toggle, the board's "Run as task" and `/research` are hidden or refused while signed out, on the old path too |
+| Q85 | A task's title in the list is its goal (one line), with the conversation's name under it, on the runs list and the old panel alike |
 
 ## Run contract (v1)
 
@@ -242,7 +259,7 @@ has shipped behind the existing per-account backend switch.
 | 5a (Phase 3) | one agent, the seams: every new run option in the contract (0.4.0) and through agent-py's run input; prompt-section and toolset-contributor hooks in the native harness; a per-run context slot that works for anonymous runs; `mcp_app` on tool results; the citation verifier client in a shared module; the matching `build-input.ts` fields passed on send and resume. Plus the Q43 trial findings ([`TRIAL-code-interpreter-on-agent-py.md`](TRIAL-code-interpreter-on-agent-py.md)) | Wave 4 merged |
 | 5b (Phase 3) | **A** background runs (Q41 resume + 0043 mutual exclusion, start parity, research mode Q46, the Q49 refusal, skills / reasoning effort in the executor, Q48, Run progress fields, early pending question) · **B** context on runs (file budget + notes with ids Q47, MCP resources, bookmarks as taint, cloud files by id Q44) · **C** memory, citation checks, reference image, `localFilesOnly`, per-IP limits, `auto` · **D** local MCP (Q42/Q45), `MCP_ALLOW_PRIVATE_HOSTS`, MCP Apps | 5a |
 | 5c (Phase 3) | the database CI job, then **A** backend (migration 0045; executor, provider, barrier, both cancel paths, runs router; Q55–Q60, background Q51) · **B** frontend (child answer card, reload, cancel, task models, schedule notice). Ends with an end-to-end check: Postgres, the real worker and a scripted model server, driven through the UI | Wave 5 merged |
-| 6 (Phase 3) | the tasks panel onto runs (Q38) | Wave 5c merged |
+| 6 (Phase 3) | the tasks panel onto runs (Q38, Q59 children's answers on runs, Q61, Q69–Q74); also: a Stop just before an ordinary chat tool call is honoured, background runs use `run_answer_applied` | Wave 5c merged (#303–#305) |
 
 Each wave merges into one integration branch and ships as one PR
 against `dev`.

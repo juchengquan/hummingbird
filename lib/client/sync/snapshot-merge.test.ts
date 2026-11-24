@@ -56,6 +56,7 @@ function fullMessage(id = "m1"): Required<Message> {
     kind: "recap",
     recapMessageIds: ["m0"],
     turnPersona: { agentId: "a1", allowedMcpServerIds: ["s1"] },
+    taskTurn: { mode: "research" },
   }
 }
 
@@ -287,6 +288,7 @@ describe("mergeCloudSnapshot: local-only fields", () => {
     expect(m.mcpApps).toEqual(fullMessage().mcpApps)
     expect(m.verification).toEqual(fullMessage().verification)
     expect(m.routedModel).toBe("openai/gpt-x")
+    expect(m.taskTurn).toEqual({ mode: "research" })
 
     const [w] = merged.workspaces
     expect(w.name).toBe("Renamed")

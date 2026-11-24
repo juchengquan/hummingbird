@@ -55,6 +55,7 @@ from .routers import (
 from .routers.chat import ChatRequest, _collect_skill_configs
 from .routers.health import HealthResponse, ReadinessChecks, ReadinessResponse
 from .routers.mcp import _decode_mcp_credential_header
+from .runs import reconcile as runs_reconcile
 from .runs import wiring as runs_wiring
 from .settings import Settings, get_settings
 
@@ -148,7 +149,7 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
         if not enable_poller:
             yield
             return
-        await db.init_pool(settings.SUPABASE_DB_URL)
+        await db.init_pool(settings.SUPABASE_DB_URL, max_size=settings.DB_POOL_MAX_SIZE)
         # The runs API (`/v1/runs`): its services see the pool opened just
         # above; the maintenance loop reaps interactive runs whose process
         # died and drops expired in-memory runs, with or without a DB.
@@ -165,11 +166,14 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
         sched_task: asyncio.Task[int] | None = None
         sched_stop = asyncio.Event()
         sched_stopping: asyncio.Task[None] | None = None
+        reconcile_task: asyncio.Task[None] | None = None
+        reconcile_stop = asyncio.Event()
         restore_signals: Callable[[], None] | None = None
 
         def begin_shutdown() -> None:
             # Idempotent: the signal hook and the lifespan both call it.
             nonlocal stopping, sched_stopping, runs_stopping
+            reconcile_stop.set()
             if runs_stopping is None:
                 # Interactive runs end now (failed / worker_lost), so their
                 # streams close and the server can drain connections.
@@ -212,6 +216,18 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
                     "lifespan.scheduler.started",
                     interval=settings.SCHEDULER_INTERVAL_SECONDS,
                 )
+            if settings.RUNS_RECONCILE_ENABLED:
+                # Wave 6 (survey bug 17): fail background tasks no worker
+                # ever picked up, as Next's `reconcileStaleRuns` does.
+                reconcile_task = asyncio.create_task(
+                    runs_reconcile.run_reconcile_loop(settings, stop=reconcile_stop),
+                    name="agent-py.runs.reconcile",
+                )
+                logger.info(
+                    "lifespan.reconciler.started",
+                    interval=settings.RUNS_RECONCILE_INTERVAL_SECONDS,
+                    timeout_minutes=settings.TASK_NO_WORKER_TIMEOUT_MINUTES,
+                )
         else:
             logger.info("lifespan.poller.skipped", reason="no_supabase_db_url")
             if settings.SCHEDULER_ENABLED:
@@ -232,6 +248,9 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
                     await pending
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await runs_task
+            if reconcile_task is not None:
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await reconcile_task
             runs_wiring.reset_run_services()
             poller.register_loop_task(None)
             scheduler.register_loop_task(None)

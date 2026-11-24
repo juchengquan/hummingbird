@@ -1109,6 +1109,7 @@ export type Database = {
         Row: {
           answered_question_ids: string[] | null
           answers_applied_at: string | null
+          awaiting_children: boolean | null
           checkpoint: Json | null
           conversation_id: string | null
           created_at: string
@@ -1123,7 +1124,10 @@ export type Database = {
           parent_task_id: string | null
           pending_children: number
           previous_run_id: string | null
+          research: boolean
+          result_delivered_at: string | null
           result_message_id: string | null
+          root_run_id: string | null
           started_at: string | null
           status: string
           step: number
@@ -1134,6 +1138,7 @@ export type Database = {
         Insert: {
           answered_question_ids?: string[] | null
           answers_applied_at?: string | null
+          awaiting_children?: never
           checkpoint?: Json | null
           conversation_id?: string | null
           created_at?: string
@@ -1148,7 +1153,10 @@ export type Database = {
           parent_task_id?: string | null
           pending_children?: number
           previous_run_id?: string | null
+          research?: boolean
+          result_delivered_at?: string | null
           result_message_id?: string | null
+          root_run_id?: string | null
           started_at?: string | null
           status: string
           step?: number
@@ -1159,6 +1167,7 @@ export type Database = {
         Update: {
           answered_question_ids?: string[] | null
           answers_applied_at?: string | null
+          awaiting_children?: never
           checkpoint?: Json | null
           conversation_id?: string | null
           created_at?: string
@@ -1173,7 +1182,10 @@ export type Database = {
           parent_task_id?: string | null
           pending_children?: number
           previous_run_id?: string | null
+          research?: boolean
+          result_delivered_at?: string | null
           result_message_id?: string | null
+          root_run_id?: string | null
           started_at?: string | null
           status?: string
           step?: number
@@ -1437,6 +1449,17 @@ export type Database = {
           status: string
         }[]
       }
+      create_scheduled_task: {
+        Args: {
+          p_checkpoint: Json
+          p_conversation_id: string
+          p_goal: string
+          p_id: string
+          p_max_steps: number
+          p_user_id: string
+        }
+        Returns: string
+      }
       create_task_run: {
         Args: {
           p_checkpoint: Json
@@ -1452,6 +1475,12 @@ export type Database = {
           p_action: string
           p_payload?: Json
           p_scheduled_at?: string
+          p_task_id: string
+        }
+        Returns: string
+      }
+      mark_task_delivered: {
+        Args: {
           p_task_id: string
         }
         Returns: string
@@ -1497,6 +1526,37 @@ export type Database = {
           excerpt: string
           rank: number
         }[]
+      }
+      task_current_run_id: {
+        Args: {
+          t: Database["public"]["Tables"]["tasks"]["Row"]
+        }
+        Returns: string
+      }
+      task_current_run_id_by: {
+        Args: {
+          p_id: string
+          p_parent_task_id: string
+          p_root_run_id: string
+          p_user_id: string
+        }
+        Returns: string
+      }
+      task_run_is_current: {
+        Args: {
+          t: Database["public"]["Tables"]["tasks"]["Row"]
+        }
+        Returns: boolean
+      }
+      task_run_is_current_by: {
+        Args: {
+          p_answers_applied_at: string
+          p_id: string
+          p_previous_run_id: string
+          p_status: string
+          p_user_id: string
+        }
+        Returns: boolean
       }
       task_worker_active_within: {
         Args: {

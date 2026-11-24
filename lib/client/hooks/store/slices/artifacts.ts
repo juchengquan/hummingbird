@@ -33,6 +33,13 @@ export interface ArtifactsSlice {
     content: string
     storagePath?: string | null
   }) => Artifact
+  /** `createArtifact` under a given id (a finished task's result, id
+   *  derived from the task — Q77), idempotently: an existing artifact with
+   *  that id is returned unchanged and nothing is written. */
+  createArtifactWithId: (
+    id: string,
+    input: Parameters<ArtifactsSlice["createArtifact"]>[0]
+  ) => Artifact
   deleteArtifact: (artifactId: string) => void
   togglePinArtifact: (artifactId: string) => void
   updateArtifactTitle: (artifactId: string, title: string) => void
@@ -55,17 +62,17 @@ export interface ArtifactsSlice {
   toggleConversationArtifactSelection: (artifactId: string) => void
 }
 
-export const createArtifactsSlice: SliceCreator<ArtifactsSlice> = (set, get) => ({
-  artifacts: [],
-  editorReloadToken: 0,
-
-  createArtifact: ({ conversationId, messageId = null, kind, language = null, title, content, storagePath = null }) => {
+export const createArtifactsSlice: SliceCreator<ArtifactsSlice> = (set, get) => {
+  const insertArtifact = (
+    id: string,
+    { conversationId, messageId = null, kind, language = null, title, content, storagePath = null }: Parameters<ArtifactsSlice["createArtifact"]>[0]
+  ): Artifact => {
     const fallbackTitle =
       title ?? content.split("\n")[0].slice(0, 60).trim() ?? "Untitled"
     const conv = get().conversations.find((c) => c.id === conversationId)
     const workspaceId = conv?.workspaceId ?? get().activeWorkspaceId
     const newArtifact: Artifact = {
-      id: uuid(),
+      id,
       workspaceId,
       conversationId,
       messageId,
@@ -110,95 +117,103 @@ export const createArtifactsSlice: SliceCreator<ArtifactsSlice> = (set, get) => 
       }
     }
     return newArtifact
-  },
-  deleteArtifact: (artifactId) =>
-    set((state) => {
-      // Atomic cascade: drop selection ids that reference the artifact
-      // so a deleted artifact doesn't linger as a tick in any
-      // conversation. Mirrors the file/MCP/url-bookmark pattern, but
-      // only allocates a new `conversations` array when at least one
-      // row actually carries this id — keeps the ref stable for
-      // selectors that subscribe to `state.conversations` whole.
-      const touchesAnyConv = state.conversations.some((c) =>
-        c.selectedArtifactIds?.includes(artifactId)
-      )
-      return {
-        artifacts: state.artifacts.filter((a) => a.id !== artifactId),
-        ...(touchesAnyConv
-          ? {
-              conversations: state.conversations.map((c) => {
-                const sel = c.selectedArtifactIds
-                if (!sel || !sel.includes(artifactId)) return c
-                const next = sel.filter((id) => id !== artifactId)
-                return {
-                  ...c,
-                  selectedArtifactIds: next.length > 0 ? next : undefined,
-                }
-              }),
-            }
-          : {}),
-      }
-    }),
-  togglePinArtifact: (artifactId) =>
-    set((state) => ({
-      artifacts: state.artifacts.map((a) =>
-        a.id === artifactId ? { ...a, pinned: !a.pinned } : a
-      ),
-    })),
-  updateArtifactTitle: (artifactId, title) =>
-    set((state) => ({
-      artifacts: state.artifacts.map((a) =>
-        a.id === artifactId ? { ...a, title } : a
-      ),
-    })),
-  updateArtifactContent: (artifactId, content) =>
-    set((state) => ({
-      artifacts: state.artifacts.map((a) => {
-        if (a.id !== artifactId || a.content === content) return a
-        const version: ArtifactVersion = {
-          id: uuid(),
-          content: a.content, // the PRIOR content
-          createdAt: new Date(),
+  }
+  return {
+    artifacts: [],
+    editorReloadToken: 0,
+
+    createArtifact: (input) => insertArtifact(uuid(), input),
+    createArtifactWithId: (id, input) =>
+      get().artifacts.find((a) => a.id === id) ?? insertArtifact(id, input),
+    deleteArtifact: (artifactId) =>
+      set((state) => {
+        // Atomic cascade: drop selection ids that reference the artifact
+        // so a deleted artifact doesn't linger as a tick in any
+        // conversation. Mirrors the file/MCP/url-bookmark pattern, but
+        // only allocates a new `conversations` array when at least one
+        // row actually carries this id — keeps the ref stable for
+        // selectors that subscribe to `state.conversations` whole.
+        const touchesAnyConv = state.conversations.some((c) =>
+          c.selectedArtifactIds?.includes(artifactId)
+        )
+        return {
+          artifacts: state.artifacts.filter((a) => a.id !== artifactId),
+          ...(touchesAnyConv
+            ? {
+                conversations: state.conversations.map((c) => {
+                  const sel = c.selectedArtifactIds
+                  if (!sel || !sel.includes(artifactId)) return c
+                  const next = sel.filter((id) => id !== artifactId)
+                  return {
+                    ...c,
+                    selectedArtifactIds: next.length > 0 ? next : undefined,
+                  }
+                }),
+              }
+            : {}),
         }
-        return { ...a, content, versions: pushArtifactVersion(a.versions, version) }
       }),
-    })),
-  restoreArtifactVersion: (artifactId, versionId) => {
-    const a = get().artifacts.find((x) => x.id === artifactId)
-    const v = a?.versions?.find((x) => x.id === versionId)
-    if (!a || !v) return
-    // Route through updateArtifactContent so the current content is itself
-    // captured as a version — restore is non-destructive.
-    get().updateArtifactContent(artifactId, v.content)
-  },
-  updateArtifactStoragePath: (artifactId, storagePath) =>
-    set((state) => ({
-      artifacts: state.artifacts.map((a) =>
-        a.id === artifactId && a.storagePath !== storagePath
-          ? { ...a, storagePath }
-          : a,
-      ),
-    })),
-  requestEditorReload: () =>
-    set((state) => ({ editorReloadToken: state.editorReloadToken + 1 })),
-  toggleConversationArtifactSelection: (artifactId) =>
-    set((state) => {
-      const id = state.activeConversationId
-      if (!id) return state
-      return {
-        conversations: state.conversations.map((c) => {
-          if (c.id !== id) return c
-          const selected = c.selectedArtifactIds ?? []
-          return {
-            ...c,
-            selectedArtifactIds: selected.includes(artifactId)
-              ? selected.filter((x) => x !== artifactId)
-              : [...selected, artifactId],
+    togglePinArtifact: (artifactId) =>
+      set((state) => ({
+        artifacts: state.artifacts.map((a) =>
+          a.id === artifactId ? { ...a, pinned: !a.pinned } : a
+        ),
+      })),
+    updateArtifactTitle: (artifactId, title) =>
+      set((state) => ({
+        artifacts: state.artifacts.map((a) =>
+          a.id === artifactId ? { ...a, title } : a
+        ),
+      })),
+    updateArtifactContent: (artifactId, content) =>
+      set((state) => ({
+        artifacts: state.artifacts.map((a) => {
+          if (a.id !== artifactId || a.content === content) return a
+          const version: ArtifactVersion = {
+            id: uuid(),
+            content: a.content, // the PRIOR content
+            createdAt: new Date(),
           }
+          return { ...a, content, versions: pushArtifactVersion(a.versions, version) }
         }),
-      }
-    }),
-})
+      })),
+    restoreArtifactVersion: (artifactId, versionId) => {
+      const a = get().artifacts.find((x) => x.id === artifactId)
+      const v = a?.versions?.find((x) => x.id === versionId)
+      if (!a || !v) return
+      // Route through updateArtifactContent so the current content is itself
+      // captured as a version — restore is non-destructive.
+      get().updateArtifactContent(artifactId, v.content)
+    },
+    updateArtifactStoragePath: (artifactId, storagePath) =>
+      set((state) => ({
+        artifacts: state.artifacts.map((a) =>
+          a.id === artifactId && a.storagePath !== storagePath
+            ? { ...a, storagePath }
+            : a,
+        ),
+      })),
+    requestEditorReload: () =>
+      set((state) => ({ editorReloadToken: state.editorReloadToken + 1 })),
+    toggleConversationArtifactSelection: (artifactId) =>
+      set((state) => {
+        const id = state.activeConversationId
+        if (!id) return state
+        return {
+          conversations: state.conversations.map((c) => {
+            if (c.id !== id) return c
+            const selected = c.selectedArtifactIds ?? []
+            return {
+              ...c,
+              selectedArtifactIds: selected.includes(artifactId)
+                ? selected.filter((x) => x !== artifactId)
+                : [...selected, artifactId],
+            }
+          }),
+        }
+      }),
+  }
+}
 
 /** Sort comparator shared by both artifact selectors — pinned-first,
  *  then by `createdAt` desc. Stable, pure, dependency-free. */

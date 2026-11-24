@@ -30,7 +30,14 @@ import { fileURLToPath } from "node:url"
 import { describe, expect, test } from "bun:test"
 import { CronExpressionParser } from "cron-parser"
 
-import { cronPassesCoarseGuard, nextRunFromCron, validateScheduleCron } from "./schedules"
+import {
+  cronPassesCoarseGuard,
+  nextRunFromCron,
+  SCHEDULE_DEFAULT_MODEL,
+  scheduledFireFor,
+  scheduleModelOnSave,
+  validateScheduleCron,
+} from "./schedules"
 
 const FIXTURE_PATH = fileURLToPath(
   new URL("../../../services/agent-py/tests/fixtures/cron_parity.json", import.meta.url),
@@ -417,5 +424,48 @@ describe("cron parity fixture (agent-py port)", () => {
   test("pins the cron-parser version the fixture was generated with", async () => {
     const pkg = (await import("cron-parser/package.json")) as { version: string }
     expect(pkg.version).toBe("5.5.0")
+  })
+})
+
+/**
+ * Fire + model-on-save parity (wave 6, Q73 / Q79 / Q80): both dispatchers
+ * hand `create_scheduled_task` the same goal, step budget and checkpoint
+ * under the same conversation title, and both create / update routes store
+ * the same model. `services/agent-py/tests/test_schedules_dispatch.py`
+ * checks agent-py's `scheduled_fire_for` / `schedule_model_on_save` against
+ * the same hand-written fixture.
+ */
+const FIRE_FIXTURE_PATH = fileURLToPath(
+  new URL("../../../services/agent-py/tests/fixtures/schedule_fire_parity.json", import.meta.url),
+)
+
+interface FireFixture {
+  defaultModel: string
+  fires: {
+    name: string
+    row: Parameters<typeof scheduledFireFor>[0]
+    fire: unknown
+  }[]
+  modelOnSave: { model: string | null; enabled: boolean; saved: string | null }[]
+}
+
+describe("schedule fire parity (agent-py dispatcher)", () => {
+  const fixture = JSON.parse(readFileSync(FIRE_FIXTURE_PATH, "utf8")) as FireFixture
+
+  test("the default model is agent-py's", () => {
+    expect(SCHEDULE_DEFAULT_MODEL).toBe(fixture.defaultModel)
+  })
+
+  for (const c of fixture.fires) {
+    test(`a fire writes what agent-py's writes: ${c.name}`, () => {
+      // Through JSON, as the RPC sends it (undefined keys are dropped).
+      expect(JSON.parse(JSON.stringify(scheduledFireFor(c.row)))).toEqual(c.fire)
+    })
+  }
+
+  test("a save stores the model agent-py's stores", () => {
+    for (const c of fixture.modelOnSave) {
+      expect(scheduleModelOnSave(c.model, c.enabled)).toBe(c.saved)
+    }
   })
 })

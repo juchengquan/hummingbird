@@ -37,6 +37,10 @@ NEEDLES=(
   "MCP_ENCRYPTION_KEY"
   "lib/server/"
   "@/server/"
+  # The e2e-only fake tasks interface (components/agent/tasks/e2e-fake.ts):
+  # only a build with NEXT_PUBLIC_E2E_TASKS_FAKE=1 may carry it.
+  "__humm_e2e_tasks_fake__"
+  "__HUMM_E2E_TASKS__"
 )
 
 EXIT=0

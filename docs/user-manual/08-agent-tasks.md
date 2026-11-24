@@ -15,14 +15,35 @@ picked.
 - `/research <goal>` starts a research task, with or without the toggle.
 - **Run as task** on a card of a project workspace's board.
 
-The Tasks panel opens beside the chat. One task is shown at a time; the
-line above the message box opens the panel again.
+The Tasks panel opens beside the chat. The line above the message box
+opens it again while a task of that conversation runs.
+
+With **agent-py (runs)** selected as the backend, the panel lists **all
+your tasks**, from every conversation, scheduled ones included: those
+that need your answer first, then the running ones, then the finished
+ones. Up to 5 can run at once (the count is at the top of the list). The
+**Tasks** button in the chat header opens the panel, and shows how many
+tasks wait for your answer. Click a task to expand it: its text, steps,
+plan, sub-agents and its question. A task that asks opens by itself.
+
+With any other backend, the panel shows the one task this browser
+started, as before.
+
+Either way a task is titled by its goal (the first line of what you
+asked), with its conversation's name under it.
+
+Signed out, there is no **Task** toggle and no **Run as task** on the
+board: tasks need an account. `/research` says so.
 
 ## What you can do
 - Watch progress: status, step, plan, tool calls, sub-agents and text.
+- **Run several at once** (agent-py (runs)): up to 5 tasks, the board's
+  and `/research` included. A sixth is refused with "You already have 5
+  tasks running"; wait for one to finish or cancel one.
 - **Answer a question.** A task that needs you pauses and shows a card:
   approve a tool call, pick an option, type an answer or fill in an
-  interactive card. Several questions come one after another.
+  interactive card. Several questions come one after another. Once
+  sent, the card says "Answer sent" until the task picks it up.
 - **Answer a sub-agent.** When a sub-agent needs you, the task says so
   and shows that question, named after the sub-agent. Several can ask at
   once; answer them in any order. The sub-agent's own window (click it in
@@ -33,6 +54,13 @@ line above the message box opens the panel again.
 - **Cancel** the task at any point, also while it waits for you or for
   its sub-agents. That cancels its sub-agents too, and its question
   doesn't come back.
+- **Stopped at the step limit.** A task that runs out of steps delivers
+  what it has, with the note "Stopped at the step limit", on the task and
+  at the end of its message.
+- **Edit, Regenerate or Retry a task turn** and it runs as a task again,
+  in the same mode (`/research` stays research). This is remembered in
+  the browser that sent it; on another device such a resend is a chat
+  turn.
 - Find the result as a message in the conversation it started in. A
   research report also becomes a document and an artifact; a board card
   moves to Done and links its result (or back to To-do when the task
@@ -63,6 +91,13 @@ The run is an append-only log of typed events:
 - `compact` - context was compacted to fit the window.
 - `artifact_ref` - the agent produced or referenced a saved artifact.
 - `result` - the run's final assistant message.
+
+## Notifications
+The browser asks once whether the app may notify you, when you turn on
+**Task**, send `/research` or run a board card. If you allow it, you get
+a notification when a task needs your answer, fails or finishes, while
+the app's tab is in the background; one per event, even with several
+tabs open.
 
 ## Tips & gotchas
 - Closing the browser does not stop a task. When you open the app again

@@ -20,11 +20,29 @@ const RECONNECT_MAX_MS = 15_000
 
 const TASK_GONE = "This task no longer exists, or belongs to another account."
 
+/**
+ * What a failed read of the task's stream means (survey bug 6):
+ * - `gone` — 404: not this account's task (another account signed in on
+ *   this browser) or deleted. The watch ends; nothing is settled — settling
+ *   it as cancelled moved its board card and wrote the delivered mark, so
+ *   its owner never got the result here.
+ * - `retry` — anything else, a 401 included: read again with a back-off.
+ *   A 401 keeps the pointer and the watch, so it comes back once the user
+ *   signs in again (pinned by `e2e/tasks-edges.spec.ts`, "signed out").
+ */
+export function watchFailure(status: number, code: string | undefined): "gone" | "retry" {
+  if (status === 404 && (code === "not_found" || code === undefined)) return "gone"
+  return "retry"
+}
+
 export interface UseTaskRunOptions {
   /** The run ended: once per watched run, with its final view. A reload
    *  replays the log, so this fires again then — the caller makes what it
    *  does idempotent (`settleTask`). */
   onSettled?: (runId: string, view: TaskRunView) => void
+  /** The run isn't readable here: not this account's, or deleted (404).
+   *  The watch has ended without settling it. */
+  onGone?: (runId: string) => void
 }
 
 export interface UseTaskRunResult {
@@ -97,6 +115,18 @@ export function useTaskRun(options?: UseTaskRunOptions): UseTaskRunResult {
     optsRef.current?.onSettled?.(id, ended)
   }, [])
 
+  /** End the watch without settling the run: it can't be read here. */
+  const stopWatching = useCallback((message: string) => {
+    endedRef.current = true
+    cancelledRef.current = false
+    abortRef.current?.abort()
+    viewRef.current = EMPTY_RUN_VIEW
+    runIdRef.current = null
+    setView(EMPTY_RUN_VIEW)
+    setRunId(null)
+    setWatchError(message)
+  }, [])
+
   /** Fold one event. The stream and Realtime both call this — `reduceRun`
    *  is idempotent by `seq`, so a duplicate delivery is a no-op. */
   const fold = useCallback(
@@ -135,10 +165,13 @@ export function useTaskRun(options?: UseTaskRunOptions): UseTaskRunResult {
             const res = await apiClient.tasks.resume(id, { cursor: openedFrom, signal })
             if (signal.aborted) return
             if (res.ok && res.body) body = res.body
-            else if (res.status === 404 && res.error?.code === "not_found") {
-              settle(id, { ...asCancelled(viewRef.current), fatalError: TASK_GONE })
-              return
-            } else {
+            else {
+              const failure = watchFailure(res.status, res.error?.code)
+              if (failure === "gone") {
+                stopWatching(TASK_GONE)
+                optsRef.current?.onGone?.(id)
+                return
+              }
               problem = res.error?.message ?? `Couldn't read the task (HTTP ${res.status}).`
             }
           } catch {
@@ -172,7 +205,7 @@ export function useTaskRun(options?: UseTaskRunOptions): UseTaskRunResult {
         unsubscribe?.()
       }
     },
-    [fold, settle]
+    [fold, settle, stopWatching]
   )
 
   /** (Re)open the watch from the current cursor. */

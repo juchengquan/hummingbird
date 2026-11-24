@@ -1,0 +1,29 @@
+{
+  "scenario": "spawn",
+  "runs": {
+    "child-asks-paused": {
+      "runId": "2b2679b8-ca51-48c1-a780-37698d82bc07",
+      "parentRole": "parent",
+      "previousRole": null,
+      "status": "interrupted"
+    },
+    "parent": {
+      "runId": "fc8d4797-41d8-4fed-8480-16bbc9897af9",
+      "parentRole": null,
+      "previousRole": null,
+      "status": "succeeded"
+    },
+    "child-asks": {
+      "runId": "2b2679b8-ca51-48c1-a780-37698d82bc07",
+      "parentRole": "parent",
+      "previousRole": null,
+      "status": "succeeded"
+    },
+    "child-works": {
+      "runId": "1a0362aa-daaa-41ea-9f5c-7f24d3ea7b7b",
+      "parentRole": "parent",
+      "previousRole": null,
+      "status": "succeeded"
+    }
+  }
+}

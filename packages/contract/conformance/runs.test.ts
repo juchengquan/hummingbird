@@ -1,7 +1,7 @@
 /**
  * The runs operations (tag `runs`): `startRun`, `listRuns`, `getRun`,
- * `streamRunEvents`, `cancelRun` — beyond the generic auth / error
- * cases. See ../README.md ("What the runs conformance cases cover") and
+ * `streamRunEvents`, `cancelRun`, `answerRun`, `markRunDelivered` —
+ * beyond the generic auth / error cases. See ../README.md ("What the runs conformance cases cover") and
  * RUN_EVENTS.md (streams, cursor, gap).
  *
  * Cases that start runs need a backend whose harness is model-free
@@ -904,6 +904,143 @@ describe.skipIf(!env.baseUrl)(`conformance: runs @ ${env.baseUrl}`, () => {
     )
   })
 
+  // --- tasks (0.5.0) -------------------------------------------------------------------
+  //
+  // What a model-free stub can show of the task fields, the task filters,
+  // `answerRun` and `markRunDelivered`. It can't show what needs a worker
+  // or a sub-agent run: the stub spawns none and a background run is never
+  // executed here, so `answerRun`'s 202 / `run_already_answered` /
+  // `limit_reached`, `childrenAsking` > 0, `answerPending: true` and a
+  // succeeded task's delivery are covered by agent-py's
+  // `tests/test_runs_tasks_pg.py` on a real database instead.
+
+  describe.skipIf(!env.runsStub || !env.authToken)("tasks (stub + token)", () => {
+    async function interruptedChain(): Promise<{ first: string; resume: string; threadId: string }> {
+      const threadId = randomUUID()
+      const first = await startInteractive({ token: env.authToken, threadId, conformance: { outcome: "interrupt" } })
+      const { events } = assertRunStream(first.ex, first)
+      const interrupts = ((events.at(-1) as Json).outcome as { interrupts: Json[] }).interrupts
+      const answer = await startInteractive({
+        token: env.authToken,
+        threadId,
+        previousRunId: first.runId,
+        resume: interrupts.map((i) => ({ interruptId: i.id, status: "resolved", payload: { approved: true } })),
+      })
+      assertRunStream(answer.ex, answer)
+      return { first: first.runId, resume: answer.runId, threadId }
+    }
+
+    test(
+      "a chain names its root and current run; topLevel / current / rootRunId / delivered filter, absent vs false",
+      async () => {
+        const { first, resume, threadId } = await interruptedChain()
+        const answered = await getRun(first, { token: env.authToken })
+        expect(answered).toMatchObject({
+          status: "interrupted",
+          rootRunId: first,
+          currentRunId: resume,
+          research: false,
+          delivered: false,
+          childrenAsking: 0,
+          answerPending: false,
+        })
+        const current = await getRun(resume, { token: env.authToken })
+        expect(current).toMatchObject({ status: "succeeded", rootRunId: first, currentRunId: null, delivered: false })
+
+        const ids = async (query: Record<string, string>) => {
+          const ex = await call(op("listRuns"), { token: env.authToken, query: { threadId, ...query } })
+          expect(ex.status).toBe(200)
+          contract.assertConforms("listRuns", ex)
+          return (ex.body as { runs: Json[] }).runs.map((r) => r.id)
+        }
+        expect(await ids({})).toEqual([resume, first])
+        expect(await ids({ current: "true" })).toEqual([resume])
+        expect(await ids({ current: "false" })).toEqual([first])
+        expect(await ids({ rootRunId: first })).toEqual([resume, first])
+        expect(await ids({ rootRunId: resume })).toEqual([])
+        expect(await ids({ topLevel: "true" })).toEqual([resume, first])
+        expect(await ids({ topLevel: "false" })).toEqual([])
+        // Interactive runs are never delivered.
+        expect(await ids({ delivered: "false" })).toEqual([resume, first])
+        expect(await ids({ delivered: "true" })).toEqual([])
+        const bad = await call(op("listRuns"), { token: env.authToken, query: { threadId, current: "maybe" } })
+        expect(bad.status).toBe(422)
+        contract.assertConforms("listRuns", bad)
+      },
+      TIMEOUT,
+    )
+
+    test(
+      "answerRun: a top-level run → 409 invalid_state and stays interrupted; unknown or foreign → 404; a run token → 401",
+      async () => {
+        const first = await startInteractive({ token: env.authToken, conformance: { outcome: "interrupt" } })
+        const { events } = assertRunStream(first.ex, first)
+        const interrupts = ((events.at(-1) as Json).outcome as { interrupts: Json[] }).interrupts
+        const body = { resume: interrupts.map((i) => ({ interruptId: i.id, status: "resolved", payload: { approved: true } })) }
+        const top = await call(op("answerRun"), { token: env.authToken, body, pathParams: { runId: first.runId } })
+        expect(top.status).toBe(409)
+        contract.assertConforms("answerRun", top)
+        expect(code(top)).toBe("invalid_state")
+        const run = await getRun(first.runId, { token: env.authToken })
+        expect(run).toMatchObject({ status: "interrupted", answerPending: false })
+
+        const missing = await call(op("answerRun"), { token: env.authToken, body, pathParams: { runId: randomUUID() } })
+        const missingRun = await call(op("getRun"), { token: env.authToken, pathParams: { runId: randomUUID() } })
+        expect(missing.status).toBe(404)
+        contract.assertConforms("answerRun", missing)
+        expect(missing.body).toEqual(missingRun.body)
+        if (env.authToken2) {
+          const foreign = await call(op("answerRun"), { token: env.authToken2, body, pathParams: { runId: first.runId } })
+          expect(foreign.status).toBe(404)
+          expect(foreign.body).toEqual(missingRun.body)
+        }
+
+        const anonymous = await startInteractive({ conformance: { outcome: "interrupt" } })
+        assertRunStream(anonymous.ex, anonymous)
+        const runToken = anonymous.ex.headers.get("x-run-token")!
+        const byToken = await call(op("answerRun"), {
+          body,
+          headers: { "x-run-token": runToken },
+          pathParams: { runId: anonymous.runId },
+        })
+        expect(byToken.status).toBe(401)
+        contract.assertConforms("answerRun", byToken)
+      },
+      TIMEOUT,
+    )
+
+    test(
+      "markRunDelivered: an interactive run → 409 invalid_state; unknown or foreign → 404; a run token → 401",
+      async () => {
+        const done = await startInteractive({ token: env.authToken, conformance: { outcome: "succeed" } })
+        assertRunStream(done.ex, done)
+        const refused = await call(op("markRunDelivered"), { token: env.authToken, pathParams: { runId: done.runId } })
+        expect(refused.status).toBe(409)
+        contract.assertConforms("markRunDelivered", refused)
+        expect(code(refused)).toBe("invalid_state")
+        expect((await getRun(done.runId, { token: env.authToken })).delivered).toBe(false)
+
+        const missing = await call(op("markRunDelivered"), { token: env.authToken, pathParams: { runId: randomUUID() } })
+        expect(missing.status).toBe(404)
+        contract.assertConforms("markRunDelivered", missing)
+        if (env.authToken2) {
+          const foreign = await call(op("markRunDelivered"), { token: env.authToken2, pathParams: { runId: done.runId } })
+          expect(foreign.status).toBe(404)
+          expect(foreign.body).toEqual(missing.body)
+        }
+        const anonymous = await startInteractive({ conformance: { outcome: "succeed" } })
+        assertRunStream(anonymous.ex, anonymous)
+        const byToken = await call(op("markRunDelivered"), {
+          headers: { "x-run-token": anonymous.ex.headers.get("x-run-token")! },
+          pathParams: { runId: anonymous.runId },
+        })
+        expect(byToken.status).toBe(401)
+        contract.assertConforms("markRunDelivered", byToken)
+      },
+      TIMEOUT,
+    )
+  })
+
   // --- background runs ---------------------------------------------------------------
 
   describe.skipIf(!env.authToken)("background runs", () => {
@@ -967,6 +1104,50 @@ describe.skipIf(!env.baseUrl)(`conformance: runs @ ${env.baseUrl}`, () => {
         expect(cancelled.status).toBe(200)
         contract.assertConforms("cancelRun", cancelled)
         expect((cancelled.body as Json).status).toBe("cancelled")
+      },
+      TIMEOUT,
+    )
+  })
+
+  describe.skipIf(!env.authToken || !env.threadId)("background tasks (token + thread)", () => {
+    test(
+      "a background task is its own root; markRunDelivered → 409 until it ended, then 200 delivered, idempotent",
+      async () => {
+        const body = runBody({ mode: "background", threadId: env.threadId! })
+        const runId = body.runId as string
+        const started = await call(op("startRun"), { body, token: env.authToken })
+        if (started.status === 503) {
+          expect(code(started)).toBe("unavailable") // no store for background runs
+          return
+        }
+        expect(started.status).toBe(202)
+        const run = await getRun(runId, { token: env.authToken })
+        expect(run).toMatchObject({ rootRunId: runId, currentRunId: null, delivered: false, research: false })
+        const listed = await call(op("listRuns"), {
+          token: env.authToken,
+          query: { mode: "background", topLevel: "true", current: "true", delivered: "false", rootRunId: runId },
+        })
+        expect(listed.status).toBe(200)
+        expect((listed.body as { runs: Json[] }).runs.map((r) => r.id)).toEqual([runId])
+
+        const early = await call(op("markRunDelivered"), { token: env.authToken, pathParams: { runId } })
+        expect(early.status).toBe(409)
+        contract.assertConforms("markRunDelivered", early)
+        expect(code(early)).toBe("invalid_state")
+
+        const cancelled = await call(op("cancelRun"), { token: env.authToken, pathParams: { runId } })
+        expect(cancelled.status).toBe(200)
+        for (let i = 0; i < 2; i++) {
+          const marked = await call(op("markRunDelivered"), { token: env.authToken, pathParams: { runId } })
+          expect(marked.status).toBe(200)
+          contract.assertConforms("markRunDelivered", marked)
+          expect(marked.body).toMatchObject({ id: runId, status: "cancelled", delivered: true })
+        }
+        const delivered = await call(op("listRuns"), {
+          token: env.authToken,
+          query: { rootRunId: runId, delivered: "true" },
+        })
+        expect((delivered.body as { runs: Json[] }).runs.map((r) => r.id)).toEqual([runId])
       },
       TIMEOUT,
     )

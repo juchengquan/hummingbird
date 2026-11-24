@@ -670,6 +670,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runs/{run_id}/answers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Answer Run
+         * @description `answerRun` — a sub-agent run's question answered in place (Q59,
+         *     RUN_EVENTS.md § 4.4): the answer is queued as the run's `respond` job
+         *     (`RunRepository.answer_in_place`) and the run comes back still
+         *     `interrupted`, `answerPending: true`, until a worker picks it up.
+         */
+        post: operations["answer_run_v1_runs__run_id__answers_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{run_id}/delivered": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark Run Delivered
+         * @description `markRunDelivered` — a finished task's result was written into its
+         *     conversation (Q70, Q77): `RunRepository.mark_delivered` on the task's
+         *     root, idempotent.
+         */
+        post: operations["mark_run_delivered_v1_runs__run_id__delivered_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -696,6 +741,16 @@ export interface components {
             metadata?: components["schemas"]["Metadata"] | null;
         };
         AllowedMcpServerId: string;
+        /**
+         * AnswerRunRequest
+         * @description The answers to a sub-agent run's open interrupts (`answerRun`):
+         *     one AG-UI `ResumeEntry` per interrupt, as in a resume's
+         *     `RunAgentInput.resume`.
+         */
+        AnswerRunRequest: {
+            /** Resume */
+            resume: components["schemas"]["ResumeEntry"][];
+        };
         /**
          * AssistantMessage
          * @description A message from the agent. Content is optional because a turn may consist only of tool calls.
@@ -1561,6 +1616,21 @@ export interface components {
              * Format: date-time
              */
             updatedAt: string;
+            /**
+             * Rootrunid
+             * Format: uuid
+             */
+            rootRunId: string;
+            /** Currentrunid */
+            currentRunId: string | null;
+            /** Research */
+            research: boolean;
+            /** Delivered */
+            delivered: boolean;
+            /** Childrenasking */
+            childrenAsking: number;
+            /** Answerpending */
+            answerPending: boolean;
         };
         /** RunAccepted */
         RunAccepted: {
@@ -1764,6 +1834,12 @@ export interface components {
             text?: string | null;
             /** Memorytainted */
             memoryTainted?: boolean | null;
+            /** Stoppedat */
+            stoppedAt?: "max_steps" | null;
+            /** Verification */
+            verification?: {
+                [key: string]: unknown;
+            } | null;
         } & {
             [key: string]: unknown;
         };
@@ -2990,6 +3066,10 @@ export interface operations {
                 status?: ("queued" | "running" | "interrupted" | "succeeded" | "failed" | "cancelled")[] | null;
                 parentRunId?: string | null;
                 mode?: ("interactive" | "background") | null;
+                topLevel?: boolean | null;
+                current?: boolean | null;
+                rootRunId?: string | null;
+                delivered?: boolean | null;
                 pageSize?: number;
                 pageToken?: string | null;
             };
@@ -3143,6 +3223,76 @@ export interface operations {
             header?: {
                 authorization?: string | null;
                 "X-Run-Token"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    answer_run_v1_runs__run_id__answers_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnswerRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mark_run_delivered_v1_runs__run_id__delivered_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
             };
             path: {
                 run_id: string;

@@ -34,6 +34,13 @@ Status transitions (`tasks.status`; the contract status is derived, see
 resume as having applied its answers (Q63), which keeps the question it
 answers closed whatever becomes of the run.
 
+Wave 6 (contract 0.5.0, migration 0047) adds two owner-scoped writes:
+`answer_in_place` (a sub-agent run's question, Q59) and `mark_delivered`
+(a finished task's result, Q77), and the `RunFilter` task filters
+(`top_level`, `current`, `root_run_id`, `delivered`). Every read fills
+the record's task fields (`root_run_id`, `current_run_id`, `research`,
+`delivered`, `children_asking`, `answer_pending`).
+
 The background-only transitions the existing executor makes (paused →
 running for a legacy respond or a fan-in; the barrier's counters) stay
 in `store.py` / `barrier.py` and are not part of this interface.
@@ -45,11 +52,12 @@ import base64
 import binascii
 import hashlib
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
+from .in_place import answer_problem
 from .model import (
     Cancelled,
     ContractStatus,
@@ -64,6 +72,7 @@ from .model import (
 )
 
 __all__ = [
+    "AnswerInvalid",
     "CreateResult",
     "InMemoryRunRepository",
     "InvalidPageToken",
@@ -72,8 +81,11 @@ __all__ = [
     "PreviousRunAnswerApplied",
     "PreviousRunNotFound",
     "PreviousRunNotWaiting",
+    "QuestionAlreadyAnswered",
     "RunFilter",
     "RunIdConflict",
+    "RunNotAnswerable",
+    "RunNotDeliverable",
     "RunPage",
     "RunRepository",
     "RunSpec",
@@ -130,6 +142,32 @@ class PreviousRunAlreadyAnswered(Exception):
     (API: 409 `run_already_answered`)."""
 
 
+class RunNotAnswerable(Exception):
+    """`answer_in_place` on a run that can't be answered in place: not a
+    sub-agent run (Q59 — a top-level run is answered by a resume), or no
+    longer waiting on that question (cancelled, ended, another question)
+    (API: 409 `invalid_state`)."""
+
+
+class QuestionAlreadyAnswered(Exception):
+    """`answer_in_place` on a question an accepted answer already holds —
+    a queued or running `respond` job for it (0045's "answered once", Q58)
+    (API: 409 `run_already_answered`)."""
+
+
+class AnswerInvalid(Exception):
+    """`answer_in_place` answers that don't fit the run's open interrupts:
+    not exactly one entry per open interrupt, or a payload the interrupt
+    can't take (an approval without a boolean `approved`)
+    (API: 400 `invalid_request`)."""
+
+
+class RunNotDeliverable(Exception):
+    """`mark_delivered` on a run that is not a task's root (a resume, a
+    sub-agent run, an interactive run), or whose task has not ended
+    (`mark_task_delivered` 55000, 0047) (API: 409 `invalid_state`)."""
+
+
 class InvalidPageToken(Exception):
     """A `page_token` this repository did not issue for these filters
     (API: 400 `invalid_request`)."""
@@ -169,12 +207,34 @@ class RunFilter:
     """Contract statuses; empty = any."""
     parent_run_id: str | None = None
     mode: RunMode | None = None
+    # --- Task filters (contract 0.5.0; RUN_EVENTS.md § 4.5). None = no
+    # filter; False selects the opposite set.
+    top_level: bool | None = None
+    """True: `parent_run_id` is None; False: sub-agent runs only."""
+    current: bool | None = None
+    """True: runs that are their task's current run
+    (`public.task_run_is_current`); False: the others."""
+    root_run_id: str | None = None
+    """Only the runs of this task (`tasks.root_run_id`)."""
+    delivered: bool | None = None
+    """True / False: the task's root has / hasn't `result_delivered_at`."""
+
+    @property
+    def has_task_filters(self) -> bool:
+        return (
+            self.top_level is not None
+            or self.current is not None
+            or self.root_run_id is not None
+            or self.delivered is not None
+        )
 
     def fingerprint(self) -> str:
-        raw = json.dumps(
-            [self.thread_id, sorted(self.statuses), self.parent_run_id, self.mode],
-            separators=(",", ":"),
-        )
+        parts: list[object] = [self.thread_id, sorted(self.statuses), self.parent_run_id, self.mode]
+        if self.has_task_filters:
+            # Appended only when set, so a page token issued before 0.5.0
+            # for the same filters stays valid.
+            parts += [self.top_level, self.current, self.root_run_id, self.delivered]
+        raw = json.dumps(parts, separators=(",", ":"))
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
@@ -242,6 +302,28 @@ class RunRepository(Protocol):
         the change, and signals the executing harness if it is local; a
         harness in another process notices on its next `heartbeat`
         (False) or cancellation check."""
+        ...
+
+    async def answer_in_place(
+        self, owner: RunOwner, run_id: str, resume: Sequence[Mapping[str, object]]
+    ) -> RunRecord | None:
+        """Answer the open interrupt(s) of the owner's **sub-agent** run
+        `run_id` in place (Q59, `answerRun`, RUN_EVENTS.md § 4.4): one
+        AG-UI `ResumeEntry` (JSON) per open interrupt, each queued as a
+        `respond` job whose payload is `in_place.respond_job_payload(entry)`
+        through `enqueue_task_job` as the user (0045: the run still waits
+        on that question, answered once, 20 queued jobs per user). Returns
+        the run as it now stands (`answer_pending` True); None when it is
+        not the owner's. Raises `RunNotAnswerable`, `QuestionAlreadyAnswered`,
+        `AnswerInvalid`, or `RunWriteError` (Postgres: 54000 →
+        `limit_reached`). Wave 6-A."""
+        ...
+
+    async def mark_delivered(self, owner: RunOwner, run_id: str) -> RunRecord | None:
+        """Mark the owner's task, whose root run is `run_id`, delivered
+        (Q77, `markRunDelivered`): `public.mark_task_delivered` as the user
+        (0047), idempotent. Returns the root run (`delivered` True); None
+        when it is not the owner's. Raises `RunNotDeliverable`. Wave 6-A."""
         ...
 
     async def load_checkpoint(self, owner: RunOwner, run_id: str) -> dict[str, object] | None:
@@ -387,8 +469,9 @@ class InMemoryRunRepository:
                 return CreateResult(rec, created=False)
             raise RunIdConflict()
 
+        prev_row: _Row | None = None
         if spec.previous_run_id is not None:
-            prev = self._owned(owner, spec.previous_run_id)
+            prev = prev_row = self._owned(owner, spec.previous_run_id)
             if prev is None or prev.record.thread_id != spec.thread_id:
                 raise PreviousRunNotFound()
             # 0042's `tasks_one_live_resume`; no await between this check
@@ -432,6 +515,7 @@ class InMemoryRunRepository:
                 raise ThreadNotFound()
             config = dict(cp["config"])  # type: ignore[call-overload]
             config["maxSteps"] = spec.max_steps
+            prev_record = None if prev_row is None else prev_row.record
             record = RunRecord(
                 id=spec.run_id,
                 owner=owner,
@@ -445,6 +529,10 @@ class InMemoryRunRepository:
                 goal=(spec.goal or "")[:2000],
                 max_steps=spec.max_steps,
                 step=0,
+                # 0047's `tasks_identity` trigger.
+                root_run_id=_root_of(prev_record, spec.run_id),
+                research=(prev_record is not None and prev_record.research)
+                or config.get("mode") == "research",
             )
             row = _Row(
                 record,
@@ -469,6 +557,7 @@ class InMemoryRunRepository:
                 max_steps=spec.max_steps or 25,
                 step=0,
                 lease_expires_at=now + timedelta(seconds=lease),
+                root_run_id=_root_of(None if prev_row is None else prev_row.record, spec.run_id),
             )
             row = _Row(record, checkpoint=spec.checkpoint, max_steps=spec.max_steps or 25)
         self._rows[spec.run_id] = row
@@ -476,7 +565,7 @@ class InMemoryRunRepository:
 
     async def get(self, owner: RunOwner, run_id: str) -> RunRecord | None:
         row = self._owned(owner, run_id)
-        return None if row is None else row.record
+        return None if row is None else self._view(row)
 
     async def list_runs(
         self,
@@ -501,12 +590,17 @@ class InMemoryRunRepository:
                 and (not filt.statuses or r.status in filt.statuses)
                 and (filt.parent_run_id is None or r.parent_run_id == filt.parent_run_id)
                 and (filt.mode is None or r.mode == filt.mode)
+                and (filt.top_level is None or (r.parent_run_id is None) == filt.top_level)
+                and (filt.current is None or (r.current_run_id is None) == filt.current)
+                and (filt.root_run_id is None or (r.root_run_id or r.id) == filt.root_run_id)
+                and (filt.delivered is None or r.delivered == filt.delivered)
             )
 
         def key(r: RunRecord) -> tuple[str, str]:
             return (r.created_at.isoformat(), r.id)
 
-        runs = sorted((row.record for row in self._rows.values()), key=key, reverse=True)
+        index = self._index(owner)
+        runs = sorted((self._view(row, index) for row in index.rows), key=key, reverse=True)
         runs = [r for r in runs if matches(r) and (after is None or key(r) < after)]
         page = runs[:page_size]
         token = None
@@ -519,8 +613,71 @@ class InMemoryRunRepository:
         if row is None:
             return None
         if row.record.internal_status in ("queued", "running", "paused"):
-            return self._apply_outcome(row, Cancelled())
-        return row.record
+            self._apply_outcome(row, Cancelled())
+        return self._view(row)
+
+    async def answer_in_place(
+        self, owner: RunOwner, run_id: str, resume: Sequence[Mapping[str, object]]
+    ) -> RunRecord | None:
+        """This store holds no sub-agent runs (nothing here spawns them),
+        so every run of the owner's is `RunNotAnswerable`."""
+        row = self._owned(owner, run_id)
+        if row is None:
+            return None
+        run = self._view(row)
+        if run.parent_run_id is None:
+            raise RunNotAnswerable("A top-level run is answered by a new run (startRun).")
+        if run.status != "interrupted":
+            raise RunNotAnswerable("The run is not waiting on that question.")
+        problem = answer_problem(run.open_interrupts, resume)
+        if problem is not None:
+            raise AnswerInvalid(problem)
+        raise RunNotAnswerable("This store queues no answers.")  # pragma: no cover
+
+    async def mark_delivered(self, owner: RunOwner, run_id: str) -> RunRecord | None:
+        """`mark_task_delivered` (0047): the owner's background root run,
+        once its task's current run ended; idempotent."""
+        row = self._owned(owner, run_id)
+        if row is None:
+            return None
+        rec = row.record
+        if (
+            rec.mode != "background"
+            or rec.parent_run_id is not None
+            or (rec.root_run_id or rec.id) != rec.id
+        ):
+            raise RunNotDeliverable("Not a task's root run: mark its rootRunId.")
+        if "delivered_at" not in row.extra:
+            current = self._rows.get(self._index(owner).current_of(row) or rec.id)
+            status = None if current is None else current.record.internal_status
+            if status not in ("done", "failed", "cancelled"):
+                raise RunNotDeliverable("The task has not ended.")
+            row.extra["delivered_at"] = self._clock()
+            self._set(row)
+        return self._view(row)
+
+    # -- task fields (0047's functions, over the rows) --
+
+    def _index(self, owner: RunOwner) -> _TaskIndex:
+        """The owner's rows by previous run, parent and root (a run's
+        chain and sub-agent runs are all its owner's)."""
+        return _TaskIndex([row for row in self._rows.values() if row.record.owner == owner])
+
+    def _view(self, row: _Row, index: _TaskIndex | None = None) -> RunRecord:
+        """The stored record with its task fields as of now."""
+        idx = index if index is not None else self._index(row.record.owner)
+        rec = row.record
+        root = self._rows.get(rec.root_run_id or rec.id)
+        delivered = (
+            root is not None and root.record.owner == rec.owner and "delivered_at" in root.extra
+        )
+        asking = sum(1 for c in idx.children(rec.id) if c.record.status == "interrupted")
+        return replace(
+            rec,
+            current_run_id=idx.current_of(row),
+            delivered=delivered,
+            children_asking=asking,
+        )
 
     # -- system --
 
@@ -586,6 +743,65 @@ class InMemoryRunRepository:
             self._apply_outcome(row, Failed("worker_lost", self.WORKER_LOST_MESSAGE))
             for row in expired
         ]
+
+
+class _TaskIndex:
+    """0047's current-run rule (`task_run_is_current` /
+    `task_current_run_id`) over one owner's in-memory rows."""
+
+    def __init__(self, rows: list[_Row]) -> None:
+        self.rows = rows
+        self._by_previous: dict[str, list[_Row]] = {}
+        self._by_parent: dict[str, list[_Row]] = {}
+        self._top_by_root: dict[str, list[_Row]] = {}
+        for row in rows:
+            rec = row.record
+            if rec.previous_run_id is not None:
+                self._by_previous.setdefault(rec.previous_run_id, []).append(row)
+            if rec.parent_run_id is not None:
+                self._by_parent.setdefault(rec.parent_run_id, []).append(row)
+            else:
+                self._top_by_root.setdefault(rec.root_run_id or rec.id, []).append(row)
+
+    def children(self, run_id: str) -> list[_Row]:
+        return self._by_parent.get(run_id, [])
+
+    @staticmethod
+    def _holds(row: _Row) -> bool:
+        """On its task's line: a root (or a sub-agent run), or a resume
+        that holds the question (live, done, or ended after applying)."""
+        rec = row.record
+        return (
+            rec.previous_run_id is None
+            or rec.internal_status not in ("failed", "cancelled")
+            or row.answers_applied_at is not None
+        )
+
+    def is_current(self, row: _Row) -> bool:
+        return self._holds(row) and not any(
+            self._holds(r) for r in self._by_previous.get(row.record.id, [])
+        )
+
+    def current_of(self, row: _Row) -> str | None:
+        """None when `row` is its task's current run, else that run's id."""
+        rec = row.record
+        if rec.parent_run_id is not None or self.is_current(row):
+            return None
+        line = [
+            r.record
+            for r in self._top_by_root.get(rec.root_run_id or rec.id, [])
+            if self.is_current(r)
+        ]
+        if not line:
+            return None
+        return max(line, key=lambda r: (r.created_at, r.id)).id
+
+
+def _root_of(previous: RunRecord | None, run_id: str) -> str:
+    """A new run's task root: its previous run's, else itself (0047)."""
+    if previous is None:
+        return run_id
+    return previous.root_run_id or previous.id
 
 
 def _encode_token(key: tuple[str, str], fingerprint: str) -> str:

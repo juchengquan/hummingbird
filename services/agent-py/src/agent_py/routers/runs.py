@@ -1,7 +1,10 @@
 """`/v1/runs` — the runs API (PLAN-frontend-backend-split Phase 2, Q7).
 
-The five operations of `packages/contract/openapi.yaml` (tag `runs`):
-`startRun`, `listRuns`, `getRun`, `streamRunEvents`, `cancelRun`. Events
+The operations of `packages/contract/openapi.yaml` (tag `runs`):
+`startRun`, `listRuns`, `getRun`, `streamRunEvents`, `cancelRun`, and —
+contract 0.5.0, wave 6 — `answerRun` (a sub-agent run's question
+answered in place, Q59) and `markRunDelivered` (Q77), with `listRuns`'
+task filters `topLevel` / `current` / `rootRunId` / `delivered`. Events
 are AG-UI 1.0 per `packages/contract/RUN_EVENTS.md`. Every service this
 router uses comes from `runs.wiring.RunServices` (the wiring seam).
 
@@ -20,7 +23,8 @@ an anonymous run, its `X-Run-Token`:
   wins and is verified (an invalid one is 401, never anonymous); a
   malformed run token is 401. A run that is missing, someone else's or
   not this token's → the same `404 not_found`.
-* `listRuns` takes a bearer token only.
+* `listRuns`, `answerRun` and `markRunDelivered` take a bearer token
+  only.
 
 **Idempotent `runId`.** The client mints it. A repeat from the run's
 owner with the same `threadId` and `mode` replays (interactive: the
@@ -68,14 +72,18 @@ from ..runs.history import AttachmentRejected, check_attachments, last_user_text
 from ..runs.model import ContractStatus, RunCursor, RunMode, RunOwner, RunRecord, run_to_contract
 from ..runs.native_harness import validate_run_options
 from ..runs.repository import (
+    AnswerInvalid,
     InvalidPageToken,
     PreviousRunAlreadyAnswered,
     PreviousRunAlreadyResumed,
     PreviousRunAnswerApplied,
     PreviousRunNotFound,
     PreviousRunNotWaiting,
+    QuestionAlreadyAnswered,
     RunFilter,
     RunIdConflict,
+    RunNotAnswerable,
+    RunNotDeliverable,
     RunSpec,
     ThreadNotFound,
 )
@@ -119,6 +127,7 @@ _RUN_ANSWER_APPLIED = (
     "so it can't be answered again. Send the message again instead."
 )
 _RUN_NOT_WAITING = "The previous run is no longer waiting on these answers."
+_QUESTION_ALREADY_ANSWERED = "This question was already answered."
 
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
@@ -211,7 +220,12 @@ async def _owned_run(services: RunServices, owner: RunOwner, run_id: str) -> Run
 
 
 async def _run_json(services: RunServices, owner: RunOwner, run: RunRecord) -> dict[str, object]:
-    last_seq = await services.log_for(owner).last_seq(run.id)
+    """The contract `Run`. `lastSeq` comes with the record when the
+    repository read it with the row (Postgres: no query per row, survey
+    bug 9); otherwise the event log answers."""
+    last_seq = run.last_seq
+    if last_seq is None:
+        last_seq = await services.log_for(owner).last_seq(run.id)
     return run_to_contract(run, last_seq=last_seq)
 
 
@@ -554,6 +568,10 @@ async def list_runs(
     status: Annotated[list[ContractStatus] | None, Query()] = None,
     parent_run_id: Annotated[uuid.UUID | None, Query(alias="parentRunId")] = None,
     mode: Annotated[Literal["interactive", "background"] | None, Query()] = None,
+    top_level: Annotated[bool | None, Query(alias="topLevel")] = None,
+    current: Annotated[bool | None, Query()] = None,
+    root_run_id: Annotated[uuid.UUID | None, Query(alias="rootRunId")] = None,
+    delivered: Annotated[bool | None, Query()] = None,
     page_size: Annotated[int, Query(alias="pageSize", ge=1, le=100)] = 20,
     page_token: Annotated[
         str | None, Query(alias="pageToken", min_length=1, max_length=512)
@@ -565,6 +583,10 @@ async def list_runs(
         statuses=frozenset(status or ()),
         parent_run_id=None if parent_run_id is None else str(parent_run_id),
         mode=mode,
+        top_level=top_level,
+        current=current,
+        root_run_id=None if root_run_id is None else str(root_run_id),
+        delivered=delivered,
     )
     try:
         page = await services.repo_for(owner).list_runs(
@@ -642,4 +664,70 @@ async def cancel_run(
     if run.internal_status == "cancelled":
         # This process: stop it now. Elsewhere: its heartbeat finds out.
         services.driver.signal_cancel(run.id)
+    return JSONResponse(await _run_json(services, owner, run))
+
+
+# --- POST /v1/runs/{runId}/answers (0.5.0) ----------------------------------------
+
+
+@router.post(
+    "/v1/runs/{run_id}/answers",
+    status_code=202,
+    responses={202: {"model": models.Run}},
+    response_class=JSONResponse,
+)
+async def answer_run(
+    run_id: str,
+    body: models.AnswerRunRequest,
+    claims: Annotated[dict[str, object], Depends(get_current_user)],
+    services: Annotated[RunServices, Depends(get_run_services)],
+) -> JSONResponse:
+    """`answerRun` — a sub-agent run's question answered in place (Q59,
+    RUN_EVENTS.md § 4.4): the answer is queued as the run's `respond` job
+    (`RunRepository.answer_in_place`) and the run comes back still
+    `interrupted`, `answerPending: true`, until a worker picks it up."""
+    owner = RunOwner.user(str(claims["sub"]))
+    if not _is_uuid(run_id):
+        _not_found()
+    entries = [e.model_dump(mode="json", exclude_none=True) for e in body.resume]
+    try:
+        run = await services.repo_for(owner).answer_in_place(owner, run_id, entries)
+    except AnswerInvalid as exc:
+        _raise(400, "invalid_request", str(exc))
+    except RunNotAnswerable as exc:
+        _raise(409, "invalid_state", str(exc))
+    except QuestionAlreadyAnswered:
+        _raise(409, "run_already_answered", _QUESTION_ALREADY_ANSWERED)
+    except RunWriteError as exc:
+        _raise(exc.status, exc.code, exc.message)
+    if run is None:
+        _not_found()
+    return JSONResponse(await _run_json(services, owner, run), status_code=202)
+
+
+# --- POST /v1/runs/{runId}/delivered (0.5.0) --------------------------------------
+
+
+@router.post(
+    "/v1/runs/{run_id}/delivered",
+    responses={200: {"model": models.Run}},
+    response_class=JSONResponse,
+)
+async def mark_run_delivered(
+    run_id: str,
+    claims: Annotated[dict[str, object], Depends(get_current_user)],
+    services: Annotated[RunServices, Depends(get_run_services)],
+) -> JSONResponse:
+    """`markRunDelivered` — a finished task's result was written into its
+    conversation (Q70, Q77): `RunRepository.mark_delivered` on the task's
+    root, idempotent."""
+    owner = RunOwner.user(str(claims["sub"]))
+    if not _is_uuid(run_id):
+        _not_found()
+    try:
+        run = await services.repo_for(owner).mark_delivered(owner, run_id)
+    except RunNotDeliverable as exc:
+        _raise(409, "invalid_state", str(exc))
+    if run is None:
+        _not_found()
     return JSONResponse(await _run_json(services, owner, run))

@@ -227,9 +227,17 @@ export interface paths {
          *     A2A style: pass `nextPageToken` back as `pageToken` with the same
          *     filters; a page is stable under concurrent inserts (keyset
          *     paging), and an unknown, malformed or filter-mismatched token is
-         *     `400 invalid_request`. The tasks panel reads threads of
-         *     background runs from here (`mode=background`). Anonymous runs are
-         *     never listed.
+         *     `400 invalid_request`. Anonymous runs are never listed.
+         *
+         *     **Tasks (0.5.0, Q69).** A task is a background run with no parent
+         *     (its root), every run that answered it (`previousRunId`) and
+         *     every sub-agent run any of them spawned; all of them share its
+         *     `rootRunId`. The tasks panel lists one row per task with
+         *     `mode=background&topLevel=true&current=true` — each task's
+         *     current run, which carries the task's status, question and
+         *     progress — and reads a task's history with `rootRunId`. A boolean
+         *     filter that is absent does not filter; `false` selects the
+         *     opposite set.
          */
         get: operations["listRuns"];
         put?: never;
@@ -288,14 +296,26 @@ export interface paths {
          *     answers (Q57, Q63): once it has, a tool may have run. An
          *     interactive one then answers `409 run_answer_applied` — the
          *     interrupted run stays `interrupted` (Q64), and the turn is sent
-         *     again as a new message; a background one `409
-         *     run_already_resumed`, and the task is over. A resume that ended
-         *     before applying frees them: answer again with a new `runId`. A
+         *     again as a new message; a background one answers the same `409
+         *     run_answer_applied` (0.5.0; `run_already_resumed` before) — the
+         *     task has failed, and "run again" is a new task. A resume that
+         *     ended before applying frees them: answer again with a new `runId`. A
          *     background resume (Q41) starts from the paused run's saved state
          *     plus the answers (`RUN_EVENTS.md` § 4.2); a question being
          *     answered through the old task respond route is `409
          *     run_already_answered` (per question, Q58). A background run whose
          *     `start` job can't be queued (`409 limit_reached`) is not created.
+         *
+         *     **At most 5 active tasks (Q72, Q79).** A new background run (no
+         *     `previousRunId`) is refused with `409 limit_reached`, before
+         *     anything is created, while 5 of the caller's tasks are active —
+         *     a task (`Run.rootRunId`) counts while its current run is
+         *     `queued`, `running` (a parent waiting on its sub-agent runs
+         *     included) or `interrupted`. Answers (a resume) are never refused
+         *     by it, and an idempotent retry of a run that was created still
+         *     answers 202. The same cap holds for the old task route and for
+         *     schedules: a schedule that fires at the cap creates its run
+         *     already `failed` with `error.code` `limit_reached`.
          *
          *     **Background runs take no `attachments`** (Q49): a background
          *     start with any is `400 invalid_request`, before anything is
@@ -365,6 +385,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runs/{runId}/answers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The run's id — the client-minted AG-UI `runId` (a UUID). */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Answer a sub-agent run's question in place
+         * @description Answers the open interrupt of an `interrupted` **sub-agent** run
+         *     (`parentRunId` set) in place: the same run continues, no new run
+         *     is started. A named exception to Q24, for sub-agent runs only
+         *     (Q59): their parent waits on that very run, so it can't be
+         *     answered by a new one (`RUN_EVENTS.md` § 4.4). Any other run is
+         *     answered with `startRun` and `previousRunId`.
+         *
+         *     `resume` holds one `ResumeEntry` per open interrupt of the run
+         *     (a background run has one at a time), `payload` shaped as
+         *     `RUN_EVENTS.md` § 4.2 says for the interrupt's `reason` — an
+         *     approval needs a boolean `approved`. `status: cancelled`
+         *     declines.
+         *
+         *     Answered once: the answer is queued for a worker and the call
+         *     returns `202` with the run as it now stands — still
+         *     `interrupted`, `answerPending: true` — until the worker picks it
+         *     up and the run is `running` again. Its stream (`streamRunEvents`)
+         *     closed at the interrupt: follow the run again from its last
+         *     cursor. Each question is answered once, whichever route answers
+         *     it (Q58).
+         */
+        post: operations["answerRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/runs/{runId}/cancel": {
         parameters: {
             query?: never;
@@ -395,6 +457,41 @@ export interface paths {
          *     stay in the log. Authorised like `getRun`, with the same `404`.
          */
         post: operations["cancelRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{runId}/delivered": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The run's id — the client-minted AG-UI `runId` (a UUID). */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark a finished task's result delivered
+         * @description Records that the task whose **root** run this is has had its
+         *     result written into its conversation (Q70, Q77): a browser wrote
+         *     the result message — and the research document and artifact —
+         *     under ids derived from the task, waited for sync to push them,
+         *     then calls this. Every run of the task then reads `delivered:
+         *     true`, and `listRuns?delivered=false` no longer lists it, so no
+         *     other browser delivers it again.
+         *
+         *     Idempotent: marking a task delivered twice answers `200` both
+         *     times and keeps the first mark. Only once the task has ended —
+         *     its current run `succeeded`, `failed` or `cancelled` (a failed or
+         *     cancelled task writes no message; marking it says the browser has
+         *     shown that). Background runs only, so signed-in callers only.
+         */
+        post: operations["markRunDelivered"];
         delete?: never;
         options?: never;
         head?: never;
@@ -645,6 +742,14 @@ export interface components {
             path: components["schemas"]["JsonPointer"];
             /** @description The value to insert. Any JSON value, including null, which is a legitimate thing to add. */
             value: unknown;
+        };
+        /**
+         * @description The answers to a sub-agent run's open interrupts (`answerRun`):
+         *     one AG-UI `ResumeEntry` per interrupt, as in a resume's
+         *     `RunAgentInput.resume`.
+         */
+        AnswerRunRequest: {
+            resume: components["schemas"]["ResumeEntry"][];
         };
         /**
          * @description The error envelope every backend returns on a non-2xx JSON response:
@@ -1304,8 +1409,44 @@ export interface components {
          *     empty.
          */
         Run: {
+            /**
+             * @description An answer to this `interrupted` run was accepted and is
+             *     queued, not yet picked up by a worker (`answerRun`, or the old
+             *     task respond route): show the question as answered. False
+             *     otherwise.
+             */
+            answerPending: boolean;
+            /**
+             * @description How many of this run's sub-agent runs are `interrupted`,
+             *     waiting on an answer (`answerRun`, Q59): one whose answer was
+             *     accepted and not yet picked up (its `answerPending` is true)
+             *     no longer counts — the question is answered. The parent
+             *     itself reads `running` meanwhile.
+             */
+            childrenAsking: number;
             /** Format: date-time */
             createdAt: string;
+            /**
+             * Format: uuid
+             * @description Null when this run is its task's **current run** (Q75): the
+             *     newest run of the task that holds its question — the root, or
+             *     a run that answered it and is live, succeeded, or ended
+             *     *after* applying the answers. Otherwise the id of the task's
+             *     current run, which carries the task's status: set on an
+             *     `interrupted` run a later run answered (follow it — the
+             *     question is closed), and on a resume that failed or was
+             *     cancelled before applying (a dead branch: its root's question
+             *     is open again, with this failure as a note). A sub-agent run
+             *     is answered in place (Q59), so it is always its own current
+             *     run.
+             */
+            currentRunId: string | null;
+            /**
+             * @description The task's result was marked delivered (`markRunDelivered`,
+             *     Q77) — read from the task's root, so every run of the task
+             *     agrees. False for interactive runs.
+             */
+            delivered: boolean;
             error: components["schemas"]["RunError"] | null;
             /**
              * Format: date-time
@@ -1337,7 +1478,21 @@ export interface components {
              * @description The interrupted run this one answered (`forwardedProps.previousRunId`).
              */
             previousRunId: string | null;
+            /**
+             * @description A research run (`forwardedProps.research`, Q46); a resume has
+             *     its previous run's. False for interactive runs.
+             */
+            research: boolean;
             result: components["schemas"]["RunResult"] | null;
+            /**
+             * Format: uuid
+             * @description The task this run belongs to (0.5.0, Q69, Q75): its first run.
+             *     A run that answered another (`previousRunId`) has that run's
+             *     root, a sub-agent run its parent's; any other run is its own
+             *     root (`rootRunId` = `id`). Interactive runs too: a chat turn
+             *     and its answers.
+             */
+            rootRunId: string;
             /** Format: date-time */
             startedAt: string | null;
             status: components["schemas"]["RunStatus"];
@@ -1712,8 +1867,29 @@ export interface components {
              *     means false.
              */
             memoryTainted?: boolean;
-            /** @description The run's final assistant text, when it produced one. */
+            /**
+             * @description Why the answer may be incomplete. `max_steps`: a background
+             *     task stopped at its step limit and delivers what it has (Q81);
+             *     `text` then ends with a visible "stopped at the step limit"
+             *     note. Absent for a run that finished on its own.
+             * @enum {string}
+             */
+            stoppedAt?: "max_steps";
+            /**
+             * @description The run's final assistant text, when it produced one. For a
+             *     background task's run, the whole answer across its runs (the
+             *     root and each resume that answered it, Q78), not this run's
+             *     text alone.
+             */
             text?: string;
+            /**
+             * @description A research run's citation check over `text` (Q78): the same
+             *     object as its `hummingbird.verification` activity's content
+             *     (`{ checks, summary }`). Absent when no check ran.
+             */
+            verification?: {
+                [key: string]: unknown;
+            };
         } & {
             [key: string]: unknown;
         };
@@ -1747,8 +1923,9 @@ export interface components {
          *     `running` → one of the four ends: `succeeded`, `failed`,
          *     `cancelled`, or `interrupted` (waiting for answers to its open
          *     interrupts — which a **new** run answers, Q24; an interrupted run
-         *     runs again only when the old task respond route answers it in
-         *     place, as a sub-agent's question always is, Q59). `queued` ends
+         *     runs again only when it is answered in place: a sub-agent run's
+         *     question always is, through `answerRun` or the old task respond
+         *     route, Q59). `queued` ends
          *     when a worker starts executing. A background run waiting on its own
          *     sub-agent runs is still `running`. Mapping to the internal status
          *     and `tasks.status`: `RUN_EVENTS.md` § Status.
@@ -1767,7 +1944,15 @@ export interface components {
             enabled?: boolean;
             /** @description Step budget per run; null means 25. */
             maxSteps?: number | null;
-            /** @description Model id; null falls back to the workspace / global default at run time. */
+            /**
+             * @description Model id. Nothing picks one at run time: a schedule that fires
+             *     without a model fails "no model" (Q56). So a schedule created
+             *     without one — or re-enabled while it has none (the update's
+             *     `enabled: true`) — is given the backend's default task model
+             *     (Haiku, Q67) when it is saved, and the response shows it
+             *     (Q73, Q80). Schedules that had none were paused by migration
+             *     0047 until their owners re-enable them.
+             */
             model?: string | null;
             name: string;
             prompt: string;
@@ -2394,6 +2579,7 @@ export type ActivityDeltaEvent = components['schemas']['ActivityDeltaEvent'];
 export type ActivityMessage = components['schemas']['ActivityMessage'];
 export type ActivitySnapshotEvent = components['schemas']['ActivitySnapshotEvent'];
 export type AddOperation = components['schemas']['AddOperation'];
+export type AnswerRunRequest = components['schemas']['AnswerRunRequest'];
 export type ApiError = components['schemas']['ApiError'];
 export type AssistantMessage = components['schemas']['AssistantMessage'];
 export type Attributable = components['schemas']['Attributable'];
@@ -2806,6 +2992,24 @@ export interface operations {
     listRuns: {
         parameters: {
             query?: {
+                /**
+                 * @description `true`: only runs that are their task's current run
+                 *     (`currentRunId` null — see `Run.currentRunId`): one per task,
+                 *     and every sub-agent run (answered in place, Q59). `false`:
+                 *     only runs a later run of their task took over (an answered
+                 *     `interrupted` run) and resumes that failed or were cancelled
+                 *     before applying their answers (dead branches, Q75). Absent:
+                 *     both.
+                 */
+                current?: boolean;
+                /**
+                 * @description `true`: only runs whose task's result was marked delivered
+                 *     (`markRunDelivered`, `Run.delivered`). `false`: only runs
+                 *     whose task's result was not — with `current=true` and
+                 *     `status=succeeded`, the finished results still to write into
+                 *     their conversations (Q70). Absent: both.
+                 */
+                delivered?: boolean;
                 /** @description Only runs in this mode. */
                 mode?: components["schemas"]["RunMode"];
                 /** @description Page size; absent means 20. */
@@ -2814,10 +3018,21 @@ export interface operations {
                 pageToken?: string;
                 /** @description Only sub-agent runs spawned by this run. */
                 parentRunId?: string;
+                /**
+                 * @description Only the runs of this task: its root, every run that answered
+                 *     it, and their sub-agent runs (`Run.rootRunId`).
+                 */
+                rootRunId?: string;
                 /** @description Only runs in one of these statuses (repeat the parameter for several). */
                 status?: components["schemas"]["RunStatus"][];
                 /** @description Only runs on this thread (conversation). */
                 threadId?: string;
+                /**
+                 * @description `true`: only runs that no run spawned (`parentRunId` null) —
+                 *     a task's root and its answers, and interactive runs. `false`:
+                 *     only sub-agent runs. Absent: both.
+                 */
+                topLevel?: boolean;
             };
             header?: never;
             path?: never;
@@ -2901,19 +3116,21 @@ export interface operations {
              *     sub-agent run, not `interrupted`, or `resume[]` not covering
              *     exactly its open interrupts);
              *     `run_already_resumed` — another run already answers the
-             *     previous run's interrupts: it has not failed or been
-             *     cancelled, or it is a background run that had applied the
-             *     answers (Q57), so an approved tool never runs twice;
-             *     `run_answer_applied` — an interactive run that answered the
-             *     previous run's interrupts applied the answers (an approved
-             *     tool may have run) and then failed or was cancelled (Q63):
-             *     they can't be answered again, send the turn again as a new
-             *     message instead;
+             *     previous run's interrupts and has not failed or been
+             *     cancelled, so an approved tool never runs twice;
+             *     `run_answer_applied` — a run that answered the previous
+             *     run's interrupts applied the answers (an approved tool may
+             *     have run) and then failed or was cancelled (Q57, Q63): they
+             *     can't be answered again. Interactive: send the turn again as
+             *     a new message. Background (0.5.0): the task has failed — its
+             *     current run (`Run.currentRunId`) says how;
              *     `run_already_answered` — the question of a background run is
              *     being answered through the old task respond route (each
              *     question is answered once, Q58);
-             *     `limit_reached` — the background run could not be queued, and
-             *     was not created.
+             *     `limit_reached` — a new background run while 5 of the
+             *     caller's tasks are active (Q72, Q79), or one whose `start`
+             *     job could not be queued (20 queued jobs per user); either way
+             *     it was not created.
              */
             409: {
                 headers: {
@@ -2955,6 +3172,69 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    answerRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The run's id — the client-minted AG-UI `runId` (a UUID). */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnswerRunRequest"];
+            };
+        };
+        responses: {
+            /** @description The answer is queued; the run as it now stands. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            /**
+             * @description `invalid_request` — `resume` does not answer exactly the
+             *     run's open interrupts, or a `payload` doesn't fit its
+             *     interrupt (an approval without a boolean `approved`).
+             */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            /**
+             * @description `invalid_state` — not a sub-agent run (answer a top-level run
+             *     with `startRun` and `previousRunId`), or the run is not
+             *     waiting on that question any more (it was cancelled, or it
+             *     ended);
+             *     `run_already_answered` — an answer to that question was
+             *     already accepted (by this operation or the old task respond
+             *     route) and is queued or being applied;
+             *     `limit_reached` — the answer could not be queued (20 queued
+             *     jobs per user); nothing was answered, try again.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            422: components["responses"]["ValidationError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     cancelRun: {
         parameters: {
             query?: never;
@@ -2978,6 +3258,45 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    markRunDelivered: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The run's id — the client-minted AG-UI `runId` (a UUID). */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The root run, `delivered` true. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            /**
+             * @description `invalid_state` — the run is not a task's root (a resume, a
+             *     sub-agent run or an interactive run: use its `rootRunId`), or
+             *     the task has not ended.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             503: components["responses"]["ServiceUnavailable"];
         };
     };

@@ -1,0 +1,22 @@
+data: {"type":"RUN_STARTED","threadId":"c563b54a-c2d2-4d4e-87d0-cf07f4df06c8","runId":"d143b054-9cef-43c0-9511-f75f83484ab2"}
+
+id: 3
+data: {"type":"STEP_STARTED","stepName":"step-1"}
+
+id: 4.0
+data: {"type":"TOOL_CALL_START","toolCallId":"q","toolCallName":"askUser","parentMessageId":"d143b054-9cef-43c0-9511-f75f83484ab2:4"}
+
+id: 4.1
+data: {"type":"TOOL_CALL_ARGS","toolCallId":"q","delta":"{\"prompt\":\"Which colour?\"}"}
+
+id: 4
+data: {"type":"TOOL_CALL_END","toolCallId":"q"}
+
+id: 5
+data: {"type":"STEP_FINISHED","stepName":"step-1"}
+
+id: 6
+data: {"type":"CUSTOM","name":"hummingbird.interrupt_pending","value":{"id":"q","reason":"input","responseSchema":{"type":"object","required":["value"],"properties":{"value":{"type":"string"}}},"message":"Which colour?","toolCallId":"q","metadata":{"hummingbird":{"tool":"askUser","args":{"prompt":"Which colour?"}}}}}
+
+data: {"type":"RUN_FINISHED","threadId":"c563b54a-c2d2-4d4e-87d0-cf07f4df06c8","runId":"d143b054-9cef-43c0-9511-f75f83484ab2","outcome":{"type":"interrupt","interrupts":[{"id":"q","reason":"input","message":"Which colour?","metadata":{"hummingbird":{"args":{"prompt":"Which colour?"},"tool":"askUser"}},"toolCallId":"q","responseSchema":{"type":"object","required":["value"],"properties":{"value":{"type":"string"}}}}]}}
+

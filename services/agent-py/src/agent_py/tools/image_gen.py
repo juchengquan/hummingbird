@@ -367,6 +367,14 @@ def build_image_gen_tool(
     cap = max(1, max_calls_per_turn)
 
     async def execute(args: dict[str, Any]) -> ToolInvocationResult:
+        # A background run that keeps files local (Q71) persists as an
+        # interactive one does with `localFilesOnly`: data URLs, never
+        # Storage. Background runs have no per-IP budget (the default
+        # `consume_budget` allows every call).
+        if context is not None and context.local_files_only:
+            return await generate(
+                args, RunToolContext(user_id=context.user_id, local_files_only=True)
+            )
         return await generate(args, None)
 
     async def run_execute(args: dict[str, Any], run_ctx: RunToolContext) -> ToolInvocationResult:

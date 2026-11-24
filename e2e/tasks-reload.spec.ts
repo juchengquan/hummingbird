@@ -9,6 +9,7 @@ import {
   panel,
   pointer,
   reportCounts,
+  setPointer,
   rootOf,
   runCard,
   waitSaved,
@@ -108,11 +109,9 @@ test("the watch survives a failed reconnect", async ({ page, tasks }) => {
 test("a paused task's pointer doesn't expire while it waits", async ({ page, tasks }) => {
   await launch(page, tasks, "questions.approval")
   await expect(panel(page)).toContainText("Approve action?")
-  await page.evaluate(() => {
-    const saved = JSON.parse(localStorage.getItem("humm.activeTask")!)
-    saved.updatedAt = new Date(Date.now() - 26 * 3600_000).toISOString()
-    localStorage.setItem("humm.activeTask", JSON.stringify(saved))
-  })
+  const saved = JSON.parse((await pointer(page))!)
+  saved.updatedAt = new Date(Date.now() - 26 * 3600_000).toISOString()
+  await setPointer(page, JSON.stringify(saved))
   await page.reload()
   await expect(panel(page)).toContainText("Approve action?")
 })
@@ -167,7 +166,7 @@ test.describe("side effects happen once", () => {
     await tasks.stage("plain.done")
     await expect.poll(() => reportCounts(page)).toEqual(ONCE)
     // A crash before the pointer was cleared, or another tab saving it again.
-    await page.evaluate((value) => localStorage.setItem("humm.activeTask", value!), saved)
+    await setPointer(page, saved!)
     await page.reload()
     await expect(panel(page)).toContainText("Task finished")
     await page.waitForTimeout(1000)
@@ -210,7 +209,7 @@ test.describe("side effects happen once", () => {
     await expect.poll(() => cardStatus(page)).toBe("done")
     await expect.poll(() => page.evaluate(() => localStorage.getItem("e2e-notified"))).toBe("1")
 
-    await page.evaluate((value) => localStorage.setItem("humm.activeTask", value!), saved)
+    await setPointer(page, saved!)
     await page.reload()
     await expect(panel(page)).toContainText("Task finished")
     await page.waitForTimeout(1000)

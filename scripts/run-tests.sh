@@ -32,7 +32,7 @@ while IFS= read -r f; do
   done
   [ "$covered" = 1 ] || uncovered="${uncovered}${f}"$'\n'
 done <<EOF
-$(find . -name '*.test.ts' -not -path '*/node_modules/*' -not -path './services/*' | sed 's|^\./||' | sort)
+$(find . -name '*.test.ts' -not -path '*/node_modules/*' -not -path './services/*' -not -path './.claude/*' | sed 's|^\./||' | sort)
 EOF
 
 if [ -n "$uncovered" ]; then

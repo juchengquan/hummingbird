@@ -292,6 +292,59 @@ order. Every migration has a unique numeric prefix (CI enforces this via
     never started (entries all `status` / `result`); one with no log left
     (purged) counts as applied. No status or other column changes.
   - **Rollback:** the statements in the file's header.
+- `supabase/migrations/0047_task_identity_and_caps.sql`
+  - A task's identity, delivery mark and cap (wave 6: Q69, Q72, Q73,
+    Q75, Q77, Q79). New `tasks` columns `root_run_id` (no FK; filled for
+    every insert by the `tasks_identity` trigger), `research` and
+    `result_delivered_at` (users can't write it; `mark_task_delivered`
+    RPC); `task_run_is_current` / `task_current_run_id` (a task's current
+    run); at most 5 active top-level tasks per user in `create_run` and
+    `create_task_run` (54000 → `409 limit_reached`; answers exempt);
+    `create_scheduled_task` for schedule fires (creates the task already
+    failed `limit_reached` at the cap); a background answer a failed
+    resume had applied is refused with constraint `tasks_answer_applied`
+    (`409 run_answer_applied`). Same `create_run` / `create_task_run`
+    signatures. Idempotent.
+  - **Deploy order:** stop every agent-py → apply 0047 → start the new
+    agent-py → deploy Next. An older agent-py answers the cap with a 500
+    instead of `409 limit_reached`, and an older schedule dispatcher
+    still inserts past the cap.
+  - **Existing rows:** `root_run_id` is backfilled by walking
+    `parent_task_id` / `previous_run_id` (a chain broken by a deleted run
+    roots at its earliest reachable run), `research` from each
+    checkpoint; no status, outcome or `updated_at` changes. A background
+    task that has already ended is marked delivered (the old path wrote
+    its result); one still live delivers once when it ends. **Every
+    enabled schedule without a model is paused once** (`enabled = false`, Q73) — a re-run doesn't pause it again.
+    A user who already has 5 or more active tasks can't start another
+    until fewer are active.
+  - **Rollback:** the statements in the file's header.
+- `supabase/migrations/0048_task_read_flags.sql`
+  - Reading a run without reading its checkpoint (wave 6; Q66). New
+    generated column `tasks.awaiting_children` (the checkpoint's
+    `awaiting_children` key, computed when the checkpoint is written);
+    `task_run_is_current_by` / `task_current_run_id_by` — 0047's
+    current-run rule over columns, since passing a whole `tasks` row to a
+    function fetches its TOASTed checkpoint. 0047's row functions and the
+    cap's count now call them. Idempotent.
+  - **Deploy order:** stop every agent-py → apply 0048 (the column rewrites
+    `tasks` under a brief exclusive lock) → start the new agent-py. An
+    older agent-py or Next keeps working against it.
+  - **Existing rows:** the column is computed for every row by the
+    `add column`; nothing else changes.
+  - **Rollback:** the statements in the file's header.
+- `supabase/migrations/0049_subagent_exit_entry.sql`
+  - A sub-agent run's end shows on its parent as it happens (wave 6):
+    whatever ends it (the worker, its own cancel, the reconciler) writes a
+    `handoff` `exit` entry naming it on its parent's log, from the
+    `tasks_ended` trigger, while the parent waits on its sub-agents. Before,
+    the parent's stream closed them only when the parent ended.
+  - **Deploy order:** migrate first, then deploy agent-py. An agent-py
+    from before this can, when a fan-in's seq probe fails, write a seq an
+    exit entry already took ("a step closed twice"); the new agent-py
+    abandons that fan-in instead.
+  - **Existing rows:** nothing changes.
+  - **Rollback:** the statements in the file's header.
 
 ### Migration 0018 collision (renamed to `0033_message_generated_files.sql`)
 

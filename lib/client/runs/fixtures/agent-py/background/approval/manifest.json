@@ -1,0 +1,11 @@
+{
+  "scenario": "approval",
+  "runs": {
+    "run": {
+      "runId": "2b586fc3-d3a9-41c6-b2c5-15dddfaccce6",
+      "parentRole": null,
+      "previousRole": null,
+      "status": "interrupted"
+    }
+  }
+}

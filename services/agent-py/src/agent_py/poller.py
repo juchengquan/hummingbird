@@ -131,6 +131,9 @@ def _respond_payload_from_job(job: ClaimedJob) -> executor.RespondActionPayload 
         out = dataclasses.replace(out, ui_answer=ui_answer_raw)
     if isinstance(args_raw, dict):
         out = dataclasses.replace(out, args=args_raw)
+    if payload_raw.get("cancelled") is True:
+        # An in-place answer's cancelled entry (`runs/in_place.py`): a decline.
+        out = dataclasses.replace(out, cancelled=True)
     return out
 
 

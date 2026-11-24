@@ -306,7 +306,7 @@ jobs:
   # protection rule's required status checks for main.
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
@@ -359,6 +359,12 @@ jobs:
       - name: E2E (Playwright)
         run: bun run test:e2e
 
+      # The runs task UI against its real provider, over a fake /v1/runs and
+      # a fake Supabase on one origin (e2e/tasks-wire.config.ts; its own build
+      # in .next-e2e-wire/).
+      - name: E2E — tasks on runs (Playwright)
+        run: bun run test:e2e:wire
+
       - name: Upload Playwright report + traces
         if: failure()
         uses: actions/upload-artifact@v4
@@ -367,4 +373,5 @@ jobs:
           path: |
             playwright-report/
             test-results/e2e/
+            test-results/e2e-wire/
           retention-days: 7

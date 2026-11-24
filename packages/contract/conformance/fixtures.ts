@@ -56,6 +56,10 @@ export const validRequestBodies: Record<string, unknown> = {
     messages: [{ id: "m1", role: "user", content: "Conformance probe: say hi." }],
     forwardedProps: { mode: "background", goal: "Conformance probe", maxSteps: 1 },
   },
+  // In-place answer to a sub-agent run's question (0.5.0, Q59).
+  answerRun: {
+    resume: [{ interruptId: "conformance-question", status: "resolved", payload: { approved: false } }],
+  },
 }
 
 /**

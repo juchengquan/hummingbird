@@ -39,7 +39,10 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Playwright e2e build (`NEXT_DIST_DIR`, playwright.config.ts) + outputs.
     ".next-e2e/**",
+    ".next-e2e-wire/**",
     "test-results/**",
+    // Agent worktrees (each has its own checkout, build and lint).
+    ".claude/**",
     "playwright-report/**",
   ]),
 

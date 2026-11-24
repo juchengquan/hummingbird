@@ -17,6 +17,7 @@ import {
   GitBranch,
   Zap,
   Brain,
+  ListChecks,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -112,6 +113,13 @@ interface ChatHeaderProps {
    *  in the Tasks panel instead of an inline chat turn. */
   runAsTask: boolean
   onRunAsTaskChange: (v: boolean) => void
+  /** Offer the Task toggle. Off when tasks need a sign-in the user
+   *  hasn't done (background runs are `401 auth_required`, bug 20). */
+  showTaskToggle?: boolean
+  /** On runs (wave 6): a button that opens the Tasks panel — every task
+   *  of the user is there, scheduled ones included — with the number of
+   *  tasks waiting on an answer. Absent: no button. */
+  tasksButton?: { needsAnswer: number; onClick: () => void }
 }
 
 export function ChatHeader({
@@ -124,6 +132,8 @@ export function ChatHeader({
   onReasoningEffortPick,
   runAsTask,
   onRunAsTaskChange,
+  showTaskToggle = true,
+  tasksButton,
 }: ChatHeaderProps) {
   const workspace = useActiveWorkspace()
   const conversation = useActiveConversation()
@@ -497,7 +507,7 @@ export function ChatHeader({
 
         {/* Run-as-task toggle — when on, the next send launches a
             long-running agent task (Tasks panel) instead of a chat turn. */}
-        {!renaming && (
+        {!renaming && showTaskToggle && (
           <Button
             variant={runAsTask ? "secondary" : "ghost"}
             size="sm"
@@ -511,6 +521,28 @@ export function ChatHeader({
           >
             <Zap size={14} />
             Task
+          </Button>
+        )}
+
+        {!renaming && tasksButton && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={tasksButton.onClick}
+            className="relative h-7 gap-1 px-2 text-xs shrink-0"
+            aria-label={
+              tasksButton.needsAnswer > 0
+                ? `Open tasks panel (${tasksButton.needsAnswer} need${tasksButton.needsAnswer === 1 ? "s" : ""} your answer)`
+                : "Open tasks panel"
+            }
+            title="Tasks"
+          >
+            <ListChecks size={14} />
+            {tasksButton.needsAnswer > 0 ? (
+              <span className="rounded-full bg-[var(--primary)] px-1 text-[10px] leading-4 text-[var(--primary-foreground)] tabular-nums">
+                {tasksButton.needsAnswer}
+              </span>
+            ) : null}
           </Button>
         )}
 

@@ -59,6 +59,26 @@ async function sessionAccessToken(): Promise<
   }
 }
 
+/** The session's current access token, or a refreshed one (`refresh`):
+ *  the `RunsTarget.getAuthToken` of a signed-in target, read on every
+ *  request so a long watch or stream survives the token it started with
+ *  (survey bug 19). `null` once signed out. */
+async function currentAccessToken(refresh?: boolean): Promise<string | null> {
+  try {
+    const { getSupabaseBrowserClient } = await import("@/client/supabase/client")
+    const supa = getSupabaseBrowserClient()
+    if (!supa) return null
+    if (refresh) {
+      const { data } = await supa.auth.refreshSession()
+      if (data.session?.access_token) return data.session.access_token
+    }
+    const { data } = await supa.auth.getSession()
+    return data.session?.access_token ?? null
+  } catch {
+    return null
+  }
+}
+
 /** Read the current backend choice from the store and, if it points
  *  at a remote service, resolve the Supabase JWT lazily. The async
  *  hop is unavoidable because `supabase.auth.getSession()` is async
@@ -96,8 +116,26 @@ export async function resolveRunsTarget(): Promise<RunsTarget | null> {
   if (useStore.getState().chatBackend !== "python-runs") return null
   if (!isAgentPyConfigured()) return null
   const session = await sessionAccessToken()
+  const authToken = session.ok ? session.token : null
   return {
     baseUrl: AGENT_PY_BASE_URL,
-    authToken: session.ok ? session.token : null,
+    authToken,
+    ...(authToken ? { getAuthToken: currentAccessToken } : {}),
   }
+}
+
+/**
+ * Where the tasks panel's requests go (wave 6): agent-py's runs API for
+ * the signed-in user, or `null` when agent-py isn't configured or nobody
+ * is signed in (background runs are signed-in only). Unlike
+ * `resolveRunsTarget` it doesn't depend on the selected backend: every
+ * task of the user is listed and delivered whatever the selection (Q76);
+ * the selection only decides where a new task is launched (Q61,
+ * `TasksAvailability`).
+ */
+export async function resolveTasksTarget(): Promise<RunsTarget | null> {
+  if (!isAgentPyConfigured()) return null
+  const session = await sessionAccessToken()
+  if (!session.ok || !session.token) return null
+  return { baseUrl: AGENT_PY_BASE_URL, authToken: session.token, getAuthToken: currentAccessToken }
 }

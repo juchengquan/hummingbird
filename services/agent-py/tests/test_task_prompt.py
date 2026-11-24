@@ -39,7 +39,19 @@ def test_with_the_plan_tool_the_text_is_next_byte_for_byte() -> None:
     web_2b = "".join(frags[files_end:tail_start])
     tail = "".join(frags[tail_start:])
     assert files == base + files_2b + tail
-    assert web == base + web_2b + tail
+    # Web only (wave 6, Q71: no background run has a file id): Next's
+    # text without its two mentions of files in the tail.
+    web_tail = tail.replace(" (or `searchFiles` against a relevant file)", "").replace(
+        " (or `[N] file: <name>` for attached files)", ""
+    )
+    assert web_tail != tail
+    assert web == base + web_2b + web_tail
+
+
+def test_web_only_never_names_searchfiles_or_files() -> None:
+    p = build_research_system_prompt(None, files_enabled=False, plan_tool=True)
+    assert "searchFiles" not in p
+    assert "file:" not in p
 
 
 def test_without_the_plan_tool_no_set_plan() -> None:

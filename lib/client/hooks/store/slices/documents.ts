@@ -24,6 +24,15 @@ export interface DocumentsSlice {
   activeDocumentId: string | null
 
   createDocument: (workspaceId: string, title?: string) => Document
+  /** Create a document under a given id with its content (a research
+   *  task's report, id derived from the task — Q77), idempotently: an
+   *  existing document with that id is returned unchanged. */
+  createDocumentWithId: (
+    id: string,
+    workspaceId: string,
+    title: string,
+    content: string
+  ) => Document
   deleteDocument: (documentId: string) => void
   renameDocument: (documentId: string, title: string) => void
   setDocumentContent: (documentId: string, content: string) => void
@@ -62,6 +71,22 @@ export const createDocumentsSlice: SliceCreator<DocumentsSlice> = (set, get) => 
     set((state) => ({
       documents: [newDoc, ...state.documents],
     }))
+    return newDoc
+  },
+  createDocumentWithId: (id, workspaceId, title, content) => {
+    const existing = get().documents.find((d) => d.id === id)
+    if (existing) return existing
+    const now = new Date()
+    const newDoc: Document = {
+      id,
+      workspaceId,
+      title: title.trim() || "Untitled",
+      content,
+      position: get().documents.filter((d) => d.workspaceId === workspaceId).length,
+      createdAt: now,
+      updatedAt: now,
+    }
+    set((state) => ({ documents: [newDoc, ...state.documents] }))
     return newDoc
   },
   deleteDocument: (documentId) =>
