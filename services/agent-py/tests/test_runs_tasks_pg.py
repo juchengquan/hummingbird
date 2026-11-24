@@ -283,7 +283,10 @@ async def test_a_child_answered_in_place_wakes_its_parent(world: World) -> None:
     [job] = await world.jobs(child, "respond")
     payload = job["payload"] if isinstance(job["payload"], dict) else json.loads(job["payload"])
     assert payload == {"requestId": "q", "approved": True}
-    assert (await world.run(task))["childrenAsking"] == 1
+    # An answered child no longer asks: the client shows "answer sent".
+    assert (await world.run(task))["childrenAsking"] == 0
+    [listed_parent] = [r for r in await listed(world, "topLevel=true") if r["id"] == task]
+    assert listed_parent["childrenAsking"] == 0
 
     await world.work()
     assert (await world.run(child))["status"] == "succeeded"

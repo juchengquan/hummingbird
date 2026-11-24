@@ -362,7 +362,8 @@ in § 4.2):
   as in a resume. An approval's `payload` needs a boolean `approved`
   (`400 invalid_request` otherwise; absent never approves).
 - The parent reads `running` meanwhile; its `childrenAsking` counts its
-  sub-agent runs waiting on an answer (§ 4.5), and a client lists them
+  sub-agent runs waiting on an answer (§ 4.5) — not one whose answer is
+  pending (`answerPending`), which is answered — and a client lists them
   with `listRuns?parentRunId=<run>`.
 
 ### 4.5 Tasks: root, current run, delivery (Q69, Q75, Q77)

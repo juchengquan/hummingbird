@@ -135,10 +135,14 @@ _SQLSTATE_RESPONSES: dict[str, tuple[int, str]] = {
     "54000": (409, "limit_reached"),
 }
 
-# A paused child asking a question (RUN_EVENTS.md § 1), as `c`.
+# A paused child asking a question (RUN_EVENTS.md § 1), as `c`, that no
+# accepted answer holds yet: a queued or running `respond` job for it
+# means the question is answered ("answer sent"), so it doesn't count.
 _CHILD_ASKS_SQL = (
     "c.status = 'paused' AND (COALESCE(c.outcome->>'type' = 'interrupt', false) "
-    "OR (c.outcome IS NULL AND NOT c.awaiting_children))"
+    "OR (c.outcome IS NULL AND NOT c.awaiting_children)) "
+    "AND NOT EXISTS (SELECT 1 FROM public.task_jobs cj WHERE cj.task_id = c.id "
+    "AND cj.action = 'respond' AND cj.status IN ('queued', 'running'))"
 )
 
 # 0047's "current run" by columns (0048): passing the row `t` to

@@ -934,8 +934,10 @@ class Run(BaseModel):
     childrenAsking: Annotated[int, Field(ge=0)]
     """
     How many of this run's sub-agent runs are `interrupted`,
-    waiting on an answer (`answerRun`, Q59). The parent itself
-    reads `running` meanwhile.
+    waiting on an answer (`answerRun`, Q59): one whose answer was
+    accepted and not yet picked up (its `answerPending` is true)
+    no longer counts — the question is answered. The parent
+    itself reads `running` meanwhile.
 
     """
     answerPending: bool
