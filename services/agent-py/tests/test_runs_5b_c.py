@@ -492,8 +492,10 @@ async def test_generate_image_returns_data_urls_on_runs(
         {"prompt": "a cat"}, RunToolContext(user_id=user_id, local_files_only=local_only)
     )
     assert out.images[0]["url"] == DATA_URL and "storagePath" not in out.images[0]
-    # The model reads the Minimax URL, not megabytes of base64.
-    assert "[1] https://minimax.test/a.png" in out.text and "data:" not in out.text
+    # Not stored: the model reads no link at all (Q86) — not megabytes of
+    # base64, not the Minimax URL that expires in hours.
+    assert "data:" not in out.text and "minimax.test" not in out.text
+    assert "[1] Shown to the user above your reply." in out.text
     assert seen[0]["user_id"] == user_id and seen[0]["local_files_only"] is local_only
 
 

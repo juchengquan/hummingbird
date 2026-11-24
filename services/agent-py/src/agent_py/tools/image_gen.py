@@ -219,16 +219,15 @@ async def _persist_or_inline(
     run_ctx: RunToolContext,
     images: list[MinimaxImage],
     prompt: str,
-) -> tuple[list[dict[str, object]], list[str]]:
-    """Interactive runs: each image as the TS route persists it (Storage
-    when signed in and `localFilesOnly` is off, else a data URL), plus
-    the URL the model's text names — the stored URL, or the Minimax URL
-    for a data-URL image. A failed download keeps the Minimax URL."""
+) -> list[dict[str, object]]:
+    """Runs: each image as the TS route persists it (Storage when signed
+    in and `localFilesOnly` is off, else a data URL). A failed download
+    keeps the Minimax URL. The model is told only the stored ones' links
+    (`_model_links`, Q86)."""
     import time
     import uuid
 
     records: list[dict[str, object]] = []
-    model_urls: list[str] = []
     for idx, img in enumerate(images):
         image_id = f"{int(time.time() * 1000)}-{idx}-{uuid.uuid4().hex[:8]}"
         result = await persist_or_inline_image(
@@ -253,8 +252,7 @@ async def _persist_or_inline(
             record["storagePath"] = storage_path
         record.update(width=img.width, height=img.height, format=fmt, prompt=prompt)
         records.append(record)
-        model_urls.append(img.url if url.startswith("data:") else url)
-    return records, model_urls
+    return records
 
 
 def build_remix_note(reference_url: str | None, image_gen_enabled: bool) -> str | None:
@@ -280,14 +278,28 @@ def remix_note_section(_ri: RunInput, opts: RunOptions, _ctx: HookContext) -> st
     return build_remix_note(ref.url if ref else None, "imageGen" in opts.skill_ids)
 
 
-def _build_text(prompt: str, mode: str, urls: list[str]) -> str:
-    """The model-facing tool result. One numbered line per URL so the
-    model can cite them; the URLs themselves render inline in the
-    user's UI via the Sources / generated-images rail."""
-    header = f"Generated {len(urls)} image{'s' if len(urls) != 1 else ''} ({mode}) for {prompt!r}:"
+def _model_links(images: list[dict[str, object]]) -> list[str | None]:
+    """The link the model may see for each image (Q86): a stored image's
+    (Storage, long-lived — a remix can pass it back); None for one that
+    isn't stored (a data URL, or the Minimax URL that expires in hours)."""
+    return [str(img["url"]) if img.get("storagePath") else None for img in images]
+
+
+def _build_text(prompt: str, mode: str, links: list[str | None]) -> str:
+    """The model-facing tool result: one numbered line per image, so the
+    model can refer to them. The images render for the user above the
+    reply; only a stored image's link is given (Q86)."""
+    n = len(links)
+    header = f"Generated {n} image{'s' if n != 1 else ''} ({mode}) for {prompt!r}:"
     lines = [header, ""]
-    for i, url in enumerate(urls, start=1):
-        lines.append(f"[{i}] {url}")
+    for i, link in enumerate(links, start=1):
+        lines.append(f"[{i}] {link}" if link else f"[{i}] Shown to the user above your reply.")
+    if any(link is None for link in links):
+        lines += [
+            "",
+            "An image without a link isn't stored: refer to it by its number, "
+            "and don't write a link or a markdown image for it.",
+        ]
     return "\n".join(lines)
 
 
@@ -467,7 +479,7 @@ def build_image_gen_tool(
         # gets *something* — the user-facing degradation is "URL
         # expires in hours instead of a year" rather than a tool error.
         if run_ctx is not None:
-            images, urls = await _persist_or_inline(
+            images = await _persist_or_inline(
                 run_ctx=run_ctx, images=list(result.images), prompt=prompt
             )
         else:
@@ -476,9 +488,8 @@ def build_image_gen_tool(
                 images=list(result.images),
                 prompt=prompt,
             )
-            urls = [str(img["url"]) for img in images]
-        text = _build_text(prompt, mode, urls)
-        summary = f"{len(urls)} image{'s' if len(urls) != 1 else ''} ({mode})"
+        text = _build_text(prompt, mode, _model_links(images))
+        summary = f"{len(images)} image{'s' if len(images) != 1 else ''} ({mode})"
         # The images also reach the user as a `tool_image` part (the
         # loop emits it after the tool result, as the Next route does).
         return ToolInvocationResult(
@@ -492,8 +503,9 @@ def build_image_gen_tool(
         name="generateImage",
         description=(
             "Generate one or more images via Minimax (text-to-image, or "
-            "image-to-image when you provide `referenceImageUrl`). Returns "
-            "image URLs that render inline above your message. "
+            "image-to-image when you provide `referenceImageUrl`). The images "
+            "render inline above your message; a stored image also comes "
+            "with a link you can pass back as `referenceImageUrl`. "
             f"HARD LIMIT: {cap} call{'s' if cap != 1 else ''} per turn. "
             f"Each call can render up to {MAX_IMAGES_PER_CALL} images. "
             "Use only when the user explicitly asks for an image; do not "

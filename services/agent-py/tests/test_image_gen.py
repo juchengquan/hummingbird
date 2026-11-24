@@ -97,7 +97,8 @@ async def test_happy_path_t2i(monkeypatch: pytest.MonkeyPatch) -> None:
         out = await tool.execute({"prompt": "a cat", "count": 2, "aspectRatio": "16:9"})
 
     assert out.summary == "2 images (t2i)"
-    assert "[1] https://m.test/a.png" in out.text
+    # Q86: an image that isn't stored gives the model no link (it expires in hours).
+    assert "m.test" not in out.text and "[1] Shown to the user above your reply." in out.text
     # The images also travel to the user, as the `tool_image` part's
     # records (the loop adds `id` / `mode`); no Storage → Minimax URLs.
     assert out.image_mode == "t2i"
@@ -117,7 +118,7 @@ async def test_happy_path_t2i(monkeypatch: pytest.MonkeyPatch) -> None:
             "prompt": "a cat",
         },
     )
-    assert "[2] https://m.test/b.png" in out.text
+    assert "[2] Shown to the user above your reply." in out.text
     # The mode/I2I plumbing — no `reference_image_url` since the model didn't pass one.
     kwargs = call.call_args.kwargs
     assert kwargs["aspect_ratio"] == "16:9"
@@ -140,7 +141,7 @@ async def test_happy_path_i2i(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert out.summary == "1 image (i2i)"
     assert out.image_mode == "i2i" and [i["url"] for i in out.images] == ["https://m.test/i.png"]
-    assert "[1] https://m.test/i.png" in out.text
+    assert "m.test" not in out.text and "[1] Shown to the user above your reply." in out.text
     assert call.call_args.kwargs["reference_image_url"] == "https://cdn.test/ref.png"
 
 
@@ -390,7 +391,7 @@ async def test_passthrough_when_no_context(monkeypatch: pytest.MonkeyPatch) -> N
     ):
         out = await tool.execute({"prompt": "x"})
 
-    assert "https://m.test/x.png" in out.text
+    assert "m.test" not in out.text and "[1] Shown to the user above your reply." in out.text
     persist_called.assert_not_awaited()
 
 
@@ -417,7 +418,7 @@ async def test_passthrough_when_storage_unconfigured(
     ):
         out = await tool.execute({"prompt": "x"})
 
-    assert "https://m.test/x.png" in out.text
+    assert "m.test" not in out.text and "[1] Shown to the user above your reply." in out.text
     persist_called.assert_not_awaited()
 
 
@@ -454,9 +455,10 @@ async def test_persist_failure_falls_back_to_minimax_url(
     ):
         out = await tool.execute({"prompt": "x", "count": 2})
 
-    # First image: raw Minimax URL (persist failed). Second: signed URL.
-    assert "https://m.test/a.png" in out.text
-    assert "https://signed.test/ok" in out.text
+    # First image: not stored, so no link for the model (Q86); the user
+    # still gets the Minimax URL. Second: stored, its signed URL (remix).
+    assert "m.test" not in out.text and "[1] Shown to the user above your reply." in out.text
+    assert "[2] https://signed.test/ok" in out.text
     assert out.images == (
         {"url": "https://m.test/a.png", "width": 0, "height": 0, "format": "png", "prompt": "x"},
         {
