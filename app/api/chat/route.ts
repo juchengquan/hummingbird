@@ -42,6 +42,7 @@ import { generateSuggestions } from '@/server/chat/suggestions'
 import { verifyAnswer } from '@/server/verify/verify-answer'
 import type { RetrievedSource } from '@/shared/verify'
 import { persistGeneratedImages, type ImageToPersist } from '@/server/image-storage'
+import { persistedImageFrame } from '@/server/skills/image-gen'
 import { persistGeneratedFiles, type FileToPersist } from '@/server/file-storage'
 import type { CodeRunResult } from '@/server/code-sandbox/types'
 import { resolveMountFiles } from '@/server/code-sandbox/mount-files'
@@ -169,6 +170,25 @@ async function maybeEmitImageFrame(
         }>
       }
     | undefined
+  // Stored by the tool already (Q86: before the model read the result).
+  const stored = persistedImageFrame(output)
+  if (stored) {
+    emitter.toolImage({
+      id: part.toolCallId ?? '',
+      mode: stored.mode,
+      images: stored.images.map((img) => ({
+        id: img.id,
+        url: img.url,
+        ...(img.storagePath ? { storagePath: img.storagePath } : {}),
+        width: img.width,
+        height: img.height,
+        format: img.format,
+        prompt: stored.prompt,
+        mode: stored.mode,
+      })),
+    })
+    return
+  }
   if (!output?.ok || !Array.isArray(output.images) || output.images.length === 0) {
     return
   }
@@ -426,6 +446,17 @@ export async function POST(req: NextRequest) {
       consumeBudget,
       ...(skill.id === 'codeInterpreter'
         ? { resolveMountFiles: mountResolver }
+        : {}),
+      // Q86: images are stored before the model reads the result, so it
+      // is given a stored image's link and never Minimax's.
+      ...(skill.id === 'imageGen'
+        ? {
+            persistImages: (images: ImageToPersist[]) =>
+              persistGeneratedImages(images, {
+                signal: req.signal,
+                localFilesOnly: body.localFilesOnly === true,
+              }),
+          }
         : {}),
     })
     if (tool) tools[skill.toolName] = tool
