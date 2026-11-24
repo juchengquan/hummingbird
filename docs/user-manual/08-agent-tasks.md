@@ -29,6 +29,9 @@ plan, sub-agents and its question. A task that asks opens by itself.
 With any other backend, the panel shows the one task this browser
 started, as before.
 
+Either way a task is titled by its goal (the first line of what you
+asked), with its conversation's name under it.
+
 Signed out, there is no **Task** toggle and no **Run as task** on the
 board: tasks need an account. `/research` says so.
 
