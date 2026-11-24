@@ -59,9 +59,12 @@ import { mintRunId } from "@/shared/runs/ids"
 import { answerRun, listRuns, markRunDelivered, resumeBackgroundRun, startBackgroundRun } from "../background"
 import { RunsError } from "../errors"
 import { buildResume, type InterruptAnswer } from "../interrupts"
-import { cancelRun, rejoinRun, type RunStream } from "../transport"
+import { cancelRun, getRun, rejoinRun, type RunStream } from "../transport"
 import type { ListRunsQuery, Run, RunCursor, RunList, RunsTarget, ResumeEntry, StartRunRequest } from "../types"
-import { ChainFold, generatedImagesOf, pendingInputOf } from "./chain"
+import type { GeneratedImage } from "@/shared/types"
+import { parseVerificationFrame } from "@/shared/verify"
+
+import { ChainFold, generatedImageOf, generatedImagesOf, pendingInputOf } from "./chain"
 import { deliverTask, type DeliveryDeps, type DeliveryStore, type LockLike, type PullResult } from "./deliver"
 import { backgroundStartBody } from "./launch-input"
 import { browserNotifier, notificationEvents, notifyOnce, type NotifyDeps } from "./notify"
@@ -116,6 +119,8 @@ export interface TasksApi {
     status: string
   }>
   answer(runId: string, resume: ResumeEntry[]): Promise<Run>
+  /** One run, its result whole (a list row leaves `result.images` out). */
+  get(runId: string): Promise<Run>
   cancel(runId: string): Promise<Run>
   markDelivered(rootRunId: string): Promise<Run>
   stream(runId: string, after: RunCursor, signal: AbortSignal): Promise<RunStream>
@@ -133,6 +138,7 @@ export function httpTasksApi(target: () => Promise<RunsTarget | null>): TasksApi
     start: async (body) => startBackgroundRun(body, { target: await t() }),
     resume: async (request) => resumeBackgroundRun(request, { target: await t() }),
     answer: async (runId, resume) => answerRun(runId, resume, { target: await t() }),
+    get: async (runId) => getRun(runId, { target: await t() }),
     cancel: async (runId) => cancelRun(runId, { target: await t() }),
     markDelivered: async (root) => markRunDelivered(root, { target: await t() }),
     stream: async (runId, after, signal) => rejoinRun(runId, { target: await t(), after, signal }),
@@ -480,9 +486,19 @@ export class TasksController {
     return this.pulling
   }
 
-  /** A finished task's verification and generated images: the fold of
-   *  its chain — the watched one, else its runs read once. */
+  /** A finished task's verification and generated images. A 0.5.1 result
+   *  lists its images (Q87) — read once from getRun, since a list row
+   *  leaves them out; an older one, from the fold of its chain (the
+   *  watched one, else its runs read once). */
   private async outputOf(task: TaskSummary) {
+    const current = await this.deps.api.get(task.currentRunId)
+    const result = current.result as { images?: unknown; verification?: unknown } | null
+    if (Array.isArray(result?.images)) {
+      return {
+        verification: parseVerificationFrame(result.verification),
+        images: result.images.map(generatedImageOf).filter((i): i is GeneratedImage => i !== null),
+      }
+    }
     let fold = this.watches.get(task.rootRunId)?.watch.fold
     if (!fold || !fold.isClosed(task.currentRunId)) {
       const runs = (await this.deps.api.list({ rootRunId: task.rootRunId, topLevel: true, pageSize: 100 })).runs

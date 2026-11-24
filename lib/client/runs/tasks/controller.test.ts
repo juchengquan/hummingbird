@@ -380,4 +380,41 @@ describe("delivery output", () => {
     const message = t.store.conversations.get(CONV)!.messages[0] as { generatedImages?: Array<{ id: string; storagePath?: string }> }
     expect(message.generatedImages?.map((i) => [i.id, i.storagePath])).toEqual([["c-img-0", "u/generated/fox.png"]])
   })
+
+  test("a 0.5.1 task's images come from getRun (the list leaves them out), with no stream read (Q87)", async () => {
+    const server = new FakeRunsServer()
+    const root = "00000000-0000-4000-8000-0000000000f8"
+    const image = {
+      id: "kid-img-0",
+      url: "https://signed.test/kid.png",
+      storagePath: "u/generated/kid.png",
+      width: 1,
+      height: 1,
+      format: "png",
+      prompt: "a cat",
+      mode: "t2i",
+    }
+    server.add(makeRun({ id: root, threadId: CONV, status: "succeeded", result: { text: "Drew.", images: [image] } }))
+    const t = tab({ server })
+    t.store.addConversation(CONV)
+    await t.controller.refreshNow()
+    await until(() => server.marks.size === 1)
+    const message = t.store.conversations.get(CONV)!.messages[0] as { generatedImages?: unknown[] }
+    expect(message.generatedImages).toEqual([image])
+    expect(server.calls.filter((c) => c.op === "stream")).toEqual([])
+    expect(server.calls.filter((c) => c.op === "get").map((c) => c.arg)).toEqual([root])
+  })
+
+  test("a 0.5.1 task with no images reads no stream either", async () => {
+    const server = new FakeRunsServer()
+    const root = "00000000-0000-4000-8000-0000000000f9"
+    server.add(makeRun({ id: root, threadId: CONV, status: "succeeded", result: { text: "Plain.", images: [] } }))
+    const t = tab({ server })
+    t.store.addConversation(CONV)
+    await t.controller.refreshNow()
+    await until(() => server.marks.size === 1)
+    const message = t.store.conversations.get(CONV)!.messages[0] as { generatedImages?: unknown[] }
+    expect(message.generatedImages).toBeUndefined()
+    expect(server.calls.filter((c) => c.op === "stream")).toEqual([])
+  })
 })

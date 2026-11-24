@@ -38,7 +38,6 @@ import type { GeneratedImage } from "@/shared/types"
 import type { VerificationResult } from "@/shared/verify"
 import { parseVerificationFrame } from "@/shared/verify"
 
-import { generatedImageOf } from "./chain"
 import type { TaskPointers } from "./pointers"
 import type { TaskSummary } from "./types"
 
@@ -105,11 +104,10 @@ export interface DeliveryDeps {
   whenDrained(): Promise<void>
   /** `POST /v1/runs/{root}/delivered`. */
   markDelivered(rootRunId: string): Promise<void>
-  /** What the task's streams hold that its result doesn't: the citation
-   *  checks (`hummingbird.verification`, when `RunResult.verification`
-   *  is absent) and the images it generated (`hummingbird.tool_image` —
-   *  stored, or data URLs with `localFilesOnly`; the text only quotes the
-   *  provider's temporary URL). */
+  /** What a list row doesn't carry: the images the task generated (a
+   *  0.5.1 result lists them, read from getRun — Q87; an older one, from
+   *  its `hummingbird.tool_image` activities) and, for an older result,
+   *  the citation checks (`hummingbird.verification`). */
   outputOf?(task: TaskSummary): Promise<TaskOutput>
   /** "Report opened in the editor". */
   onReportOpened?(): void
@@ -149,14 +147,6 @@ export function resultTextOf(task: TaskSummary): string | null {
 
 async function outputFor(task: TaskSummary, deps: DeliveryDeps): Promise<TaskOutput> {
   const fromResult = parseVerificationFrame((task.result as { verification?: unknown } | null)?.verification)
-  // 0.5.1 (Q87): the result lists its images, its sub-agents' included,
-  // and a worker that writes them also writes the verification — the
-  // stream is read only for a result written before.
-  const resultImages = (task.result as { images?: unknown } | null)?.images
-  if (Array.isArray(resultImages)) {
-    const images = resultImages.map(generatedImageOf).filter((i): i is GeneratedImage => i !== null)
-    return { verification: fromResult, images }
-  }
   let streamed: TaskOutput = { verification: null, images: [] }
   if (deps.outputOf) {
     try {

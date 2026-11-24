@@ -70,6 +70,12 @@ function streamOf(runId: string, items: readonly RunStreamItem[], after: RunCurs
 }
 
 /** The server side of `/v1/runs`, in memory. */
+function withoutImages(result: Run["result"]): Run["result"] {
+  if (!result || !("images" in result)) return result
+  const { images: _images, ...rest } = result as Record<string, unknown>
+  return rest as Run["result"]
+}
+
 export class FakeRunsServer {
   runs = new Map<string, Run>()
   streams = new Map<string, RunStreamItem[]>()
@@ -109,7 +115,8 @@ export class FakeRunsServer {
         if (query.status && !query.status.includes(r.status)) return false
         return true
       })
-      .map((r) => ({ ...r, delivered: this.delivered(r.rootRunId) }))
+      // As agent-py does: a list row leaves `result.images` out (Q87).
+      .map((r) => ({ ...r, result: withoutImages(r.result), delivered: this.delivered(r.rootRunId) }))
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
   }
 
@@ -159,6 +166,12 @@ export class FakeRunsServer {
         if (run.answerPending) throw new RunsError("http", "run_already_answered", "answered", 409)
         this.update(runId, { answerPending: true })
         return this.runs.get(runId)!
+      },
+      get: async (runId) => {
+        this.calls.push({ op: "get", arg: runId })
+        const run = this.runs.get(runId)
+        if (!run) throw new RunsError("http", "not_found", "gone", 404)
+        return { ...run, delivered: this.delivered(run.rootRunId) }
       },
       cancel: async (runId) => {
         this.calls.push({ op: "cancel", arg: runId })
