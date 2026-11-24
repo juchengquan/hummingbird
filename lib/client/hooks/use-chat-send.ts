@@ -33,6 +33,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { apiClient } from "@/client/api-client"
 import { useTaskRunContext } from "@/client/agent/task-run-context"
+import { toast } from "sonner"
+import { useTasks } from "@/client/runs/tasks/context"
+import { launchesOnRuns, launchTaskOnRuns } from "@/components/agent/tasks/launch"
 import { autoArchiveCodeBlocks as autoArchiveCodeBlocksPure } from "@/client/chat/auto-archive-code-blocks"
 import { shouldAutoRetry } from "@/client/chat/auto-retry-decision"
 import { resolveSendTargetConversationId } from "@/client/chat/resolve-send-target"
@@ -272,6 +275,13 @@ export function useChatSend(): UseChatSendResult {
   useEffect(() => {
     taskRunRef.current = taskRun
   }, [taskRun])
+  // Tasks on runs (wave 6): when the tasks interface launches on runs,
+  // a task turn goes there instead (Q61).
+  const tasks = useTasks()
+  const tasksRef = useRef(tasks)
+  useEffect(() => {
+    tasksRef.current = tasks
+  }, [tasks])
 
   // --- shared local helpers ---
   const mockAIResponse = useCallback(
@@ -400,22 +410,50 @@ export function useChatSend(): UseChatSendResult {
       // Task mode: hand off to the shared task runner (Tasks panel). It
       // switches a model the worker can't run — a persona's, `auto`, the
       // chat's own — for this launch, with a note (Q55).
+      // On runs (wave 6, Q71): the attached images go in the message (as
+      // here, by value), never `attachments`; `research` for `/research`;
+      // the persona's MCP allow-list; "store files locally". The tasks
+      // interface switches a model the worker can't run (Q55).
       if (options?.asTask) {
-        taskRunRef.current.startTask(
-          {
-            messages: buildMessages() as TaskRequestInput["messages"],
-            conversationId: targetConvId,
-            model: modelForCall,
-            workspaceSystemPrompt,
-            workspaceId: activeWorkspaceId || undefined,
-            skills: enabledSkills,
-            ...(options.taskMode && options.taskMode !== "default"
-              ? { mode: options.taskMode }
-              : {}),
-            ...(allowedMcpServerIds ? { allowedMcpServerIds } : {}),
-          },
-          { title: conv?.title }
-        )
+        const taskInput: TaskRequestInput = {
+          messages: buildMessages() as TaskRequestInput["messages"],
+          conversationId: targetConvId,
+          model: modelForCall,
+          workspaceSystemPrompt,
+          workspaceId: activeWorkspaceId || undefined,
+          skills: enabledSkills,
+          ...(options.taskMode && options.taskMode !== "default"
+            ? { mode: options.taskMode }
+            : {}),
+          ...(allowedMcpServerIds ? { allowedMcpServerIds } : {}),
+          ...(useStore.getState().localFilesOnly ? { localFilesOnly: true } : {}),
+        }
+        // The task is titled by its goal (the turn's text); the list shows
+        // its conversation's name under it.
+        const goal = [...history].reverse().find((m) => m.role === "user")?.content ?? ""
+        if (launchesOnRuns(tasksRef.current)) {
+          await launchTaskOnRuns(tasksRef.current, taskInput, { title: goal })
+          return
+        }
+        // The old path drives one task at a time: a resend of a task turn
+        // (bug 4) must not replace the one being watched.
+        if (taskRunRef.current.isRunning) {
+          toast.error("A task is already running. Cancel it first.")
+          return
+        }
+        // Still reading the session: neither path yet, and no refusal.
+        if (
+          tasksRef.current.availability.ok === false &&
+          tasksRef.current.availability.reason === "loading"
+        ) {
+          return
+        }
+        // Tasks need sign-in on this path too (bug 20): a resend can get here.
+        if (!(await hasSignedInSession())) {
+          toast.error("Sign in to run tasks.")
+          return
+        }
+        taskRunRef.current.startTask(taskInput, { title: goal })
         return
       }
 

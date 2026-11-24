@@ -9,3 +9,7 @@ export const WEB_PORT = Number(process.env.E2E_WEB_PORT ?? 3100)
 export const AGENT_PORT = Number(process.env.E2E_AGENT_PORT ?? 8100)
 export const WEB_ORIGIN = `http://${HOST}:${WEB_PORT}`
 export const AGENT_PY_ORIGIN = `http://${HOST}:${AGENT_PORT}`
+/** The fake Supabase (GoTrue + PostgREST stand-in, `tasks-runs-backend.ts`)
+ *  the e2e build is pointed at, so a spec can be signed in. */
+export const SUPABASE_PORT = Number(process.env.E2E_SUPABASE_PORT ?? AGENT_PORT + 1)
+export const SUPABASE_ORIGIN = `http://${HOST}:${SUPABASE_PORT}`

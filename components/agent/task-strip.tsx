@@ -1,32 +1,17 @@
 "use client"
 
-import {
-  Ban,
-  CheckCircle2,
-  Circle,
-  CircleDot,
-  FileText,
-  Loader2,
-  Pause,
-  X,
-  XCircle,
-} from "lucide-react"
+import { FileText, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { MarkdownPreview } from "@/components/markdown-preview"
-import {
-  ToolCallStrip,
-  type LiveToolCall,
-} from "@/components/skills/tool-call-strip"
 import type { ChildRuns } from "@/client/agent/use-child-runs"
 import { openChildRunViewer } from "@/client/agent/child-run-viewer/types"
 import { taskProgress } from "@/client/agent/task-progress"
 import { isTerminalStatus, type RunStatus } from "@/shared/agent/events"
-import type { PlanItem } from "@/shared/agent/events"
 import type { ChildRunRef, TaskRunView } from "@/shared/agent/project"
 import { cn } from "@/shared/utils"
 
 import { subagentPillLabel } from "./subagent-pill-label"
+import { StatusIcon, SubagentRows, TaskRunBody } from "./task-run-body"
 import { TaskQuestion } from "./task-question"
 
 interface TaskStripProps {
@@ -119,19 +104,6 @@ export function TaskStrip({
   // calls runs: the asked one has its card, and the turn's later ones
   // haven't started. A spawn is shown as the sub-agent list.
   const idle = progress.paused || !!childState?.waiting
-  const shownCalls = view.toolCalls.filter(
-    (c) =>
-      c.status === "done" ||
-      (!idle && !(c.toolName === "spawnSubagent" && view.childRuns.length > 0))
-  )
-  const calls: LiveToolCall[] = shownCalls.map((c) => ({
-    id: c.toolCallId,
-    name: c.toolName,
-    argsLabel: argLabel(c.args),
-    status: c.status,
-    summary: c.summary,
-    results: c.results,
-  }))
 
   return (
     <div
@@ -190,35 +162,16 @@ export function TaskStrip({
         <ChildQuestions childRuns={view.childRuns} childState={childState} />
       ) : null}
 
-      {view.plan.length > 0 ? <PlanList items={view.plan} /> : null}
-
-      {view.childRuns.length > 0 ? (
-        <SubagentGroup childRuns={view.childRuns} childState={childState} />
-      ) : null}
-
-      {calls.length > 0 ? <ToolCallStrip calls={calls} className="[&>span]:max-w-full" /> : null}
-
-      {view.lastStepError ? (
-        <p className="text-[11px] text-[var(--muted-foreground)]">
-          Retried after error: {view.lastStepError}
-        </p>
-      ) : null}
-
-      {view.reasoning ? (
-        <details className="text-xs">
-          <summary className="cursor-pointer text-[var(--muted-foreground)]">
-            Reasoning
-          </summary>
-          <MarkdownPreview
-            content={view.reasoning}
-            className="!p-0 text-[var(--muted-foreground)]"
-          />
-        </details>
-      ) : null}
-
-      {view.text ? (
-        <MarkdownPreview content={view.text} className="!p-0" />
-      ) : null}
+      <TaskRunBody
+        view={view}
+        idle={idle}
+        hasSubagents={view.childRuns.length > 0}
+        subagents={
+          view.childRuns.length > 0 ? (
+            <SubagentGroup childRuns={view.childRuns} childState={childState} />
+          ) : null
+        }
+      />
     </div>
   )
 }
@@ -266,96 +219,25 @@ function SubagentGroup({
   childRuns: ChildRunRef[]
   childState?: ChildRuns
 }) {
-  const rows = childState?.rows ?? []
-  const statuses = Object.fromEntries(rows.map((r) => [r.id, r.status]))
+  const statuses = Object.fromEntries((childState?.rows ?? []).map((r) => [r.id, r.status]))
   return (
-    <ul className="space-y-0.5 text-xs">
-      <li className="flex items-center gap-1.5 text-[var(--muted-foreground)] font-medium">
-        Spawned {childRuns.length} subagent{childRuns.length === 1 ? "" : "s"}
-      </li>
-      {childState?.stale ? (
-        <li className="text-[var(--destructive)]">
-          Couldn&apos;t refresh the sub-agents. Retrying…
-        </li>
-      ) : null}
-      {childRuns.map((c) => {
+    <SubagentRows
+      stale={childState?.stale}
+      rows={childRuns.map((c) => {
         const status = statuses[c.childTaskId]
-        const canSkip = !!status && !isTerminalStatus(status as RunStatus)
-        return (
-          <li key={c.childTaskId} className="flex min-w-0 items-center gap-1">
-            <button
-              type="button"
-              onClick={() => openChildRunViewer({ childTaskId: c.childTaskId })}
-              className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 py-0.5 text-left hover:bg-[var(--muted)]"
-            >
-              <span className="shrink-0 rounded-sm bg-[var(--muted)] px-1 py-0.5 text-[10px] leading-none text-[var(--muted-foreground)]">
-                {subagentPillLabel(c.childTaskId, statuses)}
-              </span>{" "}
-              <span className="min-w-0 truncate font-medium">{c.agent}</span>{" "}
-              <span className="min-w-0 truncate text-[var(--muted-foreground)]">{c.subgoal}</span>
-            </button>
-            {canSkip && childState ? (
-              <Button
-                size="xs"
-                variant="ghost"
-                className="shrink-0"
-                disabled={childState.skipping.has(c.childTaskId)}
-                aria-label={`Skip sub-agent ${c.agent}`}
-                title="Skip this sub-agent; the task carries on"
-                onClick={() => void childState.skip(c.childTaskId)}
-              >
-                Skip
-              </Button>
-            ) : null}
-          </li>
-        )
+        return {
+          id: c.childTaskId,
+          agent: c.agent,
+          subgoal: c.subgoal,
+          label: subagentPillLabel(c.childTaskId, statuses),
+          canSkip: !!childState && !!status && !isTerminalStatus(status as RunStatus),
+          skipping: !!childState?.skipping.has(c.childTaskId),
+        }
       })}
-    </ul>
+      onOpen={(id) => openChildRunViewer({ childTaskId: id })}
+      onSkip={childState ? (id) => void childState.skip(id) : undefined}
+    />
   )
-}
-
-function PlanList({ items }: { items: PlanItem[] }) {
-  return (
-    <ul className="space-y-0.5 text-xs">
-      {items.map((item) => (
-        <li key={item.id} className="flex items-center gap-1.5">
-          <PlanIcon status={item.status} />
-          <span
-            className={cn(
-              item.status === "completed" &&
-                "line-through text-[var(--muted-foreground)]"
-            )}
-          >
-            {item.text}
-          </span>
-        </li>
-      ))}
-    </ul>
-  )
-}
-
-function PlanIcon({ status }: { status: PlanItem["status"] }) {
-  if (status === "completed")
-    return <CheckCircle2 size={12} className="text-[var(--primary)]" />
-  if (status === "in_progress")
-    return <CircleDot size={12} className="text-[var(--primary)]" />
-  return <Circle size={12} className="text-[var(--muted-foreground)]" />
-}
-
-function StatusIcon({ status }: { status: RunStatus }) {
-  switch (status) {
-    case "running":
-    case "queued":
-      return <Loader2 size={14} className="animate-spin text-[var(--primary)]" />
-    case "paused":
-      return <Pause size={14} className="text-[var(--muted-foreground)]" />
-    case "done":
-      return <CheckCircle2 size={14} className="text-[var(--primary)]" />
-    case "failed":
-      return <XCircle size={14} className="text-[var(--destructive)]" />
-    case "cancelled":
-      return <Ban size={14} className="text-[var(--muted-foreground)]" />
-  }
 }
 
 function terminalSummary(view: TaskRunView, subagent?: boolean): string {
@@ -371,14 +253,4 @@ function terminalSummary(view: TaskRunView, subagent?: boolean): string {
     default:
       return `Task ended · ${steps}`
   }
-}
-
-/** Best-effort short label from a tool's input — the query string most
- *  search-style tools carry. Falls back to undefined (generic pill). */
-function argLabel(args: unknown): string | undefined {
-  if (args && typeof args === "object") {
-    const q = (args as { query?: unknown }).query
-    if (typeof q === "string" && q.trim()) return q.slice(0, 80)
-  }
-  return undefined
 }
