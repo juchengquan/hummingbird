@@ -101,23 +101,38 @@ const DEFAULT_RECONNECTS = 3
 const DEFAULT_RECONNECT_DELAY_MS = 500
 const MAX_RECONNECT_DELAY_MS = 4_000
 
-function runsUrl(target: RunsTarget, path: string): string {
+export function runsUrl(target: RunsTarget, path: string): string {
   return `${target.baseUrl}${path}`
 }
 
-function runPath(runId: string, suffix = ""): string {
+export function runPath(runId: string, suffix = ""): string {
   return `/v1/runs/${encodeURIComponent(runId)}${suffix}`
+}
+
+/** The bearer to send: the target's getter (the session's current token;
+ *  `refresh` forces a new one after a 401), else the token the target was
+ *  resolved with. A getter that fails or has none keeps the resolved one —
+ *  the server's 401 then says so. */
+async function bearerToken(target: RunsTarget, refresh: boolean): Promise<string> {
+  const fallback = target.authToken as string
+  if (!target.getAuthToken) return fallback
+  try {
+    return (await target.getAuthToken(refresh)) || fallback
+  } catch {
+    return fallback
+  }
 }
 
 /** Auth headers: Bearer when signed in; otherwise the run's token, when
  *  one is known. */
-function authHeaders(
+async function authHeaders(
   opts: RunRequestOptions,
   tokenRunId: string | null,
-): { headers: Record<string, string>; token: string | null } {
+  refresh = false,
+): Promise<{ headers: Record<string, string>; token: string | null }> {
   const headers: Record<string, string> = {}
   if (opts.target.authToken) {
-    headers.Authorization = `Bearer ${opts.target.authToken}`
+    headers.Authorization = `Bearer ${await bearerToken(opts.target, refresh)}`
     return { headers, token: null }
   }
   const token =
@@ -154,6 +169,30 @@ async function send(
   } catch (err) {
     throw toRunsError(err, signal)
   }
+}
+
+/**
+ * `send` with auth headers (`extra` added to them). A signed-in request
+ * answered `401` asks the target for a fresh token and is sent once more
+ * (survey bug 19: a token expires during a long watch); a second `401`
+ * is returned as is.
+ */
+export async function sendAuthed(
+  opts: RunRequestOptions,
+  url: string,
+  init: { method: string; body?: string; headers?: Record<string, string> },
+  signal: AbortSignal | undefined,
+  tokenRunId: string | null,
+): Promise<Response> {
+  const attempt = async (refresh: boolean) => {
+    const { headers } = await authHeaders(opts, tokenRunId, refresh)
+    return send(opts, url, { ...init, headers: { ...headers, ...(init.headers ?? {}) } }, signal)
+  }
+  const res = await attempt(false)
+  if (res.status !== 401 || !opts.target.authToken || !opts.target.getAuthToken) return res
+  // Drain the refused body so the connection is reusable.
+  await res.body?.cancel().catch(() => {})
+  return attempt(true)
 }
 
 /** An AbortController that also aborts when `outer` does. */
@@ -325,14 +364,19 @@ async function openEvents(
   controller: AbortController,
   runToken: string | null,
 ): Promise<Response> {
-  const { headers } = authHeaders({ ...opts, runToken: runToken ?? opts.runToken }, runId)
-  headers.Accept = "text/event-stream"
+  const headers: Record<string, string> = { Accept: "text/event-stream" }
   let url = runsUrl(opts.target, runPath(runId, "/events"))
   if (after !== START_CURSOR) {
     headers["Last-Event-ID"] = after
     url += `?after=${encodeURIComponent(after)}`
   }
-  const res = await send(opts, url, { method: "GET", headers }, controller.signal)
+  const res = await sendAuthed(
+    { ...opts, runToken: runToken ?? opts.runToken },
+    url,
+    { method: "GET", headers },
+    controller.signal,
+    runId,
+  )
   if (res.status === 404 && !opts.target.authToken) dropRunToken(runId, opts.tokens)
   await expectStream(res)
   return res
@@ -364,14 +408,16 @@ export async function startRun(body: StartRunRequest, opts: RunStreamOptions): P
       : typeof previousRunId === "string"
         ? previousRunId
         : body.runId
-  const { headers } = authHeaders(opts, tokenRunId)
-  headers["Content-Type"] = "application/json"
-  headers.Accept = "text/event-stream"
-  const res = await send(
+  const res = await sendAuthed(
     opts,
     runsUrl(opts.target, "/v1/runs"),
-    { method: "POST", headers, body: JSON.stringify(body) },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      body: JSON.stringify(body),
+    },
     controller.signal,
+    tokenRunId,
   )
   await expectStream(res)
   let runToken: string | null = null
@@ -423,12 +469,12 @@ async function runJson(
   method: "GET" | "POST",
   opts: RunRequestOptions,
 ): Promise<Run> {
-  const { headers } = authHeaders(opts, runId)
-  const res = await send(
+  const res = await sendAuthed(
     opts,
     runsUrl(opts.target, runPath(runId, suffix)),
-    { method, headers },
+    { method },
     opts.signal,
+    runId,
   )
   if (!res.ok) {
     if (res.status === 404 && !opts.target.authToken) dropRunToken(runId, opts.tokens)

@@ -70,6 +70,13 @@ import {
   resumeRun,
   startRun,
 } from "@/client/runs/transport"
+import {
+  answerRun,
+  listRuns,
+  markRunDelivered,
+  resumeBackgroundRun,
+  startBackgroundRun,
+} from "@/client/runs/background"
 import type { ChatBackend } from "@/client/hooks/store/slices/ui"
 import { notifyAuthRequired } from "@/client/auth/auth-required"
 
@@ -1360,6 +1367,12 @@ export const apiClient = {
     status: getRun,
     cancel: cancelRun,
     resume: resumeRun,
+    /** Background runs — the tasks panel (wave 6, `runs/background.ts`). */
+    startBackground: startBackgroundRun,
+    resumeBackground: resumeBackgroundRun,
+    list: listRuns,
+    answer: answerRun,
+    markDelivered: markRunDelivered,
   },
   tasks: {
     start: tasksStart,

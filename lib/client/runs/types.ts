@@ -24,6 +24,12 @@ export interface RunsTarget {
   /** The Supabase session JWT (`Authorization: Bearer`), or `null` for an
    *  anonymous run, addressed by its `X-Run-Token` (Q20/Q34). */
   authToken: string | null
+  /** The signed-in session's current JWT, read again for every request
+   *  (a long watch outlives the token it started with — survey bug 19);
+   *  `refresh: true` after a `401`, to force a new one. Absent: `authToken`
+   *  is used as is. Never consulted for an anonymous target
+   *  (`authToken: null`). */
+  getAuthToken?: (refresh?: boolean) => Promise<string | null>
 }
 
 /** `POST /v1/runs` body — an AG-UI `RunAgentInput` (`build-input.ts`). */

@@ -28,6 +28,14 @@ export const RUN_ALREADY_RESUMED = "run_already_resumed"
 export const RUN_ANSWER_APPLIED = "run_answer_applied"
 export const INVALID_STATE = "invalid_state"
 export const INVALID_ATTACHMENT = "invalid_attachment"
+/** A background question being answered another way (Q58), or a
+ *  sub-agent's question answered twice (`answerRun`, Q59). */
+export const RUN_ALREADY_ANSWERED = "run_already_answered"
+/** 5 active tasks (Q72), or 20 queued jobs: nothing was created / answered. */
+export const LIMIT_REACHED = "limit_reached"
+export const NOT_FOUND = "not_found"
+/** Background runs (and, with `REQUIRE_AUTH_FOR_AI`, every run) need sign-in. */
+export const AUTH_REQUIRED = "auth_required"
 
 export class RunsError extends Error {
   readonly kind: RunsErrorKind

@@ -127,6 +127,10 @@ export interface TaskSummary {
   delivered: boolean
   /** A succeeded task's result (the whole answer across its runs, Q78). */
   result: RunResult | null
+  /** A succeeded task that stopped at its step limit and delivered what it
+   *  had (Q81, `RunResult.stoppedAt`): show the "stopped at the step
+   *  limit" note. Null otherwise. */
+  stoppedAt: "max_steps" | null
   /** A failed task's error. */
   error: TaskError | null
   /** A resume that failed or was cancelled before applying its answer
@@ -162,11 +166,15 @@ export interface TaskView extends TaskSummary {
 /** Whether this browser can launch tasks, and why not. */
 export type TasksAvailability =
   | { ok: true }
+  /** The sign-in session is still being read: show nothing yet (don't
+   *  flash the signed-out state). */
+  | { ok: false; reason: "loading" }
   /** Background runs need sign-in (`401 auth_required`): hide the Task
    *  toggle and the board's start. */
   | { ok: false; reason: "signed_out" }
-  /** The selected backend isn't "agent-py (runs)" (Q61): tasks launch on
-   *  the old path, and the list shows every task all the same (Q76). */
+  /** The selected backend isn't "agent-py (runs)" (Q61): tasks launch,
+   *  are listed, delivered and notified on the old path; the runs
+   *  controller does nothing (on runs, the list shows every task — Q76). */
   | { ok: false; reason: "not_runs" }
 
 export interface TaskLaunchOptions {

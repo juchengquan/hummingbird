@@ -17,6 +17,7 @@ import { clearActiveTask } from "@/client/agent/active-task"
 import { notifyTaskFinished } from "@/client/agent/notify"
 import { useStore } from "@/client/hooks/use-store"
 import { formatResearchCitations } from "@/shared/agent/citation-formatter"
+import { resultIdsFor } from "@/shared/runs/ids"
 import type { TaskRunView } from "@/shared/agent/project"
 import { deriveResearchReportTitle } from "@/shared/agent/research-report"
 
@@ -24,6 +25,12 @@ export interface TaskMeta {
   conversationId: string
   title?: string
   mode: "default" | "research"
+  /** The signed-in user who launched or resumed it: the result is written
+   *  under ids derived from the user and the run (`resultIdsFor`, Q70), so
+   *  the runs list delivering the same task in this or another browser is
+   *  a no-op. Null without accounts (Supabase unconfigured): the ids are
+   *  then derived from the run alone. */
+  userId: string | null
 }
 
 const DELIVERED_KEY = "humm.settledTasks"
@@ -62,7 +69,7 @@ export async function settleTask(runId: string, view: TaskRunView, meta: TaskMet
       markDelivered(runId, delivered)
       deliver(runId, view, meta)
     }
-    clearActiveTask(runId)
+    clearActiveTask(runId, meta.userId)
     return first
   }
   // Web Locks need a secure context; without them the mark alone guards.
@@ -80,50 +87,57 @@ function deliver(runId: string, view: TaskRunView, meta: TaskMeta): void {
   const store = useStore.getState()
   const { conversationId, title, mode } = meta
   const rawText = (view.resultText ?? view.text).trim()
+  const ids = resultIdsFor(meta.userId ?? "local", runId)
 
-  if (view.status === "done") notifyTaskFinished(view, { title })
+  notifyTaskFinished(view, { title, runId })
 
-  if (view.status === "done" && rawText) {
+  // Never into a deleted conversation (survey bug 21), and a report into
+  // the conversation's own workspace, never the active one (bug 2).
+  const conversation = store.conversations.find((c) => c.id === conversationId)
+  let text = rawText
+  if (view.status === "done" && rawText && conversation) {
     // Research reports go through the citation formatter
     // (`PLAN-deep-research.md` §Phase 4): inline `[N]` markers remapped to
     // first-appearance order, `## Sources` deduped.
     const research = mode === "research"
-    const text = research ? formatResearchCitations(rawText) : rawText
+    text = research ? formatResearchCitations(rawText) : rawText
     // Citation-verification verdicts, for `MessageVerification`
     // (`docs/PLAN-citation-verifiability.md`).
     const verification = view.verification ?? undefined
-    const message = store.addMessage(
+    const message = store.addMessageWithId(
+      ids.messageId,
       { role: "assistant", content: text, ...(verification ? { verification } : {}) },
       conversationId
     )
-    const workspaceId = store.activeWorkspaceId
-    if (research && workspaceId) {
+    const workspaceId = conversation.workspaceId
+    if (message && research && workspaceId) {
       const reportTitle = deriveResearchReportTitle(text, conversationId)
-      // A fresh document per report, so a workspace accumulates a library
-      // of reports rather than one mixed document.
-      const doc = store.createDocument(workspaceId, reportTitle)
-      store.setDocumentContent(doc.id, text)
-      store.setActiveDocument(doc.id)
-      store.createArtifact({
+      // A document per report, so a workspace accumulates a library of
+      // reports rather than one mixed document.
+      store.createDocumentWithId(ids.documentId, workspaceId, reportTitle, text)
+      store.createArtifactWithId(ids.artifactId, {
         conversationId,
         messageId: message.id,
         kind: "markdown",
         title: reportTitle,
         content: text,
       })
-      toast.success("Report opened in the editor")
+      if (store.activeWorkspaceId === workspaceId) {
+        store.setActiveDocument(ids.documentId)
+        toast.success("Report opened in the editor")
+      }
     }
   }
 
   const card = store.projectTasks.find((task) => task.taskId === runId)
   if (!card) return
   if (view.status === "done") {
-    if (!card.artifactId && rawText) {
-      const artifact = store.createArtifact({
+    if (!card.artifactId && rawText && conversation) {
+      const artifact = store.createArtifactWithId(ids.artifactId, {
         conversationId,
         kind: "markdown",
         title: card.title,
-        content: rawText,
+        content: text,
       })
       store.updateProjectTask(card.id, { artifactId: artifact.id })
     }
