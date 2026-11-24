@@ -16,6 +16,7 @@ Every test either rolls back its transaction or deletes the users it made.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -216,8 +217,10 @@ class Db:
         )
 
 
-@pytest_asyncio.fixture
-async def db() -> AsyncIterator[Db]:
+@contextlib.asynccontextmanager
+async def open_db() -> AsyncIterator[Db]:
+    """A seeded user in one transaction, rolled back (shared by later
+    migrations' tests)."""
     conn = await asyncpg.connect(DB_URL, statement_cache_size=0)  # the schema changes
     tx = conn.transaction()
     await tx.start()
@@ -227,6 +230,12 @@ async def db() -> AsyncIterator[Db]:
     finally:
         await tx.rollback()
         await conn.close()
+
+
+@pytest_asyncio.fixture
+async def db() -> AsyncIterator[Db]:
+    async with open_db() as opened:
+        yield opened
 
 
 # --- Upgrade -----------------------------------------------------------------------

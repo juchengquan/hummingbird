@@ -241,16 +241,21 @@ def _sqlstate(exc: BaseException) -> str | None:
     return state if isinstance(state, str) else None
 
 
+_LIMIT_MESSAGES = {"task_cap": TASK_CAP_MESSAGE, "job_queue": JOB_QUEUE_FULL_MESSAGE}
+"""54000's hint (0050, Q88) → the sentence a user reads."""
+
+
 def _raise_write_error(exc: asyncpg.PostgresError, *, limit_message: str | None = None) -> NoReturn:
-    """Map a deliberate refusal; `limit_message` replaces the database's
-    text for 54000 (which cap it was depends on the call)."""
+    """Map a deliberate refusal. A 54000 reads the sentence its hint names
+    (0050); `limit_message`, the call's guess, covers a database before it."""
     state = _sqlstate(exc)
     mapped = _SQLSTATE_RESPONSES.get(state or "")
     if mapped is None:
         raise exc
     message = str(getattr(exc, "message", "") or exc) or "Request rejected."
-    if state == "54000" and limit_message is not None:
-        message = limit_message
+    if state == "54000":
+        hinted = _LIMIT_MESSAGES.get(str(getattr(exc, "hint", None) or ""))
+        message = hinted or limit_message or message
     raise RunWriteError(state, mapped[0], mapped[1], message) from None
 
 

@@ -345,6 +345,16 @@ order. Every migration has a unique numeric prefix (CI enforces this via
     abandons that fan-in instead.
   - **Existing rows:** nothing changes.
   - **Rollback:** the statements in the file's header.
+- `supabase/migrations/0050_task_refusal_hints.sql`
+  - A task write refused at a limit (54000) names it in the error's hint
+    (wave 7, Q88): `task_cap` (5 active tasks) or `job_queue` (20 queued
+    jobs); Next and agent-py show the same sentence for each.
+    `private.task_waits_on` reads 0048's `awaiting_children` column, not
+    the checkpoint (Q90).
+  - **Deploy order:** any; an older Next or agent-py sees the same
+    SQLSTATE and message as before.
+  - **Existing rows:** nothing changes.
+  - **Rollback:** the four functions' definitions from 0047 and 0045.
 
 ### Migration 0018 collision (renamed to `0033_message_generated_files.sql`)
 

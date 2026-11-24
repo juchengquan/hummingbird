@@ -371,7 +371,8 @@ class JobTaskState:
     step: int
     pending_children: int
     # `tasks.checkpoint` carries `awaiting_children` — the run is a
-    # parent paused on its subagents (fan-in pending).
+    # parent paused on its subagents (fan-in pending). Read from 0048's
+    # generated column, so the checkpoint itself isn't fetched.
     awaiting_children: bool
     # Another job for the same task is queued (and claimable) or holds
     # an unexpired lease — something else will still drive the task.
@@ -386,7 +387,7 @@ _JOB_TASK_STATE_SQL = """
 SELECT t.status,
        t.step,
        t.pending_children,
-       COALESCE(t.checkpoint ? 'awaiting_children', false) AS awaiting_children,
+       t.awaiting_children,  -- 0048's column: the checkpoint isn't read (Q90)
        EXISTS (
            SELECT 1 FROM public.task_jobs j
            WHERE j.task_id = t.id
