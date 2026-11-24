@@ -34,16 +34,30 @@ async def test_no_key_fails_a_start(world: World) -> None:
 
 
 async def test_no_key_fails_a_continue(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
-    import asyncio
+    """The start job's chunk ends after its first step, the key goes, and
+    the one `continue` fails for it. The chunk ends on that event, not on a
+    wall-clock budget, so a slow machine can't yield more than once (Q90)."""
+    from agent_py import executor
 
     from .task_world import READ, Reply
 
-    async def slow() -> None:
-        await asyncio.sleep(0.15)
+    class AfterFirstCall(float):
+        """A chunk deadline that has passed once the model was called.
+        `now > deadline` asks this (a float subclass) first."""
+
+        called = False
+
+        def __lt__(self, now: object) -> bool:
+            return AfterFirstCall.called
+
+    deadlines = iter([AfterFirstCall(0.0)])
+
+    async def first_call() -> None:
+        AfterFirstCall.called = True
         world.key = False
 
-    monkeypatch.setenv("WORKER_CHUNK_BUDGET_S", "0.05")
-    world.model.script("Do it", Reply([use("r", READ)], before=slow))
+    monkeypatch.setattr(executor, "_chunk_deadline_s", lambda: next(deadlines, None))
+    world.model.script("Do it", Reply([use("r", READ)], before=first_call))
     task = await world.start()
     await world.work()
     assert len(await world.jobs(task, "continue")) == 1
