@@ -138,6 +138,9 @@ three times. The goals:
 | Q80 | Re-enabling a schedule with no model sets Haiku and shows it; one conversation per fire; the contract's "null falls back to the default" text is corrected |
 | Q81 | A task that hits its step limit delivers what it has with a visible "stopped at the step limit" note; a spawn on the last step still uses its children's results |
 | Q82 | A real-stack browser job in CI (GoTrue, PostgREST, Next, the worker, a scripted model): on PRs touching tasks / runs and nightly; required after two green weeks |
+| Q83 | A message's "this was a task turn" marker (`Message.taskTurn`) stays local: on another device Edit / Regenerate / Retry of it is a chat turn. A synced column can come later |
+| Q84 | Tasks need sign-in on both paths: the Task toggle, the board's "Run as task" and `/research` are hidden or refused while signed out, on the old path too |
+| Q85 | A task's title in the list is its goal (one line), with the conversation's name under it, on the runs list and the old panel alike |
 
 ## Run contract (v1)
 
