@@ -185,6 +185,13 @@ _RUN_COLUMNS = f"""
              WHERE e.task_id = t.id ORDER BY e.seq DESC LIMIT 1), 0) AS last_seq
 """
 
+# A list row's outcome without `result.images` (Q87): a data-URL image can
+# be megabytes and the list is polled; a client reads them from getRun.
+_LIST_RUN_COLUMNS = _RUN_COLUMNS.replace(
+    "t.outcome::text AS outcome", "(t.outcome #- '{result,images}')::text AS outcome"
+)
+assert _LIST_RUN_COLUMNS != _RUN_COLUMNS
+
 _LIVE = ("queued", "running")
 
 # 0045's `question_held_by_respond`, for any of these questions.
@@ -494,7 +501,7 @@ class PgRunRepository:
             where.append(f"(t.created_at, t.id) < ({created_p}::timestamptz, {id_p}::uuid)")
         limit_p = param(page_size + 1)
         sql = (
-            f"SELECT {_RUN_COLUMNS} FROM public.tasks t WHERE {' AND '.join(where)} "
+            f"SELECT {_LIST_RUN_COLUMNS} FROM public.tasks t WHERE {' AND '.join(where)} "
             f"ORDER BY t.created_at DESC, t.id DESC LIMIT {limit_p}"
         )
         async with self._as_user(owner.user_id) as conn:

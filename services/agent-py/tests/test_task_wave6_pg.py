@@ -690,6 +690,11 @@ async def test_a_task_result_lists_the_images_of_every_run_on_its_line(
     assert result["images"][0]["storagePath"] == "p"
     outcome = (await world.task(resumed))["outcome"]
     assert outcome["result"]["images"] == result["images"]
+    # A list row leaves the images out (a data URL can be megabytes, and the
+    # list is polled): a client reads them once, from getRun.
+    listed = await world.http.get("/v1/runs?mode=background", headers=world.headers())
+    [row] = [r for r in listed.json()["runs"] if r["id"] == resumed]
+    assert row["result"] == {"text": result["text"]}
 
 
 async def test_a_parents_result_gathers_its_sub_agents_images(

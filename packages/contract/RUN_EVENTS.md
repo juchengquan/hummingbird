@@ -468,6 +468,8 @@ settled before wave 6 — since then every background settle writes
   `tool_image` image shape. An empty list when there are none; absent
   only on a result written before 0.5.1 (or when the worker couldn't
   read them), and only then does a client read them from the stream.
+  `listRuns` rows leave `images` out (a data-URL image can be megabytes,
+  and the list is polled); `getRun` carries them.
 
 ## 6. Streams
 

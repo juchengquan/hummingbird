@@ -1402,7 +1402,9 @@ class RunResult(BaseModel):
     `storagePath`, or a data URL when files are kept local.
     An empty list when there are none; absent only on a result
     written before 0.5.1 (a client then reads them from the
-    run's `hummingbird.tool_image` activities).
+    run's `hummingbird.tool_image` activities). `listRuns` rows
+    leave `images` out (a data-URL image can be megabytes and
+    the list is polled): read them from `getRun`.
 
     """
 
