@@ -9,7 +9,8 @@ import { describe, expect, test } from "bun:test"
 
 import { resultIdsFor } from "@/shared/runs/ids"
 
-import { deliverTask, STEP_LIMIT_NOTE, type DeliveryDeps } from "./deliver"
+import { deliverTask, type DeliveryDeps } from "./deliver"
+import { withStepLimitNote } from "@/shared/agent/step-limit"
 import { TaskPointers } from "./pointers"
 import { summaryOf } from "./summary"
 import { FakeRunsServer, FakeStore, USER, browser, makeRun, tab, type Browser } from "./test-support"
@@ -257,6 +258,38 @@ describe("delivery", () => {
     const task = summaryOf(server.list({})[0], { userId: USER })
     expect(task.stoppedAt).toBe("max_steps")
     await deliverTask(task, deps(store, browser(), server, new Cloud()))
-    expect(store.conversations.get(CONV)!.messages[0].content).toBe(`Partial.\n\n${STEP_LIMIT_NOTE}`)
+    expect(store.conversations.get(CONV)!.messages[0].content).toBe(withStepLimitNote("Partial.", 25))
+  })
+})
+
+describe("board cards on runs", () => {
+  test("a card named by the launch's projectTaskId (not linked yet): done, with its artifact, once across two browsers", async () => {
+    const server = new FakeRunsServer()
+    server.add(finished())
+    const cloud = new Cloud()
+    const stores = [new FakeStore(), new FakeStore()]
+    for (const store of stores) {
+      store.addConversation(CONV)
+      store.cards.set("card-7", { id: "card-7", title: "Card", status: "in_progress" })
+    }
+    const listed = summaryOf(server.list({})[0], { userId: USER, projectTaskId: "card-7" })
+    await Promise.all(stores.map((store) => deliverTask(listed, deps(store, browser(), server, cloud))))
+    for (const store of stores) {
+      expect(store.cards.get("card-7")).toMatchObject({ status: "done", artifactId: IDS.artifactId })
+      expect([...store.artifacts.keys()]).toEqual([IDS.artifactId])
+    }
+    expect(server.marks.size).toBe(1)
+  })
+
+  test("failed by projectTaskId: back to To-do, no artifact", async () => {
+    const server = new FakeRunsServer()
+    server.add(finished({ status: "failed", result: null, error: { code: "x", message: "y" } }))
+    const store = new FakeStore()
+    store.addConversation(CONV)
+    store.cards.set("card-8", { id: "card-8", title: "Card", status: "in_progress" })
+    const listed = summaryOf(server.list({})[0], { userId: USER, projectTaskId: "card-8" })
+    await deliverTask(listed, deps(store, browser(), server, new Cloud()))
+    expect(store.cards.get("card-8")!.status).toBe("todo")
+    expect(store.artifacts.size).toBe(0)
   })
 })

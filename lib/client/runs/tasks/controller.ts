@@ -820,6 +820,10 @@ function storeAdapter(): DeliveryStore {
       const card = s().projectTasks.find((t) => t.taskId === root)
       return card ? { id: card.id, title: card.title, ...(card.artifactId ? { artifactId: card.artifactId } : {}) } : null
     },
+    getCard: (cardId) => {
+      const card = s().projectTasks.find((t) => t.id === cardId)
+      return card ? { id: card.id, title: card.title, ...(card.artifactId ? { artifactId: card.artifactId } : {}) } : null
+    },
     setCardArtifact: (cardId, artifactId) => s().updateProjectTask(cardId, { artifactId }),
     moveCard: (cardId, status) => s().moveProjectTask(cardId, status, 0),
   }

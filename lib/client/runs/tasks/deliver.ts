@@ -26,19 +26,20 @@ import "client-only"
  * workspace, never the active one (survey bug 2). A conversation that is
  * gone after the pull gets nothing (bug 21); the task is still marked.
  * Failed and cancelled tasks write no message (Q77): only the board card
- * goes back to To-do.
+ * goes back to To-do. The board card (found by the task's root, or by the
+ * launch's `projectTaskId`) is settled as on the old path: Done with the
+ * result as its artifact (derived id), or back to To-do.
  */
 
 import { formatResearchCitations } from "@/shared/agent/citation-formatter"
 import { deriveResearchReportTitle } from "@/shared/agent/research-report"
+import { withStepLimitNote } from "@/shared/agent/step-limit"
 import type { VerificationResult } from "@/shared/verify"
 import { parseVerificationFrame } from "@/shared/verify"
 
 import type { TaskPointers } from "./pointers"
 import type { TaskSummary } from "./types"
 
-/** The note a task that stopped at its step limit carries (Q81). */
-export const STEP_LIMIT_NOTE = "_Stopped at the step limit: this is what the task had by then._"
 
 export interface DeliveryConversation {
   id: string
@@ -64,6 +65,9 @@ export interface DeliveryStore {
   setActiveDocument(id: string): void
   /** The board card the task was launched from (`ProjectTask.taskId`). */
   findCard(rootRunId: string): { id: string; title: string; artifactId?: string } | null
+  /** A board card by its id (the launch's `projectTaskId`, before the
+   *  card carries the task's id). */
+  getCard(cardId: string): { id: string; title: string; artifactId?: string } | null
   setCardArtifact(cardId: string, artifactId: string): void
   moveCard(cardId: string, status: "todo" | "done"): void
 }
@@ -113,12 +117,18 @@ function lockName(userId: string, rootRunId: string): string {
   return `humm.tasks.deliver.${userId}.${rootRunId}`
 }
 
+/** The board card of a task: the one carrying its root's id (linked at
+ *  launch), else the one its launch named (`projectTaskId`). */
+function cardOf(task: TaskSummary, store: DeliveryStore) {
+  return store.findCard(task.rootRunId) ?? (task.projectTaskId ? store.getCard(task.projectTaskId) : null)
+}
+
 /** The message text of a succeeded task (or null: nothing to write). */
 export function resultTextOf(task: TaskSummary): string | null {
   const raw = typeof task.result?.text === "string" ? task.result.text.trim() : ""
   if (!raw) return null
   const text = task.research ? formatResearchCitations(raw) : raw
-  return task.stoppedAt === "max_steps" ? `${text}\n\n${STEP_LIMIT_NOTE}` : text
+  return task.stoppedAt === "max_steps" ? withStepLimitNote(text, task.maxSteps) : text
 }
 
 async function verificationFor(task: TaskSummary, deps: DeliveryDeps): Promise<VerificationResult | null> {
@@ -147,7 +157,7 @@ async function writeResult(task: TaskSummary, deps: DeliveryDeps): Promise<boole
     conv = store.getConversation(task.conversationId)
     if (!conv) return pulled === "ok" ? false : "retry"
   }
-  const card = store.findCard(task.rootRunId)
+  const card = cardOf(task, store)
   let wrote = false
   if (text) {
     const legacy = conv.messages.some(
@@ -214,7 +224,7 @@ export async function deliverTask(task: TaskSummary, deps: DeliveryDeps): Promis
       wrote = await writeResult(task, deps)
       if (wrote === "retry") return "retry"
     } else {
-      const card = deps.store.findCard(task.rootRunId)
+      const card = cardOf(task, deps.store)
       if (card) deps.store.moveCard(card.id, "todo")
     }
     deps.pointers.markDelivered(task.rootRunId)

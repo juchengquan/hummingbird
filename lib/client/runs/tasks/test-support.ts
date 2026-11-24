@@ -220,6 +220,9 @@ export class FakeStore implements DeliveryStore {
   setActiveDocument(id: string) {
     this.activeDocument = id
   }
+  getCard(cardId: string) {
+    return this.cards.get(cardId) ?? null
+  }
   findCard(root: string) {
     return [...this.cards.values()].find((c) => c.taskId === root) ?? null
   }
