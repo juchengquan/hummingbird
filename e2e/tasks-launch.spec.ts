@@ -296,3 +296,19 @@ for (const resend of RESENDS) {
     expect(chatSends).toBe(0)
   })
 }
+
+test("while the session is read nothing is offered and nothing refused (C's `loading`)", async ({ page }) => {
+  await open(page, { availability: { ok: false, reason: "loading" } })
+  await expect(taskToggle(page)).toHaveCount(0)
+  await expect(page.getByRole("button", { name: /^Open tasks panel/ })).toHaveCount(0)
+  await send(page, "/research tea")
+  await page.waitForTimeout(500)
+  await expect(page.getByText("Sign in to run tasks.", { exact: true })).toHaveCount(0)
+  expect(await calls(page, "launch")).toHaveLength(0)
+  await expect(composer(page)).toHaveValue("/research tea")
+  // Once read, the toggle shows and the same send launches.
+  await setFake(page, { availability: { ok: true } })
+  await expect(taskToggle(page)).toBeVisible()
+  await composer(page).press("Enter")
+  await expect.poll(async () => (await launches(page)).length).toBe(1)
+})

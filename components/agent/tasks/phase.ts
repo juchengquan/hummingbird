@@ -165,3 +165,34 @@ export function answerRefusal(code: string, message: string): { text: string; st
 export function capLabel(active: number, limit: number): string {
   return `${active} of ${limit} running`
 }
+
+/** A task's title: the first non-empty line of its goal, trimmed. */
+export function taskGoalLine(goal: string | null | undefined): string {
+  for (const line of (goal ?? "").split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (trimmed) return trimmed
+  }
+  return "Task"
+}
+
+/**
+ * Whether this browser may offer task launches (the Task toggle, `/research`,
+ * the board's "Run as task"), on either path:
+ * - `loading` — the session is still being read (C's `availability`, or the
+ *   old path's auth status): offer nothing, refuse nothing;
+ * - `signed_out` — tasks need sign-in on both paths (bug 20);
+ * - `ready`.
+ */
+export type TaskGate = "ready" | "loading" | "signed_out"
+
+export function taskGate(
+  availability: { ok: true } | { ok: false; reason: string },
+  authStatus: "unconfigured" | "loading" | "signed-out" | "signed-in",
+): TaskGate {
+  if (availability.ok) return "ready"
+  if (availability.reason === "loading") return "loading"
+  if (availability.reason === "signed_out") return "signed_out"
+  // Off runs (`not_runs`): the old path's own session.
+  if (authStatus === "loading") return "loading"
+  return authStatus === "signed-in" ? "ready" : "signed_out"
+}

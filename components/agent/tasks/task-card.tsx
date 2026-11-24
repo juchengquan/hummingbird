@@ -28,7 +28,9 @@ import {
   phaseLabel,
   stepLimitNoteFor,
   stripStatus,
+  taskGoalLine,
 } from "./phase"
+import { TaskTitle } from "./task-title"
 import { TaskQuestionCard } from "./task-question-card"
 
 export function TaskCard({ task }: { task: TaskSummary }) {
@@ -61,7 +63,7 @@ export function TaskCard({ task }: { task: TaskSummary }) {
   return (
     <li
       ref={ref}
-      aria-label={`Task: ${task.title}`}
+      aria-label={`Task: ${taskGoalLine(task.title)}`}
       className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-3 space-y-2"
     >
       <button
@@ -75,7 +77,7 @@ export function TaskCard({ task }: { task: TaskSummary }) {
           <StatusIcon status={stripStatus(task.phase)} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block break-words font-medium">{task.title}</span>
+          <TaskTitle goal={task.title} conversationId={task.conversationId} />
           <span className="flex flex-wrap items-center gap-x-1.5 text-[var(--muted-foreground)]">
             <span role="status">{label}</span>
             {task.research ? (

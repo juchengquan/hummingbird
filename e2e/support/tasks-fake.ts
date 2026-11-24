@@ -196,7 +196,7 @@ export function question(
 }
 
 export interface FakeSetup {
-  availability?: { ok: true } | { ok: false; reason: "signed_out" | "not_runs" }
+  availability?: { ok: true } | { ok: false; reason: "loading" | "signed_out" | "not_runs" }
   tasks?: Json[]
   views?: Record<string, { runIds: string[]; view: TaskRunView; children: Json[]; connection: string }>
   activeLimit?: number

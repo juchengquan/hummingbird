@@ -7,6 +7,7 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { TaskStrip } from "@/components/agent/task-strip"
 import { TaskList } from "@/components/agent/tasks/task-list"
+import { TaskTitle } from "@/components/agent/tasks/task-title"
 import { useStore } from "@/client/hooks/use-store"
 import { useTaskRunContext } from "@/client/agent/task-run-context"
 import { useTasks } from "@/client/runs/tasks/context"
@@ -35,8 +36,19 @@ export function TasksSidebar() {
     (s) => s.appendToActiveDocumentOrCreate
   )
   const activeWorkspaceId = useStore((s) => s.activeWorkspaceId)
-  const { view, runId, isRunning, isCancelling, error, childRuns, cancel, refresh, runMode } =
-    useTaskRunContext()
+  const {
+    view,
+    runId,
+    isRunning,
+    isCancelling,
+    error,
+    childRuns,
+    cancel,
+    refresh,
+    runMode,
+    runTitle,
+    runConversationId,
+  } = useTaskRunContext()
 
   // Research-mode tasks produce a Markdown report — Phase 1 hands it
   // off to the editor on demand. `appendToActiveDocumentOrCreate` will
@@ -87,6 +99,10 @@ export function TasksSidebar() {
             {onRuns ? (
               <TaskList />
             ) : runId ? (
+              <div className="space-y-2">
+              <p className="text-xs">
+                <TaskTitle goal={runTitle} conversationId={runConversationId} />
+              </p>
               <TaskStrip
                 view={view}
                 isRunning={isRunning}
@@ -99,6 +115,7 @@ export function TasksSidebar() {
                 onOpenInEditor={onOpenInEditor}
                 openInEditorLabel="Open report in editor"
               />
+              </div>
             ) : isRunning ? (
               <p className="flex items-center gap-1.5 text-xs text-[var(--muted-foreground)]">
                 <Loader2 size={12} className="animate-spin" />

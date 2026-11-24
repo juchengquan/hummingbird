@@ -23,9 +23,10 @@ import { TasksSidebar } from "@/components/sidebars/tasks"
 import { useTaskRunContext } from "@/client/agent/task-run-context"
 import { ensureTaskNotificationPermission } from "@/client/agent/notify"
 import { useTasks } from "@/client/runs/tasks/context"
+import { useAuth } from "@/client/hooks/use-auth"
 import { useTaskFocus } from "@/components/agent/tasks/focus"
 import { launchesOnRuns, preLaunchRefusal } from "@/components/agent/tasks/launch"
-import { isActivePhase, pointerLabel } from "@/components/agent/tasks/phase"
+import { isActivePhase, pointerLabel, taskGate } from "@/components/agent/tasks/phase"
 import { latestTaskTurn, resendAs } from "@/shared/agent/task-turn"
 import { ContextPicker } from "@/components/chat/context-picker"
 import { SlashAutocomplete } from "@/components/panels/slash-autocomplete"
@@ -121,9 +122,15 @@ export function ChatPanel() {
   // need sign-in: signed out, the Task toggle is hidden (bug 20).
   const tasks = useTasks()
   const onRuns = launchesOnRuns(tasks)
-  const tasksSignedOut =
-    tasks.availability.ok === false && tasks.availability.reason === "signed_out"
-  const runAsTask = onRuns ? tasks.runAsTask && !tasksSignedOut : taskRun.runAsTask
+  // The old path needs sign-in too (its routes are 401 without it): the
+  // same rule, read from the session (Q61 doesn't change it, bug 20).
+  // While the session is read (`loading`), nothing is offered and nothing
+  // refused.
+  const gate = taskGate(tasks.availability, useAuth().status)
+  const tasksOffered = gate === "ready"
+  const runAsTask = onRuns
+    ? tasks.runAsTask && gate === "ready"
+    : taskRun.runAsTask && gate === "ready"
   const setTasksRunAsTask = tasks.setRunAsTask
   const setRunAsTask = useCallback(
     (v: boolean) => {
@@ -543,6 +550,12 @@ export function ChatPanel() {
     // that now holds for `/research` too.
     const launchingTask = runAsTask || !!taskModeForCall
     if (launchingTask) {
+      // Still reading the session: keep the message in the box.
+      if (gate === "loading") return
+      if (gate === "signed_out") {
+        toast.error("Sign in to run tasks.")
+        return
+      }
       if (onRuns) {
         const refused = preLaunchRefusal(tasks)
         if (refused) {
@@ -872,9 +885,9 @@ export function ChatPanel() {
           onReasoningEffortPick={setChatReasoningEffort}
           runAsTask={runAsTask}
           onRunAsTaskChange={onRunAsTaskChange}
-          showTaskToggle={!tasksSignedOut}
+          showTaskToggle={tasksOffered}
           tasksButton={
-            onRuns && !tasksSignedOut
+            onRuns && tasksOffered
               ? {
                   needsAnswer: (tasks.tasks ?? []).filter((t) => t.phase === "needs_answer")
                     .length,

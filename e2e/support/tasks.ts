@@ -150,7 +150,9 @@ export async function openApp(
       localStorage.setItem("hummingbird-storage", JSON.stringify({ state: seed, version }))
       localStorage.setItem("e2e-seeded", "1")
     },
-    { seed: { chatBackend: "ts", chatModel: HAIKU, ...state }, version: STORE_VERSION },
+    // Signed in with sync off ("local only"): the fake Supabase keeps no
+    // rows, so a sync pull would empty the store these specs seed.
+    { seed: { chatBackend: "ts", chatModel: HAIKU, localOnlyMode: signedIn, ...state }, version: STORE_VERSION },
   )
   await page.goto("/")
   await page.getByRole("button", { name: "New chat" }).click()

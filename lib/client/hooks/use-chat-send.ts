@@ -428,8 +428,11 @@ export function useChatSend(): UseChatSendResult {
           ...(allowedMcpServerIds ? { allowedMcpServerIds } : {}),
           ...(useStore.getState().localFilesOnly ? { localFilesOnly: true } : {}),
         }
+        // The task is titled by its goal (the turn's text); the list shows
+        // its conversation's name under it.
+        const goal = [...history].reverse().find((m) => m.role === "user")?.content ?? ""
         if (launchesOnRuns(tasksRef.current)) {
-          await launchTaskOnRuns(tasksRef.current, taskInput, { title: conv?.title })
+          await launchTaskOnRuns(tasksRef.current, taskInput, { title: goal })
           return
         }
         // The old path drives one task at a time: a resend of a task turn
@@ -438,7 +441,19 @@ export function useChatSend(): UseChatSendResult {
           toast.error("A task is already running. Cancel it first.")
           return
         }
-        taskRunRef.current.startTask(taskInput, { title: conv?.title })
+        // Still reading the session: neither path yet, and no refusal.
+        if (
+          tasksRef.current.availability.ok === false &&
+          tasksRef.current.availability.reason === "loading"
+        ) {
+          return
+        }
+        // Tasks need sign-in on this path too (bug 20): a resend can get here.
+        if (!(await hasSignedInSession())) {
+          toast.error("Sign in to run tasks.")
+          return
+        }
+        taskRunRef.current.startTask(taskInput, { title: goal })
         return
       }
 

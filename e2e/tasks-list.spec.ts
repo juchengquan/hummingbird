@@ -276,6 +276,10 @@ function recordedChainInterruptId(): string {
 
 test("a task is titled by its goal's first line, with its conversation's name under it", async ({ page }) => {
   await openWithTasks(page, {})
+  // The store's debounced write of the new chat.
+  await expect
+    .poll(() => page.evaluate(() => !!JSON.parse(localStorage.getItem("hummingbird-storage")!).state.conversations))
+    .toBe(true)
   const conversation = await page.evaluate(() => {
     const saved = JSON.parse(localStorage.getItem("hummingbird-storage")!).state
     return saved.conversations.find((c: { id: string }) => c.id === saved.activeConversationId) as {

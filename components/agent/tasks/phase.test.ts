@@ -62,3 +62,26 @@ describe("the runs list's words for a task", () => {
   })
 })
 
+
+describe("a task's title", () => {
+  test("is the goal's first non-empty line, trimmed", async () => {
+    const { taskGoalLine } = await import("./phase")
+    expect(taskGoalLine("  Write the notes\nwith details ")).toBe("Write the notes")
+    expect(taskGoalLine("\n\n  Second  \nthird")).toBe("Second")
+    expect(taskGoalLine("")).toBe("Task")
+    expect(taskGoalLine(null)).toBe("Task")
+  })
+})
+
+describe("the task gate (bug 20, C's `loading`)", () => {
+  test("on runs it follows availability; off runs the session", async () => {
+    const { taskGate } = await import("./phase")
+    expect(taskGate({ ok: true }, "signed-out")).toBe("ready")
+    expect(taskGate({ ok: false, reason: "loading" }, "signed-in")).toBe("loading")
+    expect(taskGate({ ok: false, reason: "signed_out" }, "signed-in")).toBe("signed_out")
+    expect(taskGate({ ok: false, reason: "not_runs" }, "signed-in")).toBe("ready")
+    expect(taskGate({ ok: false, reason: "not_runs" }, "loading")).toBe("loading")
+    expect(taskGate({ ok: false, reason: "not_runs" }, "signed-out")).toBe("signed_out")
+    expect(taskGate({ ok: false, reason: "not_runs" }, "unconfigured")).toBe("signed_out")
+  })
+})

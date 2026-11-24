@@ -42,9 +42,10 @@ import {
 import { useTaskRunContext } from "@/client/agent/task-run-context"
 import { ensureTaskNotificationPermission } from "@/client/agent/notify"
 import { useTasks } from "@/client/runs/tasks/context"
+import { useAuth } from "@/client/hooks/use-auth"
 import type { TaskSummary } from "@/client/runs/tasks/types"
 import { launchesOnRuns, launchTaskOnRuns, preLaunchRefusal } from "@/components/agent/tasks/launch"
-import { isActivePhase, phaseLabel } from "@/components/agent/tasks/phase"
+import { isActivePhase, phaseLabel, taskGate } from "@/components/agent/tasks/phase"
 import { taskProgress } from "@/client/agent/task-progress"
 import { apiClient, isAuthRequiredResult } from "@/client/api-client"
 import { downloadAsFile, safeFilename } from "@/client/export"
@@ -80,6 +81,8 @@ interface CardRunInfo {
   waitingForYou: string | null
   step: number
   maxSteps: number | null
+  /** Tasks need sign-in (bug 20), on both paths: no "Run as task". */
+  signedOut: boolean
   /** On runs (wave 6): several cards run at once, each its own task. */
   runs?: {
     /** The card's live task, matched by its root id (`taskId`), or null. */
@@ -121,6 +124,7 @@ export function ProjectTasksPanel() {
   const taskRun = useTaskRunContext()
   const runTasks = useTasks()
   const onRuns = launchesOnRuns(runTasks)
+  const gate = taskGate(runTasks.availability, useAuth().status)
   const [launchingCards, setLaunchingCards] = useState<ReadonlySet<string>>(new Set())
 
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -158,7 +162,7 @@ export function ProjectTasksPanel() {
       // Asked on the click itself (Q74): a task notifies when it needs
       // an answer, fails or ends.
       void ensureTaskNotificationPermission()
-    } else if (taskRun.isRunning || pendingCardId) return
+    } else if (taskRun.isRunning || pendingCardId || gate !== "ready") return
     const state = useStore.getState()
     const active = state.conversations.find(
       (c) => c.id === state.activeConversationId
@@ -252,6 +256,7 @@ export function ProjectTasksPanel() {
     waitingForYou: taskState.paused ? taskState.label : null,
     step: taskRun.view.step,
     maxSteps: taskRun.view.maxSteps,
+    signedOut: gate !== "ready",
     ...(onRuns
       ? {
           runs: {
@@ -713,6 +718,7 @@ function CardShell({
     !!onRun &&
     task.status === "todo" &&
     !isRunning &&
+    !run?.signedOut &&
     (runs ? !runs.disabled : !run?.running)
   const canViewResult = !dragging && !!onViewResult && !!task.artifactId
 

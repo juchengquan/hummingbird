@@ -54,6 +54,8 @@ interface TaskRunContextValue {
   /** The conversation the active run belongs to (for the inline pointer
    *  in the thread). Null when no run has started this session. */
   runConversationId: string | null
+  /** The active run's title (its goal), for the panel's heading. */
+  runTitle: string | null
   /** The board card whose launch the server hasn't accepted yet. */
   launchingCardId: string | null
   /** The chat-input "Run as task" mode toggle. */
@@ -80,6 +82,7 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
 
   const [runAsTask, setRunAsTask] = useState(false)
   const [runConversationId, setRunConversationId] = useState<string | null>(null)
+  const [runTitle, setRunTitle] = useState<string | null>(null)
   const [runMode, setRunMode] = useState<"default" | "research" | null>(null)
   const [launchingCardId, setLaunchingCardId] = useState<string | null>(null)
 
@@ -116,6 +119,7 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
         mode: body.mode ?? "default",
       }
       setRunConversationId(meta.conversationId)
+      setRunTitle(meta.title ?? null)
       setRunMode(meta.mode)
       setLaunchingCardId(cardId ?? null)
       setTasksPanelOpen(true)
@@ -173,6 +177,7 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
       mode,
     })
     setRunConversationId(pointer.conversationId)
+    setRunTitle(pointer.title ?? null)
     setRunMode(mode)
     setTasksPanelOpen(true)
     resume(pointer.runId)
@@ -186,6 +191,7 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
     error: run.error,
     childRuns,
     runConversationId,
+    runTitle,
     launchingCardId,
     runAsTask,
     setRunAsTask: handleSetRunAsTask,
