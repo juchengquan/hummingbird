@@ -1,3 +1,4 @@
+-- verify-supabase-types: skip (redefines four functions with unchanged signatures; the generated types don't change)
 -- 0050_task_refusal_hints.sql — wave 7 (Q88, Q90 of
 -- docs/PLAN-frontend-backend-split.md).
 --
