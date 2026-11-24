@@ -1228,6 +1228,27 @@ export interface components {
             /** Version */
             version: string;
         };
+        /** Image */
+        Image: {
+            /** Id */
+            id?: string | null;
+            /** Url */
+            url: string;
+            /** Storagepath */
+            storagePath?: string | null;
+            /** Width */
+            width?: number | null;
+            /** Height */
+            height?: number | null;
+            /** Format */
+            format?: string | null;
+            /** Prompt */
+            prompt?: string | null;
+            /** Mode */
+            mode?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** ImageGenSkillConfig */
         ImageGenSkillConfig: {
             /** Maxcalls */
@@ -1840,6 +1861,8 @@ export interface components {
             verification?: {
                 [key: string]: unknown;
             } | null;
+            /** Images */
+            images?: components["schemas"]["Image"][] | null;
         } & {
             [key: string]: unknown;
         };

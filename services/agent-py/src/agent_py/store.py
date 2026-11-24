@@ -225,6 +225,13 @@ def event_from_row_payload(
             if isinstance(merged.get("usage"), list)
             else (),
             stopped_at=_opt_str(merged.get("stoppedAt")),
+            images=tuple(
+                cast("dict[str, object]", i)
+                for i in cast("list[object]", merged.get("images") or [])
+                if isinstance(i, dict)
+            )
+            if isinstance(merged.get("images"), list)
+            else (),
         )
     if kind == "step_start":
         return events.StepStartEvent(run_id="", seq=seq, step=step, created_at=created_at)
@@ -478,6 +485,35 @@ async def load_task_line(pool: asyncpg.Pool, *, run_id: str, user_id: str) -> li
     async with pool.acquire() as conn:
         rows = await conn.fetch(_TASK_LINE_SQL, _coerce_uuid(run_id), _coerce_uuid(user_id))
     return [str(r["id"]) for r in rows]
+
+
+_CHILD_IMAGES_SQL = """
+SELECT t.outcome -> 'result' -> 'images' AS images
+  FROM public.tasks t
+ WHERE t.parent_task_id = ANY($1::uuid[])
+   AND t.user_id = $2
+   AND t.status = 'done'
+ ORDER BY t.created_at, t.id
+"""
+
+
+async def load_child_images(
+    pool: asyncpg.Pool, *, parent_ids: list[str], user_id: str
+) -> list[dict[str, object]]:
+    """The images of the succeeded sub-agent runs of `parent_ids`, in the
+    order they were spawned (Q87): each child's `outcome.result.images`,
+    which already gathers its own sub-agents'."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            _CHILD_IMAGES_SQL, [_coerce_uuid(p) for p in parent_ids], _coerce_uuid(user_id)
+        )
+    out: list[dict[str, object]] = []
+    for row in rows:
+        raw = row["images"]
+        images = json.loads(raw) if isinstance(raw, str) else raw
+        if isinstance(images, list):
+            out.extend(i for i in images if isinstance(i, dict))
+    return out
 
 
 async def load_run_events(

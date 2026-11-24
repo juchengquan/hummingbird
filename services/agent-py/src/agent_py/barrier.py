@@ -72,6 +72,9 @@ def terminal_outcome(status: str, event: TaskEvent | None) -> dict[str, object]:
                 # The citation check (Q78), as the `hummingbird.verification`
                 # activity carries it, next to the text it checked.
                 body["verification"] = dict(result.verification)
+            if result.images:
+                # Q87: the task's images, its sub-agents' included.
+                body["images"] = [dict(i) for i in result.images]
         return {"type": "success", "result": body}
     if status == "failed":
         return {

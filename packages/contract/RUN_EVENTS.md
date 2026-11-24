@@ -460,6 +460,14 @@ settled before wave 6 — since then every background settle writes
   with results it waited for — its sub-agents' fan-in, or an in-place
   answer — gets one model call past its limit to read them; that call
   starts no more sub-agents.
+- **`result.images` (0.5.1, Q87).** A succeeded run's result lists the
+  images its answer carries: every `tool_image` image of the task's
+  line (the same runs as its text), then the images of its sub-agents'
+  results, each once — so a parent carries what its sub-agents drew.
+  On the `result` entry, `tasks.outcome.result` and `Run.result`, in the
+  `tool_image` image shape. A client delivers images from here; only a
+  result written before 0.5.1 has to be read from the stream. Absent
+  when there are none.
 
 ## 6. Streams
 

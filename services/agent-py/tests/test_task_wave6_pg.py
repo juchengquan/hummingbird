@@ -654,3 +654,61 @@ async def test_a_schedule_whose_workspace_has_an_approval_server_pauses_for_it(
     await world.work()
     assert world.count(SEND) == 1
     assert await world.status(task) == "done"
+
+
+# --- Q87 (wave 7): a run's result lists its images --------------------------------------------
+
+
+async def test_a_task_result_lists_the_images_of_every_run_on_its_line(
+    world: World, images: dict[str, list[Any]]
+) -> None:
+    world.model.script(
+        "Draw a cat",
+        [use("g1", "generateImage", prompt="a cat")],
+        [ask("q1")],
+        [say("Done.")],
+    )
+    response, run = await world.post_run(
+        _background(world, skills=[{"id": "imageGen"}]),
+        messages=[{"id": "m", "role": "user", "content": "Draw a cat"}],
+    )
+    assert response.status_code == 202, response.text
+    await world.work()
+    assert await world.status(run) == "paused"
+    _, resumed = await world.resume(run, {"q1": {"value": "x"}})
+    await world.work()
+
+    assert await world.status(resumed) == "done"
+    result = (await world.run(resumed))["result"]
+    # The image came from the run before the question: the result is the
+    # whole task's (Q78), images included.
+    assert [i["url"] for i in result["images"]] == ["https://signed.test/cat.png"]
+    assert result["images"][0]["storagePath"] == "p"
+    outcome = (await world.task(resumed))["outcome"]
+    assert outcome["result"]["images"] == result["images"]
+
+
+async def test_a_parents_result_gathers_its_sub_agents_images(
+    world: World, images: dict[str, list[Any]]
+) -> None:
+    world.model.script("Do it", [spawn("s", "child-draw")], [say("Parent done.")])
+    world.model.script(
+        "child-draw", [use("g1", "generateImage", prompt="a cat")], [say("Drew it.")]
+    )
+    response, run = await world.post_run(_background(world, skills=[{"id": "imageGen"}]))
+    assert response.status_code == 202, response.text
+    await world.work()
+
+    assert await world.status(run) == "done"
+    [child] = await world.children(run)
+    child_images = (await world.run(child))["result"]["images"]
+    assert [i["url"] for i in child_images] == ["https://signed.test/cat.png"]
+    # The parent never generated one itself: it carries its sub-agent's.
+    assert (await world.run(run))["result"]["images"] == child_images
+
+
+async def test_a_result_without_images_has_none(world: World) -> None:
+    world.model.script("Do it", [say("Plain.")])
+    run = await world.start()
+    await world.work()
+    assert "images" not in ((await world.run(run))["result"] or {})

@@ -490,6 +490,20 @@ class HealthResponse(BaseModel):
     """
 
 
+class Image(BaseModel):
+    model_config = ConfigDict(
+        extra="allow",
+    )
+    id: str | None = None
+    url: str
+    storagePath: str | None = None
+    width: int | None = None
+    height: int | None = None
+    format: str | None = None
+    prompt: str | None = None
+    mode: str | None = None
+
+
 class ImageGenSkillConfig(BaseModel):
     maxCalls: Annotated[int | None, Field(ge=1, le=50)] = None
     aspectRatio: Literal["1:1", "16:9", "9:16", "4:3", "3:4", "2:3", "3:2"] | None = None
@@ -1376,6 +1390,17 @@ class RunResult(BaseModel):
     A research run's citation check over `text` (Q78): the same
     object as its `hummingbird.verification` activity's content
     (`{ checks, summary }`). Absent when no check ran.
+
+    """
+    images: list[Image] | None = None
+    """
+    The images the answer carries (0.5.1, Q87): every image the
+    task's runs generated (`generateImage`, `runCode` charts), in
+    order, then its sub-agents' results' images — so a parent's
+    answer carries what its sub-agents drew. Each is the
+    `hummingbird.tool_image` image shape: a Storage URL with its
+    `storagePath`, or a data URL when files are kept local.
+    Absent when there are none.
 
     """
 
