@@ -30,10 +30,12 @@ Differences from the TS port:
     always get data URLs. A failed *download* is a `PersistError`; the
     caller keeps the Minimax URL then (TS drops that image).
 
-  - **Background runs** (`persist_generated_image`) keep the earlier
-    floor: no Storage → the caller surfaces the original Minimax URL
-    (no data URLs in the task's event log), and there is no
-    `localFilesOnly` there (the preference is a per-request option).
+  - **Background runs** use the same `persist_or_inline_image` when there
+    is a user and Storage is configured (wave 7): a failed upload is kept
+    as a data URL, not Minimax's URL, which dies in hours. With no Storage
+    configured they surface the Minimax URL. `localFilesOnly` background
+    runs take the runs path (wave 6, Q71). A data URL reaches the task's
+    log and its result; a `listRuns` row leaves `result.images` out.
 
 Per-image caps mirror the TS path:
   - Download timeout: 10 seconds.

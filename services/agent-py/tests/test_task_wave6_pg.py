@@ -195,7 +195,6 @@ def images(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, list[Any]]]:
     monkeypatch.setattr(image_gen_module, "minimax_generate_image", generate)
     monkeypatch.setattr(image_storage, "download_image", download)
     monkeypatch.setattr(image_storage, "_upload_and_sign", upload)
-    monkeypatch.setattr(image_gen_module, "persist_generated_image", upload)
     yield calls
     monkeypatch.undo()
     settings_module.get_settings.cache_clear()

@@ -362,7 +362,7 @@ async def test_persists_when_context_and_storage_configured(
             "minimax_generate_image",
             new=AsyncMock(return_value=_ok(["https://m.test/a.png", "https://m.test/b.png"])),
         ),
-        patch.object(image_gen_module, "persist_generated_image", new=fake_persist),
+        patch.object(image_gen_module, "persist_or_inline_image", new=fake_persist),
     ):
         out = await tool.execute({"prompt": "x", "count": 2})
 
@@ -387,7 +387,7 @@ async def test_passthrough_when_no_context(monkeypatch: pytest.MonkeyPatch) -> N
             "minimax_generate_image",
             new=AsyncMock(return_value=_ok(["https://m.test/x.png"])),
         ),
-        patch.object(image_gen_module, "persist_generated_image", new=persist_called),
+        patch.object(image_gen_module, "persist_or_inline_image", new=persist_called),
     ):
         out = await tool.execute({"prompt": "x"})
 
@@ -414,7 +414,7 @@ async def test_passthrough_when_storage_unconfigured(
             "minimax_generate_image",
             new=AsyncMock(return_value=_ok(["https://m.test/x.png"])),
         ),
-        patch.object(image_gen_module, "persist_generated_image", new=persist_called),
+        patch.object(image_gen_module, "persist_or_inline_image", new=persist_called),
     ):
         out = await tool.execute({"prompt": "x"})
 
@@ -423,12 +423,12 @@ async def test_passthrough_when_storage_unconfigured(
 
 
 @pytest.mark.asyncio
-async def test_persist_failure_falls_back_to_minimax_url(
+async def test_a_failed_download_falls_back_to_minimax_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Per-image persistence failure → that image keeps the raw
-    Minimax URL; tool still succeeds. Mirrors the TS path's drop-bad-
-    keep-rest policy but at per-image granularity."""
+    """An image that couldn't even be downloaded keeps the raw Minimax
+    URL; the tool still succeeds, per image. (A failed upload is inlined:
+    `test_a_failed_upload_keeps_the_image_as_a_data_url`.)"""
     _set_key(monkeypatch)
     monkeypatch.setenv("SUPABASE_URL", "https://proj.supabase.test")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "k")
@@ -440,7 +440,7 @@ async def test_persist_failure_falls_back_to_minimax_url(
     async def flaky_persist(url: str, **kwargs: Any) -> PersistedImage | PersistError:
         call["n"] += 1
         if call["n"] == 1:
-            return PersistError(code="upload", message="500")
+            return PersistError(code="download", message="500")
         return PersistedImage(
             url="https://signed.test/ok", storage_path="u/g/img.png", format="png"
         )
@@ -451,7 +451,7 @@ async def test_persist_failure_falls_back_to_minimax_url(
             "minimax_generate_image",
             new=AsyncMock(return_value=_ok(["https://m.test/a.png", "https://m.test/b.png"])),
         ),
-        patch.object(image_gen_module, "persist_generated_image", new=flaky_persist),
+        patch.object(image_gen_module, "persist_or_inline_image", new=flaky_persist),
     ):
         out = await tool.execute({"prompt": "x", "count": 2})
 
@@ -470,3 +470,38 @@ async def test_persist_failure_falls_back_to_minimax_url(
             "prompt": "x",
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_a_failed_upload_keeps_the_image_as_a_data_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The background (ToolContext) path: Storage refusing the upload must
+    not leave the user Minimax's URL, which dies in hours — the image is
+    kept inline, as the runs path does (Q86, found on the real stack)."""
+    from agent_py import image_storage
+
+    _set_key(monkeypatch)
+    monkeypatch.setenv("SUPABASE_URL", "https://proj.supabase.test")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "k")
+    settings_module.get_settings.cache_clear()
+
+    async def download(url: str, **_: Any) -> image_storage.DownloadedImage:
+        return image_storage.DownloadedImage(body=b"\x89PNG-bytes", mime="image/png")
+
+    async def upload(*_: Any, **__: Any) -> PersistError:
+        return PersistError(code="upload", message="Storage upload HTTP 404: not found")
+
+    monkeypatch.setattr(image_storage, "download_image", download)
+    monkeypatch.setattr(image_storage, "_upload_and_sign", upload)
+    tool = build_image_gen_tool(context=_ctx())
+    with patch.object(
+        image_gen_module,
+        "minimax_generate_image",
+        new=AsyncMock(return_value=_ok(["https://m.test/a.png"])),
+    ):
+        out = await tool.execute({"prompt": "x"})
+
+    assert str(out.images[0]["url"]).startswith("data:image/png;base64,")
+    assert "storagePath" not in out.images[0]
+    assert "m.test" not in out.text

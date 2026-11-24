@@ -56,7 +56,6 @@ from ..image_storage import (
     PersistedImage,
     PersistError,
     is_storage_configured,
-    persist_generated_image,
     persist_or_inline_image,
 )
 from ..rate_limit import IMAGE_GEN_BUDGET
@@ -169,9 +168,10 @@ async def _persist_or_passthrough(
     Returns one image record per input, in order — `{url,
     storagePath?, width, height, format, prompt}`, the `tool_image`
     part's image shape minus `id` / `mode` (the loop adds them). `url`
-    is a signed Storage URL (success, with `storagePath`) or the
-    original Minimax URL (Storage not configured, no user context, or
-    per-image failure)."""
+    is a signed Storage URL (success, with `storagePath`), a data URL
+    when the upload fails (as the runs path keeps it — Minimax's URL dies
+    in hours), or the original Minimax URL (Storage not configured, no
+    user context, or the download itself failed)."""
 
     def record(
         img: MinimaxImage, url: str, storage_path: str | None, fmt: str
@@ -194,10 +194,11 @@ async def _persist_or_passthrough(
         # path's `${Date.now()}-${i}` shape while avoiding collisions
         # within the same millisecond.
         image_id = f"{int(time.time() * 1000)}-{idx}-{uuid.uuid4().hex[:8]}"
-        result = await persist_generated_image(
+        result = await persist_or_inline_image(
             img.url,
             user_id=user_id,
             image_id=image_id,
+            format_hint=img.format,
         )
         if isinstance(result, PersistedImage):
             out.append(record(img, result.url, result.storage_path, result.format))
