@@ -7,6 +7,7 @@ import { expect, test as base, type Locator, type Page } from "@playwright/test"
 import { STORE_VERSION } from "../../lib/client/hooks/store/migrate"
 
 import { composer } from "./runs"
+import { signIn } from "./tasks-session"
 
 export const HAIKU = "anthropic/claude-haiku-4.5"
 export const NOT_FOR_TASKS = "deepseek/deepseek-v4-flash"
@@ -135,8 +136,14 @@ export const test = base.extend<{ tasks: TasksBackend }, { tasksOrigin: string }
 
 // --- the app ------------------------------------------------------------
 
-/** A new chat, with `state` in the persisted store (seeded once per context). */
-export async function openApp(page: Page, state: Record<string, unknown> = {}): Promise<void> {
+/** A new chat, with `state` in the persisted store (seeded once per context).
+ *  Signed in (tasks need it, bug 20) unless `signedIn: false`. */
+export async function openApp(
+  page: Page,
+  state: Record<string, unknown> = {},
+  { signedIn = true }: { signedIn?: boolean } = {},
+): Promise<void> {
+  if (signedIn) await signIn(page.context())
   await page.addInitScript(
     ({ seed, version }) => {
       if (localStorage.getItem("e2e-seeded")) return

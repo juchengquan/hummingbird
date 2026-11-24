@@ -23,7 +23,8 @@ import { join } from "node:path"
 
 import { serve } from "bun"
 
-export const USER_ID = "00000000-0000-4000-8000-0000000000aa"
+import { USER_ID, session } from "./tasks-session"
+
 const FIXTURES = join(import.meta.dir, "..", "..", "lib", "client", "runs", "fixtures", "agent-py")
 const CORS = {
   "access-control-allow-origin": "*",
@@ -147,13 +148,20 @@ async function handle(req: Request): Promise<Response> {
   if (url.pathname.startsWith("/auth/v1")) {
     record("auth")
     const user = { id: USER_ID, aud: "authenticated", role: "authenticated", email: "e2e@example.test", app_metadata: {}, user_metadata: {} }
-    if (url.pathname.endsWith("/user")) return json(user)
+    // Only a session's own token is a user (the anon key isn't).
+    if (url.pathname.endsWith("/user")) {
+      return bearerIsUser(req) ? json(user) : refuse(401, "no_authorization", "No user.")
+    }
     if (url.pathname.endsWith("/token")) return json(session())
     if (url.pathname.endsWith("/logout")) return new Response(null, { status: 204, headers: CORS })
     return json({})
   }
   if (url.pathname.startsWith("/rest/v1")) {
     record(`rest:${url.pathname.slice("/rest/v1/".length)}`)
+    // `.single()` asks for one object: there is none (PGRST116).
+    if ((req.headers.get("accept") ?? "").includes("vnd.pgrst.object")) {
+      return json({ code: "PGRST116", message: "JSON object requested, multiple (or no) rows returned" }, 406)
+    }
     if (req.method === "GET" || req.method === "HEAD") return json([])
     if (url.pathname.includes("/rpc/")) return json(null)
     return json([], 201)
@@ -207,18 +215,12 @@ async function handle(req: Request): Promise<Response> {
   return refuse(404, "not_found", url.pathname)
 }
 
-/** The GoTrue session the browser holds (signature unchecked here). */
-export function session() {
-  const exp = Math.floor(Date.now() / 1000) + 3600
-  const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString("base64url")
-  const accessToken = `${b64({ alg: "HS256", typ: "JWT" })}.${b64({ sub: USER_ID, role: "authenticated", aud: "authenticated", exp })}.sig`
-  return {
-    access_token: accessToken,
-    token_type: "bearer",
-    expires_in: 3600,
-    expires_at: exp,
-    refresh_token: "e2e-refresh",
-    user: { id: USER_ID, aud: "authenticated", role: "authenticated", email: "e2e@example.test", app_metadata: {}, user_metadata: {} },
+function bearerIsUser(req: Request): boolean {
+  const token = (req.headers.get("authorization") ?? "").replace(/^Bearer /, "")
+  try {
+    return JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString()).sub === USER_ID
+  } catch {
+    return false
   }
 }
 

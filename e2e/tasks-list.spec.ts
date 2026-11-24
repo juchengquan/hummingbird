@@ -274,8 +274,34 @@ function recordedChainInterruptId(): string {
   return (pendingEvent.value as { id: string }).id
 }
 
+test("a task is titled by its goal's first line, with its conversation's name under it", async ({ page }) => {
+  await openWithTasks(page, {})
+  const conversation = await page.evaluate(() => {
+    const saved = JSON.parse(localStorage.getItem("hummingbird-storage")!).state
+    return saved.conversations.find((c: { id: string }) => c.id === saved.activeConversationId) as {
+      id: string
+      title: string
+    }
+  })
+  await setFake(page, {
+    tasks: [
+      summary({
+        title: "  Write the release notes\nwith every fix since 2.0  ",
+        conversationId: conversation.id,
+        phase: "running",
+      }),
+    ],
+  })
+  await openPanel(page)
+  const item = panel(page).getByRole("listitem", { name: "Task: Write the release notes" })
+  await expect(item).toBeVisible()
+  await expect(item).not.toContainText("with every fix")
+  await expect(item.locator("[data-task-title]")).toHaveText("Write the release notes")
+  await expect(item.locator("[data-task-conversation]")).toHaveText(conversation.title)
+})
+
 test("off runs the old single-task panel stays (Q61)", async ({ page }) => {
-  await openWithTasks(page, { availability: { ok: false, reason: "not_runs" } }, { chatBackend: "ts" })
+  await openWithTasks(page, { availability: { ok: false, reason: "not_runs" } }, { chatBackend: "ts" }, { signedIn: true })
   await expect(page.getByRole("button", { name: /^Open tasks panel/ })).toHaveCount(0)
   await taskToggle(page).click()
   await expect(taskToggle(page)).toHaveAttribute("aria-pressed", "true")

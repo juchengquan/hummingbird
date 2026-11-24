@@ -20,6 +20,7 @@ import { STORE_VERSION } from "../../lib/client/hooks/store/migrate"
 import type { TaskRunView } from "../../lib/shared/agent/project"
 
 import { composer } from "./runs"
+import { signIn } from "./tasks-session"
 
 export const HAIKU = "anthropic/claude-haiku-4.5"
 export const PHONE = { width: 390, height: 844 }
@@ -209,8 +210,9 @@ export async function openWithTasks(
   page: Page,
   fake: FakeSetup,
   state: Record<string, unknown> = {},
-  { newChat = true }: { newChat?: boolean } = {},
+  { newChat = true, signedIn = false }: { newChat?: boolean; signedIn?: boolean } = {},
 ): Promise<void> {
+  if (signedIn) await signIn(page.context())
   await page.addInitScript(
     ({ seed, version, fake }) => {
       ;(window as unknown as { __HUMM_E2E_TASKS__: unknown }).__HUMM_E2E_TASKS__ = fake

@@ -5,7 +5,7 @@ import { STORE_VERSION } from "../lib/client/hooks/store/migrate"
 import { WIRE_ORIGIN } from "./tasks-wire.config"
 import { composer } from "./support/runs"
 import { manifest, recordedInterrupt } from "./support/tasks-fake"
-import { session } from "./support/tasks-runs-backend"
+import { signIn } from "./support/tasks-session"
 
 /**
  * The runs task UI on the wire (config `tasks-wire.config.ts`): what the
@@ -48,8 +48,7 @@ const test = base.extend({
 
 /** Signed in (a GoTrue session cookie for the fake origin), on agent-py (runs). */
 async function signedIn(page: Page, state: Record<string, unknown> = {}) {
-  const raw = "base64-" + Buffer.from(JSON.stringify(session())).toString("base64url")
-  await page.context().addCookies([{ name: "sb-127-auth-token", value: raw, domain: "127.0.0.1", path: "/" }])
+  await signIn(page.context())
   const workspace = crypto.randomUUID()
   const now = new Date().toISOString()
   await page.addInitScript(

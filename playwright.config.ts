@@ -1,6 +1,14 @@
 import { defineConfig, devices } from "@playwright/test"
 
-import { AGENT_PORT, AGENT_PY_ORIGIN, HOST, WEB_ORIGIN, WEB_PORT } from "./e2e/support/env"
+import {
+  AGENT_PORT,
+  AGENT_PY_ORIGIN,
+  HOST,
+  SUPABASE_ORIGIN,
+  SUPABASE_PORT,
+  WEB_ORIGIN,
+  WEB_PORT,
+} from "./e2e/support/env"
 
 /**
  * Playwright smoke suite (`e2e/`, decision Q39 of
@@ -31,9 +39,11 @@ const skipBuild = process.env.E2E_SKIP_BUILD === "1"
 const NEXT_ENV: Record<string, string> = {
   NEXT_DIST_DIR: ".next-e2e",
   NEXT_PUBLIC_AGENT_PY_URL: AGENT_PY_ORIGIN,
-  // Signed out, no auth UI, no other remote backend.
-  NEXT_PUBLIC_SUPABASE_URL: "",
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: "",
+  // A fake Supabase (`e2e/support/tasks-runs-backend.ts`): signed out
+  // unless a spec seeds a session cookie (`support/tasks.ts` `openApp`,
+  // tasks need sign-in); its sync writes are accepted and dropped.
+  NEXT_PUBLIC_SUPABASE_URL: SUPABASE_ORIGIN,
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: "e2e-anon",
   NEXT_PUBLIC_AGENT_TS_URL: "",
   NEXT_PUBLIC_API_BASE_URL: "",
   REQUIRE_AUTH_FOR_AI: "",
@@ -91,6 +101,15 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: [
+    {
+      name: "fake-supabase",
+      command: `bun e2e/support/tasks-runs-backend.ts ${SUPABASE_PORT}`,
+      url: `${SUPABASE_ORIGIN}/auth/v1/health`,
+      reuseExistingServer: reuse,
+      timeout: 30_000,
+      stdout: "ignore",
+      stderr: "pipe",
+    },
     {
       name: "agent-py",
       command: `uv run --frozen uvicorn agent_py.main:app --host ${HOST} --port ${AGENT_PORT}`,
