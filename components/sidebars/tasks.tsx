@@ -75,6 +75,9 @@ export function TasksSidebar() {
       className="relative z-10 h-full flex shrink-0 bg-[var(--background)]"
     >
       <div
+        // Closed, it is only shrunk to nothing: out of the tab order and the
+        // accessibility tree too (Q89).
+        inert={!open}
         className={cn(
           "h-full min-h-0 overflow-hidden transition-[width] duration-200 ease-out",
           open

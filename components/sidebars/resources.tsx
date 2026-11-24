@@ -166,7 +166,10 @@ export function ResourcesSidebar({ mode = "chat" }: ResourcesSidebarProps = {}) 
             : "w-0 border-l-0"
         )}
         style={open ? { width: panelWidth } : undefined}
-        aria-hidden={!open}
+        // Closed, it is only shrunk to nothing: `inert` takes it out of the
+        // tab order as well as the accessibility tree (`aria-hidden` alone
+        // left its controls focusable, Q89).
+        inert={!open}
       >
         <div
           className="flex flex-col h-full min-h-0"
