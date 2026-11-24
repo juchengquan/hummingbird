@@ -792,7 +792,7 @@ async def _run_chunk_inner(
         resumed_from_seq = _int_or(checkpoint.get("seq"), 0)
         if resume and isinstance(checkpoint.get("awaiting_children"), dict):
             # A fan-in that died before its claim moved the checkpoint past
-            # the sub-agents' exit entries (0048): they are not the dead
+            # the sub-agents' exit entries (0049): they are not the dead
             # attempt's, so the marker must not rewind them.
             try:
                 resumed_from_seq = max(
@@ -822,7 +822,7 @@ async def _run_chunk_inner(
         user_id=payload.user_id,
         checkpoint=checkpoint,
         # A fan-in's log holds its sub-agents' `handoff` `exit` entries past
-        # the checkpoint (0048): the checkpoint's seq would collide with them.
+        # the checkpoint (0049): the checkpoint's seq would collide with them.
         reclaimed=reclaimed or (resume and isinstance(checkpoint.get("awaiting_children"), dict)),
     )
     sink = _RunSink(pool, user_id=payload.user_id)
@@ -1406,7 +1406,7 @@ async def _spawn(run: _Run, call: ToolCall) -> bool:
             )
         # The call's result as the user sees it, once its children exist
         # (committed with them): the pill stops spinning; each child's end
-        # follows as its own `handoff` `exit` (0048). The model's result is
+        # follows as its own `handoff` `exit` (0049). The model's result is
         # the fan-in, when they have all ended.
         await run.emitter.tool_output(
             tool_call_id=call.id,

@@ -1131,7 +1131,7 @@ async def commit_spawn(
 
 
 # The checkpoint's `seq` moves past its sub-agent runs' `handoff` `exit`
-# entries, written to the parent's log while it waited (0048): they are the
+# entries, written to the parent's log while it waited (0049): they are the
 # run's own, not a dead attempt's, so a reclaim's resume marker
 # (`resumedFromSeq` = the checkpoint's seq) must not rewind them. Only those:
 # anything else past the checkpoint is a dead attempt's, and stays rewound.
@@ -1160,7 +1160,7 @@ WHERE e.task_id = $1 AND e.user_id = $2 AND e.kind = 'handoff' AND e.payload ->>
 
 
 async def max_exit_handoff_seq(pool: asyncpg.Pool, *, run_id: str, user_id: str) -> int:
-    """The last `handoff` `exit` entry of a parent's log (0048: written as
+    """The last `handoff` `exit` entry of a parent's log (0049: written as
     its sub-agent runs end, never by a worker); 0 without one."""
     async with pool.acquire() as conn:
         value = await conn.fetchval(_MAX_EXIT_SEQ_SQL, _coerce_uuid(run_id), _coerce_uuid(user_id))

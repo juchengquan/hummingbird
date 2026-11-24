@@ -312,21 +312,23 @@ order. Every migration has a unique numeric prefix (CI enforces this via
   - **Existing rows:** `root_run_id` is backfilled by walking
     `parent_task_id` / `previous_run_id` (a chain broken by a deleted run
     roots at its earliest reachable run), `research` from each
-    checkpoint; no status, outcome or `updated_at` changes, nothing is
-    marked delivered. **Every enabled schedule without a model is paused
-    once** (`enabled = false`, Q73) — a re-run doesn't pause it again.
+    checkpoint; no status, outcome or `updated_at` changes. A background
+    task that has already ended is marked delivered (the old path wrote
+    its result); one still live delivers once when it ends. **Every
+    enabled schedule without a model is paused once** (`enabled = false`, Q73) — a re-run doesn't pause it again.
     A user who already has 5 or more active tasks can't start another
     until fewer are active.
   - **Rollback:** the statements in the file's header.
-- `supabase/migrations/0048_subagent_exit_entry.sql`
+- `supabase/migrations/0049_subagent_exit_entry.sql`
   - A sub-agent run's end shows on its parent as it happens (wave 6):
     whatever ends it (the worker, its own cancel, the reconciler) writes a
     `handoff` `exit` entry naming it on its parent's log, from the
     `tasks_ended` trigger, while the parent waits on its sub-agents. Before,
     the parent's stream closed them only when the parent ended.
-  - **Deploy order:** any. An agent-py from before this still works; the
-    parent's fan-in then only seeds past the exit entries through its
-    log probe.
+  - **Deploy order:** migrate first, then deploy agent-py. An agent-py
+    from before this can, when a fan-in's seq probe fails, write a seq an
+    exit entry already took ("a step closed twice"); the new agent-py
+    abandons that fan-in instead.
   - **Existing rows:** nothing changes.
   - **Rollback:** the statements in the file's header.
 

@@ -1,4 +1,4 @@
--- 0048_subagent_exit_entry.sql — a sub-agent run's end shows on its parent
+-- 0049_subagent_exit_entry.sql — a sub-agent run's end shows on its parent
 -- as it happens (wave 6).
 --
 -- docs/PLAN-frontend-backend-split.md wave 6 (the seam's finding), RUN_EVENTS.md
