@@ -231,7 +231,7 @@ def event_from_row_payload(
                 if isinstance(i, dict)
             )
             if isinstance(merged.get("images"), list)
-            else (),
+            else None,
         )
     if kind == "step_start":
         return events.StepStartEvent(run_id="", seq=seq, step=step, created_at=created_at)

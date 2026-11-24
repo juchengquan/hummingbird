@@ -743,7 +743,7 @@ def _record(row: asyncpg.Record, fallback: _LogFallback | None) -> RunRecord:
                 result["text"] = fallback.result.final_text
             if fallback.result.memory_tainted:
                 result["memoryTainted"] = True
-            if fallback.result.images:
+            if fallback.result.images is not None:
                 result["images"] = [dict(i) for i in fallback.result.images]
     elif status == "failed":
         res_ev = fallback.result if fallback is not None else None

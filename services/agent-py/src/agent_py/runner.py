@@ -152,8 +152,9 @@ FinalizeFn = Callable[[], Awaitable[dict[str, object] | None]]
 #: UI is unchanged while the fan-in (`store.load_child_results`, which
 #: reads `finalText` off the child's `result` row) finally sees a value.
 FinalTextFn = Callable[[], Awaitable[str | None]]
-FinalImagesFn = Callable[[], Awaitable[tuple[dict[str, object], ...]]]
-"""The images a settled run's result carries (Q87); () for none."""
+FinalImagesFn = Callable[[], Awaitable[tuple[dict[str, object], ...] | None]]
+"""The images a settled run's result carries (Q87); () for none, None
+when they couldn't be read (the result then leaves them out)."""
 
 STOPPED_AT_MAX_STEPS = "max_steps"
 """`RunResult.stoppedAt` of a run that ran out of steps (Q81)."""
@@ -289,7 +290,7 @@ async def _settle(
     concern (they return None) — settling never blocks on them."""
     verification = await finalize() if finalize is not None else None
     text = await final_text() if final_text is not None else None
-    images = await final_images() if final_images is not None else ()
+    images = await final_images() if final_images is not None else None
     await emitter.result(
         "done", final_text=text, verification=verification, stopped_at=stopped_at, images=images
     )

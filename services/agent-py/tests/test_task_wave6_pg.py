@@ -60,8 +60,8 @@ async def test_a_done_task_writes_its_result_into_the_outcome(world: World) -> N
 
     row = await world.task(task)
     assert row["status"] == "done"
-    assert row["outcome"] == {"type": "success", "result": {"text": "It is blue."}}
-    assert (await world.run(task))["result"] == {"text": "It is blue."}
+    assert row["outcome"] == {"type": "success", "result": {"text": "It is blue.", "images": []}}
+    assert (await world.run(task))["result"] == {"text": "It is blue.", "images": []}
 
 
 async def test_a_failed_task_writes_its_error_into_the_outcome(world: World) -> None:
@@ -96,7 +96,7 @@ async def test_a_sub_agent_run_settled_by_the_worker_has_its_outcome(world: Worl
     [child] = await world.children(parent)
     assert (await world.task(child))["outcome"] == {
         "type": "success",
-        "result": {"text": "child answer"},
+        "result": {"text": "child answer", "images": []},
     }
 
 
@@ -252,7 +252,8 @@ async def test_a_reply_cut_at_max_tokens_is_continued_not_settled(world: World) 
 
     assert await world.status(task) == "done"
     assert (await world.task(task))["outcome"]["result"] == {
-        "text": "The long report, part one, cut mid-sentence. Part two."
+        "text": "The long report, part one, cut mid-sentence. Part two.",
+        "images": [],
     }
     first, second = world.model.calls
     assert first["max_tokens"] >= 16_000
@@ -340,7 +341,10 @@ async def test_answer_resume_done_gives_the_whole_text_once(world: World) -> Non
     await world.work()
 
     whole = "Let me check the colour first.\n\nPainted it blue."
-    assert (await world.task(r1))["outcome"] == {"type": "success", "result": {"text": whole}}
+    assert (await world.task(r1))["outcome"] == {
+        "type": "success",
+        "result": {"text": whole, "images": []},
+    }
     assert (await world.run(r1))["result"]["text"] == whole
     [entry] = await world.events(r1, "result")
     assert entry["finalText"] == whole
@@ -707,8 +711,11 @@ async def test_a_parents_result_gathers_its_sub_agents_images(
     assert (await world.run(run))["result"]["images"] == child_images
 
 
-async def test_a_result_without_images_has_none(world: World) -> None:
+async def test_a_result_without_images_says_so(world: World) -> None:
+    """`[]`, not absent: absent means a result written before 0.5.1, which
+    a client has to read the stream for."""
     world.model.script("Do it", [say("Plain.")])
     run = await world.start()
     await world.work()
-    assert "images" not in ((await world.run(run))["result"] or {})
+    assert (await world.run(run))["result"]["images"] == []
+    assert (await world.task(run))["outcome"]["result"]["images"] == []

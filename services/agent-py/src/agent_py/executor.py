@@ -1222,7 +1222,7 @@ def _settle_hooks(run: _Run) -> tuple[FinalizeFn, FinalTextFn, FinalImagesFn]:
             return None
         return text or None
 
-    async def final_images() -> tuple[dict[str, object], ...]:
+    async def final_images() -> tuple[dict[str, object], ...] | None:
         try:
             line, logs = await earlier_runs()
             own = await own_events()
@@ -1238,7 +1238,7 @@ def _settle_hooks(run: _Run) -> tuple[FinalizeFn, FinalTextFn, FinalImagesFn]:
             )
         except Exception as exc:
             logger.warning("executor.final_images_failed", run_id=run_id, error=str(exc))
-            return ()
+            return None
         return _unique_images([*drawn, *children])
 
     return finalize, final_text, final_images

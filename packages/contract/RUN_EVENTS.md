@@ -465,9 +465,9 @@ settled before wave 6 — since then every background settle writes
   line (the same runs as its text), then the images of its sub-agents'
   results, each once — so a parent carries what its sub-agents drew.
   On the `result` entry, `tasks.outcome.result` and `Run.result`, in the
-  `tool_image` image shape. A client delivers images from here; only a
-  result written before 0.5.1 has to be read from the stream. Absent
-  when there are none.
+  `tool_image` image shape. An empty list when there are none; absent
+  only on a result written before 0.5.1 (or when the worker couldn't
+  read them), and only then does a client read them from the stream.
 
 ## 6. Streams
 

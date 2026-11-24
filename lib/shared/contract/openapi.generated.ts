@@ -1868,7 +1868,9 @@ export interface components {
              *     answer carries what its sub-agents drew. Each is the
              *     `hummingbird.tool_image` image shape: a Storage URL with its
              *     `storagePath`, or a data URL when files are kept local.
-             *     Absent when there are none.
+             *     An empty list when there are none; absent only on a result
+             *     written before 0.5.1 (a client then reads them from the
+             *     run's `hummingbird.tool_image` activities).
              */
             images?: ({
                 format?: string;
