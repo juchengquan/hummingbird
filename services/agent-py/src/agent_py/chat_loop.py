@@ -682,6 +682,11 @@ async def run_turn_loop(
                 if pauses_for_input(tool_name, args, gated):
                     pending.append(PendingCall(tool_call_id, tool_name, args))
                     continue
+                # The waiter task may not have run since a Stop landed (an
+                # emitter write just yielded to it): check the signal itself
+                # before a tool acts, as the resume path does.
+                if cancel is not None and cancel.is_set():
+                    return done(LoopCancelled(), step_open=True)
                 try:
                     call_context = dataclasses.replace(base_context, tainted_by=tainted_by)
                     run = await race_cancel(

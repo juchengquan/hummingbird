@@ -206,6 +206,9 @@ class ToolContext:
     pool: asyncpg.Pool
     user_id: str
     workspace_id: str | None = None
+    local_files_only: bool = False
+    """A background run's `config.localFilesOnly` (wave 6, Q71): generated
+    files come back as data URLs, never uploaded to Storage."""
 
 
 @dataclass(frozen=True)

@@ -23,8 +23,6 @@ import type { ModelMessage } from "ai"
 import type { Database, Json } from "@/shared/supabase/types"
 
 import type { RunCheckpoint } from "./checkpoint"
-import { enqueueStartJob } from "./jobs"
-import { appendEvent, appendSyntheticResult, createRun, saveCheckpoint } from "./store"
 
 type DB = SupabaseClient<Database>
 
@@ -289,81 +287,101 @@ export function scheduleSkills(
 }
 
 /**
- * Set up a fresh run from a schedule row: create the conversation row
- * (the worker authors the result Message into it), write the initial
- * `tasks` + `task_events`(queued) + checkpoint exactly like
- * `POST /api/tasks` does, enqueue the `start` job, and stamp the
- * schedule's `last_run_task_id` so the UI can deep-link to the result.
+ * The model a schedule saved without one gets (Q67, Q73, Q80). Mirrored by
+ * agent-py's `schedules.SCHEDULE_DEFAULT_MODEL`. Nothing picks one at fire
+ * time: a fire without a model fails "no model" (Q56).
+ */
+export const SCHEDULE_DEFAULT_MODEL = "anthropic/claude-haiku-4.5"
+
+/**
+ * The `model` a create or update stores: the given one, else Haiku for a
+ * schedule that is (or stays, or becomes) enabled — creating one, or
+ * re-enabling one, that has no model. A disabled schedule may keep none
+ * (it never fires). Mirrored by agent-py's `schedule_model_on_save`.
+ */
+export function scheduleModelOnSave(
+  model: string | null | undefined,
+  enabled: boolean
+): string | null {
+  if ((model ?? null) === null && enabled) return SCHEDULE_DEFAULT_MODEL
+  return model ?? null
+}
+
+/** What one fire writes: the conversation's title, then
+ *  `public.create_scheduled_task`'s goal, step budget and checkpoint (0047).
+ *  Mirrored by agent-py's `scheduled_fire_for`; the parity fixture
+ *  `services/agent-py/tests/fixtures/schedule_fire_parity.json` pins both. */
+export interface ScheduledFire {
+  conversationTitle: string
+  goal: string
+  maxSteps: number
+  checkpoint: RunCheckpoint
+}
+
+export function scheduledFireFor(
+  row: Pick<
+    ScheduleRow,
+    "name" | "prompt" | "model" | "system_prompt" | "workspace_id" | "skills" | "max_steps"
+  >
+): ScheduledFire {
+  const maxSteps = row.max_steps ?? 25
+  const messages: ModelMessage[] = [{ role: "user", content: row.prompt }]
+  return {
+    conversationTitle: `Scheduled: ${row.name}`,
+    goal: row.prompt.slice(0, 2000),
+    maxSteps,
+    checkpoint: {
+      messages,
+      step: 0,
+      seq: 1,
+      config: {
+        // No default at fire time (Q56): without a model the worker fails
+        // it "no model". The routes store Haiku when it is saved (Q73).
+        model: row.model ?? "",
+        ...(row.system_prompt !== null ? { workspaceSystemPrompt: row.system_prompt } : {}),
+        workspaceId: row.workspace_id,
+        skills: scheduleSkills(row.skills),
+        maxSteps,
+      },
+    },
+  }
+}
+
+/**
+ * Set up a fresh run from a schedule row: one new conversation per fire
+ * (Q80; the result is delivered into it), then the task through
+ * `public.create_scheduled_task` (0047) — the task, its checkpoint, the
+ * `status: queued` entry and the `start` job under the user's task lock,
+ * or, at the 5-task cap (Q79), the task already failed `limit_reached`, so
+ * the fire still shows in the task list. Then stamp the schedule's
+ * `last_run_task_id` so the UI can deep-link to the result.
  */
 async function fireSchedule(db: DB, row: ScheduleRow): Promise<void> {
   const userId = row.user_id
   const runId = crypto.randomUUID()
   const conversationId = crypto.randomUUID()
-  const maxSteps = row.max_steps ?? 25
+  const fire = scheduledFireFor(row)
 
-  // Conversation row so the worker has somewhere to author the result.
   const convInsert = await db.from("conversations").insert({
     id: conversationId,
     user_id: userId,
     workspace_id: row.workspace_id,
-    title: `Scheduled: ${row.name}`,
+    title: fire.conversationTitle,
   })
   if (convInsert.error) {
     throw new Error(`conversation insert: ${convInsert.error.message}`)
   }
 
-  // `tasks` + `task_events`(queued) + initial checkpoint exactly like
-  // the start route, so the worker treats this as just another run.
-  await createRun(db, {
-    id: runId,
-    userId,
-    conversationId,
-    goal: row.prompt.slice(0, 2000),
-    maxSteps,
+  const created = await db.rpc("create_scheduled_task", {
+    p_id: runId,
+    p_user_id: userId,
+    p_conversation_id: conversationId,
+    p_goal: fire.goal,
+    p_max_steps: fire.maxSteps,
+    p_checkpoint: fire.checkpoint as unknown as Json,
   })
-
-  const messages: ModelMessage[] = [{ role: "user", content: row.prompt }]
-  const checkpoint: RunCheckpoint = {
-    messages,
-    step: 0,
-    seq: 1,
-    config: {
-      // No default (Q56): without a model the worker fails it "no model".
-      model: row.model ?? "",
-      workspaceSystemPrompt: row.system_prompt ?? undefined,
-      workspaceId: row.workspace_id,
-      skills: scheduleSkills(row.skills),
-      maxSteps,
-    },
-  }
-  await saveCheckpoint(db, runId, userId, checkpoint)
-
-  // Synthetic `status:queued` event so a watching client sees the
-  // scheduled run flip in.
-  await appendEvent(
-    db,
-    {
-      runId,
-      seq: 1,
-      step: 0,
-      createdAt: new Date().toISOString(),
-      kind: "status",
-      status: "queued",
-      maxSteps,
-    },
-    userId
-  )
-
-  try {
-    await enqueueStartJob(db, { taskId: runId, userId })
-  } catch (error) {
-    // No queued orphan: nothing would ever run it (B18).
-    await appendSyntheticResult(db, runId, userId, {
-      status: "failed",
-      error: "The scheduled task could not be queued.",
-      from: ["queued"],
-    })
-    throw error
+  if (created.error) {
+    throw new Error(`create_scheduled_task: ${created.error.message}`)
   }
 
   // Record which task this fire produced so the UI can link to it.

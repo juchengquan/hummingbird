@@ -318,6 +318,17 @@ order. Every migration has a unique numeric prefix (CI enforces this via
     A user who already has 5 or more active tasks can't start another
     until fewer are active.
   - **Rollback:** the statements in the file's header.
+- `supabase/migrations/0048_subagent_exit_entry.sql`
+  - A sub-agent run's end shows on its parent as it happens (wave 6):
+    whatever ends it (the worker, its own cancel, the reconciler) writes a
+    `handoff` `exit` entry naming it on its parent's log, from the
+    `tasks_ended` trigger, while the parent waits on its sub-agents. Before,
+    the parent's stream closed them only when the parent ended.
+  - **Deploy order:** any. An agent-py from before this still works; the
+    parent's fan-in then only seeds past the exit entries through its
+    log probe.
+  - **Existing rows:** nothing changes.
+  - **Rollback:** the statements in the file's header.
 
 ### Migration 0018 collision (renamed to `0033_message_generated_files.sql`)
 

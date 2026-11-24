@@ -226,6 +226,10 @@ class ResultEvent(TaskEventBase):
     error_code: str | None = None
     memory_tainted: bool = False
     usage: tuple[TokenUsage, ...] = ()
+    # Wave 6 (Q81): why a succeeded run's answer may be incomplete —
+    # `"max_steps"` when a background task stopped at its step limit
+    # (`RunResult.stoppedAt`). None for a run that finished on its own.
+    stopped_at: str | None = None
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -601,6 +605,8 @@ def event_to_row_payload(event: TaskEvent) -> dict[str, object]:
             result_payload["memoryTainted"] = True
         if event.usage:
             result_payload["usage"] = [u.to_payload() for u in event.usage]
+        if event.stopped_at is not None:
+            result_payload["stoppedAt"] = event.stopped_at
         return result_payload
     if isinstance(event, ToolInputEvent):
         return {

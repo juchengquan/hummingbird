@@ -1831,6 +1831,12 @@ export interface components {
             text?: string | null;
             /** Memorytainted */
             memoryTainted?: boolean | null;
+            /** Stoppedat */
+            stoppedAt?: "max_steps" | null;
+            /** Verification */
+            verification?: {
+                [key: string]: unknown;
+            } | null;
         } & {
             [key: string]: unknown;
         };

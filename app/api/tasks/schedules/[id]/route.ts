@@ -18,7 +18,7 @@ import {
   ScheduleUpdateSchema,
 } from "@/shared/api-schemas"
 import { getSupabaseServerClient } from "@/server/supabase/server"
-import { validateScheduleCron } from "@/server/agent/schedules"
+import { scheduleModelOnSave, validateScheduleCron } from "@/server/agent/schedules"
 import { taskWriteErrorResponse } from "@/server/agent/task-writes"
 import { rowToSchedule } from "@/server/agent/schedule-codec"
 import type { Database, Json } from "@/shared/supabase/types"
@@ -85,7 +85,12 @@ export async function PATCH(
   if (patch.prompt !== undefined) update.prompt = patch.prompt
   if (patch.workspaceId !== undefined) update.workspace_id = patch.workspaceId
   if (patch.enabled !== undefined) update.enabled = patch.enabled
-  if (patch.model !== undefined) update.model = patch.model
+  // An enabled schedule always has a model (Q80): re-enabling one that
+  // has none — or clearing the model of an enabled one — stores Haiku.
+  const model = patch.model !== undefined ? patch.model : current.model
+  const enabled = patch.enabled !== undefined ? patch.enabled : current.enabled
+  const savedModel = scheduleModelOnSave(model, enabled)
+  if (patch.model !== undefined || savedModel !== current.model) update.model = savedModel
   if (patch.systemPrompt !== undefined) update.system_prompt = patch.systemPrompt
   if (patch.skills !== undefined) update.skills = patch.skills as Json | null
   if (patch.maxSteps !== undefined) update.max_steps = patch.maxSteps

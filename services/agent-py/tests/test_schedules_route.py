@@ -244,7 +244,8 @@ def test_create_inserts_as_the_caller(client: TestClient, fake_db: FakeDb) -> No
         "UTC",
         True,
     )
-    assert (model, sp, max_steps) == (None, None, 5)
+    # No model given: Haiku is stored (Q73).
+    assert (model, sp, max_steps) == ("anthropic/claude-haiku-4.5", None, 5)
     assert json.loads(skills) == [{"id": "webSearch"}]  # unknown keys stripped
     assert next_run.tzinfo is not None and next_run.hour == 8 and next_run.minute == 0
 
@@ -347,16 +348,17 @@ def test_patch_keeps_next_run_when_cron_unchanged(client: TestClient, fake_db: F
     assert r.json()["name"] == "Evening"
     sql, args = _update_sql(fake_db)
     assert "next_run_at" not in sql and "cron" not in sql
-    assert "name = $4" in sql and "model = $5" in sql and "skills = $6::jsonb" in sql
+    assert "name = $4" in sql and "skills = $5::jsonb" in sql and "model = $6" in sql
     assert args[0] == SID and args[1] == uuid.UUID(USER)
-    assert args[3:] == ("Evening", None, '[{"id": "a"}]')
+    # Clearing the model of an enabled schedule stores Haiku (Q80).
+    assert args[3:] == ("Evening", '[{"id": "a"}]', "anthropic/claude-haiku-4.5")
     _assert_impersonated(fake_db)
 
 
 def test_patch_recomputes_next_run_when_timezone_changes(
     client: TestClient, fake_db: FakeDb
 ) -> None:
-    fake_db.respond("SELECT * FROM public.task_schedules", _row())
+    fake_db.respond("SELECT * FROM public.task_schedules", _row(model="anthropic/x"))
     fake_db.respond("UPDATE public.task_schedules", _row(timezone="Asia/Tokyo"))
     r = client.patch(f"{BASE}/{SID}", json={"timezone": "Asia/Tokyo"}, headers=_auth())
     assert r.status_code == 200, r.text

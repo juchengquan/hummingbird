@@ -582,7 +582,7 @@ async def test_settle_task_terminal_is_user_scoped() -> None:
     (_, (l_sql, *l_args)), (_, (t_sql, *t_args)) = conn.calls[1:3]
     assert "private.lock_task_scope($1, $2)" in l_sql
     assert l_args[:2] == [uuid.UUID(USER_ID), uuid.UUID(RUN_ID)]
-    assert "user_id = $3" in t_sql and t_args == [uuid.UUID(RUN_ID), "done", uuid.UUID(USER_ID)]
+    assert "user_id = $3" in t_sql and t_args[:3] == [uuid.UUID(RUN_ID), "done", uuid.UUID(USER_ID)]
     # The parent's decrement is the database's, scoped to the same user.
     sql = " ".join(M0045.read_text().split())
     assert "where t.id = p_parent_id and t.user_id = p_user_id" in sql

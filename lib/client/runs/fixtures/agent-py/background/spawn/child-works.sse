@@ -1,19 +1,19 @@
-data: {"type":"RUN_STARTED","threadId":"fae1e339-eb97-4d5a-b898-6511080577ea","runId":"063a8544-99b5-4991-ac60-fffe7693cc65","parentRunId":"63ab11f6-78a9-491a-8bf6-11e248e19736"}
+data: {"type":"RUN_STARTED","threadId":"c7f0b900-9440-49e5-9e96-575bf251e9a1","runId":"1a0362aa-daaa-41ea-9f5c-7f24d3ea7b7b","parentRunId":"fc8d4797-41d8-4fed-8480-16bbc9897af9"}
 
 id: 2
 data: {"type":"STEP_STARTED","stepName":"step-1"}
 
 id: 3.0
-data: {"type":"TEXT_MESSAGE_START","messageId":"063a8544-99b5-4991-ac60-fffe7693cc65:3","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_START","messageId":"1a0362aa-daaa-41ea-9f5c-7f24d3ea7b7b:3","role":"assistant"}
 
 id: 3
-data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"063a8544-99b5-4991-ac60-fffe7693cc65:3","delta":"done: works"}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"1a0362aa-daaa-41ea-9f5c-7f24d3ea7b7b:3","delta":"done: works"}
 
 id: 4.0
-data: {"type":"TEXT_MESSAGE_END","messageId":"063a8544-99b5-4991-ac60-fffe7693cc65:3"}
+data: {"type":"TEXT_MESSAGE_END","messageId":"1a0362aa-daaa-41ea-9f5c-7f24d3ea7b7b:3"}
 
 id: 4
 data: {"type":"STEP_FINISHED","stepName":"step-1"}
 
-data: {"type":"RUN_FINISHED","threadId":"fae1e339-eb97-4d5a-b898-6511080577ea","runId":"063a8544-99b5-4991-ac60-fffe7693cc65","outcome":{"type":"success"},"result":{"text":"done: works"}}
+data: {"type":"RUN_FINISHED","threadId":"c7f0b900-9440-49e5-9e96-575bf251e9a1","runId":"1a0362aa-daaa-41ea-9f5c-7f24d3ea7b7b","outcome":{"type":"success"},"result":{"text":"done: works"}}
 

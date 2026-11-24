@@ -12,6 +12,7 @@ import asyncio
 import dataclasses
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -250,3 +251,31 @@ def test_js_slice_counts_utf16_units() -> None:
     s = "a" + "\U0001f600" * 3  # 1 + 2*3 = 7 UTF-16 units
     assert js_slice(s, 5) == "a\U0001f600\U0001f600"
     assert js_slice(s, 4) == "a\U0001f600"  # the split pair is dropped whole
+
+
+# --- fire + model parity with Next (wave 6, Q73 / Q79 / Q80) ----------------------------------
+
+FIRE_PARITY = Path(__file__).parent / "fixtures" / "schedule_fire_parity.json"
+
+
+def test_a_fire_writes_what_fire_schedule_writes() -> None:
+    """Both dispatchers hand `create_scheduled_task` the same goal, step
+    budget and checkpoint, under the same conversation title — the shared
+    fixture `lib/server/agent/schedules.parity.test.ts` checks too."""
+    fixture = json.loads(FIRE_PARITY.read_text())
+    assert fixture["defaultModel"] == schedules.SCHEDULE_DEFAULT_MODEL
+    for case in fixture["fires"]:
+        fire = schedules.scheduled_fire_for(_row(**case["row"]))
+        assert {
+            "conversationTitle": fire.conversation_title,
+            "goal": fire.goal,
+            "maxSteps": fire.max_steps,
+            "checkpoint": fire.checkpoint,
+        } == case["fire"], case["name"]
+
+
+def test_a_save_stores_the_model_next_stores() -> None:
+    fixture = json.loads(FIRE_PARITY.read_text())
+    for case in fixture["modelOnSave"]:
+        saved = schedules.schedule_model_on_save(case["model"], enabled=case["enabled"])
+        assert saved == case["saved"], case

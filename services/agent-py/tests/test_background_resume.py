@@ -344,13 +344,17 @@ def test_research_runs_get_the_research_prompt() -> None:
     assert _step_config(_cfg()).system is None
 
 
-def test_research_prompt_goes_files_first_with_search_files() -> None:
+def test_research_prompt_never_asks_for_search_files_in_the_background() -> None:
+    # Wave 6, Q71: no background run carries a file id (until Q49 is
+    # lifted), so even with the tool offered the prompt is web only.
     ctx = executor.ToolContext(pool=MagicMock(), user_id=USER_ID, workspace_id="ws")
     cp = _cfg(mode="research", skills=[{"id": "searchFiles"}])
     tools = executor._RunTools(
         context=ctx, extra_tools={}, mcp_gated=set(), skill_tool_names=frozenset({"searchFiles"})
     )
-    assert "call `searchFiles({ fileId, query })` first" in _step_config(cp, tools).system
+    config = _step_config(cp, tools)
+    assert "searchFiles" not in (config.system or "")
+    assert "searchFiles" in {t.name for t in config.tools}
 
 
 def test_only_the_chosen_skills_are_offered() -> None:

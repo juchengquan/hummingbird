@@ -8,6 +8,13 @@ its parent's live children exactly once and queues the parent's
 transition, at most once (`WHERE status NOT IN (terminal)`), with the
 run's terminal event in the same transaction: a settle that loses to a
 cancel writes neither.
+
+The transition also writes `tasks.outcome` (wave 6, survey bug 7) in the
+shape the interactive driver writes (`runs.model.outcome_to_json`), from
+the terminal event: `success` with the `RunResult` (`text`,
+`memoryTainted`, `stoppedAt`, `verification`), `error` with the event's code and message,
+or `cancelled`. Readers (`Run.result` / `Run.error`, the stream's closing
+event, the sub-agent fan-in) then never rebuild it from the log.
 """
 
 from __future__ import annotations
@@ -19,14 +26,14 @@ from dataclasses import dataclass
 import asyncpg
 
 from agent_py import store
-from agent_py.events import TaskEvent, event_to_row_payload
+from agent_py.events import ResultEvent, TaskEvent, event_to_row_payload
 from agent_py.fence import fenced_connection
 
 _TERMINAL = ("done", "failed", "cancelled")
 
 _TRANSITION_SQL = """
 UPDATE public.tasks
-SET status = $2, finished_at = now(), updated_at = now()
+SET status = $2, outcome = $4::jsonb, finished_at = now(), updated_at = now()
 WHERE id = $1 AND user_id = $3 AND status NOT IN ('done', 'failed', 'cancelled')
 RETURNING parent_task_id;
 """
@@ -45,6 +52,34 @@ VALUES (
 )
 ON CONFLICT (task_id, seq) DO NOTHING;
 """
+
+
+def terminal_outcome(status: str, event: TaskEvent | None) -> dict[str, object]:
+    """The `tasks.outcome` a background settle writes (RUN_EVENTS.md § 5):
+    built from the terminal `result` entry, with the same defaults the
+    log fallback uses (`unknown` / "Run failed.")."""
+    result = event if isinstance(event, ResultEvent) else None
+    if status == "done":
+        body: dict[str, object] = {}
+        if result is not None:
+            if result.final_text is not None:
+                body["text"] = result.final_text
+            if result.memory_tainted:
+                body["memoryTainted"] = True
+            if result.stopped_at is not None:
+                body["stoppedAt"] = result.stopped_at
+            if result.verification is not None:
+                # The citation check (Q78), as the `hummingbird.verification`
+                # activity carries it, next to the text it checked.
+                body["verification"] = dict(result.verification)
+        return {"type": "success", "result": body}
+    if status == "failed":
+        return {
+            "type": "error",
+            "code": (result.error_code if result is not None else None) or "unknown",
+            "message": (result.error if result is not None else None) or "Run failed.",
+        }
+    return {"type": "cancelled"}
 
 
 @dataclass(frozen=True)
@@ -81,7 +116,13 @@ async def settle_task_terminal(
     async with fenced_connection(pool) as conn, conn.transaction():
         # 0045's lock order: the trigger goes on to the parent's row.
         await conn.execute(store.LOCK_TASK_SCOPE_SQL, user_uuid, task_uuid)
-        row = await conn.fetchrow(_TRANSITION_SQL, task_uuid, status, user_uuid)
+        row = await conn.fetchrow(
+            _TRANSITION_SQL,
+            task_uuid,
+            status,
+            user_uuid,
+            json.dumps(terminal_outcome(status, event)),
+        )
         if row is None:
             return SettleResult(transitioned=False, parent_task_id=None)
         if event is not None:
