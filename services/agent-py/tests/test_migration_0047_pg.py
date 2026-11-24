@@ -322,7 +322,9 @@ async def test_upgrade_from_0046_fills_every_shape_and_is_idempotent(db: Db) -> 
     )
     # A task that ends after 0047 is delivered by a browser, never by a re-run.
     later = await db.task("done", minutes_ago=1)
-    await db.conn.execute("UPDATE public.tasks SET root_run_id = id WHERE id = $1", uuid.UUID(later))
+    await db.conn.execute(
+        "UPDATE public.tasks SET root_run_id = id WHERE id = $1", uuid.UUID(later)
+    )
     first = await _snapshot(db)
     await db.conn.execute(M0047.read_text())
     assert await _snapshot(db) == first
