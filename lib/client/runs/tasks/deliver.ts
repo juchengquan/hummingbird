@@ -38,6 +38,7 @@ import type { GeneratedImage } from "@/shared/types"
 import type { VerificationResult } from "@/shared/verify"
 import { parseVerificationFrame } from "@/shared/verify"
 
+import { generatedImageOf } from "./chain"
 import type { TaskPointers } from "./pointers"
 import type { TaskSummary } from "./types"
 
@@ -148,6 +149,14 @@ export function resultTextOf(task: TaskSummary): string | null {
 
 async function outputFor(task: TaskSummary, deps: DeliveryDeps): Promise<TaskOutput> {
   const fromResult = parseVerificationFrame((task.result as { verification?: unknown } | null)?.verification)
+  // 0.5.1 (Q87): the result lists its images, its sub-agents' included,
+  // and a worker that writes them also writes the verification — the
+  // stream is read only for a result written before.
+  const resultImages = (task.result as { images?: unknown } | null)?.images
+  if (Array.isArray(resultImages)) {
+    const images = resultImages.map(generatedImageOf).filter((i): i is GeneratedImage => i !== null)
+    return { verification: fromResult, images }
+  }
   let streamed: TaskOutput = { verification: null, images: [] }
   if (deps.outputOf) {
     try {

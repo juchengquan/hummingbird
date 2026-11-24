@@ -1,10 +1,10 @@
-data: {"type":"RUN_STARTED","threadId":"6b2562ae-92b5-4ed6-90e0-58faa51ce751","runId":"d5034020-ad54-4d96-9084-c4567590bd5e"}
+data: {"type":"RUN_STARTED","threadId":"3f17e7b7-087a-41d5-a928-9a01e32079a9","runId":"88c28fd9-2adf-48a4-a248-18264c789035"}
 
 id: 3
 data: {"type":"STEP_STARTED","stepName":"step-1"}
 
 id: 4.0
-data: {"type":"TOOL_CALL_START","toolCallId":"w","toolCallName":"mcp__s1__write","parentMessageId":"d5034020-ad54-4d96-9084-c4567590bd5e:4"}
+data: {"type":"TOOL_CALL_START","toolCallId":"w","toolCallName":"mcp__s1__write","parentMessageId":"88c28fd9-2adf-48a4-a248-18264c789035:4"}
 
 id: 4.1
 data: {"type":"TOOL_CALL_ARGS","toolCallId":"w","delta":"{\"n\":1}"}
@@ -16,7 +16,7 @@ id: 5
 data: {"type":"CUSTOM","name":"hummingbird.step_error","value":{"message":"tool error: RuntimeError","willRetry":true}}
 
 id: 6
-data: {"type":"TOOL_CALL_RESULT","messageId":"d5034020-ad54-4d96-9084-c4567590bd5e:6","toolCallId":"w","role":"tool","content":"{\"summary\":\"tool error: RuntimeError\"}","metadata":{"hummingbird":{"toolName":"mcp__s1__write"}}}
+data: {"type":"TOOL_CALL_RESULT","messageId":"88c28fd9-2adf-48a4-a248-18264c789035:6","toolCallId":"w","role":"tool","content":"{\"summary\":\"tool error: RuntimeError\"}","metadata":{"hummingbird":{"toolName":"mcp__s1__write"}}}
 
 id: 7
 data: {"type":"STEP_FINISHED","stepName":"step-1"}
@@ -25,16 +25,16 @@ id: 8
 data: {"type":"STEP_STARTED","stepName":"step-2"}
 
 id: 9.0
-data: {"type":"TEXT_MESSAGE_START","messageId":"d5034020-ad54-4d96-9084-c4567590bd5e:9","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_START","messageId":"88c28fd9-2adf-48a4-a248-18264c789035:9","role":"assistant"}
 
 id: 9
-data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"d5034020-ad54-4d96-9084-c4567590bd5e:9","delta":"Recovered without it."}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"88c28fd9-2adf-48a4-a248-18264c789035:9","delta":"Recovered without it."}
 
 id: 10.0
-data: {"type":"TEXT_MESSAGE_END","messageId":"d5034020-ad54-4d96-9084-c4567590bd5e:9"}
+data: {"type":"TEXT_MESSAGE_END","messageId":"88c28fd9-2adf-48a4-a248-18264c789035:9"}
 
 id: 10
 data: {"type":"STEP_FINISHED","stepName":"step-2"}
 
-data: {"type":"RUN_FINISHED","threadId":"6b2562ae-92b5-4ed6-90e0-58faa51ce751","runId":"d5034020-ad54-4d96-9084-c4567590bd5e","outcome":{"type":"success"},"result":{"text":"Recovered without it."}}
+data: {"type":"RUN_FINISHED","threadId":"3f17e7b7-087a-41d5-a928-9a01e32079a9","runId":"88c28fd9-2adf-48a4-a248-18264c789035","outcome":{"type":"success"},"result":{"text":"Recovered without it.","images":[]}}
 

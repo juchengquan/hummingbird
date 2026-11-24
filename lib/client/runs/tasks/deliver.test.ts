@@ -319,3 +319,52 @@ describe("generated images (localFilesOnly)", () => {
     expect(message.generatedImages).toEqual([image])
   })
 })
+
+describe("images from the result (Q87, contract 0.5.1)", () => {
+  const image = {
+    id: "g1-0",
+    url: "https://signed.test/cat.png",
+    storagePath: "u/generated/g1-0.png",
+    width: 512,
+    height: 512,
+    format: "png",
+    prompt: "a cat",
+    mode: "t2i" as const,
+  }
+
+  async function deliver(result: Record<string, unknown>) {
+    const server = new FakeRunsServer()
+    server.add(finished({ result }))
+    const store = new FakeStore()
+    store.addConversation(CONV)
+    let streamReads = 0
+    await deliverTask(
+      summaryOf(server.list({})[0], { userId: USER }),
+      deps(store, browser(), server, new Cloud(), {
+        outputOf: async () => {
+          streamReads += 1
+          return { verification: null, images: [] }
+        },
+      }),
+    )
+    const message = store.conversations.get(CONV)!.messages[0] as { generatedImages?: unknown[] }
+    return { message, streamReads }
+  }
+
+  test("a result's images are delivered as they are, its sub-agents' included, without reading the stream", async () => {
+    const { message, streamReads } = await deliver({ text: "Drew it.", images: [image] })
+    expect(message.generatedImages).toEqual([image])
+    expect(streamReads).toBe(0)
+  })
+
+  test("a result that says it has none reads no stream either", async () => {
+    const { message, streamReads } = await deliver({ text: "Plain.", images: [] })
+    expect(message.generatedImages).toBeUndefined()
+    expect(streamReads).toBe(0)
+  })
+
+  test("a result written before 0.5.1 (no images key) still reads them from the stream", async () => {
+    const { streamReads } = await deliver({ text: "Old." })
+    expect(streamReads).toBe(1)
+  })
+})
