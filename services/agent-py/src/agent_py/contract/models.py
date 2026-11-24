@@ -1369,6 +1369,13 @@ class RunResult(BaseModel):
     note. Absent for a run that finished on its own.
 
     """
+    verification: dict[str, Any] | None = None
+    """
+    A research run's citation check over `text` (Q78): the same
+    object as its `hummingbird.verification` activity's content
+    (`{ checks, summary }`). Absent when no check ran.
+
+    """
 
 
 class RunRewindEventValue(BaseModel):

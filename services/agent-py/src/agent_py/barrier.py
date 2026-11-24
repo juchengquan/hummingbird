@@ -12,7 +12,7 @@ cancel writes neither.
 The transition also writes `tasks.outcome` (wave 6, survey bug 7) in the
 shape the interactive driver writes (`runs.model.outcome_to_json`), from
 the terminal event: `success` with the `RunResult` (`text`,
-`memoryTainted`, `stoppedAt`), `error` with the event's code and message,
+`memoryTainted`, `stoppedAt`, `verification`), `error` with the event's code and message,
 or `cancelled`. Readers (`Run.result` / `Run.error`, the stream's closing
 event, the sub-agent fan-in) then never rebuild it from the log.
 """
@@ -68,6 +68,10 @@ def terminal_outcome(status: str, event: TaskEvent | None) -> dict[str, object]:
                 body["memoryTainted"] = True
             if result.stopped_at is not None:
                 body["stoppedAt"] = result.stopped_at
+            if result.verification is not None:
+                # The citation check (Q78), as the `hummingbird.verification`
+                # activity carries it, next to the text it checked.
+                body["verification"] = dict(result.verification)
         return {"type": "success", "result": body}
     if status == "failed":
         return {

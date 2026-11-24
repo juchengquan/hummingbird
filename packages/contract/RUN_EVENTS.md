@@ -441,6 +441,14 @@ settled before wave 6 — since then every background settle writes
   the model cites) and its verification checks the whole text. A
   sub-agent run is answered in place, so its own log is its whole
   answer.
+- **`result.verification` (Q78).** A research run's citation check over
+  that whole text rides on its result: the `result` entry's
+  `verification`, `tasks.outcome.result.verification` and
+  `Run.result.verification` — the same object as the
+  `hummingbird.verification` activity's content (`{ checks, summary }`),
+  next to `text` and `stoppedAt`. A client never has to re-read the
+  stream to find it. Absent when no check ran (not research, no
+  citations or sources, no verifier configured, or it failed).
 - **`result.stoppedAt: "max_steps"` (Q81).** A background run that ran
   out of steps settles `succeeded` with what it has: its text ends with
   a visible note ("_Stopped at the step limit (N steps), so this answer

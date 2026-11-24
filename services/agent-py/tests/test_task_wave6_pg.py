@@ -444,6 +444,10 @@ async def test_a_research_report_is_numbered_and_verified_over_the_whole_text(
     checks = entry["verification"]["checks"]
     assert [c["claim"] for c in checks] == ["Alpha is true [1].", "Beta is true [2]."]
     assert entry["verification"]["summary"]["supported"] == 2
+    # And on the result itself, next to the text it checked.
+    result = (await world.run(r1))["result"]
+    assert result["verification"] == entry["verification"]
+    assert (await world.task(r1))["outcome"]["result"]["verification"] == entry["verification"]
 
 
 # --- Q72: at most 20 sub-agents per task -------------------------------------------------------
