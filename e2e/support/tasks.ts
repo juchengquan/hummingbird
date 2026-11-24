@@ -7,7 +7,7 @@ import { expect, test as base, type Locator, type Page } from "@playwright/test"
 import { STORE_VERSION } from "../../lib/client/hooks/store/migrate"
 
 import { composer } from "./runs"
-import { signIn } from "./tasks-session"
+import { USER_ID, signIn } from "./tasks-session"
 
 export const HAIKU = "anthropic/claude-haiku-4.5"
 export const NOT_FOR_TASKS = "deepseek/deepseek-v4-flash"
@@ -233,9 +233,17 @@ export async function reportCounts(page: Page) {
   }
 }
 
+/** The old path's pointer key: per user when signed in (Q68), the unkeyed
+ *  slot otherwise. Specs are signed in as `USER_ID` unless they opt out. */
+const POINTER_KEYS = [`humm.activeTask.${USER_ID}`, "humm.activeTask"]
+
 /** The saved pointer of the task being watched. */
 export const pointer = (page: Page): Promise<string | null> =>
-  page.evaluate(() => localStorage.getItem("humm.activeTask"))
+  page.evaluate((keys) => keys.map((k) => localStorage.getItem(k)).find((v) => v !== null) ?? null, POINTER_KEYS)
+
+/** Write the pointer back where the app reads it (the signed-in user's key). */
+export const setPointer = (page: Page, value: string): Promise<void> =>
+  page.evaluate(([key, v]) => localStorage.setItem(key, v), [POINTER_KEYS[0], value] as const)
 
 /** Turn the workspace into a project with one To-do card, then reload.
  *  `model`: the workspace's default (null = none, a launch spec's case). */

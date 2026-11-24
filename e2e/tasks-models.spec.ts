@@ -41,7 +41,9 @@ async function pickerOptions(page: Page): Promise<string[]> {
   return options
 }
 
-for (const chatBackend of ["ts", "python", "ts-service", "python-runs"]) {
+// The old path's backends; "agent-py (runs)" launches on /v1/runs, and the
+// same rule is checked there in tasks-wire.spec.ts.
+for (const chatBackend of ["ts", "python", "ts-service"]) {
   for (const chatModel of [NOT_FOR_TASKS, "auto"]) {
     test(`Task toggle on ${chatBackend} with ${chatModel}`, async ({ page, tasks }) => {
       await openApp(page, { chatBackend, chatModel })

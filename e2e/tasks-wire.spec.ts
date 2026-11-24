@@ -1,6 +1,7 @@
 import { expect, test as base, type Page } from "@playwright/test"
 
 import { STORE_VERSION } from "../lib/client/hooks/store/migrate"
+import { backendAcceptsModel } from "../lib/shared/backend-models"
 
 import { WIRE_ORIGIN } from "./tasks-wire.config"
 import { composer } from "./support/runs"
@@ -118,6 +119,27 @@ test("the Task toggle starts a background run: images in the message, no attachm
     }),
   )
   await expect(panel(page)).toContainText("Write the report")
+})
+
+// Q55 / B21 on runs: a task is launched only with a model the worker runs,
+// whatever the chat had picked (as tasks-models.spec.ts checks off runs).
+for (const chatModel of ["deepseek/deepseek-v4-flash", "auto"]) {
+  test(`the Task toggle with ${chatModel} launches a task-runnable model`, async ({ page }) => {
+    await signedIn(page, { chatModel })
+    await toggle(page).click()
+    await sendText(page, "Write the report")
+    await expect.poll(async () => (await sent("start")).length).toBe(1)
+    const model = ((await sent("start"))[0].body as { forwardedProps: { model: string } }).forwardedProps.model
+    expect(backendAcceptsModel("agent-service", model), `${model} can't run as a task`).toBe(true)
+  })
+}
+
+test("/research with a model tasks can't run launches a task-runnable one", async ({ page }) => {
+  await signedIn(page, { chatModel: "deepseek/deepseek-v4-flash" })
+  await sendText(page, "/research Write the report")
+  await expect.poll(async () => (await sent("start")).length).toBe(1)
+  const model = ((await sent("start"))[0].body as { forwardedProps: { model: string } }).forwardedProps.model
+  expect(backendAcceptsModel("agent-service", model), `${model} can't run as a task`).toBe(true)
 })
 
 test("/research starts a research run (Q71)", async ({ page }) => {
