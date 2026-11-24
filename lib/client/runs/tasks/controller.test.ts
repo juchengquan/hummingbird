@@ -338,3 +338,28 @@ describe("watching and answering a chain", () => {
     expect(t.controller.snapshot().tasks![0].phase).toBe("cancelled")
   })
 })
+
+describe("only on runs (Q61)", () => {
+  test("not on agent-py (runs): no list read, no delivery, no notification", async () => {
+    const server = new FakeRunsServer()
+    server.add(makeRun({ id: "00000000-0000-4000-8000-0000000000e1", status: "succeeded", result: { text: "x" } }))
+    const t = tab({ server, overrides: { availability: () => ({ ok: false, reason: "not_runs" }) } })
+    t.store.addConversation("4738a0ca-220f-43ff-b1c6-a75aa9265be1")
+    t.controller.start()
+    await t.controller.refreshNow()
+    await new Promise((r) => setTimeout(r, 10))
+    expect(server.calls.filter((c) => c.op === "list")).toEqual([])
+    expect(server.calls.filter((c) => c.op === "markDelivered")).toEqual([])
+    expect(t.store.writes).toBe(0)
+    expect(t.shown).toEqual([])
+  })
+
+  test("on runs: every task is listed, old-path and scheduled ones included (Q76)", async () => {
+    const server = new FakeRunsServer()
+    server.add(makeRun({ id: "00000000-0000-4000-8000-0000000000e2", status: "running", goal: "old path" }))
+    server.add(makeRun({ id: "00000000-0000-4000-8000-0000000000e3", status: "queued", goal: "scheduled" }))
+    const t = tab({ server })
+    await t.controller.refreshNow()
+    expect(t.controller.snapshot().tasks?.map((x) => x.title).sort()).toEqual(["old path", "scheduled"])
+  })
+})

@@ -7,6 +7,9 @@ import "client-only"
  * user; the dashboard hands it to `TasksProvider` (`./context.tsx`).
  *
  * `TasksController` (no React) does the work:
+ * - **Only on runs** (Q61): nothing below happens unless "agent-py (runs)"
+ *   is selected and the user is signed in — otherwise `availability` is
+ *   `not_runs` and the old path lists, delivers and notifies.
  * - **The list** (Q69): `listRuns?mode=background&topLevel=true&current=true`
  *   — one row per task, every task of the user, old-path and scheduled
  *   ones too (Q76) — read every ~5 s while the Tasks panel is open, a
@@ -328,6 +331,9 @@ export class TasksController {
   // --- One read of the list -----------------------------------------------------------
 
   private async tick(): Promise<void> {
+    // Q61: the runs controller lists, delivers and notifies only while
+    // "agent-py (runs)" is selected; otherwise the old path does all three.
+    if (!this.deps.availability().ok) return
     this.ticks += 1
     let page: RunList
     try {
@@ -525,7 +531,7 @@ export class TasksController {
   async launch(input: TaskRequestInput, opts?: TaskLaunchOptions): Promise<TaskLaunchResult> {
     const availability = this.deps.availability()
     if (!availability.ok) {
-      return availability.reason === "signed_out"
+      return availability.reason !== "not_runs"
         ? { ok: false, code: "auth_required", message: "Sign in to run tasks." }
         : { ok: false, code: "not_runs", message: "Tasks run on the selected backend's own path." }
     }
@@ -824,8 +830,12 @@ function browserLocks(): LockLike | null {
 }
 
 /** Whether tasks launch on runs here (Q61). */
-export function tasksAvailability(signedIn: boolean, chatBackend: string): TasksAvailability {
-  if (!signedIn) return { ok: false, reason: "signed_out" }
+export function tasksAvailability(
+  auth: "loading" | "signed_in" | "signed_out",
+  chatBackend: string,
+): TasksAvailability {
+  if (auth === "loading") return { ok: false, reason: "loading" }
+  if (auth === "signed_out") return { ok: false, reason: "signed_out" }
   if (chatBackend !== "python-runs" || !isAgentPyConfigured()) return { ok: false, reason: "not_runs" }
   return { ok: true }
 }
@@ -873,7 +883,12 @@ export function useTasksController(): TasksContextValue {
   const chatBackend = useStore((s) => s.chatBackend)
   const panelOpen = useStore((s) => s.tasksPanelOpen)
   const userId = status === "signed-in" ? (user?.id ?? null) : null
-  const availability = useMemo(() => tasksAvailability(userId !== null, chatBackend), [userId, chatBackend])
+  const authState = status === "loading" ? "loading" : userId !== null ? "signed_in" : "signed_out"
+  const availability = useMemo(() => tasksAvailability(authState, chatBackend), [authState, chatBackend])
+  // Q61: a controller only while tasks run on runs (signed in, "agent-py
+  // (runs)" selected, agent-py configured). Otherwise nothing is listed,
+  // delivered or notified from here: the old path does it.
+  const onRuns = availability.ok
   const availabilityRef = useRef(availability)
   useEffect(() => {
     availabilityRef.current = availability
@@ -881,7 +896,7 @@ export function useTasksController(): TasksContextValue {
 
   const [controller, setController] = useState<TasksController | null>(null)
   useEffect(() => {
-    if (!userId || !isAgentPyConfigured()) {
+    if (!userId || !onRuns) {
       setController(null)
       return
     }
@@ -889,7 +904,7 @@ export function useTasksController(): TasksContextValue {
     setController(c)
     c.start()
     return () => c.dispose()
-  }, [userId])
+  }, [userId, onRuns])
 
   // Opening the panel reads the list at once (and at the fast pace).
   useEffect(() => {
@@ -898,7 +913,7 @@ export function useTasksController(): TasksContextValue {
 
   const snapshot = useSyncExternalStore(
     controller?.subscribe ?? noopSubscribe,
-    controller?.snapshot ?? (() => (userId ? EMPTY_SNAPSHOT : SIGNED_OUT_SNAPSHOT)),
+    controller?.snapshot ?? (() => (onRuns ? EMPTY_SNAPSHOT : SIGNED_OUT_SNAPSHOT)),
     () => EMPTY_SNAPSHOT,
   )
 
@@ -924,8 +939,8 @@ export function useTasksController(): TasksContextValue {
           ? controller.launch(input, opts)
           : Promise.resolve({
               ok: false as const,
-              code: userId ? "not_runs" : "auth_required",
-              message: userId ? "Tasks aren't available here." : "Sign in to run tasks.",
+              code: availability.ok || availability.reason === "not_runs" ? "not_runs" : "auth_required",
+              message: userId ? "Tasks run on the old path here." : "Sign in to run tasks.",
             }),
       answer: (question, answer) =>
         controller
