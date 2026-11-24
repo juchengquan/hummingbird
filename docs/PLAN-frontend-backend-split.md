@@ -141,7 +141,7 @@ three times. The goals:
 | Q83 | A message's "this was a task turn" marker (`Message.taskTurn`) stays local: on another device Edit / Regenerate / Retry of it is a chat turn. A synced column can come later |
 | Q84 | Tasks need sign-in on both paths: the Task toggle, the board's "Run as task" and `/research` are hidden or refused while signed out, on the old path too |
 | Q85 | A task's title in the list is its goal (one line), with the conversation's name under it, on the runs list and the old panel alike |
-| Q86 | The model is never given a URL for a generated image: it reads "image N is shown to the user" (chat and tasks), so no answer names a link that expires. Messages already written stay |
+| Q86 | The model is never given a generated image's temporary URL (Minimax's, which expires in hours): an image saved to Storage keeps its stored link, so a remix can pass it back; one that isn't saved reads "Shown to the user above your reply" (chat and tasks). A failed background upload keeps the image inline, not as the temporary URL. Messages already written stay |
 | Q87 | A run's result lists its generated images (`RunResult.images`, contract 0.5.1); a parent's result gathers its sub-agents' too. Delivery takes images from the result, the stream only for results written before |
 | Q88 | The two 54000 refusals are told apart by a hint (0050): `task_cap` (5 active tasks) and `job_queue` (20 queued jobs); Next and agent-py map them to the same wording |
 | Q89 | Every collapsed panel or sidebar (zero width, still mounted) is `inert`: out of the tab order and the accessibility tree |
