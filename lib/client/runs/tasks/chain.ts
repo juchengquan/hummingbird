@@ -37,7 +37,7 @@ import "client-only"
 import { EMPTY_RUN_VIEW, type PendingInput, type TaskRunView, type ToolCallView } from "@/shared/agent/project"
 import type { PlanItem } from "@/shared/agent/events"
 import { compareCursors, cursorSeq, START_CURSOR } from "@/shared/runs/cursor"
-import type { ToolCallResult } from "@/shared/types"
+import type { GeneratedImage, ToolCallResult } from "@/shared/types"
 import { parseVerificationFrame } from "@/shared/verify"
 
 import { toPendingInterrupt, type PendingInterrupt } from "../interrupts"
@@ -385,6 +385,54 @@ function normaliseLog(items: readonly ChainItem[]): ChainItem[] {
   return out
 }
 
+function isImage(value: unknown): value is GeneratedImage {
+  const img = rec(value)
+  return (
+    !!img &&
+    typeof img.id === "string" &&
+    typeof img.url === "string" &&
+    typeof img.width === "number" &&
+    typeof img.height === "number" &&
+    typeof img.format === "string" &&
+    typeof img.prompt === "string" &&
+    (img.mode === "t2i" || img.mode === "i2i")
+  )
+}
+
+/**
+ * The images a task generated (`ACTIVITY_SNAPSHOT hummingbird.tool_image`,
+ * RUN_EVENTS.md § 3.3), across its runs, once each, as chat stores them on
+ * a message (`Message.generatedImages`): a Storage path when the worker
+ * uploaded the image, a data URL with `localFilesOnly` (Q71). The URL a
+ * model quotes in its text is the provider's temporary one; this is the
+ * kept form. A rewound attempt's images are dropped with it. Pure.
+ */
+export function generatedImagesOf(runs: readonly ChainRunLog[]): GeneratedImage[] {
+  const out = new Map<string, GeneratedImage>()
+  for (const run of runs) {
+    for (const item of normaliseLog(run.items)) {
+      const e = item.event as Ev
+      if (e.type !== "ACTIVITY_SNAPSHOT" || e.activityType !== `${HB}tool_image`) continue
+      const images = rec(e.content)?.images
+      if (!Array.isArray(images)) continue
+      for (const img of images) {
+        if (!isImage(img)) continue
+        out.set(img.id, {
+          id: img.id,
+          url: img.url,
+          ...(typeof img.storagePath === "string" ? { storagePath: img.storagePath } : {}),
+          width: img.width,
+          height: img.height,
+          format: img.format,
+          prompt: img.prompt,
+          mode: img.mode,
+        })
+      }
+    }
+  }
+  return [...out.values()]
+}
+
 /**
  * The incremental fold of one task's chain. `setLine(runIds)` names the
  * runs, oldest first (the root, then each run that answered the one
@@ -393,7 +441,7 @@ function normaliseLog(items: readonly ChainItem[]): ChainItem[] {
  * are dropped, so re-reading a run from an earlier cursor is harmless.
  */
 export class ChainFold {
-  private logs = new Map<string, ChainItem[]>()
+  private logs_ = new Map<string, ChainItem[]>()
   private line: string[] = []
   private acc: Acc = emptyAcc()
   /** Runs whose closing event has been folded. */
@@ -414,19 +462,27 @@ export class ChainFold {
     if (same) return false
     const grows = this.line.every((id, i) => runIds[i] === id)
     this.line = [...runIds]
-    for (const id of [...this.logs.keys()]) if (!this.line.includes(id)) this.logs.delete(id)
+    for (const id of [...this.logs_.keys()]) if (!this.line.includes(id)) this.logs_.delete(id)
     if (!grows) this.refold()
     return true
   }
 
   /** The last cursor of a run (where to read it from next), `"0"` before any. */
   cursorOf(runId: string): RunCursor {
-    const items = this.logs.get(runId)
+    const items = this.logs_.get(runId)
     for (let i = (items?.length ?? 0) - 1; i >= 0; i--) {
       const c = items![i].cursor
       if (c !== null) return c
     }
     return START_CURSOR
+  }
+
+  /** The logs held, in the line's order (for `generatedImagesOf`). */
+  logs(): ChainRunLog[] {
+    return this.line.flatMap((runId) => {
+      const items = this.logs_.get(runId)
+      return items ? [{ runId, items }] : []
+    })
   }
 
   /** The run's closing event has been folded. */
@@ -436,14 +492,14 @@ export class ChainFold {
 
   /** Whether any event of the run has been folded. */
   has(runId: string): boolean {
-    return (this.logs.get(runId)?.length ?? 0) > 0
+    return (this.logs_.get(runId)?.length ?? 0) > 0
   }
 
   /** Fold one event; false when it changed nothing (a repeat, or a run
    *  not on the line). */
   push(runId: string, item: ChainItem): boolean {
     if (!this.line.includes(runId)) return false
-    const log = this.logs.get(runId) ?? []
+    const log = this.logs_.get(runId) ?? []
     if (item.cursor !== null) {
       const last = this.cursorOf(runId)
       if (last !== START_CURSOR && compareCursors(item.cursor, last) <= 0) return false
@@ -456,9 +512,9 @@ export class ChainFold {
       return false
     }
     log.push(item)
-    this.logs.set(runId, log)
+    this.logs_.set(runId, log)
     if (item.event.type === "RUN_FINISHED" || item.event.type === "RUN_ERROR") this.closedRuns.add(runId)
-    const newest = this.line.findLast((id) => this.logs.has(id))
+    const newest = this.line.findLast((id) => this.logs_.has(id))
     if (rewindOf(item) !== null || item.event.type === "MESSAGES_SNAPSHOT" || runId !== newest) {
       this.refold()
     } else {
@@ -470,10 +526,10 @@ export class ChainFold {
   /** Forget a run's closing event — it was answered in place and goes on
    *  (a sub-agent, § 4.4) — so its stream can be followed again. */
   reopen(runId: string): void {
-    const log = this.logs.get(runId)
+    const log = this.logs_.get(runId)
     if (!log || !this.closedRuns.has(runId)) return
     this.closedRuns.delete(runId)
-    this.logs.set(
+    this.logs_.set(
       runId,
       log.filter((i) => i.event.type !== "RUN_FINISHED" && i.event.type !== "RUN_ERROR"),
     )
@@ -483,10 +539,10 @@ export class ChainFold {
   private refold(): void {
     const acc = emptyAcc()
     for (const id of this.line) {
-      const log = this.logs.get(id)
+      const log = this.logs_.get(id)
       if (!log) continue
       const normal = normaliseLog(log)
-      this.logs.set(id, normal)
+      this.logs_.set(id, normal)
       for (const item of normal) apply(acc, id, item.event)
     }
     this.acc = acc

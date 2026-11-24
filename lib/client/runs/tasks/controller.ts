@@ -61,7 +61,7 @@ import { RunsError } from "../errors"
 import { buildResume, type InterruptAnswer } from "../interrupts"
 import { cancelRun, rejoinRun, type RunStream } from "../transport"
 import type { ListRunsQuery, Run, RunCursor, RunList, RunsTarget, ResumeEntry, StartRunRequest } from "../types"
-import { ChainFold, pendingInputOf } from "./chain"
+import { ChainFold, generatedImagesOf, pendingInputOf } from "./chain"
 import { deliverTask, type DeliveryDeps, type DeliveryStore, type LockLike, type PullResult } from "./deliver"
 import { backgroundStartBody } from "./launch-input"
 import { browserNotifier, notificationEvents, notifyOnce, type NotifyDeps } from "./notify"
@@ -90,7 +90,7 @@ import type {
   TaskSummary,
   TaskView,
 } from "./types"
-import { TaskWatch } from "./watch"
+import { TaskWatch, chainLine } from "./watch"
 
 /** At most this many active tasks (Q72). */
 export const ACTIVE_TASK_LIMIT = 5
@@ -465,7 +465,7 @@ export class TasksController {
       markDelivered: async (root) => {
         await this.deps.api.markDelivered(root)
       },
-      verificationOf: (task) => this.verificationOf(task),
+      outputOf: (task) => this.outputOf(task),
       onReportOpened: () => this.deps.launch.note("Report opened in the editor"),
     }
   }
@@ -480,16 +480,22 @@ export class TasksController {
     return this.pulling
   }
 
-  /** A research task's verification: its current run's stream. */
-  private async verificationOf(task: TaskSummary) {
-    const watched = this.watches.get(task.rootRunId)?.watch.fold.view.verification
-    if (watched) return watched
-    const fold = new ChainFold()
-    fold.setLine([task.currentRunId])
-    const controller = new AbortController()
-    const stream = await this.deps.api.stream(task.currentRunId, "0", controller.signal)
-    for await (const item of stream) fold.push(task.currentRunId, item)
-    return fold.view.verification
+  /** A finished task's verification and generated images: the fold of
+   *  its chain — the watched one, else its runs read once. */
+  private async outputOf(task: TaskSummary) {
+    let fold = this.watches.get(task.rootRunId)?.watch.fold
+    if (!fold || !fold.isClosed(task.currentRunId)) {
+      const runs = (await this.deps.api.list({ rootRunId: task.rootRunId, topLevel: true, pageSize: 100 })).runs
+      fold = new ChainFold()
+      const line = chainLine(runs, task.currentRunId)
+      fold.setLine(line)
+      const controller = new AbortController()
+      for (const runId of line) {
+        const stream = await this.deps.api.stream(runId, "0", controller.signal)
+        for await (const item of stream) fold.push(runId, item)
+      }
+    }
+    return { verification: fold.view.verification, images: generatedImagesOf(fold.logs()) }
   }
 
   private async deliverAll(tasks: readonly TaskSummary[]): Promise<void> {

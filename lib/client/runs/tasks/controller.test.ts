@@ -363,3 +363,21 @@ describe("only on runs (Q61)", () => {
     expect(t.controller.snapshot().tasks?.map((x) => x.title).sort()).toEqual(["old path", "scheduled"])
   })
 })
+
+describe("delivery output", () => {
+  test("an unwatched task's images are read from its chain and stored on the delivered message", async () => {
+    const { loadFixture } = await import("../fixtures")
+    const server = new FakeRunsServer()
+    const root = "00000000-0000-4000-8000-0000000000f7"
+    server.add(
+      makeRun({ id: root, threadId: CONV, status: "succeeded", result: { text: "A fox." } }),
+      loadFixture("memory-generated-image").items,
+    )
+    const t = tab({ server })
+    t.store.addConversation(CONV)
+    await t.controller.refreshNow()
+    await until(() => server.marks.size === 1)
+    const message = t.store.conversations.get(CONV)!.messages[0] as { generatedImages?: Array<{ id: string; storagePath?: string }> }
+    expect(message.generatedImages?.map((i) => [i.id, i.storagePath])).toEqual([["c-img-0", "u/generated/fox.png"]])
+  })
+})

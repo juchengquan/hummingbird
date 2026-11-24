@@ -170,3 +170,24 @@ describe("chain fold — recorded background runs", () => {
     expect(fold.view.text).toBe("")
   })
 })
+
+describe("generated images", () => {
+  test("tool_image parts across the chain, once each, with their stored form (data URL or storage path)", async () => {
+    const { generatedImagesOf } = await import("./chain")
+    const stream = loadFixture("memory-generated-image")
+    const runId = (stream.items[0].event as unknown as { runId: string }).runId
+    const images = generatedImagesOf([{ runId, items: [...stream.items, ...stream.items] }])
+    expect(images).toEqual([
+      {
+        id: "c-img-0",
+        url: "https://storage.example/u/generated/fox.png",
+        storagePath: "u/generated/fox.png",
+        width: 1024,
+        height: 1024,
+        format: "png",
+        prompt: "a red fox",
+        mode: "t2i",
+      },
+    ])
+  })
+})

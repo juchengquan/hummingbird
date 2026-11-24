@@ -34,12 +34,19 @@ import "client-only"
 import { formatResearchCitations } from "@/shared/agent/citation-formatter"
 import { deriveResearchReportTitle } from "@/shared/agent/research-report"
 import { withStepLimitNote } from "@/shared/agent/step-limit"
+import type { GeneratedImage } from "@/shared/types"
 import type { VerificationResult } from "@/shared/verify"
 import { parseVerificationFrame } from "@/shared/verify"
 
 import type { TaskPointers } from "./pointers"
 import type { TaskSummary } from "./types"
 
+
+/** A finished task's output beyond its result text. */
+export interface TaskOutput {
+  verification: VerificationResult | null
+  images: GeneratedImage[]
+}
 
 export interface DeliveryConversation {
   id: string
@@ -54,7 +61,12 @@ export interface DeliveryStore {
   /** Idempotent on `id`; `false` when the conversation isn't there. */
   addMessageWithId(
     id: string,
-    message: { role: "assistant"; content: string; verification?: VerificationResult },
+    message: {
+      role: "assistant"
+      content: string
+      verification?: VerificationResult
+      generatedImages?: GeneratedImage[]
+    },
     conversationId: string,
   ): boolean
   createDocumentWithId(id: string, workspaceId: string, title: string, content: string): void
@@ -92,9 +104,12 @@ export interface DeliveryDeps {
   whenDrained(): Promise<void>
   /** `POST /v1/runs/{root}/delivered`. */
   markDelivered(rootRunId: string): Promise<void>
-  /** A research task's citation checks, when the result doesn't carry them
-   *  (its stream's `hummingbird.verification` activity). */
-  verificationOf?(task: TaskSummary): Promise<VerificationResult | null>
+  /** What the task's streams hold that its result doesn't: the citation
+   *  checks (`hummingbird.verification`, when `RunResult.verification`
+   *  is absent) and the images it generated (`hummingbird.tool_image` —
+   *  stored, or data URLs with `localFilesOnly`; the text only quotes the
+   *  provider's temporary URL). */
+  outputOf?(task: TaskSummary): Promise<TaskOutput>
   /** "Report opened in the editor". */
   onReportOpened?(): void
 }
@@ -131,15 +146,17 @@ export function resultTextOf(task: TaskSummary): string | null {
   return task.stoppedAt === "max_steps" ? withStepLimitNote(text, task.maxSteps) : text
 }
 
-async function verificationFor(task: TaskSummary, deps: DeliveryDeps): Promise<VerificationResult | null> {
+async function outputFor(task: TaskSummary, deps: DeliveryDeps): Promise<TaskOutput> {
   const fromResult = parseVerificationFrame((task.result as { verification?: unknown } | null)?.verification)
-  if (fromResult) return fromResult
-  if (!task.research || !deps.verificationOf) return null
-  try {
-    return await deps.verificationOf(task)
-  } catch {
-    return null
+  let streamed: TaskOutput = { verification: null, images: [] }
+  if (deps.outputOf) {
+    try {
+      streamed = await deps.outputOf(task)
+    } catch {
+      // The text alone, rather than nothing.
+    }
   }
+  return { verification: fromResult ?? streamed.verification, images: streamed.images }
 }
 
 /**
@@ -165,10 +182,15 @@ async function writeResult(task: TaskSummary, deps: DeliveryDeps): Promise<boole
     )
     const exists = conv.messages.some((m) => m.id === ids.messageId)
     if (!legacy && !exists) {
-      const verification = await verificationFor(task, deps)
+      const { verification, images } = await outputFor(task, deps)
       wrote = store.addMessageWithId(
         ids.messageId,
-        { role: "assistant", content: text, ...(verification ? { verification } : {}) },
+        {
+          role: "assistant",
+          content: text,
+          ...(verification ? { verification } : {}),
+          ...(images.length > 0 ? { generatedImages: images } : {}),
+        },
         conv.id,
       )
       if (wrote && task.research) {

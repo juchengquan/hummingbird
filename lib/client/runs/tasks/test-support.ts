@@ -200,7 +200,11 @@ export class FakeStore implements DeliveryStore {
   activeWorkspaceId() {
     return this.active
   }
-  addMessageWithId(id: string, message: { role: "assistant"; content: string }, conversationId: string): boolean {
+  addMessageWithId(
+    id: string,
+    message: { role: "assistant"; content: string; generatedImages?: unknown[] },
+    conversationId: string,
+  ): boolean {
     for (const c of this.conversations.values()) if (c.messages.some((m) => m.id === id)) return true
     const conv = this.conversations.get(conversationId)
     if (!conv) return false

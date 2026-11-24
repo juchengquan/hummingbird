@@ -293,3 +293,29 @@ describe("board cards on runs", () => {
     expect(store.artifacts.size).toBe(0)
   })
 })
+
+describe("generated images (localFilesOnly)", () => {
+  test("the task's images are stored with the delivered message, not left to the URL in the text", async () => {
+    const server = new FakeRunsServer()
+    server.add(finished({ result: { text: "Here it is: ![fox](https://minimax.example/tmp/fox.png?exp=1)" } }))
+    const store = new FakeStore()
+    store.addConversation(CONV)
+    const image = {
+      id: "c-img-0",
+      url: "data:image/png;base64,iVBORw0KGgo=",
+      width: 1024,
+      height: 1024,
+      format: "png",
+      prompt: "a red fox",
+      mode: "t2i" as const,
+    }
+    await deliverTask(
+      summaryOf(server.list({})[0], { userId: USER }),
+      deps(store, browser(), server, new Cloud(), {
+        outputOf: async () => ({ verification: null, images: [image] }),
+      }),
+    )
+    const message = store.conversations.get(CONV)!.messages[0] as { generatedImages?: unknown[] }
+    expect(message.generatedImages).toEqual([image])
+  })
+})
