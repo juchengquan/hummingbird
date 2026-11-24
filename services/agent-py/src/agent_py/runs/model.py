@@ -322,10 +322,15 @@ class RunRecord:
     delivered: bool = False
     """The task's root has `result_delivered_at` (Q77)."""
     children_asking: int = 0
-    """Live sub-agent runs of this run paused on a question."""
+    """Sub-agent runs of this run paused on a question no accepted answer
+    holds yet (one with `answer_pending` doesn't count)."""
     answer_pending: bool = False
     """A `respond` job for this run is queued or running while the run is
     still `paused` (an in-place answer not picked up yet, Q59)."""
+    last_seq: int | None = None
+    """The log's highest `seq` when the repository read it with the row
+    (Postgres: one statement for a whole page, survey bug 9); None when it
+    didn't, and the caller asks the event log (`RunEventLog.last_seq`)."""
 
     @property
     def status(self) -> ContractStatus:

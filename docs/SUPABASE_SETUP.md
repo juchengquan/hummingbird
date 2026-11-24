@@ -319,6 +319,20 @@ order. Every migration has a unique numeric prefix (CI enforces this via
     A user who already has 5 or more active tasks can't start another
     until fewer are active.
   - **Rollback:** the statements in the file's header.
+- `supabase/migrations/0048_task_read_flags.sql`
+  - Reading a run without reading its checkpoint (wave 6; Q66). New
+    generated column `tasks.awaiting_children` (the checkpoint's
+    `awaiting_children` key, computed when the checkpoint is written);
+    `task_run_is_current_by` / `task_current_run_id_by` — 0047's
+    current-run rule over columns, since passing a whole `tasks` row to a
+    function fetches its TOASTed checkpoint. 0047's row functions and the
+    cap's count now call them. Idempotent.
+  - **Deploy order:** stop every agent-py → apply 0048 (the column rewrites
+    `tasks` under a brief exclusive lock) → start the new agent-py. An
+    older agent-py or Next keeps working against it.
+  - **Existing rows:** the column is computed for every row by the
+    `add column`; nothing else changes.
+  - **Rollback:** the statements in the file's header.
 - `supabase/migrations/0049_subagent_exit_entry.sql`
   - A sub-agent run's end shows on its parent as it happens (wave 6):
     whatever ends it (the worker, its own cancel, the reconciler) writes a

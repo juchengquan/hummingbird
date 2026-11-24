@@ -22,13 +22,21 @@ answer" for the other kinds (`resume_answers.DECLINED_*`), exactly as a
 cancelled resume entry (wave 6-B; until then the executor ignores the
 key, so an approval reads as not approved and a question as unanswered).
 Keys of `payload` other than those above are dropped. Pure; no I/O.
+
+`answer_problem` is the check both repositories make before queueing
+anything (`answerRun`'s `400 invalid_request`): one entry per open
+interrupt, each once, and a `resolved` payload that fits its interrupt —
+the rule `run_input.check_resume` applies to a resume (an approval needs
+a boolean `approved`).
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
-__all__ = ["ANSWER_KEYS", "respond_job_payload"]
+from .run_input import _payload_problem
+
+__all__ = ["ANSWER_KEYS", "answer_problem", "respond_job_payload"]
 
 ANSWER_KEYS = ("approved", "args", "selection", "value", "uiAnswer")
 """The answer keys a `respond` job payload carries (`RespondRequestSchema`
@@ -56,3 +64,28 @@ def respond_job_payload(entry: Mapping[str, object]) -> dict[str, object]:
             if key in payload and payload[key] is not None:
                 out[key] = payload[key]
     return out
+
+
+def answer_problem(
+    open_interrupts: Sequence[Mapping[str, object]],
+    entries: Sequence[Mapping[str, object]],
+) -> str | None:
+    """Why `entries` (AG-UI `ResumeEntry` JSON) can't answer a run waiting
+    on `open_interrupts`, or None when they can: exactly one entry per
+    open interrupt, and every `resolved` payload shaped for its
+    interrupt's `reason` (`run_input._payload_problem`, as a resume)."""
+    open_by_id = {str(i.get("id")): i for i in open_interrupts}
+    answered = [e.get("interruptId") for e in entries]
+    if len(set(answered)) != len(answered) or set(answered) != set(open_by_id):
+        return "resume[] must answer every open interrupt of the run once."
+    for entry in entries:
+        status = entry.get("status")
+        if status == "cancelled":
+            continue
+        if status != "resolved":
+            return f"resume[{entry.get('interruptId')}]: unknown status {status!r}."
+        interrupt = open_by_id[str(entry.get("interruptId"))]
+        problem = _payload_problem(interrupt.get("reason"), entry.get("payload"))
+        if problem is not None:
+            return f"resume[{entry.get('interruptId')}]: {problem}."
+    return None

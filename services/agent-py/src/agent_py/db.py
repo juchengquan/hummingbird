@@ -28,13 +28,22 @@ logger = structlog.get_logger(__name__)
 _pool: asyncpg.Pool | None = None
 
 
-async def init_pool(dsn: str | None, *, min_size: int = 1, max_size: int = 4) -> None:
+DEFAULT_MAX_SIZE = 10
+"""`Settings.DB_POOL_MAX_SIZE`'s default (was 4 until wave 6, survey bug 18)."""
+
+
+async def init_pool(
+    dsn: str | None, *, min_size: int = 1, max_size: int = DEFAULT_MAX_SIZE
+) -> None:
     """Open the Postgres connection pool.
 
     Idempotent — calling twice is a no-op (used by tests that
     `create_app()` repeatedly). Min-size 1 so the worker always has a
-    connection ready; max-size 4 leaves room for occasional bursts
-    without overwhelming a single-instance worker.
+    connection ready; `max_size` (`DB_POOL_MAX_SIZE`, default 10) is
+    shared by the task poller, the schedule dispatcher, the no-worker
+    reconciler and the runs API — every request and every stream poll
+    takes one for a statement or a short transaction. With 4, a few idle
+    streams polling 8 times a second each starved the worker.
 
     If `dsn` is empty / None, the pool stays unset and the worker
     won't start polling. Useful for local dev where Postgres isn't
@@ -48,8 +57,8 @@ async def init_pool(dsn: str | None, *, min_size: int = 1, max_size: int = 4) ->
         return
     _pool = await asyncpg.create_pool(
         dsn=dsn,
-        min_size=min_size,
-        max_size=max_size,
+        min_size=min(min_size, max(1, max_size)),
+        max_size=max(1, max_size),
         # Worker queries are short. Long-held connections are a smell;
         # surface them as timeouts so they show up in logs.
         command_timeout=30.0,

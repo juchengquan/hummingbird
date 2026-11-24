@@ -8,11 +8,15 @@ class has already authorised the run. `user_id` is taken from the run's
 
 **Subscribe (Q29).** Readers in the writing process are woken the moment
 an `append` here commits — no poll wait; readers in other processes
-(another API replica rejoining, the tasks panel's backend) poll every
-`poll_interval` (~250 ms). Either way a woken reader reads the new rows
-from Postgres, so every stream decodes the same stored bytes (jsonb
-reorders object keys; an in-memory hand-off would make a live stream
-differ from a replay of the same log).
+(another API replica rejoining, the tasks panel's backend), and readers
+of a background run (the worker writes through `store`, not here), poll:
+every `poll_interval` (~250 ms) while entries arrive, backing off to
+`max_poll_interval` (1 s) while the log is idle — each idle poll is a log
+read and the stream's row read, so an idle stream costs about two pool
+acquisitions a second, not eight (wave 6, survey bug 18). Either way a
+woken reader reads the new rows from Postgres, so every stream decodes
+the same stored bytes (jsonb reorders object keys; an in-memory hand-off
+would make a live stream differ from a replay of the same log).
 
 **Seal** is process-local (the `RunEventLog` contract): it stops this
 process's subscribers and refuses later appends from it. A reader
@@ -40,9 +44,11 @@ from ..fence import fenced_connection
 from ..store import event_from_row_payload
 from .event_log import SeqConflict
 
-__all__ = ["DEFAULT_POLL_INTERVAL", "PgRunEventLog", "RunNotFound"]
+__all__ = ["DEFAULT_MAX_POLL_INTERVAL", "DEFAULT_POLL_INTERVAL", "PgRunEventLog", "RunNotFound"]
 
 DEFAULT_POLL_INTERVAL = 0.25
+DEFAULT_MAX_POLL_INTERVAL = 1.0
+"""An idle subscription's poll interval doubles up to this."""
 DEFAULT_SEAL_MEMORY = 60 * 60.0
 
 _log = structlog.get_logger(__name__)
@@ -131,11 +137,13 @@ class PgRunEventLog:
         pool: asyncpg.Pool,
         *,
         poll_interval: float = DEFAULT_POLL_INTERVAL,
+        max_poll_interval: float = DEFAULT_MAX_POLL_INTERVAL,
         seal_memory: float = DEFAULT_SEAL_MEMORY,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._pool = pool
         self._poll = poll_interval
+        self._max_poll = max(poll_interval, max_poll_interval)
         self._seal_memory = seal_memory
         self._clock = clock
         self._sealed: dict[str, float] = {}
@@ -202,6 +210,7 @@ class PgRunEventLog:
         cursor = after_seq
         waiter = asyncio.Event()
         self._waiters.setdefault(run_id, set()).add(waiter)
+        wait = self._poll
         try:
             while True:
                 # Clear before reading: an append that commits after the
@@ -211,15 +220,18 @@ class PgRunEventLog:
                 batch = await self.read(run_id, after_seq=cursor)
                 if batch:
                     cursor = batch[-1].seq
+                    wait = self._poll
                     yield batch
                     continue
                 if sealed:
                     return
                 try:
-                    await asyncio.wait_for(waiter.wait(), timeout=self._poll)
+                    await asyncio.wait_for(waiter.wait(), timeout=wait)
                 except TimeoutError:
                     # Idle for a poll interval: let the consumer re-check
-                    # the run row, then poll again (the cross-process path).
+                    # the run row, then poll again (the cross-process path),
+                    # a little less often each time the log stays idle.
+                    wait = min(wait * 2, self._max_poll)
                     yield []
         finally:
             waiters = self._waiters.get(run_id)

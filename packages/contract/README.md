@@ -166,8 +166,8 @@ Things worth knowing when changing them:
 ### Planned operations (`x-planned`)
 
 An operation can be specified before any backend implements it: it
-carries `x-planned: <wave>` (today `answerRun` and `markRunDelivered`,
-`wave-6`; the runs operations carried `wave-3b` until agent-py
+carries `x-planned: <wave>` (none today: the runs operations carried
+`wave-3b`, and `answerRun` / `markRunDelivered` `wave-6`, until agent-py
 implemented them). The
 conformance suite skips planned operations (`Operation.planned` in
 `conformance/harness.ts`), so a backend is held to everything else with
@@ -348,6 +348,21 @@ without / with a bad credential — `startRun`'s fixture is a
   `CONTRACT_THREAD_ID`: 202 `RunAccepted` + `Location`, the retry → 202,
   `getRun` `queued` / `running` with its `goal` and `maxSteps`, another
   thread → 409, then cancelled.
+- **tasks** (stub + token, 0.5.0): an interrupted chat run answered by a
+  resume names it as `currentRunId` and both carry the root's
+  `rootRunId`; `listRuns` `current` / `rootRunId` / `topLevel` /
+  `delivered` (`true`, `false`, absent) select accordingly; `answerRun` on
+  a top-level run → 409 `invalid_state` (the run stays `interrupted`),
+  unknown or another user's → the same 404 as `getRun`, a run token → 401;
+  `markRunDelivered` on an interactive run → 409 `invalid_state`, unknown
+  or foreign → 404, a run token → 401. With `CONTRACT_THREAD_ID`: a
+  background task is its own root and current run, `markRunDelivered` is
+  409 until it ended and then 200 `delivered: true`, twice. **Not
+  reachable from here:** the stub spawns no sub-agent run and nothing
+  executes a background run, so `answerRun`'s 202 / `answerPending` /
+  `run_already_answered` / `limit_reached`, `childrenAsking`, and
+  delivering a succeeded task are covered by agent-py's
+  `tests/test_runs_tasks_pg.py` on a real database.
 - **compacted replay** (`CONTRACT_COMPACTED_RUN_ID`): `RUN_STARTED`,
   `CUSTOM hummingbird.gap` (valid `RunGapEventValue`),
   `MESSAGES_SNAPSHOT`, …, the closing event.
