@@ -197,6 +197,7 @@ export function createFakeTasks(): FakeTasks | null {
               status: "queued",
               step: null,
               maxSteps: null,
+              stoppedAt: null,
               createdAt: now,
               updatedAt: now,
               finishedAt: null,

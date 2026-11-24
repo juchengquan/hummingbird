@@ -72,7 +72,7 @@ export function SubagentRows({
               variant="ghost"
               className="shrink-0"
               disabled={c.skipping}
-              aria-label={`Skip sub-agent ${c.agent}`}
+              aria-label={`Skip sub-agent ${c.agent}${c.subgoal ? `: ${c.subgoal}` : ""}`}
               title="Skip this sub-agent; the task carries on"
               onClick={() => onSkip(c.id)}
             >

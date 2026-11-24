@@ -4,10 +4,9 @@ import "client-only"
 /**
  * The `TasksContextValue` the dashboard hands to `TasksProvider`.
  *
- * - Until wave 6-C's `useTasksController()` (`lib/client/runs/tasks/
- *   controller.ts`) is wired in here, the value is `PLACEHOLDER_TASKS`:
- *   `not_runs`, so every surface keeps the old single-task path (Q61).
- *   Integration: replace `useRealTasks` with `useTasksController`.
+ * - The real value is `useTasksController()` (`lib/client/runs/tasks/
+ *   controller.ts`): `not_runs` off "agent-py (runs)", so every surface
+ *   keeps the old single-task path there (Q61).
  * - E2E builds (`NEXT_PUBLIC_E2E_TASKS_FAKE=1`, set only by
  *   `playwright.config.ts`) can swap in the in-page fake (`./e2e-fake`)
  *   when a spec asks for it. Any other build folds the flag to `false`,
@@ -16,6 +15,7 @@ import "client-only"
 
 import { useEffect, useState, useSyncExternalStore } from "react"
 
+import { useTasksController } from "@/client/runs/tasks/controller"
 import type { TasksContextValue } from "@/client/runs/tasks/types"
 
 import type { FakeTasks } from "./e2e-fake"
@@ -47,7 +47,7 @@ export const PLACEHOLDER_TASKS: TasksContextValue = {
 }
 
 function useRealTasks(): TasksContextValue {
-  return PLACEHOLDER_TASKS
+  return useTasksController()
 }
 
 const NO_FAKE = {

@@ -47,10 +47,22 @@ const test = base.extend({
 })
 
 /** Signed in (a GoTrue session cookie for the fake origin), on agent-py (runs). */
-async function signedIn(page: Page, state: Record<string, unknown> = {}) {
+async function signedIn(page: Page, state: Record<string, unknown> = {}, board = false) {
   await signIn(page.context())
   const workspace = crypto.randomUUID()
   const now = new Date().toISOString()
+  // The fake's PostgREST forgets writes, so a reload's sync pull would read
+  // pushed rows as deleted elsewhere: a board is seeded before the first load.
+  const project = board
+    ? {
+        projectTasks: [
+          { id: "card-1", workspaceId: workspace, title: "Write the report", status: "todo", position: 0, createdAt: now, updatedAt: now },
+        ],
+        activeConversationId: null,
+        resourcesSidebarOpen: true,
+        resourcesSidebarTab: "project",
+      }
+    : {}
   await page.addInitScript(
     ({ seed, version }) => {
       if (localStorage.getItem("e2e-seeded")) return
@@ -61,15 +73,17 @@ async function signedIn(page: Page, state: Record<string, unknown> = {}) {
       seed: {
         chatBackend: "python-runs",
         chatModel: HAIKU,
-        workspaces: [{ id: workspace, name: "Wire", createdAt: now, updatedAt: now }],
+        workspaces: [{ id: workspace, name: "Wire", createdAt: now, updatedAt: now, ...(board ? { isProject: true } : {}) }],
         activeWorkspaceId: workspace,
         conversations: [],
+        ...project,
         ...state,
       },
       version: STORE_VERSION,
     },
   )
   await page.goto("/")
+  if (board) return
   await page.getByRole("button", { name: "New chat" }).click()
   await composer(page).waitFor()
 }
@@ -96,7 +110,13 @@ test("the Task toggle starts a background run: images in the message, no attachm
   expect(body.forwardedProps.localFilesOnly).toBe(true)
   expect(body.forwardedProps).not.toHaveProperty("attachments")
   expect(body.forwardedProps).not.toHaveProperty("research")
-  expect(JSON.stringify(body.messages.at(-1)?.content)).toContain("data:image/png;base64,")
+  // The contract's image part (openapi.yaml, RUN_EVENTS §1): base64 in `source`.
+  expect(body.messages.at(-1)?.content).toContainEqual(
+    expect.objectContaining({
+      type: "image",
+      source: expect.objectContaining({ type: "data", mimeType: "image/png" }),
+    }),
+  )
   await expect(panel(page)).toContainText("Write the report")
 })
 
@@ -116,22 +136,7 @@ test("a 409 limit_reached is said plainly (Q72)", async ({ page }) => {
 })
 
 test("the board waits for its new conversation to sync, then links the card to the root (bug 5)", async ({ page }) => {
-  await signedIn(page)
-  await page.waitForTimeout(300)
-  await page.evaluate(() => {
-    const saved = JSON.parse(localStorage.getItem("hummingbird-storage")!)
-    const workspace = saved.state.workspaces.find((w: { id: string }) => w.id === saved.state.activeWorkspaceId)
-    workspace.isProject = true
-    const now = new Date().toISOString()
-    saved.state.projectTasks = [
-      { id: "card-1", workspaceId: workspace.id, title: "Write the report", status: "todo", position: 0, createdAt: now, updatedAt: now },
-    ]
-    saved.state.activeConversationId = null
-    saved.state.resourcesSidebarOpen = true
-    saved.state.resourcesSidebarTab = "project"
-    localStorage.setItem("hummingbird-storage", JSON.stringify(saved))
-  })
-  await page.reload()
+  await signedIn(page, {}, true)
   await page.getByRole("button", { name: "Run as task", exact: true }).click()
   await expect.poll(async () => (await sent("start")).length).toBe(1)
   const [start] = await sent("start")
@@ -172,6 +177,14 @@ test("the list, a sub-agent's question answered in place, Skip and Cancel (Q59, 
   await page.getByRole("button", { name: /^Open tasks panel/ }).click()
   await expect.poll(async () => (await sent("list")).map((s) => s.query).join(" ")).toContain("topLevel=true")
   const item = panel(page).getByRole("listitem", { name: "Task: Ask the helpers" })
+  await expect(item.getByRole("button", { name: "Skip sub-agent helper: works" })).toBeVisible()
+  // An expanded task keeps one watch while the list refreshes around it: its
+  // chain is read once, not again on every list tick (each re-read was a new
+  // watch with an empty fold, so the sub-agents' names blinked out).
+  const chainReads = async () => (await sent("list")).filter((s) => s.query.includes("rootRunId=")).length
+  const before = await chainReads()
+  await page.waitForTimeout(6_000)
+  expect(await chainReads()).toBe(before)
   const card = item.getByRole("group", { name: /Question from sub-agent/ })
   await card.getByRole("textbox").fill("blue")
   await card.getByRole("button", { name: "Submit" }).click()
@@ -181,7 +194,8 @@ test("the list, a sub-agent's question answered in place, Skip and Cancel (Q59, 
   expect(answer.body).toEqual({ resume: [{ interruptId: "q", status: "resolved", payload: { value: "blue" } }] })
   await expect(card).toContainText("Answer sent")
 
-  await item.getByRole("button", { name: /^Skip sub-agent/ }).first().click()
+  // Both sub-agents are "helper": the label names the subgoal too.
+  await item.getByRole("button", { name: "Skip sub-agent helper: works" }).click()
   await expect.poll(async () => (await sent("cancel")).map((s) => s.path)).toContain(`/v1/runs/${works}/cancel`)
   await item.getByRole("button", { name: "Cancel task" }).click()
   await expect.poll(async () => (await sent("cancel")).map((s) => s.path)).toContain(`/v1/runs/${parent}/cancel`)

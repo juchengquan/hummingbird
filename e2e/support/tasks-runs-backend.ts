@@ -189,7 +189,9 @@ async function handle(req: Request): Promise<Response> {
       ...startAs,
     })
     runs.set(created.id as string, created)
-    return json(created, 202)
+    // The contract's `RunAccepted` (openapi.yaml): a background start is
+    // acknowledged with its id and status, not the whole run.
+    return json({ runId: created.id, status: created.status }, 202)
   }
   const row = runs.get(id!)
   if (!row) return refuse(404, "not_found", "Run not found.")

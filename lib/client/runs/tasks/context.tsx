@@ -38,15 +38,19 @@ const NOOP_UNSUBSCRIBE = () => {}
  * tasks are streamed); null when it isn't listed, or for a null id.
  */
 export function useTaskView(rootRunId: string | null): TaskView | null {
-  const tasks = useTasks()
+  // Depend on the two functions, never the whole value: the value is new
+  // on every list tick, and a new `subscribe` makes React unsubscribe, which
+  // stops the task's watch, and subscribe again, which starts a new one
+  // from an empty fold (its chain read again, the sub-agents' names gone).
+  const { subscribeTask, getTask } = useTasks()
   const subscribe = useCallback(
     (onChange: () => void) =>
-      rootRunId === null ? NOOP_UNSUBSCRIBE : tasks.subscribeTask(rootRunId, onChange),
-    [tasks, rootRunId],
+      rootRunId === null ? NOOP_UNSUBSCRIBE : subscribeTask(rootRunId, onChange),
+    [subscribeTask, rootRunId],
   )
   const snapshot = useCallback(
-    () => (rootRunId === null ? null : tasks.getTask(rootRunId)),
-    [tasks, rootRunId],
+    () => (rootRunId === null ? null : getTask(rootRunId)),
+    [getTask, rootRunId],
   )
   return useSyncExternalStore(subscribe, snapshot, () => null)
 }

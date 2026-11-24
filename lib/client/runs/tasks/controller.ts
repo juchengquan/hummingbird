@@ -888,6 +888,9 @@ const noopSubscribe = () => () => {}
  * nothing and launches nothing (`availability` says why). Another account
  * signing in gets a fresh controller (its own pointers, bug 6).
  */
+const NO_TASK = (): TaskView | null => null
+const NO_SUBSCRIBE = (): (() => void) => () => {}
+
 export function useTasksController(): TasksContextValue {
   const { status, user } = useAuth()
   const chatBackend = useStore((s) => s.chatBackend)
@@ -942,8 +945,8 @@ export function useTasksController(): TasksContextValue {
       listError: snapshot.listError,
       activeCount: snapshot.activeCount,
       activeLimit: ACTIVE_TASK_LIMIT,
-      getTask: controller ? controller.getTask : () => null,
-      subscribeTask: controller ? controller.subscribeTask : () => () => {},
+      getTask: controller ? controller.getTask : NO_TASK,
+      subscribeTask: controller ? controller.subscribeTask : NO_SUBSCRIBE,
       launch: (input, opts) =>
         controller
           ? controller.launch(input, opts)
