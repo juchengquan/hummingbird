@@ -9,7 +9,7 @@ import { HOST, WEB_ORIGIN, WEB_PORT } from "./support/env"
  * a Next build with that origin baked in as both `NEXT_PUBLIC_SUPABASE_URL`
  * and `NEXT_PUBLIC_AGENT_PY_URL` (`.next-e2e-wire/`).
  *
- * `bunx playwright test -c e2e/tasks-wire.config.ts`. Ports: the app on
+ * `bun run test:e2e:wire`. Ports: the app on
  * `E2E_WEB_PORT`, the fake on `E2E_WIRE_PORT` (default 8190).
  *
  * These need the real provider: on a branch without it the dashboard's

@@ -23,6 +23,8 @@ bun run check        # typecheck + lint (fast — mirrors CI without build/audit
 bun run check:ci     # typecheck + lint + build + audit:bundle (full CI gate locally)
 bun run test         # split runner (scripts/run-tests.sh): isolates app/api/tasks/ (process-global mock.module mocks) + excludes services/ (own CI jobs); a coverage guard fails if a *.test.ts sits outside the configured roots
 bun run test:e2e     # Playwright smoke: starts agent-py (stub harness) + a Next production build; see playwright.config.ts
+bun run test:e2e:wire  # the runs task UI with its real provider over a fake /v1/runs + Supabase (e2e/tasks-wire.config.ts)
+bun run test:e2e:live  # the real stack: Supabase containers, agent-py worker, Next build, scripted model (e2e-live/README.md)
 
 # Agent service (Python — Phase 0 of PLAN-agent-api.md)
 docker compose up agent-py            # run service in container

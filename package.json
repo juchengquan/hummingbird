@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bash scripts/run-tests.sh",
     "test:e2e": "playwright test",
+    "test:e2e:wire": "playwright test -c e2e/tasks-wire.config.ts",
     "test:e2e:live": "bash e2e-live/stack.sh bash -c 'bunx playwright test -c e2e-live/playwright.config.ts && \"$LIVE_PY\" -B e2e-live/routes.py'",
     "test:e2e:smoke": "LIVE_ANTHROPIC_URL= bash e2e-live/stack.sh bash -c '\"$LIVE_PY\" -B e2e-live/smoke.py'",
     "check": "bun run typecheck && bun run lint && bun run check:migrations && bun run test",
