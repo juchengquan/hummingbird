@@ -39,6 +39,10 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
+import { isAgentPyConfigured } from '@/client/api-client';
+import { useAuth } from '@/client/hooks/use-auth';
+import { useStore } from '@/client/hooks/use-store';
+import { editorAiAgentModels, editorAiBackend } from '@/shared/editor-ai/routing';
 import { cn } from '@/shared/utils';
 
 import { aiChatPlugin } from './plugins/ai-kit';
@@ -213,6 +217,23 @@ export function SettingsDialog() {
   const [open, setOpen] = React.useState(false);
   const [openModel, setOpenModel] = React.useState(false);
 
+  // Q102: while agent-py serves the editor (no gateway key typed — a key
+  // keeps the Next route, Q103), only the models agent-py runs are offered;
+  // a pick it doesn't run shows as switched to the first of them.
+  const chatBackend = useStore((s) => s.chatBackend);
+  const { status } = useAuth();
+  const onAgentPy =
+    editorAiBackend({
+      agentPyConfigured: isAgentPyConfigured(),
+      chatBackend,
+      ownKey: Boolean(tempKeys.aiGatewayApiKey),
+      signedIn: status === 'signed-in',
+    }) === 'agent-py';
+  const offered: Model[] = onAgentPy
+    ? editorAiAgentModels().map((m) => ({ label: m.label, value: m.id }))
+    : models;
+  const shownModel = offered.find((m) => m.value === tempModel.value) ?? offered[0] ?? tempModel;
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -224,7 +245,7 @@ export function SettingsDialog() {
       body: {
         ...chatOptions.body,
         apiKey: tempKeys.aiGatewayApiKey,
-        model: tempModel.value,
+        model: shownModel.value,
       },
     });
 
@@ -238,7 +259,7 @@ export function SettingsDialog() {
       body: {
         ...completeOptions.body,
         apiKey: tempKeys.aiGatewayApiKey,
-        model: tempModel.value,
+        model: shownModel.value,
       },
     });
   };
@@ -360,7 +381,7 @@ export function SettingsDialog() {
                       aria-expanded={openModel}
                       role="combobox"
                     >
-                      <code>{tempModel.label}</code>
+                      <code>{shownModel.label}</code>
                       <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
                     </Button>
                   </PopoverTrigger>
@@ -370,7 +391,7 @@ export function SettingsDialog() {
                       <CommandEmpty>No model found.</CommandEmpty>
                       <CommandList>
                         <CommandGroup>
-                          {models.map((m) => (
+                          {offered.map((m) => (
                             <CommandItem
                               key={m.value}
                               value={m.value}
@@ -382,7 +403,7 @@ export function SettingsDialog() {
                               <Check
                                 className={cn(
                                   'mr-2 size-4',
-                                  tempModel.value === m.value
+                                  shownModel.value === m.value
                                     ? 'opacity-100'
                                     : 'opacity-0'
                                 )}
@@ -395,6 +416,12 @@ export function SettingsDialog() {
                     </Command>
                   </PopoverContent>
                 </Popover>
+                {onAgentPy && (
+                  <p className="mt-2 text-muted-foreground text-xs" data-testid="editor-ai-agent-py-note">
+                    Editor AI runs on agent-py, which offers these models. Add an AI Gateway key to use
+                    the others.
+                  </p>
+                )}
               </div>
             </div>
           </div>
