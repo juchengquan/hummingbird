@@ -173,7 +173,7 @@ def editor_reply(body):
         words = " ".join(block.group(2).split()[:2])
         return "elements", {"elements": [{"blockId": block.group(1), "comment": "EDITOR-COMMENT", "content": words}]}
     if first.startswith("You are an inline writing assistant"):
-        return "text", " jumped."
+        return "complete", " jumped."
     if first.startswith("<task>") and "content generation assistant" in first:
         return "text", "GENERATED-TEXT"
     if first.startswith("<task>") and "<Selection>" in first:

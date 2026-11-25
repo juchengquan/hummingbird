@@ -17,7 +17,7 @@ const MOD = process.platform === "darwin" ? "Meta" : "Control"
 
 const editorCalls = async (): Promise<string[]> => (await (await fetch(`${FAKE}/state`)).json()).editor
 
-async function openEditor(page: Page, { signIn }: { signIn: boolean }) {
+async function openEditor(page: Page, { signIn, ghostText = false }: { signIn: boolean; ghostText?: boolean }) {
   if (signIn) {
     const r = await fetch(`${SUPA}/auth/v1/signup`, {
       method: "POST",
@@ -28,7 +28,8 @@ async function openEditor(page: Page, { signIn }: { signIn: boolean }) {
     const raw = "base64-" + Buffer.from(JSON.stringify(s)).toString("base64url")
     await page.context().addCookies([{ name: "sb-127-auth-token", value: raw, domain: "127.0.0.1", path: "/" }])
   }
-  const seed = { chatBackend: "python-runs", editorPrefs: { aiReviewChanges: false, inlineComplete: true } }
+  // Ghost text only where it is under test: typing would fire completions.
+  const seed = { chatBackend: "python-runs", editorPrefs: { aiReviewChanges: false, inlineComplete: ghostText } }
   await page.addInitScript(({ seed, version }) => {
     if (localStorage.getItem("e2e-seeded")) return
     localStorage.setItem("hummingbird-storage", JSON.stringify({ state: seed, version }))
@@ -93,7 +94,7 @@ test("Improve writing: the selection is edited by agent-py", async ({ page }) =>
 })
 
 test("ghost text comes from agent-py's completion", async ({ page }) => {
-  const { toAgentPy } = await openEditor(page, { signIn: true })
+  const { toAgentPy } = await openEditor(page, { signIn: true, ghostText: true })
   // Plate suggests on its own once the block ends with a space.
   await page.keyboard.type(" The quick ")
   await expect(page.getByText("jumped.")).toBeVisible()
