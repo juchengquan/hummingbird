@@ -147,6 +147,15 @@ three times. The goals:
 | Q89 | Every collapsed panel or sidebar (zero width, still mounted) is `inert`: out of the tab order and the accessibility tree |
 | Q90 | Wave-6 leftovers: the worker's claim and `task_waits_on` read 0048's `awaiting_children` column; the timing test waits on events; a real-stack image test (fake image endpoint) |
 | Q91 | Wave 7 is built on one branch by the integrator, test-first, no parallel agents |
+| **Wave 8 (2026-11-25)** | |
+| Q92 | The code interpreter moves onto runs in agent-py as the Q43 trial lays out (embedded SDK, `code_sandbox/`, `runCode`, `sandboxFiles` by id, charts / files / `code_result` out), registered only where a startup check passes (KVM, macOS arm64, or a remote microsandbox key). The production host is decided separately |
+| Q93 | `runCode` runs in interactive and background runs alike; a background run mounts cloud files only, by id (no inline data, as Q49); a signed-out interactive run may send inline files within the 16 MB body |
+| Q94 | A run's result lists its code output (`RunResult.codeResults`, `RunResult.files`, contract 0.5.2, additive); delivery writes them into the message as `codeResults` / `generatedFiles`, as a chat turn stores them. Charts stay out of `generatedImages` |
+| Q95 | agent-py pins `microsandbox==0.8.2` exactly (chosen over the two-week age rule; 0.8 replaces 0.7's APIs) with its own `MSB_HOME`; Next stays on the Node SDK 0.5.7, its upgrade a separate item |
+| Q96 | The wave ends with the Q65 real-model smoke (`.env` key, a few Haiku calls) and the trial's manual sandbox check on the dev Mac (agent-py on the host): print, chart, mounted CSV, `/tmp/outputs` file, timeout, cancel mid-run |
+| Q97 | `e2e-live` becomes a required check after two green weeks (from 8 Dec), confirmed with the owner before the branch protection changes; outside the wave's PR |
+| Q98 | agent-ts keeps giving its model the temporary image link (frozen, removed in Phase 5); recorded in its README's known issues |
+| Q99 | Wave 8 is built like wave 7: one branch, the integrator, test-first, no parallel agents |
 
 ## Run contract (v1)
 
@@ -231,7 +240,7 @@ has shipped behind the existing per-account backend switch.
      executor (5b-A: `reasoningEffort` → extended thinking; a background
      start refuses `attachments`, Q49, and its message parts go through
      the same `check_attachments` as an interactive one)
-   - [ ] background runs on `/v1/runs`: resume carries the answers into
+   - [x] background runs on `/v1/runs`: resume carries the answers into
      the executor (Q41, 0043); starts keep `workspaceId`, `requireApprovalFor`,
      research mode and the allowed MCP servers (shipped in 5b-A; unsafe
      until 5c, see "Background executor bugs")
@@ -266,6 +275,8 @@ has shipped behind the existing per-account backend switch.
 | 5b (Phase 3) | **A** background runs (Q41 resume + 0043 mutual exclusion, start parity, research mode Q46, the Q49 refusal, skills / reasoning effort in the executor, Q48, Run progress fields, early pending question) · **B** context on runs (file budget + notes with ids Q47, MCP resources, bookmarks as taint, cloud files by id Q44) · **C** memory, citation checks, reference image, `localFilesOnly`, per-IP limits, `auto` · **D** local MCP (Q42/Q45), `MCP_ALLOW_PRIVATE_HOSTS`, MCP Apps | 5a |
 | 5c (Phase 3) | the database CI job, then **A** backend (migration 0045; executor, provider, barrier, both cancel paths, runs router; Q55–Q60, background Q51) · **B** frontend (child answer card, reload, cancel, task models, schedule notice). Ends with an end-to-end check: Postgres, the real worker and a scripted model server, driven through the UI | Wave 5 merged |
 | 6 (Phase 3) | the tasks panel onto runs (Q38, Q59 children's answers on runs, Q61, Q69–Q74); also: a Stop just before an ordinary chat tool call is honoured, background runs use `run_answer_applied` | Wave 5c merged (#303–#305) |
+| 7 (Phase 3) | wave-6 gaps: images never as temporary links (Q86), images in a run's result (Q87), refusal hints (Q88), inert collapsed panels (Q89), leftovers (Q90) | Wave 6 merged (#306) |
+| 8 (Phase 3) | the code interpreter on runs (Q92–Q95), the real-model and sandbox smokes (Q96) | Wave 7 merged (#307) |
 
 Each wave merges into one integration branch and ships as one PR
 against `dev`.
