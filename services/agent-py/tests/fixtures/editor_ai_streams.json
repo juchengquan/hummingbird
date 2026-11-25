@@ -125,6 +125,27 @@
         "- item two"
       ]
     },
+    "agentPyRequest": {
+      "document": {
+        "commentContext": "",
+        "edit": null,
+        "generateContext": null,
+        "isSelecting": false
+      },
+      "messages": [
+        {
+          "parts": [
+            {
+              "text": "Write a short intro",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "model": null,
+      "toolName": "generate"
+    },
     "status": 200,
     "headers": {
       "content-type": "text/event-stream",
@@ -317,6 +338,30 @@
         "ing"
       ]
     },
+    "agentPyRequest": {
+      "document": {
+        "commentContext": "<block id=\"p1\">\n  AI systems are transforming modern workplaces.\n</block>\n",
+        "edit": {
+          "kind": "selection",
+          "context": "AI systems are <Selection>transforming</Selection> modern workplaces.\n"
+        },
+        "generateContext": "AI systems are <Selection>transforming</Selection> modern workplaces.\n",
+        "isSelecting": true
+      },
+      "messages": [
+        {
+          "parts": [
+            {
+              "text": "Improve word choice.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "model": null,
+      "toolName": "edit"
+    },
     "status": 200,
     "headers": {
       "content-type": "text/event-stream",
@@ -499,6 +544,30 @@
         "They automate tasks."
       ]
     },
+    "agentPyRequest": {
+      "document": {
+        "commentContext": "<block id=\"p1\">\n  AI systems are transforming modern workplaces.\n</block>\n\n<block id=\"p2\">\n  They automate routine tasks.\n</block>\n",
+        "edit": {
+          "kind": "multi-block",
+          "context": "AI systems are transforming modern workplaces.\n\nThey automate routine tasks.\n"
+        },
+        "generateContext": "AI systems are transforming modern workplaces.\n\nThey automate routine tasks.\n",
+        "isSelecting": true
+      },
+      "messages": [
+        {
+          "parts": [
+            {
+              "text": "Make it formal.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "model": null,
+      "toolName": "edit"
+    },
     "status": 200,
     "headers": {
       "content-type": "text/event-stream",
@@ -680,6 +749,30 @@
         "revolutionising"
       ]
     },
+    "agentPyRequest": {
+      "document": {
+        "commentContext": "<block id=\"p1\">\n  AI systems are transforming modern workplaces.\n</block>\n",
+        "edit": {
+          "kind": "selection",
+          "context": "AI systems are <Selection>transforming</Selection> modern workplaces.\n"
+        },
+        "generateContext": "AI systems are <Selection>transforming</Selection> modern workplaces.\n",
+        "isSelecting": true
+      },
+      "messages": [
+        {
+          "parts": [
+            {
+              "text": "make this punchier",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "model": null,
+      "toolName": null
+    },
     "status": 200,
     "headers": {
       "content-type": "text/event-stream",
@@ -849,6 +942,27 @@
         "Blossoms ",
         "drift"
       ]
+    },
+    "agentPyRequest": {
+      "document": {
+        "commentContext": "",
+        "edit": null,
+        "generateContext": null,
+        "isSelecting": false
+      },
+      "messages": [
+        {
+          "parts": [
+            {
+              "text": "a haiku about spring",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "model": null,
+      "toolName": null
     },
     "status": 200,
     "headers": {
@@ -1042,6 +1156,30 @@
           "\"comment\":\"Which tasks?\",\"content\":\"routine tasks\"}]}"
         ]
       }
+    },
+    "agentPyRequest": {
+      "document": {
+        "commentContext": "<block id=\"p1\">\n  AI systems are transforming modern workplaces.\n</block>\n\n<block id=\"p2\">\n  They automate routine tasks.\n</block>\n",
+        "edit": {
+          "kind": "multi-block",
+          "context": "AI systems are transforming modern workplaces.\n\nThey automate routine tasks.\n"
+        },
+        "generateContext": "AI systems are transforming modern workplaces.\n\nThey automate routine tasks.\n",
+        "isSelecting": true
+      },
+      "messages": [
+        {
+          "parts": [
+            {
+              "text": "Review this.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "model": null,
+      "toolName": "comment"
     },
     "status": 200,
     "headers": {
@@ -1256,6 +1394,30 @@
           ",{\"content\":\"NAME\",\"id\":\"c11\"}]}"
         ]
       }
+    },
+    "agentPyRequest": {
+      "document": {
+        "commentContext": "<block id=\"c11p\">\n  Name\n</block>\n\n<block id=\"c12p\">\n  City\n</block>\n\n<block id=\"c21p\">\n  John\n</block>\n\n<block id=\"c22p\">\n  New york\n</block>\n",
+        "edit": {
+          "kind": "table",
+          "context": "| <CellRef id=\"c11\" /> | <CellRef id=\"c12\" /> |\n| --- | --- |\n| <CellRef id=\"c21\" /> | <CellRef id=\"c22\" /> |\n\n<Cell id=\"c11\">\nName\n</Cell>\n\n<Cell id=\"c12\">\nCity\n</Cell>\n\n<Cell id=\"c21\">\nJohn\n</Cell>\n\n<Cell id=\"c22\">\nNew york\n</Cell>"
+        },
+        "generateContext": "Name\n\nCity\n\nJohn\n\nNew york\n",
+        "isSelecting": true
+      },
+      "messages": [
+        {
+          "parts": [
+            {
+              "text": "Fix capitalisation",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "model": null,
+      "toolName": "edit"
     },
     "status": 200,
     "headers": {

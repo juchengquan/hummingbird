@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Hummingbird backend contract
-  version: 0.5.2
+  version: 0.6.0
   summary: The frontend <-> backend HTTP contract (spec-first, PLAN-frontend-backend-split.md Q19).
   description: |
     Hand-written source of truth for the HTTP surface every Hummingbird
@@ -48,6 +48,13 @@ tags:
     description: Cross-conversation memory upkeep.
   - name: security
     description: Browser security telemetry (CSP violation reports). Public.
+  - name: editor
+    description: |
+      The rich-text editor's AI (Phase 4, Q23): Plate's AI menu and its
+      ghost-text completion. Plain streaming endpoints in the format Plate's
+      client reads — the AI SDK UI message stream and a text stream — the
+      one exception to AG-UI (Q13). The browser renders the document into
+      text (`EditorAiDocument`); the backend never sees a Plate value (Q101).
   - name: runs
     description: |
       Agent runs (Phase 2, Q7): start, rejoin, status, cancel, list. Events
@@ -580,6 +587,115 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  # --- editor ---------------------------------------------------------------
+  /v1/ai/command:
+    post:
+      operationId: editorAiCommand
+      tags: [editor]
+      summary: Generate, edit or comment on the editor document (streamed)
+      description: |
+        Plate's AI menu (Q101–Q105). Mirrors `app/api/ai/command/handler.ts`,
+        with the document rendered by the browser
+        (`components/editor/ai/editor-ai-document.ts`).
+
+        Without `toolName` the model first classifies the last instruction as
+        `generate`, `edit` (only while selecting) or `comment`, and the
+        stream opens with a `data-toolName` part. Then:
+
+        * `generate` / `edit` (not of `kind: table`) — text, streamed as
+          `text-start` / `text-delta` / `text-end` (deltas grouped so a
+          markdown construct is never split);
+        * `comment` — one `data-comment` part per comment
+          (`{ comment: { blockId, comment, content }, status: "streaming" }`),
+          then `{ comment: null, status: "finished" }`;
+        * `edit` of `kind: table` — `data-table` parts likewise
+          (`{ cellUpdate: { content, id } }`).
+
+        The stream is the AI SDK UI message stream (v1): SSE `data:` lines
+        each holding one JSON part — `start`, `start-step`, the parts above,
+        `finish-step` — ending `data: [DONE]`; a failure after the stream
+        opened is an `error` part (`errorText`). Each comment / cell part has
+        its own `id`. Unknown parts are ignored by the client.
+
+        Signed in (bearer) or anonymous: an anonymous caller is refused
+        under `REQUIRE_AUTH_FOR_AI` (`401 auth_required`) and shares the
+        anonymous per-IP limits of runs (`429 rate_limit`). Models: the
+        backend's allowlist; absent means its default. Spends model budget.
+      security:
+        - bearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EditorAiCommandRequest"
+      responses:
+        "200":
+          description: The AI SDK UI message stream.
+          headers:
+            x-vercel-ai-ui-message-stream:
+              description: "`v1` — the stream protocol version."
+              schema:
+                type: string
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/ai/complete:
+    post:
+      operationId: editorAiComplete
+      tags: [editor]
+      summary: Ghost-text completion of the current block (streamed text)
+      description: |
+        The editor's inline autocomplete. Mirrors `app/api/ai/complete/route.ts`:
+        a short continuation of `blockText` (up to the next punctuation mark,
+        ~60 tokens), streamed as plain text; `0` means "nothing sensible".
+        Every caller is rate limited per client IP (60 a minute,
+        `429 rate_limit`); anonymous callers as for `/v1/ai/command`. A
+        failure after the stream opened ends it early.
+      security:
+        - bearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EditorAiCompleteRequest"
+      responses:
+        "200":
+          description: The continuation, as a text stream.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   # --- runs -------------------------------------------------------------------
   /v1/runs:
@@ -1997,6 +2113,114 @@ components:
           type: string
           enum: [not_configured, empty, already_indexed, file_not_found]
           description: Why the request was skipped. Absent when `indexed`.
+
+    EditorAiToolName:
+      type: string
+      enum: [generate, edit, comment]
+
+    EditorAiEditKind:
+      type: string
+      enum: [selection, multi-block, table]
+      description: |
+        Which edit prompt: a span inside one block (`selection`, marked with
+        `<Selection>` tags), several blocks (`multi-block`), or several table
+        cells (`table`, answered with `data-table` cell updates).
+
+    EditorAiDocument:
+      type: object
+      required: [isSelecting, generateContext, edit, commentContext]
+      description: |
+        The editor document as the prompts read it (Q101), rendered by the
+        browser from the Plate value and selection.
+      properties:
+        isSelecting:
+          type: boolean
+          description: The selection is a range, not a caret.
+        generateContext:
+          type: [string, "null"]
+          description: "`generate`'s context while selecting (the selected blocks' markdown); null otherwise."
+        edit:
+          oneOf:
+            - $ref: "#/components/schemas/EditorAiEdit"
+            - type: "null"
+          description: The edit prompt's kind and context while selecting; null otherwise.
+        commentContext:
+          type: string
+          description: "`comment`'s context: the blocks as `<block id=\"…\">` markdown."
+
+    EditorAiEdit:
+      type: object
+      required: [kind, context]
+      properties:
+        kind:
+          $ref: "#/components/schemas/EditorAiEditKind"
+        context:
+          type: string
+
+    EditorAiMessage:
+      type: object
+      required: [role, parts]
+      description: An AI SDK UI message; only `role` and the text parts are read.
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant]
+        parts:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/EditorAiMessagePart"
+
+    EditorAiMessagePart:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          maxLength: 100
+        text:
+          type: string
+          maxLength: 200000
+
+    EditorAiCommandRequest:
+      type: object
+      required: [messages, document]
+      properties:
+        messages:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          description: The editor's AI chat so far; the last user message is the instruction.
+          items:
+            $ref: "#/components/schemas/EditorAiMessage"
+        document:
+          $ref: "#/components/schemas/EditorAiDocument"
+        toolName:
+          oneOf:
+            - $ref: "#/components/schemas/EditorAiToolName"
+            - type: "null"
+          description: The menu's action; absent or null lets the model choose. `edit` needs a selection.
+        model:
+          type: [string, "null"]
+          maxLength: 100
+          description: A catalog model id; absent or null means the backend's default.
+
+    EditorAiCompleteRequest:
+      type: object
+      required: [blockText]
+      properties:
+        blockText:
+          type: string
+          maxLength: 4000
+          description: The current block's text (markdown); the completion continues it.
+        prefix:
+          type: string
+          maxLength: 32000
+          description: The preceding document (markdown); its last 8000 characters are used.
+        model:
+          type: string
+          maxLength: 100
+          description: A catalog model id; absent means the backend's default.
 
     MemoryExtractRequest:
       type: object

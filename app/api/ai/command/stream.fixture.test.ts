@@ -9,6 +9,8 @@
  * that answers from the scenario's script, and records:
  *
  * * `request` — the body Plate's AI menu sends Next;
+ * * `agentPyRequest` — the body the browser sends agent-py instead
+ *   (`toAgentPyCommandBody`: the document rendered to text, Q101);
  * * `script` — what the model says: the tool choice, the text deltas, the
  *   comment / cell elements;
  * * `prompts` — what the route asked the model, per call (agent-py asks
@@ -28,6 +30,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'bun:test';
 import { MockLanguageModelV2, simulateReadableStream } from 'ai/test';
 import { NextRequest } from 'next/server';
+
+import { toAgentPyCommandBody } from '@/components/editor/ai/agent-py-body';
 
 import { handleAiCommand } from './handler';
 
@@ -208,6 +212,7 @@ async function record(scenario: Scenario) {
   const res = await handleAiCommand(req, { selectModel: () => model });
   return {
     ...scenario,
+    agentPyRequest: toAgentPyCommandBody(scenario.request as never, null),
     status: res.status,
     headers: {
       'content-type': res.headers.get('content-type'),

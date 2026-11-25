@@ -32,6 +32,7 @@ from .model_allowlist import get_model_allowlist
 from .routers import (
     chat,
     csp_report,
+    editor_ai,
     embed,
     extract,
     extract_table,
@@ -291,6 +292,7 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
     app.include_router(memory.router)
     app.include_router(csp_report.router)
     app.include_router(runs.router)
+    app.include_router(editor_ai.router)
 
     # Cap request bodies before routing / auth: FastAPI reads (and
     # spools multipart parts of) the body before the auth dependency

@@ -53,6 +53,10 @@ _SCHEDULES_PATH = "/v1/tasks/schedules"
 # (`turnText` ≤ 50k chars — `MEMORY_EXTRACT_BODY_MAX`), `/v1/csp-report`
 # (`CSP_REPORT_MAX_BYTES`; it is public, so the cap matters most there).
 _FIXED_PATH_LIMITS = {
+    # The editor AI routes (wave 9): `AI_COMMAND_BODY_MAX` (a large
+    # document, rendered to text) and `AI_COMPLETE_BODY_MAX`.
+    "/v1/ai/command": 32 * 1024 * 1024,
+    "/v1/ai/complete": 256 * 1024,
     "/v1/embed": 4 * 1024 * 1024,
     "/v1/memory/extract": 256 * 1024,
     "/v1/csp-report": 16 * 1024,
@@ -71,7 +75,8 @@ def body_limit_for(settings: Settings) -> Callable[[str], int]:
     - `/v1/share` — 16 KiB, as on the Next.js route;
     - `/v1/tasks/schedules[/{id}]` — 256 KiB, as on the Next.js routes;
     - `/v1/embed` 4 MiB, `/v1/memory/extract` 256 KiB, `/v1/csp-report`
-      16 KiB — as on the Next.js routes;
+      16 KiB, `/v1/ai/command` 32 MiB, `/v1/ai/complete` 256 KiB — as on
+      the Next.js routes;
     - everything else — `REQUEST_BODY_MAX_BYTES`."""
     extract_limit = settings.EXTRACT_MAX_BYTES + _MULTIPART_OVERHEAD
     chat_limit = settings.CHAT_BODY_MAX_BYTES

@@ -155,6 +155,19 @@ class AnonymousLimits:
             return _refusal("Daily limit for anonymous runs reached. Sign in to continue.", verdict)
         return None
 
+    def check_anonymous_call(self, client_key: str) -> LimitRefusal | None:
+        """An anonymous editor AI command (wave 9, Q105): the anonymous
+        per-minute and daily windows, shared with anonymous runs."""
+        verdict = self.anonymous_rate.consume(client_key)
+        if not verdict.allowed:
+            return _refusal("Too many AI requests. Slow down, or sign in.", verdict)
+        verdict = self.anonymous_budget.consume(client_key)
+        if not verdict.allowed:
+            return _refusal(
+                "Daily limit for anonymous AI requests reached. Sign in to continue.", verdict
+            )
+        return None
+
 
 def _refusal(message: str, verdict: RateLimitVerdict) -> LimitRefusal:
     return LimitRefusal(message, verdict.retry_after_sec)
