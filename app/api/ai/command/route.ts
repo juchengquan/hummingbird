@@ -15,10 +15,10 @@ import {
   tool,
 } from 'ai';
 import { NextResponse } from 'next/server';
-import { type SlateEditor, type Value, createSlateEditor, nanoid } from 'platejs';
+import { type Value, nanoid } from 'platejs';
 import { z } from 'zod';
 
-import { BaseEditorKit } from '@/components/editor/editor-base-kit';
+import { buildEditorAiDocument } from '@/components/editor/ai/editor-ai-document';
 import { markdownJoinerTransform } from '@/shared/markdown-joiner-transform';
 import { categorizeError } from '@/shared/api-errors';
 import { requireAiAuth } from '@/server/auth/require-ai-auth';
@@ -35,7 +35,8 @@ import {
   getCommentPrompt,
   getEditPrompt,
   getGeneratePrompt,
-} from './prompt';
+} from '@/shared/editor-ai/prompt';
+import type { EditorAiDocument } from '@/shared/editor-ai/prompt-utils';
 import { jsonBodyError, readJsonCapped } from '@/server/read-body-capped';
 
 /** Body cap: ≤ 1000 UI messages + an editor of ≤ 50,000 blocks. Generous
@@ -81,13 +82,9 @@ export async function POST(req: NextRequest) {
 
   const { children, selection, toolName: toolNameParam } = ctx;
 
-  const editor = createSlateEditor({
-    plugins: BaseEditorKit,
-    selection: selection ?? null,
-    value: children as Value,
-  });
-
-  const isSelecting = editor.api.isExpanded();
+  // The prompts' inputs (Q101) — the same text the browser sends agent-py.
+  const editorDoc = buildEditorAiDocument(children as Value, selection ?? null);
+  const { isSelecting } = editorDoc;
 
   // Honour the per-request gateway key from the editor settings dialog.
   // `selectModel` falls back to the server-side gateway provider config
@@ -135,12 +132,12 @@ export async function POST(req: NextRequest) {
           // Not used
           prompt: '',
           tools: {
-            comment: getCommentTool(editor, {
+            comment: getCommentTool(editorDoc, {
               messagesRaw,
               model: pickModel(model || 'google/gemini-2.5-flash'),
               writer,
             }),
-            table: getTableTool(editor, {
+            table: getTableTool(editorDoc, {
               messagesRaw,
               model: pickModel(model || 'google/gemini-2.5-flash'),
               writer,
@@ -155,8 +152,11 @@ export async function POST(req: NextRequest) {
             }
 
             if (toolName === 'edit') {
-              const [editPrompt, editType] = getEditPrompt(editor, {
-                isSelecting,
+              if (!editorDoc.edit)
+                throw new Error('Edit tool is only available when selecting');
+              const editType = editorDoc.edit.kind;
+              const editPrompt = getEditPrompt({
+                ...editorDoc.edit,
                 messages: messagesRaw,
               });
 
@@ -186,8 +186,8 @@ export async function POST(req: NextRequest) {
             }
 
             if (toolName === 'generate') {
-              const generatePrompt = getGeneratePrompt(editor, {
-                isSelecting,
+              const generatePrompt = getGeneratePrompt({
+                context: editorDoc.generateContext,
                 messages: messagesRaw,
               });
 
@@ -224,7 +224,7 @@ export async function POST(req: NextRequest) {
 }
 
 const getCommentTool = (
-  editor: SlateEditor,
+  editorDoc: EditorAiDocument,
   {
     messagesRaw,
     model,
@@ -264,7 +264,8 @@ const getCommentTool = (
         model,
         // @ts-expect-error see above
         output: Output.array({ element: commentSchema }),
-        prompt: getCommentPrompt(editor, {
+        prompt: getCommentPrompt({
+          context: editorDoc.commentContext,
           messages: messagesRaw,
         }),
       });
@@ -301,7 +302,7 @@ const getCommentTool = (
   });
 
 const getTableTool = (
-  editor: SlateEditor,
+  editorDoc: EditorAiDocument,
   {
     messagesRaw,
     model,
@@ -333,7 +334,10 @@ const getTableTool = (
         model,
         // @ts-expect-error see above
         output: Output.array({ element: cellUpdateSchema }),
-        prompt: buildEditTableMultiCellPrompt(editor, messagesRaw),
+        prompt: buildEditTableMultiCellPrompt({
+          context: editorDoc.edit?.context ?? '',
+          messages: messagesRaw,
+        }),
       });
 
       let lastLength = 0;

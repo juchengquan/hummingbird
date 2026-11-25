@@ -13,7 +13,7 @@ import {
 } from '@/server/model-provider';
 import { createSlidingWindow, rateLimitKey } from '@/server/rate-limit';
 
-import { getCompletePrompt } from '../command/prompt';
+import { getCompletePrompt } from '@/shared/editor-ai/prompt';
 import { jsonBodyError, readJsonCapped } from '@/server/read-body-capped';
 
 /**
