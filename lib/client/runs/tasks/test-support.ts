@@ -74,7 +74,8 @@ function streamOf(runId: string, items: readonly RunStreamItem[], after: RunCurs
  *  `codeResults` (Q87, Q94) — they can be megabytes. */
 function withoutImages(result: Run["result"]): Run["result"] {
   if (!result) return result
-  const { images: _images, files: _files, codeResults: _code, ...rest } = result as Record<string, unknown>
+  const rest: Record<string, unknown> = { ...result }
+  for (const key of ["images", "files", "codeResults"]) delete rest[key]
   return rest as Run["result"]
 }
 

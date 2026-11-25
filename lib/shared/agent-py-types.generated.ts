@@ -955,6 +955,21 @@ export interface components {
             /** Snippet */
             snippet?: string | null;
         };
+        /** CodeResult */
+        CodeResult: {
+            /** Id */
+            id: string;
+            /** Stdout */
+            stdout?: string | null;
+            /** Stderr */
+            stderr?: string | null;
+            /** Results */
+            results?: {
+                [key: string]: unknown;
+            }[] | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** CompressSummariseBody */
         CompressSummariseBody: {
             /**
@@ -1165,6 +1180,23 @@ export interface components {
             full_text?: string | null;
             /** Language */
             language?: string | null;
+        };
+        /** File */
+        File: {
+            /** Id */
+            id?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Sizebytes */
+            sizeBytes?: number | null;
+            /** Mimetype */
+            mimeType?: string | null;
+            /** Url */
+            url: string;
+            /** Storagepath */
+            storagePath?: string | null;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * FileSource
@@ -1765,6 +1797,8 @@ export interface components {
             referenceImage?: components["schemas"]["RunReferenceImage"] | null;
             /** Localfilesonly */
             localFilesOnly?: boolean | null;
+            /** Sandboxfiles */
+            sandboxFiles?: components["schemas"]["RunSandboxFile"][] | null;
             /** Localmcpservers */
             localMcpServers?: components["schemas"]["LocalMcpServer"][] | null;
         } & {
@@ -1863,8 +1897,24 @@ export interface components {
             } | null;
             /** Images */
             images?: components["schemas"]["Image"][] | null;
+            /** Files */
+            files?: components["schemas"]["File"][] | null;
+            /** Coderesults */
+            codeResults?: components["schemas"]["CodeResult"][] | null;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * RunSandboxFile
+         * @description A file `runCode` may mount (`RunForwardedProps.sandboxFiles`).
+         */
+        RunSandboxFile: {
+            /** Name */
+            name: string;
+            /** Fileid */
+            fileId: string;
+            /** Database64 */
+            dataBase64?: string | null;
         };
         /** @enum {string} */
         RunStatus: "queued" | "running" | "interrupted" | "succeeded" | "failed" | "cancelled";
