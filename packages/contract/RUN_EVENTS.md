@@ -470,6 +470,12 @@ settled before wave 6 — since then every background settle writes
   read them), and only then does a client read them from the stream.
   `listRuns` rows leave `images` out (a data-URL image can be megabytes,
   and the list is polled); `getRun` carries them.
+- **`result.files`, `result.codeResults` (0.5.2, Q94).** The same for a
+  task's `tool_file` files and `code_result` parts (`runCode`): the
+  task's line, then its sub-agents' results', each once; `[]` when
+  none; absent only on a result written before 0.5.2; left out of
+  `listRuns` rows. A `runCode` chart is a `tool_image` image (mode
+  `code`), so it is in `result.images`.
 
 ## 6. Streams
 

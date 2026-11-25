@@ -428,3 +428,43 @@ async def test_anthropic_provider_captures_spawn_subagent_as_spawn_outcome() -> 
     tool_inputs = [e for e in collected if isinstance(e, ToolInputEvent)]
     assert len(tool_inputs) == 1
     assert tool_inputs[0].tool_name == SPAWN_SUBAGENT_TOOL_NAME
+
+
+async def test_a_background_tool_s_images_files_and_code_output_follow_its_result() -> None:
+    """Wave 8: a background run emits a tool's files (they were dropped) and
+    its `code_result` (runCode) after its images, in the Next route's order."""
+    from agent_py.events import CodeResultEvent, ToolFileEvent, ToolImageEvent
+    from agent_py.providers.anthropic_provider import execute_tool_call
+
+    events, emitter = _list_sink()
+    tool = _build_tool(
+        "runCode",
+        result=ToolInvocationResult(
+            text="stdout: 42",
+            summary="Ran python (ok)",
+            images=({"url": "data:image/png;base64,UE5H", "format": "png", "prompt": ""},),
+            image_mode="code",
+            files=({"name": "r.csv", "sizeBytes": 2, "mimeType": "text/csv", "url": "data:x"},),
+            code_result={
+                "stdout": "42\n",
+                "stderr": "",
+                "results": [{"type": "text", "value": "42\n"}],
+            },
+        ),
+    )
+    results: list[dict[str, Any]] = []
+    await execute_tool_call(
+        emitter, tool, tool_call_id="c1", tool_name="runCode", args={}, results=results
+    )
+    assert [e.kind for e in events] == ["tool_output", "tool_image", "tool_file", "code_result"]
+    image = next(e for e in events if isinstance(e, ToolImageEvent))
+    assert image.mode == "code" and image.images[0]["id"] == "c1-0"
+    files = next(e for e in events if isinstance(e, ToolFileEvent))
+    assert files.files[0]["id"] == "c1-file-0"
+    code = next(e for e in events if isinstance(e, CodeResultEvent))
+    assert (code.tool_call_id, code.stdout, code.results) == (
+        "c1",
+        "42\n",
+        ({"type": "text", "value": "42\n"},),
+    )
+    assert results[0]["content"] == "stdout: 42"

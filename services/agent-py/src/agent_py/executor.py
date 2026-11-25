@@ -58,6 +58,7 @@ from . import (
 )
 from .aggregate import aggregate_child_results
 from .barrier import settle_task_terminal
+from .code_sandbox.mount_files import MountManifestEntry
 from .emitter import EventSink, RunEmitter, _now_iso
 from .events import (
     ApprovalEvent,
@@ -533,12 +534,16 @@ class _RunTools:
     skill_tool_names: frozenset[str] = frozenset()
     """The skill tools the run chose (`config.skills`, see `_skills_from`)."""
     skill_configs: SkillConfigs | None = None
+    sandbox_files: tuple[MountManifestEntry, ...] = ()
+    """The cloud files `runCode` may mount (`config.sandboxFiles`, Q93)."""
 
     def registry(self) -> dict[str, ToolDescriptor]:
         out = {
             name: d
             for name, d in default_tool_registry(
-                context=self.context, skill_configs=self.skill_configs
+                context=self.context,
+                skill_configs=self.skill_configs,
+                sandbox_files=self.sandbox_files,
             ).items()
             if name not in _ALL_SKILL_TOOL_NAMES or name in self.skill_tool_names
         }
@@ -575,6 +580,22 @@ def _skills_from(checkpoint: dict[str, Any]) -> tuple[frozenset[str], SkillConfi
         web_fetch=configs.get("webFetchConfig"),
         image_gen=configs.get("imageGenConfig"),
     )
+
+
+def _sandbox_files_from(checkpoint: dict[str, Any]) -> tuple[MountManifestEntry, ...]:
+    """`config.sandboxFiles` → the cloud files `runCode` may mount, by id
+    only (Q93: a background run never mounts inline data, whatever the
+    checkpoint holds)."""
+    cfg = checkpoint.get("config")
+    raw = cfg.get("sandboxFiles") if isinstance(cfg, dict) else None
+    out: list[MountManifestEntry] = []
+    for entry in raw if isinstance(raw, list) else []:
+        if not isinstance(entry, dict) or "dataBase64" in entry:
+            continue
+        name, file_id = entry.get("name"), entry.get("fileId")
+        if isinstance(name, str) and name and isinstance(file_id, str) and file_id:
+            out.append(MountManifestEntry(name=name, file_id=file_id))
+    return tuple(out[:10])
 
 
 def _allowed_mcp_server_ids_from(checkpoint: dict[str, Any]) -> tuple[str, ...] | None:
@@ -630,6 +651,7 @@ async def _build_run_tools(
         mcp_gated=mcp_gated,
         skill_tool_names=skill_tool_names,
         skill_configs=skill_configs,
+        sandbox_files=_sandbox_files_from(checkpoint),
     )
 
 
@@ -1700,6 +1722,7 @@ def _default_make_step_fn(
             mcp_gated=set(),
             skill_tool_names=skill_tool_names,
             skill_configs=skill_configs,
+            sandbox_files=_sandbox_files_from(checkpoint),
         )
     tools_dict = run_tools.registry()
     tools = list(tools_dict.values())

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Hummingbird backend contract
-  version: 0.5.1
+  version: 0.5.2
   summary: The frontend <-> backend HTTP contract (spec-first, PLAN-frontend-backend-split.md Q19).
   description: |
     Hand-written source of truth for the HTTP surface every Hummingbird
@@ -2209,6 +2209,21 @@ components:
             The account's "store files locally" preference: generated
             images come back as data URLs instead of being uploaded to
             Storage. Absent means false.
+        sandboxFiles:
+          type: array
+          maxItems: 10
+          items:
+            $ref: "#/components/schemas/RunSandboxFile"
+          description: |
+            The files `runCode` may mount at `/mnt/files/<name>` (0.5.2,
+            Q92), when the `codeInterpreter` skill is on: the Next chat
+            body's `sandboxFiles`, the model naming them by `name`. A cloud
+            file goes by id — the backend reads it only if it is the
+            caller's (Q44); `dataBase64` only for a signed-out user's local
+            file, within the request size limit. A background run takes
+            cloud files only (Q93): one with `dataBase64` is
+            `400 invalid_request`. A file that can't be mounted is a note
+            to the model, never an error.
         localMcpServers:
           type: array
           maxItems: 8
@@ -2221,6 +2236,26 @@ components:
             credentials here**: they ride in `RunAgentInput.state` under
             `hummingbird.localMcp` (see `StartRunRequest`).
       additionalProperties: true
+
+    RunSandboxFile:
+      type: object
+      description: A file `runCode` may mount (`RunForwardedProps.sandboxFiles`).
+      required: [name, fileId]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: The name the model passes to `runCode`'s `files`.
+        fileId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        dataBase64:
+          type: string
+          maxLength: 13333336
+          description: The bytes, base64 — a signed-out user's local file only.
+      additionalProperties: false
 
     RunAttachment:
       description: |
@@ -2629,6 +2664,58 @@ components:
                 type: string
               mode:
                 type: string
+        files:
+          type: array
+          description: |
+            The files the answer carries (0.5.2, Q94): every
+            `hummingbird.tool_file` file of the task's runs (`runCode`'s
+            `/tmp/outputs`), in order, then its sub-agents' results' files.
+            Each a Storage URL with its `storagePath`, or a data URL when
+            files are kept local. Like `images`: an empty list when there
+            are none, absent on a result written before 0.5.2, and left
+            out of `listRuns` rows.
+          items:
+            type: object
+            required: [url]
+            additionalProperties: true
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              sizeBytes:
+                type: integer
+              mimeType:
+                type: string
+              url:
+                type: string
+              storagePath:
+                type: string
+        codeResults:
+          type: array
+          description: |
+            The code output the answer carries (0.5.2, Q94): every
+            `hummingbird.code_result` of the task's runs, in order, then
+            its sub-agents' results'. Charts are in `images` (mode `code`).
+            Like `images`: an empty list when there are none, absent on a
+            result written before 0.5.2, and left out of `listRuns` rows.
+          items:
+            type: object
+            required: [id]
+            additionalProperties: true
+            properties:
+              id:
+                type: string
+                description: The `runCode` tool call id.
+              stdout:
+                type: string
+              stderr:
+                type: string
+              results:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
       additionalProperties: true
 
     RunError:

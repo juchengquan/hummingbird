@@ -214,6 +214,19 @@ class CitationTableSource(BaseModel):
     snippet: Annotated[str | None, Field(max_length=1000)] = None
 
 
+class CodeResult(BaseModel):
+    model_config = ConfigDict(
+        extra="allow",
+    )
+    id: str
+    """
+    The `runCode` tool call id.
+    """
+    stdout: str | None = None
+    stderr: str | None = None
+    results: list[dict[str, Any]] | None = None
+
+
 type ColumnHint1 = Annotated[str, Field(max_length=60, min_length=1)]
 
 
@@ -429,6 +442,18 @@ class ExtractTableSource(BaseModel):
     title: Annotated[str, Field(max_length=300)]
     url: Annotated[str, Field(max_length=2000)]
     snippet: Annotated[str, Field(max_length=2000)]
+
+
+class File(BaseModel):
+    model_config = ConfigDict(
+        extra="allow",
+    )
+    id: str | None = None
+    name: str | None = None
+    sizeBytes: int | None = None
+    mimeType: str | None = None
+    url: str
+    storagePath: str | None = None
 
 
 class FileSource(BaseModel):
@@ -1227,6 +1252,19 @@ class RunForwardedProps(BaseModel):
     Storage. Absent means false.
 
     """
+    sandboxFiles: Annotated[list[RunSandboxFile] | None, Field(max_length=10)] = None
+    """
+    The files `runCode` may mount at `/mnt/files/<name>` (0.5.2,
+    Q92), when the `codeInterpreter` skill is on: the Next chat
+    body's `sandboxFiles`, the model naming them by `name`. A cloud
+    file goes by id — the backend reads it only if it is the
+    caller's (Q44); `dataBase64` only for a signed-out user's local
+    file, within the request size limit. A background run takes
+    cloud files only (Q93): one with `dataBase64` is
+    `400 invalid_request`. A file that can't be mounted is a note
+    to the model, never an error.
+
+    """
     localMcpServers: Annotated[list[LocalMcpServer] | None, Field(max_length=8)] = None
     """
     Local-mode MCP servers (Q42, Q45): servers whose credentials
@@ -1407,6 +1445,26 @@ class RunResult(BaseModel):
     the list is polled): read them from `getRun`.
 
     """
+    files: list[File] | None = None
+    """
+    The files the answer carries (0.5.2, Q94): every
+    `hummingbird.tool_file` file of the task's runs (`runCode`'s
+    `/tmp/outputs`), in order, then its sub-agents' results' files.
+    Each a Storage URL with its `storagePath`, or a data URL when
+    files are kept local. Like `images`: an empty list when there
+    are none, absent on a result written before 0.5.2, and left
+    out of `listRuns` rows.
+
+    """
+    codeResults: list[CodeResult] | None = None
+    """
+    The code output the answer carries (0.5.2, Q94): every
+    `hummingbird.code_result` of the task's runs, in order, then
+    its sub-agents' results'. Charts are in `images` (mode `code`).
+    Like `images`: an empty list when there are none, absent on a
+    result written before 0.5.2, and left out of `listRuns` rows.
+
+    """
 
 
 class RunRewindEventValue(BaseModel):
@@ -1420,6 +1478,25 @@ class RunRewindEventValue(BaseModel):
     """
 
     after: Annotated[int, Field(ge=0)]
+
+
+class RunSandboxFile(BaseModel):
+    """
+    A file `runCode` may mount (`RunForwardedProps.sandboxFiles`).
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    name: Annotated[str, Field(max_length=500, min_length=1)]
+    """
+    The name the model passes to `runCode`'s `files`.
+    """
+    fileId: Annotated[str, Field(max_length=64, min_length=1)]
+    dataBase64: Annotated[str | None, Field(max_length=13333336)] = None
+    """
+    The bytes, base64 — a signed-out user's local file only.
+    """
 
 
 type RunStatus = Literal["queued", "running", "interrupted", "succeeded", "failed", "cancelled"]

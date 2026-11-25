@@ -85,6 +85,7 @@ SKILL_TOOLS: Mapping[str, str] = {
     "webFetch": "webFetch",
     "imageGen": "generateImage",
     "searchFiles": "searchFiles",
+    "codeInterpreter": "runCode",
 }
 
 #: Offered on every run; they always wait for the user (no execute path).
@@ -122,7 +123,11 @@ def skill_tools(ri: RunInput, opts: RunOptions, ctx: HookContext, draft: Toolset
     """The skills the run asked for (`SKILL_TOOLS`) + `HITL_TOOLS`, built by
     `default_tool_registry` — with the user-scoped tools (`searchFiles`)
     when the run has a `ToolContext`."""
-    registry = default_tool_registry(context=ctx.tool_context, skill_configs=opts.skill_configs)
+    registry = default_tool_registry(
+        context=ctx.tool_context,
+        skill_configs=opts.skill_configs,
+        sandbox_files=opts.sandbox_files,
+    )
     wanted = {SKILL_TOOLS[s] for s in opts.skill_ids if s in SKILL_TOOLS} | HITL_TOOLS
     draft.tools.update({name: d for name, d in registry.items() if name in wanted})
 
