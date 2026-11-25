@@ -121,6 +121,11 @@ def script(body):
         ]
     if name == "draw":
         return 0, done if n else [use(0, "generateImage", {"prompt": f"{tag} cat"})]
+    if name == "code":
+        return 0, done if n else [use(0, "runCode", {"code": "print(6 * 7)"})]
+    if name == "codekid":
+        kid = [{"personaSlug": "helper", "subgoal": f"SCENARIO:code/{tag}k"}]
+        return 0, done if n else [use(0, "spawnSubagent", {"tasks": kid})]
     if name == "drawkid":
         kid = [{"personaSlug": "helper", "subgoal": f"SCENARIO:draw/{tag}k"}]
         return 0, done if n else [use(0, "spawnSubagent", {"tasks": kid})]
