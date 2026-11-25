@@ -24,6 +24,7 @@ import re
 import secrets
 from dataclasses import dataclass
 
+from ..auth import auth_configured
 from ..rate_limit import RateLimitVerdict, SlidingWindow
 from ..settings import Settings
 
@@ -77,13 +78,13 @@ def parse_require_auth_flag(raw: str | None) -> bool:
 
 def require_auth_for_ai(settings: Settings) -> bool:
     """True when anonymous runs must be refused: the flag is on **and**
-    sign-in is possible (`SUPABASE_JWT_SECRET` set — the agent-py
-    counterpart of "Supabase configured"). Raises
+    sign-in is possible (a token can be verified: `SUPABASE_JWT_SECRET`
+    or a JWKS URL — the agent-py counterpart of "Supabase configured"). Raises
     `RequireAuthConfigError` on an invalid flag even when it would be
     inert, like `isAiAuthRequired`."""
     if not parse_require_auth_flag(settings.REQUIRE_AUTH_FOR_AI):
         return False
-    return bool(settings.SUPABASE_JWT_SECRET)
+    return auth_configured(settings)
 
 
 # --- Anonymous limits ------------------------------------------------------------

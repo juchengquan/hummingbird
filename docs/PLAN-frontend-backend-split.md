@@ -156,6 +156,16 @@ three times. The goals:
 | Q97 | `e2e-live` becomes a required check after two green weeks (from 8 Dec), confirmed with the owner before the branch protection changes; outside the wave's PR |
 | Q98 | agent-ts keeps giving its model the temporary image link (frozen, removed in Phase 5); recorded in its README's known issues |
 | Q99 | Wave 8 is built like wave 7: one branch, the integrator, test-first, no parallel agents |
+| **Wave 9 (2026-11-25)** | |
+| Q100 | Wave 9 is Phase 4 (editor AI on agent-py), the token-signing check (Q61) and the plan's housekeeping. "agent-py (runs)" as the default, with the backend switch a synced account setting, is wave 10; Phase 5 follows in waves of its own |
+| Q101 | Plate stays in the browser: it renders the document into the prompt's inputs with the helpers the route uses today (`getMarkdown`, the selection markdown with block ids, the table cells); agent-py owns the prompts (ported from `app/api/ai/command/prompt/` + `utils.ts`) and never sees a Plate value. A shared fixture pins the ported prompts to Next's, as Q47's did |
+| Q102 | On agent-py the editor takes the `anthropic/*` allowlist as chat does (Q40): the picker offers those, a model it can't run is switched with a note, and Next's Gemini Flash / GPT-5.5 defaults (the tool choice included) become `AGENT_DEFAULT_MODEL` |
+| Q103 | A browser with its own gateway key keeps the editor on the Next route; agent-py never takes a user's key. What happens to the setting is Phase 5's |
+| Q104 | `POST /v1/ai/command` speaks the AI SDK UI message stream (SSE, `x-vercel-ai-ui-message-stream: v1`) with the route's parts (text deltas, `data-toolName`, `data-comment`, `data-table`); `POST /v1/ai/complete` a plain text stream. Both in `openapi.yaml` (contract 0.6.0, additive); the Next route's recorded streams are the fixtures agent-py's are checked against. Plate's client is unchanged (Q23) |
+| Q105 | The editor goes to agent-py on `python` / `python-runs`, like summarize; `ts-service` stays on Next (agent-ts is frozen). agent-py keeps Next's gates: `REQUIRE_AUTH_FOR_AI`, the 32 MB body cap, plus the per-IP limit its other model endpoints put on anonymous callers |
+| Q106 | agent-py verifies Supabase's asymmetric signing keys (ES256 / RS256 from the project's JWKS, cached) beside HS256, so a project on the new keys isn't refused; tested with a locally signed token and a fake JWKS, plus the wrong-key, wrong-algorithm and `alg: none` refusals. Closes Q61's check |
+| Q107 | Housekeeping: the status line; each wave-6 survey item checked against the code and marked (one not fixed becomes a wave-9 item, told to the owner first); Q95's Next SDK upgrade dropped (Phase 5 removes that code) |
+| Q108 | Built like waves 7 and 8 (one branch, the integrator, test-first, no parallel agents); ends with a real-stack browser test of the editor's generate / edit / comment / complete on agent-py with a scripted model |
 
 ## Run contract (v1)
 

@@ -327,7 +327,7 @@ asyncpg · structlog · pytest · ruff · mypy.
 | Path | What |
 |---|---|
 | `services/agent-py/src/agent_py/main.py` | FastAPI app + endpoints. Lifespan owns the DB pool + the poller task. |
-| `services/agent-py/src/agent_py/auth.py` | Supabase JWT verification middleware (HS256 against `SUPABASE_JWT_SECRET`). |
+| `services/agent-py/src/agent_py/auth.py` | Supabase JWT verification middleware (HS256 against `SUPABASE_JWT_SECRET`; ES256 / RS256 against the project's JWKS, `jwks.py`). |
 | `services/agent-py/src/agent_py/settings.py` | `pydantic-settings` config. Reads the repo-level `.env`. |
 | `services/agent-py/src/agent_py/model_allowlist.py` | Model allowlist — the `anthropic/*` entries of `config/models.json`, each mapped to its `anthropicModelId`. Loaded + validated at `create_app`. agent-ts twin: `services/agent-ts/src/models.ts`. |
 | `services/agent-py/src/agent_py/db.py` | asyncpg pool lifecycle. Open on startup if `SUPABASE_DB_URL` is set; close on shutdown. |
@@ -344,8 +344,10 @@ asyncpg · structlog · pytest · ruff · mypy.
 | `docker-compose.yml` (repo root) | Spins up the agent service alongside `bun dev`. |
 | `lib/shared/agent-py-types.generated.ts` | TS types generated from FastAPI's OpenAPI doc — the **source of truth** for the Python ⇄ TS contract. Regen with `bun run codegen:agent-types`. CI fails on drift via `codegen:agent-types:check`. |
 
-**Configuration:** `SUPABASE_JWT_SECRET` is required for any
-auth-protected endpoint (without it, those endpoints return 503 — a
+**Configuration:** `SUPABASE_JWT_SECRET` (HS256 tokens) or a JWKS URL
+(`SUPABASE_JWKS_URL`, else derived from `SUPABASE_URL` — ES256 / RS256
+tokens from Supabase's asymmetric signing keys) is required for any
+auth-protected endpoint (with neither, those endpoints return 503 — a
 distinct signal from 401 so monitoring can alert on misconfig).
 `SUPABASE_DB_URL` is required to enable the poller — must be the
 **direct** Postgres connection (`db.<project>.supabase.co:5432`), NOT
