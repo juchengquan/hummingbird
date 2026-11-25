@@ -1,6 +1,6 @@
 # Plan: Frontend / backend split
 
-Status: **Waves 1–5 (Phases 0–2, chat on runs, backend catch-up) shipped (#294–#302). Wave 5c (background executor correctness, #303–#305) shipped. Wave 6 (tasks panel onto runs) being planned.** Decided in a design interview
+Status: **Waves 1–8 shipped (#294–#308): Phases 0–2, chat and the tasks panel on runs, the backend catch-up (Phase 3's checklist is done). Wave 9 is Phase 4 — the editor's AI on agent-py — plus agent-py verifying asymmetric Supabase tokens. Next: wave 10 makes "agent-py (runs)" the default; Phase 5 (removal) follows.** Decided in a design interview
 on 2026-11-21. Supersedes the open parts of
 [`PLAN-backend-extraction.md`](PLAN-backend-extraction.md), whose Phase 1
 (single `apiClient` + Zod schemas + `docs/API.md`) shipped and is the
@@ -116,7 +116,7 @@ three times. The goals:
 | Q58 | "Answered the old way" is per question (the question's id), not per task |
 | Q59 | A sub-agent's question is answered in place and shown on the parent task: a named exception to Q24, children only. 5c fixes the card and the old route; wave 6 adds the runs endpoint |
 | Q60 | Cancel means the whole task, on old and new paths: its chain of answers and its children, and the question doesn't reopen. Cancelling one child skips it and the parent continues |
-| Q61 | Tasks use runs only while "agent-py (runs)" is selected, and each task stays on the path it started on. Before that is a default, check token signing: agent-py accepts HS256 only |
+| Q61 | Tasks use runs only while "agent-py (runs)" is selected, and each task stays on the path it started on. Before that is a default, check token signing: agent-py accepts HS256 only *(done, Q106: ES256 / RS256 from the JWKS too)* |
 | Q62 | Migrating 0045 never starts a model call: a parent left waiting on ended sub-agents fails ("run it again") |
 | Q63 | Q57 extends to chat on runs (an applied interactive answer can't be given again), as a small PR after 5c *(done: migration 0046; agent-py stamps a chat resume before its answers take effect, in Postgres and the memory store; a later answer is `409 run_answer_applied` and the client drops the card and asks to resend)* |
 | Q64 | After an applied answer fails, the paused run stays as it is (a second answer is a 409); wave 6 shows the chain's last run |
@@ -151,7 +151,7 @@ three times. The goals:
 | Q92 | The code interpreter moves onto runs in agent-py as the Q43 trial lays out (embedded SDK, `code_sandbox/`, `runCode`, `sandboxFiles` by id, charts / files / `code_result` out), registered only where a startup check passes (KVM, macOS arm64, or a remote microsandbox key). The production host is decided separately |
 | Q93 | `runCode` runs in interactive and background runs alike; a background run mounts cloud files only, by id (no inline data, as Q49); a signed-out interactive run may send inline files within the 16 MB body |
 | Q94 | A run's result lists its code output (`RunResult.codeResults`, `RunResult.files`, contract 0.5.2, additive); delivery writes them into the message as `codeResults` / `generatedFiles`, each file also a `file` artifact, as a chat turn stores them. **Corrected while building:** a chat turn keeps a chart in `generatedImages` (mode `t2i`), so delivery does too — the chart is in `RunResult.images` (mode `code`) |
-| Q95 | agent-py pins `microsandbox==0.8.2` exactly (chosen over the two-week age rule; 0.8 replaces 0.7's APIs) with its own `MSB_HOME`; Next stays on the Node SDK 0.5.7, its upgrade a separate item |
+| Q95 | agent-py pins `microsandbox==0.8.2` exactly (chosen over the two-week age rule; 0.8 replaces 0.7's APIs) with its own `MSB_HOME`; Next stays on the Node SDK 0.5.7, its upgrade a separate item **Dropped (Q107):** Phase 5 removes Next's code interpreter, so it stays on 0.5.7 |
 | Q96 | The wave ends with the Q65 real-model smoke (`.env` key, a few Haiku calls) and the trial's manual sandbox check on the dev Mac (agent-py on the host): print, chart, mounted CSV, `/tmp/outputs` file, timeout, cancel mid-run |
 | Q97 | `e2e-live` becomes a required check after two green weeks (from 8 Dec), confirmed with the owner before the branch protection changes; outside the wave's PR |
 | Q98 | agent-ts keeps giving its model the temporary image link (frozen, removed in Phase 5); recorded in its README's known issues |
@@ -263,7 +263,13 @@ has shipped behind the existing per-account backend switch.
      check whether it works on Next before porting (it didn't: Q47 — the
      header now says `fileId: …` on Next and runs, and the RAG / truncation
      notes name it)
-4. **Editor AI to the backend** (Q23).
+4. **Editor AI to the backend** (Q23) — wave 9: `/v1/ai/command` +
+   `/v1/ai/complete` on agent-py (Q101–Q105), the document rendered in the
+   browser (`components/editor/ai/`), the prompts in
+   `lib/shared/editor-ai/` with agent-py's port pinned by a parity
+   fixture. Found while porting: on ai@5 the Next route's free-text
+   prompts, comments and multi-cell edits all failed (`Output.choice` /
+   `Output.array` don't exist in v5) — fixed in the route.
 5. **Removal** — all Next API routes, AI/admin keys from the frontend
    env, the old `/v1/chat`, agent-ts's old routes, the server session;
    move the Next app into `apps/web`; rename and reshape the run tables
@@ -288,6 +294,7 @@ has shipped behind the existing per-account backend switch.
 | 6 (Phase 3) | the tasks panel onto runs (Q38, Q59 children's answers on runs, Q61, Q69–Q74); also: a Stop just before an ordinary chat tool call is honoured, background runs use `run_answer_applied` | Wave 5c merged (#303–#305) |
 | 7 (Phase 3) | wave-6 gaps: images never as temporary links (Q86), images in a run's result (Q87), refusal hints (Q88), inert collapsed panels (Q89), leftovers (Q90) | Wave 6 merged (#306) |
 | 8 (Phase 3) | the code interpreter on runs (Q92–Q95), the real-model and sandbox smokes (Q96) | Wave 7 merged (#307) |
+| 9 (Phase 4) | the editor's AI on agent-py (Q101–Q105), asymmetric Supabase tokens (Q106), housekeeping (Q107) | Wave 8 merged (#308) |
 
 Each wave merges into one integration branch and ships as one PR
 against `dev`.
@@ -354,20 +361,22 @@ Read from the code at #302; the first twelve were also checked by hand.
 
 **Wave 6**
 
-- Realtime arriving ahead of the replay drops events.
-- Two tabs both write the result; the single saved pointer is clobbered.
-- A second launch orphans the running task.
-- A research result lands in the workspace active when it finishes.
-- Scheduled results never reach their conversation.
-- Background prompts carry no file id for `searchFiles`.
-- Resending a task turn makes it a chat turn.
-- A 4096-token step cuts a report and reports done.
-- A long watch dies on an expired token; idle watchers can starve the pool of 4.
-- A board task can start before its conversation has synced.
-- A parent spawning on its last step ignores the children's results.
-- No stale / no-worker reconciler for runs.
+- Realtime arriving ahead of the replay drops events. *(fixed, wave 6: `use-task-run.ts`)*
+- Two tabs both write the result; the single saved pointer is clobbered. *(fixed, wave 6: derived ids, delivered once, Q70/Q77)*
+- A second launch orphans the running task. *(fixed, wave 6: the launch guard, bug 1)*
+- A research result lands in the workspace active when it finishes. *(fixed, wave 6, bug 2)*
+- Scheduled results never reach their conversation. *(fixed, wave 6, Q73)*
+- Background prompts carry no file id for `searchFiles`. *(addressed, wave 6: the prompt no longer asks for it, Q71)*
+- Resending a task turn makes it a chat turn. *(fixed, wave 6: `Message.taskTurn`, local, Q83)*
+- A 4096-token step cuts a report and reports done. *(fixed, wave 6, bug 13)*
+- A long watch dies on an expired token; idle watchers can starve the pool of 4. *(fixed, wave 6: bug 19, a pool of 10)*
+- A board task can start before its conversation has synced. *(fixed, wave 6: waits for the sync queue, bug 5)*
+- A parent spawning on its last step ignores the children's results. *(fixed, wave 6, Q81)*
+- No stale / no-worker reconciler for runs. *(fixed, wave 6: `runs/reconcile.py`)*
 - To settle with one live model call: whether resent `parsed_output` /
-  null `system` payloads are rejected.
+  null `system` payloads are rejected. *(guarded: agent-py strips both,
+  checked against the SDK's request types; the live call is Q65's smoke,
+  still to run)*
 
 ## Revisit later
 

@@ -23,6 +23,11 @@ open an existing one.
 - Toggle **AI review changes** in [Settings](12-settings-and-theme.md)
   to control whether AI edits land as suggestions (default) or replace
   your text directly.
+- With the **agent-py** or **agent-py (runs)** backend selected, the
+  editor's AI menu and ghost-text suggestions run on agent-py too. The
+  editor's own settings (the gear at the bottom right) then offer only
+  the models agent-py runs; typing your own AI Gateway key there keeps
+  the editor on the built-in route, which bills that key.
 
 ## Tips & gotchas
 - Documents are auto-saved. There's no save button by design.

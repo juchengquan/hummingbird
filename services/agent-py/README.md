@@ -379,6 +379,43 @@ else the tool is simply absent (no mock), and the reason is logged once.
   files / 20 MB mounted, 20 files / 10 MB read back). Interactive calls
   take one unit of the per-IP web-tool budget, as on Next.
 
+## Editor AI (`/v1/ai/command`, `/v1/ai/complete`, wave 9)
+
+The rich-text editor's AI — Plate's AI menu and its ghost-text
+completion — ported from the Next routes (`app/api/ai/command/handler.ts`,
+`app/api/ai/complete/route.ts`; Phase 4, Q101–Q105). Plain streaming
+endpoints in the formats Plate reads: the AI SDK UI message stream (v1,
+`x-vercel-ai-ui-message-stream: v1`) and a text stream.
+
+- **The browser renders the document.** The body carries
+  `document: EditorAiDocument` — the selection's markdown, the edit kind
+  and context, the blocks with their ids — built by
+  `components/editor/ai/editor-ai-document.ts`; agent-py never sees a
+  Plate value.
+- **The prompts** are `editor_ai/prompts.py`, a byte-for-byte port of
+  `lib/shared/editor-ai/` (including the npm `dedent` 1.0.0 algorithm,
+  `editor_ai/js_text.py`), pinned by `tests/fixtures/editor_ai_parity.json`;
+  text streams through `editor_ai/markdown_joiner.py` as on Next.
+- **The model calls.** Without a `toolName`, one forced `json` tool call
+  classifies the instruction (`data-toolName` opens the stream); comments
+  and table-cell edits are a forced `json` tool call whose
+  `{"elements": [...]}` input streams out one `data-comment` /
+  `data-table` part per finished element (`editor_ai/elements.py`).
+  `tests/test_editor_ai_route.py` replays the Next route's recorded
+  streams (`tests/fixtures/editor_ai_streams.json`): same prompts, same
+  parts, minus the route's `tool-*` parts (the client ignores them).
+- **Gates.** A bad bearer is 401; an anonymous caller is refused under
+  `REQUIRE_AUTH_FOR_AI` and its commands share the runs' anonymous per-IP
+  windows (`RUNS_ANONYMOUS_RATE_PER_MINUTE`, `RUNS_ANONYMOUS_DAILY_BUDGET`);
+  every completion is limited to 60 a minute per IP. Models: the
+  allowlist (`400 unknown_model`), absent → `AGENT_DEFAULT_MODEL`. No
+  `ANTHROPIC_API_KEY` → `503 auth` (the editor then shows its demo
+  stream). Body caps 32 MiB / 256 KiB, as on Next.
+
+After changing a TS prompt, regenerate the fixtures and port the change:
+`EDITOR_AI_PARITY_WRITE=1 bun test components/editor/ai/editor-ai.parity.test.ts`
+and `EDITOR_AI_STREAMS_WRITE=1 bun test app/api/ai/command/stream.fixture.test.ts`.
+
 ## Configuration
 
 | Env var | Required? | What it does |

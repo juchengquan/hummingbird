@@ -533,12 +533,18 @@ Both routes return `401 { code: "auth_required", message }` (JSON, not a
 stream) to anonymous callers when the sign-in gate is on — before the
 body is validated, and even with a BYO `apiKey`.
 
-**Implication for a Python rewrite**: porting these two routes
-requires emitting the AI SDK's stream format, which is a separate
-spec from the chat-route SSE above. See
-[`ai-sdk` docs](https://ai-sdk.dev/docs) for the wire format. If the
-porting cost is high, these two routes can stay in Next.js while the
-others move (the plan calls this out as a deferred decision).
+**On agent-py** (wave 9, Phase 4 of `docs/PLAN-frontend-backend-split.md`):
+`POST /v1/ai/command` and `POST /v1/ai/complete` (contract 0.6.0,
+operations `editorAiCommand` / `editorAiComplete`) emit the same streams.
+The browser renders the document first — the command body is
+`{ messages, document: EditorAiDocument, toolName?, model? }`, built by
+`components/editor/ai/agent-py-body.ts`; agent-py never sees the Plate
+value. The editor goes there where agent-py serves chat (`python`
+signed in, `python-runs` signed in or out) unless its settings hold an
+AI Gateway key (`lib/shared/editor-ai/routing.ts`). The prompts live in
+`lib/shared/editor-ai/`; agent-py's port is pinned to them by
+`components/editor/ai/editor-ai.parity.test.ts`, and its streams to the
+route's by `app/api/ai/command/stream.fixture.test.ts`.
 
 ---
 

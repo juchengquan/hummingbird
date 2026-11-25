@@ -404,6 +404,17 @@ rate limits — `services/agent-py/README.md` § Configuration).
 needs `ANTHROPIC_API_KEY`) for a model-free stub — for the contract
 conformance suite (`CONTRACT_RUNS_STUB=1`) only.
 
+**Editor AI (`/v1/ai/command`, `/v1/ai/complete`, wave 9 / Phase 4).**
+agent-py serves the Plate editor's AI menu and ghost text where it
+serves chat (`python` signed in, `python-runs` signed in or out), unless
+the editor settings hold an AI Gateway key (`lib/shared/editor-ai/routing.ts`).
+The browser renders the document to text (`components/editor/ai/`); the
+prompts live in `lib/shared/editor-ai/` and agent-py's port
+(`services/agent-py/src/agent_py/editor_ai/`) is pinned to them by
+`components/editor/ai/editor-ai.parity.test.ts` and to the route's streams
+by `app/api/ai/command/stream.fixture.test.ts` — regenerate both fixtures
+after changing a prompt (`services/agent-py/README.md` § Editor AI).
+
 **Deploy target decided** — self-host on a small VM (Hetzner CX22 as
 the named example, ~€4.5/mo; home server / NAS as a parallel option
 if uptime is good). Reasoning in `PLAN-agent-api.md` §Host decision.
